@@ -1682,6 +1682,13 @@ Sound cache will be moved after restarting [APP_NAME].
 
   <notification
    icon="alertmodal.tga"
+   name="ClearCacheWillBeMoved"
+   type="alertmodal">
+Clear cache will be moved after restarting [APP_NAME].
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
    name="ChangeConnectionPort"
    type="alertmodal">
 Port settings take effect after restarting [APP_NAME].

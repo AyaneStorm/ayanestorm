@@ -193,6 +193,13 @@ public:
     void onClickBrowseSoundCache();
     void onClickResetSoundCache();
     // </FS:Ansariel>
+    // <AS:chanayane> Clear cache
+    void setClearCacheLocation(const LLStringExplicit& location);
+    void onClickSetClearCache();
+    void changeClearCachePath(const std::vector<std::string>& filenames, std::string proposed_name);
+    void onClickBrowseClearCache();
+    void onClickResetClearCache();
+    // </AS:chanayane>
 
     // <FS:Ansariel> FIRE-2912: Reset voice button
     void onClickResetVoice();

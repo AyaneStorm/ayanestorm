@@ -2384,6 +2384,10 @@ bool LLAppViewer::cleanup()
         gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CACHE,""), "*.*");
         // <FS:Ansariel> Sound cache
         gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_FS_SOUND_CACHE, ""), "*.*");
+
+        // <AS:chanayane> Clear cache
+        gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""), "*.*");
+        // </AS:chanayane>
     }
 
     writeDebugInfo();
@@ -5071,6 +5075,14 @@ bool LLAppViewer::initCache()
         gSavedSettings.setString("FSSoundCacheLocation", "");
     }
     // </FS:Ansariel>
+
+    // <AS:chanayane> Clear cache
+    if (!gDirUtilp->setClearCacheDir(gSavedSettings.getString("ASClearCacheLocation")))
+    {
+        LL_WARNS("AppCache") << "Unable to set clear cache location" << LL_ENDL;
+        gSavedSettings.setString("ASClearCacheLocation", "");
+    }
+    // </AS:chanayane>
 
     const std::string cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, cache_dir_name);
     // <FS:Beq> Improve cache purge triggering
