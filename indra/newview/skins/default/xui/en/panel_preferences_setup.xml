@@ -566,7 +566,7 @@
 		 name="Clear Cache location"
 		 top_delta="35"
 		 width="300">
-			Clear Cache location:
+			Clear Cache folder location:
 		</text>
 		<line_editor
 		 control_name="ASClearCacheLocation"
@@ -621,6 +621,19 @@
 		  <button.commit_callback
 		   function="Pref.ResetClearCache" />
 		</button>
+
+		<check_box
+		 follows="left|top"
+		 height="16"
+		 control_name="ASEnableClearCache"
+		 label="Enable clear cache"
+		 tool_tip="If checked, the viewer will store a clear copy of assets in the clear cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
+		 left="15"
+		 mouse_opaque="true"
+		 name="enable_clear_cache"
+		 radio_style="false"
+		 width="400"
+		 top_pad="10"/>
 
 		<text
 		 type="string"

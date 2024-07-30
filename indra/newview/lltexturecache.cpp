@@ -118,8 +118,13 @@ public:
           mResponder(responder),
           mFileHandle(LLLFSThread::nullHandle()),
           mBytesToRead(0),
-          mBytesRead(0)
+          mBytesRead(0),
+          mClearCacheEnabled(FALSE)
     {
+        if (gSavedSettings.getBOOL("ASEnableClearCache"))
+        {
+            mClearCacheEnabled = TRUE;
+        }
     }
     ~LLTextureCacheWorker()
     {
@@ -161,6 +166,7 @@ protected:
     LLLFSThread::handle_t mFileHandle;
     S32 mBytesToRead;
     LLAtomicS32 mBytesRead;
+    BOOL mClearCacheEnabled;
 };
 
 class LLTextureCacheLocalFileWorker : public LLTextureCacheWorker
@@ -663,7 +669,10 @@ bool LLTextureCacheRemoteWorker::doWrite()
         else
         {
             // <AS:chanayane> Clear cache
-            save_image(mID, mRawImage);
+            if(mClearCacheEnabled)
+            {
+                save_image(mID, mRawImage);
+            }
             // </AS:chanayane>
             S32 offset = idx * TEXTURE_CACHE_ENTRY_SIZE;    // skip to the correct spot in the header file
             S32 size = TEXTURE_CACHE_ENTRY_SIZE;            // record size is fixed for the header
