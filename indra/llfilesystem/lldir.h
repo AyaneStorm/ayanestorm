@@ -60,6 +60,9 @@ typedef enum ELLPath
     // </FS:Ansariel>
     LL_PATH_POSES = 23,
     LL_PATH_ANIMATIONS = 24,
+    // <AS:chanayane> Clear cache
+    LL_PATH_CLEAR_CACHE = 25,
+    // </AS:chanayane>
     LL_PATH_LAST
 } ELLPath;
 
@@ -150,6 +153,9 @@ class LLDir
     // <FS:Ansariel> Sound cache
     const std::string &getSoundCacheDir() const;
     // </FS:Ansariel>
+    // <AS:chanayane> Clear cache
+    const std::string &getClearCacheDir() const;
+    // </AS:chanayane>
 
     // Expanded filename
     std::string getExpandedFilename(ELLPath location, const std::string &filename) const;
@@ -250,6 +256,9 @@ class LLDir
     // <FS:Ansariel> Sound cache
     virtual bool setSoundCacheDir(const std::string& path);
     // </FS:Ansariel>
+    // <AS:chanayane> Clear cache
+    virtual bool setClearCacheDir(const std::string& path);
+    // </AS:chanayane>
 
     virtual void dumpCurrentDirectories(LLError::ELevel level = LLError::LEVEL_DEBUG);
 
@@ -339,6 +348,9 @@ protected:
     // <FS:Ansariel> Sound cache
     std::string mSoundCacheDir;         // Sound cache
     // </FS:Ansariel>
+    // <AS:chanayane> Clear cache
+    std::string mClearCacheDir;         // Clear cache
+    // </AS:chanayane>
 
     // <FS:ND> To avoid doing IO calls (expensive) in walkdSearchedSkinDirs cache results.
     struct SkinDirFile
