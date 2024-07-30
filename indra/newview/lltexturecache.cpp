@@ -31,6 +31,12 @@
 #include "llapr.h"
 #include "lldir.h"
 #include "llimage.h"
+// <AS:chanayane> Clear cache
+#include "llimagejpeg.h"
+#include "llimagepng.h"
+#include "llimagebmp.h"
+#include "llimagetga.h"
+// </AS:chanayane>
 #include "llimagej2c.h" // for version control
 #include "lllfsthread.h"
 #include "llviewercontrol.h"
@@ -252,6 +258,10 @@ public:
 
     virtual bool doRead();
     virtual bool doWrite();
+    // <AS:chanayane> Clear cache
+    virtual bool save_image(const LLUUID& id, LLPointer<LLImageRaw> raw_image);
+    virtual LLPointer<LLImageFormatted> create_image(const std::string &filename);
+    // </AS:chanayane>
 
 private:
     enum e_state
@@ -526,6 +536,33 @@ bool LLTextureCacheRemoteWorker::doRead()
     return done;
 }
 
+// <AS:chanayane> Clear cache
+// Create an empty formatted image instance of the correct type from the filename
+LLPointer<LLImageFormatted> LLTextureCacheRemoteWorker::create_image(const std::string &filename)
+{
+    std::string exten = gDirUtilp->getExtension(filename);
+    LLPointer<LLImageFormatted> image = LLImageFormatted::createFromExtension(exten);
+    return image;
+}
+
+// Save a raw image instance into a file
+bool LLTextureCacheRemoteWorker::save_image(const LLUUID& id, LLPointer<LLImageRaw> raw_image)
+{
+    std::string uuid = id.asString();
+    const std::string dest_filename = gDirUtilp->add(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""), "textures", "texture_" + uuid + ".png");
+
+    LLPointer<LLImageFormatted> image = create_image(dest_filename);
+
+    if (!image->encode(raw_image, 0.0f))
+    {
+        return false;
+    }
+
+    return image->save(dest_filename);
+}
+// </AS:chanayane>
+
+
 // This is where *everything* about a texture is written down in the cache system (entry map, header and body)
 // Current assumption are:
 // - the whole data are in a raw form, starting at mWriteData
@@ -625,6 +662,9 @@ bool LLTextureCacheRemoteWorker::doWrite()
         }
         else
         {
+            // <AS:chanayane> Clear cache
+            save_image(mID, mRawImage);
+            // </AS:chanayane>
             S32 offset = idx * TEXTURE_CACHE_ENTRY_SIZE;    // skip to the correct spot in the header file
             S32 size = TEXTURE_CACHE_ENTRY_SIZE;            // record size is fixed for the header
             S32 bytes_written;

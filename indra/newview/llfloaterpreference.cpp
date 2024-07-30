@@ -585,6 +585,12 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     mCommitCallbackRegistrar.add("Pref.ResetSoundCache",                boost::bind(&LLFloaterPreference::onClickResetSoundCache, this));
     // </FS:Ansariel>
 
+    // <AS:chanayane> Clear cache
+    mCommitCallbackRegistrar.add("Pref.BrowseClearCache",               boost::bind(&LLFloaterPreference::onClickBrowseClearCache, this));
+    mCommitCallbackRegistrar.add("Pref.SetClearCache",                  boost::bind(&LLFloaterPreference::onClickSetClearCache, this));
+    mCommitCallbackRegistrar.add("Pref.ResetClearCache",                boost::bind(&LLFloaterPreference::onClickResetClearCache, this));
+    // </AS:chanayane>
+
     // <FS:Ansariel> FIRE-2912: Reset voice button
     mCommitCallbackRegistrar.add("Pref.ResetVoice",                     boost::bind(&LLFloaterPreference::onClickResetVoice, this));
 }
@@ -683,6 +689,10 @@ BOOL LLFloaterPreference::postBuild()
     setSoundCacheLocation(gSavedSettings.getString("FSSoundCacheLocation"));
     getChild<LLUICtrl>("FSSoundCacheLocation")->setEnabled(FALSE);
     // </FS:Ansariel>
+    // <AS:chanayane> Clear cache
+    setClearCacheLocation(gSavedSettings.getString("ASClearCacheLocation"));
+    getChild<LLUICtrl>("ASClearCacheLocation")->setEnabled(FALSE);
+    // </AS:chanayane>
 
     getChild<LLComboBox>("language_combobox")->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
 
@@ -991,6 +1001,9 @@ void LLFloaterPreference::apply()
     setCacheLocation(cache_location);
     // <FS:Ansariel> Sound cache
     setSoundCacheLocation(gSavedSettings.getString("FSSoundCacheLocation"));
+    // <AS:chanayane> Clear cache
+    setClearCacheLocation(gSavedSettings.getString("ASClearCacheLocation"));
+    // </AS:chanayane>
 
     //LLViewerMedia::getInstance()->setCookiesEnabled(getChild<LLUICtrl>("cookies_enabled")->getValue());
 
@@ -1822,6 +1835,39 @@ void LLFloaterPreference::onClickResetSoundCache()
     LLNotificationsUtil::add("SoundCacheWillBeMoved");
 }
 // </FS:Ansariel>
+
+// <AS:chanayane> Clear cache
+void LLFloaterPreference::onClickSetClearCache()
+{
+    std::string cur_name(gSavedSettings.getString("ASClearCacheLocation"));
+    std::string proposed_name(cur_name);
+
+    (new LLDirPickerThread(boost::bind(&LLFloaterPreference::changeClearCachePath, this, _1, _2), proposed_name))->getFile();
+}
+
+void LLFloaterPreference::changeClearCachePath(const std::vector<std::string>& filenames, std::string proposed_name)
+{
+    std::string dir_name = filenames[0];
+    if (!dir_name.empty() && dir_name != proposed_name)
+    {
+        gSavedSettings.setString("ASClearCacheLocation", dir_name);
+        setClearCacheLocation(dir_name);
+        LLNotificationsUtil::add("ClearCacheWillBeMoved");
+    }
+}
+
+void LLFloaterPreference::onClickBrowseClearCache()
+{
+    gViewerWindow->getWindow()->openFile(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""));
+}
+
+void LLFloaterPreference::onClickResetClearCache()
+{
+    gSavedSettings.setString("ASClearCacheLocation", std::string());
+    setClearCacheLocation(std::string());
+    LLNotificationsUtil::add("ClearCacheWillBeMoved");
+}
+// </AS:chanayane>
 
 // <FS:Ansariel> FIRE-2912: Reset voice button
 class FSResetVoiceTimer : public LLEventTimer
@@ -3139,6 +3185,15 @@ void LLFloaterPreference::setSoundCacheLocation(const LLStringExplicit& location
     cache_location_editor->setToolTip(location);
 }
 // </FS:Ansariel>
+
+// <AS:chanayane> Clear cache
+void LLFloaterPreference::setClearCacheLocation(const LLStringExplicit& location)
+{
+    LLUICtrl* cache_location_editor = getChild<LLUICtrl>("ASClearCacheLocation");
+    cache_location_editor->setValue(location);
+    cache_location_editor->setToolTip(location);
+}
+// </AS:chanayane>
 
 void LLFloaterPreference::selectPanel(const LLSD& name)
 {

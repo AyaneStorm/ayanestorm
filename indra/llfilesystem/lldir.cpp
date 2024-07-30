@@ -94,7 +94,9 @@ LLDir::LLDir()
     mLanguage("en"),
     mUserName("undefined"),
     // <FS:Ansariel> Sound cache
-    mSoundCacheDir("")
+    mSoundCacheDir(""),
+    // <AS:chanayane> Clear cache
+    mClearCacheDir("")
 {
 }
 
@@ -477,6 +479,12 @@ const std::string &LLDir::getSoundCacheDir() const
     return mSoundCacheDir;
 }
 // </FS:Ansariel>
+// <AS:chanayane> Clear cache
+const std::string &LLDir::getClearCacheDir() const
+{
+    return mClearCacheDir;
+}
+// </AS:chanayane>
 
 static std::string ELLPathToString(ELLPath location)
 {
@@ -642,6 +650,12 @@ std::string LLDir::getExpandedFilename(ELLPath location, const std::string& subd
         prefix = getSoundCacheDir();
         break;
     // </FS:Ansariel>
+
+    // <AS:chanayane> Clear cache
+    case LL_PATH_CLEAR_CACHE:
+        prefix = getClearCacheDir();
+        break;
+    // </AS:chanayane>
 
     case LL_PATH_POSES:
         prefix = add(getOSUserAppDir(), "user_settings", "poses");
@@ -1206,6 +1220,46 @@ bool LLDir::setSoundCacheDir(const std::string& path)
     return result;
 }
 // </FS:Ansariel>
+
+// <AS:chanayane> Clear cache
+bool LLDir::setClearCacheDir(const std::string& path)
+{
+    bool result = false;
+
+    // Default to normal cache directory/clearcache
+    mClearCacheDir = add(getCacheDir(), "clearcache");
+    if (!LLFile::isdir(mClearCacheDir))
+    {
+        LLFile::mkdir(mClearCacheDir);
+    }
+    if (!LLFile::isdir(add(mClearCacheDir, "textures")))
+    {
+        LLFile::mkdir(add(mClearCacheDir, "textures"));
+    }
+
+    if (path.empty() )
+    {
+        // reset to default
+        result = true;
+    }
+    else
+    {
+        LLFile::mkdir(path);
+        std::string tempname = add(path, "temp");
+        LLFILE* file = LLFile::fopen(tempname,"wt");
+        if (file)
+        {
+            fclose(file);
+            LLFile::remove(tempname);
+            mClearCacheDir = path;
+            result = true;
+        }
+    }
+    LL_INFOS("AppInit", "Directories") << "Setting clear cache directory: " << mClearCacheDir << LL_ENDL;
+
+    return result;
+}
+// </AS:chanayane>
 
 void LLDir::dumpCurrentDirectories(LLError::ELevel level)
 {
