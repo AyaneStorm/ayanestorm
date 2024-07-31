@@ -199,6 +199,7 @@ public:
     void changeClearCachePath(const std::vector<std::string>& filenames, std::string proposed_name);
     void onClickBrowseClearCache();
     void onClickResetClearCache();
+    void onClickEnableClearCache();
     // </AS:chanayane>
 
     // <FS:Ansariel> FIRE-2912: Reset voice button

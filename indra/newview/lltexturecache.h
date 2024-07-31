@@ -45,6 +45,9 @@ class LLTextureCache : public LLWorkerThread
     friend class LLTextureCacheLocalFileWorker;
 
 private:
+    // <AS:chanayane> Clear cache
+    static inline BOOL s_clear_cache_enabled { FALSE };
+    // </AS:chanayane>
 
 #if LL_WINDOWS
 #pragma pack(push,1)
@@ -148,6 +151,11 @@ public:
     U32 getMaxEntries() { return sCacheMaxEntries; };
     BOOL isInCache(const LLUUID& id) ;
     BOOL isInLocal(const LLUUID& id) ; //not thread safe at the moment
+
+    // <AS:chanayane> Clear cache
+    static BOOL getClearCacheEnabled() { return s_clear_cache_enabled; }
+    static void setClearCacheEnabled(BOOL enabled) { s_clear_cache_enabled = enabled; }
+    // </AS:chanayane>
 
 protected:
     // Accessed by LLTextureCacheWorker
