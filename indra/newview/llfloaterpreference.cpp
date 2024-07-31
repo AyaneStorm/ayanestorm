@@ -97,6 +97,10 @@
 #include "llrect.h"
 #include "llstring.h"
 
+// <AS:chanayane> Clear cache
+#include "lltexturecache.h"
+// </AS:chanayane>
+
 // project includes
 
 #include "llbutton.h"
@@ -589,6 +593,7 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     mCommitCallbackRegistrar.add("Pref.BrowseClearCache",               boost::bind(&LLFloaterPreference::onClickBrowseClearCache, this));
     mCommitCallbackRegistrar.add("Pref.SetClearCache",                  boost::bind(&LLFloaterPreference::onClickSetClearCache, this));
     mCommitCallbackRegistrar.add("Pref.ResetClearCache",                boost::bind(&LLFloaterPreference::onClickResetClearCache, this));
+    mCommitCallbackRegistrar.add("Pref.EnableClearCache",               boost::bind(&LLFloaterPreference::onClickEnableClearCache, this));    
     // </AS:chanayane>
 
     // <FS:Ansariel> FIRE-2912: Reset voice button
@@ -1866,6 +1871,18 @@ void LLFloaterPreference::onClickResetClearCache()
     gSavedSettings.setString("ASClearCacheLocation", std::string());
     setClearCacheLocation(std::string());
     LLNotificationsUtil::add("ClearCacheWillBeMoved");
+}
+
+void LLFloaterPreference::onClickEnableClearCache()
+{
+    if (gSavedSettings.getBOOL("ASEnableClearCache"))
+    {
+        LLTextureCache::setClearCacheEnabled(TRUE);
+    }
+    else
+    {
+        LLTextureCache::setClearCacheEnabled(FALSE);
+    }
 }
 // </AS:chanayane>
 
