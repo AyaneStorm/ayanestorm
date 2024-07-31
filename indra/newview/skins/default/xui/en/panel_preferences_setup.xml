@@ -633,7 +633,10 @@
 		 name="enable_clear_cache"
 		 radio_style="false"
 		 width="400"
-		 top_pad="10"/>
+		 top_pad="10">
+		  <check_box.commit_callback
+		   function="Pref.EnableClearCache" />
+		</check_box>
 
 		<text
 		 type="string"

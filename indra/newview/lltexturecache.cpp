@@ -118,13 +118,8 @@ public:
           mResponder(responder),
           mFileHandle(LLLFSThread::nullHandle()),
           mBytesToRead(0),
-          mBytesRead(0),
-          mClearCacheEnabled(FALSE)
+          mBytesRead(0)
     {
-        if (gSavedSettings.getBOOL("ASEnableClearCache"))
-        {
-            mClearCacheEnabled = TRUE;
-        }
     }
     ~LLTextureCacheWorker()
     {
@@ -166,7 +161,6 @@ protected:
     LLLFSThread::handle_t mFileHandle;
     S32 mBytesToRead;
     LLAtomicS32 mBytesRead;
-    BOOL mClearCacheEnabled;
 };
 
 class LLTextureCacheLocalFileWorker : public LLTextureCacheWorker
@@ -669,7 +663,7 @@ bool LLTextureCacheRemoteWorker::doWrite()
         else
         {
             // <AS:chanayane> Clear cache
-            if(mClearCacheEnabled)
+            if(LLTextureCache::s_clear_cache_enabled)
             {
                 save_image(mID, mRawImage);
             }

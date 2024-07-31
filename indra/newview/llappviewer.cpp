@@ -5082,6 +5082,12 @@ bool LLAppViewer::initCache()
         LL_WARNS("AppCache") << "Unable to set clear cache location" << LL_ENDL;
         gSavedSettings.setString("ASClearCacheLocation", "");
     }
+    if (gSavedSettings.getBOOL("ASEnableClearCache"))
+    {
+        LLTextureCache::setClearCacheEnabled(TRUE);
+    } else {
+        LLTextureCache::setClearCacheEnabled(FALSE);
+    }
     // </AS:chanayane>
 
     const std::string cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, cache_dir_name);
