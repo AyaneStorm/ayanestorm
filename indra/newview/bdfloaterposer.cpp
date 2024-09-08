@@ -109,7 +109,7 @@ BDFloaterPoser::~BDFloaterPoser()
 {
 }
 
-BOOL BDFloaterPoser::postBuild()
+bool BDFloaterPoser::postBuild()
 {
     //BD - Posing
     mJointScrolls = { { this->getChild<FSScrollListCtrl>("joints_scroll", true),
@@ -876,7 +876,7 @@ void BDFloaterPoser::onJointSet(LLUICtrl* ctrl, const LLSD& param)
     {
         LLJoint* mirror_joint = nullptr;
         std::string mirror_joint_name = joint->getName();
-        S32 idx = joint->getName().find("Left");
+        size_t idx = joint->getName().find("Left");
         if (idx != -1)
             mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -1122,7 +1122,7 @@ void BDFloaterPoser::onJointRotationReset()
                 {
                     LLJoint* mirror_joint = nullptr;
                     std::string mirror_joint_name = joint->getName();
-                    S32 idx = joint->getName().find("Left");
+                    size_t idx = joint->getName().find("Left");
                     if (idx != -1)
                         mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -1309,7 +1309,7 @@ void BDFloaterPoser::onJointRotationRevert()
                 {
                     LLJoint* mirror_joint = nullptr;
                     std::string mirror_joint_name = joint->getName();
-                    S32 idx = joint->getName().find("Left");
+                    size_t idx = joint->getName().find("Left");
                     if (idx != -1)
                         mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -1373,7 +1373,7 @@ void BDFloaterPoser::onFlipPose()
         std::string mirror_joint_name = joint->getName();
         //BD - Attempt to find the "right" version of this bone first, we assume we always
         //     end up with the "left" version of a bone first.
-        S32 idx = joint->getName().find("Left");
+        size_t idx = joint->getName().find("Left");
         if (idx != -1)
             mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
         //BD - Attempt to find the "right" version of this bone first, this is necessary
@@ -1470,7 +1470,7 @@ void BDFloaterPoser::onPoseSymmetrize(const LLSD& param)
         {
             //BD - Attempt to find the "right" version of this bone first, we assume we always
             //     end up with the "left" version of a bone first.
-            S32 idx = joint->getName().find("Left");
+            size_t idx = joint->getName().find("Left");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
             else
@@ -1480,7 +1480,7 @@ void BDFloaterPoser::onPoseSymmetrize(const LLSD& param)
         {
             //BD - Attempt to find the "right" version of this bone first, this is necessary
             //     because there are a couple bones starting with the "right" bone.
-            S32 idx = joint->getName().find("Right");
+            size_t idx = joint->getName().find("Right");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Left");
             else
@@ -1719,7 +1719,7 @@ void BDFloaterPoser::onJointSymmetrize(bool from)
             std::string mirror_joint_name = joint->getName();
             //BD - Attempt to find the "right" version of this bone, if we can't find it try
             //     the left version.
-            S32 idx = joint->getName().find("Left");
+            size_t idx = joint->getName().find("Left");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
             idx = joint->getName().find("Right");

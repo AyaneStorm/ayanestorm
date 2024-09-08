@@ -86,11 +86,11 @@ public:
     ~LLFloaterPreference();
 
     void apply();
-    void cancel();
+    void cancel(const std::vector<std::string> settings_to_skip = {});
     // <FS:Zi> FIRE-19539 - Include the alert messages in Prefs>Notifications>Alerts in preference Search.
     // /*virtual*/ void draw();
     // </FS:Zi>
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
     /*virtual*/ void onOpen(const LLSD& key);
     /*virtual*/ void onClose(bool app_quitting);
     /*virtual*/ void changed();
@@ -174,7 +174,7 @@ protected:
     // <FS:Ansariel> Correct enabled state of Animated Script Dialogs option
     void updateAnimatedScriptDialogs();
 
-    // <FS:Zi> Group Notices and chiclets location setting conversion BOOL => S32
+    // <FS:Zi> Group Notices and chiclets location setting conversion bool => S32
     void onShowGroupNoticesTopRightChanged();
 
 public:
@@ -237,7 +237,6 @@ public:
     bool moveTranscriptsAndLog();
     //[FIX FIRE-2765 : SJ] Making sure Reset button resets works
     void onClickResetLogPath();
-    void enableHistory();
     // <FS:Ansariel> Show email address in preferences (FIRE-1071) and keep for OpenSim
     //void setPersonalInfo(const std::string& visibility);
     void setPersonalInfo(const std::string& visibility, bool im_via_email, const std::string& email);
@@ -268,10 +267,8 @@ public:
 
     void refreshUI();
 
-    void onCommitMediaEnabled();
-    void onCommitMusicEnabled();
-    void applyResolution();
     void onChangeMaturity();
+    void onChangeComplexityMode(const LLSD& newvalue);
     void onChangeModelFolder();
     void onChangePBRFolder();
     void onChangeTextureFolder();
@@ -356,12 +353,12 @@ class LLPanelPreference : public LLPanel
 {
 public:
     LLPanelPreference();
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     virtual ~LLPanelPreference();
 
     virtual void apply();
-    virtual void cancel();
+    virtual void cancel(const std::vector<std::string> settings_to_skip = {});
     // void setControlFalse(const LLSD& user_data); //<FS:KC> Handled centrally now
     virtual void setHardwareDefaults();
 
@@ -422,15 +419,13 @@ private:
 class LLPanelPreferenceGraphics : public LLPanelPreference
 {
 public:
-    BOOL postBuild();
+    bool postBuild();
     void draw();
-    void cancel();
+    void cancel(const std::vector<std::string> settings_to_skip = {});
     void saveSettings();
     void resetDirtyChilds();
     void setHardwareDefaults();
     void setPresetText();
-
-    static const std::string getPresetsPath();
 
 protected:
     bool hasDirtyChilds();
@@ -448,10 +443,10 @@ public:
     LLPanelPreferenceControls();
     virtual ~LLPanelPreferenceControls();
 
-    BOOL postBuild();
+    bool postBuild();
 
     void apply();
-    void cancel();
+    void cancel(const std::vector<std::string> settings_to_skip = {});
     void saveSettings();
     void resetDirtyChilds();
 
@@ -514,9 +509,9 @@ class LLPanelPreferenceSkins : public LLPanelPreference
 public:
     LLPanelPreferenceSkins();
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
     /*virtual*/ void apply();
-    /*virtual*/ void cancel();
+    /*virtual*/ void cancel(const std::vector<std::string> settings_to_skip = {});
     void callbackRestart(const LLSD& notification, const LLSD& response);   // <FS:CR> Callback for restart dialogs
 protected:
     void onSkinChanged();
@@ -546,9 +541,9 @@ class LLPanelPreferenceCrashReports : public LLPanelPreference
 public:
     LLPanelPreferenceCrashReports();
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
     /*virtual*/ void apply();
-    /*virtual*/ void cancel();
+    /*virtual*/ void cancel(const std::vector<std::string> settings_to_skip = {});
 
     void refresh();
 
@@ -562,7 +557,7 @@ class FSPanelPreferenceBackup : public LLPanelPreference
 {
 public:
     FSPanelPreferenceBackup();
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
 protected:
     // <FS:Zi> Backup settings
@@ -573,8 +568,8 @@ protected:
     void onClickBackupSettings();
     void onClickRestoreSettings();
 
-    void doSelect(BOOL all);                                                // calls applySelection for each list
-    void applySelection(LLScrollListCtrl* control, BOOL all);               // selects or deselects all items in a scroll list
+    void doSelect(bool all);                                                // calls applySelection for each list
+    void applySelection(LLScrollListCtrl* control, bool all);               // selects or deselects all items in a scroll list
     void doBackupSettings(const LLSD& notification, const LLSD& response);  // callback for backup dialog
     void doRestoreSettings(const LLSD& notification, const LLSD& response); // callback for restore dialog
     void onQuitConfirmed(const LLSD& notification, const LLSD& response);   // callback for finished restore dialog
@@ -595,14 +590,14 @@ public:
 
 #ifdef OPENSIM
     /*virtual*/ void apply();
-    /*virtual*/ void cancel();
+    /*virtual*/ void cancel(const std::vector<std::string> settings_to_skip = {});
 
 protected:
     boost::signals2::connection mGridListChangedCallbackConnection;
     boost::signals2::connection mGridAddedCallbackConnection;
 
     void onOpen(const LLSD& key);
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     void onClickAddGrid();
     void addedGrid(bool success);
@@ -641,7 +636,7 @@ public:
     FSPanelPreferenceSounds();
     virtual ~FSPanelPreferenceSounds();
 
-    BOOL postBuild();
+    bool postBuild();
 
 private:
     LLPanel*    mOutputDevicePanel;
@@ -667,7 +662,7 @@ public:
     void cancel();
 
 protected:
-    BOOL postBuild();
+    bool postBuild();
     void onOpen(const LLSD& key);
     void onClose(bool app_quitting);
     void saveSettings();
