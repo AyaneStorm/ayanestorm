@@ -213,7 +213,7 @@ void LLAvatarPropertiesProcessor::sendAvatarPropertiesUpdate(const LLAvatarData*
 
     // This value is required by sendAvatarPropertiesUpdate method.
     //A profile should never be mature. (From the original code)
-    BOOL mature = FALSE;
+    bool mature = false;
 
     LLMessageSystem *msg = gMessageSystem;
 
@@ -272,7 +272,7 @@ std::string LLAvatarPropertiesProcessor::paymentInfo(const LLAvatarData* avatar_
     bool transacted = (avatar_data->flags & AVATAR_TRANSACTED);
     bool identified = (avatar_data->flags & AVATAR_IDENTIFIED);
     // Not currently getting set in dataserver/lldataavatar.cpp for privacy considerations
-    //BOOL age_verified = (avatar_data->flags & AVATAR_AGEVERIFIED);
+    //bool age_verified = (avatar_data->flags & AVATAR_AGEVERIFIED);
 
     const char* payment_text;
     if (transacted)
@@ -542,7 +542,7 @@ void LLAvatarPropertiesProcessor::processAvatarNotesReply(LLMessageSystem* msg, 
     LLAvatarPropertiesProcessor* self = getInstance();
     // Request processed, no longer pending
     self->removePendingRequest(avatar_notes.target_id, APT_NOTES);
-    self->notifyObservers(avatar_notes.target_id, &avatar_notes, APT_NOTES);
+    self->notifyObservers(avatar_notes.target_id,&avatar_notes,APT_NOTES);
     // </FS>
 }
 
@@ -568,12 +568,12 @@ void LLAvatarPropertiesProcessor::processAvatarPicksReply(LLMessageSystem* msg, 
         msg->getUUID(_PREHASH_Data, _PREHASH_PickID, pick_id, block);
         msg->getString(_PREHASH_Data, _PREHASH_PickName, pick_name, block);
 
-        avatar_picks.picks_list.push_back(std::make_pair(pick_id, pick_name));
+        avatar_picks.picks_list.push_back(std::make_pair(pick_id,pick_name));
     }
     LLAvatarPropertiesProcessor* self = getInstance();
     // Request processed, no longer pending
     self->removePendingRequest(avatar_picks.target_id, APT_PICKS);
-    self->notifyObservers(avatar_picks.target_id, &avatar_picks, APT_PICKS);
+    self->notifyObservers(avatar_picks.target_id,&avatar_picks,APT_PICKS);
     // </FS> OpenSim
 }
 
@@ -621,26 +621,26 @@ void LLAvatarPropertiesProcessor::processAvatarGroupsReply(LLMessageSystem* msg,
 
     //LL_DEBUGS("AvatarProperties") << "Received AvatarGroupsReply for " << avatar_id << LL_ENDL;
     LLAvatarGroups avatar_groups;
-    msg->getUUIDFast(_PREHASH_AgentData, _PREHASH_AgentID, avatar_groups.agent_id);
-    msg->getUUIDFast(_PREHASH_AgentData, _PREHASH_AvatarID, avatar_groups.avatar_id);
+    msg->getUUIDFast(_PREHASH_AgentData, _PREHASH_AgentID, avatar_groups.agent_id );
+    msg->getUUIDFast(_PREHASH_AgentData, _PREHASH_AvatarID, avatar_groups.avatar_id );
 
     S32 group_count = msg->getNumberOfBlocksFast(_PREHASH_GroupData);
-    for (S32 i = 0; i < group_count; ++i)
+    for(S32 i = 0; i < group_count; ++i)
     {
         LLAvatarGroups::LLGroupData group_data;
 
-        msg->getU64(_PREHASH_GroupData, _PREHASH_GroupPowers, group_data.group_powers, i);
-        msg->getStringFast(_PREHASH_GroupData, _PREHASH_GroupTitle, group_data.group_title, i);
-        msg->getUUIDFast(_PREHASH_GroupData, _PREHASH_GroupID, group_data.group_id, i);
-        msg->getStringFast(_PREHASH_GroupData, _PREHASH_GroupName, group_data.group_name, i);
-        msg->getUUIDFast(_PREHASH_GroupData, _PREHASH_GroupInsigniaID, group_data.group_insignia_id, i);
+        msg->getU64(    _PREHASH_GroupData, _PREHASH_GroupPowers,   group_data.group_powers, i );
+        msg->getStringFast(_PREHASH_GroupData, _PREHASH_GroupTitle, group_data.group_title, i );
+        msg->getUUIDFast(  _PREHASH_GroupData, _PREHASH_GroupID,    group_data.group_id, i);
+        msg->getStringFast(_PREHASH_GroupData, _PREHASH_GroupName,  group_data.group_name, i );
+        msg->getUUIDFast(  _PREHASH_GroupData, _PREHASH_GroupInsigniaID, group_data.group_insignia_id, i );
 
         avatar_groups.group_list.push_back(group_data);
     }
 
     LLAvatarPropertiesProcessor* self = getInstance();
     self->removePendingRequest(avatar_groups.avatar_id, APT_GROUPS);
-    self->notifyObservers(avatar_groups.avatar_id, &avatar_groups, APT_GROUPS);
+    self->notifyObservers(avatar_groups.avatar_id,&avatar_groups,APT_GROUPS);
     // </FS> OpenSim
 }
 
@@ -728,7 +728,7 @@ void LLAvatarPropertiesProcessor::sendPickInfoUpdate(const LLPickData* new_pick)
     msg->addUUID(_PREHASH_CreatorID, new_pick->creator_id);
 
     //legacy var need to be deleted
-    msg->addBOOL(_PREHASH_TopPick, FALSE);
+    msg->addBOOL(_PREHASH_TopPick, false);
 
     // fills in on simulator if null
     msg->addUUID(_PREHASH_ParcelID, new_pick->parcel_id);
@@ -809,7 +809,7 @@ bool LLAvatarPropertiesProcessor::isPendingRequest(const LLUUID& avatar_id, EAva
     if (it == mRequestTimestamps.end()) return false;
 
     // We found a request, check if it has timed out
-    U32 now = time(nullptr);
+    U32 now = (U32)time(nullptr);
     const U32 REQUEST_EXPIRE_SECS = 5;
     U32 expires = it->second + REQUEST_EXPIRE_SECS;
 
@@ -823,7 +823,7 @@ bool LLAvatarPropertiesProcessor::isPendingRequest(const LLUUID& avatar_id, EAva
 void LLAvatarPropertiesProcessor::addPendingRequest(const LLUUID& avatar_id, EAvatarProcessorType type)
 {
     timestamp_map_t::key_type key = std::make_pair(avatar_id, type);
-    U32 now = time(nullptr);
+    U32 now = (U32)time(nullptr);
     // Add or update existing (expired) request
     mRequestTimestamps[ key ] = now;
 }

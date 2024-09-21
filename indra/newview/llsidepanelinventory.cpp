@@ -170,7 +170,7 @@ void handleInventoryDisplayInboxChanged()
     }
 }
 
-BOOL LLSidepanelInventory::postBuild()
+bool LLSidepanelInventory::postBuild()
 {
     // UI elements from inventory panel
     {
@@ -178,6 +178,8 @@ BOOL LLSidepanelInventory::postBuild()
 
         mPanelMainInventory = mInventoryPanel->getChild<LLPanelMainInventory>("panel_main_inventory");
         mPanelMainInventory->setSelectCallback(boost::bind(&LLSidepanelInventory::onSelectionChange, this, _1, _2));
+        mPanelMainInventory->setParentSidepanel(this);
+        //mPanelMainInventory->setInboxPanel(getChild<LLPanelMarketplaceInbox>("marketplace_inbox")); // <FS:Ansariel> FIRE-22509: Only apply inbox filter on primary inventory window
         //LLTabContainer* tabs = mPanelMainInventory->getChild<LLTabContainer>("inventory filter tabs");
         //tabs->setCommitCallback(boost::bind(&LLSidepanelInventory::updateVerbs, this));
 
@@ -273,7 +275,7 @@ BOOL LLSidepanelInventory::postBuild()
         initInventoryViews();
     }
 
-    return TRUE;
+    return true;
 }
 
 void LLSidepanelInventory::updateInbox()
@@ -361,6 +363,9 @@ void LLSidepanelInventory::observeInboxModifications(const LLUUID& inboxID)
     LLPanelMarketplaceInbox * inbox = getChild<LLPanelMarketplaceInbox>(MARKETPLACE_INBOX_PANEL);
     LLInventoryPanel* inventory_panel = inbox->setupInventoryPanel();
     mInventoryPanelInbox = inventory_panel->getInventoryPanelHandle();
+
+    // <FS:Ansariel> FIRE-22509: Only apply inbox filter on primary inventory window
+    mPanelMainInventory->setInboxPanel(inbox);
 }
 
 void LLSidepanelInventory::enableInbox(bool enabled)
@@ -451,7 +456,7 @@ void LLSidepanelInventory::onToggleInboxBtn()
         mInboxLayoutPanel->setTargetDim(gSavedPerAccountSettings.getS32("InventoryInboxHeight"));
         if (mInboxLayoutPanel->isInVisibleChain())
     {
-        gSavedPerAccountSettings.setU32("LastInventoryInboxActivity", time_corrected());
+        gSavedPerAccountSettings.setU32("LastInventoryInboxActivity", (U32)time_corrected());
     }
 }
     else
@@ -476,7 +481,7 @@ void LLSidepanelInventory::onOpen(const LLSD& key)
 #else
     if (mInboxEnabled && getChild<LLButton>(INBOX_BUTTON_NAME)->getToggleState())
     {
-        gSavedPerAccountSettings.setU32("LastInventoryInboxActivity", time_corrected());
+        gSavedPerAccountSettings.setU32("LastInventoryInboxActivity", (U32)time_corrected());
     }
 #endif
 
@@ -486,7 +491,7 @@ void LLSidepanelInventory::onOpen(const LLSD& key)
     {
         // set focus on filter editor when side tray inventory shows up
         LLFilterEditor* filter_editor = mPanelMainInventory->getChild<LLFilterEditor>("inventory search editor");
-        filter_editor->setFocus(TRUE);
+        filter_editor->setFocus(true);
         return;
     }
 }
@@ -515,14 +520,14 @@ void LLSidepanelInventory::onBackButtonClicked()
     showInventoryPanel();
 }
 
-void LLSidepanelInventory::onSelectionChange(const std::deque<LLFolderViewItem*> &items, BOOL user_action)
+void LLSidepanelInventory::onSelectionChange(const std::deque<LLFolderViewItem*> &items, bool user_action)
 {
 
 }
 
 void LLSidepanelInventory::showInventoryPanel()
 {
-    mInventoryPanel->setVisible(TRUE);
+    mInventoryPanel->setVisible(true);
 }
 
 void LLSidepanelInventory::initInventoryViews()
@@ -592,7 +597,7 @@ LLInventoryItem *LLSidepanelInventory::getSelectedItem()
 
 U32 LLSidepanelInventory::getSelectedCount()
 {
-    int count = 0;
+    size_t count = 0;
 
     std::set<LLFolderViewItem*> selection_list = mPanelMainInventory->getActivePanel()->getRootFolder()->getSelectionList();
     count += selection_list.size();
@@ -604,7 +609,7 @@ U32 LLSidepanelInventory::getSelectedCount()
         count += selection_list.size();
     }
 
-    return count;
+    return static_cast<U32>(count);
 }
 
 LLInventoryPanel *LLSidepanelInventory::getActivePanel()
@@ -633,7 +638,7 @@ void LLSidepanelInventory::selectAllItemsPanel()
 
 }
 
-BOOL LLSidepanelInventory::isMainInventoryPanelActive() const
+bool LLSidepanelInventory::isMainInventoryPanelActive() const
 {
     return mInventoryPanel->getVisible();
 }

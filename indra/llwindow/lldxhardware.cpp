@@ -253,7 +253,7 @@ HRESULT GetVideoMemoryViaWMI(WCHAR* strInputDeviceID, DWORD* pdwAdapterRam)
 }
 
 //static
-S32 LLDXHardware::getMBVideoMemoryViaWMI()
+U32 LLDXHardware::getMBVideoMemoryViaWMI()
 {
     DWORD vram = 0;
     if (SUCCEEDED(GetVideoMemoryViaWMI(NULL, &vram)))
@@ -380,7 +380,7 @@ std::string LLDXHardware::getDriverVersionWMI(EGPUVendor vendor)
 
             //convert BSTR to std::string
             std::wstring ws(caption, SysStringLen(caption));
-            std::string caption_str(ws.begin(), ws.end());
+            std::string caption_str = ll_convert_wide_to_string(ws);
             LLStringUtil::toLower(caption_str);
 
             bool found = false;
@@ -432,7 +432,7 @@ std::string LLDXHardware::getDriverVersionWMI(EGPUVendor vendor)
 
         //convert BSTR to std::string
         std::wstring ws(driverVersion, SysStringLen(driverVersion));
-        std::string str(ws.begin(), ws.end());
+        std::string str = ll_convert_wide_to_string(ws);
         LL_INFOS("AppInit") << " DriverVersion : " << str << LL_ENDL;
 
         if (mDriverVersion.empty())
@@ -478,7 +478,7 @@ std::string LLDXHardware::getDriverVersionWMI(EGPUVendor vendor)
     return mDriverVersion;
 }
 
-void get_wstring(IDxDiagContainer* containerp, WCHAR* wszPropName, WCHAR* wszPropValue, int outputSize)
+void get_wstring(IDxDiagContainer* containerp, const WCHAR* wszPropName, WCHAR* wszPropValue, int outputSize)
 {
     HRESULT hr;
     VARIANT var;
@@ -491,10 +491,10 @@ void get_wstring(IDxDiagContainer* containerp, WCHAR* wszPropName, WCHAR* wszPro
         switch( var.vt )
         {
             case VT_UI4:
-                swprintf( wszPropValue, L"%d", var.ulVal ); /* Flawfinder: ignore */
+                swprintf( wszPropValue, outputSize, L"%d", var.ulVal ); /* Flawfinder: ignore */
                 break;
             case VT_I4:
-                swprintf( wszPropValue, L"%d", var.lVal );  /* Flawfinder: ignore */
+                swprintf( wszPropValue, outputSize, L"%d", var.lVal );  /* Flawfinder: ignore */
                 break;
             case VT_BOOL:
                 wcscpy( wszPropValue, (var.boolVal) ? L"true" : L"false" ); /* Flawfinder: ignore */
@@ -509,7 +509,7 @@ void get_wstring(IDxDiagContainer* containerp, WCHAR* wszPropName, WCHAR* wszPro
     VariantClear( &var );
 }
 
-std::string get_string(IDxDiagContainer *containerp, WCHAR *wszPropName)
+std::string get_string(IDxDiagContainer *containerp, const WCHAR *wszPropName)
 {
     WCHAR wszPropValue[256];
     get_wstring(containerp, wszPropName, wszPropValue, 256);
@@ -520,7 +520,7 @@ std::string get_string(IDxDiagContainer *containerp, WCHAR *wszPropName)
 
 LLVersion::LLVersion()
 {
-    mValid = FALSE;
+    mValid = false;
     S32 i;
     for (i = 0; i < 4; i++)
     {
@@ -528,7 +528,7 @@ LLVersion::LLVersion()
     }
 }
 
-BOOL LLVersion::set(const std::string &version_string)
+bool LLVersion::set(const std::string &version_string)
 {
     S32 i;
     for (i = 0; i < 4; i++)
@@ -555,11 +555,11 @@ BOOL LLVersion::set(const std::string &version_string)
         {
             mFields[i] = 0;
         }
-        mValid = FALSE;
+        mValid = false;
     }
     else
     {
-        mValid = TRUE;
+        mValid = true;
     }
     return mValid;
 }
@@ -716,12 +716,12 @@ LLDXDevice *LLDXHardware::findDevice(const std::string &vendor, const std::strin
 */
 
 // <FS:Ansariel> FIRE-15891: Add option to disable WMI check in case of problems
-//BOOL LLDXHardware::getInfo(BOOL vram_only)
-BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
+//bool LLDXHardware::getInfo(bool vram_only)
+bool LLDXHardware::getInfo(bool vram_only, bool disable_wmi)
 // </FS:Ansariel>
 {
     LLTimer hw_timer;
-    BOOL ok = FALSE;
+    bool ok = false;
     HRESULT       hr;
 
     // CLSID_DxDiagProvider does not work with Multithreaded?
@@ -841,7 +841,7 @@ BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
             }
         }
         // <FS:Beq> Deprecate WMI use DXGI in preference.
-        mVRAM = GetVideoMemoryViaDXGI()/1024/1024;
+        mVRAM = (S32)(GetVideoMemoryViaDXGI()/1024/1024);
         LL_INFOS("AppInit") << "VRAM Detected via DXGI: " << mVRAM << "MB" << LL_ENDL;
         // </FS:Beq>
 
@@ -860,7 +860,7 @@ BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
 
         if (vram_only)
         {
-            ok = TRUE;
+            ok = true;
             goto LCleanup;
         }
 
@@ -920,7 +920,7 @@ BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
 
             tokenizer::iterator iter = tokens.begin();
             S32 count = 0;
-            BOOL valid = TRUE;
+            bool valid = true;
             for (;(iter != tokens.end()) && (count < 3);++iter)
             {
                 switch (count)
@@ -928,7 +928,7 @@ BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
                 case 0:
                     if (strcmp(iter->c_str(), "PCI"))
                     {
-                        valid = FALSE;
+                        valid = false;
                     }
                     break;
                 case 1:
@@ -999,7 +999,7 @@ BOOL LLDXHardware::getInfo(BOOL vram_only, bool disable_wmi)
     }
 
     // dumpDevices();
-    ok = TRUE;
+    ok = true;
 
 LCleanup:
     if (!ok)
@@ -1110,7 +1110,7 @@ LLSD LLDXHardware::getDisplayInfo()
 
         // Dump the string as an int into the structure
         char *stopstring;
-        ret["VRAM"] = strtol(ram_str.c_str(), &stopstring, 10);
+        ret["VRAM"] = LLSD::Integer(strtol(ram_str.c_str(), &stopstring, 10));
         std::string device_name = get_string(device_containerp, L"szDescription");
         ret["DeviceName"] = device_name;
         std::string device_driver=  get_string(device_containerp, L"szDriverVersion");

@@ -29,10 +29,11 @@
 #define PIESLICE_H
 
 #include "lluictrl.h"
+#include "pieautohide.h"
 
 // A slice in the pie. Does nothing by itself, just stores the function and
 // parameter to be execued when the user clicks on this item
-class PieSlice : public LLUICtrl
+class PieSlice : public LLUICtrl, public PieAutohide
 {
 public:
     // parameter block for the XUI factory
@@ -45,7 +46,7 @@ public:
         // register an on_visible callback which does the same as on_enable
         Optional<EnableCallbackParam > on_visible;
 
-        // autohide feature to hide a disabled pie slice (NOTE: <bool> is not <BOOL>)
+        // autohide feature to hide a disabled pie slice
         Optional<bool> start_autohide;
         // next item in an autohide chain
         Optional<bool> autohide;
@@ -70,10 +71,6 @@ public:
     LLSD getValue() const;
     void setValue(const LLSD& value);
 
-    // accessor to expose the autohide feature
-    bool getStartAutohide() const;
-    bool getAutohide() const;
-
     // callback connection for the onCommit method to launch the specified function
     boost::signals2::connection setClickCallback(const commit_signal_t::slot_type& cb)
     {
@@ -91,8 +88,6 @@ public:
 protected:
     // accessor store
     std::string mLabel;
-    bool mStartAutohide;
-    bool mAutohide;
     bool mCheckEnableOnce;
     bool mDoUpdateEnabled;
 

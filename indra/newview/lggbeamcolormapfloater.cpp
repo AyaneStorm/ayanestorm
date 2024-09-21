@@ -50,7 +50,7 @@ lggBeamColorMapFloater::~lggBeamColorMapFloater()
 {
 }
 
-BOOL lggBeamColorMapFloater::postBuild()
+bool lggBeamColorMapFloater::postBuild()
 {
     getChild<LLUICtrl>("BeamColor_Save")->setCommitCallback(boost::bind(&lggBeamColorMapFloater::onClickSave, this));
     getChild<LLUICtrl>("BeamColor_Load")->setCommitCallback(boost::bind(&lggBeamColorMapFloater::onClickLoad, this));
@@ -63,7 +63,7 @@ BOOL lggBeamColorMapFloater::postBuild()
 
     fixOrder();
 
-    return TRUE;
+    return true;
 }
 
 void lggBeamColorMapFloater::draw()
@@ -73,7 +73,7 @@ void lggBeamColorMapFloater::draw()
 
     //set the color of the preview thing
     LLColor4 bColor = LLColor4(lggBeamMaps::beamColorFromData(mData));
-    mBeamColorPreview->set(bColor, TRUE);
+    mBeamColorPreview->set(bColor, true);
 
     static LLCachedControl<F32> max_opacity(gSavedSettings, "PickerContextOpacity", 0.4f);
     drawConeToOwner(mContextConeOpacity, max_opacity, mFSPanel->getChild<LLButton>("BeamColor_new"), mContextConeFadeTime, mContextConeInAlpha, mContextConeOutAlpha);
@@ -92,8 +92,8 @@ void lggBeamColorMapFloater::draw()
         output.set(r, g, b);
 
         gl_line_2d(
-            convertHueToX(i) + CORRECTION_X, 201 + CORRECTION_Y,
-            convertHueToX(i) + CORRECTION_X, 277 + CORRECTION_Y, output);
+            convertHueToX((F32)i) + CORRECTION_X, 201 + CORRECTION_Y,
+            convertHueToX((F32)i) + CORRECTION_X, 277 + CORRECTION_Y, output);
     }
 
     S32 X1 = convertHueToX(mData.mStartHue) + CORRECTION_X;
@@ -101,13 +101,13 @@ void lggBeamColorMapFloater::draw()
     LLFontGL* font = LLFontGL::getFontSansSerifSmall();
 
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(X1 + CORRECTION_X, 238 + CORRECTION_Y, 9.0f, 30, false);
+    gl_circle_2d((F32)(X1 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 9.0f, 30, false);
 
     gGL.color4fv(LLColor4::black.mV);
-    gl_circle_2d(X1 + CORRECTION_X, 238 + CORRECTION_Y, 8.0f, 30, false);
+    gl_circle_2d((F32)(X1 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 8.0f, 30, false);
 
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(X1 + CORRECTION_X, 238 + CORRECTION_Y, 7.0f, 30, false);
+    gl_circle_2d((F32)(X1 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 7.0f, 30, false);
 
     gl_line_2d(X1 + 1 + CORRECTION_X, 210 + CORRECTION_Y, X1 + 1 + CORRECTION_X, 266 + CORRECTION_Y, LLColor4::white);
     gl_line_2d(X1 - 1 + CORRECTION_X, 210 + CORRECTION_Y, X1-1 + CORRECTION_X, 266 + CORRECTION_Y, LLColor4::white);
@@ -125,13 +125,13 @@ void lggBeamColorMapFloater::draw()
         LLFontGL::BASELINE, LLFontGL::DROP_SHADOW);
 
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(X2 + CORRECTION_X, 238 + CORRECTION_Y, 9.0f, 30, false);
+    gl_circle_2d((F32)(X2 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 9.0f, 30, false);
 
     gGL.color4fv(LLColor4::black.mV);
-    gl_circle_2d(X2 + CORRECTION_X, 238 + CORRECTION_Y, 8.0f, 30, false);
+    gl_circle_2d((F32)(X2 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 8.0f, 30, false);
 
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(X2 + CORRECTION_X, 238 + CORRECTION_Y, 7.0f, 30, false);
+    gl_circle_2d((F32)(X2 + CORRECTION_X), (F32)(238 + CORRECTION_Y), 7.0f, 30, false);
 
     gl_line_2d(X2 + 1 + CORRECTION_X, 210 + CORRECTION_Y, X2 + 1 + CORRECTION_X, 266 + CORRECTION_Y, LLColor4::white);
     gl_line_2d(X2 - 1 + CORRECTION_X, 210 + CORRECTION_Y, X2 - 1 + CORRECTION_X, 266 + CORRECTION_Y, LLColor4::white);
@@ -151,7 +151,7 @@ void lggBeamColorMapFloater::draw()
     gGL.popMatrix();
 }
 
-BOOL lggBeamColorMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
+bool lggBeamColorMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     F32 hue = getHueFromLocation(x, y);
     if (hue != -1.f)
@@ -159,13 +159,13 @@ BOOL lggBeamColorMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
         mData.mStartHue = hue;
         fixOrder();
 
-        return TRUE;
+        return true;
     }
 
     return LLFloater::handleMouseDown(x, y, mask);
 }
 
-BOOL lggBeamColorMapFloater::handleRightMouseDown(S32 x, S32 y, MASK mask)
+bool lggBeamColorMapFloater::handleRightMouseDown(S32 x, S32 y, MASK mask)
 {
     F32 hue = getHueFromLocation(x, y);
     if (hue != -1.f)
@@ -173,7 +173,7 @@ BOOL lggBeamColorMapFloater::handleRightMouseDown(S32 x, S32 y, MASK mask)
         mData.mEndHue = hue;
         fixOrder();
 
-        return TRUE;
+        return true;
     }
 
     return LLFloater::handleRightMouseDown(x, y, mask);

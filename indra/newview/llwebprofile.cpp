@@ -38,11 +38,12 @@
 // newview
 #include "llavataractions.h" // for getProfileURL()
 #include "llviewermedia.h" // FIXME: don't use LLViewerMedia internals
+#include "llnotificationsutil.h"
 
 #include "llcorehttputil.h"
 
 // third-party
-#include "json/reader.h" // JSON
+
 
 /*
  * Workflow:
@@ -132,6 +133,10 @@ void LLWebProfile::uploadImageCoro(LLPointer<LLImageFormatted> image, std::strin
 
     if (!status)
     {
+        if (image->getDataSize() > MAX_WEB_DATASIZE)
+        {
+            LLNotificationsUtil::add("CannotUploadSnapshotWebTooBig");
+        }
         LL_WARNS("Snapshots") << "Failed to get image upload config" << LL_ENDL;
         LLWebProfile::reportImageUploadStatus(false);
         return;
@@ -239,10 +244,12 @@ LLCore::BufferArray::ptr_t LLWebProfile::buildPostData(const LLSD &data, LLPoint
         << "Content-Disposition: form-data; name=\"file\"; filename=\"snapshot.png\"\r\n"
         << "Content-Type: image/png\r\n\r\n";
 
+    LLImageDataSharedLock lock(image);
+
     // Insert the image data.
     //char *datap = (char *)(image->getData());
     //bas.write(datap, image->getDataSize());
-    U8* image_data = image->getData();
+    const U8* image_data = image->getData();
     for (S32 i = 0; i < image->getDataSize(); ++i)
     {
         bas << image_data[i];

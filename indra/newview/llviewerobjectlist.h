@@ -74,13 +74,13 @@ public:
 
     LLViewerObject *replaceObject(const LLUUID &id, const LLPCode pcode, LLViewerRegion *regionp); // TomY: hack to switch VO instances on the fly
 
-    BOOL killObject(LLViewerObject *objectp);
+    bool killObject(LLViewerObject *objectp);
     void killAnimatedObjects();
 
     void killObjects(LLViewerRegion *regionp); // Kill all objects owned by a particular region.
     void killAllObjects();
 
-    void cleanDeadObjects(const BOOL use_timer = TRUE); // Clean up the dead object list.
+    void cleanDeadObjects(const bool use_timer = true); // Clean up the dead object list.
 
     // Simulator and viewer side object updates...
     void processUpdateCore(LLViewerObject* objectp, void** data, U32 block, const EObjectUpdateType update_type,
@@ -157,10 +157,7 @@ public:
 
     S32 getOrphanParentCount() const { return (S32) mOrphanParents.size(); }
     S32 getOrphanCount() const { return mNumOrphans; }
-    //<FS:Beq> need avatar count for dynamic BB load balancing
     S32 getAvatarCount() const { return mNumAvatars; }
-    //</FS:Beq>
-
     void orphanize(LLViewerObject *childp, U32 parent_id, U32 ip, U32 port);
     void findOrphans(LLViewerObject* objectp, U32 ip, U32 port);
 
@@ -185,20 +182,20 @@ public:
 
     // if we paused in the last frame
     // used to discount stats from this frame
-    BOOL mWasPaused;
+    bool mWasPaused;
 
-    static void getUUIDFromLocal(LLUUID &id,
+    void getUUIDFromLocal(LLUUID &id,
                                 const U32 local_id,
                                 const U32 ip,
                                 const U32 port);
-    static void setUUIDAndLocal(const LLUUID &id,
+    void setUUIDAndLocal(const LLUUID &id,
                                 const U32 local_id,
                                 const U32 ip,
                                 const U32 port); // Requires knowledge of message system info!
 
-    static BOOL removeFromLocalIDTable(const LLViewerObject* objectp);
+    bool removeFromLocalIDTable(const LLViewerObject* objectp);
     // Used ONLY by the orphaned object code.
-    static U64 getIndex(const U32 local_id, const U32 ip, const U32 port);
+    U64 getIndex(const U32 local_id, const U32 ip, const U32 port);
 
     S32 mNumUnknownUpdates;
     S32 mNumDeadObjectUpdates;
@@ -207,9 +204,7 @@ protected:
     std::vector<U64>    mOrphanParents; // LocalID/ip,port of orphaned objects
     std::vector<OrphanInfo> mOrphanChildren;    // UUID's of orphaned objects
     S32 mNumOrphans;
-    //<FS:Beq> need avatar count for dynamic BB load balancing
     S32 mNumAvatars;
-    //</FS:Beq>
 
     typedef std::vector<LLPointer<LLViewerObject> > vobj_list_t;
 
@@ -238,9 +233,9 @@ protected:
     S32 mCurLazyUpdateIndex;
 
     static U32 sSimulatorMachineIndex;
-    static std::map<U64, U32> sIPAndPortToIndex;
+    std::map<U64, U32> mIPAndPortToIndex;
 
-    static std::map<U64, LLUUID> sIndexAndLocalIDToUUID;
+    std::map<U64, LLUUID> mIndexAndLocalIDToUUID;
 
     friend class LLViewerObject;
 
@@ -293,7 +288,7 @@ extern LLViewerObjectList gObjectList;
  */
 inline LLViewerObject *LLViewerObjectList::findObject(const LLUUID &id)
 {
-    std::map<LLUUID, LLPointer<LLViewerObject> >::iterator iter = mUUIDObjectMap.find(id);
+    auto iter = mUUIDObjectMap.find(id);
     if(iter != mUUIDObjectMap.end())
     {
         return iter->second;

@@ -39,7 +39,7 @@ LLQueuedThread::LLQueuedThread(const std::string& name, bool threaded, bool shou
     LLThread(name),
     mIdleThread(true),
     mNextHandle(0),
-    mStarted(FALSE),
+    mStarted(false),
     mThreaded(threaded),
     mRequestQueue(name, 1024 * 1024)
 {
@@ -131,7 +131,7 @@ size_t LLQueuedThread::update(F32 max_time_ms)
         if (!mThreaded)
         {
             startThread();
-            mStarted = TRUE;
+            mStarted = true;
         }
     }
     return updateQueue(max_time_ms);
@@ -210,7 +210,7 @@ void LLQueuedThread::waitOnPending()
 // MAIN thread
 void LLQueuedThread::printQueueStats()
 {
-    U32 size = mRequestQueue.size();
+    auto size = mRequestQueue.size();
     if (size > 0)
     {
         LL_INFOS() << llformat("Pending Requests:%d ", mRequestQueue.size()) << LL_ENDL;
@@ -432,12 +432,12 @@ void LLQueuedThread::processRequest(LLQueuedThread::QueuedRequest* req)
             using namespace std::chrono_literals;
 
             const auto throttle_time = 2ms;
-            if( req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
+            if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
             {
-                ms_sleep(throttle_time.count());
+                ms_sleep((U32)throttle_time.count());
             }
             // if we're still not ready to retry then requeue
-            if( req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
+            if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
             {
                 LL_PROFILE_ZONE_NAMED("qtpr - defer requeue");
 
@@ -506,7 +506,7 @@ void LLQueuedThread::processRequest(LLQueuedThread::QueuedRequest* req)
 
                 //             if (sleep_time.count() > 0)
                 //             {
-                //                 ms_sleep(sleep_time.count());
+                //                 ms_sleep((U32)sleep_time.count());
                 //             }
                 //         }
                 //         processRequest(req);
@@ -542,7 +542,7 @@ void LLQueuedThread::run()
     // call checPause() immediately so we don't try to do anything before the class is fully constructed
     checkPause();
     startThread();
-    mStarted = TRUE;
+    mStarted = true;
 
 
     /*while (1)

@@ -89,7 +89,7 @@ LLPanelOutfitsInventory::~LLPanelOutfitsInventory()
 }
 
 // virtual
-BOOL LLPanelOutfitsInventory::postBuild()
+bool LLPanelOutfitsInventory::postBuild()
 {
     initTabPanels();
     initListCommandsHandlers();
@@ -107,7 +107,7 @@ BOOL LLPanelOutfitsInventory::postBuild()
     getChild<LLButton>(SAVE_BTN)->setCommitCallback(boost::bind(&LLPanelOutfitsInventory::saveOutfit, this, false));
     getChild<LLButton>(SAVE_AS_BTN)->setCommitCallback(boost::bind(&LLPanelOutfitsInventory::saveOutfit, this, true));
 
-    return TRUE;
+    return true;
 }
 
 // virtual
@@ -154,7 +154,7 @@ void LLPanelOutfitsInventory::onOpen(const LLSD& key)
                 LLFolderViewFolder* first_outfit = dynamic_cast<LLFolderViewFolder*>(my_outfits_folder->getFirstChild());
                 if (first_outfit)
                 {
-                    first_outfit->setOpen(TRUE);
+                    first_outfit->setOpen(true);
                 }
             }
         }
@@ -264,7 +264,7 @@ void LLPanelOutfitsInventory::onCOFChanged()
     LLInventoryModel::cat_array_t cats;
     LLIsType is_of_type(LLAssetType::AT_OBJECT);
     gInventory.collectDescendentsIf(cof, cats, obj_items, LLInventoryModel::EXCLUDE_TRASH, is_of_type);
-    U32 attachments = obj_items.size();
+    U32 attachments = static_cast<U32>(obj_items.size());
 
     LLStringUtil::format_map_t args;
     args["COUNT"] = llformat("%d", attachments);
@@ -292,7 +292,8 @@ void LLPanelOutfitsInventory::openApearanceTab(const std::string& tab_name)
 void LLPanelOutfitsInventory::initListCommandsHandlers()
 {
     mListCommands = getChild<LLPanel>("bottom_panel");
-    mListCommands->childSetAction("wear_btn", boost::bind(&LLPanelOutfitsInventory::onWearButtonClick, this));
+    mWearBtn = mListCommands->getChild<LLButton>("wear_btn");
+    mWearBtn->setCommitCallback(boost::bind(&LLPanelOutfitsInventory::onWearButtonClick, this));
     mMyOutfitsPanel->childSetAction("trash_btn", boost::bind(&LLPanelOutfitsInventory::onTrashButtonClick, this));
     mOutfitGalleryPanel->childSetAction("trash_btn", boost::bind(&LLPanelOutfitsInventory::onTrashButtonClick, this));
 }
@@ -303,14 +304,12 @@ void LLPanelOutfitsInventory::updateListCommands()
     bool wear_enabled =  isActionEnabled("wear");
     bool wear_visible = !isCOFPanelActive();
     bool make_outfit_enabled = isActionEnabled("save_outfit");
-
-    LLButton* wear_btn = mListCommands->getChild<LLButton>("wear_btn");
     mMyOutfitsPanel->childSetEnabled("trash_btn", trash_enabled);
     mOutfitGalleryPanel->childSetEnabled("trash_btn", trash_enabled);
-    wear_btn->setEnabled(wear_enabled);
-    wear_btn->setVisible(wear_visible);
+    mWearBtn->setEnabled(wear_enabled);
+    mWearBtn->setVisible(wear_visible);
     getChild<LLButton>(SAVE_BTN)->setEnabled(make_outfit_enabled);
-    wear_btn->setToolTip(getString((!isOutfitsGalleryPanelActive() && mMyOutfitsPanel->hasItemSelected()) ? "wear_items_tooltip" : "wear_outfit_tooltip"));
+    mWearBtn->setToolTip(getString((!isOutfitsGalleryPanelActive() && mMyOutfitsPanel->hasItemSelected()) ? "wear_items_tooltip" : "wear_outfit_tooltip"));
 }
 
 void LLPanelOutfitsInventory::onTrashButtonClick()

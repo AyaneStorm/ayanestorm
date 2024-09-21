@@ -170,8 +170,6 @@ public:
             id_it = uuids.begin(),
             id_end = uuids.end();
 
-        LLAvatarItemDistanceComparator::id_to_pos_map_t pos_map;
-
         mAvatarsPositions.clear();
 
         for (;pos_it != pos_end && id_it != id_end; ++pos_it, ++id_it )
@@ -333,9 +331,9 @@ public:
         mEventTimer.stop();
     }
 
-    virtual BOOL tick() // from LLEventTimer
+    virtual bool tick() // from LLEventTimer
     {
-        return FALSE;
+        return false;
     }
 };
 
@@ -358,7 +356,7 @@ public:
         LLAvatarTracker::instance().addObserver(this);
 
         // For notification when SIP online status changes.
-        LLVoiceClient::getInstance()->addObserver(this);
+        LLVoiceClient::addObserver(this);
         // <FS:Ansariel> Disconnect LLFriendCardsManager
         if (gSavedSettings.getBOOL("FSCreateCallingCards"))
             mInvObserver = new LLInventoryFriendCardObserver(this);
@@ -368,10 +366,7 @@ public:
     {
         // will be deleted by ~LLInventoryModel
         //delete mInvObserver;
-        if (LLVoiceClient::instanceExists())
-        {
-            LLVoiceClient::getInstance()->removeObserver(this);
-        }
+        LLVoiceClient::removeObserver(this);
         LLAvatarTracker::instance().removeObserver(this);
     }
 
@@ -389,9 +384,9 @@ public:
     }
 
 
-    /*virtual*/ BOOL tick()
+    /*virtual*/ bool tick()
     {
-        if (!mIsActive) return FALSE;
+        if (!mIsActive) return false;
 
         if (mMask & (LLFriendObserver::ADD | LLFriendObserver::REMOVE | LLFriendObserver::ONLINE))
         {
@@ -402,7 +397,7 @@ public:
         mEventTimer.stop();
         mMask = 0;
 
-        return FALSE;
+        return false;
     }
 
     // virtual
@@ -531,10 +526,10 @@ public:
         }
     }
 
-    /*virtual*/ BOOL tick()
+    /*virtual*/ bool tick()
     {
         update();
-        return FALSE;
+        return false;
     }
 private:
 };
@@ -625,10 +620,12 @@ LLPanelPeople::~LLPanelPeople()
     delete mFriendListUpdater;
     delete mRecentListUpdater;
 
-    if(LLVoiceClient::instanceExists())
-    {
-        LLVoiceClient::getInstance()->removeObserver(this);
-    }
+    LLVoiceClient::removeObserver(this);
+
+    mNearbyFilterCommitConnection.disconnect();
+    mFriedsFilterCommitConnection.disconnect();
+    mGroupsFilterCommitConnection.disconnect();
+    mRecentFilterCommitConnection.disconnect();
 
     // [FS:CR] Contact sets
     if (mContactSetChangedConnection.connected())
@@ -662,23 +659,20 @@ void LLPanelPeople::removePicker()
     }
 }
 
-BOOL LLPanelPeople::postBuild()
+bool LLPanelPeople::postBuild()
 {
     // <FS:Ansariel> Don't bother with "want more?" advertisement
     //S32 max_premium = LLAgentBenefitsMgr::get("Premium").getGroupMembershipLimit();
     // </FS:Ansariel>
 
-    // <FS:Ansariel> Firestorm radar
-    //getChild<LLFilterEditor>("nearby_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
-    getChild<LLFilterEditor>("friends_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
-    getChild<LLFilterEditor>("groups_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
-    getChild<LLFilterEditor>("recent_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
-
+    LLPanel* group_tab = getChild<LLPanel>(GROUP_TAB_NAME);
+    mGroupDelBtn = group_tab->getChild<LLButton>("minus_btn");
+    mGroupCountText = group_tab->getChild<LLTextBox>("groupcount");
     // <FS:Ansariel> Don't bother with "want more?" advertisement
     //if(LLAgentBenefitsMgr::current().getGroupMembershipLimit() < max_premium)
     //{
-    //  getChild<LLTextBox>("groupcount")->setText(getString("GroupCountWithInfo"));
-    //  getChild<LLTextBox>("groupcount")->setURLClickedCallback(boost::bind(&LLPanelPeople::onGroupLimitInfo, this));
+    //  mGroupCountText->setText(getString("GroupCountWithInfo"));
+    //  mGroupCountText->setURLClickedCallback(boost::bind(&LLPanelPeople::onGroupLimitInfo, this));
     //}
     // </FS:Ansariel>
     mTabContainer = getChild<LLTabContainer>("tabs");
@@ -691,6 +685,9 @@ BOOL LLPanelPeople::postBuild()
     friends_tab->setVisibleCallback(boost::bind(&Updater::setActive, mFriendListUpdater, _2));
     friends_tab->setVisibleCallback(boost::bind(&LLPanelPeople::removePicker, this));
 
+    mFriendsGearBtn = friends_tab->getChild<LLButton>("gear_btn");
+    mFriendsDelFriendBtn = friends_tab->getChild<LLUICtrl>("friends_del_btn");
+
     // <FS:Ansariel> FIRE-4740: Friend counter in people panel
     mFriendsTabContainer = friends_tab->findChild<LLTabContainer>("friends_accordion");
     // <FS:Ansariel> Firestorm radar
@@ -698,11 +695,11 @@ BOOL LLPanelPeople::postBuild()
     mAllFriendList = friends_tab->getChild<LLAvatarList>("avatars_all");
     mOnlineFriendList->setNoItemsCommentText(getString("no_friends_online"));
     mOnlineFriendList->setShowIcons("FriendsListShowIcons");
-    mOnlineFriendList->showPermissions("FriendsListShowPermissions");
+    mOnlineFriendList->showPermissions(gSavedSettings.getBOOL("FriendsListShowPermissions"));
     mOnlineFriendList->setShowCompleteName(!gSavedSettings.getBOOL("FriendsListHideUsernames"));
     mAllFriendList->setNoItemsCommentText(getString("no_friends"));
     mAllFriendList->setShowIcons("FriendsListShowIcons");
-    mAllFriendList->showPermissions("FriendsListShowPermissions");
+    mAllFriendList->showPermissions(gSavedSettings.getBOOL("FriendsListShowPermissions"));
     mAllFriendList->setShowCompleteName(!gSavedSettings.getBOOL("FriendsListHideUsernames"));
 
     LLPanel* nearby_tab = getChild<LLPanel>(NEARBY_TAB_NAME);
@@ -727,22 +724,35 @@ BOOL LLPanelPeople::postBuild()
     //mNearbyList->setRlvCheckShowNames(true);
 // [/RLVa:KB]
 
-    mMiniMap = (LLNetMap*)getChildView("Net Map",true);
+    mMiniMap = nearby_tab->getChild<LLNetMap>("Net Map", true);
     // <FS:Ansariel> Synchronize tooltips throughout instances
     //mMiniMap->setToolTipMsg(gSavedSettings.getBOOL("DoubleClickTeleport") ?
     //  getString("AltMiniMapToolTipMsg") : getString("MiniMapToolTipMsg"));
     // <//FS:Ansariel> Synchronize tooltips throughout instances
 
-    mRecentList = getChild<LLPanel>(RECENT_TAB_NAME)->getChild<LLAvatarList>("avatar_list");
+    mNearbyGearBtn = nearby_tab->getChild<LLButton>("gear_btn");
+    mNearbyAddFriendBtn = nearby_tab->getChild<LLButton>("add_friend_btn");
+
+    LLPanel* recent_tab = getChild<LLPanel>(RECENT_TAB_NAME);
+    mRecentList = recent_tab->getChild<LLAvatarList>("avatar_list");
     mRecentList->setNoItemsCommentText(getString("no_recent_people"));
     mRecentList->setNoItemsMsg(getString("no_recent_people"));
     mRecentList->setNoFilteredItemsMsg(getString("no_filtered_recent_people"));
     mRecentList->setShowIcons("RecentListShowIcons");
 
-    mGroupList = getChild<LLGroupList>("group_list");
+    mRecentGearBtn = recent_tab->getChild<LLButton>("gear_btn");
+    mRecentAddFriendBtn = recent_tab->getChild<LLButton>("add_friend_btn");
+
+    mGroupList = group_tab->getChild<LLGroupList>("group_list");
     mGroupList->setNoItemsCommentText(getString("no_groups_msg"));
     mGroupList->setNoItemsMsg(getString("no_groups_msg"));
     mGroupList->setNoFilteredItemsMsg(getString("no_filtered_groups_msg"));
+
+    // <FS:Ansariel> Firestorm radar
+    //mNearbyFilterCommitConnection = nearby_tab->getChild<LLFilterEditor>("nearby_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
+    mFriedsFilterCommitConnection = friends_tab->getChild<LLFilterEditor>("friends_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
+    mRecentFilterCommitConnection = recent_tab->getChild<LLFilterEditor>("recent_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
+    mGroupsFilterCommitConnection = group_tab->getChild<LLFilterEditor>("groups_filter_input")->setCommitCallback(boost::bind(&LLPanelPeople::onFilterEdit, this, _2));
 
     // <FS:Ansariel> Use Firestorm radar menu handler
     //mNearbyList->setContextMenu(&LLPanelPeopleMenus::gNearbyPeopleContextMenu);
@@ -813,19 +823,21 @@ BOOL LLPanelPeople::postBuild()
     // [/FS:CR]
 
     // <FS:Ansariel> Friend list accordion replacement
-    //LLAccordionCtrlTab* accordion_tab = getChild<LLAccordionCtrlTab>("tab_all");
-    //accordion_tab->setDropDownStateChangedCallback(
+    //mFriendsAccordion = friends_tab->getChild<LLAccordionCtrl>("friends_accordion");
+
+    //mFriendsAllTab = mFriendsAccordion->getChild<LLAccordionCtrlTab>("tab_all");
+    //mFriendsAllTab->setDropDownStateChangedCallback(
     //  boost::bind(&LLPanelPeople::onFriendsAccordionExpandedCollapsed, this, _1, _2, mAllFriendList));
 
-    //accordion_tab = getChild<LLAccordionCtrlTab>("tab_online");
-    //accordion_tab->setDropDownStateChangedCallback(
+    //mFriendsOnlineTab = mFriendsAccordion->getChild<LLAccordionCtrlTab>("tab_online");
+    //mFriendsOnlineTab->setDropDownStateChangedCallback(
     //  boost::bind(&LLPanelPeople::onFriendsAccordionExpandedCollapsed, this, _1, _2, mOnlineFriendList));
     // </FS:Ansariel> Friend list accordion replacement
 
     // Must go after setting commit callback and initializing all pointers to children.
     mTabContainer->selectTabByName(NEARBY_TAB_NAME);
 
-    LLVoiceClient::getInstance()->addObserver(this);
+    LLVoiceClient::addObserver(this);
 
     // call this method in case some list is empty and buttons can be in inconsistent state
     updateButtons();
@@ -835,11 +847,11 @@ BOOL LLPanelPeople::postBuild()
     //mAllFriendList->setRefreshCompleteCallback(boost::bind(&LLPanelPeople::onFriendListRefreshComplete, this, _1, _2));
     // </FS:Ansariel> Friend list accordion replacement
 
-    return TRUE;
+    return true;
 }
 
 // virtual
-void LLPanelPeople::onChange(EStatusType status, const std::string &channelURI, bool proximal)
+void LLPanelPeople::onChange(EStatusType status, const LLSD& channelInfo, bool proximal)
 {
     if(status == STATUS_JOINING || status == STATUS_LEFT_CHANNEL)
     {
@@ -959,7 +971,7 @@ void LLPanelPeople::updateNearbyList()
     mNearbyList->setDirty();
 
     DISTANCE_COMPARATOR.updateAvatarsPositions(positions, mNearbyList->getIDs());
-    LLActiveSpeakerMgr::instance().update(TRUE);
+    LLActiveSpeakerMgr::instance().update(true);
 }
 
 void LLPanelPeople::updateRecentList()
@@ -973,13 +985,11 @@ void LLPanelPeople::updateRecentList()
 
 void LLPanelPeople::updateButtons()
 {
-    std::string cur_tab     = getActiveTabName();
-// [RLVa:KB] - Checked: RLVa-1.4.9
+    const std::string& cur_tab     = getActiveTabName();
     bool nearby_tab_active = (cur_tab == NEARBY_TAB_NAME);
-// [/RLVa:KB]
     bool friends_tab_active = (cur_tab == FRIENDS_TAB_NAME);
     bool group_tab_active   = (cur_tab == GROUP_TAB_NAME);
-    //bool recent_tab_active    = (cur_tab == RECENT_TAB_NAME);
+    bool recent_tab_active  = (cur_tab == RECENT_TAB_NAME);
     LLUUID selected_id;
 
     uuid_vec_t selected_uuids;
@@ -994,16 +1004,15 @@ void LLPanelPeople::updateButtons()
             selected_id = mGroupList->getSelectedUUID();
         }
 
-        LLPanel* groups_panel = mTabContainer->getCurrentPanel();
-        groups_panel->getChildView("minus_btn")->setEnabled(item_selected && selected_id.notNull()); // a real group selected
+        mGroupDelBtn->setEnabled(item_selected && selected_id.notNull()); // a real group selected
 
         // <FS:CR> FIRE-12229
-        //U32 groups_count = gAgent.mGroups.size();
-        //S32 max_groups = LLAgentBenefitsMgr::current().getGroupMembershipLimit();
+        //U32 groups_count = static_cast<U32>(gAgent.mGroups.size());
+        //U32 max_groups = LLAgentBenefitsMgr::current().getGroupMembershipLimit();
         //U32 groups_remaining = max_groups > groups_count ? max_groups - groups_count : 0;
-        //groups_panel->getChild<LLUICtrl>("groupcount")->setTextArg("[COUNT]", llformat("%d", groups_count));
-        //groups_panel->getChild<LLUICtrl>("groupcount")->setTextArg("[REMAINING]", llformat("%d", groups_remaining));
-        getChild<LLUICtrl>("groupcount")->setValue(FSCommon::populateGroupCount());
+        //mGroupCountText->setTextArg("[COUNT]", llformat("%d", groups_count));
+        //mGroupCountText->setTextArg("[REMAINING]", llformat("%d", groups_remaining));
+        mGroupCountText->setValue(FSCommon::populateGroupCount());
         // </FS:CR>
     }
     else
@@ -1018,40 +1027,39 @@ void LLPanelPeople::updateButtons()
             is_self = gAgent.getID() == selected_id;
         }
 
-        LLPanel* cur_panel = mTabContainer->getCurrentPanel();
-        if (cur_panel)
         {
-            // <FS:Ansariel> RLVa check
-            //if (cur_panel->hasChild("add_friend_btn", TRUE))
-            //  cur_panel->getChildView("add_friend_btn")->setEnabled(item_selected && !is_friend && !is_self);
-            if (!nearby_tab_active && cur_panel->hasChild("add_friend_btn", TRUE))
-                cur_panel->getChildView("add_friend_btn")->setEnabled(item_selected && !is_friend && !is_self && RlvActions::canShowName(RlvActions::SNC_DEFAULT, selected_id));
-            // </FS:Ansariel> RLVa check
-
+            // <FS:Ansariel> Firestorm radar
+            //if(nearby_tab_active)
+            //{
+            //    mNearbyAddFriendBtn->setEnabled(item_selected && !is_friend && !is_self);
+            //    mNearbyGearBtn->setEnabled(multiple_selected);
+            //}
+            // </FS:Ansariel> Firestorm radar
             if (friends_tab_active)
             {
-                cur_panel->getChildView("friends_del_btn")->setEnabled(multiple_selected);
+                mFriendsDelFriendBtn->setEnabled(multiple_selected);
+                mFriendsGearBtn->setEnabled(multiple_selected);
             }
 
-            // <FS:Ansariel> Fix warning about missing gear button on blocklist panel
-            //if (!group_tab_active)
-            if (!group_tab_active && !nearby_tab_active && cur_tab != BLOCKED_TAB_NAME)
-            // </FS:Ansariel>
+            if (recent_tab_active)
             {
-                cur_panel->getChildView("gear_btn")->setEnabled(multiple_selected);
+                // <FS:Ansariel> RLVa check
+                //mRecentAddFriendBtn->setEnabled(item_selected && !is_friend && !is_self);
+                mRecentAddFriendBtn->setEnabled(item_selected && !is_friend && !is_self && RlvActions::canShowName(RlvActions::SNC_DEFAULT, selected_id));
+                mRecentGearBtn->setEnabled(multiple_selected);
             }
         }
     }
 }
 
-std::string LLPanelPeople::getActiveTabName() const
+const std::string& LLPanelPeople::getActiveTabName() const
 {
     return mTabContainer->getCurrentPanel()->getName();
 }
 
 LLUUID LLPanelPeople::getCurrentItemID() const
 {
-    std::string cur_tab = getActiveTabName();
+    const std::string& cur_tab = getActiveTabName();
 
     if (cur_tab == FRIENDS_TAB_NAME) // this tab has two lists
     {
@@ -1088,7 +1096,7 @@ LLUUID LLPanelPeople::getCurrentItemID() const
 
 void LLPanelPeople::getCurrentItemIDs(uuid_vec_t& selected_uuids) const
 {
-    std::string cur_tab = getActiveTabName();
+    const std::string& cur_tab = getActiveTabName();
 
     if (cur_tab == FRIENDS_TAB_NAME)
     {
@@ -1114,25 +1122,6 @@ void LLPanelPeople::getCurrentItemIDs(uuid_vec_t& selected_uuids) const
     else
         llassert(0 && "unknown tab selected");
 
-}
-
-void LLPanelPeople::showGroupMenu(LLMenuGL* menu)
-{
-    // Shows the menu at the top of the button bar.
-
-    // Calculate its coordinates.
-    // (assumes that groups panel is the current tab)
-    LLPanel* bottom_panel = mTabContainer->getCurrentPanel()->getChild<LLPanel>("bottom_panel");
-    LLPanel* parent_panel = mTabContainer->getCurrentPanel();
-    menu->arrangeAndClear();
-    S32 menu_height = menu->getRect().getHeight();
-    S32 menu_x = -2; // *HACK: compensates HPAD in showPopup()
-    S32 menu_y = bottom_panel->getRect().mTop + menu_height;
-
-    // Actually show the menu.
-    menu->buildDrawLabels();
-    menu->updateParent(LLMenuGL::sMenuContainer);
-    LLMenuGL::showPopup(parent_panel, menu, menu_x, menu_y);
 }
 
 void LLPanelPeople::setSortOrder(LLAvatarList* list, ESortOrder order, bool save)
@@ -1207,7 +1196,7 @@ void LLPanelPeople::onFilterEdit(const std::string& search_string)
     saved_filter = search_upper;
 
     // Apply new filter to the current tab.
-    const std::string cur_tab = getActiveTabName();
+    const std::string& cur_tab = getActiveTabName();
     if (cur_tab == NEARBY_TAB_NAME)
     {
         mNearbyList->setNameFilter(filter);
@@ -1223,10 +1212,10 @@ void LLPanelPeople::onFilterEdit(const std::string& search_string)
         mOnlineFriendList->setNameFilter(filter);
         mAllFriendList->setNameFilter(filter);
 
-    // <FS:Ansariel> Friend list accordion replacement
-    //setAccordionCollapsedByUser("tab_online", false);
-    //setAccordionCollapsedByUser("tab_all", false);
-    // </FS:Ansariel> Friend list accordion replacement
+        // <FS:Ansariel> Friend list accordion replacement
+        //setAccordionCollapsedByUser(mFriendsOnlineTab, false);
+        //setAccordionCollapsedByUser(mFriendsAllTab, false);
+        // </FS:Ansariel> Friend list accordion replacement
         showFriendsAccordionsIfNeeded();
 
         // restore accordion tabs state _after_ all manipulations
@@ -1269,15 +1258,14 @@ void LLPanelPeople::onGroupLimitInfo()
 
 void LLPanelPeople::onTabSelected(const LLSD& param)
 {
-    std::string tab_name = getChild<LLPanel>(param.asString())->getName();
     updateButtons();
 
     showFriendsAccordionsIfNeeded();
 
     // <FS:AO> Layout panels will not initialize at a constant size, force it here.
-    if (tab_name == NEARBY_TAB_NAME)
+    if (mTabContainer->getCurrentPanel()->getName() == NEARBY_TAB_NAME)
     {
-        LLLayoutPanel* minilayout = (LLLayoutPanel*)getChildView("minimaplayout", true);
+        LLLayoutPanel* minilayout = (LLLayoutPanel*)mTabContainer->getCurrentPanel()->getChildView("minimaplayout", true);
         if (minilayout->getVisible())
         {
             LLRect rec = minilayout->getRect();
@@ -1327,9 +1315,9 @@ void LLPanelPeople::onAvatarListCommitted(LLAvatarList* list)
         uuid_vec_t selected_uuids;
         getCurrentItemIDs(selected_uuids);
         mMiniMap->setSelected(selected_uuids);
-    } else
+    }
     // Make sure only one of the friends lists (online/all) has selection.
-    if (getActiveTabName() == FRIENDS_TAB_NAME)
+    else if (getActiveTabName() == FRIENDS_TAB_NAME)
     {
         if (list == mOnlineFriendList)
             mAllFriendList->resetSelection(true);
@@ -1354,12 +1342,9 @@ void LLPanelPeople::onAddFriendButtonClicked()
 bool LLPanelPeople::isItemsFreeOfFriends(const uuid_vec_t& uuids)
 {
     const LLAvatarTracker& av_tracker = LLAvatarTracker::instance();
-    for ( uuid_vec_t::const_iterator
-              id = uuids.begin(),
-              id_end = uuids.end();
-          id != id_end; ++id )
+    for (const LLUUID& uuid : uuids)
     {
-        if (av_tracker.isBuddy (*id))
+        if (av_tracker.isBuddy(uuid))
         {
             return false;
         }
@@ -1370,11 +1355,11 @@ bool LLPanelPeople::isItemsFreeOfFriends(const uuid_vec_t& uuids)
 void LLPanelPeople::onAddFriendWizButtonClicked()
 {
     LLPanel* cur_panel = mTabContainer->getCurrentPanel();
-    LLView * button = cur_panel->findChild<LLButton>("friends_add_btn", TRUE);
+    LLView * button = cur_panel->findChild<LLButton>("friends_add_btn", true);
 
     // Show add friend wizard.
     LLFloater* root_floater = gFloaterView->getParentFloater(this);
-    LLFloaterAvatarPicker* picker = LLFloaterAvatarPicker::show(boost::bind(&LLPanelPeople::onAvatarPicked, _1, _2), FALSE, TRUE, FALSE, root_floater->getName(), button);
+    LLFloaterAvatarPicker* picker = LLFloaterAvatarPicker::show(boost::bind(&LLPanelPeople::onAvatarPicked, _1, _2), false, true, false, root_floater->getName(), button);
     if (!picker)
     {
         return;
@@ -1683,15 +1668,8 @@ bool LLPanelPeople::notifyChildren(const LLSD& info)
     return LLPanel::notifyChildren(info);
 }
 
-void LLPanelPeople::showAccordion(const std::string name, bool show)
+void LLPanelPeople::showAccordion(LLAccordionCtrlTab* tab, bool show)
 {
-    if(name.empty())
-    {
-        LL_WARNS() << "No name provided" << LL_ENDL;
-        return;
-    }
-
-    LLAccordionCtrlTab* tab = getChild<LLAccordionCtrlTab>(name);
     tab->setVisible(show);
     if(show)
     {
@@ -1710,14 +1688,13 @@ void LLPanelPeople::showFriendsAccordionsIfNeeded()
     {
         // <FS:Ansariel> Friend list accordion replacement
         // Expand and show accordions if needed, else - hide them
-        //showAccordion("tab_online", mOnlineFriendList->filterHasMatches());
-        //showAccordion("tab_all", mAllFriendList->filterHasMatches());
+        //showAccordion(mFriendsOnlineTab, mOnlineFriendList->filterHasMatches());
+        //showAccordion(mFriendsAllTab, mAllFriendList->filterHasMatches());
 
         //// Rearrange accordions
-        //LLAccordionCtrl* accordion = getChild<LLAccordionCtrl>("friends_accordion");
-        //accordion->arrange();
+        //mFriendsAccordion->arrange();
 
-        childSetVisible("friends_accordion", mAllFriendList->filterHasMatches());
+        mFriendsTabContainer->setVisible(mAllFriendList->filterHasMatches());
         // </FS:Ansariel> Friend list accordion replacement
 
         // *TODO: new no_matched_tabs_text attribute was implemented in accordion (EXT-7368).
@@ -1731,11 +1708,11 @@ void LLPanelPeople::onFriendListRefreshComplete(LLUICtrl*ctrl, const LLSD& param
 {
     if(ctrl == mOnlineFriendList)
     {
-        showAccordion("tab_online", param.asInteger());
+        showAccordion(mFriendsOnlineTab, param.asInteger());
     }
     else if(ctrl == mAllFriendList)
     {
-        showAccordion("tab_all", param.asInteger());
+        showAccordion(mFriendsAllTab, param.asInteger());
     }
 }
 
@@ -1940,7 +1917,7 @@ void LLPanelPeople::onContactSetsMenuItemClicked(const LLSD& userdata)
     {
         LLFloater* root_floater = gFloaterView->getParentFloater(this);
         LLFloater* avatar_picker = LLFloaterAvatarPicker::show(boost::bind(&LLPanelPeople::handlePickerCallback, this, _1, mContactSetCombo->getValue().asString()),
-                                                               TRUE, TRUE, TRUE, root_floater->getName());
+                                                               true, true, true, root_floater->getName());
         if (root_floater && avatar_picker)
             root_floater->addDependentFloater(avatar_picker);
     }
@@ -1954,7 +1931,7 @@ void LLPanelPeople::onContactSetsMenuItemClicked(const LLSD& userdata)
 
         LLSD payload, args;
         std::string set = mContactSetCombo->getValue().asString();
-        S32 selected_size = selected_uuids.size();
+        S32 selected_size = static_cast<S32>(selected_uuids.size());
         args["SET_NAME"] = set;
         args["TARGET"] = (selected_size > 1 ? llformat("%d", selected_size) : LLSLURL("agent", selected_uuids.front(), "about").getSLURLString());
         payload["contact_set"] = set;
@@ -2077,7 +2054,7 @@ bool LLPanelPeople::onEnableColumnVisibilityChecked(const LLSD& userdata)
 // </FS:Ansariel>
 
 // <FS:Ansariel> CTRL-F focusses local search editor
-BOOL LLPanelPeople::handleKeyHere(KEY key, MASK mask)
+bool LLPanelPeople::handleKeyHere(KEY key, MASK mask)
 {
     if (FSCommon::isFilterEditorKeyCombo(key, mask))
     {
@@ -2085,18 +2062,18 @@ BOOL LLPanelPeople::handleKeyHere(KEY key, MASK mask)
 
         if (cur_tab == FRIENDS_TAB_NAME)
         {
-            getChild<LLFilterEditor>("friends_filter_input")->setFocus(TRUE);
-            return TRUE;
+            getChild<LLFilterEditor>("friends_filter_input")->setFocus(true);
+            return true;
         }
         else if (cur_tab == GROUP_TAB_NAME)
         {
-            getChild<LLFilterEditor>("groups_filter_input")->setFocus(TRUE);
-            return TRUE;
+            getChild<LLFilterEditor>("groups_filter_input")->setFocus(true);
+            return true;
         }
         else if (cur_tab == RECENT_TAB_NAME)
         {
-            getChild<LLFilterEditor>("recent_filter_input")->setFocus(TRUE);
-            return TRUE;
+            getChild<LLFilterEditor>("recent_filter_input")->setFocus(true);
+            return true;
         }
     }
 

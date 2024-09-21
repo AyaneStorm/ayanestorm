@@ -56,8 +56,9 @@ constexpr F32 PIE_OUTER_SHADE_FACTOR = 1.09f;   // size factor of the outer shad
 constexpr F32 PIE_SLICE_DIVIDER_WIDTH = 0.04f;  // width of a slice divider in radians
 constexpr F32 PIE_MAX_SLICES_F = F32(PIE_MAX_SLICES);
 
-PieMenu::PieMenu(const LLMenuGL::Params& p) :
+PieMenu::PieMenu(const Params& p) :
     LLMenuGL(p),
+    PieAutohide(p.autohide, p.start_autohide),
     mCurrentSegment(-1),
     mOldSlice(nullptr),
     mSlice(nullptr),
@@ -66,7 +67,7 @@ PieMenu::PieMenu(const LLMenuGL::Params& p) :
     LL_DEBUGS("Pie") << "PieMenu::PieMenu()" << LL_ENDL;
 
     // radius, so we need this *2
-    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, FALSE);
+    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, false);
 
     // set up the font for the menu
     mFont = LLFontGL::getFont(LLFontDescriptor("SansSerif", "Pie", LLFontGL::NORMAL));
@@ -85,7 +86,7 @@ bool PieMenu::addChild(LLView* child, S32 tab_group)
     // don't add invalid slices
     if (!child)
     {
-        return FALSE;
+        return false;
     }
 
     // add a new slice to the menu
@@ -93,9 +94,9 @@ bool PieMenu::addChild(LLView* child, S32 tab_group)
 
     // tell the view that our menu has changed and reshape it back to correct size
     LLUICtrl::addChild(child);
-    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, FALSE);
+    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, false);
 
-    return TRUE;
+    return true;
 }
 
 void PieMenu::removeChild(LLView* child)
@@ -109,10 +110,10 @@ void PieMenu::removeChild(LLView* child)
 
     // tell the view that our menu has changed and reshape it back to correct size
     LLUICtrl::removeChild(child);
-    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, FALSE);
+    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, false);
 }
 
-BOOL PieMenu::handleHover(S32 x, S32 y, MASK mask)
+bool PieMenu::handleHover(S32 x, S32 y, MASK mask)
 {
     // initialize pie scale factor for popup effect
     F32 factor = getScaleFactor();
@@ -121,7 +122,7 @@ BOOL PieMenu::handleHover(S32 x, S32 y, MASK mask)
     mCurrentSegment = -1;
 
     // move mouse coordinates to be relative to the pie center
-    LLVector2 mouseVector(x - PIE_OUTER_SIZE, y - PIE_OUTER_SIZE);
+    LLVector2 mouseVector((F32)(x - PIE_OUTER_SIZE), (F32)(y - PIE_OUTER_SIZE));
 
     // get the distance from the center point
     F32 distance = mouseVector.length();
@@ -143,7 +144,7 @@ BOOL PieMenu::handleHover(S32 x, S32 y, MASK mask)
         mCurrentSegment = (S32) (PIE_MAX_SLICES_F * angle / (F_PI * 2.f)) % PIE_MAX_SLICES;
     }
 
-    return TRUE;
+    return true;
 }
 
 void PieMenu::show(S32 x, S32 y, LLView* spawning_view)
@@ -162,7 +163,7 @@ void PieMenu::show(S32 x, S32 y, LLView* spawning_view)
     LL_DEBUGS("Pie") << "PieMenu::show(): " << x << " " << y << LL_ENDL;
 
     // make sure the menu is always the correct size
-    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, FALSE);
+    reshape(PIE_OUTER_SIZE * 2, PIE_OUTER_SIZE * 2, false);
 
     // get the 3D view rectangle
     LLRect screen = LLMenuGL::sMenuContainer->getMenuRect();
@@ -215,8 +216,8 @@ void PieMenu::show(S32 x, S32 y, LLView* spawning_view)
     mOldSlice = nullptr;
 
     // draw the menu on screen
-    setVisible(TRUE);
-    LLView::setVisible(TRUE);
+    setVisible(true);
+    LLView::setVisible(true);
 }
 
 void PieMenu::hide()
@@ -238,10 +239,10 @@ void PieMenu::hide()
     // safety in case the timer was still running
     mPopupTimer.stop();
 #endif
-    LLView::setVisible(FALSE);
+    LLView::setVisible(false);
 }
 
-void PieMenu::setVisible(BOOL visible)
+void PieMenu::setVisible(bool visible)
 {
     // hide the menu if needed
     if (!visible)
@@ -265,7 +266,7 @@ void PieMenu::draw()
 
 #if PIE_DRAW_BOUNDING_BOX
     // draw a bounding box around the menu for debugging purposes
-    gl_rect_2d(0, r.getHeight(), r.getWidth(), 0, LLColor4::white, FALSE);
+    gl_rect_2d(0, r.getHeight(), r.getWidth(), 0, LLColor4::white, false);
 #endif
 
     LLUIColorTable& colortable = LLUIColorTable::instance();
@@ -305,22 +306,21 @@ void PieMenu::draw()
     gl_washer_2d(PIE_OUTER_SIZE * factor, PIE_INNER_SIZE, steps, bgColor, borderColor);
 
     // set up an item list iterator to point at the beginning of the item list
-    slice_list_t::iterator cur_item_iter;
-    cur_item_iter = mSlices->begin();
+    slice_list_t::iterator cur_item_iter{ mSlices->begin() };
 
     // clear current slice pointer
     mSlice = nullptr;
 
     // current slice number is 0
-    S32 num = 0;
-    bool wasAutohide = false;
+    S32 num{ 0 };
+    bool wasAutohide{ false };
     do
     {
         // standard item text color
         LLColor4 itemColor = textColor;
 
         // clear the label and set up the starting angle to draw in
-        std::string label("");
+        std::string label{ "" };
         F32 segmentStart = F_PI / (PIE_MAX_SLICES_F / 2.f) * (F32)num - F_PI / PIE_MAX_SLICES_F;
 
         // iterate through the list of slices
@@ -328,21 +328,81 @@ void PieMenu::draw()
         {
             // get current slice item
             LLView* item = (*cur_item_iter);
-
-            // check if this is a submenu or a normal click slice
-            PieSlice* currentSlice = dynamic_cast<PieSlice*>(item);
-            PieMenu* currentSubmenu = dynamic_cast<PieMenu*>(item);
-            // advance internally to the next slice item
             cur_item_iter++;
+            bool isSliceOrSubmenu{ false };
+
+            auto checkAutohide = [&](PieAutohide* autohideSlice)
+                {
+                    // if the current slice is the start of an autohide chain, clear out previous chains
+                    if (autohideSlice->getStartAutohide())
+                    {
+                        wasAutohide = false;
+                    }
+
+                    // check if the current slice is part of an autohide chain
+                    if (autohideSlice->getAutohide())
+                    {
+                        // if the previous item already won the autohide, skip this item
+                        if (wasAutohide)
+                        {
+                            return true;
+                        }
+
+                        // look at the next item in the pie
+                        LLView* lookAhead = (*cur_item_iter);
+                        // check if this is a normal click slice
+                        if (PieSlice* lookSlice = dynamic_cast<PieSlice*>(lookAhead))
+                        {
+                            // if the next item is part of the current autohide chain as well ...
+                            if (lookSlice->getAutohide() && !lookSlice->getStartAutohide())
+                            {
+                                // ... it's visible and it's enabled, skip the current one.
+                                // the first visible and enabled item in autohide chains wins
+                                // this is useful for Sit/Stand toggles
+                                lookSlice->updateEnabled();
+                                lookSlice->updateVisible();
+                                if (lookSlice->getVisible() && lookSlice->getEnabled())
+                                {
+                                    return true;
+                                }
+
+                                // this item won the autohide contest
+                                wasAutohide = true;
+                            }
+                        }
+                        else if (PieMenu* lookSlice = dynamic_cast<PieMenu*>(lookAhead))
+                        {
+                            if (lookSlice->getAutohide() && !lookSlice->getStartAutohide())
+                            {
+                                if (/*lookSlice->getVisible() &&*/ lookSlice->getEnabled()) // Menu is somehow always set to not visible...
+                                {
+                                    return true;
+                                }
+
+                                // this item won the autohide contest
+                                wasAutohide = true;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // reset autohide chain
+                        wasAutohide = false;
+                    }
+
+                    return false;
+                };
 
             // in case it is regular click slice
-            if (currentSlice)
+            if (PieSlice* currentSlice = dynamic_cast<PieSlice*>(item))
             {
+                isSliceOrSubmenu = true;
+
                 // get the slice label and tell the slice to check if it's supposed to be visible
                 label = currentSlice->getLabel();
                 currentSlice->updateVisible();
                 // disable it if it's not visible, pie slices never really disappear
-                BOOL slice_visible = currentSlice->getVisible();
+                bool slice_visible = currentSlice->getVisible();
                 currentSlice->setEnabled(slice_visible);
                 if (!slice_visible)
                 {
@@ -350,50 +410,8 @@ void PieMenu::draw()
                     label = "";
                 }
 
-                // if the current slice is the start of an autohide chain, clear out previous chains
-                if (currentSlice->getStartAutohide())
-                {
-                    wasAutohide = false;
-                }
-
-                // check if the current slice is part of an autohide chain
-                if (currentSlice->getAutohide())
-                {
-                    // if the previous item already won the autohide, skip this item
-                    if (wasAutohide)
-                    {
-                        continue;
-                    }
-
-                    // look at the next item in the pie
-                    LLView* lookAhead = (*cur_item_iter);
-                    // check if this is a normal click slice
-                    PieSlice* lookSlice = dynamic_cast<PieSlice*>(lookAhead);
-                    if (lookSlice)
-                    {
-                        // if the next item is part of the current autohide chain as well ...
-                        if (lookSlice->getAutohide() && !lookSlice->getStartAutohide())
-                        {
-                            // ... it's visible and it's enabled, skip the current one.
-                            // the first visible and enabled item in autohide chains wins
-                            // this is useful for Sit/Stand toggles
-                            lookSlice->updateEnabled();
-                            lookSlice->updateVisible();
-                            if (lookSlice->getVisible() && lookSlice->getEnabled())
-                            {
-                                continue;
-                            }
-
-                            // this item won the autohide contest
-                            wasAutohide = true;
-                        }
-                    }
-                }
-                else
-                {
-                    // reset autohide chain
-                    wasAutohide = false;
-                }
+                if (checkAutohide(currentSlice))
+                    continue;
 
                 // check if the slice is currently enabled
                 currentSlice->updateEnabled();
@@ -404,9 +422,14 @@ void PieMenu::draw()
                     itemColor %= 0.3f;
                 }
             }
-            // if it's a submenu just get the label
-            else if (currentSubmenu)
+            // if it's a submenu
+            else if (PieMenu* currentSubmenu = dynamic_cast<PieMenu*>(item))
             {
+                isSliceOrSubmenu = true;
+
+                if (checkAutohide(currentSubmenu))
+                    continue;
+
                 label = currentSubmenu->getLabel();
                 if (sPieMenuOuterRingShade)
                 {
@@ -415,7 +438,7 @@ void PieMenu::draw()
             }
 
             // if it's a slice or submenu, the mouse pointer is over the same segment as our counter and the item is enabled
-            if ((currentSlice || currentSubmenu) && (mCurrentSegment == num) && item->getEnabled())
+            if (isSliceOrSubmenu && (mCurrentSegment == num) && item->getEnabled())
             {
                 // memorize the currently highlighted slice for later
                 mSlice = item;
@@ -470,12 +493,12 @@ void PieMenu::draw()
     LLView::draw();
 }
 
-BOOL PieMenu::appendContextSubMenu(PieMenu* menu)
+bool PieMenu::appendContextSubMenu(PieMenu* menu)
 {
     LL_DEBUGS("Pie") << "PieMenu::appendContextSubMenu()" << LL_ENDL;
     if (!menu)
     {
-        return FALSE;
+        return false;
     }
 
     LL_DEBUGS("Pie") << "PieMenu::appendContextSubMenu() appending " << menu->getLabel() << " to " << getLabel() << LL_ENDL;
@@ -485,23 +508,23 @@ BOOL PieMenu::appendContextSubMenu(PieMenu* menu)
     // tell the view that our menu has changed
     LLUICtrl::addChild(menu);
 
-    return TRUE;
+    return true;
 }
 
-BOOL PieMenu::handleMouseUp(S32 x, S32 y, MASK mask)
+bool PieMenu::handleMouseUp(S32 x, S32 y, MASK mask)
 {
     // left and right mouse buttons both do the same thing currently
     return handleMouseButtonUp(x, y, mask);
 }
 
-BOOL PieMenu::handleRightMouseUp(S32 x, S32 y, MASK mask)
+bool PieMenu::handleRightMouseUp(S32 x, S32 y, MASK mask)
 {
     // left and right mouse buttons both do the same thing currently
     return handleMouseButtonUp(x, y, mask);
 }
 
 // left and right mouse buttons both do the same thing currently
-BOOL PieMenu::handleMouseButtonUp(S32 x, S32 y, MASK mask)
+bool PieMenu::handleMouseButtonUp(S32 x, S32 y, MASK mask)
 {
     // if this was the first click and no slice is highlighted (no borderless click), start the popup timer
     if (mFirstClick && !mSlice)
@@ -514,7 +537,7 @@ BOOL PieMenu::handleMouseButtonUp(S32 x, S32 y, MASK mask)
     else
     {
         // default to invisible
-        BOOL visible = FALSE;
+        bool visible = false;
 
         // get the current selected slice and check if this is a regular click slice
         PieSlice* currentSlice = dynamic_cast<PieSlice*>(mSlice);
@@ -543,7 +566,7 @@ BOOL PieMenu::handleMouseButtonUp(S32 x, S32 y, MASK mask)
                     }
                 }
                 // the menu stays visible
-                visible = TRUE;
+                visible = true;
 #if PIE_POPUP_EFFECT
                 // restart the popup timer
                 mPopupTimer.reset();

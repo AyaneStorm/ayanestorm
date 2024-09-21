@@ -29,6 +29,7 @@
 #include "llfloater.h"
 
 class LLConversationLogList;
+class LLMenuButton;
 
 class LLFloaterConversationLog : public LLFloater
 {
@@ -37,15 +38,15 @@ public:
     LLFloaterConversationLog(const LLSD& key);
     virtual ~LLFloaterConversationLog(){};
 
-    virtual BOOL postBuild();
+    bool postBuild() override;
 
-    virtual void draw();
+    void draw() override;
 
     void onFilterEdit(const std::string& search_string);
 
     // <FS:Ansariel> CTRL-F focusses local search editor
-    /*virtual*/ BOOL handleKeyHere(KEY key, MASK mask);
-    /*virtual*/ bool hasAccelerators() const { return true; }
+    bool handleKeyHere(KEY key, MASK mask) override;
+    bool hasAccelerators() const override { return true; }
     // </FS:Ansariel>
 
 private:
@@ -55,6 +56,7 @@ private:
     bool isActionChecked(const LLSD& userdata);
 
     LLConversationLogList* mConversationLogList;
+    LLMenuButton*          mConversationsGearBtn = nullptr;
 };
 
 

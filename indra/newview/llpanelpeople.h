@@ -46,6 +46,8 @@ class LLGroupList;
 class LLMenuButton;
 class LLTabContainer;
 class LLNetMap;
+class LLAccordionCtrl;
+class LLAccordionCtrlTab;
 
 // Firestorm declarations
 class LLMenuGL;
@@ -60,15 +62,16 @@ public:
     LLPanelPeople();
     virtual ~LLPanelPeople();
 
-    /*virtual*/ BOOL    postBuild();
-    /*virtual*/ void    onOpen(const LLSD& key);
-    /*virtual*/ bool    notifyChildren(const LLSD& info);
+    bool postBuild() override;
+    void onOpen(const LLSD& key) override;
+    bool notifyChildren(const LLSD& info) override;
     // Implements LLVoiceClientStatusObserver::onChange() to enable call buttons
     // when voice is available
-    /*virtual*/ void onChange(EStatusType status, const std::string &channelURI, bool proximal);
+    void onChange(EStatusType status, const LLSD& channelInfo, bool proximal) override;
+
     // <FS:Ansariel> CTRL-F focusses local search editor
-    /*virtual*/ BOOL handleKeyHere(KEY key, MASK mask);
-    /*virtual*/ bool hasAccelerators() const { return true; }
+    bool handleKeyHere(KEY key, MASK mask) override;
+    bool hasAccelerators() const override { return true; }
     // </FS:Ansariel>
 
 // [RLVa:KB] - Checked: RLVa-1.2.0
@@ -105,10 +108,9 @@ private:
     bool                    isItemsFreeOfFriends(const uuid_vec_t& uuids);
 
     void                    updateButtons();
-    std::string             getActiveTabName() const;
+    const std::string&      getActiveTabName() const;
     LLUUID                  getCurrentItemID() const;
     void                    getCurrentItemIDs(uuid_vec_t& selected_uuids) const;
-    void                    showGroupMenu(LLMenuGL* menu);
     void                    setSortOrder(LLAvatarList* list, ESortOrder order, bool save = true);
 
     // UI callbacks
@@ -142,7 +144,7 @@ private:
 
     void                    onFriendsAccordionExpandedCollapsed(LLUICtrl* ctrl, const LLSD& param, LLAvatarList* avatar_list);
 
-    void                    showAccordion(const std::string name, bool show);
+    void                    showAccordion(LLAccordionCtrlTab* tab, bool show);
 
     void                    showFriendsAccordionsIfNeeded();
 
@@ -167,6 +169,21 @@ private:
     // <FS:Ansariel> FIRE-4740: Friend counter in people panel
     LLTabContainer*         mFriendsTabContainer;
 
+    LLAccordionCtrl* mFriendsAccordion = nullptr;
+    LLAccordionCtrlTab*     mFriendsAllTab = nullptr;
+    LLAccordionCtrlTab*     mFriendsOnlineTab = nullptr;
+
+    LLButton*               mNearbyGearBtn = nullptr;
+    LLButton*               mFriendsGearBtn = nullptr;
+    LLButton*               mRecentGearBtn = nullptr;
+    LLButton*               mGroupDelBtn = nullptr;
+
+    LLButton*               mNearbyAddFriendBtn = nullptr;
+    LLButton*               mRecentAddFriendBtn = nullptr;
+    LLUICtrl*               mFriendsDelFriendBtn = nullptr;
+
+    LLTextBox*              mGroupCountText = nullptr;
+
     std::vector<std::string> mSavedOriginalFilters;
     std::vector<std::string> mSavedFilters;
 
@@ -177,6 +194,11 @@ private:
     Updater*                mRecentListUpdater;
     Updater*                mButtonsUpdater;
     LLHandle< LLFloater >   mPicker;
+
+    boost::signals2::connection mNearbyFilterCommitConnection;
+    boost::signals2::connection mFriedsFilterCommitConnection;
+    boost::signals2::connection mGroupsFilterCommitConnection;
+    boost::signals2::connection mRecentFilterCommitConnection;
 
     // [FS:CR] Contact sets
     bool                    onContactSetsEnable(const LLSD& userdata);

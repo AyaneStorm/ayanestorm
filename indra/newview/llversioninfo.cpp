@@ -63,6 +63,12 @@ LLVersionInfo::LLVersionInfo():
     // immediately listen on mPump, store arriving URL into mReleaseNotes
     mStore{new LLStoreListener<std::string>(*mPump, mReleaseNotes)}
 {
+    // <FS:Ansariel> Above macro hackery results in extra quotes - fix it if it happens
+    if (LLStringUtil::startsWith(mWorkingChannelName, "\"") && mWorkingChannelName.size() > 2)
+    {
+        mWorkingChannelName = mWorkingChannelName.substr(1, mWorkingChannelName.size() - 2);
+    }
+    // </FS:Ansariel>
 }
 
 void LLVersionInfo::initSingleton()
@@ -80,33 +86,33 @@ LLVersionInfo::~LLVersionInfo()
 {
 }
 
-S32 LLVersionInfo::getMajor()
+S32 LLVersionInfo::getMajor() const
 {
     return LL_VIEWER_VERSION_MAJOR;
 }
 
-S32 LLVersionInfo::getMinor()
+S32 LLVersionInfo::getMinor() const
 {
     return LL_VIEWER_VERSION_MINOR;
 }
 
-S32 LLVersionInfo::getPatch()
+S32 LLVersionInfo::getPatch() const
 {
     return LL_VIEWER_VERSION_PATCH;
 }
 
-U64 LLVersionInfo::getBuild()
+U64 LLVersionInfo::getBuild() const
 {
     return LL_VIEWER_VERSION_BUILD;
 }
 
-std::string LLVersionInfo::getVersion()
+std::string LLVersionInfo::getVersion() const
 {
     return version;
 }
 
 //<FS:CZ>
-std::string LLVersionInfo::getBuildVersion()
+std::string LLVersionInfo::getBuildVersion() const
 {
     static std::string build_version("");
     if (build_version.empty())
@@ -119,11 +125,11 @@ std::string LLVersionInfo::getBuildVersion()
     return build_version;
 }
 //</FS:CZ>
-std::string LLVersionInfo::getShortVersion()
+
+std::string LLVersionInfo::getShortVersion() const
 {
     return short_version;
 }
-
 
 std::string LLVersionInfo::getChannelAndVersion()
 {
@@ -137,7 +143,7 @@ std::string LLVersionInfo::getChannelAndVersion()
 }
 
 //<FS:TS> Get version and channel in the format needed for FSDATA.
-std::string LLVersionInfo::getChannelAndVersionFS()
+std::string LLVersionInfo::getChannelAndVersionFS() const
 {
     static std::string sVersionChannelFS;
     if (sVersionChannelFS.empty())
@@ -156,14 +162,8 @@ std::string LLVersionInfo::getChannelAndVersionFS()
 }
 //</FS:TS>
 
-std::string LLVersionInfo::getChannel()
+std::string LLVersionInfo::getChannel() const
 {
-    // <FS:Ansariel> Above macro hackery results in extra quotes - fix it if it happens
-    if (LLStringUtil::startsWith(mWorkingChannelName, "\"") && mWorkingChannelName.size() > 2)
-    {
-        mWorkingChannelName = mWorkingChannelName.substr(1, mWorkingChannelName.size() - 2);
-    }
-    // </FS:Ansariel>
     return mWorkingChannelName;
 }
 
@@ -173,14 +173,14 @@ void LLVersionInfo::resetChannel(const std::string& channel)
     mVersionChannel.clear(); // Reset version and channel string til next use.
 }
 
-LLVersionInfo::ViewerMaturity LLVersionInfo::getViewerMaturity()
+LLVersionInfo::ViewerMaturity LLVersionInfo::getViewerMaturity() const
 {
     ViewerMaturity maturity;
 
     std::string channel = getChannel();
 
     static const boost::regex is_test_channel("\\bTest\\b");
-    static const boost::regex is_beta_channel("\\bBeta\\b");
+    static const boost::regex is_beta_channel("\\b(Beta|Develop)\\b");  // Develop is an alias for Beta
     static const boost::regex is_project_channel("\\bProject\\b");
     static const boost::regex is_release_channel("\\bRelease\\b");
 
@@ -212,7 +212,48 @@ LLVersionInfo::ViewerMaturity LLVersionInfo::getViewerMaturity()
     return maturity;
 }
 
-std::string LLVersionInfo::getReleaseNotes()
+// <FS:Beq> Add FS specific maturity grading
+LLVersionInfo::FSViewerMaturity LLVersionInfo::getFSViewerMaturity() const
+{
+    FSViewerMaturity maturity;
+
+    std::string channel = getChannel();
+
+    static const boost::regex is_manual_channel("\\bManualx64\\b");
+    static const boost::regex is_beta_channel("\\bBetax64\\b");
+    static const boost::regex is_alpha_channel("\\bAlphax64\\b");
+    static const boost::regex is_release_channel("\\bReleasex64\\b");
+    static const boost::regex is_nightly_channel("\\bNightlyx64\\b");
+
+    if (ll_regex_search(channel, is_release_channel))
+    {
+        maturity = FSViewerMaturity::RELEASE_VIEWER;
+    }
+    else if (ll_regex_search(channel, is_beta_channel))
+    {
+        maturity = FSViewerMaturity::BETA_VIEWER;
+    }
+    else if (ll_regex_search(channel, is_alpha_channel))
+    {
+        maturity = FSViewerMaturity::ALPHA_VIEWER;
+    }
+    else if (ll_regex_search(channel, is_manual_channel))
+    {
+        maturity = FSViewerMaturity::MANUAL_VIEWER;
+    }
+    else if (ll_regex_search(channel, is_nightly_channel))
+    {
+        maturity = FSViewerMaturity::NIGHTLY_VIEWER;
+    }
+    else
+    {
+        maturity = FSViewerMaturity::UNOFFICIAL_VIEWER;
+    }
+    return maturity;
+}
+// </FS:Beq>
+
+std::string LLVersionInfo::getReleaseNotes() const
 {
     return mReleaseNotes;
 }
@@ -239,7 +280,7 @@ const char* getBuildPlatformString()
 #endif
 }
 
-std::string LLVersionInfo::getBuildPlatform()
+std::string LLVersionInfo::getBuildPlatform() const
 {
     std::string strPlatform = getBuildPlatformString();
     return strPlatform;
@@ -247,7 +288,7 @@ std::string LLVersionInfo::getBuildPlatform()
 // [/SL:KB]
 
 
-std::string LLVersionInfo::getBuildConfig()
+std::string LLVersionInfo::getBuildConfig() const
 {
     return build_configuration;
 }

@@ -66,10 +66,10 @@ bool LLFindOutfitItems::operator()(LLInventoryCategory* cat,
            || (item->getType() == LLAssetType::AT_OBJECT)
            || (item->getType() == LLAssetType::AT_GESTURE))
         {
-            return TRUE;
+            return true;
         }
     }
-    return FALSE;
+    return false;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -106,32 +106,31 @@ LLPanelWearableOutfitItem::Params::Params()
 {
 }
 
-BOOL LLPanelWearableOutfitItem::postBuild()
+bool LLPanelWearableOutfitItem::postBuild()
 {
+    if (mShowWidgets)
+    {
+        mAddWearableBtn = getChild<LLButton>("add_wearable");
+        mRemoveWearableBtn = getChild<LLButton>("remove_wearable");
+    }
+
     LLPanelWearableListItem::postBuild();
 
-    //if(mShowWidgets) // <FS:Ansariel> Make Add/Remove buttons work
+    if(mShowWidgets)
     {
-        // <FS:Ansariel> Make Add/Remove buttons work
-        //addWidgetToRightSide("add_wearable");
-        //addWidgetToRightSide("remove_wearable");
-        LLViewerInventoryItem* inv_item = getItem();
-        mShowWidgets &= (inv_item->getType() != LLAssetType::AT_BODYPART);
-        addWidgetToRightSide("add_wearable", mShowWidgets);
-        addWidgetToRightSide("remove_wearable", mShowWidgets);
-        // </FS:Ansariel>
+        addWidgetToRightSide(mAddWearableBtn);
+        addWidgetToRightSide(mRemoveWearableBtn);
 
-        childSetAction("add_wearable", boost::bind(&LLPanelWearableOutfitItem::onAddWearable, this));
-        childSetAction("remove_wearable", boost::bind(&LLPanelWearableOutfitItem::onRemoveWearable, this));
+        mAddWearableBtn->setClickedCallback(boost::bind(&LLPanelWearableOutfitItem::onAddWearable, this));
+        mRemoveWearableBtn->setClickedCallback(boost::bind(&LLPanelWearableOutfitItem::onRemoveWearable, this));
 
         setWidgetsVisible(false);
         reshapeWidgets();
     }
-
-    return TRUE;
+    return true;
 }
 
-BOOL LLPanelWearableOutfitItem::handleDoubleClick(S32 x, S32 y, MASK mask)
+bool LLPanelWearableOutfitItem::handleDoubleClick(S32 x, S32 y, MASK mask)
 {
     if(!mShowWidgets)
     {
@@ -146,7 +145,7 @@ BOOL LLPanelWearableOutfitItem::handleDoubleClick(S32 x, S32 y, MASK mask)
     {
         onAddWearable();
     }
-    return TRUE;
+    return true;
 }
 
 void LLPanelWearableOutfitItem::onAddWearable()
@@ -187,7 +186,6 @@ LLPanelWearableOutfitItem::LLPanelWearableOutfitItem(LLViewerInventoryItem* item
 : LLPanelWearableListItem(item, params)
 , mWornIndicationEnabled(worn_indication_enabled)
 , mShowWidgets(show_widgets)
-, mIsWorn(false) // <FS:Ansariel> Make Add/Remove buttons work
 {
     if(mShowWidgets)
     {
@@ -212,8 +210,6 @@ void LLPanelWearableOutfitItem::updateItem(const std::string& name,
     // an inventory observer upon link in COF beind added or removed so actual
     // worn status of a linked item may still remain unchanged.
     bool is_worn = LLAppearanceMgr::instance().isLinkedInCOF(mInventoryItemUUID);
-    // <FS:Ansariel> Make Add/Remove buttons work
-    mIsWorn = is_worn;
     // <FS:Ansariel> Better attachment list
     //if (mWornIndicationEnabled && is_worn)
     //{
@@ -254,15 +250,12 @@ void LLPanelWearableOutfitItem::updateItem(const std::string& name,
 
     if(mShowWidgets)
     {
-        setShowWidget("add_wearable", !is_worn);
+        setShowWidget(mAddWearableBtn, !is_worn);
 
-        // <FS:Ansariel> Make Add/Remove buttons work
-        //// Body parts can't be removed, only replaced
-        //LLViewerInventoryItem* inv_item = getItem();
-        //bool show_remove = is_worn && inv_item && (inv_item->getType() != LLAssetType::AT_BODYPART);
-        //setShowWidget("remove_wearable", show_remove);
-        setShowWidget("remove_wearable", is_worn);
-        // </FS:Ansariel>
+        // Body parts can't be removed, only replaced
+        LLViewerInventoryItem* inv_item = getItem();
+        bool show_remove = is_worn && inv_item && (inv_item->getType() != LLAssetType::AT_BODYPART);
+        setShowWidget(mRemoveWearableBtn, show_remove);
 
         if(mHovered)
         {
@@ -345,7 +338,7 @@ LLPanelClothingListItem::~LLPanelClothingListItem()
 {
 }
 
-BOOL LLPanelClothingListItem::postBuild()
+bool LLPanelClothingListItem::postBuild()
 {
     LLPanelDeletableWearableListItem::postBuild();
 
@@ -357,7 +350,7 @@ BOOL LLPanelClothingListItem::postBuild()
     setWidgetsVisible(false);
     reshapeWidgets();
 
-    return TRUE;
+    return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -422,7 +415,7 @@ LLPanelBodyPartsListItem::~LLPanelBodyPartsListItem()
 {
 }
 
-BOOL LLPanelBodyPartsListItem::postBuild()
+bool LLPanelBodyPartsListItem::postBuild()
 {
     LLPanelInventoryListItemBase::postBuild();
 
@@ -432,7 +425,7 @@ BOOL LLPanelBodyPartsListItem::postBuild()
     setWidgetsVisible(false);
     reshapeWidgets();
 
-    return TRUE;
+    return true;
 }
 
 static LLWidgetNameRegistry::StaticRegistrar sRegisterPanelDeletableWearableListItem(&typeid(LLPanelDeletableWearableListItem::Params), "deletable_wearable_list_item");
@@ -465,7 +458,7 @@ LLPanelDeletableWearableListItem::LLPanelDeletableWearableListItem(LLViewerInven
     setSeparatorVisible(true);
 }
 
-BOOL LLPanelDeletableWearableListItem::postBuild()
+bool LLPanelDeletableWearableListItem::postBuild()
 {
     LLPanelWearableListItem::postBuild();
 
@@ -478,7 +471,7 @@ BOOL LLPanelDeletableWearableListItem::postBuild()
     setWidgetsVisible(false);
     reshapeWidgets();
 
-    return TRUE;
+    return true;
 }
 
 
@@ -550,20 +543,20 @@ FSPanelCOFWearableOutfitListItem::FSPanelCOFWearableOutfitListItem(LLViewerInven
                                                      bool show_widgets,
                                                      const FSPanelCOFWearableOutfitListItem::Params& params)
 : LLPanelWearableOutfitItem(item, worn_indication_enabled, params, show_widgets)
-, mWeightCtrl(NULL)
+, mWeightCtrl(nullptr)
 {
     LLTextBox::Params weight_params = params.item_weight;
     applyXUILayout(weight_params, this);
     addChild(LLUICtrlFactory::create<LLTextBox>(weight_params));
 }
 
-BOOL FSPanelCOFWearableOutfitListItem::postBuild()
+bool FSPanelCOFWearableOutfitListItem::postBuild()
 {
     mWeightCtrl = getChild<LLTextBox>("item_weight");
 
     if (!LLPanelWearableOutfitItem::postBuild())
     {
-        return FALSE;
+        return false;
     }
 
     addWidgetToRightSide(mWeightCtrl);
@@ -571,10 +564,11 @@ BOOL FSPanelCOFWearableOutfitListItem::postBuild()
     // Reserve space for 'delete' button event if it is invisible.
     setRightWidgetsWidth(mWeightCtrl->getRect().getWidth() + 5);
 
-    setWidgetsVisible(true);
+    mWeightCtrl->setVisible(true);
+
     reshapeWidgets();
 
-    return TRUE;
+    return true;
 }
 
 void FSPanelCOFWearableOutfitListItem::updateItemWeight(U32 item_weight)
@@ -592,19 +586,7 @@ void FSPanelCOFWearableOutfitListItem::updateItemWeight(U32 item_weight)
 void FSPanelCOFWearableOutfitListItem::updateItem(const std::string& name, EItemState item_state)
 {
     LLPanelWearableOutfitItem::updateItem(name, item_state);
-
-    setShowWidget("add_wearable", false);
-    setShowWidget("remove_wearable", mShowWidgets && mIsWorn && mHovered);
-    setWidgetsVisible(true);
-    reshapeWidgets();
-}
-
-//virtual
-void FSPanelCOFWearableOutfitListItem::onMouseEnter(S32 x, S32 y, MASK mask)
-{
-    LLPanelInventoryListItemBase::onMouseEnter(x, y, mask);
-    setShowWidget("remove_wearable", mShowWidgets && mIsWorn);
-    setWidgetsVisible(true);
+    mWeightCtrl->setVisible(true);
     reshapeWidgets();
 }
 
@@ -612,8 +594,8 @@ void FSPanelCOFWearableOutfitListItem::onMouseEnter(S32 x, S32 y, MASK mask)
 void FSPanelCOFWearableOutfitListItem::onMouseLeave(S32 x, S32 y, MASK mask)
 {
     LLPanelInventoryListItemBase::onMouseLeave(x, y, mask);
-    setShowWidget("remove_wearable", false);
-    setWidgetsVisible(true);
+    setWidgetsVisible(false);
+    mWeightCtrl->setVisible(true); // setWidgetsVisible sets this invisible - make it visible again
     reshapeWidgets();
 }
 
@@ -644,11 +626,11 @@ LLPanelDummyClothingListItem* LLPanelDummyClothingListItem::create(LLWearableTyp
     return list_item;
 }
 
-BOOL LLPanelDummyClothingListItem::postBuild()
+bool LLPanelDummyClothingListItem::postBuild()
 {
     addWidgetToRightSide("btn_add_panel");
 
-    setIconImage(LLInventoryIcon::getIcon(LLAssetType::AT_CLOTHING, LLInventoryType::IT_NONE, mWearableType, FALSE));
+    setIconImage(LLInventoryIcon::getIcon(LLAssetType::AT_CLOTHING, LLInventoryType::IT_NONE, mWearableType, false));
     updateItem(wearableTypeToString(mWearableType));
 
     // Make it look loke clothing item - reserve space for 'delete' button
@@ -657,7 +639,7 @@ BOOL LLPanelDummyClothingListItem::postBuild()
     setWidgetsVisible(false);
     reshapeWidgets();
 
-    return TRUE;
+    return true;
 }
 
 LLWearableType::EType LLPanelDummyClothingListItem::getWearableType() const
@@ -1207,14 +1189,14 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
         return;
     }
 
-    const uuid_vec_t& ids = mUUIDs; // selected items IDs
-    U32 mask = 0;                   // mask of selected items' types
-    U32 n_items = ids.size();       // number of selected items
-    U32 n_worn = 0;                 // number of worn items among the selected ones
-    U32 n_already_worn = 0;         // number of items worn of same type as selected items
-    U32 n_links = 0;                // number of links among the selected items
-    U32 n_editable = 0;             // number of editable items among the selected ones
-    U32 n_touchable = 0;            // number of touchable items among the selected ones
+    const uuid_vec_t& ids = mUUIDs;             // selected items IDs
+    U32 mask = 0;                               // mask of selected items' types
+    U32 n_items = static_cast<U32>(ids.size()); // number of selected items
+    U32 n_worn = 0;                             // number of worn items among the selected ones
+    U32 n_already_worn = 0;                     // number of items worn of same type as selected items
+    U32 n_links = 0;                            // number of links among the selected items
+    U32 n_editable = 0;                         // number of editable items among the selected ones
+    U32 n_touchable = 0;                        // number of touchable items among the selected ones
 
     bool can_be_worn = true;
 
@@ -1340,8 +1322,8 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
 // [/RLVa:KB]
     setMenuItemVisible(menu, "object_profile",      !standalone);
     setMenuItemEnabled(menu, "object_profile",      n_items == 1);
-    setMenuItemVisible(menu, "--no options--",      FALSE);
-    setMenuItemEnabled(menu, "--no options--",      FALSE);
+    setMenuItemVisible(menu, "--no options--",      false);
+    setMenuItemEnabled(menu, "--no options--",      false);
 
     // Populate or hide the "Attach to..." / "Attach to HUD..." submenus.
     if (mask == MASK_ATTACHMENT && n_worn == 0)
@@ -1370,7 +1352,7 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
     }
     if (num_visible_items == 0)
     {
-        setMenuItemVisible(menu, "--no options--", TRUE);
+        setMenuItemVisible(menu, "--no options--", true);
     }
 }
 
@@ -1390,8 +1372,8 @@ void LLWearableItemsList::ContextMenu::updateItemsLabels(LLContextMenu* menu)
     menu_item->setLabel(new_label);
 }
 
-// We need this method to convert non-zero BOOL values to exactly 1 (TRUE).
-// Otherwise code relying on a BOOL value being TRUE may fail
+// We need this method to convert non-zero bool values to exactly 1 (true).
+// Otherwise code relying on a bool value being true may fail
 // (I experienced a weird assert in LLView::drawChildren() because of that.
 // static
 void LLWearableItemsList::ContextMenu::setMenuItemVisible(LLContextMenu* menu, const std::string& name, bool val)

@@ -72,7 +72,7 @@ LLFloaterConversationPreview::~LLFloaterConversationPreview()
 {
 }
 
-BOOL LLFloaterConversationPreview::postBuild()
+bool LLFloaterConversationPreview::postBuild()
 {
     // <FS:CR> [FS communication UI]
     //mChatHistory = getChild<LLChatHistory>("chat_history");
@@ -132,11 +132,11 @@ void LLFloaterConversationPreview::setPages(std::list<LLSD>* messages, const std
             delete mMessages; // Clean up temporary message list with "Loading..." text
         }
         mMessages = messages;
-        mCurrentPage = (mMessages->size() ? (mMessages->size() - 1) / mPageSize : 0);
+        mCurrentPage = (mMessages->size() ? (static_cast<int>(mMessages->size()) - 1) / mPageSize : 0);
 
         mPageSpinner->setEnabled(true);
-        mPageSpinner->setMaxValue(mCurrentPage+1);
-        mPageSpinner->set(mCurrentPage+1);
+        mPageSpinner->setMaxValue((F32)(mCurrentPage+1));
+        mPageSpinner->set((F32)(mCurrentPage+1));
 
         std::string total_page_num = llformat("/ %d", mCurrentPage+1);
         getChild<LLTextBox>("page_num_label")->setValue(total_page_num);
@@ -317,12 +317,12 @@ void LLFloaterConversationPreview::onClickSearch()
 }
 
 // <FS:Ansariel> CTRL-F for search history
-BOOL LLFloaterConversationPreview::handleKeyHere(KEY key, MASK mask)
+bool LLFloaterConversationPreview::handleKeyHere(KEY key, MASK mask)
 {
     if (mask == MASK_CONTROL && key == 'F')
     {
         LLFloaterSearchReplace::show(mChatHistory);
-        return TRUE;
+        return true;
     }
 
     return LLFloater::handleKeyHere(key, mask);

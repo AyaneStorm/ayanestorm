@@ -131,7 +131,7 @@ public:
     //-------------------------------------------------------------------------
     // registers a motion with the character
     // returns true if successfull
-    BOOL registerMotion( const LLUUID& id, LLMotionConstructor create );
+    bool registerMotion( const LLUUID& id, LLMotionConstructor create );
 
     void removeMotion( const LLUUID& id );
 
@@ -143,13 +143,13 @@ public:
 
     // start a motion
     // returns true if successful, false if an error occurred
-    virtual BOOL startMotion( const LLUUID& id, F32 start_offset = 0.f);
+    virtual bool startMotion( const LLUUID& id, F32 start_offset = 0.f);
 
     // stop a motion
-    virtual BOOL stopMotion( const LLUUID& id, BOOL stop_immediate = FALSE );
+    virtual bool stopMotion( const LLUUID& id, bool stop_immediate = false );
 
     // is this motion active?
-    BOOL isMotionActive( const LLUUID& id );
+    bool isMotionActive( const LLUUID& id );
 
     // Event handler for motion deactivation.
     // Called when a motion has completely stopped and has been deactivated.
@@ -162,7 +162,7 @@ public:
     void updateMotions(e_update_t update_type);
 
     LLAnimPauseRequest requestPause();
-    BOOL areAnimationsPaused() const { return mMotionController.isPaused(); }
+    bool areAnimationsPaused() const { return mMotionController.isPaused(); }
     void setAnimTimeFactor(F32 factor) { mMotionController.setTimeFactor(factor); }
     void setTimeStep(F32 time_step) { mMotionController.setTimeStep(time_step); }
 
@@ -197,12 +197,12 @@ public:
     void addSharedVisualParam(LLVisualParam *param);
 
     // <FS:Ansariel> [Legacy Bake]
-    //virtual BOOL setVisualParamWeight(const LLVisualParam *which_param, F32 weight);
-    //virtual BOOL setVisualParamWeight(const char* param_name, F32 weight);
-    //virtual BOOL setVisualParamWeight(S32 index, F32 weight);
-    virtual BOOL setVisualParamWeight(const LLVisualParam *which_param, F32 weight, BOOL upload_bake = FALSE );
-    virtual BOOL setVisualParamWeight(const char* param_name, F32 weight, BOOL upload_bake = FALSE );
-    virtual BOOL setVisualParamWeight(S32 index, F32 weight, BOOL upload_bake = FALSE );
+    //virtual bool setVisualParamWeight(const LLVisualParam *which_param, F32 weight);
+    //virtual bool setVisualParamWeight(const char* param_name, F32 weight);
+    //virtual bool setVisualParamWeight(S32 index, F32 weight);
+    virtual bool setVisualParamWeight(const LLVisualParam *which_param, F32 weight, bool upload_bake = false );
+    virtual bool setVisualParamWeight(const char* param_name, F32 weight, bool upload_bake = false );
+    virtual bool setVisualParamWeight(S32 index, F32 weight, bool upload_bake = false );
     // </FS:Ansariel> [Legacy Bake]
 
     // get visual param weight by param or name
@@ -256,6 +256,28 @@ public:
     S32             getVisualParamCount() const { return (S32)mVisualParamIndexMap.size(); }
     LLVisualParam*  getVisualParam(const char *name);
 
+    // <FS:Ansariel> [Legacy Bake]
+    //void animateTweakableVisualParams(F32 delta)
+    void animateTweakableVisualParams(F32 delta, bool upload_bake)
+    {
+        for (auto& it : mVisualParamIndexMap)
+        {
+            if (it.second->isTweakable())
+            {
+                // <FS:Ansariel> [Legacy Bake]
+                //it.second->animate(delta);
+                it.second->animate(delta, upload_bake);
+            }
+        }
+    }
+
+    void applyAllVisualParams(ESex avatar_sex)
+    {
+        for (auto& it : mVisualParamIndexMap)
+        {
+            it.second->apply(avatar_sex);
+        }
+    }
 
     ESex getSex() const         { return mSex; }
     void setSex( ESex sex )     { mSex = sex; }
@@ -266,8 +288,8 @@ public:
     U32             getSkeletonSerialNum() const        { return mSkeletonSerialNum; }
     void            setSkeletonSerialNum( U32 num ) { mSkeletonSerialNum = num; }
 
-    static std::vector< LLCharacter* > sInstances;
-    static BOOL sAllowInstancesChange ; //debug use
+    static std::list< LLCharacter* > sInstances;
+    static bool sAllowInstancesChange ; //debug use
 
     virtual void    setHoverOffset(const LLVector3& hover_offset, bool send_update=true) { mHoverOffset = hover_offset; }
     const LLVector3& getHoverOffset() const { return mHoverOffset; }

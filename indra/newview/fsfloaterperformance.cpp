@@ -60,10 +60,10 @@
 
 extern F32 gSavedDrawDistance;
 
-const F32 REFRESH_INTERVAL = 1.0f;
-const S32 BAR_LEFT_PAD = 2;
-const S32 BAR_RIGHT_PAD = 5;
-const S32 BAR_BOTTOM_PAD = 9;
+constexpr F32 REFRESH_INTERVAL = 1.0f;
+constexpr S32 BAR_LEFT_PAD = 2;
+constexpr S32 BAR_RIGHT_PAD = 5;
+constexpr S32 BAR_BOTTOM_PAD = 9;
 
 constexpr auto AvType       {LLPerfStats::ObjType_t::OT_AVATAR};
 constexpr auto SceneType    {LLPerfStats::ObjType_t::OT_GENERAL};
@@ -105,7 +105,7 @@ FSFloaterPerformance::~FSFloaterPerformance()
     delete mUpdateTimer;
 }
 
-BOOL FSFloaterPerformance::postBuild()
+bool FSFloaterPerformance::postBuild()
 {
     mMainPanel = getChild<LLPanel>("panel_performance_main");
     mNearbyPanel = getChild<LLPanel>("panel_performance_nearby");
@@ -175,7 +175,7 @@ BOOL FSFloaterPerformance::postBuild()
         }
     }
 
-    return TRUE;
+    return true;
 }
 
 void FSFloaterPerformance::resetMaxArtSlider()
@@ -211,8 +211,8 @@ void FSFloaterPerformance::setHardwareDefaults()
 void FSFloaterPerformance::showSelectedPanel(LLPanel* selected_panel)
 {
     hidePanels();
-    mMainPanel->setVisible(FALSE);
-    selected_panel->setVisible(TRUE);
+    mMainPanel->setVisible(false);
+    selected_panel->setVisible(true);
 
     if (mHUDsPanel == selected_panel)
     {
@@ -379,7 +379,7 @@ void FSFloaterPerformance::draw()
             getChild<LLTextBox>("frame_breakdown")->setText(getString("frame_stats", args));
 
             auto button = getChild<LLButton>("AutoTuneFPS");
-            if((bool)button->getToggleState() != LLPerfStats::tunables.userAutoTuneEnabled)
+            if (button->getToggleState() != LLPerfStats::tunables.userAutoTuneEnabled)
             {
                 button->toggleState();
             }
@@ -390,9 +390,9 @@ void FSFloaterPerformance::draw()
                 // Is our target frame time lower than current? If so we need to take action to reduce draw overheads.
                 if (target_frame_time_ns <= tot_frame_time_ns)
                 {
-                    U32 non_avatar_time_ns = tot_frame_time_ns - tot_avatar_time_ns;
+                    U32 non_avatar_time_ns = (U32)(tot_frame_time_ns - tot_avatar_time_ns);
                     // If the target frame time < non avatar frame time then we can pototentially reach it.
-                    if (non_avatar_time_ns < target_frame_time_ns)
+                    if (non_avatar_time_ns < (U32)target_frame_time_ns)
                     {
                         textbox->setColor(LLUIColorTable::instance().getColor("orange"));
                     }
@@ -436,16 +436,16 @@ void FSFloaterPerformance::draw()
 void FSFloaterPerformance::showMainPanel()
 {
     hidePanels();
-    mMainPanel->setVisible(TRUE);
+    mMainPanel->setVisible(true);
 }
 
 void FSFloaterPerformance::hidePanels()
 {
-    mNearbyPanel->setVisible(FALSE);
-    mComplexityPanel->setVisible(FALSE);
-    mHUDsPanel->setVisible(FALSE);
-    mSettingsPanel->setVisible(FALSE);
-    mAutoTunePanel->setVisible(FALSE);
+    mNearbyPanel->setVisible(false);
+    mComplexityPanel->setVisible(false);
+    mHUDsPanel->setVisible(false);
+    mSettingsPanel->setVisible(false);
+    mAutoTunePanel->setVisible(false);
 }
 
 void FSFloaterPerformance::initBackBtn(LLPanel* panel)
@@ -561,7 +561,7 @@ void FSFloaterPerformance::populateHUDList()
         }
     }
 
-    mHUDList->sortByColumnIndex(1, FALSE);
+    mHUDList->sortByColumnIndex(1, false);
     mHUDList->setScrollPos(prev_pos);
     mHUDList->selectItemBySpecialId(prev_selected_id);
 }
@@ -572,7 +572,7 @@ void FSFloaterPerformance::populateObjectList()
     auto prev_selected_id = mObjectList->getSelectedSpecialId();
 
     std::string current_sort_col = mObjectList->getSortColumnName();
-    BOOL current_sort_asc = mObjectList->getSortAscending();
+    bool current_sort_asc = mObjectList->getSortAscending();
 
     mObjectList->clearRows();
     mObjectList->updateColumns(true);
@@ -696,7 +696,7 @@ void FSFloaterPerformance::populateNearbyList()
     S32 prev_pos = mNearbyList->getScrollPos();
     LLUUID prev_selected_id = mNearbyList->getStringUUIDSelectedItem();
     std::string current_sort_col = mNearbyList->getSortColumnName();
-    BOOL current_sort_asc = mNearbyList->getSortAscending();
+    bool current_sort_asc = mNearbyList->getSortAscending();
 
     if (current_sort_col == "art_visual")
     {
@@ -707,10 +707,10 @@ void FSFloaterPerformance::populateNearbyList()
     mNearbyList->clearRows();
     mNearbyList->updateColumns(true);
 
-    std::vector<LLCharacter*> valid_nearby_avs;
+    std::vector<LLVOAvatar*> valid_nearby_avs;
     mNearbyMaxGPUTime = LLWorld::getInstance()->getNearbyAvatarsAndMaxGPUTime(valid_nearby_avs);
 
-    std::vector<LLCharacter*>::iterator char_iter = valid_nearby_avs.begin();
+    auto char_iter = valid_nearby_avs.begin();
 
     LLPerfStats::bufferToggleLock.lock();
     auto av_render_tot_raw = LLPerfStats::StatsRecorder::getSum(AvType, LLPerfStats::StatType_t::RENDER_COMBINED);
@@ -718,7 +718,7 @@ void FSFloaterPerformance::populateNearbyList()
 
     while (char_iter != valid_nearby_avs.end())
     {
-        LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(*char_iter);
+        LLVOAvatar* avatar = *char_iter;
         if (avatar)
         {
             auto overall_appearance = avatar->getOverallAppearance();
@@ -1088,7 +1088,7 @@ void FSFloaterPerformance::onExtendedAction(const LLSD& userdata, const LLUUID& 
 
         LLViewerJoystick::getInstance()->setCameraNeedsUpdate(true); // Fixes an edge case where if the user has JUST disabled flycam themselves, the camera gets stuck waiting for input.
 
-        gAgentCamera.setFocusOnAvatar(FALSE, ANIMATE);
+        gAgentCamera.setFocusOnAvatar(false, ANIMATE);
 
         gAgentCamera.setLookAt(LOOKAT_TARGET_SELECT, objectp);
 
@@ -1126,15 +1126,15 @@ void FSFloaterPerformance::onExtendedAction(const LLSD& userdata, const LLUUID& 
         if (camera_aspect < 1.0f || invert)
         {
             angle_of_view = llmax(0.1f, LLViewerCamera::getInstance()->getView() * LLViewerCamera::getInstance()->getAspect());
-            distance = width * 0.5 * 1.1 / tanf(angle_of_view * 0.5f);
+            distance = width * 0.5f * 1.1f / tanf(angle_of_view * 0.5f);
         }
         else
         {
             angle_of_view = llmax(0.1f, LLViewerCamera::getInstance()->getView());
-            distance = height * 0.5 * 1.1 / tanf(angle_of_view * 0.5f);
+            distance = height * 0.5f * 1.1f / tanf(angle_of_view * 0.5f);
         }
 
-        distance += depth * 0.5;
+        distance += depth * 0.5f;
 
         // Verify that the bounding box isn't inside the near clip.  Using OBB-plane intersection to check if the
         // near-clip plane intersects with the bounding box, and if it does, adjust the distance such that the
@@ -1144,7 +1144,7 @@ void FSFloaterPerformance::onExtendedAction(const LLSD& userdata, const LLUUID& 
         LLVector3d axis_y = LLVector3d(0, 1, 0) * bbox.getRotation();
         LLVector3d axis_z = LLVector3d(0, 0, 1) * bbox.getRotation();
         //Normal of nearclip plane is camera_dir.
-        F32 min_near_clip_dist = bbox_extents.mdV[VX] * (camera_dir * axis_x) + bbox_extents.mdV[VY] * (camera_dir * axis_y) + bbox_extents.mdV[VZ] * (camera_dir * axis_z); // http://www.gamasutra.com/view/feature/131790/simple_intersection_tests_for_games.php?page=7
+        F32 min_near_clip_dist = (F32)(bbox_extents.mdV[VX] * (camera_dir * axis_x) + bbox_extents.mdV[VY] * (camera_dir * axis_y) + bbox_extents.mdV[VZ] * (camera_dir * axis_z)); // http://www.gamasutra.com/view/feature/131790/simple_intersection_tests_for_games.php?page=7
         F32 camera_to_near_clip_dist(LLViewerCamera::getInstance()->getNear());
         F32 min_camera_dist(min_near_clip_dist + camera_to_near_clip_dist);
         if (distance < min_camera_dist)

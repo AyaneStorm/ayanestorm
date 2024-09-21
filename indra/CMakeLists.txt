@@ -89,7 +89,6 @@ endif (USE_AVX_OPTIMIZATION)
 add_subdirectory(cmake)
 
 # <FS:Beq> Tracy Profiler support
-option(USE_TRACY "Tracy Profiler support" OFF)
 if (USE_TRACY)
   message(STATUS "Compiling with Tracy profiler")
 else (USE_TRACY)
@@ -112,6 +111,7 @@ add_subdirectory(${LIBS_OPEN_PREFIX}llmessage)
 add_subdirectory(${LIBS_OPEN_PREFIX}llprimitive)
 add_subdirectory(${LIBS_OPEN_PREFIX}llrender)
 add_subdirectory(${LIBS_OPEN_PREFIX}llfilesystem)
+add_subdirectory(${LIBS_OPEN_PREFIX}llwebrtc)
 add_subdirectory(${LIBS_OPEN_PREFIX}llwindow)
 add_subdirectory(${LIBS_OPEN_PREFIX}llxml)
 

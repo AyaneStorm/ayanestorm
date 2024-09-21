@@ -44,7 +44,7 @@ LLFloaterConversationLog::LLFloaterConversationLog(const LLSD& key)
     mEnableCallbackRegistrar.add("CallLog.Check",   boost::bind(&LLFloaterConversationLog::isActionChecked, this, _2));
 }
 
-BOOL LLFloaterConversationLog::postBuild()
+bool LLFloaterConversationLog::postBuild()
 {
     mConversationLogList = getChild<LLConversationLogList>("conversation_log_list");
 
@@ -60,10 +60,11 @@ BOOL LLFloaterConversationLog::postBuild()
     }
 
     // Use the context menu of the Conversation list for the Conversation tab gear menu.
+    mConversationsGearBtn = getChild<LLMenuButton>("conversations_gear_btn");
     LLToggleableMenu* conversations_gear_menu = mConversationLogList->getContextMenu();
     if (conversations_gear_menu)
     {
-        getChild<LLMenuButton>("conversations_gear_btn")->setMenu(conversations_gear_menu, LLMenuButton::MP_BOTTOM_LEFT);
+        mConversationsGearBtn->setMenu(conversations_gear_menu, LLMenuButton::MP_BOTTOM_LEFT);
     }
 
     getChild<LLFilterEditor>("people_filter_input")->setCommitCallback(boost::bind(&LLFloaterConversationLog::onFilterEdit, this, _2));
@@ -73,7 +74,7 @@ BOOL LLFloaterConversationLog::postBuild()
 
 void LLFloaterConversationLog::draw()
 {
-    getChild<LLMenuButton>("conversations_gear_btn")->setEnabled(mConversationLogList->getSelectedItem() != NULL);
+    mConversationsGearBtn->setEnabled(mConversationLogList->getSelectedItem() != NULL);
     LLFloater::draw();
 }
 
@@ -138,12 +139,12 @@ bool LLFloaterConversationLog::isActionChecked(const LLSD& userdata)
 }
 
 // <FS:Ansariel> CTRL-F focusses local search editor
-BOOL LLFloaterConversationLog::handleKeyHere(KEY key, MASK mask)
+bool LLFloaterConversationLog::handleKeyHere(KEY key, MASK mask)
 {
     if (FSCommon::isFilterEditorKeyCombo(key, mask))
     {
-        getChild<LLFilterEditor>("people_filter_input")->setFocus(TRUE);
-        return TRUE;
+        getChild<LLFilterEditor>("people_filter_input")->setFocus(true);
+        return true;
     }
 
     return LLFloater::handleKeyHere(key, mask);

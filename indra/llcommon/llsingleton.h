@@ -1,24 +1,24 @@
-/** 
+/**
  * @file llsingleton.h
  *
  * $LicenseInfo:firstyear=2002&license=viewerlgpl$
  * Second Life Viewer Source Code
  * Copyright (C) 2010, Linden Research, Inc.
- * 
+ *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation;
  * version 2.1 of the License only.
- * 
+ *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Lesser General Public License for more details.
- * 
+ *
  * You should have received a copy of the GNU Lesser General Public
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- * 
+ *
  * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
  * $/LicenseInfo$
  */
@@ -35,6 +35,13 @@
 #include "lockstatic.h"
 #include "llthread.h"               // on_main_thread()
 #include "llmainthreadtask.h"
+#include "llprofiler.h"
+#include "llerror.h"
+
+#ifdef LL_WINDOWS
+#pragma warning(push)
+#pragma warning(disable : 4506)   // no definition for inline function
+#endif
 
 class LLSingletonBase: private boost::noncopyable
 {
@@ -293,7 +300,7 @@ private:
         // Use a recursive_mutex in case of constructor circularity. With a
         // non-recursive mutex, that would result in deadlock.
         typedef std::recursive_mutex mutex_t;
-        mutex_t mMutex;             // LockStatic looks for mMutex
+        LL_PROFILE_MUTEX_NAMED(mutex_t, mMutex, "Singleton Data"); // LockStatic looks for mMutex
 
         EInitState      mInitState{UNINITIALIZED};
         DERIVED_TYPE*   mInstance{nullptr};
@@ -303,47 +310,6 @@ private:
     // Allow LLParamSingleton subclass -- but NOT DERIVED_TYPE itself -- to
     // access our private members.
     friend class LLParamSingleton<DERIVED_TYPE>;
-
-    // Scoped lock on the mutex associated with this LLSingleton<T>
-    class Locker
-    {
-    public:
-        Locker(): mLock(getMutex()) {}
-
-    private:
-        // Use a recursive_mutex in case of constructor circularity. With a
-        // non-recursive mutex, that would result in deadlock.
-        typedef std::recursive_mutex mutex_t;
-
-        // LLSingleton<T> must have a distinct instance of sMutex for every
-        // distinct T. It's tempting to consider hoisting Locker up into
-        // LLSingletonBase. Don't do it.
-        //
-        // sMutex must be a function-local static rather than a static member. One
-        // of the essential features of LLSingleton and friends is that they must
-        // support getInstance() even when the containing module's static
-        // variables have not yet been runtime-initialized. A mutex requires
-        // construction. A static class member might not yet have been
-        // constructed.
-        //
-        // We could store a dumb mutex_t*, notice when it's NULL and allocate a
-        // heap mutex -- but that's vulnerable to race conditions. And we can't
-        // defend the dumb pointer with another mutex.
-        //
-        // We could store a std::atomic<mutex_t*> -- but a default-constructed
-        // std::atomic<T> does not contain a valid T, even a default-constructed
-        // T! Which means std::atomic, too, requires runtime initialization.
-        //
-        // But a function-local static is guaranteed to be initialized exactly
-        // once, the first time control reaches that declaration.
-        static mutex_t& getMutex()
-        {
-            static mutex_t sMutex;
-            return sMutex;
-        }
-
-        std::unique_lock<mutex_t> mLock;
-    };
 
     // LLSingleton only supports a nullary constructor. However, the specific
     // purpose for its subclass LLParamSingleton is to support Singletons
@@ -456,7 +422,7 @@ protected:
         // deleteSingleton() to defend against manual deletion. When we moved
         // cleanup to deleteSingleton(), we hit crashes due to dangling
         // pointers in the MasterList.
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
         lk->mInstance  = nullptr;
         lk->mInitState = DELETED;
 
@@ -484,7 +450,7 @@ public:
         // Hold the lock while we call cleanupSingleton() and the destructor.
         // Our destructor also instantiates LockStatic, requiring a recursive
         // mutex.
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
         // of course, only cleanup and delete if there's something there
         if (lk->mInstance)
         {
@@ -541,7 +507,7 @@ public:
         { // nested scope for 'lk'
             // In case racing threads call getInstance() at the same moment,
             // serialize the calls.
-            LockStatic lk;
+            LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
 
             switch (lk->mInitState)
             {
@@ -569,6 +535,7 @@ public:
                          classname<DERIVED_TYPE>(),
                          " -- creating new instance"});
                 // fall through
+                [[fallthrough]];
             case UNINITIALIZED:
             case QUEUED:
                 // QUEUED means some secondary thread has already requested an
@@ -630,7 +597,7 @@ public:
     static bool instanceExists()
     {
         // defend any access to sData from racing threads
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
         return lk->mInitState == INITIALIZED;
     }
 
@@ -640,7 +607,7 @@ public:
     static bool wasDeleted()
     {
         // defend any access to sData from racing threads
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
         return lk->mInitState == DELETED;
     }
 };
@@ -679,7 +646,7 @@ private:
         // In case racing threads both call initParamSingleton() at the same
         // time, serialize them. One should initialize; the other should see
         // mInitState already set.
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
         // For organizational purposes this function shouldn't be called twice
         if (lk->mInitState != super::UNINITIALIZED)
         {
@@ -743,7 +710,7 @@ public:
     {
         // In case racing threads call getInstance() at the same moment as
         // initParamSingleton(), serialize the calls.
-        LockStatic lk;
+        LockStatic lk; LL_PROFILE_MUTEX_LOCK(lk->mMutex);
 
         switch (lk->mInitState)
         {
@@ -848,17 +815,6 @@ private:                                                                \
     DERIVED_CLASS(__VA_ARGS__)
 
 /**
- * A slight variance from the above, but includes the "override" keyword
- */
-#define LLSINGLETON_C11(DERIVED_CLASS)                                  \
-private:                                                                \
-    /* implement LLSingleton pure virtual method whose sole purpose */  \
-    /* is to remind people to use this macro */                         \
-    virtual void you_must_use_LLSINGLETON_macro() override {}           \
-    friend class LLSingleton<DERIVED_CLASS>;                            \
-    DERIVED_CLASS()
-
-/**
  * Use LLSINGLETON_EMPTY_CTOR(Foo); at the start of an LLSingleton<Foo>
  * subclass body when the constructor is trivial:
  *
@@ -876,13 +832,9 @@ private:                                                                \
     /* LLSINGLETON() is carefully implemented to permit exactly this */ \
     LLSINGLETON(DERIVED_CLASS) {}
 
-#define LLSINGLETON_EMPTY_CTOR_C11(DERIVED_CLASS)                       \
-    /* LLSINGLETON() is carefully implemented to permit exactly this */ \
-    LLSINGLETON_C11(DERIVED_CLASS) {}
-
 // Relatively unsafe singleton implementation that is much faster
 // and simpler than LLSingleton, but has no dependency tracking
-// or inherent thread safety and requires manual invocation of 
+// or inherent thread safety and requires manual invocation of
 // createInstance before first use.
 template<class T>
 class LLSimpleton
@@ -911,5 +863,9 @@ private:
 
 template <class T>
 T* LLSimpleton<T>::sInstance{ nullptr };
+
+#ifdef LL_WINDOWS
+#pragma warning(pop)
+#endif
 
 #endif

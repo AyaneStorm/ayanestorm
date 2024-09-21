@@ -969,7 +969,7 @@
          layout="topleft"
          left="25"
          name="enable_lip_sync"
-         top_pad="5"
+         top_pad="3"
          width="237"/>
         <check_box
          enabled_control="EnableVoiceChat"
@@ -981,7 +981,7 @@
          layout="topleft"
          left="25"
          name="FSShowVoiceVisualizer"
-         top_pad="3"
+         top_pad="2"
          width="237"/>
         <check_box
          enabled_control="EnableVoiceChat"
@@ -992,7 +992,7 @@
          layout="topleft"
          left="35"
          name="FSShowMyOwnVoiceVisualizer"
-         top_pad="3"
+         top_pad="2"
          width="237"/>
         <check_box
          enabled_control="EnableVoiceChat"
@@ -1004,7 +1004,7 @@
          layout="topleft"
          left="35"
          name="FSShowVoiceVisualizerWithDot"
-         top_pad="3"
+         top_pad="2"
          width="237"/>
         <check_box
          enabled_control="EnableVoiceChat"
@@ -1028,7 +1028,7 @@
          layout="topleft"
          left="25"
          name="FSShowConversationVoiceStateIndicator"
-         top_pad="3"
+         top_pad="2"
          width="237"/>
 
         <check_box
@@ -1041,7 +1041,7 @@
          left="25"
          name="VoiceCallsRejectGroup"
          width="237"
-         top_pad="10"/>
+         top_pad="7"/>
         <check_box
          enabled_control="EnableVoiceChat"
          follows="left|top"
@@ -1052,7 +1052,7 @@
          left="25"
          name="VoiceCallsRejectAdHoc"
          width="237"
-         top_pad="3"/>
+         top_pad="2"/>
         <check_box
          enabled_control="EnableVoiceChat"
          follows="left|top"
@@ -1063,27 +1063,93 @@
          left="25"
          name="VoiceCallsRejectP2P"
          width="237"
-         top_pad="3"/>
+         top_pad="2"/>
 
         <check_box
          follows="top|left"
          enabled_control="EnableVoiceChat"
          control_name="PushToTalkToggle"
          height="15"
-         label="Toggle speak on/off when I press button in toolbar"
+         label="Toggle speak on/off with toolbar button"
          layout="topleft"
          left="25"
          name="push_to_talk_toggle_check"
          width="237"
          tool_tip="When in toggle mode, press and release the trigger key ONCE to switch your microphone on or off. When not in toggle mode, the microphone broadcasts your voice only while the trigger is being held down."
-         top_pad="10"/>
+         top_pad="7"/>
+        <check_box
+         follows="top|left"
+         control_name="VoiceAutomaticGainControl"
+         height="15"
+         tool_tip="Check to enable automatic gain control"
+         label="Automatic Gain Control"
+         layout="topleft"
+         name="voice_automatic_gain_control"
+         left="25"
+         top_pad="2"
+         width="237"/>
+        <check_box
+         follows="top|left"
+         control_name="VoiceEchoCancellation"
+         height="15"
+         tool_tip="Check to enable voice echo cancellation"
+         label="Echo Cancellation"
+         layout="topleft"
+         left="25"
+         name="enable_echo_cancellation"
+         top_pad="2"
+         width="237"/>
+        <text
+         follows="top|left"
+         layout="topleft"
+         height="15"
+         left="25"
+         top_pad="2"
+         width="105"
+         name="noise_suppression_label">
+          Noise Suppression:
+        </text>
+        <combo_box
+         control_name="VoiceNoiseSuppressionLevel"
+         layout="topleft"
+         height="15"
+         left_pad="0"
+         name="noise_suppression_combo"
+         width="90">
+          <item
+           label="Off"
+           name="noise_suppression_none"
+           value="0"/>
+          <item
+           label="Low"
+           name="noise_suppression_low"
+           value="1"/>
+          <item
+           label="Moderate"
+           name="noise_suppression_moderate"
+           value="2"/>
+          <item
+           label="High"
+           name="noise_suppression_high"
+           value="3"/>
+          <item
+           label="Max"
+           name="noise_suppression_max"
+           value="4"/>
+        </combo_box>
 
         <button
          control_name="ShowDeviceSettings"
          follows="left|top"
-         height="23"
+         height="16"
          is_toggle="true"
          label="Audio Device Settings"
+         halign="left"
+         pad_left="16"
+         pad_bottom="2"
+         image_unselected="Accordion_ArrowClosed_Off"
+         image_selected="Accordion_ArrowOpened_Off"
+         scale_image="false"
          layout="topleft"
          left="20"
          top_pad="6"
@@ -1093,6 +1159,7 @@
         <panel
          background_visible="false"
          bg_alpha_color="DkGray"
+         filename="panel_sound_devices.xml"
          visiblity_control="ShowDeviceSettings"
          border="false"
          follows="top|left|right"
@@ -1103,163 +1170,7 @@
          right="-5"
          name="device_settings_panel"
          class="panel_voice_device_settings"
-         top_pad="5">
-            <panel.string
-             name="default_text">
-             Default
-            </panel.string>
-            <panel.string
-             name="default system device">
-             Default system device
-            </panel.string>
-            <panel.string
-             name="name_default_system_device">
-             Default system device
-            </panel.string>
-            <panel.string
-             name="no device">
-             No device
-            </panel.string>
-            <panel.string
-             name="name_no_device">
-             No device
-            </panel.string>
-
-            <icon
-             height="18"
-             image_name="Microphone_On"
-             left_delta="4"
-             name="microphone_icon"
-             mouse_opaque="false"
-             top="7"
-             visible="true"
-             width="18" />
-            <text
-             type="string"
-             length="1"
-             font.style="BOLD"
-             follows="left|top"
-             height="16"
-             layout="topleft"
-             left_pad="3"
-             name="Input"
-             width="70">
-                Input
-            </text>
-            <combo_box
-             height="23"
-             control_name="VoiceInputAudioDevice"
-             layout="topleft"
-             left_pad="0"
-             max_chars="128"
-             name="voice_input_device"
-             top_delta="-5"
-             width="150" />
-            <icon
-             height="18"
-             image_name="Parcel_Voice_Light"
-             left="275"
-             name="speaker_icon"
-             mouse_opaque="false"
-             top_pad="-20"
-             visible="true"
-             width="22" />
-            <text
-             font.style="BOLD"
-             type="string"
-             length="1"
-             follows="left|top"
-             height="15"
-             layout="topleft"
-             left_pad="0"
-             name="Output"
-             width="70">
-                Output
-            </text>
-            <combo_box
-             control_name="VoiceOutputAudioDevice"
-             height="23"
-             layout="topleft"
-             left_pad="0"
-             max_chars="128"
-             name="voice_output_device"
-             top_delta="-3"
-             width="150" />
-            <text
-             type="string"
-             length="1"
-             follows="left|top"
-             height="10"
-             layout="topleft"
-             left_delta="-360"
-             name="Volume label"
-             top_pad="4"
-             width="80">
-                Input Volume:
-            </text>
-            <slider_bar
-             control_name="AudioLevelMic"
-             follows="left|top"
-             height="17"
-             increment="0.025"
-             initial_value="1.0"
-             layout="topleft"
-             left_pad="5"
-             max_val="2"
-             name="mic_volume_slider"
-             tool_tip="Change the volume using this slider"
-             top_pad="-8"
-             width="220" />
-            <text
-             type="string"
-             text_color="EmphasisColor"
-             length="1"
-             follows="left|top"
-             height="18"
-             layout="topleft"
-             left_pad="5"
-             name="wait_text"
-             top_delta="-1"
-             width="110">
-                Please wait
-            </text>
-            <locate
-             height="20"
-             layout="topleft"
-             left_delta="0"
-             name="bar0"
-             top_delta="-2"
-             width="20" />
-            <locate
-             height="20"
-             layout="topleft"
-             left_pad="5"
-             name="bar1"
-             top_delta="0"
-             width="20" />
-            <locate
-             height="20"
-             layout="topleft"
-             left_pad="5"
-             name="bar2"
-             top_delta="0"
-             width="20" />
-            <locate
-             height="20"
-             layout="topleft"
-             left_pad="5"
-             name="bar3"
-             top_delta="0"
-             width="20" />
-            <locate
-             height="20"
-             layout="topleft"
-             left_pad="5"
-             name="bar4"
-             top_delta="0"
-             width="20" />
-        </panel>
-
+         top_pad="5"/>
     </panel>
 
     <!-- UI Sounds 1 -->

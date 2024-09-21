@@ -43,7 +43,7 @@ class LLFloaterJoystick : public LLFloater
 
 public:
 
-    virtual BOOL postBuild();
+    virtual bool postBuild();
     virtual void refresh();
     virtual void apply();   // Apply the changed values.
     virtual void cancel();  // Cancel the changed values.
@@ -101,6 +101,8 @@ private:
     LLComboBox      *mJoysticksCombo;
 
     bool mHasDeviceList;
+    bool mJoystickInitialized;
+    LLUUID mCurrentDeviceId;
 
     // stats view
     // <FS:Zi> FIRE-14344 - Add button preview and allow for more than 6 axes

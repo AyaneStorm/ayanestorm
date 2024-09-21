@@ -69,7 +69,7 @@ bool FSConsoleUtils::ProcessChatMessage(const LLChat& chat_msg, const LLSD &args
         std::string sender_name(chat_msg.mFromName);
 
         //IRC styled /me messages.
-        bool irc_me = is_irc_me_prefix(chat_msg.mText);
+        bool irc_me = FSCommon::is_irc_me_prefix(chat_msg.mText);
 
         // Delimiter after a name in header copy/past and in plain text mode
         std::string delimiter = ": ";
@@ -91,9 +91,10 @@ bool FSConsoleUtils::ProcessChatMessage(const LLChat& chat_msg, const LLSD &args
 
         std::string message = irc_me ? chat_msg.mText.substr(3) : chat_msg.mText;
         console_chat = sender_name + delimiter + message;
-        LLColor4 chatcolor;
-        LLViewerChat::getChatColor(chat_msg, chatcolor);
-        gConsole->addConsoleLine(console_chat, chatcolor);
+        F32 alpha = 1.f;
+        LLUIColor chatcolor;
+        LLViewerChat::getChatColor(chat_msg, chatcolor, alpha);
+        gConsole->addConsoleLine(console_chat, chatcolor % alpha);
     }
     else
     {
@@ -113,9 +114,10 @@ bool FSConsoleUtils::ProcessChatMessage(const LLChat& chat_msg, const LLSD &args
         }
         // FS:LO FIRE-1439 - Clickable avatar names on local chat radar crossing reports
 
-        LLColor4 chatcolor;
-        LLViewerChat::getChatColor(chat_msg, chatcolor);
-        gConsole->addConsoleLine(console_chat, chatcolor);
+        F32 alpha = 1.f;
+        LLUIColor chatcolor;
+        LLViewerChat::getChatColor(chat_msg, chatcolor, alpha);
+        gConsole->addConsoleLine(console_chat, chatcolor % alpha);
     }
 
     return true;
@@ -128,7 +130,7 @@ void FSConsoleUtils::onProcessChatAvatarNameLookup(const LLUUID& agent_id, const
     std::string sender_name(chat_msg.mFromName);
 
     //IRC styled /me messages.
-    bool irc_me = is_irc_me_prefix(chat_msg.mText);
+    bool irc_me = FSCommon::is_irc_me_prefix(chat_msg.mText);
 
     // Delimiter after a name in header copy/past and in plain text mode
     std::string delimiter = ": ";
@@ -157,9 +159,10 @@ void FSConsoleUtils::onProcessChatAvatarNameLookup(const LLUUID& agent_id, const
     }
 
     console_chat = sender_name + delimiter + message;
-    LLColor4 chatcolor;
-    LLViewerChat::getChatColor(chat_msg, chatcolor);
-    gConsole->addConsoleLine(console_chat, chatcolor);
+    F32 alpha = 1.f;
+    LLUIColor chatcolor;
+    LLViewerChat::getChatColor(chat_msg, chatcolor, alpha);
+    gConsole->addConsoleLine(console_chat, chatcolor % alpha);
 }
 
 //static
@@ -218,7 +221,7 @@ void FSConsoleUtils::onProccessInstantMessageNameLookup(const LLUUID& agent_id, 
     std::string delimiter = ": ";
 
     // irc styled messages
-    if (is_irc_me_prefix(message))
+    if (FSCommon::is_irc_me_prefix(message))
     {
         delimiter = LLStringUtil::null;
         message = message.substr(3);
@@ -238,8 +241,9 @@ void FSConsoleUtils::onProccessInstantMessageNameLookup(const LLUUID& agent_id, 
     chat.mText = message_str;
     chat.mSourceType = CHAT_SOURCE_AGENT;
     chat.mChatType = is_group ? CHAT_TYPE_IM_GROUP : CHAT_TYPE_IM;
-    LLColor4 textcolor;
-    LLViewerChat::getChatColor(chat, textcolor, LLSD().with("is_local", false).with("for_console", true));
+    F32 alpha = 1.f;
+    LLUIColor textcolor;
+    LLViewerChat::getChatColor(chat, textcolor, alpha, LLSD().with("is_local", false).with("for_console", true));
 
-    gConsole->addConsoleLine("IM: " + sender_name + delimiter + message, textcolor, session_id);
+    gConsole->addConsoleLine("IM: " + sender_name + delimiter + message, textcolor % alpha, session_id);
 }

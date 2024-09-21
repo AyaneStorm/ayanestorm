@@ -35,6 +35,7 @@
 #include "lluuid.h"
 #include "llviewertexture.h"
 #include "llgl.h"
+#include "lluicolor.h"
 
 class LLViewerRegion;
 class LLVector3;
@@ -50,10 +51,10 @@ public:
     // ACCESS
     LLViewerTexture*        getTexture() const      { return mTexture; }
 
-    BOOL            isOwned(const LLVector3& pos) const;
-    BOOL            isOwnedSelf(const LLVector3& pos) const;
-    BOOL            isOwnedGroup(const LLVector3& pos) const;
-    BOOL            isOwnedOther(const LLVector3& pos) const;
+    bool            isOwned(const LLVector3& pos) const;
+    bool            isOwnedSelf(const LLVector3& pos) const;
+    bool            isOwnedGroup(const LLVector3& pos) const;
+    bool            isOwnedOther(const LLVector3& pos) const;
 
     // "encroaches" means the prim hangs over the parcel, but its center
     // might be in another parcel. for now, we simply test axis aligned
@@ -62,9 +63,9 @@ public:
     bool encroachesOnUnowned(const std::vector<LLBBox>& boxes) const;
     bool encroachesOnNearbyParcel(const std::vector<LLBBox>& boxes) const;
 
-    BOOL            isSoundLocal(const LLVector3& pos) const;
+    bool            isSoundLocal(const LLVector3& pos) const;
 
-    BOOL            isBuildCameraAllowed(const LLVector3& pos) const;
+    bool            isBuildCameraAllowed(const LLVector3& pos) const;
     F32             getOwnedRatio() const;
 // [SL:KB] - Patch: World-MinimapOverlay | Checked: 2012-06-20 (Catznip-3.3)
     const U8*       getOwnership() const { return mOwnership; }
@@ -123,7 +124,7 @@ private:
     U8              *mOwnership;
 
     // Update propery lines and overlay texture
-    BOOL            mDirty;
+    bool            mDirty;
     LLFrameTimer    mTimeSinceLastUpdate;
     S32             mOverlayTextureIdx;
 
@@ -134,6 +135,14 @@ private:
     };
 
     std::vector<Edge> mEdges;
+
+    static bool sColorSetInitialized;
+    static LLUIColor sAvailColor;
+    static LLUIColor sOwnedColor;
+    static LLUIColor sGroupColor;
+    static LLUIColor sSelfColor;
+    static LLUIColor sForSaleColor;
+    static LLUIColor sAuctionColor;
 
 // [SL:KB] - Patch: World-MinimapOverlay | Checked: 2012-06-20 (Catznip-3.3)
     static update_signal_t* mUpdateSignal;

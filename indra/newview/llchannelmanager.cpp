@@ -169,7 +169,7 @@ void LLChannelManager::onLoginCompleted()
             // </FS:Ansariel>
 
             mStartUpChannel->setCommitCallback(boost::bind(&LLChannelManager::onStartUpToastClose, this));
-            mStartUpChannel->createStartUpToast(away_notifications, gSavedSettings.getS32("StartUpToastLifeTime"));
+            mStartUpChannel->createStartUpToast(away_notifications, (F32)gSavedSettings.getS32("StartUpToastLifeTime"));
         }
     }
 
@@ -182,7 +182,7 @@ void LLChannelManager::onStartUpToastClose()
 {
     if(mStartUpChannel)
     {
-        mStartUpChannel->setVisible(FALSE);
+        mStartUpChannel->setVisible(false);
         mStartUpChannel->closeStartUpToast();
         removeChannelByID(STARTUP_CHANNEL_UUID);
         mStartUpChannel = NULL;
@@ -282,8 +282,8 @@ LLNotificationsUI::LLScreenChannel* LLChannelManager::getNotificationScreenChann
 
     if (channel == NULL)
     {
-        LL_WARNS() << "Can't find screen channel by Notification Channel UUID" << LL_ENDL;
-        llassert(!"Can't find screen channel by Notification Channel UUID");
+        LL_WARNS() << "Can't find screen channel by NotificationChannelUUID" << LL_ENDL;
+        llassert(!"Can't find screen channel by NotificationChannelUUID");
     }
 
     return channel;

@@ -58,7 +58,7 @@ LLScriptEditor::LLScriptEditor(const Params& p)
     }
 }
 
-BOOL LLScriptEditor::postBuild()
+bool LLScriptEditor::postBuild()
 {
     // <FS:Ansariel> FIRE-20818: User-selectable font and size for script editor
     //gSavedSettings.getControl("LSLFontSizeName")->getCommitSignal()->connect(boost::bind(&LLScriptEditor::onFontSizeChange, this));
@@ -128,14 +128,14 @@ void LLScriptEditor::drawLineNumbers()
             if(line.mLineNum != last_line_num && line.mRect.mTop <= scrolled_view_rect.mTop)
             {
                 const LLWString ltext = utf8str_to_wstring(llformat("%d", line.mLineNum ));
-                BOOL is_cur_line = cursor_line == line.mLineNum;
+                bool is_cur_line = cursor_line == line.mLineNum;
                 const U8 style = is_cur_line ? LLFontGL::BOLD : LLFontGL::NORMAL;
-                const LLColor4 fg_color = is_cur_line ? mCursorColor : mReadOnlyFgColor;
+                const LLColor4& fg_color = is_cur_line ? mCursorColor : mReadOnlyFgColor;
                 getFont()->render(
                                  ltext, // string to draw
                                  0, // begin offset
                                  UI_TEXTEDITOR_LINE_NUMBER_MARGIN - 2, // x
-                                 line_bottom, // y
+                                 (F32)line_bottom, // y
                                  fg_color,
                                  LLFontGL::RIGHT, // horizontal alignment
                                  LLFontGL::BOTTOM, // vertical alignment
@@ -183,11 +183,11 @@ void LLScriptEditor::loadKeywords(const std::string& filename,
     LL_PROFILE_ZONE_SCOPED;
     if (mKeywords.loadFromLegacyFile(filename))
     {
-        S32 count = llmin(funcs.size(), tooltips.size());
-        for(S32 i = 0; i < count; i++)
+        auto count = llmin(funcs.size(), tooltips.size());
+        for (size_t i = 0; i < count; i++)
         {
             std::string name = utf8str_trim(funcs[i]);
-            mKeywords.addToken(LLKeywordToken::TT_WORD, name, color, tooltips[i] );
+            mKeywords.addToken(LLKeywordToken::TT_WORD, name, LLUIColor(color), tooltips[i] );
         }
         segment_vec_t segment_list;
         LLStyleConstSP style = new LLStyle(LLStyle::Params().font(getFont()).color(mDefaultColor.get()));
@@ -325,14 +325,14 @@ void LLScriptEditor::startOfLine()
 // </FS>
 
 // <FS:Ansariel> Show keyword help on F1
-BOOL LLScriptEditor::handleKeyHere(KEY key, MASK mask)
+bool LLScriptEditor::handleKeyHere(KEY key, MASK mask)
 {
     if (key == KEY_F1 && mask == MASK_NONE)
     {
         if (LLScriptEdCore* parent = getParentByType<LLScriptEdCore>(); parent != nullptr)
         {
             parent->onBtnDynamicHelp();
-            return TRUE;
+            return true;
         }
     }
 

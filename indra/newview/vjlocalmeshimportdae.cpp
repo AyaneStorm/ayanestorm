@@ -120,7 +120,7 @@ LLLocalMeshImportDAE::loadFile_return LLLocalMeshImportDAE::loadFile(LLLocalMesh
         domAsset::domUnit* unit = daeSafeCast<domAsset::domUnit>(collada_document_root->getDescendant(daeElement::matchType(domAsset::domUnit::ID())));
         if (unit)
         {
-            F32 meter = unit->getMeter();
+            F32 meter = (F32)unit->getMeter();
             scene_transform_base.mMatrix[0][0] = meter;
             scene_transform_base.mMatrix[1][1] = meter;
             scene_transform_base.mMatrix[2][2] = meter;
@@ -180,7 +180,7 @@ LLLocalMeshImportDAE::loadFile_return LLLocalMeshImportDAE::loadFile(LLLocalMesh
         pushLog("DAE Importer", "Parsing object number " + std::to_string(mesh_index));
 
         daeElement* mesh_current_elem = nullptr;
-        collada_db->getElement(&mesh_current_elem, mesh_index, NULL, COLLADA_TYPE_MESH);
+        collada_db->getElement(&mesh_current_elem, static_cast<daeInt>(mesh_index), NULL, COLLADA_TYPE_MESH);
         domMesh* mesh_current = daeSafeCast<domMesh>(mesh_current_elem);
         if (!mesh_current)
         {
@@ -189,7 +189,7 @@ LLLocalMeshImportDAE::loadFile_return LLLocalMeshImportDAE::loadFile(LLLocalMesh
         }
 
         // this WILL always return with some kind of a name, even a fallback one of "object_[idx]"
-        std::string object_name = getElementName(mesh_current_elem, mesh_index);
+        std::string object_name = getElementName(mesh_current_elem, static_cast<int>(mesh_index));
         pushLog("DAE Importer", "Object name found: " + object_name);
 
         // we're filling up from the main file, so we're creating our objects
@@ -266,7 +266,7 @@ LLLocalMeshImportDAE::loadFile_return LLLocalMeshImportDAE::loadFile(LLLocalMesh
         pushLog("DAE Importer", "Parsing skin number " + std::to_string(skin_index));
 
         daeElement* skin_current_elem = nullptr;
-        collada_db->getElement(&skin_current_elem, skin_index, NULL, COLLADA_TYPE_SKIN);
+        collada_db->getElement(&skin_current_elem, static_cast<daeInt>(skin_index), NULL, COLLADA_TYPE_SKIN);
         domSkin* skin_current = daeSafeCast<domSkin>(skin_current_elem);
         if (!skin_current)
         {
@@ -295,7 +295,7 @@ LLLocalMeshImportDAE::loadFile_return LLLocalMeshImportDAE::loadFile(LLLocalMesh
             auto iterable_mesh = mesh_usage_tracker[mesh_tracker_iterator];
             if (skin_current_mesh == iterable_mesh)
             {
-                current_object_iter = mesh_tracker_iterator;
+                current_object_iter = static_cast<int>(mesh_tracker_iterator);
                 break;
             }
         }
@@ -390,7 +390,7 @@ bool LLLocalMeshImportDAE::processObject(domMesh* current_mesh, LLLocalMeshObjec
 
     bool submesh_failure_found = false;
     bool stop_loading_additional_faces = false;
-    auto lambda_process_submesh = [&](int idx, submesh_type array_type)
+    auto lambda_process_submesh = [&](size_t idx, submesh_type array_type)
     {
         // check for face overflow
         if (object_faces.size() == 8)
@@ -554,7 +554,7 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
         {
             for (size_t matrix_j = 0; matrix_j < 4; matrix_j++)
             {
-                mat4_proxy.mMatrix[matrix_i][matrix_j] = bind_matrix_value[matrix_i + (matrix_j * 4)];
+                mat4_proxy.mMatrix[matrix_i][matrix_j] = (F32)bind_matrix_value[matrix_i + (matrix_j * 4)];
             }
         }
         skininfop->mBindShapeMatrix.loadu(mat4_proxy);
@@ -582,7 +582,7 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
     {
         daeElement* current_element = nullptr;
         daeElement* current_skeleton_root = nullptr;
-        collada_db->getElement(&current_element, skeleton_index, 0, "skeleton");
+        collada_db->getElement(&current_element, static_cast<daeInt>(skeleton_index), 0, "skeleton");
 
         auto current_skeleton = daeSafeCast<domInstance_controller::domSkeleton>(current_element);
         if (current_skeleton)
@@ -755,7 +755,7 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
                 {
                     for (size_t j = 0; j < 4; j++)
                     {
-                        mat.mMatrix[i][j] = current_transform[(matrix_index * 16) + i + (j * 4)];
+                        mat.mMatrix[i][j] = (F32)current_transform[(matrix_index * 16) + i + (j * 4)];
                     }
                 }
 
@@ -857,9 +857,9 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
             }
 
             LLVector3 pos_vec(
-                vtx_pos_list[vtx_pos_index],
-                vtx_pos_list[vtx_pos_index + 1],
-                vtx_pos_list[vtx_pos_index + 2] );
+                (F32)vtx_pos_list[vtx_pos_index],
+                (F32)vtx_pos_list[vtx_pos_index + 1],
+                (F32)vtx_pos_list[vtx_pos_index + 2] );
 
             pos_vec = pos_vec * inverse_normalized_transformation;
 
@@ -921,15 +921,15 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
         // extract all of the weights
         for (size_t influence_idx = 0; influence_idx < influences_count; ++influence_idx)
         {
-            int vtx_idx = joint_weight_indices[joint_weight_strider++];
-            int this_weight_idx = joint_weight_indices[joint_weight_strider++];
+            int vtx_idx = (int)joint_weight_indices[joint_weight_strider++];
+            int this_weight_idx = (int)joint_weight_indices[joint_weight_strider++];
 
             if (vtx_idx == -1)
             {
                 continue;
             }
 
-            float weight_value = weight_values[this_weight_idx];
+            float weight_value = (float)weight_values[this_weight_idx];
             weight_list.push_back(LLModel::JointWeight(vtx_idx, weight_value));
         }
 
@@ -1004,7 +1004,7 @@ bool LLLocalMeshImportDAE::processSkin(daeDatabase* collada_db, daeElement* coll
                 const auto& internal_position = transformed_positions[internal_position_idx];
                 if (soft_compare(current_position, internal_position, F_ALMOST_ZERO))
                 {
-                    found_idx = internal_position_idx;
+                    found_idx = static_cast<int>(internal_position_idx);
                     break;
                 }
             }
@@ -1108,7 +1108,7 @@ bool LLLocalMeshImportDAE::processSkeletonJoint(domNode* current_node, std::map<
                 {
                     for (int j = 0; j < 4; j++)
                     {
-                        workingTransform.mMatrix[i][j] = domArray[i + j * 4];
+                        workingTransform.mMatrix[i][j] = (F32)domArray[i + j * 4];
                     }
                 }
                 joint_transforms[node_name].setTranslation(workingTransform.getTranslation());
@@ -1127,7 +1127,7 @@ bool LLLocalMeshImportDAE::processSkeletonJoint(domNode* current_node, std::map<
                     {
                         for (int j = 0; j < 4; j++)
                         {
-                            workingTransform.mMatrix[i][j] = domArray[i + j * 4];
+                            workingTransform.mMatrix[i][j] = (F32)domArray[i + j * 4];
                         }
                     }
                     joint_transforms[node_name] = workingTransform;
@@ -1143,7 +1143,7 @@ bool LLLocalMeshImportDAE::processSkeletonJoint(domNode* current_node, std::map<
         else // previous query worked
         {
             domFloat3 joint_transform = current_transformation->getValue();
-            LLVector3 singleJointTranslation(joint_transform[0], joint_transform[1], joint_transform[2]);
+            LLVector3 singleJointTranslation((F32)joint_transform[0], (F32)joint_transform[1], (F32)joint_transform[2]);
             LLMatrix4 workingTransform;
             workingTransform.setTranslation(singleJointTranslation);
 
@@ -1211,7 +1211,7 @@ bool LLLocalMeshImportDAE::readMesh_CommonElements(const domInputLocalOffset_Arr
                 // vertex positions array
                 if (current_vertex_semantic.compare(COMMON_PROFILE_INPUT_POSITION) == 0)
                 {
-                    offset_position = inputs[input_iterator]->getOffset();
+                    offset_position = (int)inputs[input_iterator]->getOffset();
                     daeElementRef current_element = input_vertices_array[vertex_input_iterator]->getSource().getElement();
                     source_position = daeSafeCast<domSource>(current_element);
                 }
@@ -1219,7 +1219,7 @@ bool LLLocalMeshImportDAE::readMesh_CommonElements(const domInputLocalOffset_Arr
                 // vertex normal array
                 else if (current_vertex_semantic.compare(COMMON_PROFILE_INPUT_NORMAL) == 0)
                 {
-                    offset_normals = inputs[input_iterator]->getOffset();
+                    offset_normals = (int)inputs[input_iterator]->getOffset();
                     daeElementRef current_element = input_vertices_array[vertex_input_iterator]->getSource().getElement();
                     source_normals = daeSafeCast<domSource>(current_element);
                 }
@@ -1230,7 +1230,7 @@ bool LLLocalMeshImportDAE::readMesh_CommonElements(const domInputLocalOffset_Arr
         // normal array outside of vertex array
         else if (current_semantic.compare(COMMON_PROFILE_INPUT_NORMAL) == 0)
         {
-            offset_normals = inputs[input_iterator]->getOffset();
+            offset_normals = (int)inputs[input_iterator]->getOffset();
             daeElementRef current_element = inputs[input_iterator]->getSource().getElement();
             source_normals = daeSafeCast<domSource>(current_element);
         }
@@ -1238,7 +1238,7 @@ bool LLLocalMeshImportDAE::readMesh_CommonElements(const domInputLocalOffset_Arr
         // uv array
         else if (current_semantic.compare(COMMON_PROFILE_INPUT_TEXCOORD) == 0)
         {
-            offset_uvmap = inputs[input_iterator]->getOffset();
+            offset_uvmap = (int)inputs[input_iterator]->getOffset();
             daeElementRef current_element = inputs[input_iterator]->getSource().getElement();
             source_uvmap = daeSafeCast<domSource>(current_element);
         }
@@ -1403,10 +1403,10 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
         // position attribute
         attr_position.set
         (
-            serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 0],
-            serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 1],
-            serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 2],
-            0
+            (F32)serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 0],
+            (F32)serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 1],
+            (F32)serialized_values_position[triangle_list[triangle_iterator + offset_position] * 3 + 2],
+            0.f
         );
 
         // normal attribute
@@ -1414,10 +1414,10 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
         {
             attr_normal.set
             (
-                serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 0],
-                serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 1],
-                serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 2],
-                0
+                (F32)serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 0],
+                (F32)serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 1],
+                (F32)serialized_values_normals[triangle_list[triangle_iterator + offset_normals] * 3 + 2],
+                0.f
             );
         }
 
@@ -1426,8 +1426,8 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
         {
             attr_uv.set
             (
-                serialized_values_uvmap[triangle_list[triangle_iterator + offset_uvmap] * 2 + 0],
-                serialized_values_uvmap[triangle_list[triangle_iterator + offset_uvmap] * 2 + 1]
+                (F32)serialized_values_uvmap[triangle_list[triangle_iterator + offset_uvmap] * 2 + 0],
+                (F32)serialized_values_uvmap[triangle_list[triangle_iterator + offset_uvmap] * 2 + 1]
             );
         }
 
@@ -1456,8 +1456,8 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
 
                 // found a vertex whose position, normals and uvs match what we already have
                 int repeated_index = repeat_vtx_data.vtx_index;
-                int list_indices_size = list_indices.size();
-                int triangle_check = list_indices_size % 3;
+                size_t list_indices_size = list_indices.size();
+                size_t triangle_check = list_indices_size % 3;
 
                 if (((triangle_check < 1) || (list_indices[list_indices_size - 1] != repeated_index))
                     && ((triangle_check < 2) || (list_indices[list_indices_size - 2] != repeated_index)))
@@ -1485,20 +1485,20 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
             data_out->setFaceBoundingBox(attr_position);
 
             // push back vertex data
-            list_positions.push_back(attr_position);
+            list_positions.emplace_back(attr_position);
             if (source_normals)
             {
-                list_normals.push_back(attr_normal);
+                list_normals.emplace_back(attr_normal);
             }
 
             if (source_uvmap)
             {
-                list_uvs.push_back(attr_uv);
+                list_uvs.emplace_back(attr_uv);
             }
 
             // index is verts list - 1, push that index into indices
-            int current_index = list_positions.size() - 1;
-            list_indices.push_back(current_index);
+            int current_index = static_cast<int>(list_positions.size()) - 1;
+            list_indices.emplace_back(current_index);
 
             // track this position for future repeats
             repeat_map_data_struct new_trackable;
@@ -1508,15 +1508,15 @@ bool LLLocalMeshImportDAE::readMesh_Triangle(LLLocalMeshFace* data_out, const do
 
             if (seeker_position != repeat_map_position_iterable.end())
             {
-                int seeker_index = std::distance(repeat_map_position_iterable.begin(), seeker_position);
-                repeat_map_data[seeker_index].push_back(new_trackable);
+                int seeker_index = (int)std::distance(repeat_map_position_iterable.begin(), seeker_position);
+                repeat_map_data[seeker_index].emplace_back(new_trackable);
             }
             else
             {
-                repeat_map_position_iterable.push_back(attr_position);
+                repeat_map_position_iterable.emplace_back(attr_position);
                 std::vector<repeat_map_data_struct> new_map_data_vec;
-                new_map_data_vec.push_back(new_trackable);
-                repeat_map_data.push_back(new_map_data_vec);
+                new_map_data_vec.emplace_back(new_trackable);
+                repeat_map_data.emplace_back(new_map_data_vec);
             }
         }
 
@@ -1635,10 +1635,10 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
             // position attribute
             attr_position.set
             (
-                serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 0],
-                serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 1],
-                serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 2],
-                0
+                (F32)serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 0],
+                (F32)serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 1],
+                (F32)serialized_values_position[vertex_indices[current_vtx_index + offset_position] * 3 + 2],
+                0.f
             );
 
             // normal attribute
@@ -1646,10 +1646,10 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
             {
                 attr_normal.set
                 (
-                    serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 0],
-                    serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 1],
-                    serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 2],
-                    0
+                    (F32)serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 0],
+                    (F32)serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 1],
+                    (F32)serialized_values_normals[vertex_indices[current_vtx_index + offset_normals] * 3 + 2],
+                    0.f
                 );
             }
 
@@ -1658,8 +1658,8 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
             {
                 attr_uv.set
                 (
-                    serialized_values_uvmap[vertex_indices[current_vtx_index + offset_uvmap] * 2 + 0],
-                    serialized_values_uvmap[vertex_indices[current_vtx_index + offset_uvmap] * 2 + 1]
+                    (F32)serialized_values_uvmap[vertex_indices[current_vtx_index + offset_uvmap] * 2 + 0],
+                    (F32)serialized_values_uvmap[vertex_indices[current_vtx_index + offset_uvmap] * 2 + 1]
                 );
             }
 
@@ -1672,7 +1672,7 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
             if (seeker_position != repeat_map_position_iterable.end())
             {
                 // compare to check if you find one with matching normal and uv values
-                int seeker_index = std::distance(repeat_map_position_iterable.begin(), seeker_position);
+                int seeker_index = (int)std::distance(repeat_map_position_iterable.begin(), seeker_position);
                 for (const auto& repeat_vtx_data : repeat_map_data[seeker_index])
                 {
                     if (repeat_vtx_data.vtx_normal_data != attr_normal)
@@ -1736,7 +1736,7 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
                 }
 
                 // index is verts list - 1, push that index into indices
-                int current_index = list_positions.size() - 1;
+                int current_index = static_cast<int>(list_positions.size()) - 1;
 
                 if (vtx_iter == 0)
                 {
@@ -1748,9 +1748,9 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
                 }
                 else
                 {
-                    list_indices.push_back(first_idx);
-                    list_indices.push_back(last_idx);
-                    list_indices.push_back(current_index);
+                    list_indices.emplace_back(first_idx);
+                    list_indices.emplace_back(last_idx);
+                    list_indices.emplace_back(current_index);
                     last_idx = current_index;
                 }
 
@@ -1762,7 +1762,7 @@ bool LLLocalMeshImportDAE::readMesh_Polylist(LLLocalMeshFace* data_out, const do
 
                 if (seeker_position != repeat_map_position_iterable.end())
                 {
-                    int seeker_index = std::distance(repeat_map_position_iterable.begin(), seeker_position);
+                    int seeker_index = (int)std::distance(repeat_map_position_iterable.begin(), seeker_position);
                     repeat_map_data[seeker_index].push_back(new_trackable);
                 }
                 else

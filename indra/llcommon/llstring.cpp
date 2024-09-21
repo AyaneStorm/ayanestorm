@@ -250,7 +250,7 @@ LLWString utf16str_to_wstring(const U16* utf16str, size_t len)
     while (i < len)
     {
         llwchar cur_char;
-        i += utf16chars_to_wchar(chars16+i, &cur_char);
+        i += (S32)utf16chars_to_wchar(chars16+i, &cur_char);
         wout += cur_char;
     }
     return wout;
@@ -308,10 +308,10 @@ S32 wstring_utf16_length(const LLWString &wstr, const S32 woffset, const S32 wle
 // Given a wstring and an offset in it, returns the length as wstring (i.e.,
 // number of llwchars) of the longest substring that starts at the offset
 // and whose equivalent utf-16 string does not exceeds the given utf16_length.
-S32 wstring_wstring_length_from_utf16_length(const LLWString & wstr, const S32 woffset, const S32 utf16_length, BOOL *unaligned)
+S32 wstring_wstring_length_from_utf16_length(const LLWString & wstr, const S32 woffset, const S32 utf16_length, bool *unaligned)
 {
     const auto end = wstr.length();
-    BOOL u = FALSE;
+    bool u{ false };
     S32 n = woffset + utf16_length;
     S32 i = woffset;
     while (i < end)
@@ -565,7 +565,7 @@ std::string utf8str_truncate(const std::string& utf8str, const S32 max_len)
 }
 
 // [RLVa:KB] - Checked: RLVa-2.1.0
-std::string utf8str_substr(const std::string& utf8str, const S32 index, const S32 max_len)
+std::string utf8str_substr(const std::string& utf8str, const size_t index, const size_t max_len)
 {
     if (0 == max_len)
     {
@@ -577,7 +577,7 @@ std::string utf8str_substr(const std::string& utf8str, const S32 index, const S3
     }
     else
     {
-        S32 cur_char = max_len;
+        size_t cur_char = max_len;
 
         // If we're ASCII, we don't need to do anything
         if ((U8)utf8str[index + cur_char] > 0x7f)
@@ -830,7 +830,7 @@ std::string utf8str_showBytesUTF8(const std::string& utf8str)
 }
 
 // Search for any emoji symbol, return true if found
-bool wstring_has_emoji(const LLWString& wstr)
+bool wstring_has_emoji(LLWStringView wstr)
 {
     for (const llwchar& wch : wstr)
     {
@@ -881,7 +881,7 @@ std::string ll_convert_wide_to_string(const wchar_t* in, size_t len_in, unsigned
             code_page,
             0,
             in,
-            len_in,
+            static_cast<int>(len_in),
             NULL,
             0,
             0,
@@ -896,7 +896,7 @@ std::string ll_convert_wide_to_string(const wchar_t* in, size_t len_in, unsigned
                 code_page,
                 0,
                 in,
-                len_in,
+                static_cast<int>(len_in),
                 pout,
                 len_out,
                 0,
@@ -923,8 +923,8 @@ std::wstring ll_convert_string_to_wide(const char* in, size_t len, unsigned int 
     std::vector<wchar_t> w_out(len + 1);
 
     memset(&w_out[0], 0, w_out.size());
-    int real_output_str_len = MultiByteToWideChar(code_page, 0, in, len,
-                                                  &w_out[0], w_out.size() - 1);
+    int real_output_str_len = MultiByteToWideChar(code_page, 0, in, static_cast<int>(len),
+                                                  &w_out[0], static_cast<int>(w_out.size() - 1));
 
     //looks like MultiByteToWideChar didn't add null terminator to converted string, see EXT-4858.
     w_out[real_output_str_len] = 0;
@@ -972,6 +972,11 @@ void HeapFree_deleter(void* ptr)
 
 } // anonymous namespace
 
+unsigned long windows_get_last_error()
+{
+    return GetLastError();
+}
+
 template<>
 std::wstring windows_message<std::wstring>(DWORD error)
 {
@@ -1010,12 +1015,12 @@ std::wstring windows_message<std::wstring>(DWORD error)
     return out.str();
 }
 
-boost::optional<std::wstring> llstring_getoptenv(const std::string& key)
+std::optional<std::wstring> llstring_getoptenv(const std::string& key)
 {
     auto wkey = ll_convert_string_to_wide(key);
     // Take a wild guess as to how big the buffer should be.
     std::vector<wchar_t> buffer(1024);
-    auto n = GetEnvironmentVariableW(wkey.c_str(), &buffer[0], buffer.size());
+    auto n = GetEnvironmentVariableW(wkey.c_str(), &buffer[0], static_cast<DWORD>(buffer.size()));
     // If our initial guess was too short, n will indicate the size (in
     // wchar_t's) that buffer should have been, including the terminating nul.
     if (n > (buffer.size() - 1))
@@ -1023,13 +1028,13 @@ boost::optional<std::wstring> llstring_getoptenv(const std::string& key)
         // make it big enough
         buffer.resize(n);
         // and try again
-        n = GetEnvironmentVariableW(wkey.c_str(), &buffer[0], buffer.size());
+        n = GetEnvironmentVariableW(wkey.c_str(), &buffer[0], static_cast<DWORD>(buffer.size()));
     }
     // did that (ultimately) succeed?
     if (n)
     {
-        // great, return populated boost::optional
-        return boost::optional<std::wstring>(&buffer[0]);
+        // great, return populated std::optional
+        return std::make_optional<std::wstring>(&buffer[0]);
     }
 
     // not successful
@@ -1040,23 +1045,23 @@ boost::optional<std::wstring> llstring_getoptenv(const std::string& key)
         LL_WARNS() << "GetEnvironmentVariableW('" << key << "') failed: "
                    << windows_message<std::string>(last_error) << LL_ENDL;
     }
-    // return empty boost::optional
+    // return empty std::optional
     return {};
 }
 
 #else  // ! LL_WINDOWS
 
-boost::optional<std::string> llstring_getoptenv(const std::string& key)
+std::optional<std::string> llstring_getoptenv(const std::string& key)
 {
     auto found = getenv(key.c_str());
     if (found)
     {
-        // return populated boost::optional
-        return boost::optional<std::string>(found);
+        // return populated std::optional
+        return std::make_optional<std::string>(found);
     }
     else
     {
-        // return empty boost::optional
+        // return empty std::optional
         return {};
     }
 }
@@ -1278,6 +1283,75 @@ namespace LLStringFn
             ++it;
         }
         return output;
+    }
+
+    using literals_t = std::map<char, std::string>;
+    static const literals_t xml_elem_literals =
+    {
+        { '<', "&lt;" },
+        { '>', "&gt;" },
+        { '&', "&amp;" }
+    };
+    static const literals_t xml_attr_literals =
+    {
+        { '"', "&quot;" },
+        { '\'', "&apos;" }
+    };
+
+    static void literals_encode(std::string& text, const literals_t& literals)
+    {
+        for (const std::pair<char, std::string> it : literals)
+        {
+            std::string::size_type pos = 0;
+            while ((pos = text.find(it.first, pos)) != std::string::npos)
+            {
+                text.replace(pos, 1, it.second);
+                pos += it.second.size();
+            }
+        }
+    }
+
+    static void literals_decode(std::string& text, const literals_t& literals)
+    {
+        for (const std::pair<char, std::string> it : literals)
+        {
+            std::string::size_type pos = 0;
+            while ((pos = text.find(it.second, pos)) != std::string::npos)
+            {
+                text[pos++] = it.first;
+                text.erase(pos, it.second.size() - 1);
+            }
+        }
+    }
+
+    /**
+     * @brief Replace all characters that are not allowed in XML 1.0
+     * with corresponding literals: [ < > & ] => [ &lt; &gt; &amp; ]
+     */
+    std::string xml_encode(const std::string& input, bool for_attribute)
+    {
+        std::string result(input);
+        literals_encode(result, xml_elem_literals);
+        if (for_attribute)
+        {
+            literals_encode(result, xml_attr_literals);
+        }
+        return result;
+    }
+
+    /**
+     * @brief Replace some of XML literals that are defined in XML 1.0
+     * with corresponding characters: [ &lt; &gt; &amp; ] => [ < > & ]
+     */
+    std::string xml_decode(const std::string& input, bool for_attribute)
+    {
+        std::string result(input);
+        literals_decode(result, xml_elem_literals);
+        if (for_attribute)
+        {
+            literals_decode(result, xml_attr_literals);
+        }
+        return result;
     }
 
     /**
@@ -1679,7 +1753,7 @@ S32 LLStringUtil::format(std::string& s, const format_map_t& substitutions)
             if (iter != substitutions.end())
             {
                 S32 secFromEpoch = 0;
-                BOOL r = LLStringUtil::convertToS32(iter->second, secFromEpoch);
+                bool r = LLStringUtil::convertToS32(iter->second, secFromEpoch);
                 if (r)
                 {
                     found_replacement = formatDatetime(replacement, tokens[0], param, secFromEpoch);

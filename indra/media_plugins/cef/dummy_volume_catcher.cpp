@@ -55,4 +55,3 @@ void VolumeCatcher::setPan(F32 pan)
 void VolumeCatcher::pump()
 {
 }
-

@@ -117,7 +117,7 @@ public:
     F32 getTextureBandwidth() { return mTextureBandwidth; }
 
     // Threads:  T*
-    BOOL isFromLocalCache(const LLUUID& id);
+    bool isFromLocalCache(const LLUUID& id);
 
     // get the current fetch state, if any, from the given UUID
     S32 getFetchState(const LLUUID& id);
@@ -313,9 +313,11 @@ private:
 public:
     LLUUID mDebugID;
     S32 mDebugCount;
-    BOOL mDebugPause;
+    bool mDebugPause;
+    // <FS:Ansariel> OpenSim compatibility
     S32 mPacketCount;
     S32 mBadPacketCount;
+    // </FS:Ansariel>
 
     static LLTrace::CountStatHandle<F64>        sCacheHit;
     static LLTrace::CountStatHandle<F64>        sCacheAttempt;

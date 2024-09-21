@@ -50,6 +50,8 @@ class LLSidepanelInventory;
 class LLToggleableMenu;
 class LLFloater;
 class LLFloaterSidePanelContainer;
+class LLSidepanelInventory;
+class LLPanelMarketplaceInbox;
 class LLComboBox;   // <FS:Zi> Filter dropdown
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -67,7 +69,7 @@ public:
     LLPanelMainInventory(const LLPanel::Params& p = getDefaultParams());
     ~LLPanelMainInventory();
 
-    BOOL postBuild();
+    bool postBuild();
 
     enum EViewModeType
     {
@@ -76,17 +78,17 @@ public:
         MODE_COMBINATION
     };
 
-    virtual BOOL handleKeyHere(KEY key, MASK mask);
+    virtual bool handleKeyHere(KEY key, MASK mask);
 
     // Inherited functionality
-    /*virtual*/ BOOL handleDragAndDrop(S32 x, S32 y, MASK mask, BOOL drop,
+    /*virtual*/ bool handleDragAndDrop(S32 x, S32 y, MASK mask, bool drop,
                                        EDragAndDropType cargo_type,
                                        void* cargo_data,
                                        EAcceptance* accept,
                                        std::string& tooltip_msg);
     /*virtual*/ void changed(U32);
     /*virtual*/ void draw();
-    /*virtual*/ void    onVisibilityChange ( BOOL new_visibility );
+    /*virtual*/ void    onVisibilityChange ( bool new_visibility );
     // <FS:Ansariel> CTRL-F focusses local search editor
     /*virtual*/ bool hasAccelerators() const { return true; }
 
@@ -144,6 +146,9 @@ public:
 
     LLInventoryFilter& getCurrentFilter();
 
+    void setParentSidepanel(LLSidepanelInventory* parent_sidepanel) { mParentSidepanel = parent_sidepanel; }
+    void setInboxPanel(LLPanelMarketplaceInbox* inbox_panel) { mInboxPanel = inbox_panel; }
+
     // <FS:Zi> Filter dropdown
     void onFilterTypeSelected(const std::string& filter_type_name);
     void updateFilterDropdown(const LLInventoryFilter* filter);
@@ -161,14 +166,14 @@ protected:
     void setFilterTextFromFilter();
     void startSearch();
 
-    void onSelectionChange(LLInventoryPanel *panel, const std::deque<LLFolderViewItem*>& items, BOOL user_action);
+    void onSelectionChange(LLInventoryPanel *panel, const std::deque<LLFolderViewItem*>& items, bool user_action);
 
-    static BOOL filtersVisible(void* user_data);
+    static bool filtersVisible(void* user_data);
     void onClearSearch();
     static void onFoldersByName(void *user_data);
-    static BOOL checkFoldersByName(void *user_data);
+    static bool checkFoldersByName(void *user_data);
 
-    static BOOL incrementalFind(LLFolderViewItem* first_item, const char *find_text, BOOL backward);
+    static bool incrementalFind(LLFolderViewItem* first_item, const char *find_text, bool backward);
     void onFilterSelected();
 
     const std::string getFilterSubString();
@@ -181,7 +186,7 @@ protected:
 
     // <FS:Zi> Sort By menu handlers
     void setSortBy(const LLSD& userdata);
-    BOOL isSortByChecked(const LLSD& userdata);
+    bool isSortByChecked(const LLSD& userdata);
     // </FS:Zi> Sort By menu handlers
 
     void saveTexture(const LLSD& userdata);
@@ -210,7 +215,9 @@ private:
     LLUICtrl*                   mCounterCtrl;
     LLHandle<LLFloater>         mFinderHandle;
     LLInventoryPanel*           mActivePanel;
-    LLInventoryPanel*           mWornItemsPanel;
+    LLInventoryPanel*           mAllItemsPanel = nullptr;
+    LLInventoryPanel*           mRecentPanel = nullptr;
+    LLInventoryPanel*           mWornItemsPanel = nullptr;
     bool                        mResortActivePanel;
     LLSaveFolderState*          mSavedFolderState;
     std::string                 mFilterText;
@@ -257,8 +264,8 @@ protected:
     void showActionMenu(LLMenuGL* menu, std::string spawning_view_name);
     void onTrashButtonClick(); // <FS:Ansariel> Keep better inventory layout
     void onClipboardAction(const LLSD& userdata);
-    BOOL isActionEnabled(const LLSD& command_name);
-    BOOL isActionChecked(const LLSD& userdata);
+    bool isActionEnabled(const LLSD& command_name);
+    bool isActionChecked(const LLSD& userdata);
     void onCustomAction(const LLSD& command_name);
     bool isActionVisible(const LLSD& userdata);
 
@@ -268,22 +275,22 @@ protected:
     // </FS:Zi>
 
     // <FS:Zi> Filter Links Menu
-    BOOL isFilterLinksChecked(const LLSD& userdata);
+    bool isFilterLinksChecked(const LLSD& userdata);
     void onFilterLinksChecked(const LLSD& userdata);
     // </FS:Zi> Filter Links Menu
 
     // <FS:Zi> FIRE-1175 - Filter Permissions Menu
-    BOOL isFilterPermissionsChecked(const LLSD &userdata);
+    bool isFilterPermissionsChecked(const LLSD &userdata);
     void onFilterPermissionsChecked(const LLSD &userdata);
     // </FS:Zi>
 
     // <FS:Zi> Extended Inventory Search
-    BOOL isSearchTypeChecked(const LLSD& userdata);
+    bool isSearchTypeChecked(const LLSD& userdata);
     void onSearchTypeChecked(const LLSD& userdata);
     // </FS:Zi> Extended Inventory Search
 
     // <FS:Ansariel> Keep better inventory layout
-    bool handleDragAndDropToTrash(BOOL drop, EDragAndDropType cargo_type, EAcceptance* accept);
+    bool handleDragAndDropToTrash(bool drop, EDragAndDropType cargo_type, EAcceptance* accept);
     static bool hasSettingsInventory();
     static bool hasMaterialsInventory();
     void updateTitle();
@@ -291,13 +298,16 @@ protected:
 
     void onCombinationRootChanged(bool gallery_clicked);
     void onCombinationGallerySelectionChanged(const LLUUID& category_id);
-    void onCombinationInventorySelectionChanged(const std::deque<LLFolderViewItem*>& items, BOOL user_action);
+    void onCombinationInventorySelectionChanged(const std::deque<LLFolderViewItem*>& items, bool user_action);
     /**
      * Set upload cost in "Upload" sub menu.
      */
     void setUploadCostIfNeeded();
     void disableAddIfNeeded();
 private:
+    LLSidepanelInventory*       mParentSidepanel = nullptr;
+    LLPanelMarketplaceInbox*    mInboxPanel = nullptr;
+
     LLDragAndDropButton*        mTrashButton; // <FS:Ansariel> Keep better inventory layout
     LLToggleableMenu*           mMenuGearDefault;
     LLToggleableMenu*           mMenuViewDefault;

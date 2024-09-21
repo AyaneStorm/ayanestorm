@@ -42,8 +42,8 @@
 #include "llviewerjoystick.h"
 #include "llviewermediafocus.h"
 
-extern BOOL gCubeSnapshot;
-extern BOOL gTeleportDisplay;
+extern bool gCubeSnapshot;
+extern bool gTeleportDisplay;
 
 // get the next highest power of two of v (or v if v is already a power of two)
 //defined in llvertexbuffer.cpp
@@ -98,10 +98,10 @@ void LLHeroProbeManager::update()
     if (mMipChain.empty())
     {
         U32 res = mProbeResolution;
-        U32 count = log2((F32)res) + 0.5f;
+        U32 count = (U32)(log2((F32)res) + 0.5f);
 
         mMipChain.resize(count);
-        for (int i = 0; i < count; ++i)
+        for (U32 i = 0; i < count; ++i)
         {
             mMipChain[i].allocate(res, res, GL_RGBA16F);
             res /= 2;
@@ -121,7 +121,7 @@ void LLHeroProbeManager::update()
         // Find our nearest hero candidate.
         float last_distance = 99999.f;
         float camera_center_distance = 99999.f;
-        mNearestHero = nullptr; // <FS:Beq/> LL-1719/1721 Mirrors do not disable properly (interim fix)
+        mNearestHero = nullptr;
         for (auto vo : mHeroVOList)
         {
             if (vo && !vo->isDead() && vo->mDrawable.notNull() && vo->isReflectionProbe() && vo->getReflectionProbeIsBox())
@@ -205,34 +205,22 @@ void LLHeroProbeManager::update()
                 LLVector3(0, 0, -1)
             };
 
-            // Iterate through each face of the cube
-            for (int i = 0; i < 6; i++)
-            {
-                float cube_facing = fmax(-1, fmin(1.0f, cameraDirection * cubeFaces[i]));
-
-                cube_facing = 1 - cube_facing;
-
-                mFaceUpdateList[i] = ceilf(cube_facing * gPipeline.RenderHeroProbeConservativeUpdateMultiplier);
-            }
-
-            
             mProbes[0]->mOrigin = probe_pos;
+            mProbes[0]->mRadius = mNearestHero->getScale().magVec() * 0.5f;
         }
         else
         {
             mNearestHero = nullptr;
-            mDefaultProbe->mViewerObject = nullptr; // <FS:Beq/> FIRE-34201 TP crash
+            mDefaultProbe->mViewerObject = nullptr;
         }
 
         mHeroProbeStrength = 1;
     }
-    // <FS:Beq> LL-1719/1721 Mirrors do not disable properly (interim fix)
     else
     {
         mNearestHero = nullptr;
-        mDefaultProbe->mViewerObject = nullptr; // <FS:Beq/> FIRE-34201 TP crash
+        mDefaultProbe->mViewerObject = nullptr;
     }
-    // </FS:Beq>
 }
 
 void LLHeroProbeManager::renderProbes()
@@ -245,9 +233,10 @@ void LLHeroProbeManager::renderProbes()
 
     static LLCachedControl<S32> sDetail(gSavedSettings, "RenderHeroReflectionProbeDetail", -1);
     static LLCachedControl<S32> sLevel(gSavedSettings, "RenderHeroReflectionProbeLevel", 3);
+    static LLCachedControl<S32> sUpdateRate(gSavedSettings, "RenderHeroProbeUpdateRate", 0);
 
     F32 near_clip = 0.01f;
-    if (mNearestHero != nullptr && (gPipeline.RenderHeroProbeUpdateRate == 0 || (gFrameCount % gPipeline.RenderHeroProbeUpdateRate) == 0) &&
+    if (mNearestHero != nullptr &&
         !gTeleportDisplay && !gDisconnected && !LLAppViewer::instance()->logoutRequestSent())
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("hpmu - realtime");
@@ -255,22 +244,38 @@ void LLHeroProbeManager::renderProbes()
         bool radiance_pass = gPipeline.mReflectionMapManager.isRadiancePass();
 
         gPipeline.mReflectionMapManager.mRadiancePass = true;
-        mRenderingMirror                              = true;
+        mRenderingMirror = true;
 
-        doOcclusion();
+        S32 rate = sUpdateRate;
 
-        for (U32 j = 0; j < mProbes.size(); j++)
+        // rate must be divisor of 6 (1, 2, 3, or 6)
+        if (rate < 1)
         {
+            rate = 1;
+        }
+        else if (rate > 3)
+        {
+            rate = 6;
+        }
+
+        S32 face = gFrameCount % 6;
+
+        if (!mProbes.empty() && !mProbes[0].isNull() && !mProbes[0]->mOccluded)
+        {
+            LL_PROFILE_ZONE_NUM(gFrameCount % rate);
+            LL_PROFILE_ZONE_NUM(rate);
+
             for (U32 i = 0; i < 6; ++i)
             {
-                if (mFaceUpdateList[i] > 0 && mCurrentProbeUpdateFrame % mFaceUpdateList[i] == 0)
-                {
-                    updateProbeFace(mProbes[j], i, mNearestHero->getReflectionProbeIsDynamic() && sDetail > 0, near_clip);
-                    mCurrentProbeUpdateFrame = 0;
+                if ((gFrameCount % rate) == (i % rate))
+                { // update 6/rate faces per frame
+                    LL_PROFILE_ZONE_NUM(i);
+                    updateProbeFace(mProbes[0], i, mNearestHero->getReflectionProbeIsDynamic() && sDetail > 0, near_clip);
                 }
             }
-            generateRadiance(mProbes[j]);
+            generateRadiance(mProbes[0]);
         }
+
         mRenderingMirror = false;
 
         gPipeline.mReflectionMapManager.mRadiancePass = radiance_pass;
@@ -278,8 +283,6 @@ void LLHeroProbeManager::renderProbes()
         mProbes[0]->mViewerObject = mNearestHero;
         mProbes[0]->autoAdjustOrigin();
     }
-
-    mCurrentProbeUpdateFrame++;
 }
 
 // Do the reflection map update render passes.
@@ -354,7 +357,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
             gGaussianProgram.unbind();
         }
 
-        S32 mips = log2((F32)mProbeResolution) + 0.5f;
+        S32 mips = (S32)(log2((F32)mProbeResolution) + 0.5f);
 
         gReflectionMipProgram.bind();
         S32 diffuseChannel = gReflectionMipProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE, LLTexUnit::TT_TEXTURE);
@@ -384,7 +387,8 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 
             res /= 2;
 
-            S32 mip = i - (mMipChain.size() - mips);
+            llassert(mMipChain.size() <= size_t(S32_MAX));
+            GLint mip = i - (S32(mMipChain.size()) - mips);
 
             if (mip >= 0)
             {
@@ -412,6 +416,7 @@ void LLHeroProbeManager::updateProbeFace(LLReflectionMap* probe, U32 face, bool 
 // Useful when we may not always be rendering a full set of faces of the probe.
 void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
 {
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
     S32 sourceIdx = mReflectionProbeCount;
 
     // Unlike the reflectionmap manager, all probes are considered "realtime" for hero probes.
@@ -442,7 +447,7 @@ void LLHeroProbeManager::generateRadiance(LLReflectionMap* probe)
                 static LLStaticHashedString sStrength("probe_strength");
 
                 gHeroRadianceGenProgram.uniform1f(sRoughness, (F32) i / (F32) (mMipChain.size() - 1));
-                gHeroRadianceGenProgram.uniform1f(sMipLevel, i);
+                gHeroRadianceGenProgram.uniform1f(sMipLevel, (GLfloat)i);
                 gHeroRadianceGenProgram.uniform1i(sWidth, mProbeResolution);
                 gHeroRadianceGenProgram.uniform1f(sStrength, 1);
 
@@ -512,7 +517,8 @@ void LLHeroProbeManager::updateUniforms()
         mHeroData.heroSphere.mV[3] = mProbes[0]->mRadius;
     }
 
-    mHeroData.heroMipCount = mMipChain.size();
+    llassert(mMipChain.size() <= size_t(S32_MAX));
+    mHeroData.heroMipCount = S32(mMipChain.size());
 }
 
 void LLHeroProbeManager::renderDebug()
@@ -543,7 +549,7 @@ void LLHeroProbeManager::initReflectionMaps()
         mReset = false;
         mReflectionProbeCount = count;
         mProbeResolution      = gSavedSettings.getS32("RenderHeroProbeResolution");
-        mMaxProbeLOD = log2f(mProbeResolution) - 1.f; // number of mips - 1
+        mMaxProbeLOD = log2f((F32)mProbeResolution) - 1.f; // number of mips - 1
 
         mTexture = new LLCubeMapArray();
 
@@ -596,7 +602,6 @@ void LLHeroProbeManager::cleanup()
 {
     mVertexBuffer = nullptr;
     mRenderTarget.release();
-    mHeroRenderTarget.release();
 
     mMipChain.clear();
 
@@ -604,10 +609,7 @@ void LLHeroProbeManager::cleanup()
 
     mProbes.clear();
 
-    mReflectionMaps.clear();
-
     mDefaultProbe = nullptr;
-    mUpdatingProbe = nullptr;
 }
 
 void LLHeroProbeManager::doOcclusion()
@@ -617,7 +619,7 @@ void LLHeroProbeManager::doOcclusion()
 
     for (auto& probe : mProbes)
     {
-        if (probe != nullptr && probe != mDefaultProbe)
+        if (probe != nullptr)
         {
             probe->doOcclusion(eye);
         }

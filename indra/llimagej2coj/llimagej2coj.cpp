@@ -175,7 +175,7 @@ static OPJ_OFF_T opj_skip(OPJ_OFF_T bytes, void* user_data)
     JPEG2KBase* jpeg_codec = static_cast<JPEG2KBase*>(user_data);
     jpeg_codec->offset += bytes;
 
-    if (jpeg_codec->offset > jpeg_codec->size)
+    if (jpeg_codec->offset > (OPJ_OFF_T)jpeg_codec->size)
     {
         jpeg_codec->offset = jpeg_codec->size;
         // Indicate end of stream
@@ -434,41 +434,20 @@ public:
         opj_set_default_encoder_parameters(&parameters);
         parameters.cod_format = OPJ_CODEC_J2K;
         parameters.cp_disto_alloc = 1;
-        
-        // <FS:Chanayane> Fixes bad upload quality issue with OpenJPEG
-        /* We compute that value in the encode method as it should depend on the image dimensions */
-        //parameters.max_cs_size = (1 << 15);
-        // </FS:Chanayane>
 
         if (reversible)
         {
-            // <FS:Chanayane> Fixes bad upload quality issue with OpenJPEG
             parameters.max_cs_size = 0; // do not limit size for reversible compression
             parameters.irreversible = 0; // should be the default, but, just in case
-            // </FS:Chanayane>
             parameters.tcp_numlayers = 1;
-            // <FS:Chanayane> Fixes bad upload quality issue with OpenJPEG
-            //parameters.tcp_rates[0] = 1.0f;
-            /* documentation is wrong, should be 0.0f for lossless! 
+            /* documentation seems to be wrong, should be 0.0f for lossless, not 1.0f
                see https://github.com/uclouvain/openjpeg/blob/39e8c50a2f9bdcf36810ee3d41bcbf1cc78968ae/src/lib/openjp2/j2k.c#L7755
             */
             parameters.tcp_rates[0] = 0.0f;
-            // </FS:Chanayane>
         }
         else
         {
-            // <FS:Chanayane> Fixes bad upload quality issue with OpenJPEG
-            /* we compute these values in the encode method */
-            //parameters.tcp_numlayers = 5;
-            //parameters.tcp_rates[0] = 1920.0f;
-            //parameters.tcp_rates[1] = 960.0f;
-            //parameters.tcp_rates[2] = 480.0f;
-            //parameters.tcp_rates[3] = 120.0f;
-            //parameters.tcp_rates[4] = 30.0f;
             parameters.irreversible = 1;
-            /* tcp_mct is computed in encode method */
-            //parameters.tcp_mct = 1;
-            // </FS:Chanayane>
         }
 
         if (comment_text)
@@ -510,6 +489,9 @@ public:
 
     bool encode(const LLImageRaw& rawImageIn, LLImageJ2C &compressedImageOut)
     {
+        LLImageDataSharedLock lockIn(&rawImageIn);
+        LLImageDataLock lockOut(&compressedImageOut);
+
         setImage(rawImageIn);
 
         encoder = opj_create_compress(OPJ_CODEC_J2K);
@@ -559,11 +541,55 @@ public:
             }
 
             //ensure that we have at least a minimal size
-            max_cs_size = llmax(max_cs_size, FIRST_PACKET_SIZE);
+            max_cs_size = llmax(max_cs_size, (U32)FIRST_PACKET_SIZE);
            
             parameters.max_cs_size = max_cs_size;
         }
         // </FS:Chanayane>
+
+        // if not lossless compression, computes tcp_numlayers and max_cs_size depending on the image dimensions
+        if( parameters.irreversible ) {
+
+            // computes a number of layers
+            U32 surface = rawImageIn.getWidth() * rawImageIn.getHeight();
+            U32 nb_layers = 1;
+            U32 s = 64*64;
+            while (surface > s)
+            {
+                nb_layers++;
+                s *= 4;
+            }
+            nb_layers = llclamp(nb_layers, 1, 6);
+
+            parameters.tcp_numlayers = nb_layers;
+            parameters.tcp_rates[nb_layers - 1] = (U32)(1.f / DEFAULT_COMPRESSION_RATE); // 1:8 by default
+
+            // for each subsequent layer, computes its rate and adds surface * numcomps * 1/rate to the max_cs_size
+            U32 max_cs_size = (U32)(surface * image->numcomps * DEFAULT_COMPRESSION_RATE);
+            U32 multiplier;
+            for (int i = nb_layers - 2; i >= 0; i--)
+            {
+                if( i == nb_layers - 2 )
+                {
+                    multiplier = 15;
+                }
+                else if( i == nb_layers - 3 )
+                {
+                    multiplier = 4;
+                }
+                else
+                {
+                    multiplier = 2;
+                }
+                parameters.tcp_rates[i] = parameters.tcp_rates[i + 1] * multiplier;
+                max_cs_size += (U32)(surface * image->numcomps * (1 / parameters.tcp_rates[i]));
+            }
+
+            //ensure that we have at least a minimal size
+            max_cs_size = llmax(max_cs_size, (U32)FIRST_PACKET_SIZE);
+
+            parameters.max_cs_size = max_cs_size;
+        }
 
         if (!opj_setup_encoder(encoder, &parameters, image))
         {
@@ -621,7 +647,7 @@ public:
         {
             // "append" (set) the data we "streamed" (memcopied) for writing to the formatted image
             // with side-effect of setting the actually encoded size  to same
-            compressedImageOut.allocateData(offset);
+            compressedImageOut.allocateData((S32)offset);
             memcpy(compressedImageOut.getData(), buffer, offset);
             compressedImageOut.updateData(); // update width, height etc from header
         }
@@ -799,6 +825,9 @@ bool LLImageJ2COJ::initEncode(LLImageJ2C &base, LLImageRaw &raw_image, int block
 
 bool LLImageJ2COJ::decodeImpl(LLImageJ2C &base, LLImageRaw &raw_image, F32 decode_time, S32 first_channel, S32 max_channel_count)
 {
+    LLImageDataLock lockIn(&base);
+    LLImageDataLock lockOut(&raw_image);
+
     JPEG2KDecode decoder(0);
 
     // <FS:Techwolf Lupindo> texture comment metadata reader
@@ -906,7 +935,7 @@ bool LLImageJ2COJ::decodeImpl(LLImageJ2C &base, LLImageRaw &raw_image, F32 decod
             S32 offset = dest;
             for (S32 y = (height - 1); y >= 0; y--)
             {
-                for (S32 x = 0; x < width; x++)
+                for (U32 x = 0; x < width; x++)
                 {
                     rawp[offset] = image->comps[comp].data[y*comp_width + x];
                     offset += channels;
@@ -942,6 +971,8 @@ bool LLImageJ2COJ::encodeImpl(LLImageJ2C &base, const LLImageRaw &raw_image, con
 
 bool LLImageJ2COJ::getMetadata(LLImageJ2C &base)
 {
+    LLImageDataLock lock(&base);
+
     JPEG2KDecode decode(0);
 
     S32 width = 0;

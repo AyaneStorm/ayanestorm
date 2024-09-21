@@ -38,8 +38,8 @@
 
 LLStringTable LLCharacter::sVisualParamNames(1024);
 
-std::vector< LLCharacter* > LLCharacter::sInstances;
-BOOL LLCharacter::sAllowInstancesChange = TRUE ;
+std::list< LLCharacter* > LLCharacter::sInstances;
+bool LLCharacter::sAllowInstancesChange = true ;
 
 //-----------------------------------------------------------------------------
 // LLCharacter()
@@ -53,7 +53,6 @@ LLCharacter::LLCharacter()
     mSkeletonSerialNum( 0 )
 {
     llassert_always(sAllowInstancesChange) ;
-    sInstances.push_back(this);
 
     mMotionController.setCharacter( this );
     mPauseRequest = new LLPauseRequestHandle();
@@ -66,28 +65,12 @@ LLCharacter::LLCharacter()
 //-----------------------------------------------------------------------------
 LLCharacter::~LLCharacter()
 {
-    for (LLVisualParam *param = getFirstVisualParam();
-        param;
-        param = getNextVisualParam())
+    for (const auto& it : mVisualParamIndexMap)
     {
-        delete param;
+        delete it.second;
     }
-
-    U32 i ;
-    U32 size = sInstances.size() ;
-    for(i = 0 ; i < size ; i++)
-    {
-        if(sInstances[i] == this)
-        {
-            break ;
-        }
-    }
-
-    llassert_always(i < size) ;
 
     llassert_always(sAllowInstancesChange) ;
-    sInstances[i] = sInstances[size - 1] ;
-    sInstances.pop_back() ;
 }
 
 
@@ -122,7 +105,7 @@ LLJoint *LLCharacter::getJoint( const JointKey &name )
 //-----------------------------------------------------------------------------
 // registerMotion()
 //-----------------------------------------------------------------------------
-BOOL LLCharacter::registerMotion( const LLUUID& id, LLMotionConstructor create )
+bool LLCharacter::registerMotion( const LLUUID& id, LLMotionConstructor create )
 {
     return mMotionController.registerMotion(id, create);
 }
@@ -155,7 +138,7 @@ LLMotion* LLCharacter::createMotion( const LLUUID &id )
 //-----------------------------------------------------------------------------
 // startMotion()
 //-----------------------------------------------------------------------------
-BOOL LLCharacter::startMotion(const LLUUID &id, F32 start_offset)
+bool LLCharacter::startMotion(const LLUUID &id, F32 start_offset)
 {
     return mMotionController.startMotion(id, start_offset);
 }
@@ -164,7 +147,7 @@ BOOL LLCharacter::startMotion(const LLUUID &id, F32 start_offset)
 //-----------------------------------------------------------------------------
 // stopMotion()
 //-----------------------------------------------------------------------------
-BOOL LLCharacter::stopMotion(const LLUUID& id, BOOL stop_immediate)
+bool LLCharacter::stopMotion(const LLUUID& id, bool stop_immediate)
 {
     return mMotionController.stopMotionLocally(id, stop_immediate);
 }
@@ -172,7 +155,7 @@ BOOL LLCharacter::stopMotion(const LLUUID& id, BOOL stop_immediate)
 //-----------------------------------------------------------------------------
 // isMotionActive()
 //-----------------------------------------------------------------------------
-BOOL LLCharacter::isMotionActive(const LLUUID& id)
+bool LLCharacter::isMotionActive(const LLUUID& id)
 {
     LLMotion *motionp = mMotionController.findMotion(id);
     if (motionp)
@@ -180,7 +163,7 @@ BOOL LLCharacter::isMotionActive(const LLUUID& id)
         return mMotionController.isMotionActive(motionp);
     }
 
-    return FALSE;
+    return false;
 }
 
 
@@ -288,8 +271,8 @@ void LLCharacter::removeAnimationData(std::string name)
 // setVisualParamWeight()
 //-----------------------------------------------------------------------------
 // <FS:Ansariel> [Legacy Bake]
-//BOOL LLCharacter::setVisualParamWeight(const LLVisualParam* which_param, F32 weight)
-BOOL LLCharacter::setVisualParamWeight(const LLVisualParam* which_param, F32 weight, BOOL upload_bake)
+//bool LLCharacter::setVisualParamWeight(const LLVisualParam* which_param, F32 weight)
+bool LLCharacter::setVisualParamWeight(const LLVisualParam* which_param, F32 weight, bool upload_bake)
 {
     S32 index = which_param->getID();
     visual_param_index_map_t::iterator index_iter = mVisualParamIndexMap.find(index);
@@ -298,17 +281,17 @@ BOOL LLCharacter::setVisualParamWeight(const LLVisualParam* which_param, F32 wei
         // <FS:Ansariel> [Legacy Bake]
         //index_iter->second->setWeight(weight);
         index_iter->second->setWeight(weight, upload_bake);
-        return TRUE;
+        return true;
     }
-    return FALSE;
+    return false;
 }
 
 //-----------------------------------------------------------------------------
 // setVisualParamWeight()
 //-----------------------------------------------------------------------------
 // <FS:Ansariel> [Legacy Bake]
-//BOOL LLCharacter::setVisualParamWeight(const char* param_name, F32 weight)
-BOOL LLCharacter::setVisualParamWeight(const char* param_name, F32 weight, BOOL upload_bake)
+//bool LLCharacter::setVisualParamWeight(const char* param_name, F32 weight)
+bool LLCharacter::setVisualParamWeight(const char* param_name, F32 weight, bool upload_bake)
 {
     std::string tname(param_name);
     LLStringUtil::toLower(tname);
@@ -319,18 +302,18 @@ BOOL LLCharacter::setVisualParamWeight(const char* param_name, F32 weight, BOOL 
         // <FS:Ansariel> [Legacy Bake]
         //name_iter->second->setWeight(weight);
         name_iter->second->setWeight(weight, upload_bake);
-        return TRUE;
+        return true;
     }
     LL_WARNS() << "LLCharacter::setVisualParamWeight() Invalid visual parameter: " << param_name << LL_ENDL;
-    return FALSE;
+    return false;
 }
 
 //-----------------------------------------------------------------------------
 // setVisualParamWeight()
 //-----------------------------------------------------------------------------
 // <FS:Ansariel> [Legacy Bake]
-//BOOL LLCharacter::setVisualParamWeight(S32 index, F32 weight)
-BOOL LLCharacter::setVisualParamWeight(S32 index, F32 weight, BOOL upload_bake)
+//bool LLCharacter::setVisualParamWeight(S32 index, F32 weight)
+bool LLCharacter::setVisualParamWeight(S32 index, F32 weight, bool upload_bake)
 {
     visual_param_index_map_t::iterator index_iter = mVisualParamIndexMap.find(index);
     if (index_iter != mVisualParamIndexMap.end())
@@ -338,10 +321,10 @@ BOOL LLCharacter::setVisualParamWeight(S32 index, F32 weight, BOOL upload_bake)
         // <FS:Ansariel> [Legacy Bake]
         //index_iter->second->setWeight(weight);
         index_iter->second->setWeight(weight, upload_bake);
-        return TRUE;
+        return true;
     }
     LL_WARNS() << "LLCharacter::setVisualParamWeight() Invalid visual parameter index: " << index << LL_ENDL;
-    return FALSE;
+    return false;
 }
 
 //-----------------------------------------------------------------------------
@@ -409,7 +392,7 @@ void LLCharacter::clearVisualParamWeights()
         {
             // <FS:Ansariel> [Legacy Bake]
             //param->setWeight( param->getDefaultWeight());
-            param->setWeight( param->getDefaultWeight(), FALSE);
+            param->setWeight( param->getDefaultWeight(), false);
         }
     }
 }

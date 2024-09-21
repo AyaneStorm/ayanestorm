@@ -35,7 +35,7 @@ lggBeamMapFloater::~lggBeamMapFloater()
 {
 }
 
-BOOL lggBeamMapFloater::postBuild()
+bool lggBeamMapFloater::postBuild()
 {
     getChild<LLUICtrl>("beamshape_save")->setCommitCallback(boost::bind(&lggBeamMapFloater::onClickSave, this));
     getChild<LLUICtrl>("beamshape_clear")->setCommitCallback(boost::bind(&lggBeamMapFloater::onClickClear, this));
@@ -47,7 +47,7 @@ BOOL lggBeamMapFloater::postBuild()
 
     mBeamshapePanel = getChild<LLPanel>("beamshape_draw");
 
-    return TRUE;
+    return true;
 }
 
 void lggBeamMapFloater::draw()
@@ -60,33 +60,33 @@ void lggBeamMapFloater::draw()
 
     gGL.pushMatrix();
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(rec.getCenterX(), rec.getCenterY(), 2.0f, 30, false);
+    gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 2.0f, 30, false);
     gGL.color4fv(LLColor4::black.mV);
-    gl_circle_2d(rec.getCenterX(), rec.getCenterY(), 30.0f, 30, false);
+    gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 30.0f, 30, false);
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(rec.getCenterX(), rec.getCenterY(), 60.0f, 30, false);
+    gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 60.0f, 30, false);
     gGL.color4fv(LLColor4::black.mV);
-    gl_circle_2d(rec.getCenterX(), rec.getCenterY(), 90.0f, 30, false);
+    gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 90.0f, 30, false);
     gGL.color4fv(LLColor4::white.mV);
-    gl_circle_2d(rec.getCenterX(), rec.getCenterY(), 120.0f, 30, false);
+    gl_circle_2d((F32)rec.getCenterX(), (F32)rec.getCenterY(), 120.0f, 30, false);
 
     for (std::vector<lggPoint>::iterator it = mDots.begin(); it != mDots.end(); ++it)
     {
         lggPoint dot = *it;
 
         gGL.color4fv(LLColor4::white.mV);
-        gl_circle_2d(dot.x, dot.y, 9.0f, 30, true);
+        gl_circle_2d((F32)dot.x, (F32)dot.y, 9.0f, 30, true);
 
         gGL.color4fv(LLColor4::black.mV);
-        gl_circle_2d(dot.x, dot.y, 8.0f, 30, true);
+        gl_circle_2d((F32)dot.x, (F32)dot.y, 8.0f, 30, true);
 
         gGL.color4fv(dot.c.mV);
-        gl_circle_2d(dot.x, dot.y, 7.0f, 30, true);
+        gl_circle_2d((F32)dot.x, (F32)dot.y, 7.0f, 30, true);
     }
     gGL.popMatrix();
 }
 
-BOOL lggBeamMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
+bool lggBeamMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     if (y > 39 && x > 16 && x < 394 && y < 317)
     {
@@ -100,13 +100,13 @@ BOOL lggBeamMapFloater::handleMouseDown(S32 x, S32 y, MASK mask)
     return LLFloater::handleMouseDown(x, y, mask);
 }
 
-BOOL lggBeamMapFloater::handleRightMouseDown(S32 x, S32 y, MASK mask)
+bool lggBeamMapFloater::handleRightMouseDown(S32 x, S32 y, MASK mask)
 {
     std::vector<lggPoint> newDots;
     for (std::vector<lggPoint>::iterator it = mDots.begin(); it != mDots.end(); ++it)
     {
         lggPoint dot = *it;
-        if (dist_vec(LLVector2(x, y), LLVector2(dot.x, dot.y)) >= 7)
+        if (dist_vec(LLVector2((F32)x, (F32)y), LLVector2((F32)dot.x, (F32)dot.y)) >= 7)
         {
             newDots.push_back(dot);
         }

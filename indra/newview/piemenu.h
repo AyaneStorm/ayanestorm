@@ -30,6 +30,7 @@
 
 #include "llmenugl.h"
 #include "llframetimer.h"
+#include "pieautohide.h"
 
 constexpr S32 PIE_MAX_SLICES = 8;
 
@@ -39,15 +40,21 @@ struct PieChildRegistry : public LLChildRegistry<PieChildRegistry>
     LLSINGLETON_EMPTY_CTOR(PieChildRegistry);
 };
 
-class PieMenu : public LLMenuGL
+class PieMenu : public LLMenuGL, public PieAutohide
 {
 public:
     // parameter block for the XUI factory
     struct Params : public LLInitParam::Block<Params, LLMenuGL::Params>
     {
         Optional<std::string> name;
+        // autohide feature to hide a disabled pie slice
+        Optional<bool> start_autohide;
+        // next item in an autohide chain
+        Optional<bool> autohide;
 
-        Params()
+        Params() :
+            start_autohide("start_autohide", false),
+            autohide("autohide", false)
         {
             visible = false;
         }
@@ -56,17 +63,17 @@ public:
     // PieChildRegistry contains a list of allowed child types for the XUI definition
     typedef PieChildRegistry child_registry_t;
 
-    PieMenu(const LLMenuGL::Params& p);
+    PieMenu(const Params& p);
 
-    /*virtual*/ void setVisible(BOOL visible);
+    /*virtual*/ void setVisible(bool visible);
 
     // adding and removing "child" slices to the pie
     /*virtual*/ bool addChild(LLView* child, S32 tab_group = 0);
     /*virtual*/ void removeChild(LLView* child);
 
-    /*virtual*/ BOOL handleHover(S32 x, S32 y, MASK mask);
-    /*virtual*/ BOOL handleMouseUp(S32 x, S32 y, MASK mask);
-    /*virtual*/ BOOL handleRightMouseUp(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleHover(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleMouseUp(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleRightMouseUp(S32 x, S32 y, MASK mask);
 
     // does all the hard work of bringing the menu on the screen
     void draw();
@@ -83,7 +90,7 @@ public:
     slice_list_t* mSlices;
 
     // appends a sub pie menu to the current pie
-    BOOL appendContextSubMenu(PieMenu* menu);
+    bool appendContextSubMenu(PieMenu* menu);
 
     // we never rearrange our menu
     void needsArrange() {};
@@ -94,7 +101,7 @@ public:
 
 protected:
     // general mouse button handling
-    BOOL handleMouseButtonUp(S32 x, S32 y, MASK mask);
+    bool handleMouseButtonUp(S32 x, S32 y, MASK mask);
     // font used for the menu
     const LLFontGL* mFont;
     // currently highlighted item, must be tested if it's a slice or submenu
@@ -105,7 +112,7 @@ protected:
     // timer for visual popup effect
     LLFrameTimer mPopupTimer;
 
-    // this is TRUE when the first mouseclick came to display the menu, used for borderless menu
+    // this is true when the first mouseclick came to display the menu, used for borderless menu
     bool mFirstClick;
 
     F32 getScaleFactor();

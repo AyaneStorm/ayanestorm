@@ -91,16 +91,16 @@ std::string checkFileExtension(const std::string& filename, LLPreviewTexture::EF
 
 LLPreviewTexture::LLPreviewTexture(const LLSD& key)
     : LLPreview((key.has("uuid") ? key.get("uuid") : key)), // Changed for texture preview mode
-      mLoadingFullImage( FALSE ),
-      mShowKeepDiscard(FALSE),
-      mCopyToInv(FALSE),
-      mIsCopyable(FALSE),
-      mIsFullPerm(FALSE),
-      mUpdateDimensions(TRUE),
+      mLoadingFullImage( false ),
+      mShowKeepDiscard(false),
+      mCopyToInv(false),
+      mIsCopyable(false),
+      mIsFullPerm(false),
+      mUpdateDimensions(true),
       mLastHeight(0),
       mLastWidth(0),
       mAspectRatio(0.f),
-      mPreviewToSave(FALSE),
+      mPreviewToSave(false),
       mImage(NULL),
       mImageOldBoostLevel(LLGLTexture::BOOST_NONE),
       mShowingButtons(false),
@@ -110,16 +110,16 @@ LLPreviewTexture::LLPreviewTexture(const LLSD& key)
     updateImageID();
     if (key.has("save_as"))
     {
-        mPreviewToSave = TRUE;
+        mPreviewToSave = true;
     }
     // Texture preview mode
     if (key.has("preview_only"))
     {
-        mShowKeepDiscard = FALSE;
-        mCopyToInv = FALSE;
-        mIsCopyable = FALSE;
-        mPreviewToSave = FALSE;
-        mIsFullPerm = FALSE;
+        mShowKeepDiscard = false;
+        mCopyToInv = false;
+        mIsCopyable = false;
+        mPreviewToSave = false;
+        mIsFullPerm = false;
     }
 }
 
@@ -173,8 +173,13 @@ void LLPreviewTexture::populateRatioList()
 }
 
 // virtual
-BOOL LLPreviewTexture::postBuild()
+bool LLPreviewTexture::postBuild()
 {
+    mButtonsPanel = getChild<LLLayoutPanel>("buttons_panel");
+    mDimensionsText = getChild<LLUICtrl>("dimensions");
+    mAspectRatioText = getChild<LLUICtrl>("aspect_ratio");
+    mDimensionsPanel = findChild<LLPanel>("dimensions_panel"); // <FS:Ansariel> Texture preview mode
+
     if (mCopyToInv)
     {
         getChild<LLButton>("Keep")->setLabel(getString("Copy"));
@@ -205,7 +210,7 @@ BOOL LLPreviewTexture::postBuild()
             getChild<LLUICtrl>("desc")->setValue(item->getDescription());
             getChild<LLLineEditor>("desc")->setPrevalidate(&LLTextValidate::validateASCIIPrintableNoPipe);
         }
-        BOOL source_library = mObjectUUID.isNull() && gInventory.isObjectDescendentOf(item->getUUID(), gInventory.getLibraryRootFolderID());
+        bool source_library = mObjectUUID.isNull() && gInventory.isObjectDescendentOf(item->getUUID(), gInventory.getLibraryRootFolderID());
         if (source_library)
         {
             getChildView("Discard")->setEnabled(false);
@@ -231,14 +236,11 @@ BOOL LLPreviewTexture::postBuild()
     //               trying to mark text
     if (findChild<LLLineEditor>("uploader"))
     {
-        getChild<LLLineEditor>("uploader")->setEnabled(FALSE);
-        getChild<LLLineEditor>("upload_time")->setEnabled(FALSE);
-        getChild<LLLineEditor>("uuid")->setEnabled(FALSE);
+        getChild<LLLineEditor>("uploader")->setEnabled(false);
+        getChild<LLLineEditor>("upload_time")->setEnabled(false);
+        getChild<LLLineEditor>("uuid")->setEnabled(false);
     }
     // </FS:Ansariel>
-
-    // <FS:Ansariel> Performance improvement
-    mDimensionsCtrl = getChild<LLUICtrl>("dimensions");
 
     // <FS:Ansariel> FIRE-20150: Add refresh button to texture preview
     getChild<LLButton>("btn_refresh")->setClickedCallback(boost::bind(&LLPreviewTexture::onButtonRefresh, this));
@@ -375,7 +377,7 @@ void LLPreviewTexture::draw()
 
 
 // virtual
-BOOL LLPreviewTexture::canSaveAs() const
+bool LLPreviewTexture::canSaveAs() const
 {
     return mIsFullPerm && !mLoadingFullImage && mImage.notNull() && !mImage->isMissingAsset();
 }
@@ -446,7 +448,7 @@ void LLPreviewTexture::saveTextureToFile(const std::vector<std::string>& filenam
     const LLInventoryItem* item = getItem();
     if (item && mPreviewToSave)
     {
-        mPreviewToSave = FALSE;
+        mPreviewToSave = false;
         LLFloaterReg::showTypedInstance<LLPreviewTexture>("preview_texture", item->getUUID());
     }
 
@@ -455,7 +457,7 @@ void LLPreviewTexture::saveTextureToFile(const std::vector<std::string>& filenam
     //mSaveFileName = filenames[0];
     mSaveFileName = checkFileExtension(filenames[0], format);
     // </FS:Ansariel>
-    mLoadingFullImage = TRUE;
+    mLoadingFullImage = true;
     getWindow()->incBusyCount();
 
     mImage->forceToSaveRawImage(0);//re-fetch the raw image if the old one is removed.
@@ -463,7 +465,7 @@ void LLPreviewTexture::saveTextureToFile(const std::vector<std::string>& filenam
     //mImage->setLoadedCallback(LLPreviewTexture::onFileLoadedForSave,
     mImage->setLoadedCallback(callback,
     // </FS:Ansariel>
-        0, TRUE, FALSE, new LLUUID(mItemUUID), &mCallbackTextureList);
+        0, true, false, new LLUUID(mItemUUID), &mCallbackTextureList);
 
     // <FS:Ansariel> FIRE-22851: Show texture "Save as" file picker subsequently instead all at once
     saveMultiple(remaining_ids);
@@ -505,48 +507,51 @@ void LLPreviewTexture::saveMultipleToFile(const std::string& file_name)
 
 
     mSaveFileName = filepath;
-    mLoadingFullImage = TRUE;
+    mLoadingFullImage = true;
     getWindow()->incBusyCount();
 
     mImage->forceToSaveRawImage(0);//re-fetch the raw image if the old one is removed.
     // <FS:Ansariel> Allow to use user-defined default save format for textures
     //mImage->setLoadedCallback(LLPreviewTexture::onFileLoadedForSavePNG,
-    //    0, TRUE, FALSE, new LLUUID(mItemUUID), &mCallbackTextureList);
+    //    0, true, false, new LLUUID(mItemUUID), &mCallbackTextureList);
     if (gSavedSettings.getBOOL("FSTextureDefaultSaveAsFormat"))
     {
         mImage->setLoadedCallback(LLPreviewTexture::onFileLoadedForSavePNG,
-            0, TRUE, FALSE, new LLUUID(mItemUUID), &mCallbackTextureList);
+            0, true, false, new LLUUID(mItemUUID), &mCallbackTextureList);
     }
     else
     {
         mImage->setLoadedCallback(LLPreviewTexture::onFileLoadedForSaveTGA,
-            0, TRUE, FALSE, new LLUUID(mItemUUID), &mCallbackTextureList);
+            0, true, false, new LLUUID(mItemUUID), &mCallbackTextureList);
     }
     // </FS:Ansariel>
 }
 
 // virtual
-void LLPreviewTexture::reshape(S32 width, S32 height, BOOL called_from_parent)
+void LLPreviewTexture::reshape(S32 width, S32 height, bool called_from_parent)
 {
     LLPreview::reshape(width, height, called_from_parent);
-
-    LLRect dim_rect;
-    // Ansariel: Need the rect of the dimensions_panel
-    //LLView *pView = findChildView( "dimensions" );
-    LLView *pView = findChildView( "dimensions_panel" );
-
-    if( pView )
-        dim_rect = pView->getRect();
 
     S32 horiz_pad = 2 * (LLPANEL_BORDER_WIDTH + PREVIEW_PAD) + PREVIEW_RESIZE_HANDLE_SIZE;
 
     // add space for dimensions and aspect ratio
-    S32 info_height = dim_rect.mTop + CLIENT_RECT_VPAD;
+    S32 info_height = CLIENT_RECT_VPAD;
     // <FS:Ansariel> Texture preview mode
-    //if (getChild<LLLayoutPanel>("buttons_panel")->getVisible())
+    //if (mDimensionsText)
     //{
-    //  info_height += getChild<LLLayoutPanel>("buttons_panel")->getRect().getHeight();
+    //    LLRect dim_rect(mDimensionsText->getRect());
+    //    info_height += dim_rect.mTop;
     //}
+
+    //if (mButtonsPanel->getVisible())
+    //{
+    //  info_height += mButtonsPanel->getRect().getHeight();
+    //}
+    if (mDimensionsPanel)
+    {
+        LLRect dim_rect(mDimensionsPanel->getRect());
+        info_height += dim_rect.mTop;
+    }
     // </FS:Ansariel>
     LLRect client_rect(horiz_pad, getRect().getHeight(), getRect().getWidth() - horiz_pad, 0);
     client_rect.mTop -= (PREVIEW_HEADER_SIZE + CLIENT_RECT_VPAD);
@@ -607,7 +612,7 @@ void LLPreviewTexture::onFocusReceived()
 
 void LLPreviewTexture::openToSave()
 {
-    mPreviewToSave = TRUE;
+    mPreviewToSave = true;
 }
 
 // <FS:Ansariel> Texture preview mode
@@ -616,19 +621,19 @@ void LLPreviewTexture::openToSave()
 //  getChildView("desc txt")->setVisible(false);
 //  getChildView("desc")->setVisible(false);
 //  getChild<LLLayoutStack>("preview_stack")->collapsePanel(getChild<LLLayoutPanel>("buttons_panel"), true);
-//  getChild<LLLayoutPanel>("buttons_panel")->setVisible(false);
+//  mButtonsPanel->setVisible(false);
 //  getChild<LLComboBox>("combo_aspect_ratio")->setCurrentByIndex(0); //unconstrained
 //  reshape(getRect().getWidth(), getRect().getHeight());
 //}
 // </FS:Ansariel>
 
 // static
-void LLPreviewTexture::onFileLoadedForSaveTGA(BOOL success,
+void LLPreviewTexture::onFileLoadedForSaveTGA(bool success,
                        LLViewerFetchedTexture *src_vi,
                        LLImageRaw* src,
                        LLImageRaw* aux_src,
                        S32 discard_level,
-                       BOOL final,
+                       bool final,
                        void* userdata)
 {
     LLUUID* item_uuid = (LLUUID*) userdata;
@@ -642,7 +647,7 @@ void LLPreviewTexture::onFileLoadedForSaveTGA(BOOL success,
         if( self )
         {
             self->getWindow()->decBusyCount();
-            self->mLoadingFullImage = FALSE;
+            self->mLoadingFullImage = false;
         }
     }
 
@@ -698,12 +703,12 @@ void LLPreviewTexture::onFileLoadedForSaveTGA(BOOL success,
 }
 
 // static
-void LLPreviewTexture::onFileLoadedForSavePNG(BOOL success,
+void LLPreviewTexture::onFileLoadedForSavePNG(bool success,
                                             LLViewerFetchedTexture *src_vi,
                                             LLImageRaw* src,
                                             LLImageRaw* aux_src,
                                             S32 discard_level,
-                                            BOOL final,
+                                            bool final,
                                             void* userdata)
 {
     LLUUID* item_uuid = (LLUUID*) userdata;
@@ -717,7 +722,7 @@ void LLPreviewTexture::onFileLoadedForSavePNG(BOOL success,
         if( self )
         {
             self->getWindow()->decBusyCount();
-            self->mLoadingFullImage = FALSE;
+            self->mLoadingFullImage = false;
         }
     }
 
@@ -779,15 +784,15 @@ void LLPreviewTexture::updateDimensions()
 
     // Update the width/height display every time
     // <FS:Ansariel> Performance improvement
-    //getChild<LLUICtrl>("dimensions")->setTextArg("[WIDTH]",  llformat("%d", img_width));
-    //getChild<LLUICtrl>("dimensions")->setTextArg("[HEIGHT]", llformat("%d", img_height));
+    //mDimensionsText->setTextArg("[WIDTH]",  llformat("%d", img_width));
+    //mDimensionsText->setTextArg("[HEIGHT]", llformat("%d", img_height));
     if (img_width != mLastWidth)
     {
-        mDimensionsCtrl->setTextArg("[WIDTH]", llformat("%d", img_width));
+        mDimensionsText->setTextArg("[WIDTH]", llformat("%d", img_width));
     }
     if (img_height != mLastHeight)
     {
-        mDimensionsCtrl->setTextArg("[HEIGHT]", llformat("%d", img_height));
+        mDimensionsText->setTextArg("[HEIGHT]", llformat("%d", img_height));
     }
     // </FS:Ansariel> Performance improvement
 
@@ -797,25 +802,25 @@ void LLPreviewTexture::updateDimensions()
     // Reshape the floater only when required
     if (mUpdateDimensions)
     {
-        mUpdateDimensions = FALSE;
+        mUpdateDimensions = false;
 
         // <FS:Ansariel>: Show image at full resolution if possible
         //reshape floater
         //reshape(getRect().getWidth(), getRect().getHeight());
 
-        //gFloaterView->adjustToFitScreen(this, FALSE);
+        //gFloaterView->adjustToFitScreen(this, false);
 
         // Move dimensions panel into correct position depending
         // if any of the buttons is shown
         LLView* button_panel = getChildView("button_panel");
         LLView* dimensions_panel = getChildView("dimensions_panel");
-        dimensions_panel->setVisible(TRUE);
+        dimensions_panel->setVisible(true);
         if (!getChildView("Keep")->getVisible() &&
             !getChildView("Discard")->getVisible() &&
             !getChildView("btn_refresh")->getVisible() && // <FS:Ansariel> FIRE-20150: Add refresh button to texture preview
             !getChildView("save_tex_btn")->getVisible())
         {
-            button_panel->setVisible(FALSE);
+            button_panel->setVisible(false);
             if (mShowingButtons)
             {
                 dimensions_panel->translate(0, -button_panel->getRect().mTop);
@@ -824,7 +829,7 @@ void LLPreviewTexture::updateDimensions()
         }
         else
         {
-            button_panel->setVisible(TRUE);
+            button_panel->setVisible(true);
             if (!mShowingButtons)
             {
                 dimensions_panel->translate(0, button_panel->getRect().mTop);
@@ -839,7 +844,7 @@ void LLPreviewTexture::updateDimensions()
             bool adjust_height = false;
             if (mImage->mComment.find("a") != mImage->mComment.end())
             {
-                getChildView("uploader_date_time")->setVisible(TRUE);
+                getChildView("uploader_date_time")->setVisible(true);
                 LLUUID id = LLUUID(mImage->mComment["a"]);
                 std::string name;
                 LLAvatarName avatar_name;
@@ -868,7 +873,7 @@ void LLPreviewTexture::updateDimensions()
             {
                 if (!adjust_height)
                 {
-                    getChildView("uploader_date_time")->setVisible(TRUE);
+                    getChildView("uploader_date_time")->setVisible(true);
                     adjust_height = true;
                 }
                 std::string date_time = mImage->mComment["z"];
@@ -882,7 +887,7 @@ void LLPreviewTexture::updateDimensions()
             // add extra space for uploader and date_time
             if (adjust_height)
             {
-                getChildView("openprofile")->setVisible(TRUE);
+                getChildView("openprofile")->setVisible(true);
                 additional_height += (getChild<LLTextEditor>("uploader_date_time")->getTextBoundingRect().getHeight());
             }
         }
@@ -891,7 +896,7 @@ void LLPreviewTexture::updateDimensions()
             // AnsaStorm skin
             if (mImage->mComment.find("a") != mImage->mComment.end())
             {
-                getChild<LLButton>("openprofile")->setEnabled(TRUE);
+                getChild<LLButton>("openprofile")->setEnabled(true);
                 LLUUID id = LLUUID(mImage->mComment["a"]);
                 std::string name;
                 LLAvatarName avatar_name;
@@ -933,14 +938,14 @@ void LLPreviewTexture::updateDimensions()
             LLView* uploadtime_view = getChildView("upload_time");
             LLView* uuid_view = getChildView("uuid");
 
-            uploader_view->setVisible(TRUE);
-            uploadtime_view->setVisible(TRUE);
-            uuid_view->setVisible(TRUE);
-            getChildView("openprofile")->setVisible(TRUE);
-            getChildView("copyuuid")->setVisible(TRUE);
-            getChildView("uploader_label")->setVisible(TRUE);
-            getChildView("upload_time_label")->setVisible(TRUE);
-            getChildView("uuid_label")->setVisible(TRUE);
+            uploader_view->setVisible(true);
+            uploadtime_view->setVisible(true);
+            uuid_view->setVisible(true);
+            getChildView("openprofile")->setVisible(true);
+            getChildView("copyuuid")->setVisible(true);
+            getChildView("uploader_label")->setVisible(true);
+            getChildView("upload_time_label")->setVisible(true);
+            getChildView("uuid_label")->setVisible(true);
 
             additional_height = uploader_view->getRect().getHeight() + uploadtime_view->getRect().getHeight() + uuid_view->getRect().getHeight() + 3 * PREVIEW_VPAD;
         }
@@ -971,19 +976,19 @@ void LLPreviewTexture::updateDimensions()
             host->growToFit(floater_target_width, floater_target_height);
         }
         reshape(floater_target_width, floater_target_height);
-        gFloaterView->adjustToFitScreen(this, FALSE);
+        gFloaterView->adjustToFitScreen(this, false);
         // </FS:Ansariel>: Show image at full resolution if possible
 
-        LLRect dim_rect(getChildView("dimensions")->getRect());
-        LLRect aspect_label_rect(getChildView("aspect_ratio")->getRect());
-        getChildView("aspect_ratio")->setVisible( dim_rect.mRight < aspect_label_rect.mLeft);
+        LLRect dim_rect(mDimensionsText->getRect());
+        LLRect aspect_label_rect(mAspectRatioText->getRect());
+        mAspectRatioText->setVisible( dim_rect.mRight < aspect_label_rect.mLeft);
 
         // <FS:Ansariel> Asset UUID
         if (mIsFullPerm)
         {
             LLView* copy_uuid_btn = getChildView("copyuuid");
-            copy_uuid_btn->setVisible(TRUE);
-            copy_uuid_btn->setEnabled(TRUE);
+            copy_uuid_btn->setVisible(true);
+            copy_uuid_btn->setEnabled(true);
         }
         // </FS:Ansariel>
     }
@@ -1002,7 +1007,7 @@ void LLPreviewTexture::callbackLoadName(const LLUUID& agent_id, const LLAvatarNa
     {
         mUploaderDateTime.setArg("[UPLOADER]", av_name.getCompleteName());
         getChild<LLTextEditor>("uploader_date_time")->setText(mUploaderDateTime.getString());
-        mUpdateDimensions = TRUE;
+        mUpdateDimensions = true;
     }
     else if (findChild<LLLineEditor>("uploader"))
     {
@@ -1023,21 +1028,21 @@ void LLPreviewTexture::onButtonClickProfile()
 void LLPreviewTexture::onButtonClickUUID()
 {
     std::string uuid = mImageID.asString();
-    LLClipboard::instance().copyToClipboard(utf8str_to_wstring(uuid), 0, uuid.size());
+    LLClipboard::instance().copyToClipboard(utf8str_to_wstring(uuid), 0, static_cast<S32>(uuid.size()));
 }
 
 /* static */
-void LLPreviewTexture::onTextureLoaded(BOOL success, LLViewerFetchedTexture* src_vi, LLImageRaw* src, LLImageRaw* aux_src, S32 discard_level, BOOL final, void* userdata)
+void LLPreviewTexture::onTextureLoaded(bool success, LLViewerFetchedTexture* src_vi, LLImageRaw* src, LLImageRaw* aux_src, S32 discard_level, bool final, void* userdata)
 {
     LLPreviewTexture* self = (LLPreviewTexture*)userdata;
-    self->mUpdateDimensions = TRUE;
+    self->mUpdateDimensions = true;
 }
 // </FS:Techwolf Lupindo> texture comment decoder
 
 // Return true if everything went fine, false if we somewhat modified the ratio as we bumped on border values
 bool LLPreviewTexture::setAspectRatio(const F32 width, const F32 height)
 {
-    mUpdateDimensions = TRUE;
+    mUpdateDimensions = true;
 
     // We don't allow negative width or height. Also, if height is positive but too small, we reset to default
     // A default 0.f value for mAspectRatio means "unconstrained" in the rest of the code
@@ -1089,10 +1094,10 @@ void LLPreviewTexture::loadAsset()
     // </FS:Beq>
     mImage->forceToSaveRawImage(0) ;
     // <FS:Techwolf Lupindo> texture comment decoder
-    mImage->setLoadedCallback(LLPreviewTexture::onTextureLoaded, 0, TRUE, FALSE, this, &mCallbackTextureList);
+    mImage->setLoadedCallback(LLPreviewTexture::onTextureLoaded, 0, true, false, this, &mCallbackTextureList);
     // </FS:Techwolf Lupindo>
     mAssetStatus = PREVIEW_ASSET_LOADING;
-    mUpdateDimensions = TRUE;
+    mUpdateDimensions = true;
     updateDimensions();
     getChildView("save_tex_btn")->setEnabled(canSaveAs());
     getChildView("save_tex_btn")->setVisible(canSaveAs());
@@ -1104,7 +1109,7 @@ void LLPreviewTexture::loadAsset()
     else
     {
         // check that we can remove item
-        BOOL source_library = gInventory.isObjectDescendentOf(mItemUUID, gInventory.getLibraryRootFolderID());
+        bool source_library = gInventory.isObjectDescendentOf(mItemUUID, gInventory.getLibraryRootFolderID());
         if (source_library)
         {
             getChildView("Discard")->setEnabled(false);
@@ -1138,7 +1143,7 @@ void LLPreviewTexture::adjustAspectRatio()
     S32 num = mImage->getFullWidth() / divisor;
     S32 denom = mImage->getFullHeight() / divisor;
 
-    if (setAspectRatio(num, denom))
+    if (setAspectRatio((F32)num, (F32)denom))
     {
         // Select corresponding ratio entry in the combo list
         LLComboBox* combo = getChild<LLComboBox>("combo_aspect_ratio");
@@ -1154,11 +1159,11 @@ void LLPreviewTexture::adjustAspectRatio()
                 std::string ratio = std::to_string(num)+":" + std::to_string(denom);
                 mRatiosList.push_back(ratio);
                 combo->add(ratio);
-                combo->setCurrentByIndex(mRatiosList.size()- 1);
+                combo->setCurrentByIndex(static_cast<S32>(mRatiosList.size()) - 1);
             }
             else
             {
-                combo->setCurrentByIndex(found - mRatiosList.begin());
+                combo->setCurrentByIndex((S32)(found - mRatiosList.begin()));
             }
         }
     }
@@ -1172,7 +1177,7 @@ void LLPreviewTexture::adjustAspectRatio()
         }
     }
 
-    mUpdateDimensions = TRUE;
+    mUpdateDimensions = true;
 }
 
 void LLPreviewTexture::updateImageID()
@@ -1185,9 +1190,9 @@ void LLPreviewTexture::updateImageID()
         // here's the old logic...
         //mShowKeepDiscard = item->getPermissions().getCreator() != gAgent.getID();
         // here's the new logic... 'cos we hate disappearing buttons.
-        mShowKeepDiscard = TRUE;
+        mShowKeepDiscard = true;
 
-        mCopyToInv = FALSE;
+        mCopyToInv = false;
         LLPermissions perm(item->getPermissions());
         mIsCopyable = perm.allowCopyBy(gAgent.getID(), gAgent.getGroupID()) && perm.allowTransferTo(gAgent.getID());
         mIsFullPerm = item->checkPermissionsSet(PERM_ITEM_UNRESTRICTED);
@@ -1195,10 +1200,10 @@ void LLPreviewTexture::updateImageID()
     else // not an item, assume it's an asset id
     {
         mImageID = mItemUUID;
-        mShowKeepDiscard = FALSE;
-        mCopyToInv = TRUE;
-        mIsCopyable = TRUE;
-        mIsFullPerm = TRUE;
+        mShowKeepDiscard = false;
+        mCopyToInv = true;
+        mIsCopyable = true;
+        mIsFullPerm = true;
     }
 
 }

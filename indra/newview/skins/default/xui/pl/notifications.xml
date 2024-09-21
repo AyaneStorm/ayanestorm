@@ -872,6 +872,16 @@ To może się zdarzyć, kiedy zmieniasz ustawienia sieci. Zrestartowanie Przegl�
 		Przesyłanie pliku [FILE] nie powiodło się z powodu: [REASON]
 Spróbuj jeszcze raz później.
 	</notification>
+	<notification name="CannotUploadSnapshotEmailTooBig">
+		Przesyłanie zdjęcia [FILE] nie powiodło się z powodu: [REASON]
+
+Plik może być za duży. Spróbuj zmniejszyć rozdzielczość, jakość lub spróbować ponownie później.
+	</notification>
+	<notification name="CannotUploadSnapshotWebTooBig">
+		Przesyłanie zdjęcia nie powiodło się.
+
+Plik może być za duży. Spróbuj zmniejszyć rozdzielczość, jakość lub spróbować ponownie później.
+	</notification>
 	<notification name="LandmarkCreated">
 		Dodano "[LANDMARK_NAME]" do folderu [FOLDER_NAME].
 	</notification>
@@ -1168,6 +1178,9 @@ Połączyć działki?
 	<notification name="CannotSaveToAssetStore">
 		Nie można zapisać [NAME] w centralnym zbiorze danych.
 Zazwyczaj jest to tymczasowy problem. Możesz kontynuować modyfikacje i zapisać strój ponownie za kilka minut.
+	</notification>
+	<notification name="OutOfDiskSpace">
+		Zabrakło miejsca na dysku. Musisz zwolnić trochę miejsca na komputerze lub wyczyścić pamięć podręczną.
 	</notification>
 	<notification name="YouHaveBeenLoggedOut">
 		Nastąpiło wylogowanie z [CURRENT_GRID]
@@ -1670,6 +1683,10 @@ Zamień materiał [MATERIAL_NUM] na materiał z alphaMode="OPAQUE" lub alphaMode
 	</notification>
 	<notification name="CanNotChangeAppearanceUntilLoaded">
 		Nie możesz zmienić wyglądu podczas ładowania ubrań i kształtu.
+	</notification>
+	<notification name="UsavedWearableChanges">
+		Masz niezapisane zmiany.
+		<usetemplate ignoretext="Potwierdź przed odrzuceniem niezapisanych zmian w ubraniach" name="okcancelignore" notext="Kontynuuj edycję" yestext="Odrzuć" />
 	</notification>
 	<notification name="ClassifiedMustBeAlphanumeric">
 		Tytuł Twojej reklamy musi zaczynać się od litery (A-Z) albo cyfry. Znaki przestankowe są niedozwolone.
@@ -2449,6 +2466,9 @@ Przed usunięciem tych elementów należy je najpierw czymś zastąpić.
 	</notification>
 	<notification name="ThumbnailOutfitPhoto">
 		Aby dodać obraz do stroju, użyj okna galerii strojów lub kliknij prawym przyciskiem myszy na folderze stroju i wybierz "zdjęcie..."
+	</notification>
+	<notification name="ThumbnailSelectionTooLarge">
+		Możesz modyfikować maksymalnie 50 miniatur na raz.
 	</notification>
 	<notification name="ConfirmUnlink">
 		Na pewno chcesz rozłączyć zaznaczony obiekt?
@@ -3517,6 +3537,11 @@ Jeśli jesteś użytkownikiem premium, to [[PREMIUM_URL] kliknij tutaj] aby otrz
 	<notification name="VoiceEffectsNew">
 		Nowe Przekształcenia Głosu są dostępne!
 	</notification>
+	<notification name="VoiceEffectsNotSupported">
+		Ta przeglądarka nie obsługuje funkcji Przekształcania Głosu.
+Aby uzyskać więcej informacji na temat innych narzędzi do przekształcania głosu, zapoznaj się z [[FAQ_URL] tym artykułem].
+		<usetemplate ignoretext="Ostrzegaj mnie, że Przekształcanie Głosu nie jest obsługiwane" name="okignore" />
+	</notification>
 	<notification name="Cannot enter parcel: not a group member">
 		Nie masz dostępu do działki, nie należysz do właściwej grupy.
 	</notification>
@@ -3595,10 +3620,6 @@ to ustawienie lub wybrać inną nazwę.
 	</notification>
 	<notification name="FailedToGetBenefits">
 		Niestety nie udało nam się uzyskać informacji o korzyściach dla tej sesji. Nie powinno się to zdarzyć w normalnym środowisku produkcyjnym. Skontaktuj się z pomocą techniczną. Ta sesja nie będzie działać normalnie i zalecamy restart.
-	</notification>
-	<notification name="BulkUploadCostConfirmation">
-		Spowoduje to przesłanie [COUNT] elementów o łącznym koszcie [COST]L$. Czy chcesz kontynuować przesyłanie?
-		<usetemplate name="okcancelignore" ignoretext="Potwierdź przesyłanie zbioru wielu plików" notext="Anuluj" yestext="Prześlij"/>
 	</notification>
 	<notification name="NotEnoughMoneyForBulkUpload">
 		Twój obecny stan konta ([BALANCE]L$) nie wystarczy do przesłania [COUNT] elementów - łączny koszt to [COST]L$.
@@ -5385,8 +5406,26 @@ Czy chcesz kontynuować?
 		Edytujesz niebo inne niż HDR, które zostało automatycznie przekonwertowane na HDR. Aby usunąć HDR i mapowanie tonów, ustaw Nastrój Sondy Refleksyjnej na zero.
 		<usetemplate ignoretext="Ostrzeżenie dotyczące regulacji HDR nieba" name="okignore" />
 	</notification>
-	<notification name="GLTFPreviewSelection">
+	<notification name="GLTFOpenSelection">
 		Musisz wybrać obiekt, który będzie działał jako uchwyt dla podglądanego zasobu GLTF.
+	</notification>
+	<notification name="GLTFLoadFailed">
+		Nie udało się załadować pliku GLTF. Szczegóły znajdziesz w logu.
+	</notification>
+	<notification name="GLTFSaveFailed">
+		Nie udało się zapisać pliku GLTF. Szczegóły znajdziesz w logu.
+	</notification>
+	<notification name="GLTFSaveSelection">
+		Musisz wybrać obiekt, który ma dowiązany zasób GLTF.
+	</notification>
+	<notification name="GLTFUploadSelection">
+		Musisz wybrać obiekt, który ma dowiązany (wyłącznie lokalny) zasób GLTF.
+	</notification>
+	<notification name="GLTFUploadInProgress">
+		Przesyłanie jest obecnie w toku. Spróbuj ponownie później.
+	</notification>
+	<notification name="NoSupportGLTFShader">
+		Sceny GLTF nie są jeszcze obsługiwane przez Twoją kartę graficzną.
 	</notification>
 	<notification name="EnableAutoFPSWarning">
 		Zamierzasz włączyć funkcję AutoFPS. Wszystkie niezapisane ustawienia grafiki zostaną utracone.

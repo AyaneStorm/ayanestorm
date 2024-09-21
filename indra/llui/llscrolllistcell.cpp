@@ -220,7 +220,7 @@ void LLScrollListBar::setValue(const LLSD& value)
 {
     if (value.has("ratio"))
     {
-        mRatio = value["ratio"].asReal();
+        mRatio = (F32)value["ratio"].asReal();
     }
     if (value.has("bottom"))
     {
@@ -250,7 +250,7 @@ S32 LLScrollListBar::getWidth() const
 void LLScrollListBar::draw(const LLColor4& color, const LLColor4& highlight_color)   const
 {
     S32 bar_width = getWidth() - mLeftPad - mRightPad;
-    S32 left = bar_width - bar_width * mRatio;
+    S32 left = (S32)(bar_width - bar_width * mRatio);
     left = llclamp(left, mLeftPad, getWidth() - mRightPad - 1);
 
     gl_rect_2d(left, mBottom, getWidth() - mRightPad, mBottom - 1, mColor);
@@ -292,9 +292,9 @@ void LLScrollListText::highlightText(S32 offset, S32 num_chars)
 }
 
 //virtual
-BOOL LLScrollListText::isText() const
+bool LLScrollListText::isText() const
 {
-    return TRUE;
+    return true;
 }
 
 // virtual
@@ -309,18 +309,18 @@ const std::string &LLScrollListText::getToolTip() const
 }
 
 // virtual
-BOOL LLScrollListText::needsToolTip() const
+bool LLScrollListText::needsToolTip() const
 {
     // If base class has a tooltip, return that
     if (LLScrollListCell::needsToolTip())
         return LLScrollListCell::needsToolTip();
 
     // ...otherwise, show tooltips for truncated text
-    return mFont->getWidth(mText.getString()) > getWidth();
+    return mFont->getWidth(mText.getWString().c_str()) > getWidth();
 }
 
 //virtual
-BOOL LLScrollListText::getVisible() const
+bool LLScrollListText::getVisible() const
 {
     return mVisible;
 }
@@ -339,14 +339,14 @@ LLScrollListText::~LLScrollListText()
 
 S32 LLScrollListText::getContentWidth() const
 {
-    return mFont->getWidth(mText.getString());
+    return mFont->getWidth(mText.getWString().c_str());
 }
 
 
 void LLScrollListText::setColor(const LLColor4& color)
 {
     mColor = color;
-    mUseColor = TRUE;
+    mUseColor = true;
 }
 
 void LLScrollListText::setText(const LLStringExplicit& text)
@@ -405,18 +405,18 @@ void LLScrollListText::draw(const LLColor4& color, const LLColor4& highlight_col
         switch(mFontAlignment)
         {
         case LLFontGL::LEFT:
-            left = mFont->getWidth(mText.getString(), 1, mHighlightOffset);
+            left = mFont->getWidth(mText.getWString().c_str(), 1, mHighlightOffset);
             break;
         case LLFontGL::RIGHT:
-            left = getWidth() - mFont->getWidth(mText.getString(), mHighlightOffset, S32_MAX);
+            left = getWidth() - mFont->getWidth(mText.getWString().c_str(), mHighlightOffset, S32_MAX);
             break;
         case LLFontGL::HCENTER:
-            left = (getWidth() - mFont->getWidth(mText.getString())) / 2;
+            left = (getWidth() - mFont->getWidth(mText.getWString().c_str())) / 2;
             break;
         }
         LLRect highlight_rect(left - 2,
                 mFont->getLineHeight() + 1,
-                left + mFont->getWidth(mText.getString(), mHighlightOffset, mHighlightCount) + 1,
+                left + mFont->getWidth(mText.getWString().c_str(), mHighlightOffset, mHighlightCount) + 1,
                 1);
         mRoundedRectImage->draw(highlight_rect, highlight_color);
     }
@@ -447,7 +447,7 @@ void LLScrollListText::draw(const LLColor4& color, const LLColor4& highlight_col
                     string_chars,
                     getTextWidth(),
                     &right_x,
-                    TRUE);
+                    true);
 }
 
 //
@@ -476,7 +476,7 @@ LLScrollListCheck::LLScrollListCheck(const LLScrollListCell::Params& p)
         setWidth(rect.getWidth()); //check_box->getWidth();
     }
 
-    mCheckBox->setColor(p.color);
+    mCheckBox->setColor(p.color());
 }
 
 
@@ -491,14 +491,14 @@ void LLScrollListCheck::draw(const LLColor4& color, const LLColor4& highlight_co
     mCheckBox->draw();
 }
 
-BOOL LLScrollListCheck::handleClick()
+bool LLScrollListCheck::handleClick()
 {
     if (mCheckBox->getEnabled())
     {
         mCheckBox->toggle();
     }
     // don't change selection when clicking on embedded checkbox
-    return TRUE;
+    return true;
 }
 
 /*virtual*/
@@ -520,7 +520,7 @@ void LLScrollListCheck::onCommit()
 }
 
 /*virtual*/
-void LLScrollListCheck::setEnabled(BOOL enable)
+void LLScrollListCheck::setEnabled(bool enable)
 {
     mCheckBox->setEnabled(enable);
 }
@@ -624,18 +624,18 @@ void LLScrollListIconText::draw(const LLColor4& color, const LLColor4& highlight
         switch (mFontAlignment)
         {
         case LLFontGL::LEFT:
-            left = mFont->getWidth(mText.getString(), icon_space + 1, mHighlightOffset);
+            left = mFont->getWidth(mText.getWString().c_str(), icon_space + 1, mHighlightOffset);
             break;
         case LLFontGL::RIGHT:
-            left = getWidth() - mFont->getWidth(mText.getString(), mHighlightOffset, S32_MAX) - icon_space;
+            left = getWidth() - mFont->getWidth(mText.getWString().c_str(), mHighlightOffset, S32_MAX) - icon_space;
             break;
         case LLFontGL::HCENTER:
-            left = (getWidth() - mFont->getWidth(mText.getString()) - icon_space) / 2;
+            left = (getWidth() - mFont->getWidth(mText.getWString().c_str()) - icon_space) / 2;
             break;
         }
         LLRect highlight_rect(left - 2,
             mFont->getLineHeight() + 1,
-            left + mFont->getWidth(mText.getString(), mHighlightOffset, mHighlightCount) + 1,
+            left + mFont->getWidth(mText.getWString().c_str(), mHighlightOffset, mHighlightCount) + 1,
             1);
         mRoundedRectImage->draw(highlight_rect, highlight_color);
     }
@@ -648,17 +648,17 @@ void LLScrollListIconText::draw(const LLColor4& color, const LLColor4& highlight
     switch (mFontAlignment)
     {
     case LLFontGL::LEFT:
-        start_text_x = icon_space + 1;
+        start_text_x = icon_space + 1.f;
         start_icon_x = 1;
         break;
     case LLFontGL::RIGHT:
         start_text_x = (F32)getWidth();
-        start_icon_x = getWidth() - mFont->getWidth(mText.getString()) - icon_space;
+        start_icon_x = getWidth() - mFont->getWidth(mText.getWString().c_str()) - icon_space;
         break;
     case LLFontGL::HCENTER:
         F32 center = (F32)getWidth()* 0.5f;
         start_text_x = center + ((F32)icon_space * 0.5f);
-        start_icon_x = center - (((F32)icon_space + mFont->getWidth(mText.getString())) * 0.5f);
+        start_icon_x = (S32)(center - (((F32)icon_space + mFont->getWidth(mText.getWString().c_str())) * 0.5f));
         break;
     }
     mFont->render(mText.getWString(), 0,
@@ -671,7 +671,7 @@ void LLScrollListIconText::draw(const LLColor4& color, const LLColor4& highlight
         string_chars,
         getTextWidth(),
         &right_x,
-        TRUE);
+        true);
 
     if (mIcon)
     {
@@ -717,7 +717,7 @@ void LLScrollListLineEditor::draw(const LLColor4& color, const LLColor4& highlig
     mLineEditor->draw();
 }
 
-BOOL LLScrollListLineEditor::handleClick()
+bool LLScrollListLineEditor::handleClick()
 {
     if (mLineEditor->getEnabled())
     {
@@ -728,12 +728,12 @@ BOOL LLScrollListLineEditor::handleClick()
     return FALSE; //TRUE;
 }
 
-BOOL LLScrollListLineEditor::handleUnicodeChar(llwchar uni_char, BOOL called_from_parent)
+bool LLScrollListLineEditor::handleUnicodeChar(llwchar uni_char, bool called_from_parent)
 {
     return TRUE;
 }
 
-BOOL LLScrollListLineEditor::handleUnicodeCharHere(llwchar uni_char )
+bool LLScrollListLineEditor::handleUnicodeCharHere(llwchar uni_char )
 {
     return TRUE;
 }
@@ -769,7 +769,7 @@ LLScrollListMultiSlider::LLScrollListMultiSlider(const LLScrollListCell::Params&
         setWidth(rect.getWidth()); //check_box->getWidth();
     }
 
-    mMultiSlider->setColor(p.color);
+    mMultiSlider->setColor(p.color());
 }
 
 LLScrollListMultiSlider::~LLScrollListMultiSlider()

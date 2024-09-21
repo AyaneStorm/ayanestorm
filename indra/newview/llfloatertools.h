@@ -64,7 +64,7 @@ class LLFloaterTools
 : public LLFloater
 {
 public:
-    virtual BOOL    postBuild();
+    virtual bool    postBuild();
     static  void*   createPanelPermissions(void*    vdata);
     static  void*   createPanelObject(void* vdata);
     static  void*   createPanelVolume(void* vdata);
@@ -76,7 +76,7 @@ public:
     virtual ~LLFloaterTools();
 
     /*virtual*/ void onOpen(const LLSD& key);
-    /*virtual*/ BOOL canClose();
+    /*virtual*/ bool canClose();
     /*virtual*/ void onClose(bool app_quitting);
     /*virtual*/ void draw();
     /*virtual*/ void onFocusReceived();
@@ -186,6 +186,16 @@ public:
     LLButton    *mBtnDuplicate;
     LLButton    *mBtnDuplicateInPlace;
 
+    LLTextBox*  mTextSelectionCount = nullptr;
+    LLTextBox*  mTextSelectionEmpty = nullptr;
+    LLTextBox*  mTextSelectionFaces = nullptr;
+    LLSlider*   mSliderZoom = nullptr;
+
+    // <FS:Ansariel> Performance improvements
+    LLTextBox*  mTextLinkNumObjCount = nullptr;
+    LLTextBox*  mTextMoreInfoLabel = nullptr;
+    LLButton*   mBtnCopyKeys = nullptr;
+
     // <FS:Ansariel> FIRE-7802: Grass and tree selection in build tool
     LLComboBox*     mTreeGrassCombo;
 
@@ -196,9 +206,12 @@ public:
     LLCheckBoxCtrl  *mCheckCopyRotates;
 
     // Land buttons
-    LLRadioGroup*   mRadioGroupLand;
-    LLSlider        *mSliderDozerSize;
-    LLSlider        *mSliderDozerForce;
+    LLRadioGroup*   mRadioGroupLand = nullptr;
+    LLSlider        *mSliderDozerSize = nullptr;
+    LLSlider        *mSliderDozerForce = nullptr;
+    LLTextBox*      mTextBulldozer = nullptr;
+    LLTextBox*      mTextDozerSize = nullptr;
+    LLTextBox*      mTextDozerStrength = nullptr;
 
     LLButton        *mBtnApplyToSelection;
 
@@ -222,9 +235,9 @@ public:
     LLObjectSelectionHandle mObjectSelection;
 
 private:
-    BOOL                    mDirty;
-    BOOL                    mHasSelection;
-    BOOL                    mOpen; //Phoenix:KC
+    bool                    mDirty;
+    bool                    mHasSelection;
+    bool                    mOpen; //Phoenix:KC
 
     //Phoenix:KC
     S32                 mCollapsedHeight;

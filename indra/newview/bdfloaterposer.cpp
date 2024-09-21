@@ -109,7 +109,7 @@ BDFloaterPoser::~BDFloaterPoser()
 {
 }
 
-BOOL BDFloaterPoser::postBuild()
+bool BDFloaterPoser::postBuild()
 {
     //BD - Posing
     mJointScrolls = { { this->getChild<FSScrollListCtrl>("joints_scroll", true),
@@ -427,7 +427,7 @@ void BDFloaterPoser::onPoseStart()
     if (!motion || motion->isStopped())
     {
         avatar->setPosing();
-        //<AS:chayanane> Allow posing other avatars
+        //<AS:chanayane> Allow posing other avatars
         //if (avatar->isSelf())
         //{
             //BD - Grab our current defaults to revert to them when stopping the Poser.
@@ -436,7 +436,7 @@ void BDFloaterPoser::onPoseStart()
 
             gAgent.stopFidget();
         //}
-        //</AS:chayanane> Allow posing other avatars
+        //</AS:chanayane> Allow posing other avatars
         avatar->startDefaultMotions();
         avatar->startMotion(ANIM_BD_POSING_MOTION);
     }
@@ -836,7 +836,7 @@ void BDFloaterPoser::onJointSet(LLUICtrl* ctrl, const LLSD& param)
 
     //BD - Neat yet quick and direct way of rotating our bones.
     //     No more need to include bone rotation orders.
-    F32 val = ctrl->getValue().asReal();
+    F32 val = (F32)(ctrl->getValue().asReal());
     S32 axis = param.asInteger();
     LLScrollListCell* cell[3] = { item->getColumn(COL_ROT_X), item->getColumn(COL_ROT_Y), item->getColumn(COL_ROT_Z) };
     LLQuaternion rot_quat = joint->getTargetRotation();
@@ -845,7 +845,7 @@ void BDFloaterPoser::onJointSet(LLUICtrl* ctrl, const LLSD& param)
     F32 new_value;
     LLVector3 vec3;
 
-    old_value = cell[axis]->getValue().asReal();
+    old_value = (F32)(cell[axis]->getValue().asReal());
     cell[axis]->setValue(ll_round(val, 0.001f));
     new_value = val - old_value;
     vec3.mV[axis] = new_value;
@@ -876,7 +876,7 @@ void BDFloaterPoser::onJointSet(LLUICtrl* ctrl, const LLSD& param)
     {
         LLJoint* mirror_joint = nullptr;
         std::string mirror_joint_name = joint->getName();
-        S32 idx = joint->getName().find("Left");
+        size_t idx = joint->getName().find("Left");
         if (idx != -1)
             mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -927,7 +927,7 @@ void BDFloaterPoser::onJointPosSet(LLUICtrl* ctrl, const LLSD& param)
         if (joint)
         {
             //BD - All bones support positions now.
-            F32 val = ctrl->getValue().asReal();
+            F32 val = (F32)(ctrl->getValue().asReal());
             LLScrollListCell* cell[3] = { item->getColumn(COL_POS_X), item->getColumn(COL_POS_Y), item->getColumn(COL_POS_Z) };
             LLVector3 vec3 = { F32(cell[VX]->getValue().asReal()),
                                 F32(cell[VY]->getValue().asReal()),
@@ -951,7 +951,7 @@ void BDFloaterPoser::onJointScaleSet(LLUICtrl* ctrl, const LLSD& param)
         LLJoint* joint = (LLJoint*)item->getUserdata();
         if (joint)
         {
-            F32 val = ctrl->getValue().asReal();
+            F32 val = (F32)(ctrl->getValue().asReal());
             LLScrollListCell* cell[3] = { item->getColumn(COL_SCALE_X), item->getColumn(COL_SCALE_Y), item->getColumn(COL_SCALE_Z) };
             LLVector3 vec3 = { F32(cell[VX]->getValue().asReal()),
                                F32(cell[VY]->getValue().asReal()),
@@ -1004,10 +1004,10 @@ void BDFloaterPoser::onJointRotPosScaleReset()
 
     //BD - We don't support resetting bones for anyone else yet.
     LLVOAvatar* avatar = (LLVOAvatar*)av_item->getUserdata();
-    //<AS:chayanane> Allow posing other avatars
+    //<AS:chanayane> Allow posing other avatars
     //if (!avatar || avatar->isDead() || !avatar->isSelf()) return;
     if (!avatar || avatar->isDead()) return;
-    //</AS:chayanane> Allow posing other avatars
+    //</AS:chanayane> Allow posing other avatars
 
     //BD - While editing rotations, make sure we use a bit of spherical linear interpolation
     //     to make movements smoother.
@@ -1122,7 +1122,7 @@ void BDFloaterPoser::onJointRotationReset()
                 {
                     LLJoint* mirror_joint = nullptr;
                     std::string mirror_joint_name = joint->getName();
-                    S32 idx = joint->getName().find("Left");
+                    size_t idx = joint->getName().find("Left");
                     if (idx != -1)
                         mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -1171,10 +1171,10 @@ void BDFloaterPoser::onJointPositionReset()
 
     //BD - We don't support resetting bones positions for anyone else yet.
     LLVOAvatar* avatar = (LLVOAvatar*)item->getUserdata();
-    //<AS:chayanane> Allow posing other avatars
+    //<AS:chanayane> Allow posing other avatars
     //if (!avatar || avatar->isDead() || !avatar->isSelf()) return;
     if (!avatar || avatar->isDead()) return;
-    //</AS:chayanane> Allow posing other avatars
+    //</AS:chanayane> Allow posing other avatars
 
     S32 index = mJointTabs->getCurrentPanelIndex();
 
@@ -1228,10 +1228,10 @@ void BDFloaterPoser::onJointScaleReset()
 
     //BD - We don't support resetting bones scales for anyone else yet.
     LLVOAvatar* avatar = (LLVOAvatar*)item->getUserdata();
-    //<AS:chayanane> Allow posing other avatars
+    //<AS:chanayane> Allow posing other avatars
     //if (!avatar || avatar->isDead() || !avatar->isSelf()) return;
     if (!avatar || avatar->isDead()) return;
-    //</AS:chayanane> Allow posing other avatars
+    //</AS:chanayane> Allow posing other avatars
 
     S32 index = mJointTabs->getCurrentPanelIndex();
 
@@ -1309,7 +1309,7 @@ void BDFloaterPoser::onJointRotationRevert()
                 {
                     LLJoint* mirror_joint = nullptr;
                     std::string mirror_joint_name = joint->getName();
-                    S32 idx = joint->getName().find("Left");
+                    size_t idx = joint->getName().find("Left");
                     if (idx != -1)
                         mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
 
@@ -1373,7 +1373,7 @@ void BDFloaterPoser::onFlipPose()
         std::string mirror_joint_name = joint->getName();
         //BD - Attempt to find the "right" version of this bone first, we assume we always
         //     end up with the "left" version of a bone first.
-        S32 idx = joint->getName().find("Left");
+        size_t idx = joint->getName().find("Left");
         if (idx != -1)
             mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
         //BD - Attempt to find the "right" version of this bone first, this is necessary
@@ -1470,7 +1470,7 @@ void BDFloaterPoser::onPoseSymmetrize(const LLSD& param)
         {
             //BD - Attempt to find the "right" version of this bone first, we assume we always
             //     end up with the "left" version of a bone first.
-            S32 idx = joint->getName().find("Left");
+            size_t idx = joint->getName().find("Left");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
             else
@@ -1480,7 +1480,7 @@ void BDFloaterPoser::onPoseSymmetrize(const LLSD& param)
         {
             //BD - Attempt to find the "right" version of this bone first, this is necessary
             //     because there are a couple bones starting with the "right" bone.
-            S32 idx = joint->getName().find("Right");
+            size_t idx = joint->getName().find("Right");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Left");
             else
@@ -1719,7 +1719,7 @@ void BDFloaterPoser::onJointSymmetrize(bool from)
             std::string mirror_joint_name = joint->getName();
             //BD - Attempt to find the "right" version of this bone, if we can't find it try
             //     the left version.
-            S32 idx = joint->getName().find("Left");
+            size_t idx = joint->getName().find("Left");
             if (idx != -1)
                 mirror_joint_name.replace(idx, mirror_joint_name.length(), "Right");
             idx = joint->getName().find("Right");
@@ -2173,10 +2173,10 @@ void BDFloaterPoser::onAvatarsSelect()
     if (item)
     {
         LLVOAvatar* avatar = (LLVOAvatar*)item->getUserdata();
-        //<AS:chayanane> Allow posing other avatars
+        //<AS:chanayane> Allow posing other avatars
         //if (avatar) && avatar->isSelf())
         if (avatar)
-        //</AS:chayanane> Allow posing other avatars
+        //</AS:chanayane> Allow posing other avatars
             mStartPosingBtn->setEnabled(gAgentAvatarp->isFullyLoaded());
     }
 
@@ -2200,9 +2200,9 @@ void BDFloaterPoser::onAvatarsRefresh()
         create_new = true;
         LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(character);
         if (avatar && !avatar->isControlAvatar())
-            //<AS:chayanane> Allow posing other avatars
+            //<AS:chanayane> Allow posing other avatars
             //&& avatar->isSelf())
-            //</AS:chayanane> Allow posing other avatars
+            //</AS:chanayane> Allow posing other avatars
         {
             LLUUID uuid = avatar->getID();
             for (LLScrollListItem* item : mAvatarScroll->getAllData())

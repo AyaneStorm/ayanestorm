@@ -28,10 +28,8 @@ set(cmake_SOURCE_FILES
         GLEXT.cmake
         GLH.cmake
         GLOD.cmake # <FS:Ansariel> Bring back GLOD
-        GoogleMock.cmake
         Havok.cmake
         Hunspell.cmake
-        JsonCpp.cmake
         LLAddBuildTest.cmake
         LLAppearance.cmake
         LLAudio.cmake
@@ -62,12 +60,11 @@ set(cmake_SOURCE_FILES
         Tut.cmake
         UI.cmake
         UnixInstall.cmake
-        URIPARSER.cmake
         Variables.cmake
         ViewerMiscLibs.cmake
         VisualLeakDetector.cmake
         LibVLCPlugin.cmake
-        XmlRpcEpi.cmake
+        WebRTC.cmake
         WebP.cmake
         xxHash.cmake
         ZLIBNG.cmake

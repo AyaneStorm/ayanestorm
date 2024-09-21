@@ -98,7 +98,7 @@ void RlvUIEnabler::onRefreshHoverText()
 void RlvUIEnabler::onToggleMovement()
 {
     if ( (gRlvHandler.hasBehaviour(RLV_BHVR_FLY)) && (gAgent.getFlying()) )
-        gAgent.setFlying(FALSE);
+        gAgent.setFlying(false);
     if ( (gRlvHandler.hasBehaviour(RLV_BHVR_ALWAYSRUN)) && (gAgent.getAlwaysRun()) )
         gAgent.clearAlwaysRun();
     if ( (gRlvHandler.hasBehaviour(RLV_BHVR_TEMPRUN)) && (gAgent.getTempRun()) )
@@ -147,7 +147,7 @@ void RlvUIEnabler::onToggleShowLoc()
             if (pTpHistoryStg->compareByTitleAndGlobalPos(tpItemStg, LLTeleportHistoryPersistentItem(tpItem.mTitle, tpItem.mGlobalPos)))
             {
                 // TODO-RLVa: [RLVa-1.2.2] Is there a reason why LLTeleportHistoryStorage::removeItem() doesn't trigger history changed?
-                pTpHistoryStg->removeItem(pTpHistoryStg->getItems().size() - 1);
+                pTpHistoryStg->removeItem(static_cast<S32>(pTpHistoryStg->getItems().size()) - 1);
                 pTpHistoryStg->mHistoryChangedSignal(-1);
             }
         }
@@ -201,7 +201,7 @@ void RlvUIEnabler::onToggleShowMinimap()
 
     // Break/reestablish the visibility connection for the nearby people panel embedded minimap instance
     LLPanel* pPeoplePanel = LLFloaterSidePanelContainer::getPanel("people", "panel_people");
-    LLPanel* pNetMapPanel = (pPeoplePanel) ? pPeoplePanel->getChild<LLPanel>("minimaplayout", TRUE) : NULL;  //AO: firestorm specific
+    LLPanel* pNetMapPanel = (pPeoplePanel) ? pPeoplePanel->getChild<LLPanel>("minimaplayout", true) : NULL;  //AO: firestorm specific
     RLV_ASSERT( (pPeoplePanel) && (pNetMapPanel) );
     if (pNetMapPanel)
     {
@@ -213,7 +213,7 @@ void RlvUIEnabler::onToggleShowMinimap()
 
     // Break/reestablish the visibility connection for the radar panel embedded minimap instance
     LLFloater* pRadarFloater = LLFloaterReg::getInstance("fs_radar");
-    LLPanel* pRadarNetMapPanel = (pRadarFloater) ? pRadarFloater->getChild<LLPanel>("minimaplayout", TRUE) : NULL;  //AO: firestorm specific
+    LLPanel* pRadarNetMapPanel = (pRadarFloater) ? pRadarFloater->getChild<LLPanel>("minimaplayout", true) : NULL;  //AO: firestorm specific
     RLV_ASSERT( (pRadarFloater) && (pRadarNetMapPanel) );
     if (pRadarNetMapPanel)
     {
@@ -336,7 +336,7 @@ bool RlvUIEnabler::removeGenericFloaterFilter(const std::string& strFloaterName)
     return true;
 }
 
-bool RlvUIEnabler::filterFloaterGeneric(const std::string& strFloaterName, const LLSD&)
+bool RlvUIEnabler::filterFloaterGeneric(std::string_view strFloaterName, const LLSD&)
 {
     auto itFloater = m_FilteredFloaterMap.find(strFloaterName);
     if (m_FilteredFloaterMap.end() != itFloater)
@@ -350,7 +350,7 @@ bool RlvUIEnabler::filterFloaterGeneric(const std::string& strFloaterName, const
 }
 
 // Checked: 2010-04-22 (RLVa-1.4.5) | Added: RLVa-1.2.0
-bool RlvUIEnabler::filterFloaterShowLoc(const std::string& strName, const LLSD&)
+bool RlvUIEnabler::filterFloaterShowLoc(std::string_view strName, const LLSD&)
 {
     if ("about_land" == strName)
         return canViewParcelProperties();
@@ -362,7 +362,7 @@ bool RlvUIEnabler::filterFloaterShowLoc(const std::string& strName, const LLSD&)
 }
 
 // Checked: 2012-02-07 (RLVa-1.4.5) | Added: RLVa-1.4.5
-bool RlvUIEnabler::filterPanelShowLoc(const std::string& strFloater, const std::string&, const LLSD& sdKey)
+bool RlvUIEnabler::filterPanelShowLoc(std::string_view strFloater, std::string_view, const LLSD& sdKey)
 {
     if ("places" == strFloater)
     {
@@ -376,7 +376,7 @@ bool RlvUIEnabler::filterPanelShowLoc(const std::string& strFloater, const std::
 }
 
 // Checked: 2010-03-01 (RLVa-1.2.0b) | Added: RLVa-1.2.0a
-bool RlvUIEnabler::filterFloaterViewXXX(const std::string& strName, const LLSD&)
+bool RlvUIEnabler::filterFloaterViewXXX(std::string_view strName, const LLSD&)
 {
     if ( (gRlvHandler.hasBehaviour(RLV_BHVR_VIEWNOTE)) && ("preview_notecard" == strName) )
     {
@@ -425,8 +425,8 @@ bool RlvUIEnabler::canViewParcelProperties()
             const LLUUID& idOwner = pParcel->getOwnerID();
             if ( (idOwner != gAgent.getID()) )
             {
-                S32 count = gAgent.mGroups.size();
-                for (S32 i = 0; i < count; ++i)
+                auto count = gAgent.mGroups.size();
+                for (size_t i = 0; i < count; ++i)
                 {
                     if (gAgent.mGroups.at(i).mID == idOwner)
                     {

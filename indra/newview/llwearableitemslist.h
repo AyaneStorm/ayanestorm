@@ -83,8 +83,8 @@ public:
         Params();
     };
 
-    BOOL postBuild();
-    BOOL handleDoubleClick(S32 x, S32 y, MASK mask);
+    bool postBuild();
+    bool handleDoubleClick(S32 x, S32 y, MASK mask);
 
     static LLPanelWearableOutfitItem* create(LLViewerInventoryItem* item,
                                              bool worn_indication_enabled,
@@ -104,12 +104,10 @@ protected:
                               bool worn_indication_enabled, const Params& params, bool show_widgets = false);
 
 private:
+    LLButton* mAddWearableBtn = nullptr;
+    LLButton* mRemoveWearableBtn = nullptr;
     bool    mWornIndicationEnabled;
-    // <FS:Ansariel> Make Add/Remove buttons work
-protected:
     bool mShowWidgets;
-    bool mIsWorn;
-    // </FS:Ansariel>
 };
 
 class LLPanelDeletableWearableListItem : public LLPanelWearableListItem
@@ -128,7 +126,7 @@ public:
 
     virtual ~LLPanelDeletableWearableListItem() {};
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     /**
      * Make button visible during mouse over event.
@@ -181,7 +179,7 @@ public:
 
     virtual ~LLPanelClothingListItem();
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     /**
      * Make button visible during mouse over event.
@@ -216,7 +214,7 @@ public:
 
     virtual ~LLPanelBodyPartsListItem();
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     /**
     * Make button visible during mouse over event.
@@ -251,13 +249,12 @@ public:
     static FSPanelCOFWearableOutfitListItem* create(LLViewerInventoryItem* item,
                                              bool worn_indication_enabled, bool show_widgets, U32 weight);
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
 
     void updateItemWeight(U32 item_weight);
 
     /*virtual*/ void updateItem(const std::string& name, EItemState item_state = IS_DEFAULT);
 
-    /*virtual*/ void onMouseEnter(S32 x, S32 y, MASK mask);
     /*virtual*/ void onMouseLeave(S32 x, S32 y, MASK mask);
 
 protected:
@@ -287,7 +284,7 @@ public:
     };
     static LLPanelDummyClothingListItem* create(LLWearableType::EType w_type);
 
-    /*virtual*/ BOOL postBuild();
+    /*virtual*/ bool postBuild();
     LLWearableType::EType getWearableType() const;
 
 protected:
