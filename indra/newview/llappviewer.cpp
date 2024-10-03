@@ -2400,8 +2400,8 @@ bool LLAppViewer::cleanup()
         // <FS:Ansariel> Sound cache
         gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_FS_SOUND_CACHE, ""), "*.*");
 
-        // <AS:chanayane> Clear cache
-        gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""), "*.*");
+        // <AS:chanayane> Unencrypted cache
+        gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_UNENCRYPTED_CACHE, ""), "*.*");
         // </AS:chanayane>
     }
 
@@ -5088,17 +5088,17 @@ bool LLAppViewer::initCache()
     }
     // </FS:Ansariel>
 
-    // <AS:chanayane> Clear cache
-    if (!gDirUtilp->setClearCacheDir(gSavedSettings.getString("ASClearCacheLocation")))
+    // <AS:chanayane> Unencrypted cache
+    if (!gDirUtilp->setUnencryptedCacheDir(gSavedSettings.getString("ASUnencryptedCacheLocation")))
     {
-        LL_WARNS("AppCache") << "Unable to set clear cache location" << LL_ENDL;
-        gSavedSettings.setString("ASClearCacheLocation", "");
+        LL_WARNS("AppCache") << "Unable to set unencrypted cache location" << LL_ENDL;
+        gSavedSettings.setString("ASUnencryptedCacheLocation", "");
     }
-    if (gSavedSettings.getBOOL("ASEnableClearCache"))
+    if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
     {
-        LLTextureCache::setClearCacheEnabled(TRUE);
+        LLTextureCache::setUnencryptedCacheEnabled(TRUE);
     } else {
-        LLTextureCache::setClearCacheEnabled(FALSE);
+        LLTextureCache::setUnencryptedCacheEnabled(FALSE);
     }
     // </AS:chanayane>
 
