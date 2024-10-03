@@ -45,8 +45,8 @@ class LLTextureCache : public LLWorkerThread
     friend class LLTextureCacheLocalFileWorker;
 
 private:
-    // <AS:chanayane> Clear cache
-    static inline bool s_clear_cache_enabled { false };
+    // <AS:chanayane> Unencrypted cache
+    static inline bool s_unencrypted_cache_enabled { false };
     // </AS:chanayane>
 
 #if LL_WINDOWS
@@ -152,9 +152,9 @@ public:
     bool isInCache(const LLUUID& id) ;
     bool isInLocal(const LLUUID& id) ; //not thread safe at the moment
 
-    // <AS:chanayane> Clear cache
-    static bool getClearCacheEnabled() { return s_clear_cache_enabled; }
-    static void setClearCacheEnabled(bool enabled) { s_clear_cache_enabled = enabled; }
+    // <AS:chanayane> Unencrypted cache
+    static bool getUnencryptedCacheEnabled() { return s_unencrypted_cache_enabled; }
+    static void setUnencryptedCacheEnabled(bool enabled) { s_unencrypted_cache_enabled = enabled; }
     // </AS:chanayane>
 
 protected:

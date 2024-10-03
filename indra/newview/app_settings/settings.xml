@@ -509,10 +509,10 @@
     <key>Value</key>
     <integer>0</integer>
   </map>
-  <key>ASEnableClearCache</key>
+  <key>ASEnableUnencryptedCache</key>
   <map>
     <key>Comment</key>
-    <string>If TRUE, the viewer will store a clear copy of assets in the clear cache folder</string>
+    <string>If TRUE, the viewer will store an unencrypted copy of assets in the unencrypted cache folder</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -24065,10 +24065,10 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <string/>
     </map>
-    <key>ASClearCacheLocation</key>
+    <key>ASUnencryptedCacheLocation</key>
     <map>
       <key>Comment</key>
-      <string>Location for the clear cache; Uses default cache directory/clearcache if empty</string>
+      <string>Location for the unencrypted cache; Uses default cache directory/unencryptedcache if empty</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
