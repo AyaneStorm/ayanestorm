@@ -1682,9 +1682,9 @@ Sound cache will be moved after restarting [APP_NAME].
 
   <notification
    icon="alertmodal.tga"
-   name="ClearCacheWillBeMoved"
+   name="UnencryptedCacheWillBeMoved"
    type="alertmodal">
-Clear cache will be moved after restarting [APP_NAME].
+Unencrypted cache will be moved after restarting [APP_NAME].
   </notification>
 
   <notification

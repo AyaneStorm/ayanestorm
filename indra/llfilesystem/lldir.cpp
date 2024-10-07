@@ -95,8 +95,8 @@ LLDir::LLDir()
     mUserName("undefined"),
     // <FS:Ansariel> Sound cache
     mSoundCacheDir(""),
-    // <AS:chanayane> Clear cache
-    mClearCacheDir("")
+    // <AS:chanayane> Unencrypted cache
+    mUnencryptedCacheDir("")
 {
 }
 
@@ -479,10 +479,10 @@ const std::string &LLDir::getSoundCacheDir() const
     return mSoundCacheDir;
 }
 // </FS:Ansariel>
-// <AS:chanayane> Clear cache
-const std::string &LLDir::getClearCacheDir() const
+// <AS:chanayane> Unencrypted cache
+const std::string &LLDir::getUnencryptedCacheDir() const
 {
-    return mClearCacheDir;
+    return mUnencryptedCacheDir;
 }
 // </AS:chanayane>
 
@@ -651,9 +651,9 @@ std::string LLDir::getExpandedFilename(ELLPath location, const std::string& subd
         break;
     // </FS:Ansariel>
 
-    // <AS:chanayane> Clear cache
-    case LL_PATH_CLEAR_CACHE:
-        prefix = getClearCacheDir();
+    // <AS:chanayane> Unencrypted cache
+    case LL_PATH_UNENCRYPTED_CACHE:
+        prefix = getUnencryptedCacheDir();
         break;
     // </AS:chanayane>
 
@@ -1221,20 +1221,28 @@ bool LLDir::setSoundCacheDir(const std::string& path)
 }
 // </FS:Ansariel>
 
-// <AS:chanayane> Clear cache
-bool LLDir::setClearCacheDir(const std::string& path)
+// <AS:chanayane> Unencrypted cache
+bool LLDir::setUnencryptedCacheDir(const std::string& path)
 {
     bool result = false;
 
-    // Default to normal cache directory/clearcache
-    mClearCacheDir = add(getCacheDir(), "clearcache");
-    if (!LLFile::isdir(mClearCacheDir))
+    // Default to normal cache directory/unencryptedcache
+    mUnencryptedCacheDir = add(getCacheDir(), "unencryptedcache");
+    if (!LLFile::isdir(mUnencryptedCacheDir))
     {
-        LLFile::mkdir(mClearCacheDir);
+        LLFile::mkdir(mUnencryptedCacheDir);
     }
-    if (!LLFile::isdir(add(mClearCacheDir, "textures")))
+    if (!LLFile::isdir(add(mUnencryptedCacheDir, "textures")))
     {
-        LLFile::mkdir(add(mClearCacheDir, "textures"));
+        LLFile::mkdir(add(mUnencryptedCacheDir, "textures"));
+    }
+    if (!LLFile::isdir(add(mUnencryptedCacheDir, "sounds")))
+    {
+        LLFile::mkdir(add(mUnencryptedCacheDir, "sounds"));
+    }
+    if (!LLFile::isdir(add(mUnencryptedCacheDir, "animations")))
+    {
+        LLFile::mkdir(add(mUnencryptedCacheDir, "animations"));
     }
 
     if (path.empty() )
@@ -1251,11 +1259,11 @@ bool LLDir::setClearCacheDir(const std::string& path)
         {
             fclose(file);
             LLFile::remove(tempname);
-            mClearCacheDir = path;
+            mUnencryptedCacheDir = path;
             result = true;
         }
     }
-    LL_INFOS("AppInit", "Directories") << "Setting clear cache directory: " << mClearCacheDir << LL_ENDL;
+    LL_INFOS("AppInit", "Directories") << "Setting unencrypted cache directory: " << mUnencryptedCacheDir << LL_ENDL;
 
     return result;
 }

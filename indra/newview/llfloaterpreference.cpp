@@ -97,7 +97,7 @@
 #include "llrect.h"
 #include "llstring.h"
 
-// <AS:chanayane> Clear cache
+// <AS:chanayane> Unencrypted cache
 #include "lltexturecache.h"
 // </AS:chanayane>
 
@@ -589,11 +589,11 @@ LLFloaterPreference::LLFloaterPreference(const LLSD& key)
     mCommitCallbackRegistrar.add("Pref.ResetSoundCache",                boost::bind(&LLFloaterPreference::onClickResetSoundCache, this));
     // </FS:Ansariel>
 
-    // <AS:chanayane> Clear cache
-    mCommitCallbackRegistrar.add("Pref.BrowseClearCache",               boost::bind(&LLFloaterPreference::onClickBrowseClearCache, this));
-    mCommitCallbackRegistrar.add("Pref.SetClearCache",                  boost::bind(&LLFloaterPreference::onClickSetClearCache, this));
-    mCommitCallbackRegistrar.add("Pref.ResetClearCache",                boost::bind(&LLFloaterPreference::onClickResetClearCache, this));
-    mCommitCallbackRegistrar.add("Pref.EnableClearCache",               boost::bind(&LLFloaterPreference::onClickEnableClearCache, this));    
+    // <AS:chanayane> Unencrypted cache
+    mCommitCallbackRegistrar.add("Pref.BrowseUnencryptedCache",               boost::bind(&LLFloaterPreference::onClickBrowseUnencryptedCache, this));
+    mCommitCallbackRegistrar.add("Pref.SetUnencryptedCache",                  boost::bind(&LLFloaterPreference::onClickSetUnencryptedCache, this));
+    mCommitCallbackRegistrar.add("Pref.ResetUnencryptedCache",                boost::bind(&LLFloaterPreference::onClickResetUnencryptedCache, this));
+    mCommitCallbackRegistrar.add("Pref.EnableUnencryptedCache",               boost::bind(&LLFloaterPreference::onClickEnableUnencryptedCache, this));    
     // </AS:chanayane>
 
     // <FS:Ansariel> FIRE-2912: Reset voice button
@@ -708,9 +708,9 @@ bool LLFloaterPreference::postBuild()
     setSoundCacheLocation(gSavedSettings.getString("FSSoundCacheLocation"));
     getChild<LLUICtrl>("FSSoundCacheLocation")->setEnabled(false);
     // </FS:Ansariel>
-    // <AS:chanayane> Clear cache
-    setClearCacheLocation(gSavedSettings.getString("ASClearCacheLocation"));
-    getChild<LLUICtrl>("ASClearCacheLocation")->setEnabled(FALSE);
+    // <AS:chanayane> Unencrypted cache
+    setUnencryptedCacheLocation(gSavedSettings.getString("ASUnencryptedCacheLocation"));
+    getChild<LLUICtrl>("ASUnencryptedCacheLocation")->setEnabled(FALSE);
     // </AS:chanayane>
 
     getChild<LLComboBox>("language_combobox")->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
@@ -1023,8 +1023,8 @@ void LLFloaterPreference::apply()
     setCacheLocation(cache_location);
     // <FS:Ansariel> Sound cache
     setSoundCacheLocation(gSavedSettings.getString("FSSoundCacheLocation"));
-    // <AS:chanayane> Clear cache
-    setClearCacheLocation(gSavedSettings.getString("ASClearCacheLocation"));
+    // <AS:chanayane> Unencrypted cache
+    setUnencryptedCacheLocation(gSavedSettings.getString("ASUnencryptedCacheLocation"));
     // </AS:chanayane>
 
     //LLViewerMedia::getInstance()->setCookiesEnabled(getChild<LLUICtrl>("cookies_enabled")->getValue());
@@ -1860,47 +1860,47 @@ void LLFloaterPreference::onClickResetSoundCache()
 }
 // </FS:Ansariel>
 
-// <AS:chanayane> Clear cache
-void LLFloaterPreference::onClickSetClearCache()
+// <AS:chanayane> Unencrypted cache
+void LLFloaterPreference::onClickSetUnencryptedCache()
 {
-    std::string cur_name(gSavedSettings.getString("ASClearCacheLocation"));
+    std::string cur_name(gSavedSettings.getString("ASUnencryptedCacheLocation"));
     std::string proposed_name(cur_name);
 
-    (new LLDirPickerThread(boost::bind(&LLFloaterPreference::changeClearCachePath, this, _1, _2), proposed_name))->getFile();
+    (new LLDirPickerThread(boost::bind(&LLFloaterPreference::changeUnencryptedCachePath, this, _1, _2), proposed_name))->getFile();
 }
 
-void LLFloaterPreference::changeClearCachePath(const std::vector<std::string>& filenames, std::string proposed_name)
+void LLFloaterPreference::changeUnencryptedCachePath(const std::vector<std::string>& filenames, std::string proposed_name)
 {
     std::string dir_name = filenames[0];
     if (!dir_name.empty() && dir_name != proposed_name)
     {
-        gSavedSettings.setString("ASClearCacheLocation", dir_name);
-        setClearCacheLocation(dir_name);
-        LLNotificationsUtil::add("ClearCacheWillBeMoved");
+        gSavedSettings.setString("ASUnencryptedCacheLocation", dir_name);
+        setUnencryptedCacheLocation(dir_name);
+        LLNotificationsUtil::add("UnencryptedCacheWillBeMoved");
     }
 }
 
-void LLFloaterPreference::onClickBrowseClearCache()
+void LLFloaterPreference::onClickBrowseUnencryptedCache()
 {
-    gViewerWindow->getWindow()->openFile(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""));
+    gViewerWindow->getWindow()->openFile(gDirUtilp->getExpandedFilename(LL_PATH_UNENCRYPTED_CACHE, ""));
 }
 
-void LLFloaterPreference::onClickResetClearCache()
+void LLFloaterPreference::onClickResetUnencryptedCache()
 {
-    gSavedSettings.setString("ASClearCacheLocation", std::string());
-    setClearCacheLocation(std::string());
-    LLNotificationsUtil::add("ClearCacheWillBeMoved");
+    gSavedSettings.setString("ASUnencryptedCacheLocation", std::string());
+    setUnencryptedCacheLocation(std::string());
+    LLNotificationsUtil::add("UnencryptedCacheWillBeMoved");
 }
 
-void LLFloaterPreference::onClickEnableClearCache()
+void LLFloaterPreference::onClickEnableUnencryptedCache()
 {
-    if (gSavedSettings.getBOOL("ASEnableClearCache"))
+    if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
     {
-        LLTextureCache::setClearCacheEnabled(TRUE);
+        LLTextureCache::setUnencryptedCacheEnabled(TRUE);
     }
     else
     {
-        LLTextureCache::setClearCacheEnabled(FALSE);
+        LLTextureCache::setUnencryptedCacheEnabled(FALSE);
     }
 }
 // </AS:chanayane>
@@ -3217,10 +3217,10 @@ void LLFloaterPreference::setSoundCacheLocation(const LLStringExplicit& location
 }
 // </FS:Ansariel>
 
-// <AS:chanayane> Clear cache
-void LLFloaterPreference::setClearCacheLocation(const LLStringExplicit& location)
+// <AS:chanayane> Unencrypted cache
+void LLFloaterPreference::setUnencryptedCacheLocation(const LLStringExplicit& location)
 {
-    LLUICtrl* cache_location_editor = getChild<LLUICtrl>("ASClearCacheLocation");
+    LLUICtrl* cache_location_editor = getChild<LLUICtrl>("ASUnencryptedCacheLocation");
     cache_location_editor->setValue(location);
     cache_location_editor->setToolTip(location);
 }

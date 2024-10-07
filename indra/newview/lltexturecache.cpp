@@ -31,7 +31,7 @@
 #include "llapr.h"
 #include "lldir.h"
 #include "llimage.h"
-// <AS:chanayane> Clear cache
+// <AS:chanayane> Unencrypted cache
 #include "llimagejpeg.h"
 #include "llimagepng.h"
 #include "llimagebmp.h"
@@ -258,7 +258,7 @@ public:
 
     virtual bool doRead();
     virtual bool doWrite();
-    // <AS:chanayane> Clear cache
+    // <AS:chanayane> Unencrypted cache
     virtual bool save_image(const LLUUID& id, LLPointer<LLImageRaw> raw_image);
     virtual LLPointer<LLImageFormatted> create_image(const std::string &filename);
     // </AS:chanayane>
@@ -536,7 +536,7 @@ bool LLTextureCacheRemoteWorker::doRead()
     return done;
 }
 
-// <AS:chanayane> Clear cache
+// <AS:chanayane> Unencrypted cache
 // Create an empty formatted image instance of the correct type from the filename
 LLPointer<LLImageFormatted> LLTextureCacheRemoteWorker::create_image(const std::string &filename)
 {
@@ -549,7 +549,7 @@ LLPointer<LLImageFormatted> LLTextureCacheRemoteWorker::create_image(const std::
 bool LLTextureCacheRemoteWorker::save_image(const LLUUID& id, LLPointer<LLImageRaw> raw_image)
 {
     std::string uuid = id.asString();
-    const std::string dest_filename = gDirUtilp->add(gDirUtilp->getExpandedFilename(LL_PATH_CLEAR_CACHE, ""), "textures", "texture_" + uuid + ".png");
+    const std::string dest_filename = gDirUtilp->add(gDirUtilp->getExpandedFilename(LL_PATH_UNENCRYPTED_CACHE, ""), "textures", "texture_" + uuid + ".png");
 
     LLPointer<LLImageFormatted> image = create_image(dest_filename);
 
@@ -664,8 +664,8 @@ bool LLTextureCacheRemoteWorker::doWrite()
         }
         else
         {
-            // <AS:chanayane> Clear cache
-            if(LLTextureCache::s_clear_cache_enabled)
+            // <AS:chanayane> Unencrypted cache
+            if(LLTextureCache::s_unencrypted_cache_enabled)
             {
                 save_image(mID, mRawImage);
             }

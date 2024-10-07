@@ -563,13 +563,13 @@
 		 height="10"
 		 layout="topleft"
 		 left="15"
-		 name="Clear Cache location"
+		 name="Unencrypted Cache location"
 		 top_delta="35"
 		 width="300">
-			Clear Cache folder location:
+			Unencrypted Cache folder location:
 		</text>
 		<line_editor
-		 control_name="ASClearCacheLocation"
+		 control_name="ASUnencryptedCacheLocation"
 		 border_style="line"
 		 border_thickness="1"
 		 follows="left|top"
@@ -578,7 +578,7 @@
 		 layout="topleft"
 		 left="20"
 		 max_length_chars="4096"
-		 name="ASClearCacheLocation"
+		 name="ASUnencryptedCacheLocation"
 		 top_pad="10"
 		 width="270" />
 		<button
@@ -589,11 +589,11 @@
 		 label_selected="Open"
 		 layout="topleft"
 		 left_pad="5"
-		 name="open_clear_cache"
+		 name="open_unencrypted_cache"
 		 top_delta="-1"
 		 width="45">
 		  <button.commit_callback
-		   function="Pref.BrowseClearCache" />
+		   function="Pref.BrowseUnencryptedCache" />
 		</button>
 		<button
 		 follows="left|top"
@@ -602,11 +602,11 @@
 		 label_selected="Set"
 		 layout="topleft"
 		 left_pad="5"
-		 name="set_clear_cache"
+		 name="set_unencrypted_cache"
 		 top_delta="-0"
 		 width="40">
 		  <button.commit_callback
-		   function="Pref.SetClearCache" />
+		   function="Pref.SetUnencryptedCache" />
 		</button>
 		<button
 		 follows="left|top"
@@ -615,27 +615,27 @@
 		 label_selected="Reset"
 		 layout="topleft"
 		 left_pad="3"
-		 name="reset_clear_cache"
+		 name="reset_unencrypted_cache"
 		 top_delta="0"
 		 width="50">
 		  <button.commit_callback
-		   function="Pref.ResetClearCache" />
+		   function="Pref.ResetUnencryptedCache" />
 		</button>
 
 		<check_box
 		 follows="left|top"
 		 height="16"
-		 control_name="ASEnableClearCache"
-		 label="Enable clear cache"
-		 tool_tip="If checked, the viewer will store a clear copy of assets in the clear cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
+		 control_name="ASEnableUnencryptedCache"
+		 label="Enable unencrypted cache"
+		 tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
 		 left="15"
 		 mouse_opaque="true"
-		 name="enable_clear_cache"
+		 name="enable_unencrypted_cache"
 		 radio_style="false"
 		 width="400"
 		 top_pad="10">
 		  <check_box.commit_callback
-		   function="Pref.EnableClearCache" />
+		   function="Pref.EnableUnencryptedCache" />
 		</check_box>
 
 		<text
