@@ -4,7 +4,7 @@
 
 # AyaneStorm - A fork of Firestorm for photographers
 
-## Features (so far)
+## Features (so far ; some features might get merged in official Firestorm)
 - Added poser from BlackDragon **(works for all avatars, not only oneself)**
 - Added experimental mouse look head scaling
 - Added camera roll/tilt buttons from Blackdragon (+ key bindings)
