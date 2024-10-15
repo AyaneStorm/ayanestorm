@@ -800,7 +800,10 @@ bool FSFloaterPoser::havePermissionToAnimateAvatar(LLVOAvatar *avatar)
     if (avatar->isControlAvatar())
         return true;
 
-    return false;
+//<AS:chanayane> Allow posing all avatars
+    //return false;
+    return true;
+//</AS:chanayane>
 }
 
 void FSFloaterPoser::poseControlsEnable(bool enable)
