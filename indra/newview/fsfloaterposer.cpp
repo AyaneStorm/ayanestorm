@@ -43,6 +43,7 @@
 #include "llsliderctrl.h"
 #include "lltabcontainer.h"
 #include "llcheckboxctrl.h"
+#include <boost/algorithm/string.hpp>
 
 static const std::string POSE_INTERNAL_FORMAT_FILE_MASK     = "*.xml";
 static const std::string POSE_INTERNAL_FORMAT_FILE_EXT      = ".xml";

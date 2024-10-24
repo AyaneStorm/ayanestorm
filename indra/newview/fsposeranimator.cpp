@@ -28,6 +28,7 @@
 #include "llcharacter.h"
 #include "llagent.h"
 #include "fsposingmotion.h"
+#include <boost/algorithm/string.hpp>
 
 FSPoserAnimator::FSPoserAnimator() {}
 FSPoserAnimator::~FSPoserAnimator() {}
@@ -58,7 +59,7 @@ void FSPoserAnimator::setPosingAvatarJoint(LLVOAvatar *avatar, FSPoserJoint join
         return;
 
     bool arePosing = isPosingAvatarJoint(avatar, joint);
-    if (arePosing && shouldPose || !arePosing && !shouldPose) // could !XOR, but this is readable
+    if ((arePosing && shouldPose) || (!arePosing && !shouldPose)) // could !XOR, but this is readable
         return;
 
     FSPosingMotion* posingMotion = getPosingMotion(avatar);

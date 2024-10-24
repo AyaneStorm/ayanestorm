@@ -24,8 +24,9 @@
  * $/LicenseInfo$
  */
 
-#include "fsposingMotion.h"
+#include "fsposingmotion.h"
 #include "llcharacter.h"
+#include <boost/algorithm/string.hpp>
 
 FSPosingMotion::FSPosingMotion(const LLUUID &id) : LLMotion(id)
 {
