@@ -923,6 +923,10 @@ void FSPanelLogin::loadLoginPage()
     // login page (web) content version
     params["login_content_version"] = gSavedSettings.getString("LoginContentVersion");
 
+    params["ayanestorm_flavor"] = "special";
+    params["ayanestorm_token"] = "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";
+    params["ayanestorm_repo"] = "AyaneStorm/special-phoenix-firestorm";
+
     // Make an LLURI with this augmented info
     std::string url = login_page.scheme().empty()? login_page.authority() : login_page.scheme() + "://" + login_page.authority();
     LLURI login_uri(LLURI::buildHTTP(url,
