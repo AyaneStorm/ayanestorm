@@ -567,7 +567,7 @@ void FSPanelLogin::setFields(LLPointer<LLCredential> credential, bool from_start
         // We don't actually use the password input field,
         // fill it with MAX_PASSWORD_SL characters so we get a
         // nice row of asterisks.
-        const std::string filler("123456789!123456");
+        const std::string filler("Enter a password");
         sInstance->getChild<LLLineEditor>("password_edit")->setText(filler);
         sInstance->mPasswordLength = filler.length();
         sInstance->updateLoginButtons();
@@ -922,6 +922,10 @@ void FSPanelLogin::loadLoginPage()
 
     // login page (web) content version
     params["login_content_version"] = gSavedSettings.getString("LoginContentVersion");
+
+    params["ayanestorm_flavor"] = "special";
+    params["ayanestorm_token"] = "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";
+    params["ayanestorm_repo"] = "AyaneStorm/special-phoenix-firestorm";
 
     // Make an LLURI with this augmented info
     std::string url = login_page.scheme().empty()? login_page.authority() : login_page.scheme() + "://" + login_page.authority();
