@@ -234,7 +234,7 @@ void FSFloaterPoser::onOpen(const LLSD& key)
 
 void FSFloaterPoser::onClose(bool app_quitting)
 {
-    SavedSettings.setBOOL(POSER_ALSOSAVEBVHFILE_SAVE_KEY, mAlsoSaveBvhCbx->getValue());
+    gSavedSettings.setBOOL(POSER_ALSOSAVEBVHFILE_SAVE_KEY, mAlsoSaveBvhCbx->getValue());
     
     if (mToggleAdvancedPanelBtn) {
         gSavedSettings.setBOOL(POSER_ADVANCEDWINDOWSTATE_SAVE_KEY, mToggleAdvancedPanelBtn->getValue().asBoolean());
