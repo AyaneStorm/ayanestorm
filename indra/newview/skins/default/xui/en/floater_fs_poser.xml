@@ -1242,6 +1242,8 @@ width="403">
 				 left_pad="1"
 				 top_delta="0"
 				 width="97"/>
+<!-- [AS:chanayane] Save full poses! -->
+<!-- 
 				<button
 				 height="21"
 				 follows="top|left"
@@ -1262,6 +1264,28 @@ width="403">
 					<button.commit_callback
 					 function="Poser.Save"/>
 				</button>
+-->
+				<button
+				 height="21"
+				 follows="top|left"
+				 layout="topleft"
+				 label="Save Pose"
+				 enabled="false"
+				 visible="false"
+				 tool_tip="Save the current pose"
+				 image_overlay="Icon_Dock_Foreground"
+				 image_overlay_alignment="left"
+				 image_hover_unselected="Toolbar_Middle_Over"
+				 image_selected="Toolbar_Middle_Selected"
+				 image_unselected="Toolbar_Middle_Off"
+				 name="save_poses_button"
+				 width="97"
+				 top_delta="0"
+				 left_pad="1">
+					<button.commit_callback
+					 function="Poser.Save"/>
+				</button>
+<!-- [/AS:chanayane] -->
 			</panel>
 		</layout_panel>
 		<layout_panel

@@ -794,11 +794,18 @@ bool FSPoserAnimator::tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJo
     if (!jointPose)
         return false;
 
-    LLQuaternion difference = jointPose->getTargetRotation() * jointPose->getBeginningRotation().conjugate();  // diff * q1 = q2  ->  diff = q2 * inverse(q1)
+// <AS:chanayane> Save full poses!
+    //LLQuaternion difference = jointPose->getTargetRotation() * jointPose->getBeginningRotation().conjugate();  // diff * q1 = q2  ->  diff = q2 * inverse(q1)
+    LLQuaternion rotation = jointPose->getTargetRotation();
+// </AS:chanayane>
 
-    difference.getEulerAngles(&rot->mV[VX], &rot->mV[VY], &rot->mV[VZ]);
-    pos->set(jointPose->getTargetPosition() - jointPose->getBeginningPosition());
-    scale->set(jointPose->getTargetScale() - jointPose->getBeginningScale());
+    rotation.getEulerAngles(&rot->mV[VX], &rot->mV[VY], &rot->mV[VZ]);
+// <AS:chanayane> Save full poses!
+    // pos->set(jointPose->getTargetPosition() - jointPose->getBeginningPosition());
+    // scale->set(jointPose->getTargetScale() - jointPose->getBeginningScale());
+    pos->set(jointPose->getTargetPosition());
+    scale->set(jointPose->getTargetScale());
+// </AS:chanayane>
     return true;
 }
 
@@ -816,7 +823,10 @@ void FSPoserAnimator::loadJointRotation(LLVOAvatar* avatar, const FSPoserJoint* 
         return;
 
     LLQuaternion rot = translateRotationToQuaternion(SWAP_NOTHING, NEGATE_NOTHING, rotation);
-    jointPose->setTargetRotation(rot * jointPose->getBeginningRotation());
+// <AS:chanayane> Save full poses!
+    //jointPose->setTargetRotation(rot * jointPose->getBeginningRotation());
+    jointPose->setTargetRotation(rot);
+// </AS:chanayane>
 }
 
 void FSPoserAnimator::loadJointPosition(LLVOAvatar* avatar, const FSPoserJoint* joint, bool loadPositionAsDelta, LLVector3 position)
@@ -832,10 +842,13 @@ void FSPoserAnimator::loadJointPosition(LLVOAvatar* avatar, const FSPoserJoint* 
     if (!jointPose)
         return;
 
-    if (loadPositionAsDelta)
-        jointPose->setTargetPosition(jointPose->getBeginningPosition() + position);
-    else
-        jointPose->setTargetPosition(position);
+// <AS:chanayane> Save full poses!
+    // if (loadPositionAsDelta)
+    //     jointPose->setTargetPosition(jointPose->getBeginningPosition() + position);
+    // else
+    //     jointPose->setTargetPosition(position);
+    jointPose->setTargetPosition(position);
+// </AS:chanayane>
 }
 
 void FSPoserAnimator::loadJointScale(LLVOAvatar* avatar, const FSPoserJoint* joint, bool loadScaleAsDelta, LLVector3 scale)
@@ -851,10 +864,13 @@ void FSPoserAnimator::loadJointScale(LLVOAvatar* avatar, const FSPoserJoint* joi
     if (!jointPose)
         return;
 
-    if (loadScaleAsDelta)
-        jointPose->setTargetScale(jointPose->getTargetScale() + scale);
-    else
-        jointPose->setTargetScale(scale);
+// <AS:chanayane> Save full poses!
+    // if (loadScaleAsDelta)
+    //     jointPose->setTargetScale(jointPose->getTargetScale() + scale);
+    // else
+    //     jointPose->setTargetScale(scale);
+    jointPose->setTargetScale(scale);
+// </AS:chanayane>
 }
 
 const FSPoserAnimator::FSPoserJoint* FSPoserAnimator::getPoserJointByName(const std::string& jointName)

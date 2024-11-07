@@ -309,11 +309,13 @@ void FSFloaterPoser::onPoseFileSelect()
     mPoseSaveNameEditor->setEnabled(enableButtons);
     mPoseSaveNameEditor->setText(name);
 
-    bool isDeltaSave = !poseFileStartsFromTeePose(name);
-    if (isDeltaSave)
-        mLoadPosesBtn->setLabel("Load Diff");
-    else
-        mLoadPosesBtn->setLabel("Load Pose");
+// <AS:chanayane> Save full poses!
+    // bool isDeltaSave = !poseFileStartsFromTeePose(name);
+    // if (isDeltaSave)
+    //     mLoadPosesBtn->setLabel("Load Diff");
+    // else
+    //     mLoadPosesBtn->setLabel("Load Pose");
+// <AS:chanayane> Save full poses!
 }
 
 void FSFloaterPoser::onClickPoseSave()
@@ -403,7 +405,10 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
         std::string fullSavePath =
             gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, POSE_SAVE_SUBDIRECTORY, poseFileName + POSE_INTERNAL_FORMAT_FILE_EXT);
 
-        bool savingDiff = !mPoserAnimator.posingStartedFromZeroRotations(avatar);
+// <AS:chanayane> Save full poses!
+        //bool savingDiff = !mPoserAnimator.posingStartedFromZeroRotations(avatar);
+        bool savingDiff = false;
+// </AS:chanayane>
 
         LLSD record;
         record["version"]["value"] = (S32)4;
@@ -419,8 +424,10 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
 
             bool jointRotPosScaleAllZero = rotation == zeroVector && position == zeroVector && scale == zeroVector;
             bool posingThisJoint = mPoserAnimator.isPosingAvatarJoint(avatar, pj);
-            if (savingDiff && (!posingThisJoint || jointRotPosScaleAllZero))
-                continue;
+// <AS:chanayane> Save full poses!
+            // if (savingDiff && (!posingThisJoint || jointRotPosScaleAllZero))
+            //     continue;
+// </AS:chanayane>
 
             record[bone_name]             = bone_name;
             record[bone_name]["enabled"]  = posingThisJoint;
@@ -2129,7 +2136,9 @@ void FSFloaterPoser::refreshTextHighlightingOnAllScrollLists()
 void FSFloaterPoser::disableRecapture()
 {
     mRecaptureJointsButton->setEnabled(false);
-    mSavePosesBtn->setLabel("Save Pose");
+// <AS:chanayane> Save full poses!
+    //mSavePosesBtn->setLabel("Save Pose");
+// </AS:chanayane>
     sDisableRecaptureUntilStopPosing = true;
 }
 
@@ -2139,7 +2148,9 @@ void FSFloaterPoser::reEnableRecaptureIfAllowed()
         return;
 
     mRecaptureJointsButton->setEnabled(true);
-    mSavePosesBtn->setLabel("Save Diff");
+// <AS:chanayane> Save full poses!
+    //mSavePosesBtn->setLabel("Save Diff");
+// </AS:chanayane>
     sDisableRecaptureUntilStopPosing = false;
 }
 
