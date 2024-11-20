@@ -5132,9 +5132,10 @@ bool LLAppViewer::initCache()
     // </AS:chanayane>
 
     const std::string cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, cache_dir_name);
+    const std::string unencrypted_cache_dir = gSavedSettings.getBOOL("ASEnableUnencryptedCache") ? gDirUtilp->add(gDirUtilp->getCacheDir(), "unencryptedcache") : "";
     // <FS:Beq> Improve cache purge triggering
     // LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info);
-    LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info, gSavedSettings.getF32("FSDiskCacheHighWaterPercent"), gSavedSettings.getF32("FSDiskCacheLowWaterPercent"));
+    LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info, gSavedSettings.getF32("FSDiskCacheHighWaterPercent"), gSavedSettings.getF32("FSDiskCacheLowWaterPercent"), unencrypted_cache_dir);
     // </FS:Beq>
 
     if (!read_only)

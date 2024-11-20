@@ -50,6 +50,7 @@
 static const std::string CACHE_FILENAME_PREFIX("sl_cache");
 
 std::string LLDiskCache::sCacheDir;
+std::string LLDiskCache::sUnencryptedCacheDir;
 
 // <FS:Ansariel> Optimize asset simple disk cache
 static const char* subdirs = "0123456789abcdef";
@@ -61,6 +62,7 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
                          ,const F32 highwater_mark_percent
                          ,const F32 lowwater_mark_percent
 // </FS:Beq>
+                         ,const std::string& unencrypted_cache_dir
                          ) :
     mMaxSizeBytes(max_size_bytes),
     mEnableCacheDebugInfo(enable_cache_debug_info)
@@ -68,12 +70,39 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     sCacheDir = cache_dir;
     LLFile::mkdir(cache_dir);
 
-    // <FS:Ansariel> Optimize asset simple disk cache
-    for (S32 i = 0; i < 16; i++)
+    sUnencryptedCacheDir = unencrypted_cache_dir;
+    LLFile::mkdir(unencrypted_cache_dir);
+
+    // // <FS:Ansariel> Optimize asset simple disk cache
+    // for (S32 i = 0; i < 16; i++)
+    // {
+    //     std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
+    //     LLFile::mkdir(dirname);
+    // }
+    if (!unencrypted_cache_dir.empty())
     {
-        std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
-        LLFile::mkdir(dirname);
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "textures");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "sounds");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "callingcards");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "landmarks");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "scripts");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "clothing");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "objects");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "notecards");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "lsltext");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "lslbin");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "tga");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "bodyparts");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "wav");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "jpeg");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "animations");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gestures");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "meshes");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "materials");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltf");
+        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltfbin");
     }
+
     // </FS:Ansariel>
     // <FS:Beq> add static assets into the new cache after clear.
     // Only missing entries are copied on init, skiplist is setup
@@ -328,6 +357,99 @@ void LLDiskCache::purge()
 
 const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType::EType at)
 {
+    if (!sUnencryptedCacheDir.empty())
+    {
+        std::string assetdir = "";
+        std::string assettype = "";
+        switch (at)
+        {
+            case LLAssetType::AT_TEXTURE:
+                assetdir  = "textures";
+                assettype = "texture";
+                break;
+            case LLAssetType::AT_SOUND:
+                assetdir  = "sounds";
+                assettype = "sound";
+                break;
+            case LLAssetType::AT_CALLINGCARD:
+                assetdir  = "callingcards";
+                assettype = "callingcard";
+                break;
+            case LLAssetType::AT_LANDMARK:
+                assetdir  = "landmarks";
+                assettype = "landmark";
+                break;
+            case LLAssetType::AT_SCRIPT:
+                assetdir  = "scripts";
+                assettype = "script";
+                break;
+            case LLAssetType::AT_CLOTHING:
+                assetdir  = "clothing";
+                assettype = "clothing";
+                break;
+            case LLAssetType::AT_OBJECT:
+                assetdir  = "objects";
+                assettype = "object";
+                break;
+            case LLAssetType::AT_NOTECARD:
+                assetdir  = "notecards";
+                assettype = "notecard";
+                break;
+            case LLAssetType::AT_LSL_TEXT:
+                assetdir  = "lsltext";
+                assettype = "lsltext";
+                break;
+            case LLAssetType::AT_LSL_BYTECODE:
+                assetdir  = "lslbin";
+                assettype = "lslbin";
+                break;
+            case LLAssetType::AT_TEXTURE_TGA:
+            case LLAssetType::AT_IMAGE_TGA:
+                assetdir  = "tga";
+                assettype = "tga";
+                break;
+            case LLAssetType::AT_BODYPART:
+                assetdir  = "bodyparts";
+                assettype = "bodypart";
+                break;
+            case LLAssetType::AT_SOUND_WAV:
+                assetdir  = "wav";
+                assettype = "wav";
+                break;
+            case LLAssetType::AT_IMAGE_JPEG:
+                assetdir  = "jpeg";
+                assettype = "jpeg";
+                break;
+            case LLAssetType::AT_ANIMATION:
+                assetdir  = "animations";
+                assettype = "anim";
+                break;
+            case LLAssetType::AT_GESTURE:
+                assetdir  = "gestures";
+                assettype = "gesture";
+                break;
+            case LLAssetType::AT_MESH:
+                assetdir  = "meshes";
+                assettype = "mesh";
+                break;
+            case LLAssetType::AT_MATERIAL:
+                assetdir  = "materials";
+                assettype = "material";
+                break;
+            case LLAssetType::AT_GLTF:
+                assetdir  = "gltf";
+                assettype = "gltf";
+                break;
+            case LLAssetType::AT_GLTF_BIN:
+                assetdir  = "gltfbin";
+                assettype = "gltfbin";
+                break;
+        }
+        if (!assetdir.empty() && !assettype.empty())
+        {
+            return llformat("%s%s%s%s%s_%s_0.%s.asset", sUnencryptedCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), assetdir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str(), assettype.c_str());
+        }
+    }
     return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
 }
 
