@@ -4626,7 +4626,10 @@ void LLVOAvatar::updateAnimationDebugText()
             if (motion_name.empty())
             {
                 std::string name;
+// <AS:chanayane> Show animations UUID for everyone
+                //if (gAgent.isGodlikeWithoutAdminMenuFakery() || isSelf())
                 if (gAgent.isGodlikeWithoutAdminMenuFakery() || isSelf() || !isSelf())
+// </AS:chanayane>
                 {
                     name = motionp->getID().asString();
                     LLVOAvatar::AnimSourceIterator anim_it = mAnimationSources.begin();

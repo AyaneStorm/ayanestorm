@@ -107,7 +107,9 @@ class LLDiskCache :
                     const F32 lowwater_mark_percent,
                     // </FS:Beq>
 
+// <AS:chanayane> More unencrypted cache
                     const std::string& unencrypted_cache_dir
+// </AS:chanayane>
                     );
 
         virtual ~LLDiskCache() = default;
@@ -197,10 +199,12 @@ class LLDiskCache :
          */
         static std::string sCacheDir;
 
+// <AS:chanayane> More unencrypted cache
         /**
          * The folder that holds the unencrypted cached files.
          */
         static std::string sUnencryptedCacheDir;
+// </AS:chanayane>
 
         /**
          * When enabled, displays additional debugging information in

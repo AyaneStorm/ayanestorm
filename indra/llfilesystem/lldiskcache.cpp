@@ -50,7 +50,9 @@
 static const std::string CACHE_FILENAME_PREFIX("sl_cache");
 
 std::string LLDiskCache::sCacheDir;
+// <AS:chanayane> More unencrypted cache
 std::string LLDiskCache::sUnencryptedCacheDir;
+// </AS:chanayane>
 
 // <FS:Ansariel> Optimize asset simple disk cache
 static const char* subdirs = "0123456789abcdef";
@@ -62,7 +64,9 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
                          ,const F32 highwater_mark_percent
                          ,const F32 lowwater_mark_percent
 // </FS:Beq>
+// <AS:chanayane> More unencrypted cache
                          ,const std::string& unencrypted_cache_dir
+// </AS:chanayane>
                          ) :
     mMaxSizeBytes(max_size_bytes),
     mEnableCacheDebugInfo(enable_cache_debug_info)
@@ -70,15 +74,21 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     sCacheDir = cache_dir;
     LLFile::mkdir(cache_dir);
 
+// <AS:chanayane> More unencrypted cache
     sUnencryptedCacheDir = unencrypted_cache_dir;
     LLFile::mkdir(unencrypted_cache_dir);
+// </AS:chanayane>
 
+// <AS:chanayane> More unencrypted cache
     // // <FS:Ansariel> Optimize asset simple disk cache
     // for (S32 i = 0; i < 16; i++)
     // {
     //     std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
     //     LLFile::mkdir(dirname);
     // }
+// </AS:chanayane>
+
+// <AS:chanayane> More unencrypted cache
     if (!unencrypted_cache_dir.empty())
     {
         LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "textures");
@@ -102,6 +112,7 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
         LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltf");
         LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltfbin");
     }
+// </AS:chanayane>
 
     // </FS:Ansariel>
     // <FS:Beq> add static assets into the new cache after clear.
@@ -357,6 +368,7 @@ void LLDiskCache::purge()
 
 const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType::EType at)
 {
+// <AS:chanayane> More unencrypted cache
     if (!sUnencryptedCacheDir.empty())
     {
         std::string assetdir = "";
@@ -450,6 +462,7 @@ const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType:
             return llformat("%s%s%s%s%s_%s_0.%s.asset", sUnencryptedCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), assetdir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str(), assettype.c_str());
         }
     }
+// </AS:chanayane>
     return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
 }
 
