@@ -115,6 +115,11 @@ class LLDiskCache :
         virtual ~LLDiskCache() = default;
 
     public:
+// <AS:chanayane> More unencrypted cache
+        static void initUnencryptedCache();
+        static void setUnencryptedCacheDir(const std::string& newUnencryptedDir);
+// </AS:chanayane>
+
         /**
          * Construct a filename and path to it based on the file meta data
          * (id, asset type, additional 'extra' info like discard level perhaps)

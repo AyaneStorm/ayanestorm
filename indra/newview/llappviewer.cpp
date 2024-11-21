@@ -5125,7 +5125,8 @@ bool LLAppViewer::initCache()
     }
     if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
     {
-        LLTextureCache::setUnencryptedCacheEnabled(TRUE);
+        LLTextureCache::setUnencryptedCacheEnabled(TRUE); // <AS:chanayane> More unencrypted cache
+        LLDiskCache::setUnencryptedCacheDir(gDirUtilp->getUnencryptedCacheDir());
     } else {
         LLTextureCache::setUnencryptedCacheEnabled(FALSE);
     }

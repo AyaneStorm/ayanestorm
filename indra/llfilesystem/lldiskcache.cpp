@@ -75,43 +75,14 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     LLFile::mkdir(cache_dir);
 
 // <AS:chanayane> More unencrypted cache
-    sUnencryptedCacheDir = unencrypted_cache_dir;
-    LLFile::mkdir(unencrypted_cache_dir);
-// </AS:chanayane>
-
-// <AS:chanayane> More unencrypted cache
     // // <FS:Ansariel> Optimize asset simple disk cache
     // for (S32 i = 0; i < 16; i++)
     // {
     //     std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
     //     LLFile::mkdir(dirname);
     // }
-// </AS:chanayane>
-
-// <AS:chanayane> More unencrypted cache
-    if (!unencrypted_cache_dir.empty())
-    {
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "textures");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "sounds");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "callingcards");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "landmarks");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "scripts");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "clothing");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "objects");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "notecards");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "lsltext");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "lslbin");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "tga");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "bodyparts");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "wav");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "jpeg");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "animations");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gestures");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "meshes");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "materials");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltf");
-        LLFile::mkdir(unencrypted_cache_dir + gDirUtilp->getDirDelimiter() + "gltfbin");
-    }
+    sUnencryptedCacheDir = unencrypted_cache_dir;
+    LLDiskCache::initUnencryptedCache();
 // </AS:chanayane>
 
     // </FS:Ansariel>
@@ -121,6 +92,50 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     prepopulateCacheWithStatic();
     // </FS:Beq>
 }
+
+// <AS:chanayane> More unencrypted cache
+void LLDiskCache::initUnencryptedCache()
+{
+    if (!sUnencryptedCacheDir.empty())
+    {
+        LLFile::mkdir(sUnencryptedCacheDir);
+
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "textures");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "sounds");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "callingcards");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "landmarks");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "scripts");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "clothing");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "objects");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "notecards");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "lsltext");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "lslbin");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "tga");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "bodyparts");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "wav");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "jpeg");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "animations");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gestures");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "meshes");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "materials");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gltf");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gltfbin");
+    }
+}
+
+void LLDiskCache::setUnencryptedCacheDir(const std::string& newUnencryptedDir)
+{
+    if (newUnencryptedDir.empty())
+    {
+        sUnencryptedCacheDir = "";
+    }
+    else
+    {
+        sUnencryptedCacheDir = newUnencryptedDir;
+    }
+    LLDiskCache::initUnencryptedCache();
+}
+// </AS:chanayane>
 
 // WARNING: purge() is called by LLPurgeDiskCacheThread. As such it must
 // NOT touch any LLDiskCache data without introducing and locking a mutex!
