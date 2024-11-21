@@ -50,6 +50,9 @@
 static const std::string CACHE_FILENAME_PREFIX("sl_cache");
 
 std::string LLDiskCache::sCacheDir;
+// <AS:chanayane> More unencrypted cache
+std::string LLDiskCache::sUnencryptedCacheDir;
+// </AS:chanayane>
 
 // <FS:Ansariel> Optimize asset simple disk cache
 static const char* subdirs = "0123456789abcdef";
@@ -61,6 +64,9 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
                          ,const F32 highwater_mark_percent
                          ,const F32 lowwater_mark_percent
 // </FS:Beq>
+// <AS:chanayane> More unencrypted cache
+                         ,const std::string& unencrypted_cache_dir
+// </AS:chanayane>
                          ) :
     mMaxSizeBytes(max_size_bytes),
     mEnableCacheDebugInfo(enable_cache_debug_info)
@@ -68,12 +74,17 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     sCacheDir = cache_dir;
     LLFile::mkdir(cache_dir);
 
-    // <FS:Ansariel> Optimize asset simple disk cache
-    for (S32 i = 0; i < 16; i++)
-    {
-        std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
-        LLFile::mkdir(dirname);
-    }
+// <AS:chanayane> More unencrypted cache
+    // // <FS:Ansariel> Optimize asset simple disk cache
+    // for (S32 i = 0; i < 16; i++)
+    // {
+    //     std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
+    //     LLFile::mkdir(dirname);
+    // }
+    sUnencryptedCacheDir = unencrypted_cache_dir;
+    LLDiskCache::initUnencryptedCache();
+// </AS:chanayane>
+
     // </FS:Ansariel>
     // <FS:Beq> add static assets into the new cache after clear.
     // Only missing entries are copied on init, skiplist is setup
@@ -81,6 +92,50 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     prepopulateCacheWithStatic();
     // </FS:Beq>
 }
+
+// <AS:chanayane> More unencrypted cache
+void LLDiskCache::initUnencryptedCache()
+{
+    if (!sUnencryptedCacheDir.empty())
+    {
+        LLFile::mkdir(sUnencryptedCacheDir);
+
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "textures");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "sounds");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "callingcards");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "landmarks");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "scripts");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "clothing");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "objects");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "notecards");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "lsltext");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "lslbin");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "tga");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "bodyparts");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "wav");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "jpeg");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "animations");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gestures");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "meshes");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "materials");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gltf");
+        LLFile::mkdir(sUnencryptedCacheDir + gDirUtilp->getDirDelimiter() + "gltfbin");
+    }
+}
+
+void LLDiskCache::setUnencryptedCacheDir(const std::string& newUnencryptedDir)
+{
+    if (newUnencryptedDir.empty())
+    {
+        sUnencryptedCacheDir = "";
+    }
+    else
+    {
+        sUnencryptedCacheDir = newUnencryptedDir;
+    }
+    LLDiskCache::initUnencryptedCache();
+}
+// </AS:chanayane>
 
 // WARNING: purge() is called by LLPurgeDiskCacheThread. As such it must
 // NOT touch any LLDiskCache data without introducing and locking a mutex!
@@ -328,6 +383,101 @@ void LLDiskCache::purge()
 
 const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType::EType at)
 {
+// <AS:chanayane> More unencrypted cache
+    if (!sUnencryptedCacheDir.empty())
+    {
+        std::string assetdir = "";
+        std::string assettype = "";
+        switch (at)
+        {
+            case LLAssetType::AT_TEXTURE:
+                assetdir  = "textures";
+                assettype = "texture";
+                break;
+            case LLAssetType::AT_SOUND:
+                assetdir  = "sounds";
+                assettype = "sound";
+                break;
+            case LLAssetType::AT_CALLINGCARD:
+                assetdir  = "callingcards";
+                assettype = "callingcard";
+                break;
+            case LLAssetType::AT_LANDMARK:
+                assetdir  = "landmarks";
+                assettype = "landmark";
+                break;
+            case LLAssetType::AT_SCRIPT:
+                assetdir  = "scripts";
+                assettype = "script";
+                break;
+            case LLAssetType::AT_CLOTHING:
+                assetdir  = "clothing";
+                assettype = "clothing";
+                break;
+            case LLAssetType::AT_OBJECT:
+                assetdir  = "objects";
+                assettype = "object";
+                break;
+            case LLAssetType::AT_NOTECARD:
+                assetdir  = "notecards";
+                assettype = "notecard";
+                break;
+            case LLAssetType::AT_LSL_TEXT:
+                assetdir  = "lsltext";
+                assettype = "lsltext";
+                break;
+            case LLAssetType::AT_LSL_BYTECODE:
+                assetdir  = "lslbin";
+                assettype = "lslbin";
+                break;
+            case LLAssetType::AT_TEXTURE_TGA:
+            case LLAssetType::AT_IMAGE_TGA:
+                assetdir  = "tga";
+                assettype = "tga";
+                break;
+            case LLAssetType::AT_BODYPART:
+                assetdir  = "bodyparts";
+                assettype = "bodypart";
+                break;
+            case LLAssetType::AT_SOUND_WAV:
+                assetdir  = "wav";
+                assettype = "wav";
+                break;
+            case LLAssetType::AT_IMAGE_JPEG:
+                assetdir  = "jpeg";
+                assettype = "jpeg";
+                break;
+            case LLAssetType::AT_ANIMATION:
+                assetdir  = "animations";
+                assettype = "anim";
+                break;
+            case LLAssetType::AT_GESTURE:
+                assetdir  = "gestures";
+                assettype = "gesture";
+                break;
+            case LLAssetType::AT_MESH:
+                assetdir  = "meshes";
+                assettype = "mesh";
+                break;
+            case LLAssetType::AT_MATERIAL:
+                assetdir  = "materials";
+                assettype = "material";
+                break;
+            case LLAssetType::AT_GLTF:
+                assetdir  = "gltf";
+                assettype = "gltf";
+                break;
+            case LLAssetType::AT_GLTF_BIN:
+                assetdir  = "gltfbin";
+                assettype = "gltfbin";
+                break;
+        }
+        if (!assetdir.empty() && !assettype.empty())
+        {
+            return llformat("%s%s%s%s%s_%s_0.%s.asset", sUnencryptedCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), assetdir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str(), assettype.c_str());
+        }
+    }
+// </AS:chanayane>
     return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
 }
 

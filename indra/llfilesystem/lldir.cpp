@@ -1225,41 +1225,31 @@ bool LLDir::setSoundCacheDir(const std::string& path)
 bool LLDir::setUnencryptedCacheDir(const std::string& path)
 {
     bool result = false;
+    std::string tempUnencryptedCacheDir;
 
-    // Default to normal cache directory/unencryptedcache
-    mUnencryptedCacheDir = add(getCacheDir(), "unencryptedcache");
-    if (!LLFile::isdir(mUnencryptedCacheDir))
+    if (path.empty())
     {
-        LLFile::mkdir(mUnencryptedCacheDir);
-    }
-    if (!LLFile::isdir(add(mUnencryptedCacheDir, "textures")))
-    {
-        LLFile::mkdir(add(mUnencryptedCacheDir, "textures"));
-    }
-    if (!LLFile::isdir(add(mUnencryptedCacheDir, "sounds")))
-    {
-        LLFile::mkdir(add(mUnencryptedCacheDir, "sounds"));
-    }
-    if (!LLFile::isdir(add(mUnencryptedCacheDir, "animations")))
-    {
-        LLFile::mkdir(add(mUnencryptedCacheDir, "animations"));
-    }
-
-    if (path.empty() )
-    {
-        // reset to default
-        result = true;
+        // Default to normal cache directory/unencryptedcache
+        tempUnencryptedCacheDir = add(getCacheDir(), "unencryptedcache");
     }
     else
     {
-        LLFile::mkdir(path);
-        std::string tempname = add(path, "temp");
+        tempUnencryptedCacheDir = add(path, "unencryptedcache");
+    }
+
+    if (!tempUnencryptedCacheDir.empty())
+    {
+        if (!LLFile::isdir(tempUnencryptedCacheDir))
+        {
+            LLFile::mkdir(tempUnencryptedCacheDir);
+        }
+        std::string tempname = add(tempUnencryptedCacheDir, "temp");
         LLFILE* file = LLFile::fopen(tempname,"wt");
         if (file)
         {
             fclose(file);
             LLFile::remove(tempname);
-            mUnencryptedCacheDir = path;
+            mUnencryptedCacheDir = tempUnencryptedCacheDir;
             result = true;
         }
     }

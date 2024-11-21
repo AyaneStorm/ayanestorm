@@ -100,6 +100,9 @@
 // <AS:chanayane> Unencrypted cache
 #include "lltexturecache.h"
 // </AS:chanayane>
+// <AS:chanayane> More unencrypted cache
+#include "lldiskcache.h"
+// </AS:chanayane>
 
 // project includes
 
@@ -711,6 +714,14 @@ bool LLFloaterPreference::postBuild()
     // <AS:chanayane> Unencrypted cache
     setUnencryptedCacheLocation(gSavedSettings.getString("ASUnencryptedCacheLocation"));
     getChild<LLUICtrl>("ASUnencryptedCacheLocation")->setEnabled(FALSE);
+    if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
+    {
+        getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(TRUE);
+    }
+    else
+    {
+        getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(FALSE);
+    }
     // </AS:chanayane>
 
     getChild<LLComboBox>("language_combobox")->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
@@ -1876,31 +1887,57 @@ void LLFloaterPreference::changeUnencryptedCachePath(const std::vector<std::stri
     {
         gSavedSettings.setString("ASUnencryptedCacheLocation", dir_name);
         setUnencryptedCacheLocation(dir_name);
-        LLNotificationsUtil::add("UnencryptedCacheWillBeMoved");
+        onClickEnableUnencryptedCache();
     }
 }
 
 void LLFloaterPreference::onClickBrowseUnencryptedCache()
 {
-    gViewerWindow->getWindow()->openFile(gDirUtilp->getExpandedFilename(LL_PATH_UNENCRYPTED_CACHE, ""));
+    std::string unencryptedCacheLocation = gSavedSettings.getString("ASUnencryptedCacheLocation");
+    if (unencryptedCacheLocation.empty())
+    {
+        gViewerWindow->getWindow()->openFile(gDirUtilp->getExpandedFilename(LL_PATH_UNENCRYPTED_CACHE, ""));
+    }
+    else
+    {
+        gViewerWindow->getWindow()->openFile(gDirUtilp->add(unencryptedCacheLocation, "unencryptedcache"));
+    }
 }
 
 void LLFloaterPreference::onClickResetUnencryptedCache()
 {
     gSavedSettings.setString("ASUnencryptedCacheLocation", std::string());
     setUnencryptedCacheLocation(std::string());
-    LLNotificationsUtil::add("UnencryptedCacheWillBeMoved");
+    onClickEnableUnencryptedCache();
 }
 
 void LLFloaterPreference::onClickEnableUnencryptedCache()
 {
     if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
     {
-        LLTextureCache::setUnencryptedCacheEnabled(TRUE);
+        std::string unencryptedCacheLocation = gSavedSettings.getString("ASUnencryptedCacheLocation");
+        if (unencryptedCacheLocation.empty())
+        {
+            unencryptedCacheLocation = gDirUtilp->getCacheDir();
+        }
+        if (gDirUtilp->setUnencryptedCacheDir(unencryptedCacheLocation))
+        {
+            LLTextureCache::setUnencryptedCacheEnabled(TRUE);
+            LLDiskCache::setUnencryptedCacheDir(gDirUtilp->add(unencryptedCacheLocation, "unencryptedcache"));
+            getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(TRUE);
+        } else {
+            // unable to access directory, we disable the option again
+            gSavedSettings.setBOOL("ASEnableUnencryptedCache", FALSE);
+            LLTextureCache::setUnencryptedCacheEnabled(FALSE);
+            LLDiskCache::setUnencryptedCacheDir(std::string());
+            getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(FALSE);
+        }
     }
     else
     {
         LLTextureCache::setUnencryptedCacheEnabled(FALSE);
+        LLDiskCache::setUnencryptedCacheDir(std::string());
+        getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(FALSE);
     }
 }
 // </AS:chanayane>

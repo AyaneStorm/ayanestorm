@@ -5125,16 +5125,23 @@ bool LLAppViewer::initCache()
     }
     if (gSavedSettings.getBOOL("ASEnableUnencryptedCache"))
     {
-        LLTextureCache::setUnencryptedCacheEnabled(TRUE);
+        LLTextureCache::setUnencryptedCacheEnabled(TRUE); // <AS:chanayane> More unencrypted cache
+        LLDiskCache::setUnencryptedCacheDir(gDirUtilp->getUnencryptedCacheDir());
     } else {
         LLTextureCache::setUnencryptedCacheEnabled(FALSE);
     }
     // </AS:chanayane>
 
     const std::string cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, cache_dir_name);
+// <AS:chanayane> More unencrypted cache
+    const std::string unencrypted_cache_dir = gSavedSettings.getBOOL("ASEnableUnencryptedCache") ? gDirUtilp->add(gDirUtilp->getCacheDir(), "unencryptedcache") : "";
+// </AS:chanayane>
     // <FS:Beq> Improve cache purge triggering
     // LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info);
-    LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info, gSavedSettings.getF32("FSDiskCacheHighWaterPercent"), gSavedSettings.getF32("FSDiskCacheLowWaterPercent"));
+// <AS:chanayane> More unencrypted cache
+    //LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info, gSavedSettings.getF32("FSDiskCacheHighWaterPercent"), gSavedSettings.getF32("FSDiskCacheLowWaterPercent"));
+    LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info, gSavedSettings.getF32("FSDiskCacheHighWaterPercent"), gSavedSettings.getF32("FSDiskCacheLowWaterPercent"), unencrypted_cache_dir);
+// </AS:chanayane>
     // </FS:Beq>
 
     if (!read_only)

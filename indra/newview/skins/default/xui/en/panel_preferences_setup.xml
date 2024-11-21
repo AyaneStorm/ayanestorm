@@ -556,6 +556,23 @@
 			 function="Pref.ClearCache" />
 		</button>
 
+<!-- [AS:Chanayane] Unencrypted cache -->
+		<check_box
+		 follows="left|top"
+		 height="16"
+		 control_name="ASEnableUnencryptedCache"
+		 label="Enable unencrypted cache"
+		 tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
+		 left="15"
+		 mouse_opaque="true"
+		 name="enable_unencrypted_cache"
+		 radio_style="false"
+		 width="400"
+		 top_pad="10"
+		 top_delta="35">
+		  <check_box.commit_callback
+		   function="Pref.EnableUnencryptedCache" />
+		</check_box>
 		<text
 		 type="string"
 		 length="1"
@@ -564,7 +581,6 @@
 		 layout="topleft"
 		 left="15"
 		 name="Unencrypted Cache location"
-		 top_delta="35"
 		 width="300">
 			Unencrypted Cache folder location:
 		</text>
@@ -621,22 +637,7 @@
 		  <button.commit_callback
 		   function="Pref.ResetUnencryptedCache" />
 		</button>
-
-		<check_box
-		 follows="left|top"
-		 height="16"
-		 control_name="ASEnableUnencryptedCache"
-		 label="Enable unencrypted cache"
-		 tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
-		 left="15"
-		 mouse_opaque="true"
-		 name="enable_unencrypted_cache"
-		 radio_style="false"
-		 width="400"
-		 top_pad="10">
-		  <check_box.commit_callback
-		   function="Pref.EnableUnencryptedCache" />
-		</check_box>
+<!-- [/AS:Chanayane] -->
 
 		<text
 		 type="string"
