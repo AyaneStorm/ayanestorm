@@ -104,13 +104,22 @@ class LLDiskCache :
                     /**
                      * A floating point percentage of the max_size_bytes which the cache purge will aim to reach once triggered.
                      */
-                    const F32 lowwater_mark_percent
+                    const F32 lowwater_mark_percent,
                     // </FS:Beq>
+
+// <AS:chanayane> More unencrypted cache
+                    const std::string& unencrypted_cache_dir
+// </AS:chanayane>
                     );
 
         virtual ~LLDiskCache() = default;
 
     public:
+// <AS:chanayane> More unencrypted cache
+        static void initUnencryptedCache();
+        static void setUnencryptedCacheDir(const std::string& newUnencryptedDir);
+// </AS:chanayane>
+
         /**
          * Construct a filename and path to it based on the file meta data
          * (id, asset type, additional 'extra' info like discard level perhaps)
@@ -194,6 +203,13 @@ class LLDiskCache :
          * the Windows System dir) with disastrous results.
          */
         static std::string sCacheDir;
+
+// <AS:chanayane> More unencrypted cache
+        /**
+         * The folder that holds the unencrypted cached files.
+         */
+        static std::string sUnencryptedCacheDir;
+// </AS:chanayane>
 
         /**
          * When enabled, displays additional debugging information in
