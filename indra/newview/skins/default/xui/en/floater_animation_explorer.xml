@@ -36,15 +36,15 @@
 		<scroll_list.column
 		 label="Timestamp"
 		 name="timestamp"
-		 width="-1" />
+		 width="60" />
 		<scroll_list.column
 		 label="Animation ID"
 		 name="animation_id"
-		 width="-1" />
+		 width="60" />
 		<scroll_list.column
 		 label="Object ID"
 		 name="object_id"
-		 width="-1" />
+		 width="60" />
 	</scroll_list>
 
 	<view_border
