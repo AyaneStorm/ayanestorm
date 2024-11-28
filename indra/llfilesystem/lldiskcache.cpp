@@ -471,6 +471,9 @@ const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType:
                 assetdir  = "gltfbin";
                 assettype = "gltfbin";
                 break;
+            default:
+                assetdir  = "";
+                assettype = "";
         }
         if (!assetdir.empty() && !assettype.empty())
         {
