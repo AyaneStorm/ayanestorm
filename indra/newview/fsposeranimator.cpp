@@ -1011,8 +1011,8 @@ bool FSPoserAnimator::writeBvhMotion(llofstream* fileStream, LLVOAvatar* avatar,
     if (!joint)
         return false;
 
-    auto rotation = getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING, CURRENTROTATION);
-    auto position = getJointPosition(avatar, *joint, true);
+    auto rotation = getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
+    auto position = getJointPosition(avatar, *joint);
 
     switch (joint->boneType())
     {
