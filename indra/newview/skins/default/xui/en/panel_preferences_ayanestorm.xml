@@ -11,6 +11,87 @@
   name="ayanestorm">
 
   <check_box
+    follows="left|top"
+    height="16"
+    control_name="ASEnableUnencryptedCache"
+    label="Enable unencrypted cache"
+    tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
+    left="15"
+    mouse_opaque="true"
+    name="enable_unencrypted_cache"
+    radio_style="false"
+    width="400"
+    top_pad="10"
+    top_delta="35">
+    <check_box.commit_callback
+      function="Pref.EnableUnencryptedCache" />
+  </check_box>
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="10"
+    layout="topleft"
+    left="15"
+    name="Unencrypted Cache location"
+    width="300">
+    Unencrypted Cache folder location:
+  </text>
+  <line_editor
+    control_name="ASUnencryptedCacheLocation"
+    border_style="line"
+    border_thickness="1"
+    follows="left|top"
+    font="SansSerif"
+    height="23"
+    layout="topleft"
+    left="20"
+    max_length_chars="4096"
+    name="ASUnencryptedCacheLocation"
+    top_pad="10"
+    width="270" />
+  <button
+    enabled="true"
+    follows="left|top"
+    height="23"
+    label="Open"
+    label_selected="Open"
+    layout="topleft"
+    left_pad="5"
+    name="open_unencrypted_cache"
+    top_delta="-1"
+    width="45">
+    <button.commit_callback
+      function="Pref.BrowseUnencryptedCache" />
+  </button>
+  <button
+    follows="left|top"
+    height="23"
+    label="Set"
+    label_selected="Set"
+    layout="topleft"
+    left_pad="5"
+    name="set_unencrypted_cache"
+    top_delta="-0"
+    width="40">
+    <button.commit_callback
+      function="Pref.SetUnencryptedCache" />
+  </button>
+  <button
+    follows="left|top"
+    height="23"
+    label="Reset"
+    label_selected="Reset"
+    layout="topleft"
+    left_pad="3"
+    name="reset_unencrypted_cache"
+    top_delta="0"
+    width="50">
+    <button.commit_callback
+      function="Pref.ResetUnencryptedCache" />
+  </button>
+
+  <check_box
     control_name="MouselookExperimentalHeadScaling"
     follows="left|top"
     height="16"
