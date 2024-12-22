@@ -3716,6 +3716,7 @@ URL：[AUDIOURL]
 [[URL] 點擊這裡]繼續訂閱。
 
 付費使用者請[[PREMIUM_URL] 點擊這裡]領取免費變聲工具。
+		<usetemplate ignoretext="提醒我語音變聲即將過期" name="okignore" yestext="確定"/>
 	</notification>
 	<notification name="VoiceEffectsWillExpire">
 		至少一個你訂閱的變聲效果將在 [INTERVAL] 天后到期。
@@ -4256,11 +4257,6 @@ https://wiki.firestormviewer.org/fs_voice
 		所選的物件會影響導航格線。  將它改為彈性路徑，將使它從導航格線中被移除。
 		<usetemplate ignoretext="所選的物件會影響導航格線。  將它改為彈性路徑，將使它從導航格線中被移除。" name="okcancelignore" notext="取消" yestext="確定"/>
 	</notification>
-	<global name="UnsupportedIntelDriver">
-		您的 [GPUNAME] 安裝的Intel顯示卡驅動程式版本 [VERSION] 已經嚴重過時，並且已知會導致多種程式崩潰。強烈建議您更新到最新的驅動程式版本。
-
-您想存取Intel的驅動程式網頁嗎？
-	</global>
 	<global name="UnsupportedCPUAmount">
 		796
 	</global>
@@ -5049,7 +5045,7 @@ switch語句在沒有預設標籤情況下的行為不正確已被修正。
 		地形已烘焙。
 	</notification>
 	<notification name="TenObjectsDisabledPlzRefresh">
-		只成功停用前 10 個所選物件。 若有需要，請重新整理之後再選擇更多的物件。
+		只成功停用前 10 個所選物件。 若有需要，請更新之後再選擇更多的物件。
 	</notification>
 	<notification name="UpdateViewerBuyParcel">
 		你必須先更新檢視器後，才可購買這個地塊。
