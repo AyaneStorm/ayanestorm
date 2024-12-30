@@ -656,7 +656,7 @@ void LLSnapshotLivePreview::generateThumbnailImage(bool force_update)
 
 LLViewerTexture* LLSnapshotLivePreview::getBigThumbnailImage()
 {
-    if (mThumbnailUpdateLock) //in the process of updating
+    if (mThumbnailUpdateLock | !mPreviewImage) //in the process of updating <FS:Beq/> (bugsplat avoidance) ensure mPreviewImage is valid
     {
         return NULL;
     }
