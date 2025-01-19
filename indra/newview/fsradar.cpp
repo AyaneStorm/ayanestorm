@@ -387,7 +387,9 @@ void FSRadar::updateRadarList()
         //2b. Process newly detected avatars
         //
         radarfields_map_t::iterator last_sweep_found_it = mLastRadarSweep.find(avId);
-        if (last_sweep_found_it == mLastRadarSweep.end())
+        if (last_sweep_found_it == mLastRadarSweep.end()
+            && avId != gAgentID // <AS:chanayane> Adds own avatar in nearby people list
+        )
         {
             // chat alerts
             if (sRadarReportChatRangeEnter && (avRange <= chat_range_say) && avRange > AVATAR_UNKNOWN_RANGE)
@@ -442,7 +444,7 @@ void FSRadar::updateRadarList()
         //
         // 2c. Process previously detected avatars
         //
-        else
+        else if (avId != gAgentID) // <AS:chanayane> Adds own avatar in nearby people list
         {
             RadarFields rf = last_sweep_found_it->second;
             if (sRadarReportChatRangeEnter || sRadarReportChatRangeLeave)
