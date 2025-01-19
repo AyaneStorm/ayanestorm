@@ -164,10 +164,6 @@ bool FSFloaterPoser::postBuild()
     if (gSavedSettings.getBOOL(POSER_ADVANCEDWINDOWSTATE_SAVE_KEY))
         mToggleAdvancedPanelBtn->setValue(true);
 
-    mAlsoSaveBvhCbx = getChild<LLCheckBoxCtrl>("also_save_bvh_checkbox");
-    if (gSavedSettings.getBOOL(POSER_ALSOSAVEBVHFILE_SAVE_KEY))
-        mAlsoSaveBvhCbx->set(true);
-
     mTrackpadSensitivitySlider = getChild<LLSliderCtrl>("trackpad_sensitivity_slider");
     mTrackpadSensitivitySlider->setValue(gSavedSettings.getF32(POSER_TRACKPAD_SENSITIVITY_SAVE_KEY));
 
@@ -218,6 +214,10 @@ bool FSFloaterPoser::postBuild()
     mCollisionVolumesPnl = getChild<LLPanel>("collision_volumes_panel");
 
     mAlsoSaveBvhCbx = getChild<LLCheckBoxCtrl>("also_save_bvh_checkbox");
+// <AS:chanayane> BVH fixes
+    if (gSavedSettings.getBOOL(POSER_ALSOSAVEBVHFILE_SAVE_KEY))
+        mAlsoSaveBvhCbx->set(true);
+// [AS:chanayane]
     mResetBaseRotCbx = getChild<LLCheckBoxCtrl>("reset_base_rotation_on_edit_checkbox");
     mResetBaseRotCbx->setCommitCallback([this](LLUICtrl*, const LLSD&) { onClickSetBaseRotZero(); });
 
@@ -241,9 +241,8 @@ void FSFloaterPoser::onClose(bool app_quitting)
 {
     gSavedSettings.setBOOL(POSER_ALSOSAVEBVHFILE_SAVE_KEY, mAlsoSaveBvhCbx->getValue());
     
-    if (mToggleAdvancedPanelBtn) {
+    if (mToggleAdvancedPanelBtn)
         gSavedSettings.setBOOL(POSER_ADVANCEDWINDOWSTATE_SAVE_KEY, mToggleAdvancedPanelBtn->getValue().asBoolean());
-    }
 
     if (gSavedSettings.getBOOL(POSER_STOPPOSINGWHENCLOSED_SAVE_KEY))
         stopPosingSelf();
@@ -343,55 +342,9 @@ void FSFloaterPoser::onClickPoseSave()
             savePoseToBvh(avatar, filename);
 
         // TODO: provide feedback for save
-
-        bool alsoSaveAsBvh = mAlsoSaveBvhCbx->getValue().asBoolean();
-        if (alsoSaveAsBvh)
-            savePoseToBvh(avatar, filename);
     }
 }
 
-bool FSFloaterPoser::savePoseToBvh(LLVOAvatar* avatar, const std::string& poseFileName)
-{
-    if (poseFileName.empty())
-        return false;
-
-    if (!mPoserAnimator.isPosingAvatar(avatar))
-        return false;
-
-    bool writeSuccess = false;
-
-    try
-    {
-        std::string pathname = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, POSE_SAVE_SUBDIRECTORY);
-        if (!gDirUtilp->fileExists(pathname))
-        {
-            LL_WARNS("Poser") << "Couldn't find folder: " << pathname << " - creating one." << LL_ENDL;
-            LLFile::mkdir(pathname);
-        }
-
-        std::string fullSavePath =
-            gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, POSE_SAVE_SUBDIRECTORY, poseFileName + POSE_EXTERNAL_FORMAT_FILE_EXT);
-
-        llofstream file;
-        file.open(fullSavePath.c_str());
-        if (!file.is_open())
-        {
-            LL_WARNS("Poser") << "Unable to save pose!" << LL_ENDL;
-            return false;
-        }
-
-        writeSuccess = mPoserAnimator.writePoseAsBvh(&file, avatar);
-
-        file.close();
-    }
-    catch (const std::exception& e)
-    {
-        LL_WARNS("Posing") << "Exception caught in SaveToBVH: " << e.what() << LL_ENDL;
-        return false;
-    }
-
-
-    return true;
 void FSFloaterPoser::createUserPoseDirectoryIfNeeded()
 {
     std::string userPath =
@@ -2322,7 +2275,10 @@ bool FSFloaterPoser::writeBvhFragment(llofstream* fileStream, LLVOAvatar* avatar
     if (!joint)
         return false;
 
-    auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+// <AS:chanayane> BVH fixes
+    //auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+    auto position = mPoserAnimator.getFullJointPosition(avatar, *joint);
+// </AS:chanayane>
     auto saveAxis = getBvhJointTranslation(joint->jointName());
 
     switch (joint->boneType())
@@ -2331,7 +2287,9 @@ bool FSFloaterPoser::writeBvhFragment(llofstream* fileStream, LLVOAvatar* avatar
             *fileStream << "ROOT " + joint->jointName() << std::endl;
             *fileStream << "{" << std::endl;
             *fileStream << getTabs(tabStops + 1) + "OFFSET " + joint->bvhOffset() << std::endl;
-            *fileStream << getTabs(tabStops + 1) + "CHANNELS 6 Xposition Yposition Zposition Xrotation Zrotation Yrotation" << std::endl;
+// <AS:chanayane> BVH fixes
+            *fileStream << getTabs(tabStops + 1) + "CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation" << std::endl;
+// </AS:chanayane>
             break;
 
         default:
@@ -2407,8 +2365,12 @@ bool FSFloaterPoser::writeBvhMotion(llofstream* fileStream, LLVOAvatar* avatar, 
     if (!joint)
         return false;
 
-    auto rotation = mPoserAnimator.getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
-    auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+// <AS:chanayane> BVH fixes
+    //auto rotation = mPoserAnimator.getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
+    //auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+    auto rotation = mPoserAnimator.getFullJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
+    auto position = mPoserAnimator.getFullJointPosition(avatar, *joint);
+// </AS:chanayane>
 
     switch (joint->boneType())
     {
@@ -2502,10 +2464,16 @@ S32 FSFloaterPoser::getBvhJointNegation(const std::string& jointName) const
 
 
 bool FSFloaterPoser::getWhetherToResetBaseRotationOnEdit() { return gSavedSettings.getBOOL(POSER_RESETBASEROTONEDIT_SAVE_KEY); }
-void FSFloaterPoser::onClickSetBaseRotZero() { mAlsoSaveBvhCbx->setEnabled(getWhetherToResetBaseRotationOnEdit()); }
+// <AS:chanayane> BVH fixes
+//void FSFloaterPoser::onClickSetBaseRotZero() { mAlsoSaveBvhCbx->setEnabled(getWhetherToResetBaseRotationOnEdit()); }
+void FSFloaterPoser::onClickSetBaseRotZero() {}
+// </AS:chanayane>
 
 bool FSFloaterPoser::getSavingToBvh()
 {
-    return getWhetherToResetBaseRotationOnEdit() && gSavedSettings.getBOOL(POSER_RESETBASEROTONEDIT_SAVE_KEY);
+// <AS:chanayane> BVH fixes
+    //return getWhetherToResetBaseRotationOnEdit() && gSavedSettings.getBOOL(POSER_RESETBASEROTONEDIT_SAVE_KEY);
+    return mAlsoSaveBvhCbx->getValue().asBoolean();
+// </AS:chanayane>
 }
 

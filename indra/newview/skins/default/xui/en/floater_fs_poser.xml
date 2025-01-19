@@ -823,15 +823,6 @@ width="403">
 						 top_pad="5"
 						 width="134" />
 						<check_box
-						 name="also_save_bvh_checkbox"
-						 height="16"
-						 label="Write BVH when saving"
-						 follows="left|top"
-						 left="5"
-						 tool_tip="When you save your pose, also write a BVH file, which can be uploaded via the 'Build' menu to pose yourself or others in-world"
-						 top_pad="5"
-						 width="134" />
-						<check_box
 						 control_name="FSPoserResetBaseRotationOnEdit"
 						 name="reset_base_rotation_on_edit_checkbox"
 						 height="16"
@@ -841,15 +832,16 @@ width="403">
 						 tool_tip="When you first edit a rotation, reset it to zero. This means your work can save a pose (and not a diff see load/save). A green tick appears next each joint you have zero-ed export."
 						 top_pad="5"
 						 width="134" />
+						<!-- [AS:chanayane] BVH fixes (enabled="true" and changed tool_tip) -->
 						<check_box
 						 control_name="FSPoserSaveExternalFileAlso"
 						 name="also_save_bvh_checkbox"
 						 height="16"
-						 enabled="false"
+						 enabled="true"
 						 label="Write BVH when saving**"
 						 follows="left|top"
 						 left="5"
-						 tool_tip="When you save your pose, also write a BVH file, which can be uploaded via the 'Build > Upload > Animation' to pose yourself or others in-world. This needs joints to reset their 'base' to zero, because BVH requires original work."
+						 tool_tip="When you save your pose, also write a BVH file, which can be uploaded via the 'Build > Upload > Animation' to pose yourself or others in-world."
 						 top_pad="5"
 						 width="134" />
 					</panel>

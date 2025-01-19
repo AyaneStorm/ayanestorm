@@ -358,6 +358,25 @@ LLVector3 FSPoserAnimator::getJointPosition(LLVOAvatar* avatar, const FSPoserJoi
     return jointPose->getPositionDelta();
 }
 
+// <AS:chanayane> BVH fixes
+LLVector3 FSPoserAnimator::getFullJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const
+{
+    LLVector3 pos;
+    if (!isAvatarSafeToUse(avatar))
+        return pos;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return pos;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return pos;
+
+    return jointPose->getTargetPosition();
+}
+// </AS:chanayane>
+
 void FSPoserAnimator::setJointPosition(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& position, E_BoneDeflectionStyles style)
 {
     if (!isAvatarSafeToUse(avatar))
@@ -495,6 +514,25 @@ LLVector3 FSPoserAnimator::getJointRotation(LLVOAvatar* avatar, const FSPoserJoi
  
     return translateRotationFromQuaternion(translation, negation, jointPose->getRotationDelta());
 }
+
+// <AS:chanayane> BVH fixes
+LLVector3 FSPoserAnimator::getFullJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const
+{
+    LLVector3 vec3;
+    if (!isAvatarSafeToUse(avatar))
+        return vec3;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return vec3;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return vec3;
+ 
+    return translateRotationFromQuaternion(translation, negation, jointPose->getTargetRotation());
+}
+// </AS:chanayane>
 
 void FSPoserAnimator::setJointRotation(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& absRotation,
                                        const LLVector3& deltaRotation, E_BoneDeflectionStyles deflectionStyle,
@@ -753,6 +791,25 @@ LLVector3 FSPoserAnimator::getJointScale(LLVOAvatar* avatar, const FSPoserJoint&
     return jointPose->getScaleDelta();
 }
 
+// <AS:chanayane> BVH fixes
+LLVector3 FSPoserAnimator::getFullJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const
+{
+    LLVector3 scale;
+    if (!isAvatarSafeToUse(avatar))
+        return scale;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return scale;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return scale;
+
+    return jointPose->getTargetScale();
+}
+// </AS:chanayane>
+
 void FSPoserAnimator::setJointScale(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& scale, E_BoneDeflectionStyles style)
 {
     if (!isAvatarSafeToUse(avatar))
@@ -979,114 +1036,4 @@ bool FSPoserAnimator::isAvatarSafeToUse(LLVOAvatar* avatar) const
         return false;
 
     return true;
-}
-
-bool FSPoserAnimator::writePoseAsBvh(llofstream* fileStream, LLVOAvatar* avatar)
-{
-    if (!fileStream || !avatar)
-        return false;
-
-    *fileStream << "HIERARCHY" << std::endl;
-    auto startingJoint = getPoserJointByName("mPelvis");
-    writeBvhFragment(fileStream, avatar, startingJoint, 0);
-    *fileStream << "MOTION" << std::endl;
-    *fileStream << "Frames:    1" << std::endl;
-    *fileStream << "Frame Time: 1" << std::endl;
-    writeBvhMotion(fileStream, avatar, startingJoint);
-    *fileStream << std::endl;
-
-    return true;
-}
-
-bool FSPoserAnimator::writeBvhFragment(llofstream* fileStream, LLVOAvatar* avatar, const FSPoserJoint* joint, S32 tabStops)
-{
-    if (!joint)
-        return false;
-
-    auto position = getJointPosition(avatar, *joint);
-
-    switch (joint->boneType())
-    {
-        case WHOLEAVATAR:
-            *fileStream << "ROOT " + joint->jointName() << std::endl;
-            *fileStream << "{" << std::endl;
-            *fileStream << getTabs(tabStops + 1) + "OFFSET " + vec3ToXYZString(position) << std::endl;
-            *fileStream << getTabs(tabStops + 1) + "CHANNELS 6 Xposition Yposition Zposition Xrotation Yrotation Zrotation" << std::endl;
-            break;
-
-        default:
-            *fileStream << getTabs(tabStops) + "JOINT " + joint->jointName() << std::endl;
-            *fileStream << getTabs(tabStops) + "{" << std::endl;
-            *fileStream << getTabs(tabStops + 1) + "OFFSET " + vec3ToXYZString(position) << std::endl;
-            *fileStream << getTabs(tabStops + 1) + "CHANNELS 3 Xrotation Yrotation Zrotation" << std::endl;
-            break;
-    }
-
-    size_t numberOfBvhChildNodes = joint->bvhChildren().size();
-    if (numberOfBvhChildNodes > 0)
-    {
-        for (size_t index = 0; index != numberOfBvhChildNodes; ++index)
-        {
-            auto nextJoint = getPoserJointByName(joint->bvhChildren()[index]);
-            writeBvhFragment(fileStream, avatar, nextJoint, tabStops + 1);
-        }
-    }
-    else
-    {
-        *fileStream << getTabs(tabStops + 1) + "End Site" << std::endl;
-        *fileStream << getTabs(tabStops + 1) + "{" << std::endl;
-        *fileStream << getTabs(tabStops + 2) + "OFFSET " + vec3ToXYZString(position) << std::endl; // I don't understand this node
-        *fileStream << getTabs(tabStops + 1) + "}" << std::endl;
-    }
-
-    *fileStream << getTabs(tabStops) + "}" << std::endl;
-    return true;
-}
-
-bool FSPoserAnimator::writeBvhMotion(llofstream* fileStream, LLVOAvatar* avatar, const FSPoserJoint* joint)
-{
-    if (!joint)
-        return false;
-
-    auto rotation = getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
-    auto position = getJointPosition(avatar, *joint);
-
-    switch (joint->boneType())
-    {
-        case WHOLEAVATAR:
-            *fileStream << vec3ToXYZString(position) + " " + rotationToYZXString(rotation);
-            break;
-
-        default:
-            *fileStream << " " + rotationToYZXString(rotation);
-            break;
-    }
-
-    size_t numberOfBvhChildNodes = joint->bvhChildren().size();
-    for (size_t index = 0; index != numberOfBvhChildNodes; ++index)
-    {
-        auto nextJoint = getPoserJointByName(joint->bvhChildren()[index]);
-        writeBvhMotion(fileStream, avatar, nextJoint);
-    }
-
-    return true;
-}
-
-std::string FSPoserAnimator::vec3ToXYZString(const LLVector3& val)
-{
-    return std::to_string(val[VX]) + " " + std::to_string(val[VY]) + " " + std::to_string(val[VZ]);
-}
-
-std::string FSPoserAnimator::rotationToYZXString(const LLVector3& val)
-{
-    return std::to_string(val[VY] * RAD_TO_DEG) + " " + std::to_string(val[VZ] * RAD_TO_DEG) + " " + std::to_string(val[VX] * RAD_TO_DEG);
-}
-
-std::string FSPoserAnimator::getTabs(S32 numOfTabstops)
-{
-    std::string tabSpaces;
-    for (S32 i = 0; i < numOfTabstops; i++)
-        tabSpaces += "\t";
-
-    return tabSpaces;
 }

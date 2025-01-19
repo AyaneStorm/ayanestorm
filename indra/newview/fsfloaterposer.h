@@ -486,7 +486,6 @@ class FSFloaterPoser : public LLFloater
     LLButton* mRedoChangeBtn{ nullptr };
     LLButton* mSetToTposeButton{ nullptr };
 
-    LLCheckBoxCtrl* mAlsoSaveBvhCbx{ nullptr };
     LLLineEditor* mPoseSaveNameEditor{ nullptr };
 
     LLPanel* mAdvancedParentPnl{ nullptr };
