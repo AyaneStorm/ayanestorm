@@ -136,6 +136,19 @@
 	     top_delta="0"
 	     width="60" />
           <!-- end of Windlight Button -->
+          <!-- Windlight Button here -->  
+	    <button
+	     follows="left|top"
+	     height="23"
+	     use_ellipses="true"
+	     layout="topleft"
+	     left_pad="7"
+	     name="PersonalLighting2"
+	     label="Advanced lighting"
+	     tool_tip="Opens the Advanced Lighting window"
+	     top_delta="0"
+	     width="60" />
+          <!-- end of Windlight Button -->
 
 	</layout_panel>
 	<!-- Contains the navigation buttons -->

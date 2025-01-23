@@ -35,6 +35,7 @@
 #include "rlvdefines.h"
 
 const std::string PHOTOTOOLS_FLOATER = "phototools";
+const std::string PHOTOTOOLS_FLOATER2 = "phototools2";
 
 class LLCheckBoxCtrl;
 class LLComboBox;
@@ -108,6 +109,7 @@ public:
     // Phototools additions
     void refreshSettings();
     bool getIsPhototools() const { return getName() == PHOTOTOOLS_FLOATER; };
+    bool getIsPhototools2() const { return getName() == PHOTOTOOLS_FLOATER2; };
 
     void dockToToolbarButton();
 

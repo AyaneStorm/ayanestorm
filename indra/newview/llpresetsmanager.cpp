@@ -553,6 +553,11 @@ void LLPresetsManager::loadPreset(const std::string& subdirectory, std::string n
                 phototools->refreshSettings();
             }
             // </FS:Ansariel>
+            FloaterQuickPrefs* phototools2 = LLFloaterReg::findTypedInstance<FloaterQuickPrefs>(PHOTOTOOLS_FLOATER2);
+            if (phototools2)
+            {
+                phototools2->refreshSettings();
+            }
             triggerChangeSignal();
         }
         if(PRESETS_CAMERA == subdirectory)

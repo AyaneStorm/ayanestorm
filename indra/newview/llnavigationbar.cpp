@@ -333,6 +333,7 @@ void LLNavigationBar::setupPanel()
 
     mView->getChild<LLButton>("PersonalLighting")->setCommitCallback(boost::bind(&LLNavigationBar::onClickedLightingBtn, this)); // <FS:CR> FIRE-11847
     // </FS:Zi>
+    mView->getChild<LLButton>("PersonalLighting2")->setCommitCallback(boost::bind(&LLNavigationBar::onClickedLightingBtn2, this));
 
     fillSearchComboBox();
 
@@ -921,11 +922,17 @@ void LLNavigationBar::onClickedLightingBtn()
     LLFloaterReg::showInstance("env_adjust_snapshot");
 }
 
+void LLNavigationBar::onClickedLightingBtn2()
+{
+    LLFloaterReg::showInstance("env_adjust_snapshot2");
+}
+
 void LLNavigationBar::updateRlvRestrictions(ERlvBehaviour behavior, ERlvParamType type)
 {
     if (behavior == RLV_BHVR_SETENV)
     {
         mView->getChild<LLButton>("PersonalLighting")->setEnabled(type != RLV_TYPE_ADD);
+        mView->getChild<LLButton>("PersonalLighting2")->setEnabled(type != RLV_TYPE_ADD);
     }
 }
 // </FS:CR> FIRE-11847

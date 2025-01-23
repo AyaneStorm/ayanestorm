@@ -157,6 +157,7 @@ private:
 
     // <FS:CR> FIRE-11847
     void onClickedLightingBtn();
+    void onClickedLightingBtn2();
     boost::signals2::connection mRlvBehaviorCallbackConnection;
     void updateRlvRestrictions(ERlvBehaviour behavior, ERlvParamType type);
     // </FS:CR>
