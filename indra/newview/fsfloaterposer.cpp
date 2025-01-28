@@ -245,7 +245,7 @@ void FSFloaterPoser::onClose(bool app_quitting)
         gSavedSettings.setBOOL(POSER_ADVANCEDWINDOWSTATE_SAVE_KEY, mToggleAdvancedPanelBtn->getValue().asBoolean());
 
     if (gSavedSettings.getBOOL(POSER_STOPPOSINGWHENCLOSED_SAVE_KEY))
-        stopPosingSelf();
+        stopPosingAllAvatars();
 
     LLFloater::onClose(app_quitting);
 }
@@ -350,8 +350,8 @@ void FSFloaterPoser::createUserPoseDirectoryIfNeeded()
     std::string userPath =
         gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, POSE_SAVE_SUBDIRECTORY);
 
-    userPath = userPath + gDirUtilp->getDirDelimiter() + std::string(POSE_PRESETS_HANDS_SUBDIRECTORY);
-    if (gDirUtilp->fileExists(userPath))
+    std::string userHandPresetsPath = userPath + gDirUtilp->getDirDelimiter() + std::string(POSE_PRESETS_HANDS_SUBDIRECTORY);
+    if (gDirUtilp->fileExists(userHandPresetsPath))
         return;
 
     try
@@ -362,8 +362,11 @@ void FSFloaterPoser::createUserPoseDirectoryIfNeeded()
             LLFile::mkdir(userPath);
         }
 
-        LL_WARNS("Poser") << "Couldn't find folder: " << userPath << " - creating one." << LL_ENDL;
-        LLFile::mkdir(userPath);
+        if (!gDirUtilp->fileExists(userHandPresetsPath))
+        {
+            LL_WARNS("Poser") << "Couldn't find folder: " << userHandPresetsPath << " - creating one." << LL_ENDL;
+            LLFile::mkdir(userHandPresetsPath);
+        }
 
         std::string sourcePresetPath =
             gDirUtilp->getExpandedFilename(LL_PATH_EXECUTABLE, POSE_SAVE_SUBDIRECTORY, std::string(POSE_PRESETS_HANDS_SUBDIRECTORY));
@@ -375,10 +378,10 @@ void FSFloaterPoser::createUserPoseDirectoryIfNeeded()
         for (auto pose : posesToCopy)
         {
             std::string source      = sourcePresetPath + gDirUtilp->getDirDelimiter() + pose;
-            std::string destination = userPath + gDirUtilp->getDirDelimiter() + pose;
+            std::string destination = userHandPresetsPath + gDirUtilp->getDirDelimiter() + pose;
 
             if (!LLFile::copy(source, destination))
-                LL_WARNS("LLDiskCache") << "Failed to copy " << source << " to " << destination << LL_ENDL;
+                LL_WARNS("Poser") << "Failed to copy " << source << " to " << destination << LL_ENDL;
         }
     }
     catch (const std::exception& e)
@@ -888,6 +891,9 @@ void FSFloaterPoser::loadPoseFromXml(LLVOAvatar* avatar, const std::string& pose
 
 void FSFloaterPoser::startPosingSelf()
 {
+    if (!gAgentAvatarp || gAgentAvatarp.isNull())
+        return;
+
     setUiSelectedAvatar(gAgentAvatarp->getID());
     LLVOAvatar* avatar = getAvatarByUuid(gAgentAvatarp->getID());
     if (!avatar)
@@ -900,17 +906,24 @@ void FSFloaterPoser::startPosingSelf()
     onAvatarSelect();
 }
 
-void FSFloaterPoser::stopPosingSelf()
+void FSFloaterPoser::stopPosingAllAvatars()
 {
-    LLVOAvatar* avatar = getAvatarByUuid(gAgentAvatarp->getID());
-    if (!avatar)
+    if (!gAgentAvatarp || gAgentAvatarp.isNull())
         return;
 
-    bool arePosingSelected = mPoserAnimator.isPosingAvatar(avatar);
-    if (!arePosingSelected)
-        return;
+    for (auto listItem : mAvatarSelectionScrollList->getAllData())
+    {
+        LLScrollListCell* cell = listItem->getColumn(COL_UUID);
+        if (!cell)
+            continue;
 
-    mPoserAnimator.stopPosingAvatar(avatar);
+        LLUUID      selectedAvatarId = cell->getValue().asUUID();
+        LLVOAvatar* listAvatar       = getAvatarByUuid(selectedAvatarId);
+
+        if (mPoserAnimator.isPosingAvatar(listAvatar))
+            mPoserAnimator.stopPosingAvatar(listAvatar);
+    }
+
     onAvatarSelect();
 }
 
@@ -2082,7 +2095,7 @@ void FSFloaterPoser::onAvatarsRefresh()
         LLAvatarName av_name;
         std::string animeshName = getControlAvatarName(avatar);
         if (animeshName.empty())
-            animeshName = avatar->getFullname();
+            continue;
 
         LLSD row;
         row["columns"][COL_ICON]["column"] = "icon";
@@ -2116,6 +2129,9 @@ std::string FSFloaterPoser::getControlAvatarName(const LLControlAvatar* avatar)
 
     if (attachedItem)
         return attachedItem->getName();
+
+    if (rootEditObject->permYouOwner())
+        return avatar->getFullname();
 
     return "";
 }
@@ -2154,24 +2170,6 @@ void FSFloaterPoser::setSavePosesButtonText(bool setAsSaveDiff)
 // <AS:chanayane> Save full poses!
     //setAsSaveDiff ? mSavePosesBtn->setLabel("Save Diff") : mSavePosesBtn->setLabel("Save Pose");
 // </AS:chanayane>
-}
-
-bool FSFloaterPoser::posingAnyoneOnScrollList()
-{
-    for (auto listItem : mAvatarSelectionScrollList->getAllData())
-    {
-        LLScrollListCell* cell = listItem->getColumn(COL_UUID);
-        if (!cell)
-            continue;
-
-        LLUUID      selectedAvatarId = cell->getValue().asUUID();
-        LLVOAvatar* listAvatar       = getAvatarByUuid(selectedAvatarId);
-
-        if (mPoserAnimator.isPosingAvatar(listAvatar))
-            return true;
-    }
-
-    return false;
 }
 
 void FSFloaterPoser::addBoldToScrollList(LLScrollListCtrl* list, LLVOAvatar* avatar)
