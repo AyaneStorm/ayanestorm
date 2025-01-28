@@ -2095,7 +2095,10 @@ void FSFloaterPoser::onAvatarsRefresh()
         LLAvatarName av_name;
         std::string animeshName = getControlAvatarName(avatar);
         if (animeshName.empty())
-            continue;
+   // <AS:Chanayane> Do not limit posing to owned animeshes
+            //continue;
+            animeshName = avatar->getFullname();
+// </AS:Chanayane>
 
         LLSD row;
         row["columns"][COL_ICON]["column"] = "icon";
