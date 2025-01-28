@@ -27,7 +27,7 @@
   <key>FSUseV2Friends</key>
   <map>
     <key>Comment</key>
-    <string>Makes Comm->Friends and Comm->Groups open the v2 based windows.</string>
+    <string>Makes Comm-&gt;Friends and Comm-&gt;Groups open the v2 based windows.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
