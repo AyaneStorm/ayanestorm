@@ -2262,10 +2262,6 @@ void LLFloaterPreference::onUpdatePopupFilter()
 
 void LLFloaterPreference::refreshEnabledState()
 {
-#if ADDRESS_SIZE == 32
-    childSetEnabled("FSRestrictMaxTextureSize", false);
-#endif
-
     if (!LLFeatureManager::getInstance()->isFeatureAvailable("RenderCompressTextures"))
     {
         getChildView("texture compression")->setEnabled(false);
