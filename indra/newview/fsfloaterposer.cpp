@@ -353,12 +353,13 @@ void FSFloaterPoser::onPoseFileSelect()
     mPoseSaveNameEditor->setEnabled(enableButtons);
     mPoseSaveNameEditor->setText(name);
 
+
 // <AS:chanayane> Save full poses!
     // bool isDeltaSave = !poseFileStartsFromTeePose(name);
     // if (isDeltaSave)
-    //     mLoadPosesBtn->setLabel("Load Diff");
+    //     mLoadPosesBtn->setLabel(getString("LoadDiffLabel"));
     // else
-    //     mLoadPosesBtn->setLabel("Load Pose");
+    //     mLoadPosesBtn->setLabel(getString("LoadPoseLabel"));
 // <AS:chanayane> Save full poses!
 }
 
@@ -415,7 +416,7 @@ void FSFloaterPoser::createUserPoseDirectoryIfNeeded()
             return;
 
         auto posesToCopy = gDirUtilp->getFilesInDir(sourcePresetPath);
-        for (auto pose : posesToCopy)
+        for (const auto& pose : posesToCopy)
         {
             std::string source      = sourcePresetPath + gDirUtilp->getDirDelimiter() + pose;
             std::string destination = userHandPresetsPath + gDirUtilp->getDirDelimiter() + pose;
