@@ -2997,7 +2997,7 @@ LLViewerFetchedTexture *LLVOAvatar::getBakedTextureImage(const U8 te, const LLUU
             LL_DEBUGS("Avatar") << avString() << "get old-bake image from host " << uuid << LL_ENDL;
             LLHost host = getObjectHost();
             result = LLViewerTextureManager::getFetchedTexture(
-                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings, not happening with SL Viewer
+                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings
                 //uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
                 uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_AVATAR_BAKED, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
                 // <FS:minerjr> [FIRE-35081]
@@ -7299,8 +7299,8 @@ const LLUUID& LLVOAvatar::getID() const
 //-----------------------------------------------------------------------------
 // RN: avatar joints are multi-rooted to include screen-based attachments
 //<FS:ND> Query by JointKey rather than just a string, the key can be a U32 index for faster lookup
-//LLJoint *LLVOAvatar::getJoint( const std::string &name )
-LLJoint *LLVOAvatar::getJoint( const JointKey &name )
+//LLJoint *LLVOAvatar::getJoint(const std::string &name)
+LLJoint *LLVOAvatar::getJoint(const JointKey &name)
 // </FS:ND>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
@@ -7399,6 +7399,23 @@ LLJoint *LLVOAvatar::getJoint( S32 joint_num )
 
     llassert(!pJoint || pJoint->getJointNum() == joint_num);
     return pJoint;
+}
+
+void LLVOAvatar::initAllJoints()
+{
+    getJointAliases();
+    // <FS:Ansariel> Lookup performance changes
+    //for (auto& alias : mJointAliasMap)
+    //{
+    //    mJointMap[alias.first] = mRoot->findJoint(alias.second);
+    //    mJointMap[JointKey::construct(alias.first).mKey] = mRoot->findJoint(alias.second);
+    //}
+    for (const auto& alias : mJointAliasMap)
+    {
+        mJointMap[JointKey::construct(alias.first).mKey] = mRoot->findJoint(alias.second);
+    }
+    // </FS:Ansariel>
+    // ignore mScreen and mRoot
 }
 
 //-----------------------------------------------------------------------------
@@ -11032,7 +11049,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
             //LL_DEBUGS("Avatar") << avString() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             LL_DEBUGS("Avatar") << avString() << "sb " << (S32) isUsingServerBakes() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             setTEImage(mBakedTextureDatas[baked_index].mTextureIndex,
-                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings, not happening with SL Viewer
+                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings
                 //LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
                 //Texture will use baked textures, so it should also use that for the boost.
                 LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_AVATAR_BAKED, LLViewerTexture::LOD_TEXTURE));
