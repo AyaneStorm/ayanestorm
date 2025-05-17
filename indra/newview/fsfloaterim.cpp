@@ -479,6 +479,10 @@ void FSFloaterIM::sendMsgFromInputEditor(EChatType type)
                             {
                                 str_version_tag = "Release";
                             }
+                            else if( viewer_maturity == LLVersionInfo::FSViewerMaturity::STREAMING_VIEWER )
+                            {
+                                str_version_tag = "Streaming";
+                            }
                             else if( viewer_maturity == LLVersionInfo::FSViewerMaturity::UNOFFICIAL_VIEWER )
                             {
                                 str_version_tag = "Unofficial";
@@ -501,6 +505,10 @@ void FSFloaterIM::sendMsgFromInputEditor(EChatType type)
                             if( viewer_maturity == LLVersionInfo::FSViewerMaturity::UNOFFICIAL_VIEWER )
                             {
                                 str_version_tag = "Unofficial";
+                            }
+                            if( viewer_maturity == LLVersionInfo::FSViewerMaturity::STREAMING_VIEWER )
+                            {
+                                str_version_tag = "Streaming";
                             }
                             else if( viewer_maturity != LLVersionInfo::FSViewerMaturity::RELEASE_VIEWER )
                             {
@@ -1244,6 +1252,17 @@ FSFloaterIM* FSFloaterIM::show(const LLUUID& session_id)
 
     if (!gIMMgr->hasSession(session_id))
         return nullptr;
+
+    // <AS:chanayane> fixes unable to open an IM with someone who started a group chat
+    // Prevent showing non-IM sessions in FSFloaterIM::show()
+    LLIMModel::LLIMSession* session = LLIMModel::getInstance()->findIMSession(session_id);
+    if (!session || session->mType != IM_NOTHING_SPECIAL)
+    {
+        LL_WARNS("IMVIEW") << "Attempted to show FSFloaterIM for non-IM session: "
+                        << (session ? std::to_string(session->mType) : "null") << LL_ENDL;
+        return nullptr;
+    }
+    // </AS:chanayane>
 
     if (!isChatMultiTab())
     {
