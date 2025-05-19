@@ -1253,10 +1253,15 @@ FSFloaterIM* FSFloaterIM::show(const LLUUID& session_id)
     if (!gIMMgr->hasSession(session_id))
         return nullptr;
 
-    // <AS:chanayane> fixes unable to open an IM with someone who started a group chat
+    // <AS:chanayane> [FIRE-34494] fixes unable to open an IM with someone who started a group chat
     // Prevent showing non-IM sessions in FSFloaterIM::show()
     LLIMModel::LLIMSession* session = LLIMModel::getInstance()->findIMSession(session_id);
-    if (!session || session->mType != IM_NOTHING_SPECIAL)
+    if (!session || ( 
+           IM_NOTHING_SPECIAL          != session->mType
+        && IM_SESSION_P2P_INVITE       != session->mType
+        && IM_SESSION_INVITE           != session->mType
+        && IM_SESSION_CONFERENCE_START != session->mType
+        && IM_SESSION_GROUP_START      != session->mType))
     {
         LL_WARNS("IMVIEW") << "Attempted to show FSFloaterIM for non-IM session: "
                         << (session ? std::to_string(session->mType) : "null") << LL_ENDL;

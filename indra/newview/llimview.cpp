@@ -3904,17 +3904,16 @@ LLUUID LLIMMgr::addSession(
 
     //works only for outgoing ad-hoc sessions
     if (new_session &&
-        // <AS:chanayane> fix unable to open an IM with someone who started a group chat
-        //((IM_NOTHING_SPECIAL == dialog) || (IM_SESSION_P2P_INVITE == dialog) || (IM_SESSION_CONFERENCE_START == dialog)) &&
-        //ids.size())
-        ((IM_NOTHING_SPECIAL == dialog) || (IM_SESSION_P2P_INVITE == dialog)) &&        
+        ((IM_NOTHING_SPECIAL == dialog) || (IM_SESSION_P2P_INVITE == dialog) || (IM_SESSION_CONFERENCE_START == dialog)) &&
+        // <AS:chanayane> [FIRE-34494] fix unable to open an IM with someone who started a group chat
+        //ids.size())   
         !ids.empty())
         // </AS:chanayane>
     {
         session = LLIMModel::getInstance()->findAdHocIMSession(ids);
         if (session)
         {
-// <AS:chanayane> fix unable to open an IM with someone who started a group chat
+// <AS:chanayane> [FIRE-34494] fix unable to open an IM with someone who started a group chat
             // new_session = false;
             // session_id = session->mSessionID;
 
