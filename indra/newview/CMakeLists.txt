@@ -100,6 +100,7 @@ set(viewer_SOURCE_FILES
     dialogstack.cpp
     exoflickr.cpp
     exoflickrauth.cpp
+    fsprimfeedauth.cpp
     exogroupmutelist.cpp
     floatermedialists.cpp
     fsareasearch.cpp
@@ -168,6 +169,7 @@ set(viewer_SOURCE_FILES
     fspose.cpp
 	fsposeranimator.cpp
 	fsposingmotion.cpp
+    fsprimfeedauth.cpp
     fsradar.cpp
     fsradarentry.cpp
     fsradarlistctrl.cpp
@@ -186,6 +188,8 @@ set(viewer_SOURCE_FILES
     lfsimfeaturehandler.cpp
     llflickrconnect.cpp
     llfloaterflickr.cpp
+    fsprimfeedconnect.cpp
+    fsfloaterprimfeed.cpp
     llpanelopenregionsettings.cpp
     # <FS:Ansariel> [Legacy Bake]
     llagentwearablesfetch.cpp
@@ -918,6 +922,7 @@ set(viewer_HEADER_FILES
     dialogstack.h
     exoflickr.h
     exoflickrauth.h
+    fsprimfeedauth.h
     exogroupmutelist.h
     floatermedialists.h
     fsareasearch.h
@@ -988,6 +993,7 @@ set(viewer_HEADER_FILES
     fspose.h
 	fsposeranimator.h
 	fsposingmotion.h
+    fsprimfeedauth.h
     fsradar.h
     fsradarentry.h
     fsradarlistctrl.h
@@ -1007,6 +1013,8 @@ set(viewer_HEADER_FILES
     lfsimfeaturehandler.h
     llflickrconnect.h
     llfloaterflickr.h
+    fsprimfeedconnect.h
+    fsfloaterprimfeed.h
     # <FS:Ansariel> [Legacy Bake]
     llagentwearablesfetch.h
     vjlocalmesh.h
