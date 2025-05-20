@@ -924,6 +924,12 @@ void FSPanelLogin::loadLoginPage()
     params["login_content_version"] = gSavedSettings.getString("LoginContentVersion");
 
     params["ayanestorm_flavor"] = "standard";
+    
+    // No version popup
+    if (gSavedSettings.getBOOL("FSNoVersionPopup"))
+    {
+        params["noversionpopup"] = "true";
+    }
 
     // Make an LLURI with this augmented info
     std::string url = login_page.scheme().empty()? login_page.authority() : login_page.scheme() + "://" + login_page.authority();
