@@ -436,7 +436,18 @@ support@secondlife.com.
 	<string name="SocialFlickrErrorDisconnecting">
 		斷開與Flickr的連線時發生錯誤
 	</string>
-	<!-- SLShare: User Friendly Filter Names Translation -->
+	<string name="SocialPrimfeedConnecting">
+		正在連接到Primfeed...
+	</string>
+	<string name="SocialPrimfeedNotAuthorized">
+		未經授權...
+	</string>
+	<string name="SocialPrimfeedPosting">
+		正在發布...
+	</string>
+	<string name="SocialPrimfeedErrorPosting">
+		發布到Primfeed時出現問題
+	</string>
 	<string name="BlackAndWhite">
 		黑 &amp; 白
 	</string>
@@ -5033,10 +5044,10 @@ support@secondlife.com.
 		離線
 	</string>
 	<string name="not_online_msg">
-		使用者不線上上上 - 訊息將留存，稍後傳遞。
+		使用者不在線 - 訊息將留存，稍後傳遞。
 	</string>
 	<string name="not_online_inventory">
-		使用者不線上上上 - 庫存已儲存。
+		使用者不在線 - 庫存已儲存。
 	</string>
 	<!-- Additional IM messages -->
 	<string name="IM_announce_incoming">
@@ -6288,6 +6299,12 @@ support@secondlife.com.
 	<string name="Command_Poser_Tooltip">
 		編輯你的化身與動畫物件的姿勢
 	</string>
+	<string name="Command_Primfeed_Label">
+		Primfeed
+	</string>
+	<string name="Command_Primfeed_Tooltip">
+		直接發佈到您的Primfeed賬戶。
+	</string>
 	<string name="Command_360_Capture_Tooltip">
 		拍攝360°旋轉圖像
 	</string>
@@ -7155,7 +7172,7 @@ SecondLife.com網站的「支援」部分
 	</string>
 	<!-- <FS:Ansariel> Radar notifications -->
 	<string name="camera_no_focus">
-		相機無法聚焦於 [AVATARNAME] 使用者，因為他們在你的繪製距離之外。
+		相機無法聚焦於[AVATARNAME]居民，因為他們在你的繪製距離之外。
 	</string>
 	<string name="entering_draw_distance">
 		進入繪製距離 ([DISTANCE] 米).
@@ -7510,12 +7527,24 @@ SecondLife.com網站的「支援」部分
 		1 個元素
 	</string>
 	<string name="FSObjectInventoryElements">
-		[NUM_ELEMENTS] 元素
+		[NUM_ELEMENTS]個元素
 	</string>
 	<string name="OpenSimInventoryValidationErrorGenericHelp">
 		你的網路運營商支援小組
 	</string>
 	<string name="Unlimited">
 		無限
+	</string>
+	<string name="ListEmpty">
+		清單為空
+	</string>
+	<string name="NoValidUUIDs">
+		在匯入的檔案中未找到有效的UUID。
+	</string>
+	<string name="ImportListTooLarge">
+		項目過多。CSV檔案包含[COUNT]個項目，但僅可使用[MAX]個位置。
+	</string>
+	<string name="ImportSuccessful">
+		[COUNT]個項目已成功處理。
 	</string>
 </strings>
