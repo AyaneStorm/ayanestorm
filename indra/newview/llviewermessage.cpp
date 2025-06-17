@@ -4684,6 +4684,37 @@ void process_time_synch(LLMessageSystem *mesgsys, void **user_data)
     (void)sun_direction, (void)moon_direction, (void)phase;
 }
 
+// <FS> Sound blacklist
+static bool is_sound_blacklisted(const LLUUID& sound_id, const LLUUID& object_id, const LLUUID& owner_id)
+{
+    FSAssetBlacklist& blacklist = FSAssetBlacklist::instance();
+
+    if (blacklist.isBlacklisted(sound_id, LLAssetType::AT_SOUND))
+    {
+        return true;
+    }
+    else if (object_id == owner_id && blacklist.isBlacklisted(owner_id, LLAssetType::AT_SOUND, FSAssetBlacklist::eBlacklistFlag::GESTURE))
+    {
+        // Gesture sound
+        return true;
+    }
+    else if (LLViewerObject* object = gObjectList.findObject(object_id);
+             object && object->isAttachment() &&
+             blacklist.isBlacklisted(owner_id, LLAssetType::AT_SOUND, FSAssetBlacklist::eBlacklistFlag::WORN))
+    {
+        // Attachment sound
+        return true;
+    }
+    else if (blacklist.isBlacklisted(owner_id, LLAssetType::AT_SOUND, FSAssetBlacklist::eBlacklistFlag::REZZED))
+    {
+        // Rezzed object sound
+        return true;
+    }
+
+    return false;
+}
+// </FS>
+
 void process_sound_trigger(LLMessageSystem *msg, void **)
 {
     if (!gAudiop)
@@ -4712,10 +4743,8 @@ void process_sound_trigger(LLMessageSystem *msg, void **)
     // </FS:ND>
 
     // <FS> Asset blacklist
-    if (FSAssetBlacklist::getInstance()->isBlacklisted(sound_id, LLAssetType::AT_SOUND))
-    {
+    if (is_sound_blacklisted(sound_id, object_id, owner_id))
         return;
-    }
     // </FS>
 
     // NaCl - Antispam Registry
@@ -4821,11 +4850,14 @@ void process_preload_sound(LLMessageSystem *msg, void **user_data)
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_ObjectID, object_id);
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_OwnerID, owner_id);
 
-    // <FS> Asset blacklist
-    if (FSAssetBlacklist::getInstance()->isBlacklisted(sound_id, LLAssetType::AT_SOUND))
-    {
+    // <FS:ND> Protect against corrupted sounds
+    if (gAudiop->isCorruptSound(sound_id))
         return;
-    }
+    // </FS:ND>
+
+    // <FS> Asset blacklist
+    if (is_sound_blacklisted(sound_id, object_id, owner_id))
+        return;
     // </FS>
 
     // NaCl - Antispam Registry
@@ -4837,12 +4869,7 @@ void process_preload_sound(LLMessageSystem *msg, void **user_data)
     }
     // NaCl End
 
-    // <FS:ND> Protect against corrupted sounds
-    if( gAudiop->isCorruptSound( sound_id ) )
-        return;
-    // </FS:ND>
-
-    LLViewerObject *objectp = gObjectList.findObject(object_id);
+    LLViewerObject* objectp = gObjectList.findObject(object_id);
     if (!objectp) return;
 
     if (LLMuteList::getInstance()->isMuted(object_id)) return;
@@ -4878,11 +4905,14 @@ void process_attached_sound(LLMessageSystem *msg, void **user_data)
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_ObjectID, object_id);
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_OwnerID, owner_id);
 
-    // <FS> Asset blacklist
-    if (FSAssetBlacklist::getInstance()->isBlacklisted(sound_id, LLAssetType::AT_SOUND))
-    {
+    // <FS:ND> Protect against corrupted sounds
+    if (gAudiop->isCorruptSound(sound_id))
         return;
-    }
+    // </FS:ND>
+
+    // <FS> Asset blacklist
+    if (is_sound_blacklisted(sound_id, object_id, owner_id))
+        return;
     // </FS>
 
     // NaCl - Antispam Registry
