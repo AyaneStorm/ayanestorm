@@ -102,6 +102,7 @@
 // [RLVa:KB] - Checked: 2011-05-22 (RLVa-1.3.1a)
 #include "rlvactions.h"
 #include "rlvhandler.h"
+#include "rlvlocks.h"
 #include "rlvmodifiers.h"
 // [/RLVa:KB]
 // <FS:CR> Aurora Sim
@@ -5278,6 +5279,18 @@ void LLSelectMgr::sendDetach()
         return;
     }
 
+// [RLVa:KB]
+    if ( (rlv_handler_t::isEnabled()) && (gRlvAttachmentLocks.hasLockedAttachmentPoint(RLV_LOCK_REMOVE)) )
+    {
+        LLObjectSelectionHandle hSelect = LLSelectMgr::getInstance()->getSelection();
+        RlvSelectHasLockedAttach f;
+        if ( (hSelect->isAttachment()) && (hSelect->getFirstRootNode(&f, false) != NULL) )
+        {
+            return;
+        }
+    }
+// [/RLVa:KB]
+
     sendListToRegions(
         "ObjectDetach",
         packAgentAndSessionID,
@@ -7969,19 +7982,20 @@ bool LLSelectMgr::canSelectObject(LLViewerObject* object, bool ignore_select_own
             // only select my own objects
             return false;
         }
+
+        // <FS:Ansariel> FIRE-14593: Option to select only copyable objects
+        if (!object->permCopy() && gSavedSettings.getBOOL("FSSelectCopyableOnly"))
+        {
+            return false;
+        }
+        // </FS:Ansariel>
+        // <FS:Ansariel> FIRE-17696: Option to select only locked objects
+        if (gSavedSettings.getBOOL("FSSelectLockedOnly") && object->permMove() && !object->isPermanentEnforced())
+        {
+            return false;
+        }
+        // </FS:Ansariel>
     }
-    // <FS:Ansariel> FIRE-14593: Option to select only copyable objects
-    if (!object->permCopy() && gSavedSettings.getBOOL("FSSelectCopyableOnly"))
-    {
-        return false;
-    }
-    // </FS:Ansariel>
-    // <FS:Ansariel> FIRE-17696: Option to select only locked objects
-    if (gSavedSettings.getBOOL("FSSelectLockedOnly") && object->permMove() && !object->isPermanentEnforced())
-    {
-        return false;
-    }
-    // </FS:Ansariel>
 
     // Can't select orphans
     if (object->isOrphaned()) return false;

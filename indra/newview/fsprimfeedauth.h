@@ -69,7 +69,6 @@ private:
 
     explicit FSPrimfeedAuth(authorized_callback_t callback);
     authorized_callback_t mCallback;
-    bool mAuthenticating;
     std::string mOauthToken;
     std::string mRequestId;
     
@@ -80,7 +79,7 @@ private:
     // Callback when the validate response is received.
     void gotValidateResponse(bool success, const LLSD &response);
     // Callback when the user status response is received.
-    void gotUserStatus(bool success, const LLSD &response);
+    void gotUserStatus(bool success, const LLSD &response) const;
 
     boost::signals2::connection mInstantMessageConnection;
     boost::signals2::connection mChatMessageConnection;
