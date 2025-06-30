@@ -352,7 +352,7 @@ void force_error_infinite_loop();
 void force_error_software_exception();
 void force_error_os_exception();
 void force_error_driver_crash();
-void force_error_coroutine_crash();
+//void force_error_coroutine_crash();
 void force_error_coroprocedure_crash();
 void force_error_work_queue_crash();
 void force_error_thread_crash();
@@ -3363,7 +3363,7 @@ void derenderObject(bool permanent)
                 asset_type = LLAssetType::AT_OBJECT;
             }
 
-            FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, permanent, false);
+            FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, FSAssetBlacklist::eBlacklistFlag::NONE, permanent, false);
 
             if (permanent)
             {
@@ -3450,7 +3450,7 @@ void derenderAttachmentOwner(bool permanent)
                     entry_name = owner->getFullname();
                     asset_type = LLAssetType::AT_PERSON;
 
-                    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, permanent, false);
+                    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, FSAssetBlacklist::eBlacklistFlag::NONE, permanent, false);
 
                     if (permanent)
                     {
@@ -3592,6 +3592,15 @@ void handle_object_tex_refresh(LLViewerObject* object, LLSelectNode* node)
 
             LLViewerTexture* spec_img = object->getTESpecularMap(i);
             faces_per_texture[spec_img->getID()].push_back(i);
+        }
+
+        LLPointer<LLGLTFMaterial> mat = object->getTE(i)->getGLTFRenderMaterial();
+        if (mat.notNull())
+        {
+            for (U32 j = 0; j < LLGLTFMaterial::GLTF_TEXTURE_INFO_COUNT; ++j)
+            {
+                faces_per_texture[mat->mTextureId[j]].push_back(i);
+            }
         }
     }
 
@@ -11962,6 +11971,19 @@ class LLWorldEnvSettings : public view_listener_t
         }
 #endif
 // </FS:Beq>
+
+        // <FS:Darl> Redundant environment toggles revert to shared environment
+        LLSettingsSky::ptr_t sky = LLEnvironment::instance().getEnvironmentFixedSky(LLEnvironment::ENV_LOCAL);
+        LLUUID skyid = (sky) ? sky->getAssetId() : LLUUID::null;
+        bool repeatedEnvTogglesShared = gSavedSettings.getBOOL("FSRepeatedEnvTogglesShared");
+
+        if(repeatedEnvTogglesShared && ((skyid == LLEnvironment::KNOWN_SKY_SUNRISE       && event_name == "sunrise") ||
+                                        (skyid == LLEnvironment::KNOWN_SKY_MIDDAY        && event_name == "noon") ||
+                                        (skyid == LLEnvironment::KNOWN_SKY_LEGACY_MIDDAY && event_name == "legacy noon") ||
+                                        (skyid == LLEnvironment::KNOWN_SKY_SUNSET        && event_name == "sunset") ||
+                                        (skyid == LLEnvironment::KNOWN_SKY_MIDNIGHT      && event_name == "midnight")))
+            event_name = "region";
+        // </FS:Darl>
 
         if (event_name == "sunrise")
         {

@@ -14715,7 +14715,7 @@ https://wiki.firestormviewer.org/antivirus_whitelisting
    icon="alertmodal.tga"
    name="PrimfeedLoginRequestFailed"
    persist="false"
-   log_to_im="true"   
+   log_to_im="true"
    type="notify">
 Login request denied by Primfeed.
   </notification>

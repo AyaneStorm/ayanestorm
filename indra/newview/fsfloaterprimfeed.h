@@ -34,6 +34,7 @@
 
 class LLIconCtrl;
 class LLCheckBoxCtrl;
+class LLComboBox;
 class LLSnapshotLivePreview;
 class LLFloaterBigPreview;
 
@@ -49,9 +50,10 @@ public:
     FSPrimfeedPhotoPanel();
     ~FSPrimfeedPhotoPanel();
 
-    bool postBuild();
+    bool postBuild() override;
     S32 notify(const LLSD& info);
-    void draw();
+    void draw() override;
+    void loadPrimfeedInfo(const LLSD& data);
 
     LLSnapshotLivePreview* getPreviewView();
     void onVisibilityChange(bool new_visibility);
@@ -68,7 +70,7 @@ public:
     void checkAspectRatio(S32 index);
     LLUICtrl* getRefreshBtn();
 
-    /*virtual*/ void onOpen(const LLSD& key);
+    void onOpen(const LLSD& key) override;
     void primfeedAuthResponse(bool success, const LLSD& response);
     void uploadCallback(bool success, const LLSD& response);
 
@@ -80,30 +82,32 @@ private:
 
     LLHandle<LLView> mPreviewHandle;
 
-    LLUICtrl * mResolutionComboBox;
-    LLUICtrl * mFilterComboBox;
-    LLUICtrl * mRefreshBtn;
-    LLUICtrl * mWorkingLabel;
-    LLUICtrl * mThumbnailPlaceholder;
-    LLUICtrl * mDescriptionTextBox;
-    LLUICtrl * mLocationCheckbox;
+    LLUICtrl* mResolutionComboBox;
+    LLUICtrl* mFilterComboBox;
+    LLUICtrl* mRefreshBtn;
+    LLUICtrl* mWorkingLabel;
+    LLUICtrl* mThumbnailPlaceholder;
+    LLUICtrl* mDescriptionTextBox;
+    LLUICtrl* mLocationCheckbox;
 
-    LLUICtrl * mCommercialCheckbox;
-    LLUICtrl * mPublicGalleryCheckbox;
-    LLUICtrl * mRatingComboBox;
-    LLUICtrl * mPostButton;
-    LLUICtrl * mCancelButton;
-    LLButton * mBtnPreview;
+    LLUICtrl*   mCommercialCheckbox;
+    LLUICtrl*   mPublicGalleryCheckbox;
+    LLUICtrl*   mRatingComboBox;
+    LLUICtrl*   mPostButton;
+    LLUICtrl*   mCancelButton;
+    LLButton*   mBtnPreview;
+    LLComboBox* mStoresComboBox;
 
-    LLFloaterBigPreview * mBigPreviewFloater;
+    LLFloaterBigPreview* mBigPreviewFloater;
 };
 
 class FSPrimfeedAccountPanel : public LLPanel
 {
 public:
     FSPrimfeedAccountPanel();
-    bool postBuild();
-    void draw();
+    ~FSPrimfeedAccountPanel();
+    bool postBuild() override;
+    void draw() override;
 
 private:
     void onVisibilityChange(bool new_visibility);
@@ -111,7 +115,6 @@ private:
     bool onPrimfeedConnectStateChange(const LLSD& data);
     bool onPrimfeedConnectInfoChange();
     void onConnect();
-    void onUseAnotherAccount();
     void onDisconnect();
 
     void showConnectButton();
@@ -119,12 +122,12 @@ private:
     void showDisconnectedLayout();
     void showConnectedLayout();
 
-    LLTextBox * mAccountConnectedAsLabel;
-    LLTextBox * mAccountNameLink;
-    LLTextBox * mAccountPlan;
-    LLUICtrl * mPanelButtons;
-    LLUICtrl * mConnectButton;
-    LLUICtrl * mDisconnectButton;
+    LLTextBox* mAccountConnectedAsLabel;
+    LLTextBox* mAccountNameLink;
+    LLTextBox* mAccountPlan;
+    LLUICtrl*  mPanelButtons;
+    LLUICtrl*  mConnectButton;
+    LLUICtrl*  mDisconnectButton;
 };
 
 
@@ -132,15 +135,15 @@ class FSFloaterPrimfeed : public LLFloater
 {
 public:
     explicit FSFloaterPrimfeed(const LLSD& key);
-    static void update();    
-    bool postBuild();
-    void draw();
-    void onClose(bool app_quitting);
+    static void update();
+    bool postBuild() override;
+    void draw() override;
+    void onClose(bool app_quitting) override;
     void onCancel();
 
     void showPhotoPanel();
 
-    void onOpen(const LLSD& key);
+    void onOpen(const LLSD& key) override;
     LLSnapshotLivePreview* getPreviewView();
 
 private:
