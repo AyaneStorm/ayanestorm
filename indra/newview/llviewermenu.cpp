@@ -352,7 +352,7 @@ void force_error_infinite_loop();
 void force_error_software_exception();
 void force_error_os_exception();
 void force_error_driver_crash();
-void force_error_coroutine_crash();
+//void force_error_coroutine_crash();
 void force_error_coroprocedure_crash();
 void force_error_work_queue_crash();
 void force_error_thread_crash();
@@ -3450,7 +3450,7 @@ void derenderAttachmentOwner(bool permanent)
                     entry_name = owner->getFullname();
                     asset_type = LLAssetType::AT_PERSON;
 
-                    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, permanent, false);
+                    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(id, entry_name, region_name, asset_type, FSAssetBlacklist::eBlacklistFlag::NONE, permanent, false);
 
                     if (permanent)
                     {
