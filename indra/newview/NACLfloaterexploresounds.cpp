@@ -106,23 +106,21 @@ void NACLFloaterExploreSounds::handleSelection()
     childSetEnabled("block_avatar_gesture_sounds_btn", num_selected);
 }
 
-LLSoundHistoryItem NACLFloaterExploreSounds::getItem(const LLUUID& itemID)
+LLSoundHistoryItem NACLFloaterExploreSounds::getItem(const LLUUID& itemID) const
 {
-    std::map<LLUUID, LLSoundHistoryItem>::iterator found = gSoundHistory.find(itemID);
-    if (found != gSoundHistory.end())
+    if (auto found = gSoundHistory.find(itemID); found != gSoundHistory.end())
     {
         return found->second;
     }
     else
     {
         // If log is paused, hopefully we can find it in mLastHistory
-        if (auto found = std::find_if(mLastHistory.begin(), mLastHistory.end(), [&](const auto& item) { return item.mID == itemID; });
-            found != mLastHistory.end())
-            return *found;
+        if (auto foundHistory = std::find_if(mLastHistory.begin(), mLastHistory.end(), [&](const auto& item) { return item.mID == itemID; });
+            foundHistory != mLastHistory.end())
+            return *foundHistory;
     }
-    LLSoundHistoryItem item;
-    item.mID.setNull();
-    return item;
+
+    return {};
 }
 
 class LLSoundHistoryItemCompare
@@ -306,8 +304,7 @@ bool NACLFloaterExploreSounds::tick()
 
     // Clean up stopped local audio source IDs
     uuid_vec_t::iterator audio_src_id_iter = mLocalPlayingAudioSourceIDs.begin();
-    uuid_vec_t::iterator audio_src_id_end  = mLocalPlayingAudioSourceIDs.end();
-    while (audio_src_id_iter != audio_src_id_end)
+    while (audio_src_id_iter != mLocalPlayingAudioSourceIDs.end())
     {
         const LLUUID& audio_src_id = *audio_src_id_iter;
         if (LLAudioSource* audio_source = gAudiop->findAudioSource(audio_src_id); !audio_source || audio_source->isDone())
@@ -454,30 +451,28 @@ void NACLFloaterExploreSounds::blacklistSound(FSAssetBlacklist::eBlacklistFlag f
             region_name = cur_region->getName();
         }
 
-        blacklist_avatar_name_cache_connection_map_t::iterator it = mBlacklistAvatarNameCacheConnections.find(item.mOwnerID);
-        if (it != mBlacklistAvatarNameCacheConnections.end())
+        if (LLAvatarName av_name; LLAvatarNameCache::get(item.mOwnerID, &av_name))
         {
-            if (it->second.connected())
-            {
-                it->second.disconnect();
-            }
-            mBlacklistAvatarNameCacheConnections.erase(it);
+            FSAssetBlacklist::getInstance()->addNewItemToBlacklist(flag == FSAssetBlacklist::eBlacklistFlag::NONE ? item.mAssetID : item.mOwnerID, av_name.getCompleteName(), region_name, LLAssetType::AT_SOUND, flag);
         }
-        LLAvatarNameCache::callback_connection_t cb = LLAvatarNameCache::get(item.mOwnerID, boost::bind(&NACLFloaterExploreSounds::onBlacklistAvatarNameCacheCallback, this, _1, _2, item.mAssetID, region_name, flag));
-        mBlacklistAvatarNameCacheConnections.insert(std::make_pair(item.mOwnerID, cb));
+        else
+        {
+            // Create unique UUID here instead of avatar UUID because we might be blacklisting more than one sound of the same user
+            LLUUID requestId = LLUUID::generateNewID();
+            mBlacklistAvatarNameCacheConnections.try_emplace(requestId, LLAvatarNameCache::get(item.mOwnerID, boost::bind(&NACLFloaterExploreSounds::onBlacklistAvatarNameCacheCallback, this, requestId, _1, _2, item.mAssetID, region_name, flag)));
+        }
     }
 }
 
-void NACLFloaterExploreSounds::onBlacklistAvatarNameCacheCallback(const LLUUID& av_id, const LLAvatarName& av_name, const LLUUID& asset_id, const std::string& region_name, FSAssetBlacklist::eBlacklistFlag flag)
+void NACLFloaterExploreSounds::onBlacklistAvatarNameCacheCallback(const LLUUID& request_id, const LLUUID& av_id, const LLAvatarName& av_name, const LLUUID& asset_id, const std::string& region_name, FSAssetBlacklist::eBlacklistFlag flag)
 {
-    blacklist_avatar_name_cache_connection_map_t::iterator it = mBlacklistAvatarNameCacheConnections.find(av_id);
-    if (it != mBlacklistAvatarNameCacheConnections.end())
+    if (auto found = mBlacklistAvatarNameCacheConnections.find(request_id); found != mBlacklistAvatarNameCacheConnections.end())
     {
-        if (it->second.connected())
+        if (found->second.connected())
         {
-            it->second.disconnect();
+            found->second.disconnect();
         }
-        mBlacklistAvatarNameCacheConnections.erase(it);
+        mBlacklistAvatarNameCacheConnections.erase(found);
     }
-    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(asset_id, av_name.getCompleteName(), region_name, LLAssetType::AT_SOUND, flag);
+    FSAssetBlacklist::getInstance()->addNewItemToBlacklist(flag == FSAssetBlacklist::eBlacklistFlag::NONE ? asset_id : av_id, av_name.getCompleteName(), region_name, LLAssetType::AT_SOUND, flag);
 }
