@@ -1017,6 +1017,7 @@ class LLFileTakeSnapshotToDisk : public view_listener_t
         bool render_ui = gSavedSettings.getBOOL("RenderUIInSnapshot");
         bool render_hud = gSavedSettings.getBOOL("RenderHUDInSnapshot");
         bool render_no_post = gSavedSettings.getBOOL("RenderSnapshotNoPost");
+        bool render_balance = gSavedSettings.getBOOL("RenderBalanceInSnapshot");
 
         bool high_res = gSavedSettings.getBOOL("HighResSnapshot");
         if (high_res)
@@ -1037,6 +1038,7 @@ class LLFileTakeSnapshotToDisk : public view_listener_t
                                        render_hud,
                                        false,
                                        render_no_post,
+                                       render_balance,
                                        LLSnapshotModel::SNAPSHOT_TYPE_COLOR,
                                        high_res ? S32_MAX : MAX_SNAPSHOT_IMAGE_SIZE)) //per side
         {
