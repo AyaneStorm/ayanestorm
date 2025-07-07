@@ -2493,13 +2493,13 @@ void LLViewerWindow::initWorldUI()
         //  url = LLWeb::expandURLSubstitutions(url, LLSD());
         //  destinations->navigateTo(url, "text/html");
         // }
-        // LLMediaCtrl* avatar_picker = LLFloaterReg::getInstance("avatar")->findChild<LLMediaCtrl>("avatar_picker_contents");
-        // if (avatar_picker)
+        // LLMediaCtrl* avatar_welcome_pack = LLFloaterReg::getInstance("avatar_welcome_pack")->findChild<LLMediaCtrl>("avatar_picker_contents");
+        // if (avatar_welcome_pack)
         // {
-        //  avatar_picker->setErrorPageURL(gSavedSettings.getString("GenericErrorPageURL"));
-        //  std::string url = gSavedSettings.getString("AvatarPickerURL");
+        //  avatar_welcome_pack->setErrorPageURL(gSavedSettings.getString("GenericErrorPageURL"));
+        //  std::string url = gSavedSettings.getString("AvatarWelcomePack");
         //  url = LLWeb::expandURLSubstitutions(url, LLSD());
-        //  avatar_picker->navigateTo(url, "text/html");
+        //  avatar_welcome_pack->navigateTo(url, "text/html");
         // }
         std::string destination_guide_url;
 #ifdef OPENSIM // <FS:AW optional opensim support>
@@ -2540,18 +2540,18 @@ void LLViewerWindow::initWorldUI()
         else
 #endif // OPENSIM  // <FS:AW optional opensim support>
         {
-            avatar_picker_url = gSavedSettings.getString("AvatarPickerURL");
+            avatar_picker_url = gSavedSettings.getString("AvatarWelcomePack");
         }
 
         if(!avatar_picker_url.empty())
         {
-            LLMediaCtrl* avatar_picker = LLFloaterReg::getInstance("avatar")->findChild<LLMediaCtrl>("avatar_picker_contents");
-            if (avatar_picker)
+            LLMediaCtrl* avatar_welcome_pack = LLFloaterReg::getInstance("avatar_welcome_pack")->findChild<LLMediaCtrl>("avatar_picker_contents");
+            if (avatar_welcome_pack)
             {
-                avatar_picker->setErrorPageURL(gSavedSettings.getString("GenericErrorPageURL"));
+                avatar_welcome_pack->setErrorPageURL(gSavedSettings.getString("GenericErrorPageURL"));
                 avatar_picker_url = LLWeb::expandURLSubstitutions(avatar_picker_url, LLSD());
                 LL_DEBUGS("WebApi") << "AvatarPickerURL \"" << avatar_picker_url << "\"" << LL_ENDL;
-                avatar_picker->navigateTo(avatar_picker_url, HTTP_CONTENT_TEXT_HTML);
+                avatar_welcome_pack->navigateTo(avatar_picker_url, HTTP_CONTENT_TEXT_HTML);
             }
         }
         // </FS:AW  opensim destinations and avatar picker>
@@ -5996,12 +5996,12 @@ void LLViewerWindow::movieSize(S32 new_width, S32 new_height)
 
 }
 
-bool LLViewerWindow::saveSnapshot(const std::string& filepath, S32 image_width, S32 image_height, bool show_ui, bool show_hud, bool do_rebuild, LLSnapshotModel::ESnapshotLayerType type, LLSnapshotModel::ESnapshotFormat format)
+bool LLViewerWindow::saveSnapshot(const std::string& filepath, S32 image_width, S32 image_height, bool show_ui, bool show_hud, bool do_rebuild, bool show_balance, LLSnapshotModel::ESnapshotLayerType type, LLSnapshotModel::ESnapshotFormat format)
 {
     LL_INFOS() << "Saving snapshot to: " << filepath << LL_ENDL;
 
     LLPointer<LLImageRaw> raw = new LLImageRaw;
-    bool success = rawSnapshot(raw, image_width, image_height, true, false, show_ui, show_hud, do_rebuild);
+    bool success = rawSnapshot(raw, image_width, image_height, true, false, show_ui, show_hud, do_rebuild, show_balance);
 
     if (success)
     {
@@ -6068,14 +6068,14 @@ void LLViewerWindow::resetSnapshotLoc() const
 
 bool LLViewerWindow::thumbnailSnapshot(LLImageRaw *raw, S32 preview_width, S32 preview_height, bool show_ui, bool show_hud, bool do_rebuild, bool no_post, LLSnapshotModel::ESnapshotLayerType type)
 {
-    return rawSnapshot(raw, preview_width, preview_height, false, false, show_ui, show_hud, do_rebuild, no_post, type);
+    return rawSnapshot(raw, preview_width, preview_height, false, false, show_ui, show_hud, do_rebuild, no_post, gSavedSettings.getBOOL("RenderBalanceInSnapshot"), type);
 }
 
 // Saves the image from the screen to a raw image
 // Since the required size might be bigger than the available screen, this method rerenders the scene in parts (called subimages) and copy
 // the results over to the final raw image.
 bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_height,
-    bool keep_window_aspect, bool is_texture, bool show_ui, bool show_hud, bool do_rebuild, bool no_post, LLSnapshotModel::ESnapshotLayerType type, S32 max_size)
+    bool keep_window_aspect, bool is_texture, bool show_ui, bool show_hud, bool do_rebuild, bool no_post, bool show_balance, LLSnapshotModel::ESnapshotLayerType type, S32 max_size)
 {
     if (!raw)
     {
@@ -6134,11 +6134,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
         image_width  = llmin(image_width, window_width);
         image_height = llmin(image_height, window_height);
 
-        // <FS:CR> Hide currency balance in snapshots
-        if (gStatusBar)
-        {
-            gStatusBar->showBalance((bool)gSavedSettings.getBOOL("FSShowCurrencyBalanceInSnapshots"));
-        }
+        setBalanceVisible(show_balance);
     }
 
     S32 original_width = 0;
@@ -6219,13 +6215,13 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     }
     else
     {
-        gStatusBar->showBalance(true);  // <FS:CR> Hide currency balance in snapshots
+        setBalanceVisible(true);
         return false;
     }
 
     if (raw->isBufferInvalid())
     {
-        gStatusBar->showBalance(true);  // <FS:CR> Hide currency balance in snapshots
+        setBalanceVisible(true);
         return false;
     }
 
@@ -6436,12 +6432,7 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     {
         send_agent_resume();
     }
-
-    // <FS:CR> Hide currency balance in snapshots
-    if (gStatusBar)
-    {
-        gStatusBar->showBalance(true);
-    }
+    setBalanceVisible(true);
 
     return ret;
 }
@@ -6579,8 +6570,6 @@ bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubea
     glm::mat4 saved_proj = get_current_projection();
     glm::mat4 saved_mod = get_current_modelview();
 
-    camera->disconnectCameraAngleSignal();  // <FS:Zi> disconnect the "CameraAngle" changed signal
-
     // camera constants for the square, cube map capture image
     camera->setAspect(1.0); // must set aspect ratio first to avoid undesirable clamping of vertical FoV
     camera->setViewNoBroadcast(F_PI_BY_TWO);
@@ -6707,8 +6696,6 @@ bool LLViewerWindow::cubeSnapshot(const LLVector3& origin, LLCubeMapArray* cubea
     set_current_projection(saved_proj);
     setup3DViewport();
     LLPipeline::sUseOcclusion = old_occlusion;
-
-    camera->connectCameraAngleSignal();    // <FS:Zi> reconnect the "CameraAngle" changed signal so mouselook zoom keeps working
 
     // ====================================================
     return true;
@@ -6949,6 +6936,14 @@ void LLViewerWindow::setProgressCancelButtonVisible( bool b, const std::string& 
     if (mProgressViewMini)
     {
         mProgressViewMini->setCancelButtonVisible( b, label );
+    }
+}
+
+void LLViewerWindow::setBalanceVisible(bool visible)
+{
+    if (gStatusBar)
+    {
+        gStatusBar->setBalanceVisible(visible);
     }
 }
 

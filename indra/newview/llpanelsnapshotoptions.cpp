@@ -47,7 +47,6 @@ public:
     bool postBuild() override;
 
 private:
-    void updateUploadCost();
     void openPanel(const std::string& panel_name);
     void onSaveToProfile();
     void onSaveToEmail();

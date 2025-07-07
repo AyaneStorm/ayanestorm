@@ -2914,9 +2914,6 @@ bool idle_startup()
 
         do_startup_frame();
 
-        // We're successfully logged in.
-        gSavedSettings.setBOOL("FirstLoginThisInstall", false);
-
         LLFloaterReg::showInitialVisibleInstances();
 
         LLFloaterGridStatus::getInstance()->startGridStatusTimer();
@@ -3345,6 +3342,30 @@ bool idle_startup()
         LLUIUsage::instance().clear();
 
         LLPerfStats::StatsRecorder::setAutotuneInit();
+
+        // Display Avatar Welcome Pack the first time a user logs in
+        // (or clears their settings....)
+        if (gSavedSettings.getBOOL("FirstLoginThisInstall"))
+        {
+            LLFloater* avatar_welcome_pack_floater = LLFloaterReg::findInstance("avatar_welcome_pack");
+            if (avatar_welcome_pack_floater != nullptr)
+            {
+                // There is a (very - 1 in ~50 times) hard to repro bug where the login
+                // page is not hidden when the AWP floater is presented. This (agressive)
+                // approach to always close it seems like the best fix for now.
+                // <FS:Ansariel> [FS Login Panel]
+                //LLPanelLogin::closePanel();
+                FSPanelLogin::closePanel();
+                // </FS:Ansariel> [FS Login Panel]
+
+                avatar_welcome_pack_floater->setVisible(true);
+            }
+        }
+
+        //// We're successfully logged in.
+        // 2025-06 Moved lower down in the state machine so the Avatar Welcome Pack
+        // floater display can be triggered correctly.
+        gSavedSettings.setBOOL("FirstLoginThisInstall", false);
 
         // <FS:Techwolf Lupindo> FIRE-6643 Display MOTD when login screens are disabled
         if (gSavedSettings.getBOOL("FSDisableLoginScreens"))
@@ -4595,7 +4616,7 @@ bool process_login_success_response(U32 &first_sim_size_x, U32 &first_sim_size_y
 
     // Agent id needed for parcel info request in LLUrlEntryParcel
     // to resolve parcel name.
-    LLUrlEntryParcel::setAgentID(gAgentID);
+    LLUrlEntryBase::setAgentID(gAgentID);
 
     text = response["session_id"].asString();
     if(!text.empty()) gAgentSessionID.set(text);

@@ -3999,7 +3999,7 @@ void LLScrollListCtrl::loadPersistedSortOrder()
 }
 // </FS:Ansariel>
 
-void LLScrollListCtrl::setContextMenu(const ContextMenuType& menu, LLContextMenu* new_menup/* = nullptr*/)
+void LLScrollListCtrl::setContextMenu(const ContextMenuType &menu, LLContextMenu* new_menup/* = nullptr*/)
 {
     mContextMenuType = menu;
     LLContextMenu* menup = static_cast<LLContextMenu*>(mPopupMenuHandle.get());
