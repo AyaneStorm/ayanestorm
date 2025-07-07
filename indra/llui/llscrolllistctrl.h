@@ -362,7 +362,7 @@ public:
     enum ContextMenuType { MENU_NONE, MENU_AVATAR, MENU_GROUP, MENU_EXTERNAL };
     // For Blackdragon poser
     //void setContextMenu(const ContextMenuType &menu) { mContextMenuType = menu; }
-    void setContextMenu(const ContextMenuType &menu, LLContextMenu* new_menup = nullptr)
+    void setContextMenu(const ContextMenuType &menu, LLContextMenu* new_menup = nullptr);
     ContextMenuType getContextMenuType() const { return mContextMenuType; }
 
     // Overridden from LLView
