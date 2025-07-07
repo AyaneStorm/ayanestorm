@@ -575,6 +575,7 @@ public:
     virtual void renderJoints();
     void        renderOnlySelectedBones(const std::vector<std::string> &selected_joints);
     void        renderBoxAroundJointAttachments(LLJoint * joint);
+
     static void deleteCachedImages(bool clearAll=true);
     static void destroyGL();
     static void restoreGL();
@@ -688,6 +689,7 @@ public:
 // [/RLVa:KB]
 //  bool        mNeedsImpostorUpdate;
     S32         mLastImpostorUpdateReason;
+    bool        mIsAnimesh; // <FS:minerjr> FIRE-35735: Imposter/Impostor Avatar Exclusions (Flag to track if avatar or attachments have Animated Mesh flagged)
     F32SecondsImplicit mLastImpostorUpdateFrameTime;
     const LLVector3*  getLastAnimExtents() const { return mLastAnimExtents; }
     void        setNeedsExtentUpdate(bool val) { mNeedsExtentUpdate = val; }
