@@ -4256,6 +4256,9 @@ Versuch abgebrochen.
 	<notification name="NowOwnObject">
 		Sie sind jetzt Eigentümer des Objekts [OBJECT_NAME]
 	</notification>
+	<notification name="NowOwnObjectInv">
+		Sie sind jetzt Eigentümer des Objekts [OBJECT_NAME] und es wurde Ihrem Inventar hinzugefügt.
+	</notification>
 	<notification name="CantRezOnLand">
 		Objekt kann nicht an [OBJECT_POS] gerezzt werden, da der Landeigentümer dies nicht zulässt.  Machen Sie den Landeigentümer mit dem Landwerkzeug ausfindig.
 	</notification>
@@ -5129,6 +5132,10 @@ Möchten Sie fortfahren?
 	</notification>
 	<notification name="WaterExclusionSurfacesWarning">
 		Aktivieren von „Wasser verstecken“ überschreibt die Auswahl für Textur, Holprigkeit und Glänzen.
+		<usetemplate name="okcancelbuttons" notext="Abbrechen" yestext="Fortsetzen"/>
+	</notification>
+	<notification name="WaterExclusionNoMaterial">
+		Material kann nicht auf Wasser-Ausschluss-Oberfläche angewandt werden.
 		<usetemplate name="okcancelbuttons" notext="Abbrechen" yestext="Fortsetzen"/>
 	</notification>
 
