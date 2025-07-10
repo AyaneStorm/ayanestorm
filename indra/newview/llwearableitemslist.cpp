@@ -1142,6 +1142,9 @@ LLContextMenu* LLWearableItemsList::ContextMenu::createMenu()
     registrar.add("Wearable.CreateNew", boost::bind(createNewWearable, selected_id));
     registrar.add("Wearable.ShowOriginal", boost::bind(show_item_original, selected_id));
     // <AS:Chanayane> Delete from outfit context menu entry
+    registrar.add("Wearable.ReplaceLinks", boost::bind(replace_links, selected_id));
+    // </AS:Chanayane>
+    // <AS:Chanayane> Delete from outfit context menu entry
     registrar.add("Wearable.DeleteFromOutfit", boost::bind(delete_from_outfit, ids));
     // </AS:Chanayane>
     registrar.add("Wearable.TakeOffDetach",
@@ -1304,8 +1307,17 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
     setMenuItemEnabled(menu, "create_new",          LLAppearanceMgr::instance().canAddWearables(ids));
     setMenuItemVisible(menu, "show_original",       !standalone);
     setMenuItemEnabled(menu, "show_original",       n_items == 1 && n_links == n_items);
+
+// <AS:Chanayane> Delete from outfit context menu entry
+    setMenuItemVisible(menu, "replace_links",       n_links >= 1);
+    setMenuItemEnabled(menu, "replace_links",       n_links == 1);
+// </AS:Chanayane>
+
+// <AS:Chanayane> Delete from outfit context menu entry
     setMenuItemVisible(menu, "delete_from_outfit",  n_links > 0);
     setMenuItemEnabled(menu, "delete_from_outfit",  n_links > 0);
+// </AS:Chanayane>
+
     setMenuItemVisible(menu, "take_off",            mask == MASK_CLOTHING && n_worn == n_items);
     setMenuItemVisible(menu, "detach",              mask == MASK_ATTACHMENT && n_worn == n_items);
     setMenuItemVisible(menu, "take_off_or_detach",  mask == (MASK_ATTACHMENT|MASK_CLOTHING));
