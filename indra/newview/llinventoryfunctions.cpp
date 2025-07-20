@@ -1171,6 +1171,23 @@ void reset_inventory_filter()
 }
 
 
+// <AS:Chanayane> Replace Links context menu entry
+void replace_links(const LLUUID& item_uuid)
+{
+    LLViewerInventoryItem* item = gInventory.getItem(item_uuid);
+    if (item && item->getIsLinkType())
+    {
+        const LLUUID& linked_item_uuid = gInventory.getLinkedItemID(item_uuid);
+        const LLInventoryObject *obj = gInventory.getObject(linked_item_uuid);
+        if (obj && obj->getType() != LLAssetType::AT_CATEGORY && obj->getActualType() != LLAssetType::AT_LINK_FOLDER)
+        {
+            LLFloaterReg::showInstance("linkreplace", LLSD(linked_item_uuid));
+        }
+    }
+}
+// </AS:Chanayane>
+
+
 // <AS:Chanayane> Delete from outfit context menu entry
 void delete_from_outfit(const uuid_vec_t& ids)
 {
