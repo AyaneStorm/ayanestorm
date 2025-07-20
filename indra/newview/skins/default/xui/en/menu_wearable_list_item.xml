@@ -91,6 +91,16 @@
          function="RLV.EnableIfNot"
          parameter="showinv"/>
     </menu_item_call>
+<!-- [AS:Chanayane] Replace Links context menu entry -->
+   <menu_item_call
+   label="Replace Links"
+   layout="topleft"
+   visible="false"
+   name="replace_links">
+      <on_click
+      function="Wearable.ReplaceLinks" />
+   </menu_item_call>
+<!-- [/AS:Chanayane] -->
 <!-- [AS:Chanayane] Delete from outfit context menu entry -->
    <menu_item_call
    label="Delete from outfit"
