@@ -38,8 +38,8 @@ First, make sure you installed all the prerequisites software. See [Windows](doc
 
 Build without FMOD (the simplest):
 ```
-git clone https://github.com/AyaneStorm/phoenix-firestorm.git
-cd phoenix-firestorm
+git clone https://github.com/AyaneStorm/ayanestorm.git
+cd ayanestorm
 prepare_no_fmod.bat (only the first time)
 build_no_fmod.bat
 ```
@@ -54,8 +54,8 @@ Then update the set_fmod_vars.bat file with correct values.
 Then type:
 
 ```
-git clone https://github.com/AyaneStorm/phoenix-firestorm.git
-cd phoenix-firestorm
+git clone https://github.com/AyaneStorm/ayanestorm.git
+cd ayanestorm
 prepare_with_fmod.bat  (only the first time)
 build_with_fmod.bat
 ```
