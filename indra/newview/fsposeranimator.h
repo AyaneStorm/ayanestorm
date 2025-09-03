@@ -472,6 +472,11 @@ public:
     /// <returns>The position of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
 
+// <AS:chanayane> BVH fixes
+    // Get the full join rotation, not only the delta
+    LLVector3 getFullJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
+// </AS:chanayane>
+
     /// <summary>
     /// Sets the position of a joint for the supplied avatar.
     /// </summary>
@@ -491,6 +496,11 @@ public:
     /// <param name="rotType">The type of rotation to get from the supplied joint for the supplied avatar.</param>
     /// <returns>The rotation of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const;
+
+// <AS:chanayane> BVH fixes
+    // Get the full join rotation, not only the delta
+    LLVector3 getFullJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const;
+// </AS:chanayane>
 
     /// <summary>
     /// Gets the rotation of a joint for the supplied avatar for export.
@@ -527,6 +537,11 @@ public:
     /// <param name="joint">The joint to determine the scale for.</param>
     /// <returns>The scale of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
+
+// <AS:chanayane> BVH fixes
+    // Get the full join scale, not only the delta
+    LLVector3 getFullJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
+// </AS:chanayane>
 
     /// <summary>
     /// Sets the scale of a joint for the supplied avatar.

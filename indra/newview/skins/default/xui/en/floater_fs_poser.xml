@@ -981,14 +981,16 @@ width="430">
 						 tool_tip="Not stopping your pose can be helpful if you do a lot of work, and don't want to accidentally lose it."
 						 top_pad="10"
 						 width="134" />
+<!-- [AS:chanayane] BVH fixes (enabled="true" and changed tool_tip) -->
 						<check_box
 						 control_name="FSPoserSaveExternalFileAlso"
 						 name="also_save_bvh_checkbox"
 						 height="16"
+						 enabled="true"
 						 label="Write BVH when saving"
 						 follows="left|top"
 						 left="5"
-						 tool_tip="When you save your pose, also write a BVH file. BVH can be uploaded via the 'Build > Upload > Animation' to pose yourself or others in-world. This needs joints to reset their 'base' to zero, because BVH requires original work."
+						 tool_tip="When you save your pose, also write a BVH file. BVH can be uploaded via the 'Build > Upload > Animation' to pose yourself or others in-world."
 						 top_pad="5"
 						 width="134" />
 						<check_box
@@ -1857,6 +1859,8 @@ width="430">
 				 left_pad="1"
 				 top_delta="0"
 				 width="95"/>
+<!-- [AS:chanayane] Save full poses! -->
+<!-- 
 				<button
 				 height="21"
 				 follows="top|left"
@@ -1865,6 +1869,27 @@ width="430">
 				 enabled="false"
 				 visible="false"
 				 tool_tip="A Diff is just your changes to an existing Pose. Start from a T-Pose to save a new work."
+				 image_overlay="Icon_Dock_Foreground"
+				 image_overlay_alignment="left"
+				 image_hover_unselected="Toolbar_Middle_Over"
+				 image_selected="Toolbar_Middle_Selected"
+				 image_unselected="Toolbar_Middle_Off"
+				 name="save_poses_button"
+				 width="95"
+				 top_delta="0"
+				 left_pad="1">
+					<button.commit_callback
+					 function="Poser.Save"/>
+				</button>
+-->
+				<button
+				 height="21"
+				 follows="top|left"
+				 layout="topleft"
+				 label="Save Pose"
+				 enabled="false"
+				 visible="false"
+				 tool_tip="Save the current pose"
 				 image_overlay="Icon_Dock_Foreground"
 				 image_overlay_alignment="left"
 				 image_hover_unselected="Toolbar_Middle_Over"

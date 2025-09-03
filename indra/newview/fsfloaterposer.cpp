@@ -368,11 +368,13 @@ void FSFloaterPoser::onPoseFileSelect()
     mPoseSaveNameEditor->setEnabled(enableButtons);
     mPoseSaveNameEditor->setText(name);
 
-    bool isDeltaSave = !poseFileStartsFromTeePose(name);
-    if (isDeltaSave)
-        mLoadPosesBtn->setLabel(tryGetString("LoadDiffLabel"));
-    else
-        mLoadPosesBtn->setLabel(tryGetString("LoadPoseLabel"));
+// <AS:chanayane> Save full poses!
+    // bool isDeltaSave = !poseFileStartsFromTeePose(name);
+    // if (isDeltaSave)
+    //     mLoadPosesBtn->setLabel(tryGetString("LoadDiffLabel"));
+    // else
+    //     mLoadPosesBtn->setLabel(tryGetString("LoadPoseLabel"));
+// </AS:chanayane>
 }
 
 void FSFloaterPoser::doPoseSave(LLVOAvatar* avatar, const std::string& filename)
@@ -510,7 +512,10 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
 
     try
     {
-        bool savingDiff = !mPoserAnimator.allBaseRotationsAreZero(avatar);
+// <AS:chanayane> Save full poses!
+        //bool savingDiff = !mPoserAnimator.allBaseRotationsAreZero(avatar);
+        bool savingDiff = false;
+// </AS:chanayane>
         LLSD record;
         record["version"]["value"] = (S32)6;
         record["startFromTeePose"]["value"] = !savingDiff;
@@ -534,8 +539,10 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
 
             bool jointRotPosScaleAllZero = rotation == zeroVector && position == zeroVector && scale == zeroVector;
 
-            if (savingDiff && jointRotPosScaleAllZero)
-                continue;
+// <AS:chanayane> Save full poses!
+            //if (savingDiff && jointRotPosScaleAllZero)
+            //    continue;
+// </AS:chanayane>
 
             record[bone_name]["jointBaseRotationIsZero"] = baseRotationIsZero;
             record[bone_name]["rotation"]                = rotation.getValue();
@@ -1219,7 +1226,10 @@ bool FSFloaterPoser::havePermissionToAnimateAvatar(LLVOAvatar *avatar) const
     if (avatar->isControlAvatar())
         return true;
 
-    return false;
+//<AS:chanayane> Allow posing all avatars
+    //return false;
+    return true;
+//</AS:chanayane>
 }
 
 void FSFloaterPoser::poseControlsEnable(bool enable)
@@ -2291,7 +2301,10 @@ void FSFloaterPoser::onAvatarsRefresh()
         LLAvatarName av_name;
         std::string animeshName = getControlAvatarName(avatar);
         if (animeshName.empty())
-            continue;
+// <AS:Chanayane> Do not limit posing to owned animeshes
+            //continue;
+            animeshName = avatar->getFullname();
+// </AS:Chanayane>
 
         LLSD row;
         row["columns"][COL_ICON]["column"] = "icon";
@@ -2363,7 +2376,10 @@ void FSFloaterPoser::refreshTextHighlightingOnJointScrollLists()
 
 void FSFloaterPoser::setSavePosesButtonText(bool setAsSaveDiff)
 {
-    setAsSaveDiff ? mSavePosesBtn->setLabel(tryGetString("SaveDiffLabel")) : mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
+// <AS:chanayane> Save full poses!
+    //setAsSaveDiff ? mSavePosesBtn->setLabel(tryGetString("SaveDiffLabel")) : mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
+    mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
+// </AS:chanayane>
 }
 
 void FSFloaterPoser::addBoldToScrollList(LLScrollListCtrl* list, LLVOAvatar* avatar)
@@ -2592,8 +2608,12 @@ void FSFloaterPoser::writeBvhMotion(llofstream* fileStream, LLVOAvatar* avatar, 
 
     bool lockPelvisJoint = gSavedSettings.getBOOL(POSER_UNLOCKPELVISINBVH_SAVE_KEY);
 
-    auto rotation = mPoserAnimator.getJointExportRotation(avatar, *joint, !lockPelvisJoint);
-    auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+// <AS:chanayane> BVH fixes
+    //auto rotation = mPoserAnimator.getJointExportRotation(avatar, *joint, !lockPelvisJoint);
+    //auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+    auto rotation = mPoserAnimator.getFullJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
+    auto position = mPoserAnimator.getFullJointPosition(avatar, *joint);
+// </AS:chanayane>
 
     switch (joint->boneType())
     {
