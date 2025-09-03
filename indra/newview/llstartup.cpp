@@ -396,13 +396,13 @@ void pump_idle_startup_network(void)
 {
     // while there are message to process:
     //     process one then call display_startup()
-    S32 num_messages = 0;
+    // S32 num_messages = 0; // <FS:Beq/> Avoid set-but-unused in Clang
     {
         LockMessageChecker lmc(gMessageSystem);
         while (lmc.checkAllMessages(gFrameCount, gServicePump))
         {
             display_startup();
-            ++num_messages;
+            // ++num_messages; // <FS:Beq/> Avoid set-but-unused in Clang
         }
         lmc.processAcks();
     }
@@ -1112,6 +1112,10 @@ bool idle_startup()
         {
             LL_WARNS("AppInit") << "Unreliable timers detected (may be bad PCI chipset)!!" << LL_ENDL;
         }
+
+#ifdef LL_DISCORD
+        LLAppViewer::initDiscordSocial();
+#endif
 
         //
         // Log on to system

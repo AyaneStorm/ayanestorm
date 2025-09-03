@@ -231,8 +231,6 @@ public:
     LLJoint *getRoot();
 
     // search for child joints by name
-    //<FS:Ansariel> Joint-lookup improvements
-    //LLJoint *findJoint( const std::string &name );
     LLJoint* findJoint(std::string_view name);
 
     // add/remove children
