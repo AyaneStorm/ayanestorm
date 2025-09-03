@@ -1517,10 +1517,16 @@ void LLViewerWindow::handleMouseMove(LLWindow *window,  LLCoordGL pos, MASK mask
 
     mWindow->showCursorFromMouseMove();
 
-    if (gAwayTimer.getElapsedTimeF32() > LLAgent::MIN_AFK_TIME
-        && !gDisconnected)
+    if (!gDisconnected)
+    {
+        if (gAwayTimer.getElapsedTimeF32() > LLAgent::MIN_AFK_TIME)
     {
         gAgent.clearAFK();
+    }
+        else
+        {
+            gAwayTriggerTimer.reset();
+        }
     }
 }
 
@@ -1639,6 +1645,10 @@ bool LLViewerWindow::handleTranslatedKeyDown(KEY key,  MASK mask, bool repeated)
     if (gAwayTimer.getElapsedTimeF32() > LLAgent::MIN_AFK_TIME)
     {
         gAgent.clearAFK();
+    }
+    else
+    {
+        gAwayTriggerTimer.reset();
     }
 
     // *NOTE: We want to interpret KEY_RETURN later when it arrives as
@@ -3410,7 +3420,8 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
         // <FS:Ansariel> [FS Communication UI]
         //if ((focusedFloaterName == "nearby_chat") || (focusedFloaterName == "im_container") || (focusedFloaterName == "impanel"))
         //{
-        //  if (gSavedSettings.getBOOL("ArrowKeysAlwaysMove"))
+        //  LLCachedControl<bool> key_move(gSavedSettings, "ArrowKeysAlwaysMove");
+        //  if (key_move())
         //  {
         //      // let Control-Up and Control-Down through for chat line history,
         //      if (!(key == KEY_UP && mask == MASK_CONTROL)
@@ -3435,9 +3446,10 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
         //          }
         //      }
         //  }
+        LLCachedControl<bool> key_move(gSavedSettings, "ArrowKeysAlwaysMove");
         if(FSNearbyChat::instance().defaultChatBarHasFocus() &&
            (FSNearbyChat::instance().defaultChatBarIsIdle() ||
-            gSavedSettings.getBOOL("ArrowKeysAlwaysMove")))
+            key_move()))
         {
             // let Control-Up and Control-Down through for chat line history,
             //<FS:TS> Control-Right and Control-Left too for chat line editing
@@ -3452,10 +3464,9 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
                     case KEY_RIGHT:
                     case KEY_UP:
                     case KEY_DOWN:
-                    case KEY_PAGE_UP:
-                    case KEY_PAGE_DOWN:
-                    case KEY_HOME:
-                    case KEY_END:
+                    case KEY_PAGE_UP: //jump
+                    case KEY_PAGE_DOWN: // down
+                    case KEY_HOME: // toggle fly
                         // when chatbar is empty or ArrowKeysAlwaysMove set,
                         // pass arrow keys on to avatar...
                         return false;
@@ -5890,7 +5901,8 @@ void LLViewerWindow::saveImageLocal(LLImageFormatted *image, const snapshot_save
 #else
     boost::filesystem::path b_path(lastSnapshotDir);
 #endif
-    if (!boost::filesystem::is_directory(b_path))
+    boost::system::error_code ec;
+    if (!boost::filesystem::is_directory(b_path, ec) || ec.failed())
     {
         LLSD args;
         args["PATH"] = lastSnapshotDir;
@@ -5899,7 +5911,16 @@ void LLViewerWindow::saveImageLocal(LLImageFormatted *image, const snapshot_save
         failure_cb();
         return;
     }
-    boost::filesystem::space_info b_space = boost::filesystem::space(b_path);
+    boost::filesystem::space_info b_space = boost::filesystem::space(b_path, ec);
+    if (ec.failed())
+    {
+        LLSD args;
+        args["PATH"] = lastSnapshotDir;
+        LLNotificationsUtil::add("SnapshotToLocalDirNotExist", args);
+        resetSnapshotLoc();
+        failure_cb();
+        return;
+    }
     if (b_space.free < image->getDataSize())
     {
         LLSD args;
@@ -5916,6 +5937,8 @@ void LLViewerWindow::saveImageLocal(LLImageFormatted *image, const snapshot_save
         LLNotificationsUtil::add("SnapshotToComputerFailed", args);
 
         failure_cb();
+
+        // Shouldn't there be a return here?
     }
 
     // Look for an unused file name
