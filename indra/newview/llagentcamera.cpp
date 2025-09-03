@@ -204,7 +204,7 @@ LLAgentCamera::LLAgentCamera() :
     resetPanDiff();
     resetOrbitDiff();
 // <FS:Chanayane> Camera roll (from Alchemy)
-	resetCameraRoll();
+    resetCameraRoll();
 // </FS:Chanayane>
 }
 
@@ -388,7 +388,7 @@ void LLAgentCamera::resetView(bool reset_camera, bool change_camera, bool moveme
 
         mCameraFOVZoomFactor = 0.f;
 // <FS:Chanayane> Camera roll (from Alchemy)
-		resetCameraRoll();
+        resetCameraRoll();
 // </FS:Chanayane>
     }
     resetPanDiff();
@@ -974,7 +974,7 @@ void LLAgentCamera::resetCameraOrbit()
     cameraZoomIn(1.f);
     resetOrbitDiff();
 // <FS:Chanayane> Camera roll (from Alchemy)
-	resetCameraRoll();
+    resetCameraRoll();
 // </FS:Chanayane>
 }
 
@@ -1592,13 +1592,12 @@ void LLAgentCamera::updateCamera()
 //  LL_INFOS() << "Current FOV Zoom: " << mCameraCurrentFOVZoomFactor << " Target FOV Zoom: " << mCameraFOVZoomFactor << " Object penetration: " << mFocusObjectDist << LL_ENDL;
 
     LLVector3 focus_agent = gAgent.getPosAgentFromGlobal(mFocusGlobal);
+    LLVector3 position_agent = gAgent.getPosAgentFromGlobal(camera_pos_global);
 
-    mCameraPositionAgent = gAgent.getPosAgentFromGlobal(camera_pos_global);
+    // Try to move the camera
 
-    // Move the camera
-
-    LLViewerCamera::getInstance()->updateCameraLocation(mCameraPositionAgent, mCameraUpVector, focus_agent);
-    //LLViewerCamera::getInstance()->updateCameraLocation(mCameraPositionAgent, camera_skyward, focus_agent);
+    if (!LLViewerCamera::getInstance()->updateCameraLocation(position_agent, mCameraUpVector, focus_agent))
+        return;
 
     // Change FOV
     LLViewerCamera::getInstance()->setView(LLViewerCamera::getInstance()->getDefaultFOV() / (1.f + mCameraCurrentFOVZoomFactor));
@@ -1606,7 +1605,7 @@ void LLAgentCamera::updateCamera()
     // follow camera when in customize mode
     if (cameraCustomizeAvatar())
     {
-        setLookAt(LOOKAT_TARGET_FOCUS, NULL, mCameraPositionAgent);
+        setLookAt(LOOKAT_TARGET_FOCUS, NULL, position_agent);
     }
 
     // update the travel distance stat
@@ -1625,8 +1624,8 @@ void LLAgentCamera::updateCamera()
         LLVector3 head_pos = gAgentAvatarp->mHeadp->getWorldPosition() +
             LLVector3(0.08f, 0.f, 0.05f) * gAgentAvatarp->mHeadp->getWorldRotation() +
             LLVector3(0.1f, 0.f, 0.f) * gAgentAvatarp->mPelvisp->getWorldRotation();
-        LLVector3 diff = mCameraPositionAgent - head_pos;
-        diff = diff * ~gAgentAvatarp->mRoot->getWorldRotation();
+        LLVector3 diff = position_agent - head_pos;
+        diff *= ~gAgentAvatarp->mRoot->getWorldRotation();
 
         LLJoint* torso_joint = gAgentAvatarp->mTorsop;
         LLJoint* chest_joint = gAgentAvatarp->mChestp;
@@ -2141,16 +2140,6 @@ LLVector3d LLAgentCamera::calcCameraPositionTargetGlobal(bool *hit_limit)
                 isConstrained = true;
             }
         }
-
-// JC - Could constrain camera based on parcel stuff here.
-//          LLViewerRegion *regionp = LLWorld::getInstance()->getRegionFromPosGlobal(camera_position_global);
-//
-//          if (regionp && !regionp->mParcelOverlay->isBuildCameraAllowed(regionp->getPosRegionFromGlobal(camera_position_global)))
-//          {
-//              camera_position_global = last_position_global;
-//
-//              isConstrained = true;
-//          }
     }
 
 // [RLVa:KB] - Checked: RLVa-2.0.0
@@ -2167,9 +2156,9 @@ LLVector3d LLAgentCamera::calcCameraPositionTargetGlobal(bool *hit_limit)
         bool fCamAvDistClamped, fCamAvDistLocked = false; float nCamAvDistLimitMin, nCamAvDistLimitMax;
         if ((fCamAvDistClamped = RlvActions::getCameraAvatarDistanceLimits(nCamAvDistLimitMin, nCamAvDistLimitMax)))
             fCamAvDistLocked = nCamAvDistLimitMin == nCamAvDistLimitMax;
-        bool fCamOriginDistClamped, fCamOriginDistLocked = false; float nCamOriginDistLimitMin, nCamOriginDistLimitMax;
-        if ((fCamOriginDistClamped = RlvActions::getCameraOriginDistanceLimits(nCamOriginDistLimitMin, nCamOriginDistLimitMax)))
-            fCamOriginDistLocked = nCamOriginDistLimitMin == nCamOriginDistLimitMax;
+        float nCamOriginDistLimitMin;
+        float nCamOriginDistLimitMax;
+        const bool fCamOriginDistClamped = RlvActions::getCameraOriginDistanceLimits(nCamOriginDistLimitMin, nCamOriginDistLimitMax);
 
         // Check focus distance limits
         if ( (fCamOriginDistClamped) && (!fCamAvDistLocked) )
@@ -2588,7 +2577,8 @@ void LLAgentCamera::changeCameraToFollow(bool animate)
         AOEngine::getInstance()->inMouselook(false);
 
         // bang-in the current focus, position, and up vector of the follow cam
-        mFollowCam.reset(mCameraPositionAgent, LLViewerCamera::getInstance()->getPointOfInterest(), LLVector3::z_axis);
+        const LLViewerCamera& camera = LLViewerCamera::instance();
+        mFollowCam.reset(camera.getOrigin(), camera.getPointOfInterest(), LLVector3::z_axis);
 
         if (gBasicToolset)
         {
@@ -2827,7 +2817,7 @@ void LLAgentCamera::switchCameraPreset(ECameraPreset preset)
     resetPanDiff();
     resetOrbitDiff();
 // <FS:Chanayane> Camera roll (from Alchemy)
-	resetCameraRoll();
+    resetCameraRoll();
 // </FS:Chanayane>
 
     gSavedSettings.setU32("CameraPresetType", mCameraPreset);
@@ -3368,7 +3358,7 @@ void LLAgentCamera::storeCameraPosition()
     LLVector3d forward = LLVector3d(1.0, 0.0, 0.0) * LLViewerCamera::getInstance()->getQuaternion() + getCameraPositionGlobal();
     gSavedPerAccountSettings.setVector3d("FSStoredCameraFocus", forward);
 // <FS:Chanayane> Camera roll (from Alchemy)
-	gSavedPerAccountSettings.setF32("ALStoredCameraRoll", mRollAngle);
+    gSavedPerAccountSettings.setF32("ALStoredCameraRoll", mRollAngle);
 // </FS:Chanayane>
 
     LLUUID stored_camera_focus_object_id = LLUUID::null;
@@ -3415,7 +3405,7 @@ void LLAgentCamera::loadCameraPosition()
     unlockView();
     setCameraPosAndFocusGlobal(stored_camera_pos, stored_camera_focus, stored_camera_focus_object_id);
 // <FS:Chanayane> Camera roll (from Alchemy)
-	mRollAngle = stored_camera_roll;
+    mRollAngle = stored_camera_roll;
 // </FS:Chanayane>
 }
 // </FS:Ansariel> FIRE-7758: Save/load camera position feature
