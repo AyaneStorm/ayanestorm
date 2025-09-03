@@ -669,7 +669,7 @@ void BDFloaterPoseCreator::onKeyframeAdd()
         LLKeyframeMotion::JointMotion* joint_motion = joint_list->getJointMotion(joint->getJointNum());
         S32 selected_idx = 0;
         S32 count = 1;
-        S32 keys = 1;
+        //S32 keys = 1;
         F32 time = FRAMETIME;
         if (item)
             selected_idx = item->getColumn(1)->getValue().asInteger();
@@ -746,7 +746,7 @@ void BDFloaterPoseCreator::onKeyframeAdd()
                 joint_motion->mRotationCurve = rot_curve;
             }
 
-            keys = joint_motion->mRotationCurve.mNumKeys;
+            //keys = joint_motion->mRotationCurve.mNumKeys;
 
             LLJointState* joint_state = gDragonAnimator.mPoseCreatorMotion->findJointState(joint);
             if (joint_state->getUsage() ^ LLJointState::ROT)
@@ -826,7 +826,7 @@ void BDFloaterPoseCreator::onKeyframeAdd()
                 joint_motion->mPositionCurve = pos_curve;
             }
 
-            keys = joint_motion->mPositionCurve.mNumKeys;
+            //keys = joint_motion->mPositionCurve.mNumKeys;
 
             LLJointState* joint_state = gDragonAnimator.mPoseCreatorMotion->findJointState(joint);
             if (joint_state->getUsage() ^ LLJointState::POS)
@@ -909,7 +909,7 @@ void BDFloaterPoseCreator::onKeyframeAdd()
                 joint_motion->mScaleCurve = scale_curve;
             }
 
-            keys = joint_motion->mScaleCurve.mNumKeys;
+            //keys = joint_motion->mScaleCurve.mNumKeys;
 
             LLJointState* joint_state = gDragonAnimator.mPoseCreatorMotion->findJointState(joint);
             if (joint_state->getUsage() ^ LLJointState::SCALE)
