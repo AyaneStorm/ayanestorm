@@ -27,7 +27,7 @@
   <key>FSUseV2Friends</key>
   <map>
     <key>Comment</key>
-    <string>Makes Comm->Friends and Comm->Groups open the v2 based windows.</string>
+    <string>Makes Comm-&gt;Friends and Comm-&gt;Groups open the v2 based windows.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -14134,7 +14134,8 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key>
       <string>Select reflection probes</string>
       <key>Persist</key>
-      <integer>0</integer>
+      <!-- [AS:chanayane] Make SelectReflectionProbes setting persistent -->
+      <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
