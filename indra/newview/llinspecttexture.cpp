@@ -169,12 +169,10 @@ void LLTexturePreviewView::setImageFromAssetId(const LLUUID& idAsset)
         m_Image->setKnownDrawSize(MAX_IMAGE_SIZE, MAX_IMAGE_SIZE);
         if ( (!m_Image->isFullyLoaded()) && (!m_Image->hasFetcher()) )
         {
-// <AS:chanayane> Disable fast cache (tommytheterrible idea)
-            // if (m_Image->isInFastCacheList())
-            // {
-            //     m_Image->loadFromFastCache();
-            // }
-// </AS:chanayane>
+            if (m_Image->isInFastCacheList())
+            {
+                m_Image->loadFromFastCache();
+            }
             gTextureList.forceImmediateUpdate(m_Image);
         }
     }
