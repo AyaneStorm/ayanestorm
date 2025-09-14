@@ -22,8 +22,8 @@
     save_visibility="true"
     show_title="false"
     single_instance="true"
-    width="194"
-    min_width="179">
+    width="214"
+    min_width="199">
   <floater.string name="rotate_tooltip">
         Rotate Camera Around Focus
   </floater.string>
@@ -43,7 +43,7 @@
       layout="topleft"
       left="2"
       name="buttons_panel"
-      width="156"
+      width="176"
       top_pad="0">
     <panel_camera_item
         name="front_view"
@@ -89,6 +89,17 @@
       <panel_camera_item.selected_picture image_name="Cam_Preset_Back_On" height="24" width="24" />
       <panel_camera_item.icon_over height="24" width="24" />
       <panel_camera_item.icon_selected height="24" width="24" />
+    </panel_camera_item>
+    <panel_camera_item
+        name="tpp_view"
+        tool_tip="TPP View"
+        width="18"
+        left_pad="2">
+      <panel_camera_item.mousedown_callback
+          function="CameraPresets.ChangeView"
+          parameter="TPP View" />
+      <panel_camera_item.picture image_name="Cam_Preset_TPP_Off" />
+      <panel_camera_item.selected_picture image_name="Cam_Preset_TPP_On" />
     </panel_camera_item>
     <panel_camera_item
         name="object_view"
@@ -138,7 +149,7 @@
   </panel>
   <panel
       border="false"
-      width="184"
+      width="204"
       class="camera_zoom_panel"
       height="60"
       layout="topleft"
@@ -302,7 +313,7 @@
         layout="topleft"
         left_delta="5"
         name="camera_position_btn"
-        width="157">
+        width="177">
         <button.commit_callback
           function="Floater.Show"
           parameter="prefs_view_advanced" />
@@ -326,7 +337,7 @@
         mouse_opaque="true"
         name="preset_combo"
         top_pad="0"
-        width="157">
+        width="177">
       <combo_list mouse_wheel_opaque="true" />
       <combo_box.item
           label="Use preset"
