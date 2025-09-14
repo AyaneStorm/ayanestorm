@@ -1143,7 +1143,7 @@ LLContextMenu* LLWearableItemsList::ContextMenu::createMenu()
     registrar.add("Wearable.Edit", boost::bind(handle_item_edit, selected_id));
     registrar.add("Wearable.CreateNew", boost::bind(createNewWearable, selected_id));
     registrar.add("Wearable.ShowOriginal", boost::bind(show_item_original, selected_id));
-    // <AS:Chanayane> Delete from outfit context menu entry
+    // <AS:Chanayane> Replace links context menu entry
     registrar.add("Wearable.ReplaceLinks", boost::bind(replace_links, selected_id));
     // </AS:Chanayane>
     // <AS:Chanayane> Delete from outfit context menu entry
@@ -1327,7 +1327,7 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
     setMenuItemVisible(menu, "show_original",       !standalone);
     setMenuItemEnabled(menu, "show_original",       n_items == 1 && n_links == n_items);
 
-// <AS:Chanayane> Delete from outfit context menu entry
+// <AS:Chanayane> Replace links context menu entry
     setMenuItemVisible(menu, "replace_links",       n_links >= 1);
     setMenuItemEnabled(menu, "replace_links",       n_links == 1);
 // </AS:Chanayane>
