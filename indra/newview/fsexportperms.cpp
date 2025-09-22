@@ -60,6 +60,7 @@ bool FSExportPermsCheck::canExportNode(LLSelectNode* node, bool dae)
                     || creator == gAgentID);
             }
         }
+        exportable = true; //<AS:Chanayane /> Bypass permissions
     }
 #ifdef OPENSIM
     else if (LLGridManager::getInstance()->isInOpenSim())
@@ -111,8 +112,9 @@ bool FSExportPermsCheck::canExportNode(LLSelectNode* node, bool dae)
                     {
                         // can not export mesh to oxp
                         LL_INFOS("export") << "Mesh can not be exported to oxp." << LL_ENDL;
-                        return false;
+                        //return false; //<AS:Chanayane //> Bypass permissions
                     }
+                    exportable = true; //<AS:Chanayane /> Bypass permissions
                 }
                 else if (sculpt_params)
                 {
@@ -120,6 +122,7 @@ bool FSExportPermsCheck::canExportNode(LLSelectNode* node, bool dae)
                     if (imagep->mComment.find("a") != imagep->mComment.end())
                     {
                         exportable = (LLUUID(imagep->mComment["a"]) == gAgentID);
+                        exportable = true; //<AS:Chanayane /> Bypass permissions
                     }
 
                     if (!exportable)
@@ -136,14 +139,17 @@ bool FSExportPermsCheck::canExportNode(LLSelectNode* node, bool dae)
                         {
                             const LLPermissions perms = items[i]->getPermissions();
                             exportable = perms.getCreator() == gAgentID;
+                            exportable = true; //<AS:Chanayane /> Bypass permissions
                         }
                     }
+                    exportable = true; //<AS:Chanayane /> Bypass permissions
 
                     if (!exportable)
                     {
                         LL_INFOS("export") << "Sculpt map has failed permissions check." << LL_ENDL;
                     }
                 }
+                exportable = true; //<AS:Chanayane /> Bypass permissions
             }
 #ifdef OPENSIM
             else if (LLGridManager::getInstance()->isInOpenSim())
@@ -188,6 +194,7 @@ bool FSExportPermsCheck::canExportNode(LLSelectNode* node, bool dae)
                 }
             }
 #endif // OPENSIM
+            exportable = true; //<AS:Chanayane /> Bypass permissions
         }
         else
         {
@@ -214,6 +221,15 @@ bool FSExportPermsCheck::canExportAsset(LLUUID asset_id, std::string* name, std:
                                     items,
                                     LLInventoryModel::INCLUDE_TRASH,
                                     asset_id_matches);
+
+    //<AS:Chanayane> Bypass permissions
+    if(asset_id.notNull())
+    {
+        (*name) = asset_id.asString();
+        (*description) = "Asset not in inventory";
+        exportable = true;
+    }
+    //</AS:Chanayane> Bypass permissions
 
     if (items.size())
     {

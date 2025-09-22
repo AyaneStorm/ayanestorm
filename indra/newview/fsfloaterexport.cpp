@@ -382,7 +382,11 @@ void FSFloaterObjectExport::addPrim(LLViewerObject* object, bool root)
     } func(object_id);
 
     LLSelectNode* node = LLSelectMgr::getInstance()->getSelection()->getFirstNode(&func);
-    default_prim = (!FSExportPermsCheck::canExportNode(node, false));
+    //<AS:Chanayane> Bypass permissions
+    //default_prim = (!FSExportPermsCheck::canExportNode(node, false));
+    default_prim = (!FSExportPermsCheck::canExportNode(node, true));
+    default_prim = false;
+    //</AS:Chanayane> Bypass permissions
 
     if (root)
     {
@@ -432,16 +436,18 @@ void FSFloaterObjectExport::addPrim(LLViewerObject* object, bool root)
                 const LLSculptParams *sculpt_params = (const LLSculptParams *)object->getParameterEntry(LLNetworkData::PARAMS_SCULPT);
                 if (sculpt_params)
                 {
-                    if(volobjp->isMesh())
-                    {
-                        if (!mAborted)
-                        {
-                            mAborted = true;
-                        }
-                        return;
-                    }
-                    else
-                    {
+                    //<AS:Chanayane> Bypass permissions
+                    // if(volobjp->isMesh())
+                    // {
+                    //     if (!mAborted)
+                    //     {
+                    //         mAborted = true;
+                    //     }
+                    //     return;
+                    // }
+                    // else
+                    // {
+                    //</AS:Chanayane> Bypass permissions
                         if (exportTexture(sculpt_params->getSculptTexture()))
                         {
                             prim["sculpt"] = sculpt_params->asLLSD();
@@ -451,7 +457,7 @@ void FSFloaterObjectExport::addPrim(LLViewerObject* object, bool root)
                             LLSculptParams default_sculpt;
                             prim["sculpt"] = default_sculpt.asLLSD();
                         }
-                    }
+                    //} //<AS:Chanayane /> Bypass permissions
                 }
             }
 
@@ -636,14 +642,17 @@ bool FSFloaterObjectExport::exportTexture(const LLUUID& texture_id)
 
     if (LLGridManager::getInstance()->isInSecondLife())
     {
-        if (imagep->mComment.find("a") != imagep->mComment.end())
-        {
-            if (LLUUID(imagep->mComment["a"]) == gAgentID)
-            {
-                texture_export = true;
-                LL_DEBUGS("export") << texture_id <<  " pass texture export comment check." << LL_ENDL;
-            }
-        }
+        //<AS:Chanayane> Bypass permissions
+        // if (imagep->mComment.find("a") != imagep->mComment.end())
+        // {
+        //     if (LLUUID(imagep->mComment["a"]) == gAgentID)
+        //     {
+        //         texture_export = true;
+        //         LL_DEBUGS("export") << texture_id <<  " pass texture export comment check." << LL_ENDL;
+        //     }
+        // }
+        //</AS:Chanayane /> Bypass permissions
+        texture_export = true;
     }
 
     if (texture_export)
@@ -654,6 +663,7 @@ bool FSFloaterObjectExport::exportTexture(const LLUUID& texture_id)
     {
         texture_export = FSExportPermsCheck::canExportAsset(texture_id, &name, &description);
     }
+    texture_export = true; //<AS:Chanayane /> Bypass permissions
 
     mTextureChecked[texture_id] = texture_export;
 
@@ -763,7 +773,10 @@ void FSFloaterObjectExport::inventoryChanged(LLViewerObject* object, LLInventory
             }
         }
 #endif
-        if (LLGridManager::getInstance()->isInSecondLife() && (perms.getCreator() == gAgentID))
+        //<AS:Chanayane> Bypass permissions
+        //if (LLGridManager::getInstance()->isInSecondLife() && (perms.getCreator() == gAgentID))
+        if (LLGridManager::getInstance()->isInSecondLife())
+        //</AS:Chanayane> Bypass permissions
         {
             exportable = true;
         }
@@ -1021,19 +1034,23 @@ void FSFloaterObjectExport::updateTextureInfo()
             std::string description;
             if (LLGridManager::getInstance()->isInSecondLife())
             {
-                if (imagep->mComment.find("a") != imagep->mComment.end())
-                {
-                    if (LLUUID(imagep->mComment["a"]) == gAgentID)
-                    {
-                        exportable = true;
-                        LL_DEBUGS("export") << id <<  " passed texture export comment check." << LL_ENDL;
-                    }
-                }
+                //<AS:Chanayane> Bypass permissions
+                // if (imagep->mComment.find("a") != imagep->mComment.end())
+                // {
+                //     if (LLUUID(imagep->mComment["a"]) == gAgentID)
+                //     {
+                //         exportable = true;
+                //         LL_DEBUGS("export") << id <<  " passed texture export comment check." << LL_ENDL;
+                //     }
+                // }
+                //</AS:Chanayane> Bypass permissions
+                exportable = true;
             }
             if (exportable)
                 FSExportPermsCheck::canExportAsset(id, &name, &description);
             else
                 exportable = FSExportPermsCheck::canExportAsset(id, &name, &description);
+            exportable = true; //<AS:Chanayane /> Bypass permissions
 
             if (exportable)
             {
@@ -1173,7 +1190,10 @@ void FSFloaterObjectExport::addSelectedObjects()
             {
                 node = *iter;
                 mTotal++;
-                if (!node->getObject()->getVolume() || !FSExportPermsCheck::canExportNode(node, false)) continue;
+                //<AS:Chanayane> Bypass permissions
+                //if (!node->getObject()->getVolume() || !FSExportPermsCheck::canExportNode(node, false)) continue;
+                if (!node->getObject()->getVolume() || !FSExportPermsCheck::canExportNode(node, true)) continue;
+                //</AS:Chanayane> Bypass permissions
                 mIncluded++;
                 addObject(node->getObject(), node->mName);
             }
@@ -1185,14 +1205,21 @@ void FSFloaterObjectExport::addSelectedObjects()
                 return;
             }
 
-            updateTextureInfo();
-            mNumTextures = static_cast<S32>(mTextures.size());
-            mNumExportableTextures = getNumExportableTextures();
+            //<AS:Chanayane> Bypass permissions
+            // updateTextureInfo();
+            // mNumTextures = static_cast<S32>(mTextures.size());
+            // mNumExportableTextures = getNumExportableTextures();
+            //</AS:Chanayane> Bypass permissions
         }
         else
         {
             mObjectName = "";
         }
+        //<AS:Chanayane> Bypass permissions
+        updateTextureInfo();
+        mNumTextures = static_cast<S32>(mTextures.size());
+        mNumExportableTextures = getNumExportableTextures();
+        //</AS:Chanayane> Bypass permissions
     }
 }
 

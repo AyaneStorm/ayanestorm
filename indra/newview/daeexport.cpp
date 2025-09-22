@@ -269,7 +269,9 @@ void ColladaExportFloater::addSelectedObjects()
             for (LLObjectSelection::iterator iter = mObjectSelection->begin(); iter != mObjectSelection->end(); ++iter)
             {
                 mTotal++;
-                LLSelectNode* node = *iter;
+                //<AS:Chanayane /> do not redeclare an existing variable
+                //LLSelectNode* node = *iter;
+                node = *iter;
                 if (!node->getObject()->getVolume() || !FSExportPermsCheck::canExportNode(node, true)) continue;
                 mIncluded++;
                 mSaver.add(node->getObject(), node->mName);
@@ -556,19 +558,23 @@ void DAESaver::updateTextureInfo()
             std::string description;
             if (LLGridManager::getInstance()->isInSecondLife())
             {
-                if (imagep->mComment.find("a") != imagep->mComment.end())
-                {
-                    if (LLUUID(imagep->mComment["a"]) == gAgentID)
-                    {
-                        exportable = true;
-                        LL_DEBUGS("export") << id <<  " passed texture export comment check." << LL_ENDL;
-                    }
-                }
+                //<AS:Chanayane> Bypass permissions
+                // if (imagep->mComment.find("a") != imagep->mComment.end())
+                // {
+                //     if (LLUUID(imagep->mComment["a"]) == gAgentID)
+                //     {
+                //         exportable = true;
+                //         LL_DEBUGS("export") << id <<  " passed texture export comment check." << LL_ENDL;
+                //     }
+                // }
+                //</AS:Chanayane> Bypass permissions
+                exportable = true;
             }
             if (exportable)
                 FSExportPermsCheck::canExportAsset(id, &name, &description);
             else
                 exportable = FSExportPermsCheck::canExportAsset(id, &name, &description);
+            exportable = true; //<AS:Chanayane /> Bypass permissions
 
             if (id != DAEExportUtil::LL_TEXTURE_BLANK && exportable)
             {
