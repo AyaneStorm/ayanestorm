@@ -392,7 +392,8 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             }
             else
             {
-                if (mAvatarNameCacheConnections.find(played_by) != mAvatarNameCacheConnections.end())
+                //if (mAvatarNameCacheConnections.find(played_by) != mAvatarNameCacheConnections.end())
+                if (mAvatarNameCacheConnections.find(played_by) == mAvatarNameCacheConnections.end()) // <AS:Chanayane It should add a new entry in the cache only if it does not find it before (if == .end())
                 {
                     boost::signals2::connection cb_connection = LLAvatarNameCache::get(played_by, boost::bind(&AnimationExplorer::onAvatarNameCallback, this, _1, _2));
                     mAvatarNameCacheConnections.insert(std::make_pair(played_by, cb_connection));
