@@ -40,11 +40,11 @@
 		<scroll_list.column
 		 label="Animation ID"
 		 name="animation_id"
-		 width="60" />
+		 width="200" />
 		<scroll_list.column
 		 label="Object ID"
 		 name="object_id"
-		 width="60" />
+		 width="-1" />
 	</scroll_list>
 
 	<view_border
