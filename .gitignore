@@ -115,7 +115,10 @@ indra/newview/pilot.xml
 indra/newview/exoflickrkeys.h
 indra/newview/fsdiscordkey.h
 my_autobuild*.xml
+indra/tools/vstool/obj/*/*.cache
+my_autobuild.xml
 .vscode
+.vs
 *.srctrlbm
 *.srctrldb
 *.srctrlprj
