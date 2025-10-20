@@ -5231,7 +5231,7 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
     {
         const BOOL show_other_anims = gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars"); // <AS:Chanayane /> show animations of other avatars
         const F32 other_anim_radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"); // <AS:Chanayane /> limit other avatars animations by distance
-        const LLVector3d agent_pos = gAgent.getPositionGlobal();
+        const LLVector3d agent_pos = gAgent.getPositionGlobal();                                  // <AS:Chanayane> limit other avatars animations by distance
 
         for( S32 i = 0; i < num_blocks; i++ )
         {
@@ -5246,19 +5246,24 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
                 if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
                 {
                     LLUUID source_id = avatarp->getID();
-                    LLViewerObject* source_object = nullptr;
+                    LLViewerObject* source_object = nullptr; // <AS:Chanayane /> limit other avatars animations by distance
 
                     if (i < num_source_blocks)
                     {
                         LLUUID object_id;
                         mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
+                        // <AS:Chanayane> show animations of other avatars
+                        //if (gObjectList.findObject(object_id))
                         source_object = gObjectList.findObject(object_id);
                         if (source_object)
+                        // </AS:Chanayane> show animations of other avatars
                         {
                             source_id = object_id;
                         }
                     }
 
+                    // <AS:Chanayane> show animations of other avatars
+                    //RecentAnimationList::instance().addAnimation(animation_id, source_id);
                     bool in_radius = true;
                     if (other_anim_radius > 0.f)
                     {
@@ -5278,6 +5283,7 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
                     {
                         RecentAnimationList::instance().addAnimation(animation_id, source_id);
                     }
+                    // </AS:Chanayane> show animations of other avatars
                 }
             }
             // </AS:Chanayane>

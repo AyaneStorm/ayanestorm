@@ -564,6 +564,17 @@
     <key>Value</key>
     <real>10.0</real>
   </map>
+  <key>ASHideStoppedAnimations</key>
+  <map>
+    <key>Comment</key>
+    <string>If TRUE, the animation explorer hides entries that are no longer playing</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
   <key>RadarAlertChannel</key>
     <map>
       <key>Comment</key>

@@ -160,6 +160,17 @@
 	 tool_tip="Show the animations of the other avatars as well, within the defined radius." />
 	<!-- [/AS:Chanayane] show animations of other avatars -->
 
+	<!-- [AS:Chanayane] Hide stopped animations -->
+	<check_box
+	 follows="top|right"
+	 height="22"
+	 label="Hide stopped animations"
+	 left_pad="4"
+	 name="hide_stopped_animations"
+	 width="200"
+	 tool_tip="When checked, hides the animations that are not playing anymore" />
+	<!-- [/AS:Chanayane] show animations of other avatars -->
+
 	<button
 	 follows="top|right"
 	 height="22"

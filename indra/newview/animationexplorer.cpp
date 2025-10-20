@@ -36,7 +36,7 @@
 #include "llbutton.h"
 #include "llcachename.h"            // for gCacheName
 #include "llcheckboxctrl.h"
-#include "llsliderctrl.h"
+#include "llsliderctrl.h"           // <AS:Chanayane /> limit other avatars animations by distance
 #include "llviewercontrol.h"        // <AS:Chanayane /> show animations of other avatars
 #include "llfloater.h"
 #include "llfloaterreg.h"
@@ -168,6 +168,7 @@ bool AnimationExplorer::postBuild()
     mNoOwnedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("no_owned_animations_check");
     mOtherAvatarsCheckBox = getChild<LLCheckBoxCtrl>("other_avatars_animations_check");   // <AS:Chanayane /> show animations for other avatars
     mOtherAvatarsRadiusSlider = getChild<LLSliderCtrl>("other_avatars_radius_slider");    // <AS:Chanayane /> limit other avatars animations by distance
+    mHideStoppedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("hide_stopped_animations"); // <AS:Chanayane /> hide stopped animations
 
     // <AS:Chanayane> filter animations by avatar name
     if (mAnimationScrollList)
@@ -181,12 +182,21 @@ bool AnimationExplorer::postBuild()
     mBlacklistButton->setCommitCallback(boost::bind(&AnimationExplorer::onBlacklistPressed, this));
     mStopAndRevokeButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopAndRevokePressed, this));
     mNoOwnedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOwnedCheckToggled, this));
+    // <AS:Chanayane> hide stopped animations
+    if (mHideStoppedAnimationsCheckBox)
+    {
+        mHideStoppedAnimationsCheckBox->set(gSavedSettings.getBOOL("ASHideStoppedAnimations") == TRUE);
+        mHideStoppedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onHideStoppedAnimationsToggled, this));
+    }
+    // </AS:Chanayane> hide stopped animations
     // <AS:Chanayane> show animations of other avatars
     if (mOtherAvatarsCheckBox)
     {
         mOtherAvatarsCheckBox->set(gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") == TRUE);
         mOtherAvatarsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsCheckToggled, this));
     }
+    // </AS:Chanayane> show animations of other avatars
+    // <AS:Chanayane> limit other avatars animations by distance
     if (mOtherAvatarsRadiusSlider)
     {
         mOtherAvatarsRadiusSlider->setValue(gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"));
@@ -196,7 +206,7 @@ bool AnimationExplorer::postBuild()
             mOtherAvatarsRadiusSlider->setEnabled(mOtherAvatarsCheckBox->getValue().asBoolean());
         }
     }
-    // </AS:Chanayane> show animations of other avatars
+    // </AS:Chanayane /> limit other avatars animations by distance
 
     // <AS:Chanayane> filter animations by avatar name
     if (mAvatarFilterInput)
@@ -305,14 +315,18 @@ void AnimationExplorer::onOtherAvatarsCheckToggled()
 
     const BOOL enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
     gSavedSettings.setBOOL("ASShowAnimationsOfOtherAvatars", enabled);
+    // <AS:Chanayane> limit other avatars animations by distance
     if (mOtherAvatarsRadiusSlider)
     {
         mOtherAvatarsRadiusSlider->setEnabled(enabled == TRUE);
     }
+    // </AS:Chanayane>
     update();
     updateList(LLTimer::getElapsedSeconds());
 }
+// </AS:Chanayane> show animations of other avatars
 
+// <AS:Chanayane> limit other avatars animations by distance
 void AnimationExplorer::onOtherAvatarsRadiusChanged()
 {
     if (!mOtherAvatarsRadiusSlider)
@@ -324,7 +338,22 @@ void AnimationExplorer::onOtherAvatarsRadiusChanged()
     update();
     updateList(LLTimer::getElapsedSeconds());
 }
-// </AS:Chanayane> show animations of other avatars
+// </AS:Chanayane> limit other avatars animations by distance
+
+// <AS:Chanayane> hide stopped animations
+void AnimationExplorer::onHideStoppedAnimationsToggled()
+{
+    if (!mHideStoppedAnimationsCheckBox)
+    {
+        return;
+    }
+
+    const BOOL hide = mHideStoppedAnimationsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    gSavedSettings.setBOOL("ASHideStoppedAnimations", hide);
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+// </AS:Chanayane> hide stopped animations
 
 // <AS:Chanayane> filter animations by avatar name
 void AnimationExplorer::onAvatarFilterKeystroke(LLLineEditor* caller)
@@ -402,8 +431,17 @@ void AnimationExplorer::updateList(F64 current_timestamp)
     S32 object_id_column = mAnimationScrollList->getColumn("object_id")->mIndex;
     S32 anim_id_column = mAnimationScrollList->getColumn("animation_id")->mIndex;
 
+    // <AS:Chanayane> hide stopped animations
+    const bool hide_stopped = mHideStoppedAnimationsCheckBox && mHideStoppedAnimationsCheckBox->getValue().asBoolean();
+    // </AS:Chanayane> hide stopped animations
+
     // go through the full animation scroll list
     std::vector<LLScrollListItem*> items = mAnimationScrollList->getAllData();
+    // <AS:Chanayane> hide stopped animations
+    std::vector<S32> rows_to_remove;
+    rows_to_remove.reserve(items.size());
+    // </AS:Chanayane> hide stopped animations
+
     for (std::vector<LLScrollListItem*>::iterator list_iter = items.begin(); list_iter != items.end(); ++list_iter)
     {
         LLScrollListItem* item = *list_iter;
@@ -444,6 +482,18 @@ void AnimationExplorer::updateList(F64 current_timestamp)
             args["SECONDS"] = llformat("%d", (S32) (current_timestamp - timestamp));
 
             played_text->setText(LLTrans::getString("animation_explorer_seconds_ago", args));
+
+            // <AS:Chanayane> hide stopped animations
+            if (hide_stopped)
+            {
+                S32 row_index = mAnimationScrollList->getItemIndex(item);
+                if (row_index >= 0)
+                {
+                    rows_to_remove.push_back(row_index);
+                }
+                continue;
+            }
+            // </AS:Chanayane> hide stopped animations
         }
 
         std::string prio_text = LLTrans::getString("animation_explorer_unknown_priority");
@@ -453,6 +503,18 @@ void AnimationExplorer::updateList(F64 current_timestamp)
         }
         dynamic_cast<LLScrollListText*>(item->getColumn(priority_column))->setText(prio_text);
     }
+
+    // <AS:Chanayane> hide stopped animations
+    if (!rows_to_remove.empty())
+    {
+        std::sort(rows_to_remove.begin(), rows_to_remove.end());
+        rows_to_remove.erase(std::unique(rows_to_remove.begin(), rows_to_remove.end()), rows_to_remove.end());
+        for (auto iter = rows_to_remove.rbegin(); iter != rows_to_remove.rend(); ++iter)
+        {
+            mAnimationScrollList->deleteSingleItem(*iter);
+        }
+    }
+    // </AS:Chanayane> hide stopped animations
 }
 
 void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, F64 time)
@@ -470,9 +532,10 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             is_owned_source = true;
         }
     }
-    LLViewerObject* played_vo = gObjectList.findObject(played_by);
     // </AS:Chanayane> show animations of other avatars
-
+    
+    LLViewerObject* played_vo = gObjectList.findObject(played_by); // <AS:Chanayane /> limit other avatars animations by distance
+    
     // don't add animations that are played by ourselves when the filter box is checked
     // <AS:Chanayane> show animations of other avatars
     // if (played_by == gAgentAvatarp->getID())
@@ -489,6 +552,8 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
     {
         return;
     }
+    // </AS:Chanayane> show animations of other avatars
+    // <AS:Chanayane> limit other avatars animations by distance
     else
     {
         F32 radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius");
@@ -500,16 +565,22 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             }
         }
     }
-    // </AS:Chanayane> show animations of other avatars
+    // </AS:Chanayane> limit other avatars animations by distance
 
     // set object name to UUID at first
     std::string playedByName = played_by.asString();
 
     // find out if the object is still in reach
+    // <AS:Chanayane> limit other avatars animations by distance
+    //if (LLViewerObject* vo = gObjectList.findObject(played_by); vo)
     if (played_vo)
+    // </AS:Chanayane> limit other avatars animations by distance
     {
         // if it was an avatar, get the name here
+        // <AS:Chanayane> limit other avatars animations by distance
+        //if (vo->isAvatar())
         if (played_vo->isAvatar())
+        // </AS:Chanayane> limit other avatars animations by distance
         {
             LLAvatarName av_name;
             if (LLAvatarNameCache::get(played_by, &av_name))
@@ -549,7 +620,10 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
+                    // <AS:Chanayane> limit other avatars animations by distance
+                    //msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
                     msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
+                    // </AS:Chanayane> limit other avatars animations by distance
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
 
                     msg->newMessageFast(_PREHASH_ObjectDeselect);
@@ -557,7 +631,10 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
+                    // <AS:Chanayane> limit other avatars animations by distance
+                    //msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
                     msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
+                    // </AS:Chanayane> limit other avatars animations by distance
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
                 }
             }
