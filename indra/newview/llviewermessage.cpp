@@ -5228,11 +5228,32 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
     }
     else
     {
+        LLUUID object_id; // <AS:Chanayane /> show other avatars animations
+
         for( S32 i = 0; i < num_blocks; i++ )
         {
             mesgsys->getUUIDFast(_PREHASH_AnimationList, _PREHASH_AnimID, animation_id, i);
             mesgsys->getS32Fast(_PREHASH_AnimationList, _PREHASH_AnimSequenceID, anim_sequence_id, i);
             avatarp->mSignaledAnimations[animation_id] = anim_sequence_id;
+
+            // <AS:Chanayane /> show other avatars animations
+            LLVOAvatar::AnimIterator playing_it = avatarp->mPlayingAnimations.find(animation_id);
+            if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
+            {
+                LLUUID source_id = avatarp->getID();
+
+                if (i < num_source_blocks)
+                {
+                    mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
+                    if (gObjectList.findObject(object_id))
+                    {
+                        source_id = object_id;
+                    }
+                }
+
+                RecentAnimationList::instance().addAnimation(animation_id, source_id);
+            }
+            // </AS:Chanayane>
         }
     }
 
