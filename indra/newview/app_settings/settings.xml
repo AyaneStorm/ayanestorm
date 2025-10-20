@@ -553,6 +553,17 @@
     <key>Value</key>
     <integer>0</integer>
   </map>
+  <key>ASAnimationOtherAvatarsRadius</key>
+  <map>
+    <key>Comment</key>
+    <string>Maximum distance in meters for recording animations from other avatars when enabled</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>10.0</real>
+  </map>
   <key>RadarAlertChannel</key>
     <map>
       <key>Comment</key>

@@ -36,6 +36,7 @@
 #include "llbutton.h"
 #include "llcachename.h"            // for gCacheName
 #include "llcheckboxctrl.h"
+#include "llsliderctrl.h"
 #include "llviewercontrol.h"        // <AS:Chanayane /> show animations of other avatars
 #include "llfloater.h"
 #include "llfloaterreg.h"
@@ -166,6 +167,7 @@ bool AnimationExplorer::postBuild()
     mStopAndRevokeButton = getChild<LLButton>("stop_and_revoke_btn");
     mNoOwnedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("no_owned_animations_check");
     mOtherAvatarsCheckBox = getChild<LLCheckBoxCtrl>("other_avatars_animations_check");   // <AS:Chanayane /> show animations for other avatars
+    mOtherAvatarsRadiusSlider = getChild<LLSliderCtrl>("other_avatars_radius_slider");    // <AS:Chanayane /> limit other avatars animations by distance
 
     // <AS:Chanayane> filter animations by avatar name
     if (mAnimationScrollList)
@@ -184,6 +186,15 @@ bool AnimationExplorer::postBuild()
     {
         mOtherAvatarsCheckBox->set(gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") == TRUE);
         mOtherAvatarsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsCheckToggled, this));
+    }
+    if (mOtherAvatarsRadiusSlider)
+    {
+        mOtherAvatarsRadiusSlider->setValue(gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"));
+        mOtherAvatarsRadiusSlider->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsRadiusChanged, this));
+        if (mOtherAvatarsCheckBox)
+        {
+            mOtherAvatarsRadiusSlider->setEnabled(mOtherAvatarsCheckBox->getValue().asBoolean());
+        }
     }
     // </AS:Chanayane> show animations of other avatars
 
@@ -294,6 +305,22 @@ void AnimationExplorer::onOtherAvatarsCheckToggled()
 
     const BOOL enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
     gSavedSettings.setBOOL("ASShowAnimationsOfOtherAvatars", enabled);
+    if (mOtherAvatarsRadiusSlider)
+    {
+        mOtherAvatarsRadiusSlider->setEnabled(enabled == TRUE);
+    }
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+
+void AnimationExplorer::onOtherAvatarsRadiusChanged()
+{
+    if (!mOtherAvatarsRadiusSlider)
+    {
+        return;
+    }
+
+    gSavedSettings.setF32("ASAnimationOtherAvatarsRadius", mOtherAvatarsRadiusSlider->getValueF32());
     update();
     updateList(LLTimer::getElapsedSeconds());
 }
@@ -443,6 +470,7 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             is_owned_source = true;
         }
     }
+    LLViewerObject* played_vo = gObjectList.findObject(played_by);
     // </AS:Chanayane> show animations of other avatars
 
     // don't add animations that are played by ourselves when the filter box is checked
@@ -461,16 +489,27 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
     {
         return;
     }
+    else
+    {
+        F32 radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius");
+        if (radius > 0.f && played_vo)
+        {
+            if ((played_vo->getPositionGlobal() - gAgent.getPositionGlobal()).length() > (F64)radius)
+            {
+                return;
+            }
+        }
+    }
     // </AS:Chanayane> show animations of other avatars
 
     // set object name to UUID at first
     std::string playedByName = played_by.asString();
 
     // find out if the object is still in reach
-    if (LLViewerObject* vo = gObjectList.findObject(played_by); vo)
+    if (played_vo)
     {
         // if it was an avatar, get the name here
-        if (vo->isAvatar())
+        if (played_vo->isAvatar())
         {
             LLAvatarName av_name;
             if (LLAvatarNameCache::get(played_by, &av_name))
@@ -510,7 +549,7 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
-                    msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
 
                     msg->newMessageFast(_PREHASH_ObjectDeselect);
@@ -518,7 +557,7 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
-                    msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
                 }
             }

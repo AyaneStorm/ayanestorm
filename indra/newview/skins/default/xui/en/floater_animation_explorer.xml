@@ -153,10 +153,11 @@
 	<check_box
 	 follows="top|right"
 	 height="22"
-	 label="Show animations of other avatars"
+	 label="Other avatars"
 	 left_pad="4"
 	 name="other_avatars_animations_check"
-	 width="200" />
+	 width="100"
+	 tool_tip="Show the animations of the other avatars as well, within the defined radius." />
 	<!-- [/AS:Chanayane] show animations of other avatars -->
 
 	<button
@@ -178,6 +179,23 @@
 	 tool_tip="When checked this will filter out all animations that are owned by your avatar, like AO animations or system default animations."
 	 top_delta="-4"
 	 width="154" />
+
+	<!-- [AS:Chanayane] radius for other avatars animations -->
+	<slider
+	 follows="top|right"
+	 height="14"
+	 label="Radius"
+	 left_pad="6"
+	 increment="1"
+	 top_delta="7"
+	 max_val="128"
+	 min_val="0"
+	 name="other_avatars_radius_slider"
+	 show_text="true"
+	 value="10"
+	 width="200"
+	 tool_tip="Avatars within this radius will have their animations listed when 'Show animations of other avatars' is checked." />
+    <!-- [/AS:Chanayane] radius for other avatars animations -->
 
 	</panel>
 
