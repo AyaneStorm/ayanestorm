@@ -36,6 +36,7 @@
 #include "llbutton.h"
 #include "llcachename.h"            // for gCacheName
 #include "llcheckboxctrl.h"
+#include "llviewercontrol.h"        // <AS:Chanayane /> show animations of other avatars
 #include "llfloater.h"
 #include "llfloaterreg.h"
 #include "llkeyframefallmotion.h"
@@ -164,6 +165,7 @@ bool AnimationExplorer::postBuild()
     mBlacklistButton = getChild<LLButton>("blacklist_btn");
     mStopAndRevokeButton = getChild<LLButton>("stop_and_revoke_btn");
     mNoOwnedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("no_owned_animations_check");
+    mOtherAvatarsCheckBox = getChild<LLCheckBoxCtrl>("other_avatars_animations_check");   // <AS:Chanayane /> show animations for other avatars
 
     // <AS:Chanayane> filter animations by avatar name
     if (mAnimationScrollList)
@@ -177,6 +179,13 @@ bool AnimationExplorer::postBuild()
     mBlacklistButton->setCommitCallback(boost::bind(&AnimationExplorer::onBlacklistPressed, this));
     mStopAndRevokeButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopAndRevokePressed, this));
     mNoOwnedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOwnedCheckToggled, this));
+    // <AS:Chanayane> show animations of other avatars
+    if (mOtherAvatarsCheckBox)
+    {
+        mOtherAvatarsCheckBox->set(gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") == TRUE);
+        mOtherAvatarsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsCheckToggled, this));
+    }
+    // </AS:Chanayane> show animations of other avatars
 
     // <AS:Chanayane> filter animations by avatar name
     if (mAvatarFilterInput)
@@ -274,6 +283,21 @@ void AnimationExplorer::onOwnedCheckToggled()
     update();
     updateList(LLTimer::getElapsedSeconds());
 }
+
+// <AS:Chanayane> show animations of other avatars
+void AnimationExplorer::onOtherAvatarsCheckToggled()
+{
+    if (!mOtherAvatarsCheckBox)
+    {
+        return;
+    }
+
+    const BOOL enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    gSavedSettings.setBOOL("ASShowAnimationsOfOtherAvatars", enabled);
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+// </AS:Chanayane> show animations of other avatars
 
 // <AS:Chanayane> filter animations by avatar name
 void AnimationExplorer::onAvatarFilterKeystroke(LLLineEditor* caller)
@@ -406,14 +430,38 @@ void AnimationExplorer::updateList(F64 current_timestamp)
 
 void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, F64 time)
 {
+    // <AS:Chanayane> show animations of other avatars
+    bool is_owned_source = false;
+    if (isAgentAvatarValid())
+    {
+        if (played_by == gAgentAvatarp->getID())
+        {
+            is_owned_source = true;
+        }
+        else if (gAgentAvatarp->mAnimationSources.find(played_by) != gAgentAvatarp->mAnimationSources.end())
+        {
+            is_owned_source = true;
+        }
+    }
+    // </AS:Chanayane> show animations of other avatars
+
     // don't add animations that are played by ourselves when the filter box is checked
-    if (played_by == gAgentAvatarp->getID())
+    // <AS:Chanayane> show animations of other avatars
+    // if (played_by == gAgentAvatarp->getID())
+    if (is_owned_source)
+    // </AS:Chanayane> show animations of other avatars
     {
         if (mNoOwnedAnimationsCheckBox->getValue().asBoolean())
         {
             return;
         }
     }
+    // <AS:Chanayane> show animations of other avatars
+    else if (gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") != TRUE)
+    {
+        return;
+    }
+    // </AS:Chanayane> show animations of other avatars
 
     // set object name to UUID at first
     std::string playedByName = played_by.asString();

@@ -38,6 +38,7 @@
 #include "llfolderview.h"
 #include "llfollowcamparams.h"
 #include "llinventorydefines.h"
+#include "llviewercontrol.h" // <AS:Chanayane /> show animations of other avatars
 #include "lllslconstants.h"
 #include "llmaterialtable.h"
 #include "llregionhandle.h"
@@ -5228,7 +5229,7 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
     }
     else
     {
-        LLUUID object_id; // <AS:Chanayane /> show other avatars animations
+        const BOOL show_other_anims = gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars"); // <AS:Chanayane /> show animations of other avatars
 
         for( S32 i = 0; i < num_blocks; i++ )
         {
@@ -5236,22 +5237,26 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
             mesgsys->getS32Fast(_PREHASH_AnimationList, _PREHASH_AnimSequenceID, anim_sequence_id, i);
             avatarp->mSignaledAnimations[animation_id] = anim_sequence_id;
 
-            // <AS:Chanayane /> show other avatars animations
-            LLVOAvatar::AnimIterator playing_it = avatarp->mPlayingAnimations.find(animation_id);
-            if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
+            // <AS:Chanayane> show animations of other avatars
+            if (show_other_anims == TRUE)
             {
-                LLUUID source_id = avatarp->getID();
-
-                if (i < num_source_blocks)
+                LLVOAvatar::AnimIterator playing_it = avatarp->mPlayingAnimations.find(animation_id);
+                if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
                 {
-                    mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
-                    if (gObjectList.findObject(object_id))
-                    {
-                        source_id = object_id;
-                    }
-                }
+                    LLUUID source_id = avatarp->getID();
 
-                RecentAnimationList::instance().addAnimation(animation_id, source_id);
+                    if (i < num_source_blocks)
+                    {
+                        LLUUID object_id;
+                        mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
+                        if (gObjectList.findObject(object_id))
+                        {
+                            source_id = object_id;
+                        }
+                    }
+
+                    RecentAnimationList::instance().addAnimation(animation_id, source_id);
+                }
             }
             // </AS:Chanayane>
         }

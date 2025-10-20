@@ -105,6 +105,7 @@ class AnimationExplorer
         LLButton* mStopAndRevokeButton;
         LLCheckBoxCtrl* mNoOwnedAnimationsCheckBox;
         LLLineEditor* mAvatarFilterInput; // <AS:Chanayane /> filter animations by avatar name
+        LLCheckBoxCtrl* mOtherAvatarsCheckBox; // <AS:Chanayane /> show animations for other avatars
 
         LLView* mPreviewCtrl;   // dummy control on the floater where the avatar preview should go
         LLPointer<LLPreviewAnimation> mAnimationPreview;    // actual avatar preview
@@ -132,6 +133,7 @@ class AnimationExplorer
         void onStopAndRevokePressed();
         void onOwnedCheckToggled();
         void onAvatarFilterKeystroke(LLLineEditor* caller); // <AS:Chanayane /> filter animations by avatar name
+        void onOtherAvatarsCheckToggled(); // <AS:Chanayane /> show animations for other avatars
 };
 
 #endif // ANIMATIONEXPLORER_H

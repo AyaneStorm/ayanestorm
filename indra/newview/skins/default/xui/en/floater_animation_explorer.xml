@@ -25,11 +25,11 @@
  help_topic="fs_animation_explorer"
  layout="topleft"
  min_height="600"
- min_width="840"
+ min_width="1240"
  name="animation_explorer"
  save_rect="true"
  title="Animation Explorer"
- width="840">
+ width="1240">
 <!-- [/AS:Chanayane] larger animation preview -->
 
 	<!-- [AS:Chanayane] filter animations by avatar name -->
@@ -42,7 +42,7 @@
 	 max_length="255"
 	 name="avatar_filter_input"
 	 top="4"
-	 width="306" />
+	 width="706" />
 	<!-- [/AS:Chanayane] filter animations by avatar name -->
 
 	<!--
@@ -65,26 +65,28 @@
 	 left="4"
 	 name="animation_list"
 	 top="32"
-	 width="306">
+	 width="706">
 	<!-- [/AS:Chanayane] filter animations by avatar name -->
 		<scroll_list.column
 		 label="Played by"
-		 name="played_by" />
+		 name="played_by"
+		 min_width="60" />
 		<scroll_list.column
 		 label="Played"
-		 name="played" />
-		<scroll_list.column
+		 name="played"
+		 width="100" />
+		 <scroll_list.column
 		 label="Priority"
 		 name="priority"
-		 width="40"/>
+		 width="60"/>
 		<scroll_list.column
 		 label="Timestamp"
 		 name="timestamp"
-		 width="40" />
+		 width="70" />
 		<scroll_list.column
 		 label="Animation ID"
 		 name="animation_id"
-		 width="220" />
+		 width="240" />
 		<scroll_list.column
 		 label="Object ID"
 		 name="object_id"
@@ -146,6 +148,16 @@
 	 left_pad="4"
 	 name="stop_and_revoke_btn"
 	 width="154" />
+
+	<!-- [AS:Chanayane] show animations of other avatars -->
+	<check_box
+	 follows="top|right"
+	 height="22"
+	 label="Show animations of other avatars"
+	 left_pad="4"
+	 name="other_avatars_animations_check"
+	 width="200" />
+	<!-- [/AS:Chanayane] show animations of other avatars -->
 
 	<button
 	 follows="top|right"
