@@ -44,6 +44,7 @@
 #include "lltimer.h"
 #include "lltoolmgr.h"              // for MASK_ORBIT etc.
 #include "lltrans.h"
+#include "lllineeditor.h"           // <AS:Chanayane /> filter animations by avatar name
 #include "lluuid.h"
 #include "llview.h"
 #include "llviewerobjectlist.h"
@@ -158,16 +159,36 @@ void AnimationExplorer::startMotion(const LLUUID& motionID)
 bool AnimationExplorer::postBuild()
 {
     mAnimationScrollList = getChild<LLScrollListCtrl>("animation_list");
+    mAvatarFilterInput = getChild<LLLineEditor>("avatar_filter_input");     // <AS:Chanayane /> filter animations by avatar name
     mStopButton = getChild<LLButton>("stop_btn");
     mBlacklistButton = getChild<LLButton>("blacklist_btn");
     mStopAndRevokeButton = getChild<LLButton>("stop_and_revoke_btn");
     mNoOwnedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("no_owned_animations_check");
+
+    // <AS:Chanayane> filter animations by avatar name
+    if (mAnimationScrollList)
+    {
+        mAnimationScrollList->setFilterColumn(mAnimationScrollList->getColumn("played_by")->mIndex);
+    }
+    // </AS:Chanayane> filter animations by avatar name
 
     mAnimationScrollList->setCommitCallback(boost::bind(&AnimationExplorer::onSelectAnimation, this));
     mStopButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopPressed, this));
     mBlacklistButton->setCommitCallback(boost::bind(&AnimationExplorer::onBlacklistPressed, this));
     mStopAndRevokeButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopAndRevokePressed, this));
     mNoOwnedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOwnedCheckToggled, this));
+
+    // <AS:Chanayane> filter animations by avatar name
+    if (mAvatarFilterInput)
+    {
+        mAvatarFilterInput->setKeystrokeCallback(
+            [](LLLineEditor* caller, void* userdata)
+            {
+                static_cast<AnimationExplorer*>(userdata)->onAvatarFilterKeystroke(caller);
+            },
+            this);
+    }
+    // </AS:Chanayane> filter animations by avatar name
 
     mPreviewCtrl = findChild<LLView>("animation_preview");
     if (mPreviewCtrl)
@@ -253,6 +274,24 @@ void AnimationExplorer::onOwnedCheckToggled()
     update();
     updateList(LLTimer::getElapsedSeconds());
 }
+
+// <AS:Chanayane> filter animations by avatar name
+void AnimationExplorer::onAvatarFilterKeystroke(LLLineEditor* caller)
+{
+    if (!mAnimationScrollList)
+    {
+        return;
+    }
+
+    std::string filter_text;
+    if (caller)
+    {
+        filter_text = caller->getText();
+    }
+
+    mAnimationScrollList->setFilterString(filter_text);
+}
+// </AS:Chanayane> filter animations by avatar name
 
 void AnimationExplorer::draw()
 {

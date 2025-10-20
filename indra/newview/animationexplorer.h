@@ -68,6 +68,7 @@ public:
 class LLAvatarName;
 class LLButton;
 class LLCheckBoxCtrl;
+class LLLineEditor; // <AS:Chanayane /> filter animations by avatar name
 class LLMessageSystem;
 class LLScrollListCtrl;
 class LLView;
@@ -103,6 +104,7 @@ class AnimationExplorer
         LLButton* mBlacklistButton;
         LLButton* mStopAndRevokeButton;
         LLCheckBoxCtrl* mNoOwnedAnimationsCheckBox;
+        LLLineEditor* mAvatarFilterInput; // <AS:Chanayane /> filter animations by avatar name
 
         LLView* mPreviewCtrl;   // dummy control on the floater where the avatar preview should go
         LLPointer<LLPreviewAnimation> mAnimationPreview;    // actual avatar preview
@@ -129,6 +131,7 @@ class AnimationExplorer
         void onBlacklistPressed();
         void onStopAndRevokePressed();
         void onOwnedCheckToggled();
+        void onAvatarFilterKeystroke(LLLineEditor* caller); // <AS:Chanayane /> filter animations by avatar name
 };
 
 #endif // ANIMATIONEXPLORER_H

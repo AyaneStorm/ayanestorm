@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- [AS:Chanayane] larger animation preview -->
+<!--
 <floater
  can_close="true"
  can_drag_on_left="false"
@@ -13,7 +15,37 @@
  save_rect="true"
  title="Animation Explorer"
  width="574">
+-->
+<floater
+ can_close="true"
+ can_drag_on_left="false"
+ can_minimize="false"
+ can_resize="true"
+ height="600"
+ help_topic="fs_animation_explorer"
+ layout="topleft"
+ min_height="600"
+ min_width="840"
+ name="animation_explorer"
+ save_rect="true"
+ title="Animation Explorer"
+ width="840">
+<!-- [/AS:Chanayane] larger animation preview -->
 
+	<!-- [AS:Chanayane] filter animations by avatar name -->
+	<line_editor
+	 follows="top|left|right"
+	 height="22"
+	 label="Filter by avatar"
+	 layout="topleft"
+	 left="4"
+	 max_length="255"
+	 name="avatar_filter_input"
+	 top="4"
+	 width="306" />
+	<!-- [/AS:Chanayane] filter animations by avatar name -->
+
+	<!--
 	<scroll_list
 	 bottom="-4"
 	 draw_heading="true"
@@ -23,6 +55,18 @@
 	 name="animation_list"
 	 top="4"
 	 width="306">
+	-->
+	<!-- [AS:Chanayane] filter animations by avatar name -->
+	<scroll_list
+	 bottom="-4"
+	 draw_heading="true"
+	 follows="all"
+	 layout="topleft"
+	 left="4"
+	 name="animation_list"
+	 top="32"
+	 width="306">
+	<!-- [/AS:Chanayane] filter animations by avatar name -->
 		<scroll_list.column
 		 label="Played by"
 		 name="played_by" />
@@ -32,21 +76,23 @@
 		<scroll_list.column
 		 label="Priority"
 		 name="priority"
-		 width="60"/>
+		 width="40"/>
 		<scroll_list.column
 		 label="Timestamp"
 		 name="timestamp"
-		 width="60" />
+		 width="40" />
 		<scroll_list.column
 		 label="Animation ID"
 		 name="animation_id"
-		 width="200" />
+		 width="220" />
 		<scroll_list.column
 		 label="Object ID"
 		 name="object_id"
 		 width="-1" />
 	</scroll_list>
 
+	<!-- [/AS:Chanayane] larger animation preview -->
+	<!--
 	<view_border
 	 bevel_style="in"
 	 follows="top|bottom|right"
@@ -63,6 +109,24 @@
 	 name="buttons_panel"
 	 top_pad="4"
 	 width="256">
+	-->
+	<view_border
+	 bevel_style="in"
+	 follows="top|bottom|right"
+	 height="512"
+	 name="animation_preview"
+	 layout="topleft"
+	 left_pad="4"
+	 top_delta="0"
+	 width="512" />
+	
+	<panel
+	 follows="bottom|right"
+	 height="48"
+	 name="buttons_panel"
+	 top_pad="4"
+	 width="512">
+	<!-- [/AS:Chanayane] larger animation preview -->
 
 	<button
 	 follows="top|right"
