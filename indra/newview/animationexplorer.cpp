@@ -443,6 +443,34 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
         }
     }
 
+    // <AS:Chanayane> avoid duplicate entries by updating existing ones with the latest info
+    S32 played_by_column = mAnimationScrollList->getColumn("played_by")->mIndex;
+    S32 played_column = mAnimationScrollList->getColumn("played")->mIndex;
+    S32 timestamp_column = mAnimationScrollList->getColumn("timestamp")->mIndex;
+    S32 animation_id_column = mAnimationScrollList->getColumn("animation_id")->mIndex;
+    S32 object_id_column = mAnimationScrollList->getColumn("object_id")->mIndex;
+
+    for (LLScrollListItem* item : mAnimationScrollList->getAllData())
+    {
+        if (item->getColumn(animation_id_column)->getValue().asUUID() == id &&
+            item->getColumn(object_id_column)->getValue().asUUID() == played_by)
+        {
+            if (LLScrollListText* played_by_text = dynamic_cast<LLScrollListText*>(item->getColumn(played_by_column)))
+            {
+                played_by_text->setText(playedByName);
+            }
+
+            if (LLScrollListText* played_text = dynamic_cast<LLScrollListText*>(item->getColumn(played_column)))
+            {
+                played_text->setText(LLTrans::getString("animation_explorer_still_playing"));
+            }
+
+            item->getColumn(timestamp_column)->setValue(time);
+            return;
+        }
+    }
+    // </AS:Chanayane>
+
     // insert the item into the scroll list
     LLSD item;
     item["columns"][0]["column"] = "played_by";
