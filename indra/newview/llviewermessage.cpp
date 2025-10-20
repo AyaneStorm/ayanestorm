@@ -39,6 +39,7 @@
 #include "llfollowcamparams.h"
 #include "llinventorydefines.h"
 #include "llviewercontrol.h" // <AS:Chanayane /> show animations of other avatars
+#include "llviewerobject.h"
 #include "lllslconstants.h"
 #include "llmaterialtable.h"
 #include "llregionhandle.h"
@@ -5246,24 +5247,22 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
                 if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
                 {
                     LLUUID source_id = avatarp->getID();
-                    LLViewerObject* source_object = nullptr; // <AS:Chanayane /> limit other avatars animations by distance
+                    LLViewerObject* source_object = nullptr;
 
                     if (i < num_source_blocks)
                     {
                         LLUUID object_id;
                         mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
-                        // <AS:Chanayane> show animations of other avatars
-                        //if (gObjectList.findObject(object_id))
-                        source_object = gObjectList.findObject(object_id);
-                        if (source_object)
-                        // </AS:Chanayane> show animations of other avatars
+                        if (LLViewerObject* obj = gObjectList.findObject(object_id))
                         {
-                            source_id = object_id;
+                            if (!obj->isHUDAttachment())
+                            {
+                                source_object = obj;
+                                source_id = object_id;
+                            }
                         }
                     }
 
-                    // <AS:Chanayane> show animations of other avatars
-                    //RecentAnimationList::instance().addAnimation(animation_id, source_id);
                     bool in_radius = true;
                     if (other_anim_radius > 0.f)
                     {
@@ -5283,10 +5282,9 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
                     {
                         RecentAnimationList::instance().addAnimation(animation_id, source_id);
                     }
-                    // </AS:Chanayane> show animations of other avatars
                 }
             }
-            // </AS:Chanayane>
+            // </AS:Chanayane> show animations of other avatars
         }
     }
 
