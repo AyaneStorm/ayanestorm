@@ -39,6 +39,8 @@
 
 const LLPermissions LLPermissions::DEFAULT;
 
+bool LLPermissions::sIsInOpenSim = false; // <FS:TJ/> [FIRE-36028] Fix OpenSim object permissions
+
 // No creator = created by system
 LLPermissions::LLPermissions()
 {
@@ -774,6 +776,7 @@ void LLPermissions::importLLSD(const LLSD& sd_perm)
         }
     }
 
+    fixOwnership();
     fix();
 }
 

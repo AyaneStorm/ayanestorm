@@ -189,6 +189,7 @@ void LLOutfitsList::onOpen(const LLSD& info)
 
 void LLOutfitsList::updateAddedCategory(LLUUID cat_id)
 {
+    LL_PROFILE_ZONE_SCOPED;
     LLViewerInventoryCategory *cat = gInventory.getCategory(cat_id);
     if (!cat) return;
 
@@ -260,7 +261,9 @@ void LLOutfitsList::updateAddedCategory(LLUUID cat_id)
 
     if (AISAPI::isAvailable() && LLInventoryModelBackgroundFetch::instance().folderFetchActive())
     {
-        // for reliability just fetch it whole, linked items included
+        // For reliability just fetch it whole, linked items included
+        // Todo: list is not warrantied to exist once callback arrives
+        // Fix it!
         LLInventoryModelBackgroundFetch::instance().fetchFolderAndLinks(cat_id, [cat_id, list]
         {
             if (list)
@@ -1153,6 +1156,7 @@ void LLOutfitListBase::onIdle(void* userdata)
 
 void LLOutfitListBase::onIdleRefreshList()
 {
+    LL_PROFILE_ZONE_SCOPED;
     if (LLAppViewer::instance()->quitRequested())
     {
         mRefreshListState.CategoryUUID.setNull();
@@ -1167,11 +1171,11 @@ void LLOutfitListBase::onIdleRefreshList()
     }
 
     // <FS:PP> Scale MAX_TIME with FPS to avoid overloading the viewer with function calls at low frame rates
-    // const F64 MAX_TIME = 0.05f;
-    F64 MAX_TIME = 0.05f;
+    // const F64 MAX_TIME = 0.005f;
+    F64 MAX_TIME = 0.005f;
     constexpr F64 min_time = 0.001f;
     constexpr F64 threshold_fps = 30.0;
-    const auto current_fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS, 1);
+    const auto current_fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS,10);
     if (current_fps < threshold_fps)
     {
         MAX_TIME = min_time + (current_fps / threshold_fps) * (MAX_TIME - min_time);
@@ -1776,11 +1780,18 @@ bool LLOutfitAccordionCtrlTab::handleToolTip(S32 x, S32 y, MASK mask)
     // <FS:Ansariel> Make thumbnail tooltip work properly
     //if (y >= getLocalRect().getHeight() - getHeaderHeight())
     static LLCachedControl<bool> showInventoryThumbnailTooltips(gSavedSettings, "FSShowInventoryThumbnailTooltips");
-    if (showInventoryThumbnailTooltips && y >= getLocalRect().getHeight() - getHeaderHeight() && gInventory.getCategory(mFolderID)->getThumbnailUUID().notNull())
+    if (showInventoryThumbnailTooltips && y >= getLocalRect().getHeight() - getHeaderHeight())
     {
         LLSD params;
         params["inv_type"] = LLInventoryType::IT_CATEGORY;
         LLViewerInventoryCategory* cat = gInventory.getCategory(mFolderID);
+        // <FS:TJ> Make thumbnail tooltip work properly
+        if (!cat || cat->getThumbnailUUID().isNull())
+        {
+            return LLAccordionCtrlTab::handleToolTip(x, y, mask);
+        }
+        // </FS:TJ>
+
         if (cat)
         {
             params["thumbnail_id"] = cat->getThumbnailUUID();

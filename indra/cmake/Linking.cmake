@@ -42,6 +42,7 @@ endif ()
 link_directories(${AUTOBUILD_INSTALL_DIR}/lib/$<LOWER_CASE:$<CONFIG>>)
 link_directories(${AUTOBUILD_INSTALL_DIR}/lib/release)
 
+
 add_library( ll::oslibraries INTERFACE IMPORTED )
 
 if (LINUX)
@@ -74,6 +75,8 @@ else()
 
   find_library(APPKIT_LIBRARY AppKit)
   find_library(COREAUDIO_LIBRARY CoreAudio)
+  find_library(COREGRAPHICS_LIBRARY CoreGraphics)
+  find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox)
 
   target_link_libraries( ll::oslibraries INTERFACE
           ${COCOA_LIBRARY}
@@ -82,6 +85,8 @@ else()
           ${CARBON_LIBRARY}
           ${APPKIT_LIBRARY}
           ${COREAUDIO_LIBRARY}
+          ${AUDIOTOOLBOX_LIBRARY}
+          ${COREGRAPHICS_LIBRARY}
           )
 endif()
 

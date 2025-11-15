@@ -481,7 +481,11 @@ const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType:
         }
     }
 // </AS:chanayane>
-    return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    // <FS:Ansariel> Store assets in subfolders
+    //return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    char id_string[36]{};
+    return llformat("%s%s%c%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), id.toStringFast(id_string)[0], gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    // <FS:Ansariel>
 }
 
 const std::string LLDiskCache::getCacheInfo()
