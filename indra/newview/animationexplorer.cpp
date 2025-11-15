@@ -37,6 +37,7 @@
 #include "llcachename.h"            // for gCacheName
 #include "llcheckboxctrl.h"
 #include "llsliderctrl.h"           // <AS:Chanayane /> limit other avatars animations by distance
+#include "llimagegl.h"
 #include "llviewercontrol.h"        // <AS:Chanayane /> show animations of other avatars
 #include "llfloater.h"
 #include "llfloaterreg.h"
@@ -377,6 +378,41 @@ void AnimationExplorer::draw()
 {
     LLFloater::draw();
     LLRect r = mPreviewCtrl->getRect();
+
+    // <AS:Chanayane> animation explorer
+    if (mPreviewCtrl && isAgentAvatarValid())
+    {
+        bool rebuild_preview = false;
+
+        LLVOAvatar* dummy = mAnimationPreview ? mAnimationPreview->getDummyAvatar() : nullptr;
+        if (!dummy || dummy->isDead())
+        {
+            rebuild_preview = true;
+            mAnimationPreview = nullptr;
+        }
+
+        if (!mAnimationPreview)
+        {
+            rebuild_preview = true;
+        }
+        else
+        {
+            LLImageGL* preview_tex = mAnimationPreview->getGLTexture();
+            if (!preview_tex || !preview_tex->isGLTextureCreated())
+            {
+                rebuild_preview = true;
+                mAnimationPreview = nullptr;
+            }
+        }
+
+        if (rebuild_preview)
+        {
+            mAnimationPreview = new LLPreviewAnimation(mPreviewCtrl->getRect().getWidth(), mPreviewCtrl->getRect().getHeight());
+            mAnimationPreview->setZoom(2.0f);
+            startMotion(LLUUID::null);
+        }
+    }
+    // </AS:Chanayane> animation explorer
 
     if (mAnimationPreview)
     {
