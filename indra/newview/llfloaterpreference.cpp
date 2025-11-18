@@ -1936,12 +1936,14 @@ void LLFloaterPreference::onClickEnableUnencryptedCache()
         if (gDirUtilp->setUnencryptedCacheDir(unencryptedCacheLocation))
         {
             LLTextureCache::setUnencryptedCacheEnabled(TRUE);
+            LLDiskCache::setUnencryptedCacheEnabled(TRUE);
             LLDiskCache::setUnencryptedCacheDir(gDirUtilp->add(unencryptedCacheLocation, "unencryptedcache"));
             getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(TRUE);
         } else {
             // unable to access directory, we disable the option again
             gSavedSettings.setBOOL("ASEnableUnencryptedCache", FALSE);
             LLTextureCache::setUnencryptedCacheEnabled(FALSE);
+            LLDiskCache::setUnencryptedCacheEnabled(FALSE);
             LLDiskCache::setUnencryptedCacheDir(std::string());
             getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(FALSE);
         }
@@ -1949,6 +1951,7 @@ void LLFloaterPreference::onClickEnableUnencryptedCache()
     else
     {
         LLTextureCache::setUnencryptedCacheEnabled(FALSE);
+        LLDiskCache::setUnencryptedCacheEnabled(FALSE);
         LLDiskCache::setUnencryptedCacheDir(std::string());
         getChild<LLUICtrl>("open_unencrypted_cache")->setEnabled(FALSE);
     }

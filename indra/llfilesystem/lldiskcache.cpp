@@ -74,13 +74,13 @@ LLDiskCache::LLDiskCache(const std::string& cache_dir,
     sCacheDir = cache_dir;
     LLFile::mkdir(cache_dir);
 
+    // <FS:Ansariel> Optimize asset simple disk cache
+    for (S32 i = 0; i < 16; i++)
+    {
+        std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
+        LLFile::mkdir(dirname);
+    }
 // <AS:chanayane> More unencrypted cache
-    // // <FS:Ansariel> Optimize asset simple disk cache
-    // for (S32 i = 0; i < 16; i++)
-    // {
-    //     std::string dirname = cache_dir + gDirUtilp->getDirDelimiter() + subdirs[i];
-    //     LLFile::mkdir(dirname);
-    // }
     sUnencryptedCacheDir = unencrypted_cache_dir;
     LLDiskCache::initUnencryptedCache();
 // </AS:chanayane>
@@ -384,7 +384,7 @@ void LLDiskCache::purge()
 const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType::EType at)
 {
 // <AS:chanayane> More unencrypted cache
-    if (!sUnencryptedCacheDir.empty())
+    if (LLDiskCache::getUnencryptedCacheEnabled() && !sUnencryptedCacheDir.empty())
     {
         std::string assetdir = "";
         std::string assettype = "";

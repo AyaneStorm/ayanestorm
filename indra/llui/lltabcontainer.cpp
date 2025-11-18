@@ -1478,16 +1478,6 @@ void LLTabContainer::enableTabButton(S32 which, bool enable)
     mDragAndDropDelayTimer.stop();
 }
 
-//BD
-bool LLTabContainer::getTabButtonEnabled(S32 which)
-{
-    if (which >= 0 && which < (S32)mTabList.size())
-    {
-        return mTabList[which]->mButton->getEnabled();
-    }
-    return false;
-}
-
 void LLTabContainer::deleteAllTabs()
 {
     // Remove all the tab buttons and delete them.  Also, unlink all the child panels.

@@ -425,16 +425,6 @@ private:
     LLFrameTimer    mTypingTimer;
 
     //--------------------------------------------------------------------
-    //BD - Custom Posing
-    //--------------------------------------------------------------------
-public:
-    void            setPosing()             { mIsPosing = true; }
-    void            clearPosing()           { mIsPosing = false; }
-    bool            getPosing() const       { return mIsPosing; }
-
-    bool            mIsPosing;
-
-    //--------------------------------------------------------------------
     // AFK
     //--------------------------------------------------------------------
 public:
