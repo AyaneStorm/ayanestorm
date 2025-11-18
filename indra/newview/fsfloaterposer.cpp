@@ -725,7 +725,11 @@ void FSFloaterPoser::updatePosedBones(const std::string& jointName)
         return;
 
     bool savingToExternal = getSavingToBvh();
-    mPoserAnimator.recaptureJointAsDelta(avatar, poserJoint, savingToExternal, getUiSelectedBoneDeflectionStyle());
+    
+// <AS:Chanayane> Keep the live pose as the base; BVH export is handled separately.
+    //mPoserAnimator.recaptureJointAsDelta(avatar, poserJoint, savingToExternal, getUiSelectedBoneDeflectionStyle());
+    mPoserAnimator.recaptureJointAsDelta(avatar, poserJoint, false, getUiSelectedBoneDeflectionStyle());
+// </AS:Chanayane>
 
     refreshRotationSlidersAndSpinners();
     refreshPositionSlidersAndSpinners();
@@ -2126,9 +2130,14 @@ void FSFloaterPoser::setSelectedJointsRotation(const LLVector3& absoluteRot, con
                 continue;
         }
 
+// <AS:Chanayane>  Do not zero bases just because BVH saving is enabled; keep current pose as base.
+        // mPoserAnimator.setJointRotation(avatar, item, absoluteRot, deltaRot, defl,
+        //                                 getJointTranslation(item->jointName()), getJointNegation(item->jointName()), savingToExternal,
+        //                                 getUiSelectedBoneRotationStyle(item->jointName()));
         mPoserAnimator.setJointRotation(avatar, item, absoluteRot, deltaRot, defl,
-                                        getJointTranslation(item->jointName()), getJointNegation(item->jointName()), savingToExternal,
+                                        getJointTranslation(item->jointName()), getJointNegation(item->jointName()), false,
                                         getUiSelectedBoneRotationStyle(item->jointName()));
+// <AS:Chanayane>
     }
 
     if (savingToExternal)
