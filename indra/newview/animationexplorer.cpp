@@ -349,7 +349,7 @@ void AnimationExplorer::onHideStoppedAnimationsToggled()
         return;
     }
 
-    const BOOL hide = mHideStoppedAnimationsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    const bool hide = mHideStoppedAnimationsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
     gSavedSettings.setBOOL("ASHideStoppedAnimations", hide);
     update();
     updateList(LLTimer::getElapsedSeconds());
