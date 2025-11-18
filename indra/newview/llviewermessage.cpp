@@ -5238,7 +5238,7 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
     }
     else
     {
-        const BOOL show_other_anims = gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars"); // <AS:Chanayane /> show animations of other avatars
+        const bool show_other_anims = gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars"); // <AS:Chanayane /> show animations of other avatars
         const F32 other_anim_radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"); // <AS:Chanayane /> limit other avatars animations by distance
         const LLVector3d agent_pos = gAgent.getPositionGlobal();                                  // <AS:Chanayane> limit other avatars animations by distance
 
