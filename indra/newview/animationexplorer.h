@@ -68,7 +68,9 @@ public:
 class LLAvatarName;
 class LLButton;
 class LLCheckBoxCtrl;
+class LLLineEditor; // <AS:Chanayane /> filter animations by avatar name
 class LLMessageSystem;
+class LLSliderCtrl; // <AS:Chanayane/> limit other avatars animations by distance
 class LLScrollListCtrl;
 class LLView;
 
@@ -103,6 +105,10 @@ class AnimationExplorer
         LLButton* mBlacklistButton;
         LLButton* mStopAndRevokeButton;
         LLCheckBoxCtrl* mNoOwnedAnimationsCheckBox;
+        LLLineEditor* mAvatarFilterInput; // <AS:Chanayane /> filter animations by avatar name
+        LLCheckBoxCtrl* mOtherAvatarsCheckBox; // <AS:Chanayane /> show animations for other avatars
+        LLSliderCtrl* mOtherAvatarsRadiusSlider; // <AS:Chanayane /> limit other avatars animations by distance
+        LLCheckBoxCtrl* mHideStoppedAnimationsCheckBox; // <AS:Chanayane /> hide stopped animations
 
         LLView* mPreviewCtrl;   // dummy control on the floater where the avatar preview should go
         LLPointer<LLPreviewAnimation> mAnimationPreview;    // actual avatar preview
@@ -129,6 +135,10 @@ class AnimationExplorer
         void onBlacklistPressed();
         void onStopAndRevokePressed();
         void onOwnedCheckToggled();
+        void onAvatarFilterKeystroke(LLLineEditor* caller); // <AS:Chanayane /> filter animations by avatar name
+        void onOtherAvatarsCheckToggled(); // <AS:Chanayane /> show animations for other avatars
+        void onOtherAvatarsRadiusChanged(); // <AS:Chanayane /> limit other avatars animations by distance
+        void onHideStoppedAnimationsToggled(); // <AS:Chanayane /> hide stopped animations
 };
 
 #endif // ANIMATIONEXPLORER_H

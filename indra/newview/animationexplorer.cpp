@@ -36,6 +36,9 @@
 #include "llbutton.h"
 #include "llcachename.h"            // for gCacheName
 #include "llcheckboxctrl.h"
+#include "llsliderctrl.h"           // <AS:Chanayane /> limit other avatars animations by distance
+#include "llimagegl.h"
+#include "llviewercontrol.h"        // <AS:Chanayane /> show animations of other avatars
 #include "llfloater.h"
 #include "llfloaterreg.h"
 #include "llkeyframefallmotion.h"
@@ -44,6 +47,7 @@
 #include "lltimer.h"
 #include "lltoolmgr.h"              // for MASK_ORBIT etc.
 #include "lltrans.h"
+#include "lllineeditor.h"           // <AS:Chanayane /> filter animations by avatar name
 #include "lluuid.h"
 #include "llview.h"
 #include "llviewerobjectlist.h"
@@ -158,16 +162,64 @@ void AnimationExplorer::startMotion(const LLUUID& motionID)
 bool AnimationExplorer::postBuild()
 {
     mAnimationScrollList = getChild<LLScrollListCtrl>("animation_list");
+    mAvatarFilterInput = getChild<LLLineEditor>("avatar_filter_input");     // <AS:Chanayane /> filter animations by avatar name
     mStopButton = getChild<LLButton>("stop_btn");
     mBlacklistButton = getChild<LLButton>("blacklist_btn");
     mStopAndRevokeButton = getChild<LLButton>("stop_and_revoke_btn");
     mNoOwnedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("no_owned_animations_check");
+    mOtherAvatarsCheckBox = getChild<LLCheckBoxCtrl>("other_avatars_animations_check");   // <AS:Chanayane /> show animations for other avatars
+    mOtherAvatarsRadiusSlider = getChild<LLSliderCtrl>("other_avatars_radius_slider");    // <AS:Chanayane /> limit other avatars animations by distance
+    mHideStoppedAnimationsCheckBox = getChild<LLCheckBoxCtrl>("hide_stopped_animations"); // <AS:Chanayane /> hide stopped animations
+
+    // <AS:Chanayane> filter animations by avatar name
+    if (mAnimationScrollList)
+    {
+        mAnimationScrollList->setFilterColumn(mAnimationScrollList->getColumn("played_by")->mIndex);
+    }
+    // </AS:Chanayane> filter animations by avatar name
 
     mAnimationScrollList->setCommitCallback(boost::bind(&AnimationExplorer::onSelectAnimation, this));
     mStopButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopPressed, this));
     mBlacklistButton->setCommitCallback(boost::bind(&AnimationExplorer::onBlacklistPressed, this));
     mStopAndRevokeButton->setCommitCallback(boost::bind(&AnimationExplorer::onStopAndRevokePressed, this));
     mNoOwnedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOwnedCheckToggled, this));
+    // <AS:Chanayane> hide stopped animations
+    if (mHideStoppedAnimationsCheckBox)
+    {
+        mHideStoppedAnimationsCheckBox->set(gSavedSettings.getBOOL("ASHideStoppedAnimations") == TRUE);
+        mHideStoppedAnimationsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onHideStoppedAnimationsToggled, this));
+    }
+    // </AS:Chanayane> hide stopped animations
+    // <AS:Chanayane> show animations of other avatars
+    if (mOtherAvatarsCheckBox)
+    {
+        mOtherAvatarsCheckBox->set(gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") == TRUE);
+        mOtherAvatarsCheckBox->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsCheckToggled, this));
+    }
+    // </AS:Chanayane> show animations of other avatars
+    // <AS:Chanayane> limit other avatars animations by distance
+    if (mOtherAvatarsRadiusSlider)
+    {
+        mOtherAvatarsRadiusSlider->setValue(gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"));
+        mOtherAvatarsRadiusSlider->setCommitCallback(boost::bind(&AnimationExplorer::onOtherAvatarsRadiusChanged, this));
+        if (mOtherAvatarsCheckBox)
+        {
+            mOtherAvatarsRadiusSlider->setEnabled(mOtherAvatarsCheckBox->getValue().asBoolean());
+        }
+    }
+    // </AS:Chanayane /> limit other avatars animations by distance
+
+    // <AS:Chanayane> filter animations by avatar name
+    if (mAvatarFilterInput)
+    {
+        mAvatarFilterInput->setKeystrokeCallback(
+            [](LLLineEditor* caller, void* userdata)
+            {
+                static_cast<AnimationExplorer*>(userdata)->onAvatarFilterKeystroke(caller);
+            },
+            this);
+    }
+    // </AS:Chanayane> filter animations by avatar name
 
     mPreviewCtrl = findChild<LLView>("animation_preview");
     if (mPreviewCtrl)
@@ -254,10 +306,113 @@ void AnimationExplorer::onOwnedCheckToggled()
     updateList(LLTimer::getElapsedSeconds());
 }
 
+// <AS:Chanayane> show animations of other avatars
+void AnimationExplorer::onOtherAvatarsCheckToggled()
+{
+    if (!mOtherAvatarsCheckBox)
+    {
+        return;
+    }
+
+    const BOOL enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    gSavedSettings.setBOOL("ASShowAnimationsOfOtherAvatars", enabled);
+    // <AS:Chanayane> limit other avatars animations by distance
+    if (mOtherAvatarsRadiusSlider)
+    {
+        mOtherAvatarsRadiusSlider->setEnabled(enabled == TRUE);
+    }
+    // </AS:Chanayane>
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+// </AS:Chanayane> show animations of other avatars
+
+// <AS:Chanayane> limit other avatars animations by distance
+void AnimationExplorer::onOtherAvatarsRadiusChanged()
+{
+    if (!mOtherAvatarsRadiusSlider)
+    {
+        return;
+    }
+
+    gSavedSettings.setF32("ASAnimationOtherAvatarsRadius", mOtherAvatarsRadiusSlider->getValueF32());
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+// </AS:Chanayane> limit other avatars animations by distance
+
+// <AS:Chanayane> hide stopped animations
+void AnimationExplorer::onHideStoppedAnimationsToggled()
+{
+    if (!mHideStoppedAnimationsCheckBox)
+    {
+        return;
+    }
+
+    const BOOL hide = mHideStoppedAnimationsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    gSavedSettings.setBOOL("ASHideStoppedAnimations", hide);
+    update();
+    updateList(LLTimer::getElapsedSeconds());
+}
+// </AS:Chanayane> hide stopped animations
+
+// <AS:Chanayane> filter animations by avatar name
+void AnimationExplorer::onAvatarFilterKeystroke(LLLineEditor* caller)
+{
+    if (!mAnimationScrollList)
+    {
+        return;
+    }
+
+    std::string filter_text;
+    if (caller)
+    {
+        filter_text = caller->getText();
+    }
+
+    mAnimationScrollList->setFilterString(filter_text);
+}
+// </AS:Chanayane> filter animations by avatar name
+
 void AnimationExplorer::draw()
 {
     LLFloater::draw();
     LLRect r = mPreviewCtrl->getRect();
+
+    // <AS:Chanayane> animation explorer
+    if (mPreviewCtrl && isAgentAvatarValid())
+    {
+        bool rebuild_preview = false;
+
+        LLVOAvatar* dummy = mAnimationPreview ? mAnimationPreview->getDummyAvatar() : nullptr;
+        if (!dummy || dummy->isDead())
+        {
+            rebuild_preview = true;
+            mAnimationPreview = nullptr;
+        }
+
+        if (!mAnimationPreview)
+        {
+            rebuild_preview = true;
+        }
+        else
+        {
+            LLImageGL* preview_tex = mAnimationPreview->getGLTexture();
+            if (!preview_tex || !preview_tex->isGLTextureCreated())
+            {
+                rebuild_preview = true;
+                mAnimationPreview = nullptr;
+            }
+        }
+
+        if (rebuild_preview)
+        {
+            mAnimationPreview = new LLPreviewAnimation(mPreviewCtrl->getRect().getWidth(), mPreviewCtrl->getRect().getHeight());
+            mAnimationPreview->setZoom(2.0f);
+            startMotion(LLUUID::null);
+        }
+    }
+    // </AS:Chanayane> animation explorer
 
     if (mAnimationPreview)
     {
@@ -312,8 +467,17 @@ void AnimationExplorer::updateList(F64 current_timestamp)
     S32 object_id_column = mAnimationScrollList->getColumn("object_id")->mIndex;
     S32 anim_id_column = mAnimationScrollList->getColumn("animation_id")->mIndex;
 
+    // <AS:Chanayane> hide stopped animations
+    const bool hide_stopped = mHideStoppedAnimationsCheckBox && mHideStoppedAnimationsCheckBox->getValue().asBoolean();
+    // </AS:Chanayane> hide stopped animations
+
     // go through the full animation scroll list
     std::vector<LLScrollListItem*> items = mAnimationScrollList->getAllData();
+    // <AS:Chanayane> hide stopped animations
+    std::vector<S32> rows_to_remove;
+    rows_to_remove.reserve(items.size());
+    // </AS:Chanayane> hide stopped animations
+
     for (std::vector<LLScrollListItem*>::iterator list_iter = items.begin(); list_iter != items.end(); ++list_iter)
     {
         LLScrollListItem* item = *list_iter;
@@ -354,6 +518,18 @@ void AnimationExplorer::updateList(F64 current_timestamp)
             args["SECONDS"] = llformat("%d", (S32) (current_timestamp - timestamp));
 
             played_text->setText(LLTrans::getString("animation_explorer_seconds_ago", args));
+
+            // <AS:Chanayane> hide stopped animations
+            if (hide_stopped)
+            {
+                S32 row_index = mAnimationScrollList->getItemIndex(item);
+                if (row_index >= 0)
+                {
+                    rows_to_remove.push_back(row_index);
+                }
+                continue;
+            }
+            // </AS:Chanayane> hide stopped animations
         }
 
         std::string prio_text = LLTrans::getString("animation_explorer_unknown_priority");
@@ -363,27 +539,84 @@ void AnimationExplorer::updateList(F64 current_timestamp)
         }
         dynamic_cast<LLScrollListText*>(item->getColumn(priority_column))->setText(prio_text);
     }
+
+    // <AS:Chanayane> hide stopped animations
+    if (!rows_to_remove.empty())
+    {
+        std::sort(rows_to_remove.begin(), rows_to_remove.end());
+        rows_to_remove.erase(std::unique(rows_to_remove.begin(), rows_to_remove.end()), rows_to_remove.end());
+        for (auto iter = rows_to_remove.rbegin(); iter != rows_to_remove.rend(); ++iter)
+        {
+            mAnimationScrollList->deleteSingleItem(*iter);
+        }
+    }
+    // </AS:Chanayane> hide stopped animations
 }
 
 void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, F64 time)
 {
+    // <AS:Chanayane> show animations of other avatars
+    bool is_owned_source = false;
+    if (isAgentAvatarValid())
+    {
+        if (played_by == gAgentAvatarp->getID())
+        {
+            is_owned_source = true;
+        }
+        else if (gAgentAvatarp->mAnimationSources.find(played_by) != gAgentAvatarp->mAnimationSources.end())
+        {
+            is_owned_source = true;
+        }
+    }
+    // </AS:Chanayane> show animations of other avatars
+    
+    LLViewerObject* played_vo = gObjectList.findObject(played_by); // <AS:Chanayane /> limit other avatars animations by distance
+    
     // don't add animations that are played by ourselves when the filter box is checked
-    if (played_by == gAgentAvatarp->getID())
+    // <AS:Chanayane> show animations of other avatars
+    // if (played_by == gAgentAvatarp->getID())
+    if (is_owned_source)
+    // </AS:Chanayane> show animations of other avatars
     {
         if (mNoOwnedAnimationsCheckBox->getValue().asBoolean())
         {
             return;
         }
     }
+    // <AS:Chanayane> show animations of other avatars
+    else if (gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars") != TRUE)
+    {
+        return;
+    }
+    // </AS:Chanayane> show animations of other avatars
+    // <AS:Chanayane> limit other avatars animations by distance
+    else
+    {
+        F32 radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius");
+        if (radius > 0.f && played_vo)
+        {
+            if ((played_vo->getPositionGlobal() - gAgent.getPositionGlobal()).length() > (F64)radius)
+            {
+                return;
+            }
+        }
+    }
+    // </AS:Chanayane> limit other avatars animations by distance
 
     // set object name to UUID at first
     std::string playedByName = played_by.asString();
 
     // find out if the object is still in reach
-    if (LLViewerObject* vo = gObjectList.findObject(played_by); vo)
+    // <AS:Chanayane> limit other avatars animations by distance
+    //if (LLViewerObject* vo = gObjectList.findObject(played_by); vo)
+    if (played_vo)
+    // </AS:Chanayane> limit other avatars animations by distance
     {
         // if it was an avatar, get the name here
-        if (vo->isAvatar())
+        // <AS:Chanayane> limit other avatars animations by distance
+        //if (vo->isAvatar())
+        if (played_vo->isAvatar())
+        // </AS:Chanayane> limit other avatars animations by distance
         {
             LLAvatarName av_name;
             if (LLAvatarNameCache::get(played_by, &av_name))
@@ -392,7 +625,8 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             }
             else
             {
-                if (mAvatarNameCacheConnections.find(played_by) != mAvatarNameCacheConnections.end())
+                //if (mAvatarNameCacheConnections.find(played_by) != mAvatarNameCacheConnections.end())
+                if (mAvatarNameCacheConnections.find(played_by) == mAvatarNameCacheConnections.end()) // <AS:Chanayane It should add a new entry in the cache only if it does not find it before (if == .end())
                 {
                     boost::signals2::connection cb_connection = LLAvatarNameCache::get(played_by, boost::bind(&AnimationExplorer::onAvatarNameCallback, this, _1, _2));
                     mAvatarNameCacheConnections.insert(std::make_pair(played_by, cb_connection));
@@ -422,7 +656,10 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
-                    msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    // <AS:Chanayane> limit other avatars animations by distance
+                    //msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
+                    // </AS:Chanayane> limit other avatars animations by distance
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
 
                     msg->newMessageFast(_PREHASH_ObjectDeselect);
@@ -430,7 +667,10 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
                     msg->addUUIDFast(_PREHASH_AgentID, gAgentID);
                     msg->addUUIDFast(_PREHASH_SessionID, gAgentSessionID);
                     msg->nextBlockFast(_PREHASH_ObjectData);
-                    msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    // <AS:Chanayane> limit other avatars animations by distance
+                    //msg->addU32Fast(_PREHASH_ObjectLocalID, vo->getLocalID());
+                    msg->addU32Fast(_PREHASH_ObjectLocalID, played_vo->getLocalID());
+                    // </AS:Chanayane> limit other avatars animations by distance
                     msg->sendReliable(gAgentAvatarp->getRegion()->getHost());
                 }
             }
@@ -441,6 +681,34 @@ void AnimationExplorer::addAnimation(const LLUUID& id, const LLUUID& played_by, 
             }
         }
     }
+
+    // <AS:Chanayane> avoid duplicate entries by updating existing ones with the latest info
+    S32 played_by_column = mAnimationScrollList->getColumn("played_by")->mIndex;
+    S32 played_column = mAnimationScrollList->getColumn("played")->mIndex;
+    S32 timestamp_column = mAnimationScrollList->getColumn("timestamp")->mIndex;
+    S32 animation_id_column = mAnimationScrollList->getColumn("animation_id")->mIndex;
+    S32 object_id_column = mAnimationScrollList->getColumn("object_id")->mIndex;
+
+    for (LLScrollListItem* item : mAnimationScrollList->getAllData())
+    {
+        if (item->getColumn(animation_id_column)->getValue().asUUID() == id &&
+            item->getColumn(object_id_column)->getValue().asUUID() == played_by)
+        {
+            if (LLScrollListText* played_by_text = dynamic_cast<LLScrollListText*>(item->getColumn(played_by_column)))
+            {
+                played_by_text->setText(playedByName);
+            }
+
+            if (LLScrollListText* played_text = dynamic_cast<LLScrollListText*>(item->getColumn(played_column)))
+            {
+                played_text->setText(LLTrans::getString("animation_explorer_still_playing"));
+            }
+
+            item->getColumn(timestamp_column)->setValue(time);
+            return;
+        }
+    }
+    // </AS:Chanayane>
 
     // insert the item into the scroll list
     LLSD item;

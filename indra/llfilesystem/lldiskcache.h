@@ -115,11 +115,14 @@ class LLDiskCache :
         virtual ~LLDiskCache() = default;
 
     public:
+// <AS:chanayane> Unencrypted cache
+    static bool getUnencryptedCacheEnabled() { return s_unencrypted_cache_enabled; }
+    static void setUnencryptedCacheEnabled(bool enabled) { s_unencrypted_cache_enabled = enabled; }
+// </AS:chanayane>
 // <AS:chanayane> More unencrypted cache
         static void initUnencryptedCache();
         static void setUnencryptedCacheDir(const std::string& newUnencryptedDir);
 // </AS:chanayane>
-
         /**
          * Construct a filename and path to it based on the file meta data
          * (id, asset type, additional 'extra' info like discard level perhaps)
@@ -169,6 +172,9 @@ class LLDiskCache :
         // </FS:Beq>
 
     private:
+// <AS:chanayane> Unencrypted cache
+        static inline bool s_unencrypted_cache_enabled { false };
+// </AS:chanayane>
         /**
          * Utility function to gather the total size the files in a given
          * directory. Primarily used here to determine the directory size

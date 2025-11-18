@@ -38,6 +38,8 @@
 #include "llfolderview.h"
 #include "llfollowcamparams.h"
 #include "llinventorydefines.h"
+#include "llviewercontrol.h" // <AS:Chanayane /> show animations of other avatars
+#include "llviewerobject.h"
 #include "lllslconstants.h"
 #include "llmaterialtable.h"
 #include "llregionhandle.h"
@@ -4286,6 +4288,14 @@ void send_agent_update(bool force_send, bool send_reliable)
     msg->addVector3Fast(_PREHASH_CameraUpAxis, LLViewerCamera::getInstance()->getUpAxis());
 
     static F32 last_draw_disatance_step = 1024;
+    F32 memory_limited_draw_distance = gAgentCamera.mDrawDistance;
+
+    if (LLViewerTexture::isSystemMemoryCritical())
+    {
+        // If we are low on memory, reduce requested draw distance
+        memory_limited_draw_distance = llmax(gAgentCamera.mDrawDistance / LLViewerTexture::getSystemMemoryBudgetFactor(), gAgentCamera.mDrawDistance / 2.f);
+    }
+
     if (tp_state == LLAgent::TELEPORT_ARRIVING || LLStartUp::getStartupState() < STATE_MISC)
     {
         // Inform interest list, prioritize closer area.
@@ -4294,25 +4304,25 @@ void send_agent_update(bool force_send, bool send_reliable)
         // closer ones.
         // Todo: revise and remove once server gets distance sorting.
         last_draw_disatance_step = llmax((F32)(gAgentCamera.mDrawDistance / 2.f), 50.f);
+        last_draw_disatance_step = llmin(last_draw_disatance_step, memory_limited_draw_distance);
         msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
     }
-    else if (last_draw_disatance_step < gAgentCamera.mDrawDistance)
+    else if (last_draw_disatance_step < memory_limited_draw_distance)
     {
         static LLFrameTimer last_step_time;
         if (last_step_time.getElapsedTimeF32() > 1.f)
         {
             // gradually increase draw distance
-            // Idealy this should be not per second, but based on how loaded
-            // mesh thread is, but hopefully this is temporary.
             last_step_time.reset();
-            F32 step = gAgentCamera.mDrawDistance * 0.1f;
-            last_draw_disatance_step = llmin(last_draw_disatance_step + step, gAgentCamera.mDrawDistance);
+            F32 step = memory_limited_draw_distance * 0.1f;
+            last_draw_disatance_step = llmin(last_draw_disatance_step + step, memory_limited_draw_distance);
         }
         msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
     }
     else
     {
-        msg->addF32Fast(_PREHASH_Far, gAgentCamera.mDrawDistance);
+        last_draw_disatance_step = memory_limited_draw_distance;
+        msg->addF32Fast(_PREHASH_Far, memory_limited_draw_distance);
     }
 
     msg->addU32Fast(_PREHASH_ControlFlags, control_flags);
@@ -4891,7 +4901,7 @@ void process_preload_sound(LLMessageSystem *msg, void **user_data)
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_OwnerID, owner_id);
 
     // <FS:ND> Protect against corrupted sounds
-    if (gAudiop->isCorruptSound(sound_id))
+    if (gAudiop && gAudiop->isCorruptSound(sound_id))
         return;
     // </FS:ND>
 
@@ -4946,7 +4956,7 @@ void process_attached_sound(LLMessageSystem *msg, void **user_data)
     msg->getUUIDFast(_PREHASH_DataBlock, _PREHASH_OwnerID, owner_id);
 
     // <FS:ND> Protect against corrupted sounds
-    if (gAudiop->isCorruptSound(sound_id))
+    if (gAudiop && gAudiop->isCorruptSound(sound_id))
         return;
     // </FS:ND>
 
@@ -5228,11 +5238,61 @@ void process_avatar_animation(LLMessageSystem *mesgsys, void **user_data)
     }
     else
     {
+        const BOOL show_other_anims = gSavedSettings.getBOOL("ASShowAnimationsOfOtherAvatars"); // <AS:Chanayane /> show animations of other avatars
+        const F32 other_anim_radius = gSavedSettings.getF32("ASAnimationOtherAvatarsRadius"); // <AS:Chanayane /> limit other avatars animations by distance
+        const LLVector3d agent_pos = gAgent.getPositionGlobal();                                  // <AS:Chanayane> limit other avatars animations by distance
+
         for( S32 i = 0; i < num_blocks; i++ )
         {
             mesgsys->getUUIDFast(_PREHASH_AnimationList, _PREHASH_AnimID, animation_id, i);
             mesgsys->getS32Fast(_PREHASH_AnimationList, _PREHASH_AnimSequenceID, anim_sequence_id, i);
             avatarp->mSignaledAnimations[animation_id] = anim_sequence_id;
+
+            // <AS:Chanayane> show animations of other avatars
+            if (show_other_anims == TRUE)
+            {
+                LLVOAvatar::AnimIterator playing_it = avatarp->mPlayingAnimations.find(animation_id);
+                if (playing_it == avatarp->mPlayingAnimations.end() || playing_it->second != anim_sequence_id)
+                {
+                    LLUUID source_id = avatarp->getID();
+                    LLViewerObject* source_object = nullptr;
+
+                    if (i < num_source_blocks)
+                    {
+                        LLUUID object_id;
+                        mesgsys->getUUIDFast(_PREHASH_AnimationSourceList, _PREHASH_ObjectID, object_id, i);
+                        if (LLViewerObject* obj = gObjectList.findObject(object_id))
+                        {
+                            if (!obj->isHUDAttachment())
+                            {
+                                source_object = obj;
+                                source_id = object_id;
+                            }
+                        }
+                    }
+
+                    bool in_radius = true;
+                    if (other_anim_radius > 0.f)
+                    {
+                        LLVector3d source_pos = avatarp->getPositionGlobal();
+                        if (source_object)
+                        {
+                            source_pos = source_object->getPositionGlobal();
+                        }
+
+                        if ((source_pos - agent_pos).length() > (F64)other_anim_radius)
+                        {
+                            in_radius = false;
+                        }
+                    }
+
+                    if (in_radius)
+                    {
+                        RecentAnimationList::instance().addAnimation(animation_id, source_id);
+                    }
+                }
+            }
+            // </AS:Chanayane> show animations of other avatars
         }
     }
 

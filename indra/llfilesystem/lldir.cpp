@@ -109,7 +109,7 @@ std::vector<std::string> LLDir::getFilesInDir(const std::string &dirname)
     //Returns a vector of fullpath filenames.
 
 #ifdef LL_WINDOWS // or BOOST_WINDOWS_API
-    boost::filesystem::path p(utf8str_to_utf16str(dirname));
+    boost::filesystem::path p(ll_convert<std::wstring>(dirname));
 #else
     boost::filesystem::path p(dirname);
 #endif
@@ -205,7 +205,7 @@ U32 LLDir::deleteDirAndContents(const std::string& dir_name)
     try
     {
 #ifdef LL_WINDOWS // or BOOST_WINDOWS_API
-        boost::filesystem::path dir_path(utf8str_to_utf16str(dir_name));
+        boost::filesystem::path dir_path(ll_convert<std::wstring>(dir_name));
 #else
         boost::filesystem::path dir_path(dir_name);
 #endif
@@ -657,15 +657,7 @@ std::string LLDir::getExpandedFilename(ELLPath location, const std::string& subd
         prefix = getUnencryptedCacheDir();
         break;
     // </AS:chanayane>
-
-    case LL_PATH_POSES:
-        prefix = add(getOSUserAppDir(), "user_settings", "poses");
-        break;
-
-    case LL_PATH_ANIMATIONS:
-        prefix = add(getOSUserAppDir(), "user_settings", "animations");
-        break;
-
+	
     default:
         llassert(0);
     }
@@ -1296,39 +1288,6 @@ void LLDir::append(std::string& destpath, const std::string& name) const
     // If destpath ends with a separator, AND name starts with one, skip
     // name's leading separator.
     destpath += name.substr(sepoff.second);
-}
-
-// static
-std::string LLDir::escapePathString(std::string_view str)
-{
-    //BD - Don't use LLURI::escape() because it doesn't encode '-' characters
-    //     which may break handling of some poses.
-    //     From Singularity Viewer.
-    static const char hex[] = "0123456789ABCDEF";
-    std::stringstream escaped_str;
-    for (auto cha : str)
-    {
-        switch (cha) {
-        case '0': case '1': case '2': case '3': case '4':
-        case '5': case '6': case '7': case '8': case '9':
-        case 'a': case 'b': case 'c': case 'd': case 'e':
-        case 'f': case 'g': case 'h': case 'i': case 'j':
-        case 'k': case 'l': case 'm': case 'n': case 'o':
-        case 'p': case 'q': case 'r': case 's': case 't':
-        case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
-        case 'A': case 'B': case 'C': case 'D': case 'E':
-        case 'F': case 'G': case 'H': case 'I': case 'J':
-        case 'K': case 'L': case 'M': case 'N': case 'O':
-        case 'P': case 'Q': case 'R': case 'S': case 'T':
-        case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z':
-            escaped_str << (cha);
-            break;
-        default:
-            unsigned char c = (unsigned char)(cha);
-            escaped_str << '%' << hex[c >> 4] << hex[c & 0xF];
-        }
-    }
-    return escaped_str.str();
 }
 
 LLDir::SepOff LLDir::needSep(const std::string& path, const std::string& name) const

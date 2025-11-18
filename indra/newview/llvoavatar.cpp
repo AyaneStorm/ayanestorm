@@ -107,10 +107,6 @@
 #include "rlvmodifiers.h"
 // [/RLVa:KB]
 
-//BD
-#include "llfloaterreg.h"
-#include "bdposingmotion.h"
-
 #include "llgesturemgr.h" //needed to trigger the voice gesticulations
 #include "llvoiceclient.h"
 #include "llvoicevisualizer.h" // Ventrella
@@ -177,7 +173,7 @@ const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
 const LLUUID ANIM_AGENT_PHYSICS_MOTION = LLUUID("7360e029-3cb8-ebc4-863e-212df440d987");  //"physics_motion"
-const LLUUID ANIM_BD_POSING_MOTION = LLUUID("fd29b117-9429-09c4-10cb-933d0b2ab653");  //"custom_motion"
+
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -748,11 +744,7 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mCachedInMuteList(false),
     mIsControlAvatar(false),
     mIsUIAvatar(false),
-    mEnableDefaultMotions(true),
-    //BD - Custom Posing
-    mIsPosing(false),
-    mExpiryTime(0.0f),
-    mCurrentAction(0)
+    mEnableDefaultMotions(true)
 {
     LL_DEBUGS("AvatarRender") << "LLVOAvatar Constructor (0x" << this << ") id:" << mID << LL_ENDL;
 
@@ -1287,9 +1279,6 @@ void LLVOAvatar::initClass()
     gAnimLibrary.animStateSetString(ANIM_AGENT_TARGET,"target");
     gAnimLibrary.animStateSetString(ANIM_AGENT_WALK_ADJUST,"walk_adjust");
 
-    //BD
-    gAnimLibrary.animStateSetString(ANIM_BD_POSING_MOTION, "custom_pose");
-
     // Where should this be set initially?
     LLJoint::setDebugJointNames(gSavedSettings.getString("DebugAvatarJoints"));
 
@@ -1404,9 +1393,6 @@ void LLVOAvatar::initInstance()
         registerMotion( ANIM_AGENT_SIT_FEMALE,              LLKeyframeMotion::create );
         registerMotion( ANIM_AGENT_TARGET,                  LLTargetingMotion::create );
         registerMotion( ANIM_AGENT_WALK_ADJUST,             LLWalkAdjustMotion::create );
-
-        //BD - Jackpot.
-        registerMotion( ANIM_BD_POSING_MOTION,              BDPosingMotion::create);
     }
 
     LLAvatarAppearance::initInstance();
@@ -2627,14 +2613,6 @@ void LLVOAvatar::resetSkeleton(bool reset_animations)
         return;
     }
 
-    //BD - We need to clear posing here otherwise we'll crash.
-    LLMotion* pose_motion = findMotion(ANIM_BD_POSING_MOTION);
-    if (pose_motion)
-    {
-        gAgent.clearPosing();
-        removeMotion(ANIM_BD_POSING_MOTION);
-    }
-
     // Save mPelvis state
     //LLVector3 pelvis_pos = getJoint("mPelvis")->getPosition();
     //LLQuaternion pelvis_rot = getJoint("mPelvis")->getRotation();
@@ -3025,19 +3003,12 @@ LLViewerFetchedTexture *LLVOAvatar::getBakedTextureImage(const U8 te, const LLUU
             LL_DEBUGS("Avatar") << avString() << "get old-bake image from host " << uuid << LL_ENDL;
             LLHost host = getObjectHost();
             result = LLViewerTextureManager::getFetchedTexture(
-                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings
-                //uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
-                uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_AVATAR_BAKED, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
-                // <FS:minerjr> [FIRE-35081]
+                uuid, FTT_HOST_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, host);
             // </FS:Ansariel> [Legacy Bake]
         }
         LL_DEBUGS("Avatar") << avString() << "get server-bake image from URL " << url << LL_ENDL;
         result = LLViewerTextureManager::getFetchedTextureFromUrl(
-            // <FS:minerjr>
-            //url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, uuid);
-            // Change the texture from LOD to AVATAR_BAKED.
-            url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_AVATAR_BAKED, LLViewerTexture::LOD_TEXTURE, 0, 0, uuid);
-            // </FS:minerjr> [FIRE-35081]
+            url, FTT_SERVER_BAKE, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE, 0, 0, uuid);
         if (result->isMissingAsset())
         {
             result->setIsMissingAsset(false);
@@ -5699,16 +5670,6 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     }
 
     bool visible = isVisible();
-    // <FS:Beq> Set but not used
-    // bool is_control_avatar = isControlAvatar(); // capture state to simplify tracing
-    // bool is_attachment = false;
-
-    // if (is_control_avatar)
-    // {
-    //     LLControlAvatar *cav = dynamic_cast<LLControlAvatar*>(this);
-    //     is_attachment = cav && cav->mRootVolp && cav->mRootVolp->isAttachment(); // For attached animated objects
-    // }
-    // </FS:Beq>
 
     // For fading out the names above heads, only let the timer
     // run if we're visible.
@@ -7068,13 +7029,7 @@ bool LLVOAvatar::processSingleAnimationStateChange( const LLUUID& anim_id, bool 
     // keep appearances in sync, but not so often that animations
     // cause constant jiggling of the body or camera. Possible
     // compromise is to do it on animation changes:
-    //BD - Poser
-    //     Don't refresh our root position while we pose otherwise moving any joint that moves
-    //     mFootLeft will trigger mRoot repositioning.
-    if (!isSelf() || !gAgent.getPosing())
-    {
-        computeBodySize();
-    }
+	computeBodySize();
 
     bool result = false;
 
@@ -8263,13 +8218,7 @@ void LLVOAvatar::updateVisualParams()
 
     if (mLastSkeletonSerialNum != mSkeletonSerialNum)
     {
-        //BD - Poser
-        //     Don't refresh our root position while we pose otherwise moving any joint that moves
-        //     mFootLeft will trigger mRoot repositioning.
-        if (!isSelf() || !gAgent.getPosing())
-        {
-            computeBodySize();
-        }
+        computeBodySize();
         mLastSkeletonSerialNum = mSkeletonSerialNum;
         mRoot->updateWorldMatrixChildren();
     }
@@ -11118,11 +11067,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
             //LL_DEBUGS("Avatar") << avString() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             LL_DEBUGS("Avatar") << avString() << "sb " << (S32) isUsingServerBakes() << " baked_index " << (S32) baked_index << " using mLastTextureID " << mBakedTextureDatas[baked_index].mLastTextureID << LL_ENDL;
             setTEImage(mBakedTextureDatas[baked_index].mTextureIndex,
-                // <FS:minerjr> [FIRE-35081] Blurry prims not changing with graphics settings
-                //LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
-                //Texture will use baked textures, so it should also use that for the boost.
-                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_AVATAR_BAKED, LLViewerTexture::LOD_TEXTURE));
-                // <FS:minerjr> [FIRE-35081]
+                LLViewerTextureManager::getFetchedTexture(mBakedTextureDatas[baked_index].mLastTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE));
         }
         else
         {

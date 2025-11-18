@@ -45,9 +45,9 @@ class LLTextureCache : public LLWorkerThread
     friend class LLTextureCacheLocalFileWorker;
 
 private:
-    // <AS:chanayane> Unencrypted cache
+// <AS:chanayane> Unencrypted cache
     static inline bool s_unencrypted_cache_enabled { false };
-    // </AS:chanayane>
+// </AS:chanayane>
 
 #if LL_WINDOWS
 #pragma pack(push,1)

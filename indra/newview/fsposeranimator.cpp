@@ -94,8 +94,8 @@ void FSPoserAnimator::undoLastJointChange(LLVOAvatar* avatar, const FSPoserJoint
     if (!jointPose)
         return;
 
-    jointPose->undoLastChange();
-    undoOrRedoWorldLockedDescendants(joint, posingMotion, false);
+    if (jointPose->undoLastChange())
+        undoOrRedoWorldLockedDescendants(joint, posingMotion, false);
 
     if (style == NONE || style == DELTAMODE)
         return;
@@ -104,7 +104,8 @@ void FSPoserAnimator::undoLastJointChange(LLVOAvatar* avatar, const FSPoserJoint
     if (!oppositeJointPose)
         return;
 
-    oppositeJointPose->undoLastChange();
+    if (!oppositeJointPose->undoLastChange())
+        return;
 
     auto oppositePoserJoint = getPoserJointByName(joint.mirrorJointName());
     if (oppositePoserJoint)
@@ -288,6 +289,38 @@ void FSPoserAnimator::setJointPosition(LLVOAvatar* avatar, const FSPoserJoint* j
         default:
             break;
     }
+}
+
+bool FSPoserAnimator::getRotationIsMirrored(LLVOAvatar* avatar, const FSPoserJoint& joint) const
+{
+    if (!isAvatarSafeToUse(avatar))
+        return false;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return false;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return false;
+
+    return jointPose->getRotationMirrorState();
+}
+
+void FSPoserAnimator::setRotationIsMirrored(LLVOAvatar* avatar, const FSPoserJoint& joint, bool newState)
+{
+    if (!isAvatarSafeToUse(avatar))
+        return;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return;
+
+    jointPose->setRotationMirrorState(newState);
 }
 
 bool FSPoserAnimator::getRotationIsWorldLocked(LLVOAvatar* avatar, const FSPoserJoint& joint) const
@@ -964,7 +997,10 @@ void FSPoserAnimator::loadJointPosition(LLVOAvatar* avatar, const FSPoserJoint* 
     if (loadPositionAsDelta)
         jointPose->setPublicPosition(position);
     else
-        jointPose->setPublicPosition(position);
+    {
+        jointPose->setJointPriority(LLJoint::LOW_PRIORITY);
+        jointPose->setBasePosition(position, LLJoint::LOW_PRIORITY);
+    }
 }
 
 void FSPoserAnimator::loadJointScale(LLVOAvatar* avatar, const FSPoserJoint* joint, bool loadScaleAsDelta, LLVector3 scale)
@@ -983,7 +1019,60 @@ void FSPoserAnimator::loadJointScale(LLVOAvatar* avatar, const FSPoserJoint* joi
     if (loadScaleAsDelta)
         jointPose->setPublicScale(scale);
     else
-        jointPose->setPublicScale(scale);
+    {
+        jointPose->setJointPriority(LLJoint::LOW_PRIORITY);
+        jointPose->setBaseScale(scale, LLJoint::LOW_PRIORITY);
+        jointPose->setPublicScale(LLVector3::zero);
+    }
+}
+
+bool FSPoserAnimator::loadPosingState(LLVOAvatar* avatar, LLSD pose)
+{
+    if (!isAvatarSafeToUse(avatar))
+        return false;
+
+    mPosingState.purgeMotionStates(avatar);
+    mPosingState.restoreMotionStates(avatar, pose);
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return false;
+
+    bool loadSuccess = mPosingState.applyMotionStatesToPosingMotion(avatar, posingMotion);
+    if (loadSuccess)
+        applyJointMirrorToBaseRotations(posingMotion);
+
+    return loadSuccess;
+}
+
+void FSPoserAnimator::applyJointMirrorToBaseRotations(FSPosingMotion* posingMotion)
+{
+    for (size_t index = 0; index != PoserJoints.size(); ++index)
+    {
+        FSJointPose* jointPose = posingMotion->getJointPoseByJointName(PoserJoints[index].jointName());
+        if (!jointPose)
+            continue;
+
+        if (!jointPose->getRotationMirrorState())
+            continue;
+
+        if (PoserJoints[index].dontFlipOnMirror()) // we only flip one side.
+            continue;
+
+        jointPose->reflectBaseRotation();
+        FSJointPose* oppositeJointPose = posingMotion->getJointPoseByJointName(PoserJoints[index].mirrorJointName());
+
+        if (!oppositeJointPose)
+            continue;
+
+        oppositeJointPose->reflectBaseRotation();
+        jointPose->swapBaseRotationWith(oppositeJointPose);
+    }
+}
+
+void FSPoserAnimator::savePosingState(LLVOAvatar* avatar, LLSD* saveRecord)
+{
+    mPosingState.writeMotionStates(avatar, saveRecord);
 }
 
 const FSPoserAnimator::FSPoserJoint* FSPoserAnimator::getPoserJointByName(const std::string& jointName) const
@@ -1011,6 +1100,8 @@ bool FSPoserAnimator::tryPosingAvatar(LLVOAvatar* avatar)
         if (avatar->isSelf())
             gAgent.stopFidget();
 
+        mPosingState.captureMotionStates(avatar);
+
         avatar->startDefaultMotions();
         avatar->startMotion(posingMotion->motionId());
 
@@ -1018,6 +1109,22 @@ bool FSPoserAnimator::tryPosingAvatar(LLVOAvatar* avatar)
     }
 
     return false;
+}
+
+void FSPoserAnimator::updatePosingState(LLVOAvatar* avatar, std::vector<FSPoserAnimator::FSPoserJoint*> jointsRecaptured)
+{
+    if (!avatar)
+        return;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return;
+
+    std::string jointNamesRecaptured;
+    for (auto item : jointsRecaptured)
+        jointNamesRecaptured += item->jointName();
+
+    mPosingState.updateMotionStates(avatar, posingMotion, jointNamesRecaptured);
 }
 
 void FSPoserAnimator::stopPosingAvatar(LLVOAvatar *avatar)
@@ -1029,6 +1136,7 @@ void FSPoserAnimator::stopPosingAvatar(LLVOAvatar *avatar)
     if (!posingMotion)
         return;
 
+    mPosingState.purgeMotionStates(avatar);
     avatar->stopMotion(posingMotion->motionId());
 }
 
@@ -1069,7 +1177,6 @@ FSPosingMotion* FSPoserAnimator::findOrCreatePosingMotion(LLVOAvatar* avatar)
         sAvatarIdToRegisteredAnimationId[avatar->getID()] = animationAssetId;
 
     return dynamic_cast<FSPosingMotion*>(avatar->createMotion(animationAssetId));
-
 }
 
 bool FSPoserAnimator::isAvatarSafeToUse(LLVOAvatar* avatar) const
@@ -1181,7 +1288,11 @@ void FSPoserAnimator::undoOrRedoJointOrFirstLockedChild(const FSPoserJoint& join
 
     if (jointPose->getWorldRotationLockState())
     {
-        redo ? jointPose->redoLastChange() : jointPose->undoLastChange();
+        if (redo)
+            jointPose->redoLastChange();
+        else
+            jointPose->undoLastChange();
+
         return;
     }
 
