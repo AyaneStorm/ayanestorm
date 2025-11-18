@@ -950,7 +950,7 @@ std::string LLGridManager::getGridLabel(const std::string& grid)
 {
     std::string grid_label;
     std::string grid_name = getGrid(grid);
-    if (!grid.empty())
+    if (!grid_name.empty())
     {
         grid_label = mGridList[grid_name][GRID_LABEL_VALUE].asString();
     }
@@ -1100,7 +1100,7 @@ std::string LLGridManager::getGridId(const std::string& grid)
 {
     std::string grid_id;
     std::string grid_name = getGrid(grid);
-    if (!grid.empty())
+    if (!grid_name.empty())
     {
         // FS:AW FIRE-7468
         // NOTE: GRID_ID_VALUE  has a different meaning in llviewernetwork
