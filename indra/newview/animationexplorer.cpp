@@ -314,7 +314,7 @@ void AnimationExplorer::onOtherAvatarsCheckToggled()
         return;
     }
 
-    const BOOL enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
+    const bool enabled = mOtherAvatarsCheckBox->getValue().asBoolean() ? TRUE : FALSE;
     gSavedSettings.setBOOL("ASShowAnimationsOfOtherAvatars", enabled);
     // <AS:Chanayane> limit other avatars animations by distance
     if (mOtherAvatarsRadiusSlider)
