@@ -399,6 +399,24 @@ bool FSPoserAnimator::userSetBaseRotationToZero(LLVOAvatar* avatar, const FSPose
     return jointPose->userHasSetBaseRotationToZero();
 }
 
+// <AS:Chanayane> When a joint is currently being posed, show it as edited even if we didn't zero the base. 
+bool FSPoserAnimator::jointHasUserRotationDelta(LLVOAvatar* avatar, const FSPoserJoint& joint) const
+{
+    if (!isAvatarSafeToUse(avatar))
+        return false;
+
+    FSPosingMotion* posingMotion = getPosingMotion(avatar);
+    if (!posingMotion)
+        return false;
+
+    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
+    if (!jointPose)
+        return false;
+
+    return jointPose->getPublicRotation() != LLQuaternion::DEFAULT;
+}
+// </AS:Chanayane>
+
 bool FSPoserAnimator::allBaseRotationsAreZero(LLVOAvatar* avatar) const
 {
     if (!isAvatarSafeToUse(avatar))
