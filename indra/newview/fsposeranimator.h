@@ -606,6 +606,10 @@ public:
     /// <returns>True if the supplied joint has a 'base' rotation of zero (thus user-supplied change only), otherwise false.</returns>
     bool userSetBaseRotationToZero(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
 
+// <AS:Chanayane> When a joint is currently being posed, show it as edited even if we didn't zero the base. 
+    bool jointHasUserRotationDelta(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
+// </AS:Chanayane>
+
     /// <summary>
     /// Gets whether the supplied joints position will be set in an export.
     /// </summary>

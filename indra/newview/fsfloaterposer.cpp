@@ -2544,15 +2544,26 @@ std::string FSFloaterPoser::getScrollListIconForJoint(LLVOAvatar* avatar, FSPose
     if (joint.boneType() == COL_VOLUMES)
         return tryGetString("icon_rotation_does_not_export");
 
+// <AS:Chanayane> When a joint is currently being posed, show it as edited even if we didn't zero the base.
+    // if (mPoserAnimator.userSetBaseRotationToZero(avatar, joint))
+    // {
+    //     if (mPoserAnimator.exportRotationWillLockJoint(avatar, joint))
+    //         return tryGetString("icon_rotation_bvh_locked_edited");
+    //     else
+    //         return tryGetString("icon_rotation_bvh_locked_unedited");
+    // }
+    // else
+    //     return tryGetString("icon_rotation_bvh_unlocked");
+    const bool hasUserDelta = mPoserAnimator.jointHasUserRotationDelta(avatar, joint);
+
+    if (hasUserDelta)
+        return tryGetString("icon_rotation_bvh_locked_edited");
+
     if (mPoserAnimator.userSetBaseRotationToZero(avatar, joint))
-    {
-        if (mPoserAnimator.exportRotationWillLockJoint(avatar, joint))
-            return tryGetString("icon_rotation_bvh_locked_edited");
-        else
-            return tryGetString("icon_rotation_bvh_locked_unedited");
-    }
-    else
-        return tryGetString("icon_rotation_bvh_unlocked");
+        return tryGetString("icon_rotation_bvh_locked_unedited");
+
+    return tryGetString("icon_rotation_bvh_unlocked");
+// </AS:Chanayane>
 }
 
 std::string FSFloaterPoser::tryGetString(std::string name)
