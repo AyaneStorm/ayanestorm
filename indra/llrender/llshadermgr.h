@@ -357,9 +357,6 @@ public:
         // <FS:Beq> Uniforms for snapshot frame
         SNAPSHOT_BORDER_COLOR,              // "border_color"
         SNAPSHOT_BORDER_THICKNESS,          // "border_thickness"
-        SNAPSHOT_GUIDE_COLOR,               // "guide_color"
-        SNAPSHOT_GUIDE_THICKNESS,           // "guide_thickness"
-        SNAPSHOT_GUIDE_STYLE,               // "guide_style"
         SNAPSHOT_FRAME_RECT,                // "frame_rect"
         // </FS:Beq>
         END_RESERVED_UNIFORMS
@@ -384,7 +381,7 @@ public:
     // Implemented in the application to actually update out of date uniforms for a particular shader
     virtual void updateShaderUniforms(LLGLSLShader * shader) = 0; // Pure Virtual
 
-    void initShaderCache(bool enabled, const LLUUID& old_cache_version, const LLUUID& current_cache_version);
+    void initShaderCache(bool enabled, const LLUUID& old_cache_version, const LLUUID& current_cache_version, bool second_instance);
     void clearShaderCache();
     void persistShaderCacheMetadata();
 
@@ -408,7 +405,7 @@ public:
         F32 mLastUsedTime = 0.0;
     };
     std::map<LLUUID, ProgramBinaryData> mShaderBinaryCache;
-    bool mShaderCacheInitialized = false;
+    LLUUID mShaderCacheVersion;
     bool mShaderCacheEnabled = false;
     std::string mShaderCacheDir;
 

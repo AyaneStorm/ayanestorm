@@ -40,6 +40,10 @@
 
 #include <string>
 #include <vector>
+// <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
+// Needed for inline variable for the crash check
+#include <atomic>
+// </FS:minerjr> [FIRE-36022]
 
 #ifdef LL_MAKEDLL
 #ifdef WEBRTC_WIN
@@ -53,6 +57,12 @@
 #define LLSYMEXPORT /**/
 #endif // LL_MAKEDLL
 
+// <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
+// Create an atomic inline flag that will be shared between the various WebRTC threads and co-routines
+// to track of when the audio hardware is being talked to. The co-routine can use it to
+// exit if it too many iterations with the hardware locked indicating that the worker thread died.
+inline std::atomic<bool> gWebRTCUpdateDevices = false;
+// </FS:minerjr> [FIRE-36022]
 namespace llwebrtc
 {
 
@@ -159,7 +169,10 @@ class LLWebRTCDeviceInterface
     virtual void setTuningMode(bool enable) = 0;
     virtual float getTuningAudioLevel() = 0; // for use during tuning
     virtual float getPeerConnectionAudioLevel() = 0; // for use when not tuning
-    virtual void setPeerConnectionGain(float gain) = 0;
+    virtual void setMicGain(float gain) = 0;
+    virtual void setTuningMicGain(float gain)        = 0;
+
+    virtual void setMute(bool mute, int delay_ms = 0) = 0;
 };
 
 // LLWebRTCAudioInterface provides the viewer with a way

@@ -124,7 +124,7 @@ void LLDiskCache::purge()
     std::vector<file_info_t> file_info;
 
 #if LL_WINDOWS
-    std::wstring cache_path(utf8str_to_utf16str(sCacheDir));
+    std::wstring cache_path(ll_convert<std::wstring>(sCacheDir));
 #else
     std::string cache_path(sCacheDir);
 #endif
@@ -328,7 +328,11 @@ void LLDiskCache::purge()
 
 const std::string LLDiskCache::metaDataToFilepath(const LLUUID& id, LLAssetType::EType at)
 {
-    return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    // <FS:Ansariel> Store assets in subfolders
+    //return llformat("%s%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    char id_string[36]{};
+    return llformat("%s%s%c%s%s_%s_0.asset", sCacheDir.c_str(), gDirUtilp->getDirDelimiter().c_str(), id.toStringFast(id_string)[0], gDirUtilp->getDirDelimiter().c_str(), CACHE_FILENAME_PREFIX.c_str(), id.asString().c_str());
+    // <FS:Ansariel>
 }
 
 const std::string LLDiskCache::getCacheInfo()
@@ -416,7 +420,7 @@ void LLDiskCache::clearCache()
      */
     boost::system::error_code ec;
 #if LL_WINDOWS
-    std::wstring cache_path(utf8str_to_utf16str(sCacheDir));
+    std::wstring cache_path(ll_convert<std::wstring>(sCacheDir));
 #else
     std::string cache_path(sCacheDir);
 #endif
@@ -457,7 +461,7 @@ void LLDiskCache::removeOldVFSFiles()
 
     boost::system::error_code ec;
 #if LL_WINDOWS
-    std::wstring cache_path(utf8str_to_utf16str(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "")));
+    std::wstring cache_path(ll_convert<std::wstring>(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "")));
 #else
     std::string cache_path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, ""));
 #endif
@@ -522,7 +526,7 @@ uintmax_t LLDiskCache::dirFileSize(const std::string& dir, bool force)
      */
     boost::system::error_code ec;
 #if LL_WINDOWS
-    std::wstring dir_path(utf8str_to_utf16str(dir));
+    std::wstring dir_path(ll_convert<std::wstring>(dir));
 #else
     std::string dir_path(dir);
 #endif

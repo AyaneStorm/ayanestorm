@@ -379,7 +379,7 @@ void validate_framebuffer_object();
 bool addDeferredAttachments(LLRenderTarget& target, bool for_impostor = false)
 {
     U32 orm = GL_RGBA;
-    U32 norm = GL_RGBA16F;
+    U32 norm = GL_RGBA16;
     U32 emissive = GL_RGB16F;
     // <FS:Beq> FIRE-34483 additional fix
     if (target.getNumTextures() > 1)
@@ -474,6 +474,8 @@ void LLPipeline::init()
     sRenderRegionCornerBeacons = gSavedSettings.getBOOL("fsregioncornerbeacons"); // <FS:PP> FIRE-33085 Region corner markers
     sRenderBeacons = gSavedSettings.getBOOL("renderbeacons");
     sRenderHighlight = gSavedSettings.getBOOL("renderhighlights");
+
+    mReflectionMapManager.refreshSettings();
 
     mInitialized = true;
 
@@ -968,8 +970,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     mRT->deferredScreen.shareDepthBuffer(mRT->screen);
 
     // <FS:Beq> restore setSphere
-    // if (shadow_detail > 0 || ssao || RenderDepthOfField))
-    if (shadow_detail > 0 || ssao || RenderDepthOfField || RlvActions::hasPostProcess())
+    // if (hdr || shadow_detail > 0 || ssao || RenderDepthOfField))
+    if (hdr || shadow_detail > 0 || ssao || RenderDepthOfField || RlvActions::hasPostProcess())
     // </FS:Beq>
     { //only need mRT->deferredLight for shadows OR ssao OR dof OR fxaa
         if (!mRT->deferredLight.allocate(resX, resY, screenFormat)) return false;
@@ -1023,7 +1025,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         }
 
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("mPostMapBuffer"); // <FS:Beq/> improve Tracy scoping 
-        mPostMap.allocate(resX, resY, screenFormat);
+        mPostPingMap.allocate(resX, resY, GL_RGBA);
+        mPostPongMap.allocate(resX, resY, GL_RGBA);
         } // <FS:Beq/> improve Tracy scoping 
         // The water exclusion mask needs its own depth buffer so we can take care of the problem of multiple water planes.
         // Should we ever make water not just a plane, it also aids with that as well as the water planes will be rendered into the mask.
@@ -1322,7 +1325,8 @@ void LLPipeline::releaseGLBuffers()
 
     mWaterExclusionMask.release();
 
-    mPostMap.release();
+    mPostPingMap.release();
+    mPostPongMap.release();
 
     mFXAAMap.release();
 
@@ -1598,9 +1602,12 @@ void LLPipeline::createLUTBuffers()
 
         U32 pix_format = GL_R16F;
 #if LL_DARWIN
-        // Need to work around limited precision with 10.6.8 and older drivers
-        //
-        pix_format = GL_R32F;
+        if(!gGLManager.mIsApple)
+        {
+            // Need to work around limited precision with 10.6.8 and older drivers
+            //
+            pix_format = GL_R32F;
+        }
 #endif
         LLImageGL::generateTextures(1, &mLightFunc);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, mLightFunc);
@@ -3093,7 +3100,7 @@ void LLPipeline::markMoved(LLDrawable *drawablep, bool damped_motion)
 
 void LLPipeline::markShift(LLDrawable *drawablep)
 {
-    if (!drawablep || drawablep->isDead())
+    if (!drawablep || drawablep->isDead() || !drawablep->getVObj())
     {
         return;
     }
@@ -3127,7 +3134,7 @@ void LLPipeline::shiftObjects(const LLVector3 &offset)
             iter != mShiftList.end(); iter++)
     {
         LLDrawable *drawablep = *iter;
-        if (drawablep->isDead())
+        if (drawablep->isDead() || !drawablep->getVObj())
         {
             continue;
         }
@@ -4539,17 +4546,365 @@ void LLPipeline::recordTrianglesDrawn()
     add(LLStatViewer::TRIANGLES_DRAWN, LLUnits::Triangles::fromValue(count));
 }
 
+// <FS:Beq> Rework Snapshot Guide Rendering
+void LLPipeline::renderSnapshotGuidesOverlay()
+{
+    if (!mSnapshotGuideState.active || !mSnapshotGuideState.show_guides)
+    {
+        mSnapshotGuideState.active = false;
+        return;
+    }
+
+    if (!gViewerWindow || !gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    {
+        mSnapshotGuideState.active = false;
+        return;
+    }
+
+    LLRect view_rect = gViewerWindow->getWorldViewRectRaw();
+    const F32 width = (F32)view_rect.getWidth();
+    const F32 height = (F32)view_rect.getHeight();
+    if (width <= 0.f || height <= 0.f)
+    {
+        mSnapshotGuideState.active = false;
+        return;
+    }
+
+    const F32 left_norm = llmin(mSnapshotGuideState.left, mSnapshotGuideState.right);
+    const F32 right_norm = llmax(mSnapshotGuideState.left, mSnapshotGuideState.right);
+    const F32 bottom_norm = llmin(mSnapshotGuideState.bottom, mSnapshotGuideState.top);
+    const F32 top_norm = llmax(mSnapshotGuideState.bottom, mSnapshotGuideState.top);
+
+    const F32 left_px = left_norm * width;
+    const F32 right_px = right_norm * width;
+    const F32 bottom_px = bottom_norm * height;
+    const F32 top_px = top_norm * height;
+
+    const F32 frame_width = right_px - left_px;
+    const F32 frame_height = top_px - bottom_px;
+    if (frame_width <= 0.f || frame_height <= 0.f)
+    {
+        mSnapshotGuideState.active = false;
+        return;
+    }
+
+    const F32 alpha = llclamp(mSnapshotGuideState.visibility, 0.f, 1.f);
+    if (alpha <= 0.f)
+    {
+        mSnapshotGuideState.active = false;
+        return;
+    }
+
+    LLGLDisable depth(GL_DEPTH_TEST);
+    LLGLDisable cull(GL_CULL_FACE);
+    LLGLDisable stencil(GL_STENCIL_TEST);
+    LLGLEnable blend(GL_BLEND);
+    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+
+    LLGLSLShader* ui_shader = &gUIProgram;
+    ui_shader->bind();
+
+    if (!LLViewerFetchedTexture::sWhiteImagep.isNull())
+    {
+        gGL.getTexUnit(0)->bind(LLViewerFetchedTexture::sWhiteImagep);
+    }
+    else
+    {
+        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, LLTexUnit::sWhiteTexture);
+    }
+
+    gGL.matrixMode(LLRender::MM_PROJECTION);
+    gGL.pushMatrix();
+    gGL.loadIdentity();
+    gGL.ortho(0.f, width, 0.f, height, -1.f, 1.f);
+
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.pushMatrix();
+    gGL.loadIdentity();
+    gGLLastMatrix = nullptr;
+
+    const LLColor4 line_color(mSnapshotGuideState.color, alpha);
+    gGL.color4fv(line_color.mV);
+
+    const F32 thickness = llmax(mSnapshotGuideState.thickness, 0.f);
+    const F32 half_thickness = thickness * 0.5f;
+    auto draw_filled_rect = [&](F32 l, F32 b, F32 r, F32 t)
+    {
+        const S32 left_i = ll_round(l);
+        const S32 right_i = ll_round(r);
+        const S32 top_i = ll_round(t);
+        const S32 bottom_i = ll_round(b);
+        gl_rect_2d(left_i, top_i, right_i, bottom_i, line_color, true);
+    };
+
+    auto draw_vertical_norm = [&](F32 norm)
+    {
+        const F32 x = left_px + frame_width * norm;
+        draw_filled_rect(x - half_thickness, bottom_px, x + half_thickness, top_px);
+    };
+
+    auto draw_horizontal_norm = [&](F32 norm)
+    {
+        const F32 y = bottom_px + frame_height * norm;
+        draw_filled_rect(left_px, y - half_thickness, right_px, y + half_thickness);
+    };
+
+    switch (mSnapshotGuideState.style)
+    {
+        case SnapshotGuideState::Style::RuleOfThirds:
+        {
+            constexpr std::array<F32, 2> offsets = { 1.f / 3.f, 2.f / 3.f };
+            for (F32 offset : offsets)
+            {
+                draw_vertical_norm(offset);
+                draw_horizontal_norm(offset);
+            }
+            break;
+        }
+        case SnapshotGuideState::Style::GoldenRatio:
+        {
+            constexpr F32                               phi         = 1.61803398875f;
+            const SnapshotGuideState::GoldenOrientation orientation = mSnapshotGuideState.golden_orientation;
+
+            const F32 scale = llmin(frame_width / phi, frame_height);
+            if (scale <= 0.f)
+            {
+                break;
+            }
+
+            const F32 golden_width  = phi * scale;
+            const F32 golden_height = scale;
+            const F32 pad_x         = frame_width - golden_width;
+            const F32 pad_y         = frame_height - golden_height;
+
+            F32 anchor_x = left_px;
+            F32 anchor_y = bottom_px;
+            switch (orientation)
+            {
+                case SnapshotGuideState::GoldenOrientation::TopLeft:
+                    anchor_y += pad_y;
+                    break;
+                case SnapshotGuideState::GoldenOrientation::TopRight:
+                    anchor_x += pad_x;
+                    anchor_y += pad_y;
+                    break;
+                case SnapshotGuideState::GoldenOrientation::BottomRight:
+                    anchor_x += pad_x;
+                    break;
+                case SnapshotGuideState::GoldenOrientation::BottomLeft:
+                default:
+                    break;
+            }
+
+            auto map_point = [&](F32 local_x, F32 local_y) -> LLVector2
+            {
+                F32 x = local_x;
+                F32 y = local_y;
+
+                if (orientation == SnapshotGuideState::GoldenOrientation::TopLeft ||
+                    orientation == SnapshotGuideState::GoldenOrientation::BottomLeft)
+                {
+                    x = golden_width - local_x;
+                }
+
+                if (orientation == SnapshotGuideState::GoldenOrientation::BottomLeft ||
+                    orientation == SnapshotGuideState::GoldenOrientation::BottomRight)
+                {
+                    y = golden_height - local_y;
+                }
+
+                return LLVector2(anchor_x + x, anchor_y + y);
+            };
+
+            std::vector<std::pair<LLVector2, LLVector2>> line_segments;
+            line_segments.reserve(24);
+
+            auto add_line = [&](F32 x0, F32 y0, F32 x1, F32 y1)
+            {
+                line_segments.emplace_back(map_point(x0, y0), map_point(x1, y1));
+            };
+
+            // Outline of the fitted golden rectangle.
+            add_line(0.f, 0.f, golden_width, 0.f);
+            add_line(0.f, golden_height, golden_width, golden_height);
+            add_line(0.f, 0.f, 0.f, golden_height);
+            add_line(golden_width, 0.f, golden_width, golden_height);
+
+            // Generate subdivision lines while we walk the squares.
+            F32 x0 = 0.f;
+            F32 y0 = 0.f;
+            F32 x1 = golden_width;
+            F32 y1 = golden_height;
+
+            for (U32 step = 0; step < 12; ++step)
+            {
+                const F32 width  = x1 - x0;
+                const F32 height = y1 - y0;
+                if (width <= 1.f || height <= 1.f)
+                {
+                    break;
+                }
+
+                switch (step % 4)
+                {
+                    case 0:
+                        x0 += height;
+                        add_line(x0, y0, x0, y1);
+                        break;
+                    case 1:
+                        y0 += width;
+                        add_line(x0, y0, x1, y0);
+                        break;
+                    case 2:
+                        x1 -= height;
+                        add_line(x1, y0, x1, y1);
+                        break;
+                    default:
+                        y1 -= width;
+                        add_line(x0, y1, x1, y1);
+                        break;
+                }
+            }
+
+            auto draw_golden_spiral = [&](U32 max_depth)
+            {
+                gGL.begin(LLRender::LINE_STRIP);
+
+                F32 spiral_x0 = 0.f;
+                F32 spiral_y0 = 0.f;
+                F32 spiral_x1 = golden_width;
+                F32 spiral_y1 = golden_height;
+
+                for (U32 step = 0; step < max_depth; ++step)
+                {
+                    const F32 width  = spiral_x1 - spiral_x0;
+                    const F32 height = spiral_y1 - spiral_y0;
+                    if (width <= 1.f || height <= 1.f)
+                    {
+                        break;
+                    }
+
+                    F32 size        = 0.f;
+                    F32 cx          = 0.f;
+                    F32 cy          = 0.f;
+                    F32 start_angle = 0.f;
+                    F32 end_angle   = 0.f;
+
+                    switch (step % 4)
+                    {
+                        case 0: // left square
+                            size        = height;
+                            cx          = spiral_x0 + size;
+                            cy          = spiral_y0 + size;
+                            start_angle = F_PI;
+                            end_angle   = 1.5f * F_PI;
+                            spiral_x0 += size;
+                            break;
+                        case 1: // bottom square
+                            size        = width;
+                            cx          = spiral_x0;
+                            cy          = spiral_y0 + size;
+                            start_angle = 1.5f * F_PI;
+                            end_angle   = 2.f * F_PI;
+                            spiral_y0 += size;
+                            break;
+                        case 2: // right square
+                            size        = height;
+                            cx          = spiral_x1 - size;
+                            cy          = spiral_y0;
+                            start_angle = 0.f;
+                            end_angle   = F_PI_BY_TWO;
+                            spiral_x1 -= size;
+                            break;
+                        case 3: // top square
+                        default:
+                            size        = width;
+                            cx          = spiral_x0 + size;
+                            cy          = spiral_y1 - size;
+                            start_angle = F_PI_BY_TWO;
+                            end_angle   = F_PI;
+                            spiral_y1 -= size;
+                            break;
+                    }
+
+                    if (size <= 0.f)
+                    {
+                        break;
+                    }
+
+                    const S32 segments = llclamp((S32)(size / 4.f), 12, 64);
+                    for (S32 i = 0; i <= segments; ++i)
+                    {
+                        const F32 t       = start_angle + (end_angle - start_angle) * (F32)i / (F32)segments;
+                        const F32 local_x = cx + cosf(t) * size;
+                        const F32 local_y = cy + sinf(t) * size;
+                        LLVector2 mapped  = map_point(local_x, local_y);
+                        gGL.vertex2f(mapped.mV[0], mapped.mV[1]);
+                    }
+                }
+
+                gGL.end();
+            };
+
+            gGL.flush();
+            const F32 line_width = llmax(thickness, 1.f);
+            gGL.setLineWidth(line_width);
+            draw_golden_spiral(12);
+            gGL.setLineWidth(1.f);
+
+            if (!line_segments.empty())
+            {
+                gGL.flush();
+                gGL.setLineWidth(line_width);
+                gGL.begin(LLRender::LINES);
+                for (const auto& segment : line_segments)
+                {
+                    gGL.vertex2f(segment.first.mV[VX], segment.first.mV[VY]);
+                    gGL.vertex2f(segment.second.mV[VX], segment.second.mV[VY]);
+                }
+                gGL.end();
+                gGL.setLineWidth(1.f);
+            }
+            break;
+        }
+        case SnapshotGuideState::Style::Diagonal:
+        {
+            const F32 line_width = llmax(thickness, 1.f);
+            gGL.flush();
+            gGL.setLineWidth(line_width);
+            gGL.begin(LLRender::LINES);
+            gGL.vertex2f(left_px, bottom_px);
+            gGL.vertex2f(right_px, top_px);
+            gGL.vertex2f(left_px, top_px);
+            gGL.vertex2f(right_px, bottom_px);
+            gGL.end();
+            gGL.setLineWidth(1.f);
+            break;
+        }
+    }
+
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.popMatrix();
+    gGL.matrixMode(LLRender::MM_PROJECTION);
+    gGL.popMatrix();
+    gGLLastMatrix = nullptr;
+
+    ui_shader->unbind();
+
+    mSnapshotGuideState.active = false;
+}
+// </FS:Beq>
+
 // <FS:Beq> FIRE-32023 Focus Point Rendering
 void LLPipeline::renderFocusPoint()
 {
-
     static LLCachedControl<bool> render_focus_point_crosshair(gSavedSettings, "FSFocusPointRender", false);
-    if ( sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    if (sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
         gDebugProgram.bind();
         LLVector3 focus_point = sLastFocusPoint;
         F32 size = 0.02f;
-        LLGLDepthTest gls_depth(GL_FALSE);    
+        LLGLDepthTest gls_depth(GL_FALSE);
         gGL.pushMatrix();
         gGL.translatef(focus_point.mV[VX], focus_point.mV[VY], focus_point.mV[VZ]);
            
@@ -4564,23 +4919,24 @@ void LLPipeline::renderFocusPoint()
         }
         gGL.vertex3f(-size, 0.0f, 0.0f);
         gGL.vertex3f(size, 0.0f, 0.0f);
-    
+
         // Y-axis (Green)
         gGL.vertex3f(0.0f, -size, 0.0f);
         gGL.vertex3f(0.0f, size, 0.0f);
-    
+
         // Z-axis (Blue)
         gGL.vertex3f(0.0f, 0.0f, -size);
         gGL.vertex3f(0.0f, 0.0f, size);
     
         gGL.end();
-    
+
         gGL.popMatrix();
         gGL.flush();
         gDebugProgram.unbind();
-    }      
+    }
 }
 // </FS:Beq>
+
 void LLPipeline::renderPhysicsDisplay()
 {
     if (!hasRenderDebugMask(LLPipeline::RENDER_DEBUG_PHYSICS_SHAPES))
@@ -4591,9 +4947,9 @@ void LLPipeline::renderPhysicsDisplay()
     gGL.flush();
     gDebugProgram.bind();
 
-    LLGLEnable(GL_POLYGON_OFFSET_LINE);
+    LLGLEnable ploygon_offset_line(GL_POLYGON_OFFSET_LINE);
     glPolygonOffset(3.f, 3.f);
-    glLineWidth(3.f);
+    gGL.setLineWidth(3.f);
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
@@ -4635,7 +4991,7 @@ void LLPipeline::renderPhysicsDisplay()
             glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
         }
     }
-    glLineWidth(1.f);
+    gGL.setLineWidth(1.f);
     gDebugProgram.unbind();
 
 }
@@ -7468,13 +7824,13 @@ void LLPipeline::generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool
 
 extern LLPointer<LLImageGL> gEXRImage;
 
-void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst)
+void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_correct)
 {
+    LL_PROFILE_GPU_ZONE("tonemap");
+
     dst->bindTarget();
     // gamma correct lighting
     {
-        LL_PROFILE_GPU_ZONE("tonemap");
-
         static LLCachedControl<bool> buildNoPost(gSavedSettings, "RenderDisablePostProcessing", false);
 
         LLGLDepthTest depth(GL_FALSE, GL_FALSE);
@@ -7486,17 +7842,33 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst)
         LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
         bool no_post = gSnapshotNoPost || psky->getReflectionProbeAmbiance(should_auto_adjust) == 0.f || (buildNoPost && gFloaterTools && gFloaterTools->isAvailable());
-        LLGLSLShader& shader = no_post ? gNoPostTonemapProgram : gDeferredPostTonemapProgram;
+        LLGLSLShader* shader = nullptr;
+        if(gamma_correct)
+        {
+            bool legacy_gamma = psky->getReflectionProbeAmbiance(should_auto_adjust) == 0.f;
+            if(legacy_gamma)
+            {
+                shader = no_post ? &gNoPostTonemapLegacyGammaCorrectProgram : &gDeferredPostTonemapLegacyGammaCorrectProgram;
+            }
+            else
+            {
+                shader = no_post ? &gNoPostTonemapGammaCorrectProgram : &gDeferredPostTonemapGammaCorrectProgram;
+            }
+        }
+        else
+        {
+            shader = no_post ? &gNoPostTonemapProgram : &gDeferredPostTonemapProgram;
+        }
 
-        shader.bind();
+        shader->bind();
 
         S32 channel = 0;
 
-        shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
+        shader->bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
 
-        shader.bindTexture(LLShaderMgr::EXPOSURE_MAP, &mExposureMap);
+        shader->bindTexture(LLShaderMgr::EXPOSURE_MAP, &mExposureMap);
 
-        shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
+        shader->uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
 
         static LLCachedControl<F32> exposure(gSavedSettings, "RenderExposure", 1.f);
 
@@ -7506,28 +7878,28 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst)
         static LLStaticHashedString tonemap_mix("tonemap_mix");
         static LLStaticHashedString tonemap_type("tonemap_type");
 
-        shader.uniform1f(s_exposure, e);
+        shader->uniform1f(s_exposure, e);
 
         static LLCachedControl<U32> tonemap_type_setting(gSavedSettings, "RenderTonemapType", 0U);
-        shader.uniform1i(tonemap_type, tonemap_type_setting);
-        shader.uniform1f(tonemap_mix, psky->getTonemapMix(should_auto_adjust()));
+        shader->uniform1i(tonemap_type, tonemap_type_setting);
+        shader->uniform1f(tonemap_mix, psky->getTonemapMix(should_auto_adjust()));
 
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
         gGL.getTexUnit(channel)->unbind(src->getUsage());
-        shader.unbind();
+        shader->unbind();
     }
     dst->flush();
 }
 
 void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
 {
+    LL_PROFILE_GPU_ZONE("gamma correct");
+
     dst->bindTarget();
     // gamma correct lighting
     {
-        LL_PROFILE_GPU_ZONE("gamma correct");
-
         LLGLDepthTest depth(GL_FALSE, GL_FALSE);
 
         static LLCachedControl<bool> buildNoPost(gSavedSettings, "RenderDisablePostProcessing", false);
@@ -7578,9 +7950,9 @@ void LLPipeline::copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget*
 
 void LLPipeline::generateGlow(LLRenderTarget* src)
 {
+    LL_PROFILE_GPU_ZONE("glow generate");
     if (sRenderGlow)
     {
-        LL_PROFILE_GPU_ZONE("glow");
         mGlow[2].bindTarget();
         mGlow[2].clear();
 
@@ -7689,13 +8061,22 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
 void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
 {
     static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
-    if (cas_sharpness == 0.0f || !gCASProgram.isComplete())
+    LL_PROFILE_GPU_ZONE("cas");
+    if (cas_sharpness == 0.0f || !gCASProgram.isComplete() || !gCASLegacyGammaProgram.isComplete())
     {
         gPipeline.copyRenderTarget(src, dst);
         return;
     }
 
     LLGLSLShader* sharpen_shader = &gCASProgram;
+    static LLCachedControl<bool> should_auto_adjust(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
+
+    LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
+    bool legacy_gamma = psky->getReflectionProbeAmbiance(should_auto_adjust) == 0.f;
+    if(legacy_gamma)
+    {
+        sharpen_shader = &gCASLegacyGammaProgram;
+    }
 
     // Bind setup:
     dst->bindTarget();
@@ -7733,6 +8114,7 @@ void LLPipeline::applyCAS(LLRenderTarget* src, LLRenderTarget* dst)
 
 void LLPipeline::applyFXAA(LLRenderTarget* src, LLRenderTarget* dst)
 {
+    LL_PROFILE_GPU_ZONE("FXAA");
     {
         llassert(!gCubeSnapshot);
         bool multisample = RenderFSAAType == 1 && gFXAAProgram[0].isComplete() && mFXAAMap.isComplete();
@@ -7824,7 +8206,7 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
     // Present everything.
     if (multisample)
     {
-        LL_PROFILE_GPU_ZONE("aa");
+        LL_PROFILE_GPU_ZONE("SMAA Edge");
         static LLCachedControl<U32> aa_quality(gSavedSettings, "RenderFSAASamples", 0U);
         U32 fsaa_quality = std::clamp(aa_quality(), 0U, 3U);
 
@@ -7855,14 +8237,14 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
             {
                 if (!use_sample)
                 {
-                    src->bindTexture(0, channel, LLTexUnit::TFO_POINT);
-                    gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+                    src->bindTexture(0, channel, LLTexUnit::TFO_BILINEAR);
                 }
                 else
                 {
                     gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, mSMAASampleMap);
-                    gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+                    gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
                 }
+                gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
             }
 
             //if (use_stencil)
@@ -7936,13 +8318,13 @@ void LLPipeline::generateSMAABuffers(LLRenderTarget* src)
 
 void LLPipeline::applySMAA(LLRenderTarget* src, LLRenderTarget* dst)
 {
+    LL_PROFILE_GPU_ZONE("SMAA");
     llassert(!gCubeSnapshot);
     bool multisample = RenderFSAAType == 2 && gSMAAEdgeDetectProgram[0].isComplete() && mFXAAMap.isComplete() && mSMAABlendBuffer.isComplete();
 
     // Present everything.
     if (multisample)
     {
-        LL_PROFILE_GPU_ZONE("aa");
         static LLCachedControl<U32> aa_quality(gSavedSettings, "RenderFSAASamples", 0U);
         U32 fsaa_quality = std::clamp(aa_quality(), 0U, 3U);
 
@@ -8020,8 +8402,9 @@ void LLPipeline::copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst)
 
 void LLPipeline::combineGlow(LLRenderTarget* src, LLRenderTarget* dst)
 {
-    // Go ahead and do our glow combine here in our destination.  We blit this later into the front buffer.
+    LL_PROFILE_GPU_ZONE("glow combine");
 
+    // Go ahead and do our glow combine here in our destination.  We blit this later into the front buffer.
     dst->bindTarget();
 
     {
@@ -8091,6 +8474,9 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
     static LLCachedControl<bool> show_frame(gSavedSettings, "FSSnapshotShowCaptureFrame", false);
     static LLCachedControl<bool> show_guides(gSavedSettings, "FSSnapshotShowGuides", false);
 
+    mSnapshotGuideState.active = false;
+    mSnapshotGuideState.show_guides = false;
+
     float left   = 0.f;
     float top    = 0.f;
     float right  = 1.f;
@@ -8101,12 +8487,41 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
     static LLCachedControl<LLColor3> guide_color(gSavedSettings, "FSSnapshotFrameGuideColor", LLColor3(1.f, 1.f, 0.f));    
     static LLCachedControl<F32> border_thickness(gSavedSettings, "FSSnapshotFrameBorderWidth", 2.0f);    
     static LLCachedControl<F32> guide_thickness(gSavedSettings, "FSSnapshotFrameGuideWidth", 2.0f);    
+    static LLCachedControl<F32> guide_visibility(gSavedSettings, "FSSnapshotGuideVisibility", 0.5f);
+    static LLCachedControl<std::string> guide_style_setting(gSavedSettings, "FSSnapshotGuideStyle", std::string("rule_of_thirds"));
 
-    F32 guide_style = 1.f; // 0:off, 1:rule_of_thirds, others maybe in the future
-    if (!show_guides)
+    SnapshotGuideState::Style guide_style = SnapshotGuideState::Style::RuleOfThirds;
+    SnapshotGuideState::GoldenOrientation golden_orientation = SnapshotGuideState::GoldenOrientation::TopLeft;
+    const std::string style_value = guide_style_setting();
+    if (style_value == "golden_ratio" || style_value == "golden_ratio_top_left")
     {
-        guide_style = 0.f;
+        guide_style = SnapshotGuideState::Style::GoldenRatio;
+        golden_orientation = SnapshotGuideState::GoldenOrientation::TopLeft;
     }
+    else if (style_value == "golden_ratio_top_right")
+    {
+        guide_style = SnapshotGuideState::Style::GoldenRatio;
+        golden_orientation = SnapshotGuideState::GoldenOrientation::TopRight;
+    }
+    else if (style_value == "golden_ratio_bottom_left")
+    {
+        guide_style = SnapshotGuideState::Style::GoldenRatio;
+        golden_orientation = SnapshotGuideState::GoldenOrientation::BottomLeft;
+    }
+    else if (style_value == "golden_ratio_bottom_right")
+    {
+        guide_style = SnapshotGuideState::Style::GoldenRatio;
+        golden_orientation = SnapshotGuideState::GoldenOrientation::BottomRight;
+    }
+    else if (style_value == "diagonal")
+    {
+        guide_style = SnapshotGuideState::Style::Diagonal;
+    }
+    else
+    {
+        guide_style = SnapshotGuideState::Style::RuleOfThirds;
+    }
+    const F32 guide_visibility_value = show_guides ? (F32)guide_visibility : 0.f;
     const bool simple_snapshot_visible = LLFloaterReg::instanceVisible("simple_snapshot");
     const bool flickr_snapshot_visible = LLFloaterReg::instanceVisible("flickr");
     const bool primfeed_snapshot_visible = LLFloaterReg::instanceVisible("primfeed"); // <FS:Beq/> Primfeed integration
@@ -8220,17 +8635,7 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
         LLShaderMgr::SNAPSHOT_BORDER_THICKNESS,
         (GLfloat)border_thickness);
 
-    shader->uniform3fv(
-        LLShaderMgr::SNAPSHOT_GUIDE_COLOR,
-        1,
-        guide_color().mV);
-
-    shader->uniform1f(
-        LLShaderMgr::SNAPSHOT_GUIDE_THICKNESS,
-        (GLfloat)guide_thickness);
-    shader->uniform1f(
-        LLShaderMgr::SNAPSHOT_GUIDE_STYLE,
-        (GLfloat)guide_style);
+    // Guides are rendered in a later UI pass; no additional uniforms required here.
 
     mScreenTriangleVB->setBuffer();
     mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -8239,12 +8644,29 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
     shader->disableTexture(LLShaderMgr::DEFERRED_DIFFUSE, src->getUsage());
     shader->unbind();
     dst->flush();
+
+    if (show_frame && show_guides && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    {
+        mSnapshotGuideState.active = true;
+        mSnapshotGuideState.show_guides = true;
+        mSnapshotGuideState.left = left;
+        mSnapshotGuideState.right = right;
+        mSnapshotGuideState.bottom = bottom;
+        mSnapshotGuideState.top = top;
+        mSnapshotGuideState.color = guide_color();
+        mSnapshotGuideState.thickness = guide_thickness();
+        mSnapshotGuideState.visibility = llclamp(guide_visibility_value, 0.f, 1.f);
+        mSnapshotGuideState.style = guide_style;
+        mSnapshotGuideState.golden_orientation = golden_orientation;
+    }
+
     return true;
 }
 // </FS:Beq>
 
 void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 {
+    LL_PROFILE_GPU_ZONE("dof");
     {
         sDoFEnabled = // <FS:Beq/> // FIRE-32023 Render focus point
             (RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
@@ -8255,7 +8677,6 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
 
         if (sDoFEnabled) // <FS:Beq/> // FIRE-32023 Render focus point
         {
-            LL_PROFILE_GPU_ZONE("dof");
             LLGLDisable blend(GL_BLEND);
 
             // depth of field focal plane calculations
@@ -8489,7 +8910,6 @@ void LLPipeline::renderFinalize()
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
-
     if (hdr)
     {
         copyScreenSpaceReflections(&mRT->screen, &mSceneMap);
@@ -8498,22 +8918,31 @@ void LLPipeline::renderFinalize()
 
         generateExposure(&mLuminanceMap, &mExposureMap);
 
-        tonemap(&mRT->screen, &mPostMap);
+        static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
+        bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        applyCAS(&mPostMap, &mRT->screen);
+        tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+
+        if (apply_cas)
+        {
+            // Gamma Corrects
+            applyCAS(&mRT->deferredLight, &mPostPingMap);
+        }
     }
-
-    generateSMAABuffers(&mRT->screen);
-
-    gammaCorrect(&mRT->screen, &mPostMap);
+    else
+    {
+        gammaCorrect(&mRT->screen, &mPostPingMap);
+    }
 
     LLVertexBuffer::unbind();
 
-    applySMAA(&mPostMap, &mRT->screen);
+    generateGlow(&mPostPingMap);
 
-    generateGlow(&mRT->screen);
+    LLRenderTarget* sourceBuffer = &mPostPingMap;
+    LLRenderTarget* targetBuffer = &mPostPongMap;
 
-    combineGlow(&mRT->screen, &mPostMap);
+    combineGlow(sourceBuffer, targetBuffer);
+    std::swap(sourceBuffer, targetBuffer);
 
     gGLViewport[0] = gViewerWindow->getWorldViewRectRaw().mLeft;
     gGLViewport[1] = gViewerWindow->getWorldViewRectRaw().mBottom;
@@ -8521,45 +8950,52 @@ void LLPipeline::renderFinalize()
     gGLViewport[3] = gViewerWindow->getWorldViewRectRaw().getHeight();
     glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
 
-    renderDoF(&mPostMap, &mRT->screen);
-
-    LLRenderTarget* finalBuffer = &mRT->screen;
-    if (RenderFSAAType == 1)
+    if((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
+        RenderDepthOfField &&
+        !gCubeSnapshot)
     {
-        applyFXAA(&mRT->screen, &mPostMap);
-        finalBuffer = &mPostMap;
+        renderDoF(sourceBuffer, targetBuffer);
+        std::swap(sourceBuffer, targetBuffer);
+    }
+
+     if (RenderFSAAType == 1)
+    {
+        applyFXAA(sourceBuffer, targetBuffer);
+        std::swap(sourceBuffer, targetBuffer);
+    }
+    else if (RenderFSAAType == 2)
+    {
+        generateSMAABuffers(sourceBuffer);
+        applySMAA(sourceBuffer, targetBuffer);
+        std::swap(sourceBuffer, targetBuffer);
     }
 
     // <FS:Beq> Restore shader post proc for Vignette
-    LLRenderTarget* activeBuffer = finalBuffer;
-    LLRenderTarget* targetBuffer = RenderFSAAType ? &mRT->screen : &mPostMap;
+    LLRenderTarget* auxActiveBuffer = sourceBuffer;
+    LLRenderTarget* auxTargetBuffer = RenderFSAAType ? &mRT->screen : &mPostPingMap;
 // [RLVa:KB] - @setsphere
     if (RlvActions::hasBehaviour(RLV_BHVR_SETSPHERE))
     {
-        LLShaderEffectParams params(activeBuffer, targetBuffer, false);
+        LLShaderEffectParams params(auxActiveBuffer, auxTargetBuffer, false);
         LLVfxManager::instance().runEffect(EVisualEffect::RlvSphere, &params);
         // flip the buffers round
-        activeBuffer = params.m_pDstBuffer;
-        targetBuffer = params.m_pSrcBuffer;
+        auxActiveBuffer = params.m_pDstBuffer;
+        auxTargetBuffer = params.m_pSrcBuffer;
     }
 // [/RLVa:KB]
 
-    if (renderVignette(activeBuffer, targetBuffer))
+    if (renderVignette(auxActiveBuffer, auxTargetBuffer))
     {
-        auto prevActiveBuffer = activeBuffer;
-        activeBuffer = targetBuffer;
-        targetBuffer = prevActiveBuffer;
+        std::swap(auxActiveBuffer, auxTargetBuffer);
     };
     // </FS:Beq>
     // <FS:Beq> new shader for snapshot frame helper
-    if (renderSnapshotFrame(targetBuffer, activeBuffer))
+    if (renderSnapshotFrame(auxActiveBuffer, auxTargetBuffer))
     {
-        auto prevActiveBuffer = activeBuffer;
-        activeBuffer = targetBuffer;
-        targetBuffer = prevActiveBuffer;
+        std::swap(auxActiveBuffer, auxTargetBuffer);
     };
 
-    finalBuffer = activeBuffer;
+    sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
     if (RenderBufferVisualization > -1)
     {
@@ -8569,16 +9005,16 @@ void LLPipeline::renderFinalize()
         case 1:
         case 2:
         case 3:
-            visualizeBuffers(&mRT->deferredScreen, finalBuffer, RenderBufferVisualization);
+            visualizeBuffers(&mRT->deferredScreen, sourceBuffer, RenderBufferVisualization);
             break;
         case 4:
-            visualizeBuffers(&mLuminanceMap, finalBuffer, 0);
+            visualizeBuffers(&mLuminanceMap, sourceBuffer, 0);
             break;
         case 5:
         {
             if (RenderFSAAType > 0)
             {
-                visualizeBuffers(&mFXAAMap, finalBuffer, 0);
+                visualizeBuffers(&mFXAAMap, sourceBuffer, 0);
             }
             break;
         }
@@ -8586,7 +9022,7 @@ void LLPipeline::renderFinalize()
         {
             if (RenderFSAAType == 2)
             {
-                visualizeBuffers(&mSMAABlendBuffer, finalBuffer, 0);
+                visualizeBuffers(&mSMAABlendBuffer, sourceBuffer, 0);
             }
             break;
         }
@@ -8600,10 +9036,10 @@ void LLPipeline::renderFinalize()
     gDeferredPostNoDoFNoiseProgram.bind(); // Add noise as part of final render to screen pass to avoid damaging other post effects
 
     // Whatever is last in the above post processing chain should _always_ be rendered directly here.  If not, expect problems.
-    gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, finalBuffer);
+    gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sourceBuffer);
     gDeferredPostNoDoFNoiseProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &mRT->deferredScreen, true);
 
-    gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)finalBuffer->getWidth(), (GLfloat)finalBuffer->getHeight());
+    gDeferredPostNoDoFNoiseProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)sourceBuffer->getWidth(), (GLfloat)sourceBuffer->getHeight());
 
     {
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
@@ -8614,7 +9050,8 @@ void LLPipeline::renderFinalize()
     gDeferredPostNoDoFNoiseProgram.unbind();
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
-    
+
+    renderSnapshotGuidesOverlay(); // <FS:Beq/> Render snapshot guides as part of UI
     renderFocusPoint(); // <FS:Beq/> FIRE-32023 render focus point
 
     if (hasRenderDebugMask(LLPipeline::RENDER_DEBUG_PHYSICS_SHAPES))

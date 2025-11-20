@@ -1592,6 +1592,8 @@ void LLTextBase::reshape(S32 width, S32 height, bool called_from_parent)
         // up-to-date mVisibleTextRect
         updateRects();
 
+        // Todo: This might be wrong. updateRects already sets needsReflow conditionaly.
+        // Reflow is expensive and doing it at any twith can be too much.
         needsReflow();
     }
 }
@@ -2414,6 +2416,7 @@ void LLTextBase::createUrlContextMenu(S32 x, S32 y, const std::string &in_url)
     registrar.add("Url.RemoveFriend", boost::bind(&LLUrlAction::removeFriend, url));
     registrar.add("Url.ReportAbuse", boost::bind(&LLUrlAction::reportAbuse, url));
     registrar.add("Url.SendIM", boost::bind(&LLUrlAction::sendIM, url));
+    registrar.add("Url.ZoomInObject", boost::bind(&LLUrlAction::zoomInObject, url));
     registrar.add("Url.ShowOnMap", boost::bind(&LLUrlAction::showLocationOnMap, url));
     registrar.add("Url.ShowParcelOnMap", boost::bind(&LLUrlAction::showParcelOnMap, url));
     registrar.add("Url.CopyLabel", boost::bind(&LLUrlAction::copyLabelToClipboard, url));
@@ -2447,6 +2450,11 @@ void LLTextBase::createUrlContextMenu(S32 x, S32 y, const std::string &in_url)
     enable_registrar.add("FS.EnableBlockAvatar", std::bind(&FSRegistrarUtils::checkIsEnabled, gFSRegistrarUtils, target_id, EFSRegistrarFunctionActionType::FS_RGSTR_CHK_IS_NOT_SELF));
     enable_registrar.add("FS.EnableViewLog", std::bind(&FSRegistrarUtils::checkIsEnabled, gFSRegistrarUtils, target_id, EFSRegistrarFunctionActionType::FS_RGSTR_ACT_VIEW_TRANSCRIPT));
     // </FS:Ansariel>
+
+    // <FS:Zi> Add menu items to copy and/or insert mention URIs into chat
+    registrar.add("Mention.CopyURI", boost::bind(&LLUrlAction::copyURLToClipboard, "secondlife:///app/agent/" + target_id_str + "/mention"));
+    registrar.add("Mention.Chat", boost::bind(&LLTextBase::insertMentionAtCursor, this, "secondlife:///app/agent/" + target_id_str + "/mention"));
+    // </FS:Zi>
 
     // <FS:Zi> FIRE-30725 - Add more group functions to group URL context menu
     registrar.add("FS.JoinGroup", std::bind(&LLUrlAction::executeSLURL, "secondlife:///app/firestorm/" + target_id_str + "/groupjoin", true));
@@ -2515,6 +2523,14 @@ void LLTextBase::createUrlContextMenu(S32 x, S32 y, const std::string &in_url)
         {
             menu->getChild<LLView>("GroupModerationSubmenu")->setVisible(false);
             menu->getChild<LLView>("GroupModerationSeparator")->setVisible(false);
+        }
+        // </FS:Zi>
+
+        // <FS:Zi> Add menu items to copy and/or insert mention URIs into chat
+        if (!parent_floater || (parent_floater->getName() != "panel_im" && parent_floater->getName() != "nearby_chat"))
+        {
+            menu->getChild<LLView>("MentionURISeparator")->setVisible(false);
+            menu->getChild<LLView>("mention_in_chat")->setVisible(false);
         }
         // </FS:Zi>
 
@@ -4117,7 +4133,7 @@ bool LLNormalTextSegment::getDimensionsF32(S32 first_char, S32 num_chars, F32& w
 {
     height = 0;
     width = 0;
-    if (num_chars > 0)
+    if (num_chars > 0 && (mStart + first_char >= 0))
     {
         height = mFontHeight;
         const LLWString &text = getWText();
@@ -4574,3 +4590,10 @@ void LLTextBase::setWordWrap(bool wrap)
 {
     mWordWrap = wrap;
 }
+
+// <FS:Zi> Add menu items to copy and/or insert mention URIs into chat
+// virtual
+void LLTextBase::insertMentionAtCursor(const std::string& str)
+{
+}
+// </FS:Zi>
