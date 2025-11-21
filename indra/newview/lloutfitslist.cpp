@@ -189,6 +189,7 @@ void LLOutfitsList::onOpen(const LLSD& info)
 
 void LLOutfitsList::updateAddedCategory(LLUUID cat_id)
 {
+    LL_PROFILE_ZONE_SCOPED;
     LLViewerInventoryCategory *cat = gInventory.getCategory(cat_id);
     if (!cat) return;
 
@@ -220,11 +221,7 @@ void LLOutfitsList::updateAddedCategory(LLUUID cat_id)
 
     // *TODO: LLUICtrlFactory::defaultBuilder does not use "display_children" from xml. Should be investigated.
     tab->setDisplayChildren(false);
-
-    // <FS:ND> Calling this when there's a lot of outfits causes horrible perfomance and disconnects, due to arrange eating so many cpu cycles.
-    //mAccordion->addCollapsibleCtrl(tab);
-    mAccordion->addCollapsibleCtrl(tab, false);
-    // </FS:ND>
+    mAccordion->addCollapsibleCtrl(tab);
 
     // Start observing the new outfit category.
     LLWearableItemsList* list = tab->getChild<LLWearableItemsList>("wearable_items_list");
@@ -264,7 +261,9 @@ void LLOutfitsList::updateAddedCategory(LLUUID cat_id)
 
     if (AISAPI::isAvailable() && LLInventoryModelBackgroundFetch::instance().folderFetchActive())
     {
-        // for reliability just fetch it whole, linked items included
+        // For reliability just fetch it whole, linked items included
+        // Todo: list is not warrantied to exist once callback arrives
+        // Fix it!
         LLInventoryModelBackgroundFetch::instance().fetchFolderAndLinks(cat_id, [cat_id, list]
         {
             if (list)
@@ -1073,6 +1072,15 @@ void LLOutfitListBase::refreshList(const LLUUID& category_id)
         return;
     }
     bool wasNull = mRefreshListState.CategoryUUID.isNull();
+
+    // <FS:PP> FIRE-36116 (saving a second outfit freezes Firestorm indefinitely)
+    static LLCachedControl<bool> fsExperimentalOutfitsReturn(gSavedSettings, "FSExperimentalOutfitsReturn");
+    if (fsExperimentalOutfitsReturn && !wasNull && mRefreshListState.CategoryUUID == category_id)
+    {
+        return;
+    }
+    // </FS:PP>
+
     mRefreshListState.CategoryUUID.setNull();
 
     LLInventoryModel::cat_array_t cat_array;
@@ -1120,8 +1128,21 @@ void LLOutfitListBase::refreshList(const LLUUID& category_id)
     }
 
     // <FS:ND> FIRE-6958/VWR-2862; Handle large amounts of outfits, write a least a warning into the logs.
-    if (mRefreshListState.Added.size() > 128)
-        LL_WARNS() << "Large amount of outfits found: " << mRefreshListState.Added.size() << " this may cause hangs and disconnects" << LL_ENDL;
+    S32 currentOutfitsAmount = (S32)mRefreshListState.Added.size();
+    constexpr S32 maxSuggestedOutfits = 1000;
+    if (currentOutfitsAmount > maxSuggestedOutfits)
+    {
+        LL_WARNS() << "Large amount of outfits found: " << currentOutfitsAmount << " this may cause hangs and disconnects" << LL_ENDL;
+        static LLCachedControl<bool> fsLargeOutfitsWarningInThisSession(gSavedSettings, "FSLargeOutfitsWarningInThisSession");
+        if (!fsLargeOutfitsWarningInThisSession)
+        {
+            gSavedSettings.setBOOL("FSLargeOutfitsWarningInThisSession", true);
+            LLSD args;
+            args["AMOUNT"] = currentOutfitsAmount;
+            args["MAX"] = maxSuggestedOutfits;
+            LLNotificationsUtil::add("FSLargeOutfitsWarningInThisSession", args);
+        }
+    }
     // </FS:ND>
 
     // <FS:Ansariel> FIRE-12939: Add outfit count to outfits list
@@ -1144,6 +1165,7 @@ void LLOutfitListBase::onIdle(void* userdata)
 
 void LLOutfitListBase::onIdleRefreshList()
 {
+    LL_PROFILE_ZONE_SCOPED;
     if (LLAppViewer::instance()->quitRequested())
     {
         mRefreshListState.CategoryUUID.setNull();
@@ -1157,7 +1179,18 @@ void LLOutfitListBase::onIdleRefreshList()
         return;
     }
 
-    const F64 MAX_TIME = 0.05f;
+    // <FS:PP> Scale MAX_TIME with FPS to avoid overloading the viewer with function calls at low frame rates
+    // const F64 MAX_TIME = 0.005f;
+    F64 MAX_TIME = 0.005f;
+    constexpr F64 min_time = 0.001f;
+    constexpr F64 threshold_fps = 30.0;
+    const auto current_fps = LLTrace::get_frame_recording().getPeriodMedianPerSec(LLStatViewer::FPS,10);
+    if (current_fps < threshold_fps)
+    {
+        MAX_TIME = min_time + (current_fps / threshold_fps) * (MAX_TIME - min_time);
+    }
+    // </FS:PP>
+
     F64 curent_time = LLTimer::getTotalSeconds();
     const F64 end_time = curent_time + MAX_TIME;
 
@@ -1173,9 +1206,6 @@ void LLOutfitListBase::onIdleRefreshList()
     }
     mRefreshListState.Added.clear();
     mRefreshListState.AddedIterator = mRefreshListState.Added.end();
-
-    // <FS:ND> We called mAccordion->addCollapsibleCtrl with false as second paramter and did not let it arrange itself each time. Do this here after all is said and done.
-    arrange();
 
     // Handle removed tabs.
     while (mRefreshListState.RemovedIterator < mRefreshListState.Removed.end())
@@ -1200,8 +1230,8 @@ void LLOutfitListBase::onIdleRefreshList()
 
         // Links aren't supposed to be allowed here, check only cats
         if (cat)
-            {
-        std::string name = cat->getName();
+        {
+            std::string name = cat->getName();
             updateChangedCategoryName(cat, name);
         }
 
@@ -1759,11 +1789,18 @@ bool LLOutfitAccordionCtrlTab::handleToolTip(S32 x, S32 y, MASK mask)
     // <FS:Ansariel> Make thumbnail tooltip work properly
     //if (y >= getLocalRect().getHeight() - getHeaderHeight())
     static LLCachedControl<bool> showInventoryThumbnailTooltips(gSavedSettings, "FSShowInventoryThumbnailTooltips");
-    if (showInventoryThumbnailTooltips && y >= getLocalRect().getHeight() - getHeaderHeight() && gInventory.getCategory(mFolderID)->getThumbnailUUID().notNull())
+    if (showInventoryThumbnailTooltips && y >= getLocalRect().getHeight() - getHeaderHeight())
     {
         LLSD params;
         params["inv_type"] = LLInventoryType::IT_CATEGORY;
         LLViewerInventoryCategory* cat = gInventory.getCategory(mFolderID);
+        // <FS:TJ> Make thumbnail tooltip work properly
+        if (!cat || cat->getThumbnailUUID().isNull())
+        {
+            return LLAccordionCtrlTab::handleToolTip(x, y, mask);
+        }
+        // </FS:TJ>
+
         if (cat)
         {
             params["thumbnail_id"] = cat->getThumbnailUUID();

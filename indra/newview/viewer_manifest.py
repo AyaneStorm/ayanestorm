@@ -72,7 +72,6 @@ class ViewerManifest(LLManifest,FSViewerManifest):
     def construct(self):
         super(ViewerManifest, self).construct()
         self.path(src="../../scripts/messages/message_template.msg", dst="app_settings/message_template.msg")
-        self.path(src="../../etc/message.xml", dst="app_settings/message.xml")
         
         # <FS:LO> Copy dictionaries to a place where the viewer can find them if ran from visual studio
         pkgdir = os.path.join(self.args['build'], os.pardir, 'packages')
@@ -129,6 +128,9 @@ class ViewerManifest(LLManifest,FSViewerManifest):
                 self.path("beams")
                 self.path("beamsColors")
 
+                # <FS:AR> Poser Presets
+                self.path("poses")
+                
                 # <FS:Beq> package static_assets folder
                 if self.fs_is_opensim():
                     self.path("static_assets")
@@ -195,10 +197,6 @@ class ViewerManifest(LLManifest,FSViewerManifest):
             with self.prefix(src_dst="fs_resources"):
                 self.path("*.lsltxt")
                 self.path("*.dae") # <FS:Beq> FIRE-30963 - better physics defaults
-                
-            # <FS:AR> Poser Presets
-            with self.prefix(src_dst="poses/hand_presets"):
-                self.path("*.xml")
 
             # skins
             with self.prefix(src_dst="skins"):
@@ -774,12 +772,16 @@ class Windows_x86_64_Manifest(ViewerManifest):
             with self.prefix(src=os.path.join(pkgdir, 'bin', config)):
                 self.path("chrome_elf.dll")
                 self.path("d3dcompiler_47.dll")
+                self.path("dxcompiler.dll")
+                self.path("dxil.dll")
                 self.path("libcef.dll")
                 self.path("libEGL.dll")
                 self.path("libGLESv2.dll")
-                self.path("dullahan_host.exe")
-                self.path("snapshot_blob.bin")
                 self.path("v8_context_snapshot.bin")
+                self.path("vk_swiftshader.dll")
+                self.path("vk_swiftshader_icd.json")
+                self.path("vulkan-1.dll")
+                self.path("dullahan_host.exe")
 
             # MSVC DLLs needed for CEF and have to be in same directory as plugin
             with self.prefix(src=os.path.join(self.args['build'], os.pardir,
@@ -1125,13 +1127,27 @@ class Darwin_x86_64_Manifest(ViewerManifest):
 
             # # CEF framework goes inside Contents/Frameworks.
             # # Remember where we parked this car.
-            # with self.prefix(src="", dst="Frameworks"):
-                # CEF_framework = "Chromium Embedded Framework.framework"
-                # self.path2basename(relpkgdir, CEF_framework)
-                # CEF_framework = self.dst_path_of(CEF_framework)
+            # with self.prefix(src=relpkgdir, dst="Frameworks"):
+                # self.path("libndofdev.dylib")
 
                 # if self.args.get('bugsplat'):
                     # self.path2basename(relpkgdir, "BugsplatMac.framework")
+
+                # # OpenAL dylibs
+                # if self.args['openal'] == 'ON':
+                    # for libfile in (
+                                # "libopenal.dylib",
+                                # "libalut.dylib",
+                                # ):
+                        # self.path(libfile)
+
+                # # WebRTC libraries
+                # with self.prefix(src=os.path.join(self.args['build'], os.pardir,
+                                          # 'sharedlibs', self.args['buildtype'], 'Resources')):
+                    # for libfile in (
+                            # 'libllwebrtc.dylib',
+                    # ):
+                        # self.path(libfile)
 
             # with self.prefix(dst="MacOS"):
                 # executable = self.dst_path_of(self.channel())
@@ -1191,15 +1207,11 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                         # self.path("*.png")
                         # self.path("*.gif")
 
-                # with self.prefix(src=relpkgdir, dst=""):
-                    # self.path("libndofdev.dylib")
-
                 # with self.prefix(src_dst="cursors_mac"):
                     # self.path("*.tif")
 
                 # self.path("licenses-mac.txt", dst="licenses.txt")
                 # self.path("featuretable_mac.txt")
-                # self.path("SecondLife.nib")
 
                 # with self.prefix(src=pkgdir,dst=""):
                     # self.path("ca-bundle.crt")
@@ -1295,14 +1307,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                                     # ):
                             # dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
 
-                # # OpenAL dylibs
-                # if self.args['openal'] == 'ON':
-                    # for libfile in (
-                                # "libopenal.dylib",
-                                # "libalut.dylib",
-                                # ):
-                        # dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
-
                 # # our apps
                 # executable_path = {}
                 # embedded_apps = [ (os.path.join("llplugin", "slplugin"), "SLPlugin.app") ]
@@ -1313,131 +1317,12 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                     # executable_path[app] = \
                         # self.dst_path_of(os.path.join(app, "Contents", "MacOS"))
 
-                    # our apps dependencies on shared libs
-                    # for each app, for each dylib we collected in dylibs,
-                    # create a symlink to the real copy of the dylib.
-                    # with self.prefix(dst=os.path.join(app, "Contents", "Resources")):
-                        # for libfile in dylibs:
-                            # self.relsymlinkf(os.path.join(libfile_parent, libfile))
-
                 # # Dullahan helper apps go inside SLPlugin.app
                 # with self.prefix(dst=os.path.join(
                     # "SLPlugin.app", "Contents", "Frameworks")):
-
-                    # frameworkname = 'Chromium Embedded Framework'
-
-                    # # This code constructs a relative symlink from the
-                    # # target framework folder back to the real CEF framework.
-                    # # It needs to be relative so that the symlink still works when
-                    # # (as is normal) the user moves the app bundle out of the DMG
-                    # # and into the /Applications folder. Note we pass catch=False,
-                    # # letting the uncaught exception terminate the process, since
-                    # # without this symlink, Second Life web media can't possibly work.
-
-                    # # It might seem simpler just to symlink Frameworks back to
-                    # # the parent of Chromimum Embedded Framework.framework. But
-                    # # that would create a symlink cycle, which breaks our
-                    # # packaging step. So make a symlink from Chromium Embedded
-                    # # Framework.framework to the directory of the same name, which
-                    # # is NOT an ancestor of the symlink.
-
-                    # # from SLPlugin.app/Contents/Frameworks/Chromium Embedded
-                    # # Framework.framework back to
-                    # # $viewer_app/Contents/Frameworks/Chromium Embedded Framework.framework
-                    # SLPlugin_framework = self.relsymlinkf(CEF_framework, catch=False)
-
-
-                    # It might seem simpler just to symlink Frameworks back to
-                    # the parent of Chromimum Embedded Framework.framework. But
-                    # that would create a symlink cycle, which breaks our
-                    # packaging step. So make a symlink from Chromium Embedded
-                    # Framework.framework to the directory of the same name, which
-                    # is NOT an ancestor of the symlink.
-
-                    # from SLPlugin.app/Contents/Frameworks/Chromium Embedded
-                    # Framework.framework back to
-                    # $viewer_app/Contents/Frameworks/Chromium Embedded Framework.framework
-                    # SLPlugin_framework = self.relsymlinkf(CEF_framework, catch=False)
-
-                    # # for all the multiple CEF/Dullahan (as of CEF 76) helper app bundles we need:
-                    # for helper in (
-                        # "DullahanHelper",
-                        # "DullahanHelper (GPU)",
-                        # "DullahanHelper (Renderer)",
-                        # "DullahanHelper (Plugin)",
-                    # ):
-                        # # app is the directory name of the app bundle, with app/Contents/MacOS/helper as the executable
-                        # app = helper + ".app"
-
-                        # # copy DullahanHelper.app
-                        # self.path2basename(relpkgdir, app)
-
-                        # # and fix that up with a Frameworks/CEF symlink too
-                        # with self.prefix(dst=os.path.join(
-                                # app, 'Contents', 'Frameworks')):
-                            # # from Dullahan Helper *.app/Contents/Frameworks/Chromium Embedded
-                            # # Framework.framework back to
-                            # # SLPlugin.app/Contents/Frameworks/Chromium Embedded Framework.framework
-                            # # Since SLPlugin_framework is itself a
-                            # # symlink, don't let relsymlinkf() resolve --
-                            # # explicitly call relpath(symlink=True) and
-                            # # create that symlink here.
-                            # helper_framework = \
-                            # self.symlinkf(self.relpath(SLPlugin_framework, symlink=True), catch=False)
-
-                        # # change_command includes install_name_tool, the
-                        # # -change subcommand and the old framework rpath
-                        # # stamped into the executable. To use it with
-                        # # run_command(), we must still append the new
-                        # # framework path and the pathname of the
-                        # # executable to change.
-                        # change_command = [
-                            # 'install_name_tool', '-change',
-                            # '@rpath/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework']
-
-                        # with self.prefix(dst=os.path.join(
-                                # app, 'Contents', 'MacOS')):
-                            # # Now self.get_dst_prefix() is, at runtime,
-                            # # @executable_path. Locate the helper app
-                            # # framework (which is a symlink) from here.
-                            # newpath = os.path.join(
-                                # '@executable_path',
-                                    # self.relpath(helper_framework, symlink=True),
-                                # frameworkname)
-                                # # and restamp the Dullahan Helper executable itself
-                            # self.run_command(
-                                # change_command +
-                                    # [newpath, self.dst_path_of(helper)])
-
-                # # SLPlugin plugins
-                # with self.prefix(dst="llplugin"):
-                    # dylibexecutable = 'media_plugin_cef.dylib'
                     # self.path2basename("../media_plugins/cef/" + self.args['configuration'],
-                                       # dylibexecutable)
-
-                    # # Do this install_name_tool *after* media plugin is copied over.
-                    # # Locate the framework lib executable -- relative to
-                    # # SLPlugin.app/Contents/MacOS, which will be our
-                    # # @executable_path at runtime!
-                    # newpath = os.path.join(
-                        # '@executable_path',
-                        # self.relpath(SLPlugin_framework, executable_path["SLPlugin.app"],
-                                     # symlink=True),
-                        # frameworkname)
-                    # # restamp media_plugin_cef.dylib
-                    # self.run_command(
-                        # change_command +
-                        # [newpath, self.dst_path_of(dylibexecutable)])
-
-                    # # copy LibVLC plugin itself
-                    # self.path2basename("../media_plugins/libvlc/" + self.args['configuration'],
-                                       # "media_plugin_libvlc.dylib")
-
-                    # # copy LibVLC dynamic libraries
-                    # with self.prefix(src=relpkgdir, dst="lib"):
                         # self.path( "libvlc*.dylib*" )
                         # # copy LibVLC plugins folder
-                        # with self.prefix(src='plugins', dst=""):
                             # self.path( "*.dylib" )
                             # self.path( "plugins.dat" )
 
@@ -1475,19 +1360,29 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                         "Info.plist")
 
         with self.prefix(dst="Contents"):  # everything goes in Contents
-            # self.path("Info.plist", dst="Info.plist")
-
-            # copy additional libs in <bundle>/Contents/MacOS/
-            self.path(os.path.join(relpkgdir, "libndofdev.dylib"), dst="Resources/libndofdev.dylib")
-
             # CEF framework goes inside Contents/Frameworks.
             # Remember where we parked this car.
-            with self.prefix(src="", dst="Frameworks"):
-                CEF_framework = "Chromium Embedded Framework.framework"
-                self.path2basename(relpkgdir, CEF_framework)
-                CEF_framework = self.dst_path_of(CEF_framework)
+            with self.prefix(src=relpkgdir, dst="Frameworks"):
+                self.path("libndofdev.dylib")
+
                 if self.args.get('bugsplat'):
                     self.path2basename(relpkgdir, "BugsplatMac.framework")
+
+                # OpenAL dylibs
+                if self.args['openal'] == 'ON':
+                    for libfile in (
+                                "libopenal.dylib",
+                                "libalut.dylib",
+                                ):
+                        self.path(libfile)
+
+                # WebRTC libraries
+                with self.prefix(src=os.path.join(self.args['build'], os.pardir,
+                                          'sharedlibs', self.args['buildtype'], 'Resources')):
+                    for libfile in (
+                            'libllwebrtc.dylib',
+                    ):
+                        self.path(libfile)
 
             with self.prefix(dst="MacOS"):
                 executable = self.dst_path_of(CHANNEL_VENDOR_BASE)
@@ -1550,7 +1445,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                 with self.prefix(src=icon_path) :
                     self.path("ayanestorm_icon.icns")
 
-                self.path("Firestorm.nib")
                 # Translations
                 self.path("English.lproj/language.txt")
                 self.replace_in(src="English.lproj/InfoPlist.strings",
@@ -1598,21 +1492,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                     if not added:
                         print("Skipping %s" % dst)
                     return added
-
-                # WebRTC libraries
-                with self.prefix(src=os.path.join(self.args['build'], os.pardir,
-                                          'sharedlibs', self.args['buildtype'], 'Resources')):
-                    for libfile in (
-                            'libllwebrtc.dylib',
-                    ):
-                        self.path(libfile)
-
-                        oldpath = os.path.join("@rpath", libfile)
-                        print(f"debug: oldpath={oldpath} executable={executable} libfile={libfile}")
-                        self.run_command(
-                            ['install_name_tool', '-change', 
-                             oldpath,
-                             '@executable_path/../Resources/%s' % libfile, executable])
 
                 # dylibs is a list of all the .dylib files we expect to need
                 # in our bundled sub-apps. For each of these we'll create a
@@ -1666,23 +1545,6 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                             print("debug: adding {} to dylibs for fmodstudio".format(path_optional(os.path.join(relpkgdir, libfile), libfile)))
                             dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
 
-                # OpenAL dylibs
-                useopenal = self.args['openal'].lower()
-                print(f"debug: openal={useopenal}")
-                if useopenal == 'on':
-                    for libfile in (
-                                "libopenal.dylib",
-                                "libalut.dylib",
-                                ):
-                        print("debug: adding {} to dylibs for openal".format(path_optional(os.path.join(relpkgdir, libfile), libfile)))
-                        dylibs += path_optional(os.path.join(relpkgdir, libfile), libfile)
-
-                        oldpath = os.path.join("@rpath", libfile)
-                        self.run_command(
-                            ['install_name_tool', '-change', oldpath,
-                             '@executable_path/../Resources/%s' % libfile,
-                             executable])
-
                 print(f"debug: dylibs = {dylibs}")
 
                 # our apps
@@ -1695,115 +1557,32 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                     executable_path[app] = \
                         self.dst_path_of(os.path.join(app, "Contents", "MacOS"))
 
-                    # our apps dependencies on shared libs
-                    # for each app, for each dylib we collected in dylibs,
-                    # create a symlink to the real copy of the dylib.
-                    with self.prefix(dst=os.path.join(app, "Contents", "Resources")):
-                        for libfile in dylibs:
-                            self.relsymlinkf(os.path.join(libfile_parent, libfile))
-
                 # Dullahan helper apps go inside SLPlugin.app
                 with self.prefix(dst=os.path.join(
                     "SLPlugin.app", "Contents", "Frameworks")):
-
-                    frameworkname = 'Chromium Embedded Framework'
-
-                    # This code constructs a relative symlink from the
-                    # target framework folder back to the real CEF framework.
-                    # It needs to be relative so that the symlink still works when
-                    # (as is normal) the user moves the app bundle out of the DMG
-                    # and into the /Applications folder. Note we pass catch=False,
-                    # letting the uncaught exception terminate the process, since
-                    # without this symlink, Second Life web media can't possibly work.
-
-                    # It might seem simpler just to symlink Frameworks back to
-                    # the parent of Chromimum Embedded Framework.framework. But
-                    # that would create a symlink cycle, which breaks our
-                    # packaging step. So make a symlink from Chromium Embedded
-                    # Framework.framework to the directory of the same name, which
-                    # is NOT an ancestor of the symlink.
-
-                    # from SLPlugin.app/Contents/Frameworks/Chromium Embedded
-                    # Framework.framework back to
-                    # $viewer_app/Contents/Frameworks/Chromium Embedded Framework.framework
-                    SLPlugin_framework = self.relsymlinkf(CEF_framework, catch=False)
-
-                    # for all the multiple CEF/Dullahan (as of CEF 76) helper app bundles we need:
-                    for helper in (
-                        "DullahanHelper",
-                        "DullahanHelper (GPU)",
-                        "DullahanHelper (Renderer)",
-                        "DullahanHelper (Plugin)",
-                    ):
-                        # app is the directory name of the app bundle, with app/Contents/MacOS/helper as the executable
-                        app = helper + ".app"
-
-                        # copy DullahanHelper.app
-                        self.path2basename(relpkgdir, app)
-
-                        # and fix that up with a Frameworks/CEF symlink too
-                        with self.prefix(dst=os.path.join(
-                                app, 'Contents', 'Frameworks')):
-                            # from Dullahan Helper *.app/Contents/Frameworks/Chromium Embedded
-                            # Framework.framework back to
-                            # SLPlugin.app/Contents/Frameworks/Chromium Embedded Framework.framework
-                            # Since SLPlugin_framework is itself a
-                            # symlink, don't let relsymlinkf() resolve --
-                            # explicitly call relpath(symlink=True) and
-                            # create that symlink here.
-                            helper_framework = \
-                            self.symlinkf(self.relpath(SLPlugin_framework, symlink=True), catch=False)
-
-                        # change_command includes install_name_tool, the
-                        # -change subcommand and the old framework rpath
-                        # stamped into the executable. To use it with
-                        # run_command(), we must still append the new
-                        # framework path and the pathname of the
-                        # executable to change.
-                        change_command = [
-                            'install_name_tool', '-change',
-                            '@rpath/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework']
-
-                        with self.prefix(dst=os.path.join(
-                                app, 'Contents', 'MacOS')):
-                            # Now self.get_dst_prefix() is, at runtime,
-                            # @executable_path. Locate the helper app
-                            # framework (which is a symlink) from here.
-                            newpath = os.path.join(
-                                '@executable_path',
-                                    self.relpath(helper_framework, symlink=True),
-                                frameworkname)
-                                # and restamp the Dullahan Helper executable itself
-                            self.run_command(
-                                change_command +
-                                    [newpath, self.dst_path_of(helper)])
-
-                # SLPlugin plugins
-                with self.prefix(dst="llplugin"):
-                    dylibexecutable = 'media_plugin_cef.dylib'
+                    # copy CEF plugin
                     self.path2basename("../media_plugins/cef/" + self.args['configuration'],
-                                       dylibexecutable)
+                                       "media_plugin_cef.dylib")
 
-                    # copy LibVLC plugin itself
-                    dylibexecutable = 'media_plugin_libvlc.dylib'
-                    self.path2basename("../media_plugins/libvlc/" + self.args['configuration'], dylibexecutable)
-                    # add @rpath for the correct LibVLC subfolder
-                    self.run_command(['install_name_tool', '-add_rpath', '@loader_path/lib', self.dst_path_of(dylibexecutable)])
+                    # copy LibVLC plugin
+                    self.path2basename("../media_plugins/libvlc/" + self.args['configuration'],
+                                       "media_plugin_libvlc.dylib")
 
-                    # copy LibVLC dynamic libraries
-                    with self.prefix(src=os.path.join(self.args['build'], os.pardir, 'packages', 'lib', 'release' ), dst="lib"):
+                    # CEF framework and vlc libraries goes inside Contents/Frameworks.
+                    with self.prefix(src=os.path.join(pkgdir, 'lib', 'release')):
+                        self.path("Chromium Embedded Framework.framework")
+                        self.path("DullahanHelper.app")
+                        self.path("DullahanHelper (Alerts).app")
+                        self.path("DullahanHelper (GPU).app")
+                        self.path("DullahanHelper (Renderer).app")
+                        self.path("DullahanHelper (Plugin).app")
+
+                        # Copy libvlc
                         self.path( "libvlc*.dylib*" )
-
-                    # copy LibVLC plugins folder
-                    with self.prefix(src=os.path.join(self.args['build'], os.pardir, 'packages', 'lib', 'release', 'plugins' ), dst="lib"):
-                        self.path("*.dylib")
-                        self.path("plugins.dat")
-
-                # do this install_name_tool *after* media plugin is copied over
-                dylibexecutablepath = self.dst_path_of('llplugin/media_plugin_cef.dylib')
-                self.run_command_shell('install_name_tool -change '
-                                 '"@rpath/Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework" '
-                                 '"@executable_path/../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework" "%s"' % dylibexecutablepath)
+                        # copy LibVLC plugins folder
+                        with self.prefix(src='plugins', dst="plugins"):
+                            self.path( "*.dylib" )
+                            self.path( "plugins.dat" )
 
         # NOTE: the -S argument to strip causes it to keep enough info for
         # annotated backtraces (i.e. function names in the crash log).  'strip' with no
@@ -1922,109 +1701,129 @@ class Darwin_x86_64_Manifest(ViewerManifest):
                 if identity == '':
                     identity = 'Developer ID Application'
 
+                ad_hoc_sign = False
                 # Look for an environment variable set via build.sh when running in Team City.
                 try:
                     build_secrets_checkout = os.environ['build_secrets_checkout']
                 except KeyError:
-                    pass
-                else:
-                    # variable found so use it to unlock keychain followed by codesign
-                    home_path = os.environ['HOME']
-                    keychain_pwd_path = os.path.join(build_secrets_checkout,'code-signing-osx','password.txt')
-                    keychain_pwd = open(keychain_pwd_path).read().rstrip()
+                    ad_hoc_sign = True # A minimum of ad-hoc signing is a requirement for arm64 builds to behave correctly
+                    identity = '-' # Ad-hoc identity
+                finally:
+                    if not ad_hoc_sign:
+                        # variable found so use it to unlock keychain followed by codesign
+                        home_path = os.environ['HOME']
+                        keychain_pwd_path = os.path.join(build_secrets_checkout,'code-signing-osx','password.txt')
+                        keychain_pwd = open(keychain_pwd_path).read().rstrip()
 
-                    # Note: As of macOS Sierra, keychains are created with
-                    #       names postfixed with '-db' so for example, the SL
-                    #       Viewer keychain would by default be found in
-                    #       ~/Library/Keychains/viewer.keychain-db instead of
-                    #       just ~/Library/Keychains/viewer.keychain in
-                    #       earlier versions.
-                    #
-                    #       Because we have old OS files from previous
-                    #       versions of macOS on the build hosts, the
-                    #       configurations are different on each host. Some
-                    #       have viewer.keychain, some have viewer.keychain-db
-                    #       and some have both. As you can see in the line
-                    #       below, this script expects the Linden Developer
-                    #       cert/keys to be in viewer.keychain.
-                    #
-                    #       To correctly sign builds you need to make sure
-                    #       ~/Library/Keychains/viewer.keychain exists on the
-                    #       host and that it contains the correct cert/key. If
-                    #       a build host is set up with a clean version of
-                    #       macOS Sierra (or later) then you will need to
-                    #       change this line (and the one for 'codesign'
-                    #       command below) to point to right place or else
-                    #       pull in the cert/key into the default viewer
-                    #       keychain 'viewer.keychain-db' and export it to
-                    #       'viewer.keychain'
-                    viewer_keychain = os.path.join(home_path, 'Library',
-                                                   'Keychains', 'viewer.keychain')
-                    if not os.path.isfile( viewer_keychain ):
-                        viewer_keychain += "-db"
+                        # Note: As of macOS Sierra, keychains are created with
+                        #       names postfixed with '-db' so for example, the SL
+                        #       Viewer keychain would by default be found in
+                        #       ~/Library/Keychains/viewer.keychain-db instead of
+                        #       just ~/Library/Keychains/viewer.keychain in
+                        #       earlier versions.
+                        #
+                        #       Because we have old OS files from previous
+                        #       versions of macOS on the build hosts, the
+                        #       configurations are different on each host. Some
+                        #       have viewer.keychain, some have viewer.keychain-db
+                        #       and some have both. As you can see in the line
+                        #       below, this script expects the Linden Developer
+                        #       cert/keys to be in viewer.keychain.
+                        #
+                        #       To correctly sign builds you need to make sure
+                        #       ~/Library/Keychains/viewer.keychain exists on the
+                        #       host and that it contains the correct cert/key. If
+                        #       a build host is set up with a clean version of
+                        #       macOS Sierra (or later) then you will need to
+                        #       change this line (and the one for 'codesign'
+                        #       command below) to point to right place or else
+                        #       pull in the cert/key into the default viewer
+                        #       keychain 'viewer.keychain-db' and export it to
+                        #       'viewer.keychain'
+                        viewer_keychain = os.path.join(home_path, 'Library',
+                                                       'Keychains', 'viewer.keychain')
+                        if not os.path.isfile( viewer_keychain ):
+                            viewer_keychain += "-db"
 
-                    if not os.path.isfile( viewer_keychain ):
-                        raise "No keychain named viewer found"
-                    
-                    self.run_command(['security', 'unlock-keychain',
-                                      '-p', keychain_pwd, viewer_keychain])
-                    sign_retry_wait=15
-                    resources = app_in_dmg + "/Contents/Resources/"
-                    plain_sign = glob.glob(resources + "llplugin/*.dylib")
+                        if not os.path.isfile( viewer_keychain ):
+                            raise "No keychain named viewer found"
 
-                    # <FS:ND> Even though we got some dylibs in Resources signed by LL, we also got some there that are *NOT*
-                    # At least: fmod, growl, GLOD
-                    # We could selectively sign those, or repackage them and then sign them. For an easy clean sweet we just resign them al
-                    plain_sign += glob.glob(resources + "*.dylib")
-                    plain_sign += glob.glob(resources + "llplugin/lib/*.dylib")
-                    plain_sign += glob.glob( app_in_dmg + "/Contents/Frameworks/Chromium Embedded Framework.framework/Libraries/*.dylib" )
+                        self.run_command(['security', 'unlock-keychain',
+                                          '-p', keychain_pwd, viewer_keychain])
 
-                    deep_sign = [
-                        # <FS:ND> Firestorm does not ship SLVersionChecker
-                        #resources + "updater/SLVersionChecker",
-                        resources + "SLPlugin.app/Contents/MacOS/SLPlugin",
-                        resources + "SLVoice",
-                        app_in_dmg,
-                        ]
-                    for attempt in range(3):
-                        if attempt: # second or subsequent iteration
-                            print("codesign failed, waiting {:d} seconds before retrying".format(sign_retry_wait),
-                                  file=sys.stderr)
-                            time.sleep(sign_retry_wait)
-                            sign_retry_wait*=2
+                    with tempfile.TemporaryDirectory() as tmpdir:
+                        tmp_app_path = os.path.join(tmpdir, self.app_name() + ".app")
+                        print("Copying app to temporary folder for signing:", tmp_app_path)
+                        subprocess.run(['ditto', app_in_dmg, tmp_app_path], check=True)
 
-                        try:
-                            # Note: See blurb above about names of keychains
-                            for signee in plain_sign:
-                                self.run_command(
-                                    ['codesign',
-                                     '--force',
-                                     '--timestamp',
-                                     '--keychain', viewer_keychain,
-                                     '--sign', identity,
-                                     signee])
-                            for signee in deep_sign:
-                                self.run_command(
-                                    ['codesign',
-                                     '--verbose',
-                                     '--deep',
-                                     '--force',
-                                     '--entitlements', self.src_path_of("slplugin.entitlements"),
-                                     '--options', 'runtime',
-                                     '--keychain', viewer_keychain,
-                                     '--sign', identity,
-                                     signee])
-                            break # if no exception was raised, the codesign worked
-                        except ManifestError as err:
-                            # 'err' goes out of scope
-                            sign_failed = err
-                    else:
-                        print("Maximum codesign attempts exceeded; giving up", file=sys.stderr)
-                        raise sign_failed
-                    # <FS:ND> This fails sometimes and works other times. Even when notarization (down below) is a success
-                    # Remove it for now and investigate after we did notarize  a few times
-                    #self.run_command(['spctl', '-a', '-texec', '-vvvv', app_in_dmg])
-                    self.run_command([self.src_path_of("installers/darwin/apple-notarize.sh"), app_in_dmg])
+                        sign_retry_wait=15
+                        resources = tmp_app_path + "/Contents/Resources/"
+                        plain_sign = glob.glob(resources + "llplugin/*.dylib")
+
+                        # <FS:ND> Even though we got some dylibs in Resources signed by LL, we also got some there that are *NOT*
+                        # At least: fmod, growl, GLOD
+                        # We could selectively sign those, or repackage them and then sign them. For an easy clean sweet we just resign them al
+                        plain_sign += glob.glob(resources + "*.dylib")
+                        plain_sign += glob.glob(resources + "llplugin/lib/*.dylib")
+                        plain_sign += glob.glob(resources + "SLPlugin.app/Contents/Frameworks/Chromium Embedded Framework.framework/Libraries/*.dylib")
+
+                        deep_sign = [
+                            # <FS:ND> Firestorm does not ship SLVersionChecker
+                            #resources + "updater/SLVersionChecker",
+                            resources + "SLPlugin.app/Contents/MacOS/SLPlugin",
+                            resources + "SLVoice",
+                            tmp_app_path,
+                            ]
+                        for attempt in range(3):
+                            if attempt: # second or subsequent iteration
+                                print("codesign failed, waiting {:d} seconds before retrying".format(sign_retry_wait),
+                                      file=sys.stderr)
+                                time.sleep(sign_retry_wait)
+                                sign_retry_wait*=2
+
+                            try:
+                                # Note: See blurb above about names of keychains
+                                for signee in plain_sign:
+                                    args = [
+                                        'codesign',
+                                        '--force',
+                                        '--timestamp'
+                                    ]
+                                    if not ad_hoc_sign:
+                                        args += ['--keychain', viewer_keychain]
+                                    args += ['--sign', identity, signee]
+                                    self.run_command(args)
+                                for signee in deep_sign:
+                                    args = [
+                                        'codesign',
+                                        '--verbose',
+                                        '--deep',
+                                        '--force',
+                                        '--entitlements', self.src_path_of("slplugin.entitlements"),
+                                        '--options', 'runtime'
+                                    ]
+                                    if not ad_hoc_sign:
+                                        args += ['--keychain', viewer_keychain]
+                                    args += ['--sign', identity, signee]
+                                    self.run_command(args)
+                                break # if no exception was raised, the codesign worked
+                            except ManifestError as err:
+                                # 'err' goes out of scope
+                                sign_failed = err
+                        else:
+                            print("Maximum codesign attempts exceeded; giving up", file=sys.stderr)
+                            raise sign_failed
+
+                        # Signing succeeded, now delete the original app in the mounted sparse image and notarize if needed
+                        shutil.rmtree(app_in_dmg)
+                        if not ad_hoc_sign:
+                            # <FS:ND> This fails sometimes and works other times. Even when notarization (down below) is a success
+                            # Remove it for now and investigate after we did notarize  a few times
+                            #self.run_command(['spctl', '-a', '-texec', '-vvvv', app_in_dmg])
+                            self.run_command([self.src_path_of("installers/darwin/apple-notarize.sh"), tmp_app_path])
+
+                        print("Copying signed app back into mounted sparse image")
+                        subprocess.run(['ditto', tmp_app_path, app_in_dmg], check=True)
 
         finally:
             # Unmount the image even if exceptions from any of the above 
@@ -2109,25 +1908,23 @@ class LinuxManifest(ViewerManifest):
         # CEF files 
         with self.prefix(src=os.path.join(pkgdir, 'lib', 'release'), dst="lib"):
             self.path( "libcef.so" )
-            self.path( "libEGL.so" )
-            self.path( "libGLESv2.so" )
-            self.path( "libvk_swiftshader.so" )
-            self.path_optional( "libminigbm.so" )
+            self.path( "libEGL*" )
+            self.path( "libvulkan*" )
+            self.path( "libvk_swiftshader*" )
+            self.path( "libGLESv2*" )
 
         with self.prefix(src=os.path.join(pkgdir, 'bin', 'release'), dst="bin"):
             self.path( "chrome-sandbox" )
             self.path( "dullahan_host" )
-            self.path( "snapshot_blob.bin" )
-            self.path( "v8_context_snapshot.bin" )
-        with self.prefix(src=os.path.join(pkgdir, 'bin', 'release'), dst="lib"):
-            self.path( "snapshot_blob.bin" )
-            self.path( "v8_context_snapshot.bin" )
 
-        with self.prefix(src=os.path.join(pkgdir, 'resources'), dst="bin"):
-            self.path( "chrome_100_percent.pak" )
-            self.path( "chrome_200_percent.pak" )
-            self.path( "resources.pak" )
-            self.path( "icudtl.dat" )
+        with self.prefix(src=os.path.join(pkgdir, 'lib', 'release'), dst="bin"):
+            self.path( "v8_context_snapshot.bin" )
+            self.path( "vk_swiftshader_icd.json")
+
+        with self.prefix(src=os.path.join(pkgdir, 'lib', 'release'), dst="lib"):
+            self.path( "v8_context_snapshot.bin" )
+            self.path( "vk_swiftshader_icd.json")
+
         with self.prefix(src=os.path.join(pkgdir, 'resources'), dst="lib"):
             self.path( "chrome_100_percent.pak" )
             self.path( "chrome_200_percent.pak" )
@@ -2135,63 +1932,7 @@ class LinuxManifest(ViewerManifest):
             self.path( "icudtl.dat" )
 
         with self.prefix(src=os.path.join(pkgdir, 'resources', 'locales'), dst=os.path.join('lib', 'locales')):
-            self.path("am.pak")
-            self.path("ar.pak")
-            self.path("bg.pak")
-            self.path("bn.pak")
-            self.path("ca.pak")
-            self.path("cs.pak")
-            self.path("da.pak")
-            self.path("de.pak")
-            self.path("el.pak")
-            self.path("en-GB.pak")
-            self.path("en-US.pak")
-            self.path("es-419.pak")
-            self.path("es.pak")
-            self.path("et.pak")
-            self.path("fa.pak")
-            self.path("fi.pak")
-            self.path("fil.pak")
-            self.path("fr.pak")
-            self.path("gu.pak")
-            self.path("he.pak")
-            self.path("hi.pak")
-            self.path("hr.pak")
-            self.path("hu.pak")
-            self.path("id.pak")
-            self.path("it.pak")
-            self.path("ja.pak")
-            self.path("kn.pak")
-            self.path("ko.pak")
-            self.path("lt.pak")
-            self.path("lv.pak")
-            self.path("ml.pak")
-            self.path("mr.pak")
-            self.path("ms.pak")
-            self.path("nb.pak")
-            self.path("nl.pak")
-            self.path("pl.pak")
-            self.path("pt-BR.pak")
-            self.path("pt-PT.pak")
-            self.path("ro.pak")
-            self.path("ru.pak")
-            self.path("sk.pak")
-            self.path("sl.pak")
-            self.path("sr.pak")
-            self.path("sv.pak")
-            self.path("sw.pak")
-            self.path("ta.pak")
-            self.path("te.pak")
-            self.path("th.pak")
-            self.path("tr.pak")
-            self.path("uk.pak")
-            self.path("vi.pak")
-            self.path("zh-CN.pak")
-            self.path("zh-TW.pak")
-
-        # llcommon
-        #if not self.path("../llcommon/libllcommon.so", "lib/libllcommon.so"):
-        #    print("Skipping llcommon.so (assuming llcommon was linked statically))"
+            self.path("*.pak")
 
         self.path("featuretable_linux.txt")
         self.path("cube.dae")
