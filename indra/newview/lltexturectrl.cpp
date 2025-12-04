@@ -1081,6 +1081,8 @@ void LLFloaterTexturePicker::onBtnSetToDefault(void* userdata)
     {
         self->setImageID( self->getDefaultImageAssetID() );
         self->setTentative(false);
+        // Deselect in case inventory has a selected item with the same id
+        self->mInventoryPanel->getRootFolder()->clearSelection();
     }
     self->commitIfImmediateSet();
 }
@@ -1092,6 +1094,8 @@ void LLFloaterTexturePicker::onBtnBlank(void* userdata)
     self->setCanApply(true, true);
     self->setImageID( self->getBlankImageAssetID() );
     self->setTentative(false);
+    // Deselect in case inventory has a selected item with the same id
+    self->mInventoryPanel->getRootFolder()->clearSelection();
     self->commitIfImmediateSet();
 }
 
@@ -1113,6 +1117,8 @@ void LLFloaterTexturePicker::onBtnNone(void* userdata)
     self->setCanApply(true, true);
     self->setImageID( LLUUID::null );
     self->setTentative(false);
+    // Deselect in case inventory has a selected item with null id
+    self->mInventoryPanel->getRootFolder()->clearSelection();
     self->commitIfImmediateSet();
 }
 
@@ -1860,9 +1866,17 @@ LLTextureCtrl::LLTextureCtrl(const LLTextureCtrl::Params& p)
     mIsPreviewDisabled(false)
 {
     mCaptionHeight = p.show_caption ? BTN_HEIGHT_SMALL : 0;     // <FS:Zi> leave some room underneath the image for the caption
-    // Default of defaults is white image for diff tex
-    //
-    setBlankImageAssetID(IMG_WHITE);
+
+    if (mInventoryPickType == PICK_MATERIAL)
+    {
+        setBlankImageAssetID(BLANK_MATERIAL_ASSET_ID);
+    }
+    else
+    {
+        // Default of defaults is white image for diff tex
+        //
+        setBlankImageAssetID(IMG_WHITE);
+    }
 
     setAllowNoTexture(p.allow_no_texture);
     setCanApplyImmediately(p.can_apply_immediately);

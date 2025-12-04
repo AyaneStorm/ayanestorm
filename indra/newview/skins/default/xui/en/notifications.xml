@@ -1718,7 +1718,7 @@ Would you like to shutdown the viewer and launch it manually again in order to a
    icon="alertmodal.tga"
    name="ChangeLanguage"
    type="alertmodal">
-The selected language will be applied after restarting [APP_NAME].
+The selected language or time format will be applied after restarting [APP_NAME].
   </notification>
 
   <notification
@@ -2338,7 +2338,7 @@ Could not open uploaded sound file for reading:
 Model upload is not yet available on Apple Silicon, but will be supported in an upcoming release.
 
 Workaround: Right-click the [APP_NAME] app in Finder, select
-"Get Info", then check "Open using Rosetta"
+&apos;Get Info&apos;, then check &apos;Open using Rosetta&apos;
   <tag>fail</tag>
   </notification>
 
@@ -6879,6 +6879,22 @@ Do you want to replace it with the selected object?
    name="TooManyWearables"
    type="alertmodal">
     You can't wear a folder containing more than [AMOUNT] items.  You can change this limit in Advanced &gt; Show Debug Settings &gt; WearFolderLimit.
+    <tag>fail</tag>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="CantLinkNotecard"
+   type="alertmodal">
+    You must save the notecard before creating a link to it.
+    <tag>fail</tag>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="CantLinkMaterial"
+   type="alertmodal">
+    You must save the material before creating a link to it.
     <tag>fail</tag>
   </notification>
 
@@ -14130,6 +14146,19 @@ the region &quot;[REGION]&quot;?
   </notification>
   <notification
    icon="alertmodal.tga"
+   name="ConfirmGlobalOnlineStatusToggle"
+   type="alertmodal">
+Are you sure you want to change your online status visibility for all friends at once?
+
+Due to server load, this mass change can take a while to become effective and may cause temporary issues for some friends seeing your online status.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="OK"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
    name="GlobalOnlineStatusToggle"
    type="alertmodal">
 Due to server load, mass toggling online status visibility can take a while to become effective. Please be patient.
@@ -14799,7 +14828,7 @@ https://wiki.firestormviewer.org/antivirus_whitelisting
    name="FSLargeOutfitsWarningInThisSession"
    type="alertmodal">
     <unique/>
-    A large number of outfits were detected: [AMOUNT]. This may cause viewer hangs or disconnects. Consider reducing the number of outfits for better performance (below [MAX]).
+    A large number of outfits were detected: [AMOUNT]. This may cause viewer hangs or disconnects. Consider reducing the number of outfits for better performance (below [MAX]). THIS IS ONLY A SUGGESTION - if your computer is functioning normally, you can safely ignore it.
     <usetemplate
      ignoretext="Outfit count warning"
      name="okignore"
