@@ -2531,10 +2531,14 @@ uuid_vec_t FSFloaterPoser::getNearbyAvatarsAndAnimeshes() const
         if (isMuted)
             continue;
 
+// <AS:Chanayane> Allow posing other avatars
+/*
         bool isSelfOrCtrl = avatar->isControlAvatar() || avatar->isSelf();
 
         if (!isSelfOrCtrl)
             continue;
+*/
+// <//AS:Chanayane>
 
         avatar_ids.emplace_back(character->getID());
     }
@@ -2549,7 +2553,10 @@ bool FSFloaterPoser::avatarIsNearbyMe(LLCharacter* character) const
 
     LLVector3 separationVector = character->getCharacterPosition() - gAgentAvatarp->getCharacterPosition();
 
-    return separationVector.magVec() < 50.f;
+// <AS:Chanayane> increase distance for near avatars
+    //return separationVector.magVec() < 50.f;
+    return separationVector.magVec() < 256.f;
+// <//AS:Chanayane>
 }
 
 uuid_vec_t FSFloaterPoser::getCurrentlyListedAvatarsAndAnimeshes() const
@@ -2627,8 +2634,12 @@ void FSFloaterPoser::onAvatarsRefresh()
         if (LLMuteList::getInstance()->isMuted(uuid))
             continue;
 
+// <AS:Chanayane> Allow posing other avatars
+        /*
         if (!avatar->isSelf())
             continue;
+        */
+// <//AS:Chanayane>
 
         LLSD row;
         row["columns"][COL_ICON]["column"] = "icon";

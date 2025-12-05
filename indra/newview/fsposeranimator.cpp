@@ -658,7 +658,7 @@ LLVector3 FSPoserAnimator::getFullJointRotation(LLVOAvatar* avatar, const FSPose
     if (!jointPose)
         return vec3;
  
-    return translateRotationFromQuaternion(translation, negation, jointPose->getTargetRotation());
+    return translateRotationFromQuaternion(jointPose, translation, negation, jointPose->getTargetRotation());
 }
 // </AS:chanayane>
 
