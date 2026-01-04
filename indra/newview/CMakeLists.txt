@@ -114,6 +114,7 @@ set(viewer_SOURCE_FILES
     fsdroptarget.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
+    fsfavoritegroups.cpp
     fsfloaterassetblacklist.cpp
     fsfloateravatarrendersettings.cpp
     fsfloaterblocklist.cpp
@@ -149,6 +150,7 @@ set(viewer_SOURCE_FILES
     fslslpreproc.cpp
     fslslpreprocviewer.cpp
     fsmaniprotatejoint.cpp
+    fsmaniptranslatejoint.cpp
     fsmoneytracker.cpp
     fsnamelistavatarmenu.cpp
     fsnearbychatbarlistener.cpp
@@ -186,6 +188,8 @@ set(viewer_SOURCE_FILES
     lfsimfeaturehandler.cpp
     llflickrconnect.cpp
     llfloaterflickr.cpp
+    omnifilter.cpp
+    omnifilterengine.cpp
     fsprimfeedconnect.cpp
     fsfloaterprimfeed.cpp
     llpanelopenregionsettings.cpp
@@ -957,6 +961,7 @@ set(viewer_HEADER_FILES
     fsdroptarget.h
     fsexportperms.h
     fsfloateraddtocontactset.h
+    fsfavoritegroups.h
     fsfloaterassetblacklist.h
     fsfloateravatarrendersettings.h
     fsfloaterblocklist.h
@@ -994,6 +999,7 @@ set(viewer_HEADER_FILES
     fslslpreprocviewer.h
     fsmoneytracker.h
     fsmaniprotatejoint.h
+    fsmaniptranslatejoint.h
     fsnamelistavatarmenu.h
     fsnearbychatbarlistener.h
     fsnearbychatcontrol.h
@@ -1035,6 +1041,8 @@ set(viewer_HEADER_FILES
     fsfloaterprimfeed.h
     # <FS:Ansariel> [Legacy Bake]
     llagentwearablesfetch.h
+    omnifilter.h
+    omnifilterengine.h
     vjlocalmesh.h
     vjfloaterlocalmesh.h
     vjlocalmeshimportdae.h
@@ -2502,11 +2510,6 @@ elseif (DARWIN)
         PROPERTIES
         RESOURCE Firestorm.xib
         LINK_FLAGS_RELEASE "${LINK_FLAGS_RELEASE} -Xlinker -dead_strip"
-        #<FS:TS> Force the SDK version in the linked executable to be 10.12. This will fool
-        # macOS into using the pre-Mojave display system, avoiding the blurry display that
-        # otherwise occurs when upscaling the viewer to Retina resolution levels.
-        LINK_FLAGS_RELEASE "${LINK_FLAGS_RELEASE} -Xlinker -platform_version -Xlinker macos -Xlinker ${CMAKE_OSX_DEPLOYMENT_TARGET} -Xlinker 10.12"
-
         )
     if(HAVOK)
       set_target_properties(${VIEWER_BINARY_NAME}
@@ -2775,7 +2778,7 @@ if (DARWIN)
   set(MACOSX_BUNDLE_BUNDLE_NAME "AyaneStorm")
   set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}")
   set(MACOSX_BUNDLE_BUNDLE_VERSION "${VIEWER_SHORT_VERSION}${VIEWER_MACOSX_PHASE}${VIEWER_REVISION}")
-  set(MACOSX_BUNDLE_COPYRIGHT "Copyright 2010-2025 The Phoenix Firestorm Project, Inc.")
+  set(MACOSX_BUNDLE_COPYRIGHT "Copyright 2010-2026 The Phoenix Firestorm Project, Inc.")
   set(MACOSX_BUNDLE_NSMAIN_NIB_FILE "Firestorm.nib")
   set(MACOSX_BUNDLE_NSPRINCIPAL_CLASS "LLApplication")
 
