@@ -96,6 +96,7 @@ else (FS_PF_USER_AGENT)
     message(STATUS "Compiling with standard Primfeed user-agent")
 endif (FS_PF_USER_AGENT)
 # </Beq>
+
 # <FS:Ansariel> [AVX Optimization]
 option(USE_AVX_OPTIMIZATION "AVX optimization support" OFF)
 option(USE_AVX2_OPTIMIZATION "AVX2 optimization support" OFF)

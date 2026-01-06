@@ -31,6 +31,7 @@
 
 #include "fscommon.h"
 #include "fscontactsfriendsmenu.h"
+#include "fsfavoritegroups.h"
 #include "fsfloaterimcontainer.h"
 #include "fsscrolllistctrl.h"
 #include "llagent.h"
@@ -147,6 +148,7 @@ bool FSFloaterContacts::postBuild()
     mGroupsChatBtn     = mGroupsTab->getChild<LLButton>("chat_btn");
     mGroupsInfoBtn     = mGroupsTab->getChild<LLButton>("info_btn");
     mGroupsActivateBtn = mGroupsTab->getChild<LLButton>("activate_btn");
+    mGroupsFavoriteBtn = mGroupsTab->getChild<LLButton>("favorite_btn");
     mGroupsLeaveBtn    = mGroupsTab->getChild<LLButton>("leave_btn");
     mGroupsCreateBtn   = mGroupsTab->getChild<LLButton>("create_btn");
     mGroupsSearchBtn   = mGroupsTab->getChild<LLButton>("search_btn");
@@ -156,6 +158,7 @@ bool FSFloaterContacts::postBuild()
     mGroupsChatBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupChatButtonClicked, this));
     mGroupsInfoBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupInfoButtonClicked, this));
     mGroupsActivateBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupActivateButtonClicked, this));
+    mGroupsFavoriteBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupFavoriteButtonClicked, this));
     mGroupsLeaveBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupLeaveButtonClicked, this));
     mGroupsCreateBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupCreateButtonClicked, this));
     mGroupsSearchBtn->setCommitCallback(boost::bind(&FSFloaterContacts::onGroupSearchButtonClicked, this));
@@ -247,6 +250,12 @@ void FSFloaterContacts::updateGroupButtons()
     mGroupsLeaveBtn->setEnabled(isGroup);
     mGroupsCreateBtn->setEnabled((!gMaxAgentGroups) || (gAgent.mGroups.size() < gMaxAgentGroups));
     mGroupsInviteBtn->setEnabled(isGroup && gAgent.hasPowerInGroup(groupId, GP_MEMBER_INVITE));
+    mGroupsFavoriteBtn->setEnabled(isGroup);
+    if (isGroup)
+    {
+        bool is_favorite = FSFavoriteGroups::getInstance()->isFavorite(groupId);
+        mGroupsFavoriteBtn->setLabel(is_favorite ? getString("unfavorite_label") : getString("favorite_label"));
+    }
 }
 
 void FSFloaterContacts::onOpen(const LLSD& key)
@@ -271,7 +280,7 @@ void FSFloaterContacts::onOpen(const LLSD& key)
     LLFloater::onOpen(key);
 }
 
-void FSFloaterContacts::openTab(const std::string& name)
+void FSFloaterContacts::openTab(std::string_view name)
 {
     if (name == "friends")
     {
@@ -291,8 +300,7 @@ void FSFloaterContacts::openTab(const std::string& name)
         return;
     }
 
-    FSFloaterIMContainer* floater_container = dynamic_cast<FSFloaterIMContainer*>(getHost());
-    if (floater_container)
+    if (auto floater_container = dynamic_cast<FSFloaterIMContainer*>(getHost()))
     {
         floater_container->setVisible(true);
         floater_container->showFloater(this);
@@ -391,7 +399,7 @@ void FSFloaterContacts::onAvatarPicked(const uuid_vec_t& ids, const std::vector<
 {
     if (!names.empty() && !ids.empty())
     {
-        LLAvatarActions::requestFriendshipDialog(ids[0], names[0].getCompleteName());
+        LLAvatarActions::requestFriendshipDialog(ids.front(), names.front().getCompleteName());
     }
 }
 
@@ -405,8 +413,7 @@ void FSFloaterContacts::onAddFriendWizButtonClicked(LLUICtrl* ctrl)
         picker->setOkBtnEnableCb(boost::bind(&FSFloaterContacts::isItemsFreeOfFriends, this, _1));
     }
 
-    LLFloater* root_floater = gFloaterView->getParentFloater(this);
-    if (root_floater)
+    if (auto root_floater = gFloaterView->getParentFloater(this))
     {
         root_floater->addDependentFloater(picker);
     }
@@ -432,6 +439,15 @@ void FSFloaterContacts::onGroupInfoButtonClicked()
 void FSFloaterContacts::onGroupActivateButtonClicked()
 {
     LLGroupActions::activate(mGroupList->getSelectedUUID());
+}
+
+void FSFloaterContacts::onGroupFavoriteButtonClicked()
+{
+    if (LLUUID group_id = getCurrentItemID(); group_id.notNull())
+    {
+        FSFavoriteGroups::getInstance()->toggleFavorite(group_id);
+        updateGroupButtons();
+    }
 }
 
 void FSFloaterContacts::onGroupLeaveButtonClicked()
@@ -474,7 +490,7 @@ std::string FSFloaterContacts::getActiveTabName() const
     return mTabContainer->getCurrentPanel()->getName();
 }
 
-LLPanel* FSFloaterContacts::getPanelByName(const std::string& panel_name)
+LLPanel* FSFloaterContacts::getPanelByName(std::string_view panel_name)
 {
     return mTabContainer->getPanelByName(panel_name);
 }
@@ -518,10 +534,9 @@ void FSFloaterContacts::getCurrentItemIDs(uuid_vec_t& selected_uuids) const
 
 void FSFloaterContacts::getCurrentFriendItemIDs(uuid_vec_t& selected_uuids) const
 {
-    listitem_vec_t selected = mFriendsList->getAllSelected();
-    for (listitem_vec_t::iterator itr = selected.begin(); itr != selected.end(); ++itr)
+    for (auto list_item : mFriendsList->getAllSelected())
     {
-        selected_uuids.push_back((*itr)->getUUID());
+        selected_uuids.push_back(list_item->getUUID());
     }
 }
 
@@ -786,7 +801,7 @@ void FSFloaterContacts::refreshRightsChangeList()
     bool can_offer_teleport = num_selected >= 1;
     bool selected_friends_online = true;
 
-    const LLRelationship* friend_status = NULL;
+    const LLRelationship* friend_status = nullptr;
     for (const auto& id : friends)
     {
         friend_status = LLAvatarTracker::instance().getBuddyInfo(id);
@@ -1064,8 +1079,8 @@ void FSFloaterContacts::sendRightsGrant(rights_map_t& ids)
     // setup message header
     msg->newMessageFast(_PREHASH_GrantUserRights);
     msg->nextBlockFast(_PREHASH_AgentData);
-    msg->addUUID(_PREHASH_AgentID, gAgent.getID());
-    msg->addUUID(_PREHASH_SessionID, gAgent.getSessionID());
+    msg->addUUID(_PREHASH_AgentID, gAgentID);
+    msg->addUUID(_PREHASH_SessionID, gAgentSessionID);
 
     for (const auto& [id, rights] : ids)
     {
@@ -1078,7 +1093,7 @@ void FSFloaterContacts::sendRightsGrant(rights_map_t& ids)
     gAgent.sendReliableMessage();
 }
 
-void FSFloaterContacts::childShowTab(const std::string& id, const std::string& tabname)
+void FSFloaterContacts::childShowTab(std::string_view id, std::string_view tabname)
 {
     if (LLTabContainer* child = findChild<LLTabContainer>(id))
     {

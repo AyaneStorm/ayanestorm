@@ -25,7 +25,6 @@
  */
 
 #include <deque>
-#include <boost/algorithm/string.hpp>
 #include "fsposingmotion.h"
 #include "llcharacter.h"
 
@@ -47,59 +46,67 @@ FSJointPose::FSJointPose(LLJoint* joint, U32 usage, bool isCollisionVolume)
 
     mJointName         = joint->getName();
     mIsCollisionVolume = isCollisionVolume;
+    mJointNumber       = joint->getJointNum();
 
-    mCurrentState   = FSJointState(joint);
+    mCurrentState = FSJointState(joint);
 }
 
 void FSJointPose::setPublicPosition(const LLVector3& pos)
 {
-    addStateToUndo(FSJointState(mCurrentState));
+    addStateToUndo(mCurrentState);
     mCurrentState.mPosition.set(pos);
-    mCurrentState.mLastChangeWasRotational = false;
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 }
 
-void FSJointPose::setPublicRotation(bool zeroBase, const LLQuaternion& rot)
+void FSJointPose::setPublicRotation(bool zeroBase, E_PoserChangeType changeType, const LLQuaternion& rot)
 {
-    addStateToUndo(FSJointState(mCurrentState));
+    addStateToUndo(mCurrentState);
 
     if (zeroBase)
         zeroBaseRotation(true);
+    else
+        mCurrentState.mUserSpecifiedBaseZero = POSER_CHANGE_DEFAULT;
 
     mCurrentState.mRotation.set(rot);
-    mCurrentState.mLastChangeWasRotational = true;
+    mCurrentState.mPoserChangeType = changeType;
 }
 
 void FSJointPose::setPublicScale(const LLVector3& scale)
 {
-    addStateToUndo(FSJointState(mCurrentState));
+    addStateToUndo(mCurrentState);
     mCurrentState.mScale.set(scale);
-    mCurrentState.mLastChangeWasRotational = false;
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 }
 
-bool FSJointPose::undoLastChange()
+E_PoserChangeType FSJointPose::undoLastChange()
 {
-    bool changeType = mCurrentState.mLastChangeWasRotational;
-    mCurrentState   = undoLastStateChange(FSJointState(mCurrentState));
+    E_PoserChangeType changeType = mCurrentState.mPoserChangeType;
+    mCurrentState   = undoLastStateChange(mCurrentState);
 
     return changeType;
 }
 
-void FSJointPose::redoLastChange()
+E_PoserChangeType FSJointPose::redoLastChange()
 {
-    mCurrentState = redoLastStateChange(FSJointState(mCurrentState));
+    mCurrentState = redoLastStateChange(mCurrentState);
+
+    return mCurrentState.mPoserChangeType;
 }
 
 void FSJointPose::resetJoint()
 {
-    addStateToUndo(FSJointState(mCurrentState));
+    addStateToUndo(mCurrentState);
     mCurrentState.resetJoint();
-    mCurrentState.mLastChangeWasRotational = true;
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 }
 
-void FSJointPose::addStateToUndo(FSJointState stateToAddToUndo)
+void FSJointPose::addStateToUndo(const FSJointState& stateToAddToUndo)
 {
-    auto timeIntervalSinceLastChange = std::chrono::system_clock::now() - mTimeLastUpdatedCurrentState;
-    mTimeLastUpdatedCurrentState     = std::chrono::system_clock::now();
+    mModifiedThisSession = true;
+
+    auto now = std::chrono::system_clock::now();
+    auto timeIntervalSinceLastChange = now - mTimeLastUpdatedCurrentState;
+    mTimeLastUpdatedCurrentState     = now;
 
     if (timeIntervalSinceLastChange < UndoUpdateInterval)
         return;
@@ -119,7 +126,7 @@ void FSJointPose::addStateToUndo(FSJointState stateToAddToUndo)
         mLastSetJointStates.pop_back();
 }
 
-FSJointPose::FSJointState FSJointPose::undoLastStateChange(FSJointState thingToSet)
+FSJointPose::FSJointState FSJointPose::undoLastStateChange(const FSJointState& thingToSet)
 {
     if (mLastSetJointStates.empty())
         return thingToSet;
@@ -133,7 +140,7 @@ FSJointPose::FSJointState FSJointPose::undoLastStateChange(FSJointState thingToS
     return mLastSetJointStates.at(mUndoneJointStatesIndex);
 }
 
-FSJointPose::FSJointState FSJointPose::redoLastStateChange(FSJointState thingToSet)
+FSJointPose::FSJointState FSJointPose::redoLastStateChange(const FSJointState& thingToSet)
 {
     if (mLastSetJointStates.empty())
         return thingToSet;
@@ -151,40 +158,41 @@ FSJointPose::FSJointState FSJointPose::redoLastStateChange(FSJointState thingToS
 
 void FSJointPose::recaptureJoint()
 {
+    LLJoint* joint = mJointState->getJoint();
+    if (!joint)
+        return;
+
+    addStateToUndo(mCurrentState);
+
     if (mIsCollisionVolume)
-        return;
+    {
+        mCurrentState.mPosition.clear();
+        mCurrentState.mScale.clear();
+    }
 
-    LLJoint* joint = mJointState->getJoint();
-    if (!joint)
-        return;
-
-    addStateToUndo(FSJointState(mCurrentState));
     mCurrentState = FSJointState(joint);
-    mCurrentState.mLastChangeWasRotational = true;
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 }
 
-LLQuaternion FSJointPose::recaptureJointAsDelta(bool zeroBase)
+LLQuaternion FSJointPose::updateJointAsDelta(bool zeroBase, const LLQuaternion& rotation, const LLVector3& position, const LLVector3& scale)
 {
-    LLJoint* joint = mJointState->getJoint();
-    if (!joint)
-        return LLQuaternion::DEFAULT;
+    addStateToUndo(mCurrentState);
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 
-    addStateToUndo(FSJointState(mCurrentState));
-    mCurrentState.mLastChangeWasRotational = true;
-    return mCurrentState.updateFromJoint(joint, zeroBase);
+    return mCurrentState.updateFromJointProperties(zeroBase, rotation, position, scale);
 }
 
-void FSJointPose::setBaseRotation(LLQuaternion rotation, LLJoint::JointPriority priority)
+void FSJointPose::setBaseRotation(const LLQuaternion& rotation, LLJoint::JointPriority priority)
 {
     mCurrentState.resetBaseRotation(rotation, priority);
 }
 
-void FSJointPose::setBasePosition(LLVector3 position, LLJoint::JointPriority priority)
+void FSJointPose::setBasePosition(const LLVector3& position, LLJoint::JointPriority priority)
 {
     mCurrentState.resetBasePosition(position, priority);
 }
 
-void FSJointPose::setBaseScale(LLVector3 scale, LLJoint::JointPriority priority)
+void FSJointPose::setBaseScale(const LLVector3& scale, LLJoint::JointPriority priority)
 {
     mCurrentState.resetBaseScale(scale, priority);
 }
@@ -225,7 +233,7 @@ void FSJointPose::cloneRotationFrom(FSJointPose* fromJoint)
 
     addStateToUndo(FSJointState(mCurrentState));
     mCurrentState.cloneRotationFrom(fromJoint->mCurrentState);
-    mCurrentState.mLastChangeWasRotational = true;
+    mCurrentState.mPoserChangeType = POSER_CHANGE_DEFAULT;
 }
 
 void FSJointPose::mirrorRotationFrom(FSJointPose* fromJoint)
@@ -247,6 +255,7 @@ void FSJointPose::reflectRotation()
     if (mIsCollisionVolume)
         return;
 
+    mModifiedThisSession = true;
     mCurrentState.reflectRotation();
 }
 

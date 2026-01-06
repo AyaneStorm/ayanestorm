@@ -1026,7 +1026,7 @@ void LLPanelProfileSecondLife::resetData()
 
     // Set default image and 1:1 dimensions for it
     // <FS:Ansariel> Retain texture picker for profile images
-    //mSecondLifePic->setValue("Generic_Person_Large");
+    //mSecondLifePic->setValue(LLUUID());
     mSecondLifePic->setImageAssetID(LLUUID::null);
     mImageId = LLUUID::null;
 
@@ -2601,6 +2601,11 @@ bool LLPanelProfileWeb::postBuild()
     mWebBrowser = getChild<LLMediaCtrl>("profile_html");
     mWebBrowser->addObserver(this);
     mWebBrowser->setHomePageUrl("about:blank");
+
+    // <FS:PP> Load cookies in the profile, in feed tab
+    mWebBrowser->setErrorPageURL(gSavedSettings.getString("GenericErrorPageURL"));
+    LLViewerMedia::getInstance()->getOpenIDCookie(mWebBrowser);
+    // </FS:PP>
 
     return true;
 }

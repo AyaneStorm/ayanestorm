@@ -5533,6 +5533,9 @@ Spróbuj załączyć ścieżkę do edytora w cytowaniu.
 	<string name="Command_Primfeed_Tooltip">
 		Publikuj bezpośrednio na swoim koncie Primfeed.
 	</string>
+	<string name="Command_Omnifilter_Label">
+		Wszystkofiltr
+	</string>
 	<string name="Command_360_Capture_Tooltip">
 		Uchwyć równoprostokątny obraz 360°
 	</string>
@@ -5718,6 +5721,9 @@ Spróbuj załączyć ścieżkę do edytora w cytowaniu.
 	</string>
 	<string name="Command_Beacons_Tooltip">
 		Pokaż emitery
+	</string>
+	<string name="Command_Omnifilter_Tooltip">
+		Edytuj reguły Wszystkofiltra
 	</string>
 	<string name="Toolbar_Bottom_Tooltip">
 		obecnie na Twoim dolnym pasku
@@ -6585,17 +6591,20 @@ Twoja aktualna pozycja: [AVATAR_POS]
 	<string name="GroupNoticesPanelDateString">
 		[day,datetime,local].[mthnum,datetime,local].[year,datetime,local], [hour,datetime,local]:[min,datetime,local]:[second,datetime,local]
 	</string>
+	<string name="GroupNoticesPanelDateStringAMPM">
+		[day,datetime,local].[mthnum,datetime,local].[year,datetime,local], [hour12,datetime,local]:[min,datetime,local]:[second,datetime,local] [timezone,datetime,local]
+	</string>
 	<string name="GroupNoticesToastDateString">
 		[wkday,datetime,slt]., [day,datetime,slt].[mth,datetime,slt].[year,datetime,slt], [hour,datetime,slt]:[min,datetime,slt]:[second,datetime,slt] [timezone,datetime,slt]
 	</string>
-	<string name="NotificationItemDateStringLocal">
-		[day,datetime,local].[mthnum,datetime,local].[year,datetime,local], [hour,datetime,local]:[min,datetime,local]
+	<string name="GroupNoticesToastDateStringAMPM">
+		[wkday,datetime,slt]., [day,datetime,slt].[mth,datetime,slt].[year,datetime,slt], [hour12,datetime,slt]:[min,datetime,slt]:[second,datetime,slt] [ampm,datetime,slt] [timezone,datetime,slt]
 	</string>
-	<string name="NotificationItemDateStringUTC">
+	<string name="NotificationItemDateString">
 		[day,datetime,utc].[mth,datetime,utc].[year,datetime,utc], [hour,datetime,utc]:[min,datetime,utc] [timezone,datetime,utc]
 	</string>
-	<string name="NotificationItemDateStringSLT">
-		[day,datetime,slt].[mthnum,datetime,slt].[year,datetime,slt], [hour,datetime,slt]:[min,datetime,slt] [timezone,datetime,slt]
+	<string name="NotificationItemDateStringAMPM">
+		[day,datetime,utc].[mth,datetime,utc].[year,datetime,utc], [hour12,datetime,utc]:[min,datetime,utc] [ampm,datetime,utc] [timezone,datetime,utc]
 	</string>
 	<string name="Pie_av_render_normally">
 		Normalnie
@@ -6675,5 +6684,23 @@ Twoja aktualna pozycja: [AVATAR_POS]
 	</string>
 	<string name="ImportSuccessful">
 		Pomyślnie przetworzono [COUNT] rekordów.
+	</string>
+	<string name="Flood">
+		Zalewanie
+	</string>
+	<string name="Surface Only">
+		Tylko powierzchnia
+	</string>
+	<string name="Raycast">
+		Rzutowanie
+	</string>
+	<string name="Very High">
+		Bardzo wysoko
+	</string>
+	<string name="Maximum">
+		Maksymalnie
+	</string>
+	<string name="OmnifilterReplacement">
+		Wszystkofiltr: [REPLACEMENT]
 	</string>
 </strings>

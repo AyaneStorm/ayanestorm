@@ -63,8 +63,8 @@ public:
     static FSFloaterContacts* getInstance();
     static FSFloaterContacts* findInstance();
 
-    void openTab(const std::string& name);
-    LLPanel* getPanelByName(const std::string& panel_name);
+    void openTab(std::string_view name);
+    LLPanel* getPanelByName(std::string_view panel_name);
 
     void                    sortFriendList();
     void                    onDisplayNameChanged();
@@ -141,6 +141,7 @@ private:
     void                    onGroupChatButtonClicked();
     void                    onGroupInfoButtonClicked();
     void                    onGroupActivateButtonClicked();
+    void                    onGroupFavoriteButtonClicked();
     void                    onGroupLeaveButtonClicked();
     void                    onGroupCreateButtonClicked();
     void                    onGroupSearchButtonClicked();
@@ -167,6 +168,7 @@ private:
     LLButton*               mGroupsChatBtn{ nullptr };
     LLButton*               mGroupsInfoBtn{ nullptr };
     LLButton*               mGroupsActivateBtn{ nullptr };
+    LLButton*               mGroupsFavoriteBtn{ nullptr };
     LLButton*               mGroupsLeaveBtn{ nullptr };
     LLButton*               mGroupsCreateBtn{ nullptr };
     LLButton*               mGroupsSearchBtn{ nullptr };
@@ -189,7 +191,7 @@ private:
     std::string             mFriendFilterSubString{ LLStringUtil::null };
     std::string             mFriendFilterSubStringOrig{ LLStringUtil::null };
 
-    void childShowTab(const std::string& id, const std::string& tabname);
+    void childShowTab(std::string_view id, std::string_view tabname);
 
     void updateRlvRestrictions(ERlvBehaviour behavior);
     boost::signals2::connection mRlvBehaviorCallbackConnection{};

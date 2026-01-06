@@ -173,6 +173,7 @@
 #include "llavatarpropertiesprocessor.h"
 #include "llcheckboxctrl.h"
 #include "llfloatergridstatus.h"
+#include "llfloatermarketplace.h"
 #include "llfloaterpreference.h"
 #include "llkeyconflict.h"
 #include "lllogininstance.h"
@@ -8250,7 +8251,7 @@ bool handle_zoom_to_object(const LLUUID& object_id, const std::optional<LLVector
 
     LLViewerObject* object = gObjectList.findObject(object_id);
 
-    if (object)
+    if (object && object->isReachable())
     {
         gAgentCamera.setFocusOnAvatar(false, ANIMATE);
 
@@ -8713,6 +8714,13 @@ void handle_edit_shape()
     LLFloaterSidePanelContainer::showPanel("appearance", LLSD().with("type", "edit_shape"));
 }
 
+// <FS:Zi> Omnifilter support
+void handle_omnifilter()
+{
+    LLFloaterReg::showInstance("omnifilter");
+}
+// </FS:Zi>
+
 void handle_hover_height()
 {
     LLFloaterReg::showInstance("edit_hover_height");
@@ -8944,6 +8952,29 @@ class LLPromptShowURL : public view_listener_t
         return true;
     }
 };
+
+// <FS:TJ> For the SL Marketplace, use the already preloaded CEF instance
+class FSLoadSLMarketplace : public view_listener_t
+{
+    bool handleEvent(const LLSD& userdata)
+    {
+        static LLCachedControl<std::string> marketplace_url(gSavedSettings, "MarketplaceURL", "https://marketplace.secondlife.com/");
+        if (LLWeb::useExternalBrowser(marketplace_url))
+        {
+            LLWeb::loadURL(marketplace_url);
+        }
+        else
+        {
+            LLFloaterReg::showInstanceOrBringToFront("marketplace");
+            if (LLFloaterMarketplace* marketplace = LLFloaterReg::getTypedInstance<LLFloaterMarketplace>("marketplace"))
+            {
+                marketplace->openMarketplace();
+            }
+        }
+        return true;
+    }
+};
+// </FS:TJ>
 
 bool callback_show_file(const LLSD& notification, const LLSD& response)
 {
@@ -12796,6 +12827,7 @@ void initialize_menus()
     commit.add("NowWearing", boost::bind(&handle_now_wearing));
     commit.add("EditOutfit", boost::bind(&handle_edit_outfit));
     commit.add("EditShape", boost::bind(&handle_edit_shape));
+    commit.add("Omnifilter", boost::bind(&handle_omnifilter));      // <FS:Zi> Omnifilter support
     commit.add("HoverHeight", boost::bind(&handle_hover_height));
     commit.add("EditPhysics", boost::bind(&handle_edit_physics));
     // <FS:TT> Client LSL Bridge
@@ -13399,6 +13431,9 @@ void initialize_menus()
     commit.add("Camera.StoreView", boost::bind(&LLAgentCamera::storeCameraPosition, &gAgentCamera));
     commit.add("Camera.LoadView", boost::bind(&LLAgentCamera::loadCameraPosition, &gAgentCamera));
     // </FS:Ansariel>
+
+    // <FS:TJ> For the SL Marketplace, use the already preloaded CEF instance
+    view_listener_t::addMenu(new FSLoadSLMarketplace(), "LoadSLMarketplace");
 
     // <FS:Ansariel> Script debug floater
     commit.add("ShowScriptDebug", boost::bind(&LLFloaterScriptDebug::show, LLUUID::null));

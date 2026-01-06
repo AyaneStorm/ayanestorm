@@ -300,10 +300,10 @@ void LLWebRTCVoiceClient::terminate()
     LL_INFOS("Voice") << "Terminating WebRTC" << LL_ENDL;
 
     mVoiceEnabled = false;
+    sShuttingDown = true; // so that coroutines won't post more work.
     llwebrtc::terminate();
-    mWebRTCDeviceInterface = nullptr;
 
-    sShuttingDown = true;
+    mWebRTCDeviceInterface = nullptr;
 }
 
 //---------------------------------------------------
@@ -400,7 +400,7 @@ void LLWebRTCVoiceClient::updateSettings()
             config.mNoiseSuppressionLevel = noiseSuppressionLevel;
             audioConfigChanged            = true;
         }
-        if (audioConfigChanged)
+        if (audioConfigChanged && mWebRTCDeviceInterface)
         {
             mWebRTCDeviceInterface->setAudioConfig(config);
         }
@@ -876,7 +876,10 @@ void LLWebRTCVoiceClient::tuningStart()
 {
     if (!mIsInTuningMode)
     {
-        mWebRTCDeviceInterface->setTuningMode(true);
+        if (mWebRTCDeviceInterface)
+        {
+            mWebRTCDeviceInterface->setTuningMode(true);
+        }
         mIsInTuningMode = true;
     }
 }
@@ -885,7 +888,10 @@ void LLWebRTCVoiceClient::tuningStop()
 {
     if (mIsInTuningMode)
     {
-        mWebRTCDeviceInterface->setTuningMode(false);
+        if (mWebRTCDeviceInterface)
+        {
+            mWebRTCDeviceInterface->setTuningMode(false);
+        }
         mIsInTuningMode = false;
     }
 }
@@ -918,13 +924,10 @@ void LLWebRTCVoiceClient::tuningSetSpeakerVolume(float volume)
 
 float LLWebRTCVoiceClient::tuningGetEnergy(void)
 {
-    // <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
-    // This can cause an error if device interface can be NULL.
     if (!mWebRTCDeviceInterface)
     {
-        return 0.0f;
+        return 0.f;
     }
-    // </FS:minerjr> [FIRE-36022]
     float rms = mWebRTCDeviceInterface->getTuningAudioLevel();
     return TUNING_LEVEL_START_POINT - TUNING_LEVEL_SCALE * rms;
 }
@@ -952,7 +955,10 @@ void LLWebRTCVoiceClient::refreshDeviceLists(bool clearCurrentList)
         clearCaptureDevices();
         clearRenderDevices();
     }
-    mWebRTCDeviceInterface->refreshDevices();
+    if (mWebRTCDeviceInterface)
+    {
+        mWebRTCDeviceInterface->refreshDevices();
+    }
 }
 
 
@@ -1260,7 +1266,7 @@ void LLWebRTCVoiceClient::sendPositionUpdate(bool force)
 void LLWebRTCVoiceClient::updateOwnVolume()
 {
     F32 audio_level = 0.0f;
-    if (!mMuteMic)
+    if (!mMuteMic && mWebRTCDeviceInterface)
     {
         float rms = mWebRTCDeviceInterface->getPeerConnectionAudioLevel();
         audio_level = LEVEL_START_POINT - LEVEL_SCALE * rms;
@@ -2762,6 +2768,11 @@ void LLVoiceWebRTCConnection::breakVoiceConnectionCoro(connectionPtr_t connectio
 void LLVoiceWebRTCSpatialConnection::requestVoiceConnection()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOICE;
+    if (LLWebRTCVoiceClient::isShuttingDown())
+    {
+        mOutstandingRequests--;
+        return;
+    }
 
     LLViewerRegion *regionp = LLWorld::instance().getRegionFromID(mRegionID);
 
@@ -3368,6 +3379,12 @@ LLVoiceWebRTCAdHocConnection::~LLVoiceWebRTCAdHocConnection()
 void LLVoiceWebRTCAdHocConnection::requestVoiceConnection()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOICE;
+
+    if (LLWebRTCVoiceClient::isShuttingDown())
+    {
+        mOutstandingRequests--;
+        return;
+    }
 
     LLViewerRegion *regionp = LLWorld::instance().getRegionFromID(mRegionID);
 
