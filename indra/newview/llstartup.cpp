@@ -233,6 +233,7 @@
 #include "fscommon.h"
 #include "fscorehttputil.h"
 #include "fsdata.h"
+#include "fsfavoritegroups.h" // <FS:PP> Group favorites / pinning
 #include "fsfloatercontacts.h"
 #include "fsfloaterimcontainer.h"
 #include "fsfloaternearbychat.h"
@@ -253,6 +254,7 @@
 #include "llprogressview.h"
 #include "lltoolbarview.h"
 #include "NACLantispam.h"
+#include "omnifilterengine.h"       // <FS:Zi> Omnifilter support
 #include "streamtitledisplay.h"
 #include "tea.h"
 
@@ -696,7 +698,26 @@ bool idle_startup()
     system = osString.substr (begIdx, endIdx - begIdx);
     system += "Locale";
 
-    LLStringUtil::setLocale (LLTrans::getString(system));
+    std::string locale = LLTrans::getString(system);
+    if (locale != LLStringUtil::getLocale()) // is there a reason to do this on repeat?
+    {
+        LLStringUtil::setLocale(locale);
+
+        // Not all locales have AMPM, test it
+        if (LLStringOps::sAM.empty()) // Might already be overriden from LLAppViewer::init()
+        {
+            LLDate datetime(0.0);
+            std::string val = datetime.toHTTPDateString("%p");
+            if (val.empty())
+            {
+                LL_DEBUGS("InitInfo") << "Current locale \"" << locale << "\" "
+                    << "doesn't support AM/PM time format" << LL_ENDL;
+                // fallback to declarations in strings.xml
+                LLStringOps::sAM = LLTrans::getString("dateTimeAM");
+                LLStringOps::sPM = LLTrans::getString("dateTimePM");
+            }
+        }
+    }
 
     //note: Removing this line will cause incorrect button size in the login screen. -- bao.
     gTextureList.updateImages(0.01f) ;
@@ -1260,6 +1281,8 @@ bool idle_startup()
             init_menus();
         }
         show_release_notes_if_required();
+
+        OmnifilterEngine::getInstance()->init();    // <FS:Zi> Omnifilter support
 
         if (show_connect_box)
         {
@@ -3295,6 +3318,10 @@ bool idle_startup()
         // Need we really clear the Auth response data?
         // Clean up the userauth stuff.
         // LLUserAuth::getInstance()->reset();
+
+        // <FS:PP> Group favorites / pinning
+        FSFavoriteGroups::getInstance()->loadFavorites();
+        // </FS:PP>
 
         LLStartUp::setStartupState( STATE_STARTED );
         do_startup_frame();

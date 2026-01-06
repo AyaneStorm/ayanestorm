@@ -5263,7 +5263,7 @@ void LLRiggedVolume::update(
     else
     {
         face_begin = face_index;
-        face_end = face_begin + 1;
+        face_end = llmin(face_begin + 1, volume->getNumVolumeFaces());
     }
     for (S32 i = face_begin; i < face_end; ++i)
     {
@@ -7088,7 +7088,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
                 && te->getShiny()
                 && can_be_shiny)
             { //shiny
-                if (tex && tex->getPrimaryFormat() == GL_ALPHA) // <FS:Beq/> [FIRE-34534] guard additional cases of tex == null
+                if (tex && tex->getPrimaryFormat() == GL_ALPHA)
                 { //invisiprim+shiny
                     if (!facep->getViewerObject()->isAttachment() && !facep->getViewerObject()->isRiggedMesh())
                     {
@@ -7128,7 +7128,7 @@ U32 LLVolumeGeometryManager::genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace
             }
             else
             { //not alpha and not shiny
-                if (!is_alpha && tex && tex->getPrimaryFormat() == GL_ALPHA) // <FS:Beq/> FIRE-34540 bugsplat crash caused by tex==nullptr. This stops the crash, but should we continue and leave the face unregistered instead of falling through?
+                if (!is_alpha && tex && tex->getPrimaryFormat() == GL_ALPHA)
                 { //invisiprim
                     if (!facep->getViewerObject()->isAttachment() && !facep->getViewerObject()->isRiggedMesh())
                     {

@@ -659,7 +659,7 @@ Möchten Sie den Viewer schließen und anschließend manuell neu starten, um die
 		<usetemplate name="okcancelbuttons" notext="Später" yestext="Jetzt beenden"/>
 	</notification>
 	<notification name="ChangeLanguage">
-		Die Sprachänderung tritt nach Neustart von [APP_NAME] in Kraft.
+		Die Änderung der Sprache oder des Uhrzeitformats tritt nach Neustart von [APP_NAME] in Kraft.
 	</notification>
 	<notification name="GoToAuctionPage">
 		Zur [CURRENT_GRID]-Webseite, um Auktionen anzuzeigen oder ein Gebot abzugeben?
@@ -880,6 +880,14 @@ Erwartet wurde [VALIDS]
 	<notification name="CannotUploadSoundFile">
 		Sounddatei konnte nicht hochgeladen werden:
 [FILE]
+	</notification>
+	<notification name="ModelUploaderMissingPhysicsApple">
+		Das Hochladen von Modellen wird derzeit auf Apple Silicon-Systemen nicht verfügbar, wird jedoch in einem späteren Release unterstützt.
+
+Workaround: Im Finder auf die [APP_NAME] App rechtsklicken, dann „Info anzeigen“ wählen und anschließend „Mit Rosette öffnen“ aktivieren.
+	</notification>
+	<notification name="ModelUploaderMissingPhysics">
+		Physik-Bibliothek ist nicht vorhanden - einzelne Funktionen für das Hochladen des Modells funktionieren möglicherweise nicht oder nicht korrekt.
 	</notification>
 	<notification name="SoundFileNotRIFF">
 		Die Datei ist anscheinend keine RIFF WAVE-Datei:
@@ -2694,6 +2702,12 @@ Möchten Sie es mit dem ausgewählten Objekt ersetzen?
 	</notification>
 	<notification name="TooManyWearables">
 		Sie können keinen Ordner tragen, der mehr als [AMOUNT] Elemente enthält.  Sie können diesen Höchstwert unter „Erweitert“ &gt; „Debug-Einstellungen anzeigen“ &gt; „WearFolderLimit“ ändern.
+	</notification>
+	<notification name="CantLinkNotecard">
+		Sie müssen die Notizkarte speichern, bevor Sie eine Verknüpfung dorthin herstellen können.
+	</notification>
+	<notification name="CantLinkMaterial">
+		Sie müssen das Material speichern, bevor Sie eine Verknüpfung dorthin herstellen können.
 	</notification>
 	<notification label="Warnung für Nicht-stören-Modus" name="DoNotDisturbModePay">
 		Sie haben den Nicht-stören-Modus aktiviert. Sie erhalten keine Artikel, die im Gegenzug für diese Zahlung angeboten werden.
@@ -5830,6 +5844,12 @@ Welche Bezeichnung soll für die Region
 		Neue Auswahl kann nicht erstellt werden, da bereits die maximale Anzahl an Auswahlen erstellt wurde.
 		<usetemplate name="okbutton" yestext="OK"/>
 	</notification>
+	<notification name="ConfirmGlobalOnlineStatusToggle">
+		Sind Sie sicher, dass Sie die Sichtbarkeit Ihres Online-Status für alle Ihre Freunde auf einmal ändern möchten?
+
+Abhängig von der Serverauslastung kann es einen Moment dauern, bis das Umschalten der Sichtbarkeit des Online-Status effektiv wird, und es kann zeitweise zu Problemen mit Ihrem Online-Status für Ihre Freunde führen.
+		<usetemplate name="okcancelbuttons" notext="Abbrechen" yestext="OK"/>
+	</notification>
 	<notification name="GlobalOnlineStatusToggle">
 		Abhängig von der Serverauslastung kann es einen Moment dauern, bis das Umschalten der Sichtbarkeit des Online-Status effektiv wird.
 		<usetemplate ignoretext="Weise mich darauf hin, dass das Umschalten der Sichtbarkeit des Online-Status etwas dauern kann." name="okignore" yestext="OK"/>
@@ -5901,7 +5921,7 @@ https://wiki.firestormviewer.org/antivirus_whitelisting
 		<usetemplate name="okcancelbuttons" notext="Abbrechen" yestext="Okay"/>
 	</notification>
 	<notification name="FSLargeOutfitsWarningInThisSession">
-		Eine große Anzahl an Outfits wurde erkannt: [AMOUNT]. Dies kann zu einem Blockieren des Viewers oder zu Verbindungsabbrüchen führen. Ziehen Sie eine Reduzierung der Outfits für eine bessere Performance in Betracht (unter [MAX]).
+		Eine große Anzahl an Outfits wurde erkannt: [AMOUNT]. Dies kann zu einem Blockieren des Viewers oder zu Verbindungsabbrüchen führen. Ziehen Sie eine Reduzierung der Outfits für eine bessere Performance in Betracht (unter [MAX]). DIES IST NUR EIN VORSCHLAG - wenn Ihr Computer normal funktioniert, können Sie diesen Vorschlag bedenkenlos ignorieren.
 		<usetemplate ignoretext="Warnung bei zu vielen Outfits" name="okignore" yestext="OK" />
 	</notification>
 	<notification name="PrimfeedLoginRequestFailed">
@@ -5924,5 +5944,52 @@ https://wiki.firestormviewer.org/antivirus_whitelisting
 	</notification>
 	<notification name="PrimfeedUserStatusFailed">
 		Primfeed-Benutzeranmeldung erfolgreich, allerdings ist die Statusprüfung fehlgeschlagen. Bitte prüfen Sie, ob Primfeed korrekt funktioniert.
+	</notification>
+	<notification name="NotRegularFileError">
+		Es wurde eine reguläre Datei erwartet:
+[FILE_NAME]
+	</notification>
+	<notification name="NotFolderError">
+		Es wurde ein reguläres Verzeichnis erwartet:
+[FILE_NAME]
+	</notification>
+	<notification name="GenericFileEmptyError">
+		Datei existiert, aber ist leer:
+[FILE_NAME]
+
+Fehlermeldung:
+[ERROR_MESSAGE] ([ERROR_CODE])
+	</notification>
+	<notification name="GenericFileOpenReadError">
+		Datei konnte nicht zum Lesen geöffnet werden:
+[FILE_NAME]
+
+Fehlermeldung:
+[ERROR_MESSAGE] ([ERROR_CODE])
+	</notification>
+	<notification name="GenericFileOpenWriteError">
+		Datei konnte nicht zum Schreiben geöffnet werden:
+[FILE_NAME]
+
+Fehlermeldung:
+[ERROR_MESSAGE] ([ERROR_CODE])
+	</notification>
+	<notification name="GenericFileReadError">
+		Datei konnte nicht gelesen werden:
+[FILE_NAME]
+
+Fehlermeldung:
+[ERROR_MESSAGE] ([ERROR_CODE])
+	</notification>
+	<notification name="GenericFileWriteError">
+		Datei konnte nicht geschrieben werden:
+[FILE_NAME]
+
+Fehlermeldung:
+[ERROR_MESSAGE] ([ERROR_CODE])
+	</notification>
+	<notification name="ChatHistoryIsMissing">
+		Chat-Verlauf-Datei ist nicht vorhanden. Entweder existiert kein Verlauf für diesen Chat oder Verläufe werden nicht gespeichert.
+Sie können das Speichern von Verläufen einschalten unter Einstellungen &gt; Privatsphäre &gt; Protokoll und Verläufe
 	</notification>
 </notifications>

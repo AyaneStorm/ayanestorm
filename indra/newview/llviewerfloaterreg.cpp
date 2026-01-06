@@ -219,6 +219,7 @@
 #include "fsfloaterprotectedfolders.h"
 #include "fsfloaterradar.h"
 #include "fsfloatersearch.h"
+#include "fsfloatersplashscreensettings.h"
 #include "fsfloaterstatistics.h"
 #include "fsfloaterstreamtitle.h"
 #include "fsfloaterteleporthistory.h"
@@ -242,7 +243,7 @@
 #include "quickprefs.h"
 #include "vjfloaterlocalmesh.h" // local mesh
 #include "fsfloaterwhitelisthelper.h" // fs whitelist helper
-
+#include "omnifilter.h"               // Omnifilter support
 
 // handle secondlife:///app/openfloater/{NAME} URLs
 const std::string FLOATER_PROFILE("profile");
@@ -658,6 +659,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("fs_poser", "floater_fs_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPoser>); // <FS:AR> [FIRE-30873]: Poser
     LLFloaterReg::add("fs_protectedfolders", "floater_fs_protectedfolders.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterProtectedFolders>);
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
+    LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);
     LLFloaterReg::add("fs_streamtitle", "floater_fs_streamtitle.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterStreamTitle>);
     LLFloaterReg::add("fs_streamtitlehistory", "floater_fs_streamtitlehistory.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterStreamTitleHistory>);
     LLFloaterReg::add("fs_teleporthistory", "floater_fs_teleporthistory.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterTeleportHistory>);
@@ -669,6 +671,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("lgg_beamshape", "floater_beamshape.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<lggBeamMapFloater>);
     LLFloaterReg::add("media_lists", "floater_media_lists.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterMediaLists>);
     LLFloaterReg::add("money_tracker", "floater_fs_money_tracker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSMoneyTracker>);
+    LLFloaterReg::add("omnifilter", "floater_omnifilter.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<Omnifilter>);        // <FS:Zi> Omnifilter support
     LLFloaterReg::add("particle_editor","floater_particle_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ParticleEditor>);
     LLFloaterReg::add("bd_poser", "bd_floater_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<BDFloaterPoser>);
     LLFloaterReg::add("bd_poser_creator", "bd_floater_poser_creator.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<BDFloaterPoseCreator>);
