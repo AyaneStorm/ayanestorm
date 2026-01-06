@@ -700,6 +700,8 @@ bool LLFloaterPreference::postBuild()
     // </FS:Ansariel>
 
     getChild<LLComboBox>("language_combobox")->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
+    mTimeFormatCombobox = getChild<LLComboBox>("time_format_combobox");
+    mTimeFormatCombobox->setCommitCallback(boost::bind(&LLFloaterPreference::onTimeFormatChange, this));
 
     // <FS:CR> [CHUI MERGE]
     // We don't use these in FS Communications UI, should we in the future? Disabling for now.
@@ -1213,6 +1215,17 @@ void LLFloaterPreference::onOpen(const LLSD& key)
     // Load (double-)click to walk/teleport settings.
     updateClickActionViews();
 
+#if LL_LINUX
+    // Lixux doesn't support automatic mode
+    LLComboBox* combo = getChild<LLComboBox>("double_click_action_combo");
+    S32 mode = gSavedSettings.getS32("MouseWarpMode");
+    if (mode == 0)
+    {
+        combo->setValue("1");
+    }
+    combo->setEnabledByValue("0", false);
+#endif
+
     // <FS:PP> Load UI Sounds tabs settings.
     updateUISoundsControls();
 
@@ -1721,6 +1734,13 @@ void LLFloaterPreference::onLanguageChange()
         LLNotificationsUtil::add("ChangeLanguage");
         mLanguageChanged = true;
     }
+}
+
+void LLFloaterPreference::onTimeFormatChange()
+{
+    std::string val = mTimeFormatCombobox->getValue();
+    gSavedSettings.setBOOL("Use24HourClock", val == "1");
+    onLanguageChange();
 }
 
 void LLFloaterPreference::onNotificationsChange(const std::string& OptionName)
@@ -2372,6 +2392,8 @@ void LLFloaterPreference::refresh()
         advanced->refresh();
     }
     updateClickActionViews();
+
+    mTimeFormatCombobox->selectByValue(gSavedSettings.getBOOL("Use24HourClock") ? "1" : "0");
 }
 
 void LLFloaterPreference::onCommitWindowedMode()
@@ -2410,6 +2432,7 @@ void LLFloaterPreference::onChangeQuality(const LLSD& data)
     }
     mLastQualityLevel = level;
     LLFeatureManager::getInstance()->setGraphicsLevel(level, true);
+    gSavedSettings.setU32("DebugQualityPerformance", level);
     refreshEnabledGraphics();
     refresh();
 }

@@ -96,6 +96,12 @@
 #include "llpresetsmanager.h"
 #include "fsdata.h"
 
+// <FS:PP> Render chat range spheres in 3D world
+#include "lfsimfeaturehandler.h"
+#include "llrendersphere.h"
+#include "lluicolortable.h"
+// </FS:PP>
+
 #include <filesystem>
 #include <iomanip>
 #include <sstream>
@@ -267,8 +273,11 @@ void display_stats()
     if (gRecentFPSTime.getElapsedTimeF32() >= FPS_LOG_FREQUENCY)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("DS - FPS");
+        LLTrace::Recording& recording = LLTrace::get_frame_recording().getLastRecording();
+        F64 normalized_session_jitter = recording.getLastValue(LLStatViewer::NOTRMALIZED_FRAMETIME_JITTER_SESSION);
+        F64 normalized_period_jitter = recording.getLastValue(LLStatViewer::NORMALIZED_FRAMTIME_JITTER_PERIOD);
         F32 fps = gRecentFrameCount / FPS_LOG_FREQUENCY;
-        LL_INFOS() << llformat("FPS: %.02f", fps) << LL_ENDL;
+        LL_INFOS() << llformat("FPS: %.02f SESSION JITTER: %.4f PERIOD JITTER: %.4f", fps, normalized_session_jitter, normalized_period_jitter) << LL_ENDL;
         gRecentFrameCount = 0;
         gRecentFPSTime.reset();
     }
@@ -1652,6 +1661,11 @@ void render_ui(F32 zoom_factor, int subfield)
                 render_disconnected_background();
             }
         }
+        else
+        {
+            // Make sure particle effects disappear
+            LLHUDObject::renderAllForTimer();
+        }
 
         if (render_ui)
         {
@@ -1759,6 +1773,54 @@ void draw_axes()
     gGL.popMatrix();
 }
 
+// <FS:PP> Render chat range spheres in 3D world
+static void renderChatRangeSphere(const LLVector3& center, F32 radius, const LLColor4& color)
+{
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.pushMatrix();
+    {
+        gGL.translatef(center.mV[VX], center.mV[VY], center.mV[VZ]);
+        gDebugProgram.bind();
+        LLGLEnable blend(GL_BLEND);
+        LLGLDepthTest depth(GL_TRUE, GL_TRUE);
+        gGL.color4fv(color.mV);
+        gGL.diffuseColor4fv(color.mV);
+        gGL.pushMatrix();
+        {
+            gGL.scalef(radius, radius, radius);
+            glCullFace(GL_FRONT);
+            gSphere.render();
+            glCullFace(GL_BACK);
+            gSphere.render();
+        }
+        gGL.popMatrix();
+        gUIProgram.bind();
+    }
+    gGL.popMatrix();
+}
+
+static void drawChatRangeSpheres()
+{
+    if (!isAgentAvatarValid())
+    {
+        return;
+    }
+
+    LFSimFeatureHandler& simfeatures = LFSimFeatureHandler::instance();
+    F32 whisper_range = (F32)simfeatures.whisperRange();
+    F32 say_range = (F32)simfeatures.sayRange();
+    F32 shout_range = (F32)simfeatures.shoutRange();
+
+    LLVector3 avatar_pos = gAgent.getPositionAgent();
+    static LLUIColor whisper_color = LLUIColorTable::instance().getColor("MapWhisperRingColor", LLColor4::blue);
+    static LLUIColor say_color = LLUIColorTable::instance().getColor("MapChatRingColor", LLColor4::yellow);
+    static LLUIColor shout_color = LLUIColorTable::instance().getColor("MapShoutRingColor", LLColor4::red);
+    renderChatRangeSphere(avatar_pos, whisper_range, whisper_color);
+    renderChatRangeSphere(avatar_pos, say_range, say_color);
+    renderChatRangeSphere(avatar_pos, shout_range, shout_color);
+}
+// </FS:PP>
+
 void render_ui_3d()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
@@ -1790,6 +1852,14 @@ void render_ui_3d()
     {
         draw_axes();
     }
+
+    // <FS:PP> Render chat range spheres in 3D world
+    static LLCachedControl<bool> show_spheres(gSavedSettings, "FSShowChatRangeSpheres", false);
+    if (show_spheres())
+    {
+        drawChatRangeSpheres();
+    }
+    // </FS:PP>
 
     gViewerWindow->renderSelections(false, false, true); // Non HUD call in render_hud_elements
 

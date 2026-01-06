@@ -2786,9 +2786,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_BDPoser_Tooltip">Pose your avatar and animated objects</string>
   <string name="Command_Primfeed_Label">Primfeed</string>
   <string name="Command_Primfeed_Tooltip">Post directly to your Primfeed account.</string>
+  <string name="Command_Omnifilter_Label">Omnifilter</string>
 
-  <string 
-name="Command_360_Capture_Tooltip">Capture a 360° equirectangular image</string>
+  <string name="Command_360_Capture_Tooltip">Capture a 360° equirectangular image</string>
   <string name="Command_AboutLand_Tooltip">Information about the land you're visiting</string>
   <string name="Command_Appearance_Tooltip">Change your avatar</string>
   <string name="Command_Avatar_Tooltip">Choose a complete avatar</string>
@@ -2852,6 +2852,7 @@ name="Command_360_Capture_Tooltip">Capture a 360° equirectangular image</string
   <string name="Command_RFO_Tooltip">Show only your friends in the viewer, all other avatars will be removed. Once enabled a TP is required to restore visibility of others.</string>
   <string name="Command_DAO_Tooltip">Derender Animated Objects (aka Animesh) - Temporarily derenders all currently visible Animesh (attached and free roaming). Derendered animesh will reappear after a TP</string>
   <string name="Command_Beacons_Tooltip">Show beacons</string>
+  <string name="Command_Omnifilter_Tooltip">Edit the Omnifilter rules</string>
 
   <string name="Toolbar_Bottom_Tooltip">currently in your bottom toolbar</string>
   <string name="Toolbar_Left_Tooltip"  >currently in your left toolbar</string>
@@ -3282,10 +3283,11 @@ Your current position: [AVATAR_POS]
   <string name="CallingCardOnlineLabelSuffix">(online)</string>
   
   <string name="GroupNoticesPanelDateString">[year,datetime,local]/[mthnum,datetime,local]/[day,datetime,local] [hour,datetime,local]:[min,datetime,local]:[second,datetime,local]</string>
-  <string name="GroupNoticesToastDateString">[wkday,datetime,slt], [mth,datetime,slt] [day,datetime,slt] [year,datetime,slt] [hour12,datetime,slt]:[min,datetime,slt]:[second,datetime,slt] [ampm,datetime,slt] [timezone,datetime,slt]</string>
-  <string name="NotificationItemDateStringLocal">[mthnum,datetime,local]/[day,datetime,local]/[year,datetime,local] [hour,datetime,local]:[min,datetime,local]</string>
-  <string name="NotificationItemDateStringUTC">[mth,datetime,utc]/[day,datetime,utc]/[year,datetime,utc] [hour,datetime,utc]:[min,datetime,utc] [timezone,datetime,utc]</string>
-  <string name="NotificationItemDateStringSLT">[mthnum,datetime,slt]/[day,datetime,slt]/[year,datetime,slt] [hour,datetime,slt]:[min,datetime,slt] [timezone,datetime,slt]</string>
+  <string name="GroupNoticesPanelDateStringAMPM">[year,datetime,local]/[mthnum,datetime,local]/[day,datetime,local] [hour12,datetime,local]:[min,datetime,local]:[second,datetime,local] [timezone,datetime,local]</string>
+  <string name="GroupNoticesToastDateString">[wkday,datetime,slt], [mth,datetime,slt] [day,datetime,slt] [year,datetime,slt] [hour,datetime,slt]:[min,datetime,slt]:[second,datetime,slt] [timezone,datetime,slt]</string>
+  <string name="GroupNoticesToastDateStringAMPM">[wkday,datetime,slt], [mth,datetime,slt] [day,datetime,slt] [year,datetime,slt] [hour12,datetime,slt]:[min,datetime,slt]:[second,datetime,slt] [ampm,datetime,slt] [timezone,datetime,slt]</string>
+  <string name="NotificationItemDateString">[mth,datetime,utc]/[day,datetime,utc]/[year,datetime,utc] [hour,datetime,utc]:[min,datetime,utc] [timezone,datetime,utc]</string>
+  <string name="NotificationItemDateStringAMPM">[mth,datetime,utc]/[day,datetime,utc]/[year,datetime,utc] [hour12,datetime,utc]:[min,datetime,utc] [ampm,datetime,utc] [timezone,datetime,utc]</string>
 
   <string name="Pie_av_render_normally">Normally</string>
   <string name="Pie_av_render_never">Never</string>
@@ -3337,4 +3339,13 @@ Your current position: [AVATAR_POS]
   <string name="ImportListTooLarge">Too many entries. The CSV file has [COUNT] entries and there are [MAX] slots available.</string>
   <string name="ImportSuccessful">Successfully processed [COUNT] entries.</string>
 
+  <!-- VHACD enum strings -->
+  <string name="Flood">Flood</string>
+  <string name="Surface Only">Surface Only</string>
+  <string name="Raycast">Raycast</string>
+  <string name="Very High">Very High</string>
+  <string name="Ultra">Ultra</string>
+  <string name="Maximum">Maximum</string>
+
+  <string name="OmnifilterReplacement">Omnifilter Replacement: [REPLACEMENT]</string>
 </strings>

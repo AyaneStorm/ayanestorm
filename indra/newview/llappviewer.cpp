@@ -292,10 +292,10 @@ using namespace LL;
 #include "nd/ndetw.h" // <FS:ND/> Windows Event Tracing, does nothing on OSX/Linux.
 #include "nd/ndlogthrottle.h"
 
+#include "aoengine.h"
 #include "fsradar.h"
 #include "fsassetblacklist.h"
 #include "bugsplatattributes.h"
-// #include "fstelemetry.h" // <FS:Beq> Tracy profiler support
 
 #if LL_LINUX && LL_GTK
 #include "glib.h"
@@ -1478,6 +1478,7 @@ bool LLAppViewer::init()
     LLViewerCamera::createInstance();
     LL::GLTFSceneManager::createInstance();
 
+    gSavedSettings.setU32("DebugQualityPerformance", gSavedSettings.getU32("RenderQualityPerformance"));
 
 #if LL_WINDOWS
     if (!mSecondInstance)
@@ -2270,6 +2271,8 @@ bool LLAppViewer::cleanup()
         LLEnvironment::getInstance()->saveToSettings();
     }
 
+    AOEngine::deleteSingleton();
+
     // Must do this after all panels have been deleted because panels that have persistent rects
     // save their rects on delete.
     if(mSaveSettingsOnExit)     // <FS:Zi> Backup Settings
@@ -2852,7 +2855,6 @@ void LLAppViewer::initLoggingAndGetLastDuration()
         if (gDirUtilp->fileExists(user_data_path_cef_log))
         {
             std::string user_data_path_cef_old = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "cef.old");
-            LLFile::remove(user_data_path_cef_old, ENOENT);
             LLFile::rename(user_data_path_cef_log, user_data_path_cef_old);
         }
     }
@@ -4759,8 +4761,15 @@ void LLAppViewer::processMarkerFiles()
         else if (marker_is_same_version)
         {
             // the file existed, is ours, and matched our version, so we can report on what it says
-            LL_INFOS("MarkerFile") << "Exec marker '"<< mMarkerFileName << "' found; last exec crashed" << LL_ENDL;
+            LL_INFOS("MarkerFile") << "Exec marker '"<< mMarkerFileName << "' found; last exec crashed or froze" << LL_ENDL;
+#if LL_WINDOWS && LL_BUGSPLAT
+            // bugsplat will set correct state in bugsplatSendLog
+            // Might be more accurate to rename this one into 'unknown'
+            gLastExecEvent = LAST_EXEC_FROZE;
+#else
             gLastExecEvent = LAST_EXEC_OTHER_CRASH;
+#endif // LL_WINDOWS
+
         }
         else
         {
@@ -5020,7 +5029,7 @@ void LLAppViewer::earlyExit(const std::string& name, const LLSD& substitutions)
 // case where we need the viewer to exit without any need for notifications
 void LLAppViewer::earlyExitNoNotify()
 {
-    LL_WARNS() << "app_early_exit with no notification: " << LL_ENDL;
+    LL_WARNS() << "app_early_exit with no notification." << LL_ENDL;
     gDoDisconnect = true;
     finish_early_exit( LLSD(), LLSD() );
 }
@@ -5364,6 +5373,7 @@ void LLAppViewer::purgeCache()
     LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE);
     LLVOCache::getInstance()->removeCache(LL_PATH_CACHE);
     LLViewerShaderMgr::instance()->clearShaderCache();
+    purgeCefStaleCaches();
     gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, ""), "*");
 }
 
@@ -6350,6 +6360,12 @@ void LLAppViewer::createErrorMarker(eLastExecEvent error_code) const
     }
 }
 
+bool LLAppViewer::errorMarkerExists() const
+{
+    std::string error_marker_file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, ERROR_MARKER_FILE_NAME);
+    return LLAPRFile::isExist(error_marker_file, NULL, LL_APR_RB);
+}
+
 void LLAppViewer::outOfMemorySoftQuit()
 {
     if (!mQuitRequested)
@@ -6482,7 +6498,10 @@ void LLAppViewer::idleNetwork()
     add(LLStatViewer::NUM_NEW_OBJECTS, gObjectList.mNumNewObjects);
 
     // Retransmit unacknowledged packets.
-    gXferManager->retransmitUnackedPackets();
+    if (gXferManager)
+    {
+        gXferManager->retransmitUnackedPackets();
+    }
     gAssetStorage->checkForTimeouts();
     gViewerThrottle.setBufferLoadRate(gMessageSystem->getBufferLoadRate());
     gViewerThrottle.updateDynamicThrottle();
