@@ -1223,7 +1223,7 @@ void FSFloaterObjectExport::addSelectedObjects()
     }
 }
 
-S32 FSFloaterObjectExport::getNumExportableTextures()
+S32 FSFloaterObjectExport::getNumExportableTextures() const
 {
     S32 res = 0;
     for (string_list_t::const_iterator t = mTextureNames.begin(); t != mTextureNames.end(); ++t)
