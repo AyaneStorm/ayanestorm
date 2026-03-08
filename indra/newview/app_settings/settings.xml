@@ -2274,6 +2274,17 @@
         <key>Value</key>
         <string>http://lecs-viewer-web-components.s3.amazonaws.com/v3.0/[GRID_LOWERCASE]/vawp/index.html</string>
     </map>
+    <key>AvatarAlignOscillate</key>
+    <map>
+      <key>Comment</key>
+      <string>When aligning the avatar, send oscillating rotations so remote viewers' pelvis animation commits to the correct direction.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>AvatarRotateThresholdSlow</key>
     <map>
       <key>Comment</key>
