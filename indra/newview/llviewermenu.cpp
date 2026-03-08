@@ -161,6 +161,7 @@
 // [/RLVa:KB]
 
 // Firestorm includes
+#include "fsfloateravataralign.h" // <AS:Chanayane> Compass floater
 #include "fsassetblacklist.h"
 #include "fsdata.h"
 #include "fslslbridge.h"
@@ -13310,6 +13311,24 @@ void initialize_menus()
     enable.add("Avatar.IsPicksTabOpen", boost::bind(&picks_tab_visible));
 
     commit.add("Avatar.OpenMarketplace", boost::bind(&LLWeb::loadURLExternal, gSavedSettings.getString("MarketplaceURL")));
+
+// <AS:Chanayane> Compass floater
+    commit.add("Avatar.AlignToggle", [](LLUICtrl*, const LLSD&) {
+        if (gSavedSettings.getBOOL("AvatarAlignMini"))
+            LLFloaterReg::toggleInstance("avatar_align_mini");
+        else
+            LLFloaterReg::toggleInstance("avatar_align");
+    });
+    enable.add("Avatar.AlignIsOpen", [](LLUICtrl*, const LLSD&) -> bool {
+        return gSavedSettings.getBOOL("AvatarAlignMini")
+            ? LLFloaterReg::instanceVisible("avatar_align_mini", LLSD())
+            : LLFloaterReg::instanceVisible("avatar_align",      LLSD());
+    });
+    commit.add("Avatar.FaceNearest", [](LLUICtrl*, const LLSD&) {
+        FSAvatarAlignBase* f = FSAvatarAlignBase::getActive();
+        if (f) f->onClickFaceNearestAvatar();
+    });
+// </AS:Chanayane>
 
     view_listener_t::addMenu(new LLAvatarEnableAddFriend(), "Avatar.EnableAddFriend");
     enable.add("Avatar.EnableFreezeEject", boost::bind(&enable_freeze_eject, _2));
