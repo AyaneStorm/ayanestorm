@@ -20,6 +20,9 @@
 #include "llviewercontrol.h"
 #include "llcharacter.h"
 #include "llfloaterreg.h"
+#include "llfontgl.h"
+#include "llrender.h"
+#include "llrender2dutils.h"
 #include "llvoavatar.h"
 #include "llvoavatarself.h"
 #include "llviewermessage.h"
@@ -90,9 +93,161 @@ void FSFloaterAvatarAlign::onOpen(const LLSD& key)
 {
 }
 
+void FSFloaterAvatarAlign::drawCompass()
+{
+    LLRect local = getLocalRect();
+    S32 header_h = getHeaderHeight();
+
+    // Reserve ~95px at the bottom for buttons + checkbox.
+    S32 avail_h = local.getHeight() - header_h - 95;
+    S32 R = llclamp(llmin(local.getWidth() / 2 - 27, avail_h / 2), 40, 90);
+
+    mCompassCX = local.getCenterX();
+    mCompassCY = local.mTop - header_h - 30 - R;
+    mCompassR  = R;
+
+    F32 cx = (F32)mCompassCX;
+    F32 cy = (F32)mCompassCY;
+    F32 fR = (F32)R;
+
+    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+
+    // Background circle
+    gGL.color4f(0.08f, 0.08f, 0.10f, 0.90f);
+    gl_circle_2d(cx, cy, fR, 64, TRUE);
+
+    // Outer ring
+    gGL.color4f(0.45f, 0.45f, 0.45f, 1.f);
+    gl_circle_2d(cx, cy, fR, 64, FALSE);
+
+    // Inner ring at half radius
+    gGL.color4f(0.25f, 0.25f, 0.25f, 1.f);
+    gl_circle_2d(cx, cy, fR * 0.5f, 48, FALSE);
+
+    // Tick marks at 45° intervals
+    gGL.begin(LLRender::LINES);
+    gGL.color4f(0.35f, 0.35f, 0.35f, 1.f);
+    for (S32 i = 0; i < 8; ++i)
+    {
+        F32 a  = i * F_PI / 4.f;
+        F32 sa = sinf(a), ca = cosf(a);
+        gGL.vertex2f(cx + (fR - 7.f) * sa, cy + (fR - 7.f) * ca);
+        gGL.vertex2f(cx +  fR        * sa, cy +  fR        * ca);
+    }
+    gGL.end();
+
+    // 4 compass arm kite shapes
+    // Each arm: tip at (R-4), left/right base points at R*0.35 rotated ±90°.
+    struct ArmDef { F32 angle_deg; F32 r, g, b; };
+    static const ArmDef ARMS[] = {
+        {   0.f, 0.85f, 0.15f, 0.15f },  // North: red
+        { 180.f, 0.85f, 0.85f, 0.85f },  // South: white
+        {  90.f, 0.65f, 0.65f, 0.65f },  // East:  grey
+        { 270.f, 0.65f, 0.65f, 0.65f },  // West:  grey
+    };
+
+    F32 tipR  = fR - 4.f;
+    F32 sideR = fR * 0.245f;
+
+    gGL.begin(LLRender::TRIANGLES);
+    for (const auto& arm : ARMS)
+    {
+        F32 a  = arm.angle_deg * DEG_TO_RAD;
+        F32 al = a - F_PI_BY_TWO;
+        F32 ar = a + F_PI_BY_TWO;
+
+        F32 tx = cx + tipR  * sinf(a);   F32 ty = cy + tipR  * cosf(a);
+        F32 lx = cx + sideR * sinf(al);  F32 ly = cy + sideR * cosf(al);
+        F32 rx = cx + sideR * sinf(ar);  F32 ry = cy + sideR * cosf(ar);
+
+        gGL.color4f(arm.r, arm.g, arm.b, 1.f);
+        gGL.vertex2f(tx, ty); gGL.vertex2f(cx, cy); gGL.vertex2f(lx, ly);
+        gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
+    }
+    gGL.end();
+
+    // Center dot
+    gGL.color4f(0.20f, 0.20f, 0.20f, 1.f);
+    gl_circle_2d(cx, cy, 5.f, 16, TRUE);
+    gGL.color4f(0.50f, 0.50f, 0.50f, 1.f);
+    gl_circle_2d(cx, cy, 5.f, 16, FALSE);
+
+    // Heading needle — gold triangle pointing in avatar's current facing direction.
+    LLVector3 at = gAgent.getAtAxis();
+    at.mV[VZ] = 0.f;
+    if (at.normalize() > 0.01f)
+    {
+        // SL: X=East, Y=North — maps directly to GL screen X/Y (y-up).
+        F32 nl = tipR * 0.88f;
+        F32 pw = 4.f; // half-width of needle base
+        F32 nx  = cx + nl * at.mV[VX];
+        F32 ny  = cy + nl * at.mV[VY];
+        F32 bx1 = cx - at.mV[VY] * pw;  F32 by1 = cy + at.mV[VX] * pw;
+        F32 bx2 = cx + at.mV[VY] * pw;  F32 by2 = cy - at.mV[VX] * pw;
+
+        gGL.begin(LLRender::TRIANGLES);
+        gGL.color4f(1.f, 0.85f, 0.f, 0.95f);
+        gGL.vertex2f(nx, ny); gGL.vertex2f(bx1, by1); gGL.vertex2f(bx2, by2);
+        gGL.end();
+    }
+
+    // Cardinal labels
+    LLFontGL* font   = LLFontGL::getFontSansSerifSmall();
+    S32       ld     = R + 12;
+    LLColor4  col_n(1.f, 0.55f, 0.55f, 1.f);
+    LLColor4  col_o(0.90f, 0.90f, 0.90f, 1.f);
+
+    font->renderUTF8("N", 0, cx,          (F32)(mCompassCY + ld), col_n, LLFontGL::HCENTER, LLFontGL::BOTTOM,   LLFontGL::BOLD,   LLFontGL::DROP_SHADOW);
+    font->renderUTF8("S", 0, cx,          (F32)(mCompassCY - ld), col_o, LLFontGL::HCENTER, LLFontGL::TOP,      LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
+    font->renderUTF8("E", 0, (F32)(mCompassCX + ld), (F32)mCompassCY, col_o, LLFontGL::LEFT,    LLFontGL::VCENTER,  LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
+    font->renderUTF8("W", 0, (F32)(mCompassCX - ld), (F32)mCompassCY, col_o, LLFontGL::RIGHT,   LLFontGL::VCENTER,  LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
+
+    // Current bearing in degrees, centred below the compass.
+    LLVector3 hat = gAgent.getAtAxis();
+    hat.mV[VZ] = 0.f;
+    hat.normalize();
+    F32 bearing = fmodf(atan2f(hat.mV[VX], hat.mV[VY]) * RAD_TO_DEG + 360.f, 360.f);
+    std::string bearing_str = llformat("%03.0f\xC2\xB0", bearing); // e.g. "045°"
+    font->renderUTF8(bearing_str, 0, cx, (F32)(mCompassCY - R - 30),
+        LLColor4(0.85f, 0.85f, 0.85f, 1.f), LLFontGL::HCENTER, LLFontGL::TOP,
+        LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
+}
+
+bool FSFloaterAvatarAlign::handleMouseDown(S32 x, S32 y, MASK mask)
+{
+    if (mCompassR > 0)
+    {
+        S32 dx   = x - mCompassCX;
+        S32 dy   = y - mCompassCY;
+        F32 dist = sqrtf((F32)(dx * dx + dy * dy));
+
+        if (dist <= (F32)mCompassR)
+        {
+            if (dist < (F32)mCompassR * 0.25f)
+            {
+                // Centre tap: face nearest avatar.
+                onClickFaceNearestAvatar();
+            }
+            else
+            {
+                // Outer tap: determine cardinal from angle.
+                // atan2f(dx, dy) gives angle from +Y (North), positive clockwise.
+                F32 deg = atan2f((F32)dx, (F32)dy) * RAD_TO_DEG;
+                if      (deg >= -45.f  && deg <  45.f)  onClickCardinal(  0.f); // N
+                else if (deg >=  45.f  && deg < 135.f)  onClickCardinal( 90.f); // E
+                else if (deg >= 135.f  || deg < -135.f) onClickCardinal(180.f); // S
+                else                                     onClickCardinal(270.f); // W
+            }
+            return true;
+        }
+    }
+    return LLFloater::handleMouseDown(x, y, mask);
+}
+
 void FSFloaterAvatarAlign::draw()
 {
     LLFloater::draw();
+    drawCompass();
 
     if (mOscStep < 0)
         return;

@@ -28,6 +28,7 @@ public:
     bool postBuild() override;
     void onOpen(const LLSD& key) override;
     void draw() override;
+    bool handleMouseDown(S32 x, S32 y, MASK mask) override;
 
 private:
     void onClickCardinal(F32 target_deg);
@@ -37,6 +38,7 @@ private:
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);
     LLVector3 offsetDirection(const LLVector3& base_at, F32 offset_deg) const;
+    void drawCompass();
 
     // Oscillation sequence: send offset rotations via AgentUpdate so remote
     // viewers' pelvis-lag animation commits to the target direction.
@@ -47,6 +49,11 @@ private:
     LLVector3 mTargetDirection;   // final desired facing (horizontal, normalised)
     S32       mOscStep = -1;      // current index into OSCILLATION, -1 = idle
     LLTimer   mOscTimer;
+
+    // Compass geometry, computed each draw() and used by handleMouseDown().
+    S32 mCompassCX = 0;
+    S32 mCompassCY = 0;
+    S32 mCompassR  = 0;
 };
 
 #endif // FS_FLOATER_AVATAR_ALIGN_H
