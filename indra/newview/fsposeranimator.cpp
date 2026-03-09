@@ -543,7 +543,7 @@ void FSPoserAnimator::updateJointRotationFromManip(LLVOAvatar* avatar, const FSP
         return;
 
     LLQuaternion framedRotation = changeToRotationFrame(avatar, rotation, frame, jointPose);
-    jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION, framedRotation * jointPose->getPublicRotation());
+    jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION, framedRotation * jointPose->getPublicRotation());
 
     deRotateWorldLockedDescendants(joint, posingMotion, framedRotation);
 
@@ -560,7 +560,7 @@ void FSPoserAnimator::updateJointRotationFromManip(LLVOAvatar* avatar, const FSP
     {
         case SYMPATHETIC:
         case SYMPATHETIC_DELTA:
-            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION,
+            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
                                                  framedRotation * oppositeJointPose->getPublicRotation());
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, framedRotation);
@@ -568,7 +568,7 @@ void FSPoserAnimator::updateJointRotationFromManip(LLVOAvatar* avatar, const FSP
 
         case MIRROR:
         case MIRROR_DELTA:
-            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION,
+            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
                                                  mirroredRotation * oppositeJointPose->getPublicRotation());
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, mirroredRotation);
@@ -654,12 +654,13 @@ void FSPoserAnimator::updateJointPositionFromManip(LLVOAvatar* avatar, const FSP
     grandParentLengthRotChange = grandParentWorldRot * grandParentLengthRotChange * ~grandParentWorldRot;
     parentLengthRotChange      = parentWorldRot * parentLengthRotChange * ~parentWorldRot;
 
-    movedJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_CHILDMOVE, movedJointPose->getPublicRotation()); // set up undo
-    parentJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION,
+    movedJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_CHILDMOVE,
+                                      movedJointPose->getPublicRotation()); // set up undo
+    parentJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
                                        parentLengthRotChange * parentJointPose->getPublicRotation());
-    grandParentJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION,
+    grandParentJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
                                             grandParentLengthRotChange * grandParentJointPose->getPublicRotation());
-    grandParentJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_ROTATION,
+    grandParentJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
                                             grandParentFrameRotChange * grandParentJointPose->getPublicRotation());
 
     auto grandParentPoserJoint = getPoserJointByName(grandParentJoint->getName());
@@ -923,28 +924,28 @@ void FSPoserAnimator::setJointRotation(LLVOAvatar* avatar, const FSPoserJoint* j
         case SYMPATHETIC:
         case MIRROR:
             if (rotationStyle == DELTAIC_ROT || translationRequiresDelta)
-                jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
+                jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
             else
-                jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, absRot);
+                jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT, absRot);
 
             break;
 
         case SYMPATHETIC_DELTA:
         case MIRROR_DELTA:
-            jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
+            jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
             break;
 
         case DELTAMODE:
-            jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
+            jointPose->setPublicRotation(resetBaseRotationToZero,true,  POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
             deRotateWorldLockedDescendants(joint, posingMotion, deltaRot);
             return;
 
         case NONE:
         default:
             if (rotationStyle == DELTAIC_ROT || translationRequiresDelta)
-                jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
+                jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT, deltaRot * jointPose->getPublicRotation());
             else
-                jointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT, absRot);
+                jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT, absRot);
 
             deRotateWorldLockedDescendants(joint, posingMotion, deltaRot);
             return;
@@ -967,7 +968,7 @@ void FSPoserAnimator::setJointRotation(LLVOAvatar* avatar, const FSPoserJoint* j
             break;
 
         case SYMPATHETIC_DELTA:
-            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT,
+            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT,
                                                  deltaRot * oppositeJointPose->getPublicRotation());
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, deltaRot);
@@ -980,7 +981,7 @@ void FSPoserAnimator::setJointRotation(LLVOAvatar* avatar, const FSPoserJoint* j
             break;
 
         case MIRROR_DELTA:
-            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, POSER_CHANGE_DEFAULT,
+            oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_DEFAULT,
                                                  mirroredRotation * oppositeJointPose->getPublicRotation());
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, mirroredRotation);
@@ -1341,7 +1342,7 @@ void FSPoserAnimator::setJointScale(LLVOAvatar* avatar, const FSPoserJoint* join
 }
 
 bool FSPoserAnimator::tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJoint& joint, LLVector3* rot, LLVector3* pos,
-                                             LLVector3* scale, bool* baseRotationIsZero)
+                                             LLVector3* scale, bool* baseRotationIsZero, bool* userSetBaseRotZero)
 {
     if (!rot || !pos || !scale)
         return false;
@@ -1362,6 +1363,7 @@ bool FSPoserAnimator::tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJo
     pos->set(jointPose->getPublicPosition());
     scale->set(jointPose->getPublicScale());
     *baseRotationIsZero = jointPose->isBaseRotationZero();
+    *userSetBaseRotZero = jointPose->userHasSetBaseRotationToZero();
 
 // <AS:chanayane> Save full poses!
     rotationDelta = jointPose->getTargetRotation();
@@ -1372,7 +1374,7 @@ bool FSPoserAnimator::tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJo
     return true;
 }
 
-void FSPoserAnimator::loadJointRotation(LLVOAvatar* avatar, const FSPoserJoint* joint, bool setBaseToZero, LLVector3 rotation)
+void FSPoserAnimator::loadJointRotation(LLVOAvatar* avatar, const FSPoserJoint* joint, bool setBaseToZero, bool userSetBaseToZero, LLVector3 rotation)
 {
     if (!isAvatarSafeToUse(avatar) || !joint)
         return;
@@ -1388,7 +1390,7 @@ void FSPoserAnimator::loadJointRotation(LLVOAvatar* avatar, const FSPoserJoint* 
     jointPose->purgeUndoQueue();
 
     LLQuaternion rot = translateRotationToQuaternion(avatar, jointPose, POSER_FRAME_BONE, SWAP_NOTHING, NEGATE_NOTHING, rotation);
-    jointPose->setPublicRotation(setBaseToZero, POSER_CHANGE_DEFAULT, rot);
+    jointPose->setPublicRotation(setBaseToZero, userSetBaseToZero, POSER_CHANGE_DEFAULT, rot);
 }
 
 void FSPoserAnimator::loadJointPosition(LLVOAvatar* avatar, const FSPoserJoint* joint, bool loadPositionAsDelta, LLVector3 position)
@@ -1702,7 +1704,7 @@ void FSPoserAnimator::deRotateJointOrFirstLockedChild(const FSPoserJoint* joint,
         LLQuaternion rotDiffInChildFrame  = differenceInWorldRot * rotationChange * ~differenceInWorldRot;
         rotDiffInChildFrame.conjugate();
 
-        jointPose->setPublicRotation(false, POSER_CHANGE_ROTATION, rotDiffInChildFrame * jointPose->getPublicRotation());
+        jointPose->setPublicRotation(false, false, POSER_CHANGE_ROTATION, rotDiffInChildFrame * jointPose->getPublicRotation());
         return;
     }
 
