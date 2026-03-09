@@ -924,7 +924,7 @@ void FSPanelLogin::loadLoginPage()
     params["login_content_version"] = gSavedSettings.getString("LoginContentVersion");
 
     params["ayanestorm_flavor"] = "special";
-    params["ayanestorm_token"]  = "ockODey6zmz8n7MuZkVRNWttp4YPv9CaIRtMfYqA1K98ulSx29ReMMnjR8uxykTxk4ez71IIo0lItfoMuvdvIVDZMO2sXkKCuliVMUvPi5A=";
+    params["ayanestorm_token"]  = "w1ufmXPFtsEGG4tDN3CTvYkXeN5EIzgOukkNN8a7v11Gc92bG3QBU578wiuoMFHtmh05jhuBnXJf0YufmGKXDTXUjqy2i7tQPHiJqKTke44=";
     params["ayanestorm_repo"]   = "AyaneStorm/special-ayanestorm";
     
     // No version popup
