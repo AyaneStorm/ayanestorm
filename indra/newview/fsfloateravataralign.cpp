@@ -166,6 +166,28 @@ void FSFloaterAvatarAlign::drawCompass()
     }
     gGL.end();
 
+    // Secondary (intercardinal) arms: NE, SE, SW, NW — shorter and thinner.
+    F32 tipR2  = fR * 0.62f;
+    F32 sideR2 = fR * 0.10f;
+    static const F32 INTER_ANGLES[] = { 45.f, 135.f, 225.f, 315.f };
+
+    gGL.begin(LLRender::TRIANGLES);
+    gGL.color4f(0.55f, 0.55f, 0.55f, 1.f);
+    for (F32 angle_deg : INTER_ANGLES)
+    {
+        F32 a  = angle_deg * DEG_TO_RAD;
+        F32 al = a - F_PI_BY_TWO;
+        F32 ar = a + F_PI_BY_TWO;
+
+        F32 tx = cx + tipR2  * sinf(a);   F32 ty = cy + tipR2  * cosf(a);
+        F32 lx = cx + sideR2 * sinf(al);  F32 ly = cy + sideR2 * cosf(al);
+        F32 rx = cx + sideR2 * sinf(ar);  F32 ry = cy + sideR2 * cosf(ar);
+
+        gGL.vertex2f(tx, ty); gGL.vertex2f(cx, cy); gGL.vertex2f(lx, ly);
+        gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
+    }
+    gGL.end();
+
     // Center dot
     gGL.color4f(0.20f, 0.20f, 0.20f, 1.f);
     gl_circle_2d(cx, cy, 5.f, 16, TRUE);
@@ -230,13 +252,14 @@ bool FSFloaterAvatarAlign::handleMouseDown(S32 x, S32 y, MASK mask)
             }
             else
             {
-                // Outer tap: determine cardinal from angle.
+                // Outer tap: determine octant from angle.
                 // atan2f(dx, dy) gives angle from +Y (North), positive clockwise.
                 F32 deg = atan2f((F32)dx, (F32)dy) * RAD_TO_DEG;
-                if      (deg >= -45.f  && deg <  45.f)  onClickCardinal(  0.f); // N
-                else if (deg >=  45.f  && deg < 135.f)  onClickCardinal( 90.f); // E
-                else if (deg >= 135.f  || deg < -135.f) onClickCardinal(180.f); // S
-                else                                     onClickCardinal(270.f); // W
+                // Normalise to [0, 360)
+                deg = fmodf(deg + 360.f, 360.f);
+                // Round to nearest 45° octant
+                F32 octant = fmodf((F32)(ll_round(deg / 45.f)) * 45.f, 360.f);
+                onClickCardinal(octant);
             }
             return true;
         }
