@@ -32,6 +32,7 @@ public:
 
 private:
     void onClickCardinal(F32 target_deg);
+    void onClickRotate(F32 delta_deg);
     void onClickNearest();
     void onClickFaceNearestAvatar();
     void rotateAgentTo(F32 target_deg);

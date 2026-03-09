@@ -79,12 +79,10 @@ FSFloaterAvatarAlign::~FSFloaterAvatarAlign()
 
 bool FSFloaterAvatarAlign::postBuild()
 {
-    childSetAction("btn_north",   [this](void*) { onClickCardinal(0.f);       }, this);
-    childSetAction("btn_east",    [this](void*) { onClickCardinal(90.f);      }, this);
-    childSetAction("btn_south",   [this](void*) { onClickCardinal(180.f);     }, this);
-    childSetAction("btn_west",    [this](void*) { onClickCardinal(270.f);     }, this);
-    childSetAction("btn_nearest", [this](void*) { onClickNearest();           }, this);
-    childSetAction("btn_avatar",  [this](void*) { onClickFaceNearestAvatar(); }, this);
+    childSetAction("btn_rotate_left",  [this](void*) { onClickRotate(-1.f);          }, this);
+    childSetAction("btn_rotate_right", [this](void*) { onClickRotate( 1.f);          }, this);
+    childSetAction("btn_nearest",      [this](void*) { onClickNearest();              }, this);
+    childSetAction("btn_avatar",       [this](void*) { onClickFaceNearestAvatar();    }, this);
 
     return true;
 }
@@ -98,8 +96,8 @@ void FSFloaterAvatarAlign::drawCompass()
     LLRect local = getLocalRect();
     S32 header_h = getHeaderHeight();
 
-    // Reserve ~95px at the bottom for buttons + checkbox.
-    S32 avail_h = local.getHeight() - header_h - 95;
+    // Reserve ~125px at the bottom for buttons + checkbox.
+    S32 avail_h = local.getHeight() - header_h - 125;
     S32 R = llclamp(llmin(local.getWidth() / 2 - 27, avail_h / 2), 40, 90);
 
     mCompassCX = local.getCenterX();
@@ -366,6 +364,15 @@ void FSFloaterAvatarAlign::rotateAgentTo(F32 target_deg)
 void FSFloaterAvatarAlign::onClickCardinal(F32 target_deg)
 {
     rotateAgentTo(target_deg);
+}
+
+void FSFloaterAvatarAlign::onClickRotate(F32 delta_deg)
+{
+    LLVector3 at = gAgent.getFrameAgent().getAtAxis();
+    at.mV[VZ] = 0.f;
+    at.normalize();
+    F32 yaw_deg = atan2f(at.mV[VX], at.mV[VY]) * RAD_TO_DEG;
+    rotateAgentTo(fmodf(yaw_deg + delta_deg + 360.f, 360.f));
 }
 
 void FSFloaterAvatarAlign::onClickNearest()
