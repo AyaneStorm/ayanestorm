@@ -89,7 +89,6 @@ bool FSFloaterAvatarAlign::postBuild()
     childSetAction("btn_rotate_right_10", [this](void*) { onClickRotate( 10.f);         }, this);
     childSetAction("btn_nearest",         [this](void*) { onClickNearest();             }, this);
     childSetAction("btn_avatar",          [this](void*) { onClickFaceNearestAvatar();   }, this);
-    childSetAction("btn_mirror_avatar",   [this](void*) { onClickMirrorNearestAvatar(); }, this);
 
     return true;
 }
@@ -103,8 +102,8 @@ void FSFloaterAvatarAlign::drawCompass()
     LLRect local = getLocalRect();
     S32 header_h = getHeaderHeight();
 
-    // Reserve ~152px at the bottom for buttons + checkbox.
-    S32 avail_h = local.getHeight() - header_h - 152;
+    // Reserve ~125px at the bottom for buttons + checkbox.
+    S32 avail_h = local.getHeight() - header_h - 125;
     S32 R = llclamp(llmin(local.getWidth() / 2 - 27, avail_h / 2), 40, 90);
 
     mCompassCX = local.getCenterX();
@@ -282,6 +281,8 @@ void FSFloaterAvatarAlign::draw()
 
     // Always override mRoot to the final target so local view looks correct.
     snapAvatarBody(mTargetDirection);
+    // Also suppress pelvis-lag on the target remote avatar on our viewer.
+    snapRemoteAvatarBody(mTargetAvatar);
 
     S32 last = (S32)(LL_ARRAY_SIZE(OSCILLATION)) - 1;
     if (mOscTimer.getElapsedTimeF32() >= OSCILLATION[mOscStep].hold_sec)
@@ -293,6 +294,7 @@ void FSFloaterAvatarAlign::draw()
             gAgent.resetAxes(mTargetDirection);
             send_agent_update(true, false);
             mOscStep = -1;
+            mTargetAvatar = nullptr;
             return;
         }
         LLVector3 stepped = offsetDirection(mTargetDirection, OSCILLATION[mOscStep].offset_deg);
@@ -333,6 +335,26 @@ void FSFloaterAvatarAlign::snapAvatarBody(const LLVector3& target_at)
     gAgentAvatarp->mRoot->setWorldRotation(LLQuaternion(at, left, up));
 }
 
+// Override mRoot of a remote avatar to match their server-reported rotation,
+// eliminating pelvis-lag rendering on the local viewer for that avatar.
+void FSFloaterAvatarAlign::snapRemoteAvatarBody(LLVOAvatar* avatar)
+{
+    if (!avatar || avatar->isDead() || !avatar->mRoot)
+        return;
+
+    LLVector3 at = LLVector3(1.f, 0.f, 0.f) * avatar->getRotation();
+    at.mV[VZ] = 0.f;
+    if (at.normalize() < 0.001f)
+        return;
+
+    LLVector3 up(0.f, 0.f, 1.f);
+    LLVector3 left = up % at;
+    left.normalize();
+    at = left % up;
+
+    avatar->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+}
+
 // Begin the oscillation sequence (or a direct snap) toward direction.
 void FSFloaterAvatarAlign::applyRotation(const LLVector3& direction)
 {
@@ -355,6 +377,8 @@ void FSFloaterAvatarAlign::applyRotation(const LLVector3& direction)
         gAgent.resetAxes(mTargetDirection);
         send_agent_update(true, false);
         snapAvatarBody(mTargetDirection);
+        snapRemoteAvatarBody(mTargetAvatar);
+        mTargetAvatar = nullptr;
     }
 }
 
@@ -410,6 +434,8 @@ void FSFloaterAvatarAlign::faceAvatar(LLVOAvatar* avatar)
     if (!avatar || !isAgentAvatarValid())
         return;
 
+    mTargetAvatar = avatar;
+
     LLVector3 direction = avatar->getPositionAgent() - gAgentAvatarp->getPositionAgent();
     direction.mV[VZ] = 0.f;
     direction.normalize();
@@ -417,56 +443,6 @@ void FSFloaterAvatarAlign::faceAvatar(LLVOAvatar* avatar)
     applyRotation(direction);
 }
 
-void FSFloaterAvatarAlign::mirrorAvatar(LLVOAvatar* avatar)
-{
-    if (!avatar || !isAgentAvatarValid())
-        return;
-
-    // Use the other avatar's server-reported body rotation.
-    // The at-axis of an SL avatar object is the local X axis.
-    LLVector3 other_at = LLVector3(1.f, 0.f, 0.f) * avatar->getRotation();
-    other_at.mV[VZ] = 0.f;
-    if (other_at.normalize() < 0.001f)
-        return;
-
-    applyRotation(-other_at);
-}
-
-void FSFloaterAvatarAlign::onClickMirrorNearestAvatar()
-{
-    if (!isAgentAvatarValid())
-        return;
-
-    LLVector3 my_pos = gAgent.getPositionAgent();
-    LLVOAvatar* nearest = nullptr;
-    F32 nearest_dist_sq = F32_MAX;
-
-    for (LLCharacter* character : LLCharacter::sInstances)
-    {
-        LLVOAvatar* avatar = (LLVOAvatar*)character;
-        if (avatar->isDead() || avatar->isControlAvatar() || avatar->isSelf())
-            continue;
-        if (isAvatarFlying(avatar))
-            continue;
-
-        F32 dist_sq = dist_vec_squared(avatar->getPositionAgent(), my_pos);
-        if (dist_sq > MAX_FACE_DISTANCE * MAX_FACE_DISTANCE)
-            continue;
-        if (dist_sq < nearest_dist_sq)
-        {
-            nearest_dist_sq = dist_sq;
-            nearest = avatar;
-        }
-    }
-
-    if (!nearest)
-    {
-        LL_WARNS("AvatarAlign") << "No nearby avatar found to mirror." << LL_ENDL;
-        return;
-    }
-
-    mirrorAvatar(nearest);
-}
 
 void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
 {
