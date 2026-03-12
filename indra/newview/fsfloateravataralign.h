@@ -32,6 +32,9 @@ public:
     void draw() override;
     bool handleMouseDown(S32 x, S32 y, MASK mask) override;
 
+    // Face the nearest non-flying avatar within MAX_FACE_DISTANCE.
+    void onClickFaceNearestAvatar();
+
     // Face a specific avatar. Safe to call with nullptr (no-op).
     // Callable from external contexts (minimap context menu, etc.).
     void faceAvatar(LLVOAvatar* avatar);
@@ -45,7 +48,6 @@ private:
     void onClickCardinal(F32 target_deg);
     void onClickRotate(F32 delta_deg);
     void onClickNearest();
-    void onClickFaceNearestAvatar();
     void rotateAgentTo(F32 target_deg);
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);

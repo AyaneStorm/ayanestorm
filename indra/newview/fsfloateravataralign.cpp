@@ -409,7 +409,7 @@ void FSFloaterAvatarAlign::faceAvatar(LLVOAvatar* avatar)
     if (!avatar || !isAgentAvatarValid())
         return;
 
-    LLVector3 direction = avatar->getPositionAgent() - gAgent.getPositionAgent();
+    LLVector3 direction = avatar->getPositionAgent() - gAgentAvatarp->getPositionAgent();
     direction.mV[VZ] = 0.f;
     direction.normalize();
 
