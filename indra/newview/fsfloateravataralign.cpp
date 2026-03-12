@@ -333,6 +333,7 @@ void FSFloaterAvatarAlign::snapAvatarBody(const LLVector3& target_at)
     at = left % up;
 
     gAgentAvatarp->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+    gAgentAvatarp->mRoot->setWorldPosition(gAgent.getPositionAgent());
 }
 
 // Override mRoot of a remote avatar to match their server-reported rotation,
@@ -353,6 +354,7 @@ void FSFloaterAvatarAlign::snapRemoteAvatarBody(LLVOAvatar* avatar)
     at = left % up;
 
     avatar->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+    avatar->mRoot->setWorldPosition(avatar->getPositionAgent());
 }
 
 // Begin the oscillation sequence (or a direct snap) toward direction.
