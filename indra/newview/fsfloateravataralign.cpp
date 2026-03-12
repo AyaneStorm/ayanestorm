@@ -79,10 +79,12 @@ FSFloaterAvatarAlign::~FSFloaterAvatarAlign()
 
 bool FSFloaterAvatarAlign::postBuild()
 {
-    childSetAction("btn_rotate_left",  [this](void*) { onClickRotate(-1.f);          }, this);
-    childSetAction("btn_rotate_right", [this](void*) { onClickRotate( 1.f);          }, this);
-    childSetAction("btn_nearest",      [this](void*) { onClickNearest();              }, this);
-    childSetAction("btn_avatar",       [this](void*) { onClickFaceNearestAvatar();    }, this);
+    childSetAction("btn_rotate_left_10",  [this](void*) { onClickRotate(-10.f);         }, this);
+    childSetAction("btn_rotate_left_1",   [this](void*) { onClickRotate( -1.f);         }, this);
+    childSetAction("btn_rotate_right_1",  [this](void*) { onClickRotate(  1.f);         }, this);
+    childSetAction("btn_rotate_right_10", [this](void*) { onClickRotate( 10.f);         }, this);
+    childSetAction("btn_nearest",         [this](void*) { onClickNearest();             }, this);
+    childSetAction("btn_avatar",          [this](void*) { onClickFaceNearestAvatar();   }, this);
 
     return true;
 }
