@@ -39,6 +39,10 @@ public:
     // Callable from external contexts (minimap context menu, etc.).
     void faceAvatar(LLVOAvatar* avatar);
 
+    // Face exactly opposite the avatar's server-reported rotation (mirror approach).
+    // More accurate than faceAvatar() when both avatars are already roughly aligned.
+    void mirrorAvatar(LLVOAvatar* avatar);
+
     // Returns true if avatar is non-null, alive, and within MAX_FACE_DISTANCE metres.
     bool isAvatarInRange(LLVOAvatar* avatar) const;
 
@@ -48,6 +52,7 @@ private:
     void onClickCardinal(F32 target_deg);
     void onClickRotate(F32 delta_deg);
     void onClickNearest();
+    void onClickMirrorNearestAvatar();
     void rotateAgentTo(F32 target_deg);
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);

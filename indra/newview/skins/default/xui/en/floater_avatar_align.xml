@@ -7,11 +7,11 @@
     can_minimize="true"
     can_resize="true"
     chrome="true"
-    height="437"
+    height="464"
     help_topic=""
     layout="topleft"
     legacy_header_height="15"
-    min_height="437"
+    min_height="464"
     min_width="230"
     name="avatar_align"
     save_rect="true"
@@ -30,7 +30,8 @@
     <button name="btn_rotate_right_45" label="+45° R" top="304" left="114" width="50" />
     <button name="btn_rotate_right_90" label="+90° R" top="304" left="166" width="50" />
     <button name="btn_nearest" label="To nearest cardinal" top_pad="4" left="10" width="207" />
-    <button name="btn_avatar" label="Face nearest avatar" top_pad="6" left="10" width="207" />
+    <button name="btn_avatar" label="Face nearest avatar" top_pad="4" left="10" width="207" />
+    <button name="btn_mirror_avatar" label="Mirror nearest avatar" top_pad="4" left="10" width="207" />
     <check_box name="chk_oscillate"
                label="Improve rotation accuracy"
                top_pad="10"
