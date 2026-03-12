@@ -21,16 +21,16 @@
     title="Compass" 
     width="230"
 >
-    <button name="btn_rotate_left_10"  label="10° L" top="277" left="10"  width="45" />
-    <button name="btn_rotate_left_1"   label="1° L"  top="277" left="65"  width="45" />
-    <button name="btn_rotate_right_1"  label="1° R"  top="277" left="120" width="45" />
-    <button name="btn_rotate_right_10" label="10° R" top="277" left="175" width="45" />
-    <button name="btn_nearest" label="To nearest cardinal" top_pad="4" left="10" width="205" />
-    <button name="btn_avatar" label="Face nearest avatar" top_pad="6" left="10" width="205" />
+    <button name="btn_rotate_left_10"  label="10° L" top="277" left="10"  width="50" />
+    <button name="btn_rotate_left_1"   label="1° L"  top="277" left="62"  width="50" />
+    <button name="btn_rotate_right_1"  label="1° R"  top="277" left="114" width="50" />
+    <button name="btn_rotate_right_10" label="10° R" top="277" left="166" width="50" />
+    <button name="btn_nearest" label="To nearest cardinal" top_pad="4" left="10" width="207" />
+    <button name="btn_avatar" label="Face nearest avatar" top_pad="6" left="10" width="207" />
     <check_box name="chk_oscillate"
                label="Improve rotation accuracy"
                top_pad="10"
                left="10"
-               width="205"
+               width="207"
                control_name="AvatarAlignOscillate" />
 </floater>
