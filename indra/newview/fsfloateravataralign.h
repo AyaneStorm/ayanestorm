@@ -17,6 +17,8 @@
 
 #include "llfloater.h"
 
+class LLVOAvatar;
+
 class FSFloaterAvatarAlign : public LLFloater
 {
     LOG_CLASS(FSFloaterAvatarAlign);
@@ -30,11 +32,22 @@ public:
     void draw() override;
     bool handleMouseDown(S32 x, S32 y, MASK mask) override;
 
+    // Face the nearest non-flying avatar within MAX_FACE_DISTANCE.
+    void onClickFaceNearestAvatar();
+
+    // Face a specific avatar. Safe to call with nullptr (no-op).
+    // Callable from external contexts (minimap context menu, etc.).
+    void faceAvatar(LLVOAvatar* avatar);
+
+    // Returns true if avatar is non-null, alive, and within MAX_FACE_DISTANCE metres.
+    bool isAvatarInRange(LLVOAvatar* avatar) const;
+
+    static constexpr F32 MAX_FACE_DISTANCE = 20.f;
+
 private:
     void onClickCardinal(F32 target_deg);
     void onClickRotate(F32 delta_deg);
     void onClickNearest();
-    void onClickFaceNearestAvatar();
     void rotateAgentTo(F32 target_deg);
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);
@@ -47,9 +60,12 @@ private:
     struct OscStep { F32 offset_deg; F32 hold_sec; };
     static const OscStep OSCILLATION[];
 
-    LLVector3 mTargetDirection;   // final desired facing (horizontal, normalised)
-    S32       mOscStep = -1;      // current index into OSCILLATION, -1 = idle
-    LLTimer   mOscTimer;
+    void snapRemoteAvatarBody(LLVOAvatar* avatar);
+
+    LLVector3  mTargetDirection;            // final desired facing (horizontal, normalised)
+    S32        mOscStep = -1;               // current index into OSCILLATION, -1 = idle
+    LLTimer    mOscTimer;
+    LLVOAvatar* mTargetAvatar = nullptr;   // remote avatar to snap during oscillation
 
     // Compass geometry, computed each draw() and used by handleMouseDown().
     S32 mCompassCX = 0;

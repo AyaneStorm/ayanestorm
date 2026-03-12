@@ -714,4 +714,12 @@
         is_running_parameters="avatar_align"
          />
 
+  <command name="face_nearest_avatar"
+        available_in_toybox="true"
+        icon="Command_AvatarAlign_Icon"
+        label_ref="Command_FaceNearestAvatar_Label"
+        tooltip_ref="Command_FaceNearestAvatar_Tooltip"
+        execute_function="Avatar.FaceNearest"
+         />
+
 </commands>

@@ -79,6 +79,10 @@ FSFloaterAvatarAlign::~FSFloaterAvatarAlign()
 
 bool FSFloaterAvatarAlign::postBuild()
 {
+    childSetAction("btn_rotate_left_90",  [this](void*) { onClickRotate(-90.f);         }, this);
+    childSetAction("btn_rotate_left_45",  [this](void*) { onClickRotate(-45.f);         }, this);
+    childSetAction("btn_rotate_right_45", [this](void*) { onClickRotate( 45.f);         }, this);
+    childSetAction("btn_rotate_right_90", [this](void*) { onClickRotate( 90.f);         }, this);
     childSetAction("btn_rotate_left_10",  [this](void*) { onClickRotate(-10.f);         }, this);
     childSetAction("btn_rotate_left_1",   [this](void*) { onClickRotate( -1.f);         }, this);
     childSetAction("btn_rotate_right_1",  [this](void*) { onClickRotate(  1.f);         }, this);
@@ -277,6 +281,8 @@ void FSFloaterAvatarAlign::draw()
 
     // Always override mRoot to the final target so local view looks correct.
     snapAvatarBody(mTargetDirection);
+    // Also suppress pelvis-lag on the target remote avatar on our viewer.
+    snapRemoteAvatarBody(mTargetAvatar);
 
     S32 last = (S32)(LL_ARRAY_SIZE(OSCILLATION)) - 1;
     if (mOscTimer.getElapsedTimeF32() >= OSCILLATION[mOscStep].hold_sec)
@@ -288,6 +294,7 @@ void FSFloaterAvatarAlign::draw()
             gAgent.resetAxes(mTargetDirection);
             send_agent_update(true, false);
             mOscStep = -1;
+            mTargetAvatar = nullptr;
             return;
         }
         LLVector3 stepped = offsetDirection(mTargetDirection, OSCILLATION[mOscStep].offset_deg);
@@ -328,6 +335,26 @@ void FSFloaterAvatarAlign::snapAvatarBody(const LLVector3& target_at)
     gAgentAvatarp->mRoot->setWorldRotation(LLQuaternion(at, left, up));
 }
 
+// Override mRoot of a remote avatar to match their server-reported rotation,
+// eliminating pelvis-lag rendering on the local viewer for that avatar.
+void FSFloaterAvatarAlign::snapRemoteAvatarBody(LLVOAvatar* avatar)
+{
+    if (!avatar || avatar->isDead() || !avatar->mRoot)
+        return;
+
+    LLVector3 at = LLVector3(1.f, 0.f, 0.f) * avatar->getRotation();
+    at.mV[VZ] = 0.f;
+    if (at.normalize() < 0.001f)
+        return;
+
+    LLVector3 up(0.f, 0.f, 1.f);
+    LLVector3 left = up % at;
+    left.normalize();
+    at = left % up;
+
+    avatar->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+}
+
 // Begin the oscillation sequence (or a direct snap) toward direction.
 void FSFloaterAvatarAlign::applyRotation(const LLVector3& direction)
 {
@@ -350,6 +377,8 @@ void FSFloaterAvatarAlign::applyRotation(const LLVector3& direction)
         gAgent.resetAxes(mTargetDirection);
         send_agent_update(true, false);
         snapAvatarBody(mTargetDirection);
+        snapRemoteAvatarBody(mTargetAvatar);
+        mTargetAvatar = nullptr;
     }
 }
 
@@ -393,6 +422,28 @@ void FSFloaterAvatarAlign::onClickNearest()
     rotateAgentTo(nearest_deg);
 }
 
+bool FSFloaterAvatarAlign::isAvatarInRange(LLVOAvatar* avatar) const
+{
+    if (!avatar || avatar->isDead())
+        return false;
+    return dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= MAX_FACE_DISTANCE;
+}
+
+void FSFloaterAvatarAlign::faceAvatar(LLVOAvatar* avatar)
+{
+    if (!avatar || !isAgentAvatarValid())
+        return;
+
+    mTargetAvatar = avatar;
+
+    LLVector3 direction = avatar->getPositionAgent() - gAgentAvatarp->getPositionAgent();
+    direction.mV[VZ] = 0.f;
+    direction.normalize();
+
+    applyRotation(direction);
+}
+
+
 void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
 {
     if (!isAgentAvatarValid())
@@ -411,6 +462,8 @@ void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
             continue;
 
         F32 dist_sq = dist_vec_squared(avatar->getPositionAgent(), my_pos);
+        if (dist_sq > MAX_FACE_DISTANCE * MAX_FACE_DISTANCE)
+            continue;
         if (dist_sq < nearest_dist_sq)
         {
             nearest_dist_sq = dist_sq;
@@ -424,9 +477,5 @@ void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
         return;
     }
 
-    LLVector3 direction = nearest->getPositionAgent() - my_pos;
-    direction.mV[VZ] = 0.f;
-    direction.normalize();
-
-    applyRotation(direction);
+    faceAvatar(nearest);
 }

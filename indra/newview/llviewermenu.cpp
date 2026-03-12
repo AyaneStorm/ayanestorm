@@ -161,6 +161,7 @@
 // [/RLVa:KB]
 
 // Firestorm includes
+#include "fsfloateravataralign.h"
 #include "fsassetblacklist.h"
 #include "fsdata.h"
 #include "fslslbridge.h"
@@ -13281,6 +13282,11 @@ void initialize_menus()
     enable.add("Avatar.IsPicksTabOpen", boost::bind(&picks_tab_visible));
 
     commit.add("Avatar.OpenMarketplace", boost::bind(&LLWeb::loadURLExternal, gSavedSettings.getString("MarketplaceURL")));
+
+    commit.add("Avatar.FaceNearest", [](LLUICtrl*, const LLSD&) {
+        FSFloaterAvatarAlign* f = LLFloaterReg::getTypedInstance<FSFloaterAvatarAlign>("avatar_align");
+        if (f) f->onClickFaceNearestAvatar();
+    });
 
     view_listener_t::addMenu(new LLAvatarEnableAddFriend(), "Avatar.EnableAddFriend");
     enable.add("Avatar.EnableFreezeEject", boost::bind(&enable_freeze_eject, _2));
