@@ -79,6 +79,10 @@ FSFloaterAvatarAlign::~FSFloaterAvatarAlign()
 
 bool FSFloaterAvatarAlign::postBuild()
 {
+    childSetAction("btn_rotate_left_90",  [this](void*) { onClickRotate(-90.f);         }, this);
+    childSetAction("btn_rotate_left_45",  [this](void*) { onClickRotate(-45.f);         }, this);
+    childSetAction("btn_rotate_right_45", [this](void*) { onClickRotate( 45.f);         }, this);
+    childSetAction("btn_rotate_right_90", [this](void*) { onClickRotate( 90.f);         }, this);
     childSetAction("btn_rotate_left_10",  [this](void*) { onClickRotate(-10.f);         }, this);
     childSetAction("btn_rotate_left_1",   [this](void*) { onClickRotate( -1.f);         }, this);
     childSetAction("btn_rotate_right_1",  [this](void*) { onClickRotate(  1.f);         }, this);
@@ -393,6 +397,25 @@ void FSFloaterAvatarAlign::onClickNearest()
     rotateAgentTo(nearest_deg);
 }
 
+bool FSFloaterAvatarAlign::isAvatarInRange(LLVOAvatar* avatar) const
+{
+    if (!avatar || avatar->isDead())
+        return false;
+    return dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= MAX_FACE_DISTANCE;
+}
+
+void FSFloaterAvatarAlign::faceAvatar(LLVOAvatar* avatar)
+{
+    if (!avatar || !isAgentAvatarValid())
+        return;
+
+    LLVector3 direction = avatar->getPositionAgent() - gAgent.getPositionAgent();
+    direction.mV[VZ] = 0.f;
+    direction.normalize();
+
+    applyRotation(direction);
+}
+
 void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
 {
     if (!isAgentAvatarValid())
@@ -411,6 +434,8 @@ void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
             continue;
 
         F32 dist_sq = dist_vec_squared(avatar->getPositionAgent(), my_pos);
+        if (dist_sq > MAX_FACE_DISTANCE * MAX_FACE_DISTANCE)
+            continue;
         if (dist_sq < nearest_dist_sq)
         {
             nearest_dist_sq = dist_sq;
@@ -424,9 +449,5 @@ void FSFloaterAvatarAlign::onClickFaceNearestAvatar()
         return;
     }
 
-    LLVector3 direction = nearest->getPositionAgent() - my_pos;
-    direction.mV[VZ] = 0.f;
-    direction.normalize();
-
-    applyRotation(direction);
+    faceAvatar(nearest);
 }

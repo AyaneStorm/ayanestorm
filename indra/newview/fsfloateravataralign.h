@@ -17,6 +17,8 @@
 
 #include "llfloater.h"
 
+class LLVOAvatar;
+
 class FSFloaterAvatarAlign : public LLFloater
 {
     LOG_CLASS(FSFloaterAvatarAlign);
@@ -29,6 +31,15 @@ public:
     void onOpen(const LLSD& key) override;
     void draw() override;
     bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+
+    // Face a specific avatar. Safe to call with nullptr (no-op).
+    // Callable from external contexts (minimap context menu, etc.).
+    void faceAvatar(LLVOAvatar* avatar);
+
+    // Returns true if avatar is non-null, alive, and within MAX_FACE_DISTANCE metres.
+    bool isAvatarInRange(LLVOAvatar* avatar) const;
+
+    static constexpr F32 MAX_FACE_DISTANCE = 20.f;
 
 private:
     void onClickCardinal(F32 target_deg);

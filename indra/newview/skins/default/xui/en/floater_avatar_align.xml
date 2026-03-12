@@ -7,11 +7,11 @@
     can_minimize="true"
     can_resize="true"
     chrome="true"
-    height="410"
+    height="437"
     help_topic=""
     layout="topleft"
     legacy_header_height="15"
-    min_height="410"
+    min_height="437"
     min_width="230"
     name="avatar_align"
     save_rect="true"
@@ -25,6 +25,10 @@
     <button name="btn_rotate_left_1"   label="1° L"  top="277" left="62"  width="50" />
     <button name="btn_rotate_right_1"  label="1° R"  top="277" left="114" width="50" />
     <button name="btn_rotate_right_10" label="10° R" top="277" left="166" width="50" />
+    <button name="btn_rotate_left_90"  label="-90° L" top="304" left="10"  width="50" />
+    <button name="btn_rotate_left_45"  label="-45° L" top="304" left="62"  width="50" />
+    <button name="btn_rotate_right_45" label="+45° R" top="304" left="114" width="50" />
+    <button name="btn_rotate_right_90" label="+90° R" top="304" left="166" width="50" />
     <button name="btn_nearest" label="To nearest cardinal" top_pad="4" left="10" width="207" />
     <button name="btn_avatar" label="Face nearest avatar" top_pad="6" left="10" width="207" />
     <check_box name="chk_oscillate"
