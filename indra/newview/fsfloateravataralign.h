@@ -31,6 +31,7 @@ public:
     void onOpen(const LLSD& key) override;
     void draw() override;
     bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    bool handleHover(S32 x, S32 y, MASK mask) override;
 
     // Face the nearest non-flying avatar within MAX_FACE_DISTANCE.
     void onClickFaceNearestAvatar();
@@ -67,10 +68,12 @@ private:
     LLTimer    mOscTimer;
     LLVOAvatar* mTargetAvatar = nullptr;   // remote avatar to snap during oscillation
 
-    // Compass geometry, computed each draw() and used by handleMouseDown().
+    // Compass geometry, computed each draw() and used by handleMouseDown/handleHover().
     S32 mCompassCX = 0;
     S32 mCompassCY = 0;
     S32 mCompassR  = 0;
+    // Hover state: -1=none, -2=centre, 0-7=octant (index × 45° = degrees from North CW)
+    S32 mHoverOctant = -1;
 };
 
 #endif // FS_FLOATER_AVATAR_ALIGN_H
