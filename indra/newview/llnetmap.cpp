@@ -2059,7 +2059,7 @@ void LLNetMap::handleFaceTowards()
     if (!avatar)
         return;
     // Get-or-create the floater instance; no need to show it just to rotate.
-    FSFloaterAvatarAlign* floater = LLFloaterReg::getTypedInstance<FSFloaterAvatarAlign>("avatar_align", LLSD());
+    FSAvatarAlignBase* floater = FSAvatarAlignBase::getActive();
     if (floater)
     {
         floater->faceAvatar(avatar);
@@ -2069,8 +2069,8 @@ void LLNetMap::handleFaceTowards()
 bool LLNetMap::canFaceTowards()
 {
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(gObjectList.findObject(mClosestAgentRightClick));
-    return avatar && !avatar->isDead() &&
-           dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSFloaterAvatarAlign::MAX_FACE_DISTANCE;
+    return avatar && !avatar->isSelf() && !avatar->isDead() &&
+           dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSAvatarAlignBase::MAX_FACE_DISTANCE;
 }
 // </AS:Chanayane>
 

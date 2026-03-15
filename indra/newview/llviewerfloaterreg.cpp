@@ -692,7 +692,8 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("local_mesh_floater", "floater_vj_local_mesh.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterLocalMesh>); // local mesh
     LLFloaterReg::add("fs_whitelist_floater", "floater_whitelist.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterWhiteListHelper>); // white list advisor
     // <AS:Chanayane> Compass floater
-    LLFloaterReg::add("avatar_align", "floater_avatar_align.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterAvatarAlign>);
+    LLFloaterReg::add("avatar_align",      "floater_avatar_align.xml",      (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterAvatarAlign>);
+    LLFloaterReg::add("avatar_align_mini", "floater_avatar_align_mini.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterAvatarAlignMini>);
     // </AS:Chanayane>
 
     LLFloaterReg::registerControlVariables(); // Make sure visibility and rect controls get preserved when saving

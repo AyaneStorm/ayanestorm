@@ -13313,8 +13313,19 @@ void initialize_menus()
     commit.add("Avatar.OpenMarketplace", boost::bind(&LLWeb::loadURLExternal, gSavedSettings.getString("MarketplaceURL")));
 
 // <AS:Chanayane> Compass floater
+    commit.add("Avatar.AlignToggle", [](LLUICtrl*, const LLSD&) {
+        if (gSavedSettings.getBOOL("AvatarAlignMini"))
+            LLFloaterReg::toggleInstance("avatar_align_mini");
+        else
+            LLFloaterReg::toggleInstance("avatar_align");
+    });
+    enable.add("Avatar.AlignIsOpen", [](LLUICtrl*, const LLSD&) -> bool {
+        return gSavedSettings.getBOOL("AvatarAlignMini")
+            ? LLFloaterReg::instanceVisible("avatar_align_mini", LLSD())
+            : LLFloaterReg::instanceVisible("avatar_align",      LLSD());
+    });
     commit.add("Avatar.FaceNearest", [](LLUICtrl*, const LLSD&) {
-        FSFloaterAvatarAlign* f = LLFloaterReg::getTypedInstance<FSFloaterAvatarAlign>("avatar_align");
+        FSAvatarAlignBase* f = FSAvatarAlignBase::getActive();
         if (f) f->onClickFaceNearestAvatar();
     });
 // </AS:Chanayane>
