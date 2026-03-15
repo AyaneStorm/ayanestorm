@@ -312,10 +312,10 @@ public:
     typedef LLCoreHttpUtil::HttpCoroutineAdapter::completionCallback_t httpCallback_t;
     bool requestPostCapability(const std::string &capName,
                                LLSD              &postData,
-                               httpCallback_t     cbSuccess = NULL,
-                               httpCallback_t     cbFailure = NULL);
-    bool requestGetCapability(const std::string &capName, httpCallback_t cbSuccess = NULL, httpCallback_t cbFailure = NULL);
-    bool requestDelCapability(const std::string &capName, httpCallback_t cbSuccess = NULL, httpCallback_t cbFailure = NULL);
+                               httpCallback_t     cbSuccess = nullptr,
+                               httpCallback_t     cbFailure = nullptr);
+    bool requestGetCapability(const std::string& capName, httpCallback_t cbSuccess = nullptr, httpCallback_t cbFailure = nullptr);
+    bool requestDelCapability(const std::string& capName, httpCallback_t cbSuccess = nullptr, httpCallback_t cbFailure = nullptr);
 
     /// implements LLCapabilityProvider
     /*virtual*/ const LLHost& getHost() const;
@@ -380,7 +380,8 @@ public:
 
 // </FS:CR>
 #ifdef OPENSIM
-    const std::set<std::string, std::less<>>& getGods() const { return mGodNames; };
+    const std::set<std::string, std::less<>>& getGods() const { return mGodNames; }
+    const std::vector<std::string> getStunServers() const { return mStunServers; }
 #endif // OPENSIM
 // </FS:CR>
 
@@ -625,6 +626,7 @@ public:
     // <FS:CR> Opensim region capabilities
 #ifdef OPENSIM
     std::set<std::string, std::less<>> mGodNames;
+    std::vector<std::string> mStunServers;
 #endif
     // </FS:CR>
 

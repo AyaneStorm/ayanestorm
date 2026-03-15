@@ -3190,7 +3190,7 @@ bool FSLoadPoseTimer::tick()
 {
     if (!mAttemptLoading)
         return false;
-    if (mCallback.empty())
+    if (!mCallback)
         return false;
 
     if (mLoadAttempts >= mMaxLoadAttempts)

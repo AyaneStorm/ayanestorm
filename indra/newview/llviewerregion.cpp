@@ -260,8 +260,8 @@ void LLViewerRegionImpl::requestBaseCapabilitiesCoro(U64 regionHandle)
 {
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
-        httpAdapter(new LLCoreHttpUtil::HttpCoroutineAdapter("BaseCapabilitiesRequest", httpPolicy));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
+        httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("BaseCapabilitiesRequest", httpPolicy);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
 
     LLSD result;
     LLViewerRegion *regionp = NULL;
@@ -414,8 +414,8 @@ void LLViewerRegionImpl::requestBaseCapabilitiesCompleteCoro(U64 regionHandle)
 {
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
-        httpAdapter(new LLCoreHttpUtil::HttpCoroutineAdapter("BaseCapabilitiesRequest", httpPolicy));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
+        httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("BaseCapabilitiesRequest", httpPolicy);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
 
     LLSD result;
     LLViewerRegion *regionp = NULL;
@@ -548,8 +548,8 @@ void LLViewerRegionImpl::requestSimulatorFeatureCoro(std::string url, U64 region
 {
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
-        httpAdapter(new LLCoreHttpUtil::HttpCoroutineAdapter("BaseCapabilitiesRequest", httpPolicy));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
+        httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("requestSimulatorFeatureCoro", httpPolicy);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
 
     LLViewerRegion *regionp = NULL;
     S32 attemptNumber = 0;
@@ -2714,6 +2714,12 @@ void LLViewerRegion::setSimulatorFeatures(const LLSD& sim_features)
                     mGodNames.emplace(item.asString());
                 }
             }
+        }
+
+        mStunServers.clear();
+        if (mSimulatorFeatures.has("stun-servers"))
+        {
+            LLStringUtil::getTokens(mSimulatorFeatures["stun-servers"].asString(), mStunServers, ",");
         }
     }
 #endif
