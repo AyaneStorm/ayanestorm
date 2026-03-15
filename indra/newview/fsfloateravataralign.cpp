@@ -17,7 +17,6 @@
 #include "fsfloateravataralign.h"
 
 #include "llagent.h"
-#include "llviewercontrol.h"
 #include "llcharacter.h"
 #include "llfloaterreg.h"
 #include "llfontgl.h"
@@ -28,22 +27,6 @@
 #include "llviewermessage.h"
 #include "llanimationstates.h"
 
-// Oscillation sequence sent via AgentUpdate to force remote viewers' pelvis-lag
-// animation to commit to the target direction.  Each step is an angular offset
-// from the target, held long enough (~one PELVIS_LAG_WALKING period = 0.4 s)
-// for the remote avatar's pelvis to actually move before the next correction.
-// The final entry (offset 0) is the true target and is held until the sequence ends.
-// Locally mRoot is always overridden to the final target — no visible jitter.
-const FSFloaterAvatarAlign::OscStep FSFloaterAvatarAlign::OSCILLATION[] =
-{
-    { 45.f, 0.4f },
-    {-45.f, 0.4f },
-    { 20.f, 0.35f},
-    {-20.f, 0.35f},
-    {  8.f, 0.3f },
-    { -8.f, 0.3f },
-    {  0.f, 0.3f },   // final: correct direction
-};
 
 namespace
 {
@@ -102,8 +85,8 @@ void FSFloaterAvatarAlign::drawCompass()
     LLRect local = getLocalRect();
     S32 header_h = getHeaderHeight();
 
-    // Reserve ~125px at the bottom for buttons + checkbox.
-    S32 avail_h = local.getHeight() - header_h - 125;
+    // Reserve ~95px at the bottom for buttons.
+    S32 avail_h = local.getHeight() - header_h - 95;
     S32 R = llclamp(llmin(local.getWidth() / 2 - 27, avail_h / 2), 40, 90);
 
     mCompassCX = local.getCenterX();
@@ -329,44 +312,8 @@ void FSFloaterAvatarAlign::draw()
 {
     LLFloater::draw();
     drawCompass();
-
-    if (mOscStep < 0)
-        return;
-
-    // Always override mRoot to the final target so local view looks correct.
-    snapAvatarBody(mTargetDirection);
-    // Also suppress pelvis-lag on the target remote avatar on our viewer.
-    snapRemoteAvatarBody(mTargetAvatar);
-
-    S32 last = (S32)(LL_ARRAY_SIZE(OSCILLATION)) - 1;
-    if (mOscTimer.getElapsedTimeF32() >= OSCILLATION[mOscStep].hold_sec)
-    {
-        ++mOscStep;
-        if (mOscStep > last)
-        {
-            // Sequence done — ensure final correct rotation is applied.
-            gAgent.resetAxes(mTargetDirection);
-            send_agent_update(true, false);
-            mOscStep = -1;
-            mTargetAvatar = nullptr;
-            return;
-        }
-        LLVector3 stepped = offsetDirection(mTargetDirection, OSCILLATION[mOscStep].offset_deg);
-        gAgent.resetAxes(stepped);
-        send_agent_update(true, false);
-        mOscTimer.reset();
-    }
 }
 
-// Rotate at by offset_deg around the world Z axis.
-LLVector3 FSFloaterAvatarAlign::offsetDirection(const LLVector3& base_at, F32 offset_deg) const
-{
-    F32 rad = offset_deg * DEG_TO_RAD;
-    F32 c = cosf(rad), s = sinf(rad);
-    return LLVector3(base_at.mV[VX] * c - base_at.mV[VY] * s,
-                     base_at.mV[VX] * s + base_at.mV[VY] * c,
-                     0.f);
-}
 
 // Override mRoot world rotation to match target_at for this frame.
 // Replicates the fwdDir/wQv math from LLVOAvatar::updateCharacter() so that
@@ -411,31 +358,13 @@ void FSFloaterAvatarAlign::snapRemoteAvatarBody(LLVOAvatar* avatar)
     avatar->mRoot->setWorldPosition(avatar->getPositionAgent());
 }
 
-// Begin the oscillation sequence (or a direct snap) toward direction.
 void FSFloaterAvatarAlign::applyRotation(const LLVector3& direction)
 {
-    mTargetDirection = direction;
-
-    if (gSavedSettings.getBOOL("AvatarAlignOscillate"))
-    {
-        // Oscillate: remote viewers receive offset AgentUpdates so their
-        // pelvis-lag animation commits to the target direction.
-        mOscStep = 0;
-        LLVector3 stepped = offsetDirection(mTargetDirection, OSCILLATION[0].offset_deg);
-        gAgent.resetAxes(stepped);
-        send_agent_update(true, false);
-        mOscTimer.reset();
-    }
-    else
-    {
-        // Direct snap: apply the correct rotation immediately.
-        mOscStep = -1;
-        gAgent.resetAxes(mTargetDirection);
-        send_agent_update(true, false);
-        snapAvatarBody(mTargetDirection);
-        snapRemoteAvatarBody(mTargetAvatar);
-        mTargetAvatar = nullptr;
-    }
+    gAgent.resetAxes(direction);
+    send_agent_update(true, false);
+    snapAvatarBody(direction);
+    snapRemoteAvatarBody(mTargetAvatar);
+    mTargetAvatar = nullptr;
 }
 
 // Rotate agent to face a world direction given in degrees.

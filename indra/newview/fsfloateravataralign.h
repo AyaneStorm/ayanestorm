@@ -52,21 +52,11 @@ private:
     void rotateAgentTo(F32 target_deg);
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);
-    LLVector3 offsetDirection(const LLVector3& base_at, F32 offset_deg) const;
     void drawCompass();
-
-    // Oscillation sequence: send offset rotations via AgentUpdate so remote
-    // viewers' pelvis-lag animation commits to the target direction.
-    // Locally, mRoot is always overridden to the final target (no visible jitter).
-    struct OscStep { F32 offset_deg; F32 hold_sec; };
-    static const OscStep OSCILLATION[];
 
     void snapRemoteAvatarBody(LLVOAvatar* avatar);
 
-    LLVector3  mTargetDirection;            // final desired facing (horizontal, normalised)
-    S32        mOscStep = -1;               // current index into OSCILLATION, -1 = idle
-    LLTimer    mOscTimer;
-    LLVOAvatar* mTargetAvatar = nullptr;   // remote avatar to snap during oscillation
+    LLVOAvatar* mTargetAvatar = nullptr;
 
     // Compass geometry, computed each draw() and used by handleMouseDown/handleHover().
     S32 mCompassCX = 0;
