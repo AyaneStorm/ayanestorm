@@ -283,7 +283,7 @@ void FSRadarMenu::onTrackAvatarMenuItemClick()
 void FSRadarMenu::onFaceTowardsAvatarMenuItemClick()
 {
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(gObjectList.findObject(mUUIDs.front()));
-    FSFloaterAvatarAlign* floater = LLFloaterReg::getTypedInstance<FSFloaterAvatarAlign>("avatar_align", LLSD());
+    FSAvatarAlignBase* floater = FSAvatarAlignBase::getActive();
     if (floater && avatar)
     {
         floater->faceAvatar(avatar);
@@ -294,7 +294,7 @@ bool FSRadarMenu::canFaceTowardsAvatar()
 {
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(gObjectList.findObject(mUUIDs.front()));
     return avatar && !avatar->isDead() &&
-           dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSFloaterAvatarAlign::MAX_FACE_DISTANCE;
+           dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSAvatarAlignBase::MAX_FACE_DISTANCE;
 }
 
 void FSRadarMenu::addToContactSet()

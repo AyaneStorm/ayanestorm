@@ -737,6 +737,7 @@ void LLWebRTCVoiceClient::setCaptureDevice(const std::string& name)
 {
     if (mWebRTCDeviceInterface)
     {
+        LL_DEBUGS("Voice") << "new capture device is " << name << LL_ENDL;
         mWebRTCDeviceInterface->setCaptureDevice(name);
     }
 }
@@ -778,6 +779,9 @@ void LLWebRTCVoiceClient::OnDevicesChangedImpl(const llwebrtc::LLWebRTCVoiceDevi
         return;
     }
     LL_PROFILE_ZONE_SCOPED_CATEGORY_VOICE;
+
+    LL_DEBUGS("Voice") << "Reiniting " << LL_ENDL;
+
     std::string inputDevice = gSavedSettings.getString("VoiceInputAudioDevice");
     std::string outputDevice = gSavedSettings.getString("VoiceOutputAudioDevice");
 
@@ -868,6 +872,7 @@ void LLWebRTCVoiceClient::setRenderDevice(const std::string& name)
 {
     if (mWebRTCDeviceInterface)
     {
+        LL_DEBUGS("Voice") << "new render device is " << name << LL_ENDL;
         mWebRTCDeviceInterface->setRenderDevice(name);
     }
 }
@@ -1383,7 +1388,7 @@ LLWebRTCVoiceClient::participantStatePtr_t LLWebRTCVoiceClient::sessionState::ad
     if (!result)
     {
         // participant isn't already in one list or the other.
-        result.reset(new participantState(agent_id, region));
+        result = std::make_shared<participantState>(agent_id, region);
         mParticipantsByUUID.insert(participantUUIDMap::value_type(agent_id, result));
         result->mAvatarID = agent_id;
     }
@@ -2247,7 +2252,7 @@ bool LLWebRTCVoiceClient::estateSessionState::processConnectionStates()
             // Only connect if the region supports WebRTC voice server type
             if (isRegionWebRTCEnabled(neighbor))
             {
-                connectionPtr_t connection(new LLVoiceWebRTCSpatialConnection(neighbor, INVALID_PARCEL_ID, mChannelID));
+                connectionPtr_t connection = std::make_shared<LLVoiceWebRTCSpatialConnection>(neighbor, INVALID_PARCEL_ID, mChannelID);
 
                 mWebRTCConnections.push_back(connection);
                 connection->setMuteMic(mMuted);  // mute will be set for primary connection when that connection comes up
@@ -2524,11 +2529,11 @@ void LLVoiceWebRTCConnection::processIceUpdatesCoro(connectionPtr_t connection)
         body["viewer_session"]    = connection->mViewerSession;
         body["voice_server_type"] = WEBRTC_VOICE_SERVER_TYPE;
 
-        LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter(
-            new LLCoreHttpUtil::HttpCoroutineAdapter("LLVoiceWebRTCAdHocConnection::processIceUpdatesCoro",
-                                                        LLCore::HttpRequest::DEFAULT_POLICY_ID));
-        LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
-        LLCore::HttpOptions::ptr_t httpOpts(new LLCore::HttpOptions);
+        LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter =
+            std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("LLVoiceWebRTCAdHocConnection::processIceUpdatesCoro",
+                                                                   LLCore::HttpRequest::DEFAULT_POLICY_ID);
+        LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+        LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
 
         httpOpts->setWantHeaders(true);
 
@@ -2737,11 +2742,11 @@ void LLVoiceWebRTCConnection::breakVoiceConnectionCoro(connectionPtr_t connectio
     body["viewer_session"] = connection->mViewerSession;
     body["voice_server_type"] = WEBRTC_VOICE_SERVER_TYPE;
 
-    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter(
-        new LLCoreHttpUtil::HttpCoroutineAdapter("LLVoiceWebRTCAdHocConnection::breakVoiceConnection",
-                                                 LLCore::HttpRequest::DEFAULT_POLICY_ID));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
-    LLCore::HttpOptions::ptr_t httpOpts(new LLCore::HttpOptions);
+    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter =
+        std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("LLVoiceWebRTCAdHocConnection::breakVoiceConnection",
+                                                               LLCore::HttpRequest::DEFAULT_POLICY_ID);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+    LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
 
     httpOpts->setWantHeaders(true);
 
@@ -2806,11 +2811,11 @@ void LLVoiceWebRTCSpatialConnection::requestVoiceConnection()
     }
     body["channel_type"]      = "local";
     body["voice_server_type"] = WEBRTC_VOICE_SERVER_TYPE;
-    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter(
-        new LLCoreHttpUtil::HttpCoroutineAdapter("LLVoiceWebRTCAdHocConnection::requestVoiceConnection",
-                                                 LLCore::HttpRequest::DEFAULT_POLICY_ID));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
-    LLCore::HttpOptions::ptr_t httpOpts(new LLCore::HttpOptions);
+    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter =
+        std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("LLVoiceWebRTCAdHocConnection::requestVoiceConnection",
+                                                               LLCore::HttpRequest::DEFAULT_POLICY_ID);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+    LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
 
     httpOpts->setWantHeaders(true);
     LLSD result = httpAdapter->postAndSuspend(httpRequest, url, body, httpOpts);
@@ -2881,6 +2886,19 @@ static llwebrtc::LLWebRTCPeerConnectionInterface::InitOptions getConnectionOptio
     // TODO: Pull these from login
     std::string grid = LLGridManager::getInstance()->getGridLoginID();
     std::transform(grid.begin(), grid.end(), grid.begin(), [](unsigned char c){ return std::tolower(c); });
+    // <FS:TJ> [FIRE-36421] Add OpenSim STUN server support
+#ifdef OPENSIM
+    if (!LLGridManager::getInstance()->isInSecondLife())
+    {
+        if (LLViewerRegion* regionp = gAgent.getRegion())
+        {
+            servers.mUrls = regionp->getStunServers();
+        }
+        options.mServers.push_back(servers);
+        return options;
+    }
+#endif
+    // </FS:TJ>
     int num_servers = 2;
     if (grid == "agni")
     {
@@ -3421,11 +3439,11 @@ void LLVoiceWebRTCAdHocConnection::requestVoiceConnection()
     body["channel_type"] = "multiagent";
     body["voice_server_type"] = WEBRTC_VOICE_SERVER_TYPE;
 
-    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter(
-        new LLCoreHttpUtil::HttpCoroutineAdapter("LLVoiceWebRTCAdHocConnection::requestVoiceConnection",
-                                                 LLCore::HttpRequest::DEFAULT_POLICY_ID));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
-    LLCore::HttpOptions::ptr_t httpOpts(new LLCore::HttpOptions);
+    LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t httpAdapter =
+        std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("LLVoiceWebRTCAdHocConnection::requestVoiceConnection",
+                                                               LLCore::HttpRequest::DEFAULT_POLICY_ID);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+    LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
 
     httpOpts->setWantHeaders(true);
 
