@@ -140,6 +140,36 @@ void FSFloaterAvatarAlign::drawCompass()
     }
     gGL.end();
 
+    // Hover highlight
+    if (mHoverOctant == -2)
+    {
+        // Centre: glow over the inner circle
+        gGL.color4f(1.f, 1.f, 1.f, 0.18f);
+        gl_circle_2d(cx, cy, fR * 0.25f, 24, TRUE);
+    }
+    else if (mHoverOctant >= 0)
+    {
+        // Octant wedge highlight from inner radius to outer radius, spanning 45°
+        F32 hoverAngle = mHoverOctant * 45.f * DEG_TO_RAD;
+        F32 halfSpan   = F_PI / 8.f;  // 22.5°
+        F32 innerR     = fR * 0.25f;
+        S32 segs       = 8;
+        gGL.begin(LLRender::TRIANGLES);
+        gGL.color4f(1.f, 1.f, 1.f, 0.13f);
+        for (S32 i = 0; i < segs; ++i)
+        {
+            F32 a0 = hoverAngle - halfSpan + (F32)i       * (2.f * halfSpan / segs);
+            F32 a1 = hoverAngle - halfSpan + (F32)(i + 1) * (2.f * halfSpan / segs);
+            gGL.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
+            gGL.vertex2f(cx + fR     * sinf(a0), cy + fR     * cosf(a0));
+            gGL.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
+            gGL.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
+            gGL.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
+            gGL.vertex2f(cx + innerR * sinf(a1), cy + innerR * cosf(a1));
+        }
+        gGL.end();
+    }
+
     // 4 compass arm kite shapes
     // Each arm: tip at (R-4), left/right base points at R*0.35 rotated ±90°.
     struct ArmDef { F32 angle_deg; F32 r, g, b; };
@@ -269,6 +299,30 @@ bool FSFloaterAvatarAlign::handleMouseDown(S32 x, S32 y, MASK mask)
         }
     }
     return LLFloater::handleMouseDown(x, y, mask);
+}
+
+bool FSFloaterAvatarAlign::handleHover(S32 x, S32 y, MASK mask)
+{
+    mHoverOctant = -1;
+    if (mCompassR > 0)
+    {
+        S32 dx   = x - mCompassCX;
+        S32 dy   = y - mCompassCY;
+        F32 dist = sqrtf((F32)(dx * dx + dy * dy));
+        if (dist <= (F32)mCompassR)
+        {
+            if (dist < (F32)mCompassR * 0.25f)
+            {
+                mHoverOctant = -2;  // centre
+            }
+            else
+            {
+                F32 deg = fmodf(atan2f((F32)dx, (F32)dy) * RAD_TO_DEG + 360.f, 360.f);
+                mHoverOctant = (S32)(ll_round(deg / 45.f)) % 8;
+            }
+        }
+    }
+    return LLFloater::handleHover(x, y, mask);
 }
 
 void FSFloaterAvatarAlign::draw()
