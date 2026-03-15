@@ -161,7 +161,7 @@
 // [/RLVa:KB]
 
 // Firestorm includes
-#include "fsfloateravataralign.h"
+#include "fsfloateravataralign.h" // <AS:Chanayane> Compass floater
 #include "fsassetblacklist.h"
 #include "fsdata.h"
 #include "fslslbridge.h"
@@ -13312,10 +13312,12 @@ void initialize_menus()
 
     commit.add("Avatar.OpenMarketplace", boost::bind(&LLWeb::loadURLExternal, gSavedSettings.getString("MarketplaceURL")));
 
+// <AS:Chanayane> Compass floater
     commit.add("Avatar.FaceNearest", [](LLUICtrl*, const LLSD&) {
         FSFloaterAvatarAlign* f = LLFloaterReg::getTypedInstance<FSFloaterAvatarAlign>("avatar_align");
         if (f) f->onClickFaceNearestAvatar();
     });
+// </AS:Chanayane>
 
     view_listener_t::addMenu(new LLAvatarEnableAddFriend(), "Avatar.EnableAddFriend");
     enable.add("Avatar.EnableFreezeEject", boost::bind(&enable_freeze_eject, _2));
