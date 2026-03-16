@@ -43,7 +43,7 @@ public:
     typedef validate_signal_t::slot_type validate_callback_t;
 
     // The callback function will be called with an avatar name and UUID.
-    typedef boost::function<void (const uuid_vec_t&, const std::vector<LLAvatarName>&)> select_callback_t;
+    typedef std::function<void(const uuid_vec_t&, const std::vector<LLAvatarName>&)> select_callback_t;
     // Call this to select an avatar.
     static LLFloaterAvatarPicker* show(select_callback_t callback,
                                        bool allow_multiple = false,
@@ -97,7 +97,13 @@ private:
     void populateFriend();
     bool visibleItemsSelected() const; // Returns true if any items in the current tab are selected.
 
-    static void findCoro(std::string url, LLUUID mQueryID, std::string mName);
+    // <FS:PP> FIRE-34809 Contact Sets support in avatar picker
+    void populateContactSets();
+    void onContactSetSelected();
+    // </FS:PP>
+
+    static void findByIdCoro(std::string url, LLUUID query_id, LLUUID agent_id, std::string floater_key);
+    static void findByNameCoro(std::string url, LLUUID mQueryID, std::string mName);
     void find();
     void setAllowMultiple(bool allow_multiple);
     LLScrollListCtrl* getActiveList();
@@ -111,6 +117,7 @@ private:
     bool                mNearMeListComplete;
     bool                mCloseOnSelect;
     bool                mExcludeAgentFromSearchResults;
+    bool                mAllowMultipleSelection; // <FS:PP> FIRE-34809 Contact Sets support in avatar picker
     LLHandle <LLView>   mFrustumOrigin;
     F32                 mContextConeOpacity;
     F32                 mContextConeInAlpha;

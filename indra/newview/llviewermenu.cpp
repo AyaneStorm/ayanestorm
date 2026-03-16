@@ -8391,7 +8391,10 @@ class LLAvatarToggleSearch : public view_listener_t
 {
     bool handleEvent(const LLSD& userdata)
     {
-        LLFloater* instance = LLFloaterReg::findInstance("search");
+        // <FS:Ansariel> Legacy search toggle
+        const std::string instance_name = gSavedSettings.getBOOL("FSUseFSLegacySearch") ? "search" : "legacy_search";
+
+        LLFloater* instance = LLFloaterReg::findInstance(instance_name);
         if (LLFloater::isMinimized(instance))
         {
             instance->setMinimized(false);
@@ -8399,7 +8402,7 @@ class LLAvatarToggleSearch : public view_listener_t
         }
         else if (!LLFloater::isShown(instance))
         {
-            LLFloaterReg::showInstance("search");
+            LLFloaterReg::showInstance(instance_name);
         }
         else if (!instance->hasFocus() && !instance->getIsChrome())
         {
@@ -8412,6 +8415,16 @@ class LLAvatarToggleSearch : public view_listener_t
         return true;
     }
 };
+
+// <FS:Ansariel> Legacy search toggle
+class FSAvatarSearchVisible : public view_listener_t
+{
+    bool handleEvent(const LLSD& userdata)
+    {
+        return LLFloaterReg::instanceVisible(gSavedSettings.getBOOL("FSUseFSLegacySearch") ? "search" : "legacy_search", LLSD());
+    }
+};
+// </FS:Ansariel>
 
 class LLAvatarResetSkeleton : public view_listener_t
 {
@@ -8439,11 +8452,8 @@ class LLAvatarEnableResetSkeleton : public view_listener_t
 {
     bool handleEvent(const LLSD& userdata)
     {
-        if (find_avatar_from_object(LLSelectMgr::getInstance()->getSelection()->getPrimaryObject())) // <FS:Beq/> set but unused.
-        {
-            return true;
-        }
-        return false;
+        LLViewerObject* obj = LLSelectMgr::getInstance()->getSelection()->getPrimaryObject();
+        return obj && obj->getAvatar();
     }
 };
 
@@ -11324,6 +11334,12 @@ LLVOAvatar* find_avatar_from_object(LLViewerObject* object)
         }
         else if( !object->isAvatar() )
         {
+            // Check for animesh objects (animated objects with a control avatar)
+            LLVOAvatar* avatar = object->getAvatar();
+            if (avatar)
+            {
+                return avatar;
+            }
             object = NULL;
         }
     }
@@ -11677,6 +11693,17 @@ class LLViewHighlightTransparent : public view_listener_t
         LLDrawPoolAlpha::sShowDebugAlpha = (!LLDrawPoolAlpha::sShowDebugAlpha) && (RlvActions::canHighlightTransparent());
 // [/RLVa:KB]
 
+        // invisible objects skip building their render batches unless sShowDebugAlpha is true, so rebuild batches whenever toggling this flag
+        gPipeline.rebuildDrawInfo();
+        return true;
+    }
+};
+
+class LLViewHighlightTransparentProbe : public view_listener_t
+{
+    bool handleEvent(const LLSD& userdata)
+    {
+        gSavedSettings.setBOOL("RenderReflectionProbeShowTransparent", !gSavedSettings.getBOOL("RenderReflectionProbeShowTransparent"));
         // invisible objects skip building their render batches unless sShowDebugAlpha is true, so rebuild batches whenever toggling this flag
         gPipeline.rebuildDrawInfo();
         return true;
@@ -12844,6 +12871,7 @@ void initialize_menus()
     view_listener_t::addMenu(new LLViewLookAtLastChatter(), "View.LookAtLastChatter");
     view_listener_t::addMenu(new LLViewShowHoverTips(), "View.ShowHoverTips");
     view_listener_t::addMenu(new LLViewHighlightTransparent(), "View.HighlightTransparent");
+    view_listener_t::addMenu(new LLViewHighlightTransparentProbe(), "View.HighlightTransparentProbe");
     view_listener_t::addMenu(new LLViewHighlightTransparentRigged(), "View.HighlightTransparentRigged"); // <FS:Beq/> FIRE-32132 et al. Allow rigged mesh transparency highlights to be toggled
     view_listener_t::addMenu(new LLViewToggleRenderType(), "View.ToggleRenderType");
     view_listener_t::addMenu(new LLViewShowHUDAttachments(), "View.ShowHUDAttachments");
@@ -13272,6 +13300,7 @@ void initialize_menus()
     view_listener_t::addMenu(new LLAvatarToggleMyProfile(), "Avatar.ToggleMyProfile");
     view_listener_t::addMenu(new LLAvatarTogglePicks(), "Avatar.TogglePicks");
     view_listener_t::addMenu(new LLAvatarToggleSearch(), "Avatar.ToggleSearch");
+    view_listener_t::addMenu(new FSAvatarSearchVisible(), "Avatar.SearchVisible");
     view_listener_t::addMenu(new LLAvatarResetSkeleton(), "Avatar.ResetSkeleton");
     view_listener_t::addMenu(new LLAvatarEnableResetSkeleton(), "Avatar.EnableResetSkeleton");
     view_listener_t::addMenu(new LLAvatarResetSkeletonAndAnimations(), "Avatar.ResetSkeletonAndAnimations");

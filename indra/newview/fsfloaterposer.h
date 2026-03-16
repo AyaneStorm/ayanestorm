@@ -587,7 +587,7 @@ public:
 class FSLoadPoseTimer : public LLEventTimer
 {
 public:
-    typedef boost::function<void()> callback_t;
+    typedef std::function<void()> callback_t;
 
     FSLoadPoseTimer(callback_t callback);
     /*virtual*/ bool tick();
