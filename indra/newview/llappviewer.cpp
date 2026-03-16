@@ -2461,27 +2461,6 @@ bool LLAppViewer::cleanup()
         // Deletes user data
         std::string user_path = gDirUtilp->getOSUserAppDir() + gDirUtilp->getDirDelimiter() + LLStartUp::getUserId();
         gDirUtilp->deleteDirAndContents(user_path);
-
-        //Deletes user from login screen
-        /*
-        std::string credName = gSavedSettings.getString("UserLoginInfo");
-        if (!credName.empty()) {
-            gSavedSettings.getControl("UserLoginInfo")->resetToDefault();
-            LLPointer<LLCredential> credential = gSecAPIHandler->loadCredential(credName);
-            if (size_t arobase = credName.find("@"); arobase != std::string::npos && arobase + 1 < credName.length() && arobase > 1)
-            {
-                auto gridname = credName.substr(arobase + 1, credName.length() - arobase - 1);
-                std::string grid_id = LLGridManager::getInstance()->getGridId(gridname);
-                if (grid_id.empty())
-                {
-                    grid_id = gridname;
-                }
-                gSecAPIHandler->removeFromProtectedMap("mfa_hash", grid_id, credential->userID()); // doesn't write
-                gSecAPIHandler->syncProtectedMap();
-            }
-            gSecAPIHandler->deleteCredential(credential);
-        }
-        */
     }
 // </AS:chanayane>
 
@@ -5909,9 +5888,6 @@ void LLAppViewer::idle()
             // Handle automatic walking towards points
             gAgentPilot.updateTarget();
             gAgent.autoPilot(&yaw);
-
-            //BD - Animator
-            gDragonAnimator.update();
         }
 
         send_agent_update(false);

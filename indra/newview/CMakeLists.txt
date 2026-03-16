@@ -91,10 +91,6 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
-    bdanimator.cpp
-    bdfloaterposer.cpp
-    bdfloaterposecreator.cpp
-    bdposingmotion.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -949,10 +945,6 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
-    bdanimator.h
-    bdfloaterposer.h
-    bdfloaterposecreator.h
-    bdposingmotion.h
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h

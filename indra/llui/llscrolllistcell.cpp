@@ -34,9 +34,6 @@
 #include "llui.h"   // LLUIImage
 #include "lluictrlfactory.h"
 
-//BD
-#include "llmultislider.h"
-
 //static
 LLScrollListCell* LLScrollListCell::create(const LLScrollListCell::Params& cell_p)
 {
@@ -58,17 +55,9 @@ LLScrollListCell* LLScrollListCell::create(const LLScrollListCell::Params& cell_
     {
         cell = new LLScrollListIconText(cell_p);
     }
-    else if (cell_p.type() == "multislider")
-    {
-        cell = new LLScrollListMultiSlider(cell_p);
-    }
     else if (cell_p.type() == "bar")
     {
         cell = new LLScrollListBar(cell_p);
-    }
-    else if(cell_p.type() == "line_editor")
-    {
-        cell = new LLScrollListLineEditor(cell_p);
     }
     else    // default is "text"
     {
@@ -722,132 +711,4 @@ void LLScrollListIconText::draw(const LLColor4& color, const LLColor4& highlight
     {
         mIcon->draw(start_icon_x, 0, icon_height, icon_height, mColor);
     }
-}
-
-//
-// LLScrollListLineEditor
-//
-LLScrollListLineEditor::LLScrollListLineEditor( const LLScrollListCell::Params& p)
-: LLScrollListCell(p)
-{
-    LLLineEditor::Params line_editor_p;
-    line_editor_p.name("line_editor");
-    line_editor_p.rect = LLRect(0, p.width, p.width, 0);
-    line_editor_p.enabled(p.enabled);
-    line_editor_p.initial_value(p.value());
-
-    mLineEditor = LLUICtrlFactory::create<LLLineEditor>(line_editor_p);
-
-    LLRect rect(mLineEditor->getRect());
-    if (p.width())
-    {
-        rect.mRight = rect.mLeft + p.width();
-        mLineEditor->setRect(rect);
-        setWidth(p.width());
-    }
-    else
-    {
-        setWidth(rect.getWidth()); //line_editor->getWidth();
-    }
-}
-
-LLScrollListLineEditor::~LLScrollListLineEditor()
-{
-    delete mLineEditor;
-    mLineEditor = NULL;
-}
-
-void LLScrollListLineEditor::draw(const LLColor4& color, const LLColor4& highlight_color)
-{
-    mLineEditor->draw();
-}
-
-bool LLScrollListLineEditor::handleClick()
-{
-    if (mLineEditor->getEnabled())
-    {
-        mLineEditor->setFocus(TRUE);
-        mLineEditor->selectAll();
-    }
-    // return value changes selection?
-    return FALSE; //TRUE;
-}
-
-bool LLScrollListLineEditor::handleUnicodeChar(llwchar uni_char, bool called_from_parent)
-{
-    return TRUE;
-}
-
-bool LLScrollListLineEditor::handleUnicodeCharHere(llwchar uni_char )
-{
-    return TRUE;
-}
-
-//
-// BD - LLScrollListMultiSlider
-//
-LLScrollListMultiSlider::LLScrollListMultiSlider(const LLScrollListCell::Params& p)
-    : LLScrollListCell(p),
-    mMinValue(p.min_val),
-    mMaxValue(p.max_val)
-{
-    LLMultiSlider::Params multislider_p;
-    multislider_p.name("multislider");
-    multislider_p.rect = LLRect(0, 18, p.width, 0);
-    multislider_p.enabled(p.enabled);
-    multislider_p.initial_value(p.value());
-    multislider_p.max_sliders(p.max_sliders);
-    multislider_p.min_value(p.min_val);
-    multislider_p.max_value(p.max_val);
-    multislider_p.increment(p.increment);
-
-    mMultiSlider = LLUICtrlFactory::create<LLMultiSlider>(multislider_p);
-    LLRect rect(mMultiSlider->getRect());
-    if (p.width)
-    {
-        rect.mRight = rect.mLeft + p.width;
-        mMultiSlider->setRect(rect);
-        setWidth(p.width);
-    }
-    else
-    {
-        setWidth(rect.getWidth()); //check_box->getWidth();
-    }
-
-    mMultiSlider->setColor(p.color());
-}
-
-LLScrollListMultiSlider::~LLScrollListMultiSlider()
-{
-}
-
-const LLSD LLScrollListMultiSlider::getValue() const
-{
-    return true;
-}
-
-void LLScrollListMultiSlider::setValue(const LLSD& value)
-{
-
-}
-
-void LLScrollListMultiSlider::addKeyframe(F32 time, std::string name)
-{
-    mMultiSlider->addSlider(time, name);
-}
-
-void LLScrollListMultiSlider::deleteKeyframe(std::string name)
-{
-    mMultiSlider->deleteSlider(name);
-}
-
-void LLScrollListMultiSlider::setWidth(S32 width)
-{
-    LLScrollListCell::setWidth(width);
-}
-
-
-void LLScrollListMultiSlider::draw(const LLColor4& color, const LLColor4& highlight_color)
-{
-    mMultiSlider->draw();
 }

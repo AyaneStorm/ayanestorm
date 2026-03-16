@@ -36,9 +36,6 @@
 #include "llui.h"
 #include "llgltexture.h"
 
-#include "lllineeditor.h"
-
-class LLMultiSlider;
 class LLCheckBoxCtrl;
 class LLSD;
 class LLUIImage;
@@ -75,12 +72,6 @@ public:
 
         Optional<LLColor4>          color;
 
-        //BD
-        Optional<S32>               max_sliders;
-        Optional<F32>               min_val;
-        Optional<F32>               max_val;
-        Optional<F32>               increment;
-
         Params()
         :   type("type", "text"),
             column("column"),
@@ -94,12 +85,7 @@ public:
             font("font", LLFontGL::getFontEmojiSmall()),
             font_color("font_color", LLColor4::black),
             color("color", LLColor4::white),
-            font_halign("halign", LLFontGL::LEFT),
-            //BD
-            max_sliders("max_sliders", 60),
-            min_val("min_value", 0),
-            max_val("max_value", 1),
-            increment("increment", 1)
+            font_halign("halign", LLFontGL::LEFT)
         {
             addSynonym(column, "name");
             addSynonym(font_color, "font-color");
@@ -295,55 +281,4 @@ private:
     LLPointer<LLUIImage>    mIcon;
     S32                     mPad;
 };
-
-class LLScrollListLineEditor : public LLScrollListCell
-{
-public:
-    LLScrollListLineEditor( const LLScrollListCell::Params&);
-    /*virtual*/ ~LLScrollListLineEditor();
-    void    draw(const LLColor4& color, const LLColor4& highlight_color) override;
-    S32     getHeight() const override { return 0; }
-    const LLSD  getValue() const override { return mLineEditor->getValue(); }
-    void    setValue(const LLSD& value) override { mLineEditor->setValue(value); }
-    void    onCommit() override { mLineEditor->onCommit(); }
-    bool    handleClick() override;
-    virtual bool    handleUnicodeChar(llwchar uni_char, bool called_from_parent);
-    virtual bool    handleUnicodeCharHere(llwchar uni_char );
-    void    setEnabled(bool enable) override { mLineEditor->setEnabled(enable); }
-
-    LLLineEditor*   getLineEditor()             { return mLineEditor; }
-    bool    isText() const override { return FALSE; }
-
-private:
-    LLLineEditor* mLineEditor;
-};
-
-/*
-* BD - Cell displaying a keyframe multislider.
-*/
-
-class LLScrollListMultiSlider : public LLScrollListCell
-{
-public:
-    LLScrollListMultiSlider(const LLScrollListCell::Params& p);
-    /*virtual*/ ~LLScrollListMultiSlider();
-    /*virtual*/ void    draw(const LLColor4& color, const LLColor4& highlight_color);
-    /*virtual*/ const LLSD      getValue() const;
-    /*virtual*/ void    setValue(const LLSD& value);
-
-
-    /*virtual*/ void    setWidth(S32 width);/* { LLScrollListCell::setWidth(width); mTextWidth = width - ; }*/
-
-    F32                 getMinValue() const { return mMinValue; }
-    F32                 getMaxValue() const { return mMaxValue; }
-
-    void                addKeyframe(F32 time, std::string name);
-    void                deleteKeyframe(std::string name);
-
-private:
-    LLMultiSlider*      mMultiSlider;
-    F32                 mMinValue;
-    F32                 mMaxValue;
-};
-
 #endif

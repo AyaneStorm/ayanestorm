@@ -87,8 +87,6 @@ private:
     LLVector3 mPivot;
     typedef std::vector<LLAvatarBoneInfo*> bones_t;
     bones_t mChildren;
-    //BD - Poser
-    bool mHasPosition;
 };
 
 //------------------------------------------------------------------------
@@ -663,9 +661,6 @@ bool LLAvatarAppearance::setupBone(const LLAvatarBoneInfo* info, LLJoint* parent
     joint->setSupport(info->mSupport);
     joint->setEnd(info->mEnd);
 
-    //BD - Poser
-    joint->setCanReposition(info->mHasPosition);
-
     if (info->mIsJoint)
     {
         joint->setSkinOffset( info->mPivot );
@@ -865,11 +860,6 @@ void LLAvatarAppearance::buildCharacter()
     mWristRightp    = mRoot->findJoint("mWristRight");
     mEyeLeftp       = mRoot->findJoint("mEyeLeft");
     mEyeRightp      = mRoot->findJoint("mEyeRight");
-    //BD
-    mShoulderRightp = mRoot->findJoint("mShoulderRight");
-    mShoulderLeftp  = mRoot->findJoint("mShoulderLeft");
-    mElbowRightp    = mRoot->findJoint("mElbowRight");
-    mElbowLeftp     = mRoot->findJoint("mElbowLeft");
 
     //-------------------------------------------------------------------------
     // Make sure "well known" pointers exist
@@ -891,12 +881,7 @@ void LLAvatarAppearance::buildCharacter()
           mWristLeftp &&
           mWristRightp &&
           mEyeLeftp &&
-          mEyeRightp &&
-          //BD
-          mShoulderRightp &&
-          mShoulderLeftp &&
-          mElbowRightp &&
-          mElbowLeftp))
+          mEyeRightp))
     {
         LL_ERRS() << "Failed to create avatar." << LL_ENDL;
         return;
@@ -1663,13 +1648,6 @@ bool LLAvatarBoneInfo::parseXml(LLXmlTreeNode* node)
             LL_WARNS() << "Bone without pivot" << LL_ENDL;
             return false;
         }
-    }
-
-    //BD
-    static LLStdStringHandle reposition_string = LLXmlTree::addAttributeString("reposition");
-    if (!node->getFastAttributeBOOL(reposition_string, mHasPosition))
-    {
-        mHasPosition = FALSE;
     }
 
     // parse children

@@ -107,10 +107,6 @@
 #include "rlvmodifiers.h"
 // [/RLVa:KB]
 
-//BD
-#include "llfloaterreg.h"
-#include "bdposingmotion.h"
-
 #include "llgesturemgr.h" //needed to trigger the voice gesticulations
 #include "llvoiceclient.h"
 #include "llvoicevisualizer.h" // Ventrella
@@ -177,7 +173,6 @@ const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
 const LLUUID ANIM_AGENT_PHYSICS_MOTION = LLUUID("7360e029-3cb8-ebc4-863e-212df440d987");  //"physics_motion"
-const LLUUID ANIM_BD_POSING_MOTION = LLUUID("fd29b117-9429-09c4-10cb-933d0b2ab653");  //"custom_motion"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -748,11 +743,7 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mCachedInMuteList(false),
     mIsControlAvatar(false),
     mIsUIAvatar(false),
-    mEnableDefaultMotions(true),
-    //BD - Custom Posing
-    mIsPosing(false),
-    mExpiryTime(0.0f),
-    mCurrentAction(0)
+    mEnableDefaultMotions(true)
 {
     LL_DEBUGS("AvatarRender") << "LLVOAvatar Constructor (0x" << this << ") id:" << mID << LL_ENDL;
 
@@ -1287,9 +1278,6 @@ void LLVOAvatar::initClass()
     gAnimLibrary.animStateSetString(ANIM_AGENT_TARGET,"target");
     gAnimLibrary.animStateSetString(ANIM_AGENT_WALK_ADJUST,"walk_adjust");
 
-    //BD
-    gAnimLibrary.animStateSetString(ANIM_BD_POSING_MOTION, "custom_pose");
-
     // Where should this be set initially?
     LLJoint::setDebugJointNames(gSavedSettings.getString("DebugAvatarJoints"));
 
@@ -1404,9 +1392,6 @@ void LLVOAvatar::initInstance()
         registerMotion( ANIM_AGENT_SIT_FEMALE,              LLKeyframeMotion::create );
         registerMotion( ANIM_AGENT_TARGET,                  LLTargetingMotion::create );
         registerMotion( ANIM_AGENT_WALK_ADJUST,             LLWalkAdjustMotion::create );
-
-        //BD - Jackpot.
-        registerMotion( ANIM_BD_POSING_MOTION,              BDPosingMotion::create);
     }
 
     LLAvatarAppearance::initInstance();
@@ -2625,14 +2610,6 @@ void LLVOAvatar::resetSkeleton(bool reset_animations)
     {
         LL_WARNS() << "Can't reset avatar " << getID() << "; no appearance message has been received yet." << LL_ENDL;
         return;
-    }
-
-    //BD - We need to clear posing here otherwise we'll crash.
-    LLMotion* pose_motion = findMotion(ANIM_BD_POSING_MOTION);
-    if (pose_motion)
-    {
-        gAgent.clearPosing();
-        removeMotion(ANIM_BD_POSING_MOTION);
     }
 
     // Save mPelvis state
@@ -7037,13 +7014,7 @@ bool LLVOAvatar::processSingleAnimationStateChange( const LLUUID& anim_id, bool 
     // keep appearances in sync, but not so often that animations
     // cause constant jiggling of the body or camera. Possible
     // compromise is to do it on animation changes:
-    //BD - Poser
-    //     Don't refresh our root position while we pose otherwise moving any joint that moves
-    //     mFootLeft will trigger mRoot repositioning.
-    if (!isSelf() || !gAgent.getPosing())
-    {
-        computeBodySize();
-    }
+    computeBodySize();
 
     bool result = false;
 
@@ -8232,13 +8203,7 @@ void LLVOAvatar::updateVisualParams()
 
     if (mLastSkeletonSerialNum != mSkeletonSerialNum)
     {
-        //BD - Poser
-        //     Don't refresh our root position while we pose otherwise moving any joint that moves
-        //     mFootLeft will trigger mRoot repositioning.
-        if (!isSelf() || !gAgent.getPosing())
-        {
-            computeBodySize();
-        }
+        computeBodySize();
         mLastSkeletonSerialNum = mSkeletonSerialNum;
         mRoot->updateWorldMatrixChildren();
     }

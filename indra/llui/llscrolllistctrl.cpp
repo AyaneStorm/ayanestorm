@@ -1133,30 +1133,6 @@ void LLScrollListCtrl::deleteSelectedItems()
     dirtyColumns();
 }
 
-//BD
-void LLScrollListCtrl::deleteFlaggedItems()
-{
-    item_list::iterator iter;
-    for (iter = mItemList.begin(); iter < mItemList.end();)
-    {
-        LLScrollListItem* itemp = *iter;
-        if (itemp && itemp->getFlagged())
-        {
-            if (itemp == mLastSelected)
-            {
-                mLastSelected = NULL;
-            }
-            delete itemp;
-            iter = mItemList.erase(iter);
-        }
-        else
-        {
-            iter++;
-        }
-    }
-    dirtyColumns();
-}
-
 void LLScrollListCtrl::clearHighlightedItems()
 {
     for (item_list::iterator iter = mItemList.begin(); iter != mItemList.end(); ++iter)
@@ -2212,7 +2188,7 @@ bool LLScrollListCtrl::handleRightMouseDown(S32 x, S32 y, MASK mask)
         // check to see if we have a UUID for this row
         std::string id = item->getValue().asString();
         LLUUID uuid(id);
-        if (! uuid.isNull() && mContextMenuType != MENU_NONE && mContextMenuType != MENU_EXTERNAL)
+        if (! uuid.isNull() && mContextMenuType != MENU_NONE)
         {
             // set up the callbacks for all of the avatar/group menu items
             // (N.B. callbacks don't take const refs as id is local scope)
@@ -2298,24 +2274,6 @@ bool LLScrollListCtrl::handleRightMouseDown(S32 x, S32 y, MASK mask)
                 menu->show(x, y);
                 LLMenuGL::showPopup(this, menu, x, y);
                 return true;
-            }
-        }
-        //BD - Right Click Context Menu
-        else if (mContextMenuType == MENU_EXTERNAL)
-        {
-            deselectAllItems(TRUE);
-            selectItem(item, getColumnIndexFromOffset(x));
-
-            auto menu = mPopupMenuHandle.get();
-            if (menu)
-            {
-                menu->show(x, y);
-                LLMenuGL::showPopup(this, menu, x, y);
-                return TRUE;
-            }
-            else
-            {
-                LL_WARNS() << "External menu is null!" << LL_ENDL;
             }
         }
         return LLUICtrl::handleRightMouseDown(x, y, mask);
@@ -3999,19 +3957,3 @@ void LLScrollListCtrl::loadPersistedSortOrder()
     }
 }
 // </FS:Ansariel>
-
-void LLScrollListCtrl::setContextMenu(const ContextMenuType &menu, LLContextMenu* new_menup/* = nullptr*/)
-{
-    mContextMenuType = menu;
-    LLContextMenu* menup = static_cast<LLContextMenu*>(mPopupMenuHandle.get());
-    if (menup)
-    {
-        menup->die();
-        mPopupMenuHandle.markDead();
-    }
-
-    if (new_menup)
-    {
-        mPopupMenuHandle = new_menup->getHandle();
-    }
-}

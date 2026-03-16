@@ -236,9 +236,6 @@ public:
     void            deleteSingleItem( S32 index );
     void            deleteItems(const LLSD& sd);
     void            deleteSelectedItems();
-    
-    //BD
-    void            deleteFlaggedItems();
 
     void            deselectAllItems(bool no_commit_on_change = false); // by default, go ahead and commit on selection change
 
@@ -359,10 +356,8 @@ public:
     // </FS:Ansariel> Fix for FS-specific people list (radar)
 
     // support right-click context menus for avatar/group lists
-    enum ContextMenuType { MENU_NONE, MENU_AVATAR, MENU_GROUP, MENU_EXTERNAL };
-    // For Blackdragon poser
-    //void setContextMenu(const ContextMenuType &menu) { mContextMenuType = menu; }
-    void setContextMenu(const ContextMenuType &menu, LLContextMenu* new_menup = nullptr);
+    enum ContextMenuType { MENU_NONE, MENU_AVATAR, MENU_GROUP };
+    void setContextMenu(const ContextMenuType &menu) { mContextMenuType = menu; }
     ContextMenuType getContextMenuType() const { return mContextMenuType; }
 
     // Overridden from LLView

@@ -98,11 +98,6 @@ public:
 
     bool isBlending();
 
-    //BD - Eternal animations are never deactivated, never deprecated and never removed,
-    //     released or destroyed, they stay around until we allow them to be deprecated.
-    void setEternal(bool eternal) { mEternal = eternal; }
-    bool getEternal() const { return mEternal; }
-
     // Activation functions.
     // It is OK for other classes to activate a motion,
     // but only the controller can deactivate it.
@@ -168,32 +163,13 @@ public:
     F32 getInterpolationTime() const                    { return mInterpolationTime; }
     virtual void setInterpolationTime(F32 time)         { mInterpolationTime = time; }
 
-    //BD - functions to set/get our interpolation type
-    //     0 = None,
-    //     1 = Linear Interpolatioon,
-    //     2 = Spherical Linear Interpolation,
-    //     3 = Curve
-    S32 getInterpolationType() const                    { return mInterpolationType; }
-    virtual void setInterpolationType(S32 type)         { mInterpolationType = type; }
-
-    void pauseInterpolationTimer() { mInterpolationTimer.pause(); }
-    void startInterpolationTimer() { mInterpolationTimer.start(); }
-    void stopInterpolationTimer() { mInterpolationTimer.stop(); }
-
-    //BD
-    void addJointState(const LLPointer<LLJointState>& jointState);
-    void removeJointState(const LLPointer<LLJointState>& jointState);
-    const LLPointer<LLJointState> findJointState(const std::string jointName);
-    const LLPointer<LLJointState> findJointState(LLJoint *joint);
-
 protected:
     // called when a motion is activated
     // must return true to indicate success, or else
     // it will be deactivated
     virtual bool onActivate() = 0;
 
-// BD
-//  void addJointState(const LLPointer<LLJointState>& jointState);
+    void addJointState(const LLPointer<LLJointState>& jointState);
 
 protected:
     LLPose      mPose;
@@ -206,18 +182,6 @@ protected:
     //-------------------------------------------------------------------------
     std::string     mName;          // instance name assigned by motion controller
     LLUUID          mID;
-
-    //BD - functions to set/get our interpolation type
-    //     0 = None,
-    //     1 = Linear Interpolatioon,
-    //     2 = Spherical Linear Interpolation,
-    //     3 = Curve
-    S32                 mInterpolationType;
-    F32                 mInterpolationTime;
-    LLFrameTimer        mInterpolationTimer;
-
-    //BD - Eternal
-    bool                mEternal;
 
     F32 mActivationTimestamp;   // time when motion was activated
     F32 mStopTimestamp;         // time when motion was told to stop
