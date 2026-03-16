@@ -160,9 +160,6 @@ public:
     // optional callback routine called when animation deactivated.
     void    setDeactivateCallback( void (*cb)(void *), void* userdata );
 
-    F32 getInterpolationTime() const                    { return mInterpolationTime; }
-    virtual void setInterpolationTime(F32 time)         { mInterpolationTime = time; }
-
 protected:
     // called when a motion is activated
     // must return true to indicate success, or else
