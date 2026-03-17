@@ -67,6 +67,7 @@
 #include "llfloatercreatelandmark.h"
 #include "llfloaterdeleteprefpreset.h"
 #include "llfloaterdestinations.h"
+#include "llfloaterdirectory.h"
 #include "llfloaterdisplayname.h"
 #include "llfloatereditextdaycycle.h"
 #include "llfloateremojipicker.h"
@@ -186,8 +187,6 @@
 #include "llpreviewtexture.h"
 #include "llscriptfloater.h"
 #include "llsyswellwindow.h"
-#include "bdfloaterposer.h"
-#include "bdfloaterposecreator.h"
 
 // *NOTE: Please add files in alphabetical order to keep merges easy.
 // [RLVa:KB] - Checked: 2010-03-11
@@ -244,6 +243,7 @@
 #include "vjfloaterlocalmesh.h" // local mesh
 #include "fsfloaterwhitelisthelper.h" // fs whitelist helper
 #include "omnifilter.h"               // Omnifilter support
+#include "fsfloateravataralign.h" // <AS:Chanayane> Compass floater
 
 // handle secondlife:///app/openfloater/{NAME} URLs
 const std::string FLOATER_PROFILE("profile");
@@ -294,7 +294,8 @@ public:
                 "upload_model",
                 "upload_script",
                 "upload_sound",
-                "bulk_upload"
+                "bulk_upload",
+                "legacy_search"
             };
             return std::find(blacklist_clicked.begin(), blacklist_clicked.end(), fl_name) == blacklist_clicked.end();
         }
@@ -346,7 +347,8 @@ public:
                 "upload_script",
                 "upload_sound",
                 "bulk_upload",
-                "slapp_test"
+                "slapp_test",
+                "legacy_search"
             };
             return std::find(blacklist_untrusted.begin(), blacklist_untrusted.end(), fl_name) == blacklist_untrusted.end();
         }
@@ -613,6 +615,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("snapshot_guide_settings", "floater_snapshot_guide_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);// <FS:Beq/> photo guide settings
     // <FS:CR> Search floater is deferred to login now so we can tell what grid we're in.
     //LLFloaterReg::add("search", "floater_search.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSearch>);
+    LLFloaterReg::add("legacy_search", "floater_directory.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterDirectory>);
     LLFloaterReg::add("profile", "floater_profile.xml",(LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterProfile>);
     LLFloaterReg::add("guidebook", "floater_how_to.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterHowTo>);
     LLFloaterReg::add("slapp_test", "floater_test_slapp.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSLappTest>);
@@ -673,8 +676,6 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("money_tracker", "floater_fs_money_tracker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSMoneyTracker>);
     LLFloaterReg::add("omnifilter", "floater_omnifilter.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<Omnifilter>);        // <FS:Zi> Omnifilter support
     LLFloaterReg::add("particle_editor","floater_particle_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ParticleEditor>);
-    LLFloaterReg::add("bd_poser", "bd_floater_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<BDFloaterPoser>);
-    LLFloaterReg::add("bd_poser_creator", "bd_floater_poser_creator.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<BDFloaterPoseCreator>);
     LLFloaterReg::add("performance", "floater_fs_performance.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPerformance>);
 	// <FS:William_W:FixPhototoolsTypo> [PhotoTools] Corrected typo in Phototools floater registration - using string literal instead of PHOTOTOOLS_FLOATER constant (likely intended).
 	// LLFloaterReg::add(PHOTOTOOLS_FLOATER, "floater_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>); // Original line with likely typo
@@ -690,6 +691,10 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("vram_usage", "floater_fs_vram_usage.xml", static_cast<LLFloaterBuildFunc>(&LLFloaterReg::build<FSFloaterVRAMUsage>));
     LLFloaterReg::add("local_mesh_floater", "floater_vj_local_mesh.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterLocalMesh>); // local mesh
     LLFloaterReg::add("fs_whitelist_floater", "floater_whitelist.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterWhiteListHelper>); // white list advisor
+    // <AS:Chanayane> Compass floater
+    LLFloaterReg::add("avatar_align",      "floater_avatar_align.xml",      (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterAvatarAlign>);
+    LLFloaterReg::add("avatar_align_mini", "floater_avatar_align_mini.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterAvatarAlignMini>);
+    // </AS:Chanayane>
 
     LLFloaterReg::registerControlVariables(); // Make sure visibility and rect controls get preserved when saving
 }

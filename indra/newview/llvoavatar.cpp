@@ -107,10 +107,6 @@
 #include "rlvmodifiers.h"
 // [/RLVa:KB]
 
-//BD
-#include "llfloaterreg.h"
-#include "bdposingmotion.h"
-
 #include "llgesturemgr.h" //needed to trigger the voice gesticulations
 #include "llvoiceclient.h"
 #include "llvoicevisualizer.h" // Ventrella
@@ -177,7 +173,6 @@ const LLUUID ANIM_AGENT_PELVIS_FIX = LLUUID("0c5dd2a2-514d-8893-d44d-05beffad208
 const LLUUID ANIM_AGENT_TARGET = LLUUID("0e4896cb-fba4-926c-f355-8720189d5b55");  //"target"
 const LLUUID ANIM_AGENT_WALK_ADJUST = LLUUID("829bc85b-02fc-ec41-be2e-74cc6dd7215d");  //"walk_adjust"
 const LLUUID ANIM_AGENT_PHYSICS_MOTION = LLUUID("7360e029-3cb8-ebc4-863e-212df440d987");  //"physics_motion"
-const LLUUID ANIM_BD_POSING_MOTION = LLUUID("fd29b117-9429-09c4-10cb-933d0b2ab653");  //"custom_motion"
 
 //-----------------------------------------------------------------------------
 // Constants
@@ -748,11 +743,7 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mCachedInMuteList(false),
     mIsControlAvatar(false),
     mIsUIAvatar(false),
-    mEnableDefaultMotions(true),
-    //BD - Custom Posing
-    mIsPosing(false),
-    mExpiryTime(0.0f),
-    mCurrentAction(0)
+    mEnableDefaultMotions(true)
 {
     LL_DEBUGS("AvatarRender") << "LLVOAvatar Constructor (0x" << this << ") id:" << mID << LL_ENDL;
 
@@ -1287,9 +1278,6 @@ void LLVOAvatar::initClass()
     gAnimLibrary.animStateSetString(ANIM_AGENT_TARGET,"target");
     gAnimLibrary.animStateSetString(ANIM_AGENT_WALK_ADJUST,"walk_adjust");
 
-    //BD
-    gAnimLibrary.animStateSetString(ANIM_BD_POSING_MOTION, "custom_pose");
-
     // Where should this be set initially?
     LLJoint::setDebugJointNames(gSavedSettings.getString("DebugAvatarJoints"));
 
@@ -1404,9 +1392,6 @@ void LLVOAvatar::initInstance()
         registerMotion( ANIM_AGENT_SIT_FEMALE,              LLKeyframeMotion::create );
         registerMotion( ANIM_AGENT_TARGET,                  LLTargetingMotion::create );
         registerMotion( ANIM_AGENT_WALK_ADJUST,             LLWalkAdjustMotion::create );
-
-        //BD - Jackpot.
-        registerMotion( ANIM_BD_POSING_MOTION,              BDPosingMotion::create);
     }
 
     LLAvatarAppearance::initInstance();
@@ -2627,14 +2612,6 @@ void LLVOAvatar::resetSkeleton(bool reset_animations)
         return;
     }
 
-    //BD - We need to clear posing here otherwise we'll crash.
-    LLMotion* pose_motion = findMotion(ANIM_BD_POSING_MOTION);
-    if (pose_motion)
-    {
-        gAgent.clearPosing();
-        removeMotion(ANIM_BD_POSING_MOTION);
-    }
-
     // Save mPelvis state
     //LLVector3 pelvis_pos = getJoint("mPelvis")->getPosition();
     //LLQuaternion pelvis_rot = getJoint("mPelvis")->getRotation();
@@ -3761,7 +3738,7 @@ void LLVOAvatar::idleUpdateLoadingEffect()
 void LLVOAvatar::idleUpdateWindEffect()
 {
     // update wind effect
-    if ((LLViewerShaderMgr::instance()->getShaderLevel(LLViewerShaderMgr::SHADER_AVATAR) >= LLDrawPoolAvatar::SHADER_LEVEL_CLOTH))
+    if (LLPipeline::RenderAvatarCloth)
     {
         F32 hover_strength = 0.f;
         F32 time_delta = mRippleTimer.getElapsedTimeF32() - mRippleTimeLast;
@@ -5318,14 +5295,10 @@ void LLVOAvatar::updateOrientation(LLAgent& agent, F32 speed, F32 delta_time)
 
             LLVector3 pelvisDir( mRoot->getWorldMatrix().getFwdRow4().mV );
 
-            // <FS:Beq> FIRE-34196 Restore the pelvis rotation threshold config removed by LL as "unused"
-            // const F32 AVATAR_PELVIS_ROTATE_THRESHOLD_SLOW = 60.0f;
-            // const F32 AVATAR_PELVIS_ROTATE_THRESHOLD_FAST = 2.0f;
-            static LLCachedControl<F32> AVATAR_PELVIS_ROTATE_THRESHOLD_SLOW(gSavedSettings, "AvatarRotateThresholdSlow", 60.0);
-            static LLCachedControl<F32> AVATAR_PELVIS_ROTATE_THRESHOLD_FAST(gSavedSettings, "AvatarRotateThresholdFast", 2.0);
-            // </FS:Beq>
+            static LLCachedControl<F32> s_pelvis_rot_threshold_slow(gSavedSettings, "AvatarRotateThresholdSlow", 60.0);
+            static LLCachedControl<F32> s_pelvis_rot_threshold_fast(gSavedSettings, "AvatarRotateThresholdFast", 2.0);
 
-            F32 pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, AVATAR_PELVIS_ROTATE_THRESHOLD_SLOW, AVATAR_PELVIS_ROTATE_THRESHOLD_FAST);
+            F32 pelvis_rot_threshold = clamp_rescale(speed, 0.1f, 1.0f, s_pelvis_rot_threshold_slow, s_pelvis_rot_threshold_fast);
 
             if (self_in_mouselook)
             {
@@ -7041,13 +7014,7 @@ bool LLVOAvatar::processSingleAnimationStateChange( const LLUUID& anim_id, bool 
     // keep appearances in sync, but not so often that animations
     // cause constant jiggling of the body or camera. Possible
     // compromise is to do it on animation changes:
-    //BD - Poser
-    //     Don't refresh our root position while we pose otherwise moving any joint that moves
-    //     mFootLeft will trigger mRoot repositioning.
-    if (!isSelf() || !gAgent.getPosing())
-    {
-        computeBodySize();
-    }
+    computeBodySize();
 
     bool result = false;
 
@@ -8236,13 +8203,7 @@ void LLVOAvatar::updateVisualParams()
 
     if (mLastSkeletonSerialNum != mSkeletonSerialNum)
     {
-        //BD - Poser
-        //     Don't refresh our root position while we pose otherwise moving any joint that moves
-        //     mFootLeft will trigger mRoot repositioning.
-        if (!isSelf() || !gAgent.getPosing())
-        {
-            computeBodySize();
-        }
+        computeBodySize();
         mLastSkeletonSerialNum = mSkeletonSerialNum;
         mRoot->updateWorldMatrixChildren();
     }
@@ -10662,10 +10623,7 @@ bool LLVOAvatar::visualParamWeightsAreDefault()
     return rtn;
 }
 
-// <FS:ND> Remove LLVolatileAPRPool/apr_file_t and use FILE* instead
-//void dump_visual_param(apr_file_t* file, LLVisualParam* viewer_param, F32 value)
-void dump_visual_param(LLAPRFile::tFiletype* file, LLVisualParam* viewer_param, F32 value)
-// </FS:ND>
+void dump_visual_param(apr_file_t* file, LLVisualParam* viewer_param, F32 value)
 {
     std::string type_string = "unknown";
     if (dynamic_cast<LLTexLayerParamAlpha*>(viewer_param))
@@ -10702,12 +10660,7 @@ void LLVOAvatar::dumpAppearanceMsgParams( const std::string& dump_prefix,
     LLAPRFile outfile;
     std::string fullpath = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, outfilename);
     outfile.open(fullpath, LL_APR_WB );
-
-    // <FS:ND> Remove LLVolatileAPRPool/apr_file_t and use FILE* instead
-    // apr_file_t* file = outfile.getFileHandle();
-    LLAPRFile::tFiletype* file = outfile.getFileHandle();
-    // </FS:ND>
-
+    apr_file_t* file = outfile.getFileHandle();
     if (!file)
     {
         return;
@@ -10793,8 +10746,8 @@ void LLVOAvatar::parseAppearanceMessage(LLMessageSystem* mesgsys, LLAppearanceMe
 
         if (attachment_id.notNull())
         {
-        mSimAttachments[attachment_id] = attach_point;
-    }
+            mSimAttachments[attachment_id] = attach_point;
+        }
         else
         {
             // at the moment viewer is only interested in non-null attachments
@@ -11645,11 +11598,7 @@ void LLVOAvatar::dumpArchetypeXMLCallback(const std::vector<std::string>& filena
 // </FS:CR>
     if (APR_SUCCESS == outfile.open(fullpath, LL_APR_WB ))
     {
-        // <FS:ND> Remove LLVolatileAPRPool/apr_file_t and use FILE* instead
-        //apr_file_t* file = outfile.getFileHandle();
-        LLAPRFile::tFiletype* file = outfile.getFileHandle();
-        // </FS:ND>
-
+        apr_file_t* file = outfile.getFileHandle();
         LL_INFOS() << "xmlfile write handle obtained : " << fullpath << LL_ENDL;
 
         apr_file_printf( file, "<?xml version=\"1.0\" encoding=\"US-ASCII\" standalone=\"yes\"?>\n" );

@@ -130,6 +130,7 @@
 // <FS:Ansariel> [FS Login Panel]
 #include "llmutelist.h"
 #include "llavatarpropertiesprocessor.h"
+#include "llpaneldirbrowser.h"
 #include "llpanelgrouplandmoney.h"
 #include "llpanelgroupnotices.h"
 #include "llparcel.h"
@@ -250,9 +251,7 @@
 #include "llfloatersidepanelcontainer.h"
 #include "llfriendcard.h"
 #include "llnotificationmanager.h"
-#include "llpresetsmanager.h"
 #include "llprogressview.h"
-#include "lltoolbarview.h"
 #include "NACLantispam.h"
 #include "omnifilterengine.h"       // <FS:Zi> Omnifilter support
 #include "streamtitledisplay.h"
@@ -716,6 +715,32 @@ bool idle_startup()
                 LLStringOps::sAM = LLTrans::getString("dateTimeAM");
                 LLStringOps::sPM = LLTrans::getString("dateTimePM");
             }
+            else
+            {
+                std::wstring utf16str = ll_convert<std::wstring>(val);
+                if (utf16str.size() > 4)
+                {
+                    LL_DEBUGS("InitInfo") << "Current locale \"" << locale << "\" "
+                        << "has impracitcally long AM/PM time format" << LL_ENDL;
+                    // fallback to declarations in strings.xml
+                    LLStringOps::sAM = LLTrans::getString("dateTimeAM");
+                    LLStringOps::sPM = LLTrans::getString("dateTimePM");
+                }
+            }
+        }
+
+        // Some locales (as well some of our own dateTimeAM/PM) return long
+        // strings for AM/PM which aren't practical to display in the UI.
+        // Hardcode to "AM"/"PM" in those cases.
+        std::wstring utf16str = ll_convert<std::wstring>(LLStringOps::sAM);
+        if (utf16str.size() > 4)
+        {
+            LLStringOps::sAM = "AM";
+        }
+        utf16str = ll_convert<std::wstring>(LLStringOps::sPM);
+        if (utf16str.size() > 4)
+        {
+            LLStringOps::sPM = "PM";
         }
     }
 
@@ -3502,9 +3527,9 @@ void release_notes_coro(const std::string url)
 
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
-        httpAdapter(new LLCoreHttpUtil::HttpCoroutineAdapter("releaseNotesCoro", httpPolicy));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
-    LLCore::HttpOptions::ptr_t httpOpts = LLCore::HttpOptions::ptr_t(new LLCore::HttpOptions);
+        httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("releaseNotesCoro", httpPolicy);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+    LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
 
     httpOpts->setHeadersOnly(true); // only making sure it isn't 404 or something like that
 
@@ -3836,15 +3861,14 @@ void register_viewer_callbacks(LLMessageSystem* msg)
     msg->setHandlerFunc("PlacesReply", process_places_reply);
     msg->setHandlerFunc("GroupNoticesListReply", LLPanelGroupNotices::processGroupNoticesListReply);
 
-// <FS:CR> FIRE-6310 - Legacy search handlers
-    msg->setHandlerFunc("DirPeopleReply", FSPanelSearchPeople::processSearchReply);
-    msg->setHandlerFunc("DirPlacesReply", FSPanelSearchPlaces::processSearchReply);
-    msg->setHandlerFunc("DirGroupsReply", FSPanelSearchGroups::processSearchReply);
-    msg->setHandlerFunc("DirEventsReply", FSPanelSearchEvents::processSearchReply);
-    msg->setHandlerFunc("DirLandReply",   FSPanelSearchLand::processSearchReply);
-    msg->setHandlerFunc("DirClassifiedReply",  FSPanelSearchClassifieds::processSearchReply);
-// </FS:CR> FIRE-6310
     msg->setHandlerFunc("AvatarPickerReply", LLFloaterAvatarPicker::processAvatarPickerReply);
+
+    msg->setHandlerFunc("DirPlacesReply", LLPanelDirBrowser::processDirPlacesReply);
+    msg->setHandlerFunc("DirPeopleReply", LLPanelDirBrowser::processDirPeopleReply);
+    msg->setHandlerFunc("DirEventsReply", LLPanelDirBrowser::processDirEventsReply);
+    msg->setHandlerFunc("DirGroupsReply", LLPanelDirBrowser::processDirGroupsReply);
+    msg->setHandlerFunc("DirClassifiedReply", LLPanelDirBrowser::processDirClassifiedReply);
+    msg->setHandlerFunc("DirLandReply", LLPanelDirBrowser::processDirLandReply);
 
     msg->setHandlerFunc("MapBlockReply", LLWorldMapMessage::processMapBlockReply);
     msg->setHandlerFunc("MapItemReply", LLWorldMapMessage::processMapItemReply);
@@ -4207,6 +4231,9 @@ void LLStartUp::initNameCache()
 
 void LLStartUp::initExperiences()
 {
+    // <FS:Ansariel> Log getting spammed with experience requests from other grids
+    LLExperienceCache::setCurrentGrid(LLGridManager::instance().getGridId(), !LLGridManager::instance().isInSecondLife());
+
     // Should trigger loading the cache.
     LLExperienceCache::instance().setCapabilityQuery(
         boost::bind(&LLAgent::getRegionCapability, &gAgent, _1));

@@ -2558,14 +2558,6 @@ void LLAgentCamera::changeCameraToFollow(bool animate)
         return;
     }
 
-	//BD - Coming from Mouselook
-	static LLCachedControl<bool> exp_scaling(gSavedSettings, "MouselookExperimentalHeadScaling");
-	if (exp_scaling && mCameraMode == CAMERA_MODE_MOUSELOOK)
-	{
-		if (!gAgentAvatarp->mIsPosing)
-			gAgentAvatarp->resetSkeleton(false);
-	}
-
     if(mCameraMode != CAMERA_MODE_FOLLOW)
     {
         if (mCameraMode == CAMERA_MODE_MOUSELOOK)
@@ -2643,14 +2635,6 @@ void LLAgentCamera::changeCameraToThirdPerson(bool animate)
     // unpause avatar animation
     gAgent.unpauseAnimation();
 
-	//BD - Coming from Mouselook
-	static LLCachedControl<bool> exp_scaling(gSavedSettings, "MouselookExperimentalHeadScaling");
-	if (exp_scaling && mCameraMode == CAMERA_MODE_MOUSELOOK)
-	{
-		if (!gAgentAvatarp->mIsPosing)
-			gAgentAvatarp->resetSkeleton(false);
-	}
-
     if (mCameraMode != CAMERA_MODE_THIRD_PERSON)
     {
         if (gBasicToolset)
@@ -2724,14 +2708,6 @@ void LLAgentCamera::changeCameraToCustomizeAvatar()
     }
 
     startCameraAnimation();
-
-	//BD - Coming from Mouselook
-	static LLCachedControl<bool> exp_scaling(gSavedSettings, "MouselookExperimentalHeadScaling");
-	if (exp_scaling && mCameraMode == CAMERA_MODE_MOUSELOOK)
-	{
-		if (!gAgentAvatarp->mIsPosing)
-			gAgentAvatarp->resetSkeleton(false);
-	}
 
     if (mCameraMode != CAMERA_MODE_CUSTOMIZE_AVATAR)
     {

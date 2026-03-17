@@ -44,17 +44,10 @@
 #include "stringize.h"
 #include "llstring.h"
 #include <boost/filesystem.hpp>
-#include <boost/range/begin.hpp>
-#include <boost/range/end.hpp>
-#include <boost/assign/list_of.hpp>
 #include <boost/bind.hpp>
-#include <boost/ref.hpp>
 #include <algorithm>
 
 #include "indra_constants.h"
-
-using boost::assign::list_of;
-using boost::assign::map_list_of;
 
 #if LL_WINDOWS
 #include "lldir_win32.h"
@@ -516,31 +509,31 @@ const std::string &LLDir::getSoundCacheDir() const
 static std::string ELLPathToString(ELLPath location)
 {
     typedef std::map<ELLPath, const char*> ELLPathMap;
-#define ENT(symbol) (symbol, #symbol)
-    static const ELLPathMap sMap = map_list_of
-        ENT(LL_PATH_NONE)
-        ENT(LL_PATH_USER_SETTINGS)
-        ENT(LL_PATH_APP_SETTINGS)
-        ENT(LL_PATH_PER_SL_ACCOUNT) // returns/expands to blank string if we don't know the account name yet
-        ENT(LL_PATH_CACHE)
-        ENT(LL_PATH_CHARACTER)
-        ENT(LL_PATH_HELP)
-        ENT(LL_PATH_LOGS)
-        ENT(LL_PATH_TEMP)
-        ENT(LL_PATH_SKINS)
-        ENT(LL_PATH_TOP_SKIN)
-        ENT(LL_PATH_CHAT_LOGS)
-        ENT(LL_PATH_PER_ACCOUNT_CHAT_LOGS)
-        ENT(LL_PATH_USER_SKIN)
-        ENT(LL_PATH_LOCAL_ASSETS)
-        ENT(LL_PATH_EXECUTABLE)
-        ENT(LL_PATH_DEFAULT_SKIN)
-        ENT(LL_PATH_FONTS)
+#define ENT(symbol) { symbol, #symbol }
+    static const ELLPathMap sMap = {
+        ENT(LL_PATH_NONE),
+        ENT(LL_PATH_USER_SETTINGS),
+        ENT(LL_PATH_APP_SETTINGS),
+        ENT(LL_PATH_PER_SL_ACCOUNT), // returns/expands to blank string if we don't know the account name yet
+        ENT(LL_PATH_CACHE),
+        ENT(LL_PATH_CHARACTER),
+        ENT(LL_PATH_HELP),
+        ENT(LL_PATH_LOGS),
+        ENT(LL_PATH_TEMP),
+        ENT(LL_PATH_SKINS),
+        ENT(LL_PATH_TOP_SKIN),
+        ENT(LL_PATH_CHAT_LOGS),
+        ENT(LL_PATH_PER_ACCOUNT_CHAT_LOGS),
+        ENT(LL_PATH_USER_SKIN),
+        ENT(LL_PATH_LOCAL_ASSETS),
+        ENT(LL_PATH_EXECUTABLE),
+        ENT(LL_PATH_DEFAULT_SKIN),
+        ENT(LL_PATH_FONTS),
 // [SL:KB] - Patch: Viewer-Skins | Checked: 2012-12-26 (Catznip-3.4)
-        ENT(LL_PATH_TOP_SKINTHEME)
+        ENT(LL_PATH_TOP_SKINTHEME),
 // [/SL:KB]
-        ENT(LL_PATH_LAST)
-    ;
+        ENT(LL_PATH_LAST),
+    };
 #undef ENT
 
     ELLPathMap::const_iterator found = sMap.find(location);
@@ -677,14 +670,6 @@ std::string LLDir::getExpandedFilename(ELLPath location, const std::string& subd
         prefix = getSoundCacheDir();
         break;
     // </FS:Ansariel>
-
-    case LL_PATH_POSES:
-        prefix = add(getOSUserAppDir(), "user_settings", "poses");
-        break;
-
-    case LL_PATH_ANIMATIONS:
-        prefix = add(getOSUserAppDir(), "user_settings", "animations");
-        break;
 
     default:
         llassert(0);
@@ -832,10 +817,10 @@ std::vector<std::string> LLDir::findSkinnedFilenames(const std::string& subdir,
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     // Recognize subdirs that have no localization.
-    static const std::set<std::string> sUnlocalized = list_of
-        ("")                        // top-level directory not localized
-        ("textures")                // textures not localized
-    ;
+    static const std::set<std::string> sUnlocalized = {
+        "",        // top-level directory not localized
+        "textures" // textures not localized
+    };
 
     LL_DEBUGS("LLDir") << "subdir '" << subdir << "', filename '" << filename
                        << "', constraint "
@@ -1278,39 +1263,6 @@ void LLDir::append(std::string& destpath, const std::string& name) const
     // If destpath ends with a separator, AND name starts with one, skip
     // name's leading separator.
     destpath += name.substr(sepoff.second);
-}
-
-// static
-std::string LLDir::escapePathString(std::string_view str)
-{
-    //BD - Don't use LLURI::escape() because it doesn't encode '-' characters
-    //     which may break handling of some poses.
-    //     From Singularity Viewer.
-    static const char hex[] = "0123456789ABCDEF";
-    std::stringstream escaped_str;
-    for (auto cha : str)
-    {
-        switch (cha) {
-        case '0': case '1': case '2': case '3': case '4':
-        case '5': case '6': case '7': case '8': case '9':
-        case 'a': case 'b': case 'c': case 'd': case 'e':
-        case 'f': case 'g': case 'h': case 'i': case 'j':
-        case 'k': case 'l': case 'm': case 'n': case 'o':
-        case 'p': case 'q': case 'r': case 's': case 't':
-        case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
-        case 'A': case 'B': case 'C': case 'D': case 'E':
-        case 'F': case 'G': case 'H': case 'I': case 'J':
-        case 'K': case 'L': case 'M': case 'N': case 'O':
-        case 'P': case 'Q': case 'R': case 'S': case 'T':
-        case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z':
-            escaped_str << (cha);
-            break;
-        default:
-            unsigned char c = (unsigned char)(cha);
-            escaped_str << '%' << hex[c >> 4] << hex[c & 0xF];
-        }
-    }
-    return escaped_str.str();
 }
 
 LLDir::SepOff LLDir::needSep(const std::string& path, const std::string& name) const

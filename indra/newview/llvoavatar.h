@@ -54,8 +54,6 @@
 #include "llvovolume.h"
 #include "llavatarrendernotifier.h"
 #include "llmodel.h"
-//BD - Poser
-#include "bdanimator.h"
 
 extern const LLUUID ANIM_AGENT_BODY_NOISE;
 extern const LLUUID ANIM_AGENT_BREATHE_ROT;
@@ -68,8 +66,6 @@ extern const LLUUID ANIM_AGENT_HEAD_ROT;
 extern const LLUUID ANIM_AGENT_PELVIS_FIX;
 extern const LLUUID ANIM_AGENT_TARGET;
 extern const LLUUID ANIM_AGENT_WALK_ADJUST;
-//BD
-extern const LLUUID ANIM_BD_POSING_MOTION;
 
 class LLViewerWearable;
 class LLVoiceVisualizer;
@@ -1309,28 +1305,6 @@ public:
 
 /********************************************************************************
  **                                                                            **
- **                    POSER
- **/
-
-    //--------------------------------------------------------------------
-    //BD - Custom Posing
-    //--------------------------------------------------------------------
-public:
-    void            setPosing()             { mIsPosing = true; }
-    void            clearPosing()           { mIsPosing = false; }
-    bool            getPosing()             { return mIsPosing; }
-    void            clearAnimList()         { mAnimatorActions.clear(); }
-
-    bool            mIsPosing;
-    S32             getCurrentActionIndex() { return mCurrentAction; }
-
-    std::vector<Action>             mAnimatorActions;
-    LLFrameTimer                    mAnimPlayTimer;
-    F32                             mExpiryTime;
-    S32                             mCurrentAction;
-
-/********************************************************************************
- **                                                                            **
  **                    SUPPORT CLASSES
  **/
 
@@ -1351,11 +1325,7 @@ extern const F32 MIN_HOVER_Z;
 std::string get_sequential_numbered_file_name(const std::string& prefix,
                                               const std::string& suffix);
 void dump_sequential_xml(const std::string outprefix, const LLSD& content);
-
-// <FS:ND> Remove LLVolatileAPRPool/apr_file_t and use FILE* instead
 void dump_visual_param(apr_file_t* file, LLVisualParam* viewer_param, F32 value);
-void dump_visual_param(LLAPRFile::tFiletype* file, LLVisualParam* viewer_param, F32 value);
-//</FS:ND>
 
 #endif // LL_VOAVATAR_H
 

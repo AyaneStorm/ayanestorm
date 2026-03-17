@@ -627,11 +627,11 @@ void LLFloaterPreference::saveAvatarPropertiesCoro(const std::string cap_url, bo
 {
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
-        httpAdapter(new LLCoreHttpUtil::HttpCoroutineAdapter("put_avatar_properties_coro", httpPolicy));
-    LLCore::HttpRequest::ptr_t httpRequest(new LLCore::HttpRequest);
+        httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("put_avatar_properties_coro", httpPolicy);
+    LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
     LLCore::HttpHeaders::ptr_t httpHeaders;
 
-    LLCore::HttpOptions::ptr_t httpOpts(new LLCore::HttpOptions);
+    LLCore::HttpOptions::ptr_t httpOpts = std::make_shared<LLCore::HttpOptions>();
     httpOpts->setFollowRedirects(true);
 
     std::string finalUrl = cap_url + "/" + gAgentID.asString();
@@ -2930,6 +2930,22 @@ void LLFloaterPreference::onChangeMaturity()
                                                             || sim_access == SIM_ACCESS_ADULT);
 
     getChild<LLIconCtrl>("rating_icon_adult")->setVisible(sim_access == SIM_ACCESS_ADULT);
+
+    // Update Legacy Search maturity settings
+    bool can_access_mature = gAgent.canAccessMature();
+    bool can_access_adult  = gAgent.canAccessAdult();
+    if (!can_access_mature)
+    {
+        gSavedSettings.setBOOL("ShowMatureSims", false);
+        gSavedSettings.setBOOL("ShowMatureLand", false);
+        gSavedSettings.setBOOL("ShowMatureClassifieds", false);
+    }
+    if (!can_access_adult)
+    {
+        gSavedSettings.setBOOL("ShowAdultSims", false);
+        gSavedSettings.setBOOL("ShowAdultLand", false);
+        gSavedSettings.setBOOL("ShowAdultClassifieds", false);
+    }
 }
 
 void LLFloaterPreference::onChangeComplexityMode(const LLSD& newvalue)
@@ -3341,7 +3357,7 @@ void LLFloaterPreference::updateAnimatedScriptDialogs()
 
 //public:
 
-//  typedef boost::function<bool(const LLSD&)> callback_t;
+//  typedef std::function<bool(const LLSD&)> callback_t;
 
 //  Updater(callback_t cb, F32 period)
 //  :LLEventTimer(period),
@@ -5083,7 +5099,7 @@ void LLFloaterPreference::collectSearchableItems()
     LLTabContainer *pRoot = getChild< LLTabContainer >( "pref core" );
     if( mFilterEdit && pRoot )
     {
-        mSearchData.reset(new ll::prefs::SearchData() );
+        mSearchData = std::make_unique<ll::prefs::SearchData>();
 
         ll::prefs::TabContainerDataPtr pRootTabcontainer = ll::prefs::TabContainerDataPtr( new ll::prefs::TabContainerData );
         pRootTabcontainer->mTabContainer = pRoot;

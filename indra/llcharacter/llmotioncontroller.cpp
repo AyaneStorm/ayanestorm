@@ -197,8 +197,7 @@ void LLMotionController::purgeExcessMotions()
         {
             motion_set_t::iterator cur_iter = deprecated_motion_it++;
             LLMotion* cur_motionp = *cur_iter;
-            //BD - Do not kill eternal animations.
-            if (!isMotionActive(cur_motionp) && !cur_motionp->getEternal())
+            if (!isMotionActive(cur_motionp))
             {
                 // Motion is deprecated so we know it's not cannonical,
                 //  we can safely remove the instance
@@ -216,8 +215,7 @@ void LLMotionController::purgeExcessMotions()
         for (LLMotion* cur_motionp : mLoadedMotions)
         {
             // motion isn't playing, delete it
-            //BD - Do not kill eternal animations.
-            if (!isMotionActive(cur_motionp) && !cur_motionp->getEternal())
+            if (!isMotionActive(cur_motionp))
             {
                 motions_to_kill.insert(cur_motionp->getID());
             }
@@ -230,8 +228,7 @@ void LLMotionController::purgeExcessMotions()
         // look up the motion again by ID to get canonical instance
         // and kill it only if that one is inactive
         LLMotion* motionp = findMotion(motion_id);
-        //BD - Do not kill eternal animations.
-        if (motionp && !isMotionActive(motionp) && !motionp->getEternal())
+        if (motionp && !isMotionActive(motionp))
         {
             removeMotion(motion_id);
         }
@@ -877,7 +874,6 @@ void LLMotionController::updateMotions(bool force_update)
         }
         else
         {
-            //BD - Keep this, otherwise playing animations backwards doesn't work.
             mAnimTime = update_time;
         }
     }

@@ -176,6 +176,8 @@ with the same filename but different name
   <texture name="Command_Primfeed_Icon"     file_name="icons/primfeed_white.png"       preload="true" />     <!-- FS:Beq Primfeed support -->
   <texture name="Command_Profile_Icon"      file_name="toolbar_icons/profile.png"      preload="true" />
   <texture name="Command_Report_Abuse_Icon" file_name="toolbar_icons/report_abuse.png" preload="true" />
+  <texture name="Command_AvatarAlign_Icon"  file_name="toolbar_icons/compass.png"      preload="true" />     <!-- AS:Chanayane Compass floater -->
+  <texture name="Command_FaceNearest_Icon"  file_name="toolbar_icons/facenearest.png"  preload="true" />     <!-- AS:Chanayane Compass floater -->
   <texture name="Command_Search_Icon"       file_name="toolbar_icons/search.png"       preload="true" />
   <texture name="Command_Snapshot_Icon"     file_name="toolbar_icons/snapshot.png"     preload="true" />
   <texture name="Command_Speak_Icon"        file_name="toolbar_icons/speak.png"        preload="true" />
@@ -1039,7 +1041,13 @@ with the same filename but different name
   <texture name="icon_avatar_online.tga" />
   <texture name="icon_diurnal.tga" />
   <texture name="icon_for_sale.tga" file_name="icons/Icon_For_Sale.png" />
+  <texture name="icon_auction.tga"/>
+  <texture name="icon_place.tga"/>
   <texture name="icon_top_pick.tga" />
+
+  <texture name="icon_event.tga"/>
+  <texture name="icon_event_adult.tga"/>
+  <texture name="icon_event_mature.tga" />
 
   <texture name="lag_status_critical.tga" />
   <texture name="lag_status_good.tga" />

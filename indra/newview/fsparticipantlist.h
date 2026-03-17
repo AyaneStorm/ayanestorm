@@ -52,8 +52,8 @@ public:
         CONV_SESSION_UNKNOWN = 6
     };
 
-    typedef boost::function<bool (const LLUUID& speaker_id)> validate_speaker_callback_t;
-    typedef boost::function<void (const LLUUID& speaker_id)> insert_mention_callback_t;
+    typedef std::function<bool (const LLUUID& speaker_id)> validate_speaker_callback_t;
+    typedef std::function<void (const LLUUID& speaker_id)> insert_mention_callback_t;
 
     FSParticipantList(LLSpeakerMgr* data_source,
                       LLAvatarList* avatar_list,

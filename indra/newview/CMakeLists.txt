@@ -91,10 +91,6 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
-    bdanimator.cpp
-    bdfloaterposer.cpp
-    bdfloaterposecreator.cpp
-    bdposingmotion.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -120,6 +116,7 @@ set(viewer_SOURCE_FILES
     fsfloateraddtocontactset.cpp
     fsfavoritegroups.cpp
     fsfloaterassetblacklist.cpp
+    fsfloateravataralign.cpp
     fsfloateravatarrendersettings.cpp
     fsfloaterblocklist.cpp
     fsfloatercontacts.cpp
@@ -345,6 +342,7 @@ set(viewer_SOURCE_FILES
     llfloatercreatelandmark.cpp
     llfloaterdeleteprefpreset.cpp
     llfloaterdestinations.cpp
+    llfloaterdirectory.cpp
     llfloaterdisplayname.cpp
     llfloatereditenvironmentbase.cpp
     llfloatereditextdaycycle.cpp
@@ -572,11 +570,20 @@ set(viewer_SOURCE_FILES
     llpanelblockedlist.cpp
     llpanelclassified.cpp
     llpanelcontents.cpp
+    llpaneldirbrowser.cpp
+    llpaneldirclassified.cpp
+    llpaneldirevents.cpp
+    llpaneldirgroups.cpp
+    llpaneldirland.cpp
+    llpaneldirpeople.cpp
+    llpaneldirplaces.cpp
+    llpaneldirweb.cpp
     llpaneleditsky.cpp
     llpaneleditwater.cpp
     llpaneleditwearable.cpp
     llpanelemojicomplete.cpp
     llpanelenvironment.cpp
+    llpaneleventinfo.cpp
     llpanelexperiencelisteditor.cpp
     llpanelexperiencelog.cpp
     llpanelexperiencepicker.cpp
@@ -859,7 +866,6 @@ set(viewer_SOURCE_FILES
     llvovolume.cpp
     llvowater.cpp
     llvowlsky.cpp
-    llwatchdog.cpp
     llwearableitemslist.cpp
     llwearablelist.cpp
     llweb.cpp
@@ -940,10 +946,6 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
-    bdanimator.h
-    bdfloaterposer.h
-    bdfloaterposecreator.h
-    bdposingmotion.h
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h
@@ -982,6 +984,7 @@ set(viewer_HEADER_FILES
     fsfloaterim.h
     fsfloaterimcontainer.h
     fsfloaternearbychat.h
+    fsfloateravataralign.h
     fsfloaterpartialinventory.h
     fsfloaterplacedetails.h
     fsfloaterposer.h
@@ -1200,6 +1203,7 @@ set(viewer_HEADER_FILES
     llfloatercreatelandmark.h
     llfloaterdeleteprefpreset.h
     llfloaterdestinations.h
+    llfloaterdirectory.h
     llfloaterdisplayname.h
     llfloatereditenvironmentbase.h
     llfloatereditextdaycycle.h
@@ -1419,11 +1423,20 @@ set(viewer_HEADER_FILES
     llpanelblockedlist.h
     llpanelclassified.h
     llpanelcontents.h
+    llpaneldirbrowser.h
+    llpaneldirclassified.h
+    llpaneldirevents.h
+    llpaneldirgroups.h
+    llpaneldirland.h
+    llpaneldirpeople.h
+    llpaneldirplaces.h
+    llpaneldirweb.h
     llpaneleditsky.h
     llpaneleditwater.h
     llpaneleditwearable.h
     llpanelemojicomplete.h
     llpanelenvironment.h
+    llpaneleventinfo.h
     llpanelexperiencelisteditor.h
     llpanelexperiencelog.h
     llpanelexperiencepicker.h
@@ -1706,7 +1719,6 @@ set(viewer_HEADER_FILES
     llvovolume.h
     llvowater.h
     llvowlsky.h
-    llwatchdog.h
     llwearableitemslist.h
     llwearablelist.h
     llweb.h

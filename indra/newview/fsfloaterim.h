@@ -307,7 +307,7 @@ private:
 class FSFloaterIMTimer : public LLEventTimer
 {
 public:
-    typedef boost::function<void()> callback_t;
+    typedef std::function<void()> callback_t;
 
     FSFloaterIMTimer(callback_t callback);
     bool tick() override;
