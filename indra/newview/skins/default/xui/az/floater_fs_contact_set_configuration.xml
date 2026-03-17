@@ -11,6 +11,7 @@
 		<button name="rename_btn" width="85" label="Adı dəyişdir"/>
 		<color_swatch label="Rəngi təyin et" name="set_swatch" tool_tip="Rəng seçimini açmaq üçün toxunun" />
 		<check_box label="Bildirişlər göstər" name="show_set_notifications" />
+		<check_box label="Onlayn statusa görə sırala" name="sort_by_online_status" />
 	</panel>
 	<panel name="bottom_panel" width="450">
 		<text name="global_label">
@@ -31,5 +32,6 @@
 		<check_box label="Kontakt dəstinə əsaslanan ad etiketinin rəngi" name="FSContactSetsColorizeNameTag" />
 		<check_box label="Kontaktlar dəstinə əsaslanan radara qeyd rəngi" name="FSContactSetsColorizeRadar" />
 		<check_box label="Kontaktlar dəstinə əsaslanan ümumi söhbətdə rəng" name="FSContactSetsColorizeChat" />
+		<check_box label="Kontaktlar dəstinə əsaslanan dost siyahısı rəngi" name="FSContactSetsColorizeFriends" />
 	</panel>
 </floater>
