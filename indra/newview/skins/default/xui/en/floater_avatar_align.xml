@@ -23,8 +23,8 @@
 >
     <button name="btn_rotate_left_10"  label="-10°" top="265" left="10"  width="50" tool_tip="Rotate your avatar 10° on the left" />
     <button name="btn_rotate_left_1"   label="-1°"  top="265" left="62"  width="50" tool_tip="Rotate your avatar 1° on the left" />
-    <button name="btn_rotate_right_1"  label="1°"   top="265" left="114" width="50" tool_tip="Rotate your avatar 1° on the right" />
-    <button name="btn_rotate_right_10" label="10°"  top="265" left="166" width="50" tool_tip="Rotate your avatar 10° on the right" />
+    <button name="btn_rotate_right_1"  label="+1°"  top="265" left="114" width="50" tool_tip="Rotate your avatar 1° on the right" />
+    <button name="btn_rotate_right_10" label="+10°" top="265" left="166" width="50" tool_tip="Rotate your avatar 10° on the right" />
     <button name="btn_rotate_left_90"  label="-90°" top="292" left="10"  width="50" tool_tip="Rotate your avatar 90° on the left" />
     <button name="btn_rotate_left_45"  label="-45°" top="292" left="62"  width="50" tool_tip="Rotate your avatar 45° on the left" />
     <button name="btn_rotate_right_45" label="+45°" top="292" left="114" width="50" tool_tip="Rotate your avatar 45° on the right" />
