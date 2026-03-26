@@ -63,9 +63,9 @@
          function="RLV.CanShowName" />
       </menu_item_call>
 <!-- [AS:Chanayane] Compass floater - face towards avatar from attachment context menu -->
-    <menu_item_call label="Face towards"
+    <menu_item_call label="Face towards avatar"
       layout="topleft"
-      name="Face towards">
+      name="Face towards avatar">
       <menu_item_call.on_click function="Avatar.FaceTowards" />
       <menu_item_call.on_enable function="Avatar.CanFaceTowards" />
     </menu_item_call>
