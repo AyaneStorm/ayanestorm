@@ -483,6 +483,21 @@ void FSAvatarAlignBase::onClickFaceNearestAvatar()
     faceAvatar(nearest);
 }
 
+// When switching between full and mini mode :
+// if floater is located on the left of the app, grow from the left. Otherwiser grow from the right.
+// if floater is located on the bottom of the app, grow from the bottom. Otherwiser grow from the top.
+void FSAvatarAlignBase::repositionOnToggle(LLFloater* next, const LLRect& old_rect)
+{
+    LLRect view  = gFloaterView->getRect();
+    S32 new_w    = next->getRect().getWidth();
+    S32 new_h    = next->getRect().getHeight();
+    bool on_left = (old_rect.getCenterX() < view.getCenterX());
+    bool on_bot  = (old_rect.getCenterY() < view.getCenterY());
+    S32 new_left = on_left ? old_rect.mLeft : (old_rect.mRight - new_w);
+    S32 new_bot  = on_bot  ? old_rect.mBottom : (old_rect.mTop - new_h);
+    next->setOrigin(new_left, new_bot);
+}
+
 // ============================================================
 // FSFloaterAvatarAlign  (full mode)
 // ============================================================
@@ -518,11 +533,7 @@ void FSFloaterAvatarAlign::onToggleMode()
     LLRect rect = getRect();
     closeFloater(false);
     FSFloaterAvatarAlignMini* mini = LLFloaterReg::showTypedInstance<FSFloaterAvatarAlignMini>("avatar_align_mini");
-    if (mini)
-    {
-        // Keep the top-left corner fixed
-        mini->setOrigin(rect.mLeft, rect.mBottom + rect.getHeight() - mini->getRect().getHeight());
-    }
+    if (mini) { repositionOnToggle(mini, rect); }
 }
 
 // ============================================================
@@ -553,8 +564,5 @@ void FSFloaterAvatarAlignMini::onToggleMode()
     LLRect rect = getRect();
     closeFloater(false);
     FSFloaterAvatarAlign* full = LLFloaterReg::showTypedInstance<FSFloaterAvatarAlign>("avatar_align");
-    if (full)
-    {
-        full->setOrigin(rect.mLeft, rect.mBottom + rect.getHeight() - full->getRect().getHeight());
-    }
+    if (full) { repositionOnToggle(full, rect); }
 }

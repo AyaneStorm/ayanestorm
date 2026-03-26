@@ -927,6 +927,9 @@ void FSPanelLogin::loadLoginPage()
     params["ayanestorm_token"]  = "w1ufmXPFtsEGG4tDN3CTvYkXeN5EIzgOukkNN8a7v11Gc92bG3QBU578wiuoMFHtmh05jhuBnXJf0YufmGKXDTXUjqy2i7tQPHiJqKTke44=";
     params["ayanestorm_repo"]   = "AyaneStorm/special-ayanestorm";
     
+    // skin
+    params["skin"] = gSavedSettings.getString("FSInternalSkinCurrent") + " " + gSavedSettings.getString("FSInternalSkinCurrentTheme");
+
     // No version popup
     if (gSavedSettings.getBOOL("FSNoVersionPopup"))
     {
