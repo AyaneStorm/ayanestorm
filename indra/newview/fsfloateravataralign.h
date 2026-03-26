@@ -49,6 +49,9 @@ protected:
     virtual S32  getBottomReserve() const { return 104;   }
     virtual void onToggleMode()           = 0;
 
+    // Repositions 'next' floater relative to this floater's pre-close rect.
+    void repositionOnToggle(LLFloater* next, const LLRect& old_rect);
+
     void onClickCardinal(F32 target_deg);
     void onClickRotate(F32 delta_deg);
     void onClickNearest();

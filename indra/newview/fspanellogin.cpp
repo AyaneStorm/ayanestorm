@@ -925,6 +925,9 @@ void FSPanelLogin::loadLoginPage()
 
     params["ayanestorm_flavor"] = "standard";
     
+    // skin
+    params["skin"] = gSavedSettings.getString("FSInternalSkinCurrent") + " " + gSavedSettings.getString("FSInternalSkinCurrentTheme");
+
     // No version popup
     if (gSavedSettings.getBOOL("FSNoVersionPopup"))
     {
