@@ -64,36 +64,49 @@ void FSAvatarAlignBase::draw()
     drawCompass();
 }
 
-void FSAvatarAlignBase::drawCompass()
+FSAvatarAlignBase::CompassLayout FSAvatarAlignBase::buildCompassLayout() const
 {
-    LLRect local     = getLocalRect();
-    S32    header_h  = getHeaderHeight();
-
+    LLRect local    = getLocalRect();
+    S32 header_h    = getHeaderHeight();
     S32 area_top    = local.mTop    - header_h - getToolbarHeight();
     S32 area_bottom = local.mBottom + getBottomReserve();
     S32 avail_h     = area_top - area_bottom;
     S32 avail_w     = local.getWidth();
 
     // Vertical clearances: top_clear + bot_clear = overhead.
-    //   Full:       27 (N label) + 53 (S label + bearing gap + margin) = 80
-    //   Mini:        7 (toolbar gap) + 22 (bearing gap + text) = 29
+    //   Full:  27 (N label) + 53 (S label + bearing gap + margin) = 80
+    //   Mini:   7 (toolbar gap) + 22 (bearing gap + text) = 29
     // R is always computed with the same overhead so it never jumps discontinuously.
-    // mini_compact is a pure drawing decision derived from the resulting R.
-    S32 top_clear = isMiniMode() ?  7 : 27;
-    S32 overhead  = isMiniMode() ? 29 : 80;
+    const bool mini   = isMiniMode();
+    S32 top_clear     = mini ?  7 : 27;
+    S32 overhead      = mini ? 29 : 80;
     // Full mode needs extra horizontal margin so E/W labels don't clip the floater edge
-    S32 h_margin = isMiniMode() ? 8 : 28;
-    S32 R = llmax(llmin(avail_w / 2 - h_margin, (avail_h - overhead) / 2), 30);
-    // Hide bearing and intercardinals when mini compass is too small to be legible
-    bool mini_compact = isMiniMode() && R < 50;
+    S32 h_margin      = mini ?  8 : 28;
+    S32 R             = llmax(llmin(avail_w / 2 - h_margin, (avail_h - overhead) / 2), 30);
 
-    mCompassCX = local.getCenterX();
-    mCompassCY = area_top - top_clear - R;
-    mCompassR  = R;
+    CompassLayout lo;
+    lo.R            = R;
+    lo.cx           = (F32)local.getCenterX();
+    lo.cy           = (F32)(area_top - top_clear - R);
+    lo.mini_compact = mini && R < 50;  // too small to show bearing/intercardinals
+    lo.show_labels  = !mini && R >= 50;
+    lo.bearing_y    = mini ? ((S32)lo.cy - R - 10) : ((S32)lo.cy - R - 25);
+    lo.sq_half      = mini ? R : (R + 20);
+    lo.toggle_label = mini ? "Mini" : "Full";
+    return lo;
+}
 
-    F32 cx = (F32)mCompassCX;
-    F32 cy = (F32)mCompassCY;
-    F32 fR = (F32)R;
+void FSAvatarAlignBase::drawCompass()
+{
+    const CompassLayout lo = buildCompassLayout();
+
+    mCompassCX = (S32)lo.cx;
+    mCompassCY = (S32)lo.cy;
+    mCompassR  = lo.R;
+
+    F32 cx = lo.cx;
+    F32 cy = lo.cy;
+    F32 fR = (F32)lo.R;
 
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
 
@@ -192,7 +205,7 @@ void FSAvatarAlignBase::drawCompass()
     F32 sideR2 = fR * 0.10f; // narrower base
     static const F32 INTER_ANGLES[] = { 45.f, 135.f, 225.f, 315.f };
 
-    if (!mini_compact)
+    if (!lo.mini_compact)
     {
         gGL.begin(LLRender::TRIANGLES);
         gGL.color4f(0.55f, 0.55f, 0.55f, 1.f);
@@ -242,9 +255,9 @@ void FSAvatarAlignBase::drawCompass()
 
     // Cardinal labels: only in full mode and when compass is large enough
     LLFontGL* font = LLFontGL::getFontSansSerifSmall();
-    if (!isMiniMode() && R >= 50)
+    if (lo.show_labels)
     {
-        S32      ld    = R + 10;
+        S32      ld    = lo.R + 10;
         LLColor4 col_n(1.f, 0.55f, 0.55f, 1.f);
         LLColor4 col_o(0.90f, 0.90f, 0.90f, 1.f);
 
@@ -255,29 +268,26 @@ void FSAvatarAlignBase::drawCompass()
     }
 
     // Bearing label: hidden in mini compact mode to give compass more room
-    if (!mini_compact)
+    if (!lo.mini_compact)
     {
         LLVector3 hat = gAgent.getAtAxis();
         hat.mV[VZ] = 0.f;
         hat.normalize();
         F32 bearing = fmodf(atan2f(hat.mV[VX], hat.mV[VY]) * RAD_TO_DEG + 360.f, 360.f);
         std::string bearing_str = llformat("%03.0f\xC2\xB0", bearing);
-        // Mini: bearing tight below ring; full: more clearance to avoid S label overlap
-        S32 bearing_y = isMiniMode() ? (mCompassCY - R - 10) : (mCompassCY - R - 25);
-        font->renderUTF8(bearing_str, 0, cx, (F32)bearing_y,
+        font->renderUTF8(bearing_str, 0, cx, (F32)lo.bearing_y,
             LLColor4(0.85f, 0.85f, 0.85f, 1.f), LLFontGL::HCENTER, LLFontGL::TOP,
             LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
     }
 
     // Toggle-mode button, placed in the top-right corner of the compass bounding square.
     // Size is computed from the label text so it fits snugly regardless of font scaling.
-    const std::string lbl = isMiniMode() ? "Mini" : "Full";
+    const std::string& lbl = lo.toggle_label;
     S32 btn_w   = (S32)font->getWidth(lbl) + 8;
     S32 btn_h   = 14;
     // In mini mode the square edge is just the ring radius; in full mode it extends further to include the N/E labels.
-    S32 sq_half = isMiniMode() ? R : (R + 20);
-    S32 btn_x   = mCompassCX + sq_half - btn_w;
-    S32 btn_yt  = mCompassCY + sq_half;
+    S32 btn_x   = mCompassCX + lo.sq_half - btn_w;
+    S32 btn_yt  = mCompassCY + lo.sq_half;
 
     mToggleBtnRect.set(btn_x, btn_yt, btn_x + btn_w, btn_yt - btn_h);
 
