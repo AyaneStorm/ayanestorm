@@ -1,14 +1,28 @@
-/**
+ /**
  * @file fsfloateravataralign.cpp
  * @brief Floater for rotating the avatar to face cardinal directions or nearest avatar
+ * @author chanayane@firestorm
  *
- * $LicenseInfo:firstyear=2025&license=viewerlgpl$
- * AyaneStorm Viewer Source Code
+ * $LicenseInfo:firstyear=2026&license=fsviewerlgpl$
+ * Phoenix Firestorm Viewer Source Code
+ * Copyright (C) 2026, Ayane Lyla
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
  * License as published by the Free Software Foundation;
  * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * The Phoenix Firestorm Project, Inc., 1831 Oakwood Drive, Fairmont, Minnesota 56031-3225 USA
+ * http://www.firestormviewer.org
  * $/LicenseInfo$
  */
 
@@ -26,30 +40,6 @@
 #include "llvoavatar.h"
 #include "llvoavatarself.h"
 #include "llviewermessage.h"
-#include "llanimationstates.h"
-
-namespace
-{
-
-bool isAvatarFlying(LLVOAvatar* avatar)
-{
-    if (!avatar) return false;
-
-    const LLVOAvatar::AnimIterator end = avatar->mSignaledAnimations.end();
-    for (LLVOAvatar::AnimIterator it = avatar->mSignaledAnimations.begin(); it != end; ++it)
-    {
-        if (it->first == ANIM_AGENT_FLY        ||
-            it->first == ANIM_AGENT_HOVER      ||
-            it->first == ANIM_AGENT_HOVER_DOWN ||
-            it->first == ANIM_AGENT_HOVER_UP)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-} // namespace
 
 // ============================================================
 // FSAvatarAlignBase
@@ -131,24 +121,29 @@ void FSAvatarAlignBase::drawCompass()
     }
     gGL.end();
 
-    // Hover highlight
+    // Hover highlight: a semi-transparent light overlay drawn on whichever zone the mouse is over
     if (mHoverOctant == -2)
     {
+        // Center zone: fill the inner circle
         gGL.color4f(1.f, 1.f, 1.f, 0.18f);
         gl_circle_2d(cx, cy, fR * 0.25f, 24, TRUE);
     }
     else if (mHoverOctant >= 0)
     {
-        F32 hoverAngle = mHoverOctant * 45.f * DEG_TO_RAD;
-        F32 halfSpan   = F_PI / 8.f;
-        F32 innerR     = fR * 0.25f;
-        S32 segs       = 8;
+        // Outer ring: fill the 45° pie slice for the hovered octant.
+        // The slice is built as a triangle fan between the inner and outer radius.
+        F32 hoverAngle = mHoverOctant * 45.f * DEG_TO_RAD; // center angle of the slice
+        F32 halfSpan   = F_PI / 8.f;                       // half of 45° in radians
+        F32 innerR     = fR * 0.25f;                       // inner boundary (center zone edge)
+        S32 segs       = 8;                                // subdivisions for a smooth arc
         gGL.begin(LLRender::TRIANGLES);
         gGL.color4f(1.f, 1.f, 1.f, 0.13f);
         for (S32 i = 0; i < segs; ++i)
         {
+            // Two adjacent arc angles for this subdivision
             F32 a0 = hoverAngle - halfSpan + (F32)i       * (2.f * halfSpan / segs);
             F32 a1 = hoverAngle - halfSpan + (F32)(i + 1) * (2.f * halfSpan / segs);
+            // Two triangles forming a trapezoid between innerR and fR for this strip
             gGL.vertex2f(cx + innerR * sinf(a0), cy + innerR * cosf(a0));
             gGL.vertex2f(cx + fR     * sinf(a0), cy + fR     * cosf(a0));
             gGL.vertex2f(cx + fR     * sinf(a1), cy + fR     * cosf(a1));
@@ -159,7 +154,8 @@ void FSAvatarAlignBase::drawCompass()
         gGL.end();
     }
 
-    // 4 cardinal arm kite shapes
+    // Draw the 4 cardinal arms as kite (diamond) shapes.
+    // Each arm points outward from center, colored by convention (red=North, white=South, grey=E/W).
     struct ArmDef { F32 angle_deg; F32 r, g, b; };
     static const ArmDef ARMS[] = {
         {   0.f, 0.85f, 0.15f, 0.15f },  // North: red
@@ -168,29 +164,32 @@ void FSAvatarAlignBase::drawCompass()
         { 270.f, 0.65f, 0.65f, 0.65f },  // West:  grey
     };
 
-    F32 tipR  = fR - 4.f;
-    F32 sideR = fR * 0.245f;
+    F32 tipR  = fR - 4.f;    // how far out the arm tip reaches
+    F32 sideR = fR * 0.245f; // half-width of the arm at its base (center of compass)
 
     gGL.begin(LLRender::TRIANGLES);
     for (const auto& arm : ARMS)
     {
         F32 a  = arm.angle_deg * DEG_TO_RAD;
-        F32 al = a - F_PI_BY_TWO;
-        F32 ar = a + F_PI_BY_TWO;
+        F32 al = a - F_PI_BY_TWO; // left side angle
+        F32 ar = a + F_PI_BY_TWO; // right side angle
 
+        // tip point and the two base corners of the kite
         F32 tx = cx + tipR  * sinf(a);   F32 ty = cy + tipR  * cosf(a);
         F32 lx = cx + sideR * sinf(al);  F32 ly = cy + sideR * cosf(al);
         F32 rx = cx + sideR * sinf(ar);  F32 ry = cy + sideR * cosf(ar);
 
+        // two triangles: tip->center->left, tip->right->center
         gGL.color4f(arm.r, arm.g, arm.b, 1.f);
         gGL.vertex2f(tx, ty); gGL.vertex2f(cx, cy); gGL.vertex2f(lx, ly);
         gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
     }
     gGL.end();
 
-    // Intercardinal arms: NE, SE, SW, NW (hidden in mini mode below 150px wide)
-    F32 tipR2  = fR * 0.62f;
-    F32 sideR2 = fR * 0.10f;
+    // Intercardinal arms (NE, SE, SW, NW): same kite shape as cardinals but shorter and narrower.
+    // Skipped entirely when the floater is in compact mini mode (too small to be legible).
+    F32 tipR2  = fR * 0.62f; // shorter reach than cardinal arms
+    F32 sideR2 = fR * 0.10f; // narrower base
     static const F32 INTER_ANGLES[] = { 45.f, 135.f, 225.f, 315.f };
 
     if (!mini_compact)
@@ -203,6 +202,7 @@ void FSAvatarAlignBase::drawCompass()
             F32 al = a - F_PI_BY_TWO;
             F32 ar = a + F_PI_BY_TWO;
 
+            // tip and base corners, same geometry as cardinal arms
             F32 tx = cx + tipR2  * sinf(a);   F32 ty = cy + tipR2  * cosf(a);
             F32 lx = cx + sideR2 * sinf(al);  F32 ly = cy + sideR2 * cosf(al);
             F32 rx = cx + sideR2 * sinf(ar);  F32 ry = cy + sideR2 * cosf(ar);
@@ -211,7 +211,7 @@ void FSAvatarAlignBase::drawCompass()
             gGL.vertex2f(tx, ty); gGL.vertex2f(rx, ry); gGL.vertex2f(cx, cy);
         }
         gGL.end();
-    } // end intercardinal guard
+    }
 
     // Center dot
     gGL.color4f(0.20f, 0.20f, 0.20f, 1.f);
@@ -219,20 +219,23 @@ void FSAvatarAlignBase::drawCompass()
     gGL.color4f(0.50f, 0.50f, 0.50f, 1.f);
     gl_circle_2d(cx, cy, 5.f, 16, FALSE);
 
-    // Heading needle
+    // Heading needle: a yellow triangle pointing in the direction the agent is currently facing.
     LLVector3 at = gAgent.getAtAxis();
     at.mV[VZ] = 0.f;
     if (at.normalize() > 0.01f)
     {
-        F32 nl  = tipR * 0.88f;
-        F32 pw  = 4.f;
+        F32 nl  = tipR * 0.88f; // needle tip reaches slightly inside the compass rim
+        F32 pw  = 4.f;          // half-width of the needle base
+
+        // Tip of the needle, pointing in the facing direction
         F32 nx  = cx + nl * at.mV[VX];
         F32 ny  = cy + nl * at.mV[VY];
+        // Two base corners, perpendicular to the facing direction
         F32 bx1 = cx - at.mV[VY] * pw;  F32 by1 = cy + at.mV[VX] * pw;
         F32 bx2 = cx + at.mV[VY] * pw;  F32 by2 = cy - at.mV[VX] * pw;
 
         gGL.begin(LLRender::TRIANGLES);
-        gGL.color4f(1.f, 0.85f, 0.f, 0.95f);
+        gGL.color4f(1.f, 0.85f, 0.f, 0.95f); // yellow
         gGL.vertex2f(nx, ny); gGL.vertex2f(bx1, by1); gGL.vertex2f(bx2, by2);
         gGL.end();
     }
@@ -266,22 +269,25 @@ void FSAvatarAlignBase::drawCompass()
             LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
     }
 
-    // Toggle-mode button: top-right corner of compass bounding square
+    // Toggle-mode button, placed in the top-right corner of the compass bounding square.
+    // Size is computed from the label text so it fits snugly regardless of font scaling.
     const std::string lbl = isMiniMode() ? "Mini" : "Full";
     S32 btn_w   = (S32)font->getWidth(lbl) + 8;
     S32 btn_h   = 14;
-    // Mini: top-right of ring bounding square; Full: top-right of square including N/E labels
+    // In mini mode the square edge is just the ring radius; in full mode it extends further to include the N/E labels.
     S32 sq_half = isMiniMode() ? R : (R + 20);
     S32 btn_x   = mCompassCX + sq_half - btn_w;
     S32 btn_yt  = mCompassCY + sq_half;
 
     mToggleBtnRect.set(btn_x, btn_yt, btn_x + btn_w, btn_yt - btn_h);
 
+    // Dark fill, then a white border that brightens on hover
     gGL.color4f(0.f, 0.f, 0.f, 0.55f);
     gl_rect_2d(mToggleBtnRect, true);
     gGL.color4f(1.f, 1.f, 1.f, mHoverToggle ? 1.f : 0.65f);
     gl_rect_2d(mToggleBtnRect, false);
 
+    // Label centered inside the button
     font->renderUTF8(lbl, 0,
         (F32)(mToggleBtnRect.mLeft + mToggleBtnRect.mRight) * 0.5f,
         (F32)(mToggleBtnRect.mBottom + mToggleBtnRect.mTop) * 0.5f,
@@ -291,7 +297,7 @@ void FSAvatarAlignBase::drawCompass()
 
 bool FSAvatarAlignBase::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    // Toggle button takes priority
+    // The toggle button (mini/full mode switch) takes priority over everything else
     if (mToggleBtnRect.notEmpty() && mToggleBtnRect.pointInRect(x, y))
     {
         onToggleMode();
@@ -300,6 +306,7 @@ bool FSAvatarAlignBase::handleMouseDown(S32 x, S32 y, MASK mask)
 
     if (mCompassR > 0)
     {
+        // Check if the click landed inside the compass circle
         S32 dx   = x - mCompassCX;
         S32 dy   = y - mCompassCY;
         F32 dist = sqrtf((F32)(dx * dx + dy * dy));
@@ -308,10 +315,13 @@ bool FSAvatarAlignBase::handleMouseDown(S32 x, S32 y, MASK mask)
         {
             if (dist < (F32)mCompassR * 0.25f)
             {
+                // Click in the center zone: face the nearest avatar
                 onClickFaceNearestAvatar();
             }
             else
             {
+                // Click in the outer ring: snap to the closest cardinal/intercardinal direction.
+                // Convert the click angle to degrees (north-up), then round to the nearest 45° octant.
                 F32 deg    = atan2f((F32)dx, (F32)dy) * RAD_TO_DEG;
                 deg        = fmodf(deg + 360.f, 360.f);
                 F32 octant = fmodf((F32)(ll_round(deg / 45.f)) * 45.f, 360.f);
@@ -325,9 +335,11 @@ bool FSAvatarAlignBase::handleMouseDown(S32 x, S32 y, MASK mask)
 
 bool FSAvatarAlignBase::handleHover(S32 x, S32 y, MASK mask)
 {
+    // Check if the mouse is over the toggle button; reset octant highlight in any case.
     mHoverToggle = mToggleBtnRect.notEmpty() && mToggleBtnRect.pointInRect(x, y);
-    mHoverOctant = -1;
+    mHoverOctant = -1; // -1 means no compass zone is highlighted
 
+    // Only test compass zones when the toggle button is not already consuming the hover
     if (!mHoverToggle && mCompassR > 0)
     {
         S32 dx   = x - mCompassCX;
@@ -336,9 +348,10 @@ bool FSAvatarAlignBase::handleHover(S32 x, S32 y, MASK mask)
         if (dist <= (F32)mCompassR)
         {
             if (dist < (F32)mCompassR * 0.25f)
-                mHoverOctant = -2;
+                mHoverOctant = -2; // -2 means center zone (face nearest avatar)
             else
             {
+                // Outer ring: determine which of the 8 octants the mouse is in
                 F32 deg = fmodf(atan2f((F32)dx, (F32)dy) * RAD_TO_DEG + 360.f, 360.f);
                 mHoverOctant = (S32)(ll_round(deg / 45.f)) % 8;
             }
@@ -352,16 +365,19 @@ void FSAvatarAlignBase::snapAvatarBody(const LLVector3& target_at)
     if (!isAgentAvatarValid() || !gAgentAvatarp->mRoot)
         return;
 
+    // Strip any vertical component so the avatar stays upright
     LLVector3 at = target_at;
     at.mV[VZ] = 0.f;
     if (at.normalize() < 0.001f)
         return;
 
+    // Build a clean rotation from the forward direction, keeping "up" as the world Z axis
     LLVector3 up(0.f, 0.f, 1.f);
     LLVector3 left = up % at;
     left.normalize();
     at = left % up;
 
+    // Apply the new orientation and plant the avatar at the agent's current position
     gAgentAvatarp->mRoot->setWorldRotation(LLQuaternion(at, left, up));
     gAgentAvatarp->mRoot->setWorldPosition(gAgent.getPositionAgent());
 }
@@ -371,22 +387,14 @@ void FSAvatarAlignBase::snapRemoteAvatarBody(LLVOAvatar* avatar)
     if (!avatar || avatar->isDead() || !avatar->mRoot)
         return;
 
-    LLVector3 at = LLVector3(1.f, 0.f, 0.f) * avatar->getRotation();
-    at.mV[VZ] = 0.f;
-    if (at.normalize() < 0.001f)
-        return;
-
-    LLVector3 up(0.f, 0.f, 1.f);
-    LLVector3 left = up % at;
-    left.normalize();
-    at = left % up;
-
-    avatar->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+    // Reset the avatar's skeleton to exactly the server rotation and position
+    avatar->mRoot->setWorldRotation(avatar->getRotation());
     avatar->mRoot->setWorldPosition(avatar->getPositionAgent());
 }
 
 void FSAvatarAlignBase::applyRotation(const LLVector3& direction)
 {
+    // Rotate the agent camera/frame, tell the server, then fix up both avatar bodies visually
     gAgent.resetAxes(direction);
     send_agent_update(true, false);
     snapAvatarBody(direction);
@@ -396,6 +404,7 @@ void FSAvatarAlignBase::applyRotation(const LLVector3& direction)
 
 void FSAvatarAlignBase::rotateAgentTo(F32 target_deg)
 {
+    // Convert an absolute compass angle (degrees, north=0) to a world direction and rotate
     F32 yaw_rad = target_deg * DEG_TO_RAD;
     LLVector3 look_at(sinf(yaw_rad), cosf(yaw_rad), 0.f);
     applyRotation(look_at);
@@ -403,11 +412,13 @@ void FSAvatarAlignBase::rotateAgentTo(F32 target_deg)
 
 void FSAvatarAlignBase::onClickCardinal(F32 target_deg)
 {
+    // Rotate to the exact compass angle that was clicked on the compass ring
     rotateAgentTo(target_deg);
 }
 
 void FSAvatarAlignBase::onClickRotate(F32 delta_deg)
 {
+    // Rotate by a relative offset from the current facing direction
     LLVector3 at = gAgent.getFrameAgent().getAtAxis();
     at.mV[VZ] = 0.f;
     at.normalize();
@@ -417,6 +428,7 @@ void FSAvatarAlignBase::onClickRotate(F32 delta_deg)
 
 void FSAvatarAlignBase::onClickNearest()
 {
+    // Snap the current heading to the closest 45-degree increment
     LLVector3 at = gAgent.getFrameAgent().getAtAxis();
     at.mV[VZ] = 0.f;
     at.normalize();
@@ -440,6 +452,7 @@ void FSAvatarAlignBase::faceAvatar(LLVOAvatar* avatar)
 
     mTargetAvatar = avatar;
 
+    // Compute the horizontal direction from us to the target avatar and rotate to face it
     LLVector3 direction = avatar->getPositionAgent() - gAgentAvatarp->getPositionAgent();
     direction.mV[VZ] = 0.f;
     direction.normalize();
@@ -459,14 +472,16 @@ void FSAvatarAlignBase::onClickFaceNearestAvatar()
     for (LLCharacter* character : LLCharacter::sInstances)
     {
         LLVOAvatar* avatar = (LLVOAvatar*)character;
+        // do not select ourself or dead avatar as the nearest avatar
         if (avatar->isDead() || avatar->isControlAvatar() || avatar->isSelf())
             continue;
-        if (isAvatarFlying(avatar))
-            continue;
 
+        // do not select someone that is located further than MAX_FACE_DISTANCE meters from us, in any 3D direction
         F32 dist_sq = dist_vec_squared(avatar->getPositionAgent(), my_pos);
         if (dist_sq > MAX_FACE_DISTANCE * MAX_FACE_DISTANCE)
             continue;
+
+        // if that avatar is nearer the previously selected avatar, select it instead
         if (dist_sq < nearest_dist_sq)
         {
             nearest_dist_sq = dist_sq;
@@ -509,6 +524,7 @@ FSFloaterAvatarAlign::FSFloaterAvatarAlign(const LLSD& key)
 
 bool FSFloaterAvatarAlign::postBuild()
 {
+    // Wire up all rotation buttons and the face-avatar button
     childSetAction("btn_rotate_left_90",  [this](void*) { onClickRotate(-90.f);         }, this);
     childSetAction("btn_rotate_left_45",  [this](void*) { onClickRotate(-45.f);         }, this);
     childSetAction("btn_rotate_right_45", [this](void*) { onClickRotate( 45.f);         }, this);
@@ -529,6 +545,7 @@ void FSFloaterAvatarAlign::onOpen(const LLSD& key)
 
 void FSFloaterAvatarAlign::onToggleMode()
 {
+    // Switch to mini mode: save the preference, close this floater, open the mini one
     gSavedSettings.setBOOL("AvatarAlignMini", true);
     LLRect rect = getRect();
     closeFloater(false);
@@ -547,6 +564,7 @@ FSFloaterAvatarAlignMini::FSFloaterAvatarAlignMini(const LLSD& key)
 
 bool FSFloaterAvatarAlignMini::postBuild()
 {
+    // Mini mode only has fine-step rotation and the face-avatar button
     childSetAction("btn_rotate_left_1",  [this](void*) { onClickRotate(-1.f);           }, this);
     childSetAction("btn_rotate_right_1", [this](void*) { onClickRotate( 1.f);           }, this);
     childSetAction("btn_avatar",         [this](void*) { onClickFaceNearestAvatar();    }, this);
@@ -560,6 +578,7 @@ void FSFloaterAvatarAlignMini::onOpen(const LLSD& key)
 
 void FSFloaterAvatarAlignMini::onToggleMode()
 {
+    // Switch to full mode: save the preference, close this floater, open the full one
     gSavedSettings.setBOOL("AvatarAlignMini", false);
     LLRect rect = getRect();
     closeFloater(false);
