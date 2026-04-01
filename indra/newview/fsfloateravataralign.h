@@ -73,7 +73,20 @@ protected:
     void applyRotation(const LLVector3& direction);
     void snapAvatarBody(const LLVector3& target_at);
     void snapRemoteAvatarBody(LLVOAvatar* avatar);
-    void drawCompass();
+    // All mode-dependent layout values needed to draw the compass, computed once per frame.
+    struct CompassLayout
+    {
+        S32  R;             // compass radius in pixels
+        F32  cx, cy;        // compass center in local screen coords
+        bool mini_compact;  // true when mini mode and radius is too small for bearing/intercardinals
+        bool show_labels;   // true when full mode and radius is large enough for N/S/E/W labels
+        S32  bearing_y;     // Y position of the bearing text below the ring
+        S32  sq_half;       // half-size of the bounding square (used for toggle button placement)
+        std::string toggle_label; // "Mini" or "Full"
+    };
+
+    CompassLayout buildCompassLayout() const;
+    void          drawCompass();
 
     LLVOAvatar* mTargetAvatar = nullptr;
 
