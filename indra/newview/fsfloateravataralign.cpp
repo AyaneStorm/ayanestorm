@@ -387,19 +387,8 @@ void FSAvatarAlignBase::snapRemoteAvatarBody(LLVOAvatar* avatar)
     if (!avatar || avatar->isDead() || !avatar->mRoot)
         return;
 
-    // Read the avatar's current facing direction and flatten it to the ground plane
-    LLVector3 at = LLVector3(1.f, 0.f, 0.f) * avatar->getRotation();
-    at.mV[VZ] = 0.f;
-    if (at.normalize() < 0.001f)
-        return;
-
-    // Same upright rotation rebuild as snapAvatarBody, applied to the remote avatar
-    LLVector3 up(0.f, 0.f, 1.f);
-    LLVector3 left = up % at;
-    left.normalize();
-    at = left % up;
-
-    avatar->mRoot->setWorldRotation(LLQuaternion(at, left, up));
+    // Reset the avatar's skeleton to exactly the server rotation and position
+    avatar->mRoot->setWorldRotation(avatar->getRotation());
     avatar->mRoot->setWorldPosition(avatar->getPositionAgent());
 }
 
