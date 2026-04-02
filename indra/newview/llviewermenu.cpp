@@ -161,7 +161,7 @@
 // [/RLVa:KB]
 
 // Firestorm includes
-#include "fsfloateravataralign.h" // <AS:Chanayane> Compass floater
+#include "fsfloateravataralign.h" // <FS:Chanayane> Compass floater
 #include "fsassetblacklist.h"
 #include "fsdata.h"
 #include "fslslbridge.h"
@@ -8322,7 +8322,7 @@ class LLAvatarInviteToGroup : public view_listener_t
     }
 };
 
-// <AS:Chanayane> Compass floater - face towards avatar from context menu
+// <FS:Chanayane> Compass floater - face towards avatar from context menu
 class LLAvatarFaceTowards : public view_listener_t
 {
     bool handleEvent(const LLSD& userdata)
@@ -8344,7 +8344,7 @@ class LLAvatarCanFaceTowards : public view_listener_t
                dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSAvatarAlignBase::MAX_FACE_DISTANCE;
     }
 };
-// </AS:Chanayane>
+// </FS:Chanayane>
 
 class LLAvatarAddFriend : public view_listener_t
 {
@@ -13305,10 +13305,10 @@ void initialize_menus()
     view_listener_t::addMenu(new LLAvatarDebug(), "Avatar.Debug");
     view_listener_t::addMenu(new LLAvatarVisibleDebug(), "Avatar.VisibleDebug");
     view_listener_t::addMenu(new LLAvatarInviteToGroup(), "Avatar.InviteToGroup");
-// <AS:Chanayane> Compass floater - face towards avatar from context menu
+// <FS:Chanayane> Compass floater - face towards avatar from context menu
     view_listener_t::addMenu(new LLAvatarFaceTowards(),    "Avatar.FaceTowards");
     view_listener_t::addMenu(new LLAvatarCanFaceTowards(), "Avatar.CanFaceTowards");
-// </AS:Chanayane>
+// </FS:Chanayane>
     // <FS:Ansariel> FIRE-13515: Re-add give calling card
     view_listener_t::addMenu(new LLAvatarGiveCard(), "Avatar.GiveCard");
     // </FS:Ansariel> FIRE-13515: Re-add give calling card

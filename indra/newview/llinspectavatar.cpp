@@ -46,9 +46,9 @@
 #include "llfloaterreg.h"
 #include "lltextbox.h"
 #include "lltrans.h"
-#include "fsfloateravataralign.h"  // <AS:Chanayane> Compass floater
-#include "llviewerobjectlist.h"    // <AS:Chanayane> Compass floater
-#include "llvoavatar.h"            // <AS:Chanayane> Compass floater
+#include "fsfloateravataralign.h"  // <FS:Chanayane> Compass floater
+#include "llviewerobjectlist.h"    // <FS:Chanayane> Compass floater
+#include "llvoavatar.h"            // <FS:Chanayane> Compass floater
 
 // <FS:Ansariel> Undo CHUI-90 and make avatar inspector useful again
 #include "llagentdata.h"
@@ -137,7 +137,7 @@ private:
     void onClickTeleport();
     void onClickTeleportRequest();
     void onClickInviteToGroup();
-    void onClickFaceTowards(); // <AS:Chanayane> Compass floater
+    void onClickFaceTowards(); // <FS:Chanayane> Compass floater
     void onClickPay();
     void onClickShare();
     void onToggleMute();
@@ -254,7 +254,7 @@ LLInspectAvatar::LLInspectAvatar(const LLSD& sd)
     mCommitCallbackRegistrar.add("InspectAvatar.Teleport",                      boost::bind(&LLInspectAvatar::onClickTeleport, this));
     mCommitCallbackRegistrar.add("InspectAvatar.TeleportRequest",               boost::bind(&LLInspectAvatar::onClickTeleportRequest, this));
     mCommitCallbackRegistrar.add("InspectAvatar.InviteToGroup",                 boost::bind(&LLInspectAvatar::onClickInviteToGroup, this));
-    mCommitCallbackRegistrar.add("InspectAvatar.FaceTowards",                   boost::bind(&LLInspectAvatar::onClickFaceTowards, this)); // <AS:Chanayane> Compass floater
+    mCommitCallbackRegistrar.add("InspectAvatar.FaceTowards",                   boost::bind(&LLInspectAvatar::onClickFaceTowards, this)); // <FS:Chanayane> Compass floater
     mCommitCallbackRegistrar.add("InspectAvatar.Pay",                           boost::bind(&LLInspectAvatar::onClickPay, this));
     mCommitCallbackRegistrar.add("InspectAvatar.Share",                         boost::bind(&LLInspectAvatar::onClickShare, this));
     mCommitCallbackRegistrar.add("InspectAvatar.ToggleMute",                    boost::bind(&LLInspectAvatar::onToggleMute, this));
@@ -734,7 +734,7 @@ void LLInspectAvatar::onClickInviteToGroup()
     closeFloater();
 }
 
-// <AS:Chanayane> Compass floater
+// <FS:Chanayane> Compass floater
 void LLInspectAvatar::onClickFaceTowards()
 {
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(gObjectList.findObject(mAvatarID));
@@ -742,7 +742,7 @@ void LLInspectAvatar::onClickFaceTowards()
     FSAvatarAlignBase* f = FSAvatarAlignBase::getActive();
     if (f) f->faceAvatar(avatar);
 }
-// </AS:Chanayane>
+// </FS:Chanayane>
 
 void LLInspectAvatar::onClickPay()
 {

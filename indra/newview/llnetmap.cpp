@@ -34,7 +34,7 @@
 #include "llavatarnamecache.h"
 #include "llmath.h"
 #include "llfloaterreg.h"
-#include "fsfloateravataralign.h" // <AS:Chanayane> Compass floater
+#include "fsfloateravataralign.h" // <FS:Chanayane> Compass floater
 #include "llfocusmgr.h"
 #include "lllocalcliprect.h"
 #include "llrender.h"
@@ -213,10 +213,10 @@ bool LLNetMap::postBuild()
     commitRegistrar.add("Minimap.ClearMarks", boost::bind(&LLNetMap::handleClearMarks, this));
     // </FS:Ansariel>
     commitRegistrar.add("Minimap.Cam", boost::bind(&LLNetMap::handleCam, this));
-// <AS:Chanayane> Compass floater
+// <FS:Chanayane> Compass floater
     commitRegistrar.add("Minimap.FaceTowards", boost::bind(&LLNetMap::handleFaceTowards, this));
     enableRegistrar.add("Minimap.CanFaceTowards", boost::bind(&LLNetMap::canFaceTowards, this));
-// </AS:Chanayane>
+// </FS:Chanayane>
     commitRegistrar.add("Minimap.StartTracking", boost::bind(&LLNetMap::handleStartTracking, this));
 // [SL:KB] - Patch: World-MiniMap | Checked: 2012-07-08 (Catznip-3.3)
     commitRegistrar.add("Minimap.ShowProfile", boost::bind(&LLNetMap::handleShowProfile, this, _2));
@@ -2052,7 +2052,7 @@ void LLNetMap::handleCam()
     }
 }
 
-// <AS:Chanayane> Compass floater
+// <FS:Chanayane> Compass floater
 void LLNetMap::handleFaceTowards()
 {
     LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(gObjectList.findObject(mClosestAgentRightClick));
@@ -2072,7 +2072,7 @@ bool LLNetMap::canFaceTowards()
     return avatar && !avatar->isSelf() && !avatar->isDead() &&
            dist_vec(avatar->getPositionAgent(), gAgent.getPositionAgent()) <= FSAvatarAlignBase::MAX_FACE_DISTANCE;
 }
-// </AS:Chanayane>
+// </FS:Chanayane>
 
 // <FS:Ansariel> Avatar tracking feature
 void LLNetMap::handleStartTracking()
