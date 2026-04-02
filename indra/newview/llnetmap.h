@@ -222,10 +222,10 @@ private:
     void handleClearMark();
     void handleClearMarks();
     void handleCam();
-// <AS:Chanayane> Compass floater
+// <FS:Chanayane> Compass floater
     void handleFaceTowards();
     bool canFaceTowards();
-// </AS:Chanayane>
+// </FS:Chanayane>
 // [SL:KB] - Patch: World-MiniMap | Checked: 2012-07-08 (Catznip-3.3)
     void handleOverlayToggle(const LLSD& sdParam);
     void setAvatarProfileLabel(const LLUUID& av_id, const LLAvatarName& avName, const std::string& item_name);
