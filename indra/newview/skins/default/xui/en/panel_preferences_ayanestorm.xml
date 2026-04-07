@@ -91,4 +91,18 @@
       function="Pref.ResetUnencryptedCache" />
   </button>
 
+  <check_box
+    follows="left|top"
+    height="16"
+    control_name="ASShowOwnAvatarInRadar"
+    label="Show own avatar in Nearby People radar"
+    tool_tip="If checked, your own avatar will appear in the Nearby People radar list."
+    left="15"
+    mouse_opaque="true"
+    name="show_own_avatar_in_radar"
+    radio_style="false"
+    width="400"
+    top_pad="10"
+    top_delta="35" />
+
 </panel>

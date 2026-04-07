@@ -219,6 +219,7 @@ void FSRadar::updateRadarList()
     static LLCachedControl<bool> sFSRadarColorNamesByDistance(gSavedSettings, "FSRadarColorNamesByDistance", false);
     static LLCachedControl<bool> sFSRadarShowMutedAndDerendered(gSavedSettings, "FSRadarShowMutedAndDerendered");
     static LLCachedControl<bool> sFSRadarEnhanceByBridge(gSavedSettings, "FSRadarEnhanceByBridge");
+    static LLCachedControl<bool> sASShowOwnAvatarInRadar(gSavedSettings, "ASShowOwnAvatarInRadar", true); // <AS:chanayane>
     bool sUseLSLBridge = bridge.canUseBridge();
 
     F32 drawRadius(sRenderFarClip);
@@ -302,6 +303,10 @@ void FSRadar::updateRadarList()
         // {
         //     continue;
         // }
+        if (avId == gAgentID && !sASShowOwnAvatarInRadar)
+        {
+            continue;
+        }
 // </AS:chanayane>
 
         // Skip modelling this avatar if its basic data is either inaccessible, or it's a dummy placeholder
