@@ -2,7 +2,7 @@
 <panel
   border="true"
   follows="all"
-  height="440"
+  height="480"
   layout="topleft"
   left="1"
   top="1"
@@ -12,6 +12,7 @@
 
   <check_box
     follows="left|top"
+    layout="topleft"
     height="16"
     control_name="ASEnableUnencryptedCache"
     label="Enable unencrypted cache"
@@ -21,8 +22,7 @@
     name="enable_unencrypted_cache"
     radio_style="false"
     width="400"
-    top_pad="10"
-    top_delta="35">
+    top="10">
     <check_box.commit_callback
       function="Pref.EnableUnencryptedCache" />
   </check_box>
@@ -93,6 +93,7 @@
 
   <check_box
     follows="left|top"
+    layout="topleft"
     height="16"
     control_name="ASShowOwnAvatarInRadar"
     label="Show own avatar in Nearby People radar"
@@ -102,7 +103,6 @@
     name="show_own_avatar_in_radar"
     radio_style="false"
     width="400"
-    top_pad="10"
-    top_delta="35" />
+    top_pad="20" />
 
 </panel>
