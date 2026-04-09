@@ -38,7 +38,8 @@ LL::WorkQueueBase::WorkQueueBase(const std::string& name, bool auto_shutdown)
     {
         // Register for "LLApp" events so we can implicitly close() on viewer shutdown
         std::string listener_name = "WorkQueue:" + getKey();
-        LLEventPumps::instance().obtain("LLApp").listen(
+        LLEventPumps* pump = LLEventPumps::getInstance();
+        pump->obtain("LLApp").listen(
             listener_name,
             [this](const LLSD& stat)
             {
@@ -54,14 +55,25 @@ LL::WorkQueueBase::WorkQueueBase(const std::string& name, bool auto_shutdown)
 
         // Store the listener name so we can unregister in the destructor
         mListenerName = listener_name;
+        mPumpHandle = pump->getHandle();
     }
 }
 
 LL::WorkQueueBase::~WorkQueueBase()
 {
-    if (!mListenerName.empty() && !LLEventPumps::wasDeleted())
+    if (!mListenerName.empty() && !mPumpHandle.isDead())
     {
-        LLEventPumps::instance().obtain("LLApp").stopListening(mListenerName);
+        // Due to shutdown order issues, use handle, not a singleton
+        // and ignore fiber issue.
+        try
+        {
+            LLEventPumps* pump = mPumpHandle.get();
+            pump->obtain("LLApp").stopListening(mListenerName);
+        }
+        catch (const boost::fibers::lock_error&)
+        {
+            // Likely mutex is down, ignore
+        }
     }
 }
 
@@ -281,12 +293,30 @@ bool LL::WorkQueue::done()
 
 bool LL::WorkQueue::post(const Work& callable)
 {
-    return mQueue.pushIfOpen(callable);
+    try
+    {
+        return mQueue.pushIfOpen(callable);
+    }
+    catch (std::bad_alloc&)
+    {
+        LLError::LLUserWarningMsg::showOutOfMemory();
+        LL_ERRS("LLCoros") << "Bad memory allocation in WorkQueue::post" << LL_ENDL;
+        return false;
+    }
 }
 
 bool LL::WorkQueue::tryPost(const Work& callable)
 {
-    return mQueue.tryPush(callable);
+    try
+    {
+        return mQueue.tryPush(callable);
+    }
+    catch (std::bad_alloc&)
+    {
+        LLError::LLUserWarningMsg::showOutOfMemory();
+        LL_ERRS("LLCoros") << "Bad memory allocation in WorkQueue::tryPost" << LL_ENDL;
+        return false;
+    }
 }
 
 LL::WorkQueue::Work LL::WorkQueue::pop_()
