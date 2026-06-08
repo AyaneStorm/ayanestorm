@@ -1750,8 +1750,11 @@ bool LLAppViewer::doFrame()
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Shutdown:SaveSnapshot");
                 pauseMainloopTimeout();
-                // <AS:Chanayane> Do not save the final snapshot
-                //saveFinalSnapshot();
+                // <AS:Chanayane> Save final snapshot only if enabled in settings
+                if (gSavedSettings.getBOOL("ASSaveFinalSnapshot"))
+                {
+                    saveFinalSnapshot();
+                }
                 // </AS:Chanayane>
 
                 if (LLVoiceClient::instanceExists())
@@ -1931,8 +1934,11 @@ bool LLAppViewer::doFrame()
         // Save snapshot for next time, if we made it through initialization
         if (STATE_STARTED == LLStartUp::getStartupState())
         {
-            // <AS:Chanayane> Do not save the final snapshot
-            //saveFinalSnapshot();
+            // <AS:Chanayane> Save final snapshot only if enabled in settings
+            if (gSavedSettings.getBOOL("ASSaveFinalSnapshot"))
+            {
+                saveFinalSnapshot();
+            }
             // </AS:Chanayane>
         }
 
@@ -6268,8 +6274,11 @@ void LLAppViewer::idleShutdown()
     if (!saved_snapshot)
     {
         saved_snapshot = true;
-        // <AS:Chanayane> Do not save the final snapshot
-        //saveFinalSnapshot();
+        // <AS:Chanayane> Save final snapshot only if enabled in settings
+        if (gSavedSettings.getBOOL("ASSaveFinalSnapshot"))
+        {
+            saveFinalSnapshot();
+        }
         // </AS:Chanayane>
         return;
     }
