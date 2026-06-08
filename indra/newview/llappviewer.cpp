@@ -1750,7 +1750,9 @@ bool LLAppViewer::doFrame()
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Shutdown:SaveSnapshot");
                 pauseMainloopTimeout();
-                saveFinalSnapshot();
+                // <AS:Chanayane> Do not save the final snapshot
+                //saveFinalSnapshot();
+                // </AS:Chanayane>
 
                 if (LLVoiceClient::instanceExists())
                 {
@@ -1929,7 +1931,9 @@ bool LLAppViewer::doFrame()
         // Save snapshot for next time, if we made it through initialization
         if (STATE_STARTED == LLStartUp::getStartupState())
         {
-            saveFinalSnapshot();
+            // <AS:Chanayane> Do not save the final snapshot
+            //saveFinalSnapshot();
+            // </AS:Chanayane>
         }
 
         pingMainloopTimeout("Main:TerminateVoice");
@@ -6264,7 +6268,9 @@ void LLAppViewer::idleShutdown()
     if (!saved_snapshot)
     {
         saved_snapshot = true;
-        saveFinalSnapshot();
+        // <AS:Chanayane> Do not save the final snapshot
+        //saveFinalSnapshot();
+        // </AS:Chanayane>
         return;
     }
 
