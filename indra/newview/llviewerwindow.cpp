@@ -2545,20 +2545,37 @@ void LLViewerWindow::initWorldUI()
     {
         LL_INFOS() << "Preloading cef instances" << LL_ENDL;
 
-        LLFloaterReg::getInstance("destinations");
-        LLFloaterReg::getInstance("avatar_welcome_pack");
+        // <AS:Chanayane> Preload Dullahan host conditionally based on user preferences
+        if (gSavedSettings.getBOOL("ASPreloadDullahanDestinations"))
+        {
+            LLFloaterReg::getInstance("destinations");
+        }
+        if (gSavedSettings.getBOOL("ASPreloadDullahanAvatarWelcomePack"))
+        {
+            LLFloaterReg::getInstance("avatar_welcome_pack");
+        }
         // <FS:TJ> Preload the CEF instance of the currently used legacy search floater
         //LLFloaterReg::getInstance("search");
         if (gSavedSettings.getBOOL("FSUseFSLegacySearch"))
         {
-            LLFloaterReg::getInstance("search");
+            if (gSavedSettings.getBOOL("ASPreloadDullahanSearch"))
+            {
+                LLFloaterReg::getInstance("search");
+            }
         }
         else
         {
-            LLFloaterReg::getInstance("legacy_search");
+            if (gSavedSettings.getBOOL("ASPreloadDullahanLegacySearch"))
+            {
+                LLFloaterReg::getInstance("legacy_search");
+            }
         }
         // </FS:TJ>
-        LLFloaterReg::getInstance("marketplace");
+        if (gSavedSettings.getBOOL("ASPreloadDullahanMarketplace"))
+        {
+            LLFloaterReg::getInstance("marketplace");
+        }
+        // </AS:Chanayane>
     }
 
     // <FS:Zi> Autohide main chat bar if applicable
