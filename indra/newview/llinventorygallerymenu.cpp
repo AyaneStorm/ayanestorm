@@ -415,7 +415,7 @@ void LLInventoryGalleryContextMenu::doToSelected(const LLSD& userdata)
 
         if (can_copy)
         {
-            const LLUUID& marketplacelistings_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS);
+            const LLUUID& marketplacelistings_id = gInventory.getMarketplaceListingsUUID();
             if (itemp)
             {
                 move_item_to_marketplacelistings(itemp, marketplacelistings_id, copy_operation);
@@ -434,7 +434,7 @@ void LLInventoryGalleryContextMenu::doToSelected(const LLSD& userdata)
                     // option == 0  Move no copy item(s)
                     // option == 1  Don't move no copy item(s) (leave them behind)
                     bool copy_and_move = option == 0;
-                    const LLUUID& marketplacelistings_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS);
+                    const LLUUID& marketplacelistings_id = gInventory.getMarketplaceListingsUUID();
 
                     // main inventory only allows one item?
                     LLViewerInventoryItem* itemp = gInventory.getItem(lamdba_list.front());
@@ -550,7 +550,7 @@ bool can_list_on_marketplace(const LLUUID &id)
         if (can_list)
         {
             std::string error_msg;
-            const LLUUID& marketplacelistings_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS);
+            const LLUUID& marketplacelistings_id = gInventory.getMarketplaceListingsUUID();
             if (marketplacelistings_id.notNull())
             {
                 LLViewerInventoryCategory* master_folder = gInventory.getCategory(marketplacelistings_id);
@@ -1048,7 +1048,7 @@ void LLInventoryGalleryContextMenu::updateMenuItemsVisibility(LLContextMenu* men
 
         // Marketplace
         bool can_list = false;
-        const LLUUID marketplacelistings_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS);
+        const LLUUID marketplacelistings_id = gInventory.getMarketplaceListingsUUID();
         if (marketplacelistings_id.notNull() && !is_inbox && !obj->getIsLinkType())
         {
             if (is_folder)

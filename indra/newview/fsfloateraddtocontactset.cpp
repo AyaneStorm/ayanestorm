@@ -30,8 +30,6 @@
 #include "llviewerprecompiledheaders.h"
 #include "fsfloateraddtocontactset.h"
 
-#include "fsfloatercontacts.h"
-#include "fspanelcontactsets.h"
 #include "llnotificationsutil.h"
 #include "llslurl.h"
 
@@ -85,6 +83,17 @@ FSFloaterAddToContactSet::~FSFloaterAddToContactSet()
 
 bool FSFloaterAddToContactSet::postBuild()
 {
+    if (mIsMoveOperation)
+    {
+        setTitle(getString("title_move"));
+        getChild<LLButton>("add_btn")->setLabel(getString("button_move"));
+    }
+    else
+    {
+        setTitle(getString("title_add"));
+        getChild<LLButton>("add_btn")->setLabel(getString("button_add"));
+    }
+
     if (mHasMultipleAgents)
     {
         LLStringUtil::format_map_t args;
