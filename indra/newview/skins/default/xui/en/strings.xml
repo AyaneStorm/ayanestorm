@@ -295,7 +295,7 @@ If you feel this is an error, please contact support@secondlife.com</string>
 	<string name="TooltipMustSingleDrop">Only a single item can be dragged here</string>
 	<string name="TooltipTooManyWearables">You can't wear a folder containing more than [AMOUNT] items.  You can change this limit in Advanced &gt; Show Debug Settings &gt; WearFolderLimit.</string>
 	<string name="TooltipPrice" value="L$[AMOUNT]: "/>
-	<string name="TooltipSLIcon">This links to a page on the official SecondLife.com or LindenLab.com domain.</string>
+	<string name="TooltipSLIcon">This links to a page on the official SecondLife.com, LindenLab.com, or firestormviewer.org domain.</string>
 	<string name="TooltipFlagScript">Script</string>
 	<string name="TooltipFlagPhysics">Physics</string>
 	<string name="TooltipFlagTouch">Touch</string>
@@ -796,7 +796,8 @@ https://www.firestormviewer.org/support for help fixing this problem.
 	<!-- inventory -->
 	<string name="InventoryNoMatchingItems">Didn't find what you're looking for? Try [secondlife:///app/search/all/[SEARCH_TERM] Search].</string>
 	<string name="InventoryNoMatchingRecentItems">Didn't find what you're looking for? Try [secondlife:///app/inventory/filters Show filters].</string>	
-  <string name="InventoryNoMatchingFavorites">You haven't marked any items as favorites.</string>
+	<string name="InventoryNoMatchingFavorites">You haven't marked any items as favorites.</string>
+	<string name="FSInventoryCustomTabDefaultName">Custom</string>
 	<string name="PlacesNoMatchingItems">To add a place to your landmarks, click the star to the right of the location name.</string>
 	<string name="FavoritesNoMatchingItems">Drag a landmark here to add it to your favorites.</string>
 	<string name="MarketplaceNoListing">You have no listings yet.</string>
@@ -2787,6 +2788,8 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_Primfeed_Label">Primfeed</string>
   <string name="Command_Primfeed_Tooltip">Post directly to your Primfeed account.</string>
   <string name="Command_Omnifilter_Label">Omnifilter</string>
+  <string name="Command_AvatarAlign_Label">Avatar alignment</string>
+  <string name="Command_FaceNearest_Label">Face nearest avatar</string>
 
   <string name="Command_360_Capture_Tooltip">Capture a 360° equirectangular image</string>
   <string name="Command_AboutLand_Tooltip">Information about the land you're visiting</string>
@@ -2848,9 +2851,7 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_ResyncAnimations_Tooltip">Synchronizes avatar animations</string>
   <string name="Command_RegionTracker_Tooltip">Track various regions status</string>
   <!-- [FS:Chanayane] Compass floater -->
-  <string name="Command_AvatarAlign_Label">Avatar alignment</string>
   <string name="Command_AvatarAlign_Tooltip">Align your avatar to a cardinal direction or face the nearest avatar</string>
-  <string name="Command_FaceNearest_Label">Face nearest avatar</string>
   <string name="Command_FaceNearest_Tooltip">Turn to face the nearest avatar within 20m</string>
   <!-- [/FS:Chanayane] -->
   <string name="Command_Group_Titles_Tooltip">Change active group tag</string>
@@ -3354,4 +3355,6 @@ Your current position: [AVATAR_POS]
   <string name="Maximum">Maximum</string>
 
   <string name="OmnifilterReplacement">Omnifilter Replacement: [REPLACEMENT]</string>
+  <string name="FSAvatarAlignToggleMini">Mini</string>
+  <string name="FSAvatarAlignToggleFull">Full</string>
 </strings>

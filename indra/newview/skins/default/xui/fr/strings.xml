@@ -509,7 +509,7 @@ Si vous pensez qu'il s'agit d'une erreur, veuillez contacter support@secondlife.
 	</string>
 	<string name="TooltipPrice" value="[AMOUNT] L$ :"/>
 	<string name="TooltipSLIcon">
-		Il s’agit d’un lien vers une page dans le domaine officiel SecondLife.com ou LindenLab.com.
+		Il s’agit d’un lien vers une page dans le domaine officiel SecondLife.com, LindenLab.com ou firestormviewer.org.
 	</string>
 	<string name="TooltipFlagScript">
 		Script
@@ -1642,6 +1642,9 @@ http://secondlife.com/support pour vous aider à résoudre ce problème.
 	</string>
 	<string name="InventoryNoMatchingRecentItems">
 		Avez-vous trouvé ce que vous cherchiez ? Essayez [secondlife:///app/inventory/filters Show filters].
+	</string>
+	<string name="FSInventoryCustomTabDefaultName">
+		Filtre
 	</string>
 	<string name="PlacesNoMatchingItems">
 		Vous n&apos;avez pas trouvé ce que vous cherchiez ? Essayez [secondlife:///app/search/places/[SEARCH_TERM] Rechercher].
@@ -6006,6 +6009,12 @@ Essayez avec le chemin d&apos;accès à l&apos;éditeur entre guillemets doubles
 	<string name="Command_Omnifilter_Label">
 		Omnifiltre
 	</string>
+	<string name="Command_AvatarAlign_Label">
+		Alignement de l'avatar
+	</string>
+	<string name="Command_FaceNearest_Label">
+		Face à l'avatar le plus proche
+	</string>
 	 <string name="Command_360_Capture_Tooltip">
 		Capturez une image équirectangulaire de 360°.
 	</string>
@@ -7205,5 +7214,11 @@ Votre position actuelle : [AVATAR_POS]
 	</string>
 	<string name="OmnifilterReplacement">
 		Remplacement omnifiltre : [REPLACEMENT]
+	</string>
+	<string name="FSAvatarAlignToggleMini">
+		Mini
+	</string>
+	<string name="FSAvatarAlignToggleFull">
+		Complet
 	</string>
 </strings>

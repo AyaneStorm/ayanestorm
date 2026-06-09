@@ -44,6 +44,8 @@
 			<menu_item_check label="Forcer à s'asseoir" name="Force Toggle Sitting"/>
 			<menu_item_check label="Figer" name="Move Lock"/>
 			<menu_item_check label="Saut rapide" name="Avatar Ignore Prejump"/>
+			<menu_item_call label="Face à l'avatar le plus proche" name="AvatarFaceNearest"/>
+			<menu_item_check label="Alignement de l'avatar" name="AvatarAlign"/>
 		</menu>
 		<menu_item_check label="Contrôles des mouvements" name="Movement Controls"/>
 		<menu_item_check label="Contrôles de la caméra..." name="Camera Controls"/>
@@ -84,6 +86,11 @@
 			<menu_item_check label="Rejeter les offres et les demandes de téléportation" name="Automatically reject teleport offers"/>
 			<menu_item_check label="Rejeter toutes les invitations pour un groupe" name="Reject all group invites"/>
 			<menu_item_check label="Rejeter toutes les demandes d'amitié" name="Reject all friendship requests"/>
+			<menu label="Conférences ad hoc" name="Ad-hoc conferences">
+				<menu_item_check label="Tout ignorer et quitter automatiquement" name="FSIgnoreAdHocSessions"/>
+				<menu_item_check label="Signaler les ignorés dans le Chat local" name="FSReportIgnoredAdHocSession"/>
+				<menu_item_check label="Ne pas ignorer mes amis" name="FSDontIgnoreAdHocFromFriends"/>
+			</menu>
 		</menu>
 		<menu_item_call label="Amis" name="My Friends"/>
 		<menu_item_check label="Contacts" name="Contacts"/>

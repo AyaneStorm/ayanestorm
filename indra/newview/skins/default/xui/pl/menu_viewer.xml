@@ -44,6 +44,8 @@
 			<menu_item_check label="Usiądź na ziemi" name="Force Toggle Sitting" shortcut="control|alt|K"/>
 			<menu_item_check label="Unieruchom" name="Move Lock"/>
 			<menu_item_check label="Szybki skok" name="Avatar Ignore Prejump"/>
+			<menu_item_call label="Zwróć się w stronę najbliższego awatara" name="AvatarFaceNearest" />
+			<menu_item_check label="Wyrównanie awatara" name="AvatarAlign" />
 		</menu>
 		<menu_item_check label="Ustawienia ruchu" name="Movement Controls"/>
 		<menu_item_check label="Ustawienia kamery" name="Camera Controls"/>
@@ -84,6 +86,11 @@
 			<menu_item_check label="Odrzucaj propozycje i prośby o teleport" name="Automatically reject teleport offers"/>
 			<menu_item_check label="Odrzucaj zaproszenia do grup" name="Reject all group invites"/>
 			<menu_item_check label="Odrzucaj zaproszenia do znajomych" name="Reject all friendship requests"/>
+			<menu label="Czaty konferencji (ad-hoc)" name="Ad-hoc conferences">
+				<menu_item_check label="Automatycznie ignoruj i opuszczaj wszystkie" name="FSIgnoreAdHocSessions"/>
+				<menu_item_check label="Zgłaszaj ignorowane w czacie w pobliżu" name="FSReportIgnoredAdHocSession"/>
+				<menu_item_check label="Nie ignoruj od moich znajomych" name="FSDontIgnoreAdHocFromFriends"/>
+			</menu>
 		</menu>
 		<menu_item_call label="Znajomi" name="My Friends"/>
 		<menu_item_check label="Kontakty" name="Contacts"/>
