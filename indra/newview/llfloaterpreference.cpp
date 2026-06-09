@@ -691,7 +691,8 @@ bool LLFloaterPreference::postBuild()
     getChild<LLUICtrl>("FSSoundCacheLocation")->setEnabled(false);
     // </FS:Ansariel>
 
-    getChild<LLComboBox>("language_combobox")->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
+    mLanguageCombobox = getChild<LLComboBox>("language_combobox");
+    mLanguageCombobox->setCommitCallback(boost::bind(&LLFloaterPreference::onLanguageChange, this));
     mTimeFormatCombobox = getChild<LLComboBox>("time_format_combobox");
     mTimeFormatCombobox->setCommitCallback(boost::bind(&LLFloaterPreference::onTimeFormatChange, this));
 
@@ -744,18 +745,18 @@ bool LLFloaterPreference::postBuild()
         std::map<std::string, std::string>::iterator iter = labels.find(system_lang);
         if (iter != labels.end())
         {
-            getChild<LLComboBox>("language_combobox")->add(iter->second, LLSD("default"), ADD_TOP, true);
+            mLanguageCombobox->add(iter->second, LLSD("default"), ADD_TOP, true);
         }
         else
         {
             LL_WARNS() << "Language \"" << system_lang << "\" is not in default_languages.xml" << LL_ENDL;
-            getChild<LLComboBox>("language_combobox")->add("System default", LLSD("default"), ADD_TOP, true);
+            mLanguageCombobox->add("System default", LLSD("default"), ADD_TOP, true);
         }
     }
     else
     {
         LL_WARNS() << "Failed to load labels from " << user_filename << ". Using default." << LL_ENDL;
-        getChild<LLComboBox>("language_combobox")->add("System default", LLSD("default"), ADD_TOP, true);
+        mLanguageCombobox->add("System default", LLSD("default"), ADD_TOP, true);
     }
 
 // <FS:Ansariel> Prefer FS-specific Discord implementation
@@ -2386,6 +2387,12 @@ void LLFloaterPreference::refresh()
     updateClickActionViews();
 
     mTimeFormatCombobox->selectByValue(gSavedSettings.getBOOL("Use24HourClock") ? "1" : "0");
+
+    std::string current_language = gSavedSettings.getString("Language");
+    if (current_language != "default" && !current_language.empty())
+    {
+        mLanguageCombobox->selectByValue(LLSD(current_language));
+    }
 }
 
 void LLFloaterPreference::onCommitWindowedMode()
@@ -2931,12 +2938,19 @@ void LLFloaterPreference::onChangeMaturity()
         gSavedSettings.setBOOL("ShowMatureSims", false);
         gSavedSettings.setBOOL("ShowMatureLand", false);
         gSavedSettings.setBOOL("ShowMatureClassifieds", false);
+        gSavedSettings.setU32("FSSearchGroupMaturity", SIM_ACCESS_PG); // <FS:TJ/> Fix legacy group search to better support maturity settings
     }
     if (!can_access_adult)
     {
         gSavedSettings.setBOOL("ShowAdultSims", false);
         gSavedSettings.setBOOL("ShowAdultLand", false);
         gSavedSettings.setBOOL("ShowAdultClassifieds", false);
+        // <FS:TJ/> Fix legacy group search to better support maturity settings
+        if (can_access_mature)
+        {
+            gSavedSettings.setU32("FSSearchGroupMaturity", SIM_ACCESS_MATURE);
+        }
+        // </FS:TJ>
     }
 }
 

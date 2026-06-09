@@ -2,12 +2,118 @@
 <panel
   border="true"
   follows="all"
-  height="440"
+  height="480"
   layout="topleft"
   left="1"
   top="1"
   width="540"
   label="AyaneStorm"
   name="ayanestorm">
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASShowOwnAvatarInRadar"
+    label="Show own avatar in Nearby People radar"
+    tool_tip="If checked, your own avatar will appear in the Nearby People radar list."
+    left="15"
+    mouse_opaque="true"
+    name="show_own_avatar_in_radar"
+    radio_style="false"
+    width="400"
+    top_pad="20" />
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASSaveFinalSnapshot"
+    label="Save final snapshot on exit"
+    tool_tip="If checked, the viewer will save a snapshot on exit (original viewer behavior). Disabled by default."
+    left="15"
+    mouse_opaque="true"
+    name="save_final_snapshot"
+    radio_style="false"
+    width="400"
+    top_pad="20" />
+
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="10"
+    layout="topleft"
+    left="15"
+    name="preload_dullahan_label"
+    width="500"
+    top_pad="20">
+    Preload Dullahan hosts (accelerates window loading at the cost of dozens of processes):
+  </text>
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASPreloadDullahanDestinations"
+    label="Destinations"
+    tool_tip="If checked, the Dullahan (CEF) host for the Destinations floater will be preloaded at startup."
+    left="25"
+    mouse_opaque="true"
+    name="preload_dullahan_destinations"
+    radio_style="false"
+    width="400"
+    top_pad="8" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASPreloadDullahanAvatarWelcomePack"
+    label="Avatar welcome pack"
+    tool_tip="If checked, the Dullahan (CEF) host for the Avatar Welcome Pack floater will be preloaded at startup."
+    left="25"
+    mouse_opaque="true"
+    name="preload_dullahan_avatar_welcome_pack"
+    radio_style="false"
+    width="400"
+    top_pad="4" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASPreloadDullahanSearch"
+    label="Search"
+    tool_tip="If checked, the Dullahan (CEF) host for the Search floater will be preloaded at startup. Only effective when the FS legacy search mode is active."
+    left="25"
+    mouse_opaque="true"
+    name="preload_dullahan_search"
+    radio_style="false"
+    width="400"
+    top_pad="4" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASPreloadDullahanLegacySearch"
+    label="Legacy search"
+    tool_tip="If checked, the Dullahan (CEF) host for the Legacy Search floater will be preloaded at startup. Only effective when the FS legacy search mode is not active."
+    left="25"
+    mouse_opaque="true"
+    name="preload_dullahan_legacy_search"
+    radio_style="false"
+    width="400"
+    top_pad="4" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASPreloadDullahanMarketplace"
+    label="Marketplace"
+    tool_tip="If checked, the Dullahan (CEF) host for the Marketplace floater will be preloaded at startup."
+    left="25"
+    mouse_opaque="true"
+    name="preload_dullahan_marketplace"
+    radio_style="false"
+    width="400"
+    top_pad="4" />
 
 </panel>

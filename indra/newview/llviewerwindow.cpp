@@ -1436,7 +1436,7 @@ LLWindowCallbacks::DragNDropResult LLViewerWindow::handleDragNDrop( LLWindow *wi
                                 // Check the whitelist, if there's media (otherwise just show it)
                                 if (te->getMediaData() == NULL || te->getMediaData()->checkCandidateUrl(url))
                                 {
-                                    if ( obj != mDragHoveredObject.get())
+                                    if (obj != mDragHoveredObject)
                                     {
                                         // Highlight the dragged object
                                         LLSelectMgr::getInstance()->unhighlightObjectOnly(mDragHoveredObject);
@@ -2545,10 +2545,37 @@ void LLViewerWindow::initWorldUI()
     {
         LL_INFOS() << "Preloading cef instances" << LL_ENDL;
 
-        LLFloaterReg::getInstance("destinations");
-        LLFloaterReg::getInstance("avatar_welcome_pack");
-        LLFloaterReg::getInstance("search");
-        LLFloaterReg::getInstance("marketplace");
+        // <AS:Chanayane> Preload Dullahan host conditionally based on user preferences
+        if (gSavedSettings.getBOOL("ASPreloadDullahanDestinations"))
+        {
+            LLFloaterReg::getInstance("destinations");
+        }
+        if (gSavedSettings.getBOOL("ASPreloadDullahanAvatarWelcomePack"))
+        {
+            LLFloaterReg::getInstance("avatar_welcome_pack");
+        }
+        // <FS:TJ> Preload the CEF instance of the currently used legacy search floater
+        //LLFloaterReg::getInstance("search");
+        if (gSavedSettings.getBOOL("FSUseFSLegacySearch"))
+        {
+            if (gSavedSettings.getBOOL("ASPreloadDullahanSearch"))
+            {
+                LLFloaterReg::getInstance("search");
+            }
+        }
+        else
+        {
+            if (gSavedSettings.getBOOL("ASPreloadDullahanLegacySearch"))
+            {
+                LLFloaterReg::getInstance("legacy_search");
+            }
+        }
+        // </FS:TJ>
+        if (gSavedSettings.getBOOL("ASPreloadDullahanMarketplace"))
+        {
+            LLFloaterReg::getInstance("marketplace");
+        }
+        // </AS:Chanayane>
     }
 
     // <FS:Zi> Autohide main chat bar if applicable
@@ -3809,13 +3836,11 @@ void append_xui_tooltip(LLView* viewp, LLToolTip::Params& params)
     }
 }
 
-static LLTrace::BlockTimerStatHandle ftm("Update UI");
-
 // Update UI based on stored mouse position from mouse-move
 // event processing.
 void LLViewerWindow::updateUI()
 {
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI; //LL_RECORD_BLOCK_TIME(ftm);
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     static std::string last_handle_msg;
 
@@ -3835,12 +3860,15 @@ void LLViewerWindow::updateUI()
     //}
     // </FS:Ansariel>
 
-    LLConsole::updateClass();
+    {
+        LL_PROFILE_ZONE_NAMED("UI updateClass");
+        LLConsole::updateClass();
 
-    // execute postponed arrange calls
-    LLAccordionCtrl::updateClass();
-    // animate layout stacks so we have up to date rect for world view
-    LLLayoutStack::updateClass();
+        // execute postponed arrange calls
+        LLAccordionCtrl::updateClass();
+        // animate layout stacks so we have up to date rect for world view
+        LLLayoutStack::updateClass();
+    }
 
     // use full window for world view when not rendering UI
     bool world_view_uses_full_window = gAgentCamera.cameraMouselook() || !gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI);
@@ -4268,6 +4296,7 @@ void LLViewerWindow::updateUI()
 
 void LLViewerWindow::updateLayout()
 {
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
     LLTool* tool = LLToolMgr::getInstance()->getCurrentTool();
     if (gFloaterTools != NULL
         && tool != NULL

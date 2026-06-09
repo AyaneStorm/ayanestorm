@@ -92,7 +92,7 @@ public:
 FSRadar::FSRadar() :
     mRadarAlertRequest(false),
     mRadarFrameCount(0),
-    mRadarLastBulkOffsetRequestTime(0),
+    mRadarLastBulkOffsetRequestTime(0LL),
     mRadarLastRequestTime(0.f),
     mShowUsernamesCallbackConnection(),
     mNameFormatCallbackConnection(),
@@ -219,6 +219,7 @@ void FSRadar::updateRadarList()
     static LLCachedControl<bool> sFSRadarColorNamesByDistance(gSavedSettings, "FSRadarColorNamesByDistance", false);
     static LLCachedControl<bool> sFSRadarShowMutedAndDerendered(gSavedSettings, "FSRadarShowMutedAndDerendered");
     static LLCachedControl<bool> sFSRadarEnhanceByBridge(gSavedSettings, "FSRadarEnhanceByBridge");
+    static LLCachedControl<bool> sASShowOwnAvatarInRadar(gSavedSettings, "ASShowOwnAvatarInRadar", true); // <AS:chanayane>
     bool sUseLSLBridge = bridge.canUseBridge();
 
     F32 drawRadius(sRenderFarClip);
@@ -245,7 +246,7 @@ void FSRadar::updateRadarList()
     {
         if (sLimitRange)
         {
-            world->getAvatars(&avatar_ids, &positions, gAgent.getPositionGlobal(), sNearMeRange);
+            world->getAvatars(&avatar_ids, &positions, posSelf, sNearMeRange);
         }
         else
         {
@@ -281,8 +282,8 @@ void FSRadar::updateRadarList()
 
     //STEP 2: Transform detected model list data into more flexible multimap data structure;
     //TS: Count avatars in chat range and in the same region
-    U32 inChatRange{ 0 };
-    U32 inSameRegion{ 0 };
+    U32 inChatRange{ 0U };
+    U32 inSameRegion{ 0U };
     std::vector<LLVector3d>::const_iterator
         pos_it = positions.begin(),
         pos_end = positions.end();
@@ -294,7 +295,7 @@ void FSRadar::updateRadarList()
         //
         //2a. For each detected av, gather up all data we would want to display or use to drive alerts
         //
-        LLUUID avId          = static_cast<LLUUID>(*item_it);
+        const LLUUID& avId   = static_cast<LLUUID>(*item_it);
         LLVector3d avPos     = static_cast<LLVector3d>(*pos_it);
 
 // <AS:chanayane> Adds own avatar in nearby people list
@@ -302,6 +303,10 @@ void FSRadar::updateRadarList()
         // {
         //     continue;
         // }
+        if (avId == gAgentID && !sASShowOwnAvatarInRadar)
+        {
+            continue;
+        }
 // </AS:chanayane>
 
         // Skip modelling this avatar if its basic data is either inaccessible, or it's a dummy placeholder
@@ -320,9 +325,9 @@ void FSRadar::updateRadarList()
             continue;
         }
 
-        bool is_muted = mutelist->isMuted(avId);
-        bool is_blacklisted = blacklist->isBlacklisted(avId, LLAssetType::AT_PERSON);
-        bool should_be_ignored = is_muted || is_blacklisted;
+        const bool is_muted = mutelist->isMuted(avId);
+        const bool is_blacklisted = blacklist->isBlacklisted(avId, LLAssetType::AT_PERSON);
+        const bool should_be_ignored = is_muted || is_blacklisted;
         ent->mIgnore = should_be_ignored;
         if (!sFSRadarShowMutedAndDerendered && should_be_ignored)
         {
@@ -330,18 +335,18 @@ void FSRadar::updateRadarList()
         }
 
         LLUUID avRegion;
-        if (LLViewerRegion* reg = world->getRegionFromPosGlobal(avPos); reg)
+        if (LLViewerRegion* reg = world->getRegionFromPosGlobal(avPos))
         {
             avRegion = reg->getRegionID();
         }
-        bool isInSameRegion = (avRegion == regionSelf);
-        bool isOnSameParcel = parcelmgr.inAgentParcel(avPos);
-        S32 seentime = (S32)difftime(now, ent->mFirstSeen);
-        S32 hours = (S32)(seentime / 3600);
-        S32 mins = (S32)((seentime - hours * 3600) / 60);
-        S32 secs = (S32)((seentime - hours * 3600 - mins * 60));
-        std::string avSeenStr = llformat("%d:%02d:%02d", hours, mins, secs);
-        S32 avStatusFlags     = ent->mStatus;
+        const bool isInSameRegion = (avRegion == regionSelf);
+        const bool isOnSameParcel = parcelmgr.inAgentParcel(avPos);
+        const S32 seentime = (S32)difftime(now, ent->mFirstSeen);
+        const S32 hours = (S32)(seentime / 3600);
+        const S32 mins = (S32)((seentime - hours * 3600) / 60);
+        const S32 secs = (S32)((seentime - hours * 3600 - mins * 60));
+        const std::string avSeenStr = llformat("%d:%02d:%02d", hours, mins, secs);
+        const S32& avStatusFlags     = ent->mStatus;
         ERadarPaymentInfoFlag avFlag = FSRADAR_PAYMENT_INFO_NONE;
         if (avStatusFlags & AVATAR_TRANSACTED)
         {
@@ -351,10 +356,10 @@ void FSRadar::updateRadarList()
         {
             avFlag = FSRADAR_PAYMENT_INFO_FILLED;
         }
-        S32 avAge = ent->mAge;
-        std::string avName = ent->mName;
-        U32 lastZOffsetTime = (U32)ent->mLastZOffsetTime;
-        F32 avZOffset = ent->mZOffset;
+        const S32& avAge = ent->mAge;
+        const std::string& avName = ent->mName;
+        const time_t& lastZOffsetTime = ent->mLastZOffsetTime;
+        const F32& avZOffset = ent->mZOffset;
         if (avPos[VZ] == AVATAR_UNKNOWN_Z_OFFSET) // if our official z position is AVATAR_UNKNOWN_Z_OFFSET, we need a correction.
         {
             // set correction if we have it
@@ -370,7 +375,7 @@ void FSRadar::updateRadarList()
                 ent->mLastZOffsetTime = now;
             }
         }
-        F32 avRange = (F32)(avPos[VZ] != AVATAR_UNKNOWN_Z_OFFSET ? dist_vec(avPos, posSelf) : AVATAR_UNKNOWN_RANGE);
+        const F32 avRange = (F32)(avPos[VZ] != AVATAR_UNKNOWN_Z_OFFSET ? dist_vec(avPos, posSelf) : AVATAR_UNKNOWN_RANGE);
         ent->mRange = avRange;
         ent->mGlobalPos = avPos;
         ent->mRegion = avRegion;
@@ -514,7 +519,7 @@ void FSRadar::updateRadarList()
         //
         if (isInSameRegion)
         {
-            inSameRegion++;
+            ++inSameRegion;
         }
 
         LLSD entry;
@@ -663,7 +668,7 @@ void FSRadar::updateRadarList()
         LLSD entry_data;
         entry_data["entry"] = entry;
         entry_data["options"] = entry_options;
-        mRadarEntriesData.push_back(entry_data);
+        mRadarEntriesData.push_back(std::move(entry_data));
     } // End STEP 2, all model/presentation row processing complete.
 
     //
@@ -701,7 +706,7 @@ void FSRadar::updateRadarList()
 
         // clear out the dispatch queue
         mRadarOffsetRequests.clear();
-        mRadarLastBulkOffsetRequestTime = (U32)now;
+        mRadarLastBulkOffsetRequestTime = now;
     }
 
     //
@@ -813,11 +818,10 @@ void FSRadar::updateRadarList()
         RadarFields rf;
         rf.lastDistance = entry->mRange;
         rf.lastIgnore = entry->mIgnore;
-        rf.lastRegion = LLUUID::null;
-        if (entry->mGlobalPos != LLVector3d(0.0, 0.0, 0.0))
+        rf.lastRegion.setNull();
+        if (!entry->mGlobalPos.isNull())
         {
-            LLViewerRegion* lastRegion = world->getRegionFromPosGlobal(entry->mGlobalPos);
-            if (lastRegion)
+            if (LLViewerRegion* lastRegion = world->getRegionFromPosGlobal(entry->mGlobalPos))
             {
                 rf.lastRegion = lastRegion->getRegionID();
             }
@@ -873,7 +877,7 @@ void FSRadar::teleportToAvatar(const LLUUID& targetAv)
 // Teleports user to last scanned location of nearby avatar
 // Note: currently teleportViaLocation is disrupted by enforced landing points set on a parcel.
 {
-    if (auto entry = getEntry(targetAv); entry)
+    if (auto entry = getEntry(targetAv))
     {
         LLVector3d avpos = entry->mGlobalPos;
         if (avpos.mdV[VZ] == AVATAR_UNKNOWN_Z_OFFSET)
@@ -1016,7 +1020,7 @@ void FSRadar::checkTracking()
 
 void FSRadar::updateTracking()
 {
-    if (auto entry = getEntry(mTrackedAvatarId); entry)
+    if (auto entry = getEntry(mTrackedAvatarId))
     {
         if (LLTracker::getTrackedPositionGlobal() != entry->mGlobalPos)
         {
@@ -1053,7 +1057,7 @@ void FSRadar::updateNames()
 
 void FSRadar::updateName(const LLUUID& avatar_id)
 {
-    if (auto entry = getEntry(avatar_id); entry)
+    if (auto entry = getEntry(avatar_id))
     {
         entry->updateName();
     }
