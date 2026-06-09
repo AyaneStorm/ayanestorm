@@ -127,7 +127,7 @@
     layout="topleft"
     left="15"
     name="preload_dullahan_label"
-    width="300"
+    width="500"
     top_pad="20">
     Preload Dullahan hosts (accelerates window loading at the cost of dozens of processes):
   </text>
