@@ -55,6 +55,9 @@
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
+bool LLDrawPoolAlpha::sWBOITRendered = false; // <AS:Chanayane>
+bool LLDrawPoolAlpha::sWBOITClearNeeded = false; // <AS:Chanayane>
+bool LLDrawPoolAlpha::sPostWBOITLegacyPass = false; // <AS:Chanayane>
 
 #define current_shader (LLGLSLShader::sCurBoundShaderPtr)
 
@@ -195,11 +198,34 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
+    // <AS:Chanayane> WBOIT — prepare WBOIT shader variants for POST_WATER path
+    if (!LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+    {
+        prepare_alpha_shader(&gDeferredAlphaWBOITProgram, true, water_sign);
+        prepare_alpha_shader(&gDeferredPBRAlphaWBOITProgram, true, water_sign);
+        prepare_alpha_shader(&gDeferredFullbrightAlphaWBOITProgram, true, water_sign);
+        for (int i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
+        {
+            if (gDeferredMaterialAlphaWBOITProgram[i].mProgramObject)
+            {
+                prepare_alpha_shader(&gDeferredMaterialAlphaWBOITProgram[i], true, water_sign);
+            }
+        }
+    }
+    // </AS:Chanayane>
+
     // explicitly unbind here so render loop doesn't make assumptions about the last shader
     // already being setup for rendering
     LLGLSLShader::unbind();
 
-    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    if (sPostWBOITLegacyPass && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
+        forwardRender(true,  ATTACHMENT_POST_WBOIT_LEGACY);
+        forwardRender(false, ATTACHMENT_POST_WBOIT_LEGACY);
+        return;
+    }
+
+    // <AS:Chanayane> WBOIT path for POST_WATER non-impostor non-cubemap
     // if (!LLPipeline::sRenderingHUDs)
     // {
     //     // first pass, render rigged objects only and render to depth buffer
@@ -208,18 +234,38 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     // // second pass, regular forward alpha rendering
     // forwardRender();
-    if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
+        && !LLPipeline::sImpostorRender && !gCubeSnapshot)
     {
-        // AS:Chanayane inspired from the work of Mayatonton in AYAstorm
-        // 3-pass dispatch to preserve both the §5 swap fix (background transparency
-        // through hair) and correct z-order for attachment N-BL prims (e.g. eyelash
-        // prims) relative to rigged hair:
-        //   pass 1: SIM-rezzed N-BL only  — background windows / foliage
-        //   pass 2: all rigged (R-BL)     — hair writes depth
-        //   pass 3: attachment N-BL only  — eyelash prims etc. over hair
-        forwardRender(false, ATTACHMENT_NONE);   // 1 - SIM N-BL (background)
-        forwardRender(true,  ATTACHMENT_ALL);    // 2 - all rigged — writes depth
-        forwardRender(false, ATTACHMENT_ONLY);   // 3 - attachment N-BL (foreground prims)
+        if (sWBOITClearNeeded)
+        {
+            // Clear accum to (0,0,0,0) and reveal to (1,1,1,1) once for the shared
+            // WBOIT MRT before the first alpha pool writes to it this frame.
+            GLint prev_fbo = 0;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
+            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitFBO.getFBO());
+            static const GLfloat accum_clear[4]  = { 0.f, 0.f, 0.f, 0.f };
+            static const GLfloat reveal_clear[4] = { 1.f, 1.f, 1.f, 1.f };
+            glClearBufferfv(GL_COLOR, 0, accum_clear);
+            glClearBufferfv(GL_COLOR, 1, reveal_clear);
+            glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
+            sWBOITClearNeeded = false;
+        }
+
+        mForwardToWBOIT = true;
+        forwardRender(false, ATTACHMENT_NONE);
+        forwardRender(true,  ATTACHMENT_ALL);
+        forwardRender(false, ATTACHMENT_ONLY);
+        mForwardToWBOIT = false;
+        sWBOITRendered = true;
+        // screen RT is already restored by the final wboitFBO.flush() inside forwardRender
+    }
+    else if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
+        // impostor / cubemap: keep 3-pass depth-writing path
+        forwardRender(false, ATTACHMENT_NONE);
+        forwardRender(true,  ATTACHMENT_ALL);
+        forwardRender(false, ATTACHMENT_ONLY);
     }
     else
     {
@@ -265,13 +311,14 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     //enable writing to alpha for emissive effects
     gGL.setColorMask(true, true);
 
-    bool write_depth = rigged ||
+    // <AS:Chanayane> WBOIT — never write depth; blend modes set per-attachment below
+    bool write_depth = !mForwardToWBOIT && !sPostWBOITLegacyPass && (rigged ||
         LLDrawPoolWater::sSkipScreenCopy
         // we want depth written so that rendered alpha will
         // contribute to the alpha mask used for impostors
         || LLPipeline::sImpostorRenderAlphaDepthPass
-        || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
-
+        || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER); // needed for accurate water fog
+    // </AS:Chanayane>
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
 
@@ -279,10 +326,24 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     mColorDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA; // }
     mAlphaSFactor = LLRender::BF_ZERO;                         // } glow suppression
     mAlphaDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA;       // }
-    gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
 
-    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
-    { // draw GLTF scene to depth buffer before rigged alpha
+    // <AS:Chanayane> WBOIT — per-attachment blend: accum=additive, reveal=multiplicative
+    if (mForwardToWBOIT)
+    {
+        gPipeline.mRT->wboitFBO.bindTarget();
+        GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+        glDrawBuffers(2, draw_bufs);
+        glBlendFunci(0, GL_ONE, GL_ONE);                    // accum: additive
+        glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // reveal: multiplicative
+    }
+    else
+    // </AS:Chanayane>
+    {
+        gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
+    }
+
+    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT)
+    { // draw GLTF scene to depth buffer before rigged alpha (skip in WBOIT mode — wrong RT)
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
@@ -295,13 +356,25 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
 
     gGL.setColorMask(true, false);
 
+    // <AS:Chanayane> WBOIT — restore normal blend state and unbind WBOIT FBO after each sub-pass
+    if (mForwardToWBOIT)
+    {
+        glBlendFunci(0, GL_ONE, GL_ZERO);
+        glBlendFunci(1, GL_ONE, GL_ZERO);
+        // Keep LLRender's cached blend state in sync after raw glBlendFunci calls.
+        // The composite pass will switch this back to normal alpha blending.
+        gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ZERO);
+        gPipeline.mRT->wboitFBO.flush();
+    }
+    // </AS:Chanayane>
+
     // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
     //if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER)
     //{ //render "highlight alpha" on final non-rigged pass
     //    // NOTE -- hacky call here protected by !rigged instead of alongside "forwardRender"
     //    // so renderDebugAlpha is executed while gls_pipeline_alpha and depth GL state
     //    // variables above are still in scope
-    if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER && (filter == ATTACHMENT_ONLY || filter == ATTACHMENT_ALL))
+    if (!rigged && !mForwardToWBOIT && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER && (filter == ATTACHMENT_ONLY || filter == ATTACHMENT_ALL))
     {
         //render "highlight alpha" after the final non-rigged pass (pass 3 or legacy ALL),
         // so all non-rigged batches are covered before highlighting.
@@ -718,16 +791,36 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     continue;
                 }
 
+                const U32 partition_type = group->getSpatialPartition()->mPartitionType;
+                const bool is_avatar_partition =
+                    partition_type == LLViewerRegion::PARTITION_AVATAR ||
+                    partition_type == LLViewerRegion::PARTITION_CONTROL_AV;
+                bool is_attachment = params.mAttachedToAvatar.notNull() || is_avatar_partition;
+                bool is_avatar_alpha = rigged || params.mAvatar || is_attachment;
+                bool custom_blend = params.mBlendFuncSrc != LLRender::BF_SOURCE_ALPHA ||
+                                    params.mBlendFuncDst != LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
+
                 // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
                 // 3-pass attachment filter: only active for non-rigged batches.
                 // ATTACHMENT_NONE  = skip attachment prims (SIM-rezzed only, pass 1)
                 // ATTACHMENT_ONLY  = skip SIM-rezzed batches (attachment prims only, pass 3)
                 // ATTACHMENT_ALL   = draw everything (rigged pass and legacy paths)
-                if (!rigged && filter != ATTACHMENT_ALL)
+                if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
                 {
-                    bool is_attachment = params.mAttachedToAvatar.notNull();
+                    if (!is_avatar_alpha && !custom_blend)
+                    {
+                        continue;
+                    }
+                }
+                else if (!rigged && filter != ATTACHMENT_ALL)
+                {
                     if (filter == ATTACHMENT_NONE && is_attachment)  { continue; }
                     if (filter == ATTACHMENT_ONLY && !is_attachment) { continue; }
+                }
+
+                if (mForwardToWBOIT && (is_avatar_alpha || custom_blend))
+                {
+                    continue;
                 }
                 // </AS:Chanayane>
 
@@ -742,7 +835,11 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
 
                 if (gltf_mat && gltf_mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND)
                 {
-                    target_shader = pbr_shader;
+                    // <AS:Chanayane> WBOIT: route GLTF/PBR alpha through the WBOIT shader
+                    // variant so it writes both accum and reveal attachments instead of
+                    // disappearing in the composite pass.
+                    target_shader = mForwardToWBOIT ? &gDeferredPBRAlphaWBOITProgram : pbr_shader;
+                    // </AS:Chanayane>
                     if (params.mAvatar != nullptr)
                     {
                         target_shader = target_shader->mRiggedVariant;
@@ -766,8 +863,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                         if (light_enabled || !initialized_lighting)
                         {
                             initialized_lighting = true;
-                            target_shader = fullbright_shader;
-
+                            // <AS:Chanayane> WBOIT variant
+                            target_shader = mForwardToWBOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                            // </AS:Chanayane>
                             light_enabled = false;
                         }
                     }
@@ -775,7 +873,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     else if (!light_enabled || !initialized_lighting)
                     {
                         initialized_lighting = true;
-                        target_shader = simple_shader;
+                        // <AS:Chanayane> WBOIT variant
+                        target_shader = mForwardToWBOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        // </AS:Chanayane>
                         light_enabled = true;
                     }
 
@@ -788,15 +888,28 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                         U32 mask = params.mShaderMask;
 
                         llassert(mask < LLMaterial::SHADER_COUNT);
-                        target_shader = &(gDeferredMaterialProgram[mask]);
+                        // <AS:Chanayane> WBOIT variant
+                        if (mForwardToWBOIT && gDeferredMaterialAlphaWBOITProgram[mask].mProgramObject)
+                        {
+                            target_shader = &gDeferredMaterialAlphaWBOITProgram[mask];
+                        }
+                        else
+                        // </AS:Chanayane>
+                        {
+                            target_shader = &(gDeferredMaterialProgram[mask]);
+                        }
                     }
                     else if (!params.mFullbright)
                     {
-                        target_shader = simple_shader;
+                        // <AS:Chanayane> WBOIT variant
+                        target_shader = mForwardToWBOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        // </AS:Chanayane>
                     }
                     else
                     {
-                        target_shader = fullbright_shader;
+                        // <AS:Chanayane> WBOIT variant
+                        target_shader = mForwardToWBOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                        // </AS:Chanayane>
                     }
 
                     if (params.mAvatar != nullptr)
@@ -848,7 +961,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 bool tex_setup = TexSetup(&params, (mat != nullptr));
 
                 {
-                    gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
+                    if (!mForwardToWBOIT)
+                    {
+                        gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
+                    }
 
                     bool reset_minimum_alpha = false;
                     if (!LLPipeline::sImpostorRender &&
@@ -907,7 +1023,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
             }
 
             // render emissive faces into alpha channel for bloom effects
-            if (!depth_only)
+            // <AS:Chanayane> skip emissive glow sub-pass in WBOIT mode (wrong FBO semantics)
+            if (!depth_only && !mForwardToWBOIT)
+            // </AS:Chanayane>
             {
                 gPipeline.enableLightsDynamic();
 

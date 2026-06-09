@@ -724,6 +724,11 @@ public:
         LLRenderTarget          deferredScreen;
         LLRenderTarget          deferredLight;
 
+        // <AS:Chanayane> WBOIT MRT — attachment0=accum(RGBA16F), attachment1=reveal(RGBA16F)
+        // Only allocated for mMainRT (not auxiliary/hero/cube).
+        LLRenderTarget          wboitFBO;
+        // </AS:Chanayane>
+
         //sun shadow map
         LLRenderTarget          shadow[4];
     };

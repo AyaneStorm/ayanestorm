@@ -31,7 +31,15 @@
 #define NON_INDEXED 2
 #define NON_INDEXED_NO_COLOR 3
 
+#ifdef WBOIT
+out vec4 frag_data[2];
+float wboit_weight(float a, float depth) {
+    return clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
+                 pow(1.0 - depth * 0.9, 3.0), 1e-2, 3e3);
+}
+#else
 out vec4 frag_color;
+#endif
 
 uniform mat3 env_mat;
 uniform vec3 sun_dir;
@@ -314,6 +322,12 @@ void main()
 #endif
 
     color.rgb *= final_scale;
+#ifdef WBOIT
+    color = max(color, vec4(0));
+    float wboit_w = wboit_weight(color.a, gl_FragCoord.z);
+    frag_data[0] = vec4(color.rgb * color.a, color.a) * wboit_w;
+    frag_data[1] = vec4(color.a);
+#else
     frag_color = max(color, vec4(0));
+#endif
 }
-

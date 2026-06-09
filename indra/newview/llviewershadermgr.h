@@ -305,6 +305,17 @@ extern LLGLSLShader         gDeferredPBROpaqueProgram;
 extern LLGLSLShader         gDeferredPBRAlphaProgram;
 extern LLGLSLShader         gHUDPBRAlphaProgram;
 
+// <AS:Chanayane> WBOIT shaders
+extern LLGLSLShader         gWBOITCompositeProgram;
+extern LLGLSLShader         gDeferredAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredSkinnedAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredPBRAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredSkinnedPBRAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredFullbrightAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredSkinnedFullbrightAlphaWBOITProgram;
+extern LLGLSLShader         gDeferredMaterialAlphaWBOITProgram[LLMaterial::SHADER_COUNT * 2];
+// </AS:Chanayane>
+
 // GLTF shaders
 extern LLGLSLShader         gGLTFPBRMetallicRoughnessProgram;
 

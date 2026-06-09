@@ -247,6 +247,17 @@ LLGLSLShader            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 
 LLGLSLShader            gGLTFPBRMetallicRoughnessProgram;
 
+// <AS:Chanayane> WBOIT shaders
+LLGLSLShader            gWBOITCompositeProgram;
+LLGLSLShader            gDeferredAlphaWBOITProgram;
+LLGLSLShader            gDeferredSkinnedAlphaWBOITProgram;
+LLGLSLShader            gDeferredPBRAlphaWBOITProgram;
+LLGLSLShader            gDeferredSkinnedPBRAlphaWBOITProgram;
+LLGLSLShader            gDeferredFullbrightAlphaWBOITProgram;
+LLGLSLShader            gDeferredSkinnedFullbrightAlphaWBOITProgram;
+LLGLSLShader            gDeferredMaterialAlphaWBOITProgram[LLMaterial::SHADER_COUNT * 2];
+// </AS:Chanayane>
+
 
 //helper for making a rigged variant of a given shader
 static bool make_rigged_variant(LLGLSLShader& shader, LLGLSLShader& riggedShader)
@@ -438,6 +449,15 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gHUDFullbrightAlphaMaskProgram);
     mShaderList.push_back(&gDeferredFullbrightAlphaMaskAlphaProgram);
     mShaderList.push_back(&gHUDFullbrightAlphaMaskAlphaProgram);
+    // <AS:Chanayane> WBOIT
+    mShaderList.push_back(&gWBOITCompositeProgram);
+    mShaderList.push_back(&gDeferredAlphaWBOITProgram);
+    mShaderList.push_back(&gDeferredSkinnedAlphaWBOITProgram);
+    mShaderList.push_back(&gDeferredPBRAlphaWBOITProgram);
+    mShaderList.push_back(&gDeferredSkinnedPBRAlphaWBOITProgram);
+    mShaderList.push_back(&gDeferredFullbrightAlphaWBOITProgram);
+    mShaderList.push_back(&gDeferredSkinnedFullbrightAlphaWBOITProgram);
+    // </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
     mShaderList.push_back(&gDeferredEmissiveProgram);
@@ -1143,6 +1163,19 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskProgram.unload();
         gDeferredFullbrightAlphaMaskAlphaProgram.unload();
         gHUDFullbrightAlphaMaskAlphaProgram.unload();
+        // <AS:Chanayane> WBOIT
+        gWBOITCompositeProgram.unload();
+        gDeferredAlphaWBOITProgram.unload();
+        gDeferredSkinnedAlphaWBOITProgram.unload();
+        gDeferredPBRAlphaWBOITProgram.unload();
+        gDeferredSkinnedPBRAlphaWBOITProgram.unload();
+        gDeferredFullbrightAlphaWBOITProgram.unload();
+        gDeferredSkinnedFullbrightAlphaWBOITProgram.unload();
+        for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
+        {
+            gDeferredMaterialAlphaWBOITProgram[i].unload();
+        }
+        // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
         gDeferredAvatarEyesProgram.unload();
@@ -1911,6 +1944,166 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasLighting = true;
         }
     }
+
+    // <AS:Chanayane> WBOIT alpha shader variants
+    if (success)
+    {
+        LLGLSLShader* shaders[2] = { &gDeferredAlphaWBOITProgram, &gDeferredSkinnedAlphaWBOITProgram };
+        for (int i = 0; i < 2 && success; ++i)
+        {
+            bool rigged = (i == 1);
+            LLGLSLShader* shader = shaders[i];
+            shader->mName = rigged ? "Skinned Deferred Alpha WBOIT Shader" : "Deferred Alpha WBOIT Shader";
+            shader->mFeatures.calculatesLighting = false;
+            shader->mFeatures.hasLighting = false;
+            shader->mFeatures.isAlphaLighting = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasShadows = use_sun_shadow;
+            shader->mFeatures.hasReflectionProbes = true;
+            shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+            if (rigged) shader->mFeatures.hasObjectSkinning = true;
+            shader->mShaderFiles.clear();
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaV.glsl", GL_VERTEX_SHADER));
+
+            shader->mShaderFiles.push_back(make_pair("deferred/alphaF.glsl", GL_FRAGMENT_SHADER));
+            shader->clearPermutations();
+            shader->addPermutation("USE_VERTEX_COLOR", "1");
+            shader->addPermutation("HAS_ALPHA_MASK", "1");
+            shader->addPermutation("USE_INDEXED_TEX", "1");
+            shader->addPermutation("WBOIT", "1");
+            if (use_sun_shadow) shader->addPermutation("HAS_SUN_SHADOW", "1");
+            if (rigged) shader->addPermutation("HAS_SKIN", "1");
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            success = shader->createShader();
+            llassert(success);
+            shader->mFeatures.calculatesLighting = true;
+            shader->mFeatures.hasLighting = true;
+        }
+        gDeferredAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedAlphaWBOITProgram;
+    }
+
+    if (success)
+    {
+        LLGLSLShader* shaders[2] = { &gDeferredPBRAlphaWBOITProgram, &gDeferredSkinnedPBRAlphaWBOITProgram };
+        for (int i = 0; i < 2 && success; ++i)
+        {
+            bool rigged = (i == 1);
+            LLGLSLShader* shader = shaders[i];
+            shader->mName = rigged ? "Skinned Deferred PBR Alpha WBOIT Shader" : "Deferred PBR Alpha WBOIT Shader";
+            shader->mFeatures.calculatesLighting = false;
+            shader->mFeatures.hasLighting = false;
+            shader->mFeatures.isAlphaLighting = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasShadows = use_sun_shadow;
+            shader->mFeatures.isDeferred = true;
+            shader->mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED];
+            if (rigged) shader->mFeatures.hasObjectSkinning = true;
+            shader->mShaderFiles.clear();
+            shader->mShaderFiles.push_back(make_pair("deferred/pbralphaV.glsl", GL_VERTEX_SHADER));
+
+            shader->mShaderFiles.push_back(make_pair("deferred/pbralphaF.glsl", GL_FRAGMENT_SHADER));
+            shader->clearPermutations();
+            shader->addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", (int)LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
+            shader->addPermutation("HAS_NORMAL_MAP", "1");
+            shader->addPermutation("HAS_SPECULAR_MAP", "1");
+            shader->addPermutation("HAS_EMISSIVE_MAP", "1");
+            shader->addPermutation("USE_VERTEX_COLOR", "1");
+            shader->addPermutation("WBOIT", "1");
+            if (use_sun_shadow) shader->addPermutation("HAS_SUN_SHADOW", "1");
+            if (rigged) shader->addPermutation("HAS_SKIN", "1");
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            success = shader->createShader();
+            llassert(success);
+            shader->mFeatures.calculatesLighting = true;
+            shader->mFeatures.hasLighting = true;
+        }
+        gDeferredPBRAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedPBRAlphaWBOITProgram;
+    }
+
+    if (success)
+    {
+        LLGLSLShader* shaders[2] = { &gDeferredFullbrightAlphaWBOITProgram, &gDeferredSkinnedFullbrightAlphaWBOITProgram };
+        for (int i = 0; i < 2 && success; ++i)
+        {
+            bool rigged = (i == 1);
+            LLGLSLShader* shader = shaders[i];
+            shader->mName = rigged ? "Skinned Deferred Fullbright Alpha WBOIT Shader" : "Deferred Fullbright Alpha WBOIT Shader";
+            shader->mFeatures.calculatesAtmospherics = true;
+            shader->mFeatures.hasGamma = true;
+            shader->mFeatures.hasAtmospherics = true;
+            shader->mFeatures.hasSrgb = true;
+            shader->mFeatures.isDeferred = true;
+            shader->mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+            if (rigged) shader->mFeatures.hasObjectSkinning = true;
+            shader->mShaderFiles.clear();
+            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightV.glsl", GL_VERTEX_SHADER));
+
+            shader->mShaderFiles.push_back(make_pair("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER));
+            shader->clearPermutations();
+            shader->addPermutation("HAS_ALPHA_MASK", "1");
+            shader->addPermutation("IS_ALPHA", "1");
+            shader->addPermutation("WBOIT", "1");
+            if (rigged) shader->addPermutation("HAS_SKIN", "1");
+            add_common_permutations(shader);
+            shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            success = shader->createShader();
+            llassert(success);
+        }
+        gDeferredFullbrightAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedFullbrightAlphaWBOITProgram;
+    }
+
+    if (success)
+    {
+        for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
+        {
+            U32 alpha_mode = i & 0x3;
+            if (alpha_mode != LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
+            {
+                continue; // only BLEND mode goes through alpha pool
+            }
+            bool has_skin = i >= LLMaterial::SHADER_COUNT;
+            U32 idx = i & 0xf;
+            if (!has_skin)
+            {
+                mShaderList.push_back(&gDeferredMaterialAlphaWBOITProgram[i]);
+            }
+            gDeferredMaterialAlphaWBOITProgram[i].mName = llformat("Material WBOIT Shader %d", i);
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasSrgb = true;
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.calculatesAtmospherics = true;
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasAtmospherics = true;
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasGamma = true;
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasShadows = use_sun_shadow;
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasReflectionProbes = true;
+            if (has_skin) gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasObjectSkinning = true;
+            gDeferredMaterialAlphaWBOITProgram[i].mShaderFiles.clear();
+            gDeferredMaterialAlphaWBOITProgram[i].mShaderFiles.push_back(make_pair("deferred/materialV.glsl", GL_VERTEX_SHADER));
+
+            gDeferredMaterialAlphaWBOITProgram[i].mShaderFiles.push_back(make_pair("deferred/materialF.glsl", GL_FRAGMENT_SHADER));
+            gDeferredMaterialAlphaWBOITProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            gDeferredMaterialAlphaWBOITProgram[i].clearPermutations();
+            if (idx & 0x8) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_NORMAL_MAP", "1");
+            if (idx & 0x4) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SPECULAR_MAP", "1");
+            gDeferredMaterialAlphaWBOITProgram[i].addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+            gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
+            gDeferredMaterialAlphaWBOITProgram[i].addPermutation("WBOIT", "1");
+            if (use_sun_shadow) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
+            add_common_permutations(&gDeferredMaterialAlphaWBOITProgram[i]);
+            if (has_skin) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SKIN", "1");
+            if (!has_skin) gDeferredMaterialAlphaWBOITProgram[i].mRiggedVariant = &gDeferredMaterialAlphaWBOITProgram[i + LLMaterial::SHADER_COUNT];
+            success = gDeferredMaterialAlphaWBOITProgram[i].createShader();
+            llassert(success);
+            gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasLighting = true;
+        }
+    }
+    // </AS:Chanayane>
 
     if (success)
     {
@@ -2821,6 +3014,20 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         llassert(success);
     }
 
+    // <AS:Chanayane> WBOIT composite
+    if (success)
+    {
+        gWBOITCompositeProgram.mName = "WBOIT Composite Shader";
+        gWBOITCompositeProgram.mFeatures.isDeferred = true;
+        gWBOITCompositeProgram.mShaderFiles.clear();
+        gWBOITCompositeProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gWBOITCompositeProgram.mShaderFiles.push_back(make_pair("deferred/wboitCompositeF.glsl", GL_FRAGMENT_SHADER));
+        gWBOITCompositeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gWBOITCompositeProgram.createShader();
+        llassert(success);
+    }
+    // </AS:Chanayane>
+
     if (success)
     {
         gDeferredCoFProgram.mName = "Deferred CoF Shader";
@@ -3625,4 +3832,3 @@ LLViewerShaderMgr::shader_iter LLViewerShaderMgr::endShaders() const
 {
     return mShaderList.end();
 }
-

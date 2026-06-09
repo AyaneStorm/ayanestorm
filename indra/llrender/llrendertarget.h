@@ -142,6 +142,8 @@ public:
     //get Y resolution
     U32 getHeight() const { return mResY; }
 
+    U32 getFBO() const { return mFBO; }
+
     LLTexUnit::eTextureType getUsage(void) const { return mUsage; }
 
     U32 getTexture(U32 attachment = 0) const;

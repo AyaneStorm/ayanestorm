@@ -987,7 +987,20 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
     if (!gCubeSnapshot) // hack to not re-allocate various targets for cube snapshots
     {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
+        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping
+
+        // <AS:Chanayane> WBOIT MRT — two RGBA16F color attachments sharing depth from screen
+        // attachment0 = weighted color+alpha sum, attachment1 = weighted transmittance
+        // Depth shared so accumulation pass depth-tests against opaque geometry.
+        // Release first so re-entrant calls (window resize) don't hit the shareDepthBuffer
+        // "already shared" assert.
+        mRT->wboitFBO.release();
+        if (!mRT->wboitFBO.allocate(resX, resY, GL_RGBA16F)) return false;
+        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;
+        // deferredScreen owns the depth texture; screen and wboitFBO share it from there
+        mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
+        // </AS:Chanayane>
+
         if (RenderUIBuffer)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("UIBuffer"); // <FS:Beq/> improve Tracy scoping 
@@ -1380,6 +1393,9 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
+    // <AS:Chanayane> WBOIT
+    mRT->wboitFBO.release();
+    // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -9821,6 +9837,10 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
+        // Reset WBOIT frame state before the post-deferred alpha pools run.
+        LLDrawPoolAlpha::sWBOITRendered = false;
+        LLDrawPoolAlpha::sWBOITClearNeeded = true;
+
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
                           LLPipeline::RENDER_TYPE_ALPHA_PRE_WATER,
@@ -9856,6 +9876,53 @@ void LLPipeline::renderDeferredLighting()
         renderGeomPostDeferred(*LLViewerCamera::getInstance());
         popRenderTypeMask();
     }
+
+    // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
+    if (!gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered)
+    {
+        LL_PROFILE_GPU_ZONE("WBOIT composite");
+
+        // screen_target is already bound — do not call bindTarget() again
+        gGL.setColorMask(true, false);
+
+        LLGLEnable blend(GL_BLEND);
+        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+
+        LLGLDepthTest depth(GL_FALSE);
+
+        gWBOITCompositeProgram.bind();
+
+        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
+        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
+
+        mScreenTriangleVB->setBuffer();
+        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+        gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+        gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR);
+        gWBOITCompositeProgram.unbind();
+
+        gGL.setColorMask(true, true);
+        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+
+        // Draw alpha batches that are a poor fit for WBOIT after the composite:
+        // attachment prims need foreground priority, and custom blend modes need
+        // the legacy per-batch blend path.
+        LLDrawPoolAlpha::sPostWBOITLegacyPass = true;
+        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
+        {
+            LLDrawPool* poolp = *iter;
+            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginPostDeferredPass(0);
+                poolp->renderPostDeferred(0);
+                poolp->endPostDeferredPass(0);
+            }
+        }
+        LLDrawPoolAlpha::sPostWBOITLegacyPass = false;
+    }
+    // </AS:Chanayane>
 
     screen_target->flush();
 

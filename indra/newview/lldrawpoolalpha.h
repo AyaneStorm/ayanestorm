@@ -61,7 +61,7 @@ public:
     // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
     // 3-pass dispatch: discriminates SIM-rezzed vs attachment non-rigged batches
     // so that attachment N-BL prims are drawn after rigged hair (pass 3), not before (pass 1).
-    enum AttachmentFilter { ATTACHMENT_ALL, ATTACHMENT_NONE, ATTACHMENT_ONLY };
+    enum AttachmentFilter { ATTACHMENT_ALL, ATTACHMENT_NONE, ATTACHMENT_ONLY, ATTACHMENT_POST_WBOIT_LEGACY };
     // </AS:Chanayane>
 
     void forwardRender(bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);
@@ -79,6 +79,12 @@ public:
 
     static bool sShowDebugAlpha;
     static bool sShowDebugAlphaRigged;
+    // <AS:Chanayane> WBOIT — set true when WBOIT accumulation ran this frame; composite checks this
+    static bool sWBOITRendered;
+    // Clear the shared WBOIT MRT once per frame before the first alpha pool contributes.
+    static bool sWBOITClearNeeded;
+    // Draw skipped WBOIT-sensitive alpha batches with the legacy path after composite.
+    static bool sPostWBOITLegacyPass;
 
 private:
     LLGLSLShader* target_shader;
@@ -106,6 +112,10 @@ private:
 
     // if true, we're executing a rigged render pass
     bool mRigged = false;
+
+    // <AS:Chanayane> WBOIT — true while accumulation passes are active
+    bool mForwardToWBOIT = false;
+    // </AS:Chanayane>
 };
 
 #endif // LL_LLDRAWPOOLALPHA_H

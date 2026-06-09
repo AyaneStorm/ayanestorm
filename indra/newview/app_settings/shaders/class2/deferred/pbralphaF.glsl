@@ -45,7 +45,15 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int classic_mode;
 
+#ifdef WBOIT
+out vec4 frag_data[2];
+float wboit_weight(float a, float depth) {
+    return clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
+                 pow(1.0 - depth * 0.9, 3.0), 1e-2, 3e3);
+}
+#else
 out vec4 frag_color;
+#endif
 
 in vec3 vary_fragcoord;
 
@@ -217,7 +225,14 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-    frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
+    vec4 out_color = max(vec4(color.rgb * final_scale, a), vec4(0));
+#ifdef WBOIT
+    float wboit_w = wboit_weight(out_color.a, gl_FragCoord.z);
+    frag_data[0] = vec4(out_color.rgb * out_color.a, out_color.a) * wboit_w;
+    frag_data[1] = vec4(out_color.a);
+#else
+    frag_color = out_color;
+#endif
 }
 
 #else

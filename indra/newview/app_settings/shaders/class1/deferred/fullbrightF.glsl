@@ -25,7 +25,15 @@
 
 /*[EXTRA_CODE_HERE]*/
 
+#ifdef WBOIT
+out vec4 frag_data[2];
+float wboit_weight(float a, float depth) {
+    return clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
+                 pow(1.0 - depth * 0.9, 3.0), 1e-2, 3e3);
+}
+#else
 out vec4 frag_color;
+#endif
 
 #if !defined(HAS_DIFFUSE_LOOKUP)
 uniform sampler2D diffuseMap;
@@ -95,6 +103,12 @@ void main()
 
 #endif
 
+#ifdef WBOIT
+    color = max(color, vec4(0));
+    float wboit_w = wboit_weight(color.a, gl_FragCoord.z);
+    frag_data[0] = vec4(color.rgb * color.a, color.a) * wboit_w;
+    frag_data[1] = vec4(color.a);
+#else
     frag_color = max(color, vec4(0));
+#endif
 }
-
