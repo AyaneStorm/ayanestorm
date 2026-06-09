@@ -511,7 +511,7 @@ void LLSLMMenuUpdater::setMerchantMenu()
     LLCommand* command = LLCommandManager::instance().getCommand("marketplacelistings");
     gToolBarView->enableCommand(command->id(), true);
 
-    const LLUUID marketplacelistings_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS);
+    const LLUUID marketplacelistings_id = gInventory.getMarketplaceListingsUUID();
     if (marketplacelistings_id.isNull())
     {
         U32 mkt_status = LLMarketplaceData::instance().getSLMStatus();
@@ -3625,7 +3625,7 @@ void handle_object_tex_refresh(LLViewerObject* object, LLSelectNode* node)
     // Refresh sculpt texture
     if (object->isSculpted())
     {
-        LLSculptParams *sculpt_params = (LLSculptParams *)object->getParameterEntry(LLNetworkData::PARAMS_SCULPT);
+        LLSculptParams *sculpt_params = object->getSculptParams();
         if (sculpt_params)
         {
             LLUUID sculpt_uuid = sculpt_params->getSculptTexture();

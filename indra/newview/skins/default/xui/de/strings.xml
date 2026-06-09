@@ -594,7 +594,7 @@ Wenn Sie der Ansicht sind, dass Sie diese Meldung fälschlicherweise erhalten ha
 	</string>
 	<string name="TooltipPrice" value="[AMOUNT] L$"/>
 	<string name="TooltipSLIcon">
-		Führt zu einer Seite in der offiziellen Domäne SecondLife.com oder LindenLab.com.
+		Führt zu einer Seite in der offiziellen Domäne SecondLife.com, LindenLab.com oder firestormviewer.org.
 	</string>
 	<string name="TooltipOutboxDragToWorld">
 		Sie können keine Objekte aus dem Marktplatz-Auflistungsordner rezzen
@@ -1704,6 +1704,9 @@ https://www.firestormviewer.org/support für Hilfe zum Lösen des Problems.
 	</string>
 	<string name="InventoryNoMatchingRecentItems">
 		Sie haben nicht das Richtige gefunden? [secondlife:///app/inventory/filters Filter] anzeigen.
+	</string>
+	<string name="FSInventoryCustomTabDefaultName">
+		Eigene
 	</string>
 	<string name="PlacesNoMatchingItems">
 		Sie haben nicht das Richtige gefunden? Versuchen Sie es mit der [secondlife:///app/search/places/[SEARCH_TERM] Suche].
@@ -6118,6 +6121,12 @@ Setzen Sie den Editorpfad in Anführungszeichen
 	<string name="Command_Omnifilter_Label">
 		Omni-Filter
 	</string>
+	<string name="Command_AvatarAlign_Label">
+		Avatar-Ausrichtung
+	</string>
+	<string name="Command_FaceNearest_Label">
+		Zu nächstem Avatar drehen
+	</string>
 	<string name="Command_Appearance_Tooltip">
 		Avatar ändern
 	</string>
@@ -6324,6 +6333,12 @@ Setzen Sie den Editorpfad in Anführungszeichen
 	</string>
 	<string name="Command_Omnifilter_Tooltip">
 		Regel für Omni-Filter bearbeiten
+	</string>
+	<string name="Command_AvatarAlign_Tooltip">
+		Avatar zur nächsten Himmelsrichtung oder zum Avatar in der geringsten Entfernung ausrichten
+	</string>
+	<string name="Command_FaceNearest_Tooltip">
+		Zum Avatar in der geringsten Entfernung innerhalb von 20m drehen
 	</string>
 	<string name="Toolbar_Bottom_Tooltip">
 		gegenwärtig in der unteren Symbolleiste
@@ -7333,5 +7348,11 @@ Ihre aktuelle Position: [AVATAR_POS]
 	</string>
 	<string name="OmnifilterReplacement">
 		Omni-Filter-Ersetzung: [REPLACEMENT]
+	</string>
+	<string name="FSAvatarAlignToggleMini"
+		>Mini
+	</string>
+	<string name="FSAvatarAlignToggleFull">
+		Voll
 	</string>
 </strings>

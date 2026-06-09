@@ -1565,6 +1565,15 @@ void LLWebRTCVoiceClient::processChannels(bool process)
 
 bool LLWebRTCVoiceClient::inProximalChannel()
 {
+    // <FS:PP> FIRE-36672: Voice status indicator behavior change
+    // inSpatialChannel() defaults to true with no session (parcel voice disabled), which keeps the conversation voice indicator green
+    // Only report proximal when a spatial session is established
+    static LLCachedControl<bool> require_established_session(gSavedSettings, "DebugWebRTCRequireEstablishedSpatialSession", false);
+    if (require_established_session)
+    {
+        return mProcessChannels && mSession && mSession->isSpatial();
+    }
+    // </FS:PP>
     return inSpatialChannel();
 }
 
@@ -1775,6 +1784,13 @@ void LLWebRTCVoiceClient::setVoiceEnabled(bool enabled)
         LL_DEBUGS("Voice") << " no-op" << LL_ENDL;
     }
 }
+
+// <FS:TJ> Fix Nearby Voice when changing voice device settings
+void LLWebRTCVoiceClient::notifyVoiceConnected()
+{
+    notifyStatusObservers(LLVoiceClientStatusObserver::STATUS_JOINED);
+}
+// </FS:TJ>
 
 
 /////////////////////////////
@@ -2575,17 +2591,18 @@ void LLVoiceWebRTCConnection::processIceUpdatesCoro(connectionPtr_t connection)
 // callback from llwebrtc
 void LLVoiceWebRTCConnection::OnOfferAvailable(const std::string &sdp)
 {
+    connectionPtr_t connection = shared_from_this();
     LL::WorkQueue::postMaybe(mMainQueue,
-        [=, this] {
-            if (mShutDown)
+        [=] {
+            if (connection->mShutDown)
             {
                 return;
             }
             LL_DEBUGS("Voice") << "On Offer Available." << LL_ENDL;
-            mChannelSDP = sdp;
-            if (mVoiceConnectionState == VOICE_STATE_WAIT_FOR_SESSION_START)
+            connection->mChannelSDP = sdp;
+            if (connection->mVoiceConnectionState == VOICE_STATE_WAIT_FOR_SESSION_START)
             {
-                mVoiceConnectionState = VOICE_STATE_REQUEST_CONNECTION;
+                connection->mVoiceConnectionState = VOICE_STATE_REQUEST_CONNECTION;
             }
         });
 }
@@ -2602,16 +2619,17 @@ void LLVoiceWebRTCConnection::OnOfferAvailable(const std::string &sdp)
 // callback from llwebrtc
 void LLVoiceWebRTCConnection::OnAudioEstablished(llwebrtc::LLWebRTCAudioInterface* audio_interface)
 {
+    connectionPtr_t connection = shared_from_this();
     LL::WorkQueue::postMaybe(mMainQueue,
-        [=, this] {
-            if (mShutDown)
+        [=] {
+            if (connection->mShutDown)
             {
                 return;
             }
             LL_DEBUGS("Voice") << "On AudioEstablished." << LL_ENDL;
-            mWebRTCAudioInterface = audio_interface;
-            mWebRTCAudioInterface->setMute(true);  // mute will be set appropriately later when we finish setting up.
-            setVoiceConnectionState(VOICE_STATE_SESSION_ESTABLISHED);
+            connection->mWebRTCAudioInterface = audio_interface;
+            connection->mWebRTCAudioInterface->setMute(true);  // mute will be set appropriately later when we finish setting up.
+            connection->setVoiceConnectionState(VOICE_STATE_SESSION_ESTABLISHED);
         });
 }
 
@@ -3301,17 +3319,18 @@ void LLVoiceWebRTCConnection::OnDataReceivedImpl(const std::string &data, bool b
 // llwebrtc callback
 void LLVoiceWebRTCConnection::OnDataChannelReady(llwebrtc::LLWebRTCDataInterface *data_interface)
 {
+    connectionPtr_t connection = shared_from_this();
     LL::WorkQueue::postMaybe(mMainQueue,
-        [=, this] {
-            if (mShutDown)
+        [=] {
+            if (connection->mShutDown)
             {
                 return;
             }
 
             if (data_interface)
             {
-                mWebRTCDataInterface = data_interface;
-                mWebRTCDataInterface->setDataObserver(this);
+                connection->mWebRTCDataInterface = data_interface;
+                connection->mWebRTCDataInterface->setDataObserver(connection.get());
             }
         });
 }

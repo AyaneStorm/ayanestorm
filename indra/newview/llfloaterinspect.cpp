@@ -705,7 +705,7 @@ void LLFloaterInspect::getObjectTextureMemory(LLViewerObject* object, U32& objec
     // sculpt map
     if (object->isSculpted() && !object->isMesh())
     {
-        LLSculptParams *sculpt_params = (LLSculptParams *)(object->getParameterEntry(LLNetworkData::PARAMS_SCULPT));
+        LLSculptParams *sculpt_params = object->getSculptParams();
         uuid = sculpt_params->getSculptTexture();
         LLViewerTexture* img = gTextureList.getImage(uuid);
         if (img)
@@ -720,6 +720,16 @@ void LLFloaterInspect::calculateTextureMemory(LLViewerTexture* texture, uuid_vec
     const LLUUID uuid = texture->getID();
     U32 vram_memory = (texture->getFullHeight() * texture->getFullWidth() * 32 / 8);
     U32 texture_memory = (texture->getFullHeight() * texture->getFullWidth() * texture->getComponents());
+
+    // Use actual GL memory instead of a fixed RGBA32 estimate if possible.
+    if (texture->hasGLTexture())
+    {
+        const S32 vram_bytes = texture->getTextureMemory().value();
+        if (vram_bytes > 0)
+        {
+            vram_memory = static_cast<U32>(vram_bytes);
+        }
+    }
 
     if (std::find(mTextureList.begin(), mTextureList.end(), uuid) == mTextureList.end())
     {
