@@ -199,7 +199,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
     // <AS:Chanayane> WBOIT — prepare WBOIT shader variants for POST_WATER path
-    if (!LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+    static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
+    if (render_wboit && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender && !gCubeSnapshot)
     {
         prepare_alpha_shader(&gDeferredAlphaWBOITProgram, true, water_sign);
         prepare_alpha_shader(&gDeferredPBRAlphaWBOITProgram, true, water_sign);
@@ -220,7 +221,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     if (sPostWBOITLegacyPass && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
-        forwardRender(true,  ATTACHMENT_POST_WBOIT_LEGACY);
+        forwardRender(true,  ATTACHMENT_POST_WBOIT_OTHER_RIGGED);
+        forwardRender(true,  ATTACHMENT_POST_WBOIT_SELF_RIGGED);
         forwardRender(false, ATTACHMENT_POST_WBOIT_LEGACY);
         return;
     }
@@ -234,7 +236,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     // // second pass, regular forward alpha rendering
     // forwardRender();
-    if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
+    if (render_wboit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
         && !LLPipeline::sImpostorRender && !gCubeSnapshot)
     {
         if (sWBOITClearNeeded)
@@ -260,7 +262,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         sWBOITRendered = true;
         // screen RT is already restored by the final wboitFBO.flush() inside forwardRender
     }
-    else if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    else if (render_wboit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
         // impostor / cubemap: keep 3-pass depth-writing path
         forwardRender(false, ATTACHMENT_NONE);
@@ -311,13 +313,18 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     //enable writing to alpha for emissive effects
     gGL.setColorMask(true, true);
 
-    // <AS:Chanayane> WBOIT — never write depth; blend modes set per-attachment below
-    bool write_depth = !mForwardToWBOIT && !sPostWBOITLegacyPass && (rigged ||
-        LLDrawPoolWater::sSkipScreenCopy
-        // we want depth written so that rendered alpha will
-        // contribute to the alpha mask used for impostors
-        || LLPipeline::sImpostorRenderAlphaDepthPass
-        || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER); // needed for accurate water fog
+    // <AS:Chanayane> WBOIT — accumulation never writes depth. In the
+    // post-WBOIT legacy path, other avatars' rigged alpha writes depth before
+    // self rigged alpha is drawn without depth writes; this prevents background
+    // avatar hair from blending over self hair without breaking self hair layers.
+    bool write_depth = !mForwardToWBOIT &&
+        ((sPostWBOITLegacyPass && rigged && filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED) ||
+         (!sPostWBOITLegacyPass && (rigged ||
+            LLDrawPoolWater::sSkipScreenCopy
+            // we want depth written so that rendered alpha will
+            // contribute to the alpha mask used for impostors
+            || LLPipeline::sImpostorRenderAlphaDepthPass
+            || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER))); // needed for accurate water fog
     // </AS:Chanayane>
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
@@ -791,12 +798,17 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     continue;
                 }
 
-                const U32 partition_type = group->getSpatialPartition()->mPartitionType;
-                const bool is_avatar_partition =
-                    partition_type == LLViewerRegion::PARTITION_AVATAR ||
-                    partition_type == LLViewerRegion::PARTITION_CONTROL_AV;
-                bool is_attachment = params.mAttachedToAvatar.notNull() || is_avatar_partition;
+                bool is_attachment = params.mAttachedToAvatar.notNull();
+                if (mForwardToWBOIT || filter == ATTACHMENT_POST_WBOIT_LEGACY)
+                {
+                    const U32 partition_type = group->getSpatialPartition()->mPartitionType;
+                    const bool is_avatar_partition =
+                        partition_type == LLViewerRegion::PARTITION_AVATAR ||
+                        partition_type == LLViewerRegion::PARTITION_CONTROL_AV;
+                    is_attachment = is_attachment || is_avatar_partition;
+                }
                 bool is_avatar_alpha = rigged || params.mAvatar || is_attachment;
+                bool is_self_avatar = params.mAvatar && params.mAvatar->isSelf();
                 bool custom_blend = params.mBlendFuncSrc != LLRender::BF_SOURCE_ALPHA ||
                                     params.mBlendFuncDst != LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
 
@@ -805,7 +817,21 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 // ATTACHMENT_NONE  = skip attachment prims (SIM-rezzed only, pass 1)
                 // ATTACHMENT_ONLY  = skip SIM-rezzed batches (attachment prims only, pass 3)
                 // ATTACHMENT_ALL   = draw everything (rigged pass and legacy paths)
-                if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
+                if (filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED)
+                {
+                    if (!rigged || is_self_avatar)
+                    {
+                        continue;
+                    }
+                }
+                else if (filter == ATTACHMENT_POST_WBOIT_SELF_RIGGED)
+                {
+                    if (!rigged || !is_self_avatar)
+                    {
+                        continue;
+                    }
+                }
+                else if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
                 {
                     if (!is_avatar_alpha && !custom_blend)
                     {

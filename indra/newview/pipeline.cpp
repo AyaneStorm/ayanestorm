@@ -9878,7 +9878,8 @@ void LLPipeline::renderDeferredLighting()
     }
 
     // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
-    if (!gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered)
+    static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
+    if (render_wboit && !gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered)
     {
         LL_PROFILE_GPU_ZONE("WBOIT composite");
 

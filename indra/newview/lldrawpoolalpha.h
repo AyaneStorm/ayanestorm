@@ -61,7 +61,15 @@ public:
     // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
     // 3-pass dispatch: discriminates SIM-rezzed vs attachment non-rigged batches
     // so that attachment N-BL prims are drawn after rigged hair (pass 3), not before (pass 1).
-    enum AttachmentFilter { ATTACHMENT_ALL, ATTACHMENT_NONE, ATTACHMENT_ONLY, ATTACHMENT_POST_WBOIT_LEGACY };
+    enum AttachmentFilter
+    {
+        ATTACHMENT_ALL,
+        ATTACHMENT_NONE,
+        ATTACHMENT_ONLY,
+        ATTACHMENT_POST_WBOIT_LEGACY,
+        ATTACHMENT_POST_WBOIT_OTHER_RIGGED,
+        ATTACHMENT_POST_WBOIT_SELF_RIGGED
+    };
     // </AS:Chanayane>
 
     void forwardRender(bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);

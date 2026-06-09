@@ -3,7 +3,30 @@
 **Author**: AS:Chanayane  
 **Date**: 2026-06-09  
 **Branch**: `special-ayanestorm-dev`  
-**Status**: Implementation complete — pending build & validation
+**Status**: Implemented and runtime-tested; WBOIT is optional and current remaining issue is self layered-hair opacity/intersection artifacts.
+
+---
+
+## Current Runtime State (2026-06-10)
+
+WBOIT is now behind `RenderWBOIT`, exposed in Preferences > AyaneStorm as `Use improved transparency rendering (WBOIT)`.
+
+When `RenderWBOIT` is disabled, the post-water alpha dispatch intentionally matches reference commit `6d68bc063cc110258851b0f2a03596badb11b73e`, before:
+- `82e5ea45c680e028c181fe551b7758a9d8b343bc` (`fix alpha blend inspired from the work of Mayatonton`)
+- `a90c1319555c60cf2702bf139365d3659ec9c8f0` (`Weighted Blended Order-Independent Transparency`)
+
+Runtime-validated improvements:
+- Transparent objects are visible again.
+- PBR/GLTF-looking transparent objects, including a glass panel, are visible again.
+- Hair/glass behavior is much improved compared with the initial WBOIT implementation.
+- The black/white frame on switching 1st/3rd person is reduced to almost invisible.
+- Other avatars' hair no longer appears in front of the user's hair after the post-WBOIT rigged split.
+- The user's back/skin no longer appears through long hair after reverting the failed self-depth-prepass experiment.
+
+Current known issue:
+- The user's own layered rigged hair still looks wrong with WBOIT enabled: inner layers are too visible through outer layers, and crossing/intersection lines between hair cards are visibly defined instead of blending with the smoother opacity seen in the reference/vanilla renderer.
+- A self rigged high-alpha depth prepass was tested and rejected because it made transparent hair parts nearly fully transparent and exposed back/skin again.
+- Current code uses the best-so-far split: other avatars' rigged alpha writes depth first, then self rigged alpha renders without depth writes. This fixes inter-avatar ordering but does not solve self-hair layer opacity.
 
 ---
 
@@ -32,31 +55,32 @@
   - [x] `gDeferredPBRAlphaWBOITProgram` + skinned variant
   - [x] `gDeferredFullbrightAlphaWBOITProgram` + skinned variant
   - [x] `gDeferredMaterialAlphaWBOITProgram[SHADER_COUNT*2]` (BLEND slots only)
-  - Note: `wboitWeight.glsl` linked as a separate `GL_FRAGMENT_SHADER` object alongside each alpha shader (multi-object linking, valid OpenGL)
+  - Note: `wboitWeight.glsl` exists as reference only. It is not linked as a separate shader object because that caused duplicate helper-symbol/linkage issues; the weight function is inlined in each WBOIT shader branch.
 
 - [x] **Step 4 — Accumulation pass wiring**
   - [x] `lldrawpoolalpha.h` — `mForwardToWBOIT` flag added
   - [x] `renderPostDeferred` — WBOIT branch for POST_WATER non-impostor non-cubemap; prepares WBOIT shader variants; clears MRT; runs 3-pass dispatch; restores screen RT
   - [x] `forwardRender` — `write_depth = false` when WBOIT; binds `wboitFBO` MRT; sets per-attachment blend via `glBlendFunci` (attachment 0 additive, attachment 1 multiplicative)
   - [x] `renderAlpha` — selects WBOIT shader variants when `mForwardToWBOIT`; emissive glow sub-pass suppressed under WBOIT
-  - Note: GLTF PBR alpha (`gltf_mat`) falls back to standard `pbr_shader` under WBOIT (no depth write, but not weighted-accumulated); dedicated GLTF WBOIT variant is future work
+  - [x] GLTF/PBR alpha BLEND now routes to `gDeferredPBRAlphaWBOITProgram` under WBOIT instead of falling back to the standard PBR alpha shader
+  - [x] Avatar/attachment/custom-blend alpha is skipped from WBOIT accumulation and handled by a post-WBOIT legacy pass
 
 - [x] **Step 5 — Composite pass**
   - [x] `pipeline.cpp` — composite inserted after `renderGeomPostDeferred`, before `screen_target->flush()`
-  - [x] Guarded by `!gCubeSnapshot && !sImpostorRender`
-  - [x] Blend: `BF_ONE_MINUS_SOURCE_ALPHA` over `BF_SOURCE_ALPHA` (premultiplied "over" onto opaque scene)
-  - [x] Textures bound via `wboitFBO.bindTexture(0/1, channel, TFO_POINT)`
+  - [x] Guarded by `RenderWBOIT && !gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered`
+  - [x] Blend: `BF_SOURCE_ALPHA / BF_ONE_MINUS_SOURCE_ALPHA`
+  - [x] Textures bound through `gWBOITCompositeProgram.bindTexture(...)`
   - [x] `LLShaderMgr::DEFERRED_DIFFUSE` → accum (attachment 0), `DEFERRED_SPECULAR` → reveal (attachment 1)
 
-- [ ] **Step 6 — Validation** *(build first)*
-  - [ ] Clean compile — no shader link errors at startup
-  - [ ] Eyelash prims visible through transparent rigged hair
-  - [ ] Background (foliage/windows) visible through hair
-  - [ ] Hair visible through other hair
-  - [ ] HUD unaffected
-  - [ ] PRE_WATER (underwater) unaffected
-  - [ ] Impostors unaffected
-  - [ ] Cube snapshots / reflection probes unaffected
+- [~] **Step 6 — Runtime validation**
+  - [x] Transparent objects visible again
+  - [x] Hair/glass behavior substantially improved
+  - [x] PBR/GLTF-looking glass panel visible
+  - [x] WBOIT preference checkbox visible and useful for comparing on/off
+  - [x] WBOIT off path restored to reference commit `6d68bc0` dispatch
+  - [x] Other avatars' hair no longer renders in front of the user's hair
+  - [ ] Self layered rigged hair still needs a better opacity/order strategy
+  - [ ] HUD, PRE_WATER, impostors, and cube snapshots/reflection probes still need explicit regression checks
 
 ---
 
@@ -81,17 +105,17 @@ The correct solution is **Weighted Blended Order-Independent Transparency (WBOIT
 Instead of sorting and drawing alpha BLEND surfaces back-to-front with depth writes, WBOIT:
 
 1. **Accumulation pass**: render ALL alpha BLEND geometry (unsorted) into two render targets:
-   - `mWBOITAccum` (RGBA16F): weighted premultiplied color sum
-   - `mWBOITReveal` (R16F): weighted transmittance product
+   - `wboitFBO` attachment 0 (RGBA16F): weighted premultiplied color sum
+   - `wboitFBO` attachment 1 (RGBA16F): reveal/transmittance value stored in `.r`
 
    Per-fragment, the fragment shader computes:
    ```glsl
    float w = clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
                    pow(1.0 - gl_FragCoord.z * 0.9, 3.0), 1e-2, 3e3);
    // accum target:
-   outAccum = vec4(color.rgb * a, a) * w;
-   // reveal target:
-   outReveal = a;
+   frag_data[0] = vec4(color.rgb * a, a) * w;
+   // reveal target, sampled from .r by composite:
+   frag_data[1] = vec4(a);
    ```
    (standard McGuire 2013 weight function — biased toward near, opaque-leaning fragments)
 
@@ -111,7 +135,7 @@ Instead of sorting and drawing alpha BLEND surfaces back-to-front with depth wri
 - Approximate for strongly overlapping same-depth surfaces (acceptable for SL hair/clothing)
 - Depth write OFF for all alpha BLEND — no more depth rejection through transparent fragments
 
-**Known limitation**: Not physically exact for complex interleaved alpha (e.g. two surfaces at exactly the same depth). Visually excellent for all typical SL cases.
+**Known limitation**: Not physically exact for complex interleaved alpha (e.g. many same-avatar hair cards at similar depth). Runtime testing confirms this is still the main unresolved issue for the user's own layered hair.
 
 ---
 
@@ -127,11 +151,12 @@ Instead of sorting and drawing alpha BLEND surfaces back-to-front with depth wri
   - Both attachment and SIM-rezzed geometry
   - POST_WATER pass (primary scene)
 
-### Out of scope (do not change)
+### Out of scope / special handling
 - PRE_WATER pass (water fog requires existing depth logic)
 - HUD pass (forwardRender called once, separate pipeline)
 - Opaque / alpha MASK geometry (deferred gbuffer path unchanged)
-- The 3-pass dispatch for pass ordering (keep it — it still controls emissive and debug draw order)
+- The original pre-WBOIT path must remain available through `RenderWBOIT = false`
+- Avatar/attachment/custom-blend alpha is no longer pure WBOIT; it uses a hybrid post-WBOIT legacy path because WBOIT averaged foreground hair/eyelashes into background glass too aggressively
 - DoF, SSAO, SSR integration with WBOIT targets (separate future chapter)
 - Impostor render path (keep existing write_depth logic for impostors)
 - Cube snapshot path (keep existing logic)
@@ -141,16 +166,14 @@ Instead of sorting and drawing alpha BLEND surfaces back-to-front with depth wri
 ## §4 Files to Change
 
 ### 4.1 New files (shaders)
-- `indra/newview/app_settings/shaders/class1/deferred/wboitAccumF.glsl` — NEW
-  - Fragment shader for accumulation pass
-  - Receives same inputs as `alphaF.glsl` / `pbralphaF.glsl` (lit color + alpha)
-  - Outputs to `layout(location=0) out vec4 outAccum` and `layout(location=1) out float outReveal`
-  - Weight function as in §2
+- `indra/newview/app_settings/shaders/class1/deferred/wboitWeight.glsl`
+  - Reference utility only; not linked as a separate shader object
+  - The actual weight function is inlined in WBOIT shader branches
 
-- `indra/newview/app_settings/shaders/class1/deferred/wboitCompositeF.glsl` — NEW
+- `indra/newview/app_settings/shaders/class1/deferred/wboitCompositeF.glsl`
   - Fullscreen composite fragment shader
-  - Inputs: `uniform sampler2D uAccum`, `uniform sampler2D uReveal`
-  - Output: `frag_color` with premultiplied alpha for blending over opaque scene
+  - Inputs: `uniform sampler2D diffuseRect` for accum and `uniform sampler2D specularRect` for reveal
+  - Output: `frag_color` for standard alpha blending over the opaque scene
 
 ### 4.2 Modified files (shaders)
 The accumulation pass needs the same lighting computation as the existing alpha shaders, but with a different output. The cleanest approach is **not** to fork the entire shader, but to add a `#define WBOIT` path at the output stage only.
@@ -166,12 +189,11 @@ Files to add `#ifdef WBOIT` output branch:
 - `indra/newview/app_settings/shaders/class1/deferred/fullbrightF.glsl`
   - Same pattern
 
-**Important**: The `#ifdef WBOIT` variant needs to declare:
+**Implemented note**: The first attempt used explicit layout outputs and a float reveal target. Runtime debugging switched this to the viewer MRT convention:
 ```glsl
-layout(location=0) out vec4 outAccum;
-layout(location=1) out float outReveal;
+out vec4 frag_data[2];
 ```
-instead of `out vec4 frag_color`. These declarations must be guarded by `#ifdef WBOIT` to avoid conflicting with the standard path.
+and reveal is written as `frag_data[1] = vec4(alpha)`.
 
 Each alpha shader also needs the weight function. Add it as a shared include:
 - `indra/newview/app_settings/shaders/class1/deferred/wboitWeight.glsl` — NEW utility include
@@ -183,31 +205,24 @@ Each alpha shader also needs the weight function. Add it as a shared include:
   ```
 
 ### 4.3 `indra/newview/pipeline.h`
-Add to `RenderTargetPack` struct (around line 724, after `deferredLight`):
+Implemented in `RenderTargetPack` as a single combined target, not separate targets:
 ```cpp
-// <AS:Chanayane> WBOIT accumulation targets
-LLRenderTarget wboitAccum;   // RGBA16F — weighted color+alpha sum
-LLRenderTarget wboitReveal;  // R16F    — weighted transmittance
-// </AS:Chanayane>
+LLRenderTarget wboitFBO; // attachment0 accum, attachment1 reveal
 ```
 
 ### 4.4 `indra/newview/pipeline.cpp`
 
-**Allocation** (in `allocateScreenBufferInternal`, around line 979):
+**Implemented allocation**:
 ```cpp
-// <AS:Chanayane> WBOIT targets — share depth with screen so WBOIT
-// accumulation depth-tests against opaque geometry
-if (!mRT->wboitAccum.allocate(resX, resY, GL_RGBA16F)) return false;
-mRT->wboitAccum.shareDepthBuffer(mRT->screen);
-if (!mRT->wboitReveal.allocate(resX, resY, GL_R16F)) return false;
-mRT->wboitReveal.shareDepthBuffer(mRT->screen);
-// </AS:Chanayane>
+mRT->wboitFBO.release();
+if (!mRT->wboitFBO.allocate(resX, resY, GL_RGBA16F)) return false;
+if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;
+mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
 ```
 
 **Release** (in `releaseScreenBuffers` or wherever other RTs are released):
 ```cpp
-mRT->wboitAccum.release();
-mRT->wboitReveal.release();
+mRT->wboitFBO.release();
 ```
 
 **Composite pass** — insert in `renderDeferredLighting` (`pipeline.cpp`) immediately after
@@ -218,16 +233,15 @@ already used at lines 8827, 8852, 9810, etc.
 
 ```cpp
     // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
-    if (!gCubeSnapshot && !sImpostorRender)
+    if (render_wboit && !gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered)
     {
-        mRT->screen.bindTarget();
         gGL.setColorMask(true, false);
         LLGLEnable blend(GL_BLEND);
-        gGL.blendFunc(LLRender::BF_ONE_MINUS_SOURCE_ALPHA, LLRender::BF_SOURCE_ALPHA);
+        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
         gWBOITCompositeProgram.bind();
-        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitAccum,  LLTexUnit::TFO_POINT);
-        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitReveal, LLTexUnit::TFO_POINT);
+        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
+        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         gWBOITCompositeProgram.unbind();
@@ -275,17 +289,10 @@ if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATE
     && !LLPipeline::sImpostorRender && !gCubeSnapshot)
 {
     // <AS:Chanayane> WBOIT path
-    // Clear accum to (0,0,0,0) and reveal to (1)
-    gPipeline.mRT->wboitAccum.bindTarget();
-    glClearColor(0, 0, 0, 0);
-    glClear(GL_COLOR_BUFFER_BIT);
-    gPipeline.mRT->wboitReveal.bindTarget();
-    glClearColor(1, 1, 1, 1);
-    glClear(GL_COLOR_BUFFER_BIT);
-
-    // bind MRT: [0]=wboitAccum, [1]=wboitReveal, depth shared from screen
-    // use GLenum draw_buffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-    // (implementation detail: may need LLRenderTarget::bindMultiple or manual FBO setup)
+    // Clear combined MRT once per frame via raw GL:
+    // attachment 0 accum = (0,0,0,0)
+    // attachment 1 reveal = (1,1,1,1)
+    // Bind wboitFBO MRT: [0]=accum, [1]=reveal, depth shared from deferredScreen
     mForwardToWBOIT = true;
     forwardRender(false, ATTACHMENT_NONE);
     forwardRender(true,  ATTACHMENT_ALL);
@@ -323,10 +330,10 @@ bool mForwardToWBOIT = false;
 ## §5 MRT Binding Strategy
 
 Binding two separate `LLRenderTarget`s as MRT attachments 0 and 1 requires either:
-- **Option A**: A combined FBO that has both textures attached. Create a helper `LLRenderTarget mWBOITFBO` that attaches `wboitAccum` and `wboitReveal` as color attachments 0 and 1, sharing depth from `mRT->screen`. This is the cleanest approach.
+- **Option A**: A combined FBO that has both color attachments attached. Implemented as `LLRenderTarget wboitFBO` with attachment 0 for accum and attachment 1 for reveal, sharing depth from `mRT->deferredScreen`.
 - **Option B**: Manual `glDrawBuffers` calls after binding. More fragile.
 
-**Recommended: Option A.** Add `mWBOITFBO` to `RenderTargetPack` as the combined binding target. Allocate it with `GL_RGBA16F` for attachment 0 and manually attach the `wboitReveal` texture as attachment 1 via `glFramebufferTexture2D`.
+**Implemented: Option A.** `wboitFBO` is the combined binding target. Both color attachments are RGBA16F, with reveal stored in the red channel.
 
 ---
 
@@ -349,8 +356,19 @@ In `renderAlpha`, when `mForwardToWBOIT == true`, select the WBOIT variant inste
 
 ## §7 Interaction with Existing Systems
 
-### 3-pass dispatch (keep)
-The `ATTACHMENT_NONE` / `ATTACHMENT_ALL` / `ATTACHMENT_ONLY` filter still controls which batches are processed in which call. Under WBOIT, ordering doesn't affect correctness (that's the point), but keeping 3 passes ensures emissive accumulation and debug highlight still work correctly per-pass.
+### 3-pass dispatch / WBOIT-off behavior
+The Mayatonton 3-pass attachment split is now guarded by `RenderWBOIT`. When WBOIT is disabled, post-water alpha dispatch reverts to reference commit `6d68bc0`: rigged pass first when not rendering HUDs, then one regular alpha pass.
+
+When WBOIT is enabled, the WBOIT accumulation path uses the attachment filters, while avatar/attachment/custom-blend alpha is excluded from WBOIT and drawn after composite in a hybrid legacy pass.
+
+### Post-WBOIT avatar handling
+Current best-so-far behavior:
+- Other avatars' rigged alpha renders first with depth writes enabled.
+- Self rigged alpha renders second with depth writes disabled.
+- Non-rigged attachment/custom-blend alpha renders last with depth writes disabled.
+
+Rejected experiment:
+- A self rigged high-alpha depth prepass caused the user's transparent hair parts to become almost fully transparent and exposed back/skin again.
 
 ### DoF depth prepass (lines 219–236 in `renderPostDeferred`)
 The DoF depth prepass (`gDeferredFullbrightAlphaMaskProgram` with `minimum_alpha=0.33`) runs **after** the WBOIT accumulation passes and **before** the composite. It should remain unchanged — it writes to `mRT->screen`'s depth buffer, which is correct.
@@ -371,7 +389,7 @@ Keep existing path. HUD has its own pass.
 
 ## §8 Settings
 
-No new user-facing settings. WBOIT is always-on for the POST_WATER non-impostor non-cubemap path. If a kill-switch is desired for debugging, add:
+WBOIT is user-configurable and enabled by default:
 
 ```xml
 <!-- in app_settings/settings.xml -->
@@ -384,13 +402,18 @@ No new user-facing settings. WBOIT is always-on for the POST_WATER non-impostor 
 
 And wrap the WBOIT branch in `if (gSavedSettings.getBOOL("RenderWBOIT"))`.
 
+Runtime behavior:
+- `RenderWBOIT = true`: use WBOIT accumulation/composite plus the post-WBOIT legacy pass.
+- `RenderWBOIT = false`: use the reference pre-`82e5ea45` / pre-`a90c1319` alpha dispatch from commit `6d68bc063cc110258851b0f2a03596badb11b73e`.
+- UI: Preferences > AyaneStorm > `Use improved transparency rendering (WBOIT)`.
+
 ---
 
 ## §9 Implementation Order (recommended)
 
 1. **Shaders first** — add `wboitWeight.glsl`, add `#ifdef WBOIT` output branch to `alphaF.glsl` and `pbralphaF.glsl`, write `wboitCompositeF.glsl`. Verify GLSL compiles in isolation.
 
-2. **RT allocation** — add `wboitAccum`, `wboitReveal`, `mWBOITFBO` to `RenderTargetPack`, allocate in `pipeline.cpp`. Verify no allocation failure at startup.
+2. **RT allocation** — add combined `wboitFBO` to `RenderTargetPack`, allocate two RGBA16F color attachments in `pipeline.cpp`, and share depth from `deferredScreen`. Verify no allocation failure at startup.
 
 3. **Shader registration** — register WBOIT variants in `llviewershadermgr.cpp`. Verify link at startup.
 
@@ -398,13 +421,16 @@ And wrap the WBOIT branch in `if (gSavedSettings.getBOOL("RenderWBOIT"))`.
 
 5. **Composite pass** — add composite draw call in `pipeline.cpp` after alpha pool render. Alpha surfaces should reappear correctly.
 
-6. **Validation** — test the canonical problem cases:
-   - Eyelash prims visible through transparent rigged hair ✓
-   - Background (foliage/windows) visible through hair ✓
-   - Hair visible through other hair ✓
-   - HUD unaffected ✓
-   - PRE_WATER (underwater) unaffected ✓
-   - Impostors unaffected ✓
+6. **Validation** — current state:
+   - Transparent objects visible again ✓
+   - PBR/GLTF-looking glass panel visible ✓
+   - Hair/glass behavior substantially improved ✓
+   - Other avatars' hair no longer appears in front of self hair ✓
+   - Self long/layered hair still shows excessive internal layers and visible card intersections ✗
+   - HUD unaffected: explicit check still needed
+   - PRE_WATER unaffected: explicit check still needed
+   - Impostors unaffected: explicit check still needed
+   - Cube snapshots/reflection probes unaffected: explicit check still needed
 
 ---
 
@@ -414,7 +440,7 @@ And wrap the WBOIT branch in `if (gSavedSettings.getBOOL("RenderWBOIT"))`.
 |------|---------|
 | `indra/newview/lldrawpoolalpha.cpp` | Alpha pool render dispatch (main change site) |
 | `indra/newview/lldrawpoolalpha.h` | `AttachmentFilter` enum, `mForwardToWBOIT` flag |
-| `indra/newview/pipeline.h` | `RenderTargetPack` struct — add WBOIT RT members |
+| `indra/newview/pipeline.h` | `RenderTargetPack` struct — combined `wboitFBO` |
 | `indra/newview/pipeline.cpp` | RT allocation + WBOIT composite pass location |
 | `indra/newview/llviewershadermgr.h/.cpp` | Shader declarations and registration |
 | `indra/newview/app_settings/shaders/class2/deferred/alphaF.glsl` | Legacy alpha shader — add `#ifdef WBOIT` output |
