@@ -199,14 +199,38 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // already being setup for rendering
     LLGLSLShader::unbind();
 
-    if (!LLPipeline::sRenderingHUDs)
-    {
-        // first pass, render rigged objects only and render to depth buffer
-        forwardRender(true);
-    }
+    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    // if (!LLPipeline::sRenderingHUDs)
+    // {
+    //     // first pass, render rigged objects only and render to depth buffer
+    //     forwardRender(true);
+    // }
 
-    // second pass, regular forward alpha rendering
-    forwardRender();
+    // // second pass, regular forward alpha rendering
+    // forwardRender();
+    if (!LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
+        // AS:Chanayane inspired from the work of Mayatonton in AYAstorm
+        // 3-pass dispatch to preserve both the §5 swap fix (background transparency
+        // through hair) and correct z-order for attachment N-BL prims (e.g. eyelash
+        // prims) relative to rigged hair:
+        //   pass 1: SIM-rezzed N-BL only  — background windows / foliage
+        //   pass 2: all rigged (R-BL)     — hair writes depth
+        //   pass 3: attachment N-BL only  — eyelash prims etc. over hair
+        forwardRender(false, ATTACHMENT_NONE);   // 1 - SIM N-BL (background)
+        forwardRender(true,  ATTACHMENT_ALL);    // 2 - all rigged — writes depth
+        forwardRender(false, ATTACHMENT_ONLY);   // 3 - attachment N-BL (foreground prims)
+    }
+    else
+    {
+        // PRE_WATER / HUD: keep upstream order (water fog integrity).
+        if (!LLPipeline::sRenderingHUDs)
+        {
+            forwardRender(true);
+        }
+        forwardRender();
+    }
+    // </AS:Chanayane>
 
     // final pass, render to depth for depth of field effects
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
@@ -229,7 +253,10 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     }
 }
 
-void LLDrawPoolAlpha::forwardRender(bool rigged)
+// <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+//void LLDrawPoolAlpha::forwardRender(bool rigged)
+void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
+// </AS:Chanayane>
 {
     gPipeline.enableLightsDynamic();
 
@@ -264,15 +291,21 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
     // We don't want the nearly invisible objects to cause of DoF effects
-    renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged);
+    renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged, filter);
 
     gGL.setColorMask(true, false);
 
-    if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER)
-    { //render "highlight alpha" on final non-rigged pass
-        // NOTE -- hacky call here protected by !rigged instead of alongside "forwardRender"
-        // so renderDebugAlpha is executed while gls_pipeline_alpha and depth GL state
-        // variables above are still in scope
+    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    //if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER)
+    //{ //render "highlight alpha" on final non-rigged pass
+    //    // NOTE -- hacky call here protected by !rigged instead of alongside "forwardRender"
+    //    // so renderDebugAlpha is executed while gls_pipeline_alpha and depth GL state
+    //    // variables above are still in scope
+    if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER && (filter == ATTACHMENT_ONLY || filter == ATTACHMENT_ALL))
+    {
+        //render "highlight alpha" after the final non-rigged pass (pass 3 or legacy ALL),
+        // so all non-rigged batches are covered before highlighting.
+    // </AS:Chanayane>
         renderDebugAlpha();
     }
 }
@@ -580,7 +613,10 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
     }
 }
 
-void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
+// <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+//void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
+void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, AttachmentFilter filter)
+// </AS:Chanayane>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     bool initialized_lighting = false;
@@ -681,6 +717,19 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
                     continue;
                 }
+
+                // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+                // 3-pass attachment filter: only active for non-rigged batches.
+                // ATTACHMENT_NONE  = skip attachment prims (SIM-rezzed only, pass 1)
+                // ATTACHMENT_ONLY  = skip SIM-rezzed batches (attachment prims only, pass 3)
+                // ATTACHMENT_ALL   = draw everything (rigged pass and legacy paths)
+                if (!rigged && filter != ATTACHMENT_ALL)
+                {
+                    bool is_attachment = params.mAttachedToAvatar.notNull();
+                    if (filter == ATTACHMENT_NONE && is_attachment)  { continue; }
+                    if (filter == ATTACHMENT_ONLY && !is_attachment) { continue; }
+                }
+                // </AS:Chanayane>
 
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
 

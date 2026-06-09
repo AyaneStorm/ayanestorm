@@ -58,13 +58,23 @@ public:
     /*virtual*/ void renderPostDeferred(S32 pass);
     /*virtual*/ S32  getNumPasses() { return 1; }
 
-    void forwardRender(bool write_depth = false);
+    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    // 3-pass dispatch: discriminates SIM-rezzed vs attachment non-rigged batches
+    // so that attachment N-BL prims are drawn after rigged hair (pass 3), not before (pass 1).
+    enum AttachmentFilter { ATTACHMENT_ALL, ATTACHMENT_NONE, ATTACHMENT_ONLY };
+    // </AS:Chanayane>
+
+    void forwardRender(bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);
     /*virtual*/ void prerender();
 
     void renderDebugAlpha();
 
     void renderGroupAlpha(LLSpatialGroup* group, U32 type, U32 mask, bool texture = true);
-    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
+
+    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    //void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
+    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);
+    // </AS:Chanayane>
     void renderAlphaHighlight();
 
     static bool sShowDebugAlpha;

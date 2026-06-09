@@ -118,6 +118,12 @@ public:
     LLPointer<LLVOAvatar> mAvatar = nullptr;
     LLConstPointer<LLMeshSkinInfo> mSkinInfo;// <FS:Beq/> be defensive about UAF with skinInfo during LocalMesh
 
+    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
+    // Wearer avatar for attachment objects (rigged or not). getAvatar() walks the
+    // parent chain so non-rigged attachment prims are also covered. NULL for world geometry.
+    LLPointer<LLVOAvatar> mAttachedToAvatar = nullptr;
+    // </AS:Chanayane>
+
     // Material pointer here is likely for debugging only and are immaterial (zing!)
     LLPointer<LLMaterial> mMaterial;
 
