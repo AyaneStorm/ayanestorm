@@ -26,6 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Exact OIT
+#include "fsexactoit.h"
+// </AS:Chanayane>
+
 #include "llappviewer.h"
 
 // Viewer includes
@@ -4113,6 +4117,9 @@ LLSD LLAppViewer::getViewerInfo() const
     info["GRAPHICS_CARD"] = ll_safe_string((const char*)(glGetString(GL_RENDERER)));
     info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
     info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
+    // <AS:Chanayane> Exact OIT renderer diagnostics
+    FSExactOIT::appendDiagnostics(info);
+    // </AS:Chanayane>
 
 #if LL_WINDOWS
     std::string drvinfo;

@@ -3356,7 +3356,7 @@
 			 top_pad="1"
 			 left="3"
 			 right="-3"
-			 height="87"
+			 height="103"
 			 border_visible="true"
 			 border_thickness="1"
 			 background_visible="true">
@@ -3420,6 +3420,19 @@
 					 function="Advanced.HandleAttachedLightParticles"
 					 parameter="RenderAttachedParticles"/>
 				</check_box>
+				<!-- <AS:Chanayane> Exact OIT preference. -->
+				<check_box
+				 follows="left|top"
+				 layout="topleft"
+				 height="16"
+				 control_name="RenderExactOIT"
+				 label="Use Exact OIT transparency"
+				 tool_tip="Renders supported transparent surfaces in exact per-pixel depth order. This improves overlapping hair, glass, particles, and other alpha surfaces, but can cost performance in transparency-heavy scenes. Disable it to use the standard transparency renderer."
+				 left="3"
+				 name="render_exact_oit"
+				 width="240"
+				 top_pad="0" />
+				<!-- </AS:Chanayane> -->
 			</panel>
 
 			<panel
