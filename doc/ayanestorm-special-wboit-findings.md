@@ -6,25 +6,26 @@ Date: 2026-06-10
 
 Current date of this handoff: 2026-06-11.
 
-The current WBOIT branch is in an experimental state. It is not just the original single-layer WBOIT implementation anymore. The latest direction is a two-layer WBOIT split:
+The current WBOIT branch is in an experimental state. It is not just the original single-layer WBOIT implementation anymore. The active direction is the two-layer WBOIT split:
 
 - Layer 1: world/sim alpha is accumulated into WBOIT and composited over the opaque scene.
 - Layer 2: the same WBOIT target is cleared/reused, avatar/attachment alpha is accumulated, then composited over the world result.
-- Custom blend batches still render in the post-WBOIT legacy fallback after both WBOIT composites.
+- Custom blend batches still render in the post-WBOIT legacy fallback after the WBOIT composites.
 
 Important runtime observations from manual testing:
 
 - `RenderWBOITDebugTint` proved that the edited WBOIT fragment shaders are active: enabling it made all transparent WBOIT content magenta/opaque.
 - The earlier `HAS_SKIN`-only diagnostic did not affect the tested hair. That means the problematic hair was WBOIT-rendered but not using the `HAS_SKIN` branch, likely an attachment/avatar alpha batch using a non-skinned shader path.
-- `RenderWBOITAttachmentAlphaBoost` with the subtle `0.35..0.85` coverage promotion looked slightly better when enabled, but it did not fix hair being too transparent.
+- The removed `RenderWBOITAttachmentAlphaBoost` experiment with the subtle `0.35..0.85` coverage promotion looked slightly better when enabled, but it did not fix hair being too transparent.
 - A stronger attachment boost `0.12..0.55` made makeup, hair, and eyelashes too dark and still did not fix the perceived transparency. Do not reintroduce that without a new reason.
 - A rigged alpha depth-only prepass was tried and made hair much worse. Do not reintroduce a coarse depth prepass.
 - Material WBOIT `mFeatures.hasAlphaMask = true` was tried for parity and regressed hair/eyelashes in front of glass. It remains disabled.
 - The near-opaque coverage promotion `0.995..1.0` fixed or greatly improved cage/fence-like cutout alpha textures and should be preserved unless testing proves otherwise.
 
-Latest untested or not-yet-fully-tested change:
+Latest tested/reverted experiments:
 
-- The two-layer WBOIT split in `pipeline.cpp` / `lldrawpoolalpha.cpp` has been implemented but not yet manually tested by the user at the time this section was written.
+- The previous two-layer WBOIT split tested much better for hair solidity and glass interaction, but made hair, eyelashes, and makeup too dark. A subsequent reveal-softening attempt regressed hair opacity without fixing darkness and was reverted.
+- A three-layer split in `pipeline.cpp` / `lldrawpoolalpha.cpp` separated rigged avatar alpha from non-rigged attachment alpha. Manual testing showed a regression: a beard rendered like it was in front of long hair when the hair should visually be in front. The three-layer split and `RenderWBOITThreeLayerSplit` setting were removed.
 
 Recommended next manual tests:
 
@@ -95,8 +96,10 @@ Use WBOIT for standard alpha blend surfaces, including avatar rigged hair and no
 - WBOIT reveal/transmittance alpha now uses a separate stronger opacity curve (`1 - pow(1 - a, 1.65)`, clamped toward opaque from `0.95..1.0`) while color accumulation keeps the existing coverage alpha. This targets SL hair cards that were visually too transparent: stacked alpha layers should build opacity faster instead of staying thin.
 - Skinned WBOIT shader variants now treat medium/high alpha more like coverage than translucency, promoting alpha toward opaque over `0.35..0.85` before color accumulation and reveal. This is a targeted test for rigged hair/eyelashes whose texture alpha represents strand coverage rather than physical transparency.
 - `RenderWBOITDebugTint` was added as a temporary diagnostic. When enabled, all WBOIT fragments render magenta/opaque, proving whether the edited WBOIT shader variants are actually active.
-- `RenderWBOITAttachmentAlphaBoost` was added as an opt-in experiment. When enabled, avatar/attachment WBOIT batches set `wboitAttachmentAlphaBoost`, applying coverage-style alpha promotion over `0.35..0.85` even when the mesh is not using a `HAS_SKIN` shader variant. A stronger `0.12..0.55` boost made makeup, hair, and eyelashes too dark without fixing the perceived hair transparency, so it was reverted.
-- WBOIT accumulation is now split into two layers: world/sim alpha is accumulated and composited first, then the WBOIT target is cleared/reused for avatar/attachment alpha and composited over the world result. This keeps WBOIT for hair vs sheer worn layers while preventing world glass/windows from being averaged into the same WBOIT layer as worn hair/lashes.
+- The `RenderWBOITAttachmentAlphaBoost` opt-in experiment was removed. It applied coverage-style alpha promotion over `0.35..0.85` even when the mesh was not using a `HAS_SKIN` shader variant, but it did not fix the perceived hair transparency; stronger versions made makeup, hair, and eyelashes too dark.
+- WBOIT accumulation was first split into two layers: world/sim alpha first, then avatar/attachment alpha over the world result. This substantially improved hair opacity and fixed the "eyelashes in front of glass make the window transparent" problem, but avatar-side content became too dark.
+- A global avatar-layer reveal-softening attempt was tested and reverted because it made background visible through hair again while hair, eyelashes, and makeup remained dark.
+- A three-layer split was tested and removed: world/sim alpha, rigged avatar alpha, then non-rigged attachment alpha. It regressed attachment beard vs rigged long hair ordering because the fixed rigged-before-attachment composite order could put beards incorrectly in front of hair.
 
 ## Open Runtime Issues
 

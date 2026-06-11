@@ -18,6 +18,7 @@ Latest architecture after transparency bug review:
 - The post-WBOIT legacy pass is narrowed to custom blend modes that WBOIT cannot represent directly.
 - The earlier self/other rigged post-WBOIT split is no longer the intended direction because it made self layered hair mostly exercise unsorted legacy alpha instead of WBOIT.
 - Full legacy fallback for avatar attachments was considered and rejected because it would likely restore the vanilla bug where hair/lashes erase sheer worn layers behind them.
+- A three-layer rigged-avatar vs non-rigged-attachment split was tested and removed after it made a beard attachment render in front of rigged long hair.
 
 When `RenderWBOIT` is disabled, the post-water alpha dispatch intentionally matches reference commit `6d68bc063cc110258851b0f2a03596badb11b73e`, before:
 - `82e5ea45c680e028c181fe551b7758a9d8b343bc` (`fix alpha blend inspired from the work of Mayatonton`)
@@ -35,12 +36,12 @@ Current known issue:
 - The user's own layered hair can still look too transparent with WBOIT enabled. The user specifically reports seeing pavement/head/background through hair where hair strand texels should visually block the background.
 - Multiple opacity and weight tuning attempts were not sufficient. Stronger attachment alpha promotion darkened makeup/hair/eyelashes without fixing the perceived transparency.
 - A self rigged high-alpha depth prepass was tested and rejected because it made hair much worse.
-- The latest untested major change is the two-layer WBOIT split. It is intended to keep WBOIT within the avatar stack while preventing world glass/windows from being averaged into the same WBOIT layer as worn hair/lashes.
+- The two-layer WBOIT split tested much better for hair solidity and glass interaction, including the eyelashes-in-front-of-glass case, but avatar-side alpha can now look too dark.
 
 Debug/runtime settings currently relevant:
 - `RenderWBOIT`: enables/disables WBOIT.
 - `RenderWBOITDebugTint`: temporary diagnostic, default off. When enabled, all WBOIT fragments become magenta/opaque, proving the edited WBOIT shaders are active.
-- `RenderWBOITAttachmentAlphaBoost`: opt-in experiment, default off. Applies a subtle `0.35..0.85` coverage-style alpha promotion to avatar/attachment WBOIT batches. A stronger `0.12..0.55` version was tested and rejected because it made makeup/hair/eyelashes too dark.
+- `RenderWBOITAttachmentAlphaBoost` was removed after testing. The subtle `0.35..0.85` coverage promotion did not fix hair transparency, and stronger variants made makeup/hair/eyelashes too dark.
 
 ---
 

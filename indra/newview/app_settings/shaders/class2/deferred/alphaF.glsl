@@ -35,7 +35,6 @@
 const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
 out vec4 frag_data[2];
 uniform int debugWBOITTint;
-uniform int wboitAttachmentAlphaBoost;
 float wboit_weight(float a, float depth) {
     return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
                  pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
@@ -49,9 +48,6 @@ float wboit_skinned_alpha(float a) {
 #else
     return a;
 #endif
-}
-float wboit_attachment_alpha(float a) {
-    return (wboitAttachmentAlphaBoost != 0) ? mix(a, 1.0, smoothstep(0.35, 0.85, a)) : a;
 }
 float wboit_reveal_alpha(float a) {
     float opacity = 1.0 - pow(max(1.0 - a, 0.0), 1.65);
@@ -352,7 +348,7 @@ void main()
     {
         discard;
     }
-    float wboit_a = wboit_coverage_alpha(wboit_attachment_alpha(wboit_skinned_alpha(color.a)));
+    float wboit_a = wboit_coverage_alpha(wboit_skinned_alpha(color.a));
     float wboit_reveal = wboit_reveal_alpha(wboit_a);
     float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
     frag_data[0] = vec4(color.rgb * wboit_a, wboit_a) * wboit_w;

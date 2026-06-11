@@ -993,19 +993,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     }
                 }
 
-                // <AS:Chanayane> WBOIT — attachment alpha often represents
-                // strand/texture coverage rather than physical translucency
-                // (hair, lashes). Tell WBOIT shaders when the current batch is
-                // avatar/attachment content so they can use coverage-style
-                // opacity without changing world glass/smoke/cages.
-                if (current_shader && mForwardToWBOIT)
-                {
-                    static LLCachedControl<bool> wboit_attachment_alpha_boost(gSavedSettings, "RenderWBOITAttachmentAlphaBoost", false);
-                    static LLStaticHashedString wboitAttachmentAlphaBoost("wboitAttachmentAlphaBoost");
-                    current_shader->uniform1i(wboitAttachmentAlphaBoost, (wboit_attachment_alpha_boost && is_attachment) ? 1 : 0);
-                }
-                // </AS:Chanayane>
-
                 if (params.mAvatar && !uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, lastAvatarShader, skipLastSkin))
                 {
                     continue;
