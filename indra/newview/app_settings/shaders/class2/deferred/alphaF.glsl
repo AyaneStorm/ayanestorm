@@ -43,8 +43,10 @@ float wboit_coverage_alpha(float a) {
     return mix(a, 1.0, smoothstep(0.995, 1.0, a));
 }
 float wboit_skinned_alpha(float a) {
+    // Subtle boost for rigged hair/lashes whose texture alpha is coverage not translucency.
+    // Keep modest — layer split now handles ordering, so less artificial opacity needed.
 #ifdef HAS_SKIN
-    return mix(a, 1.0, smoothstep(0.35, 0.85, a));
+    return mix(a, 1.0, smoothstep(0.55, 0.95, a));
 #else
     return a;
 #endif

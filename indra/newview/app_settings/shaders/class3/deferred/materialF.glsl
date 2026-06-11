@@ -69,7 +69,7 @@ float wboit_coverage_alpha(float a) {
 }
 float wboit_skinned_alpha(float a) {
 #ifdef HAS_SKIN
-    return mix(a, 1.0, smoothstep(0.35, 0.85, a));
+    return mix(a, 1.0, smoothstep(0.55, 0.95, a));
 #else
     return a;
 #endif
