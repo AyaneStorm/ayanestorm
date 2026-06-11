@@ -77,7 +77,8 @@ float wboit_skinned_alpha(float a) {
 }
 float wboit_reveal_alpha(float a) {
     if (wboitAvatarLayer != 0) {
-        float opacity = 1.0 - pow(max(1.0 - a, 0.0), 1.65);
+        float exponent = mix(1.65, 1.0, smoothstep(0.05, 0.25, a));
+        float opacity = 1.0 - pow(max(1.0 - a, 0.0), exponent);
         return mix(opacity, 1.0, smoothstep(0.95, 1.0, a));
     } else {
         return mix(a, 1.0, smoothstep(0.95, 1.0, a));
