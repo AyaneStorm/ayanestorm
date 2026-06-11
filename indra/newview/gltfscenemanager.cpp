@@ -658,10 +658,14 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         RenderData& rd = asset.mRenderData[ds];
         auto& batches = rd.mBatches[variant];
 
+        // <AS:Chanayane> Do not abort the whole render when one double-sided
+        // bucket is empty; the other bucket can still contain primitives.
         if (batches.empty())
         {
-            return;
+            // return;
+            continue;
         }
+        // </AS:Chanayane>
 
         LLGLDisable cull_face(ds == 1 ? GL_CULL_FACE : 0);
 
@@ -1204,6 +1208,3 @@ void GLTFSceneManager::renderDebug()
     gDebugProgram.unbind();
 
 }
-
-
-

@@ -7,9 +7,17 @@
 
 ---
 
-## Current Runtime State (2026-06-10)
+## Current Runtime State (2026-06-11)
 
 WBOIT is now behind `RenderWBOIT`, exposed in Preferences > AyaneStorm as `Use improved transparency rendering (WBOIT)`.
+
+Latest architecture after transparency bug review:
+- WBOIT is split into two accumulation/composite layers.
+- First layer: world/sim alpha accumulates into WBOIT, then composites over the opaque scene.
+- Second layer: WBOIT is cleared/reused, avatar/attachment alpha accumulates into WBOIT, then composites over the already-composited world result.
+- The post-WBOIT legacy pass is narrowed to custom blend modes that WBOIT cannot represent directly.
+- The earlier self/other rigged post-WBOIT split is no longer the intended direction because it made self layered hair mostly exercise unsorted legacy alpha instead of WBOIT.
+- Full legacy fallback for avatar attachments was considered and rejected because it would likely restore the vanilla bug where hair/lashes erase sheer worn layers behind them.
 
 When `RenderWBOIT` is disabled, the post-water alpha dispatch intentionally matches reference commit `6d68bc063cc110258851b0f2a03596badb11b73e`, before:
 - `82e5ea45c680e028c181fe551b7758a9d8b343bc` (`fix alpha blend inspired from the work of Mayatonton`)
@@ -24,13 +32,44 @@ Runtime-validated improvements:
 - The user's back/skin no longer appears through long hair after reverting the failed self-depth-prepass experiment.
 
 Current known issue:
-- The user's own layered rigged hair still looks wrong with WBOIT enabled: inner layers are too visible through outer layers, and crossing/intersection lines between hair cards are visibly defined instead of blending with the smoother opacity seen in the reference/vanilla renderer.
-- A self rigged high-alpha depth prepass was tested and rejected because it made transparent hair parts nearly fully transparent and exposed back/skin again.
-- Current code uses the best-so-far split: other avatars' rigged alpha writes depth first, then self rigged alpha renders without depth writes. This fixes inter-avatar ordering but does not solve self-hair layer opacity.
+- The user's own layered hair can still look too transparent with WBOIT enabled. The user specifically reports seeing pavement/head/background through hair where hair strand texels should visually block the background.
+- Multiple opacity and weight tuning attempts were not sufficient. Stronger attachment alpha promotion darkened makeup/hair/eyelashes without fixing the perceived transparency.
+- A self rigged high-alpha depth prepass was tested and rejected because it made hair much worse.
+- The latest untested major change is the two-layer WBOIT split. It is intended to keep WBOIT within the avatar stack while preventing world glass/windows from being averaged into the same WBOIT layer as worn hair/lashes.
+
+Debug/runtime settings currently relevant:
+- `RenderWBOIT`: enables/disables WBOIT.
+- `RenderWBOITDebugTint`: temporary diagnostic, default off. When enabled, all WBOIT fragments become magenta/opaque, proving the edited WBOIT shaders are active.
+- `RenderWBOITAttachmentAlphaBoost`: opt-in experiment, default off. Applies a subtle `0.35..0.85` coverage-style alpha promotion to avatar/attachment WBOIT batches. A stronger `0.12..0.55` version was tested and rejected because it made makeup/hair/eyelashes too dark.
 
 ---
 
 ## Implementation Status
+
+### Fresh Handoff Notes
+
+For a new conversation, start from these facts:
+
+- The current code has accumulated many experimental changes. Check the working tree diff before making new edits.
+- The latest architectural change is the two-layer WBOIT split controlled by `LLDrawPoolAlpha::sWBOITAvatarLayer`.
+- World alpha is rendered by `LLDrawPoolAlpha::renderPostDeferred()` with `sWBOITAvatarLayer == false`, which currently calls `forwardRender(false, ATTACHMENT_NONE)`.
+- Avatar/attachment alpha is rendered by rerunning the alpha pool from `LLPipeline::renderDeferredLighting()` with `sWBOITAvatarLayer == true`, which currently calls `forwardRender(true, ATTACHMENT_ALL)` and `forwardRender(false, ATTACHMENT_ONLY)`.
+- WBOIT composite is now wrapped in a local `composite_wboit` lambda in `pipeline.cpp` so it can run once after world alpha and again after avatar/attachment alpha.
+- Custom blend alpha remains in `ATTACHMENT_POST_WBOIT_LEGACY` after both WBOIT composites.
+
+Do not repeat these failed approaches without a new hypothesis:
+
+- Coarse rigged/alpha depth-only prepass. It made hair much worse.
+- Broad or aggressive alpha promotion for all avatar attachments. It darkened makeup, hair, and eyelashes without fixing the hair transparency complaint.
+- Re-enabling material WBOIT `mFeatures.hasAlphaMask`. It regressed hair/eyelashes in front of glass.
+- Global near-opaque/skinned foreground color-weight boosts. They helped some cutouts but made glass disappear behind hair/lashes.
+
+Preserve these known-good or useful changes unless retesting says otherwise:
+
+- Near-opaque `0.995..1.0` coverage promotion for WBOIT alpha. It improved cage/fence/vent-style cutout textures without breaking 1% transparent clothing.
+- Glow sub-pass flushing/rebinding around WBOIT so bloom/glow still works.
+- Invalid accum/reveal guards in WBOIT composite.
+- GLTF double-sided bucket `continue` fix.
 
 ### §9 Implementation Checklist
 

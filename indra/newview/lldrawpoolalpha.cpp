@@ -58,6 +58,7 @@ bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
 bool LLDrawPoolAlpha::sWBOITRendered = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sWBOITClearNeeded = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sPostWBOITLegacyPass = false; // <AS:Chanayane>
+bool LLDrawPoolAlpha::sWBOITAvatarLayer = false; // <AS:Chanayane>
 
 #define current_shader (LLGLSLShader::sCurBoundShaderPtr)
 
@@ -97,8 +98,12 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 {
     static LLCachedControl<F32> displayGamma(gSavedSettings, "RenderDeferredDisplayGamma");
     F32 gamma = displayGamma;
+    // <AS:Chanayane> WBOIT diagnostic: verify alpha actually uses the edited
+    // WBOIT shader variants.
+    static LLCachedControl<bool> debug_wboit_tint(gSavedSettings, "RenderWBOITDebugTint", false);
 
     static LLStaticHashedString waterSign("waterSign");
+    static LLStaticHashedString debugWBOITTint("debugWBOITTint");
 
     // Does this deferred shader need environment uniforms set such as sun_dir, etc. ?
     // NOTE: We don't actually need a gbuffer since we are doing forward rendering (for transparency) post deferred rendering
@@ -111,6 +116,8 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
+    shader->uniform1i(debugWBOITTint, debug_wboit_tint ? 1 : 0);
+    // </AS:Chanayane>
 
     if (LLPipeline::sRenderingHUDs)
     { // for HUD attachments, only the pre-water pass is executed and we never want to clip anything
@@ -219,13 +226,17 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // already being setup for rendering
     LLGLSLShader::unbind();
 
+    // <AS:Chanayane> WBOIT — post-composite fallback is now limited to
+    // custom blend modes that the WBOIT MRT blend setup cannot represent.
     if (sPostWBOITLegacyPass && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
-        forwardRender(true,  ATTACHMENT_POST_WBOIT_OTHER_RIGGED);
-        forwardRender(true,  ATTACHMENT_POST_WBOIT_SELF_RIGGED);
+        // forwardRender(true,  ATTACHMENT_POST_WBOIT_OTHER_RIGGED);
+        // forwardRender(true,  ATTACHMENT_POST_WBOIT_SELF_RIGGED);
+        forwardRender(true,  ATTACHMENT_POST_WBOIT_LEGACY);
         forwardRender(false, ATTACHMENT_POST_WBOIT_LEGACY);
         return;
     }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> WBOIT path for POST_WATER non-impostor non-cubemap
     // if (!LLPipeline::sRenderingHUDs)
@@ -255,9 +266,18 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         }
 
         mForwardToWBOIT = true;
-        forwardRender(false, ATTACHMENT_NONE);
-        forwardRender(true,  ATTACHMENT_ALL);
-        forwardRender(false, ATTACHMENT_ONLY);
+        // forwardRender(false, ATTACHMENT_NONE);
+        // forwardRender(true,  ATTACHMENT_ALL);
+        // forwardRender(false, ATTACHMENT_ONLY);
+        if (sWBOITAvatarLayer)
+        {
+            forwardRender(true,  ATTACHMENT_ALL);
+            forwardRender(false, ATTACHMENT_ONLY);
+        }
+        else
+        {
+            forwardRender(false, ATTACHMENT_NONE);
+        }
         mForwardToWBOIT = false;
         sWBOITRendered = true;
         // screen RT is already restored by the final wboitFBO.flush() inside forwardRender
@@ -313,18 +333,22 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     //enable writing to alpha for emissive effects
     gGL.setColorMask(true, true);
 
-    // <AS:Chanayane> WBOIT — accumulation never writes depth. In the
-    // post-WBOIT legacy path, other avatars' rigged alpha writes depth before
-    // self rigged alpha is drawn without depth writes; this prevents background
-    // avatar hair from blending over self hair without breaking self hair layers.
+    // <AS:Chanayane> WBOIT — accumulation never writes depth. The post-WBOIT
+    // legacy path is reserved for custom blend modes and does not depth-write.
+    // bool write_depth = !mForwardToWBOIT &&
+    //     ((sPostWBOITLegacyPass && rigged && filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED) ||
+    //      (!sPostWBOITLegacyPass && (rigged ||
+    //         LLDrawPoolWater::sSkipScreenCopy
+    //         || LLPipeline::sImpostorRenderAlphaDepthPass
+    //         || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER)));
     bool write_depth = !mForwardToWBOIT &&
-        ((sPostWBOITLegacyPass && rigged && filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED) ||
-         (!sPostWBOITLegacyPass && (rigged ||
+        !sPostWBOITLegacyPass &&
+        (rigged ||
             LLDrawPoolWater::sSkipScreenCopy
             // we want depth written so that rendered alpha will
             // contribute to the alpha mask used for impostors
             || LLPipeline::sImpostorRenderAlphaDepthPass
-            || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER))); // needed for accurate water fog
+            || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER); // needed for accurate water fog
     // </AS:Chanayane>
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
@@ -349,13 +373,17 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
         gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
     }
 
-    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT)
+    // <AS:Chanayane> WBOIT — skip the global GLTF alpha draw during the
+    // filtered post-WBOIT fallback so it cannot bypass custom-blend filtering.
+    // if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT)
+    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT && !sPostWBOITLegacyPass)
     { // draw GLTF scene to depth buffer before rigged alpha (skip in WBOIT mode — wrong RT)
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
         LL::GLTFSceneManager::instance().render(false, true, true);
     }
+    // </AS:Chanayane>
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
     // We don't want the nearly invisible objects to cause of DoF effects
@@ -807,8 +835,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                         partition_type == LLViewerRegion::PARTITION_CONTROL_AV;
                     is_attachment = is_attachment || is_avatar_partition;
                 }
-                bool is_avatar_alpha = rigged || params.mAvatar || is_attachment;
-                bool is_self_avatar = params.mAvatar && params.mAvatar->isSelf();
                 bool custom_blend = params.mBlendFuncSrc != LLRender::BF_SOURCE_ALPHA ||
                                     params.mBlendFuncDst != LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
 
@@ -817,23 +843,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 // ATTACHMENT_NONE  = skip attachment prims (SIM-rezzed only, pass 1)
                 // ATTACHMENT_ONLY  = skip SIM-rezzed batches (attachment prims only, pass 3)
                 // ATTACHMENT_ALL   = draw everything (rigged pass and legacy paths)
-                if (filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED)
+                if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
                 {
-                    if (!rigged || is_self_avatar)
-                    {
-                        continue;
-                    }
-                }
-                else if (filter == ATTACHMENT_POST_WBOIT_SELF_RIGGED)
-                {
-                    if (!rigged || !is_self_avatar)
-                    {
-                        continue;
-                    }
-                }
-                else if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
-                {
-                    if (!is_avatar_alpha && !custom_blend)
+                    // if (!is_avatar_alpha && !custom_blend)
+                    if (!custom_blend)
                     {
                         continue;
                     }
@@ -844,7 +857,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     if (filter == ATTACHMENT_ONLY && !is_attachment) { continue; }
                 }
 
-                if (mForwardToWBOIT && (is_avatar_alpha || custom_blend))
+                // if (mForwardToWBOIT && (is_avatar_alpha || custom_blend))
+                if (mForwardToWBOIT && custom_blend)
                 {
                     continue;
                 }
@@ -979,6 +993,19 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     }
                 }
 
+                // <AS:Chanayane> WBOIT — attachment alpha often represents
+                // strand/texture coverage rather than physical translucency
+                // (hair, lashes). Tell WBOIT shaders when the current batch is
+                // avatar/attachment content so they can use coverage-style
+                // opacity without changing world glass/smoke/cages.
+                if (current_shader && mForwardToWBOIT)
+                {
+                    static LLCachedControl<bool> wboit_attachment_alpha_boost(gSavedSettings, "RenderWBOITAttachmentAlphaBoost", false);
+                    static LLStaticHashedString wboitAttachmentAlphaBoost("wboitAttachmentAlphaBoost");
+                    current_shader->uniform1i(wboitAttachmentAlphaBoost, (wboit_attachment_alpha_boost && is_attachment) ? 1 : 0);
+                }
+                // </AS:Chanayane>
+
                 if (params.mAvatar && !uploadMatrixPalette(params.mAvatar, params.mSkinInfo, lastAvatar, lastMeshId, lastAvatarShader, skipLastSkin))
                 {
                     continue;
@@ -1049,10 +1076,19 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
             }
 
             // render emissive faces into alpha channel for bloom effects
-            // <AS:Chanayane> skip emissive glow sub-pass in WBOIT mode (wrong FBO semantics)
-            if (!depth_only && !mForwardToWBOIT)
-            // </AS:Chanayane>
+            // <AS:Chanayane> WBOIT — keep glow active by temporarily rendering
+            // the emissive sub-pass to the screen target alpha channel.
+            bool has_emissives = !emissives.empty() || !pbr_emissives.empty() ||
+                !rigged_emissives.empty() || !pbr_rigged_emissives.empty();
+            if (!depth_only && has_emissives)
             {
+                if (mForwardToWBOIT)
+                {
+                    // WBOIT accumulates color into its own MRT, but glow still
+                    // belongs in the screen target alpha channel for bloom.
+                    gPipeline.mRT->wboitFBO.flush();
+                }
+
                 gPipeline.enableLightsDynamic();
 
                 // install glow-accumulating blend mode
@@ -1096,7 +1132,17 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 {
                     lastShader->bind();
                 }
+
+                if (mForwardToWBOIT)
+                {
+                    gPipeline.mRT->wboitFBO.bindTarget();
+                    GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+                    glDrawBuffers(2, draw_bufs);
+                    glBlendFunci(0, GL_ONE, GL_ONE);
+                    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+                }
             }
+            // </AS:Chanayane>
         }
     }
 

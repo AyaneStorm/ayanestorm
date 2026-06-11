@@ -46,10 +46,30 @@ uniform vec3 moon_dir;
 uniform int classic_mode;
 
 #ifdef WBOIT
+const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
 out vec4 frag_data[2];
+uniform int debugWBOITTint;
+uniform int wboitAttachmentAlphaBoost;
 float wboit_weight(float a, float depth) {
-    return clamp(pow(min(1.0, a * 10.0) + 0.01, 3.0) * 1e8 *
-                 pow(1.0 - depth * 0.9, 3.0), 1e-2, 3e3);
+    return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
+                 pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
+}
+float wboit_coverage_alpha(float a) {
+    return mix(a, 1.0, smoothstep(0.995, 1.0, a));
+}
+float wboit_skinned_alpha(float a) {
+#ifdef HAS_SKIN
+    return mix(a, 1.0, smoothstep(0.35, 0.85, a));
+#else
+    return a;
+#endif
+}
+float wboit_attachment_alpha(float a) {
+    return (wboitAttachmentAlphaBoost != 0) ? mix(a, 1.0, smoothstep(0.35, 0.85, a)) : a;
+}
+float wboit_reveal_alpha(float a) {
+    float opacity = 1.0 - pow(max(1.0 - a, 0.0), 1.65);
+    return mix(opacity, 1.0, smoothstep(0.95, 1.0, a));
 }
 #else
 out vec4 frag_color;
@@ -227,9 +247,19 @@ void main()
         final_scale = 1.1;
     vec4 out_color = max(vec4(color.rgb * final_scale, a), vec4(0));
 #ifdef WBOIT
-    float wboit_w = wboit_weight(out_color.a, gl_FragCoord.z);
-    frag_data[0] = vec4(out_color.rgb * out_color.a, out_color.a) * wboit_w;
-    frag_data[1] = vec4(out_color.a);
+    if (debugWBOITTint != 0)
+    {
+        out_color = vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (out_color.a <= WBOIT_MIN_ALPHA)
+    {
+        discard;
+    }
+    float wboit_a = wboit_coverage_alpha(wboit_attachment_alpha(wboit_skinned_alpha(out_color.a)));
+    float wboit_reveal = wboit_reveal_alpha(wboit_a);
+    float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
+    frag_data[0] = vec4(out_color.rgb * wboit_a, wboit_a) * wboit_w;
+    frag_data[1] = vec4(wboit_reveal);
 #else
     frag_color = out_color;
 #endif

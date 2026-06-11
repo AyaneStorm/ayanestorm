@@ -2092,7 +2092,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (idx & 0x8) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_NORMAL_MAP", "1");
             if (idx & 0x4) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SPECULAR_MAP", "1");
             gDeferredMaterialAlphaWBOITProgram[i].addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+            // <AS:Chanayane> Disabled for isolation after glass/hair regression testing.
+            // gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
+            // gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasAlphaMask = true;
             gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
+            // </AS:Chanayane>
             gDeferredMaterialAlphaWBOITProgram[i].addPermutation("WBOIT", "1");
             if (use_sun_shadow) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
             add_common_permutations(&gDeferredMaterialAlphaWBOITProgram[i]);

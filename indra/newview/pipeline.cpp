@@ -9840,6 +9840,7 @@ void LLPipeline::renderDeferredLighting()
         // Reset WBOIT frame state before the post-deferred alpha pools run.
         LLDrawPoolAlpha::sWBOITRendered = false;
         LLDrawPoolAlpha::sWBOITClearNeeded = true;
+        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
 
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
@@ -9879,36 +9880,69 @@ void LLPipeline::renderDeferredLighting()
 
     // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
     static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
-    if (render_wboit && !gCubeSnapshot && !sImpostorRender && LLDrawPoolAlpha::sWBOITRendered)
+    if (render_wboit && !gCubeSnapshot && !sImpostorRender)
     {
-        LL_PROFILE_GPU_ZONE("WBOIT composite");
+        auto composite_wboit = [this]()
+        {
+            if (!LLDrawPoolAlpha::sWBOITRendered)
+            {
+                return;
+            }
 
-        // screen_target is already bound — do not call bindTarget() again
-        gGL.setColorMask(true, false);
+            LL_PROFILE_GPU_ZONE("WBOIT composite");
 
-        LLGLEnable blend(GL_BLEND);
-        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+            // screen_target is already bound — do not call bindTarget() again
+            gGL.setColorMask(true, false);
 
-        LLGLDepthTest depth(GL_FALSE);
+            LLGLEnable blend(GL_BLEND);
+            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
-        gWBOITCompositeProgram.bind();
+            LLGLDepthTest depth(GL_FALSE);
 
-        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
-        gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
+            gWBOITCompositeProgram.bind();
 
-        mScreenTriangleVB->setBuffer();
-        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
+            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
 
-        gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
-        gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR);
-        gWBOITCompositeProgram.unbind();
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-        gGL.setColorMask(true, true);
-        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+            gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+            gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR);
+            gWBOITCompositeProgram.unbind();
 
-        // Draw alpha batches that are a poor fit for WBOIT after the composite:
-        // attachment prims need foreground priority, and custom blend modes need
-        // the legacy per-batch blend path.
+            gGL.setColorMask(true, true);
+            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+        };
+
+        composite_wboit();
+
+        // Render avatar/attachment alpha into a fresh WBOIT layer and composite
+        // it over the already-composited world alpha. This keeps WBOIT within
+        // the avatar stack while preventing world glass/windows from being
+        // averaged into the same WBOIT solution as worn hair/lashes.
+        LLDrawPoolAlpha::sWBOITRendered = false;
+        LLDrawPoolAlpha::sWBOITClearNeeded = true;
+        LLDrawPoolAlpha::sWBOITAvatarLayer = true;
+        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
+        {
+            LLDrawPool* poolp = *iter;
+            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginPostDeferredPass(0);
+                poolp->renderPostDeferred(0);
+                poolp->endPostDeferredPass(0);
+            }
+        }
+        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
+
+        composite_wboit();
+
+        // Draw only alpha batches WBOIT cannot represent directly.
+        // Standard world and avatar/attachment alpha are accumulated by the
+        // two WBOIT layers; custom blend modes still need the legacy per-batch
+        // blend path.
         LLDrawPoolAlpha::sPostWBOITLegacyPass = true;
         for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
         {

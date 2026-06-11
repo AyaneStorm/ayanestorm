@@ -11744,6 +11744,32 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
+  <key>RenderWBOITDebugTint</key>
+  <map>
+    <key>Comment</key>
+    <string>DEBUG: Tint all WBOIT alpha fragments magenta and opaque to verify whether the edited WBOIT shader variants are active.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderWBOITAttachmentAlphaBoost</key>
+  <map>
+    <key>Comment</key>
+    <string>EXPERIMENTAL: Treat avatar/attachment WBOIT alpha more like texture coverage than translucency.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
   <key>RenderDeferredNoise</key>
   <map>
     <key>Comment</key>

@@ -20,12 +20,18 @@ void main()
     vec4 accum  = texture(diffuseRect,  uv);
     float reveal = texture(specularRect, uv).r;
 
+    if (any(isnan(accum)) || any(isinf(accum)) || isnan(reveal) || isinf(reveal))
+    {
+        discard;
+    }
+
     // Guard against near-zero accum.a (fully transparent region)
     if (accum.a < 1e-5 && abs(reveal - 1.0) < 1e-5)
     {
         discard;
     }
 
+    reveal = clamp(reveal, 0.0, 1.0);
     vec3 average_color = accum.rgb / max(accum.a, 1e-5);
     float alpha = 1.0 - reveal;
 

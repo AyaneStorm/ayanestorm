@@ -66,9 +66,9 @@ public:
         ATTACHMENT_ALL,
         ATTACHMENT_NONE,
         ATTACHMENT_ONLY,
-        ATTACHMENT_POST_WBOIT_LEGACY,
-        ATTACHMENT_POST_WBOIT_OTHER_RIGGED,
-        ATTACHMENT_POST_WBOIT_SELF_RIGGED
+        ATTACHMENT_POST_WBOIT_LEGACY
+        // ATTACHMENT_POST_WBOIT_OTHER_RIGGED,
+        // ATTACHMENT_POST_WBOIT_SELF_RIGGED
     };
     // </AS:Chanayane>
 
@@ -91,8 +91,11 @@ public:
     static bool sWBOITRendered;
     // Clear the shared WBOIT MRT once per frame before the first alpha pool contributes.
     static bool sWBOITClearNeeded;
-    // Draw skipped WBOIT-sensitive alpha batches with the legacy path after composite.
+    // Draw custom-blend alpha batches with the legacy path after composite.
     static bool sPostWBOITLegacyPass;
+    // When true, WBOIT accumulation draws avatar/attachment alpha over the already-composited world layer.
+    static bool sWBOITAvatarLayer;
+    // </AS:Chanayane>
 
 private:
     LLGLSLShader* target_shader;
