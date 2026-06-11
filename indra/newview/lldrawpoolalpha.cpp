@@ -104,6 +104,7 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 
     static LLStaticHashedString waterSign("waterSign");
     static LLStaticHashedString debugWBOITTint("debugWBOITTint");
+    static LLStaticHashedString wboitAvatarLayer("wboitAvatarLayer");
 
     // Does this deferred shader need environment uniforms set such as sun_dir, etc. ?
     // NOTE: We don't actually need a gbuffer since we are doing forward rendering (for transparency) post deferred rendering
@@ -117,6 +118,7 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
     shader->uniform1i(debugWBOITTint, debug_wboit_tint ? 1 : 0);
+    shader->uniform1i(wboitAvatarLayer, LLDrawPoolAlpha::sWBOITAvatarLayer ? 1 : 0);
     // </AS:Chanayane>
 
     if (LLPipeline::sRenderingHUDs)

@@ -28,13 +28,15 @@ Latest tested/reverted experiments:
 - A three-layer split in `pipeline.cpp` / `lldrawpoolalpha.cpp` separated rigged avatar alpha from non-rigged attachment alpha. Manual testing showed a regression: a beard rendered like it was in front of long hair when the hair should visually be in front. The three-layer split and `RenderWBOITThreeLayerSplit` setting were removed.
 - Worn eyeglasses now look too opaque, while eyelashes and Lelutka head eyesocket alpha behind the glasses are not toned down by the glass as they were in an earlier renderer state. This is because non-rigged attachments (eyeglasses) and rigged/non-rigged face alpha (eyelashes, eyesocket) are all in the same avatar WBOIT layer and get averaged — WBOIT cannot represent one surface occluding another within the same buffer.
 
-## Layer split revision (2026-06-11, untested)
+## Layer split + reveal curve revision (2026-06-11, untested)
 
 **Change**: world WBOIT layer now renders both sim-rezzed non-rigged (`ATTACHMENT_NONE`) AND non-rigged attachments (`ATTACHMENT_ONLY`). Avatar WBOIT layer now renders only rigged content (`ATTACHMENT_ALL`, rigged=true).
 
 **Rationale**: eyeglasses are non-rigged attachments. When they were in the avatar layer alongside rigged eyelashes/face alpha, WBOIT averaged them all — glasses appeared too opaque and face alpha showed through them incorrectly. Moving non-rigged attachments to the world layer means glasses composite with the world first, then rigged hair/eyelashes composite on top of the already-attenuated result.
 
 **Risk**: non-rigged worn beard or other non-rigged mesh that visually should be in front of rigged long hair now composites in the world layer (behind the rigged avatar layer). May regress beard-over-hair ordering. Needs testing.
+
+**Reveal curve**: `wboit_reveal_alpha` kept as `pow(1-a, 1.65)` unconditionally. A `HAS_SKIN`-gated split was attempted but reverted — long hair does NOT use `HAS_SKIN` (confirmed in earlier testing), so splitting on that flag would give hair the linear path and make it more transparent. The `wboit_skinned_alpha` boost range was narrowed from `0.35–0.85` to `0.55–0.95`, but this has no effect on hair since hair doesn't use `HAS_SKIN` either. The glass-too-opaque problem remains; the 1.65 exponent is needed for hair opacity and cannot be removed without a hair-specific gate that works for non-skinned hair.
 
 ## Avatar Peel Experiment (2026-06-11) — CONCLUDED, REVERTED
 
