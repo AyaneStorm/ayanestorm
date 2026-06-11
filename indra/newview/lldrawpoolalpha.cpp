@@ -271,12 +271,18 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         // forwardRender(false, ATTACHMENT_ONLY);
         if (sWBOITAvatarLayer)
         {
-            forwardRender(true,  ATTACHMENT_ALL);
-            forwardRender(false, ATTACHMENT_ONLY);
+            // Avatar layer: rigged content only (hair, rigged eyelashes, skinned mesh).
+            // Non-rigged attachments (eyeglasses, non-rigged lashes, beard prims) were
+            // composited in the world layer so they correctly attenuate what is behind them
+            // before rigged avatar content is blended on top.
+            forwardRender(true, ATTACHMENT_ALL);
         }
         else
         {
+            // World layer: sim-rezzed non-rigged AND non-rigged worn attachments (eyeglasses etc).
+            // Compositing these first lets them attenuate the scene before rigged avatar alpha.
             forwardRender(false, ATTACHMENT_NONE);
+            forwardRender(false, ATTACHMENT_ONLY);
         }
         mForwardToWBOIT = false;
         sWBOITRendered = true;

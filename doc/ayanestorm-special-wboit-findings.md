@@ -4,7 +4,7 @@ Date: 2026-06-10
 
 ## Fresh Conversation Handoff
 
-Current date of this handoff: 2026-06-11.
+Current date of this handoff: 2026-06-11. Updated: 2026-06-11 (peel experiment concluded).
 
 The current WBOIT branch is in an experimental state. It is not just the original single-layer WBOIT implementation anymore. The active direction is the two-layer WBOIT split:
 
@@ -26,10 +26,49 @@ Latest tested/reverted experiments:
 
 - The previous two-layer WBOIT split tested much better for hair solidity and glass interaction, but made hair, eyelashes, and makeup too dark. A subsequent reveal-softening attempt regressed hair opacity without fixing darkness and was reverted.
 - A three-layer split in `pipeline.cpp` / `lldrawpoolalpha.cpp` separated rigged avatar alpha from non-rigged attachment alpha. Manual testing showed a regression: a beard rendered like it was in front of long hair when the hair should visually be in front. The three-layer split and `RenderWBOITThreeLayerSplit` setting were removed.
+- Worn eyeglasses now look too opaque, while eyelashes and Lelutka head eyesocket alpha behind the glasses are not toned down by the glass as they were in an earlier renderer state. This is because non-rigged attachments (eyeglasses) and rigged/non-rigged face alpha (eyelashes, eyesocket) are all in the same avatar WBOIT layer and get averaged — WBOIT cannot represent one surface occluding another within the same buffer.
+
+## Layer split revision (2026-06-11, untested)
+
+**Change**: world WBOIT layer now renders both sim-rezzed non-rigged (`ATTACHMENT_NONE`) AND non-rigged attachments (`ATTACHMENT_ONLY`). Avatar WBOIT layer now renders only rigged content (`ATTACHMENT_ALL`, rigged=true).
+
+**Rationale**: eyeglasses are non-rigged attachments. When they were in the avatar layer alongside rigged eyelashes/face alpha, WBOIT averaged them all — glasses appeared too opaque and face alpha showed through them incorrectly. Moving non-rigged attachments to the world layer means glasses composite with the world first, then rigged hair/eyelashes composite on top of the already-attenuated result.
+
+**Risk**: non-rigged worn beard or other non-rigged mesh that visually should be in front of rigged long hair now composites in the world layer (behind the rigged avatar layer). May regress beard-over-hair ordering. Needs testing.
+
+## Avatar Peel Experiment (2026-06-11) — CONCLUDED, REVERTED
+
+`RenderAvatarPeelTransparency` was implemented by Codex as a fixed four-layer depth peel for avatar/attachment alpha, replacing the second WBOIT layer when enabled. The peel shaders (`#ifdef PEEL` blocks in alphaF, pbralphaF, fullbrightF, materialF) and the `avatarPeelCompositeF.glsl` composite remain in the codebase but are unreferenced after the revert. All runtime code (pipeline.h/cpp, lldrawpoolalpha.h/cpp, llviewershadermgr.h/cpp, settings.xml) was reverted to commit `a088dd4f` ("best wboit so far").
+
+### Bugs found during testing
+
+1. **Color mask inherited across peel sub-passes.** `gGL.setColorMask(true, false)` left by the first `forwardRender` disabled alpha writes for all subsequent peel passes. Peel FBO alpha was 0 everywhere; composite discarded everything. Fix: `setColorMask(true, true)` before each peel `forwardRender`.
+
+2. **`is_attachment` not extended for peel mode.** Non-rigged avatar-partition batches were excluded from the `ATTACHMENT_ONLY` pass because the partition-type expansion was guarded by `mForwardToWBOIT` only. Fix: also apply when `mForwardToAvatarPeel`.
+
+3. **Peel layer 0 scene-depth discard gated by `avatarPeelLayer > 0`.** Layer 0 captured all avatar alpha including fragments behind opaque geometry. Composite used `LLGLDepthTest(GL_FALSE)` so peel layers drew over the opaque scene: nose/cheeks disappeared, back-hair bled through body, lace showed through shorts. Fix: moved opaque-depth rejection to the composite shader — sample peel layer depth and `deferredScreen` depth, discard when `peel_depth >= scene_depth + bias`.
+
+4. **Inter-layer epsilon `0.000001` too small.** Coplanar or near-coplanar hair cards and eyelashes collapsed into the same peel layer. Layer 1+ discards treated them as already covered, making them invisible. Raising to `0.0002` helped but exposed the next problem.
+
+5. **Depth precision kills transparency at normal zoom distances.** Even with the scene-depth check moved to the composite, the composite `peel_depth >= scene_depth + bias` comparison failed at typical avatar distances: transparent surfaces on opaque mesh (makeup, lace shorts over panties, lip material) have nearly identical depth values. The correct bias is view-distance-dependent in a non-linear depth buffer. No single constant works across close and far zoom.
+
+6. **Peel layer imprints on sky at far zoom.** At distance, peel depth values spread toward 1.0 (far plane), causing peel fragments to composite onto sky pixels. The sky has `scene_depth = 1.0`; any peel depth < 1.0 passed the composite depth check and painted transparent geometry color on the sky.
+
+### Why the approach was abandoned
+
+Fixed-count depth peeling has fundamental mismatches with SL avatar rendering:
+
+- Dense layered hair typically has 10–30 overlapping alpha surfaces per pixel. Four fixed layers capture only the front few; the rest are silently dropped.
+- The inter-layer epsilon must be large enough to separate real layers but small enough not to skip real geometry — impossible to tune for both hair cards (millimeter separation) and body-over-clothing (centimeter separation) at all zoom levels.
+- The composite depth test must be loose enough to allow makeup/lace on skin but tight enough to block geometry clearly behind a wall — also not a stable constant in a perspective depth buffer.
+- Every iteration re-renders all avatar alpha geometry, making this 4× the cost of a single WBOIT pass for a worse visual result.
+
+**The two-layer WBOIT (world pass + avatar pass) remains the active implementation.** The peel plan document (`doc/ayanestorm-special-wboit-photo-mode-plan.md`) is kept for reference but the approach is not recommended for a follow-up attempt without a fundamentally different strategy (e.g. linearized depth comparison, per-object layer budgets, or a hybrid WBOIT-remainder for overflow layers).
 
 Recommended next manual tests:
 
 - Hair/lashes in front of glass windows.
+- Worn eyeglasses over eyelashes and mesh-head eyesocket alpha.
 - Hair over opaque pavement/background.
 - Hair over head intersections.
 - Hair in front of sheer worn clothing, to verify WBOIT still avoids the old vanilla "hair erases sheer shirt" problem.
@@ -104,6 +143,7 @@ Use WBOIT for standard alpha blend surfaces, including avatar rigged hair and no
 ## Open Runtime Issues
 
 - Tinted glasses/windows need retesting after the two-layer WBOIT split. World glass should now composite before avatar/attachment WBOIT, so worn hair/lashes in front of windows should no longer be averaged into the same WBOIT layer as the glass.
+- Worn eyeglasses over face alpha are not matching earlier renderer behavior: glasses can look too opaque while eyelashes/eyesocket alpha behind them are not attenuated by the glasses.
 - Some glow objects are brighter in WBOIT than vanilla while others match, suggesting a material-specific glow/color interaction still needs isolation.
 - Dense rigged hair still needs testing after the skinned-alpha opacity boost. A coarse rigged depth-only prepass made this worse and should not be reintroduced without a better per-material or per-surface rule.
 - Alpha-blend textures with nearly opaque pixels and holes, such as cage/fence/vent surfaces, need retesting after the narrow `0.995` coverage-alpha promotion. Global foreground boosts helped these but caused regressions with glass.

@@ -35,11 +35,13 @@ Runtime-validated improvements:
 Current known issue:
 - The user's own layered hair can still look too transparent with WBOIT enabled. The user specifically reports seeing pavement/head/background through hair where hair strand texels should visually block the background.
 - Multiple opacity and weight tuning attempts were not sufficient. Stronger attachment alpha promotion darkened makeup/hair/eyelashes without fixing the perceived transparency.
+- Worn eyeglasses currently look too opaque, and eyelashes plus Lelutka head eyesocket alpha behind the glasses are not toned down by the glass like they were in an earlier renderer state. This points to missing ordered compositing inside the avatar/attachment WBOIT layer.
 - A self rigged high-alpha depth prepass was tested and rejected because it made hair much worse.
 - The two-layer WBOIT split tested much better for hair solidity and glass interaction, including the eyelashes-in-front-of-glass case, but avatar-side alpha can now look too dark.
 
 Debug/runtime settings currently relevant:
 - `RenderWBOIT`: enables/disables WBOIT.
+- `RenderAvatarPeelTransparency`: experimental fixed four-layer avatar/attachment alpha depth peel. When enabled, world/sim alpha still uses WBOIT, while avatar/attachment alpha uses peeled color/depth layers composited back-to-front. Default off.
 - `RenderWBOITDebugTint`: temporary diagnostic, default off. When enabled, all WBOIT fragments become magenta/opaque, proving the edited WBOIT shaders are active.
 - `RenderWBOITAttachmentAlphaBoost` was removed after testing. The subtle `0.35..0.85` coverage promotion did not fix hair transparency, and stronger variants made makeup/hair/eyelashes too dark.
 
