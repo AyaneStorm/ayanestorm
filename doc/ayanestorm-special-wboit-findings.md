@@ -4,7 +4,7 @@ Date: 2026-06-10
 
 ## Fresh Conversation Handoff
 
-Current date of this handoff: 2026-06-11. Updated: 2026-06-11 (peel experiment concluded).
+Current date of this handoff: 2026-06-12. Updated: 2026-06-13 (legacy-avatar hybrid removed; WBOIT DoF fix retained).
 
 The current WBOIT branch is in an experimental state. It is not just the original single-layer WBOIT implementation anymore. The active direction is the two-layer WBOIT split:
 
@@ -141,6 +141,49 @@ Use WBOIT for standard alpha blend surfaces, including avatar rigged hair and no
 - WBOIT accumulation was first split into two layers: world/sim alpha first, then avatar/attachment alpha over the world result. This substantially improved hair opacity and fixed the "eyelashes in front of glass make the window transparent" problem, but avatar-side content became too dark.
 - A global avatar-layer reveal-softening attempt was tested and reverted because it made background visible through hair again while hair, eyelashes, and makeup remained dark.
 - A three-layer split was tested and removed: world/sim alpha, rigged avatar alpha, then non-rigged attachment alpha. It regressed attachment beard vs rigged long hair ordering because the fixed rigged-before-attachment composite order could put beards incorrectly in front of hair.
+
+## Session 2026-06-12 — Reveal curve tuning + wboitAvatarLayer uniform
+
+### wboitAvatarLayer uniform (COMMITTED)
+
+Added `uniform int wboitAvatarLayer` to all 4 WBOIT shaders and set it from `LLDrawPoolAlpha::sWBOITAvatarLayer` in `prepare_alpha_shader`. Split `wboit_reveal_alpha`:
+- World layer (`wboitAvatarLayer == 0`): linear reveal `mix(a, 1.0, smoothstep(0.95, 1.0, a))` — glass/smoke match vanilla opacity.
+- Avatar layer (`wboitAvatarLayer != 0`): boosted reveal with adaptive exponent — hair stacks into solid coverage.
+
+Result: eyeglasses and world transparent objects now match vanilla brightness. Committed.
+
+### Reveal curve tuning (avatar layer)
+
+Tried multiple exponent approaches to fix hair/eyelashes being too dark and having "longer tips" (low-alpha pixels pushed too visible):
+
+| Attempt | Result |
+|---|---|
+| `pow(1-a, 1.65)` fixed | Hair solid but too dark, eyelashes elongated |
+| `pow(1-a, 1.2)` fixed | Hair too transparent |
+| `mix(1.65, 1.1, smoothstep(0.3, 0.7, a))` | Better but eyelashes still dark |
+| `mix(1.65, 1.0, smoothstep(0.3, 0.7, a))` | Eyelashes still darker than vanilla |
+| `mix(1.65, 1.0, smoothstep(0.05, 0.25, a))` | Better tips, hair acceptable, still slightly dark |
+| `mix(1.0, 1.65, smoothstep(0.3, 0.7, a))` (inverted) | Currently active — low-alpha tips linear, high-alpha dense regions boosted |
+
+Also added `weight_a = mix(wboit_a, 1.0, smoothstep(0.1, 0.5, wboit_a))` for avatar layer color weight — boosts color contribution without affecting reveal. User confirmed less dark color but hair more transparent. Both active together.
+
+**Key insight**: vanilla avatar alpha is NOT sorted back-to-front by depth. Rigged alpha groups are sorted by `CompareRenderOrder()` (attachment order) per `pipeline.cpp:3896`. Vanilla's correct appearance comes from attachment order happening to work for most hair styles, plus the rigged depth-write pass blocking geometry behind the avatar.
+
+**Key insight**: WBOIT is fundamentally better than vanilla for avatar hair because vanilla's "hair erases shirt" bug comes from batch-level sort (whole hair attachment renders last, overwrites shirt), not per-triangle sort.
+
+### Depth prepass attempt — FAILED, reverted
+
+Tried avatar-layer depth prepass before WBOIT accumulation. Failed immediately: WBOIT requires ALL overlapping fragments to accumulate. Blocking rear fragments with depth test creates holes where the weighted average is computed from incomplete data.
+
+### Legacy avatar with WBOIT world (ABANDONED AND REMOVED)
+
+Several attempts to render the complete avatar stack through the vanilla alpha path after compositing the WBOIT world were tested. Direct rendering and an isolated color/depth target both produced incorrect layered hair, movement trails, or transparency that did not match vanilla.
+
+The experiment has been fully removed, including its setting, render target, composite shader, shader registration, and filtering branches. The renderer is back to the established two-layer WBOIT path. Do not reintroduce a persistent setting for this experiment.
+
+### WBOIT DoF alpha-depth fix (RETAINED)
+
+The deferred alpha depth-only pass used by DoF creates a sharp alpha-card cutout around some unrigged hair. WBOIT now skips that extra transparent depth injection while vanilla continues to use the original pass unchanged. This fixes the reported DoF cutout in full WBOIT without changing full vanilla rendering.
 
 ## Open Runtime Issues
 
