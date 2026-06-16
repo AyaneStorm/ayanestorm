@@ -9905,10 +9905,12 @@ void LLPipeline::renderDeferredLighting()
             LL_PROFILE_GPU_ZONE("WBOIT composite");
 
             // screen_target is already bound — do not call bindTarget() again
-            gGL.setColorMask(true, false);
+            // Alpha blend ZERO/ONE_MINUS_SRC_ALPHA suppresses screen glow by reveal, matching vanilla per-draw glow suppression.
+            gGL.setColorMask(true, true);
 
             LLGLEnable blend(GL_BLEND);
-            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
+                          LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
 
             LLGLDepthTest depth(GL_FALSE);
 
@@ -9928,7 +9930,21 @@ void LLPipeline::renderDeferredLighting()
             gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
         };
 
+        // Find alpha pool once for deferred emissive calls below.
+        LLDrawPoolAlpha* wboit_alpha_pool = nullptr;
+        for (auto* p : mPools)
+        {
+            if (p->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                wboit_alpha_pool = static_cast<LLDrawPoolAlpha*>(p);
+                break;
+            }
+        }
+
         composite_wboit();
+        // Draw world-layer deferred emissives AFTER the composite so the composite's
+        // glow suppression does not suppress the emissive objects' own glow.
+        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
 
         // <AS:Chanayane> Snapshot world reveal before avatar pass clears wboitFBO.
         // wboitFBO attachment[1] still holds per-pixel world transmittance (= world reveal)
@@ -9968,6 +9984,8 @@ void LLPipeline::renderDeferredLighting()
         LLDrawPoolAlpha::sWBOITAvatarLayer = false;
 
         composite_wboit();
+        // Draw avatar-layer deferred emissives AFTER the composite.
+        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
 
         // Draw only alpha batches WBOIT cannot represent directly.
         // Standard world and avatar/attachment alpha are accumulated by the

@@ -59,6 +59,10 @@ bool LLDrawPoolAlpha::sWBOITRendered = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sWBOITClearNeeded = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sPostWBOITLegacyPass = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sWBOITAvatarLayer = false; // <AS:Chanayane>
+std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredEmissives; // <AS:Chanayane>
+std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredRiggedEmissives; // <AS:Chanayane>
+std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredPbrEmissives; // <AS:Chanayane>
+std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredPbrRiggedEmissives; // <AS:Chanayane>
 
 #define current_shader (LLGLSLShader::sCurBoundShaderPtr)
 
@@ -741,6 +745,38 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
     }
 }
 
+// <AS:Chanayane> WBOIT deferred emissive sub-pass — called from pipeline.cpp after composite_wboit()
+// so the composite's glow suppression does not suppress this layer's own emissive glow.
+void LLDrawPoolAlpha::runDeferredWBOITEmissives()
+{
+    bool has_emissives = !sDeferredEmissives.empty() || !sDeferredRiggedEmissives.empty() ||
+                         !sDeferredPbrEmissives.empty() || !sDeferredPbrRiggedEmissives.empty();
+    if (!has_emissives)
+    {
+        return;
+    }
+
+    gPipeline.enableLightsDynamic();
+
+    LLGLEnable blend_on(GL_BLEND);
+    gGL.setColorMask(true, true);
+    gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE, LLRender::BF_ONE);
+
+    if (!sDeferredEmissives.empty())        renderEmissives(sDeferredEmissives);
+    if (!sDeferredPbrEmissives.empty())     renderPbrEmissives(sDeferredPbrEmissives);
+    if (!sDeferredRiggedEmissives.empty())  renderRiggedEmissives(sDeferredRiggedEmissives);
+    if (!sDeferredPbrRiggedEmissives.empty()) renderRiggedPbrEmissives(sDeferredPbrRiggedEmissives);
+
+    sDeferredEmissives.clear();
+    sDeferredRiggedEmissives.clear();
+    sDeferredPbrEmissives.clear();
+    sDeferredPbrRiggedEmissives.clear();
+
+    LLGLSLShader::unbind();
+    gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+}
+// </AS:Chanayane>
+
 // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
 //void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, AttachmentFilter filter)
@@ -1083,70 +1119,65 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
             }
 
             // render emissive faces into alpha channel for bloom effects
-            // <AS:Chanayane> WBOIT — keep glow active by temporarily rendering
-            // the emissive sub-pass to the screen target alpha channel.
+            // <AS:Chanayane> WBOIT — defer the emissive sub-pass to after the composite so the
+            // composite's glow suppression (reveal*old_alpha) does not suppress this layer's own glow.
             bool has_emissives = !emissives.empty() || !pbr_emissives.empty() ||
                 !rigged_emissives.empty() || !pbr_rigged_emissives.empty();
             if (!depth_only && has_emissives)
             {
                 if (mForwardToWBOIT)
                 {
-                    // WBOIT accumulates color into its own MRT, but glow still
-                    // belongs in the screen target alpha channel for bloom.
-                    gPipeline.mRT->wboitFBO.flush();
+                    // Collect into per-layer deferred vectors; pipeline.cpp draws them after composite.
+                    sDeferredEmissives.insert(sDeferredEmissives.end(), emissives.begin(), emissives.end());
+                    sDeferredRiggedEmissives.insert(sDeferredRiggedEmissives.end(), rigged_emissives.begin(), rigged_emissives.end());
+                    sDeferredPbrEmissives.insert(sDeferredPbrEmissives.end(), pbr_emissives.begin(), pbr_emissives.end());
+                    sDeferredPbrRiggedEmissives.insert(sDeferredPbrRiggedEmissives.end(), pbr_rigged_emissives.begin(), pbr_rigged_emissives.end());
                 }
-
-                gPipeline.enableLightsDynamic();
-
-                // install glow-accumulating blend mode
-                // don't touch color, add to alpha (glow)
-                gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE, LLRender::BF_ONE);
-
-                bool rebind = false;
-                LLGLSLShader* lastShader = current_shader;
-                if (!emissives.empty())
+                else
                 {
-                    light_enabled = true;
-                    renderEmissives(emissives);
-                    rebind = true;
-                }
+                    gPipeline.enableLightsDynamic();
 
-                if (!pbr_emissives.empty())
-                {
-                    light_enabled = true;
-                    renderPbrEmissives(pbr_emissives);
-                    rebind = true;
-                }
+                    // install glow-accumulating blend mode
+                    // don't touch color, add to alpha (glow)
+                    gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE, LLRender::BF_ONE);
 
-                if (!rigged_emissives.empty())
-                {
-                    light_enabled = true;
-                    renderRiggedEmissives(rigged_emissives);
-                    rebind = true;
-                }
+                    bool rebind = false;
+                    LLGLSLShader* lastShader = current_shader;
+                    if (!emissives.empty())
+                    {
+                        light_enabled = true;
+                        renderEmissives(emissives);
+                        rebind = true;
+                    }
 
-                if (!pbr_rigged_emissives.empty())
-                {
-                    light_enabled = true;
-                    renderRiggedPbrEmissives(pbr_rigged_emissives);
-                    rebind = true;
-                }
+                    if (!pbr_emissives.empty())
+                    {
+                        light_enabled = true;
+                        renderPbrEmissives(pbr_emissives);
+                        rebind = true;
+                    }
 
-                // restore our alpha blend mode
-                gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
+                    if (!rigged_emissives.empty())
+                    {
+                        light_enabled = true;
+                        renderRiggedEmissives(rigged_emissives);
+                        rebind = true;
+                    }
 
-                if (lastShader && rebind)
-                {
-                    lastShader->bind();
-                }
+                    if (!pbr_rigged_emissives.empty())
+                    {
+                        light_enabled = true;
+                        renderRiggedPbrEmissives(pbr_rigged_emissives);
+                        rebind = true;
+                    }
 
-                if (mForwardToWBOIT)
-                {
-                    gPipeline.mRT->wboitFBO.bindTarget();
-                    GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-                    glDrawBuffers(2, draw_bufs);
-                    glBlendFunci(0, GL_ONE, GL_ONE);
-                    glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);
+                    // restore our alpha blend mode
+                    gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
+
+                    if (lastShader && rebind)
+                    {
+                        lastShader->bind();
+                    }
                 }
             }
             // </AS:Chanayane>

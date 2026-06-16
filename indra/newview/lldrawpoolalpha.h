@@ -95,6 +95,16 @@ public:
     static bool sPostWBOITLegacyPass;
     // When true, WBOIT accumulation draws avatar/attachment alpha over the already-composited world layer.
     static bool sWBOITAvatarLayer;
+
+    // Emissives collected during a WBOIT accumulation layer, drawn after the composite
+    // so the composite's glow suppression does not suppress the emissive object's own glow.
+    static std::vector<LLDrawInfo*> sDeferredEmissives;
+    static std::vector<LLDrawInfo*> sDeferredRiggedEmissives;
+    static std::vector<LLDrawInfo*> sDeferredPbrEmissives;
+    static std::vector<LLDrawInfo*> sDeferredPbrRiggedEmissives;
+
+    // Draw and clear the per-layer deferred emissive vectors. Call after composite_wboit().
+    void runDeferredWBOITEmissives();
     // </AS:Chanayane>
 
 private:
