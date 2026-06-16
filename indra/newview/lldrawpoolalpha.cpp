@@ -119,6 +119,15 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
     shader->uniform1i(debugWBOITTint, debug_wboit_tint ? 1 : 0);
     shader->uniform1i(wboitAvatarLayer, LLDrawPoolAlpha::sWBOITAvatarLayer ? 1 : 0);
+    // Bind the world-reveal snapshot so avatar WBOIT shaders can attenuate by world glass transmittance.
+    if (LLDrawPoolAlpha::sWBOITAvatarLayer)
+    {
+        S32 channel = shader->enableTexture(LLShaderMgr::WBOIT_WORLD_REVEAL);
+        if (channel > -1)
+        {
+            gPipeline.mRT->wboitWorldRevealFBO.bindTexture(0, channel, LLTexUnit::TFO_POINT);
+        }
+    }
     // </AS:Chanayane>
 
     if (LLPipeline::sRenderingHUDs)

@@ -727,6 +727,9 @@ public:
         // <AS:Chanayane> WBOIT MRT — attachment0=accum(RGBA16F), attachment1=reveal(RGBA16F)
         // Only allocated for mMainRT (not auxiliary/hero/cube).
         LLRenderTarget          wboitFBO;
+        // Snapshot of the world-layer reveal taken after world composite and before avatar pass.
+        // Sampled by avatar WBOIT shaders to attenuate hair/lashes by world glass transmittance.
+        LLRenderTarget          wboitWorldRevealFBO;
         // </AS:Chanayane>
 
         //sun shadow map

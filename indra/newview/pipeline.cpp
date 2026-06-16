@@ -999,6 +999,10 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;
         // deferredScreen owns the depth texture; screen and wboitFBO share it from there
         mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
+        // World-reveal snapshot: blitted from wboitFBO.attachment1 after world composite
+        // so avatar WBOIT shaders can sample world glass transmittance per pixel.
+        mRT->wboitWorldRevealFBO.release();
+        if (!mRT->wboitWorldRevealFBO.allocate(resX, resY, GL_RGBA16F)) return false;
         // </AS:Chanayane>
 
         if (RenderUIBuffer)
@@ -1403,6 +1407,7 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredLight.release();
     // <AS:Chanayane> WBOIT
     mRT->wboitFBO.release();
+    mRT->wboitWorldRevealFBO.release();
     // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
@@ -9924,6 +9929,23 @@ void LLPipeline::renderDeferredLighting()
         };
 
         composite_wboit();
+
+        // <AS:Chanayane> Snapshot world reveal before avatar pass clears wboitFBO.
+        // wboitFBO attachment[1] still holds per-pixel world transmittance (= world reveal)
+        // from the world accumulation pass. Blit it to wboitWorldRevealFBO so avatar WBOIT
+        // shaders can sample it to attenuate hair/lashes behind world glass.
+        if (mRT->wboitWorldRevealFBO.getFBO() && mRT->wboitFBO.getFBO())
+        {
+            GLint prev_fbo = LLRenderTarget::sCurFBO;
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->wboitFBO.getFBO());
+            glReadBuffer(GL_COLOR_ATTACHMENT1);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->wboitWorldRevealFBO.getFBO());
+            glBlitFramebuffer(0, 0, mRT->wboitFBO.getWidth(), mRT->wboitFBO.getHeight(),
+                              0, 0, mRT->wboitWorldRevealFBO.getWidth(), mRT->wboitWorldRevealFBO.getHeight(),
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
+        }
+        // </AS:Chanayane>
 
         // Render avatar/attachment alpha into a fresh WBOIT layer and composite
         // it over the already-composited world alpha. This keeps WBOIT within
