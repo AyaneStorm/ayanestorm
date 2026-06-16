@@ -185,6 +185,34 @@ The experiment has been fully removed, including its setting, render target, com
 
 The deferred alpha depth-only pass used by DoF creates a sharp alpha-card cutout around some unrigged hair. WBOIT now skips that extra transparent depth injection while vanilla continues to use the original pass unchanged. This fixes the reported DoF cutout in full WBOIT without changing full vanilla rendering.
 
+## Session 2026-06-16 — World-reveal attenuation for avatar layer (CONFIRMED PARTIAL)
+
+### wboitWorldRevealFBO blit approach
+
+After world composite, `wboitFBO.attachment[1]` still holds the world-layer reveal data (composite reads it but leaves it intact). A new `wboitWorldRevealFBO` (RGBA16F, no depth) was added to `RenderTargetPack` and allocated alongside `wboitFBO` in `pipeline.cpp`.
+
+After `composite_wboit()` for the world pass, the reveal attachment is blitted to `wboitWorldRevealFBO` via `glBlitFramebuffer` (`glReadBuffer(GL_COLOR_ATTACHMENT1)` selects it as read source). This snapshot happens before `sWBOITClearNeeded = true` resets the FBO for the avatar pass.
+
+In `prepare_alpha_shader`, when `sWBOITAvatarLayer` is true, `wboitWorldRevealFBO` is bound to the new `LLShaderMgr::WBOIT_WORLD_REVEAL` slot (`"worldRevealTex"` sampler). The slot was added to `llshadermgr.h` enum and `llshadermgr.cpp` name array.
+
+All 4 WBOIT fragment shaders (`alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl`, `materialF.glsl`) got:
+- `uniform sampler2D worldRevealTex;` in the `#ifdef WBOIT` block
+- `wboit_a *= texelFetch(worldRevealTex, ivec2(gl_FragCoord.xy), 0).r;` when `wboitAvatarLayer != 0`
+
+`texelFetch` used instead of `texture()` to avoid needing `screen_res` (only conditionally declared in pbralphaF.glsl under `#ifdef HAS_SUN_SHADOW`).
+
+**Why the original approach (sampling screen color alpha) was rejected**: `composite_wboit()` uses `gGL.setColorMask(true, false)`, suppressing all alpha writes to the screen buffer. `1 - world_reveal` is computed in the composite shader but never stored anywhere accessible. The blit is the only correct approach.
+
+### Test results (2026-06-16)
+
+- **Eyelashes behind eyeglasses**: CONFIRMED FIXED. Eyelashes are visibly attenuated when behind worn eyeglasses. Stronger glass opacity → stronger attenuation, as expected.
+- **Rigged transparent attachments behind glass**: still unattenuated. Rigged hair and a rigged lace vest worn by another avatar both appear unattenuated through a glass panel. Root cause TBD — likely either the avatar layer blit timing, or `prepare_alpha_shader` not binding the texture for those specific shader variants.
+
+### Known tradeoffs
+
+- Screen-space only: hair physically in front of glass at the same screen pixel is slightly over-attenuated. Accepted as minor.
+- No world-glass attenuation for non-rigged transparent attachments — those are in the world layer themselves and composite before the snapshot is taken.
+
 ## Open Runtime Issues
 
 - Tinted glasses/windows need retesting after the two-layer WBOIT split. World glass should now composite before avatar/attachment WBOIT, so worn hair/lashes in front of windows should no longer be averaged into the same WBOIT layer as the glass.
