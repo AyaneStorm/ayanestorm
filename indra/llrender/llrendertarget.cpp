@@ -351,6 +351,24 @@ void LLRenderTarget::shareDepthBuffer(LLRenderTarget& target)
     }
 }
 
+// <AS:Chanayane>
+void LLRenderTarget::refreshSharedDepth(LLRenderTarget& target)
+{
+    llassert(!isBoundInStack());
+    llassert(mDepth);         // caller (depth owner) must have a depth texture
+    llassert(target.mFBO);    // target must have an FBO to attach into
+
+    // Detach whatever depth is currently on the target (owned or shared).
+    glBindFramebuffer(GL_FRAMEBUFFER, target.mFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, LLTexUnit::getInternalType(mUsage), 0, 0);
+    target.mUseDepth = false;
+    glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+
+    // Re-attach the current (freshly allocated) depth texture.
+    shareDepthBuffer(target);
+}
+// </AS:Chanayane>
+
 void LLRenderTarget::release()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;

@@ -31,6 +31,8 @@
 #define NON_INDEXED 2
 #define NON_INDEXED_NO_COLOR 3
 
+// <AS:Chanayane> WBOIT helpers — mirrored in pbralphaF.glsl, materialF.glsl, fullbrightF.glsl.
+// Keep all four copies in sync when tuning weight/reveal curves.
 #ifdef WBOIT
 const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
 out vec4 frag_data[2];

@@ -267,26 +267,24 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             sWBOITClearNeeded = false;
         }
 
-        mForwardToWBOIT = true;
-        // forwardRender(false, ATTACHMENT_NONE);
-        // forwardRender(true,  ATTACHMENT_ALL);
-        // forwardRender(false, ATTACHMENT_ONLY);
-        if (sWBOITAvatarLayer)
         {
-            // Avatar layer: rigged content only (hair, rigged eyelashes, skinned mesh).
-            // Non-rigged attachments (eyeglasses, non-rigged lashes, beard prims) were
-            // composited in the world layer so they correctly attenuate what is behind them
-            // before rigged avatar content is blended on top.
-            forwardRender(true, ATTACHMENT_ALL);
+            WBOITScope wboit_scope(*this); // <AS:Chanayane> RAII: resets mForwardToWBOIT on exit
+            if (sWBOITAvatarLayer)
+            {
+                // Avatar layer: rigged content only (hair, rigged eyelashes, skinned mesh).
+                // Non-rigged attachments (eyeglasses, non-rigged lashes, beard prims) were
+                // composited in the world layer so they correctly attenuate what is behind them
+                // before rigged avatar content is blended on top.
+                forwardRender(true, ATTACHMENT_ALL);
+            }
+            else
+            {
+                // World layer: sim-rezzed non-rigged AND non-rigged worn attachments (eyeglasses etc).
+                // Compositing these first lets them attenuate the scene before rigged avatar alpha.
+                forwardRender(false, ATTACHMENT_NONE);
+                forwardRender(false, ATTACHMENT_ONLY);
+            }
         }
-        else
-        {
-            // World layer: sim-rezzed non-rigged AND non-rigged worn attachments (eyeglasses etc).
-            // Compositing these first lets them attenuate the scene before rigged avatar alpha.
-            forwardRender(false, ATTACHMENT_NONE);
-            forwardRender(false, ATTACHMENT_ONLY);
-        }
-        mForwardToWBOIT = false;
         sWBOITRendered = true;
         // screen RT is already restored by the final wboitFBO.flush() inside forwardRender
     }
@@ -309,8 +307,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // </AS:Chanayane>
 
     // final pass, render to depth for depth of field effects
-    // <AS:Chanayane> WBOIT fix for DoF
-    //if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    // <AS:Chanayane> WBOIT: skip DoF depth-write pass when WBOIT is on — it punches holes
+    // in unrigged hair cards whose alpha is coverage-based, not translucency-based.
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot &&
         !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER &&
         !render_wboit)

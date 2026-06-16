@@ -1066,6 +1066,14 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         mBakeMap.allocate(LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT, GL_RGBA);
         }// <FS:Beq/> create an independent preview screen target
     }
+    else if (mRT->wboitFBO.getFBO())
+    {
+        // <AS:Chanayane> Cube-snapshot path: deferredScreen was reallocated above (new depth
+        // texture) but wboitFBO was skipped. Re-attach the fresh depth so wboitFBO is not
+        // pointing at the old deleted texture.
+        mRT->deferredScreen.refreshSharedDepth(mRT->wboitFBO);
+        // </AS:Chanayane>
+    }
     //HACK make screenbuffer allocations start failing after 30 seconds
     if (gSavedSettings.getBOOL("SimulateFBOFailure"))
     {

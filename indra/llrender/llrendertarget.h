@@ -115,6 +115,10 @@ public:
 
     //share depth buffer with provided render target
     void shareDepthBuffer(LLRenderTarget& target);
+    // <AS:Chanayane> Re-share depth after the owning target is reallocated (e.g. cube snapshot
+    // path where the sharing target's FBO survives but the depth texture is replaced).
+    void refreshSharedDepth(LLRenderTarget& target);
+    // </AS:Chanayane>
 
     //free any allocated resources
     //safe to call redundantly

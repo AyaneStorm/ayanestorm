@@ -126,6 +126,14 @@ private:
 
     // <AS:Chanayane> WBOIT — true while accumulation passes are active
     bool mForwardToWBOIT = false;
+    // RAII guard: sets mForwardToWBOIT true for its lifetime, resets to false on destruction
+    // even if forwardRender exits via an early-return or assert-skip.
+    struct WBOITScope
+    {
+        LLDrawPoolAlpha& pool;
+        WBOITScope(LLDrawPoolAlpha& p) : pool(p) { pool.mForwardToWBOIT = true; }
+        ~WBOITScope() { pool.mForwardToWBOIT = false; }
+    };
     // </AS:Chanayane>
 };
 
