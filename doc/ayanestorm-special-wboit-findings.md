@@ -213,11 +213,246 @@ All 4 WBOIT fragment shaders (`alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl
 - Screen-space only: hair physically in front of glass at the same screen pixel is slightly over-attenuated. Accepted as minor.
 - No world-glass attenuation for non-rigged transparent attachments — those are in the world layer themselves and composite before the snapshot is taken.
 
+## Session 2026-06-17 — Depth-gated world-reveal attenuation (FAILED, REVERTED PARTIALLY)
+
+### Root cause analysis
+
+The hair glitch introduced by commit `128bd6b9fa` ("fixed eyelashes behind glasses") was confirmed by bisection. The `wboit_a *= worldReveal` attenuation suppresses **all** avatar WBOIT fragments at pixels where any world alpha object rendered — not just glass. A tree or fence at alpha=0.5 leaves world reveal=0.5 at its pixels; any avatar hair behind it on screen gets `wboit_a *= 0.5`. When the camera moves, different pixels are evaluated and hair reappears. This is the hair glitch.
+
+### Depth-gated attenuation attempt
+
+Added a third attachment to `wboitFBO` — a `GL_R32F` min-depth buffer (attachment[2]). During world WBOIT accumulation, each fragment writes `gl_FragCoord.z` to attachment[2] with `glBlendEquationi(2, GL_MIN)`, so each pixel stores the depth of the nearest world alpha fragment. After the world composite, attachment[2] is blitted to a new `wboitWorldDepthFBO`. In the avatar WBOIT shaders, the attenuation is depth-gated: `worldReveal` is only applied if `world_depth < gl_FragCoord.z` (world alpha is in front of this avatar fragment).
+
+**Wiring changes**: `WBOIT_WORLD_DEPTH` / `"worldDepthTex"` added to `llshadermgr.h/cpp`. `wboitWorldDepthFBO` added to `pipeline.h/cpp` (allocate, release, blit). `sWBOITClearNeeded` block clears attachment[2] to 1.0 (= far plane = no world alpha) only before the world pass, not the avatar pass. Avatar pass uses only 2 draw buffers so the blit is not overwritten.
+
+**Test results (2026-06-17)**:
+- Hair glitch **not fixed**. Transparent hair parts still disappear and reappear with camera movement.
+- Eyelash attenuation by eyeglasses **broken** — no longer visible.
+
+### Why it failed
+
+Two separate problems:
+
+**1. Depth comparison is wrong in NDC space.** `gl_FragCoord.z` is the non-linear NDC depth (0=near, 1=far). The min-depth FBO stores the minimum NDC depth across all world alpha fragments. For a world alpha object in front of the avatar, its NDC depth is **smaller** than the avatar fragment's NDC depth — so `world_depth < gl_FragCoord.z` should be true. However if the world alpha object is behind the avatar, `world_depth > gl_FragCoord.z`. In theory this is correct, but if the min-depth buffer was not properly cleared or the blit didn't work, world_depth could be stale values that pass or fail the test incorrectly. The hair glitch persisting suggests the depth gate is either not activating (no attenuation applied at all, breaking eyelashes) or activating everywhere (hair suppressed), depending on what `worldDepthTex` actually contains.
+
+**2. The core problem is that the depth-gate either always fires or never fires**, depending on FBO attachment ordering and whether the blit captures the right data. The `wboitFBO` now has 3 attachments; `addColorAttachment` appends in order, so attachment[2] is the third `addColorAttachment` call (GL_R32F). The blit reads `GL_COLOR_ATTACHMENT2` — this must match the allocation order. If `LLRenderTarget::addColorAttachment` uses a different index scheme internally, the blit reads the wrong attachment.
+
+**3. The eyelash fix breaking** suggests that when `world_depth >= gl_FragCoord.z` (the gate doesn't fire), no attenuation is applied — meaning the world depth in front of eyelashes is reporting as behind them, so the gate never triggers for eyeglasses in front of eyelashes.
+
+### Conclusion
+
+The depth-gated approach is architecturally correct but the implementation has a depth comparison or FBO attachment ordering issue that was not resolved. The fundamental challenge: NDC depth from `gl_FragCoord.z` is non-linear and monotonically increases with distance, so `world_depth < gl_FragCoord.z` should mean "world object is closer to camera." If eyeglasses are in front of eyelashes, glasses NDC depth < eyelash NDC depth, so the gate should fire. That it doesn't suggests the blit is capturing the wrong data or the min-depth is not being written correctly during the world pass.
+
+### What was not tried
+
+- Verifying what `wboitFBO.attachment[2]` actually contains via debug tint or readback.
+- Checking whether `LLRenderTarget::addColorAttachment` correctly maps the third call to `GL_COLOR_ATTACHMENT2`.
+- Linear depth for comparison (divide by far plane) to remove NDC non-linearity from the equation.
+- An epsilon/bias on the depth comparison to handle coplanar surfaces.
+
+### Current state of the code
+
+The depth-gated implementation remains in the code (not reverted) as of session end. The 4 WBOIT shaders have `frag_data[3]`, `worldDepthTex` uniform, and the depth-gated attenuation block. `wboitWorldDepthFBO` is allocated and blitted. The fix is incomplete and hair glitch + eyelash attenuation are both broken. This needs further investigation before shipping.
+
+## Session 2026-06-17 (continued) — Snapshot isolation fix
+
+### Root cause of hair glitch (RESOLVED)
+
+Two bugs were identified and fixed:
+
+**Bug 1 — Snapshot FBOs cleared during avatar pass.** `wboitWorldRevealFBO` and `wboitWorldDepthFBO` were cleared to 1.0 inside the `sWBOITClearNeeded` block, which fires for BOTH the world pass clear and the avatar pass clear. The blit (world composite → snapshot FBOs) happened between the two clears, so the avatar-pass clear wiped the blit data before avatar shaders could sample it. Fix: moved snapshot FBO clears inside the `if (!sWBOITAvatarLayer)` guard so they only clear before the world pass.
+
+**Bug 2 — Sim-rezzed world objects in reveal snapshot.** The world WBOIT layer accumulates both sim-rezzed objects (`ATTACHMENT_NONE`: fences, windows, trees) and worn non-rigged attachments (`ATTACHMENT_ONLY`: eyeglasses). The original blit captured combined reveal from attachment[1], which included sim fences and windows. Any sim-world alpha object in front of the avatar would depth-gate and attenuate hair. Observed as: ghost window/fence/grill patterns on avatar hair that move opposite to camera rotation (same direction as world objects) — confirmed by user on any avatar, not just those wearing eyeglasses.
+
+**Fix:** Added a 4th attachment to `wboitFBO` (attachment[2] = worn-attachment-only reveal, attachment[3] = min worn-attachment depth). The world WBOIT pass is split into two sub-passes controlled by `sWBOITAttachmentSubPass`:
+- Sim sub-pass (`ATTACHMENT_NONE`): writes only attachment[0] (accum) and [1] (combined reveal for composite).
+- Attachment sub-pass (`ATTACHMENT_ONLY`): additionally writes attachment[2] (worn-attachment reveal) and [3] (min worn-attachment depth) using same blend modes as [1] and GL_MIN respectively.
+
+The blit after world composite now captures attachment[2] → `wboitWorldRevealFBO` and attachment[3] → `wboitWorldDepthFBO`. Avatar WBOIT shaders sample these — only worn-accessory transparency attenuates avatar hair, never sim-world fences or windows.
+
+All 4 WBOIT shaders updated: `frag_data[4]`, `frag_data[2] = reveal` (attachment-only), `frag_data[3] = depth`. Draw buffer mask controls which writes land in the FBO per sub-pass.
+
+### Eyelash-behind-glasses fix status
+
+Eyelashes behind eyeglasses confirmed fixed by user after Bug 1 fix (snapshot not wiped). Still works correctly after the attachment isolation fix since eyeglasses are `ATTACHMENT_ONLY` — their reveal lands in attachment[2] which is what the avatar shaders sample.
+
+## Session 2026-06-17 (continued 3) — Shadow map ghost pattern root cause (PENDING TEST)
+
+### Root cause of ghost pattern on avatar hair
+
+After the attachment isolation fix landed (session 2026-06-17 continued), avatar hair and eyelashes were reported completely invisible on some avatars. Separately, a "ghost pattern" bug existed: transparent hair and eyelashes were cut by patterns that looked like inverted, rotated, wrong-sized versions of opaque world geometry not visible from the main camera.
+
+The ghost pattern was confirmed to be shadow map data by user observation:
+- Ghost objects were different size than the real objects (sometimes smaller, sometimes bigger)
+- Same ghost rotated ~90° clockwise when camera was rotated around avatar
+- Ghost showed opaque objects that were NOT visible from main camera (e.g. chimneys behind a building)
+- Ghost was inverted up/down relative to the world
+- Sky appeared transparent; opaque surfaces appeared dark
+
+All of these are characteristic of a shadow map sampled with screen-space coordinates.
+
+### Root cause: texture unit collision via `bindDeferredShader`
+
+`prepare_alpha_shader` in `lldrawpoolalpha.cpp` sets `shader->mCanBindFast = false` and calls `shader->bind()` — but does NOT call `bindDeferredShader`. The deferred shader setup (which binds shadow maps, reflection probes, etc.) is deferred to the first draw batch, which calls `bindDeferredShaderFast`. When `mCanBindFast = false`, `bindDeferredShaderFast` falls through to the slow path and calls `bindDeferredShader`, which in turn calls `bindShadowMaps` and `bindReflectionProbes`.
+
+This means: `bindShadowMaps` runs AFTER `prepare_alpha_shader` set up `worldRevealTex` and `worldDepthTex` bindings. `bindShadowMaps` rebinds shadow maps to their driver-assigned units (in range 0..`mActiveTextureChannels`-1). If `worldRevealTex` or `worldDepthTex` had been assigned units in that same range by `enableTexture`, `bindShadowMaps` would overwrite those bindings with shadow map textures.
+
+When `worldRevealTex` contained shadow map data instead of `wboitWorldRevealFBO`:
+- Shadow map values near 0.0 (shadowed) multiplied `wboit_a` toward 0.0 → hair fragments nearly discarded → **all transparent gone** on shadowed avatars
+- Shadow map values at non-matching scale/orientation → **ghost pattern** cutting through hair
+
+### Fix: force worldRevealTex and worldDepthTex to units above `mActiveTextureChannels`
+
+All driver-assigned samplers live in units 0..`mActiveTextureChannels`-1. Units at `mActiveTextureChannels` and above are never touched by `bindShadowMaps`, `bindReflectionProbes`, or any per-batch binding code.
+
+The fix replaces `enableTexture`/`bindTexture` with explicit `uniform1i` + `bindManual` using `mActiveTextureChannels` as the forced unit base:
+
+```cpp
+// In prepare_alpha_shader, inside if (LLDrawPoolAlpha::sWBOITAvatarLayer):
+S32 rev_unit = shader->mActiveTextureChannels;
+S32 dep_unit = shader->mActiveTextureChannels + 1;
+if (shader->getUniformLocation(LLShaderMgr::WBOIT_WORLD_REVEAL) >= 0)
+{
+    shader->uniform1i(LLShaderMgr::WBOIT_WORLD_REVEAL, rev_unit);
+    gGL.getTexUnit(rev_unit)->bindManual(LLTexUnit::TT_TEXTURE,
+        gPipeline.mRT->wboitWorldRevealFBO.getTexture(0));
+}
+if (shader->getUniformLocation(LLShaderMgr::WBOIT_WORLD_DEPTH) >= 0)
+{
+    shader->uniform1i(LLShaderMgr::WBOIT_WORLD_DEPTH, dep_unit);
+    gGL.getTexUnit(dep_unit)->bindManual(LLTexUnit::TT_TEXTURE,
+        gPipeline.mRT->wboitWorldDepthFBO.getTexture(0));
+}
+```
+
+`uniform1i` bypasses `mapUniformTextureChannel` (which would go through the driver-assigned pool) and writes directly to the GPU uniform. `bindManual` calls `activate()`+`enable()`+`glBindTexture` on the forced unit — safe to call on an otherwise idle unit.
+
+### GL_R32F → GL_RGBA16F
+
+`wboitFBO` attachment[3] and `wboitWorldDepthFBO` were originally allocated as `GL_R32F`. `LLRenderTarget::addColorAttachment(GL_R32F)` calls `setManualImage` with `GL_RGBA` / `GL_UNSIGNED_BYTE` as pixel format/type — mismatched channel count and type for a float single-channel format. Most drivers accept NULL data regardless, but changed to `GL_RGBA16F` for consistency with other WBOIT attachments and to avoid any driver-specific rejection.
+
+### Expected fix outcome (SUPERSEDED BY 2026-06-18 TESTING)
+
+- Hair/eyelashes visible again on all avatars (no more all-transparent-gone from shadow map near-zero values)
+- No more ghost shadow-map pattern cutting through avatar hair
+- Eyelash attenuation by eyeglasses still works (snapshot data unaffected; only the unit assignment changed)
+
+## Session 2026-06-18 — Worn-reveal attenuation rollback
+
+### User-visible failures confirmed
+
+The attachment-isolated reveal/depth snapshot and texture-unit fix did **not** produce a shippable result.
+
+Observed failures:
+
+- Ghost objects cut through **all avatar-layer transparent content**, not only hair: eyelashes, sheer dresses, knit-hole tops, and other transparent avatar attachments were affected.
+- The ghost shapes looked like opaque world geometry sampled from the wrong projection: wrong size, sometimes inverted vertically, sometimes rotated ~90 degrees, and sometimes showing opaque objects not visible from the main camera.
+- After forcing `worldRevealTex` / `worldDepthTex` to manual texture units, almost all avatar transparency disappeared. Most avatars lost transparent hair, eyelashes, sheer clothing, and similar alpha content. A few exceptions still rendered, likely because those assets used a different path or technique.
+- Removing the depth gate did not restore transparency. This proved `worldDepthTex` was not the only problem.
+- Reverting `frag_data[4]` back to `frag_data[3]` and removing the depth snapshot infrastructure still did not fully recover transparency while `worldRevealTex` attenuation remained active.
+- Final rollback removed the shader-side `wboit_a *= texelFetch(worldRevealTex, ...).r` attenuation. After that, avatar attachment transparency returned, but eyelashes are again **not attenuated by eyeglasses**.
+
+### Conclusions
+
+The `worldRevealTex` attenuation approach is currently too fragile for the alpha accumulation shaders.
+
+The working theory after testing:
+
+- The shadow-map-looking ghost was caused by `worldRevealTex` effectively sampling data that was not the intended reveal snapshot, or by the reveal binding being overwritten during per-batch deferred shader setup.
+- The manual texture-unit fix using `mActiveTextureChannels` was insufficient. Different alpha shader variants can have different active texture-channel counts; a unit that is "free" for one shader can still be touched later by another shader's deferred/shadow binding path in the same frame.
+- `frag_data[4]` plus the fourth WBOIT attachment/depth snapshot added extra risk and was not needed once the depth gate was removed.
+- The depth-gated approach had already failed earlier; when the texture binding was changed, it exposed worse failure modes rather than fixing the underlying problem.
+
+### Current code direction after rollback
+
+Current intended state:
+
+- Keep the two-layer WBOIT split.
+- Keep world/sim alpha and worn non-rigged attachment handling as currently structured unless later cleanup removes unused snapshot plumbing.
+- Do **not** use `worldRevealTex` or `worldDepthTex` in avatar WBOIT fragment shaders.
+- Do **not** reintroduce `frag_data[4]` / attachment[3] / `wboitWorldDepthFBO` without a new, verified design.
+- Accept the known regression for now: eyelashes and mesh-head eyesocket alpha are not attenuated by worn eyeglasses.
+
+Remaining cleanup candidate:
+
+- Some `wboitWorldRevealFBO`, `sWBOITAttachmentSubPass`, and `WBOIT_WORLD_REVEAL` / `WBOIT_WORLD_DEPTH` plumbing may remain as dead or unused infrastructure after the rollback. It should either be removed in a cleanup pass or reused only by a redesigned solution.
+
+### Recommended next approach for eyeglasses
+
+Do not try to attenuate avatar fragments from inside every alpha accumulation shader using a screen-space sampler unless the texture binding path is proven robust across all shader variants and deferred bind paths.
+
+Safer future directions:
+
+- Apply eyeglass attenuation during the avatar WBOIT composite stage, where FBO texture inputs are already explicit and centralized.
+- Or add a narrow, separately rendered glasses/face-alpha interaction pass with controlled shader state.
+- Or accept the two-layer WBOIT tradeoff and leave eyeglass attenuation unsolved until a cleaner per-object/per-layer ordering design exists.
+
+## Ideas to Try Next — Eyeglasses / Eyesocket Attenuation
+
+The next serious attempt should move the eyeglass attenuation out of the many avatar alpha accumulation shaders and into a single controlled pass.
+
+### Composite-stage worn-accessory reveal mask
+
+Try applying eyeglass attenuation in the avatar WBOIT composite shader instead of in `alphaF`, `pbralphaF`, `fullbrightF`, and `materialF`.
+
+Proposed shape:
+
+- During the world/non-rigged attachment stage, capture a screen-space reveal/transmittance mask for worn non-rigged transparent attachments only (`ATTACHMENT_ONLY`), especially eyeglasses.
+- Do not include sim-rezzed world alpha such as windows, fences, trees, vents, smoke, or other scene geometry.
+- During the avatar WBOIT composite pass, sample that worn-accessory reveal mask and attenuate the final avatar transparent contribution:
+
+```glsl
+avatar_alpha *= worn_attachment_reveal;
+avatar_rgb   *= worn_attachment_reveal;
+```
+
+This is an approximation, but it avoids binding the mask texture across every alpha material shader variant. The composite path has one shader, explicit FBO inputs, and less interaction with per-batch deferred texture binding.
+
+Expected benefit:
+
+- Eyelashes and mesh-head eyesocket alpha should be dimmed by worn eyeglasses.
+- Avatar transparent attachments should not disappear due to shadow/probe sampler contamination.
+- Sim-world transparent geometry should not cut patterns into avatar hair/clothing, because it is not part of the worn-accessory mask.
+
+Known limitation:
+
+- Without depth gating, avatar alpha physically in front of glasses may also be attenuated at the same screen pixel. Test whether this is acceptable before adding complexity.
+
+### Add debug visualization before trusting the mask
+
+Add a temporary debug mode that displays the worn-accessory reveal mask directly.
+
+Validation criteria:
+
+- The mask should show worn eyeglasses and similar non-rigged worn transparent accessories.
+- The mask must **not** show sim windows, fences, trees, chimneys, shadow-map silhouettes, rotated/inverted geometry, sky, or opaque building shapes.
+- If the mask contains anything other than worn transparent accessories, do not wire it into avatar compositing.
+
+### Depth gate only after reveal-only works
+
+Do not reintroduce a depth-gated design first. Prove the reveal-only composite-stage attenuation works and does not break avatar transparency.
+
+If depth is still needed later:
+
+- Capture worn-accessory min depth in a controlled target.
+- Sample it only in the avatar composite shader.
+- Use a clear debug visualization for the depth mask before enabling it.
+- Add bias/epsilon carefully; the old `world_depth < gl_FragCoord.z` approach was not proven stable.
+
+### Alternative narrow pass
+
+If composite-stage attenuation is still too broad, try a dedicated glasses/face-alpha interaction pass:
+
+- Render only worn eyeglasses or explicitly tagged non-rigged transparent face accessories into a small controlled mask.
+- Apply that mask only to rigged face-adjacent alpha such as eyelashes and mesh-head eyesocket alpha.
+- Avoid making this a general-purpose world alpha solution.
+
 ## Open Runtime Issues
 
-- Tinted glasses/windows need retesting after the two-layer WBOIT split. World glass should now composite before avatar/attachment WBOIT, so worn hair/lashes in front of windows should no longer be averaged into the same WBOIT layer as the glass.
-- Worn eyeglasses over face alpha are not matching earlier renderer behavior: glasses can look too opaque while eyelashes/eyesocket alpha behind them are not attenuated by the glasses.
-- Some glow objects are brighter in WBOIT than vanilla while others match, suggesting a material-specific glow/color interaction still needs isolation.
+- Eyelash attenuation by worn eyeglasses is currently **not fixed** after rolling back shader-side `worldRevealTex` attenuation.
+- Verify that avatar transparent attachments remain visible after the rollback: rigged hair, eyelashes, sheer clothing, knit-hole clothing, and other avatar alpha content.
+- Verify that the shadow-map/ghost-object pattern is gone after removing shader-side `worldRevealTex` attenuation.
+- Glow fix (commit `c1901c36`) confirmed working — glow now matches vanilla.
+- Tinted glasses/windows need retesting after the two-layer WBOIT split.
 - Dense rigged hair still needs testing after the skinned-alpha opacity boost. A coarse rigged depth-only prepass made this worse and should not be reintroduced without a better per-material or per-surface rule.
-- Alpha-blend textures with nearly opaque pixels and holes, such as cage/fence/vent surfaces, need retesting after the narrow `0.995` coverage-alpha promotion. Global foreground boosts helped these but caused regressions with glass.
-- Eyelashes should not be classified as custom blend without direct batch evidence. A user-tested eyelash asset is alpha blend, so if it matches vanilla it may be because its geometry/material path happens to remain visually equivalent, not because it is necessarily outside WBOIT.
+- Alpha-blend textures with nearly opaque pixels and holes, such as cage/fence/vent surfaces, need retesting after the narrow `0.995` coverage-alpha promotion.

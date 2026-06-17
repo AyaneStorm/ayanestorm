@@ -58,10 +58,9 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
 #ifdef WBOIT
 const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
-out vec4 frag_data[2];
+out vec4 frag_data[3];
 uniform int debugWBOITTint;
 uniform int wboitAvatarLayer;
-uniform sampler2D worldRevealTex;
 float wboit_weight(float a, float depth) {
     return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
                  pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
@@ -466,15 +465,11 @@ void main()
         discard;
     }
     float wboit_a = wboit_coverage_alpha(wboit_skinned_alpha(out_color.a));
-    // <AS:Chanayane> Attenuate by world glass transmittance when in avatar layer
-    if (wboitAvatarLayer != 0) {
-        wboit_a *= texelFetch(worldRevealTex, ivec2(gl_FragCoord.xy), 0).r;
-    }
-    // </AS:Chanayane>
     float wboit_reveal = wboit_reveal_alpha(wboit_a);
     float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
     frag_data[0] = vec4(out_color.rgb * wboit_a, wboit_a) * wboit_w;
-    frag_data[1] = vec4(wboit_reveal);
+    frag_data[1] = vec4(wboit_reveal);   // combined reveal — used by composite
+    frag_data[2] = vec4(wboit_reveal);   // worn-attachment-only reveal — snapshotted for avatar attenuation
 #else
     frag_color = out_color;
 #endif

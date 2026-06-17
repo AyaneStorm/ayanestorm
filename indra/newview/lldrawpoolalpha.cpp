@@ -59,6 +59,7 @@ bool LLDrawPoolAlpha::sWBOITRendered = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sWBOITClearNeeded = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sPostWBOITLegacyPass = false; // <AS:Chanayane>
 bool LLDrawPoolAlpha::sWBOITAvatarLayer = false; // <AS:Chanayane>
+bool LLDrawPoolAlpha::sWBOITAttachmentSubPass = false; // <AS:Chanayane>
 std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredEmissives; // <AS:Chanayane>
 std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredRiggedEmissives; // <AS:Chanayane>
 std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredPbrEmissives; // <AS:Chanayane>
@@ -123,15 +124,6 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
     shader->uniform1i(debugWBOITTint, debug_wboit_tint ? 1 : 0);
     shader->uniform1i(wboitAvatarLayer, LLDrawPoolAlpha::sWBOITAvatarLayer ? 1 : 0);
-    // Bind the world-reveal snapshot so avatar WBOIT shaders can attenuate by world glass transmittance.
-    if (LLDrawPoolAlpha::sWBOITAvatarLayer)
-    {
-        S32 channel = shader->enableTexture(LLShaderMgr::WBOIT_WORLD_REVEAL);
-        if (channel > -1)
-        {
-            gPipeline.mRT->wboitWorldRevealFBO.bindTexture(0, channel, LLTexUnit::TFO_POINT);
-        }
-    }
     // </AS:Chanayane>
 
     if (LLPipeline::sRenderingHUDs)
@@ -267,15 +259,26 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     {
         if (sWBOITClearNeeded)
         {
-            // Clear accum to (0,0,0,0) and reveal to (1,1,1,1) once for the shared
-            // WBOIT MRT before the first alpha pool writes to it this frame.
+            // Clear accum to (0,0,0,0), reveal to (1,1,1,1).
+            // Snapshot FBOs and min-depth are only cleared before the world pass (see below).
             GLint prev_fbo = 0;
             glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
-            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitFBO.getFBO());
             static const GLfloat accum_clear[4]  = { 0.f, 0.f, 0.f, 0.f };
             static const GLfloat reveal_clear[4] = { 1.f, 1.f, 1.f, 1.f };
+            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitFBO.getFBO());
             glClearBufferfv(GL_COLOR, 0, accum_clear);
             glClearBufferfv(GL_COLOR, 1, reveal_clear);
+            if (!sWBOITAvatarLayer)
+            {
+                // Only clear world-pass-specific buffers before the world pass.
+                // Before the avatar pass these hold the blitted snapshots — don't overwrite them.
+                glClearBufferfv(GL_COLOR, 2, reveal_clear);  // attachment-only reveal: 1.0 = fully transparent
+                if (gPipeline.mRT->wboitWorldRevealFBO.getFBO())
+                {
+                    glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitWorldRevealFBO.getFBO());
+                    glClearBufferfv(GL_COLOR, 0, reveal_clear);
+                }
+            }
             glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
             sWBOITClearNeeded = false;
         }
@@ -294,8 +297,16 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             {
                 // World layer: sim-rezzed non-rigged AND non-rigged worn attachments (eyeglasses etc).
                 // Compositing these first lets them attenuate the scene before rigged avatar alpha.
+                // Sub-pass 1: sim-rezzed objects — writes only accum[0] and combined-reveal[1].
+                // Sub-pass 2: worn non-rigged attachments — additionally writes attachment-only-reveal[2]
+                //             and min-depth[3] that the avatar WBOIT shaders use for depth-gated attenuation.
+                //             Keeping these two captures separate means sim fences/windows do NOT
+                //             suppress avatar hair transparency.
+                sWBOITAttachmentSubPass = false;
                 forwardRender(false, ATTACHMENT_NONE);
+                sWBOITAttachmentSubPass = true;
                 forwardRender(false, ATTACHMENT_ONLY);
+                sWBOITAttachmentSubPass = false;
             }
         }
         sWBOITRendered = true;
@@ -386,10 +397,24 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     if (mForwardToWBOIT)
     {
         gPipeline.mRT->wboitFBO.bindTarget();
-        GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-        glDrawBuffers(2, draw_bufs);
         glBlendFunci(0, GL_ONE, GL_ONE);                    // accum: additive
-        glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // reveal: multiplicative
+        glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // combined reveal: multiplicative
+        if (!sWBOITAvatarLayer && sWBOITAttachmentSubPass)
+        {
+            // Worn-attachment sub-pass: additionally write attachment-only-reveal[2].
+            // Snapshotted after world composite; avatar WBOIT shaders sample it so only worn
+            // accessories (eyeglasses etc.) attenuate avatar hair/lashes, not sim fences/windows.
+            GLenum draw_bufs[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+            glDrawBuffers(3, draw_bufs);
+            glBlendFunci(2, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // attachment-only reveal: multiplicative
+        }
+        else
+        {
+            // Sim-rezzed sub-pass, avatar pass, or any other context:
+            // attachments[2] and [3] hold snapshot data — don't overwrite them.
+            GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+            glDrawBuffers(2, draw_bufs);
+        }
     }
     else
     // </AS:Chanayane>
@@ -420,6 +445,11 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     {
         glBlendFunci(0, GL_ONE, GL_ZERO);
         glBlendFunci(1, GL_ONE, GL_ZERO);
+        if (!sWBOITAvatarLayer && sWBOITAttachmentSubPass)
+        {
+            glBlendFunci(2, GL_ONE, GL_ZERO);      // restore attachment-only reveal blend
+            glBlendEquationi(3, GL_FUNC_ADD);      // restore default equation for min-depth slot
+        }
         // Keep LLRender's cached blend state in sync after raw glBlendFunci calls.
         // The composite pass will switch this back to normal alpha blending.
         gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ZERO);

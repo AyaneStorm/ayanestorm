@@ -95,6 +95,11 @@ public:
     static bool sPostWBOITLegacyPass;
     // When true, WBOIT accumulation draws avatar/attachment alpha over the already-composited world layer.
     static bool sWBOITAvatarLayer;
+    // When true, the current world sub-pass is rendering non-rigged worn attachments (ATTACHMENT_ONLY).
+    // These renders additionally write to wboitFBO attachment[2] (attach-only reveal) and [3] (min-depth)
+    // so the avatar WBOIT pass can attenuate hair/lashes by worn-glass transmittance without being
+    // affected by sim-rezzed world objects (fences, windows).
+    static bool sWBOITAttachmentSubPass;
 
     // Emissives collected during a WBOIT accumulation layer, drawn after the composite
     // so the composite's glow suppression does not suppress the emissive object's own glow.

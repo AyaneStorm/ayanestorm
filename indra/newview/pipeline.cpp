@@ -996,11 +996,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         // "already shared" assert.
         mRT->wboitFBO.release();
         if (!mRT->wboitFBO.allocate(resX, resY, GL_RGBA16F)) return false;
-        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;
+        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;   // attachment1: combined reveal (composite)
+        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;  // attachment2: worn-attachment-only reveal (snapshot)
         // deferredScreen owns the depth texture; screen and wboitFBO share it from there
         mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
-        // World-reveal snapshot: blitted from wboitFBO.attachment1 after world composite
-        // so avatar WBOIT shaders can sample world glass transmittance per pixel.
+        // Snapshot of world-layer worn-attachment reveal, taken after world composite.
+        // Avatar WBOIT shaders sample it so only worn accessories (eyeglasses) attenuate hair/lashes.
         mRT->wboitWorldRevealFBO.release();
         if (!mRT->wboitWorldRevealFBO.allocate(resX, resY, GL_RGBA16F)) return false;
         // </AS:Chanayane>
@@ -9946,19 +9947,21 @@ void LLPipeline::renderDeferredLighting()
         // glow suppression does not suppress the emissive objects' own glow.
         if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
 
-        // <AS:Chanayane> Snapshot world reveal before avatar pass clears wboitFBO.
-        // wboitFBO attachment[1] still holds per-pixel world transmittance (= world reveal)
-        // from the world accumulation pass. Blit it to wboitWorldRevealFBO so avatar WBOIT
-        // shaders can sample it to attenuate hair/lashes behind world glass.
+        // <AS:Chanayane> Snapshot worn-attachment reveal before avatar pass clears wboitFBO.
+        // wboitFBO attachment[2] = worn-attachment-only reveal (NOT sim fences/windows).
+        // Written only during the ATTACHMENT_ONLY sub-pass of the world WBOIT accumulation.
+        // Avatar WBOIT shaders sample it to attenuate hair/lashes by worn accessories (eyeglasses).
         if (mRT->wboitWorldRevealFBO.getFBO() && mRT->wboitFBO.getFBO())
         {
             GLint prev_fbo = LLRenderTarget::sCurFBO;
             glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->wboitFBO.getFBO());
-            glReadBuffer(GL_COLOR_ATTACHMENT1);
+
+            glReadBuffer(GL_COLOR_ATTACHMENT2);  // worn-attachment-only reveal
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->wboitWorldRevealFBO.getFBO());
             glBlitFramebuffer(0, 0, mRT->wboitFBO.getWidth(), mRT->wboitFBO.getHeight(),
                               0, 0, mRT->wboitWorldRevealFBO.getWidth(), mRT->wboitWorldRevealFBO.getHeight(),
                               GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
             glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
         }
         // </AS:Chanayane>

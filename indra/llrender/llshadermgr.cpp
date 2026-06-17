@@ -1562,6 +1562,7 @@ void LLShaderMgr::initAttribsAndUniforms()
     // </FS:Beq>
     // <AS:Chanayane> WBOIT
     mReservedUniforms.push_back("worldRevealTex");
+    mReservedUniforms.push_back("worldDepthTex");
     // </AS:Chanayane>
 
     llassert(mReservedUniforms.size() == END_RESERVED_UNIFORMS);
