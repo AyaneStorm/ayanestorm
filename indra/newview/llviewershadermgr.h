@@ -314,10 +314,15 @@ extern LLGLSLShader         gDeferredSkinnedPBRAlphaWBOITProgram;
 extern LLGLSLShader         gDeferredFullbrightAlphaWBOITProgram;
 extern LLGLSLShader         gDeferredSkinnedFullbrightAlphaWBOITProgram;
 extern LLGLSLShader         gDeferredMaterialAlphaWBOITProgram[LLMaterial::SHADER_COUNT * 2];
+extern LLGLSLShader         gExactOITEmissiveProgram;
+extern LLGLSLShader         gExactOITPBRGlowProgram;
 // </AS:Chanayane>
 
 // GLTF shaders
 extern LLGLSLShader         gGLTFPBRMetallicRoughnessProgram;
+// <AS:Chanayane> Exact OIT GLTF capture variants
+extern LLGLSLShader         gExactOITGLTFProgram;
+// </AS:Chanayane>
 
 // Encodes detail level for dropping textures, in accordance with the GLTF spec where possible
 // 0 is highest detail, -1 drops emissive, etc

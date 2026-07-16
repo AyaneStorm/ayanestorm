@@ -4117,6 +4117,30 @@ LLSD LLAppViewer::getViewerInfo() const
     info["GRAPHICS_CARD"] = ll_safe_string((const char*)(glGetString(GL_RENDERER)));
     info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
     info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
+    // <AS:Chanayane> Exact OIT renderer diagnostics
+    info["EXACT_OIT_AVAILABLE"] = gPipeline.mRT->exactOITAvailable;
+    info["EXACT_OIT_NODE_CAPACITY"] = LLSD::Integer(gPipeline.mRT->exactOITCapacity);
+    info["EXACT_OIT_PEAK_NODES"] = LLSD::Integer(gPipeline.mRT->exactOITPeakNodes);
+    info["EXACT_OIT_OVERFLOW_COUNT"] = LLSD::Integer(gPipeline.mRT->exactOITOverflowCount);
+    info["EXACT_OIT_MEMORY_MB"] = LLSD::Integer(
+        (static_cast<U64>(gPipeline.mRT->exactOITCapacity) * 48ull) / (1024ull * 1024ull));
+    if (gGLManager.mGLVersion < 4.29f)
+    {
+        info["EXACT_OIT_STATUS"] = "Unavailable: OpenGL 4.3 is required";
+    }
+    else if (!gPipeline.mRT->exactOITAvailable)
+    {
+        info["EXACT_OIT_STATUS"] = "Unavailable: GPU resource allocation failed or safe VRAM limit reached";
+    }
+    else if (!gWBOITCompositeProgram.mProgramObject)
+    {
+        info["EXACT_OIT_STATUS"] = "Unavailable: exact OIT shader creation failed";
+    }
+    else
+    {
+        info["EXACT_OIT_STATUS"] = "Available";
+    }
+    // </AS:Chanayane>
 
 #if LL_WINDOWS
     std::string drvinfo;

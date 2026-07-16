@@ -45,37 +45,30 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int classic_mode;
 
-#ifdef WBOIT
-const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
-out vec4 frag_data[3];
-uniform int debugWBOITTint;
-uniform int wboitAvatarLayer;
-float wboit_weight(float a, float depth) {
-    return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
-                 pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
-}
-float wboit_coverage_alpha(float a) {
-    return mix(a, 1.0, smoothstep(0.995, 1.0, a));
-}
-float wboit_skinned_alpha(float a) {
-#ifdef HAS_SKIN
-    return mix(a, 1.0, smoothstep(0.55, 0.95, a));
-#else
-    return a;
-#endif
-}
-float wboit_reveal_alpha(float a) {
-    if (wboitAvatarLayer != 0) {
-        float exponent = mix(1.65, 1.0, smoothstep(0.05, 0.25, a));
-        float opacity = 1.0 - pow(max(1.0 - a, 0.0), exponent);
-        return mix(opacity, 1.0, smoothstep(0.95, 1.0, a));
-    } else {
-        return mix(a, 1.0, smoothstep(0.95, 1.0, a));
-    }
+// <AS:Chanayane> Exact OIT fragment-node output declarations
+#ifdef EXACT_OIT
+layout(early_fragment_tests) in;
+layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
+struct OITNode { vec4 color; vec4 glow; float depth; uint next; uint blend; uint sequence; };
+layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
+layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
+uniform uint oitBlendFactors;
+uniform float oitGlow;
+void exact_oit_store(vec4 color)
+{
+    uint index = atomicAdd(oitNodeCount, 1u);
+    if (index >= oitNodeCapacity) { atomicOr(oitOverflow, 1u); return; }
+    oitNodes[index].color = color;
+    oitNodes[index].glow = vec4(oitGlow, 0.0, 0.0, 0.0);
+    oitNodes[index].depth = gl_FragCoord.z;
+    oitNodes[index].blend = oitBlendFactors;
+    oitNodes[index].sequence = index;
+    oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
 }
 #else
 out vec4 frag_color;
 #endif
+// </AS:Chanayane>
 
 in vec3 vary_fragcoord;
 
@@ -248,24 +241,14 @@ void main()
     if (classic_mode > 0)
         final_scale = 1.1;
     vec4 out_color = max(vec4(color.rgb * final_scale, a), vec4(0));
-#ifdef WBOIT
-    if (debugWBOITTint != 0)
-    {
-        out_color = vec4(1.0, 0.0, 1.0, 1.0);
-    }
-    if (out_color.a <= WBOIT_MIN_ALPHA)
-    {
-        discard;
-    }
-    float wboit_a = wboit_coverage_alpha(wboit_skinned_alpha(out_color.a));
-    float wboit_reveal = wboit_reveal_alpha(wboit_a);
-    float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
-    frag_data[0] = vec4(out_color.rgb * wboit_a, wboit_a) * wboit_w;
-    frag_data[1] = vec4(wboit_reveal);   // combined reveal — used by composite
-    frag_data[2] = vec4(wboit_reveal);   // worn-attachment-only reveal — snapshotted for avatar attenuation
+// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// frag_color = out_color;
+#ifdef EXACT_OIT
+    exact_oit_store(out_color);
 #else
     frag_color = out_color;
 #endif
+// </AS:Chanayane>
 }
 
 #else

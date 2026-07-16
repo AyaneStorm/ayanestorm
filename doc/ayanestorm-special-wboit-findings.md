@@ -1,5 +1,13 @@
 # WBOIT Transparency Findings
 
+<!-- <AS:Chanayane> Exact OIT supersession note -->
+> **Superseded by exact OIT implementation (2026-07-16).** The `wip-wboit`
+> branch now uses `RenderWBOIT` as a compatibility setting for an exact
+> per-pixel linked-list transparency renderer. The historical WBOIT, fixed
+> layer split, reveal snapshot, and peel experiments below remain useful as
+> failure analysis, but no longer describe the active rendering architecture.
+<!-- </AS:Chanayane> -->
+
 Date: 2026-06-10
 
 ## Fresh Conversation Handoff

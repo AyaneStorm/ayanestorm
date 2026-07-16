@@ -246,6 +246,9 @@ LLGLSLShader            gDeferredSkinnedPBRAlphaProgram;
 LLGLSLShader            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 
 LLGLSLShader            gGLTFPBRMetallicRoughnessProgram;
+// <AS:Chanayane> Exact OIT GLTF capture variants
+LLGLSLShader            gExactOITGLTFProgram;
+// </AS:Chanayane>
 
 // <AS:Chanayane> WBOIT shaders
 LLGLSLShader            gWBOITCompositeProgram;
@@ -256,6 +259,10 @@ LLGLSLShader            gDeferredSkinnedPBRAlphaWBOITProgram;
 LLGLSLShader            gDeferredFullbrightAlphaWBOITProgram;
 LLGLSLShader            gDeferredSkinnedFullbrightAlphaWBOITProgram;
 LLGLSLShader            gDeferredMaterialAlphaWBOITProgram[LLMaterial::SHADER_COUNT * 2];
+LLGLSLShader            gExactOITEmissiveProgram;
+LLGLSLShader            gExactOITSkinnedEmissiveProgram;
+LLGLSLShader            gExactOITPBRGlowProgram;
+LLGLSLShader            gExactOITSkinnedPBRGlowProgram;
 // </AS:Chanayane>
 
 
@@ -457,6 +464,11 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gDeferredSkinnedPBRAlphaWBOITProgram);
     mShaderList.push_back(&gDeferredFullbrightAlphaWBOITProgram);
     mShaderList.push_back(&gDeferredSkinnedFullbrightAlphaWBOITProgram);
+    mShaderList.push_back(&gExactOITGLTFProgram);
+    mShaderList.push_back(&gExactOITEmissiveProgram);
+    mShaderList.push_back(&gExactOITSkinnedEmissiveProgram);
+    mShaderList.push_back(&gExactOITPBRGlowProgram);
+    mShaderList.push_back(&gExactOITSkinnedPBRGlowProgram);
     // </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
@@ -946,7 +958,6 @@ bool LLViewerShaderMgr::loadShadersWater()
 
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
-
     if (mShaderLevel[SHADER_WATER] == 0)
     {
         gWaterProgram.unload();
@@ -1114,6 +1125,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     LL_PROFILE_ZONE_SCOPED;
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
+    // <AS:Chanayane> Keep exact shader creation entirely out of the vanilla-disabled path.
+    const bool render_exact_oit = gSavedSettings.getBOOL("RenderWBOIT") &&
+        (gGLManager.mGLSLVersionMajor > 4 ||
+         (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30));
+    // </AS:Chanayane>
 
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
@@ -1171,6 +1187,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSkinnedPBRAlphaWBOITProgram.unload();
         gDeferredFullbrightAlphaWBOITProgram.unload();
         gDeferredSkinnedFullbrightAlphaWBOITProgram.unload();
+        gExactOITGLTFProgram.unload();
+        gExactOITEmissiveProgram.unload();
+        gExactOITSkinnedEmissiveProgram.unload();
+        gExactOITPBRGlowProgram.unload();
+        gExactOITSkinnedPBRGlowProgram.unload();
         for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
         {
             gDeferredMaterialAlphaWBOITProgram[i].unload();
@@ -1461,6 +1482,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 // continue as if this shader never happened
                 success = true;
             }
+
+            // <AS:Chanayane> Add exact variants without modifying the original GLTF program.
+            if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
+            {
+                gExactOITGLTFProgram.mName = "Exact OIT GLTF PBR Metallic Roughness Shader";
+                gExactOITGLTFProgram.mFeatures.hasSrgb = true;
+                gExactOITGLTFProgram.mShaderFiles.clear();
+                gExactOITGLTFProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessV.glsl", GL_VERTEX_SHADER));
+                gExactOITGLTFProgram.mShaderFiles.push_back(make_pair("gltf/pbrmetallicroughnessF.glsl", GL_FRAGMENT_SHADER));
+                gExactOITGLTFProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+                gExactOITGLTFProgram.clearPermutations();
+                gExactOITGLTFProgram.addPermutation("EXACT_OIT", "1");
+                add_common_permutations(&gExactOITGLTFProgram);
+                success = make_gltf_variants(gExactOITGLTFProgram, use_sun_shadow);
+                llassert(success);
+            }
+            // </AS:Chanayane>
         }
     }
 
@@ -1482,6 +1520,22 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
         llassert(success);
     }
+
+    // <AS:Chanayane> Exact OIT PBR glow capture variants
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
+    {
+        gExactOITPBRGlowProgram.mName = "Exact OIT PBR Glow Shader";
+        gExactOITPBRGlowProgram.mFeatures.hasSrgb = true;
+        gExactOITPBRGlowProgram.mShaderFiles.clear();
+        gExactOITPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/pbrglowV.glsl", GL_VERTEX_SHADER));
+        gExactOITPBRGlowProgram.mShaderFiles.push_back(make_pair("deferred/exactOITPbrGlowF.glsl", GL_FRAGMENT_SHADER));
+        gExactOITPBRGlowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gExactOITPBRGlowProgram);
+        success = make_rigged_variant(gExactOITPBRGlowProgram, gExactOITSkinnedPBRGlowProgram);
+        success = success && gExactOITPBRGlowProgram.createShader();
+        llassert(success);
+    }
+    // </AS:Chanayane>
 
     if (success)
     {
@@ -1945,15 +1999,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         }
     }
 
-    // <AS:Chanayane> WBOIT alpha shader variants
-    if (success)
+    // <AS:Chanayane> Exact OIT alpha shader variants
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
     {
         LLGLSLShader* shaders[2] = { &gDeferredAlphaWBOITProgram, &gDeferredSkinnedAlphaWBOITProgram };
         for (int i = 0; i < 2 && success; ++i)
         {
             bool rigged = (i == 1);
             LLGLSLShader* shader = shaders[i];
-            shader->mName = rigged ? "Skinned Deferred Alpha WBOIT Shader" : "Deferred Alpha WBOIT Shader";
+            shader->mName = rigged ? "Skinned Deferred Alpha Exact OIT Shader" : "Deferred Alpha Exact OIT Shader";
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
             shader->mFeatures.isAlphaLighting = true;
@@ -1973,7 +2027,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            shader->addPermutation("WBOIT", "1");
+            shader->addPermutation("EXACT_OIT", "1");
             if (use_sun_shadow) shader->addPermutation("HAS_SUN_SHADOW", "1");
             if (rigged) shader->addPermutation("HAS_SKIN", "1");
             add_common_permutations(shader);
@@ -1986,14 +2040,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedAlphaWBOITProgram;
     }
 
-    if (success)
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
     {
         LLGLSLShader* shaders[2] = { &gDeferredPBRAlphaWBOITProgram, &gDeferredSkinnedPBRAlphaWBOITProgram };
         for (int i = 0; i < 2 && success; ++i)
         {
             bool rigged = (i == 1);
             LLGLSLShader* shader = shaders[i];
-            shader->mName = rigged ? "Skinned Deferred PBR Alpha WBOIT Shader" : "Deferred PBR Alpha WBOIT Shader";
+            shader->mName = rigged ? "Skinned Deferred PBR Alpha Exact OIT Shader" : "Deferred PBR Alpha Exact OIT Shader";
             shader->mFeatures.calculatesLighting = false;
             shader->mFeatures.hasLighting = false;
             shader->mFeatures.isAlphaLighting = true;
@@ -2015,7 +2069,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("HAS_SPECULAR_MAP", "1");
             shader->addPermutation("HAS_EMISSIVE_MAP", "1");
             shader->addPermutation("USE_VERTEX_COLOR", "1");
-            shader->addPermutation("WBOIT", "1");
+            shader->addPermutation("EXACT_OIT", "1");
             if (use_sun_shadow) shader->addPermutation("HAS_SUN_SHADOW", "1");
             if (rigged) shader->addPermutation("HAS_SKIN", "1");
             add_common_permutations(shader);
@@ -2028,14 +2082,14 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPBRAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedPBRAlphaWBOITProgram;
     }
 
-    if (success)
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
     {
         LLGLSLShader* shaders[2] = { &gDeferredFullbrightAlphaWBOITProgram, &gDeferredSkinnedFullbrightAlphaWBOITProgram };
         for (int i = 0; i < 2 && success; ++i)
         {
             bool rigged = (i == 1);
             LLGLSLShader* shader = shaders[i];
-            shader->mName = rigged ? "Skinned Deferred Fullbright Alpha WBOIT Shader" : "Deferred Fullbright Alpha WBOIT Shader";
+            shader->mName = rigged ? "Skinned Deferred Fullbright Alpha Exact OIT Shader" : "Deferred Fullbright Alpha Exact OIT Shader";
             shader->mFeatures.calculatesAtmospherics = true;
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasAtmospherics = true;
@@ -2050,7 +2104,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->clearPermutations();
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("IS_ALPHA", "1");
-            shader->addPermutation("WBOIT", "1");
+            shader->addPermutation("EXACT_OIT", "1");
             if (rigged) shader->addPermutation("HAS_SKIN", "1");
             add_common_permutations(shader);
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2060,7 +2114,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaWBOITProgram.mRiggedVariant = &gDeferredSkinnedFullbrightAlphaWBOITProgram;
     }
 
-    if (success)
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
     {
         for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
         {
@@ -2075,7 +2129,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             {
                 mShaderList.push_back(&gDeferredMaterialAlphaWBOITProgram[i]);
             }
-            gDeferredMaterialAlphaWBOITProgram[i].mName = llformat("Material WBOIT Shader %d", i);
+            gDeferredMaterialAlphaWBOITProgram[i].mName = llformat("Material Exact OIT Shader %d", i);
             gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasSrgb = true;
             gDeferredMaterialAlphaWBOITProgram[i].mFeatures.calculatesAtmospherics = true;
             gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasAtmospherics = true;
@@ -2097,7 +2151,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             // gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasAlphaMask = true;
             gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
             // </AS:Chanayane>
-            gDeferredMaterialAlphaWBOITProgram[i].addPermutation("WBOIT", "1");
+            gDeferredMaterialAlphaWBOITProgram[i].addPermutation("EXACT_OIT", "1");
             if (use_sun_shadow) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
             add_common_permutations(&gDeferredMaterialAlphaWBOITProgram[i]);
             if (has_skin) gDeferredMaterialAlphaWBOITProgram[i].addPermutation("HAS_SKIN", "1");
@@ -2107,8 +2161,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredMaterialAlphaWBOITProgram[i].mFeatures.hasLighting = true;
         }
     }
-    // </AS:Chanayane>
-
     if (success)
     {
         gDeferredAvatarEyesProgram.mName = "Deferred Avatar Eyes Shader";
@@ -2128,6 +2180,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gDeferredAvatarEyesProgram.createShader();
         llassert(success);
     }
+    // </AS:Chanayane>
 
     if (success)
     {
@@ -2322,6 +2375,25 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = make_rigged_variant(gDeferredEmissiveProgram, gDeferredSkinnedEmissiveProgram);
         success = success && gDeferredEmissiveProgram.createShader();
         llassert(success);
+    }
+
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
+    {
+        // <AS:Chanayane> Exact OIT legacy emissive capture variant
+        gExactOITEmissiveProgram.mName = "Exact OIT Emissive Shader";
+        gExactOITEmissiveProgram.mFeatures.calculatesAtmospherics = true;
+        gExactOITEmissiveProgram.mFeatures.hasGamma = true;
+        gExactOITEmissiveProgram.mFeatures.hasAtmospherics = true;
+        gExactOITEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+        gExactOITEmissiveProgram.mShaderFiles.clear();
+        gExactOITEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/emissiveV.glsl", GL_VERTEX_SHADER));
+        gExactOITEmissiveProgram.mShaderFiles.push_back(make_pair("deferred/exactOITEmissiveF.glsl", GL_FRAGMENT_SHADER));
+        gExactOITEmissiveProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        add_common_permutations(&gExactOITEmissiveProgram);
+        success = make_rigged_variant(gExactOITEmissiveProgram, gExactOITSkinnedEmissiveProgram);
+        success = success && gExactOITEmissiveProgram.createShader();
+        llassert(success);
+        // </AS:Chanayane>
     }
 
     if (success)
@@ -3019,13 +3091,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     }
 
     // <AS:Chanayane> WBOIT composite
-    if (success)
+    if (render_exact_oit && success && gGLManager.mGLVersion >= 4.29f)
     {
-        gWBOITCompositeProgram.mName = "WBOIT Composite Shader";
+        gWBOITCompositeProgram.mName = "Exact OIT Composite Shader";
         gWBOITCompositeProgram.mFeatures.isDeferred = true;
         gWBOITCompositeProgram.mShaderFiles.clear();
         gWBOITCompositeProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
-        gWBOITCompositeProgram.mShaderFiles.push_back(make_pair("deferred/wboitCompositeF.glsl", GL_FRAGMENT_SHADER));
+        gWBOITCompositeProgram.mShaderFiles.push_back(make_pair("deferred/exactOITCompositeF.glsl", GL_FRAGMENT_SHADER));
         gWBOITCompositeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gWBOITCompositeProgram.createShader();
         llassert(success);

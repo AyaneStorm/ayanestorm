@@ -999,21 +999,63 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping
 
-        // <AS:Chanayane> WBOIT MRT — two RGBA16F color attachments sharing depth from screen
-        // attachment0 = weighted color+alpha sum, attachment1 = weighted transmittance
-        // Depth shared so accumulation pass depth-tests against opaque geometry.
-        // Release first so re-entrant calls (window resize) don't hit the shareDepthBuffer
-        // "already shared" assert.
-        mRT->wboitFBO.release();
-        if (!mRT->wboitFBO.allocate(resX, resY, GL_RGBA16F)) return false;
-        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;   // attachment1: combined reveal (composite)
-        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;  // attachment2: worn-attachment-only reveal (snapshot)
-        // deferredScreen owns the depth texture; screen and wboitFBO share it from there
-        mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
-        // Snapshot of world-layer worn-attachment reveal, taken after world composite.
-        // Avatar WBOIT shaders sample it so only worn accessories (eyeglasses) attenuate hair/lashes.
-        mRT->wboitWorldRevealFBO.release();
-        if (!mRT->wboitWorldRevealFBO.allocate(resX, resY, GL_RGBA16F)) return false;
+        // <AS:Chanayane> Exact OIT: preserve the pre-transparency scene and allocate a per-pixel
+        // head image plus a VRAM-bounded global fragment-node pool.
+        mRT->exactOITOpaque.release();
+        mRT->exactOITAvailable = false;
+        if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
+        if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
+        if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+        if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
+        mRT->exactOITHeads = mRT->exactOITHeadFBO = mRT->exactOITNodes = mRT->exactOITControl = 0;
+        mRT->exactOITCapacity = 0;
+        mRT->exactOITPeakNodes = 0;
+
+        // <AS:Chanayane> Disabled means no exact-OIT allocation or GL-state side effects.
+        // if (gGLManager.mGLVersion >= 4.29f && mRT->exactOITOpaque.allocate(resX, resY, GL_RGBA16F))
+        if (gSavedSettings.getBOOL("RenderWBOIT") && gGLManager.mGLVersion >= 4.29f &&
+            mRT->exactOITOpaque.allocate(resX, resY, GL_RGBA16F))
+        {
+            glGenTextures(1, &mRT->exactOITHeads);
+            glBindTexture(GL_TEXTURE_2D, mRT->exactOITHeads);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, resX, resY);
+            glBindTexture(GL_TEXTURE_2D, 0);
+
+            glGenFramebuffers(1, &mRT->exactOITHeadFBO);
+            glBindFramebuffer(GL_FRAMEBUFFER, mRT->exactOITHeadFBO);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mRT->exactOITHeads, 0);
+            GLenum head_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+            glBindFramebuffer(GL_FRAMEBUFFER, LLRenderTarget::sCurFBO);
+
+            constexpr U64 node_bytes = 48;
+            // <AS:Chanayane> Do not invent a VRAM budget when dedicated VRAM was not reported.
+            // U64 vram_bytes = U64(llmax(gGLManager.mVRAM, 512u)) * 1024u * 1024u;
+            U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
+            // </AS:Chanayane>
+            U64 safe_bytes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull);
+            U64 wanted_nodes = static_cast<U64>(resX) * static_cast<U64>(resY) * 4ull;
+            U64 safe_nodes = safe_bytes / node_bytes;
+            mRT->exactOITCapacity = U32(llmin<U64>(wanted_nodes, llmin<U64>(safe_nodes, 0xfffffffeull)));
+
+            if (head_status == GL_FRAMEBUFFER_COMPLETE && mRT->exactOITCapacity > 0)
+            {
+                while (glGetError() != GL_NO_ERROR) {}
+                glGenBuffers(1, &mRT->exactOITNodes);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITNodes);
+                glBufferData(GL_SHADER_STORAGE_BUFFER,
+                             GLsizeiptr(static_cast<U64>(mRT->exactOITCapacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
+
+                glGenBuffers(1, &mRT->exactOITControl);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
+                U32 control[4] = { 0, mRT->exactOITCapacity, 0, 0 };
+                glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(control), control, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                mRT->exactOITAvailable = glGetError() == GL_NO_ERROR;
+            }
+        }
+        // </AS:Chanayane>
         // </AS:Chanayane>
 
         if (RenderUIBuffer)
@@ -1080,14 +1122,6 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("BakeMapBuffer");// <FS:Beq/> create an independent preview screen target
         mBakeMap.allocate(LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT, GL_RGBA);
         }// <FS:Beq/> create an independent preview screen target
-    }
-    else if (mRT->wboitFBO.getFBO())
-    {
-        // <AS:Chanayane> Cube-snapshot path: deferredScreen was reallocated above (new depth
-        // texture) but wboitFBO was skipped. Re-attach the fresh depth so wboitFBO is not
-        // pointing at the old deleted texture.
-        mRT->deferredScreen.refreshSharedDepth(mRT->wboitFBO);
-        // </AS:Chanayane>
     }
     //HACK make screenbuffer allocations start failing after 30 seconds
     if (gSavedSettings.getBOOL("SimulateFBOFailure"))
@@ -1426,9 +1460,15 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
-    // <AS:Chanayane> WBOIT
-    mRT->wboitFBO.release();
-    mRT->wboitWorldRevealFBO.release();
+    // <AS:Chanayane> Release exact OIT resources added alongside the screen targets.
+    mRT->exactOITOpaque.release();
+    if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
+    if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
+    if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+    if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
+    mRT->exactOITHeads = mRT->exactOITHeadFBO = mRT->exactOITNodes = mRT->exactOITControl = 0;
+    mRT->exactOITCapacity = 0;
+    mRT->exactOITAvailable = false;
     // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
@@ -9875,10 +9915,11 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
-        // Reset WBOIT frame state before the post-deferred alpha pools run.
-        LLDrawPoolAlpha::sWBOITRendered = false;
-        LLDrawPoolAlpha::sWBOITClearNeeded = true;
-        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
+        // <AS:Chanayane> Reset exact OIT state; RenderWBOIT=false continues into the untouched vanilla dispatch.
+        LLDrawPoolAlpha::sExactOITCaptured = false;
+        LLDrawPoolAlpha::sExactOITClearNeeded = true;
+        LLDrawPoolAlpha::sExactOITVanillaFallback = false;
+        // </AS:Chanayane>
 
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
@@ -9916,121 +9957,110 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-    // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
+    // <AS:Chanayane> Exact OIT validation and composite. Capture shaders have not touched the
+    // screen color, so an overflow can safely rerun the complete vanilla alpha path.
     static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
-    if (render_wboit && !gCubeSnapshot && !sImpostorRender)
+    if (render_wboit && !gCubeSnapshot && !sImpostorRender &&
+        mRT->exactOITAvailable && gWBOITCompositeProgram.mProgramObject &&
+        LLDrawPoolAlpha::sExactOITCaptured)
     {
-        auto composite_wboit = [this]()
+        LL_PROFILE_GPU_ZONE("Exact OIT composite");
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                        GL_ATOMIC_COUNTER_BARRIER_BIT);
+
+        U32 control[4] = {};
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        mRT->exactOITPeakNodes = llmax(mRT->exactOITPeakNodes, control[0]);
+
+        if (control[2] != 0 || control[0] > mRT->exactOITCapacity)
         {
-            if (!LLDrawPoolAlpha::sWBOITRendered)
+            ++mRT->exactOITOverflowCount;
+            LL_WARNS_ONCE("ExactOIT") << "Exact OIT node capacity exceeded (required "
+                << control[0] << ", capacity " << mRT->exactOITCapacity
+                << "); rendering complete vanilla transparency for this frame." << LL_ENDL;
+            LLDrawPoolAlpha::sExactOITCaptured = false;
+            LLDrawPoolAlpha::sExactOITVanillaFallback = true;
+            for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
             {
-                return;
+                LLDrawPool* poolp = *iter;
+                if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+                {
+                    LLVertexBuffer::unbind();
+                    poolp->beginPostDeferredPass(0);
+                    poolp->renderPostDeferred(0);
+                    poolp->endPostDeferredPass(0);
+                }
             }
+            LLDrawPoolAlpha::sExactOITVanillaFallback = false;
 
-            LL_PROFILE_GPU_ZONE("WBOIT composite");
+            constexpr U64 node_bytes = 48;
+            // <AS:Chanayane> Growth remains bounded by reported dedicated VRAM only.
+            // U64 vram_bytes = U64(llmax(gGLManager.mVRAM, 512u)) * 1024u * 1024u;
+            U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
+            // </AS:Chanayane>
+            U64 safe_nodes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull) / node_bytes;
+            U64 requested = (static_cast<U64>(control[0]) * 5ull + 3ull) / 4ull;
+            U32 grown_capacity = U32(llmin<U64>(requested, llmin<U64>(safe_nodes, 0xfffffffeull)));
+            if (grown_capacity > mRT->exactOITCapacity)
+            {
+                while (glGetError() != GL_NO_ERROR) {}
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITNodes);
+                glBufferData(GL_SHADER_STORAGE_BUFFER,
+                             GLsizeiptr(static_cast<U64>(grown_capacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
+                glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                if (glGetError() == GL_NO_ERROR)
+                {
+                    mRT->exactOITCapacity = grown_capacity;
+                    LL_INFOS("ExactOIT") << "Grew exact OIT node capacity to "
+                        << grown_capacity << LL_ENDL;
+                }
+                else
+                {
+                    mRT->exactOITAvailable = false;
+                    LL_WARNS("ExactOIT") << "Unable to grow exact OIT node buffer; exact OIT disabled for this session."
+                        << LL_ENDL;
+                }
+            }
+        }
+        else
+        {
+            GLint previous_fbo = LLRenderTarget::sCurFBO;
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->screen.getFBO());
+            glReadBuffer(GL_COLOR_ATTACHMENT0);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->exactOITOpaque.getFBO());
+            glBlitFramebuffer(0, 0, mRT->screen.getWidth(), mRT->screen.getHeight(),
+                              0, 0, mRT->exactOITOpaque.getWidth(), mRT->exactOITOpaque.getHeight(),
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
 
-            // screen_target is already bound — do not call bindTarget() again
-            // Alpha blend ZERO/ONE_MINUS_SRC_ALPHA suppresses screen glow by reveal, matching vanilla per-draw glow suppression.
-            gGL.setColorMask(true, true);
-
-            LLGLEnable blend(GL_BLEND);
-            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
-                          LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
-
+            LLGLDisable blend(GL_BLEND);
             LLGLDepthTest depth(GL_FALSE);
-
+            gGL.setColorMask(true, true);
+            glBindImageTexture(0, mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, mRT->exactOITNodes);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, mRT->exactOITControl);
             gWBOITCompositeProgram.bind();
-
-            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
-            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
-
+            static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+            static LLStaticHashedString oit_debug_mode("oitDebugMode");
+            gWBOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
+                                               &mRT->exactOITOpaque, false, LLTexUnit::TFO_POINT, 0);
             mScreenTriangleVB->setBuffer();
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-
             gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
-            gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR);
             gWBOITCompositeProgram.unbind();
 
-            gGL.setColorMask(true, true);
-            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
-        };
-
-        // Find alpha pool once for deferred emissive calls below.
-        LLDrawPoolAlpha* wboit_alpha_pool = nullptr;
-        for (auto* p : mPools)
-        {
-            if (p->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            for (auto* poolp : mPools)
             {
-                wboit_alpha_pool = static_cast<LLDrawPoolAlpha*>(p);
-                break;
+                if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+                {
+                    static_cast<LLDrawPoolAlpha*>(poolp)->renderDebugAlpha();
+                    break;
+                }
             }
         }
-
-        composite_wboit();
-        // Draw world-layer deferred emissives AFTER the composite so the composite's
-        // glow suppression does not suppress the emissive objects' own glow.
-        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
-
-        // <AS:Chanayane> Snapshot worn-attachment reveal before avatar pass clears wboitFBO.
-        // wboitFBO attachment[2] = worn-attachment-only reveal (NOT sim fences/windows).
-        // Written only during the ATTACHMENT_ONLY sub-pass of the world WBOIT accumulation.
-        // Avatar WBOIT shaders sample it to attenuate hair/lashes by worn accessories (eyeglasses).
-        if (mRT->wboitWorldRevealFBO.getFBO() && mRT->wboitFBO.getFBO())
-        {
-            GLint prev_fbo = LLRenderTarget::sCurFBO;
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->wboitFBO.getFBO());
-
-            glReadBuffer(GL_COLOR_ATTACHMENT2);  // worn-attachment-only reveal
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->wboitWorldRevealFBO.getFBO());
-            glBlitFramebuffer(0, 0, mRT->wboitFBO.getWidth(), mRT->wboitFBO.getHeight(),
-                              0, 0, mRT->wboitWorldRevealFBO.getWidth(), mRT->wboitWorldRevealFBO.getHeight(),
-                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
-
-            glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
-        }
-        // </AS:Chanayane>
-
-        // Render avatar/attachment alpha into a fresh WBOIT layer and composite
-        // it over the already-composited world alpha. This keeps WBOIT within
-        // the avatar stack while preventing world glass/windows from being
-        // averaged into the same WBOIT solution as worn hair/lashes.
-        LLDrawPoolAlpha::sWBOITRendered = false;
-        LLDrawPoolAlpha::sWBOITClearNeeded = true;
-        LLDrawPoolAlpha::sWBOITAvatarLayer = true;
-        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
-        {
-            LLDrawPool* poolp = *iter;
-            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-            {
-                LLVertexBuffer::unbind();
-                poolp->beginPostDeferredPass(0);
-                poolp->renderPostDeferred(0);
-                poolp->endPostDeferredPass(0);
-            }
-        }
-        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
-
-        composite_wboit();
-        // Draw avatar-layer deferred emissives AFTER the composite.
-        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
-
-        // Draw only alpha batches WBOIT cannot represent directly.
-        // Standard world and avatar/attachment alpha are accumulated by the
-        // two WBOIT layers; custom blend modes still need the legacy per-batch
-        // blend path.
-        LLDrawPoolAlpha::sPostWBOITLegacyPass = true;
-        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
-        {
-            LLDrawPool* poolp = *iter;
-            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-            {
-                LLVertexBuffer::unbind();
-                poolp->beginPostDeferredPass(0);
-                poolp->renderPostDeferred(0);
-                poolp->endPostDeferredPass(0);
-            }
-        }
-        LLDrawPoolAlpha::sPostWBOITLegacyPass = false;
     }
     // </AS:Chanayane>
 

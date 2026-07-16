@@ -724,12 +724,16 @@ public:
         LLRenderTarget          deferredScreen;
         LLRenderTarget          deferredLight;
 
-        // <AS:Chanayane> WBOIT MRT — attachment0=accum(RGBA16F), attachment1=reveal(RGBA16F), attachment2=worn-reveal(RGBA16F)
-        // Only allocated for mMainRT (not auxiliary/hero/cube).
-        LLRenderTarget          wboitFBO;
-        // Snapshot of world-layer worn-attachment reveal taken after world composite.
-        // Sampled by avatar WBOIT shaders to attenuate hair/lashes by worn accessories (eyeglasses).
-        LLRenderTarget          wboitWorldRevealFBO;
+        // <AS:Chanayane> Exact OIT resources are allocated only for the main full-resolution target.
+        LLRenderTarget          exactOITOpaque;
+        GLuint                  exactOITHeads = 0;
+        GLuint                  exactOITHeadFBO = 0;
+        GLuint                  exactOITNodes = 0;
+        GLuint                  exactOITControl = 0;
+        U32                     exactOITCapacity = 0;
+        U32                     exactOITPeakNodes = 0;
+        U32                     exactOITOverflowCount = 0;
+        bool                    exactOITAvailable = false;
         // </AS:Chanayane>
 
         //sun shadow map

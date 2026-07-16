@@ -10,6 +10,7 @@
   label="AyaneStorm"
   name="ayanestorm">
 
+  <!-- <AS:Chanayane> RenderWBOIT compatibility setting now selects exact OIT. -->
   <check_box
     follows="left|top"
     layout="topleft"
@@ -124,14 +125,15 @@
     layout="topleft"
     height="16"
     control_name="RenderWBOIT"
-    label="Use improved transparency rendering (WBOIT)"
-    tool_tip="If checked, alpha surfaces such as hair, eyelashes, and glass use weighted blended order-independent transparency. Disable this to use the legacy alpha renderer."
+    label="Use exact transparency rendering"
+    tool_tip="If checked, supported alpha surfaces are captured and composited in exact per-pixel depth order. Disable this to use the legacy alpha renderer."
     left="15"
     mouse_opaque="true"
     name="render_wboit"
     radio_style="false"
     width="500"
     top_pad="20" />
+  <!-- </AS:Chanayane> -->
 
   <text
     type="string"

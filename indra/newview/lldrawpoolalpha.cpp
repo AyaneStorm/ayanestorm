@@ -55,15 +55,12 @@
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
-bool LLDrawPoolAlpha::sWBOITRendered = false; // <AS:Chanayane>
-bool LLDrawPoolAlpha::sWBOITClearNeeded = false; // <AS:Chanayane>
-bool LLDrawPoolAlpha::sPostWBOITLegacyPass = false; // <AS:Chanayane>
-bool LLDrawPoolAlpha::sWBOITAvatarLayer = false; // <AS:Chanayane>
-bool LLDrawPoolAlpha::sWBOITAttachmentSubPass = false; // <AS:Chanayane>
-std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredEmissives; // <AS:Chanayane>
-std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredRiggedEmissives; // <AS:Chanayane>
-std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredPbrEmissives; // <AS:Chanayane>
-std::vector<LLDrawInfo*> LLDrawPoolAlpha::sDeferredPbrRiggedEmissives; // <AS:Chanayane>
+// <AS:Chanayane> Exact OIT frame and fallback state
+bool LLDrawPoolAlpha::sExactOITCaptured = false;
+bool LLDrawPoolAlpha::sExactOITClearNeeded = false;
+bool LLDrawPoolAlpha::sExactOITVanillaFallback = false;
+bool LLDrawPoolAlpha::sExactOITCaptureActive = false;
+// </AS:Chanayane>
 
 #define current_shader (LLGLSLShader::sCurBoundShaderPtr)
 
@@ -103,13 +100,7 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 {
     static LLCachedControl<F32> displayGamma(gSavedSettings, "RenderDeferredDisplayGamma");
     F32 gamma = displayGamma;
-    // <AS:Chanayane> WBOIT diagnostic: verify alpha actually uses the edited
-    // WBOIT shader variants.
-    static LLCachedControl<bool> debug_wboit_tint(gSavedSettings, "RenderWBOITDebugTint", false);
-
     static LLStaticHashedString waterSign("waterSign");
-    static LLStaticHashedString debugWBOITTint("debugWBOITTint");
-    static LLStaticHashedString wboitAvatarLayer("wboitAvatarLayer");
 
     // Does this deferred shader need environment uniforms set such as sun_dir, etc. ?
     // NOTE: We don't actually need a gbuffer since we are doing forward rendering (for transparency) post deferred rendering
@@ -122,9 +113,6 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
 
     shader->bind();
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
-    shader->uniform1i(debugWBOITTint, debug_wboit_tint ? 1 : 0);
-    shader->uniform1i(wboitAvatarLayer, LLDrawPoolAlpha::sWBOITAvatarLayer ? 1 : 0);
-    // </AS:Chanayane>
 
     if (LLPipeline::sRenderingHUDs)
     { // for HUD attachments, only the pre-water pass is executed and we never want to clip anything
@@ -212,9 +200,71 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-    // <AS:Chanayane> WBOIT — prepare WBOIT shader variants for POST_WATER path
+    // <AS:Chanayane> Prepare exact-OIT capture shader variants for the supported post-water path.
     static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
-    if (render_wboit && !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+    std::string missing_exact_shader;
+    auto require_exact_shader = [&missing_exact_shader](const LLGLSLShader& shader, const char* name)
+    {
+        if (missing_exact_shader.empty() && !shader.mProgramObject)
+        {
+            missing_exact_shader = name;
+        }
+    };
+    require_exact_shader(gDeferredAlphaWBOITProgram, "deferred alpha");
+    require_exact_shader(gDeferredSkinnedAlphaWBOITProgram, "skinned deferred alpha");
+    require_exact_shader(gDeferredPBRAlphaWBOITProgram, "PBR alpha");
+    require_exact_shader(gDeferredSkinnedPBRAlphaWBOITProgram, "skinned PBR alpha");
+    require_exact_shader(gDeferredFullbrightAlphaWBOITProgram, "fullbright alpha");
+    require_exact_shader(gDeferredSkinnedFullbrightAlphaWBOITProgram, "skinned fullbright alpha");
+    require_exact_shader(gExactOITEmissiveProgram, "emissive");
+    if (missing_exact_shader.empty() && (!gExactOITEmissiveProgram.mRiggedVariant ||
+        !gExactOITEmissiveProgram.mRiggedVariant->mProgramObject)) missing_exact_shader = "skinned emissive";
+    require_exact_shader(gExactOITPBRGlowProgram, "PBR glow");
+    if (missing_exact_shader.empty() && (!gExactOITPBRGlowProgram.mRiggedVariant ||
+        !gExactOITPBRGlowProgram.mRiggedVariant->mProgramObject)) missing_exact_shader = "skinned PBR glow";
+    require_exact_shader(gWBOITCompositeProgram, "composite");
+    bool exact_shaders_ready = missing_exact_shader.empty();
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && exact_shaders_ready; ++i)
+    {
+        if ((i & 0x3) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
+        {
+            if (!gDeferredMaterialAlphaWBOITProgram[i].mProgramObject)
+            {
+                missing_exact_shader = llformat("material alpha %u", i);
+                exact_shaders_ready = false;
+            }
+        }
+    }
+    if (exact_shaders_ready && gSavedSettings.getBOOL("GLTFEnabled"))
+    {
+        if (gExactOITGLTFProgram.mGLTFVariants.empty())
+        {
+            missing_exact_shader = "GLTF variants";
+            exact_shaders_ready = false;
+        }
+        for (const LLGLSLShader& shader : gExactOITGLTFProgram.mGLTFVariants)
+        {
+            if (!shader.mProgramObject)
+            {
+                missing_exact_shader = "GLTF variant";
+                exact_shaders_ready = false;
+                break;
+            }
+        }
+    }
+    if (render_wboit && !exact_shaders_ready)
+    {
+        static bool logged_incomplete_shader = false;
+        if (!logged_incomplete_shader)
+        {
+            logged_incomplete_shader = true;
+            LL_WARNS("ExactOIT") << "Exact OIT shader set is incomplete (missing " << missing_exact_shader
+                                  << "); using complete vanilla transparency." << LL_ENDL;
+        }
+    }
+    if (render_wboit && exact_shaders_ready && gPipeline.mRT->exactOITAvailable &&
+        !LLPipeline::sRenderingHUDs &&
+        !LLPipeline::sImpostorRender && !gCubeSnapshot && !sExactOITVanillaFallback)
     {
         prepare_alpha_shader(&gDeferredAlphaWBOITProgram, true, water_sign);
         prepare_alpha_shader(&gDeferredPBRAlphaWBOITProgram, true, water_sign);
@@ -226,6 +276,10 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
                 prepare_alpha_shader(&gDeferredMaterialAlphaWBOITProgram[i], true, water_sign);
             }
         }
+        prepare_alpha_shader(&gExactOITEmissiveProgram, false, water_sign);
+        prepare_alpha_shader(&gExactOITPBRGlowProgram, false, water_sign);
+        emissive_shader = &gExactOITEmissiveProgram;
+        pbr_emissive_shader = &gExactOITPBRGlowProgram;
     }
     // </AS:Chanayane>
 
@@ -233,91 +287,41 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // already being setup for rendering
     LLGLSLShader::unbind();
 
-    // <AS:Chanayane> WBOIT — post-composite fallback is now limited to
-    // custom blend modes that the WBOIT MRT blend setup cannot represent.
-    if (sPostWBOITLegacyPass && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-    {
-        // forwardRender(true,  ATTACHMENT_POST_WBOIT_OTHER_RIGGED);
-        // forwardRender(true,  ATTACHMENT_POST_WBOIT_SELF_RIGGED);
-        forwardRender(true,  ATTACHMENT_POST_WBOIT_LEGACY);
-        forwardRender(false, ATTACHMENT_POST_WBOIT_LEGACY);
-        return;
-    }
-    // </AS:Chanayane>
-
-    // <AS:Chanayane> WBOIT path for POST_WATER non-impostor non-cubemap
-    // if (!LLPipeline::sRenderingHUDs)
-    // {
-    //     // first pass, render rigged objects only and render to depth buffer
-    //     forwardRender(true);
-    // }
-
-    // // second pass, regular forward alpha rendering
+    // <AS:Chanayane> Exact capture replaces the two vanilla calls only while RenderWBOIT is enabled.
+    // if (!LLPipeline::sRenderingHUDs) forwardRender(true);
     // forwardRender();
     if (render_wboit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
-        && !LLPipeline::sImpostorRender && !gCubeSnapshot)
+        && !LLPipeline::sImpostorRender && !gCubeSnapshot && gPipeline.mRT->exactOITAvailable &&
+        exact_shaders_ready
+        && !sExactOITVanillaFallback)
     {
-        if (sWBOITClearNeeded)
+        LL_PROFILE_GPU_ZONE("Exact OIT capture");
+        if (sExactOITClearNeeded)
         {
-            // Clear accum to (0,0,0,0), reveal to (1,1,1,1).
-            // Snapshot FBOs and min-depth are only cleared before the world pass (see below).
-            GLint prev_fbo = 0;
-            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
-            static const GLfloat accum_clear[4]  = { 0.f, 0.f, 0.f, 0.f };
-            static const GLfloat reveal_clear[4] = { 1.f, 1.f, 1.f, 1.f };
-            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitFBO.getFBO());
-            glClearBufferfv(GL_COLOR, 0, accum_clear);
-            glClearBufferfv(GL_COLOR, 1, reveal_clear);
-            if (!sWBOITAvatarLayer)
-            {
-                // Only clear world-pass-specific buffers before the world pass.
-                // Before the avatar pass these hold the blitted snapshots — don't overwrite them.
-                glClearBufferfv(GL_COLOR, 2, reveal_clear);  // attachment-only reveal: 1.0 = fully transparent
-                if (gPipeline.mRT->wboitWorldRevealFBO.getFBO())
-                {
-                    glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->wboitWorldRevealFBO.getFBO());
-                    glClearBufferfv(GL_COLOR, 0, reveal_clear);
-                }
-            }
-            glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
-            sWBOITClearNeeded = false;
+            GLint previous_fbo = LLRenderTarget::sCurFBO;
+            const GLuint empty[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
+            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->exactOITHeadFBO);
+            glClearBufferuiv(GL_COLOR, 0, empty);
+            glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+
+            U32 control[4] = { 0, gPipeline.mRT->exactOITCapacity, 0, 0 };
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, gPipeline.mRT->exactOITControl);
+            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            glBindImageTexture(0, gPipeline.mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gPipeline.mRT->exactOITNodes);
+            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gPipeline.mRT->exactOITControl);
+            sExactOITClearNeeded = false;
         }
 
         {
-            WBOITScope wboit_scope(*this); // <AS:Chanayane> RAII: resets mForwardToWBOIT on exit
-            if (sWBOITAvatarLayer)
-            {
-                // Avatar layer: rigged content only (hair, rigged eyelashes, skinned mesh).
-                // Non-rigged attachments (eyeglasses, non-rigged lashes, beard prims) were
-                // composited in the world layer so they correctly attenuate what is behind them
-                // before rigged avatar content is blended on top.
-                forwardRender(true, ATTACHMENT_ALL);
-            }
-            else
-            {
-                // World layer: sim-rezzed non-rigged AND non-rigged worn attachments (eyeglasses etc).
-                // Compositing these first lets them attenuate the scene before rigged avatar alpha.
-                // Sub-pass 1: sim-rezzed objects — writes only accum[0] and combined-reveal[1].
-                // Sub-pass 2: worn non-rigged attachments — additionally writes attachment-only-reveal[2]
-                //             and min-depth[3] that the avatar WBOIT shaders use for depth-gated attenuation.
-                //             Keeping these two captures separate means sim fences/windows do NOT
-                //             suppress avatar hair transparency.
-                sWBOITAttachmentSubPass = false;
-                forwardRender(false, ATTACHMENT_NONE);
-                sWBOITAttachmentSubPass = true;
-                forwardRender(false, ATTACHMENT_ONLY);
-                sWBOITAttachmentSubPass = false;
-            }
+            ExactOITScope exact_scope(*this);
+            // <AS:Chanayane> Match vanilla insertion order for coincident-depth stable tie breaking.
+            forwardRender(true);
+            forwardRender(false);
+            // </AS:Chanayane>
         }
-        sWBOITRendered = true;
-        // screen RT is already restored by the final wboitFBO.flush() inside forwardRender
-    }
-    else if (render_wboit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-    {
-        // impostor / cubemap: keep 3-pass depth-writing path
-        forwardRender(false, ATTACHMENT_NONE);
-        forwardRender(true,  ATTACHMENT_ALL);
-        forwardRender(false, ATTACHMENT_ONLY);
+        sExactOITCaptured = true;
     }
     else
     {
@@ -331,12 +335,9 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // </AS:Chanayane>
 
     // final pass, render to depth for depth of field effects
-    // <AS:Chanayane> WBOIT: skip DoF depth-write pass when WBOIT is on — it punches holes
-    // in unrigged hair cards whose alpha is coverage-based, not translucency-based.
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot &&
         !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER &&
-        !render_wboit)
-    // </AS:Chanayane>
+        !sExactOITCaptured)
     {
         //update depth buffer sampler
         simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
@@ -356,9 +357,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     }
 }
 
-// <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-//void LLDrawPoolAlpha::forwardRender(bool rigged)
-void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
+// <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature.
+void LLDrawPoolAlpha::forwardRender(bool rigged)
 // </AS:Chanayane>
 {
     gPipeline.enableLightsDynamic();
@@ -368,65 +368,36 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     //enable writing to alpha for emissive effects
     gGL.setColorMask(true, true);
 
-    // <AS:Chanayane> WBOIT — accumulation never writes depth. The post-WBOIT
-    // legacy path is reserved for custom blend modes and does not depth-write.
-    // bool write_depth = !mForwardToWBOIT &&
-    //     ((sPostWBOITLegacyPass && rigged && filter == ATTACHMENT_POST_WBOIT_OTHER_RIGGED) ||
-    //      (!sPostWBOITLegacyPass && (rigged ||
-    //         LLDrawPoolWater::sSkipScreenCopy
-    //         || LLPipeline::sImpostorRenderAlphaDepthPass
-    //         || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER)));
-    bool write_depth = !mForwardToWBOIT &&
-        !sPostWBOITLegacyPass &&
+    // <AS:Chanayane> Original vanilla expression is preserved when exact capture is inactive.
+    // bool write_depth = rigged || LLDrawPoolWater::sSkipScreenCopy ||
+    //     LLPipeline::sImpostorRenderAlphaDepthPass || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER;
+    bool write_depth = !mForwardToExactOIT &&
         (rigged ||
             LLDrawPoolWater::sSkipScreenCopy
             // we want depth written so that rendered alpha will
             // contribute to the alpha mask used for impostors
             || LLPipeline::sImpostorRenderAlphaDepthPass
             || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER); // needed for accurate water fog
-    // </AS:Chanayane>
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
+    LLGLDisable exact_oit_blend(mForwardToExactOIT ? GL_BLEND : 0);
+    // </AS:Chanayane>
 
     mColorSFactor = LLRender::BF_SOURCE_ALPHA;           // } regular alpha blend
     mColorDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA; // }
     mAlphaSFactor = LLRender::BF_ZERO;                         // } glow suppression
     mAlphaDFactor = LLRender::BF_ONE_MINUS_SOURCE_ALPHA;       // }
 
-    // <AS:Chanayane> WBOIT — per-attachment blend: accum=additive, reveal=multiplicative
-    if (mForwardToWBOIT)
-    {
-        gPipeline.mRT->wboitFBO.bindTarget();
-        glBlendFunci(0, GL_ONE, GL_ONE);                    // accum: additive
-        glBlendFunci(1, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // combined reveal: multiplicative
-        if (!sWBOITAvatarLayer && sWBOITAttachmentSubPass)
-        {
-            // Worn-attachment sub-pass: additionally write attachment-only-reveal[2].
-            // Snapshotted after world composite; avatar WBOIT shaders sample it so only worn
-            // accessories (eyeglasses etc.) attenuate avatar hair/lashes, not sim fences/windows.
-            GLenum draw_bufs[3] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
-            glDrawBuffers(3, draw_bufs);
-            glBlendFunci(2, GL_ZERO, GL_ONE_MINUS_SRC_COLOR);  // attachment-only reveal: multiplicative
-        }
-        else
-        {
-            // Sim-rezzed sub-pass, avatar pass, or any other context:
-            // attachments[2] and [3] hold snapshot data — don't overwrite them.
-            GLenum draw_bufs[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
-            glDrawBuffers(2, draw_bufs);
-        }
-    }
-    else
-    // </AS:Chanayane>
+    // <AS:Chanayane> Disable framebuffer blending only for node capture.
+    if (!mForwardToExactOIT)
     {
         gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
     }
+    // </AS:Chanayane>
 
-    // <AS:Chanayane> WBOIT — skip the global GLTF alpha draw during the
-    // filtered post-WBOIT fallback so it cannot bypass custom-blend filtering.
-    // if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT)
-    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER && !mForwardToWBOIT && !sPostWBOITLegacyPass)
-    { // draw GLTF scene to depth buffer before rigged alpha (skip in WBOIT mode — wrong RT)
+    // <AS:Chanayane> The original GLTF calls remain identical; GLTF selects exact variants from capture state.
+    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
@@ -436,26 +407,9 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
 
     // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
     // We don't want the nearly invisible objects to cause of DoF effects
-    renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged, filter);
+    renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2, false, rigged);
 
     gGL.setColorMask(true, false);
-
-    // <AS:Chanayane> WBOIT — restore normal blend state and unbind WBOIT FBO after each sub-pass
-    if (mForwardToWBOIT)
-    {
-        glBlendFunci(0, GL_ONE, GL_ZERO);
-        glBlendFunci(1, GL_ONE, GL_ZERO);
-        if (!sWBOITAvatarLayer && sWBOITAttachmentSubPass)
-        {
-            glBlendFunci(2, GL_ONE, GL_ZERO);      // restore attachment-only reveal blend
-            glBlendEquationi(3, GL_FUNC_ADD);      // restore default equation for min-depth slot
-        }
-        // Keep LLRender's cached blend state in sync after raw glBlendFunci calls.
-        // The composite pass will switch this back to normal alpha blending.
-        gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ZERO);
-        gPipeline.mRT->wboitFBO.flush();
-    }
-    // </AS:Chanayane>
 
     // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
     //if (!rigged && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER)
@@ -463,7 +417,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged, AttachmentFilter filter)
     //    // NOTE -- hacky call here protected by !rigged instead of alongside "forwardRender"
     //    // so renderDebugAlpha is executed while gls_pipeline_alpha and depth GL state
     //    // variables above are still in scope
-    if (!rigged && !mForwardToWBOIT && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER && (filter == ATTACHMENT_ONLY || filter == ATTACHMENT_ALL))
+    if (!rigged && !mForwardToExactOIT && getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER)
     {
         //render "highlight alpha" after the final non-rigged pass (pass 3 or legacy ALL),
         // so all non-rigged batches are covered before highlighting.
@@ -775,41 +729,8 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
     }
 }
 
-// <AS:Chanayane> WBOIT deferred emissive sub-pass — called from pipeline.cpp after composite_wboit()
-// so the composite's glow suppression does not suppress this layer's own emissive glow.
-void LLDrawPoolAlpha::runDeferredWBOITEmissives()
-{
-    bool has_emissives = !sDeferredEmissives.empty() || !sDeferredRiggedEmissives.empty() ||
-                         !sDeferredPbrEmissives.empty() || !sDeferredPbrRiggedEmissives.empty();
-    if (!has_emissives)
-    {
-        return;
-    }
-
-    gPipeline.enableLightsDynamic();
-
-    LLGLEnable blend_on(GL_BLEND);
-    gGL.setColorMask(true, true);
-    gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE, LLRender::BF_ONE);
-
-    if (!sDeferredEmissives.empty())        renderEmissives(sDeferredEmissives);
-    if (!sDeferredPbrEmissives.empty())     renderPbrEmissives(sDeferredPbrEmissives);
-    if (!sDeferredRiggedEmissives.empty())  renderRiggedEmissives(sDeferredRiggedEmissives);
-    if (!sDeferredPbrRiggedEmissives.empty()) renderRiggedPbrEmissives(sDeferredPbrRiggedEmissives);
-
-    sDeferredEmissives.clear();
-    sDeferredRiggedEmissives.clear();
-    sDeferredPbrEmissives.clear();
-    sDeferredPbrRiggedEmissives.clear();
-
-    LLGLSLShader::unbind();
-    gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
-}
-// </AS:Chanayane>
-
-// <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-//void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
-void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, AttachmentFilter filter)
+// <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature.
+void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 // </AS:Chanayane>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
@@ -912,44 +833,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     continue;
                 }
 
-                bool is_attachment = params.mAttachedToAvatar.notNull();
-                if (mForwardToWBOIT || filter == ATTACHMENT_POST_WBOIT_LEGACY)
-                {
-                    const U32 partition_type = group->getSpatialPartition()->mPartitionType;
-                    const bool is_avatar_partition =
-                        partition_type == LLViewerRegion::PARTITION_AVATAR ||
-                        partition_type == LLViewerRegion::PARTITION_CONTROL_AV;
-                    is_attachment = is_attachment || is_avatar_partition;
-                }
-                bool custom_blend = params.mBlendFuncSrc != LLRender::BF_SOURCE_ALPHA ||
-                                    params.mBlendFuncDst != LLRender::BF_ONE_MINUS_SOURCE_ALPHA;
-
-                // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-                // 3-pass attachment filter: only active for non-rigged batches.
-                // ATTACHMENT_NONE  = skip attachment prims (SIM-rezzed only, pass 1)
-                // ATTACHMENT_ONLY  = skip SIM-rezzed batches (attachment prims only, pass 3)
-                // ATTACHMENT_ALL   = draw everything (rigged pass and legacy paths)
-                if (filter == ATTACHMENT_POST_WBOIT_LEGACY)
-                {
-                    // if (!is_avatar_alpha && !custom_blend)
-                    if (!custom_blend)
-                    {
-                        continue;
-                    }
-                }
-                else if (!rigged && filter != ATTACHMENT_ALL)
-                {
-                    if (filter == ATTACHMENT_NONE && is_attachment)  { continue; }
-                    if (filter == ATTACHMENT_ONLY && !is_attachment) { continue; }
-                }
-
-                // if (mForwardToWBOIT && (is_avatar_alpha || custom_blend))
-                if (mForwardToWBOIT && custom_blend)
-                {
-                    continue;
-                }
-                // </AS:Chanayane>
-
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("ra - push batch");
 
                 LLRenderPass::applyModelMatrix(params);
@@ -964,7 +847,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     // <AS:Chanayane> WBOIT: route GLTF/PBR alpha through the WBOIT shader
                     // variant so it writes both accum and reveal attachments instead of
                     // disappearing in the composite pass.
-                    target_shader = mForwardToWBOIT ? &gDeferredPBRAlphaWBOITProgram : pbr_shader;
+                    target_shader = mForwardToExactOIT ? &gDeferredPBRAlphaWBOITProgram : pbr_shader;
                     // </AS:Chanayane>
                     if (params.mAvatar != nullptr)
                     {
@@ -990,7 +873,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                         {
                             initialized_lighting = true;
                             // <AS:Chanayane> WBOIT variant
-                            target_shader = mForwardToWBOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                            target_shader = mForwardToExactOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
                             // </AS:Chanayane>
                             light_enabled = false;
                         }
@@ -1000,7 +883,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     {
                         initialized_lighting = true;
                         // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToWBOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        target_shader = mForwardToExactOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
                         // </AS:Chanayane>
                         light_enabled = true;
                     }
@@ -1015,7 +898,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
 
                         llassert(mask < LLMaterial::SHADER_COUNT);
                         // <AS:Chanayane> WBOIT variant
-                        if (mForwardToWBOIT && gDeferredMaterialAlphaWBOITProgram[mask].mProgramObject)
+                        if (mForwardToExactOIT && gDeferredMaterialAlphaWBOITProgram[mask].mProgramObject)
                         {
                             target_shader = &gDeferredMaterialAlphaWBOITProgram[mask];
                         }
@@ -1028,13 +911,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     else if (!params.mFullbright)
                     {
                         // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToWBOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        target_shader = mForwardToExactOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
                         // </AS:Chanayane>
                     }
                     else
                     {
                         // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToWBOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                        target_shader = mForwardToExactOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
                         // </AS:Chanayane>
                     }
 
@@ -1087,10 +970,24 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 bool tex_setup = TexSetup(&params, (mat != nullptr));
 
                 {
-                    if (!mForwardToWBOIT)
+                    if (!mForwardToExactOIT)
                     {
                         gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
                     }
+                    // <AS:Chanayane> Upload original per-draw blend factors into exact OIT nodes.
+                    else if (current_shader)
+                    {
+                        static LLStaticHashedString oit_blend_factors("oitBlendFactors");
+                        static LLStaticHashedString oit_glow("oitGlow");
+                        const U32 packed_blend = U32(params.mBlendFuncSrc) |
+                            (U32(params.mBlendFuncDst) << 8) |
+                            (U32(mAlphaSFactor) << 16) |
+                            (U32(mAlphaDFactor) << 24);
+                        GLint blend_location = current_shader->getUniformLocation(oit_blend_factors);
+                        if (blend_location >= 0) glUniform1ui(blend_location, packed_blend);
+                        current_shader->uniform1f(oit_glow, 0.f);
+                    }
+                    // </AS:Chanayane>
 
                     bool reset_minimum_alpha = false;
                     if (!LLPipeline::sImpostorRender &&
@@ -1148,22 +1045,14 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                 }
             }
 
-            // render emissive faces into alpha channel for bloom effects
-            // <AS:Chanayane> WBOIT — defer the emissive sub-pass to after the composite so the
-            // composite's glow suppression (reveal*old_alpha) does not suppress this layer's own glow.
+            // <AS:Chanayane> Preserve the vanilla condition and route its emissive draws to exact capture when active.
+            // if (!depth_only && (!emissives.empty() || !pbr_emissives.empty() ||
+            //     !rigged_emissives.empty() || !pbr_rigged_emissives.empty()))
             bool has_emissives = !emissives.empty() || !pbr_emissives.empty() ||
                 !rigged_emissives.empty() || !pbr_rigged_emissives.empty();
             if (!depth_only && has_emissives)
             {
-                if (mForwardToWBOIT)
-                {
-                    // Collect into per-layer deferred vectors; pipeline.cpp draws them after composite.
-                    sDeferredEmissives.insert(sDeferredEmissives.end(), emissives.begin(), emissives.end());
-                    sDeferredRiggedEmissives.insert(sDeferredRiggedEmissives.end(), rigged_emissives.begin(), rigged_emissives.end());
-                    sDeferredPbrEmissives.insert(sDeferredPbrEmissives.end(), pbr_emissives.begin(), pbr_emissives.end());
-                    sDeferredPbrRiggedEmissives.insert(sDeferredPbrRiggedEmissives.end(), pbr_rigged_emissives.begin(), pbr_rigged_emissives.end());
-                }
-                else
+                if (!mForwardToExactOIT)
                 {
                     gPipeline.enableLightsDynamic();
 
@@ -1208,6 +1097,13 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged, Attach
                     {
                         lastShader->bind();
                     }
+                }
+                else
+                {
+                    if (!emissives.empty()) renderEmissives(emissives);
+                    if (!pbr_emissives.empty()) renderPbrEmissives(pbr_emissives);
+                    if (!rigged_emissives.empty()) renderRiggedEmissives(rigged_emissives);
+                    if (!pbr_rigged_emissives.empty()) renderRiggedPbrEmissives(pbr_rigged_emissives);
                 }
             }
             // </AS:Chanayane>

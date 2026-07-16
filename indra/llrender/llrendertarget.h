@@ -115,10 +115,6 @@ public:
 
     //share depth buffer with provided render target
     void shareDepthBuffer(LLRenderTarget& target);
-    // <AS:Chanayane> Re-share depth after the owning target is reallocated (e.g. cube snapshot
-    // path where the sharing target's FBO survives but the depth texture is replaced).
-    void refreshSharedDepth(LLRenderTarget& target);
-    // </AS:Chanayane>
 
     //free any allocated resources
     //safe to call redundantly
@@ -146,7 +142,9 @@ public:
     //get Y resolution
     U32 getHeight() const { return mResY; }
 
+    // <AS:Chanayane> Required for exact OIT image-preservation blits.
     U32 getFBO() const { return mFBO; }
+    // </AS:Chanayane>
 
     LLTexUnit::eTextureType getUsage(void) const { return mUsage; }
 
@@ -197,4 +195,3 @@ protected:
 };
 
 #endif
-

@@ -166,11 +166,31 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 // ==================================
 // output definition
 // ==================================
-#if defined(ALPHA_BLEND) || defined(UNLIT)
+// <AS:Chanayane> Exact OIT fragment-node declarations; original outputs remain below.
+#if defined(EXACT_OIT) && defined(ALPHA_BLEND)
+layout(early_fragment_tests) in;
+layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
+struct OITNode { vec4 color; vec4 glow; float depth; uint next; uint blend; uint sequence; };
+layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
+layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
+uniform uint oitBlendFactors;
+void exact_oit_store(vec4 color)
+{
+    uint index = atomicAdd(oitNodeCount, 1u);
+    if (index >= oitNodeCapacity) { atomicOr(oitOverflow, 1u); return; }
+    oitNodes[index].color = color;
+    oitNodes[index].glow = vec4(0.0);
+    oitNodes[index].depth = gl_FragCoord.z;
+    oitNodes[index].blend = oitBlendFactors;
+    oitNodes[index].sequence = index;
+    oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
+}
+#elif defined(ALPHA_BLEND) || defined(UNLIT)
 out vec4 frag_color;
 #else
 out vec4 frag_data[4];
 #endif
+// </AS:Chanayane>
 // ==================================
 
 
@@ -319,12 +339,25 @@ void main()
 
     float a = basecolor.a*vertex_color.a;
 
+    // <AS:Chanayane> Exact capture replaces only the original alpha framebuffer write.
+    // frag_color = max(vec4(color.rgb,a), vec4(0));
+    #ifdef EXACT_OIT
+    exact_oit_store(max(vec4(color.rgb,a), vec4(0)));
+    #else
     frag_color = max(vec4(color.rgb,a), vec4(0));
+    #endif
+    // </AS:Chanayane>
 #else // UNLIT
     vec4 color = basecolor;
     color.rgb += emissive.rgb;
+    // <AS:Chanayane> Exact capture replaces only the original unlit alpha framebuffer write.
+    // frag_color = color;
+    #ifdef EXACT_OIT
+    exact_oit_store(color);
+    #else
     frag_color = color;
+    #endif
+    // </AS:Chanayane>
 #endif
 #endif  // ALPHA_BLEND
 }
-

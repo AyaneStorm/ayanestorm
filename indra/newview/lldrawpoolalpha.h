@@ -58,58 +58,27 @@ public:
     /*virtual*/ void renderPostDeferred(S32 pass);
     /*virtual*/ S32  getNumPasses() { return 1; }
 
-    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-    // 3-pass dispatch: discriminates SIM-rezzed vs attachment non-rigged batches
-    // so that attachment N-BL prims are drawn after rigged hair (pass 3), not before (pass 1).
-    enum AttachmentFilter
-    {
-        ATTACHMENT_ALL,
-        ATTACHMENT_NONE,
-        ATTACHMENT_ONLY,
-        ATTACHMENT_POST_WBOIT_LEGACY
-        // ATTACHMENT_POST_WBOIT_OTHER_RIGGED,
-        // ATTACHMENT_POST_WBOIT_SELF_RIGGED
-    };
+    // <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature; exact OIT does not classify attachments.
+    void forwardRender(bool write_depth = false);
     // </AS:Chanayane>
-
-    void forwardRender(bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);
     /*virtual*/ void prerender();
 
     void renderDebugAlpha();
 
     void renderGroupAlpha(LLSpatialGroup* group, U32 type, U32 mask, bool texture = true);
 
-    // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-    //void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
-    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false, AttachmentFilter filter = ATTACHMENT_ALL);
+    // <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature.
+    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
     // </AS:Chanayane>
     void renderAlphaHighlight();
 
     static bool sShowDebugAlpha;
     static bool sShowDebugAlphaRigged;
-    // <AS:Chanayane> WBOIT — set true when WBOIT accumulation ran this frame; composite checks this
-    static bool sWBOITRendered;
-    // Clear the shared WBOIT MRT once per frame before the first alpha pool contributes.
-    static bool sWBOITClearNeeded;
-    // Draw custom-blend alpha batches with the legacy path after composite.
-    static bool sPostWBOITLegacyPass;
-    // When true, WBOIT accumulation draws avatar/attachment alpha over the already-composited world layer.
-    static bool sWBOITAvatarLayer;
-    // When true, the current world sub-pass is rendering non-rigged worn attachments (ATTACHMENT_ONLY).
-    // These renders additionally write to wboitFBO attachment[2] (attach-only reveal) and [3] (min-depth)
-    // so the avatar WBOIT pass can attenuate hair/lashes by worn-glass transmittance without being
-    // affected by sim-rezzed world objects (fences, windows).
-    static bool sWBOITAttachmentSubPass;
-
-    // Emissives collected during a WBOIT accumulation layer, drawn after the composite
-    // so the composite's glow suppression does not suppress the emissive object's own glow.
-    static std::vector<LLDrawInfo*> sDeferredEmissives;
-    static std::vector<LLDrawInfo*> sDeferredRiggedEmissives;
-    static std::vector<LLDrawInfo*> sDeferredPbrEmissives;
-    static std::vector<LLDrawInfo*> sDeferredPbrRiggedEmissives;
-
-    // Draw and clear the per-layer deferred emissive vectors. Call after composite_wboit().
-    void runDeferredWBOITEmissives();
+    // <AS:Chanayane> Exact OIT frame and fallback state
+    static bool sExactOITCaptured;
+    static bool sExactOITClearNeeded;
+    static bool sExactOITVanillaFallback;
+    static bool sExactOITCaptureActive;
     // </AS:Chanayane>
 
 private:
@@ -139,15 +108,13 @@ private:
     // if true, we're executing a rigged render pass
     bool mRigged = false;
 
-    // <AS:Chanayane> WBOIT — true while accumulation passes are active
-    bool mForwardToWBOIT = false;
-    // RAII guard: sets mForwardToWBOIT true for its lifetime, resets to false on destruction
-    // even if forwardRender exits via an early-return or assert-skip.
-    struct WBOITScope
+    // <AS:Chanayane> Exact OIT capture scope
+    bool mForwardToExactOIT = false;
+    struct ExactOITScope
     {
         LLDrawPoolAlpha& pool;
-        WBOITScope(LLDrawPoolAlpha& p) : pool(p) { pool.mForwardToWBOIT = true; }
-        ~WBOITScope() { pool.mForwardToWBOIT = false; }
+        ExactOITScope(LLDrawPoolAlpha& p) : pool(p) { pool.mForwardToExactOIT = true; sExactOITCaptureActive = true; }
+        ~ExactOITScope() { pool.mForwardToExactOIT = false; sExactOITCaptureActive = false; }
     };
     // </AS:Chanayane>
 };

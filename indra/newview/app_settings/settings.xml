@@ -11786,10 +11786,11 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
+  <!-- <AS:Chanayane> Compatibility key now enables exact per-pixel OIT. -->
   <key>RenderWBOIT</key>
   <map>
     <key>Comment</key>
-    <string>Use weighted blended order-independent transparency for post-water alpha rendering.</string>
+    <string>Use exact per-pixel linked-list transparency for supported post-water alpha rendering.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -11799,19 +11800,22 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
-  <key>RenderWBOITDebugTint</key>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Exact OIT diagnostics. -->
+  <key>RenderExactOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>DEBUG: Tint all WBOIT alpha fragments magenta and opaque to verify whether the edited WBOIT shader variants are active.</string>
+    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
-    <string>Boolean</string>
+    <string>S32</string>
     <key>Value</key>
     <integer>0</integer>
     <key>Backup</key>
     <integer>0</integer>
   </map>
+  <!-- </AS:Chanayane> -->
   <key>RenderDeferredNoise</key>
   <map>
     <key>Comment</key>

@@ -569,6 +569,11 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     S32 major_version = gGLManager.mGLSLVersionMajor;
     S32 minor_version = gGLManager.mGLSLVersionMinor;
 
+    // <AS:Chanayane> Exact OIT uses SSBOs and shader-storage atomics, which are core in GLSL 4.30.
+    const bool exact_oit_shader = filename.find("exactOIT") != std::string::npos ||
+        (defines && defines->find("EXACT_OIT") != defines->end());
+    // </AS:Chanayane>
+
     if (major_version == 1 && minor_version < 30)
     {
         llassert(false); // GL 3.1 or later required
@@ -577,8 +582,13 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     {
         if (major_version >= 4)
         {
-            //set version to 400 or 420
-            if (minor_version >= 20)
+            // <AS:Chanayane> Preserve the vanilla version selection for every non-exact shader.
+            // if (minor_version >= 20) shader_code_text[shader_code_count++] = strdup("#version 420\n");
+            if (exact_oit_shader && minor_version >= 30)
+            {
+                shader_code_text[shader_code_count++] = strdup("#version 430\n");
+            }
+            else if (minor_version >= 20)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 420\n");
             }
@@ -586,6 +596,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
             {
                 shader_code_text[shader_code_count++] = strdup("#version 400\n");
             }
+            // </AS:Chanayane>
         }
         else if (major_version == 3)
         {
@@ -1561,8 +1572,6 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("frame_rect");
     // </FS:Beq>
     // <AS:Chanayane> WBOIT
-    mReservedUniforms.push_back("worldRevealTex");
-    mReservedUniforms.push_back("worldDepthTex");
     // </AS:Chanayane>
 
     llassert(mReservedUniforms.size() == END_RESERVED_UNIFORMS);

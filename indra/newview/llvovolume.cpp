@@ -5806,15 +5806,6 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         draw_info->mAvatar = facep->mAvatar;
         draw_info->mSkinInfo = facep->mSkinInfo;
 
-        // <AS:Chanayane> inspired from the work of Mayatonton in AYAstorm
-        // getAvatar() walks the parent chain: returns wearer for attachments (rigged or not),
-        // control avatar for animesh, NULL for world geometry.
-        if (LLViewerObject* vobj = facep->getViewerObject())
-        {
-            draw_info->mAttachedToAvatar = vobj->getAvatar();
-        }
-        // </AS:Chanayane>
-
         if (gltf_mat)
         {
             // just remember the material ID, render pools will reference the GLTF material

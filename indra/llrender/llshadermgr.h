@@ -360,8 +360,6 @@ public:
         SNAPSHOT_FRAME_RECT,                // "frame_rect"
         // </FS:Beq>
         // <AS:Chanayane> WBOIT
-        WBOIT_WORLD_REVEAL,                 //  "worldRevealTex"
-        WBOIT_WORLD_DEPTH,                  //  "worldDepthTex"
         // </AS:Chanayane>
         END_RESERVED_UNIFORMS
     } eGLSLReservedUniforms;
