@@ -128,15 +128,8 @@ void main()
     uint head = imageLoad(oitHeadPointers, pixel).r;
     vec4 dst = texelFetch(diffuseRect, pixel, 0);
 
-    if (oitPass == 0)
-    {
-        uint pass_count = 0u;
-        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next) ++pass_count;
-        imageStore(oitListCounts, pixel, uvec4(pass_count, 0u, 0u, 0u));
-        atomicMax(oitPad, pass_count);
-        frag_color = vec4(0.0);
-        return;
-    }
+    // <AS:Chanayane> The original pass 0 list traversal is replaced by exact
+    // atomic counts written as each successfully allocated node is captured.
 
     if (oitPass == 1)
     {

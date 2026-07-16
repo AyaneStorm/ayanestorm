@@ -62,14 +62,18 @@ The original implementation performed counting, every merge width, and final
 blending in one fragment invocation. Dense lists could keep a single GPU
 invocation active long enough to trigger the NVIDIA driver watchdog.
 
-The active implementation divides this work into GPU passes:
+The active implementation divides this work into capture metadata and GPU sort
+passes:
 
-1. Count every per-pixel linked list and record the maximum list length.
-2. Execute one merge width per fullscreen draw, with the required image and
+1. Atomically count each successfully captured node in its pixel and record the
+   maximum list length while the fragment is inserted.
+2. Read overflow, total-node, and maximum-list metadata together at the one
+   mandatory post-capture synchronization point.
+3. Execute one merge width per fullscreen draw, with the required image and
    shader-storage barriers between draws.
-3. Skip a pixel during a merge pass when its exact stored list count is no
+4. Skip a pixel during a merge pass when its exact stored list count is no
    greater than that pass's merge width.
-4. Traverse the sorted list and produce the final composite.
+5. Traverse the sorted list and produce the final composite.
 
 Skipping a completed pixel changes only the amount of work. It does not remove,
 approximate, reorder, or alter any fragment.
@@ -180,13 +184,27 @@ that a smaller visual layer budget is acceptable.
 2. **One merge width per draw:** bounds each invocation and adds explicit
    synchronization, avoiding the original monolithic workload. It remained
    expensive because every pixel traversed its list during every merge width.
-3. **Exact count-guided merge passes (current, awaiting confirmation):** stores
-   each pixel's list length and skips later merge widths for lists already fully
-   sorted. Empty pixels and short lists no longer repeat linked-list traversal.
+3. **Exact count-guided merge passes:** stores each pixel's list length and skips
+   later merge widths for lists already fully sorted. Empty pixels and short
+   lists no longer repeat linked-list traversal.
+4. **Capture-time exact counting (current, awaiting confirmation):** increments
+   the pixel count as each valid node is linked and updates the maximum length
+   atomically. This removes the separate fullscreen counting traversal and its
+   second synchronous CPU readback. Camera transitions emit at most two
+   diagnostic lines: the transition sample and a 30-frame peak summary.
+5. **Viewport-resize node-pool retention (current, awaiting confirmation):**
+   first-person mode changes the tested 3440-pixel-wide world view from 1328 to
+   1351 pixels high as UI visibility changes. The old path destroyed and
+   recreated an approximately 836--851 MiB node buffer on every transition.
+   Viewport-only resizes now retain the largest successful node allocation;
+   only resolution-dependent textures and targets are recreated. Full release
+   still occurs for shutdown, failures, disabling Exact OIT, and graphics-state
+   recreation.
 
-The third version was not present in the build that created the latest analyzed
-crash dump. It needs testing in the same crowded location and in first-person
-view before its stability or performance can be considered confirmed.
+The later optimizations were not present together in the build that created the
+latest analyzed crash dump. The current version needs testing in the same
+crowded location and in first-person view before its stability or performance
+can be considered confirmed.
 
 ## Diagnostics and evidence locations
 

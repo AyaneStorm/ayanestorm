@@ -35,6 +35,7 @@
 #ifdef EXACT_OIT
 layout(early_fragment_tests) in;
 layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
+layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
 struct OITNode { vec4 color; vec4 glow; float depth; uint next; uint blend; uint sequence; };
 layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
 layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
@@ -50,6 +51,10 @@ void exact_oit_store(vec4 color)
     oitNodes[index].blend = oitBlendFactors;
     oitNodes[index].sequence = index;
     oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
+    // <AS:Chanayane> Exact metadata only: it does not alter captured color, depth, or ordering.
+    uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
+    atomicMax(oitPad, pixel_count);
+    // </AS:Chanayane>
 }
 #else
 out vec4 frag_color;

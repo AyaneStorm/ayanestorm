@@ -300,8 +300,12 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         {
             GLint previous_fbo = LLRenderTarget::sCurFBO;
             const GLuint empty[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
+            const GLuint zero[4] = { 0u, 0u, 0u, 0u };
             glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->exactOITHeadFBO);
             glClearBufferuiv(GL_COLOR, 0, empty);
+            // <AS:Chanayane> Capture shaders atomically build exact per-pixel list counts.
+            glClearBufferuiv(GL_COLOR, 1, zero);
+            // </AS:Chanayane>
             glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
 
             U32 control[4] = { 0, gPipeline.mRT->exactOITCapacity, 0, 0 };
@@ -309,6 +313,9 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
             glBindImageTexture(0, gPipeline.mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+            // <AS:Chanayane> Count only successfully allocated nodes; overflow still selects vanilla.
+            glBindImageTexture(1, gPipeline.mRT->exactOITCounts, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+            // </AS:Chanayane>
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gPipeline.mRT->exactOITNodes);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gPipeline.mRT->exactOITControl);
             sExactOITClearNeeded = false;

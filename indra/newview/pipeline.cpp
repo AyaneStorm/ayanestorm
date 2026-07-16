@@ -842,7 +842,10 @@ void LLPipeline::resizeScreenTexture()
         if (gResizeScreenTexture || (scaledResX != mRT->screen.getWidth()) || (scaledResY != mRT->screen.getHeight()))
 // [/SL:KB]
         {
-            releaseScreenBuffers();
+            // <AS:Chanayane> Mouselook changes world-view height; retain the ~850 MiB node pool.
+            // releaseScreenBuffers();
+            releaseScreenBuffers(true);
+            // </AS:Chanayane>
             releaseSunShadowTargets();
             releaseSpotShadowTargets();
             allocateScreenBuffer(resX,resY);
@@ -1006,12 +1009,19 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
         if (mRT->exactOITCounts) glDeleteTextures(1, &mRT->exactOITCounts);
         if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
-        if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
         if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
-        mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO =
-            mRT->exactOITNodes = mRT->exactOITControl = 0;
-        mRT->exactOITCapacity = 0;
-        mRT->exactOITPeakNodes = 0;
+        mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO = mRT->exactOITControl = 0;
+
+        // <AS:Chanayane> releaseScreenBuffers(true) deliberately preserves the largest
+        // successful node allocation. Disabling Exact OIT must still release it completely.
+        if (!gSavedSettings.getBOOL("RenderWBOIT"))
+        {
+            if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+            mRT->exactOITNodes = 0;
+            mRT->exactOITCapacity = 0;
+            mRT->exactOITPeakNodes = 0;
+        }
+        // </AS:Chanayane>
 
         // <AS:Chanayane> Disabled means no exact-OIT allocation or GL-state side effects.
         // if (gGLManager.mGLVersion >= 4.29f && mRT->exactOITOpaque.allocate(resX, resY, GL_RGBA16F))
@@ -1034,6 +1044,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             glGenFramebuffers(1, &mRT->exactOITHeadFBO);
             glBindFramebuffer(GL_FRAMEBUFFER, mRT->exactOITHeadFBO);
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mRT->exactOITHeads, 0);
+            // <AS:Chanayane> Clear capture-time exact list counts through the same FBO.
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, mRT->exactOITCounts, 0);
+            const GLenum exact_oit_clear_buffers[] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+            glDrawBuffers(2, exact_oit_clear_buffers);
+            // </AS:Chanayane>
             GLenum head_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             glBindFramebuffer(GL_FRAMEBUFFER, LLRenderTarget::sCurFBO);
 
@@ -1045,15 +1060,30 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             U64 safe_bytes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull);
             U64 wanted_nodes = static_cast<U64>(resX) * static_cast<U64>(resY) * 4ull;
             U64 safe_nodes = safe_bytes / node_bytes;
-            mRT->exactOITCapacity = U32(llmin<U64>(wanted_nodes, llmin<U64>(safe_nodes, 0xfffffffeull)));
+            // <AS:Chanayane> Keep the largest safe allocation across UI-only viewport changes.
+            // U32 requested_capacity = U32(llmin<U64>(wanted_nodes, llmin<U64>(safe_nodes, 0xfffffffeull)));
+            U32 requested_capacity = U32(llmin<U64>(wanted_nodes, llmin<U64>(safe_nodes, 0xfffffffeull)));
+            U32 retained_capacity = U32(llmin<U64>(mRT->exactOITCapacity, llmin<U64>(safe_nodes, 0xfffffffeull)));
+            U32 allocation_capacity = llmax(requested_capacity, retained_capacity);
+            // </AS:Chanayane>
 
-            if (head_status == GL_FRAMEBUFFER_COMPLETE && mRT->exactOITCapacity > 0)
+            if (head_status == GL_FRAMEBUFFER_COMPLETE && allocation_capacity > 0)
             {
                 while (glGetError() != GL_NO_ERROR) {}
-                glGenBuffers(1, &mRT->exactOITNodes);
-                glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITNodes);
-                glBufferData(GL_SHADER_STORAGE_BUFFER,
-                             GLsizeiptr(static_cast<U64>(mRT->exactOITCapacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
+                // <AS:Chanayane> Reuse retained storage; allocate only for first use or genuine growth.
+                if (!mRT->exactOITNodes)
+                {
+                    glGenBuffers(1, &mRT->exactOITNodes);
+                }
+                if (allocation_capacity > mRT->exactOITCapacity)
+                {
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITNodes);
+                    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                                 GLsizeiptr(static_cast<U64>(allocation_capacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
+                    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+                    mRT->exactOITCapacity = allocation_capacity;
+                }
+                // </AS:Chanayane>
 
                 glGenBuffers(1, &mRT->exactOITControl);
                 glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
@@ -1463,7 +1493,10 @@ void LLPipeline::releaseShadowBuffers()
     releaseSpotShadowTargets();
 }
 
-void LLPipeline::releaseScreenBuffers()
+// <AS:Chanayane> Preserve the expensive global node pool only for viewport-only resizing.
+// void LLPipeline::releaseScreenBuffers()
+void LLPipeline::releaseScreenBuffers(bool preserve_exact_oit_nodes)
+// </AS:Chanayane>
 {
     mRT->screen.release();
     mRT->deferredScreen.release();
@@ -1473,11 +1506,19 @@ void LLPipeline::releaseScreenBuffers()
     if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
     if (mRT->exactOITCounts) glDeleteTextures(1, &mRT->exactOITCounts);
     if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
-    if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+    // <AS:Chanayane> Original deletion remains active for shutdown, settings changes, and failures.
+    // if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+    if (!preserve_exact_oit_nodes && mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
+    // </AS:Chanayane>
     if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
-    mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO =
-        mRT->exactOITNodes = mRT->exactOITControl = 0;
-    mRT->exactOITCapacity = 0;
+    mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO = mRT->exactOITControl = 0;
+    // <AS:Chanayane> Retained capacity continues to describe the still-live node buffer.
+    if (!preserve_exact_oit_nodes)
+    {
+        mRT->exactOITNodes = 0;
+        mRT->exactOITCapacity = 0;
+    }
+    // </AS:Chanayane>
     mRT->exactOITAvailable = false;
     // </AS:Chanayane>
 
@@ -9984,6 +10025,43 @@ void LLPipeline::renderDeferredLighting()
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         mRT->exactOITPeakNodes = llmax(mRT->exactOITPeakNodes, control[0]);
 
+        // <AS:Chanayane> Camera-transition diagnostics are bounded to two log lines per transition.
+        // They reuse the mandatory overflow readback and therefore introduce no additional GPU wait.
+        static bool exact_oit_camera_state_initialized = false;
+        static bool exact_oit_was_mouselook = false;
+        static U32 exact_oit_camera_samples_remaining = 0;
+        static U32 exact_oit_camera_peak_nodes = 0;
+        static U32 exact_oit_camera_peak_list = 0;
+        const bool exact_oit_is_mouselook = gAgentCamera.cameraMouselook();
+        if (!exact_oit_camera_state_initialized)
+        {
+            exact_oit_camera_state_initialized = true;
+            exact_oit_was_mouselook = exact_oit_is_mouselook;
+        }
+        else if (exact_oit_is_mouselook != exact_oit_was_mouselook)
+        {
+            exact_oit_was_mouselook = exact_oit_is_mouselook;
+            exact_oit_camera_samples_remaining = 30;
+            exact_oit_camera_peak_nodes = control[0];
+            exact_oit_camera_peak_list = control[3];
+            LL_INFOS("ExactOIT") << "Camera mode changed to "
+                << (exact_oit_is_mouselook ? "first person" : "third person")
+                << "; capture nodes " << control[0] << ", maximum pixel list " << control[3]
+                << ", capacity " << mRT->exactOITCapacity << LL_ENDL;
+        }
+        if (exact_oit_camera_samples_remaining > 0)
+        {
+            exact_oit_camera_peak_nodes = llmax(exact_oit_camera_peak_nodes, control[0]);
+            exact_oit_camera_peak_list = llmax(exact_oit_camera_peak_list, control[3]);
+            if (--exact_oit_camera_samples_remaining == 0)
+            {
+                LL_INFOS("ExactOIT") << "Camera transition settled after 30 Exact OIT frames; peak nodes "
+                    << exact_oit_camera_peak_nodes << ", peak pixel list " << exact_oit_camera_peak_list
+                    << LL_ENDL;
+            }
+        }
+        // </AS:Chanayane>
+
         if (control[2] != 0 || control[0] > mRT->exactOITCapacity)
         {
             ++mRT->exactOITOverflowCount;
@@ -10061,16 +10139,9 @@ void LLPipeline::renderDeferredLighting()
                                                &mRT->exactOITOpaque, false, LLTexUnit::TFO_POINT, 0);
             mScreenTriangleVB->setBuffer();
 
-            // <AS:Chanayane> Split exact linked-list sorting into watchdog-safe GPU submissions.
+            // <AS:Chanayane> Capture already produced exact per-pixel counts and maximum length.
+            // The removed count draw and second synchronous readback were metadata-only work.
             gGL.setColorMask(false, false);
-            gWBOITCompositeProgram.uniform1i(oit_pass, 0);
-            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
-            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-
             gWBOITCompositeProgram.uniform1i(oit_pass, 1);
             for (U32 width = 1; width < control[3]; width <<= 1)
             {
