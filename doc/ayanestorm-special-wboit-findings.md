@@ -239,6 +239,34 @@ Two separate problems:
 
 **3. The eyelash fix breaking** suggests that when `world_depth >= gl_FragCoord.z` (the gate doesn't fire), no attenuation is applied — meaning the world depth in front of eyelashes is reporting as behind them, so the gate never triggers for eyeglasses in front of eyelashes.
 
+## Session 2026-06-18 — Coverage-alpha WBOIT tuning (FAILED, REVERT)
+
+Several shader-side attempts tried to make opaque-face alpha textures behave more like cutout coverage inside WBOIT without touching vanilla rendering:
+
+- Added `wboitCoverageAlpha` in `LLDrawPoolAlpha` only, avoiding `llvovolume.cpp` / `LLDrawInfo` so vanilla geometry batching/rendering would remain untouched.
+- First gated coverage on `LLViewerTexture::getIsAlphaMask()`. This did not affect the tested hair. Likely reason: real hair textures contain enough antialias/mip mid-alpha that the existing mask heuristic rejects them.
+- Then enabled coverage for alpha textures, including legacy material alpha-blend textures, while excluding PBR alpha-blend and guarding in shader on opaque vertex/face alpha.
+- Tried a hard-ish cutout curve `smoothstep(0.25, 0.50, a)`. Result: hair became harsh and alpha-mask-like, with black/jagged cutout edges and lost soft strand tips.
+- Tried a softer color coverage curve `1 - pow(1 - a, 2.2)`. Result: hair edges were softer, but the fundamental "hair over sheer dress becomes transparent" problem remained.
+- Tried separating color coverage from reveal/transmittance: color `1 - pow(1 - a, 4.0)`, reveal `1 - pow(1 - a, 12.0)`. Result: still visually bad. Screenshot showed broken speckled hairline fragments on the forehead, harsh lashes, over-hardened hair regions, and the underlying hair-over-transparent-dress issue was not solved.
+
+Conclusion: this is not a tuning problem in the WBOIT alpha curves. Treating coverage-alpha hair/knit textures as stronger translucency inside the same WBOIT layer does not reproduce vanilla behavior. These assets are not glass; their texture alpha is coverage for an otherwise opaque surface. When such a surface is stacked over a sheer object, WBOIT averaging/reveal still treats both as transparent participants in one blended solution, so the rear/sheers contaminate the front coverage surface.
+
+Do not continue with blind shader curve tuning for this issue. Revert the `wboitCoverageAlpha` shader/draw-pool experiment.
+
+The next plausible direction should be structural:
+
+- classify alpha-texture/opaque-face surfaces before WBOIT as coverage/cutout surfaces,
+- render those with a coverage/alpha-test-like or separate ordered path,
+- keep true alpha-blend materials such as glass, smoke, and deliberately sheer fabric in WBOIT,
+- avoid reusing shader-side `worldRevealTex` attenuation until the texture-unit/shadow-map conflict is fully understood.
+
+Current known visual failures after rollback target:
+
+- Rigged eyelashes/eyesocket alpha behind worn eyeglasses are still not attenuated like vanilla.
+- Rigged hair behind sim-rezzed glass panels is still not attenuated like vanilla.
+- Long hair over a sheer dress remains too transparent, especially at farther camera distance; the close/far transition suggests mip/filtering of texture alpha is being interpreted as translucency instead of coverage.
+
 ### Conclusion
 
 The depth-gated approach is architecturally correct but the implementation has a depth comparison or FBO attachment ordering issue that was not resolved. The fundamental challenge: NDC depth from `gl_FragCoord.z` is non-linear and monotonically increases with distance, so `world_depth < gl_FragCoord.z` should mean "world object is closer to camera." If eyeglasses are in front of eyelashes, glasses NDC depth < eyelash NDC depth, so the gate should fire. That it doesn't suggests the blit is capturing the wrong data or the min-depth is not being written correctly during the world pass.
