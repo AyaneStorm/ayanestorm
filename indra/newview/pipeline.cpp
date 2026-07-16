@@ -997,7 +997,25 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
     if (!gCubeSnapshot) // hack to not re-allocate various targets for cube snapshots
     {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
+        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping
+
+        // <AS:Chanayane> WBOIT MRT — two RGBA16F color attachments sharing depth from screen
+        // attachment0 = weighted color+alpha sum, attachment1 = weighted transmittance
+        // Depth shared so accumulation pass depth-tests against opaque geometry.
+        // Release first so re-entrant calls (window resize) don't hit the shareDepthBuffer
+        // "already shared" assert.
+        mRT->wboitFBO.release();
+        if (!mRT->wboitFBO.allocate(resX, resY, GL_RGBA16F)) return false;
+        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;   // attachment1: combined reveal (composite)
+        if (!mRT->wboitFBO.addColorAttachment(GL_RGBA16F)) return false;  // attachment2: worn-attachment-only reveal (snapshot)
+        // deferredScreen owns the depth texture; screen and wboitFBO share it from there
+        mRT->deferredScreen.shareDepthBuffer(mRT->wboitFBO);
+        // Snapshot of world-layer worn-attachment reveal, taken after world composite.
+        // Avatar WBOIT shaders sample it so only worn accessories (eyeglasses) attenuate hair/lashes.
+        mRT->wboitWorldRevealFBO.release();
+        if (!mRT->wboitWorldRevealFBO.allocate(resX, resY, GL_RGBA16F)) return false;
+        // </AS:Chanayane>
+
         if (RenderUIBuffer)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("UIBuffer"); // <FS:Beq/> improve Tracy scoping 
@@ -1062,6 +1080,14 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("BakeMapBuffer");// <FS:Beq/> create an independent preview screen target
         mBakeMap.allocate(LLAvatarAppearanceDefines::SCRATCH_TEX_WIDTH, LLAvatarAppearanceDefines::SCRATCH_TEX_HEIGHT, GL_RGBA);
         }// <FS:Beq/> create an independent preview screen target
+    }
+    else if (mRT->wboitFBO.getFBO())
+    {
+        // <AS:Chanayane> Cube-snapshot path: deferredScreen was reallocated above (new depth
+        // texture) but wboitFBO was skipped. Re-attach the fresh depth so wboitFBO is not
+        // pointing at the old deleted texture.
+        mRT->deferredScreen.refreshSharedDepth(mRT->wboitFBO);
+        // </AS:Chanayane>
     }
     //HACK make screenbuffer allocations start failing after 30 seconds
     if (gSavedSettings.getBOOL("SimulateFBOFailure"))
@@ -1400,6 +1426,10 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
+    // <AS:Chanayane> WBOIT
+    mRT->wboitFBO.release();
+    mRT->wboitWorldRevealFBO.release();
+    // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -9845,6 +9875,11 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
+        // Reset WBOIT frame state before the post-deferred alpha pools run.
+        LLDrawPoolAlpha::sWBOITRendered = false;
+        LLDrawPoolAlpha::sWBOITClearNeeded = true;
+        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
+
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
                           LLPipeline::RENDER_TYPE_ALPHA_PRE_WATER,
@@ -9880,6 +9915,124 @@ void LLPipeline::renderDeferredLighting()
         renderGeomPostDeferred(*LLViewerCamera::getInstance());
         popRenderTypeMask();
     }
+
+    // <AS:Chanayane> WBOIT composite — blend accumulated transparency over opaque scene
+    static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
+    if (render_wboit && !gCubeSnapshot && !sImpostorRender)
+    {
+        auto composite_wboit = [this]()
+        {
+            if (!LLDrawPoolAlpha::sWBOITRendered)
+            {
+                return;
+            }
+
+            LL_PROFILE_GPU_ZONE("WBOIT composite");
+
+            // screen_target is already bound — do not call bindTarget() again
+            // Alpha blend ZERO/ONE_MINUS_SRC_ALPHA suppresses screen glow by reveal, matching vanilla per-draw glow suppression.
+            gGL.setColorMask(true, true);
+
+            LLGLEnable blend(GL_BLEND);
+            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
+                          LLRender::BF_ZERO, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+
+            LLGLDepthTest depth(GL_FALSE);
+
+            gWBOITCompositeProgram.bind();
+
+            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,  &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 0);
+            gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &mRT->wboitFBO, false, LLTexUnit::TFO_POINT, 1);
+
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+            gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+            gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR);
+            gWBOITCompositeProgram.unbind();
+
+            gGL.setColorMask(true, true);
+            gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+        };
+
+        // Find alpha pool once for deferred emissive calls below.
+        LLDrawPoolAlpha* wboit_alpha_pool = nullptr;
+        for (auto* p : mPools)
+        {
+            if (p->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                wboit_alpha_pool = static_cast<LLDrawPoolAlpha*>(p);
+                break;
+            }
+        }
+
+        composite_wboit();
+        // Draw world-layer deferred emissives AFTER the composite so the composite's
+        // glow suppression does not suppress the emissive objects' own glow.
+        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
+
+        // <AS:Chanayane> Snapshot worn-attachment reveal before avatar pass clears wboitFBO.
+        // wboitFBO attachment[2] = worn-attachment-only reveal (NOT sim fences/windows).
+        // Written only during the ATTACHMENT_ONLY sub-pass of the world WBOIT accumulation.
+        // Avatar WBOIT shaders sample it to attenuate hair/lashes by worn accessories (eyeglasses).
+        if (mRT->wboitWorldRevealFBO.getFBO() && mRT->wboitFBO.getFBO())
+        {
+            GLint prev_fbo = LLRenderTarget::sCurFBO;
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->wboitFBO.getFBO());
+
+            glReadBuffer(GL_COLOR_ATTACHMENT2);  // worn-attachment-only reveal
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->wboitWorldRevealFBO.getFBO());
+            glBlitFramebuffer(0, 0, mRT->wboitFBO.getWidth(), mRT->wboitFBO.getHeight(),
+                              0, 0, mRT->wboitWorldRevealFBO.getWidth(), mRT->wboitWorldRevealFBO.getHeight(),
+                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, prev_fbo);
+        }
+        // </AS:Chanayane>
+
+        // Render avatar/attachment alpha into a fresh WBOIT layer and composite
+        // it over the already-composited world alpha. This keeps WBOIT within
+        // the avatar stack while preventing world glass/windows from being
+        // averaged into the same WBOIT solution as worn hair/lashes.
+        LLDrawPoolAlpha::sWBOITRendered = false;
+        LLDrawPoolAlpha::sWBOITClearNeeded = true;
+        LLDrawPoolAlpha::sWBOITAvatarLayer = true;
+        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
+        {
+            LLDrawPool* poolp = *iter;
+            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginPostDeferredPass(0);
+                poolp->renderPostDeferred(0);
+                poolp->endPostDeferredPass(0);
+            }
+        }
+        LLDrawPoolAlpha::sWBOITAvatarLayer = false;
+
+        composite_wboit();
+        // Draw avatar-layer deferred emissives AFTER the composite.
+        if (wboit_alpha_pool) wboit_alpha_pool->runDeferredWBOITEmissives();
+
+        // Draw only alpha batches WBOIT cannot represent directly.
+        // Standard world and avatar/attachment alpha are accumulated by the
+        // two WBOIT layers; custom blend modes still need the legacy per-batch
+        // blend path.
+        LLDrawPoolAlpha::sPostWBOITLegacyPass = true;
+        for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
+        {
+            LLDrawPool* poolp = *iter;
+            if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                LLVertexBuffer::unbind();
+                poolp->beginPostDeferredPass(0);
+                poolp->renderPostDeferred(0);
+                poolp->endPostDeferredPass(0);
+            }
+        }
+        LLDrawPoolAlpha::sPostWBOITLegacyPass = false;
+    }
+    // </AS:Chanayane>
 
     screen_target->flush();
 

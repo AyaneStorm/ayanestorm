@@ -31,7 +31,41 @@
 #define NON_INDEXED 2
 #define NON_INDEXED_NO_COLOR 3
 
+// <AS:Chanayane> WBOIT helpers — mirrored in pbralphaF.glsl, materialF.glsl, fullbrightF.glsl.
+// Keep all four copies in sync when tuning weight/reveal curves.
+#ifdef WBOIT
+const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
+out vec4 frag_data[3];
+uniform int debugWBOITTint;
+uniform int wboitAvatarLayer;
+float wboit_weight(float a, float depth) {
+    return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
+                 pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
+}
+float wboit_coverage_alpha(float a) {
+    return mix(a, 1.0, smoothstep(0.995, 1.0, a));
+}
+float wboit_skinned_alpha(float a) {
+    // Subtle boost for rigged hair/lashes whose texture alpha is coverage not translucency.
+    // Keep modest — layer split now handles ordering, so less artificial opacity needed.
+#ifdef HAS_SKIN
+    return mix(a, 1.0, smoothstep(0.55, 0.95, a));
+#else
+    return a;
+#endif
+}
+float wboit_reveal_alpha(float a) {
+    if (wboitAvatarLayer != 0) {
+        float exponent = mix(1.65, 1.0, smoothstep(0.05, 0.25, a));
+        float opacity = 1.0 - pow(max(1.0 - a, 0.0), exponent);
+        return mix(opacity, 1.0, smoothstep(0.95, 1.0, a));
+    } else {
+        return mix(a, 1.0, smoothstep(0.95, 1.0, a));
+    }
+}
+#else
 out vec4 frag_color;
+#endif
 
 uniform mat3 env_mat;
 uniform vec3 sun_dir;
@@ -314,6 +348,23 @@ void main()
 #endif
 
     color.rgb *= final_scale;
+#ifdef WBOIT
+    color = max(color, vec4(0));
+    if (debugWBOITTint != 0)
+    {
+        color = vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (color.a <= WBOIT_MIN_ALPHA)
+    {
+        discard;
+    }
+    float wboit_a = wboit_coverage_alpha(wboit_skinned_alpha(color.a));
+    float wboit_reveal = wboit_reveal_alpha(wboit_a);
+    float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
+    frag_data[0] = vec4(color.rgb * wboit_a, wboit_a) * wboit_w;
+    frag_data[1] = vec4(wboit_reveal);   // combined reveal — used by composite
+    frag_data[2] = vec4(wboit_reveal);   // worn-attachment-only reveal — snapshotted for avatar attenuation
+#else
     frag_color = max(color, vec4(0));
+#endif
 }
-

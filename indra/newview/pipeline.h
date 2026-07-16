@@ -724,6 +724,14 @@ public:
         LLRenderTarget          deferredScreen;
         LLRenderTarget          deferredLight;
 
+        // <AS:Chanayane> WBOIT MRT — attachment0=accum(RGBA16F), attachment1=reveal(RGBA16F), attachment2=worn-reveal(RGBA16F)
+        // Only allocated for mMainRT (not auxiliary/hero/cube).
+        LLRenderTarget          wboitFBO;
+        // Snapshot of world-layer worn-attachment reveal taken after world composite.
+        // Sampled by avatar WBOIT shaders to attenuate hair/lashes by worn accessories (eyeglasses).
+        LLRenderTarget          wboitWorldRevealFBO;
+        // </AS:Chanayane>
+
         //sun shadow map
         LLRenderTarget          shadow[4];
     };

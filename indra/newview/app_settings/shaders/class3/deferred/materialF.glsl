@@ -56,7 +56,37 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
 #if (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
 
+#ifdef WBOIT
+const float WBOIT_MIN_ALPHA = 1.0 / 255.0;
+out vec4 frag_data[3];
+uniform int debugWBOITTint;
+uniform int wboitAvatarLayer;
+float wboit_weight(float a, float depth) {
+    return clamp(pow(clamp(a, 0.0, 1.0) + 0.01, 1.5) * 1e4 *
+                 pow(1.0 - depth * 0.9, 12.0), 1e-2, 3e3);
+}
+float wboit_coverage_alpha(float a) {
+    return mix(a, 1.0, smoothstep(0.995, 1.0, a));
+}
+float wboit_skinned_alpha(float a) {
+#ifdef HAS_SKIN
+    return mix(a, 1.0, smoothstep(0.55, 0.95, a));
+#else
+    return a;
+#endif
+}
+float wboit_reveal_alpha(float a) {
+    if (wboitAvatarLayer != 0) {
+        float exponent = mix(1.65, 1.0, smoothstep(0.05, 0.25, a));
+        float opacity = 1.0 - pow(max(1.0 - a, 0.0), exponent);
+        return mix(opacity, 1.0, smoothstep(0.95, 1.0, a));
+    } else {
+        return mix(a, 1.0, smoothstep(0.95, 1.0, a));
+    }
+}
+#else
 out vec4 frag_color;
+#endif
 
 #ifdef HAS_SUN_SHADOW
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
@@ -424,7 +454,25 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-    frag_color = max(vec4(color * final_scale, al), vec4(0));
+    vec4 out_color = max(vec4(color * final_scale, al), vec4(0));
+#ifdef WBOIT
+    if (debugWBOITTint != 0)
+    {
+        out_color = vec4(1.0, 0.0, 1.0, 1.0);
+    }
+    if (out_color.a <= WBOIT_MIN_ALPHA)
+    {
+        discard;
+    }
+    float wboit_a = wboit_coverage_alpha(wboit_skinned_alpha(out_color.a));
+    float wboit_reveal = wboit_reveal_alpha(wboit_a);
+    float wboit_w = wboit_weight(wboit_a, gl_FragCoord.z);
+    frag_data[0] = vec4(out_color.rgb * wboit_a, wboit_a) * wboit_w;
+    frag_data[1] = vec4(wboit_reveal);   // combined reveal — used by composite
+    frag_data[2] = vec4(wboit_reveal);   // worn-attachment-only reveal — snapshotted for avatar attenuation
+#else
+    frag_color = out_color;
+#endif
 
 #else // mode is not DIFFUSE_ALPHA_MODE_BLEND, encode to gbuffer
     // deferred path               // See: C++: addDeferredAttachment(), shader: softenLightF.glsl
@@ -441,5 +489,3 @@ void main()
 
 #endif
 }
-
-
