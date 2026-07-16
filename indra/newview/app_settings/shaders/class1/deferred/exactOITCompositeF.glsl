@@ -7,7 +7,7 @@
 
 /*[EXTRA_CODE_HERE]*/
 
-layout(binding = 0, r32ui) uniform readonly uimage2D oitHeadPointers;
+layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
 
 struct OITNode
 {
@@ -24,7 +24,7 @@ layout(std430, binding = 0) buffer OITNodes
     OITNode oitNodes[];
 };
 
-layout(std430, binding = 1) readonly buffer OITControl
+layout(std430, binding = 1) buffer OITControl
 {
     uint oitNodeCount;
     uint oitNodeCapacity;
@@ -34,6 +34,8 @@ layout(std430, binding = 1) readonly buffer OITControl
 
 uniform sampler2D diffuseRect;
 uniform int oitDebugMode;
+uniform int oitPass;
+uniform uint oitSortWidth;
 
 in vec2 vary_fragcoord;
 out vec4 frag_color;
@@ -100,27 +102,23 @@ uint merge_runs(uint a, uint b, out uint tail)
     return head;
 }
 
-uint sort_list(uint head, uint count)
+uint sort_list_pass(uint head, uint width)
 {
-    for (uint width = 1u; width < count; width <<= 1u)
+    uint current = head;
+    uint new_head = OIT_NULL;
+    uint new_tail = OIT_NULL;
+    while (current != OIT_NULL)
     {
-        uint current = head;
-        uint new_head = OIT_NULL;
-        uint new_tail = OIT_NULL;
-        while (current != OIT_NULL)
-        {
-            uint left = current;
-            uint right = split_run(left, width);
-            current = split_run(right, width);
-            uint merged_tail;
-            uint merged_head = merge_runs(left, right, merged_tail);
-            if (new_head == OIT_NULL) new_head = merged_head;
-            else oitNodes[new_tail].next = merged_head;
-            new_tail = merged_tail;
-        }
-        head = new_head;
+        uint left = current;
+        uint right = split_run(left, width);
+        current = split_run(right, width);
+        uint merged_tail;
+        uint merged_head = merge_runs(left, right, merged_tail);
+        if (new_head == OIT_NULL) new_head = merged_head;
+        else oitNodes[new_tail].next = merged_head;
+        new_tail = merged_tail;
     }
-    return head;
+    return new_head;
 }
 
 void main()
@@ -128,6 +126,27 @@ void main()
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     uint head = imageLoad(oitHeadPointers, pixel).r;
     vec4 dst = texelFetch(diffuseRect, pixel, 0);
+
+    if (oitPass == 0)
+    {
+        uint pass_count = 0u;
+        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next) ++pass_count;
+        atomicMax(oitPad, pass_count);
+        frag_color = vec4(0.0);
+        return;
+    }
+
+    if (oitPass == 1)
+    {
+        if (head != OIT_NULL)
+        {
+            head = sort_list_pass(head, oitSortWidth);
+            imageStore(oitHeadPointers, pixel, uvec4(head, 0u, 0u, 0u));
+        }
+        frag_color = vec4(0.0);
+        return;
+    }
+
     if (head == OIT_NULL)
     {
         frag_color = dst;
@@ -153,7 +172,6 @@ void main()
     if (oitDebugMode == 2) { frag_color = vec4(vec3(nearest), 1.0); return; }
     if (oitDebugMode == 3) { frag_color = vec4(vec3(farthest), 1.0); return; }
 
-    head = sort_list(head, count);
     if (oitDebugMode == 4)
     {
         bool invalid = false;

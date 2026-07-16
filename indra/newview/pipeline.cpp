@@ -10037,18 +10037,42 @@ void LLPipeline::renderDeferredLighting()
 
             LLGLDisable blend(GL_BLEND);
             LLGLDepthTest depth(GL_FALSE);
-            gGL.setColorMask(true, true);
-            glBindImageTexture(0, mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
+            glBindImageTexture(0, mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, mRT->exactOITNodes);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, mRT->exactOITControl);
             gWBOITCompositeProgram.bind();
             static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
             static LLStaticHashedString oit_debug_mode("oitDebugMode");
+            static LLStaticHashedString oit_pass("oitPass");
+            static LLStaticHashedString oit_sort_width("oitSortWidth");
             gWBOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
             gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                                &mRT->exactOITOpaque, false, LLTexUnit::TFO_POINT, 0);
             mScreenTriangleVB->setBuffer();
+
+            // <AS:Chanayane> Split exact linked-list sorting into watchdog-safe GPU submissions.
+            gGL.setColorMask(false, false);
+            gWBOITCompositeProgram.uniform1i(oit_pass, 0);
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+            gWBOITCompositeProgram.uniform1i(oit_pass, 1);
+            for (U32 width = 1; width < control[3]; width <<= 1)
+            {
+                GLint sort_width_location = gWBOITCompositeProgram.getUniformLocation(oit_sort_width);
+                if (sort_width_location >= 0) glUniform1ui(sort_width_location, width);
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            }
+
+            gGL.setColorMask(true, true);
+            gWBOITCompositeProgram.uniform1i(oit_pass, 2);
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            // </AS:Chanayane>
             gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
             gWBOITCompositeProgram.unbind();
 
