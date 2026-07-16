@@ -192,7 +192,7 @@ that a smaller visual layer budget is acceptable.
    atomically. This removes the separate fullscreen counting traversal and its
    second synchronous CPU readback. Camera transitions emit at most two
    diagnostic lines: the transition sample and a 30-frame peak summary.
-5. **Viewport-resize node-pool retention (current, awaiting confirmation):**
+5. **Viewport-resize node-pool retention (transition fix confirmed):**
    first-person mode changes the tested 3440-pixel-wide world view from 1328 to
    1351 pixels high as UI visibility changes. The old path destroyed and
    recreated an approximately 836--851 MiB node buffer on every transition.
@@ -201,6 +201,34 @@ that a smaller visual layer budget is acceptable.
    still occurs for shutdown, failures, disabling Exact OIT, and graphics-state
    recreation.
 
+### Test result after capture counting and node-pool retention
+
+The first-/third-person transition became instant after retaining the node pool,
+confirming that repeated destruction and allocation of the approximately
+836--851 MiB SSBO was the original camera-transition stall. Capacity remained
+stable at 19,337,136 nodes during subsequent transitions.
+
+Performance later degraded again as the scene continued loading. This later
+slowdown had a different signature:
+
+- Exact OIT did not overflow or grow its node buffer.
+- Captured node counts varied from roughly 2.7 million to 12.1 million.
+- Maximum per-pixel lists rose as high as 558 fragments, requiring ten exact
+  merge widths for the affected frame.
+- Texture-downscaling warnings increased rapidly while the viewer was loading
+  scene content.
+- Reported viewer physical memory rose from approximately 8.4 GiB to 16 GiB.
+- Observed frame rate later fell into the 3--12 FPS range.
+- NVIDIA reported 12,288 MiB total VRAM, 9,658 MiB used, and 2,427 MiB free at
+  the time of inspection.
+
+This evidence does not show the Exact OIT allocation filling up: its capacity
+was stable and no overflow occurred. The leading explanation is combined
+texture-memory churn and the genuine cost of sorting unusually dense
+transparent pixels. Precise GPU timing is required to separate capture,
+synchronization, individual merge passes, and final composite before making
+another optimization decision.
+
 The later optimizations were not present together in the build that created the
 latest analyzed crash dump. The current version needs testing in the same
 crowded location and in first-person view before its stability or performance
@@ -208,18 +236,24 @@ can be considered confirmed.
 
 ## Diagnostics and evidence locations
 
-The current runtime log location supplied for subsequent testing is:
+The proposed relocated runtime log directory was:
 
 ```text
 S:\as\logs
 ```
 
-Older evidence used during this investigation was read from the former roaming
-profile log location and from Windows local crash dumps. Future analysis should
-use the new log directory first and correlate its final timestamp with:
+However, the July test builds continued writing the active log to:
 
 ```text
-C:\Users\gabri\AppData\Local\CrashDumps
+C:\Users\[user]\AppData\Roaming\AyaneStorm_x64\logs\AyaneStorm.log
+```
+
+`S:\as\logs` still contained an old May log, so the relocation had not taken
+effect. Future analysis should use the roaming-profile log unless a newer file
+appears on `S:` and correlate its final timestamp with:
+
+```text
+C:\Users\[user]\AppData\Local\CrashDumps
 ```
 
 Available renderer diagnostics include Exact OIT availability, node capacity,
@@ -249,7 +283,9 @@ The next validation run should preserve the exact same rendering requirements:
 
 ## Open work
 
-- Confirm stability and first-person performance of count-guided merge passes.
+- Continue long-session stability testing of count-guided merge passes.
+- Add GPU timings before addressing the later memory-pressure/dense-list
+  slowdown; do not infer the expensive stage from aggregate FPS alone.
 - Add sufficiently precise GPU timing around capture, count/readback, each sort
   stage, and composite so future optimization targets measured cost.
 - Complete systematic blend-factor/equation reference tests, including separate
