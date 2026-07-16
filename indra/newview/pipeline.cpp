@@ -1004,10 +1004,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         mRT->exactOITOpaque.release();
         mRT->exactOITAvailable = false;
         if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
+        if (mRT->exactOITCounts) glDeleteTextures(1, &mRT->exactOITCounts);
         if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
         if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
         if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
-        mRT->exactOITHeads = mRT->exactOITHeadFBO = mRT->exactOITNodes = mRT->exactOITControl = 0;
+        mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO =
+            mRT->exactOITNodes = mRT->exactOITControl = 0;
         mRT->exactOITCapacity = 0;
         mRT->exactOITPeakNodes = 0;
 
@@ -1018,6 +1020,12 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         {
             glGenTextures(1, &mRT->exactOITHeads);
             glBindTexture(GL_TEXTURE_2D, mRT->exactOITHeads);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, resX, resY);
+
+            glGenTextures(1, &mRT->exactOITCounts);
+            glBindTexture(GL_TEXTURE_2D, mRT->exactOITCounts);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
             glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI, resX, resY);
@@ -1463,10 +1471,12 @@ void LLPipeline::releaseScreenBuffers()
     // <AS:Chanayane> Release exact OIT resources added alongside the screen targets.
     mRT->exactOITOpaque.release();
     if (mRT->exactOITHeads) glDeleteTextures(1, &mRT->exactOITHeads);
+    if (mRT->exactOITCounts) glDeleteTextures(1, &mRT->exactOITCounts);
     if (mRT->exactOITHeadFBO) glDeleteFramebuffers(1, &mRT->exactOITHeadFBO);
     if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
     if (mRT->exactOITControl) glDeleteBuffers(1, &mRT->exactOITControl);
-    mRT->exactOITHeads = mRT->exactOITHeadFBO = mRT->exactOITNodes = mRT->exactOITControl = 0;
+    mRT->exactOITHeads = mRT->exactOITCounts = mRT->exactOITHeadFBO =
+        mRT->exactOITNodes = mRT->exactOITControl = 0;
     mRT->exactOITCapacity = 0;
     mRT->exactOITAvailable = false;
     // </AS:Chanayane>
@@ -10038,6 +10048,7 @@ void LLPipeline::renderDeferredLighting()
             LLGLDisable blend(GL_BLEND);
             LLGLDepthTest depth(GL_FALSE);
             glBindImageTexture(0, mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
+            glBindImageTexture(1, mRT->exactOITCounts, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, mRT->exactOITNodes);
             glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, mRT->exactOITControl);
             gWBOITCompositeProgram.bind();
@@ -10054,7 +10065,7 @@ void LLPipeline::renderDeferredLighting()
             gGL.setColorMask(false, false);
             gWBOITCompositeProgram.uniform1i(oit_pass, 0);
             mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
             glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
             glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);

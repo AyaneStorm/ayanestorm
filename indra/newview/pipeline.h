@@ -727,6 +727,7 @@ public:
         // <AS:Chanayane> Exact OIT resources are allocated only for the main full-resolution target.
         LLRenderTarget          exactOITOpaque;
         GLuint                  exactOITHeads = 0;
+        GLuint                  exactOITCounts = 0;
         GLuint                  exactOITHeadFBO = 0;
         GLuint                  exactOITNodes = 0;
         GLuint                  exactOITControl = 0;

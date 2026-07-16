@@ -8,6 +8,7 @@
 /*[EXTRA_CODE_HERE]*/
 
 layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
+layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
 
 struct OITNode
 {
@@ -131,6 +132,7 @@ void main()
     {
         uint pass_count = 0u;
         for (uint n = head; n != OIT_NULL; n = oitNodes[n].next) ++pass_count;
+        imageStore(oitListCounts, pixel, uvec4(pass_count, 0u, 0u, 0u));
         atomicMax(oitPad, pass_count);
         frag_color = vec4(0.0);
         return;
@@ -138,7 +140,8 @@ void main()
 
     if (oitPass == 1)
     {
-        if (head != OIT_NULL)
+        uint list_count = imageLoad(oitListCounts, pixel).r;
+        if (list_count > oitSortWidth)
         {
             head = sort_list_pass(head, oitSortWidth);
             imageStore(oitHeadPointers, pixel, uvec4(head, 0u, 0u, 0u));
