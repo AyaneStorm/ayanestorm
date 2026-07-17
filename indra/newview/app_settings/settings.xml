@@ -11786,8 +11786,8 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
-  <!-- <AS:Chanayane> Compatibility key now enables exact per-pixel OIT. -->
-  <key>RenderWBOIT</key>
+  <!-- <AS:Chanayane> Exact per-pixel OIT. -->
+  <key>RenderExactOIT</key>
   <map>
     <key>Comment</key>
     <string>Use exact per-pixel linked-list transparency for supported post-water alpha rendering.</string>

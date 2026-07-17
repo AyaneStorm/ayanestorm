@@ -10,7 +10,7 @@
   label="AyaneStorm"
   name="ayanestorm">
 
-  <!-- <AS:Chanayane> RenderWBOIT compatibility setting now selects exact OIT. -->
+  <!-- <AS:Chanayane> Exact OIT preference. -->
   <check_box
     follows="left|top"
     layout="topleft"
@@ -124,12 +124,12 @@
     follows="left|top"
     layout="topleft"
     height="16"
-    control_name="RenderWBOIT"
-    label="Use exact transparency rendering"
-    tool_tip="If checked, supported alpha surfaces are captured and composited in exact per-pixel depth order. Disable this to use the legacy alpha renderer."
+    control_name="RenderExactOIT"
+    label="Use Exact OIT transparency"
+    tool_tip="Renders supported transparent surfaces in exact per-pixel depth order. This improves overlapping hair, glass, particles, and other alpha surfaces, but can cost performance in transparency-heavy scenes. Disable it to use the standard transparency renderer."
     left="15"
     mouse_opaque="true"
-    name="render_wboit"
+    name="render_exact_oit"
     radio_style="false"
     width="500"
     top_pad="20" />

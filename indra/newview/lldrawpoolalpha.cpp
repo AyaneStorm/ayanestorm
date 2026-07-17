@@ -201,7 +201,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
     // <AS:Chanayane> Prepare exact-OIT capture shader variants for the supported post-water path.
-    static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
+    static LLCachedControl<bool> render_exact_oit(gSavedSettings, "RenderExactOIT", true);
     std::string missing_exact_shader;
     auto require_exact_shader = [&missing_exact_shader](const LLGLSLShader& shader, const char* name)
     {
@@ -252,7 +252,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             }
         }
     }
-    if (render_wboit && !exact_shaders_ready)
+    if (render_exact_oit && !exact_shaders_ready)
     {
         static bool logged_incomplete_shader = false;
         if (!logged_incomplete_shader)
@@ -262,7 +262,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
                                   << "); using complete vanilla transparency." << LL_ENDL;
         }
     }
-    if (render_wboit && exact_shaders_ready && gPipeline.mRT->exactOITAvailable &&
+    if (render_exact_oit && exact_shaders_ready && gPipeline.mRT->exactOITAvailable &&
         !LLPipeline::sRenderingHUDs &&
         !LLPipeline::sImpostorRender && !gCubeSnapshot && !sExactOITVanillaFallback)
     {
@@ -287,10 +287,10 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // already being setup for rendering
     LLGLSLShader::unbind();
 
-    // <AS:Chanayane> Exact capture replaces the two vanilla calls only while RenderWBOIT is enabled.
+    // <AS:Chanayane> Exact capture replaces the two vanilla calls only while RenderExactOIT is enabled.
     // if (!LLPipeline::sRenderingHUDs) forwardRender(true);
     // forwardRender();
-    if (render_wboit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
+    if (render_exact_oit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
         && !LLPipeline::sImpostorRender && !gCubeSnapshot && gPipeline.mRT->exactOITAvailable &&
         exact_shaders_ready
         && !sExactOITVanillaFallback)

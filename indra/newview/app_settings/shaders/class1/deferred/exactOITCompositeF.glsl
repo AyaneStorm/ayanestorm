@@ -36,7 +36,6 @@ layout(std430, binding = 1) buffer OITControl
 uniform sampler2D diffuseRect;
 uniform int oitDebugMode;
 uniform int oitPass;
-uniform uint oitSortWidth;
 
 in vec2 vary_fragcoord;
 out vec4 frag_color;
@@ -65,16 +64,45 @@ bool comes_first(uint lhs, uint rhs)
     return ld > rd || (ld == rd && oitNodes[lhs].sequence < oitNodes[rhs].sequence);
 }
 
-uint split_run(uint head, uint width)
+// Detach one naturally ordered run. Reverse runs are reversed while they are
+// detached, so the returned run is always in the required far-to-near order.
+uint take_natural_run(inout uint current, out uint tail)
 {
-    if (head == OIT_NULL) return OIT_NULL;
-    for (uint i = 1u; i < width && oitNodes[head].next != OIT_NULL; ++i)
+    uint head = current;
+    tail = head;
+    uint next = oitNodes[tail].next;
+    if (next == OIT_NULL)
     {
-        head = oitNodes[head].next;
+        current = OIT_NULL;
+        return head;
     }
-    uint second = oitNodes[head].next;
-    oitNodes[head].next = OIT_NULL;
-    return second;
+
+    bool reverse = comes_first(next, tail);
+    while (next != OIT_NULL)
+    {
+        bool continues = reverse ? comes_first(next, tail) : comes_first(tail, next);
+        if (!continues) break;
+        tail = next;
+        next = oitNodes[tail].next;
+    }
+    current = next;
+    oitNodes[tail].next = OIT_NULL;
+
+    if (reverse)
+    {
+        uint previous = OIT_NULL;
+        uint node = head;
+        tail = head;
+        while (node != OIT_NULL)
+        {
+            uint following = oitNodes[node].next;
+            oitNodes[node].next = previous;
+            previous = node;
+            node = following;
+        }
+        head = previous;
+    }
+    return head;
 }
 
 uint merge_runs(uint a, uint b, out uint tail)
@@ -103,21 +131,29 @@ uint merge_runs(uint a, uint b, out uint tail)
     return head;
 }
 
-uint sort_list_pass(uint head, uint width)
+uint natural_merge_pass(uint head, out uint output_run_count)
 {
     uint current = head;
     uint new_head = OIT_NULL;
     uint new_tail = OIT_NULL;
+    output_run_count = 0u;
     while (current != OIT_NULL)
     {
-        uint left = current;
-        uint right = split_run(left, width);
-        current = split_run(right, width);
-        uint merged_tail;
-        uint merged_head = merge_runs(left, right, merged_tail);
-        if (new_head == OIT_NULL) new_head = merged_head;
-        else oitNodes[new_tail].next = merged_head;
-        new_tail = merged_tail;
+        uint left_tail;
+        uint left = take_natural_run(current, left_tail);
+        uint output_head = left;
+        uint output_tail = left_tail;
+        if (current != OIT_NULL)
+        {
+            uint right_tail;
+            uint right = take_natural_run(current, right_tail);
+            output_head = merge_runs(left, right, output_tail);
+        }
+
+        if (new_head == OIT_NULL) new_head = output_head;
+        else oitNodes[new_tail].next = output_head;
+        new_tail = output_tail;
+        ++output_run_count;
     }
     return new_head;
 }
@@ -133,10 +169,12 @@ void main()
 
     if (oitPass == 1)
     {
-        uint list_count = imageLoad(oitListCounts, pixel).r;
-        if (list_count > oitSortWidth)
+        uint remaining_runs = imageLoad(oitListCounts, pixel).r;
+        if (remaining_runs > 1u)
         {
-            head = sort_list_pass(head, oitSortWidth);
+            uint output_runs;
+            head = natural_merge_pass(head, output_runs);
+            imageStore(oitListCounts, pixel, uvec4(output_runs, 0u, 0u, 0u));
             imageStore(oitHeadPointers, pixel, uvec4(head, 0u, 0u, 0u));
         }
         frag_color = vec4(0.0);

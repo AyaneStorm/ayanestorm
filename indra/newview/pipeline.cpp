@@ -1014,7 +1014,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
         // <AS:Chanayane> releaseScreenBuffers(true) deliberately preserves the largest
         // successful node allocation. Disabling Exact OIT must still release it completely.
-        if (!gSavedSettings.getBOOL("RenderWBOIT"))
+        if (!gSavedSettings.getBOOL("RenderExactOIT"))
         {
             if (mRT->exactOITNodes) glDeleteBuffers(1, &mRT->exactOITNodes);
             mRT->exactOITNodes = 0;
@@ -1025,7 +1025,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
         // <AS:Chanayane> Disabled means no exact-OIT allocation or GL-state side effects.
         // if (gGLManager.mGLVersion >= 4.29f && mRT->exactOITOpaque.allocate(resX, resY, GL_RGBA16F))
-        if (gSavedSettings.getBOOL("RenderWBOIT") && gGLManager.mGLVersion >= 4.29f &&
+        if (gSavedSettings.getBOOL("RenderExactOIT") && gGLManager.mGLVersion >= 4.29f &&
             mRT->exactOITOpaque.allocate(resX, resY, GL_RGBA16F))
         {
             glGenTextures(1, &mRT->exactOITHeads);
@@ -9966,7 +9966,7 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
-        // <AS:Chanayane> Reset exact OIT state; RenderWBOIT=false continues into the untouched vanilla dispatch.
+        // <AS:Chanayane> Reset exact OIT state; RenderExactOIT=false continues into the untouched vanilla dispatch.
         LLDrawPoolAlpha::sExactOITCaptured = false;
         LLDrawPoolAlpha::sExactOITClearNeeded = true;
         LLDrawPoolAlpha::sExactOITVanillaFallback = false;
@@ -10010,8 +10010,8 @@ void LLPipeline::renderDeferredLighting()
 
     // <AS:Chanayane> Exact OIT validation and composite. Capture shaders have not touched the
     // screen color, so an overflow can safely rerun the complete vanilla alpha path.
-    static LLCachedControl<bool> render_wboit(gSavedSettings, "RenderWBOIT", true);
-    if (render_wboit && !gCubeSnapshot && !sImpostorRender &&
+    static LLCachedControl<bool> render_exact_oit(gSavedSettings, "RenderExactOIT", true);
+    if (render_exact_oit && !gCubeSnapshot && !sImpostorRender &&
         mRT->exactOITAvailable && gWBOITCompositeProgram.mProgramObject &&
         LLDrawPoolAlpha::sExactOITCaptured)
     {
@@ -10133,7 +10133,6 @@ void LLPipeline::renderDeferredLighting()
             static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
             static LLStaticHashedString oit_debug_mode("oitDebugMode");
             static LLStaticHashedString oit_pass("oitPass");
-            static LLStaticHashedString oit_sort_width("oitSortWidth");
             gWBOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
             gWBOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                                &mRT->exactOITOpaque, false, LLTexUnit::TFO_POINT, 0);
@@ -10145,8 +10144,6 @@ void LLPipeline::renderDeferredLighting()
             gWBOITCompositeProgram.uniform1i(oit_pass, 1);
             for (U32 width = 1; width < control[3]; width <<= 1)
             {
-                GLint sort_width_location = gWBOITCompositeProgram.getUniformLocation(oit_sort_width);
-                if (sort_width_location >= 0) glUniform1ui(sort_width_location, width);
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
                 glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
             }

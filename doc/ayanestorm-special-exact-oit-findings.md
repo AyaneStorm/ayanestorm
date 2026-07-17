@@ -1,14 +1,12 @@
-<!-- <AS:Chanayane> Exact OIT findings and investigation record -->
 # Exact OIT Transparency Findings
 
-Date: 2026-07-16
+Date: 2026-07-17
 
 ## Purpose and quality contract
 
 The active transparency experiment replaces weighted blended order-independent
 transparency (WBOIT) with exact per-pixel linked-list transparency (PPLL, also
-known as an A-buffer). `RenderWBOIT` remains the compatibility setting name, but
-enabling it selects Exact OIT.
+known as an A-buffer). The feature is exposed as `RenderExactOIT`.
 
 The implementation is governed by the following requirements:
 
@@ -200,6 +198,20 @@ that a smaller visual layer budget is acceptable.
    only resolution-dependent textures and targets are recreated. Full release
    still occurs for shutdown, failures, disabling Exact OIT, and graphics-state
    recreation.
+6. **Natural-run merge sorting (moving-camera improvement confirmed, remaining
+   slowdown):**
+   sudden particle and sprite bursts can create hundreds of overlapping
+   fragments in a pixel. The earlier all-or-nothing monotonic fast path helped
+   one test, but another large burst still slowed down severely specifically
+   while the camera was moving. This indicates that camera-relative depth
+   changes leave the lists partially ordered rather than fully monotonic.
+   Sorting now discovers natural ordered runs, reverses descending runs, merges
+   adjacent run pairs, and stores the remaining run count so completed pixels
+   skip later passes. Fully unordered data still receives a complete exact
+   merge sort. No fragments or blend operations are removed. Retesting while
+   moving the camera showed a visible performance improvement, confirming that
+   partial ordering was relevant, but the scene remained somewhat slow. This is
+   therefore an effective optimization rather than a complete resolution.
 
 ### Test result after capture counting and node-pool retention
 
@@ -278,16 +290,22 @@ The next validation run should preserve the exact same rendering requirements:
   repeats `0xC0000409` inside `nvoglv64.dll` or presents a new failure signature.
 - Force an undersized buffer separately to verify that overflow produces a
   complete vanilla frame and never a partial composite.
-- With `RenderWBOIT` disabled, compare directly against
+- With `RenderExactOIT` disabled, compare directly against
   `special-ayanestorm-dev` for vanilla parity.
 
 ## Open work
 
 - Continue long-session stability testing of count-guided merge passes.
+- Validate natural-run sorting with the same sprite burst while moving and
+  holding the camera still, and compare it against the earlier monotonic-only
+  implementation.
 - Add GPU timings before addressing the later memory-pressure/dense-list
   slowdown; do not infer the expensive stage from aggregate FPS alone.
 - Add sufficiently precise GPU timing around capture, count/readback, each sort
   stage, and composite so future optimization targets measured cost.
+- Use the moving-camera sprite reproduction for those timings; compare capture,
+  validation readback, natural-run passes, and final blending before changing
+  the sorting algorithm again.
 - Complete systematic blend-factor/equation reference tests, including separate
   color and alpha state.
 - Complete parity tests for water-adjacent alpha, HUDs, impostors, cube and
@@ -297,4 +315,3 @@ The next validation run should preserve the exact same rendering requirements:
 No future optimization may impose a fixed fragment limit per pixel, silently
 discard captured data, substitute approximate blending, or knowingly add visual
 artifacts without explicit approval.
-<!-- </AS:Chanayane> -->

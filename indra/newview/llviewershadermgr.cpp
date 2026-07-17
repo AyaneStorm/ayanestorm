@@ -1126,7 +1126,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
     // <AS:Chanayane> Keep exact shader creation entirely out of the vanilla-disabled path.
-    const bool render_exact_oit = gSavedSettings.getBOOL("RenderWBOIT") &&
+    const bool render_exact_oit = gSavedSettings.getBOOL("RenderExactOIT") &&
         (gGLManager.mGLSLVersionMajor > 4 ||
          (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30));
     // </AS:Chanayane>
