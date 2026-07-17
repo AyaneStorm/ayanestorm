@@ -585,6 +585,10 @@ void LLViewerShaderMgr::setShaders()
         {
             HBXXH128 hash_obj;
             hash_obj.update(LLVersionInfo::instance().getVersion());
+            // <AS:Chanayane> Shader paths alone do not invalidate cached program binaries
+            // after source/layout changes in same-version development builds.
+            hash_obj.update("AyaneStormSpecial Exact OIT shader revision v5");
+            // </AS:Chanayane>
             current_cache_version = hash_obj.digest();
 
             old_cache_version = LLUUID(gSavedSettings.getString("RenderShaderCacheVersion"));

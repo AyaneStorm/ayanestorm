@@ -13,7 +13,9 @@ vec3 srgb_to_linear(vec3 c);
 layout(early_fragment_tests) in;
 layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
 layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
-struct OITNode { vec4 color; vec4 glow; float depth; uint next; uint blend; uint sequence; };
+// <AS:Chanayane> Lossless 32-byte node: scalar glow and index-derived sequence.
+struct OITNode { vec4 color; float glow; float depth; uint next; uint blend; };
+// </AS:Chanayane>
 layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
 layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
 void exact_oit_store_glow(float glow)
@@ -21,10 +23,9 @@ void exact_oit_store_glow(float glow)
     uint index = atomicAdd(oitNodeCount, 1u);
     if (index >= oitNodeCapacity) { atomicOr(oitOverflow, 1u); return; }
     oitNodes[index].color = vec4(0.0);
-    oitNodes[index].glow = vec4(glow, 0.0, 0.0, 0.0);
+    oitNodes[index].glow = glow;
     oitNodes[index].depth = gl_FragCoord.z;
     oitNodes[index].blend = 0xffffffffu;
-    oitNodes[index].sequence = index;
     oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
     // <AS:Chanayane> Glow nodes participate in the same exact ordered list count.
     uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;

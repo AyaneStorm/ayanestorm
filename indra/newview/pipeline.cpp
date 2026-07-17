@@ -1052,7 +1052,9 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
             GLenum head_status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             glBindFramebuffer(GL_FRAMEBUFFER, LLRenderTarget::sCurFBO);
 
-            constexpr U64 node_bytes = 48;
+            // <AS:Chanayane> Lossless compact node layout: vec4 color plus four scalars.
+            constexpr U64 node_bytes = 32;
+            // </AS:Chanayane>
             // <AS:Chanayane> Do not invent a VRAM budget when dedicated VRAM was not reported.
             // U64 vram_bytes = U64(llmax(gGLManager.mVRAM, 512u)) * 1024u * 1024u;
             U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
@@ -10020,9 +10022,13 @@ void LLPipeline::renderDeferredLighting()
                         GL_ATOMIC_COUNTER_BARRIER_BIT);
 
         U32 control[4] = {};
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        {
+            // This CPU zone includes the mandatory GPU synchronization wait.
+            LL_PROFILE_ZONE_NAMED("Exact OIT validation readback");
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, mRT->exactOITControl);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        }
         mRT->exactOITPeakNodes = llmax(mRT->exactOITPeakNodes, control[0]);
 
         // <AS:Chanayane> Camera-transition diagnostics are bounded to two log lines per transition.
@@ -10083,13 +10089,20 @@ void LLPipeline::renderDeferredLighting()
             }
             LLDrawPoolAlpha::sExactOITVanillaFallback = false;
 
-            constexpr U64 node_bytes = 48;
+            // <AS:Chanayane> Match the lossless compact shader-node layout.
+            constexpr U64 node_bytes = 32;
+            // </AS:Chanayane>
             // <AS:Chanayane> Growth remains bounded by reported dedicated VRAM only.
             // U64 vram_bytes = U64(llmax(gGLManager.mVRAM, 512u)) * 1024u * 1024u;
             U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
             // </AS:Chanayane>
             U64 safe_nodes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull) / node_bytes;
-            U64 requested = (static_cast<U64>(control[0]) * 5ull + 3ull) / 4ull;
+            // <AS:Chanayane> Avoid repeated huge reallocations during a sudden sprite burst.
+            // Keep 25% headroom over observed demand, but grow by at least 2x when safe.
+            U64 demand_with_headroom = (static_cast<U64>(control[0]) * 5ull + 3ull) / 4ull;
+            U64 geometric_growth = static_cast<U64>(mRT->exactOITCapacity) * 2ull;
+            U64 requested = llmax(demand_with_headroom, geometric_growth);
+            // </AS:Chanayane>
             U32 grown_capacity = U32(llmin<U64>(requested, llmin<U64>(safe_nodes, 0xfffffffeull)));
             if (grown_capacity > mRT->exactOITCapacity)
             {
@@ -10114,14 +10127,17 @@ void LLPipeline::renderDeferredLighting()
         }
         else
         {
-            GLint previous_fbo = LLRenderTarget::sCurFBO;
-            glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->screen.getFBO());
-            glReadBuffer(GL_COLOR_ATTACHMENT0);
-            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->exactOITOpaque.getFBO());
-            glBlitFramebuffer(0, 0, mRT->screen.getWidth(), mRT->screen.getHeight(),
-                              0, 0, mRT->exactOITOpaque.getWidth(), mRT->exactOITOpaque.getHeight(),
-                              GL_COLOR_BUFFER_BIT, GL_NEAREST);
-            glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+            {
+                LL_PROFILE_GPU_ZONE("Exact OIT opaque copy");
+                GLint previous_fbo = LLRenderTarget::sCurFBO;
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, mRT->screen.getFBO());
+                glReadBuffer(GL_COLOR_ATTACHMENT0);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mRT->exactOITOpaque.getFBO());
+                glBlitFramebuffer(0, 0, mRT->screen.getWidth(), mRT->screen.getHeight(),
+                                  0, 0, mRT->exactOITOpaque.getWidth(), mRT->exactOITOpaque.getHeight(),
+                                  GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+            }
 
             LLGLDisable blend(GL_BLEND);
             LLGLDepthTest depth(GL_FALSE);
@@ -10140,17 +10156,24 @@ void LLPipeline::renderDeferredLighting()
 
             // <AS:Chanayane> Capture already produced exact per-pixel counts and maximum length.
             // The removed count draw and second synchronous readback were metadata-only work.
-            gGL.setColorMask(false, false);
-            gWBOITCompositeProgram.uniform1i(oit_pass, 1);
-            for (U32 width = 1; width < control[3]; width <<= 1)
             {
-                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
+                gGL.setColorMask(false, false);
+                gWBOITCompositeProgram.uniform1i(oit_pass, 1);
+                for (U32 width = 1; width < control[3]; width <<= 1)
+                {
+                    LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
+                    mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                }
             }
 
-            gGL.setColorMask(true, true);
-            gWBOITCompositeProgram.uniform1i(oit_pass, 2);
-            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            {
+                LL_PROFILE_GPU_ZONE("Exact OIT final blend");
+                gGL.setColorMask(true, true);
+                gWBOITCompositeProgram.uniform1i(oit_pass, 2);
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            }
             // </AS:Chanayane>
             gWBOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
             gWBOITCompositeProgram.unbind();

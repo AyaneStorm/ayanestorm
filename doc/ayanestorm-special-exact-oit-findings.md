@@ -212,6 +212,123 @@ that a smaller visual layer budget is acceptable.
    moving the camera showed a visible performance improvement, confirming that
    partial ordering was relevant, but the scene remained somewhat slow. This is
    therefore an effective optimization rather than a complete resolution.
+7. **Split sort metadata and payload buffers (tested and removed):**
+   Tracy frame 12611 showed repeated `Exact OIT natural sort pass` GPU zones
+   dominating the frame while the CPU spent 76 ms in the validation readback
+   waiting for the GPU backlog. Sorting previously traversed 48-byte nodes even
+   though it only uses depth, next index, and sequence. Nodes are now split into
+   a 16-byte sort record and a 32-byte color/glow payload. Total storage remains
+   48 bytes per fragment, and capture/final blending retain identical data, but
+   sort passes no longer fetch or rewrite unused color payloads.
+
+   `trace002.tracy` contained 444 Exact OIT frames, with camera movement during
+   the first 222 and a stationary camera during the last 222. Validation-wait
+   results were:
+
+   - Moving: 18.78 ms mean, 13.40 ms median, 41.55 ms p90, 50.07 ms p95,
+     134.48 ms maximum.
+   - Stationary: 17.10 ms mean, 12.66 ms median, 33.83 ms p90, 39.47 ms p95,
+     46.79 ms maximum.
+
+   Camera movement clearly increases the heavy tail. However, the moving mean
+   did not improve over `trace001.tracy`'s 18.31 ms mean. Scene variation
+   prevents treating the small difference as a regression, but the split layout
+   has not demonstrated an end-to-end performance benefit.
+
+   The frame 9210 screenshot showed the 134 ms readback waiting on a deep GPU
+   queue, with Exact OIT capture itself occupying roughly 30--35 ms immediately
+   before the wait released. Splitting the node added a second scattered SSBO
+   write to every captured fragment. With no end-to-end benefit and evidence of
+   increased capture pressure, the split-buffer experiment was removed. Exact
+   OIT again uses one 48-byte node buffer.
+8. **Lossless compact single-buffer nodes (performance improvement confirmed):**
+   The combined node contained a four-float glow vector although only its first
+   component was ever read, plus a stored sequence value that was always equal
+   to the node's allocation index. Glow is now one full-precision float and
+   equal-depth ordering compares node indices directly. The resulting node is
+   32 bytes instead of 48, while retaining identical color, glow precision,
+   depth, blend factors, links, and deterministic ordering. This reduces both
+   capture writes and linked-sort traffic without adding another buffer access.
+   The VRAM budget and growth calculations now use the exact 32-byte stride.
+
+   `trace003.tracy` measured 496 Exact OIT frames. Compared with
+   `trace002.tracy`, validation-wait timing improved:
+
+   - Mean: 17.94 ms to 14.44 ms.
+   - p90: 38.66 ms to 22.14 ms.
+   - p95: 44.92 ms to 26.16 ms.
+   - p99: 57.85 ms to 33.88 ms.
+
+   This improvement occurred despite a substantially heavier capture. The new
+   session required as many as 58.8 million nodes and grew to the 67.1-million
+   safe-node cap, while the earlier split-layout crash occurred around
+   29.8 million required nodes. One isolated 123 ms maximum remained during the
+   early repeated overflow/growth sequence; outside that outlier the timing
+   tail was much lower.
+
+   The trace003 test moved the camera for approximately the first half and held
+   it stationary for approximately the second half. The transition was manual
+   and not exactly at frame 248, so half-by-half statistics must not use that
+   frame as a precise boundary. Aggregate trace002-to-trace003 percentiles are
+   the reliable comparison for this capture.
+9. **Geometric overflow growth (confirmed):**
+   Trace003 overflowed and reallocated four times while rising from 19.3 million
+   to the 67.1-million-node safe cap. Growth previously targeted only 25 percent
+   above the most recently observed demand. It now retains that demand headroom
+   but also grows by at least 2x when the safe VRAM budget permits. For the
+   trace003 sequence this should reduce four large reallocations to two:
+   approximately 19.3 to 38.7 million, then to the 67.1-million cap. Overflow
+   frames still rerender complete vanilla transparency, and allocation remains
+   bounded by the existing VRAM limit.
+
+   The latest log confirmed exactly two growth events:
+
+   - 19,337,136 to 38,674,272 nodes after a 24,256,592-node requirement.
+   - 38,674,272 to the 67,108,864-node cap after a 38,695,208-node requirement.
+
+   `trace004.tracy` contained 396 Exact OIT frames. Compared with trace003,
+   validation-wait timing improved from 14.44 to 13.52 ms mean, 13.09 to
+   11.44 ms median, 22.14 to 18.44 ms p90, and 26.16 to 23.86 ms p95. The
+   approximate stationary half measured 10.95 ms mean and 12.42 ms p95. A
+   135 ms maximum remains from a one-time large allocation; geometric growth
+   reduces the number of these allocation events but not the cost of an
+   individual allocation.
+10. **Bounded exact short-list completion (crashed; removed):**
+    Trace005 switched immediately to first person and moved the camera. It
+    contained 252 Exact OIT frames with a 17.24 ms mean, 22.91 ms p90,
+    34.99 ms p95, and 157.88 ms maximum validation wait. The retained capacity
+    was already 67.1 million nodes; camera-transition diagnostics peaked around
+    14.7 million nodes and a 69-fragment maximum list, so allocation was not the
+    cause.
+
+    After one natural merge pass, lists containing at most 32 fragments and no
+    more than four remaining ordered runs now finish with exact stable
+    linked-list insertion sorting in that same draw. Monotonic lists still
+    finish through the natural-run path, while longer or more disordered lists
+    retain the complete multi-pass natural merge sort. This changes scheduling
+    only; it does not alter fragment data or final order.
+
+    The test build crashed inside the NVIDIA OpenGL driver while the scene was
+    rezzing, immediately after the second geometric buffer growth. The same
+    growth path was stable in trace004; bounded insertion sorting was the only
+    new GPU algorithm in this build. It was therefore removed rather than
+    accepted as a stability risk. Shader cache revision v5 prevents cached v4
+    composite binaries from loading.
+
+### Split-layout startup crash
+
+The first split-buffer test build crashed shortly after login. The log showed
+that it loaded cached Exact OIT program binaries compiled for the old combined
+48-byte node layout. The shader cache key included shader paths and viewer
+version, but not shader source contents; the development build retained the
+same viewer version, so the incompatible binaries were accepted. Those shaders
+then wrote combined nodes into the new 16-byte metadata buffer.
+
+The viewer shader-cache version now includes an AyaneStorm Exact OIT revision
+salt. This forces recompilation after incompatible shader-layout changes. The crash log
+also showed a 29.8-million-node overflow followed by growth from 19.3 million
+to 37.3 million nodes immediately before termination, but stale shader writes
+make that run invalid for evaluating the split-buffer allocation itself.
 
 ### Test result after capture counting and node-pool retention
 
@@ -274,6 +391,24 @@ peak allocation count, node memory, overflow count, and status/fallback reason.
 modes such as fragment count, depth extrema, sorted-depth validation, blend-mode
 visualization, and utilization/overflow state.
 
+Profiler instrumentation separates the moving-camera sprite workload into:
+
+- `Exact OIT capture`
+- `Exact OIT validation readback` (CPU time, including the GPU wait)
+- `Exact OIT opaque copy`
+- `Exact OIT natural sort`
+- `Exact OIT natural sort pass` (one zone for each submitted pass)
+- `Exact OIT final blend`
+
+These zones do not add rendering shortcuts or alter either Exact OIT or vanilla
+output. They expose the remaining cost through a profiler capture rather than
+adding another synchronous timing readback to every frame.
+
+The Firestorm configure script must be passed `--tracy`, and CMake must also
+receive `-DUSE_TRACY_GPU:BOOL=ON`. `--tracy` alone leaves GPU profiling disabled
+by default. A configure summary showing `TRACY: false` compiles these profiler
+zones out entirely.
+
 ## Required validation
 
 The next validation run should preserve the exact same rendering requirements:
@@ -299,10 +434,6 @@ The next validation run should preserve the exact same rendering requirements:
 - Validate natural-run sorting with the same sprite burst while moving and
   holding the camera still, and compare it against the earlier monotonic-only
   implementation.
-- Add GPU timings before addressing the later memory-pressure/dense-list
-  slowdown; do not infer the expensive stage from aggregate FPS alone.
-- Add sufficiently precise GPU timing around capture, count/readback, each sort
-  stage, and composite so future optimization targets measured cost.
 - Use the moving-camera sprite reproduction for those timings; compare capture,
   validation readback, natural-run passes, and final blending before changing
   the sorting algorithm again.
@@ -311,6 +442,110 @@ The next validation run should preserve the exact same rendering requirements:
 - Complete parity tests for water-adjacent alpha, HUDs, impostors, cube and
   reflection captures, DoF, and transparency highlighting.
 - Preserve a one-time, precise diagnostic for every session-level fallback.
+
+## Further exact optimization directions
+
+The remaining performance and watchdog risk is architectural. Candidate work
+must preserve every visually relevant fragment, exact ordering, original blend
+behavior, and the untouched vanilla-disabled path.
+
+### Exact opaque cutoff inside transparent lists
+
+Opaque scene geometry already rejects hidden transparent fragments through
+early depth testing. However, an alpha value of 1 produced by geometry submitted
+through the transparent pass does not write depth. Capture therefore still
+records fragments behind it because submission order does not establish which
+fragment is nearest.
+
+For a node using a blend mode proven to overwrite both destination color and
+alpha completely, a list traversal can find the nearest such node before
+sorting and discard every deeper node from that pixel's sorting workload. This
+is exact: those deeper color and glow contributions cannot survive that
+overwriting node. The optimization must not apply merely because source alpha
+equals 1; custom destination-dependent blend factors, equations, or other
+special modes may still require the destination beneath them.
+
+If a pixel captures `n` fragments and the nearest proven overwrite leaves only
+`k` relevant fragments at or in front of it, work changes from approximately
+`O(n log n)` sorting plus `O(n)` blending to `O(n)` cutoff discovery followed
+by `O(k log k)` sorting and `O(k)` blending. A 100-fragment pixel reduced to
+five relevant fragments could eliminate roughly 80--95 percent of its sorting
+work. A cutoff leaving only itself can eliminate sorting for that pixel after
+the discovery traversal.
+
+Expected benefit varies by content:
+
+- Mostly translucent smoke or glow may have no qualifying cutoff.
+- Sprites with solid interiors and soft edges, foliage, fences, and alpha cards
+  may reduce affected-pixel sorting by approximately 20--50 percent.
+- Pathological stacks with a near opaque-overwrite fragment could improve by
+  several times in their sorting stage.
+
+Whole-frame gains will be smaller because initial fragment shading and capture
+still occur. The optimization does not reduce the allocation count or prevent
+overflow by itself; it reduces sorting and final blending after capture.
+Discovery should be integrated into the first natural-sort traversal so scenes
+without a qualifying cutoff do not pay a separate extra list scan. Equal-depth
+sequence order must be considered when deciding which nodes are behind the
+cutoff.
+
+#### Deferred near-opaque exploration
+
+A later, explicitly approximate experiment may evaluate treating source alpha
+at or above `0.995` as a cutoff for deeper-list processing. This would include
+an 8-bit alpha value of 254 (`254/255`, approximately 0.99608), which commonly
+comes from transparent textures rather than an object-opacity value a user can
+select directly.
+
+This is not part of the active implementation or approved quality contract.
+Texture filtering, mipmaps, vertex/object alpha, HDR backgrounds, and glow can
+make the discarded sub-percent destination contribution visible. The experiment
+must remain deferred until a deliberate perceptual-quality exception is
+approved and validated against filtered texture edges and bright content.
+Current Exact OIT cutoff work may use only mathematically complete overwrite
+nodes.
+
+### Compute-based parallel sorting
+
+Move linked-list sorting out of one fragment invocation per pixel and into
+compute shaders with explicitly bounded workgroups. A parallel merge or exact
+key sort could expose more concurrency, improve memory coalescing, and keep an
+individual dispatch below watchdog-sensitive execution time.
+
+### GPU-driven work scheduling
+
+Replace repeated fullscreen sort draws with compact work queues or indirect
+dispatch. Only pixels with more than one remaining run should generate work.
+Completed and empty pixels would stop launching shader invocations instead of
+returning early from later fullscreen passes.
+
+### Exact key/payload organization
+
+Investigate a GPU-oriented representation in which sorting touches compact
+depth/order/link keys and final blending reads full payloads. The tested simple
+two-SSBO split added a second scattered capture write and showed no end-to-end
+benefit, so a future design must improve capture locality rather than repeating
+that layout.
+
+### GPU-side validation and fallback selection
+
+The synchronous control-buffer readback is where the CPU waits for the entire
+GPU backlog. A GPU-driven overflow decision could avoid that CPU stall, but it
+must still select either a complete Exact OIT result or a complete vanilla
+rerender in the same frame. It may never display partial capture data.
+
+### Capacity reuse across sessions
+
+Persisting or predicting a previously required safe capacity could avoid large
+runtime reallocations while a scene rezzes. This trades shorter stalls for
+reserving potentially very large amounts of VRAM earlier, so it must remain
+bounded by the existing dedicated-VRAM budget and account for texture pressure.
+
+### Watchdog-safe workload subdivision
+
+Further divide expensive sorting into bounded compute dispatches and use GPU
+work queues to continue unfinished exact work. This should bound the duration
+of any one shader invocation without imposing a fragment or layer limit.
 
 No future optimization may impose a fixed fragment limit per pixel, silently
 discard captured data, substitute approximate blending, or knowingly add visual

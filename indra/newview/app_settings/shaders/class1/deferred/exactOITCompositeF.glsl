@@ -13,11 +13,12 @@ layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
 struct OITNode
 {
     vec4 color;
-    vec4 glow;
+    // <AS:Chanayane> Scalar glow and implicit node-index sequence keep this node at 32 bytes.
+    float glow;
     float depth;
     uint next;
     uint blend;
-    uint sequence;
+    // </AS:Chanayane>
 };
 
 layout(std430, binding = 0) buffer OITNodes
@@ -61,7 +62,9 @@ bool comes_first(uint lhs, uint rhs)
 {
     float ld = oitNodes[lhs].depth;
     float rd = oitNodes[rhs].depth;
-    return ld > rd || (ld == rd && oitNodes[lhs].sequence < oitNodes[rhs].sequence);
+    // <AS:Chanayane> Capture sequence was identical to allocation index.
+    return ld > rd || (ld == rd && lhs < rhs);
+    // </AS:Chanayane>
 }
 
 // Detach one naturally ordered run. Reverse runs are reversed while they are
@@ -238,7 +241,7 @@ void main()
         OITNode node = oitNodes[n];
         if (node.blend == 0xffffffffu)
         {
-            glow += node.glow.r;
+            glow += node.glow;
             continue;
         }
         uint color_src = node.blend & 255u;
@@ -251,7 +254,7 @@ void main()
         vec4 adf = blend_factor(alpha_dst, node.color, dst);
         dst.rgb = node.color.rgb * sf.rgb + dst.rgb * df.rgb;
         dst.a = node.color.a * asf.a + dst.a * adf.a;
-        glow = node.glow.r + glow * (1.0 - node.color.a);
+        glow = node.glow + glow * (1.0 - node.color.a);
     }
     dst.a = max(dst.a, glow);
     frag_color = max(dst, vec4(0.0));

@@ -50,7 +50,9 @@ uniform int classic_mode;
 layout(early_fragment_tests) in;
 layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
 layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
-struct OITNode { vec4 color; vec4 glow; float depth; uint next; uint blend; uint sequence; };
+// <AS:Chanayane> Lossless 32-byte node: scalar glow and index-derived sequence.
+struct OITNode { vec4 color; float glow; float depth; uint next; uint blend; };
+// </AS:Chanayane>
 layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
 layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
 uniform uint oitBlendFactors;
@@ -60,10 +62,9 @@ void exact_oit_store(vec4 color)
     uint index = atomicAdd(oitNodeCount, 1u);
     if (index >= oitNodeCapacity) { atomicOr(oitOverflow, 1u); return; }
     oitNodes[index].color = color;
-    oitNodes[index].glow = vec4(oitGlow, 0.0, 0.0, 0.0);
+    oitNodes[index].glow = oitGlow;
     oitNodes[index].depth = gl_FragCoord.z;
     oitNodes[index].blend = oitBlendFactors;
-    oitNodes[index].sequence = index;
     oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
     // <AS:Chanayane> Exact capture-time count replaces a later full-list traversal.
     uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;

@@ -42,16 +42,17 @@ an A-buffer. At full render resolution it uses:
   for that pixel, or `0xFFFFFFFF` when the list is empty.
 - An `R32UI` list-count image containing the exact number of successfully
   captured fragments for each pixel.
-- A shader-storage buffer containing 48-byte fragment nodes.
+- A shader-storage buffer containing 32-byte fragment nodes.
 - A small control shader-storage buffer containing the total node count, node
   capacity, overflow flag, and maximum per-pixel list length.
 - An RGBA16F copy of the opaque scene used as the background for final
   compositing. Capture itself leaves the main scene target untouched, allowing
   vanilla fallback to start from the original opaque result.
 
-Each node stores shaded color, glow, window-space depth, the next-node index,
-the packed original blend factors, and a capture sequence number. The sequence
-number gives equal-depth fragments a deterministic order.
+Each node stores shaded color, scalar glow, window-space depth, the next-node
+index, and the packed original blend factors. The allocation index is also the
+capture sequence, so equal-depth fragments have deterministic ordering without
+storing a duplicate sequence field.
 
 The node buffer initially targets an average of four fragments per screen
 pixel. Its allocation is limited to the smaller of 25 percent of reported
@@ -144,7 +145,9 @@ which separate objects and draw batches reached the capture shaders.
 If capture reports overflow, the linked-list result is discarded completely.
 The renderer reruns the entire standard transparency path over the untouched
 opaque scene during the same frame. It may then grow the node buffer within the
-VRAM limit for later frames.
+VRAM limit for later frames. Growth reserves at least 25 percent more than the
+observed demand and doubles the previous capacity when the safe budget permits,
+reducing repeated large reallocations during sudden transparency bursts.
 
 Missing shaders, unsupported OpenGL capabilities, allocation failures, or
 other session-level Exact OIT failures also select the complete standard
