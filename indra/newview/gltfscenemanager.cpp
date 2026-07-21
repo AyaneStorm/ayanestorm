@@ -649,11 +649,11 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         return;
     }
 
-    // <AS:Chanayane> Use exact capture variants only while the opt-in path is active.
+// <AS:Chanayane> Use exact capture variants only while the opt-in path is active.
+    //if (gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() <= variant)
     LLGLSLShader& gltf_program = FSExactOIT::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
-    // </AS:Chanayane>
-
     if (gltf_program.mGLTFVariants.size() <= variant)
+// </AS:Chanayane>
     {
         llassert(false); // mGLTFVariants should have been initialized
         return;
@@ -671,8 +671,8 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             {
                 continue;
             }
-            return;
             // </AS:Chanayane>
+            return;
         }
 
         LLGLDisable cull_face(ds == 1 ? GL_CULL_FACE : 0);
@@ -691,19 +691,24 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
             if (!shader_bound)
             { // don't bind the shader until we know we have somthing to render
-                // <AS:Chanayane> Select through gltf_program for Exact OIT capture.
                 if (opaque)
                 {
+// <AS:Chanayane> Select through gltf_program for Exact OIT capture.
+                    //gGLTFPBRMetallicRoughnessProgram.bind(variant);
                     gltf_program.bind(variant);
+// </AS:Chanayane>
                 }
                 else
                 { // alpha shaders need all the shadow map setup etc
+// <AS:Chanayane> Select through gltf_program for Exact OIT capture.
+                    //gPipeline.bindDeferredShader(gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[variant]);
                     gPipeline.bindDeferredShader(gltf_program.mGLTFVariants[variant]);
                     if (FSExactOIT::captureActive())
                     {
                         LLGLSLShader& shader = gltf_program.mGLTFVariants[variant];
                         FSExactOIT::configureGLTFCapturedDraw(shader);
                     }
+// </AS:Chanayane>
                 }
                 // </AS:Chanayane>
 

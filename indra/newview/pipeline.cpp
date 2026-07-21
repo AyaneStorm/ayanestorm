@@ -9898,7 +9898,7 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-    // <AS:Chanayane> Exact OIT validation and composite. Capture shaders have not touched the
+// <AS:Chanayane> Exact OIT validation and composite. Capture shaders have not touched the
     // screen color, so an overflow can safely rerun the complete vanilla alpha path.
     U32 exact_oit_maximum_list = 0;
     const FSExactOIT::ValidationResult exact_oit_validation = FSExactOIT::validateCapture(
@@ -9935,7 +9935,7 @@ void LLPipeline::renderDeferredLighting()
             }
         }
     }
-    // </AS:Chanayane>
+// </AS:Chanayane>
 
     screen_target->flush();
 
