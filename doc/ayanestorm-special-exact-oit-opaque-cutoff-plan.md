@@ -76,7 +76,7 @@ decisions must continue to use the complete captured allocation count.
 - Do not change capture resolution, discard visible fragments, introduce a
   layer limit, or use WBOIT as a fallback.
 - Add `<AS:Chanayane>` ownership tags around changed source code.
-- Bump the Exact OIT shader-cache revision from v5 to v6 when the shader changes.
+- Bump the Exact OIT shader-cache revision from v6 to v7 when the shader changes.
 
 ## Validation
 

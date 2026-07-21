@@ -32,9 +32,13 @@ builds plus runtime rendering tests. The resulting module owns:
   natural-sort submission, and final compositing;
 - crash-report field construction.
 
-The pipeline retains allocation, release, frame-reset, validation-result,
-vanilla-fallback traversal, composite, and debug-alpha hooks. The alpha and
-GLTF renderers retain traversal plus narrow capture and shader-selection hooks.
+The pipeline retains allocation, release, frame-reset, and one end-of-frame
+hook. Validation, vanilla-fallback traversal, compositing, and debug-alpha
+dispatch are owned by `FSExactOIT`. The alpha renderer retains narrow
+per-draw state and shader-selection hooks; capture preparation, its two-pass
+traversal, captured blend upload, and captured emissive dispatch are owned by
+`FSExactOIT`. The GLTF renderer retains narrow program-selection and
+captured-draw hooks.
 The capture flag and RAII scope are owned by `FSExactOIT`;
 `lldrawpoolalpha.h` retains no Exact OIT state or methods, only a narrow friend
 declaration that lets the owned module execute the existing private traversal.
@@ -196,16 +200,17 @@ Move the following implementation from `pipeline.cpp` into
 The pipeline should retain thin calls at four integration points:
 
 1. allocate Exact OIT resources after the main screen target exists;
-2. release resources along with screen buffers, passing whether the node pool
-   may be retained;
+2. request node-pool retention for viewport resizing and release resources
+   along with screen buffers;
 3. reset Exact OIT state before post-deferred transparency;
-4. validate and composite after post-deferred transparency.
+4. enter the module's validation/fallback/composite handler after
+   post-deferred transparency.
 
 The vanilla fallback must still be executed through the existing alpha pool
-rendering interfaces. To avoid transferring ownership of pipeline internals,
-`FSExactOIT` may return a result such as `COMPOSITED`, `FALLBACK_REQUIRED`, or
-`INACTIVE`; the pipeline will perform the existing vanilla rerender when
-`FALLBACK_REQUIRED` is returned. Buffer growth and Exact OIT session disabling
+rendering interfaces. A narrow `friend class FSExactOIT` declaration allows the
+module to execute that existing private pool traversal without exposing new
+pipeline methods or leaving the fallback algorithm in `pipeline.cpp`.
+Validation results, buffer growth, compositing, and Exact OIT session disabling
 remain internal to `FSExactOIT`.
 
 ### Shader management
@@ -249,16 +254,21 @@ The extraction cannot make Exact OIT completely invisible to upstream-owned
 files. The following minimal changes will remain:
 
 - `indra/newview/CMakeLists.txt`: list `fsexactoit.cpp` and `fsexactoit.h`;
-- `pipeline.cpp`: allocation, release, frame reset, and composite/fallback
-  hooks;
-- `lldrawpoolalpha.cpp`: capture scope, shader-selection, draw-configuration,
-  depth/blend, and debug-alpha hooks;
+- `pipeline.cpp`: allocation, release, frame reset, and one end-of-frame hook;
+- `pipeline.h`: a friend declaration allowing the owned module to execute the
+  existing private fallback and debug-alpha traversal;
+- `lldrawpoolalpha.cpp`: shader-selection, draw-configuration, depth/blend,
+  debug-alpha suppression, and thin capture/emissive hooks;
+- `lldrawpoolalpha.h`: a friend declaration allowing the owned module to
+  execute existing private alpha and emissive traversal;
 - `gltfscenemanager.cpp`: GLTF program-selection and captured-blend hooks;
 - `llviewershadermgr.cpp`: shader registration/load/unload hooks;
 - `llappviewer.cpp`: one diagnostics hook;
 - relevant headers: only declarations or signature changes that cannot be
   hidden behind `fsexactoit.h`;
 - `llshadermgr.cpp`: the GLSL 4.30 Exact OIT compilation exception.
+- `llglslshader.cpp`: suppress indexed-texture helper injection only for the
+  linked `exactOITCaptureF.glsl` library object.
 
 Shader files, settings XML, preferences XML, and documentation naturally remain
 separate from the C++ module.
@@ -298,8 +308,9 @@ or unrelated cleanup.
 - Check for stale Exact OIT globals and direct state mutations outside the new
   module.
 - Check the final branch diff for whitespace errors and missing ownership tags.
-- Confirm no shader-cache revision bump is needed because this refactor does
-  not change shader sources or permutations.
+- Confirm shader-cache revision v6 is active. The linked shared capture
+  fragment changes the shader-file composition and must not reuse v5 program
+  binaries.
 
 ### Rendering behavior
 

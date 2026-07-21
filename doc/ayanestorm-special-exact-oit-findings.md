@@ -29,10 +29,12 @@ The implementation is governed by the following requirements:
 
 ### Source ownership
 
-The Exact OIT C++ implementation now resides in `fsexactoit.cpp` and
+The Exact OIT implementation now resides primarily in `fsexactoit.cpp` and
 `fsexactoit.h`. Viewer-owned files retain narrow integration hooks for shader
-management, resource lifecycle, alpha and GLTF traversal, validation-result
-handling, vanilla fallback traversal, compositing, and diagnostics.
+management, resource lifecycle, per-draw alpha and GLTF integration, and
+diagnostics. The owned module executes capture preparation and traversal,
+captured emissive dispatch, validation, vanilla fallback traversal,
+compositing, and debug-alpha dispatch through narrow friend declarations.
 
 Exact OIT shaders are created whenever the hardware supports the required
 OpenGL and GLSL versions, independently of the user setting. This permits the
@@ -49,7 +51,7 @@ The Exact OIT path currently uses:
   sentinel.
 - A full-resolution `R32UI` fragment-count texture used to avoid redundant sort
   work.
-- A shader-storage buffer containing 48-byte fragment nodes.
+- A shader-storage buffer containing 32-byte fragment nodes.
 - A control shader-storage buffer containing allocation count, capacity,
   overflow state, and maximum per-pixel list length.
 - An opaque-scene backup render target used by the final composite and by the
@@ -343,6 +345,11 @@ salt. This forces recompilation after incompatible shader-layout changes. The cr
 also showed a 29.8-million-node overflow followed by growth from 19.3 million
 to 37.3 million nodes immediately before termination, but stale shader writes
 make that run invalid for evaluating the split-buffer allocation itself.
+
+Shader cache revision v6 was later assigned when the common capture
+implementation moved into the linked `exactOITCaptureF.glsl` fragment object.
+This prevents cached v5 programs with the previous single-object composition
+from being reused.
 
 ### Test result after capture counting and node-pool retention
 

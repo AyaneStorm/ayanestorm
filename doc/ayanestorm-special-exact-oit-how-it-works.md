@@ -66,6 +66,13 @@ The standard post-water transparency shaders have Exact OIT variants for
 regular and rigged alpha, PBR alpha, fullbright alpha, legacy materials, GLTF,
 emissive surfaces, and PBR glow.
 
+The common node allocation and storage implementation is compiled once as the
+owned `exactOITCaptureF.glsl` fragment object and linked into the Exact OIT
+programs. Shared viewer shaders contain only small `#ifdef EXACT_OIT` hooks
+that declare and call this function. Ordinary shader permutations do not define
+`EXACT_OIT`; preprocessing therefore retains their original framebuffer output
+and excludes every capture call and declaration.
+
 Instead of writing color into the framebuffer, a capture shader:
 
 1. Atomically reserves a node from the global node buffer.
