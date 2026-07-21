@@ -570,8 +570,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     S32 minor_version = gGLManager.mGLSLVersionMinor;
 
     // <AS:Chanayane> Exact OIT uses SSBOs and shader-storage atomics, which are core in GLSL 4.30.
-    const bool exact_oit_shader = filename.find("exactOIT") != std::string::npos ||
-        (defines && defines->find("EXACT_OIT") != defines->end());
+    const bool exact_oit_shader = filename.find("exactOIT") != std::string::npos || (defines && defines->find("EXACT_OIT") != defines->end());
     // </AS:Chanayane>
 
     if (major_version == 1 && minor_version < 30)
@@ -582,12 +581,15 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     {
         if (major_version >= 4)
         {
-            // <AS:Chanayane> Exact OIT requires GLSL 4.30.
+// <AS:Chanayane> Exact OIT requires GLSL 4.30.
+            // //set version to 400 or 420
+            // if (minor_version >= 20)
             if (exact_oit_shader && minor_version >= 30)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 430\n");
             }
             else if (minor_version >= 20)
+// </AS:Chanayane>
             {
                 shader_code_text[shader_code_count++] = strdup("#version 420\n");
             }
@@ -595,7 +597,6 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
             {
                 shader_code_text[shader_code_count++] = strdup("#version 400\n");
             }
-            // </AS:Chanayane>
         }
         else if (major_version == 3)
         {

@@ -36,6 +36,7 @@
 
 class LLSD;
 class LLDrawPoolAlpha;
+class LLDrawInfo;
 class LLPipeline;
 class LLRenderTarget;
 class LLVertexBuffer;
@@ -60,9 +61,14 @@ public:
     static void beginFrame();
     static bool captureCompleted();
     static bool captureActive();
-    static void configureCapturedDraw(LLGLSLShader& shader, U32 color_source,
-                                      U32 color_destination, U32 alpha_source,
-                                      U32 alpha_destination);
+    static bool configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
+                                              U32 color_destination, U32 alpha_source,
+                                              U32 alpha_destination);
+    static bool handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
+                                        std::vector<LLDrawInfo*>& emissives,
+                                        std::vector<LLDrawInfo*>& pbr_emissives,
+                                        std::vector<LLDrawInfo*>& rigged_emissives,
+                                        std::vector<LLDrawInfo*>& pbr_rigged_emissives);
     static void configureGLTFCapturedDraw(LLGLSLShader& shader);
     static LLGLSLShader& gltfProgram(LLGLSLShader& ordinary_program);
     static LLGLSLShader* alphaShader(LLGLSLShader* ordinary);

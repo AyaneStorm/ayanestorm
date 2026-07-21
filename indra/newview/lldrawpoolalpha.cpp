@@ -200,6 +200,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
 // <AS:Chanayane> Capture replaces the two vanilla calls only while Exact OIT is active.
+    // LLGLSLShader::unbind();
+    //
     // if (!LLPipeline::sRenderingHUDs)
     // {
     //     // first pass, render rigged objects only and render to depth buffer
@@ -228,7 +230,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     // final pass, render to depth for depth of field effects
 // <AS:Chanayane> exact OIT capture completed
-    //if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    // if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER && !FSExactOIT::captureCompleted())
 // </AS:Chanayane>
     {
@@ -860,14 +862,9 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
 // <AS:Chanayane> Upload original per-draw blend factors into exact OIT nodes.
                     // gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
-                    if (!FSExactOIT::captureActive())
+                    if (!FSExactOIT::configureCapturedDrawIfActive(current_shader, U32(params.mBlendFuncSrc), U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor)))
                     {
                         gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
-                    }
-                    else if (current_shader)
-                    {
-                        FSExactOIT::configureCapturedDraw(*current_shader, U32(params.mBlendFuncSrc),
-                            U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor));
                     }
 // </AS:Chanayane>
 
@@ -930,15 +927,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 // <AS:Chanayane> Route emissive draws to Exact OIT capture when active.
             // // render emissive faces into alpha channel for bloom effects
             // if (!depth_only)
-            if (!depth_only && FSExactOIT::captureActive())
-            {
-                if (!emissives.empty()) renderEmissives(emissives);
-                if (!pbr_emissives.empty()) renderPbrEmissives(pbr_emissives);
-                if (!rigged_emissives.empty()) renderRiggedEmissives(rigged_emissives);
-                if (!pbr_rigged_emissives.empty()) renderRiggedPbrEmissives(pbr_rigged_emissives);
-            }
-            // render emissive faces into alpha channel for bloom effects
-            else if (!depth_only)
+            if (!FSExactOIT::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
 // </AS:Chanayane>
             {
                 gPipeline.enableLightsDynamic();

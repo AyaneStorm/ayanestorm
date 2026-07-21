@@ -795,20 +795,52 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
     return true;
 }
 
-void FSExactOIT::configureCapturedDraw(LLGLSLShader& shader, U32 color_source,
-                                       U32 color_destination, U32 alpha_source,
-                                       U32 alpha_destination)
+bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
+                                               U32 color_destination, U32 alpha_source,
+                                               U32 alpha_destination)
 {
+    if (!sCaptureActive)
+    {
+        return false;
+    }
+    if (!shader)
+    {
+        return true;
+    }
+
     static LLStaticHashedString blend_factors("oitBlendFactors");
     static LLStaticHashedString glow("oitGlow");
     const U32 packed_blend = color_source | (color_destination << 8) |
         (alpha_source << 16) | (alpha_destination << 24);
-    const GLint location = shader.getUniformLocation(blend_factors);
+    const GLint location = shader->getUniformLocation(blend_factors);
     if (location >= 0)
     {
         glUniform1ui(location, packed_blend);
     }
-    shader.uniform1f(glow, 0.f);
+    shader->uniform1f(glow, 0.f);
+    return true;
+}
+
+bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
+                                         std::vector<LLDrawInfo*>& emissives,
+                                         std::vector<LLDrawInfo*>& pbr_emissives,
+                                         std::vector<LLDrawInfo*>& rigged_emissives,
+                                         std::vector<LLDrawInfo*>& pbr_rigged_emissives)
+{
+    if (depth_only)
+    {
+        return true;
+    }
+    if (!sCaptureActive)
+    {
+        return false;
+    }
+
+    if (!emissives.empty()) pool.renderEmissives(emissives);
+    if (!pbr_emissives.empty()) pool.renderPbrEmissives(pbr_emissives);
+    if (!rigged_emissives.empty()) pool.renderRiggedEmissives(rigged_emissives);
+    if (!pbr_rigged_emissives.empty()) pool.renderRiggedPbrEmissives(pbr_rigged_emissives);
+    return true;
 }
 
 void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)

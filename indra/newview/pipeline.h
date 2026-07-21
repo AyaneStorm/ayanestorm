@@ -52,7 +52,9 @@ class LLVOAvatar;
 class LLVOPartGroup;
 class LLGLSLShader;
 class LLDrawPoolAlpha;
+// <AS:Chanayane> Exact OIT
 class FSExactOIT;
+// </AS:Chanayane>
 class LLSettingsSky;
 
 typedef enum e_avatar_skinning_method

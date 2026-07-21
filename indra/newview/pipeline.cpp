@@ -26,7 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Exact OIT
 #include "fsexactoit.h"
+// </AS:Chanayane>
 
 #include "pipeline.h"
 
@@ -9899,8 +9901,7 @@ void LLPipeline::renderDeferredLighting()
     }
 
 // <AS:Chanayane> Exact OIT validation, fallback, and composite.
-    FSExactOIT::finishFrame(*this, mRT->screen, *mScreenTriangleVB, gCubeSnapshot,
-                            sImpostorRender, gAgentCamera.cameraMouselook());
+    FSExactOIT::finishFrame(*this, mRT->screen, *mScreenTriangleVB, gCubeSnapshot, sImpostorRender, gAgentCamera.cameraMouselook());
 // </AS:Chanayane>
 
     screen_target->flush();

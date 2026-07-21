@@ -26,6 +26,7 @@
 /*[EXTRA_CODE_HERE]*/
 
 // <AS:Chanayane> Exact OIT fragment-node output declarations
+// out vec4 frag_color;
 #ifdef EXACT_OIT
 void exact_oit_store(vec4 color);
 #else
