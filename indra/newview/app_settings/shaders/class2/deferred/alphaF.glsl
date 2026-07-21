@@ -31,7 +31,14 @@
 #define NON_INDEXED 2
 #define NON_INDEXED_NO_COLOR 3
 
+// <AS:Chanayane> Exact OIT fragment-node output declarations
+// out vec4 frag_color;
+#ifdef EXACT_OIT
+void exact_oit_store(vec4 color);
+#else
 out vec4 frag_color;
+#endif
+// </AS:Chanayane>
 
 uniform mat3 env_mat;
 uniform vec3 sun_dir;
@@ -314,6 +321,14 @@ void main()
 #endif
 
     color.rgb *= final_scale;
+// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// frag_color = max(color, vec4(0));
+#ifdef EXACT_OIT
+    color = max(color, vec4(0));
+    exact_oit_store(color);
+#else
     frag_color = max(color, vec4(0));
+#endif
+// </AS:Chanayane>
 }
 

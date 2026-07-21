@@ -56,7 +56,14 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
 #if (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
 
+// <AS:Chanayane> Exact OIT fragment-node output declarations
+// out vec4 frag_color;
+#ifdef EXACT_OIT
+void exact_oit_store(vec4 color);
+#else
 out vec4 frag_color;
+#endif
+// </AS:Chanayane>
 
 #ifdef HAS_SUN_SHADOW
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
@@ -424,7 +431,14 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
+// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// frag_color = max(vec4(color * final_scale, al), vec4(0));
+#ifdef EXACT_OIT
+    exact_oit_store(max(vec4(color * final_scale, al), vec4(0)));
+#else
     frag_color = max(vec4(color * final_scale, al), vec4(0));
+#endif
+// </AS:Chanayane>
 
 #else // mode is not DIFFUSE_ALPHA_MODE_BLEND, encode to gbuffer
     // deferred path               // See: C++: addDeferredAttachment(), shader: softenLightF.glsl
