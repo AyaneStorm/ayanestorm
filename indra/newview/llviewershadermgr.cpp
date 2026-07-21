@@ -248,6 +248,7 @@ LLGLSLShader            gDeferredPBRTerrainProgram[TERRAIN_PAINT_TYPE_COUNT];
 
 LLGLSLShader            gGLTFPBRMetallicRoughnessProgram;
 
+
 //helper for making a rigged variant of a given shader
 static bool make_rigged_variant(LLGLSLShader& shader, LLGLSLShader& riggedShader)
 {
@@ -932,6 +933,7 @@ bool LLViewerShaderMgr::loadShadersWater()
 
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
+
     if (mShaderLevel[SHADER_WATER] == 0)
     {
         gWaterProgram.unload();
@@ -1099,6 +1101,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     LL_PROFILE_ZONE_SCOPED;
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
+
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
         gDeferredTreeProgram.unload();
@@ -1918,6 +1921,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasLighting = true;
         }
     }
+
     if (success)
     {
         gDeferredAvatarEyesProgram.mName = "Deferred Avatar Eyes Shader";
@@ -1937,7 +1941,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gDeferredAvatarEyesProgram.createShader();
         llassert(success);
     }
-    // </AS:Chanayane>
 
     if (success)
     {

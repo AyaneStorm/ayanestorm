@@ -359,8 +359,6 @@ public:
         SNAPSHOT_BORDER_THICKNESS,          // "border_thickness"
         SNAPSHOT_FRAME_RECT,                // "frame_rect"
         // </FS:Beq>
-        // <AS:Chanayane> WBOIT
-        // </AS:Chanayane>
         END_RESERVED_UNIFORMS
     } eGLSLReservedUniforms;
     // clang-format on

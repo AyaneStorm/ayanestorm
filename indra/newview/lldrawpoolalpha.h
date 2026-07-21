@@ -58,22 +58,18 @@ public:
     /*virtual*/ void renderPostDeferred(S32 pass);
     /*virtual*/ S32  getNumPasses() { return 1; }
 
-    // <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature; exact OIT does not classify attachments.
     void forwardRender(bool write_depth = false);
-    // </AS:Chanayane>
     /*virtual*/ void prerender();
 
     void renderDebugAlpha();
 
     void renderGroupAlpha(LLSpatialGroup* group, U32 type, U32 mask, bool texture = true);
-
-    // <AS:Chanayane> Restore the special-ayanestorm-dev vanilla signature.
     void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
-    // </AS:Chanayane>
     void renderAlphaHighlight();
 
     static bool sShowDebugAlpha;
     static bool sShowDebugAlphaRigged;
+
 private:
     LLGLSLShader* target_shader;
 
@@ -100,16 +96,6 @@ private:
 
     // if true, we're executing a rigged render pass
     bool mRigged = false;
-
-    // <AS:Chanayane> Exact OIT capture scope
-    bool mForwardToExactOIT = false;
-    struct ExactOITScope
-    {
-        LLDrawPoolAlpha& pool;
-        ExactOITScope(LLDrawPoolAlpha& p);
-        ~ExactOITScope();
-    };
-    // </AS:Chanayane>
 };
 
 #endif // LL_LLDRAWPOOLALPHA_H

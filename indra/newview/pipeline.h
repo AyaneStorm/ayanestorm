@@ -106,10 +106,7 @@ public:
 
     void releaseGLBuffers();
     void releaseLUTBuffers();
-    // <AS:Chanayane> Viewport-only resizes may retain the large Exact OIT node pool.
-    // void releaseScreenBuffers();
-    void releaseScreenBuffers(bool preserve_exact_oit_nodes = false);
-    // </AS:Chanayane>
+    void releaseScreenBuffers();
     void releaseShadowBuffers();
 
     void createGLBuffers();

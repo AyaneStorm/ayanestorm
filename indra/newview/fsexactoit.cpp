@@ -175,6 +175,7 @@ bool FSExactOIT::sCaptureClearNeeded = false;
 bool FSExactOIT::sVanillaFallbackActive = false;
 bool FSExactOIT::sCaptureActive = false;
 bool FSExactOIT::sRuntimeAllocationAttempted = false;
+bool FSExactOIT::sRetainNodePoolOnRelease = false;
 LLRenderTarget FSExactOIT::sOpaqueTarget;
 FSExactOIT::Resources FSExactOIT::sResources;
 
@@ -618,6 +619,16 @@ void FSExactOIT::endCapture()
     sCaptureActive = false;
 }
 
+FSExactOIT::CaptureScope::CaptureScope()
+{
+    beginCapture();
+}
+
+FSExactOIT::CaptureScope::~CaptureScope()
+{
+    endCapture();
+}
+
 void FSExactOIT::prepareCaptureBuffers()
 {
     if (!sCaptureClearNeeded)
@@ -782,25 +793,25 @@ LLGLSLShader& FSExactOIT::gltfProgram(LLGLSLShader& ordinary_program)
     return sCaptureActive ? gExactOITGLTFProgram : ordinary_program;
 }
 
-LLGLSLShader* FSExactOIT::alphaShader(bool capturing, LLGLSLShader* ordinary)
+LLGLSLShader* FSExactOIT::alphaShader(LLGLSLShader* ordinary)
 {
-    return capturing ? &gExactOITAlphaProgram : ordinary;
+    return sCaptureActive ? &gExactOITAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSExactOIT::pbrAlphaShader(bool capturing, LLGLSLShader* ordinary)
+LLGLSLShader* FSExactOIT::pbrAlphaShader(LLGLSLShader* ordinary)
 {
-    return capturing ? &gExactOITPBRAlphaProgram : ordinary;
+    return sCaptureActive ? &gExactOITPBRAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSExactOIT::fullbrightAlphaShader(bool capturing, LLGLSLShader* ordinary)
+LLGLSLShader* FSExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary)
 {
-    return capturing ? &gExactOITFullbrightAlphaProgram : ordinary;
+    return sCaptureActive ? &gExactOITFullbrightAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSExactOIT::materialAlphaShader(bool capturing, U32 mask, LLGLSLShader* ordinary)
+LLGLSLShader* FSExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary)
 {
     LLGLSLShader& shader = gExactOITMaterialAlphaProgram[mask];
-    return capturing && shader.mProgramObject ? &shader : ordinary;
+    return sCaptureActive && shader.mProgramObject ? &shader : ordinary;
 }
 
 LLGLSLShader* FSExactOIT::emissiveShader()
@@ -1012,6 +1023,18 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
         sResources.capacity = 0;
     }
     sResources.available = false;
+}
+
+void FSExactOIT::retainNodePoolOnNextRelease()
+{
+    sRetainNodePoolOnRelease = true;
+}
+
+void FSExactOIT::releaseResources()
+{
+    const bool preserve_node_pool = sRetainNodePoolOnRelease;
+    sRetainNodePoolOnRelease = false;
+    releaseResources(preserve_node_pool);
 }
 
 void FSExactOIT::prepareResourceAllocation()

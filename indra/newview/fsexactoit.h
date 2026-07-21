@@ -50,6 +50,14 @@ public:
         VanillaFallbackScope(const VanillaFallbackScope&) = delete;
         VanillaFallbackScope& operator=(const VanillaFallbackScope&) = delete;
     };
+    class CaptureScope
+    {
+    public:
+        CaptureScope();
+        ~CaptureScope();
+        CaptureScope(const CaptureScope&) = delete;
+        CaptureScope& operator=(const CaptureScope&) = delete;
+    };
     static const char* shaderCacheRevision();
     static bool loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
                             bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list);
@@ -62,8 +70,6 @@ public:
     static bool vanillaFallbackActive();
     static bool captureActive();
     static void markCaptureCompleted();
-    static void beginCapture();
-    static void endCapture();
     static void prepareCaptureBuffers();
     static bool captureEligible(bool rendering_huds, bool impostor_render, bool cube_snapshot,
                                 U32 width, U32 height);
@@ -74,16 +80,17 @@ public:
                                       U32 alpha_destination);
     static void configureGLTFCapturedDraw(LLGLSLShader& shader);
     static LLGLSLShader& gltfProgram(LLGLSLShader& ordinary_program);
-    static LLGLSLShader* alphaShader(bool capturing, LLGLSLShader* ordinary);
-    static LLGLSLShader* pbrAlphaShader(bool capturing, LLGLSLShader* ordinary);
-    static LLGLSLShader* fullbrightAlphaShader(bool capturing, LLGLSLShader* ordinary);
-    static LLGLSLShader* materialAlphaShader(bool capturing, U32 mask, LLGLSLShader* ordinary);
+    static LLGLSLShader* alphaShader(LLGLSLShader* ordinary);
+    static LLGLSLShader* pbrAlphaShader(LLGLSLShader* ordinary);
+    static LLGLSLShader* fullbrightAlphaShader(LLGLSLShader* ordinary);
+    static LLGLSLShader* materialAlphaShader(U32 mask, LLGLSLShader* ordinary);
     static LLGLSLShader* emissiveShader();
     static LLGLSLShader* pbrGlowShader();
     static ValidationResult validateCapture(bool cube_snapshot, bool impostor_render,
                                             bool mouselook, U32& maximum_list);
     static void composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list);
-    static void releaseResources(bool preserve_node_pool);
+    static void retainNodePoolOnNextRelease();
+    static void releaseResources();
     static void allocateResources(U32 width, U32 height);
 
 private:
@@ -101,6 +108,9 @@ private:
     static bool shadersReady();
     static void discardCapture();
     static void setVanillaFallback(bool active);
+    static void beginCapture();
+    static void endCapture();
+    static void releaseResources(bool preserve_node_pool);
     struct Resources
     {
         GLuint heads = 0;
@@ -126,6 +136,7 @@ private:
     static bool sVanillaFallbackActive;
     static bool sCaptureActive;
     static bool sRuntimeAllocationAttempted;
+    static bool sRetainNodePoolOnRelease;
     static LLRenderTarget sOpaqueTarget;
     static Resources sResources;
 };

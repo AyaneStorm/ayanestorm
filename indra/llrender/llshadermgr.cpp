@@ -582,8 +582,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     {
         if (major_version >= 4)
         {
-            // <AS:Chanayane> Preserve the vanilla version selection for every non-exact shader.
-            // if (minor_version >= 20) shader_code_text[shader_code_count++] = strdup("#version 420\n");
+            // <AS:Chanayane> Exact OIT requires GLSL 4.30.
             if (exact_oit_shader && minor_version >= 30)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 430\n");
@@ -1571,8 +1570,6 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("border_thickness");
     mReservedUniforms.push_back("frame_rect");
     // </FS:Beq>
-    // <AS:Chanayane> WBOIT
-    // </AS:Chanayane>
 
     llassert(mReservedUniforms.size() == END_RESERVED_UNIFORMS);
 

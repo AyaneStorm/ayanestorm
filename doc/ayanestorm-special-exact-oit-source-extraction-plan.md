@@ -35,6 +35,8 @@ builds plus runtime rendering tests. The resulting module owns:
 The pipeline retains allocation, release, frame-reset, validation-result,
 vanilla-fallback traversal, composite, and debug-alpha hooks. The alpha and
 GLTF renderers retain traversal plus narrow capture and shader-selection hooks.
+The capture flag and RAII scope are owned by `FSExactOIT`; no Exact OIT fields
+or declarations remain in `lldrawpoolalpha.h`.
 
 Runtime setting transitions were explicitly tested. Starting with Exact OIT
 disabled, enabling it without restarting now uses the already loaded shader

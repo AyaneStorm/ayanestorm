@@ -650,7 +650,6 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
     }
 
     // <AS:Chanayane> Use exact capture variants only while the opt-in path is active.
-    // LLGLSLShader& gltf_program = gGLTFPBRMetallicRoughnessProgram;
     LLGLSLShader& gltf_program = FSExactOIT::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
     // </AS:Chanayane>
 
@@ -667,8 +666,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
         if (batches.empty())
         {
-            // <AS:Chanayane> Preserve the special-ayanestorm-dev vanilla behavior exactly.
-            // return;
+            // <AS:Chanayane> Continue through the second cull mode during Exact OIT capture.
             if (FSExactOIT::captureActive())
             {
                 continue;
@@ -693,8 +691,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
             if (!shader_bound)
             { // don't bind the shader until we know we have somthing to render
-                // <AS:Chanayane> Select through gltf_program for exact capture; vanilla resolves to the original program.
-                // if (opaque)
+                // <AS:Chanayane> Select through gltf_program for Exact OIT capture.
                 if (opaque)
                 {
                     gltf_program.bind(variant);
@@ -1226,3 +1223,5 @@ void GLTFSceneManager::renderDebug()
     gDebugProgram.unbind();
 
 }
+
+

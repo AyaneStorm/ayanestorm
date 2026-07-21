@@ -844,10 +844,10 @@ void LLPipeline::resizeScreenTexture()
         if (gResizeScreenTexture || (scaledResX != mRT->screen.getWidth()) || (scaledResY != mRT->screen.getHeight()))
 // [/SL:KB]
         {
-            // <AS:Chanayane> Mouselook changes world-view height; retain the ~850 MiB node pool.
-            // releaseScreenBuffers();
-            releaseScreenBuffers(true);
+            // <AS:Chanayane> Retain the large Exact OIT node pool across viewport-only resizing.
+            FSExactOIT::retainNodePoolOnNextRelease();
             // </AS:Chanayane>
+            releaseScreenBuffers();
             releaseSunShadowTargets();
             releaseSpotShadowTargets();
             allocateScreenBuffer(resX,resY);
@@ -1002,7 +1002,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
     if (!gCubeSnapshot) // hack to not re-allocate various targets for cube snapshots
     {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping
+        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
 
         // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
         FSExactOIT::allocateResources(resX, resY);
@@ -1405,16 +1405,13 @@ void LLPipeline::releaseShadowBuffers()
     releaseSpotShadowTargets();
 }
 
-// <AS:Chanayane> Preserve the expensive global node pool only for viewport-only resizing.
-// void LLPipeline::releaseScreenBuffers()
-void LLPipeline::releaseScreenBuffers(bool preserve_exact_oit_nodes)
-// </AS:Chanayane>
+void LLPipeline::releaseScreenBuffers()
 {
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
     // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
-    FSExactOIT::releaseResources(preserve_exact_oit_nodes);
+    FSExactOIT::releaseResources();
     // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
