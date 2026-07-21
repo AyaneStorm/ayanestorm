@@ -27,6 +27,20 @@ The implementation is governed by the following requirements:
 
 ## Active architecture
 
+### Source ownership
+
+The Exact OIT C++ implementation now resides in `fsexactoit.cpp` and
+`fsexactoit.h`. Viewer-owned files retain narrow integration hooks for shader
+management, resource lifecycle, alpha and GLTF traversal, validation-result
+handling, vanilla fallback traversal, compositing, and diagnostics.
+
+Exact OIT shaders are created whenever the hardware supports the required
+OpenGL and GLSL versions, independently of the user setting. This permits the
+setting to be enabled without restarting. GPU resources remain setting-driven:
+starting disabled allocates none, enabling lazily allocates them at the next
+eligible alpha pass, disabling releases them, and re-enabling recreates them.
+The complete disabled-enable-disable-re-enable sequence was tested successfully.
+
 ### Capture resources
 
 The Exact OIT path currently uses:

@@ -155,4 +155,7 @@ renderer. The implementation never displays a partially captured list and does
 not fall back to weighted blended OIT.
 
 The feature is controlled by `RenderExactOIT`. Disabling it leaves the standard
-transparency path active and avoids Exact OIT allocation and capture work.
+transparency path active and avoids Exact OIT allocation and capture work. The
+shader family is loaded on supported hardware so the setting can be changed
+without restarting. Enabling allocates resources at the next eligible alpha
+pass; disabling releases them, and enabling again recreates them.

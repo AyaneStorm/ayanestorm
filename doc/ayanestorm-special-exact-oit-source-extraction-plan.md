@@ -16,6 +16,32 @@ This refactor must not change rendering behavior, Exact OIT quality, fallback
 behavior, settings, diagnostics, resource limits, or the appearance of the
 vanilla renderer when Exact OIT is disabled.
 
+## Implementation status
+
+The extraction is implemented and has passed incremental Windows Release
+builds plus runtime rendering tests. The resulting module owns:
+
+- the complete Exact OIT shader family, cache revision, creation, registration,
+  unloading, and validation;
+- all GPU resources, allocation, viewport retention, release, availability,
+  capacity, and statistics;
+- frame, capture, and fallback state;
+- capture-buffer clearing and binding;
+- alpha and GLTF shader selection and captured blend uploads;
+- validation readback, overflow detection, geometric growth, diagnostics,
+  natural-sort submission, and final compositing;
+- crash-report field construction.
+
+The pipeline retains allocation, release, frame-reset, validation-result,
+vanilla-fallback traversal, composite, and debug-alpha hooks. The alpha and
+GLTF renderers retain traversal plus narrow capture and shader-selection hooks.
+
+Runtime setting transitions were explicitly tested. Starting with Exact OIT
+disabled, enabling it without restarting now uses the already loaded shader
+family and lazily allocates resources at the next eligible alpha pass.
+Disabling releases the resources, and enabling again recreates them. The full
+disabled-enable-disable-re-enable sequence was visually confirmed.
+
 ## Intended interface
 
 `FSExactOIT` will be the single owner and entry point for Exact OIT state and
@@ -214,9 +240,10 @@ files. The following minimal changes will remain:
 Shader files, settings XML, preferences XML, and documentation naturally remain
 separate from the C++ module.
 
-Every retained custom source hook and all new code in `fsexactoit.cpp` and
-`fsexactoit.h` must use `<AS:Chanayane>` ownership tags. Markdown files must not
-contain ownership-tag comments.
+Every retained custom source hook in upstream-owned files must use
+`<AS:Chanayane>` ownership tags. The wholly owned `fsexactoit.cpp` and
+`fsexactoit.h` files do not need per-block ownership tags. Markdown files must
+not contain ownership-tag comments.
 
 ## Refactoring sequence
 
@@ -233,9 +260,10 @@ contain ownership-tag comments.
 7. Compare the resulting diff against `special-ayanestorm-dev` to confirm that
    large custom blocks are concentrated in the new files.
 
-Use mechanical moves wherever possible. Do not combine this extraction with
-the planned opaque-cutoff optimization, shader behavior changes, renaming of
-legacy shader globals, or unrelated cleanup.
+Use mechanical moves wherever possible. The legacy WBOIT-named shader globals
+should be renamed to describe their sole Exact OIT purpose. Do not combine this
+extraction with the planned opaque-cutoff optimization, shader behavior changes,
+or unrelated cleanup.
 
 ## Verification
 

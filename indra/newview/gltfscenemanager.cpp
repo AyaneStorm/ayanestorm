@@ -26,6 +26,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "fsexactoit.h"
+
 #include "gltfscenemanager.h"
 #include "llviewermenufile.h"
 #include "llappviewer.h"
@@ -39,9 +41,6 @@
 #include "gltf/asset.h"
 #include "pipeline.h"
 #include "llviewershadermgr.h"
-// <AS:Chanayane> Exact OIT capture state
-#include "lldrawpoolalpha.h"
-// </AS:Chanayane>
 #include "llviewertexturelist.h"
 #include "llimagej2c.h"
 #include "llfloaterperms.h"
@@ -652,8 +651,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
     // <AS:Chanayane> Use exact capture variants only while the opt-in path is active.
     // LLGLSLShader& gltf_program = gGLTFPBRMetallicRoughnessProgram;
-    LLGLSLShader& gltf_program = LLDrawPoolAlpha::sExactOITCaptureActive ?
-        gExactOITGLTFProgram : gGLTFPBRMetallicRoughnessProgram;
+    LLGLSLShader& gltf_program = FSExactOIT::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
     // </AS:Chanayane>
 
     if (gltf_program.mGLTFVariants.size() <= variant)
@@ -671,7 +669,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         {
             // <AS:Chanayane> Preserve the special-ayanestorm-dev vanilla behavior exactly.
             // return;
-            if (LLDrawPoolAlpha::sExactOITCaptureActive)
+            if (FSExactOIT::captureActive())
             {
                 continue;
             }
@@ -704,16 +702,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                 else
                 { // alpha shaders need all the shadow map setup etc
                     gPipeline.bindDeferredShader(gltf_program.mGLTFVariants[variant]);
-                    if (LLDrawPoolAlpha::sExactOITCaptureActive)
+                    if (FSExactOIT::captureActive())
                     {
-                        static LLStaticHashedString oit_blend_factors("oitBlendFactors");
                         LLGLSLShader& shader = gltf_program.mGLTFVariants[variant];
-                        GLint location = shader.getUniformLocation(oit_blend_factors);
-                        const U32 packed = U32(LLRender::BF_SOURCE_ALPHA) |
-                            (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 8) |
-                            (U32(LLRender::BF_ZERO) << 16) |
-                            (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 24);
-                        if (location >= 0) glUniform1ui(location, packed);
+                        FSExactOIT::configureGLTFCapturedDraw(shader);
                     }
                 }
                 // </AS:Chanayane>

@@ -74,13 +74,6 @@ public:
 
     static bool sShowDebugAlpha;
     static bool sShowDebugAlphaRigged;
-    // <AS:Chanayane> Exact OIT frame and fallback state
-    static bool sExactOITCaptured;
-    static bool sExactOITClearNeeded;
-    static bool sExactOITVanillaFallback;
-    static bool sExactOITCaptureActive;
-    // </AS:Chanayane>
-
 private:
     LLGLSLShader* target_shader;
 
@@ -113,8 +106,8 @@ private:
     struct ExactOITScope
     {
         LLDrawPoolAlpha& pool;
-        ExactOITScope(LLDrawPoolAlpha& p) : pool(p) { pool.mForwardToExactOIT = true; sExactOITCaptureActive = true; }
-        ~ExactOITScope() { pool.mForwardToExactOIT = false; sExactOITCaptureActive = false; }
+        ExactOITScope(LLDrawPoolAlpha& p);
+        ~ExactOITScope();
     };
     // </AS:Chanayane>
 };

@@ -26,6 +26,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "fsexactoit.h"
+
 #include "lldrawpoolalpha.h"
 
 #include "llglheaders.h"
@@ -55,11 +57,19 @@
 
 bool LLDrawPoolAlpha::sShowDebugAlpha = false;
 bool LLDrawPoolAlpha::sShowDebugAlphaRigged = false;
-// <AS:Chanayane> Exact OIT frame and fallback state
-bool LLDrawPoolAlpha::sExactOITCaptured = false;
-bool LLDrawPoolAlpha::sExactOITClearNeeded = false;
-bool LLDrawPoolAlpha::sExactOITVanillaFallback = false;
-bool LLDrawPoolAlpha::sExactOITCaptureActive = false;
+
+// <AS:Chanayane> Exact OIT capture scope integration
+LLDrawPoolAlpha::ExactOITScope::ExactOITScope(LLDrawPoolAlpha& p) : pool(p)
+{
+    pool.mForwardToExactOIT = true;
+    FSExactOIT::beginCapture();
+}
+
+LLDrawPoolAlpha::ExactOITScope::~ExactOITScope()
+{
+    pool.mForwardToExactOIT = false;
+    FSExactOIT::endCapture();
+}
 // </AS:Chanayane>
 
 #define current_shader (LLGLSLShader::sCurBoundShaderPtr)
@@ -200,86 +210,15 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-    // <AS:Chanayane> Prepare exact-OIT capture shader variants for the supported post-water path.
-    static LLCachedControl<bool> render_exact_oit(gSavedSettings, "RenderExactOIT", true);
-    std::string missing_exact_shader;
-    auto require_exact_shader = [&missing_exact_shader](const LLGLSLShader& shader, const char* name)
+    // <AS:Chanayane> Prepare Exact OIT capture shader variants for the supported post-water path.
+    const bool exact_capture_ready = FSExactOIT::captureEligible(
+        LLPipeline::sRenderingHUDs, LLPipeline::sImpostorRender, gCubeSnapshot,
+        gPipeline.mRT->screen.getWidth(), gPipeline.mRT->screen.getHeight());
+    if (exact_capture_ready)
     {
-        if (missing_exact_shader.empty() && !shader.mProgramObject)
-        {
-            missing_exact_shader = name;
-        }
-    };
-    require_exact_shader(gDeferredAlphaWBOITProgram, "deferred alpha");
-    require_exact_shader(gDeferredSkinnedAlphaWBOITProgram, "skinned deferred alpha");
-    require_exact_shader(gDeferredPBRAlphaWBOITProgram, "PBR alpha");
-    require_exact_shader(gDeferredSkinnedPBRAlphaWBOITProgram, "skinned PBR alpha");
-    require_exact_shader(gDeferredFullbrightAlphaWBOITProgram, "fullbright alpha");
-    require_exact_shader(gDeferredSkinnedFullbrightAlphaWBOITProgram, "skinned fullbright alpha");
-    require_exact_shader(gExactOITEmissiveProgram, "emissive");
-    if (missing_exact_shader.empty() && (!gExactOITEmissiveProgram.mRiggedVariant ||
-        !gExactOITEmissiveProgram.mRiggedVariant->mProgramObject)) missing_exact_shader = "skinned emissive";
-    require_exact_shader(gExactOITPBRGlowProgram, "PBR glow");
-    if (missing_exact_shader.empty() && (!gExactOITPBRGlowProgram.mRiggedVariant ||
-        !gExactOITPBRGlowProgram.mRiggedVariant->mProgramObject)) missing_exact_shader = "skinned PBR glow";
-    require_exact_shader(gWBOITCompositeProgram, "composite");
-    bool exact_shaders_ready = missing_exact_shader.empty();
-    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && exact_shaders_ready; ++i)
-    {
-        if ((i & 0x3) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
-        {
-            if (!gDeferredMaterialAlphaWBOITProgram[i].mProgramObject)
-            {
-                missing_exact_shader = llformat("material alpha %u", i);
-                exact_shaders_ready = false;
-            }
-        }
-    }
-    if (exact_shaders_ready && gSavedSettings.getBOOL("GLTFEnabled"))
-    {
-        if (gExactOITGLTFProgram.mGLTFVariants.empty())
-        {
-            missing_exact_shader = "GLTF variants";
-            exact_shaders_ready = false;
-        }
-        for (const LLGLSLShader& shader : gExactOITGLTFProgram.mGLTFVariants)
-        {
-            if (!shader.mProgramObject)
-            {
-                missing_exact_shader = "GLTF variant";
-                exact_shaders_ready = false;
-                break;
-            }
-        }
-    }
-    if (render_exact_oit && !exact_shaders_ready)
-    {
-        static bool logged_incomplete_shader = false;
-        if (!logged_incomplete_shader)
-        {
-            logged_incomplete_shader = true;
-            LL_WARNS("ExactOIT") << "Exact OIT shader set is incomplete (missing " << missing_exact_shader
-                                  << "); using complete vanilla transparency." << LL_ENDL;
-        }
-    }
-    if (render_exact_oit && exact_shaders_ready && gPipeline.mRT->exactOITAvailable &&
-        !LLPipeline::sRenderingHUDs &&
-        !LLPipeline::sImpostorRender && !gCubeSnapshot && !sExactOITVanillaFallback)
-    {
-        prepare_alpha_shader(&gDeferredAlphaWBOITProgram, true, water_sign);
-        prepare_alpha_shader(&gDeferredPBRAlphaWBOITProgram, true, water_sign);
-        prepare_alpha_shader(&gDeferredFullbrightAlphaWBOITProgram, true, water_sign);
-        for (int i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
-        {
-            if (gDeferredMaterialAlphaWBOITProgram[i].mProgramObject)
-            {
-                prepare_alpha_shader(&gDeferredMaterialAlphaWBOITProgram[i], true, water_sign);
-            }
-        }
-        prepare_alpha_shader(&gExactOITEmissiveProgram, false, water_sign);
-        prepare_alpha_shader(&gExactOITPBRGlowProgram, false, water_sign);
-        emissive_shader = &gExactOITEmissiveProgram;
-        pbr_emissive_shader = &gExactOITPBRGlowProgram;
+        FSExactOIT::prepareCaptureShaders(prepare_alpha_shader, water_sign);
+        emissive_shader = FSExactOIT::emissiveShader();
+        pbr_emissive_shader = FSExactOIT::pbrGlowShader();
     }
     // </AS:Chanayane>
 
@@ -290,36 +229,10 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // <AS:Chanayane> Exact capture replaces the two vanilla calls only while RenderExactOIT is enabled.
     // if (!LLPipeline::sRenderingHUDs) forwardRender(true);
     // forwardRender();
-    if (render_exact_oit && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER
-        && !LLPipeline::sImpostorRender && !gCubeSnapshot && gPipeline.mRT->exactOITAvailable &&
-        exact_shaders_ready
-        && !sExactOITVanillaFallback)
+    if (exact_capture_ready && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
     {
         LL_PROFILE_GPU_ZONE("Exact OIT capture");
-        if (sExactOITClearNeeded)
-        {
-            GLint previous_fbo = LLRenderTarget::sCurFBO;
-            const GLuint empty[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
-            const GLuint zero[4] = { 0u, 0u, 0u, 0u };
-            glBindFramebuffer(GL_FRAMEBUFFER, gPipeline.mRT->exactOITHeadFBO);
-            glClearBufferuiv(GL_COLOR, 0, empty);
-            // <AS:Chanayane> Capture shaders atomically build exact per-pixel list counts.
-            glClearBufferuiv(GL_COLOR, 1, zero);
-            // </AS:Chanayane>
-            glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
-
-            U32 control[4] = { 0, gPipeline.mRT->exactOITCapacity, 0, 0 };
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, gPipeline.mRT->exactOITControl);
-            glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(control), control);
-            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-            glBindImageTexture(0, gPipeline.mRT->exactOITHeads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
-            // <AS:Chanayane> Count only successfully allocated nodes; overflow still selects vanilla.
-            glBindImageTexture(1, gPipeline.mRT->exactOITCounts, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
-            // </AS:Chanayane>
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, gPipeline.mRT->exactOITNodes);
-            glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, gPipeline.mRT->exactOITControl);
-            sExactOITClearNeeded = false;
-        }
+        FSExactOIT::prepareCaptureBuffers();
 
         {
             ExactOITScope exact_scope(*this);
@@ -328,7 +241,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             forwardRender(false);
             // </AS:Chanayane>
         }
-        sExactOITCaptured = true;
+        FSExactOIT::markCaptureCompleted();
     }
     else
     {
@@ -344,7 +257,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // final pass, render to depth for depth of field effects
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot &&
         !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER &&
-        !sExactOITCaptured)
+        !FSExactOIT::captureCompleted())
     {
         //update depth buffer sampler
         simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
@@ -851,10 +764,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 
                 if (gltf_mat && gltf_mat->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND)
                 {
-                    // <AS:Chanayane> WBOIT: route GLTF/PBR alpha through the WBOIT shader
-                    // variant so it writes both accum and reveal attachments instead of
-                    // disappearing in the composite pass.
-                    target_shader = mForwardToExactOIT ? &gDeferredPBRAlphaWBOITProgram : pbr_shader;
+                    // <AS:Chanayane> Route captured PBR alpha through the Exact OIT shader.
+                    target_shader = FSExactOIT::pbrAlphaShader(mForwardToExactOIT, pbr_shader);
                     // </AS:Chanayane>
                     if (params.mAvatar != nullptr)
                     {
@@ -879,8 +790,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         if (light_enabled || !initialized_lighting)
                         {
                             initialized_lighting = true;
-                            // <AS:Chanayane> WBOIT variant
-                            target_shader = mForwardToExactOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                            // <AS:Chanayane> Exact OIT variant
+                            target_shader = FSExactOIT::fullbrightAlphaShader(mForwardToExactOIT, fullbright_shader);
                             // </AS:Chanayane>
                             light_enabled = false;
                         }
@@ -889,8 +800,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     else if (!light_enabled || !initialized_lighting)
                     {
                         initialized_lighting = true;
-                        // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToExactOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        // <AS:Chanayane> Exact OIT variant
+                        target_shader = FSExactOIT::alphaShader(mForwardToExactOIT, simple_shader);
                         // </AS:Chanayane>
                         light_enabled = true;
                     }
@@ -904,27 +815,21 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         U32 mask = params.mShaderMask;
 
                         llassert(mask < LLMaterial::SHADER_COUNT);
-                        // <AS:Chanayane> WBOIT variant
-                        if (mForwardToExactOIT && gDeferredMaterialAlphaWBOITProgram[mask].mProgramObject)
-                        {
-                            target_shader = &gDeferredMaterialAlphaWBOITProgram[mask];
-                        }
-                        else
+                        // <AS:Chanayane> Exact OIT variant
+                        target_shader = FSExactOIT::materialAlphaShader(
+                            mForwardToExactOIT, mask, &gDeferredMaterialProgram[mask]);
                         // </AS:Chanayane>
-                        {
-                            target_shader = &(gDeferredMaterialProgram[mask]);
-                        }
                     }
                     else if (!params.mFullbright)
                     {
-                        // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToExactOIT ? &gDeferredAlphaWBOITProgram : simple_shader;
+                        // <AS:Chanayane> Exact OIT variant
+                        target_shader = FSExactOIT::alphaShader(mForwardToExactOIT, simple_shader);
                         // </AS:Chanayane>
                     }
                     else
                     {
-                        // <AS:Chanayane> WBOIT variant
-                        target_shader = mForwardToExactOIT ? &gDeferredFullbrightAlphaWBOITProgram : fullbright_shader;
+                        // <AS:Chanayane> Exact OIT variant
+                        target_shader = FSExactOIT::fullbrightAlphaShader(mForwardToExactOIT, fullbright_shader);
                         // </AS:Chanayane>
                     }
 
@@ -984,15 +889,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     // <AS:Chanayane> Upload original per-draw blend factors into exact OIT nodes.
                     else if (current_shader)
                     {
-                        static LLStaticHashedString oit_blend_factors("oitBlendFactors");
-                        static LLStaticHashedString oit_glow("oitGlow");
-                        const U32 packed_blend = U32(params.mBlendFuncSrc) |
-                            (U32(params.mBlendFuncDst) << 8) |
-                            (U32(mAlphaSFactor) << 16) |
-                            (U32(mAlphaDFactor) << 24);
-                        GLint blend_location = current_shader->getUniformLocation(oit_blend_factors);
-                        if (blend_location >= 0) glUniform1ui(blend_location, packed_blend);
-                        current_shader->uniform1f(oit_glow, 0.f);
+                        FSExactOIT::configureCapturedDraw(*current_shader, U32(params.mBlendFuncSrc),
+                            U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor));
                     }
                     // </AS:Chanayane>
 

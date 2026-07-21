@@ -727,19 +727,6 @@ public:
         LLRenderTarget          deferredScreen;
         LLRenderTarget          deferredLight;
 
-        // <AS:Chanayane> Exact OIT resources are allocated only for the main full-resolution target.
-        LLRenderTarget          exactOITOpaque;
-        GLuint                  exactOITHeads = 0;
-        GLuint                  exactOITCounts = 0;
-        GLuint                  exactOITHeadFBO = 0;
-        GLuint                  exactOITNodes = 0;
-        GLuint                  exactOITControl = 0;
-        U32                     exactOITCapacity = 0;
-        U32                     exactOITPeakNodes = 0;
-        U32                     exactOITOverflowCount = 0;
-        bool                    exactOITAvailable = false;
-        // </AS:Chanayane>
-
         //sun shadow map
         LLRenderTarget          shadow[4];
     };
