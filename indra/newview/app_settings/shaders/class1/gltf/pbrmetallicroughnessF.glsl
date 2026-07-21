@@ -167,14 +167,15 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 // output definition
 // ==================================
 // <AS:Chanayane> Exact OIT fragment-node declarations; original outputs remain below.
+// #if defined(ALPHA_BLEND) || defined(UNLIT)
 #if defined(EXACT_OIT) && defined(ALPHA_BLEND)
 void exact_oit_store(vec4 color);
 #elif defined(ALPHA_BLEND) || defined(UNLIT)
+// </AS:Chanayane>
 out vec4 frag_color;
 #else
 out vec4 frag_data[4];
 #endif
-// </AS:Chanayane>
 // ==================================
 
 
