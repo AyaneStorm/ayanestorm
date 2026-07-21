@@ -9898,43 +9898,9 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-// <AS:Chanayane> Exact OIT validation and composite. Capture shaders have not touched the
-    // screen color, so an overflow can safely rerun the complete vanilla alpha path.
-    U32 exact_oit_maximum_list = 0;
-    const FSExactOIT::ValidationResult exact_oit_validation = FSExactOIT::validateCapture(
-        gCubeSnapshot, sImpostorRender, gAgentCamera.cameraMouselook(), exact_oit_maximum_list);
-    if (exact_oit_validation != FSExactOIT::ValidationResult::INACTIVE)
-    {
-        LL_PROFILE_GPU_ZONE("Exact OIT composite");
-        if (exact_oit_validation == FSExactOIT::ValidationResult::FALLBACK_REQUIRED)
-        {
-            FSExactOIT::VanillaFallbackScope fallback_scope;
-            for (pool_set_t::iterator iter = mPools.begin(); iter != mPools.end(); ++iter)
-            {
-                LLDrawPool* poolp = *iter;
-                if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-                {
-                    LLVertexBuffer::unbind();
-                    poolp->beginPostDeferredPass(0);
-                    poolp->renderPostDeferred(0);
-                    poolp->endPostDeferredPass(0);
-                }
-            }
-        }
-        else
-        {
-            FSExactOIT::composite(mRT->screen, *mScreenTriangleVB, exact_oit_maximum_list);
-
-            for (auto* poolp : mPools)
-            {
-                if (poolp->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-                {
-                    static_cast<LLDrawPoolAlpha*>(poolp)->renderDebugAlpha();
-                    break;
-                }
-            }
-        }
-    }
+// <AS:Chanayane> Exact OIT validation, fallback, and composite.
+    FSExactOIT::finishFrame(*this, mRT->screen, *mScreenTriangleVB, gCubeSnapshot,
+                            sImpostorRender, gAgentCamera.cameraMouselook());
 // </AS:Chanayane>
 
     screen_target->flush();

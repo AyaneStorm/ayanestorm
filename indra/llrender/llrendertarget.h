@@ -142,10 +142,6 @@ public:
     //get Y resolution
     U32 getHeight() const { return mResY; }
 
-    // <AS:Chanayane> Required for exact OIT image-preservation blits.
-    U32 getFBO() const { return mFBO; }
-    // </AS:Chanayane>
-
     LLTexUnit::eTextureType getUsage(void) const { return mUsage; }
 
     U32 getTexture(U32 attachment = 0) const;
@@ -195,3 +191,4 @@ protected:
 };
 
 #endif
+

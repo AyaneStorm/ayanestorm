@@ -199,51 +199,29 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-// <AS:Chanayane> Prepare Exact OIT capture shader variants for the supported post-water path.
-    const bool exact_capture_ready = FSExactOIT::captureEligible(
-        LLPipeline::sRenderingHUDs, LLPipeline::sImpostorRender, gCubeSnapshot,
-        gPipeline.mRT->screen.getWidth(), gPipeline.mRT->screen.getHeight());
-    if (exact_capture_ready)
-    {
-        FSExactOIT::prepareCaptureShaders(prepare_alpha_shader, water_sign);
-        emissive_shader = FSExactOIT::emissiveShader();
-        pbr_emissive_shader = FSExactOIT::pbrGlowShader();
-    }
-// </AS:Chanayane>
-
-    // explicitly unbind here so render loop doesn't make assumptions about the last shader
-    // already being setup for rendering
-    LLGLSLShader::unbind();
-
 // <AS:Chanayane> Capture replaces the two vanilla calls only while Exact OIT is active.
     // if (!LLPipeline::sRenderingHUDs)
     // {
     //     // first pass, render rigged objects only and render to depth buffer
     //     forwardRender(true);
     // }
-    // 
+    //
     // // second pass, regular forward alpha rendering
     // forwardRender();
-    if (exact_capture_ready && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    if (!FSExactOIT::renderPostDeferredCapture(*this, prepare_alpha_shader, water_sign,
+                                               emissive_shader, pbr_emissive_shader))
     {
-        LL_PROFILE_GPU_ZONE("Exact OIT capture");
-        FSExactOIT::prepareCaptureBuffers();
+        // explicitly unbind here so render loop doesn't make assumptions about the last shader
+        // already being setup for rendering
+        LLGLSLShader::unbind();
 
-        {
-            FSExactOIT::CaptureScope exact_scope;
-            // Match vanilla insertion order for coincident-depth stable tie breaking.
-            forwardRender(true);
-            forwardRender(false);
-        }
-        FSExactOIT::markCaptureCompleted();
-    }
-    else
-    {
-        // PRE_WATER / HUD: keep upstream order (water fog integrity).
         if (!LLPipeline::sRenderingHUDs)
         {
+            // first pass, render rigged objects only and render to depth buffer
             forwardRender(true);
         }
+
+        // second pass, regular forward alpha rendering
         forwardRender();
     }
 // </AS:Chanayane>

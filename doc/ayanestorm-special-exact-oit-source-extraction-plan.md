@@ -35,8 +35,29 @@ builds plus runtime rendering tests. The resulting module owns:
 The pipeline retains allocation, release, frame-reset, validation-result,
 vanilla-fallback traversal, composite, and debug-alpha hooks. The alpha and
 GLTF renderers retain traversal plus narrow capture and shader-selection hooks.
-The capture flag and RAII scope are owned by `FSExactOIT`; no Exact OIT fields
-or declarations remain in `lldrawpoolalpha.h`.
+The capture flag and RAII scope are owned by `FSExactOIT`;
+`lldrawpoolalpha.h` retains no Exact OIT state or methods, only a narrow friend
+declaration that lets the owned module execute the existing private traversal.
+
+The shared Exact OIT node-storage implementation is linked from the owned
+`exactOITCaptureF.glsl` fragment object. Upstream fragment shaders retain only
+small `#ifdef EXACT_OIT` declaration/output hooks. Ordinary permutations never
+define `EXACT_OIT`, so their declarations and output statements preprocess to
+the original source. Unsupported hardware does not compile the Exact OIT
+shader family. Supported hardware loads that family even while the setting is
+disabled so runtime enabling remains possible without restarting; this adds
+shader-load work but does not select Exact OIT programs or alter vanilla GL
+state or rendering.
+
+`LLGLSLShader` compiles the capture fragment object with indexed-texture source
+injection disabled. The primary alpha fragment object still receives the
+ordinary injected lookup helper; suppressing it only for the linked capture
+library prevents a duplicate `diffuseLookup()` definition. All other shader
+files retain the original loader arguments.
+
+The opaque-scene copy uses the OpenGL 4.3 `glCopyImageSubData` entry point and
+the existing public texture accessors. No `LLRenderTarget` accessor or source
+change is required.
 
 Runtime setting transitions were explicitly tested. Starting with Exact OIT
 disabled, enabling it without restarting now uses the already loaded shader

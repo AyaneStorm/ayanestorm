@@ -33,12 +33,16 @@
 #include "fsexactoit.h"
 
 #include "llgl.h"
+#include "lldrawpoolalpha.h"
 #include "llrender.h"
 #include "llrendertarget.h"
 #include "llsd.h"
 #include "llshadermgr.h"
 #include "llvertexbuffer.h"
 #include "llviewercontrol.h"
+#include "pipeline.h"
+
+extern bool gCubeSnapshot;
 
 namespace
 {
@@ -50,6 +54,11 @@ void addCommonPermutations(LLGLSLShader& shader)
     {
         shader.addPermutation("HAS_EMISSIVE", "1");
     }
+}
+
+void addCaptureFragment(LLGLSLShader& shader)
+{
+    shader.mShaderFiles.emplace_back("deferred/exactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
 }
 
 bool makeRiggedVariant(LLGLSLShader& shader, LLGLSLShader& rigged_shader)
@@ -183,7 +192,7 @@ const char* FSExactOIT::shaderCacheRevision()
 {
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
-    return "Exact OIT shader revision v5";
+    return "Exact OIT shader revision v6";
 }
 
 bool FSExactOIT::isSupported()
@@ -260,6 +269,7 @@ bool FSExactOIT::loadGLTFShaders(S32 shader_level, bool use_sun_shadow)
     gExactOITGLTFProgram.mShaderFiles.clear();
     gExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessV.glsl", GL_VERTEX_SHADER);
     gExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessF.glsl", GL_FRAGMENT_SHADER);
+    addCaptureFragment(gExactOITGLTFProgram);
     gExactOITGLTFProgram.mShaderLevel = shader_level;
     gExactOITGLTFProgram.clearPermutations();
     gExactOITGLTFProgram.addPermutation("EXACT_OIT", "1");
@@ -346,6 +356,7 @@ bool FSExactOIT::loadAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.mShaderFiles.clear();
         shader.mShaderFiles.emplace_back("deferred/alphaV.glsl", GL_VERTEX_SHADER);
         shader.mShaderFiles.emplace_back("deferred/alphaF.glsl", GL_FRAGMENT_SHADER);
+        addCaptureFragment(shader);
         shader.clearPermutations();
         shader.addPermutation("USE_VERTEX_COLOR", "1");
         shader.addPermutation("HAS_ALPHA_MASK", "1");
@@ -398,6 +409,7 @@ bool FSExactOIT::loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.mShaderFiles.clear();
         shader.mShaderFiles.emplace_back("deferred/pbralphaV.glsl", GL_VERTEX_SHADER);
         shader.mShaderFiles.emplace_back("deferred/pbralphaF.glsl", GL_FRAGMENT_SHADER);
+        addCaptureFragment(shader);
         shader.clearPermutations();
         shader.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", (int)LLMaterial::DIFFUSE_ALPHA_MODE_BLEND));
         shader.addPermutation("HAS_NORMAL_MAP", "1");
@@ -448,6 +460,7 @@ bool FSExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
         shader.mShaderFiles.clear();
         shader.mShaderFiles.emplace_back("deferred/fullbrightV.glsl", GL_VERTEX_SHADER);
         shader.mShaderFiles.emplace_back("deferred/fullbrightF.glsl", GL_FRAGMENT_SHADER);
+        addCaptureFragment(shader);
         shader.clearPermutations();
         shader.addPermutation("HAS_ALPHA_MASK", "1");
         shader.addPermutation("IS_ALPHA", "1");
@@ -501,6 +514,7 @@ bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
         shader.mShaderFiles.clear();
         shader.mShaderFiles.emplace_back("deferred/materialV.glsl", GL_VERTEX_SHADER);
         shader.mShaderFiles.emplace_back("deferred/materialF.glsl", GL_FRAGMENT_SHADER);
+        addCaptureFragment(shader);
         shader.mShaderLevel = shader_level;
         shader.clearPermutations();
         if (idx & 0x8)
@@ -572,11 +586,6 @@ void FSExactOIT::beginFrame()
 bool FSExactOIT::captureCompleted()
 {
     return sCaptureCompleted;
-}
-
-bool FSExactOIT::vanillaFallbackActive()
-{
-    return sVanillaFallbackActive;
 }
 
 bool FSExactOIT::captureActive()
@@ -758,6 +767,34 @@ void FSExactOIT::prepareCaptureShaders(PrepareShader prepare, F32 water_sign)
     prepare(&gExactOITPBRGlowProgram, false, water_sign);
 }
 
+bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
+                                           F32 water_sign, LLGLSLShader*& emissive_shader,
+                                           LLGLSLShader*& pbr_emissive_shader)
+{
+    const bool capture_ready = captureEligible(
+        LLPipeline::sRenderingHUDs, LLPipeline::sImpostorRender, gCubeSnapshot,
+        gPipeline.mRT->screen.getWidth(), gPipeline.mRT->screen.getHeight());
+    if (!capture_ready || pool.getType() != LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
+        return false;
+    }
+
+    prepareCaptureShaders(prepare, water_sign);
+    emissive_shader = emissiveShader();
+    pbr_emissive_shader = pbrGlowShader();
+    LLGLSLShader::unbind();
+
+    LL_PROFILE_GPU_ZONE("Exact OIT capture");
+    prepareCaptureBuffers();
+    {
+        CaptureScope capture_scope;
+        pool.forwardRender(true);
+        pool.forwardRender(false);
+    }
+    markCaptureCompleted();
+    return true;
+}
+
 void FSExactOIT::configureCapturedDraw(LLGLSLShader& shader, U32 color_source,
                                        U32 color_destination, U32 alpha_source,
                                        U32 alpha_destination)
@@ -777,6 +814,7 @@ void FSExactOIT::configureCapturedDraw(LLGLSLShader& shader, U32 color_source,
 void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
     static LLStaticHashedString blend_factors("oitBlendFactors");
+    static LLStaticHashedString glow("oitGlow");
     const U32 packed_blend = U32(LLRender::BF_SOURCE_ALPHA) |
         (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 8) |
         (U32(LLRender::BF_ZERO) << 16) |
@@ -786,6 +824,7 @@ void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
     {
         glUniform1ui(location, packed_blend);
     }
+    shader.uniform1f(glow, 0.f);
 }
 
 LLGLSLShader& FSExactOIT::gltfProgram(LLGLSLShader& ordinary_program)
@@ -940,14 +979,9 @@ void FSExactOIT::bindCompositeResources()
 void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
 {
     LL_PROFILE_GPU_ZONE("Exact OIT opaque copy");
-    const GLint previous_fbo = LLRenderTarget::sCurFBO;
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, screen.getFBO());
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, sOpaqueTarget.getFBO());
-    glBlitFramebuffer(0, 0, screen.getWidth(), screen.getHeight(),
-                      0, 0, sOpaqueTarget.getWidth(), sOpaqueTarget.getHeight(),
-                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+    glCopyImageSubData(screen.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                       sOpaqueTarget.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0,
+                       screen.getWidth(), screen.getHeight(), 1);
 }
 
 void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list)
@@ -987,6 +1021,46 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
 
     gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     gExactOITCompositeProgram.unbind();
+}
+
+void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
+                             LLVertexBuffer& screen_triangle, bool cube_snapshot,
+                             bool impostor_render, bool mouselook)
+{
+    U32 maximum_list = 0;
+    const ValidationResult validation = validateCapture(
+        cube_snapshot, impostor_render, mouselook, maximum_list);
+    if (validation == ValidationResult::INACTIVE)
+    {
+        return;
+    }
+
+    LL_PROFILE_GPU_ZONE("Exact OIT composite");
+    if (validation == ValidationResult::FALLBACK_REQUIRED)
+    {
+        VanillaFallbackScope fallback_scope;
+        for (LLDrawPool* pool : pipeline.mPools)
+        {
+            if (pool->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                LLVertexBuffer::unbind();
+                pool->beginPostDeferredPass(0);
+                pool->renderPostDeferred(0);
+                pool->endPostDeferredPass(0);
+            }
+        }
+        return;
+    }
+
+    composite(screen, screen_triangle, maximum_list);
+    for (LLDrawPool* pool : pipeline.mPools)
+    {
+        if (pool->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+        {
+            static_cast<LLDrawPoolAlpha*>(pool)->renderDebugAlpha();
+            break;
+        }
+    }
 }
 
 void FSExactOIT::releaseResources(bool preserve_node_pool)

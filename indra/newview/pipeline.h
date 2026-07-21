@@ -52,6 +52,7 @@ class LLVOAvatar;
 class LLVOPartGroup;
 class LLGLSLShader;
 class LLDrawPoolAlpha;
+class FSExactOIT;
 class LLSettingsSky;
 
 typedef enum e_avatar_skinning_method
@@ -92,6 +93,10 @@ extern LLTrace::BlockTimerStatHandle FTM_RENDER_UI_2D;
 
 class LLPipeline
 {
+    // <AS:Chanayane> Exact OIT keeps fallback/composite traversal in the owned module.
+    friend class FSExactOIT;
+    // </AS:Chanayane>
+
 public:
     LLPipeline();
     ~LLPipeline();

@@ -47,30 +47,7 @@ uniform int classic_mode;
 
 // <AS:Chanayane> Exact OIT fragment-node output declarations
 #ifdef EXACT_OIT
-layout(early_fragment_tests) in;
-layout(binding = 0, r32ui) uniform coherent uimage2D oitHeadPointers;
-layout(binding = 1, r32ui) uniform coherent uimage2D oitListCounts;
-// <AS:Chanayane> Lossless 32-byte node: scalar glow and index-derived sequence.
-struct OITNode { vec4 color; float glow; float depth; uint next; uint blend; };
-// </AS:Chanayane>
-layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
-layout(std430, binding = 1) buffer OITControl { uint oitNodeCount; uint oitNodeCapacity; uint oitOverflow; uint oitPad; };
-uniform uint oitBlendFactors;
-uniform float oitGlow;
-void exact_oit_store(vec4 color)
-{
-    uint index = atomicAdd(oitNodeCount, 1u);
-    if (index >= oitNodeCapacity) { atomicOr(oitOverflow, 1u); return; }
-    oitNodes[index].color = color;
-    oitNodes[index].glow = oitGlow;
-    oitNodes[index].depth = gl_FragCoord.z;
-    oitNodes[index].blend = oitBlendFactors;
-    oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
-    // <AS:Chanayane> Exact capture-time count replaces a later full-list traversal.
-    uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
-    atomicMax(oitPad, pixel_count);
-    // </AS:Chanayane>
-}
+void exact_oit_store(vec4 color);
 #else
 out vec4 frag_color;
 #endif
@@ -246,13 +223,12 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-    vec4 out_color = max(vec4(color.rgb * final_scale, a), vec4(0));
 // <AS:Chanayane> Replace the original framebuffer output only during exact capture.
-// frag_color = out_color;
+// frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
 #ifdef EXACT_OIT
-    exact_oit_store(out_color);
+    exact_oit_store(max(vec4(color.rgb * final_scale, a), vec4(0)));
 #else
-    frag_color = out_color;
+    frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
 #endif
 // </AS:Chanayane>
 }
