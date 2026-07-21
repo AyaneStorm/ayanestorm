@@ -95,6 +95,7 @@ LLPreviewNotecard::LLPreviewNotecard(const LLSD& key) //const LLUUID& item_id,
 LLPreviewNotecard::~LLPreviewNotecard()
 {
     delete mLiveFile;
+    mEditor = nullptr;
 
     // <FS:Ansariel> FIRE-29425: User-selectable font and size for notecards
     if (mFontNameChangedCallbackConnection.connected())
@@ -165,6 +166,30 @@ bool LLPreviewNotecard::postBuild()
     onFontChanged();
     // </FS:Ansariel>
 
+    // <FS:mjr>
+    // Get the resize bars and add a resize listener to the onResizeFloater method.
+    LLResizeBar* resizebar_left = getChild<LLResizeBar>("resizebar_left");
+    if (resizebar_left)
+    {
+        resizebar_left->setResizeListener(boost::bind(&LLPreviewNotecard::onResizeFloater, this));
+    }
+    LLResizeBar* resizebar_right = getChild<LLResizeBar>("resizebar_right");
+    if (resizebar_right)
+    {
+        resizebar_right->setResizeListener(boost::bind(&LLPreviewNotecard::onResizeFloater, this));
+    }
+    LLResizeBar* resizebar_top = getChild<LLResizeBar>("resizebar_top");
+    if (resizebar_top)
+    {
+        resizebar_top->setResizeListener(boost::bind(&LLPreviewNotecard::onResizeFloater, this));
+    }
+    LLResizeBar* resizebar_bottom = getChild<LLResizeBar>("resizebar_bottom");
+    if (resizebar_bottom)
+    {
+        resizebar_bottom->setResizeListener(boost::bind(&LLPreviewNotecard::onResizeFloater, this));
+    }
+    // </FS:mjr>
+
     return LLPreview::postBuild();
 }
 
@@ -194,7 +219,7 @@ void LLPreviewNotecard::updateByteCounter()
         if (bytes > (MAX_BYTES * 8 / 10))
             return LLColor4::yellow;
 
-        return LLColor4::white;
+        return LLUIColorTable::getInstance()->getColor("LabelTextColor"); // Use the actual default color from the Widget.
     };
     mByteCounter->setColor(getColorForByteCount());
 
@@ -209,8 +234,20 @@ void LLPreviewNotecard::updateByteCounter()
     ui_text.setArg("[MAX]", std::to_string(MAX_BYTES));
 
     mByteCounter->setText(ui_text.getString());
+    // Update the visiblity state of the mByteCounter if there is not enough space.
+    onResizeFloater();
 }
 // </FS>
+
+// <FS:mjr>
+// Callback method for the resizebar so the byte counter can become invisible if overlapped by the buttons
+void LLPreviewNotecard::onResizeFloater()
+{
+    // Set the visiblity flag of the byte counter to true if the right side of the byte counter text is less then the left side of the save button.
+    S32 text_right = mByteCounter->getRect().mLeft + mByteCounter->getTextPixelWidth();
+    mByteCounter->setVisible(text_right < mSaveBtn->getRect().mLeft);
+}
+// </FS:mjr>
 
 void LLPreviewNotecard::setEnabled(bool enabled)
 {
@@ -277,7 +314,7 @@ bool LLPreviewNotecard::handleKeyHere(KEY key, MASK mask)
 // virtual
 bool LLPreviewNotecard::canClose()
 {
-    if(mForceClose || mEditor->isPristine())
+    if(mForceClose || !mEditor || mEditor->isPristine())
     {
         return true;
     }
