@@ -26,7 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Exact OIT
 #include "fsexactoit.h"
+// </AS:Chanayane>
 
 #include "llappviewer.h"
 

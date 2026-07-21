@@ -26,7 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Exact OIT
 #include "fsexactoit.h"
+// </AS:Chanayane>
 
 #include "lldrawpoolalpha.h"
 
@@ -197,7 +199,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-    // <AS:Chanayane> Prepare Exact OIT capture shader variants for the supported post-water path.
+// <AS:Chanayane> Prepare Exact OIT capture shader variants for the supported post-water path.
     const bool exact_capture_ready = FSExactOIT::captureEligible(
         LLPipeline::sRenderingHUDs, LLPipeline::sImpostorRender, gCubeSnapshot,
         gPipeline.mRT->screen.getWidth(), gPipeline.mRT->screen.getHeight());
@@ -207,7 +209,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         emissive_shader = FSExactOIT::emissiveShader();
         pbr_emissive_shader = FSExactOIT::pbrGlowShader();
     }
-    // </AS:Chanayane>
+// </AS:Chanayane>
 
     // explicitly unbind here so render loop doesn't make assumptions about the last shader
     // already being setup for rendering
@@ -286,8 +288,6 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     //     // contribute to the alpha mask used for impostors
     //     || LLPipeline::sImpostorRenderAlphaDepthPass
     //     || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
-    // 
-    // LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
     bool write_depth = !FSExactOIT::captureActive() &&
         (rigged ||
             LLDrawPoolWater::sSkipScreenCopy
@@ -295,8 +295,10 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
             // contribute to the alpha mask used for impostors
             || LLPipeline::sImpostorRenderAlphaDepthPass
             || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER); // needed for accurate water fog
+// </AS:Chanayane>
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
+// <AS:Chanayane> Exact capture does not write depth or use framebuffer blending.
     LLGLDisable exact_oit_blend(FSExactOIT::captureActive() ? GL_BLEND : 0);
 // </AS:Chanayane>
 
