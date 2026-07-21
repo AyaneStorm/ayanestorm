@@ -1046,8 +1046,6 @@ void LLFloaterPreference::apply()
     setUnencryptedCacheLocation(gSavedSettings.getString("ASUnencryptedCacheLocation"));
     // </AS:chanayane>
 
-    //LLViewerMedia::getInstance()->setCookiesEnabled(getChild<LLUICtrl>("cookies_enabled")->getValue());
-
     if (hasChild("web_proxy_enabled", true) &&hasChild("web_proxy_editor", true) && hasChild("web_proxy_port", true))
     {
         bool proxy_enable = getChild<LLUICtrl>("web_proxy_enabled")->getValue();
@@ -6186,7 +6184,7 @@ void LLFloaterPreference::loadFontPresetsFromDir(const std::string& dir, LLCombo
         //hack to deal with "fonts.xml"
         if (file == "fonts.xml")
         {
-            font_selection_combo->add("Deja Vu", file);
+            font_selection_combo->add("Inter", file);
         }
         //hack to get "fonts_[name].xml" to "Name"
         else

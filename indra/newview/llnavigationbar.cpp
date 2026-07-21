@@ -651,8 +651,6 @@ void LLNavigationBar::onLocationSelection()
                     std::string current_grid = LFSimFeatureHandler::instance().hyperGridURL();
                     std::string gatekeeper = LLGridManager::getInstance()->getGatekeeper(grid);
 
-                    LL_INFOS("Hecklezz") << "grid: " << grid << ", current_grid: " << current_grid << ", gatekeeper: " << gatekeeper << LL_ENDL;
-
                     // Requesting region information from the server is only required when changing grid
                     if (slurl.isValid() && grid != current_grid)
                     {
@@ -993,10 +991,16 @@ void LLNavigationBar::resizeLayoutPanel()
 }
 void LLNavigationBar::invokeSearch(std::string search_text)
 {
+    LLSD key;
+    key["category"] = "standard";
+    key["query"] = search_text;
+    LLSD collections = LLSD::emptyArray();
+    collections.append("destinations");
+    collections.append("places");
+    key["collections"] = collections;
     // <FS:PP> FIRE-36483 Menu, navbar and toolbar button must open the same search window
-    // LLFloaterReg::showInstance("search", LLSD().with("category", "standard").with("query", LLSD(search_text)));
-    const std::string search_floater_name = gSavedSettings.getBOOL("FSUseFSLegacySearch") ? "search" : "legacy_search";
-    LLFloaterReg::showInstance(search_floater_name, LLSD().with("category", "standard").with("query", LLSD(search_text)));
+    //LLFloaterReg::showInstance("search", key);
+    LLFloaterReg::showInstance(gSavedSettings.getBOOL("FSUseFSLegacySearch") ? "search" : "legacy_search", key);
     // </FS:PP>
 }
 

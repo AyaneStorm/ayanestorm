@@ -157,6 +157,7 @@ public:
     static void setUnencryptedCacheEnabled(bool enabled) { s_unencrypted_cache_enabled = enabled; }
     // </AS:chanayane>
 
+    LLMutex* getFastCacheMutex() { return &mFastCacheMutex; }
 protected:
     // Accessed by LLTextureCacheWorker
     std::string getLocalFileName(const LLUUID& id);
@@ -202,6 +203,7 @@ private:
     // Internal
     LLMutex mWorkersMutex;
     LLMutex mHeaderMutex;
+    LLMutex mHeaderIDMapMutex; // To avoid deadlocks, never lock mFastCacheMutex after mHeaderIDMapMutex.
     LLMutex mListMutex;
     LLMutex mFastCacheMutex;
     LLAPRFile* mHeaderAPRFile;

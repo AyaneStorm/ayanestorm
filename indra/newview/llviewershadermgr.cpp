@@ -30,6 +30,9 @@
 #include <boost/lexical_cast.hpp>
 
 #include "llfeaturemanager.h"
+// <AS:Chanayane> Exact OIT
+#include "fsexactoit.h"
+// </AS:Chanayane>
 #include "llviewershadermgr.h"
 #include "llviewercontrol.h"
 #include "llversioninfo.h"
@@ -438,6 +441,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gHUDFullbrightAlphaMaskProgram);
     mShaderList.push_back(&gDeferredFullbrightAlphaMaskAlphaProgram);
     mShaderList.push_back(&gHUDFullbrightAlphaMaskAlphaProgram);
+// <AS:Chanayane> Exact OIT shader registration
+    FSExactOIT::registerShaders(mShaderList);
+// </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
     mShaderList.push_back(&gDeferredEmissiveProgram);
@@ -553,6 +559,9 @@ void LLViewerShaderMgr::setShaders()
         {
             HBXXH128 hash_obj;
             hash_obj.update(LLVersionInfo::instance().getVersion());
+// <AS:Chanayane> Include the Exact OIT shader revision in the cache key.
+            hash_obj.update(FSExactOIT::shaderCacheRevision());
+// </AS:Chanayane>
             current_cache_version = hash_obj.digest();
 
             old_cache_version = LLUUID(gSavedSettings.getString("RenderShaderCacheVersion"));
@@ -1143,6 +1152,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHUDFullbrightAlphaMaskProgram.unload();
         gDeferredFullbrightAlphaMaskAlphaProgram.unload();
         gHUDFullbrightAlphaMaskAlphaProgram.unload();
+// <AS:Chanayane> Exact OIT shader unloading
+        FSExactOIT::unloadShaders();
+// </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
         gDeferredAvatarEyesProgram.unload();
@@ -3048,6 +3060,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gRlvSphereProgram.createShader();
     }
     // [/RLV:KB]
+// <AS:Chanayane> Load the complete Exact OIT shader family through one module entry point.
+    success = FSExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
+// </AS:Chanayane>
     return success;
 }
 
@@ -3625,4 +3640,3 @@ LLViewerShaderMgr::shader_iter LLViewerShaderMgr::endShaders() const
 {
     return mShaderList.end();
 }
-

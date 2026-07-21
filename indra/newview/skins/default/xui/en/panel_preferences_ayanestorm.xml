@@ -10,6 +10,7 @@
   label="AyaneStorm"
   name="ayanestorm">
 
+  <!-- <AS:Chanayane> Exact OIT preference. -->
   <check_box
     follows="left|top"
     layout="topleft"
@@ -117,6 +118,20 @@
     name="save_final_snapshot"
     radio_style="false"
     width="400"
+    top_pad="20" />
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="RenderExactOIT"
+    label="Use Exact OIT transparency"
+    tool_tip="Renders supported transparent surfaces in exact per-pixel depth order. This improves overlapping hair, glass, particles, and other alpha surfaces, but can cost performance in transparency-heavy scenes. Disable it to use the standard transparency renderer."
+    left="15"
+    mouse_opaque="true"
+    name="render_exact_oit"
+    radio_style="false"
+    width="500"
     top_pad="20" />
 
   <text
