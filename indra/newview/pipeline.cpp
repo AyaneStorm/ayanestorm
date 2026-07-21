@@ -26,6 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Exact OIT
+#include "fsexactoit.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // library includes
@@ -842,6 +846,9 @@ void LLPipeline::resizeScreenTexture()
         if (gResizeScreenTexture || (scaledResX != mRT->screen.getWidth()) || (scaledResY != mRT->screen.getHeight()))
 // [/SL:KB]
         {
+            // <AS:Chanayane> Retain the large Exact OIT node pool across viewport-only resizing.
+            FSExactOIT::retainNodePoolOnNextRelease();
+            // </AS:Chanayane>
             releaseScreenBuffers();
             releaseSunShadowTargets();
             releaseSpotShadowTargets();
@@ -998,6 +1005,11 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
     if (!gCubeSnapshot) // hack to not re-allocate various targets for cube snapshots
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
+
+        // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
+        FSExactOIT::allocateResources(resX, resY);
+        // </AS:Chanayane>
+
         if (RenderUIBuffer)
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("UIBuffer"); // <FS:Beq/> improve Tracy scoping 
@@ -1400,6 +1412,9 @@ void LLPipeline::releaseScreenBuffers()
     mRT->screen.release();
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
+    // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
+    FSExactOIT::releaseResources();
+    // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
     mAuxillaryRT.deferredScreen.release();
@@ -9845,6 +9860,10 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
+        // <AS:Chanayane> Reset exact OIT state; RenderExactOIT=false continues into the untouched vanilla dispatch.
+        FSExactOIT::beginFrame();
+        // </AS:Chanayane>
+
         pushRenderTypeMask();
         andRenderTypeMask(LLPipeline::RENDER_TYPE_ALPHA,
                           LLPipeline::RENDER_TYPE_ALPHA_PRE_WATER,
@@ -9880,6 +9899,10 @@ void LLPipeline::renderDeferredLighting()
         renderGeomPostDeferred(*LLViewerCamera::getInstance());
         popRenderTypeMask();
     }
+
+// <AS:Chanayane> Exact OIT validation, fallback, and composite.
+    FSExactOIT::finishFrame(*this, mRT->screen, *mScreenTriangleVB, gCubeSnapshot, sImpostorRender, gAgentCamera.cameraMouselook());
+// </AS:Chanayane>
 
     screen_target->flush();
 

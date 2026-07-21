@@ -34,6 +34,7 @@
 class LLFace;
 class LLColor4;
 class LLGLSLShader;
+class FSExactOIT;
 
 class LLDrawPoolAlpha final: public LLRenderPass
 {
@@ -71,6 +72,10 @@ public:
     static bool sShowDebugAlphaRigged;
 
 private:
+    // <AS:Chanayane> Exact OIT keeps its capture traversal in the owned module.
+    friend class FSExactOIT;
+    // </AS:Chanayane>
+
     LLGLSLShader* target_shader;
 
     // setup by beginFooPass, [0] is static variant, [1] is rigged variant
