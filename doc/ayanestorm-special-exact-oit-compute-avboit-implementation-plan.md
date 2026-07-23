@@ -50,6 +50,10 @@ V27 corrects shallow-branch screen alpha so it contains only ordered,
 glass-attenuated glow. It no longer restores unattenuated opaque glow or maps
 ordinary accumulated opacity into the glow channel.
 
+V27 passed build and runtime testing (`bokt`). The glass/glow regression is
+fixed and the tested hybrid output is visually satisfactory. Performance
+optimization remains the next implementation stage.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

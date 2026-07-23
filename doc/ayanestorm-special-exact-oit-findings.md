@@ -934,6 +934,12 @@ branch restored the original opaque glow with a maximum operation and treated
 ordinary accumulated opacity as screen-alpha glow. Revision v27 writes only
 the ordered, attenuated glow recurrence to screen alpha.
 
+Revision v27 received `bokt`. Runtime testing confirmed that the glass/glow
+regression is fixed and the resulting hybrid AVBOIT rendering was described as
+looking perfect in the tested scenes. The earlier v26 diagnostic had already
+confirmed that this result includes both shallow-exact and approximate AVBOIT
+pixels rather than a whole-frame Exact OIT fallback.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the
