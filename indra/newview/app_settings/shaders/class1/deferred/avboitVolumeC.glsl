@@ -49,7 +49,6 @@ layout(std430, binding = 7) buffer AVBOITDirectAccumulation
 
 uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
-uniform sampler2D avboitTotalTransmittanceSampler;
 uniform int avboitPass;
 uniform int avboitDebugMode;
 uniform ivec2 avboitViewport;

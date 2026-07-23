@@ -1032,6 +1032,26 @@ Runtime validation must first confirm shader compilation, world entry, resize,
 live toggling, coverage across legacy/PBR/GLTF/rigged/emissive content, visual
 quality, and performance.
 
+Revision v31 passed its first runtime test. The independent path was
+substantially faster than Exact OIT in the same glass-heavy scene: about
+34 FPS versus 23 FPS, approximately a 48% increase. Close-up smoke sprites that
+made Exact OIT lag severely rendered without the previous lag, and smoke was
+reported to look great. This confirms that removing node capture and list
+sorting addresses the dominant dense-transparency bottleneck.
+
+Hair looked visibly blurred. V31 used the one-eighth-resolution volume's total
+transmittance as final pixel opacity, so hardware filtering spread thin
+high-frequency silhouettes across neighboring volume cells. The SIGGRAPH
+presentation instead lists accumulated extinction as a full-resolution
+transparency output.
+
+Revision v32 expands direct accumulation from five to six 32-bit values per
+pixel. The sixth value atomically accumulates full-resolution logarithmic
+extinction. Resolve reconstructs exact order-independent per-pixel aggregate
+opacity as `exp(-sum(extinction))`; the low-resolution volume is now used only
+to estimate front transmittance for color and glow weighting. This should
+restore sharp alpha silhouettes while retaining approximate depth weighting.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the

@@ -78,6 +78,17 @@ accumulation replaces fragment nodes. Successful direct rendering performs no
 node allocation, list traversal, or shallow exact sort; Exact OIT remains only
 failure fallback infrastructure. Build/runtime validation is pending.
 
+V31 runtime performance was about 34 FPS versus 23 FPS for Exact OIT in the
+same glass-heavy scene, and close smoke no longer caused severe lag. Smoke
+quality was good, but hair silhouettes were blurred because final opacity came
+from the filtered one-eighth-resolution volume.
+
+V32 follows the paper's full-resolution accumulated-extinction output. A sixth
+fixed-point atomic value per pixel stores total logarithmic extinction, and
+resolve derives final opacity from it. Low-resolution transmittance remains
+only the color/glow ordering weight. Hair sharpness and the v31 performance
+gain require runtime validation.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

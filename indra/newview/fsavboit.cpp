@@ -387,7 +387,6 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     static LLStaticHashedString pass("avboitPass");
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
-    static LLStaticHashedString total_sampler("avboitTotalTransmittanceSampler");
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderAVBOITDebugMode", 0);
     const U32 groups_x = (sResources.viewportWidth + 15u) / 16u;
@@ -405,10 +404,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     gAVBOITResolveProgram.bindTexture(
         LLShaderMgr::DEFERRED_DIFFUSE, &gAVBOITOpaqueTarget,
         false, LLTexUnit::TFO_POINT, 0);
-    gAVBOITResolveProgram.uniform1i(total_sampler, 2);
-    gGL.getTexUnit(2)->bindManual(LLTexUnit::TT_TEXTURE, sResources.totalTransmittance);
     glDispatchCompute(groups_x, groups_y, 1u);
-    gGL.getTexUnit(2)->unbind(LLTexUnit::TT_TEXTURE);
     gAVBOITResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     gAVBOITResolveProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
