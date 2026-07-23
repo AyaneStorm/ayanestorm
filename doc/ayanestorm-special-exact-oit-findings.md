@@ -505,10 +505,40 @@ Expected benefit varies by content:
 Whole-frame gains will be smaller because initial fragment shading and capture
 still occur. The optimization does not reduce the allocation count or prevent
 overflow by itself; it reduces sorting and final blending after capture.
-Discovery should be integrated into the first natural-sort traversal so scenes
-without a qualifying cutoff do not pay a separate extra list scan. Equal-depth
-sequence order must be considered when deciding which nodes are behind the
-cutoff.
+The initial implementation is now integrated into the first natural-sort
+fullscreen invocation. It accepts only ordinary color nodes with final alpha
+exactly `1.0` and the packed
+`SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA, ZERO,
+ONE_MINUS_SOURCE_ALPHA` color/alpha tuple. It selects the nearest qualifier
+using the existing depth and allocation-index total order, relinks the cutoff
+and all later nodes, stores the retained count, and passes the retained list
+directly to the natural merge pass. Glow-only and custom-blend nodes do not
+qualify. The shader-cache salt was advanced to revision v8 after the cutoff
+diagnostic was added.
+
+The discovery traversal counts the original list as it searches, avoiding a
+second discovery-only traversal when no cutoff exists. Natural sorting still
+traverses the list afterward, so no-cutoff pixels pay the planned `O(n)`
+discovery overhead. Pruned allocations remain part of capture totals and
+overflow decisions; this implementation cannot reduce allocation demand or
+prevent overflow.
+
+Rendering comparisons and GPU measurements for this implementation are still
+pending. In particular, the natural-sort, final-blend, and whole-frame GPU
+zones must be measured in both cutoff-heavy and no-qualifier scenes before the
+optimization is considered ready to ship.
+
+The default-enabled `RenderExactOITOpaqueCutoff` debug setting gates only
+cutoff discovery and pruning. Turning it off retains Exact OIT but restores the
+previous full-list sorting and compositing path for direct visual and timing
+comparisons.
+
+`RenderExactOITDebugMode = 7` exposes whether the optimization has useful work.
+Black means no qualifying cutoff, blue means a cutoff has no node behind it,
+and orange encodes the number of farther nodes behind the nearest cutoff. When
+pruning is enabled, affected orange pixels should become blue. This separates a
+non-triggering optimization from one whose GPU-time savings are merely below
+whole-frame measurement noise.
 
 #### Deferred near-opaque exploration
 

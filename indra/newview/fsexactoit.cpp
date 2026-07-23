@@ -198,7 +198,8 @@ const char* FSExactOIT::shaderCacheRevision()
 {
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
-    return "Exact OIT shader revision v6";
+    // Opaque-cutoff pruning changes the composite shader binary.
+    return "Exact OIT shader revision v8";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -1078,8 +1079,11 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
 
     gExactOITCompositeProgram.bind();
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_debug_mode("oitDebugMode");
     static LLStaticHashedString oit_pass("oitPass");
+    // Limit opaque-cutoff discovery to the first natural-sort invocation.
+    static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
     gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
     gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                           &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
@@ -1092,6 +1096,9 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         for (U32 width = 1; width < maximum_list; width <<= 1)
         {
             LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
+            // Prune fully hidden nodes before the first merge pass.
+            gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
+                                                opaque_cutoff && width == 1);
             screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         }

@@ -37,6 +37,8 @@ layout(std430, binding = 1) buffer OITControl
 uniform sampler2D diffuseRect;
 uniform int oitDebugMode;
 uniform int oitPass;
+// Enables lossless opaque-cutoff discovery on the first sort pass only.
+uniform int oitFirstSortPass;
 
 in vec2 vary_fragcoord;
 out vec4 frag_color;
@@ -67,6 +69,54 @@ bool comes_first(uint lhs, uint rhs)
     // </AS:Chanayane>
 }
 
+// The standard alpha tuple completely overwrites the destination
+// color, alpha, and accumulated glow when the shader-produced alpha is exactly one.
+bool is_opaque_cutoff(uint node)
+{
+    const uint standard_alpha_blend = 7u | (9u << 8u) | (1u << 16u) | (9u << 24u);
+    return oitNodes[node].blend == standard_alpha_blend &&
+        oitNodes[node].color.a == 1.0;
+}
+
+// Keeps the nearest qualifying cutoff and every node ordered at or in front of
+// it. Retained nodes stay in their current linked-list order for the natural pass.
+uint prune_behind_opaque_cutoff(uint head, out uint retained_count)
+{
+    uint cutoff = OIT_NULL;
+    retained_count = 0u;
+    for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
+    {
+        ++retained_count;
+        if (is_opaque_cutoff(node) &&
+            (cutoff == OIT_NULL || comes_first(cutoff, node)))
+        {
+            cutoff = node;
+        }
+    }
+
+    if (cutoff == OIT_NULL)
+    {
+        return head;
+    }
+
+    retained_count = 0u;
+    uint retained_head = OIT_NULL;
+    uint retained_tail = OIT_NULL;
+    for (uint node = head; node != OIT_NULL;)
+    {
+        uint following = oitNodes[node].next;
+        if (node == cutoff || comes_first(cutoff, node))
+        {
+            if (retained_head == OIT_NULL) retained_head = node;
+            else oitNodes[retained_tail].next = node;
+            retained_tail = node;
+            ++retained_count;
+        }
+        node = following;
+    }
+    oitNodes[retained_tail].next = OIT_NULL;
+    return retained_head;
+}
 // Detach one naturally ordered run. Reverse runs are reversed while they are
 // detached, so the returned run is always in the required far-to-near order.
 uint take_natural_run(inout uint current, out uint tail)
@@ -173,6 +223,13 @@ void main()
     if (oitPass == 1)
     {
         uint remaining_runs = imageLoad(oitListCounts, pixel).r;
+        // Discover and apply the exact opaque cutoff before sorting.
+        if (oitFirstSortPass != 0 && remaining_runs > 1u)
+        {
+            head = prune_behind_opaque_cutoff(head, remaining_runs);
+            imageStore(oitListCounts, pixel, uvec4(remaining_runs, 0u, 0u, 0u));
+            imageStore(oitHeadPointers, pixel, uvec4(head, 0u, 0u, 0u));
+        }
         if (remaining_runs > 1u)
         {
             uint output_runs;
@@ -187,6 +244,37 @@ void main()
     if (head == OIT_NULL)
     {
         frag_color = dst;
+        return;
+    }
+
+    if (oitDebugMode == 7)
+    {
+        uint count_before_node = 0u;
+        uint hidden_behind_cutoff = 0u;
+        bool cutoff_found = false;
+        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        {
+            if (is_opaque_cutoff(n))
+            {
+                cutoff_found = true;
+                hidden_behind_cutoff = count_before_node;
+            }
+            ++count_before_node;
+        }
+
+        if (!cutoff_found)
+        {
+            frag_color = vec4(0.0, 0.0, 0.0, 1.0);
+        }
+        else if (hidden_behind_cutoff == 0u)
+        {
+            frag_color = vec4(0.0, 0.25, 1.0, 1.0);
+        }
+        else
+        {
+            float heat = min(float(hidden_behind_cutoff) / 16.0, 1.0);
+            frag_color = vec4(heat, heat * 0.5, 0.0, 1.0);
+        }
         return;
     }
 

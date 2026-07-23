@@ -11805,13 +11805,26 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderExactOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode.</string>
+    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode, 6 capacity, 7 opaque-cutoff activity.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>S32</string>
     <key>Value</key>
     <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderExactOITOpaqueCutoff</key>
+  <map>
+    <key>Comment</key>
+    <string>Enable exact opaque-cutoff pruning before Exact OIT sorting. Disable for rendering comparisons.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
     <key>Backup</key>
     <integer>0</integer>
   </map>
