@@ -215,7 +215,6 @@ void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     uint head = imageLoad(oitHeadPointers, pixel).r;
-    vec4 dst = texelFetch(diffuseRect, pixel, 0);
 
     // <AS:Chanayane> The original pass 0 list traversal is replaced by exact
     // atomic counts written as each successfully allocated node is captured.
@@ -241,6 +240,7 @@ void main()
         return;
     }
 
+    vec4 dst = texelFetch(diffuseRect, pixel, 0);
     if (head == OIT_NULL)
     {
         frag_color = dst;

@@ -198,8 +198,8 @@ const char* FSExactOIT::shaderCacheRevision()
 {
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
-    // Opaque-cutoff pruning changes the composite shader binary.
-    return "Exact OIT shader revision v8";
+    // Keep development builds from reusing incompatible Exact OIT shader binaries.
+    return "Exact OIT shader revision v12";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -577,7 +577,7 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
     info["EXACT_OIT_PEAK_NODES"] = LLSD::Integer(sResources.peakNodes);
     info["EXACT_OIT_OVERFLOW_COUNT"] = LLSD::Integer(sResources.overflowCount);
     info["EXACT_OIT_MEMORY_MB"] = LLSD::Integer(
-        (static_cast<U64>(sResources.capacity) * 48ull) / (1024ull * 1024ull));
+        (static_cast<U64>(sResources.capacity) * 32ull) / (1024ull * 1024ull));
 
     if (gGLManager.mGLVersion < 4.29f)
     {
@@ -1085,8 +1085,6 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     // Limit opaque-cutoff discovery to the first natural-sort invocation.
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
     gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
-    gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
-                                          &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
     screen_triangle.setBuffer();
 
     {
@@ -1108,10 +1106,11 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         LL_PROFILE_GPU_ZONE("Exact OIT final blend");
         gGL.setColorMask(true, true);
         gExactOITCompositeProgram.uniform1i(oit_pass, 2);
+        gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
+                                              &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
         screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+        gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     }
-
-    gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     gExactOITCompositeProgram.unbind();
 }
 

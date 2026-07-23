@@ -49,3 +49,8 @@ new code here;
 
 - This is a Windows-based project.
 - When operating in WSL, convert WSL paths such as `/mnt/e/...` to their Windows form (for example, `E:\...`) whenever a path is intended for Windows tools, commands, or user instructions.
+- Use Git for Windows, not Git for WSL, to perform Git operations. The path is "C:\Program Files\Git\cmd\git.exe" or "/mnt/c/Program\ Files/Git/cmd/git.exe" from WSL
+
+## Logs
+
+Logs can be checked at %APPDATA%\AyaneStorm_x64\logs and in particular AyaneStorm.log

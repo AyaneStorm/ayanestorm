@@ -330,6 +330,49 @@ that a smaller visual layer budget is acceptable.
     new GPU algorithm in this build. It was therefore removed rather than
     accepted as a stability risk. Shader cache revision v5 prevents cached v4
     composite binaries from loading.
+11. **Active-pixel natural-sort scheduling (crashed; removed):**
+    capture now appends one packed coordinate when a pixel receives its first
+    node. The existing validation readback supplies the active count, and a
+    dedicated vertex shader emits one one-pixel point per active coordinate for
+    every natural-sort pass. The proven fragment sorter is unchanged. This
+    avoids fullscreen sorting invocations for empty pixels without adding a
+    synchronization point. The sort path also returns before fetching the
+    opaque background, removing an unused texture read from every sort
+    invocation.
+
+    The initial queue was not compacted as pixels finished. The experiment
+    included a live setting that gated both capture collection and active
+    scheduling.
+
+    The first build remained on vanilla rendering, indicating that the new
+    optional shader or buffer failed the shared Exact OIT readiness gate. The
+    integration was corrected so either failure logs a warning and selects
+    fullscreen Exact OIT sorting instead of disabling Exact OIT.
+
+    The corrected build completed build and runtime testing (`bokt`). Exact OIT
+    and its diagnostic views worked again, and toggling active-pixel sorting
+    produced no visual difference. Log inspection showed that the active vertex
+    shader had failed because `packed` was used as a local variable even though
+    it is a reserved GLSL keyword. The optional fullscreen fallback therefore
+    handled both setting states, making that run invalid as a performance or
+    active-path parity comparison. The variable was renamed and shader-cache
+    revision v10 forces compilation of the correction.
+
+    The corrected active shader compiled, but the viewer then crashed at driver
+    level while the world loaded. The initial raw point draw used the active
+    pixel count as its vertex count while the screen-triangle buffer remained
+    bound. That buffer contains only three vertices; enabled or stale vertex
+    attributes could therefore cause out-of-range driver fetches despite the
+    shader indexing coordinates with `gl_VertexID`. The draw now instances one
+    point vertex per active pixel and indexes with `gl_InstanceID`, bounding all
+    vertex-buffer access to vertex zero. Enabling that corrected path still
+    crashed immediately. The experiment was therefore removed in full rather
+    than retained as an optional driver-stability risk. Shader-cache revision
+    v12 restores the proven four-word control layout, removes active-coordinate
+    capture and storage, removes the extra shader program, and retains
+    fullscreen natural-sort draws. The v12 removal build completed build and
+    runtime testing (`bokt`), confirming that baseline Exact OIT stability was
+    restored.
 
 ### Split-layout startup crash
 
@@ -383,6 +426,39 @@ The later optimizations were not present together in the build that created the
 latest analyzed crash dump. The current version needs testing in the same
 crowded location and in first-person view before its stability or performance
 can be considered confirmed.
+
+### Screen coverage dominates zoomed splash cost
+
+Runtime observation after the stable v12 restoration showed that sprite count
+alone does not predict the slowdown. Zooming closely onto water-splash sprites
+caused severe lag as their screen coverage increased.
+
+The regular alpha shaders multiply sampled texture alpha by vertex alpha and
+discard only below `MINIMUM_ALPHA`, currently `0.004` (approximately 1/255).
+Consequently, nearly every nonzero filtered splash texel can execute capture
+and allocate a 32-byte node. Cost therefore scales with covered pixels and
+overdraw, even when the scene contains only a few large sprites.
+
+This weakens the case for empty-pixel scheduling in the reported scene: a
+zoomed splash makes a large portion of the viewport active. The next trace must
+separate `Exact OIT capture`, natural sorting, and final blending. If capture
+dominates, further sort scheduling cannot resolve the slowdown. Raising the
+alpha threshold or reducing Exact OIT resolution would reduce work but would
+change the current rendering result and is not an exact optimization.
+
+Diagnostic inspection of the problematic water splashes showed white/yellow
+content in blend-mode view 5, while cutoff view 7 was almost entirely black
+with only a small amount of blue. Thus the splash fragments enter Exact OIT
+blend processing, but almost none satisfy the standard-tuple plus final-alpha
+exactly `1.0` cutoff predicate. The lossless opaque cutoff cannot materially
+reduce this splash workload; its cost comes predominantly from fractional-alpha
+screen coverage and any overlapping layers.
+
+Smoke produced the same mostly black cutoff visualization, as expected for
+soft fractional-alpha content. Smoke therefore represents a worst case for
+cutoff-based pruning: large filtered screen coverage and potentially deep
+overlap, with no mathematically complete overwrite that permits deeper nodes to
+be discarded.
 
 ## Diagnostics and evidence locations
 
