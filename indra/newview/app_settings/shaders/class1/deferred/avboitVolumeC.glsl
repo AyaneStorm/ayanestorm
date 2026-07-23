@@ -55,7 +55,8 @@ uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 
 const uint OIT_NULL = 0xffffffffu;
-const uint AVBOIT_SLICES = 128u;
+const uint AVBOIT_SLICES = 192u;
+const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
 const uint AVBOIT_EXACT_SHALLOW_LIMIT = 32u;
 const uint STANDARD_ALPHA_BLEND = 7u | (9u << 8u) | (1u << 16u) | (9u << 24u);
 const uint AVBOIT_CLASS_EMPTY = 0u;
@@ -85,17 +86,24 @@ ivec3 volume_coordinate(ivec2 pixel, uint slice)
 
 uint tile_occupancy_index(ivec2 cell, uint word)
 {
-    return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) * 4u + word;
+    return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) *
+        AVBOIT_OCCUPANCY_WORDS + word;
 }
 
 bool tile_is_occupied(ivec2 cell)
 {
-    uint index = tile_occupancy_index(cell, 0u);
-    return (avboitTileOccupancy[index] | avboitTileOccupancy[index + 1u] |
-            avboitTileOccupancy[index + 2u] | avboitTileOccupancy[index + 3u]) != 0u;
+    for (uint word = 0u; word < AVBOIT_OCCUPANCY_WORDS; ++word)
+    {
+        if (avboitTileOccupancy[tile_occupancy_index(cell, word)] != 0u)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
-void mark_filter_neighborhood(ivec2 cell, uvec4 slice_mask)
+void mark_filter_neighborhood(ivec2 cell,
+                              uint slice_mask[AVBOIT_OCCUPANCY_WORDS])
 {
     for (int y = -1; y <= 1; ++y)
     {
@@ -103,7 +111,7 @@ void mark_filter_neighborhood(ivec2 cell, uvec4 slice_mask)
         {
             ivec2 neighbor = clamp(cell + ivec2(x, y), ivec2(0),
                                    avboitVolumeSize - ivec2(1));
-            for (uint word = 0u; word < 4u; ++word)
+            for (uint word = 0u; word < AVBOIT_OCCUPANCY_WORDS; ++word)
             {
                 if (slice_mask[word] != 0u)
                 {
@@ -272,7 +280,11 @@ void main()
             return;
         }
         ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
-        uvec4 slice_mask = uvec4(0u);
+        uint slice_mask[AVBOIT_OCCUPANCY_WORDS];
+        for (uint word = 0u; word < AVBOIT_OCCUPANCY_WORDS; ++word)
+        {
+            slice_mask[word] = 0u;
+        }
         for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
         {
             float alpha = clamp(oitNodes[node].color.a, 0.0, 1.0);
@@ -287,9 +299,14 @@ void main()
         }
         // Keep custom zero-alpha/glow pixels on initialized identity
         // transmittance even when they contribute no extinction.
-        if (!any(notEqual(slice_mask, uvec4(0u))))
+        bool any_slice = false;
+        for (uint word = 0u; word < AVBOIT_OCCUPANCY_WORDS; ++word)
         {
-            slice_mask.x = 1u;
+            any_slice = any_slice || slice_mask[word] != 0u;
+        }
+        if (!any_slice)
+        {
+            slice_mask[0] = 1u;
         }
         mark_filter_neighborhood(cell, slice_mask);
         return;

@@ -87,7 +87,15 @@ V32 follows the paper's full-resolution accumulated-extinction output. A sixth
 fixed-point atomic value per pixel stores total logarithmic extinction, and
 resolve derives final opacity from it. Low-resolution transmittance remains
 only the color/glow ordering weight. Hair sharpness and the v31 performance
-gain require runtime validation.
+gain were confirmed at runtime, but the older internal hair-patch artifact
+returned once it was no longer blurred.
+
+V33 increases the physical depth resolution from 128 to 192 slices. The
+associated occupancy mask grows from four to six words per low-resolution
+cell. This is intended to reduce same-slice collisions in layered hair without
+changing the full-resolution opacity path. Validate hair, smoke, close
+intersections, and FPS before deciding whether the 50 percent increase in
+volume memory and integration work is worthwhile.
 
 ## Lossless Exact OIT compute sorter
 
@@ -123,7 +131,8 @@ benchmark, with no avatar regression above 5 percent.
   then vanilla transparency.
 - Require OpenGL and GLSL 4.3; fall back to Exact OIT after shader or resource
   failure.
-- Use one-eighth viewport dimensions, 128 physical depth slices, and an 8K
+- Use one-eighth viewport dimensions, initially 128 and experimentally 192
+  physical depth slices, and an 8K
   adaptive depth-occupancy/warp domain.
 - Rasterize extinction, build the adaptive warp, integrate transmittance,
   render attenuated transparent color, and resolve over the opaque scene.

@@ -1052,6 +1052,22 @@ opacity as `exp(-sum(extinction))`; the low-resolution volume is now used only
 to estimate front transmittance for color and glow weighting. This should
 restore sharp alpha silhouettes while retaining approximate depth weighting.
 
+Runtime testing confirmed that v32 made hair substantially better while
+preserving the strong v31 performance gain. It removed the blurred silhouette,
+but exposed the same internal hair patches seen before the temporary 32-node
+Exact fallback. That fallback had concealed the AVBOIT approximation rather
+than repaired it. The remaining artifact is consistent with multiple hair
+layers mapping to one physical depth slice and receiving indistinguishable
+front-transmittance weights.
+
+Revision v33 increases the low-resolution extinction/transmittance volume from
+128 to 192 physical depth slices and expands each volume-cell occupancy mask
+from four to six 32-bit words. Full-resolution accumulation remains unchanged.
+This provides 50 percent more adaptive depth separation for hair and close
+intersections while retaining the direct, node-free path. It increases volume
+memory and integration work by 50 percent, so hair quality and whole-frame FPS
+must both be compared with v32.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the

@@ -35,6 +35,8 @@ uniform int avboitRasterPass;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform sampler3D avboitTransmittanceSampler;
+const uint AVBOIT_DIRECT_SLICES = 192u;
+const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
@@ -57,7 +59,8 @@ float avboit_warped_slice(float depth)
 
 uint avboit_tile_index(ivec2 cell, uint word)
 {
-    return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) * 4u + word;
+    return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) *
+        AVBOIT_DIRECT_OCCUPANCY_WORDS + word;
 }
 
 void avboit_mark_tile(ivec2 cell)
@@ -101,7 +104,7 @@ void avboit_direct_store(vec4 color)
             float optical_depth = -log(max(1.0 - alpha, 1.0 / 65536.0)) / 64.0;
             uint fixed_extinction = uint(optical_depth * 65536.0 + 0.5);
             uint lower_slice = uint(floor(slice_coordinate));
-            uint upper_slice = min(lower_slice + 1u, 127u);
+            uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
             uint upper_extinction = uint(
                 float(fixed_extinction) * fract(slice_coordinate) + 0.5);
             uint lower_extinction = fixed_extinction - upper_extinction;
@@ -132,10 +135,12 @@ void avboit_direct_store(vec4 color)
         }
 
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
-        float sample_slice = clamp(slice_coordinate - 2.0, 0.0, 127.0);
+        float sample_slice = clamp(
+            slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
         float front_transmittance = texture(
             avboitTransmittanceSampler,
-            vec3(sample_xy, (sample_slice + 0.5) / 128.0)).r;
+            vec3(sample_xy, (sample_slice + 0.5) /
+                float(AVBOIT_DIRECT_SLICES))).r;
         float weight = alpha * front_transmittance;
         uint index = (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
         atomicAdd(avboitDirectAccumulation[index],

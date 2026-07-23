@@ -17,7 +17,7 @@
 namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
-constexpr U32 AVBOIT_SLICES = 128;
+constexpr U32 AVBOIT_SLICES = 192;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 
 S32 directTransmittanceTextureUnit()

@@ -22,6 +22,8 @@ uniform int avboitRasterPass;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform sampler3D avboitTransmittanceSampler;
+const uint AVBOIT_DIRECT_SLICES = 192u;
+const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
@@ -38,7 +40,7 @@ void exact_oit_store_glow(float glow)
             ivec2 neighbor = clamp(cell + ivec2(x, y), ivec2(0),
                                    avboitVolumeSize - ivec2(1));
             uint tile = (uint(neighbor.y) * uint(avboitVolumeSize.x) +
-                         uint(neighbor.x)) * 4u;
+                         uint(neighbor.x)) * AVBOIT_DIRECT_OCCUPANCY_WORDS;
             atomicOr(avboitTileOccupancy[tile], 1u);
         }
         return;
@@ -56,9 +58,11 @@ void exact_oit_store_glow(float glow)
         uint zero_depth = imageLoad(avboitZeroTransmittanceDepth, cell).r;
         if (zero_depth != 255u && slice_coordinate > float(zero_depth)) return;
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
-        float sample_slice = clamp(slice_coordinate - 2.0, 0.0, 127.0);
+        float sample_slice = clamp(
+            slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
         float front = texture(avboitTransmittanceSampler,
-                              vec3(sample_xy, (sample_slice + 0.5) / 128.0)).r;
+                              vec3(sample_xy, (sample_slice + 0.5) /
+                                  float(AVBOIT_DIRECT_SLICES))).r;
         uint index = (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
         atomicAdd(avboitDirectAccumulation[index + 4u],
                   uint(clamp(glow * front * 4096.0, 0.0, 16777215.0) + 0.5));
