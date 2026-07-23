@@ -570,7 +570,11 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     S32 minor_version = gGLManager.mGLSLVersionMinor;
 
     // <AS:Chanayane> OIT and compute shaders use features that are core in GLSL 4.30.
-    const bool exact_oit_shader = filename.find("exactOIT") != std::string::npos || (defines && defines->find("EXACT_OIT") != defines->end());
+    const bool oit_storage_shader =
+        filename.find("exactOIT") != std::string::npos ||
+        filename.find("avboit") != std::string::npos ||
+        (defines && (defines->find("EXACT_OIT") != defines->end() ||
+                     defines->find("AVBOIT") != defines->end()));
     const bool compute_shader = type == GL_COMPUTE_SHADER;
     // </AS:Chanayane>
 
@@ -585,7 +589,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 // <AS:Chanayane> Exact OIT requires GLSL 4.30.
             // //set version to 400 or 420
             // if (minor_version >= 20)
-            if ((exact_oit_shader || compute_shader) && minor_version >= 30)
+            if ((oit_storage_shader || compute_shader) && minor_version >= 30)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 430\n");
             }

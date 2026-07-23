@@ -166,10 +166,12 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 // ==================================
 // output definition
 // ==================================
-// <AS:Chanayane> Exact OIT fragment-node declarations; original outputs remain below.
+// <AS:Chanayane> Independent OIT declarations; original outputs remain below.
 // #if defined(ALPHA_BLEND) || defined(UNLIT)
 #if defined(EXACT_OIT) && defined(ALPHA_BLEND)
 void exact_oit_store(vec4 color);
+#elif defined(AVBOIT) && defined(ALPHA_BLEND)
+void avboit_store(vec4 color);
 #elif defined(ALPHA_BLEND) || defined(UNLIT)
 // </AS:Chanayane>
 out vec4 frag_color;
@@ -324,10 +326,12 @@ void main()
 
     float a = basecolor.a*vertex_color.a;
 
-    // <AS:Chanayane> Exact capture replaces only the original alpha framebuffer write.
+    // <AS:Chanayane> OIT capture replaces only the original alpha framebuffer write.
     // frag_color = max(vec4(color.rgb,a), vec4(0));
     #ifdef EXACT_OIT
     exact_oit_store(max(vec4(color.rgb,a), vec4(0)));
+    #elif defined(AVBOIT)
+    avboit_store(max(vec4(color.rgb,a), vec4(0)));
     #else
     frag_color = max(vec4(color.rgb,a), vec4(0));
     #endif
@@ -335,10 +339,12 @@ void main()
 #else // UNLIT
     vec4 color = basecolor;
     color.rgb += emissive.rgb;
-    // <AS:Chanayane> Exact capture replaces only the original unlit alpha framebuffer write.
+    // <AS:Chanayane> OIT capture replaces only the original unlit alpha framebuffer write.
     // frag_color = color;
     #ifdef EXACT_OIT
     exact_oit_store(color);
+    #elif defined(AVBOIT)
+    avboit_store(color);
     #else
     frag_color = color;
     #endif
@@ -346,4 +352,3 @@ void main()
 #endif
 #endif  // ALPHA_BLEND
 }
-

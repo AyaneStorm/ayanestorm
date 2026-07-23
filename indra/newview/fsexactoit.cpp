@@ -32,7 +32,6 @@
 #include <utility>
 
 #include "fsexactoit.h"
-#include "fsavboit.h"
 
 #include "llgl.h"
 #include "lldrawpoolalpha.h"
@@ -204,7 +203,7 @@ const char* FSExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT and AVBOIT shader revision v33";
+    return "Exact OIT shader revision v17";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -218,7 +217,7 @@ bool FSExactOIT::isSupported()
 // Reports whether Exact OIT is both requested by the user and supported by the GPU.
 bool FSExactOIT::isEnabled()
 {
-    return (gSavedSettings.getBOOL("RenderExactOIT") || FSAVBOIT::requested()) && isSupported();
+    return gSavedSettings.getBOOL("RenderExactOIT") && isSupported();
 }
 
 // Loads the complete Exact OIT shader family and propagates the aggregate success state.
@@ -887,38 +886,6 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
                                            F32 water_sign, LLGLSLShader*& emissive_shader,
                                            LLGLSLShader*& pbr_emissive_shader)
 {
-    if (FSAVBOIT::requested() && pool.getType() == LLDrawPool::POOL_ALPHA_POST_WATER &&
-        !LLPipeline::sRenderingHUDs && !LLPipeline::sImpostorRender && !gCubeSnapshot &&
-        FSAVBOIT::beginDirectFrame(gPipeline.mRT->screen))
-    {
-        prepareCaptureShaders(prepare, water_sign);
-        emissive_shader = emissiveShader();
-        pbr_emissive_shader = pbrGlowShader();
-        LLGLSLShader::unbind();
-
-        const auto render_direct_pass = [&pool]()
-        {
-            FSAVBOIT::configureDirectRasterShader(&gExactOITEmissiveProgram);
-            FSAVBOIT::configureDirectRasterShader(&gExactOITSkinnedEmissiveProgram);
-            FSAVBOIT::configureDirectRasterShader(&gExactOITPBRGlowProgram);
-            FSAVBOIT::configureDirectRasterShader(&gExactOITSkinnedPBRGlowProgram);
-            CaptureScope capture_scope;
-            pool.forwardRender(true);
-            pool.forwardRender(false);
-        };
-
-        LL_PROFILE_GPU_ZONE("Direct AVBOIT raster passes");
-        gGL.setColorMask(false, false);
-        render_direct_pass();
-        FSAVBOIT::finishDirectOccupancy();
-        render_direct_pass();
-        FSAVBOIT::finishDirectExtinction();
-        render_direct_pass();
-        gGL.setColorMask(true, true);
-        markCaptureCompleted();
-        return true;
-    }
-
     const bool capture_ready = captureEligible(
         LLPipeline::sRenderingHUDs, LLPipeline::sImpostorRender, gCubeSnapshot,
         gPipeline.mRT->screen.getWidth(), gPipeline.mRT->screen.getHeight());
@@ -930,10 +897,6 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
     prepareCaptureShaders(prepare, water_sign);
     emissive_shader = emissiveShader();
     pbr_emissive_shader = pbrGlowShader();
-    FSAVBOIT::configureDirectRasterShader(&gExactOITEmissiveProgram);
-    FSAVBOIT::configureDirectRasterShader(&gExactOITSkinnedEmissiveProgram);
-    FSAVBOIT::configureDirectRasterShader(&gExactOITPBRGlowProgram);
-    FSAVBOIT::configureDirectRasterShader(&gExactOITSkinnedPBRGlowProgram);
     LLGLSLShader::unbind();
 
     LL_PROFILE_GPU_ZONE("Exact OIT capture");
@@ -975,7 +938,6 @@ bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_s
     }
     shader->uniform1f(glow, 0.f);
     shader->uniform1i(discard_no_op, discard_no_op_enabled);
-    FSAVBOIT::configureDirectRasterShader(shader);
     return true;
 }
 
@@ -1021,7 +983,6 @@ void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
     }
     shader.uniform1f(glow, 0.f);
     shader.uniform1i(discard_no_op, discard_no_op_enabled);
-    FSAVBOIT::configureDirectRasterShader(&shader);
 }
 
 // Returns the Exact OIT GLTF program during capture, otherwise the supplied vanilla program.
@@ -1339,23 +1300,6 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
                              LLVertexBuffer& screen_triangle, bool cube_snapshot,
                              bool impostor_render, bool mouselook)
 {
-    if (FSAVBOIT::directFrameReady())
-    {
-        LL_PROFILE_GPU_ZONE("Direct AVBOIT composite");
-        if (FSAVBOIT::finishDirectFrame(screen))
-        {
-            for (LLDrawPool* pool : pipeline.mPools)
-            {
-                if (pool->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-                {
-                    static_cast<LLDrawPoolAlpha*>(pool)->renderDebugAlpha();
-                    break;
-                }
-            }
-            return;
-        }
-    }
-
     U32 maximum_list = 0;
     const ValidationResult validation = validateCapture(
         cube_snapshot, impostor_render, mouselook, maximum_list);
@@ -1381,11 +1325,7 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
         return;
     }
 
-    if (!FSAVBOIT::composite(screen, sOpaqueTarget, sResources.heads, sResources.nodes,
-                             screen.getWidth(), screen.getHeight()))
-    {
-        composite(screen, screen_triangle, maximum_list);
-    }
+    composite(screen, screen_triangle, maximum_list);
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
     // The viewer's Highlight Transparent overlay is drawn after compositing and
     // would obscure Exact OIT diagnostic colors.

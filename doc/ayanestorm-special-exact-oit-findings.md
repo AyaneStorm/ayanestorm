@@ -1068,6 +1068,126 @@ intersections while retaining the direct, node-free path. It increases volume
 memory and integration work by 50 percent, so hair quality and whole-frame FPS
 must both be compared with v32.
 
+Screenshot comparison after v33 showed that the remaining pale hair glitches
+have rectangular, screen-space footprints. They are therefore attributed to
+spatial sharing in the one-eighth-resolution volume rather than inadequate
+depth-slice resolution.
+
+Revision v34 changes the direct AVBOIT volume scale from one-eighth to
+one-quarter resolution. A volume cell now represents 4 by 4 full-resolution
+pixels instead of 8 by 8. Extinction normalization changes correspondingly
+from 1/64 to 1/16 per raster sample. This provides four times the spatial
+precision and targets the visible hair patches, at the cost of approximately
+four times the low-resolution volume memory and integration work. The
+full-resolution accumulation buffers and raster-pass count are unchanged.
+
+Runtime testing rejected v34. It caused severe lag and did not remove or
+materially improve the hair glitches. Revision v35 therefore restores the
+one-eighth spatial volume and its 1/64 extinction normalization. This result
+rules out brute-force spatial resolution as a useful remedy and points the
+next investigation toward adaptive depth-warp construction, filtering across
+occupied-range boundaries, and same-slice color normalization.
+
+The user subsequently requested adherence to the presentation's official
+implementation rather than further brute-force configuration experiments.
+Revision v36 restores the presented 128 physical slices as well as the already
+restored one-eighth spatial scale. The unsuccessful 192-slice and
+one-quarter-scale experiments are retained only as diagnostic findings.
+
+Code review then found an off-by-one error in the adaptive depth-warp builder.
+The old LUT stored an occupied bin's ordinal and mapped following empty entries
+back to `ordinal - 1`. An isolated occupied virtual bin therefore had identical
+warp values at both boundaries: fractional depth across that bin collapsed to
+one physical slice. Increasing spatial or physical resolution could reduce
+some collisions but could not repair this collapse.
+
+Revision v37 changes the LUT to the presentation's prefix-at-boundaries form.
+Each entry stores the number of occupied bins preceding that boundary, then
+advances the prefix when the current bin is occupied. Occupied ranges now have
+a positive physical-depth slope while empty ranges remain constant. Mapping
+uses the inclusive physical coordinate range zero through 127. This is a
+correctness fix and is the primary candidate for the localized hair bands.
+
+Runtime screenshots rejected v37. Layered transparent clothing developed
+severe concentric depth bands. The prefix was incorrectly scaled over the
+entire 128-slice physical range, so a sparsely occupied virtual bin could be
+stretched across a large portion of the volume. The test made the mapping
+error much more visible.
+
+Revision v38 replaces that scaling with the presentation's adaptive packing
+sequence. It counts occupied virtual-depth groups and repeatedly halves virtual
+resolution until no more than 128 occupied groups remain. Each occupied group
+then consumes one compacted physical interval; empty groups remain flat.
+The LUT stores 16.16 fixed-point coordinates so fractional position can be
+recalculated inside a coarsened occupied group without stretching it across
+unused physical storage.
+
+The AVBOIT prototype still reused Exact OIT material shader objects and frame
+orchestration. This was expedient for complete legacy, rigged, PBR, GLTF, and
+emissive coverage, but it coupled module identity and shader-cache invalidation.
+Revision v39 begins separation by restoring the Exact OIT cache identity to its
+unchanged v17 algorithm revision and adding an independent AVBOIT cache
+revision. The viewer cache key includes both salts. This is organizational and
+does not change rendering; separate AVBOIT material programs and orchestration
+remain required to remove the deeper coupling.
+
+### AVBOIT extraction from Exact OIT
+
+The user rejected the prototype coupling and required every AVBOIT component
+to live outside Exact OIT. The extraction restores `fsexactoit.cpp`,
+`fsexactoit.h`, `exactOITCaptureF.glsl`, `exactOITEmissiveF.glsl`, and
+`exactOITPbrGlowF.glsl` byte-for-byte to the last pre-AVBOIT commit
+`6cd7da6a82`. A direct comparison against that commit reports no differences,
+and a case-insensitive search reports no AVBOIT reference in any Exact OIT
+source or shader.
+
+AVBOIT now owns:
+
+- `avboitCaptureF.glsl`, `avboitEmissiveF.glsl`, and
+  `avboitPbrGlowF.glsl`;
+- independent legacy, rigged, PBR, fullbright, material, GLTF, emissive, and
+  glow shader objects cloned from the corresponding vanilla configurations;
+- capture-active and capture-completed frame state;
+- occupancy, extinction, accumulation, integration, resolve, resources, and
+  shader-cache revision;
+- all three direct transparency raster traversals.
+
+`fsoitdispatcher` is the only module that knows about both renderers. It gives
+AVBOIT precedence when requested and ready, otherwise invokes Exact OIT when
+that independent setting is enabled, otherwise permits vanilla transparency.
+The alpha pool, GLTF scene manager, and pipeline call this neutral dispatcher
+rather than using Exact OIT as a host for AVBOIT.
+
+The obsolete AVBOIT captured-list composite and all Exact node/list
+declarations were removed from active AVBOIT code. Exact OIT is no longer
+enabled by `RenderAVBOIT`, AVBOIT no longer reads
+`RenderExactOITDebugMode`, and AVBOIT shader loading no longer depends on
+Exact OIT shader-load success. AVBOIT does require the vanilla deferred
+material family to load successfully because its independent programs clone
+those material configurations before appending AVBOIT-owned output shaders.
+
+Revision v40 completes the source-level separation. AVBOIT uses its own
+`AVBOIT` material permutation and `avboit_store` terminal instead of compiling
+through the Exact OIT permutation or terminal symbol. Static verification
+confirmed:
+
+- the Exact OIT module and three capture shaders have no difference from
+  pre-AVBOIT commit `6cd7da6a82`;
+- those Exact files contain no case-insensitive `avboit` match;
+- AVBOIT module and shaders contain no `FSExactOIT`, Exact shader object,
+  Exact node, head-pointer, linked-list, or `EXACT_OIT` dependency;
+- no renderer-specific capture call remains in the alpha pool, GLTF scene
+  manager, or pipeline outside `fsoitdispatcher`;
+- `git diff --check` reports no whitespace errors.
+
+AVBOIT independently invalidates visible vanilla alpha groups when it is
+disabled after an active frame. This preserves live switching without relying
+on Exact OIT's separate transition state or requiring camera movement.
+
+Compilation and runtime validation remain the user's responsibility. The first
+build must validate the independently cloned material program family before
+any further AVBOIT algorithm work.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the

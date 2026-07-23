@@ -97,6 +97,73 @@ changing the full-resolution opacity path. Validate hair, smoke, close
 intersections, and FPS before deciding whether the 50 percent increase in
 volume memory and integration work is worthwhile.
 
+V34 responds to screenshot evidence that the residual hair glitches have
+screen-space voxel footprints. It increases spatial volume resolution from
+one-eighth to one-quarter scale and adjusts extinction averaging from 64 to 16
+full-resolution samples per cell. Validate whether the reduced artifacts
+justify four times the volume memory and integration work.
+
+V34 was rejected at runtime: it produced severe lag without eliminating the
+hair glitches. V35 restores one-eighth resolution and the matching 1/64
+extinction normalization. Do not pursue increased spatial volume resolution
+as the hair fix; implement the missing filterable adaptive-warp behavior and
+inspect same-slice normalization instead.
+
+V36 restores the presentation's 128-slice configuration at the user's request
+to follow the official implementation. Further work must implement the
+paper's algorithms rather than compensate through higher fixed resolution.
+Platform adaptations required by the OpenGL 4.3 baseline must be identified
+as adaptations and must preserve the paper's representation and behavior as
+closely as the API permits.
+
+## Renderer separation
+
+AVBOIT must not be hosted by or compiled into Exact OIT. The implemented
+separation restores the Exact module and shaders to pre-AVBOIT source, gives
+AVBOIT independent material shader programs and capture state, and routes both
+through `fsoitdispatcher`.
+
+The user-facing preference is now the live `RenderOITMode` selector:
+
+1. `0`, Standard;
+2. `1`, Exact-OIT;
+3. `2`, AVBOIT.
+
+The neutral dispatcher translates that one choice into the two legacy internal
+booleans before either renderer starts its frame. The legacy `-1` default
+migrates an existing Exact OIT or AVBOIT choice on first use. The modes are
+mutually exclusive: unavailable AVBOIT returns to Standard rather than silently
+running Exact OIT. The same selector replaces the old Exact OIT checkbox in
+AyaneStorm Preferences and Phototools.
+
+Selection and fallback do not permit AVBOIT declarations, uniforms, resources,
+shader revisions, or frame state inside Exact OIT.
+
+### Mode-selector runtime validation
+
+The first build with the selector compiled, but selecting AVBOIT visibly used
+Standard. `AyaneStorm.log` showed NVIDIA GLSL compilation errors at every
+AVBOIT shader-storage `buffer` declaration. The shared loader recognized only
+Exact OIT filenames/defines when selecting GLSL 4.30, so AVBOIT material
+fragment shaders received GLSL 4.20 even though AVBOIT requires shader-storage
+blocks. The loader now recognizes AVBOIT independently as a GLSL 4.30 storage
+shader, and the AVBOIT-only cache revision is v41.
+
+The following runtime reached GLSL linking but failed because the viewer
+injected its indexed-texture `diffuseLookup` helper into both the ordinary
+material fragment stage and the appended AVBOIT capture-library stage. The
+existing exclusion covered only the Exact OIT capture library. All three
+AVBOIT fragment libraries are now independently excluded from duplicate helper
+injection, and the AVBOIT cache revision is v42.
+
+The next run exposed the underlying feature-cloning error. Vanilla alpha
+programs retain post-link `hasLighting` state, which caused cloned AVBOIT
+programs to attach another lighting fragment object and define
+`diffuseLookup` twice. Capture clones now reset those link-time lighting flags.
+AVBOIT emissive and PBR-glow shaders are complete terminal fragment stages, not
+capture libraries; they now replace the vanilla terminal stage and retain their
+required indexed-texture helper. The AVBOIT cache revision is v43.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.
@@ -127,12 +194,12 @@ benchmark, with no avatar regression above 5 percent.
 ## Approximate AVBOIT renderer
 
 - Implement the renderer in a separate `fsavboit` module.
-- Add `RenderAVBOIT`, default `false`; AVBOIT takes precedence, then Exact OIT,
-  then vanilla transparency.
-- Require OpenGL and GLSL 4.3; fall back to Exact OIT after shader or resource
+- Keep `RenderAVBOIT` as internal compatibility state selected through
+  `RenderOITMode`.
+- Require OpenGL and GLSL 4.3; fall back to Standard after shader or resource
   failure.
-- Use one-eighth viewport dimensions, initially 128 and experimentally 192
-  physical depth slices, and an 8K
+- Use initially one-eighth and experimentally one-quarter viewport dimensions,
+  initially 128 and experimentally 192 physical depth slices, and an 8K
   adaptive depth-occupancy/warp domain.
 - Rasterize extinction, build the adaptive warp, integrate transmittance,
   render attenuated transparent color, and resolve over the opaque scene.

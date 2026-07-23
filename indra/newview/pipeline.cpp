@@ -29,6 +29,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
 #include "fsavboit.h"
+#include "fsoitdispatcher.h"
 // </AS:Chanayane>
 
 #include "pipeline.h"
@@ -9863,8 +9864,8 @@ void LLPipeline::renderDeferredLighting()
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
-        // <AS:Chanayane> Reset exact OIT state; RenderExactOIT=false continues into the untouched vanilla dispatch.
-        FSExactOIT::beginFrame();
+        // <AS:Chanayane> Reset independent OIT renderer state before transparency.
+        FSOITDispatcher::beginFrame();
         // </AS:Chanayane>
 
         pushRenderTypeMask();
@@ -9903,8 +9904,10 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-// <AS:Chanayane> Exact OIT validation, fallback, and composite.
-    FSExactOIT::finishFrame(*this, mRT->screen, *mScreenTriangleVB, gCubeSnapshot, sImpostorRender, gAgentCamera.cameraMouselook());
+// <AS:Chanayane> Dispatch the active independent OIT renderer or vanilla fallback.
+    FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
+                                 gCubeSnapshot, sImpostorRender,
+                                 gAgentCamera.cameraMouselook());
 // </AS:Chanayane>
 
     screen_target->flush();

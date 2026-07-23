@@ -45,10 +45,12 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int classic_mode;
 
-// <AS:Chanayane> Exact OIT fragment-node output declarations
+// <AS:Chanayane> Independent OIT output declarations
 // out vec4 frag_color;
 #ifdef EXACT_OIT
 void exact_oit_store(vec4 color);
+#elif defined(AVBOIT)
+void avboit_store(vec4 color);
 #else
 out vec4 frag_color;
 #endif
@@ -224,10 +226,12 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
 #ifdef EXACT_OIT
     exact_oit_store(max(vec4(color.rgb * final_scale, a), vec4(0)));
+#elif defined(AVBOIT)
+    avboit_store(max(vec4(color.rgb * final_scale, a), vec4(0)));
 #else
     frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
 #endif

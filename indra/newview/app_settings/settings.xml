@@ -11801,6 +11801,21 @@ Change of this parameter will affect the layout of buttons in notification toast
     <integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> User-facing transparency renderer selection. -->
+  <key>RenderOITMode</key>
+  <map>
+    <key>Comment</key>
+    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>-1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Exact OIT diagnostics. -->
   <key>RenderExactOITDebugMode</key>
   <map>
@@ -11857,7 +11872,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderAVBOIT</key>
   <map>
     <key>Comment</key>
-    <string>Use experimental approximate adaptive voxel-based OIT over captured transparency. Falls back to Exact OIT when unavailable.</string>
+    <string>Internal compatibility state for the AVBOIT transparency mode.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

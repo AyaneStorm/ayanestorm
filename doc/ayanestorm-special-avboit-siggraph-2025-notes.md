@@ -121,3 +121,74 @@ remain separate from strictly lossless Exact OIT.
 The first two items are correctness work for the current prototype. Items
 three through six are required before meaningful comparison with the
 presentation's performance claims.
+
+## Implementation audit after direct-raster revision v34
+
+The AyaneStorm renderer implements the paper's broad VBOIT composition model,
+but it is not yet a complete implementation of the presented AVBOIT system.
+
+Implemented:
+
+- a separate direct, node-free raster path;
+- integer logarithmic-extinction atomics;
+- an 8192-entry virtual-depth occupancy domain and depth-warp LUT;
+- depth-linear extinction splatting between two physical slices;
+- integrated 3D front transmittance with hardware linear sampling and a
+  two-slice self-occlusion bias;
+- full-resolution accumulated color, normalization weight, total extinction,
+  and glow;
+- zero-transmittance depth generation and rejection in the final raster pass;
+- conservative neighboring-cell marking and spatially sparse clear/integration;
+- automatic Exact OIT fallback when direct AVBOIT is unavailable.
+
+Material differences and missing work:
+
+- The warp builder performs a single-thread serial scan and stores only a
+  physical-slice index. It does not encode filterable occupied-range
+  boundaries, snap interpolation across empty ranges, or recompute fractional
+  coordinates as described by the paper.
+- Oversubscribed virtual depth is mapped proportionally into the fixed physical
+  budget. The iterative virtual-resolution reduction and logarithmic-depth
+  reparametrization from the presentation are not implemented.
+- Direct occupancy is produced by a full material raster traversal rather than
+  conservative software raster bounds. Its tile mask indicates spatial use but
+  does not preserve useful per-slice occupancy, so an occupied cell still
+  clears and integrates every physical slice.
+- Extinction is stored as one `R32UI` value per voxel. The paper's packed
+  8-bit extinction representation, packed atomic update, and splat-time
+  overflow-depth handling are not implemented.
+- Zero-transmittance rejection occurs after fragment material evaluation in
+  the final pass. The generated indirect depth quads and early-depth pipeline
+  proposed by the paper are not implemented.
+- Occupancy and extinction prepasses reuse the fully evaluated transparency
+  shaders. They are not yet lightweight bounds/extinction-only passes.
+- Full-resolution outputs use six fixed-point `uint` values per pixel rather
+  than the paper's packed float render-target formats. This is an OpenGL 4.3
+  compatibility design and has different precision, overflow, memory, and
+  bandwidth behavior.
+- Chromatic/RGB extinction, sparse RGB allocation, volumetric-fog coupling,
+  distortion, motion-vector, refraction, and other optional extensions are not
+  implemented. Custom Second Life blend modes are deliberately approximated
+  as source-over.
+
+Consequently, visual and performance results from the presentation cannot be
+assumed for this implementation. The most relevant missing correctness feature
+for the observed hair artifacts is the filterable warp-boundary representation.
+The most relevant missing performance features are per-slice sparse work,
+lightweight prepasses, packed extinction, and early-depth culling.
+
+Revision v37 corrects a separate warp-builder defect discovered during this
+audit. The original implementation stored occupied-bin ordinals rather than
+prefix values at virtual-bin boundaries, making isolated occupied bins flat
+instead of filterable. The corrected exclusive prefix gives occupied bins a
+slope and leaves empty ranges constant. Explicit begin/end metadata and
+oversubscription reparametrization remain to be implemented.
+
+V37's first runtime result showed that scaling the exclusive prefix over the
+entire physical range was not the presentation's compact mapping: sparse
+coverage produced severe depth contours on layered clothing. V38 instead
+coarsens virtual-depth groups until occupied coverage fits the 128-slice
+budget, assigns one physical interval per occupied group, and stores
+fractional compact coordinates in 16.16 fixed point. This implements the
+presentation's resolution-reduction and compact-prefix behavior without
+requiring a filterable integer texture format.
