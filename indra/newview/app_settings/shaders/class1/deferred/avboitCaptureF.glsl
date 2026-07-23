@@ -21,10 +21,9 @@ layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDep
 layout(std430, binding = 4) buffer AVBOITOccupancy { uint avboitOccupancy[8192]; };
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
-layout(std430, binding = 7) buffer AVBOITDirectAccumulation
-{
-    uint avboitDirectAccumulation[];
-};
+layout(location = 1) out vec4 avboitAccumulatedColorGlow;
+layout(location = 2) out float avboitAccumulatedWeight;
+layout(location = 3) out float avboitAccumulatedExtinction;
 
 float avboit_virtual_depth(float window_depth)
 {
@@ -101,6 +100,19 @@ uint avboit_conservative_zero_depth(ivec2 pixel)
     return zero_depth;
 }
 
+bool avboit_cull_fragment()
+{
+    if (avboitRasterPass != 2)
+    {
+        return false;
+    }
+    float slice_coordinate = avboit_warped_slice(gl_FragCoord.z);
+    uint zero_depth =
+        avboit_conservative_zero_depth(ivec2(gl_FragCoord.xy));
+    return zero_depth != 255u &&
+        slice_coordinate > float(zero_depth);
+}
+
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     uint value = uint(clamp(
@@ -169,8 +181,7 @@ void avboit_direct_store(vec4 color)
 
     if (avboitRasterPass == 2)
     {
-        uint zero_depth = avboit_conservative_zero_depth(pixel);
-        if (zero_depth != 255u && slice_coordinate > float(zero_depth))
+        if (avboit_cull_fragment())
         {
             return;
         }
@@ -183,21 +194,12 @@ void avboit_direct_store(vec4 color)
             vec3(sample_xy, (sample_slice + 0.5) /
                 float(AVBOIT_DIRECT_SLICES))).r;
         float weight = alpha * front_transmittance;
-        uint index = (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
-        atomicAdd(avboitDirectAccumulation[index],
-                  uint(clamp(color.r * weight * 4096.0, 0.0, 16777215.0) + 0.5));
-        atomicAdd(avboitDirectAccumulation[index + 1u],
-                  uint(clamp(color.g * weight * 4096.0, 0.0, 16777215.0) + 0.5));
-        atomicAdd(avboitDirectAccumulation[index + 2u],
-                  uint(clamp(color.b * weight * 4096.0, 0.0, 16777215.0) + 0.5));
-        atomicAdd(avboitDirectAccumulation[index + 3u],
-                  uint(clamp(weight * 4096.0, 0.0, 16777215.0) + 0.5));
-        atomicAdd(avboitDirectAccumulation[index + 4u],
-                  uint(clamp(oitGlow * front_transmittance * 4096.0,
-                             0.0, 16777215.0) + 0.5));
-        atomicAdd(avboitDirectAccumulation[index + 5u],
-                  uint(clamp(-log(max(1.0 - alpha, 1.0 / 65536.0)) * 4096.0,
-                             0.0, 16777215.0) + 0.5));
+        avboitAccumulatedColorGlow =
+            vec4(max(color.rgb, vec3(0.0)) * weight,
+                 max(oitGlow, 0.0) * front_transmittance);
+        avboitAccumulatedWeight = weight;
+        avboitAccumulatedExtinction =
+            -log(max(1.0 - alpha, 1.0 / 65536.0));
     }
 }
 

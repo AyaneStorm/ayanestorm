@@ -51,6 +51,8 @@ uniform int classic_mode;
 void exact_oit_store(vec4 color);
 #elif defined(AVBOIT)
 void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
 #endif
@@ -151,6 +153,26 @@ void main()
         discard;
     }
 #endif
+
+// <AS:Chanayane> AVBOIT prepasses avoid PBR normal, ORM, probe, and light evaluation.
+#if defined(AVBOIT)
+    if (avboitRasterPass < 2)
+    {
+        avboit_store(vec4(0.0, 0.0, 0.0,
+                          basecolor.a * vertex_color.a));
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Cull saturated AVBOIT pixels before PBR material and lighting work.
+#if defined(AVBOIT)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+#endif
+// </AS:Chanayane>
 
     vec3 col = vertex_color.rgb * basecolor.rgb;
 

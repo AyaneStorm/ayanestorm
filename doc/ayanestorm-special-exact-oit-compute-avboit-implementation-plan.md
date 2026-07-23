@@ -223,6 +223,61 @@ split into occupancy raster, warp/sparse clear, extinction raster, integration,
 and weighted-color raster zones so the remaining work can be measured by
 stage. Build and runtime validation of the combined v46-v49 batch is pending.
 
+V50 implements the lightweight alpha/extinction prepass requirement across
+legacy alpha, legacy material, fullbright, PBR alpha, and GLTF alpha-blend
+shaders. AVBOIT passes 0 and 1 now return immediately after base-alpha texture
+sampling, vertex-alpha application, and alpha masking. They no longer execute
+normal/ORM/emissive sampling, reflection probes, atmosphere, fog, shadows, or
+local lighting merely to write occupancy or extinction. Exact OIT and Standard
+branches retain their original shader flow.
+
+V51 moves conservative zero-transmittance rejection to the same early point in
+the final weighted-color pass. Fragments known to be behind effective-zero
+transmittance now return before material, reflection, atmosphere, fog, and
+lighting evaluation. The capture helper retains a defensive late check for
+any future material shader that does not call the early hook. Together v50 and
+v51 implement the presentation's two most important draw-cost requirements:
+a lightweight transmittance prepass and shading cull behind saturated
+transparency. Build and runtime validation of v50-v51 is pending.
+
+V52 replaces the prototype's six-`U32` (24-byte) per-pixel SSBO and six atomic
+adds per ordinary fragment with the presentation's additive framebuffer
+accumulation model. Three temporary attachments are added to the already-bound
+scene framebuffer so opaque depth testing is preserved:
+
+- `RGBA16F` stores transmittance-weighted RGB and attenuated glow;
+- `R16F` stores the normalization denominator;
+- `R16F` stores full-resolution accumulated extinction.
+
+Independent additive blending is enabled only for those attachments, while
+the opaque scene attachment remains color-masked. The attachments are detached
+before compute resolve, which reads them as images. Accumulation storage falls
+from 24 to 12 bytes per full-resolution pixel, fixed-point quantization and
+per-fragment integer clamps are removed, and color-pass atomics are eliminated.
+The extra color alpha channel is the viewer adaptation needed to retain its
+separate glow signal.
+
+The GPU-only diagnostic block now records virtual occupied-slice count,
+physical warp utilization, and saturated volume-cell count without a CPU
+readback. AVBOIT debug modes are:
+
+1. active AVBOIT fragments;
+2. virtual-depth occupancy;
+3. physical-slice utilization;
+4. integrated total transmittance;
+5. effective-zero depth/culling.
+
+The v52 batch completes the core monochrome AVBOIT pipeline described by the
+presentation and the project plan: lightweight occupancy/extinction raster,
+adaptive logarithmic depth compaction with filterable range metadata, packed
+8-bit extinction with overflow-min handling, sparse 8-bit transmittance
+integration, conservative effective-zero early culling, hardware-blended
+weighted color/glow accumulation, and resolve over opaque color. RGB
+transmittance, distortion, depth of field, motion vectors, and sparse virtual
+allocation are presentation extensions/future work rather than requirements
+of the selected initial monochrome configuration. Build and runtime validation
+of the complete v46-v52 batch are pending.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

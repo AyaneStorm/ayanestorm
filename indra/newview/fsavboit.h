@@ -59,6 +59,7 @@ public:
     static void configureDirectRasterShader(LLGLSLShader* shader);
     static void finishDirectOccupancy();
     static void finishDirectExtinction();
+    static void finishDirectColorRaster();
     static bool finishDirectFrame(LLRenderTarget& screen);
     static bool directFrameReady();
 
@@ -76,7 +77,10 @@ private:
         GLuint occupancy = 0;
         GLuint warp = 0;
         GLuint tileOccupancy = 0;
-        GLuint accumulation = 0;
+        GLuint diagnostics = 0;
+        GLuint accumulatedColorGlow = 0;
+        GLuint accumulatedWeight = 0;
+        GLuint accumulatedExtinction = 0;
         U32 volumeWidth = 0;
         U32 volumeHeight = 0;
         U32 viewportWidth = 0;

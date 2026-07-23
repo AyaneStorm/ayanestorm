@@ -30,6 +30,18 @@ constexpr U32 AVBOIT_SLICES = 128;
 constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 
+void allocateAccumulationTexture(GLuint& texture, GLenum format,
+                                  U32 width, U32 height)
+{
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    glTexStorage2D(GL_TEXTURE_2D, 1, format, width, height);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
 S32 directTransmittanceTextureUnit()
 {
     return llmax(0, gGLManager.mNumTextureImageUnits - 1);
@@ -123,7 +135,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v49";
+    return "AVBOIT shader revision v52";
 }
 
 bool FSAVBOIT::supported()
@@ -388,6 +400,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
         LL_PROFILE_GPU_ZONE("AVBOIT weighted color raster");
         render_pass();
     }
+    finishDirectColorRaster();
     gGL.setColorMask(true, true);
     sCaptureCompleted = true;
     return true;
@@ -542,11 +555,18 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
                      (AVBOIT_SLICES / 32u) * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
 
-    glGenBuffers(1, &sResources.accumulation);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.accumulation);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 static_cast<U64>(width) * height * 6u * sizeof(U32),
+    glGenBuffers(1, &sResources.diagnostics);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.diagnostics);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 4u * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
+
+    allocateAccumulationTexture(sResources.accumulatedColorGlow,
+                                GL_RGBA16F, width, height);
+    allocateAccumulationTexture(sResources.accumulatedWeight,
+                                GL_R16F, width, height);
+    allocateAccumulationTexture(sResources.accumulatedExtinction,
+                                GL_R16F, width, height);
+    glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     return glGetError() == GL_NO_ERROR &&
         gAVBOITOpaqueTarget.allocate(width, height, GL_RGBA16F);
@@ -576,7 +596,13 @@ void FSAVBOIT::releaseResources()
     if (sResources.occupancy) glDeleteBuffers(1, &sResources.occupancy);
     if (sResources.warp) glDeleteBuffers(1, &sResources.warp);
     if (sResources.tileOccupancy) glDeleteBuffers(1, &sResources.tileOccupancy);
-    if (sResources.accumulation) glDeleteBuffers(1, &sResources.accumulation);
+    if (sResources.diagnostics) glDeleteBuffers(1, &sResources.diagnostics);
+    if (sResources.accumulatedColorGlow)
+        glDeleteTextures(1, &sResources.accumulatedColorGlow);
+    if (sResources.accumulatedWeight)
+        glDeleteTextures(1, &sResources.accumulatedWeight);
+    if (sResources.accumulatedExtinction)
+        glDeleteTextures(1, &sResources.accumulatedExtinction);
     gAVBOITOpaqueTarget.release();
     sDirectRasterPass = -1;
     sDirectFrameReady = false;
@@ -598,7 +624,7 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
-         6ull * sizeof(U32)) / (1024ull * 1024ull));
+         12ull) / (1024ull * 1024ull));
     info["AVBOIT_STATUS"] = !supported() ? "Unavailable: OpenGL 4.3 is required" :
         !available() ? "Unavailable or disabled; dispatcher fallback active" :
         "Available";
@@ -615,7 +641,9 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
         allocateResources(width, height);
         glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
     }
-    if (!available() || !sResources.accumulation || !gAVBOITOpaqueTarget.isComplete())
+    if (!available() || !sResources.accumulatedColorGlow ||
+        !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
+        !gAVBOITOpaqueTarget.isComplete())
     {
         return false;
     }
@@ -639,6 +667,9 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.tileOccupancy);
     glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.diagnostics);
+    glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
+                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
@@ -652,7 +683,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sResources.occupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sResources.warp);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, sResources.accumulation);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, sResources.diagnostics);
 
     sDirectFrameReady = false;
     beginDirectRasterPass(0);
@@ -664,15 +695,52 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     sDirectRasterPass = pass;
     if (pass == 2)
     {
-        const U32 zero = 0u;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.accumulation);
-        glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
-                          GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                               GL_TEXTURE_2D,
+                               sResources.accumulatedColorGlow, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
+                               GL_TEXTURE_2D,
+                               sResources.accumulatedWeight, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3,
+                               GL_TEXTURE_2D,
+                               sResources.accumulatedExtinction, 0);
+        const GLenum draw_buffers[] = {
+            GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1,
+            GL_COLOR_ATTACHMENT2, GL_COLOR_ATTACHMENT3
+        };
+        glDrawBuffers(4, draw_buffers);
+        glColorMaski(0, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        for (GLuint attachment = 1; attachment <= 3; ++attachment)
+        {
+            glColorMaski(attachment, GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            glEnablei(GL_BLEND, attachment);
+            glBlendEquationi(attachment, GL_FUNC_ADD);
+            glBlendFunci(attachment, GL_ONE, GL_ONE);
+        }
+        const GLfloat clear_value[4] = { 0.f, 0.f, 0.f, 0.f };
+        glClearBufferfv(GL_COLOR, 1, clear_value);
+        glClearBufferfv(GL_COLOR, 2, clear_value);
+        glClearBufferfv(GL_COLOR, 3, clear_value);
         gGL.getTexUnit(directTransmittanceTextureUnit())->bindManual(
             LLTexUnit::TT_TEXTURE_3D, sResources.transmittance);
         sDirectFrameReady = true;
     }
+}
+
+void FSAVBOIT::finishDirectColorRaster()
+{
+    for (GLuint attachment = 1; attachment <= 3; ++attachment)
+    {
+        glDisablei(GL_BLEND, attachment);
+        glColorMaski(attachment, GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+        glFramebufferTexture2D(
+            GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + attachment,
+            GL_TEXTURE_2D, 0, 0);
+    }
+    const GLenum draw_buffer = GL_COLOR_ATTACHMENT0;
+    glDrawBuffers(1, &draw_buffer);
+    glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT |
+                    GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 }
 
 void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
@@ -795,6 +863,12 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
 
     glBindImageTexture(2, screen.getTexture(), 0, GL_FALSE, 0,
                        GL_WRITE_ONLY, GL_RGBA16F);
+    glBindImageTexture(0, sResources.accumulatedColorGlow, 0, GL_FALSE, 0,
+                       GL_READ_ONLY, GL_RGBA16F);
+    glBindImageTexture(1, sResources.accumulatedWeight, 0, GL_FALSE, 0,
+                       GL_READ_ONLY, GL_R16F);
+    glBindImageTexture(5, sResources.accumulatedExtinction, 0, GL_FALSE, 0,
+                       GL_READ_ONLY, GL_R16F);
     gAVBOITResolveProgram.bind();
     gAVBOITResolveProgram.uniform2i(viewport, sResources.viewportWidth,
                                     sResources.viewportHeight);

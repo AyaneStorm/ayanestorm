@@ -62,6 +62,8 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 void exact_oit_store(vec4 color);
 #elif defined(AVBOIT)
 void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
 #endif
@@ -309,6 +311,26 @@ void main()
     vec4 diffcol = texture(diffuseMap, vary_texcoord0.xy);
     diffcol.rgb *= vertex_color.rgb;
     alphaMask(diffcol.a);
+
+// <AS:Chanayane> AVBOIT prepasses bypass material, normal, reflection, and lighting work.
+#if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
+    if (avboitRasterPass < 2)
+    {
+        avboit_store(vec4(0.0, 0.0, 0.0,
+                          diffcol.a * vertex_color.a));
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Cull saturated AVBOIT pixels before material and lighting evaluation.
+#if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+#endif
+// </AS:Chanayane>
 
     // spec == specular map combined with specular color
     vec4 spec = getSpecular();

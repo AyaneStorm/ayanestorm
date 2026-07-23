@@ -172,6 +172,8 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 void exact_oit_store(vec4 color);
 #elif defined(AVBOIT) && defined(ALPHA_BLEND)
 void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #elif defined(ALPHA_BLEND) || defined(UNLIT)
 // </AS:Chanayane>
 out vec4 frag_color;
@@ -206,6 +208,25 @@ void main()
     {
         discard;
     }
+
+    // <AS:Chanayane> AVBOIT prepasses stop after GLTF base-alpha evaluation.
+    #if defined(AVBOIT) && defined(ALPHA_BLEND)
+    if (avboitRasterPass < 2)
+    {
+        avboit_store(vec4(0.0, 0.0, 0.0, basecolor.a));
+        return;
+    }
+    #endif
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Cull saturated AVBOIT pixels before GLTF material shading.
+    #if defined(AVBOIT) && defined(ALPHA_BLEND)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+    #endif
+    // </AS:Chanayane>
 
     vec3 emissive = emissiveColor;
     emissive *= srgb_to_linear(texture(emissiveMap, emissive_uv.xy).rgb);

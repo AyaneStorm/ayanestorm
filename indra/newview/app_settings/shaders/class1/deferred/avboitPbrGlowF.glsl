@@ -23,7 +23,9 @@ const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
-layout(std430, binding = 7) buffer AVBOITDirectAccumulation { uint avboitDirectAccumulation[]; };
+layout(location = 1) out vec4 avboitAccumulatedColorGlow;
+layout(location = 2) out float avboitAccumulatedWeight;
+layout(location = 3) out float avboitAccumulatedExtinction;
 float avboit_virtual_depth(float window_depth)
 {
     float near_depth = max(avboitDepthRange.x, 0.0001);
@@ -101,9 +103,10 @@ void avboit_store_glow(float glow)
         float front = texture(avboitTransmittanceSampler,
                               vec3(sample_xy, (sample_slice + 0.5) /
                                   float(AVBOIT_DIRECT_SLICES))).r;
-        uint index = (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
-        atomicAdd(avboitDirectAccumulation[index + 4u],
-                  uint(clamp(glow * front * 4096.0, 0.0, 16777215.0) + 0.5));
+        avboitAccumulatedColorGlow =
+            vec4(0.0, 0.0, 0.0, max(glow, 0.0) * front);
+        avboitAccumulatedWeight = 0.0;
+        avboitAccumulatedExtinction = 0.0;
         return;
     }
 

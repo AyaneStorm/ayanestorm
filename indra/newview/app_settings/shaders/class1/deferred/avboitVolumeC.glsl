@@ -9,6 +9,9 @@ layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 4, r8) uniform coherent image3D avboitTransmittance;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
+layout(binding = 0, rgba16f) uniform readonly image2D avboitAccumulatedColorGlow;
+layout(binding = 1, r16f) uniform readonly image2D avboitAccumulatedWeight;
+layout(binding = 5, r16f) uniform readonly image2D avboitAccumulatedExtinction;
 
 layout(std430, binding = 4) buffer AVBOITOccupancy
 {
@@ -25,9 +28,9 @@ layout(std430, binding = 6) buffer AVBOITTileOccupancy
     uint avboitTileOccupancy[];
 };
 
-layout(std430, binding = 7) buffer AVBOITDirectAccumulation
+layout(std430, binding = 7) buffer AVBOITDiagnostics
 {
-    uint avboitDirectAccumulation[];
+    uint avboitDiagnostic[4];
 };
 
 uniform sampler2D diffuseRect;
@@ -76,6 +79,15 @@ void main()
     {
         if (pixel == ivec2(0))
         {
+            uint occupied_virtual = 0u;
+            for (uint virtual_index = 0u;
+                 virtual_index < 8192u; ++virtual_index)
+            {
+                occupied_virtual +=
+                    avboitOccupancy[virtual_index] != 0u ? 1u : 0u;
+            }
+            avboitDiagnostic[0] = occupied_virtual;
+
             // Coarsen virtual depth until occupied groups fit the physical pool.
             uint group_shift = 0u;
             for (uint candidate = 0u; candidate <= 6u; ++candidate)
@@ -124,6 +136,7 @@ void main()
                 }
                 physical += occupied ? 1u : 0u;
             }
+            avboitDiagnostic[1] = physical;
         }
         return;
     }
@@ -182,6 +195,7 @@ void main()
                 if (zero_depth == 255u && extinction >= AVBOIT_ZERO_EXTINCTION)
                 {
                     zero_depth = slice_index;
+                    atomicAdd(avboitDiagnostic[2], 1u);
                     break;
                 }
             }
@@ -197,18 +211,12 @@ void main()
 
     if (avboitPass == 7)
     {
-        uint index =
-            (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
-        float weight =
-            float(avboitDirectAccumulation[index + 3u]) / 4096.0;
-        vec3 weighted_color = vec3(
-            avboitDirectAccumulation[index],
-            avboitDirectAccumulation[index + 1u],
-            avboitDirectAccumulation[index + 2u]) / 4096.0;
-        float accumulated_glow =
-            float(avboitDirectAccumulation[index + 4u]) / 4096.0;
+        vec4 color_glow = imageLoad(avboitAccumulatedColorGlow, pixel);
+        float weight = imageLoad(avboitAccumulatedWeight, pixel).r;
+        vec3 weighted_color = color_glow.rgb;
+        float accumulated_glow = color_glow.a;
         float accumulated_extinction =
-            float(avboitDirectAccumulation[index + 5u]) / 4096.0;
+            imageLoad(avboitAccumulatedExtinction, pixel).r;
         if (avboitDebugMode == 1 &&
             (weight > 0.0 || accumulated_glow > 0.0))
         {
@@ -217,9 +225,46 @@ void main()
         }
         float total_transmittance = exp(-accumulated_extinction);
         float aggregate_alpha = 1.0 - total_transmittance;
+        ivec2 cell = clamp(pixel / 8, ivec2(0),
+                           avboitVolumeSize - ivec2(1));
         vec3 transparent = weight > 0.0 ?
             weighted_color * (aggregate_alpha / weight) : vec3(0.0);
         vec4 opaque = texelFetch(diffuseRect, pixel, 0);
+        if (avboitDebugMode == 2 && (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            float occupancy = clamp(
+                float(avboitDiagnostic[0]) / 8192.0, 0.0, 1.0);
+            imageStore(avboitOutput, pixel,
+                       vec4(occupancy, 1.0 - occupancy, 0.0, 0.0));
+            return;
+        }
+        if (avboitDebugMode == 3 && (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            float utilization = clamp(
+                float(avboitDiagnostic[1]) / float(AVBOIT_SLICES),
+                0.0, 1.0);
+            imageStore(avboitOutput, pixel,
+                       vec4(utilization, utilization * utilization,
+                            1.0 - utilization, 0.0));
+            return;
+        }
+        if (avboitDebugMode == 4 && (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            imageStore(avboitOutput, pixel,
+                       vec4(vec3(total_transmittance), 0.0));
+            return;
+        }
+        if (avboitDebugMode == 5 && (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            uint zero_depth =
+                imageLoad(avboitZeroTransmittanceDepth, cell).r;
+            vec3 diagnostic = zero_depth == 255u ?
+                vec3(0.0, 0.25, 1.0) :
+                vec3(1.0, float(zero_depth) /
+                           float(AVBOIT_SLICES - 1u), 0.0);
+            imageStore(avboitOutput, pixel, vec4(diagnostic, 0.0));
+            return;
+        }
         imageStore(avboitOutput, pixel,
                    max(vec4(transparent + opaque.rgb * total_transmittance,
                             accumulated_glow + opaque.a * total_transmittance),
