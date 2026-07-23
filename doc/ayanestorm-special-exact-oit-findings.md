@@ -1263,3 +1263,53 @@ of any one shader invocation without imposing a fragment or layer limit.
 No future optimization may impose a fixed fragment limit per pixel, silently
 discard captured data, substitute approximate blending, or knowingly add visual
 artifacts without explicit approval.
+## AVBOIT packed-extinction quantization defect
+
+The persistent card-shaped artifacts across hair, clothing, and Alpha Blend
+foliage have a concrete numerical source. The direct prototype rasterizes at
+full resolution and averages each contribution into an 8-by-8 volume cell by
+dividing optical depth by 64. It then quantizes every individual divided
+fragment directly into the presentation's packed 8-bit extinction format.
+
+With effective-zero extinction `-log(1/255) = 5.54126355`, one packed unit is
+approximately `0.02173`. The current per-fragment packed values before rounding
+are:
+
+- alpha 0.1: 0.0758 units, rounded to 0;
+- alpha 0.2: 0.1604 units, rounded to 0;
+- alpha 0.3: 0.2565 units, rounded to 0;
+- alpha 0.4: 0.3673 units, rounded to 0;
+- alpha 0.5: 0.4984 units, rounded to 0;
+- alpha 0.6: 0.6588 units, rounded to 1.
+
+Linear depth splatting divides that already small contribution between two
+physical slices before quantization. Consequently even contributions above the
+nominal threshold can round to zero in both slices depending on the fractional
+warped depth. Small camera or warp changes therefore make entire fragments
+appear or disappear from the transmittance volume along mesh/card boundaries.
+
+Those fragments still contribute unquantized full-resolution extinction during
+the final color pass. The resolve therefore combines opacity from fragments
+which were absent from the front-transmittance function, producing the observed
+dark, transparent, or opaque-scene patches.
+
+The presentation avoids this ordering error by rasterizing a dedicated
+low-resolution extinction prepass and quantizing the resulting low-resolution
+fragment contribution, without first dividing each fragment by 64. Correct
+alternatives are:
+
+1. implement that low-resolution prepass with matching conservative depth
+   bounds, retaining the official packed 8-bit representation; or
+2. retain full-resolution folding but accumulate enough precision before
+   spatial averaging and quantize only after the cell/slice sum is complete.
+
+Simply changing filtering, slice count, or the final accumulation format cannot
+correct this defect.
+
+Revision v54 implements the high-precision-then-integrate alternative with two
+16-bit extinction slices packed into each `R32UI` word. At alpha 0.1 the
+divided contribution is approximately 19.5 packed units instead of 0.0758, so
+it survives both rounding and linear depth splitting. Overflow-min semantics
+remain valid for packed half-word carry. This is a correctness adaptation for
+the current full-resolution folding path, not a claim that the dedicated
+low-resolution prepass has been implemented.

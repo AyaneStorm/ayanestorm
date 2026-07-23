@@ -278,6 +278,34 @@ allocation are presentation extensions/future work rather than requirements
 of the selected initial monochrome configuration. Build and runtime validation
 of the complete v46-v52 batch are pending.
 
+V52 built and activated, but screenshot comparison exposed large opaque-scene
+patches through hair cards rather than merely the pre-existing close-layer
+approximation. The MRT attachments were configured for additive blending
+before `LLDrawPoolAlpha::forwardRender`, but the pool deliberately disables
+global framebuffer blending during OIT capture. That global disable reset the
+per-attachment enables, so each pixel retained only a later fragment instead
+of the required sum. V53 reapplies independent additive blending from the
+per-draw AVBOIT configuration hook after the pool's disable, and again inside
+the captured-emissive hook. Standard and Exact OIT blend state remain
+untouched.
+
+V54 fixes the independently confirmed pre-integration quantization defect.
+The full-resolution-folding adaptation cannot safely quantize each
+`opticalDepth / 64` contribution to eight bits: alpha values through 0.5 round
+to zero before accumulation, and linear splatting can erase still higher
+values. The extinction scratch volume now packs two 16-bit physical slices per
+`R32UI` word. Contributions are normalized to 65535 before the atomic add and
+integration reconstructs them at the same precision. Overflow-min handling is
+unchanged and protects against carry into the adjacent half-word.
+
+This raises extinction scratch storage from the official 128 bits to 256 bits
+per XY cell, still half the earlier one-`U32`-per-slice prototype. Integrated
+transmittance remains the specified filterable 8-bit representation. The
+additional scratch precision is required by the current full-resolution
+folding adaptation; a future true low-resolution conservative prepass can
+return the scratch representation to packed 8-bit without losing individual
+contributions.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

@@ -116,18 +116,18 @@ bool avboit_cull_fragment()
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     uint value = uint(clamp(
-        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 255.0,
-        0.0, 255.0) + 0.5);
+        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 65535.0,
+        0.0, 65535.0) + 0.5);
     if (value == 0u)
     {
         return;
     }
 
-    uint shift = (slice_index & 3u) * 8u;
+    uint shift = (slice_index & 1u) * 16u;
     uint old_word = imageAtomicAdd(
-        avboitExtinction, ivec3(cell, int(slice_index >> 2u)), value << shift);
-    uint old_value = (old_word >> shift) & 255u;
-    if (old_value + value > 255u)
+        avboitExtinction, ivec3(cell, int(slice_index >> 1u)), value << shift);
+    uint old_value = (old_word >> shift) & 65535u;
+    if (old_value + value > 65535u)
     {
         imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
     }

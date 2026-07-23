@@ -27,7 +27,7 @@ namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
 constexpr U32 AVBOIT_SLICES = 128;
-constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
+constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 
 void allocateAccumulationTexture(GLuint& texture, GLenum format,
@@ -40,6 +40,16 @@ void allocateAccumulationTexture(GLuint& texture, GLenum format,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+}
+
+void configureAccumulationBlend()
+{
+    for (GLuint attachment = 1; attachment <= 3; ++attachment)
+    {
+        glEnablei(GL_BLEND, attachment);
+        glBlendEquationi(attachment, GL_FUNC_ADD);
+        glBlendFunci(attachment, GL_ONE, GL_ONE);
+    }
 }
 
 S32 directTransmittanceTextureUnit()
@@ -135,7 +145,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v52";
+    return "AVBOIT shader revision v54";
 }
 
 bool FSAVBOIT::supported()
@@ -434,6 +444,10 @@ bool FSAVBOIT::handleCapturedEmissives(
     }
     if (!depth_only)
     {
+        if (sDirectRasterPass == 2)
+        {
+            configureAccumulationBlend();
+        }
         if (!emissives.empty()) pool.renderEmissives(emissives);
         if (!pbr_emissives.empty()) pool.renderPbrEmissives(pbr_emissives);
         if (!rigged_emissives.empty()) pool.renderRiggedEmissives(rigged_emissives);
@@ -763,6 +777,12 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     if (sDirectRasterPass < 0)
     {
         return;
+    }
+    if (sDirectRasterPass == 2)
+    {
+        // LLDrawPoolAlpha disables ordinary framebuffer blending for OIT
+        // capture, so restore independent additive blending at draw time.
+        configureAccumulationBlend();
     }
     location = shader->getUniformLocation(viewport);
     if (location >= 0)
