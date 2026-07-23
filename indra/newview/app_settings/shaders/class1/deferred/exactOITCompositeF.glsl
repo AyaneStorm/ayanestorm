@@ -39,6 +39,8 @@ uniform int oitDebugMode;
 uniform int oitPass;
 // Enables lossless opaque-cutoff discovery on the first sort pass only.
 uniform int oitFirstSortPass;
+// Reports whether compute sorting completed this frame for diagnostic mode 9.
+uniform int oitComputeSortActive;
 
 in vec2 vary_fragcoord;
 out vec4 frag_color;
@@ -245,8 +247,15 @@ void main()
     {
         // Screen alpha carries glow, not display opacity. Diagnostics clear it
         // so later post-processing cannot turn the visualization white.
-        frag_color = oitDebugMode >= 1 && oitDebugMode <= 8 ?
+        frag_color = oitDebugMode >= 1 && oitDebugMode <= 9 ?
             vec4(dst.rgb, 0.0) : dst;
+        return;
+    }
+
+    if (oitDebugMode == 9)
+    {
+        frag_color = oitComputeSortActive != 0 ?
+            vec4(0.0, 0.8, 0.15, 0.0) : vec4(0.9, 0.0, 0.0, 0.0);
         return;
     }
 

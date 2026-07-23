@@ -633,7 +633,13 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         }
     }
 
-    if (type == GL_FRAGMENT_SHADER)
+// <AS:Chanayane> Identify compute shaders correctly for Exact OIT GPU sorting.
+    // if (type == GL_FRAGMENT_SHADER)
+    if (type == GL_COMPUTE_SHADER)
+    {
+        extra_code_text[extra_code_count++] = strdup("#define COMPUTE_SHADER 1\n");
+    }
+    else if (type == GL_FRAGMENT_SHADER)
     {
         extra_code_text[extra_code_count++] = strdup("#define FRAGMENT_SHADER 1\n");
     }
@@ -641,6 +647,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     {
         extra_code_text[extra_code_count++] = strdup("#define VERTEX_SHADER 1\n");
     }
+// </AS:Chanayane>
 
     // Use alpha float to store bit flags
     // See: C++: addDeferredAttachment(), shader: frag_data[2]

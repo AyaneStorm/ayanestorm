@@ -25,10 +25,10 @@ Implemented:
 - exact standard-blend and final-alpha predicate;
 - nearest-cutoff selection using the existing depth/allocation-index order;
 - retained-list relinking and retained-count handoff to natural merge sort;
-- Exact OIT shader-cache revision v15 after subsequent shader experiments,
+- Exact OIT shader-cache revision v17 after subsequent shader experiments,
   restoration of the stable fullscreen sorter, removal of a redundant
   normal-composite diagnostic traversal, correction of diagnostic glow, and
-  exact zero-alpha capture rejection;
+  exact zero-alpha capture rejection, and the optional compute sorter;
 - implementation notes in the findings and how-it-works documents.
 
 Pending:
@@ -100,7 +100,7 @@ decisions must continue to use the complete captured allocation count.
   layer limit, or use WBOIT as a fallback.
 - Ownership tags are not required in Exact OIT-owned source files.
 - Bump the Exact OIT shader-cache revision whenever the shader changes. The
-  implementation currently uses v15.
+  implementation currently uses v17.
 
 ## Validation
 

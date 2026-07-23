@@ -799,6 +799,39 @@ that discards these small but nonzero contributions would be approximate rather
 than lossless and must not be folded into the exact path without an explicit
 quality-policy decision.
 
+#### Experimental compute sorter
+
+Shader-cache revision v17 adds a default-disabled lossless compute sorter. A
+16-by-16 classification kernel compacts pixels whose lists need sorting into a
+packed viewport queue. One 64-lane workgroup then applies the existing opaque
+cutoff, gathers linked nodes in blocks of 64, sorts each block with a fixed
+shared-memory bitonic network, and relinks the exact depth/allocation-index
+order. GPU-generated ping-pong queues send only unfinished pixels through
+subsequent natural-run merge kernels. The existing fullscreen fragment sorter
+remains the live fallback through `RenderExactOITComputeSort`.
+
+The implementation uses two four-byte-per-pixel queues with 16-byte indirect
+dispatch headers and no duplicate node pool. It also extends the shared shader
+loader with tagged compute-stage identification and program-local object
+lifetime handling. Runtime compilation, correctness, performance, and NVIDIA
+stability validation are pending.
+
+Initial enabled/disabled testing was visually identical, as required for exact
+sorting, but showed no observable FPS difference and did not establish whether
+the optional compute programs were active or silently falling back. Revision
+v17 therefore adds diagnostic mode 9: green captured pixels mean compute sorting
+was used for the frame, while red means the fullscreen fallback was used.
+`ExactOIT` log entries also report requested, available, and used state whenever
+one changes.
+
+Runtime validation of revision v17 confirmed that diagnostic mode 9 is red with
+`RenderExactOITComputeSort` disabled and green when it is enabled. The compute
+path is therefore compiling, allocating, dispatching, and switching live rather
+than silently falling back. Rendering remained visually identical. The observed
+performance change was approximately one FPS, which is below the acceptance
+threshold and may be measurement noise. The compute sorter remains
+default-disabled and is not a candidate for promotion based on this result.
+
 #### Deferred near-opaque exploration
 
 A later, explicitly approximate experiment may evaluate treating source alpha

@@ -29,6 +29,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include <string>
+#include <utility>
 
 #include "fsexactoit.h"
 
@@ -176,6 +177,9 @@ LLGLSLShader gExactOITSkinnedEmissiveProgram;
 LLGLSLShader gExactOITPBRGlowProgram;
 LLGLSLShader gExactOITSkinnedPBRGlowProgram;
 LLGLSLShader gExactOITCompositeProgram;
+LLGLSLShader gExactOITClassifyProgram;
+LLGLSLShader gExactOITBlockSortProgram;
+LLGLSLShader gExactOITMergeProgram;
 LLGLSLShader gExactOITAlphaProgram;
 LLGLSLShader gExactOITSkinnedAlphaProgram;
 LLGLSLShader gExactOITPBRAlphaProgram;
@@ -199,7 +203,7 @@ const char* FSExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v15";
+    return "Exact OIT shader revision v17";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -233,6 +237,7 @@ bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
     if (success) success = loadMaterialAlphaShaders(shader_level, use_sun_shadow, shader_list);
     if (success) success = loadEmissiveShaders(shader_level);
     if (success) success = loadCompositeShader(shader_level);
+    if (success) loadComputeSortShaders(shader_level);
     return success;
 }
 
@@ -240,6 +245,9 @@ bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
 void FSExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
 {
     shader_list.push_back(&gExactOITCompositeProgram);
+    shader_list.push_back(&gExactOITClassifyProgram);
+    shader_list.push_back(&gExactOITBlockSortProgram);
+    shader_list.push_back(&gExactOITMergeProgram);
     shader_list.push_back(&gExactOITAlphaProgram);
     shader_list.push_back(&gExactOITSkinnedAlphaProgram);
     shader_list.push_back(&gExactOITPBRAlphaProgram);
@@ -257,6 +265,9 @@ void FSExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
 void FSExactOIT::unloadShaders()
 {
     gExactOITCompositeProgram.unload();
+    gExactOITClassifyProgram.unload();
+    gExactOITBlockSortProgram.unload();
+    gExactOITMergeProgram.unload();
     gExactOITAlphaProgram.unload();
     gExactOITSkinnedAlphaProgram.unload();
     gExactOITPBRAlphaProgram.unload();
@@ -343,6 +354,42 @@ bool FSExactOIT::loadCompositeShader(S32 shader_level)
     const bool success = gExactOITCompositeProgram.createShader();
     llassert(success);
     return success;
+}
+
+// Creates optional compute stages; failure leaves the proven fullscreen sorter available.
+void FSExactOIT::loadComputeSortShaders(S32 shader_level)
+{
+    struct ComputeStage
+    {
+        LLGLSLShader* shader;
+        const char* name;
+        const char* permutation;
+    };
+    const ComputeStage stages[] = {
+        { &gExactOITClassifyProgram, "Exact OIT Compute Classifier", "OIT_CLASSIFY" },
+        { &gExactOITBlockSortProgram, "Exact OIT Compute Block Sort", "OIT_BLOCK_SORT" },
+        { &gExactOITMergeProgram, "Exact OIT Compute Merge", "OIT_MERGE" }
+    };
+
+    for (const ComputeStage& stage : stages)
+    {
+        stage.shader->mName = stage.name;
+        stage.shader->mFeatures.attachNothing = true;
+        stage.shader->mShaderFiles.clear();
+        stage.shader->mShaderFiles.emplace_back("deferred/exactOITSortC.glsl", GL_COMPUTE_SHADER);
+        stage.shader->mShaderLevel = shader_level;
+        stage.shader->clearPermutations();
+        stage.shader->addPermutation(stage.permutation, "1");
+        if (!stage.shader->createShader())
+        {
+            gExactOITClassifyProgram.unload();
+            gExactOITBlockSortProgram.unload();
+            gExactOITMergeProgram.unload();
+            LL_WARNS("ExactOIT") << "Optional compute sorter unavailable; using fullscreen sorter"
+                                 << LL_ENDL;
+            return;
+        }
+    }
 }
 
 // Creates ordinary and skinned deferred-alpha capture programs.
@@ -578,6 +625,9 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
     info["EXACT_OIT_OVERFLOW_COUNT"] = LLSD::Integer(sResources.overflowCount);
     info["EXACT_OIT_MEMORY_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.capacity) * 32ull) / (1024ull * 1024ull));
+    info["EXACT_OIT_COMPUTE_SORT_AVAILABLE"] = sResources.computeSortAvailable;
+    info["EXACT_OIT_COMPUTE_QUEUE_MB"] = LLSD::Integer(
+        (static_cast<U64>(sResources.sortQueueCapacity) * 8ull) / (1024ull * 1024ull));
 
     if (gGLManager.mGLVersion < 4.29f)
     {
@@ -1095,6 +1145,75 @@ void FSExactOIT::bindCompositeResources()
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, sResources.control);
 }
 
+// Clears one GPU-generated indirect-dispatch count while preserving its 1,1 dimensions.
+static void clearSortQueueCount(GLuint queue)
+{
+    const U32 zero = 0;
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, queue);
+    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0, sizeof(U32),
+                         GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+}
+
+// Sorts captured lists through compact compute queues, returning false when unavailable.
+bool FSExactOIT::sortWithCompute(U32 width, U32 height, U32 maximum_list)
+{
+    static LLCachedControl<bool> compute_sort(gSavedSettings, "RenderExactOITComputeSort", false);
+    if (!compute_sort || !sResources.computeSortAvailable || maximum_list <= 1u)
+    {
+        return false;
+    }
+
+    bindCompositeResources();
+    clearSortQueueCount(sResources.sortQueues[0]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sResources.sortQueues[0]);
+
+    {
+        LL_PROFILE_GPU_ZONE("Exact OIT compute classify");
+        gExactOITClassifyProgram.bind();
+        glDispatchCompute((width + 15u) / 16u, (height + 15u) / 16u, 1u);
+        gExactOITClassifyProgram.unbind();
+    }
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                    GL_COMMAND_BARRIER_BIT);
+
+    clearSortQueueCount(sResources.sortQueues[1]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sResources.sortQueues[0]);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sResources.sortQueues[1]);
+    glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.sortQueues[0]);
+    {
+        LL_PROFILE_GPU_ZONE("Exact OIT compute block sort");
+        static LLCachedControl<bool> opaque_cutoff(
+            gSavedSettings, "RenderExactOITOpaqueCutoff", true);
+        static LLStaticHashedString oit_opaque_cutoff("oitOpaqueCutoff");
+        gExactOITBlockSortProgram.bind();
+        gExactOITBlockSortProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
+        glDispatchComputeIndirect(0);
+        gExactOITBlockSortProgram.unbind();
+    }
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                    GL_COMMAND_BARRIER_BIT);
+
+    U32 input_queue = 1u;
+    U32 output_queue = 0u;
+    for (U32 sorted_width = 64u; sorted_width < maximum_list; sorted_width <<= 1u)
+    {
+        LL_PROFILE_GPU_ZONE("Exact OIT compute deep merge");
+        clearSortQueueCount(sResources.sortQueues[output_queue]);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sResources.sortQueues[input_queue]);
+        glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sResources.sortQueues[output_queue]);
+        glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.sortQueues[input_queue]);
+        gExactOITMergeProgram.bind();
+        glDispatchComputeIndirect(0);
+        gExactOITMergeProgram.unbind();
+        glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                        GL_COMMAND_BARRIER_BIT);
+        std::swap(input_queue, output_queue);
+    }
+    glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    return true;
+}
+
 // Copies the untouched opaque screen color into the composite background texture.
 void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
 {
@@ -1112,41 +1231,68 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     LLGLDepthTest depth(GL_FALSE);
     bindCompositeResources();
 
-    gExactOITCompositeProgram.bind();
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
     static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_debug_mode("oitDebugMode");
     static LLStaticHashedString oit_pass("oitPass");
+    static LLStaticHashedString oit_compute_sort_active("oitComputeSortActive");
     // Limit opaque-cutoff discovery to the first natural-sort invocation.
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
-    gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
-    screen_triangle.setBuffer();
-
+    gGL.setColorMask(false, false);
+    const bool used_compute_sort =
+        sortWithCompute(screen.getWidth(), screen.getHeight(), maximum_list);
+    if (!used_compute_sort)
     {
-        LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
-        gGL.setColorMask(false, false);
-        gExactOITCompositeProgram.uniform1i(oit_pass, 1);
-        for (U32 width = 1; width < maximum_list; width <<= 1)
+        gExactOITCompositeProgram.bind();
+        gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+        screen_triangle.setBuffer();
         {
-            LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
-            // Prune fully hidden nodes before the first merge pass.
-            gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
-                                                opaque_cutoff && width == 1);
-            screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
-            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
+            gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+            for (U32 width = 1; width < maximum_list; width <<= 1)
+            {
+                LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
+                // Prune fully hidden nodes before the first merge pass.
+                gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
+                                                    opaque_cutoff && width == 1);
+                screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+            }
         }
+        gExactOITCompositeProgram.unbind();
     }
 
     {
         LL_PROFILE_GPU_ZONE("Exact OIT final blend");
         gGL.setColorMask(true, true);
+        gExactOITCompositeProgram.bind();
+        gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+        gExactOITCompositeProgram.uniform1i(oit_compute_sort_active, used_compute_sort);
         gExactOITCompositeProgram.uniform1i(oit_pass, 2);
         gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                               &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
+        screen_triangle.setBuffer();
         screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
         gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+        gExactOITCompositeProgram.unbind();
     }
-    gExactOITCompositeProgram.unbind();
+
+    static bool previous_requested = false;
+    static bool previous_available = false;
+    static bool previous_used = false;
+    const bool requested = gSavedSettings.getBOOL("RenderExactOITComputeSort");
+    if (requested != previous_requested ||
+        sResources.computeSortAvailable != previous_available ||
+        used_compute_sort != previous_used)
+    {
+        LL_INFOS("ExactOIT") << "Compute sort requested " << requested
+                             << ", available " << sResources.computeSortAvailable
+                             << ", used this frame " << used_compute_sort
+                             << ", maximum list " << maximum_list << LL_ENDL;
+        previous_requested = requested;
+        previous_available = sResources.computeSortAvailable;
+        previous_used = used_compute_sort;
+    }
 }
 
 // Validates the frame, performs complete fallback or composite, and dispatches debug alpha.
@@ -1220,11 +1366,16 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
     {
         glDeleteBuffers(1, &sResources.control);
     }
+    glDeleteBuffers(2, sResources.sortQueues);
 
     sResources.heads = 0;
     sResources.counts = 0;
     sResources.headFBO = 0;
     sResources.control = 0;
+    sResources.sortQueues[0] = 0;
+    sResources.sortQueues[1] = 0;
+    sResources.sortQueueCapacity = 0;
+    sResources.computeSortAvailable = false;
     if (!preserve_node_pool)
     {
         sResources.nodes = 0;
@@ -1332,6 +1483,47 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
     sResources.available = glGetError() == GL_NO_ERROR;
 }
 
+// Allocates two packed-pixel queues with indirect-dispatch headers.
+void FSExactOIT::allocateComputeSortQueues(U32 width, U32 height)
+{
+    sResources.computeSortAvailable = false;
+    if (!sResources.available ||
+        !gExactOITClassifyProgram.mProgramObject ||
+        !gExactOITBlockSortProgram.mProgramObject ||
+        !gExactOITMergeProgram.mProgramObject ||
+        width > 0xffffu || height > 0xffffu)
+    {
+        return;
+    }
+
+    const U64 pixel_count = static_cast<U64>(width) * static_cast<U64>(height);
+    if (pixel_count == 0u || pixel_count > 0xffffffffu)
+    {
+        return;
+    }
+
+    const U64 queue_bytes = 4ull * sizeof(U32) + pixel_count * sizeof(U32);
+    const U32 header[4] = { 0u, 1u, 1u, 0u };
+    while (glGetError() != GL_NO_ERROR) {}
+    glGenBuffers(2, sResources.sortQueues);
+    for (GLuint queue : sResources.sortQueues)
+    {
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, queue);
+        glBufferData(GL_SHADER_STORAGE_BUFFER, GLsizeiptr(queue_bytes), nullptr, GL_DYNAMIC_DRAW);
+        glBufferSubData(GL_SHADER_STORAGE_BUFFER, 0, sizeof(header), header);
+    }
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    sResources.sortQueueCapacity = static_cast<U32>(pixel_count);
+    sResources.computeSortAvailable = glGetError() == GL_NO_ERROR;
+    if (!sResources.computeSortAvailable)
+    {
+        glDeleteBuffers(2, sResources.sortQueues);
+        sResources.sortQueues[0] = 0;
+        sResources.sortQueues[1] = 0;
+        sResources.sortQueueCapacity = 0;
+    }
+}
+
 // Allocates all setting-dependent Exact OIT resources for the current viewport.
 void FSExactOIT::allocateResources(U32 width, U32 height)
 {
@@ -1345,4 +1537,5 @@ void FSExactOIT::allocateResources(U32 width, U32 height)
     }
 
     allocateNodePool(width, height, allocateCaptureImages(width, height));
+    allocateComputeSortQueues(width, height);
 }

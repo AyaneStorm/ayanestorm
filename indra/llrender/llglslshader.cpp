@@ -464,6 +464,13 @@ bool LLGLSLShader::createShader()
             if (shaderhandle)
             {
                 attachObject(shaderhandle);
+// <AS:Chanayane> Compute objects are program-local and are not retained in the shared vertex/fragment maps.
+                // no original compute-shader lifetime handling;
+                if ((*fileIter).second == GL_COMPUTE_SHADER)
+                {
+                    glDeleteShader(shaderhandle);
+                }
+// </AS:Chanayane>
             }
             else
             {
