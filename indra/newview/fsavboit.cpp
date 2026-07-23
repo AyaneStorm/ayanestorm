@@ -109,6 +109,16 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_3D, 0);
 
+    glGenTextures(1, &sResources.classification);
+    glBindTexture(GL_TEXTURE_2D, sResources.classification);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8UI, width, height);
+
+    glGenTextures(1, &sResources.zeroTransmittanceDepth);
+    glBindTexture(GL_TEXTURE_2D, sResources.zeroTransmittanceDepth);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8UI,
+                   sResources.volumeWidth, sResources.volumeHeight);
+    glBindTexture(GL_TEXTURE_2D, 0);
+
     glGenBuffers(1, &sResources.occupancy);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.occupancy);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
@@ -118,6 +128,13 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.warp);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
                  AVBOIT_VIRTUAL_SLICES * sizeof(U32), nullptr, GL_DYNAMIC_DRAW);
+
+    glGenBuffers(1, &sResources.tileOccupancy);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.tileOccupancy);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
+                     (AVBOIT_SLICES / 32u) * sizeof(U32),
+                 nullptr, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     return glGetError() == GL_NO_ERROR;
 }
@@ -139,8 +156,12 @@ void FSAVBOIT::releaseResources()
 {
     if (sResources.extinction) glDeleteTextures(1, &sResources.extinction);
     if (sResources.transmittance) glDeleteTextures(1, &sResources.transmittance);
+    if (sResources.classification) glDeleteTextures(1, &sResources.classification);
+    if (sResources.zeroTransmittanceDepth)
+        glDeleteTextures(1, &sResources.zeroTransmittanceDepth);
     if (sResources.occupancy) glDeleteBuffers(1, &sResources.occupancy);
     if (sResources.warp) glDeleteBuffers(1, &sResources.warp);
+    if (sResources.tileOccupancy) glDeleteBuffers(1, &sResources.tileOccupancy);
     sResources = Resources();
 }
 
@@ -193,13 +214,20 @@ bool FSAVBOIT::composite(LLRenderTarget& screen, LLRenderTarget& opaque,
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.occupancy);
     glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.tileOccupancy);
+    glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
+                      GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
 
     glBindImageTexture(0, heads, 0, GL_FALSE, 0, GL_READ_ONLY, GL_R32UI);
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32UI);
     glBindImageTexture(4, sResources.transmittance, 0, GL_TRUE, 0, GL_READ_WRITE, GL_R32F);
+    glBindImageTexture(5, sResources.classification, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R8UI);
+    glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
+                       GL_READ_WRITE, GL_R8UI);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0, nodes);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sResources.occupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sResources.warp);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);
 
     static LLStaticHashedString pass_uniform("avboitPass");
     static LLStaticHashedString viewport_uniform("avboitViewport");
@@ -222,7 +250,7 @@ bool FSAVBOIT::composite(LLRenderTarget& screen, LLRenderTarget& opaque,
         gAVBOITVolumeProgram.uniform1i(pass_uniform, 0);
         glDispatchCompute(viewport_groups_x, viewport_groups_y, 1u);
     }
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     {
         LL_PROFILE_GPU_ZONE("AVBOIT adaptive warp");
@@ -232,22 +260,29 @@ bool FSAVBOIT::composite(LLRenderTarget& screen, LLRenderTarget& opaque,
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     {
-        LL_PROFILE_GPU_ZONE("AVBOIT volume clear");
+        LL_PROFILE_GPU_ZONE("AVBOIT tiled occupancy");
         gAVBOITVolumeProgram.uniform1i(pass_uniform, 2);
-        glDispatchCompute(volume_groups_x, volume_groups_y, AVBOIT_SLICES);
+        glDispatchCompute(viewport_groups_x, viewport_groups_y, 1u);
+    }
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT sparse volume clear");
+        gAVBOITVolumeProgram.uniform1i(pass_uniform, 3);
+        glDispatchCompute(volume_groups_x, volume_groups_y, 1u);
     }
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     {
         LL_PROFILE_GPU_ZONE("AVBOIT extinction");
-        gAVBOITVolumeProgram.uniform1i(pass_uniform, 3);
+        gAVBOITVolumeProgram.uniform1i(pass_uniform, 4);
         glDispatchCompute(viewport_groups_x, viewport_groups_y, 1u);
     }
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     {
-        LL_PROFILE_GPU_ZONE("AVBOIT integrate");
-        gAVBOITVolumeProgram.uniform1i(pass_uniform, 4);
+        LL_PROFILE_GPU_ZONE("AVBOIT sparse integrate");
+        gAVBOITVolumeProgram.uniform1i(pass_uniform, 5);
         glDispatchCompute(volume_groups_x, volume_groups_y, 1u);
     }
     gAVBOITVolumeProgram.unbind();
@@ -260,7 +295,7 @@ bool FSAVBOIT::composite(LLRenderTarget& screen, LLRenderTarget& opaque,
         gAVBOITResolveProgram.uniform2i(viewport_uniform, width, height);
         gAVBOITResolveProgram.uniform2i(
             volume_size_uniform, sResources.volumeWidth, sResources.volumeHeight);
-        gAVBOITResolveProgram.uniform1i(pass_uniform, 5);
+        gAVBOITResolveProgram.uniform1i(pass_uniform, 6);
         gAVBOITResolveProgram.uniform1i(debug_mode_uniform, debug_mode);
         gAVBOITResolveProgram.bindTexture(
             LLShaderMgr::DEFERRED_DIFFUSE, &opaque, false, LLTexUnit::TFO_POINT, 0);

@@ -5,7 +5,7 @@
 In progress. The lossless compute sorter passed its first build/runtime gate:
 mode 9 proves live compute dispatch and visual parity, but the observed gain was
 only about one FPS. It remains default-disabled. AVBOIT is now the active
-implementation stage. Revision v27 contains the first wired prototype: it
+implementation stage. Revision v30 contains the first sparse-volume prototype: it
 reuses complete Exact OIT capture as a fallback-safe input, bypasses sorting,
 builds adaptive occupancy, warp, extinction, and transmittance in compute, and
 resolves unsorted nodes approximately.
@@ -53,6 +53,23 @@ ordinary accumulated opacity into the glow channel.
 V27 passed build and runtime testing (`bokt`). The glass/glow regression is
 fixed and the tested hybrid output is visually satisfactory. Performance
 optimization remains the next implementation stage.
+
+V29 classifies pixels as empty, shallow exact, or approximate before building
+the volume. Only approximate pixels contribute occupancy and extinction. A
+conservative 128-bit XYZ occupancy mask per low-resolution cell allows clear
+and integration to skip inactive cells while retaining neighbors required for
+trilinear sampling. Runtime rendering remained identical, but the measured
+gain was only about one FPS (28 to 29).
+
+V30 records effective-zero transmittance depth, stops integration when it is
+reached, and skips deeper approximate color/glow sampling during resolve.
+Linked-list traversal remains unavoidable until direct AVBOIT capture can
+apply this depth before rasterization.
+
+V30 passed build/runtime testing (`bokt`) with correct rendering but no visible
+FPS gain. The captured-list prototype is now closed for performance work.
+Implementation must proceed to independent AVBOIT raster passes with no Exact
+OIT node allocation or shallow exact resolve.
 
 ## Lossless Exact OIT compute sorter
 

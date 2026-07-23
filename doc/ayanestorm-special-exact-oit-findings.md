@@ -940,6 +940,60 @@ looking perfect in the tested scenes. The earlier v26 diagnostic had already
 confirmed that this result includes both shallow-exact and approximate AVBOIT
 pixels rather than a whole-frame Exact OIT fallback.
 
+#### Sparse tiled AVBOIT volume
+
+Revision v29 begins the performance implementation described by the SIGGRAPH
+2025 presentation. A full-resolution `R8UI` classification image records empty,
+shallow-exact, and approximate pixels during the first occupancy traversal.
+Only approximate pixels now contribute to the 8K depth histogram, tiled
+occupancy, extinction volume, and integration work. Shallow-exact content such
+as the validated hair, clothing, and glass no longer populates the approximate
+volume.
+
+A physical 128-bit depth occupancy mask is stored for every one-eighth-scale
+volume cell. Approximate pixels mark their warped slices and a conservative
+three-by-three cell neighborhood so hardware trilinear sampling never reads an
+uncleared stale neighbor. Sparse clear and integration dispatch one invocation
+per volume cell and loop over 128 slices only for occupied cells. This replaces
+the previous clear dispatch of roughly
+`volume width * volume height * 128` invocations and avoids all image traffic
+for inactive cells. GPU zones distinguish tiled occupancy, sparse clear, and
+sparse integration.
+
+This is still a captured-list prototype. Classification, global occupancy,
+tiled occupancy, extinction, and resolve each traverse relevant lists, and the
+tiled mask uses conservative per-pixel atomics rather than the paper's
+primitive-bounds software rasterizer. Runtime visual, resize, activation, and
+performance validation are required before adding zero-transmittance culling.
+
+V29 passed runtime visual testing with rendering identical to v27. The observed
+performance change was only about one FPS, from 28 to 29 FPS. Sparse volume
+clear/integration is therefore not the dominant cost in the captured-list
+prototype; capture and repeated node traversal remain.
+
+Revision v30 adds the presentation's zero-transmittance depth representation.
+Sparse integration records the first physical slice where integrated
+transmittance falls to `1/65536` or lower and stops integrating that cell.
+Approximate resolve rejects color and glow contributions behind that slice and
+avoids their 3D transmittance samples, while retaining their alpha in total
+background attenuation. Shallow-exact pixels are unaffected.
+
+Because captured nodes are unsorted, resolve must still traverse deeper linked
+nodes to find all fragments and maintain total opacity. The production
+optimization culls those fragments before rasterization through generated
+depth geometry; that larger gain requires the planned direct AVBOIT capture
+path and cannot be reproduced by this resolve-only step.
+
+Revision v30 received `bokt`. Rendering remained visually correct, but no
+visible FPS improvement was observed. This confirms that zero-transmittance
+resolve rejection cannot overcome Exact OIT capture and linked-list traversal
+cost. The current hybrid is also intentionally mostly exact whenever debug
+mode 1 is mostly green: every pixel is first captured into Exact OIT nodes, and
+green pixels with at most 32 ordinary nodes are sorted and composited exactly.
+Only magenta pixels use the approximate voxel resolve. The prototype has
+therefore reached its useful performance limit and further optimization must
+decouple AVBOIT from Exact OIT capture.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the

@@ -9,6 +9,8 @@ layout(binding = 0, r32ui) uniform readonly uimage2D oitHeadPointers;
 layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 4, r32f) uniform coherent image3D avboitTransmittance;
+layout(binding = 5, r8ui) uniform coherent uimage2D avboitClassification;
+layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 
 struct OITNode
 {
@@ -34,6 +36,11 @@ layout(std430, binding = 5) buffer AVBOITWarp
     uint avboitWarp[8192];
 };
 
+layout(std430, binding = 6) buffer AVBOITTileOccupancy
+{
+    uint avboitTileOccupancy[];
+};
+
 uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
 uniform int avboitPass;
@@ -45,6 +52,10 @@ const uint OIT_NULL = 0xffffffffu;
 const uint AVBOIT_SLICES = 128u;
 const uint AVBOIT_EXACT_SHALLOW_LIMIT = 32u;
 const uint STANDARD_ALPHA_BLEND = 7u | (9u << 8u) | (1u << 16u) | (9u << 24u);
+const uint AVBOIT_CLASS_EMPTY = 0u;
+const uint AVBOIT_CLASS_EXACT = 1u;
+const uint AVBOIT_CLASS_APPROXIMATE = 2u;
+const float AVBOIT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
 
 uint virtual_slice(float depth)
 {
@@ -64,6 +75,38 @@ ivec3 volume_coordinate(ivec2 pixel, uint slice)
 {
     ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
     return ivec3(cell, int(slice));
+}
+
+uint tile_occupancy_index(ivec2 cell, uint word)
+{
+    return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) * 4u + word;
+}
+
+bool tile_is_occupied(ivec2 cell)
+{
+    uint index = tile_occupancy_index(cell, 0u);
+    return (avboitTileOccupancy[index] | avboitTileOccupancy[index + 1u] |
+            avboitTileOccupancy[index + 2u] | avboitTileOccupancy[index + 3u]) != 0u;
+}
+
+void mark_filter_neighborhood(ivec2 cell, uvec4 slice_mask)
+{
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 neighbor = clamp(cell + ivec2(x, y), ivec2(0),
+                                   avboitVolumeSize - ivec2(1));
+            for (uint word = 0u; word < 4u; ++word)
+            {
+                if (slice_mask[word] != 0u)
+                {
+                    atomicOr(avboitTileOccupancy[tile_occupancy_index(neighbor, word)],
+                             slice_mask[word]);
+                }
+            }
+        }
+    }
 }
 
 bool node_comes_first(uint a, uint b)
@@ -107,28 +150,39 @@ void main()
         return;
     }
 
-    if (avboitPass == 2)
+    if (avboitPass == 3)
     {
-        if (all(lessThan(pixel, avboitVolumeSize)) && invocation.z < int(AVBOIT_SLICES))
+        if (all(lessThan(pixel, avboitVolumeSize)) && tile_is_occupied(pixel))
         {
-            imageStore(avboitExtinction, invocation, uvec4(0u));
-            imageStore(avboitTransmittance, invocation, vec4(1.0));
+            for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
+            {
+                ivec3 coordinate = ivec3(pixel, int(slice));
+                imageStore(avboitExtinction, coordinate, uvec4(0u));
+                imageStore(avboitTransmittance, coordinate, vec4(1.0));
+            }
         }
         return;
     }
 
-    if (avboitPass == 4)
+    if (avboitPass == 5)
     {
-        if (all(lessThan(pixel, avboitVolumeSize)))
+        if (all(lessThan(pixel, avboitVolumeSize)) && tile_is_occupied(pixel))
         {
             float extinction = 0.0;
+            uint zero_depth = 255u;
             for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
             {
                 imageStore(avboitTransmittance, ivec3(pixel, int(slice)),
                            vec4(exp(-extinction)));
                 extinction += float(imageLoad(
                     avboitExtinction, ivec3(pixel, int(slice))).r) / 65536.0;
+                if (zero_depth == 255u && extinction >= AVBOIT_ZERO_EXTINCTION)
+                {
+                    zero_depth = slice;
+                    break;
+                }
             }
+            imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(zero_depth));
         }
         return;
     }
@@ -141,18 +195,70 @@ void main()
     uint head = imageLoad(oitHeadPointers, pixel).r;
     if (avboitPass == 0)
     {
+        uint classification = head == OIT_NULL ? AVBOIT_CLASS_EMPTY : AVBOIT_CLASS_EXACT;
+        uint count = 0u;
         for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
         {
-            if (oitNodes[node].blend != OIT_NULL && oitNodes[node].color.a > 0.0)
+            if (count == AVBOIT_EXACT_SHALLOW_LIMIT ||
+                (oitNodes[node].blend != OIT_NULL &&
+                 oitNodes[node].blend != STANDARD_ALPHA_BLEND))
             {
-                atomicOr(avboitOccupancy[virtual_slice(oitNodes[node].depth)], 1u);
+                classification = AVBOIT_CLASS_APPROXIMATE;
+                break;
+            }
+            ++count;
+        }
+        imageStore(avboitClassification, pixel, uvec4(classification));
+
+        if (classification == AVBOIT_CLASS_APPROXIMATE)
+        {
+            for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
+            {
+                if (oitNodes[node].blend != OIT_NULL && oitNodes[node].color.a > 0.0)
+                {
+                    atomicOr(avboitOccupancy[virtual_slice(oitNodes[node].depth)], 1u);
+                }
             }
         }
         return;
     }
 
-    if (avboitPass == 3)
+    if (avboitPass == 2)
     {
+        if (imageLoad(avboitClassification, pixel).r != AVBOIT_CLASS_APPROXIMATE)
+        {
+            return;
+        }
+        ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
+        uvec4 slice_mask = uvec4(0u);
+        for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
+        {
+            float alpha = clamp(oitNodes[node].color.a, 0.0, 1.0);
+            if (oitNodes[node].blend != OIT_NULL && alpha > 0.0)
+            {
+                float slice_coordinate = warped_slice(oitNodes[node].depth);
+                uint lower_slice = uint(floor(slice_coordinate));
+                uint upper_slice = min(lower_slice + 1u, AVBOIT_SLICES - 1u);
+                slice_mask[lower_slice >> 5u] |= 1u << (lower_slice & 31u);
+                slice_mask[upper_slice >> 5u] |= 1u << (upper_slice & 31u);
+            }
+        }
+        // Keep custom zero-alpha/glow pixels on initialized identity
+        // transmittance even when they contribute no extinction.
+        if (!any(notEqual(slice_mask, uvec4(0u))))
+        {
+            slice_mask.x = 1u;
+        }
+        mark_filter_neighborhood(cell, slice_mask);
+        return;
+    }
+
+    if (avboitPass == 4)
+    {
+        if (imageLoad(avboitClassification, pixel).r != AVBOIT_CLASS_APPROXIMATE)
+        {
+            return;
+        }
         for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
         {
             float alpha = clamp(oitNodes[node].color.a, 0.0, 1.0);
@@ -184,23 +290,16 @@ void main()
     }
 
     vec4 opaque = texelFetch(diffuseRect, pixel, 0);
+    uint classification = imageLoad(avboitClassification, pixel).r;
     uint shallow_nodes[AVBOIT_EXACT_SHALLOW_LIMIT];
     uint shallow_count = 0u;
-    bool shallow_exact = true;
-    for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
+    bool shallow_exact = classification != AVBOIT_CLASS_APPROXIMATE;
+    if (shallow_exact)
     {
-        if (shallow_count == AVBOIT_EXACT_SHALLOW_LIMIT)
+        for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
         {
-            shallow_exact = false;
-            break;
+            shallow_nodes[shallow_count++] = node;
         }
-        uint blend = oitNodes[node].blend;
-        if (blend != OIT_NULL && blend != STANDARD_ALPHA_BLEND)
-        {
-            shallow_exact = false;
-            break;
-        }
-        shallow_nodes[shallow_count++] = node;
     }
 
     if (shallow_exact)
@@ -259,14 +358,25 @@ void main()
     float color_weight = 0.0;
     float glow = 0.0;
     float pixel_transmittance = 1.0;
+    ivec2 volume_cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
+    uint zero_depth = imageLoad(avboitZeroTransmittanceDepth, volume_cell).r;
     for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
     {
         OITNode fragment = oitNodes[node];
+        float fragment_slice = warped_slice(fragment.depth);
+        if (zero_depth != 255u && fragment_slice > float(zero_depth))
+        {
+            if (fragment.blend != OIT_NULL)
+            {
+                pixel_transmittance *= 1.0 - clamp(fragment.color.a, 0.0, 1.0);
+            }
+            continue;
+        }
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         // Linear sampling over a linear extinction splat needs a two-slice
         // camera-side bias so a surface does not attenuate itself.
         float sample_slice = clamp(
-            warped_slice(fragment.depth) - 2.0, 0.0, float(AVBOIT_SLICES - 1u));
+            fragment_slice - 2.0, 0.0, float(AVBOIT_SLICES - 1u));
         float sample_z = (sample_slice + 0.5) / float(AVBOIT_SLICES);
         float front_transmittance = texture(
             avboitTransmittanceSampler, vec3(sample_xy, sample_z)).r;

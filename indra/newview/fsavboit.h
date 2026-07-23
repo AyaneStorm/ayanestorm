@@ -37,8 +37,11 @@ private:
     {
         GLuint extinction = 0;
         GLuint transmittance = 0;
+        GLuint classification = 0;
+        GLuint zeroTransmittanceDepth = 0;
         GLuint occupancy = 0;
         GLuint warp = 0;
+        GLuint tileOccupancy = 0;
         U32 volumeWidth = 0;
         U32 volumeHeight = 0;
         bool available = false;
