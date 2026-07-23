@@ -199,7 +199,7 @@ const char* FSExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v14";
+    return "Exact OIT shader revision v15";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -876,6 +876,9 @@ bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_s
 
     static LLStaticHashedString blend_factors("oitBlendFactors");
     static LLStaticHashedString glow("oitGlow");
+    static LLStaticHashedString discard_no_op("oitDiscardNoOp");
+    static LLCachedControl<bool> discard_no_op_enabled(
+        gSavedSettings, "RenderExactOITNoOpCapture", true);
     const U32 packed_blend = color_source | (color_destination << 8) |
         (alpha_source << 16) | (alpha_destination << 24);
     const GLint location = shader->getUniformLocation(blend_factors);
@@ -884,6 +887,7 @@ bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_s
         glUniform1ui(location, packed_blend);
     }
     shader->uniform1f(glow, 0.f);
+    shader->uniform1i(discard_no_op, discard_no_op_enabled);
     return true;
 }
 
@@ -915,6 +919,9 @@ void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
     static LLStaticHashedString blend_factors("oitBlendFactors");
     static LLStaticHashedString glow("oitGlow");
+    static LLStaticHashedString discard_no_op("oitDiscardNoOp");
+    static LLCachedControl<bool> discard_no_op_enabled(
+        gSavedSettings, "RenderExactOITNoOpCapture", true);
     const U32 packed_blend = U32(LLRender::BF_SOURCE_ALPHA) |
         (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 8) |
         (U32(LLRender::BF_ZERO) << 16) |
@@ -925,6 +932,7 @@ void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
         glUniform1ui(location, packed_blend);
     }
     shader.uniform1f(glow, 0.f);
+    shader.uniform1i(discard_no_op, discard_no_op_enabled);
 }
 
 // Returns the Exact OIT GLTF program during capture, otherwise the supplied vanilla program.

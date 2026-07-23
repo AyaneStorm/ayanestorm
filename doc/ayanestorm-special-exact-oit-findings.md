@@ -741,13 +741,63 @@ zero-glow fragments is now higher priority than short-list register sorting:
 it can collapse both the shallow outer rectangles and the exceptionally deep
 invisible center before allocation.
 
-A future capture optimization can reject a node only when its complete captured
-operation is mathematically a no-op. The initial safe case to investigate is
-exact source alpha zero, zero captured glow, and the standard alpha blend tuple.
-Custom/additive blend tuples and glow-only capture must not be discarded merely
-because color alpha is zero. Unlike a sorting-only optimization, safe capture
-rejection would reduce node allocation, list depth, sorting, blending, memory
-traffic, and overflow pressure.
+#### Exact zero-alpha capture rejection
+
+Shader-cache revision v15 implements lossless rejection in the shared color
+capture function. Before allocating a node, it requires all of:
+
+- `RenderExactOITNoOpCapture` is enabled;
+- the packed blend tuple is standard
+  `SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA, ZERO,
+  ONE_MINUS_SOURCE_ALPHA`;
+- final captured source alpha is exactly `0.0`;
+- captured glow is exactly `0.0`.
+
+For this tuple, zero source alpha multiplies source color by zero, leaves
+destination color and alpha unchanged, and leaves accumulated glow unchanged.
+The node is therefore mathematically ineffective regardless of its RGB or
+depth. Rejection occurs before the allocation atomic, node writes, head
+exchange, per-pixel count increment, and maximum-list update.
+
+The setting is default-enabled and uploaded per captured draw, so it can be
+changed live for visual, mode 8, allocation, overflow, and performance A/B
+comparisons. Regular and GLTF color capture use it. Custom/additive blend
+tuples, nonzero glow, fractional alpha, and separate glow-only nodes remain
+unchanged.
+
+Runtime mode 8 A/B screenshots confirm that the setting changes capture live.
+With rejection disabled, large solid shallow-list regions cover visually empty
+parts of avatar hair, face-overlay, and clothing cards. Enabling rejection
+removes those regions and reveals the normal face while retaining bucket colors
+on actual nonzero-alpha hair strands, lashes or makeup, garment surfaces, and
+edges. Large one-fragment gray garment regions remain, indicating a real
+nonzero-alpha surface rather than discarded empty card area. This validates the
+intended node-count reduction; mode 0 image parity and FPS measurements remain
+to be recorded.
+
+The initial mode 0 A/B test showed no observable FPS change. The optimization
+is visibly removing captured nodes, but rasterization, texture sampling,
+lighting, and the rest of each alpha fragment shader execute before
+`exact_oit_store()` can reject the result. Fullscreen sort-pass scheduling,
+nonzero-alpha lists, and the capture-validation synchronization also remain.
+The rejection is retained because it is lossless and reduces node writes,
+memory traffic, depth complexity, capacity demand, and overflow pressure, but
+it is not considered the primary solution to the measured frame-time problem.
+
+A paired normal/mode-8 screenshot of faint chimney smoke identifies the primary
+remaining workload. Although the smoke contributes only a subtle haze to the
+normal image, its projected plume contains broad yellow/orange regions and a
+very large magenta center, meaning at least 65 captured fragments per pixel.
+The diagnostic footprint follows most of the plume's large screen area.
+
+These are nonzero fractional-alpha fragments, so exact zero-alpha rejection
+cannot remove them. A small-list fast path would affect only the narrow outer
+bands, and active-pixel scheduling would still dispatch most of the plume
+because it densely covers the screen. This scene is the representative
+deep-list benchmark for future exact sorting work. Any effective-opacity cutoff
+that discards these small but nonzero contributions would be approximate rather
+than lossless and must not be folded into the exact path without an explicit
+quality-policy decision.
 
 #### Deferred near-opaque exploration
 
