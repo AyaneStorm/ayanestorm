@@ -123,6 +123,38 @@ renderer alongside the existing OpenGL renderer. Apple documents
 [mixing Metal and OpenGL rendering in one view](https://developer.apple.com/documentation/metal/mixing-metal-and-opengl-rendering-in-a-view)
 through Core Video/IOSurface-backed interoperable textures.
 
+Apple's sample creates a `CVPixelBuffer` with both
+`kCVPixelBufferOpenGLCompatibilityKey` and
+`kCVPixelBufferMetalCompatibilityKey` enabled. It then creates two API views
+of that same backing:
+
+- `CVOpenGLTextureCacheCreateTextureFromImage` produces a
+  `CVOpenGLTexture`, whose OpenGL name is obtained with
+  `CVOpenGLTextureGetName`.
+- `CVMetalTextureCacheCreateTextureFromImage` produces a `CVMetalTexture`,
+  whose Metal texture is obtained with `CVMetalTextureGetTexture`.
+
+This is directly useful for exchanging a compatible color image without CPU
+readback. The Core Video pixel format, Metal pixel format, and OpenGL internal
+format must be selected as a compatible combination. The sample requires
+macOS 10.13 or later.
+
+The sample does not establish that an existing viewer OpenGL texture can be
+retrofitted with shared backing. The interoperable `CVPixelBuffer` must own the
+backing from creation, so viewer integration would allocate the exchanged
+color target through Core Video and render or copy into its OpenGL view. It
+also does not demonstrate sharing a depth attachment, vertex or index
+buffers, material textures, or Metal PPLL node and counter buffers. Those
+remain separate prototype questions. In particular, color-texture
+interoperability alone does not eliminate the depth conversion/copy described
+below.
+
+Apple presents the mechanism as a migration bridge: either Metal renders the
+shared texture for OpenGL to sample, or OpenGL renders it for Metal to sample.
+That validates alternating API ownership of one image, but it is not a way to
+issue Metal operations from inside OpenGL rendering or to share general
+OpenGL object names.
+
 A hybrid frame would have this boundary:
 
 1. OpenGL renders the opaque scene normally.
