@@ -6,7 +6,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
-layout(binding = 4, r32f) uniform coherent image3D avboitTransmittance;
+layout(binding = 4, r8) uniform coherent image3D avboitTransmittance;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
 
@@ -40,7 +40,8 @@ uniform ivec2 avboitVolumeSize;
 const uint AVBOIT_SLICES = 128u;
 const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4u;
 const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
-const float AVBOIT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
+const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
+const float AVBOIT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
 
 float unpack_extinction(uint packed_word, uint slice_index)
 {
@@ -115,9 +116,11 @@ void main()
                     {
                         coordinate += float(offset) / float(group_size);
                     }
-                    avboitWarp[start + offset] = uint(
+                    uint encoded_coordinate = uint(
                         clamp(coordinate, 0.0,
                               float(AVBOIT_SLICES - 1u)) * 65536.0 + 0.5);
+                    avboitWarp[start + offset] = encoded_coordinate |
+                        (occupied ? AVBOIT_WARP_FILTERABLE : 0u);
                 }
                 physical += occupied ? 1u : 0u;
             }
@@ -142,7 +145,9 @@ void main()
                      slice_index < AVBOIT_SLICES; ++slice_index)
                 {
                     ivec3 coordinate = ivec3(pixel, int(slice_index));
-                    imageStore(avboitTransmittance, coordinate, vec4(1.0));
+                    // Saturated integration stops early, so untouched tail
+                    // slices must represent zero rather than full transmission.
+                    imageStore(avboitTransmittance, coordinate, vec4(0.0));
                 }
             }
         }

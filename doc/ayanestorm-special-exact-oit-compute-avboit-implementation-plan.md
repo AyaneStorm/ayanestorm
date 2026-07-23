@@ -181,7 +181,47 @@ transmittance image was removed. Build and runtime validation are pending.
 The first v44 runtime attempt fell back to Standard because NVIDIA's GLSL
 compiler parsed the new identifiers `slice` and `packed` as reserved/contextual
 tokens. V45 renames them to `slice_index` and `packed_word` throughout the
-packed-extinction code. Runtime validation is pending.
+packed-extinction code. V45 passed build and runtime validation; AVBOIT was
+active again and retained the pre-existing visual artifacts.
+
+V46 changes the integrated monochrome transmittance volume from the prototype's
+`R32F` to the presentation's one-byte-per-slice `R8` representation. Its
+effective-zero extinction is correspondingly `-log(1/255)`, matching the
+8-bit extinction normalization and overflow rule. This reduces transmittance
+volume storage and filtered-sampling bandwidth by 75 percent. Runtime rendering
+was visibly worse, but the specified representation is retained while the
+remaining depth-warp work proceeds.
+
+V47 stores an occupied-range filterability bit alongside every fixed-point
+depth-warp coordinate. All ordinary, emissive, and PBR-glow AVBOIT sampling
+paths mask that metadata consistently. Coordinates interpolate only when both
+neighboring virtual-depth entries belong to occupied ranges; transitions into
+or out of empty space snap to the occupied endpoint. This implements the
+presentation's rule that empty ranges disable filtering instead of allowing
+the hardware-equivalent linear lookup to blend across them. Build and runtime
+validation are pending.
+
+V48 replaces direct window-depth binning with the presentation's logarithmic
+view-depth parametrization. Every AVBOIT material path reconstructs linear
+view depth from `gl_FragCoord.z` and the live camera near/far planes, maps the
+visible range logarithmically into the 8K virtual domain, and then samples the
+adaptive warp. Occupancy generation, extinction splatting, ordinary color,
+emissive, and PBR glow therefore use one consistent depth function. This gives
+the adaptive compaction a physically meaningful minimum near-camera slice
+thickness instead of inheriting the projection buffer's reciprocal depth
+distribution. Build and runtime validation are pending.
+
+V49 corrects two coupled zero-transmittance faults found during the larger
+specification pass. Sparse clear now initializes integrated-transmittance tail
+voxels to zero, so slices left unwritten after the specified saturation early
+out cannot incorrectly transmit the background. Color and glow rasterization
+also conservatively takes the farthest zero-transmittance depth across the
+four cells in the actual bilinear sampling footprint rather than culling from
+one nearest cell. This matches the presentation's conservative-read rule and
+targets the screen-space blocks seen in hair and clothing. GPU profiling is
+split into occupancy raster, warp/sparse clear, extinction raster, integration,
+and weighted-color raster zones so the remaining work can be measured by
+stage. Build and runtime validation of the combined v46-v49 batch is pending.
 
 ## Lossless Exact OIT compute sorter
 

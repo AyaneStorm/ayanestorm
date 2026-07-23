@@ -16,6 +16,7 @@
 #include "llrendertarget.h"
 #include "llsd.h"
 #include "llshadermgr.h"
+#include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llviewershadermgr.h"
 #include "pipeline.h"
@@ -122,7 +123,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v45";
+    return "AVBOIT shader revision v49";
 }
 
 bool FSAVBOIT::supported()
@@ -366,13 +367,27 @@ bool FSAVBOIT::renderPostDeferredCapture(
         sCaptureActive = false;
     };
 
-    LL_PROFILE_GPU_ZONE("Direct AVBOIT raster passes");
     gGL.setColorMask(false, false);
-    render_pass();
-    finishDirectOccupancy();
-    render_pass();
-    finishDirectExtinction();
-    render_pass();
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
+        render_pass();
+    }
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT depth warp and sparse clear");
+        finishDirectOccupancy();
+    }
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT extinction raster");
+        render_pass();
+    }
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT extinction integration");
+        finishDirectExtinction();
+    }
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT weighted color raster");
+        render_pass();
+    }
     gGL.setColorMask(true, true);
     sCaptureCompleted = true;
     return true;
@@ -490,7 +505,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenTextures(1, &sResources.transmittance);
     glBindTexture(GL_TEXTURE_3D, sResources.transmittance);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32F,
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8,
                    sResources.volumeWidth, sResources.volumeHeight, AVBOIT_SLICES);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -577,6 +592,9 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
     info["AVBOIT_PACKED_EXTINCTION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
          AVBOIT_PACKED_SLICES * sizeof(U32)) / (1024ull * 1024ull));
+    info["AVBOIT_TRANSMITTANCE_MB"] = LLSD::Integer(
+        (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
+         AVBOIT_SLICES) / (1024ull * 1024ull));
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
@@ -626,7 +644,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
                        GL_READ_WRITE, GL_R32UI);
     glBindImageTexture(4, sResources.transmittance, 0, GL_TRUE, 0,
-                       GL_READ_WRITE, GL_R32F);
+                       GL_READ_WRITE, GL_R8);
     glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R8UI);
     glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
@@ -668,6 +686,7 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString transmittance_sampler("avboitTransmittanceSampler");
+    static LLStaticHashedString depth_range("avboitDepthRange");
     GLint location = shader->getUniformLocation(raster_pass);
     if (location >= 0)
     {
@@ -694,6 +713,13 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     {
         glProgramUniform1i(shader->mProgramObject, location,
                            directTransmittanceTextureUnit());
+    }
+    location = shader->getUniformLocation(depth_range);
+    if (location >= 0)
+    {
+        const LLCamera& camera = *LLViewerCamera::getInstance();
+        glProgramUniform2f(shader->mProgramObject, location,
+                           camera.getNear(), camera.getFar());
     }
 }
 
