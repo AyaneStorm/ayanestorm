@@ -5,7 +5,7 @@
 In progress. The lossless compute sorter passed its first build/runtime gate:
 mode 9 proves live compute dispatch and visual parity, but the observed gain was
 only about one FPS. It remains default-disabled. AVBOIT is now the active
-implementation stage. Revision v30 contains the first sparse-volume prototype: it
+implementation stage. Revision v31 contains the first direct-raster prototype: it
 reuses complete Exact OIT capture as a fallback-safe input, bypasses sorting,
 builds adaptive occupancy, warp, extinction, and transmittance in compute, and
 resolves unsorted nodes approximately.
@@ -70,6 +70,13 @@ V30 passed build/runtime testing (`bokt`) with correct rendering but no visible
 FPS gain. The captured-list prototype is now closed for performance work.
 Implementation must proceed to independent AVBOIT raster passes with no Exact
 OIT node allocation or shallow exact resolve.
+
+V31 implements that transition. Occupancy, extinction, and weighted-color
+accumulation are three direct transparency raster traversals separated by warp,
+sparse-clear, and integration compute work. Full-resolution fixed-point atomic
+accumulation replaces fragment nodes. Successful direct rendering performs no
+node allocation, list traversal, or shallow exact sort; Exact OIT remains only
+failure fallback infrastructure. Build/runtime validation is pending.
 
 ## Lossless Exact OIT compute sorter
 

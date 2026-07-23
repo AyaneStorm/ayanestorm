@@ -11,6 +11,7 @@ layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 4, r32f) uniform coherent image3D avboitTransmittance;
 layout(binding = 5, r8ui) uniform coherent uimage2D avboitClassification;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
+layout(binding = 7, r32f) uniform coherent image2D avboitTotalTransmittance;
 
 struct OITNode
 {
@@ -41,8 +42,14 @@ layout(std430, binding = 6) buffer AVBOITTileOccupancy
     uint avboitTileOccupancy[];
 };
 
+layout(std430, binding = 7) buffer AVBOITDirectAccumulation
+{
+    uint avboitDirectAccumulation[];
+};
+
 uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
+uniform sampler2D avboitTotalTransmittanceSampler;
 uniform int avboitPass;
 uniform int avboitDebugMode;
 uniform ivec2 avboitViewport;
@@ -152,13 +159,17 @@ void main()
 
     if (avboitPass == 3)
     {
-        if (all(lessThan(pixel, avboitVolumeSize)) && tile_is_occupied(pixel))
+        if (all(lessThan(pixel, avboitVolumeSize)))
         {
-            for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
+            imageStore(avboitTotalTransmittance, pixel, vec4(1.0));
+            if (tile_is_occupied(pixel))
             {
-                ivec3 coordinate = ivec3(pixel, int(slice));
-                imageStore(avboitExtinction, coordinate, uvec4(0u));
-                imageStore(avboitTransmittance, coordinate, vec4(1.0));
+                for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
+                {
+                    ivec3 coordinate = ivec3(pixel, int(slice));
+                    imageStore(avboitExtinction, coordinate, uvec4(0u));
+                    imageStore(avboitTransmittance, coordinate, vec4(1.0));
+                }
             }
         }
         return;
@@ -183,12 +194,44 @@ void main()
                 }
             }
             imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(zero_depth));
+            imageStore(avboitTotalTransmittance, pixel, vec4(exp(-extinction)));
         }
         return;
     }
 
     if (any(greaterThanEqual(pixel, avboitViewport)))
     {
+        return;
+    }
+
+    if (avboitPass == 7)
+    {
+        uint accumulation_index =
+            (uint(pixel.y) * uint(avboitViewport.x) + uint(pixel.x)) * 6u;
+        float weight = float(avboitDirectAccumulation[accumulation_index + 3u]) / 4096.0;
+        vec3 weighted_color = vec3(
+            avboitDirectAccumulation[accumulation_index],
+            avboitDirectAccumulation[accumulation_index + 1u],
+            avboitDirectAccumulation[accumulation_index + 2u]) / 4096.0;
+        float accumulated_glow =
+            float(avboitDirectAccumulation[accumulation_index + 4u]) / 4096.0;
+        float accumulated_extinction =
+            float(avboitDirectAccumulation[accumulation_index + 5u]) / 4096.0;
+        if (avboitDebugMode == 1 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            imageStore(avboitOutput, pixel, vec4(1.0, 0.0, 1.0, 0.0));
+            return;
+        }
+        float total_transmittance = exp(-accumulated_extinction);
+        float aggregate_alpha = 1.0 - total_transmittance;
+        vec3 transparent = weight > 0.0 ?
+            weighted_color * (aggregate_alpha / weight) : vec3(0.0);
+        vec4 opaque = texelFetch(diffuseRect, pixel, 0);
+        imageStore(avboitOutput, pixel,
+                   max(vec4(transparent + opaque.rgb * total_transmittance,
+                            accumulated_glow + opaque.a * total_transmittance),
+                       vec4(0.0)));
         return;
     }
 

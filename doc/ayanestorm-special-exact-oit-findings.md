@@ -994,6 +994,44 @@ Only magenta pixels use the approximate voxel resolve. The prototype has
 therefore reached its useful performance limit and further optimization must
 decouple AVBOIT from Exact OIT capture.
 
+#### Independent direct-raster AVBOIT
+
+Revision v31 replaces the normal AVBOIT execution path with three independent
+transparency raster traversals and does not allocate or traverse fragment nodes:
+
+1. The occupancy traversal writes the 8K virtual-depth histogram and
+   conservative low-resolution spatial occupancy.
+2. Compute builds the adaptive warp and sparsely clears occupied volume cells.
+3. The extinction traversal atomically splats linearly divided logarithmic
+   extinction into the physical volume.
+4. Compute integrates transmittance and records effective-zero depth.
+5. The accumulation traversal samples front transmittance, rejects fragments
+   behind effective zero, and atomically accumulates fixed-point weighted RGB,
+   normalization weight, and glow at full resolution.
+6. Compute resolves accumulated transparency over a preserved opaque copy using
+   the low-resolution total transmittance.
+
+The fixed-point accumulation buffer uses five 32-bit values per screen pixel.
+It avoids requiring floating-point atomics or mixed framebuffer blend equations
+on the OpenGL 4.3 baseline. Each contribution uses 12 fractional bits and is
+clamped before atomic addition. Overflow and precision must be evaluated on
+extreme HDR/glow content.
+
+The existing Exact OIT shader family supplies the already-validated material,
+rigging, GLTF, fullbright, and emissive surface evaluation, but its terminal
+store function switches to direct AVBOIT raster output. No Exact OIT node
+counter, head pointer, node storage, classification, shallow exact sort, or
+linked-list resolve is touched on the successful direct path. If direct AVBOIT
+resource initialization fails, the previous Exact OIT/vanilla fallback routing
+remains available.
+
+In direct diagnostic mode 1, every contributing direct AVBOIT pixel is magenta
+and there are no green shallow-exact pixels. A log entry explicitly reports
+`Using independent direct-raster AVBOIT; Exact OIT nodes are not captured`.
+Runtime validation must first confirm shader compilation, world entry, resize,
+live toggling, coverage across legacy/PBR/GLTF/rigged/emissive content, visual
+quality, and performance.
+
 During the same test, Exact OIT temporarily appeared to render as vanilla and
 later recovered. The log recorded repeated required-node counts between
 approximately 68 and 110 million while the scene was rezzing, above the
