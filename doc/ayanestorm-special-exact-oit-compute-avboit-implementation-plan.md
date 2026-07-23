@@ -5,7 +5,50 @@
 In progress. The lossless compute sorter passed its first build/runtime gate:
 mode 9 proves live compute dispatch and visual parity, but the observed gain was
 only about one FPS. It remains default-disabled. AVBOIT is now the active
-implementation stage.
+implementation stage. Revision v27 contains the first wired prototype: it
+reuses complete Exact OIT capture as a fallback-safe input, bypasses sorting,
+builds adaptive occupancy, warp, extinction, and transmittance in compute, and
+resolves unsorted nodes approximately.
+
+The initial v18 build exposed and safely fell back from a GLSL 4.20 loader
+selection for the AVBOIT compute source. V19 requires GLSL 4.30 for every
+compute stage.
+
+The initial active resolve exposed severe hair striping from unnormalized
+same-slice color sums. V20 uses front-transmittance-weighted average color with
+one exact aggregate-opacity application per pixel.
+
+The remaining localized voxel blocks in hair led to v21: integrated
+transmittance is now a filterable `R32F` volume sampled trilinearly during
+resolve. This targets coarse-cell and physical-slice boundaries without
+increasing the fixed one-eighth spatial resolution.
+
+The SIGGRAPH 2025 AVBOIT presentation showed that filtered sampling must be
+paired with linear extinction splatting and a camera-side sampling bias to
+avoid self-occlusion. V22 splits each extinction contribution across adjacent
+warped slices and samples front transmittance with the documented two-slice
+bias.
+
+V23 corrects opaque-scene glow behind transparency: screen alpha carries glow,
+so it must be attenuated by total transmittance just like opaque RGB rather
+than copied unchanged.
+
+V24 uses a bounded hybrid resolve for shallow ordinary transparency. Lists of
+at most 16 source-over or glow-only nodes are sorted and composited exactly;
+deeper and custom-blend pixels continue through AVBOIT. This targets thin hair
+and clothing layers without applying exact sorting to dense smoke pixels.
+
+V25 raises that threshold to 32 after runtime testing showed a clothing surface
+became stable only when close enough for its per-pixel depth to fall below 16.
+The larger private array requires explicit performance validation.
+
+V26 adds live branch diagnostic `RenderAVBOITDebugMode=1`: green identifies
+captured pixels using the shallow exact branch and magenta identifies pixels
+using approximate AVBOIT.
+
+V27 corrects shallow-branch screen alpha so it contains only ordered,
+glass-attenuated glow. It no longer restores unattenuated opaque glow or maps
+ordinary accumulated opacity into the glow channel.
 
 ## Lossless Exact OIT compute sorter
 

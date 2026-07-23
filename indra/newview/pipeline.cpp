@@ -26,8 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Exact OIT
+// <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
+#include "fsavboit.h"
 // </AS:Chanayane>
 
 #include "pipeline.h"
@@ -1008,6 +1009,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
         // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
         FSExactOIT::allocateResources(resX, resY);
+        FSAVBOIT::allocateResources(resX, resY);
         // </AS:Chanayane>
 
         if (RenderUIBuffer)
@@ -1413,6 +1415,7 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
     // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
+    FSAVBOIT::releaseResources();
     FSExactOIT::releaseResources();
     // </AS:Chanayane>
 

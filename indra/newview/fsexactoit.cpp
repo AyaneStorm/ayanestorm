@@ -32,6 +32,7 @@
 #include <utility>
 
 #include "fsexactoit.h"
+#include "fsavboit.h"
 
 #include "llgl.h"
 #include "lldrawpoolalpha.h"
@@ -203,7 +204,7 @@ const char* FSExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v17";
+    return "Exact OIT and AVBOIT shader revision v27";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -217,7 +218,7 @@ bool FSExactOIT::isSupported()
 // Reports whether Exact OIT is both requested by the user and supported by the GPU.
 bool FSExactOIT::isEnabled()
 {
-    return gSavedSettings.getBOOL("RenderExactOIT") && isSupported();
+    return (gSavedSettings.getBOOL("RenderExactOIT") || FSAVBOIT::requested()) && isSupported();
 }
 
 // Loads the complete Exact OIT shader family and propagates the aggregate success state.
@@ -1325,7 +1326,11 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
         return;
     }
 
-    composite(screen, screen_triangle, maximum_list);
+    if (!FSAVBOIT::composite(screen, sOpaqueTarget, sResources.heads, sResources.nodes,
+                             screen.getWidth(), screen.getHeight()))
+    {
+        composite(screen, screen_triangle, maximum_list);
+    }
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
     // The viewer's Highlight Transparent overlay is drawn after compositing and
     // would obscure Exact OIT diagnostic colors.

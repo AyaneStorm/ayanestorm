@@ -832,6 +832,122 @@ performance change was approximately one FPS, which is below the acceptance
 threshold and may be measurement noise. The compute sorter remains
 default-disabled and is not a candidate for promotion based on this result.
 
+#### First wired AVBOIT prototype
+
+Shader-cache revision v18 adds a separate default-disabled `fsavboit` module and
+`RenderAVBOIT` setting. The first prototype deliberately reuses complete Exact
+OIT node capture, allowing immediate fallback without duplicating the full
+legacy, material, rigged, emissive, and GLTF shader family. It bypasses all
+linked-list sorting when active.
+
+Compute passes mark an 8K virtual depth occupancy domain, build a 128-slice
+adaptive warp, clear and populate a one-eighth-resolution integer extinction
+volume, integrate front transmittance, and resolve each full-resolution pixel
+by traversing its unsorted captured nodes. Ordinary and custom color nodes are
+approximated as source-over; glow nodes are accumulated with estimated front
+transmittance. The opaque scene is attenuated by total estimated
+transmittance.
+
+This prototype tests the central performance question—whether eliminating deep
+sorting materially helps the smoke workload—while retaining node-capture cost.
+It is not yet the final direct-raster AVBOIT architecture and is explicitly
+approximate. Shader/resource failure logs once and falls back to the existing
+Exact OIT composite. Build, visual, performance, resize, live-toggle, and
+fallback validation are pending.
+
+The first build correctly fell back to Exact OIT because the shared loader
+emitted `#version 420` for `avboitVolumeC.glsl`; SSBO declarations require GLSL
+4.30 and NVIDIA rejected both occupancy/warp blocks. Revision v19 makes every
+compute shader request GLSL 4.30 on supported hardware, matching the existing
+Exact OIT compute programs. The log provides direct confirmation of this
+failure and fallback rather than an inactive setting.
+
+After the GLSL fix, AVBOIT became visibly active, but a close hair comparison
+showed unacceptable dark striping and repeated card layers. The first resolve
+summed every straight-alpha color contribution after coarse front-transmittance
+weighting; fragments sharing a voxel slice therefore applied dense hair opacity
+multiple times. Revision v20 instead forms a front-transmittance-weighted color
+average and applies the exact order-independent per-pixel aggregate opacity
+`1 - product(1 - alpha)` once. This retains approximate depth preference while
+preventing same-slice contribution sums from producing layered bands.
+
+The v20 result substantially improved hair, but a close comparison still
+showed localized block-shaped color changes aligned with the one-eighth-scale
+volume. The integer transmittance volume was sampled from one coarse cell and
+one physical slice for every fragment. Revision v21 stores integrated
+transmittance in a filterable `R32F` volume and samples it trilinearly during
+resolve. Extinction accumulation remains integer-atomic. This smooths spatial
+cell and slice transitions without increasing the volume dimensions or capture
+cost.
+
+The SIGGRAPH 2025 AVBOIT presentation subsequently established that v21's
+filtering-only change was incomplete: linear sampling over point extinction
+splats can still self-occlude surfaces. Revision v22 linearly divides each
+extinction contribution between adjacent warped slices and applies the
+presentation's two-slice camera-side bias when sampling integrated
+transmittance. Detailed comparison notes are recorded in
+`doc/ayanestorm-special-avboit-siggraph-2025-notes.md`.
+
+Runtime comparison of v22 showed greatly reduced hair artifacts and generally
+acceptable approximate rendering. Remaining observations were minor hair
+patches, temporally unstable bands on an Alpha Blend trouser surface, and
+excessive bloom from a glowing opaque object viewed through glass. The glow
+case exposed a resolve error rather than an inherent AVBOIT limitation:
+opaque-scene RGB was attenuated by total pixel transmittance, while the
+opaque-scene glow stored in screen alpha was copied unchanged. Revision v23
+attenuates opaque glow by the same total pixel transmittance. Captured
+transparent glow remains weighted by estimated front transmittance.
+
+Revision v24 adds a bounded hybrid resolve for the remaining hair and clothing
+artifacts. Pixels containing at most 16 ordinary source-over or glow-only nodes
+are insertion-sorted by the Exact OIT total order and composited exactly.
+Deeper pixels and pixels using custom blend modes retain AVBOIT. This uses the
+nodes already captured by the prototype and is intended to protect shallow
+thin-layer content without restoring full sorting cost to dense smoke and
+splashes. Its performance impact must be measured; the bounded private array is
+specific to this captured-list prototype and is not part of the final
+direct-raster AVBOIT architecture.
+
+Runtime testing confirmed that v24 fixed excessive opaque glow behind glass.
+The trouser surface stopped flickering only when sufficiently close to the
+camera. This distance dependency is consistent with screen-space
+concentration: nearby layers spread across more pixels and fit the 16-node
+exact branch, while distant layers collapse into deeper per-pixel lists.
+Revision v25 raises the bounded exact source-over limit to 32 nodes, covering
+the previously observed 17–32 fragment range. GPU occupancy and whole-frame
+cost must be compared because the resolve shader's bounded private index array
+also grows from 16 to 32 entries.
+
+The v25 log confirmed AVBOIT activation at runtime, but the expanded exact
+branch made visual setting comparisons ambiguous. Revision v26 adds
+`RenderAVBOITDebugMode`. Mode 1 displays captured shallow-exact pixels in green
+and pixels using approximate AVBOIT in magenta; pixels without captured
+transparency retain the opaque scene. This setting is live and adds no normal
+mode readback.
+
+V26 runtime diagnostics showed both green shallow-exact pixels and magenta
+approximate pixels, confirming that AVBOIT was active rather than falling back
+wholly to Exact OIT. The hybrid result was reported as artifact-free with only
+very minor differences, mostly involving glow. It also exposed a regression in
+the shallow branch: after correctly attenuating opaque glow through glass, the
+branch restored the original opaque glow with a maximum operation and treated
+ordinary accumulated opacity as screen-alpha glow. Revision v27 writes only
+the ordered, attenuated glow recurrence to screen alpha.
+
+During the same test, Exact OIT temporarily appeared to render as vanilla and
+later recovered. The log recorded repeated required-node counts between
+approximately 68 and 110 million while the scene was rezzing, above the
+67.1-million-node maximum capacity. Exact OIT therefore entered its intended
+same-frame vanilla fallback until demand dropped below capacity. The user
+reported that this initial output was substantially worse than ordinary
+vanilla, so visual correctness of the overflow fallback is not established and
+must not be inferred from its log message. One likely difference is stale
+within-group vanilla alpha ordering: Exact OIT normally does not maintain that
+ordering while enabled, but the overflow path abruptly replays vanilla
+transparency without an Exact-to-vanilla setting transition. AVBOIT did not
+become active until after this interval, at 15:30:05, so it did not cause the
+initial regression.
+
 #### Deferred near-opaque exploration
 
 A later, explicitly approximate experiment may evaluate treating source alpha

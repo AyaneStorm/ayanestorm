@@ -30,8 +30,9 @@
 #include <boost/lexical_cast.hpp>
 
 #include "llfeaturemanager.h"
-// <AS:Chanayane> Exact OIT
+// <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
+#include "fsavboit.h"
 // </AS:Chanayane>
 #include "llviewershadermgr.h"
 #include "llviewercontrol.h"
@@ -443,6 +444,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gHUDFullbrightAlphaMaskAlphaProgram);
 // <AS:Chanayane> Exact OIT shader registration
     FSExactOIT::registerShaders(mShaderList);
+    FSAVBOIT::registerShaders(mShaderList);
 // </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
@@ -1153,6 +1155,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredFullbrightAlphaMaskAlphaProgram.unload();
         gHUDFullbrightAlphaMaskAlphaProgram.unload();
 // <AS:Chanayane> Exact OIT shader unloading
+        FSAVBOIT::unloadShaders();
         FSExactOIT::unloadShaders();
 // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
@@ -3062,6 +3065,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // [/RLV:KB]
 // <AS:Chanayane> Load the complete Exact OIT shader family through one module entry point.
     success = FSExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
+    if (success)
+    {
+        FSAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+    }
 // </AS:Chanayane>
     return success;
 }
