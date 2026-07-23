@@ -460,6 +460,32 @@ cutoff-based pruning: large filtered screen coverage and potentially deep
 overlap, with no mathematically complete overwrite that permits deeper nodes to
 be discarded.
 
+### Stale vanilla alpha order after disabling Exact OIT
+
+Runtime observation showed that some avatar alpha surfaces could continue to
+look Exact-OIT-like immediately after disabling the setting, then change to
+their vanilla appearance only after looking away and back.
+
+Shader routing itself checks `sCaptureActive` at draw time and therefore selects
+the vanilla shaders as soon as Exact OIT capture stops. However, changing
+`RenderExactOIT` does not invalidate cached within-group alpha ordering.
+`LLSpatialPartition::calcDistance` marks an alpha group `ALPHA_DIRTY` only after
+the view-angle difference exceeds its existing threshold. Looking away causes
+that rebuild, matching the reported transition.
+
+This indicates a stale vanilla alpha-sort transition rather than persistent
+Exact OIT compositing. `FSExactOIT::beginFrame()` now detects the
+enabled-to-disabled transition, marks the currently visible regular and rigged
+alpha groups `ALPHA_DIRTY`, and queues them for geometry rebuild. Vanilla
+ordering is therefore regenerated on the following rebuild pass without
+requiring a camera-angle change. A diagnostic-mode test can distinguish the
+paths: Exact OIT debug colors should disappear immediately while the queued
+vanilla ordering rebuild completes.
+
+The transition invalidation completed build and runtime testing (`bokt`).
+Disabling Exact OIT now makes the difference from vanilla rendering immediately
+noticeable without requiring the camera to look away and return.
+
 ## Diagnostics and evidence locations
 
 The proposed relocated runtime log directory was:
