@@ -89,3 +89,12 @@ collect a histogram of per-pixel list depths and GPU time by list range. That
 will show how much work lies in capacities 1--4, 5--8, 9--16, 17--32, and above
 32, and therefore whether specialized variants could affect enough pixels to
 justify their dispatch and maintenance cost.
+
+Shader-cache revision v14 includes diagnostic mode 8 as the first instrumentation
+step. It displays exact per-pixel depth buckets for 1, 2--4, 5--8, 9--16,
+17--32, 33--64, and 65-or-more fragments. This is a visual distribution rather
+than a timed or numeric GPU histogram, but it requires no new SSBO layout,
+readback, compaction, or dispatch mechanism and is therefore suitable for the
+initial runtime decision. The separate Highlight Transparent overlay is
+suppressed while Exact OIT diagnostics are active so it cannot obscure the
+bucket colors.

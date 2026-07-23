@@ -182,6 +182,11 @@ skips cutoff discovery and pruning while leaving Exact OIT capture, sorting,
 blending, and fallback behavior active, providing a direct runtime A/B
 comparison with the pre-optimization path.
 
+Normal rendering does not perform the count and depth traversal used by
+diagnostic modes. The final pass proceeds directly to the blend traversal, so
+the retained linked list is read once for output rather than once for unused
+diagnostic values and again for blending.
+
 Diagnostic mode 7 visualizes cutoff activity. Black pixels have no qualifying
 cutoff. Blue pixels contain a cutoff with no retained node behind it. Orange
 pixels have farther nodes behind the nearest cutoff; brighter orange represents

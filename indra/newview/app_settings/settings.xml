@@ -11805,7 +11805,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderExactOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode, 6 capacity, 7 opaque-cutoff activity.</string>
+    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode, 6 capacity, 7 opaque-cutoff activity, 8 list-depth buckets.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

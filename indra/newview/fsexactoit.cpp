@@ -199,7 +199,7 @@ const char* FSExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v12";
+    return "Exact OIT shader revision v14";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -1172,12 +1172,18 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
     }
 
     composite(screen, screen_triangle, maximum_list);
-    for (LLDrawPool* pool : pipeline.mPools)
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    // The viewer's Highlight Transparent overlay is drawn after compositing and
+    // would obscure Exact OIT diagnostic colors.
+    if (debug_mode == 0)
     {
-        if (pool->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+        for (LLDrawPool* pool : pipeline.mPools)
         {
-            static_cast<LLDrawPoolAlpha*>(pool)->renderDebugAlpha();
-            break;
+            if (pool->getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+            {
+                static_cast<LLDrawPoolAlpha*>(pool)->renderDebugAlpha();
+                break;
+            }
         }
     }
 }

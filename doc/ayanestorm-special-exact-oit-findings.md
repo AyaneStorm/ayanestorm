@@ -642,6 +642,113 @@ pruning is enabled, affected orange pixels should become blue. This separates a
 non-triggering optimization from one whose GPU-time savings are merely below
 whole-frame measurement noise.
 
+#### Normal-composite traversal removal and depth buckets
+
+Shader-cache revision v13 removes a redundant linked-list traversal from normal
+compositing. The final pass previously calculated fragment count, nearest depth,
+and farthest depth for every populated pixel before checking whether diagnostic
+modes 1 through 4 needed those values. Mode 0 then traversed the same list again
+to blend it. Normal rendering now enters the blend traversal directly; the
+count/depth scan runs only for diagnostics that consume it. This is lossless and
+does not change sorting, blending, capture, allocation, or overflow behavior.
+Its expected benefit scales with the number of captured fragments covering the
+screen, making zoomed smoke and splash workloads the most relevant test.
+
+Diagnostic mode 8 provides a visual list-depth histogram without changing the
+capture buffers or scheduling. Populated pixels are bucketed as follows:
+
+- dark gray: 1 fragment;
+- blue: 2--4;
+- cyan: 5--8;
+- green: 9--16;
+- yellow: 17--32;
+- orange: 33--64;
+- magenta: 65 or more.
+
+This view is intended to decide whether a fixed small-list register sorter could
+cover enough pixels to justify another implementation. It deliberately precedes
+that experiment because the earlier dynamic insertion-sort completion path
+crashed the NVIDIA OpenGL driver.
+
+The viewer's separate Highlight Transparent overlay normally renders after the
+Exact OIT composite. It is suppressed while any Exact OIT diagnostic mode is
+active because otherwise it can paint transparent geometry over the diagnostic
+result. Normal mode 0 retains the existing overlay behavior.
+
+Shader-cache revision v14 makes all Exact OIT diagnostics write zero to the
+screen alpha channel. In this
+render target alpha carries glow rather than display opacity; the previous
+diagnostic alpha of `1.0` requested maximum glow on every diagnosed transparent
+pixel, allowing later post-processing to wash the intended colors out to white.
+Empty-list pixels retain the opaque scene RGB but likewise clear glow while a
+diagnostic mode is active. Mode 4 now performs only its sort-validation
+traversal instead of first calculating unrelated count and depth values.
+
+Runtime validation confirmed that revision v14 removes the pervasive white glow
+and leaves the intended mode 8 depth-bucket colors visible.
+
+Initial mode 8 scene observations after that fix:
+
+- hairstyles are commonly in the 2--4-fragment blue bucket;
+- grass fields can reach the 17--32-fragment yellow bucket;
+- trees range from blue through the 65-or-more magenta bucket;
+- smoke contains substantial 9--16 green, 17--32 yellow, and 65-or-more
+  magenta regions;
+- across general viewing, blue covers more pixels than any other individual
+  bucket.
+
+This distribution means a fixed sorter for at most eight fragments would help
+hair and shallow outer regions, but would not address the expensive centers of
+grass, trees, and smoke. Deep-list work must remain a primary optimization
+target. Visual area is not a GPU-work histogram: a magenta pixel contains at
+least 65 nodes versus 2--4 for blue and can require more global merge passes, so
+a much smaller magenta region may still account for more sorting and memory
+traffic than a large blue region.
+
+A close frontal avatar screenshot provides a more specific shallow-list case.
+The colored avatar regions are almost entirely dark gray, blue, and cyan:
+one-fragment, 2--4-fragment, and 5--8-fragment pixels. The hairstyle is
+predominantly blue with cyan strands and edges; large isolated transparent
+surface regions are one fragment. No material green, yellow, orange, or magenta
+avatar region is visible in that capture. A fixed exact fast path through eight
+fragments would therefore cover nearly all captured avatar transparency in this
+example, even though it would not solve the deep smoke, foliage, and grass
+hotspots.
+
+Some otherwise unrelated surfaces become blue when an alpha-masked tree is
+close to the camera, while the tree itself receives no mode 8 color. This
+confirms that the mask geometry remains outside Exact OIT. Mode 8 is
+screen-space: coloring a visible surface means that 2--4 captured transparent
+fragments lie on the same screen pixels, not that the surface or tree produced
+those fragments. The contributing draw is currently unidentified and must not
+be attributed to the masked tree without capture-path evidence.
+
+Separately, the regular alpha shader does not discard zero-alpha texels in every
+permutation, and `exact_oit_store()` currently allocates every fragment that
+reaches it. Alpha Blend cards, filtered or mipmapped texels, or additional
+blended/emissive passes can therefore create visually inconsequential nodes
+across a large projected area. This remains a general code finding rather than
+an explanation proven for the observed tree scene.
+
+A subsequent mode 8 screenshot of a confirmed Alpha Blend tree proves this
+behavior directly. The diagnostic buckets fill the complete rectangular
+foliage cards, including texels where no leaf is visible. Overlapping full cards
+form broad concentric regions from blue and cyan through green, yellow, orange,
+and a magenta 65-or-more-fragment center. Much of this tree's allocation and
+sorting cost is therefore exact-zero-alpha card area rather than visible leaf
+transparency. Capture-time rejection of mathematically no-op standard-alpha,
+zero-glow fragments is now higher priority than short-list register sorting:
+it can collapse both the shallow outer rectangles and the exceptionally deep
+invisible center before allocation.
+
+A future capture optimization can reject a node only when its complete captured
+operation is mathematically a no-op. The initial safe case to investigate is
+exact source alpha zero, zero captured glow, and the standard alpha blend tuple.
+Custom/additive blend tuples and glow-only capture must not be discarded merely
+because color alpha is zero. Unlike a sorting-only optimization, safe capture
+rejection would reduce node allocation, list depth, sorting, blending, memory
+traffic, and overflow pressure.
+
 #### Deferred near-opaque exploration
 
 A later, explicitly approximate experiment may evaluate treating source alpha

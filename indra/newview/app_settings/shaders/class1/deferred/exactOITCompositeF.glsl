@@ -243,7 +243,10 @@ void main()
     vec4 dst = texelFetch(diffuseRect, pixel, 0);
     if (head == OIT_NULL)
     {
-        frag_color = dst;
+        // Screen alpha carries glow, not display opacity. Diagnostics clear it
+        // so later post-processing cannot turn the visualization white.
+        frag_color = oitDebugMode >= 1 && oitDebugMode <= 8 ?
+            vec4(dst.rgb, 0.0) : dst;
         return;
     }
 
@@ -264,39 +267,53 @@ void main()
 
         if (!cutoff_found)
         {
-            frag_color = vec4(0.0, 0.0, 0.0, 1.0);
+            frag_color = vec4(0.0);
         }
         else if (hidden_behind_cutoff == 0u)
         {
-            frag_color = vec4(0.0, 0.25, 1.0, 1.0);
+            frag_color = vec4(0.0, 0.25, 1.0, 0.0);
         }
         else
         {
             float heat = min(float(hidden_behind_cutoff) / 16.0, 1.0);
-            frag_color = vec4(heat, heat * 0.5, 0.0, 1.0);
+            frag_color = vec4(heat, heat * 0.5, 0.0, 0.0);
         }
         return;
     }
 
-    uint count = 0u;
-    float nearest = 1.0;
-    float farthest = 0.0;
-    for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+    // Count and depth scans are diagnostic work. Normal compositing proceeds
+    // directly to blending so each visible node is read only for useful output.
+    if ((oitDebugMode >= 1 && oitDebugMode <= 3) || oitDebugMode == 8)
     {
-        ++count;
-        nearest = min(nearest, oitNodes[n].depth);
-        farthest = max(farthest, oitNodes[n].depth);
-    }
+        uint count = 0u;
+        float nearest = 1.0;
+        float farthest = 0.0;
+        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        {
+            ++count;
+            nearest = min(nearest, oitNodes[n].depth);
+            farthest = max(farthest, oitNodes[n].depth);
+        }
 
-    if (oitDebugMode == 1)
-    {
-        float heat = min(float(count) / 32.0, 1.0);
-        frag_color = vec4(heat, heat * heat, 1.0 - heat, 1.0);
+        if (oitDebugMode == 1)
+        {
+            float heat = min(float(count) / 32.0, 1.0);
+            frag_color = vec4(heat, heat * heat, 1.0 - heat, 0.0);
+            return;
+        }
+        if (oitDebugMode == 2) { frag_color = vec4(vec3(nearest), 0.0); return; }
+        if (oitDebugMode == 3) { frag_color = vec4(vec3(farthest), 0.0); return; }
+
+        // Exact list-depth buckets: 1, 2-4, 5-8, 9-16, 17-32, 33-64, and 65+.
+        frag_color = count == 1u  ? vec4(0.10, 0.10, 0.10, 0.0) :
+                     count <= 4u  ? vec4(0.00, 0.25, 1.00, 0.0) :
+                     count <= 8u  ? vec4(0.00, 0.80, 1.00, 0.0) :
+                     count <= 16u ? vec4(0.00, 0.80, 0.20, 0.0) :
+                     count <= 32u ? vec4(1.00, 0.90, 0.00, 0.0) :
+                     count <= 64u ? vec4(1.00, 0.35, 0.00, 0.0) :
+                                    vec4(1.00, 0.00, 0.75, 0.0);
         return;
     }
-    if (oitDebugMode == 2) { frag_color = vec4(vec3(nearest), 1.0); return; }
-    if (oitDebugMode == 3) { frag_color = vec4(vec3(farthest), 1.0); return; }
-
     if (oitDebugMode == 4)
     {
         bool invalid = false;
@@ -306,21 +323,21 @@ void main()
             invalid = invalid || oitNodes[n].depth > previous;
             previous = oitNodes[n].depth;
         }
-        frag_color = invalid ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.35, 0.0, 1.0);
+        frag_color = invalid ? vec4(1.0, 0.0, 0.0, 0.0) : vec4(0.0, 0.35, 0.0, 0.0);
         return;
     }
     if (oitDebugMode == 5)
     {
         uint mode = oitNodes[head].blend;
-        frag_color = mode == 0xffffffffu ? vec4(1.0, 0.5, 0.0, 1.0) :
-            vec4(float(mode & 255u) / 9.0, float((mode >> 8u) & 255u) / 9.0, 0.5, 1.0);
+        frag_color = mode == 0xffffffffu ? vec4(1.0, 0.5, 0.0, 0.0) :
+            vec4(float(mode & 255u) / 9.0, float((mode >> 8u) & 255u) / 9.0, 0.5, 0.0);
         return;
     }
     if (oitDebugMode == 6)
     {
         float utilization = oitNodeCapacity == 0u ? 0.0 : min(float(oitNodeCount) / float(oitNodeCapacity), 1.0);
-        frag_color = oitOverflow != 0u ? vec4(1.0, 0.0, 1.0, 1.0) :
-            vec4(utilization, 1.0 - utilization, 0.0, 1.0);
+        frag_color = oitOverflow != 0u ? vec4(1.0, 0.0, 1.0, 0.0) :
+            vec4(utilization, 1.0 - utilization, 0.0, 0.0);
         return;
     }
     float glow = dst.a;
