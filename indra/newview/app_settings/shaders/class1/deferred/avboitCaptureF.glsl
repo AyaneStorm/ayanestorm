@@ -13,7 +13,7 @@ const uint AVBOIT_DIRECT_SLICES = 128u;
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
 const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
-const float AVBOIT_DIRECT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
+const float AVBOIT_DIRECT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
 
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
@@ -102,15 +102,10 @@ uint avboit_conservative_zero_depth(ivec2 pixel)
 
 bool avboit_cull_fragment()
 {
-    if (avboitRasterPass != 2)
-    {
-        return false;
-    }
-    float slice_coordinate = avboit_warped_slice(gl_FragCoord.z);
-    uint zero_depth =
-        avboit_conservative_zero_depth(ivec2(gl_FragCoord.xy));
-    return zero_depth != 255u &&
-        slice_coordinate > float(zero_depth);
+    // Full-resolution folding has no matching conservative low-resolution
+    // depth bounds. Coarse zero-depth rejection would discard visible
+    // geometry at 8x8 cell boundaries.
+    return false;
 }
 
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)

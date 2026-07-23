@@ -136,3 +136,31 @@ retain its performance advantages.
 AVBOIT should therefore be considered viable through Metal on macOS, or through
 OpenGL 4.3-class functionality on other platforms, but not as a portable
 AyaneStorm OpenGL 4.1 feature.
+
+## Runtime grid-artifact diagnosis
+
+Screenshots from the independent AVBOIT path showed severe staircase-shaped
+holes in hair, clothing, and foliage aligned to the one-eighth-resolution
+extinction grid. This identifies a coarse-cell decision rather than normal
+slice approximation or mesh-specific shading as the cause.
+
+The current full-resolution-folding prototype generated an effective-zero
+depth per coarse cell and used it to reject full-resolution fragments. The
+reference algorithm's rejection depends on matching conservative
+low-resolution depth bounds; those bounds are not present in this adaptation.
+A dense portion of a cell could therefore reject unrelated visible geometry
+sharing that cell. Eight-bit integrated transmittance made the boundary still
+more abrupt.
+
+Shader-cache revision v55 disables that geometry rejection until conservative
+bounds are implemented, retains zero depth for diagnostics, stores integrated
+transmittance as `R16F`, and moves effective zero from 1/255 to 1/65536. This
+trades some culling performance for correctness and directly targets the
+observed 8-by-8 grid artifacts.
+
+A pre-v55 banana-leaf comparison provides a clear material-independent example.
+Exact OIT reconstructs the continuous alpha-blended leaf card, whereas AVBOIT
+cuts it into repeated axis-aligned stair steps unrelated to the texture's leaf
+edge. The AVBOIT debug image follows the same stepped footprint. This supports
+coarse-cell full-resolution rejection as the fault and not a banana-leaf
+material, alpha-mask, or mesh problem.

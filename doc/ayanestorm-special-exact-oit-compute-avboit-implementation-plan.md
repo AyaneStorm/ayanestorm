@@ -299,12 +299,25 @@ integration reconstructs them at the same precision. Overflow-min handling is
 unchanged and protects against carry into the adjacent half-word.
 
 This raises extinction scratch storage from the official 128 bits to 256 bits
-per XY cell, still half the earlier one-`U32`-per-slice prototype. Integrated
-transmittance remains the specified filterable 8-bit representation. The
-additional scratch precision is required by the current full-resolution
-folding adaptation; a future true low-resolution conservative prepass can
-return the scratch representation to packed 8-bit without losing individual
-contributions.
+per XY cell, still half the earlier one-`U32`-per-slice prototype. V54 retained
+filterable 8-bit integrated transmittance. The additional scratch precision is
+required by the current full-resolution folding adaptation; a future true
+low-resolution conservative prepass can return the scratch representation to
+packed 8-bit without losing individual contributions.
+
+V55 addresses runtime screenshots showing hard staircase artifacts aligned to
+the 8-by-8 extinction-volume footprint. The prototype used low-resolution
+effective-zero depth to reject full-resolution fragments, but does not yet
+implement the matching conservative low-resolution depth bounds from the
+reference pipeline. Dense coverage in part of a coarse cell could consequently
+discard visible hair, clothing, or foliage elsewhere in that cell.
+
+Until matching conservative bounds exist, effective-zero depth remains
+available for diagnostics but does not reject full-resolution geometry.
+Integrated transmittance is upgraded from `R8` to `R16F`, and the
+effective-zero threshold changes from 1/255 to 1/65536. This deliberately
+forgoes premature zero-transmittance culling for correctness and removes the
+8-bit threshold discontinuity that made coarse cells visibly blocky.
 
 ## Lossless Exact OIT compute sorter
 

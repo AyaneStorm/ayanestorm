@@ -145,7 +145,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v54";
+    return "AVBOIT shader revision v55";
 }
 
 bool FSAVBOIT::supported()
@@ -532,7 +532,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenTextures(1, &sResources.transmittance);
     glBindTexture(GL_TEXTURE_3D, sResources.transmittance);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8,
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R16F,
                    sResources.volumeWidth, sResources.volumeHeight, AVBOIT_SLICES);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -634,7 +634,7 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
          AVBOIT_PACKED_SLICES * sizeof(U32)) / (1024ull * 1024ull));
     info["AVBOIT_TRANSMITTANCE_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
-         AVBOIT_SLICES) / (1024ull * 1024ull));
+         AVBOIT_SLICES * 2ull) / (1024ull * 1024ull));
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
@@ -689,7 +689,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
                        GL_READ_WRITE, GL_R32UI);
     glBindImageTexture(4, sResources.transmittance, 0, GL_TRUE, 0,
-                       GL_READ_WRITE, GL_R8);
+                       GL_READ_WRITE, GL_R16F);
     glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R8UI);
     glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
