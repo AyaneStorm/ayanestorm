@@ -8,7 +8,7 @@ layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 4, r32f) uniform coherent image3D avboitTransmittance;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
-layout(binding = 7, r32f) uniform coherent image2D avboitTotalTransmittance;
+layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
 
 layout(std430, binding = 4) buffer AVBOITOccupancy
 {
@@ -38,8 +38,16 @@ uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 
 const uint AVBOIT_SLICES = 128u;
+const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4u;
 const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
 const float AVBOIT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
+
+float unpack_extinction(uint packed_word, uint slice_index)
+{
+    uint shift = (slice_index & 3u) * 8u;
+    return float((packed_word >> shift) & 255u) *
+        (AVBOIT_ZERO_EXTINCTION / 255.0);
+}
 
 uint tile_occupancy_index(ivec2 cell, uint word)
 {
@@ -121,13 +129,19 @@ void main()
     {
         if (all(lessThan(pixel, avboitVolumeSize)))
         {
-            imageStore(avboitTotalTransmittance, pixel, vec4(1.0));
+            imageStore(avboitExtinctionOverflowDepth, pixel, uvec4(255u));
+            imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(255u));
             if (tile_is_occupied(pixel))
             {
-                for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
+                for (uint word = 0u; word < AVBOIT_PACKED_SLICES; ++word)
                 {
-                    ivec3 coordinate = ivec3(pixel, int(slice));
+                    ivec3 coordinate = ivec3(pixel, int(word));
                     imageStore(avboitExtinction, coordinate, uvec4(0u));
+                }
+                for (uint slice_index = 0u;
+                     slice_index < AVBOIT_SLICES; ++slice_index)
+                {
+                    ivec3 coordinate = ivec3(pixel, int(slice_index));
                     imageStore(avboitTransmittance, coordinate, vec4(1.0));
                 }
             }
@@ -141,20 +155,32 @@ void main()
         {
             float extinction = 0.0;
             uint zero_depth = 255u;
-            for (uint slice = 0u; slice < AVBOIT_SLICES; ++slice)
+            uint overflow_depth =
+                imageLoad(avboitExtinctionOverflowDepth, pixel).r;
+            for (uint slice_index = 0u;
+                 slice_index < AVBOIT_SLICES; ++slice_index)
             {
-                imageStore(avboitTransmittance, ivec3(pixel, int(slice)),
+                imageStore(avboitTransmittance,
+                           ivec3(pixel, int(slice_index)),
                            vec4(exp(-extinction)));
-                extinction += float(imageLoad(
-                    avboitExtinction, ivec3(pixel, int(slice))).r) / 65536.0;
+                if (slice_index >= overflow_depth)
+                {
+                    extinction = AVBOIT_ZERO_EXTINCTION;
+                }
+                else
+                {
+                    uint packed_word = imageLoad(
+                        avboitExtinction,
+                        ivec3(pixel, int(slice_index >> 2u))).r;
+                    extinction += unpack_extinction(packed_word, slice_index);
+                }
                 if (zero_depth == 255u && extinction >= AVBOIT_ZERO_EXTINCTION)
                 {
-                    zero_depth = slice;
+                    zero_depth = slice_index;
                     break;
                 }
             }
             imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(zero_depth));
-            imageStore(avboitTotalTransmittance, pixel, vec4(exp(-extinction)));
         }
         return;
     }

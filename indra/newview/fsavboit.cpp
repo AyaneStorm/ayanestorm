@@ -26,6 +26,7 @@ namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
 constexpr U32 AVBOIT_SLICES = 128;
+constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 
 S32 directTransmittanceTextureUnit()
@@ -121,7 +122,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v43";
+    return "AVBOIT shader revision v45";
 }
 
 bool FSAVBOIT::supported()
@@ -484,7 +485,8 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glGenTextures(1, &sResources.extinction);
     glBindTexture(GL_TEXTURE_3D, sResources.extinction);
     glTexStorage3D(GL_TEXTURE_3D, 1, GL_R32UI,
-                   sResources.volumeWidth, sResources.volumeHeight, AVBOIT_SLICES);
+                   sResources.volumeWidth, sResources.volumeHeight,
+                   AVBOIT_PACKED_SLICES);
 
     glGenTextures(1, &sResources.transmittance);
     glBindTexture(GL_TEXTURE_3D, sResources.transmittance);
@@ -502,14 +504,10 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glTexStorage2D(GL_TEXTURE_2D, 1, GL_R8UI,
                    sResources.volumeWidth, sResources.volumeHeight);
 
-    glGenTextures(1, &sResources.totalTransmittance);
-    glBindTexture(GL_TEXTURE_2D, sResources.totalTransmittance);
-    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32F,
+    glGenTextures(1, &sResources.extinctionOverflowDepth);
+    glBindTexture(GL_TEXTURE_2D, sResources.extinctionOverflowDepth);
+    glTexStorage2D(GL_TEXTURE_2D, 1, GL_R32UI,
                    sResources.volumeWidth, sResources.volumeHeight);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glBindTexture(GL_TEXTURE_2D, 0);
 
     glGenBuffers(1, &sResources.occupancy);
@@ -558,7 +556,8 @@ void FSAVBOIT::releaseResources()
     if (sResources.transmittance) glDeleteTextures(1, &sResources.transmittance);
     if (sResources.zeroTransmittanceDepth)
         glDeleteTextures(1, &sResources.zeroTransmittanceDepth);
-    if (sResources.totalTransmittance) glDeleteTextures(1, &sResources.totalTransmittance);
+    if (sResources.extinctionOverflowDepth)
+        glDeleteTextures(1, &sResources.extinctionOverflowDepth);
     if (sResources.occupancy) glDeleteBuffers(1, &sResources.occupancy);
     if (sResources.warp) glDeleteBuffers(1, &sResources.warp);
     if (sResources.tileOccupancy) glDeleteBuffers(1, &sResources.tileOccupancy);
@@ -575,6 +574,9 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
     info["AVBOIT_VOLUME_WIDTH"] = LLSD::Integer(sResources.volumeWidth);
     info["AVBOIT_VOLUME_HEIGHT"] = LLSD::Integer(sResources.volumeHeight);
     info["AVBOIT_SLICES"] = LLSD::Integer(AVBOIT_SLICES);
+    info["AVBOIT_PACKED_EXTINCTION_MB"] = LLSD::Integer(
+        (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
+         AVBOIT_PACKED_SLICES * sizeof(U32)) / (1024ull * 1024ull));
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
@@ -627,8 +629,8 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
                        GL_READ_WRITE, GL_R32F);
     glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R8UI);
-    glBindImageTexture(7, sResources.totalTransmittance, 0, GL_FALSE, 0,
-                       GL_READ_WRITE, GL_R32F);
+    glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
+                       GL_READ_WRITE, GL_R32UI);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sResources.occupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sResources.warp);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);

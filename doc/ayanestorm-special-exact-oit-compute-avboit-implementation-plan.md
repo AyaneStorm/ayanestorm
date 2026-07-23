@@ -164,6 +164,25 @@ AVBOIT emissive and PBR-glow shaders are complete terminal fragment stages, not
 capture libraries; they now replace the vanilla terminal stage and retain their
 required indexed-texture helper. The AVBOIT cache revision is v43.
 
+V43 restored independent AVBOIT rendering at runtime. Noticeable hair and
+clothing artifacts remain, but artifact correction is deferred while the
+implementation is brought closer to the presentation specification.
+
+V44 replaces the prototype's 32-bit extinction value per physical slice with
+the presentation's four packed 8-bit extinction values per 32-bit word. Atomic
+adds return the previous packed word; if the addressed byte overflows, the
+fragment records the minimum overflowing physical slice in a separate
+low-resolution `R32UI` image. Integration saturates at that slice, so carry
+propagation into later packed bytes cannot alter the transmittance result.
+The 128-slice extinction volume therefore falls from 512 to 128 bits per XY
+cell, plus one 32-bit overflow depth per XY cell. The unused prototype total
+transmittance image was removed. Build and runtime validation are pending.
+
+The first v44 runtime attempt fell back to Standard because NVIDIA's GLSL
+compiler parsed the new identifiers `slice` and `packed` as reserved/contextual
+tokens. V45 renames them to `slice_index` and `packed_word` throughout the
+packed-extinction code. Runtime validation is pending.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

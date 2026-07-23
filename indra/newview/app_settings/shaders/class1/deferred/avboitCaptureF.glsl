@@ -13,6 +13,7 @@ const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
+layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
 layout(std430, binding = 4) buffer AVBOITOccupancy { uint avboitOccupancy[8192]; };
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
@@ -50,6 +51,25 @@ void avboit_mark_tile(ivec2 cell)
     }
 }
 
+void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
+{
+    uint value = uint(clamp(
+        optical_depth / -log(1.0 / 65536.0) * 255.0, 0.0, 255.0) + 0.5);
+    if (value == 0u)
+    {
+        return;
+    }
+
+    uint shift = (slice_index & 3u) * 8u;
+    uint old_word = imageAtomicAdd(
+        avboitExtinction, ivec3(cell, int(slice_index >> 2u)), value << shift);
+    uint old_value = (old_word >> shift) & 255u;
+    if (old_value + value > 255u)
+    {
+        imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
+    }
+}
+
 void avboit_direct_store(vec4 color)
 {
     float alpha = clamp(color.a, 0.0, 1.0);
@@ -76,24 +96,19 @@ void avboit_direct_store(vec4 color)
         if (alpha > 0.0)
         {
             float optical_depth = -log(max(1.0 - alpha, 1.0 / 65536.0)) / 64.0;
-            uint fixed_extinction = uint(optical_depth * 65536.0 + 0.5);
             uint lower_slice = uint(floor(slice_coordinate));
             uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
-            uint upper_extinction = uint(
-                float(fixed_extinction) * fract(slice_coordinate) + 0.5);
-            uint lower_extinction = fixed_extinction - upper_extinction;
+            float upper_extinction = optical_depth * fract(slice_coordinate);
+            float lower_extinction = optical_depth - upper_extinction;
             ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
             if (upper_slice == lower_slice)
             {
-                imageAtomicAdd(avboitExtinction, ivec3(cell, int(lower_slice)),
-                               fixed_extinction);
+                avboit_add_extinction(cell, lower_slice, optical_depth);
             }
             else
             {
-                imageAtomicAdd(avboitExtinction, ivec3(cell, int(lower_slice)),
-                               lower_extinction);
-                imageAtomicAdd(avboitExtinction, ivec3(cell, int(upper_slice)),
-                               upper_extinction);
+                avboit_add_extinction(cell, lower_slice, lower_extinction);
+                avboit_add_extinction(cell, upper_slice, upper_extinction);
             }
         }
         return;
