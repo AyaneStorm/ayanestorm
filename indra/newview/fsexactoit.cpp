@@ -650,33 +650,7 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
 // Resets transient capture and fallback state at the start of a transparency frame.
 void FSExactOIT::beginFrame()
 {
-    // Exact OIT does not require vanilla's cached within-group alpha ordering.
-    // Rebuild visible alpha groups when returning to vanilla so that ordering
-    // cannot remain stale until camera movement marks the groups dirty.
-    static bool was_enabled = false;
-    const bool enabled = isEnabled();
-    if (was_enabled && !enabled)
-    {
-        const auto invalidate_alpha_groups =
-            [](LLCullResult::sg_iterator begin, LLCullResult::sg_iterator end)
-        {
-            for (LLCullResult::sg_iterator iter = begin; iter != end; ++iter)
-            {
-                LLSpatialGroup* group = *iter;
-                if (group && !group->isDead())
-                {
-                    group->setState(LLSpatialGroup::ALPHA_DIRTY);
-                    gPipeline.markRebuild(group);
-                }
-            }
-        };
-
-        invalidate_alpha_groups(gPipeline.beginAlphaGroups(), gPipeline.endAlphaGroups());
-        invalidate_alpha_groups(gPipeline.beginRiggedAlphaGroups(),
-                                gPipeline.endRiggedAlphaGroups());
-    }
-    was_enabled = enabled;
-
+    // Mode-transition invalidation is centralized in the neutral dispatcher.
     sCaptureCompleted = false;
     sCaptureClearNeeded = true;
     sVanillaFallbackActive = false;

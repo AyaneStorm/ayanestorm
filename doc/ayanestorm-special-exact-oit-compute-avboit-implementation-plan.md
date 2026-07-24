@@ -199,7 +199,7 @@ neighboring virtual-depth entries belong to occupied ranges; transitions into
 or out of empty space snap to the occupied endpoint. This implements the
 presentation's rule that empty ranges disable filtering instead of allowing
 the hardware-equivalent linear lookup to blend across them. Build and runtime
-validation are pending.
+validation passed (`bokt`).
 
 V48 replaces direct window-depth binning with the presentation's logarithmic
 view-depth parametrization. Every AVBOIT material path reconstructs linear
@@ -362,6 +362,208 @@ implemented 0-5 range, and logs every live transition. This removes cached
 control ambiguity and provides direct evidence that the selected diagnostic
 value reaches the independent AVBOIT renderer.
 
+V59 replaces the packed-extinction saturating compare-and-swap loop with the
+PDF's production atomic-add and earliest-overflow-depth method. V60 introduces
+separate occupied-range begin/end metadata and boundary-aware snapping.
+
+V61 replaces the single-thread warp scan with a 256-lane compute construction.
+It evaluates conservatively OR-reduced occupancy at successively halved
+virtual resolutions, selects the finest level fitting 128 physical slices,
+performs an 8192-entry Blelloch exclusive prefix sum, and writes compacted
+coordinates in parallel. The LUT now distinguishes begin, end, and middle
+entries of contiguous occupied ranges. Empty-boundary sampling snaps to the
+marked endpoint; occupied ranges use the recomputed fractional coordinate.
+Minimum-world-thickness fitting of the initial logarithmic curve remains
+pending. Build and runtime validation of v59-v61 is pending.
+
+V62 replaces the prototype's near-normalized logarithm with the PDF slide 49
+curve:
+
+`slice = log2(depth / a + 1) / log2(far / a + 1) * n`
+
+At the proposed high virtual resolution, `n=8192` and `a=16384`; the near plane
+is implicit. Occupancy, extinction, ordinary color, emissive, and PBR glow all
+use this same equation. Reparameterizing both `n` and `a` for the selected
+power-of-two divider remains part of the active v62 work.
+
+V61-v62 passed build and runtime testing (`bokt`).
+
+V63 begins exact resolution redistribution. The compute builder now owns the
+PDF's divider-dependent curve (`n=8192/2^d`, `a=16384/2^d`) and its inverse
+high-resolution curve. It can conservatively map both depth boundaries of an
+occupied high-resolution bin into the reparameterized domain without
+rerasterizing transparency. The v61 adjacent-index grouping has been replaced:
+each candidate divider clears a shared occupancy domain, conservatively maps
+the lower and upper depth boundaries of every occupied high-resolution bin,
+counts the remapped coverage in parallel, and selects the finest candidate
+that fits 128 physical slices. Prefix compaction and LUT fractional
+coordinates operate in that selected reparameterized domain. Build and runtime
+validation passed (`bokt`).
+
+V64 supplies the isolated one-eighth-resolution occupancy and extinction
+rasters with the opaque scene's visible-depth bound. Each low-resolution
+fragment conservatively reduces the farthest conventional-Z depth over its
+covered 8-by-8 full-resolution block and rejects only if it lies behind every
+opaque sample. Occupancy, scalar extinction, emissive, and PBR glow use the
+same bound. Build and runtime validation are pending.
+
+The first v64 runtime test selected Standard because the startup guard queried
+the post-deferred `screen` target for an owned depth texture. That target only
+shares the attachment and consequently returns zero from `getDepth()`. The
+corrected v64 path samples the texture from its owner, `deferredScreen`, while
+continuing to render against the shared depth attachment on `screen`.
+
+The corrected v64 path passed build and runtime testing (`bokt`).
+
+V65 compacts spatially occupied extinction cells into a GPU work list. A dense
+classification pass appends each conservative occupied cell once, a one-group
+finalization pass writes an indirect compute command, and both sparse clear
+and extinction integration consume the same list through
+`glDispatchComputeIndirect`. Empty cells no longer launch clear or integration
+invocations. The list is sized to the complete low-resolution grid and its
+counter remains GPU-only in the diagnostics buffer. Build and runtime
+validation passed (`bokt`).
+
+V66 implements the PDF's zero-transmittance early-depth pipeline without
+modifying the viewer's shared scene depth:
+
+1. the full-resolution opaque-copy target now owns a private depth texture;
+2. opaque color and the shared deferred depth are copied into that target;
+3. warp construction records a conservative maximum window-depth bound for
+   every physical AVBOIT slice;
+4. compute reduces each 16-by-16 screen tile over its four 8-by-8 extinction
+   cells, rejects any tile containing a non-saturated cell, and appends the
+   remaining tile/depth pairs to a GPU list;
+5. compute increments the instance count of a four-word indirect draw command;
+6. an indirect six-vertex instanced draw rasterizes conservative depth-only
+   tile quads into the private depth texture; and
+7. full-resolution weighted transparency renders in the same framebuffer and
+   is rejected through ordinary `GL_LEQUAL` early depth and hierarchical Z.
+
+The physical-slice bound uses the far boundary of every contributing virtual
+depth interval. Tile reduction takes the farthest of all four extinction
+cells, so generated depth may retain false-positive work but cannot reject a
+potentially visible fragment merely because another part of the tile saturated
+earlier. The invalid fragment-stage substitute remains disabled. Build and
+runtime validation are pending.
+
+All transient sparse-cell, indirect-dispatch, physical-depth-bound, tile-list,
+and indirect-draw data shares one SSBO at binding 3. Together with occupancy,
+warp, tile occupancy, and diagnostics, v66 uses five shader-storage bindings
+and remains within OpenGL 4.3's minimum guarantee of eight compute-stage SSBO
+bindings.
+
+The first v66 build fell back to Standard because NVIDIA GLSL reserves the
+identifier `output`; it was used for the tile-list work-buffer offset in the
+volume compute shader. V67 renames it to `work_offset` and bumps the AVBOIT
+shader-cache revision. Runtime validation is pending.
+
+V67 passed build and runtime testing (`bokt`). The indirect private-depth path
+is active with conventional `GL_LEQUAL` depth, clipped partial viewport tiles,
+restored framebuffer/depth state, and no mutation of shared scene depth.
+
+V68 applies DRO17's portable full-resolution conservative-raster fallback to
+AVBOIT occupancy. Occupancy geometry rasterizes against the private
+full-resolution opaque depth target and atomically folds every covered
+fragment into its 8-by-8 volume cell. Extinction remains a separate
+one-eighth-resolution raster, as required by the selected AVBOIT
+configuration. Thin geometry that contributes to the final color raster can
+therefore no longer disappear merely because it missed every low-resolution
+occupancy sample center. Neighbor-cell dilation remains in place for
+trilinear-filter support.
+
+This is a correctness-preserving material-raster fallback for conservative
+coverage, not completion of the optimized DRO17 entity-bound/Z-bin job. The
+latter remains necessary to avoid a full material draw traversal for
+occupancy.
+
+V68 passed build and runtime testing (`bokt`). It fixed a visible thin-banana-
+leaf false negative where the opposite side showed through the leaf; the
+result is now closer to Exact OIT. This confirms that the earlier
+one-eighth-resolution occupancy raster could omit geometry that still covered
+pixels in the final full-resolution pass.
+
+V69 implements the first conservative transparent-bounds job from the DRO17
+adaptation. Before alpha-tested occupancy rasterization, it visits the visible
+static and rigged alpha spatial-group ranges, applies the matching water-side,
+particle-visibility, dead-group, bridge, and draw-entry tests, and rasterizes
+both opposing fans of every conservative group AABB at full resolution.
+Fragments atomically reduce a logarithmic virtual-depth interval for each
+covered 8-by-8 cell in the existing binding-3 work SSBO.
+
+The initial v69 implementation converted the intervals to start/end events and
+unioned every depth inside each coarse AABB into virtual-Z coverage. It built
+after adding the missing `llviewerregion.h` definition, but runtime testing
+regressed the v68 banana-leaf fix: the far leaf side became visible through
+the front again. The alpha-tested fragment was still covered; the regression
+came from erasing genuine empty Z ranges, which forced adaptive compaction to
+spend physical slices on empty space inside coarse group bounds.
+
+V70 preserves the proxy intervals and their conservative spatial-work
+dilation, but restores fragment-derived virtual-Z occupancy as the sole input
+to depth-warp fitting. Bounds therefore cannot flatten the adaptive
+distribution. Per-entity bounds plus the packed DRO17 Z-bin candidate stage
+must be implemented before bound intervals are precise enough to influence Z
+occupancy. Proxy depth remains clamped by the same private opaque-depth source
+and logarithmic near/far parameters used by material splatting. The packed
+work layout continues to preserve the OpenGL 4.3 eight-SSBO-binding baseline.
+V70 passed build and runtime testing. The banana-leaf regression is improved:
+the far surface is no longer exposed as in v69, although the result remains
+slightly less opaque than Exact OIT. The full-resolution aggregate-opacity
+equation is correct; the residual difference is consistent with AVBOIT's
+specified effective-zero threshold. At `T <= 1/255`, indirect early depth may
+skip deeper events, intentionally retaining at most about 0.4 percent
+transmission rather than continuing Exact OIT's product toward mathematical
+zero.
+
+V71 implements the first active DRO17 Z-bin candidate range. The CPU gathers
+and conservatively depth-projects visible alpha bounds, sorts them by minimum
+view depth, and sweeps uniformly distributed visible-depth bins. Every one of
+8192 bins is uploaded as a packed pair of 16-bit minimum/maximum sorted entity
+IDs. The proxy fragment stage loads its bin, decodes the range, and rejects an
+entity outside that conservative candidate interval before writing spatial
+coverage. ID 65534 is a conservative overflow bucket and
+`0xffff|0xffff` denotes an empty bin.
+
+This is the OpenGL 4.3 adaptation of DRO17's scalar range stage. Core GLSL 4.30
+does not expose subgroup/wave operations, so wave-uniform min/max and
+wave-compacted bit-word iteration cannot be assumed. The remaining optimized
+stage is a per-tile entity bit mask intersected with the packed Z-bin range;
+until that exists, v68's material occupancy traversal remains the correctness
+oracle. V71 build, shader-link, visual, and CPU/GPU performance validation are
+pending.
+
+V71 passed build and runtime validation (`bokt`).
+
+V72 adds the presentation's 256-bit screen-cell entity mask. After the packed
+Z-bin range accepts a proxy fragment, it atomically ORs the sorted entity ID
+into one of eight 32-bit words for that 8-by-8 AVBOIT cell. IDs above 254 share
+bit 255 as a conservative overflow bucket, so a scene exceeding the portable
+mask budget cannot silently lose spatial coverage. Compute clears the masks
+and requires at least one surviving entity bit before proxy bounds enlarge
+sparse spatial work. The masks and intervals remain packed into the unified
+binding-3 work buffer.
+
+The remaining DRO17 step is range-masked word iteration: derive the applicable
+Z-bin range for a voxel job, mask the first/last words, and iterate the merged
+candidate bits with a portable workgroup reduction. V72 passed build and
+runtime validation (`bokt`) with rendering unchanged from v71.
+
+The v72 runtime also reconfirmed a mode-transition regression: after returning
+from either Exact OIT or AVBOIT to Standard, parts of the scene could retain
+OIT-era alpha ordering. Both renderer modules independently invalidated only
+the current cull result, and AVBOIT did so only when its preceding capture had
+completed. Groups outside the current view could therefore later enter
+Standard without ever being rebuilt.
+
+Transition cleanup is now centralized in `FSOITDispatcher`. On an OIT-to-
+Standard transition it marks current static and rigged alpha groups
+`ALPHA_DIRTY` and also calls the existing all-region volume/bridge octree
+rebuild traversal. The individual renderers now only reset their private
+frame state. This prevents selection logic and cleanup from diverging again.
+Build/runtime validation of Exact-to-Standard, AVBOIT-to-Standard, and objects
+entering view after the switch is pending.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.
@@ -437,64 +639,190 @@ the specification merely because a custom approximation exists.
 
 ### Viewer integration requiring validation as mathematically equivalent
 
-- [ ] Audit the full-resolution MRT color, normalization-weight, glow, and
+- [x] Audit the full-resolution MRT color, normalization-weight, glow, and
   extinction equations line by line against the PDF equations.
-- [ ] Audit the two-slice sampling offset and self-occlusion avoidance against
+- [x] Audit the two-slice sampling offset and self-occlusion avoidance against
   the PDF's stated depth bias.
-- [ ] Verify custom source-over mapping and glow treatment are explicitly
+- [x] Verify custom source-over mapping and glow treatment are explicitly
   outside the physical AVBOIT model rather than claiming PDF equivalence.
-- [ ] Verify the isolated low-resolution raster target uses the same required
+- [x] Verify the isolated low-resolution raster target uses the same required
   visible-depth bounds as the reference prepass.
 
 ### Missing adaptive depth-distribution stages
 
-- [ ] Parameterize the logarithmic depth curve from requested minimum slice
+- [x] Parameterize the logarithmic depth curve from requested minimum slice
   thickness over the visible depth range.
-- [ ] Generate coverage at the proposed high virtual-slice resolution.
-- [ ] Implement a parallel prefix sum of virtual Z occupancy.
-- [ ] Compact occupied virtual slices into physical slices.
-- [ ] When occupied slices exceed the 128-slice budget, halve/reparameterize
+- [x] Generate coverage at the proposed high virtual-slice resolution.
+- [x] Implement a parallel prefix sum of virtual Z occupancy.
+- [x] Compact occupied virtual slices into physical slices.
+- [x] When occupied slices exceed the 128-slice budget, halve/reparameterize
   virtual resolution and conservatively rewrite occupancy until it fits.
-- [ ] Encode distinct range-begin, range-end, and range-middle filterability
+- [x] Encode distinct range-begin, range-end, and range-middle filterability
   metadata in the depth-warp LUT.
-- [ ] Recalculate the fractional coordinate within occupied ranges.
-- [ ] Snap sampling at empty-range boundaries exactly as described by the PDF.
-- [ ] Replace the current power-of-two grouping, serial scan, and one-bit
-  filterability approximation.
+- [x] Recalculate the fractional coordinate within occupied ranges.
+- [x] Snap sampling at empty-range boundaries as described by the PDF.
+- [x] Replace the serial scan and one-bit filterability approximation with
+  parallel conservative resolution reduction and prefix compaction.
 
-### Missing sparse spatial-work stages
+### Sparse spatial-work stages
 
-- [ ] Gather transparent mesh and VFX bounding boxes/quads for a compute job.
-- [ ] Conservatively software-rasterize/voxelize those bounds into the
+- [x] Gather conservative transparent static, rigged, and VFX spatial-group
+  bounding boxes for the GPU bounds job.
+- [x] Conservatively proxy-rasterize and voxelize those bounds into the
   low-resolution occupancy bit buffer.
-- [ ] Separate scalar and RGB occupancy where the selected reference
-  configuration requires it.
-- [ ] Drive clear and integration dispatches from occupied work rather than
+- [x] Keep one scalar occupancy path for the selected monochrome-extinction
+  configuration; RGB occupancy is not required by this selection.
+- [x] Drive clear and integration dispatches from occupied work rather than
   merely branching inside dense dispatches.
-- [ ] Confirm the same conservative depth bounds are shared with the
-  transparency prepass.
+- [x] Share the private conservative opaque-depth copy and logarithmic
+  near/far parameters with the transparency prepass.
+
+#### DRO17 Z-binning input
+
+The local cited source is Michal Drobot, *Improved Culling for Tiled and
+Clustered Rendering*, SIGGRAPH 2017,
+`doc/2017_Sig_Improved_Culling_final.pdf`. It is a Forward+/clustered-culling
+presentation rather than an OIT method, but AVBOIT explicitly reuses its
+one-dimensional Z-binning idea and conservative raster-culling machinery.
+
+The F+ Z-binning algorithm is:
+
+- CPU sorts entities by Z and creates uniform depth bins;
+- every bin stores a packed pair of 16-bit minimum/maximum sorted entity IDs;
+- a pixel or compute wave loads its Z-bin range;
+- wave-wide minimum and maximum operations scalarize the entity-word range;
+- per-lane Z-bin masks intersect the spatial visibility words;
+- wave-wide bitwise OR produces a scalar merged candidate mask; and
+- set bits are iterated with first-bit extraction.
+
+For AVBOIT this is not a replacement for adaptive depth-warp prefix compaction.
+It is the candidate-generation mechanism for the missing conservative
+mesh/VFX bounds job. A conforming AyaneStorm design should therefore:
+
+1. create a transient list of transparent draw bounds sorted by conservative
+   view-space minimum depth;
+2. build the packed `minID|maxID` Z-bin LUT over the selected visible range;
+3. combine those Z ranges with conservative screen-tile entity masks;
+4. scalarize candidate word ranges per compute wave where subgroup operations
+   are available;
+5. software-rasterize only surviving bounds into AVBOIT occupancy; and
+6. retain a portable shared-memory reduction path because OpenGL 4.3 does not
+   guarantee subgroup/wave intrinsics.
+
+The final occupancy must remain conservative. Z-bin min/max ranges may include
+false-positive entities but must never exclude an entity whose bounds overlap
+the queried depth bin.
+
+Current AyaneStorm status:
+
+- [x] Conservatively depth-project and sort transparent bound entities on CPU.
+- [x] Generate the uniform packed 16-bit minimum/maximum entity-ID LUT.
+- [x] Load and apply that Z-bin range in the proxy fragment stage.
+- [x] Generate eight per-cell entity bit words after Z-bin range acceptance.
+- [ ] Intersect tile words with the Z-bin range and iterate surviving entities.
+- [ ] Replace the v68 material fallback only after conservative-superset
+  diagnostics show no missing alpha-tested coverage.
+
+The same source provides a more direct implementation route for the bounds
+stage than CPU screen rectangles alone:
+
+- represent each bounded entity with conservative proxy geometry;
+- rasterize the proxy through the fixed-function pipeline;
+- atomically OR its entity bit into an 8-by-8 screen-tile flat bit array;
+- use early depth/stencil and conservative depth bounds where available;
+- emulate conservative rasterization with full-resolution raster plus 4x MSAA
+  when hardware conservative rasterization is unavailable;
+- compact duplicate `(tile, word)` atomic writes within a wave before the OR;
+- for cluster walking, derive conservative triangle depth from fine
+  derivatives and the triangle's three vertex depths.
+
+The presentation measured its 256-bit tiled Z-bin lookup at 7.65 ms versus
+9.00 ms for the tiled baseline in one PS4 scene, and the combined scalarized
+tile plus Z-bin path at 4.6 ms versus 5.7 ms for its base tiled path in another.
+Its raster-culling example reduced three full-screen lights from 1.44 ms to
+0.10 ms using 4x MSAA plus atomic compaction. These figures establish the
+intended optimization direction but are not transferable AVBOIT performance
+claims.
+
+AyaneStorm should adapt the method to transparent draw bounds, not individual
+fragments. The resulting tile/entity mask limits which bounds the occupancy
+compute job examines; the existing material raster remains responsible for
+alpha-tested extinction until a conservative proxy can reproduce all relevant
+draw bounds without false negatives.
+
+#### AyaneStorm conservative-bounds implementation contract
+
+The viewer already exposes the two inputs needed for the portable DRO17 path:
+each visible alpha `LLSpatialGroup` supplies conservative agent-space extents
+(or its bridge's spatial extents), and `LLPipeline::mCubeVB` supplies the cube
+proxy used by the existing occlusion renderer. The AVBOIT bounds stage should
+therefore use fixed-function proxy rasterization rather than CPU-projected
+screen rectangles:
+
+1. before material occupancy/extinction splatting, visit the same alpha and
+   rigged-alpha group ranges used by `LLDrawPoolAlpha`;
+2. reject groups with no applicable alpha draw entries and apply the same
+   water-side, particle-visibility, dead-group, and bridge tests as the real
+   traversal;
+3. rasterize each surviving conservative AABB with the cube proxy at the
+   full-resolution fallback sample rate (or hardware conservative raster when
+   a future capability path is added);
+4. atomically reduce the nearest and farthest logarithmic virtual-depth bin
+   touched by the proxy into each covered 8-by-8 AVBOIT cell;
+5. use those cell intervals to seed conservative spatial work, while retaining
+   alpha-tested fragment coverage as the Z-warp input until per-entity Z-bin
+   filtering makes the bounds sufficiently precise; and
+6. retain v68's alpha-tested full-resolution occupancy raster until comparison
+   diagnostics prove that proxy occupancy is a conservative superset. Only
+   then may the proxy path replace the fallback.
+
+Using CPU-projected rectangles was rejected for this stage: AABB edges that
+cross the near plane require explicit homogeneous clipping, and clamping only
+the eight projected corners can under-cover the screen. Proxy clipping is
+instead handled by the existing graphics pipeline. Rasterizing only one proxy
+surface depth is also insufficient; the interval reduction and expansion are
+required so all virtual slices intersected by the bound become occupied.
+
+The first implementation should operate on spatial-group bounds because these
+are already available before material splatting and conservatively include
+mesh, rigged, and VFX draws. They may introduce false positives. A later
+per-draw bound list and packed 16-bit Z-bin entity-ID LUT can reduce those
+false positives without changing the occupancy contract. Bounds and the
+alpha-tested fallback must use the same opaque-depth copy and logarithmic
+near/far parameters as extinction splatting.
 
 ### Missing zero-transmittance early-depth pipeline
 
-- [ ] Conservatively reduce `zeroTransmittanceDepth` for screen tiles of at
+- [x] Conservatively reduce `zeroTransmittanceDepth` for screen tiles of at
   least 16 by 16 pixels.
-- [ ] Generate a tile-quad list and indirect draw command in compute.
-- [ ] Draw the generated quads at their conservative zero-transmittance depth
+- [x] Generate a tile-quad list and indirect draw command in compute.
+- [x] Draw the generated quads at their conservative zero-transmittance depth
   into the scene depth buffer.
-- [ ] Validate depth convention, reversed-Z state if applicable, viewport
+- [x] Validate depth convention, reversed-Z state if applicable, viewport
   edges, partial tiles, and hierarchical-Z behavior.
-- [ ] Re-enable zero-transmittance rejection only through this depth pipeline.
+- [x] Re-enable zero-transmittance rejection only through this depth pipeline.
 - [x] Disable the invalid fragment-stage coarse-cell rejection.
 
 ### Color extinction and advanced PDF stages
 
-- [ ] Determine and document whether AyaneStorm targets the scalar-only,
+- [x] Determine and document whether AyaneStorm targets the scalar-only,
   split scalar/RGB, or memory-constrained chroma-skew reference configuration.
-- [ ] If using split RGB extinction, implement its separate occupancy,
-  splatting, integration, and RGB integral storage.
-- [ ] Implement or explicitly exclude the PDF's slice-overlap detection and
+- [x] Explicitly select scalar-only extinction; split RGB occupancy,
+  splatting, integration, and RGB integral storage are not part of this
+  selected reference configuration.
+- [x] Explicitly exclude the optional PDF slice-overlap detection and
   color-skew self-correction.
-- [ ] Implement or explicitly exclude fog-transmittance interaction.
+- [x] Explicitly exclude optional fog-transmittance interaction.
+
+AyaneStorm targets the PDF's monochrome/scalar AVBOIT configuration: one
+packed 8-bit extinction value and one integrated scalar transmittance value per
+voxel. This matches the presentation's primary 16.8 MB one-eighth-resolution
+4K configuration and the current Second Life source-over approximation.
+Split RGB extinction, memory-constrained chroma skew, overlap correction, and
+volumetric-fog composition are optional extensions in the presentation. They
+are deliberately excluded from the initial conforming renderer rather than
+being silently represented by scalar data. They can be added as separately
+named modes later without changing the scalar path's conformance claim.
 
 ### Required validation before claiming PDF conformance
 

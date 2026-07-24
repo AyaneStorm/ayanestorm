@@ -33,18 +33,106 @@ layout(std430, binding = 7) buffer AVBOITDiagnostics
     uint avboitDiagnostic[4];
 };
 
+layout(std430, binding = 3) buffer AVBOITWork
+{
+    uint avboitWork[];
+};
+
 uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
 uniform int avboitPass;
 uniform int avboitDebugMode;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
+uniform vec2 avboitDepthRange;
+
+const uint AVBOIT_ENTITY_MASK_WORDS = 8u;
+
+uint avboit_cell_offset()
+{
+    return 8u + 128u;
+}
+
+uint avboit_tile_offset()
+{
+    return avboit_cell_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y);
+}
+
+uint avboit_bounds_offset()
+{
+    ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
+    return avboit_tile_offset() +
+        uint(tile_count.x * tile_count.y) * 4u +
+        8192u +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
+            AVBOIT_ENTITY_MASK_WORDS;
+}
+
+uint avboit_entity_mask_offset()
+{
+    ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
+    return avboit_tile_offset() +
+        uint(tile_count.x * tile_count.y) * 4u +
+        8192u;
+}
 
 const uint AVBOIT_SLICES = 128u;
 const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4u;
 const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
+const uint AVBOIT_WARP_RANGE_BEGIN = 0x40000000u;
+const uint AVBOIT_WARP_RANGE_END = 0x20000000u;
+const uint AVBOIT_WARP_RANGE_MIDDLE = 0x10000000u;
 const float AVBOIT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
+
+shared uint avboitWarpScan[8192];
+
+float avboit_curve_coordinate(float linear_depth, uint divider)
+{
+    float scale = exp2(float(divider));
+    float slice_count = 8192.0 / scale;
+    float linearization = 16384.0 / scale;
+    float far_depth = max(avboitDepthRange.y, 0.0001);
+    return clamp(
+        log2(linear_depth / linearization + 1.0) /
+            log2(far_depth / linearization + 1.0) * slice_count,
+        0.0, slice_count - 1.0);
+}
+
+float avboit_high_virtual_depth(float virtual_coordinate)
+{
+    float far_depth = max(avboitDepthRange.y, 0.0001);
+    float normalized = clamp(virtual_coordinate / 8192.0, 0.0, 1.0);
+    return 16384.0 *
+        (exp2(normalized * log2(far_depth / 16384.0 + 1.0)) - 1.0);
+}
+
+float avboit_window_depth(float linear_depth)
+{
+    float near_depth = max(avboitDepthRange.x, 0.0001);
+    float far_depth = max(avboitDepthRange.y, near_depth + 0.0001);
+    float ndc_depth =
+        (far_depth + near_depth -
+         2.0 * near_depth * far_depth / max(linear_depth, near_depth)) /
+        (far_depth - near_depth);
+    return clamp(ndc_depth * 0.5 + 0.5, 0.0, 1.0);
+}
+
+uvec2 avboit_reparameterized_bin_range(uint virtual_index, uint divider)
+{
+    float lower_depth =
+        avboit_high_virtual_depth(float(virtual_index));
+    float upper_depth =
+        avboit_high_virtual_depth(float(virtual_index + 1u));
+    uint lower_bin = uint(floor(
+        avboit_curve_coordinate(lower_depth, divider)));
+    uint upper_bin = uint(floor(
+        avboit_curve_coordinate(upper_depth, divider)));
+    uint slice_count = 8192u >> divider;
+    return min(uvec2(lower_bin, upper_bin),
+               uvec2(slice_count - 1u));
+}
 
 float unpack_extinction(uint packed_word, uint slice_index)
 {
@@ -75,93 +163,332 @@ void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 
+    if (avboitPass == 9)
+    {
+        if (all(lessThan(pixel, avboitVolumeSize)))
+        {
+            uint linear_cell =
+                uint(pixel.y * avboitVolumeSize.x + pixel.x);
+            uint interval = avboit_bounds_offset() + linear_cell * 2u;
+            avboitWork[interval] = 0xffffffffu;
+            avboitWork[interval + 1u] = 0u;
+            uint mask = avboit_entity_mask_offset() +
+                linear_cell * AVBOIT_ENTITY_MASK_WORDS;
+            for (uint word = 0u;
+                 word < AVBOIT_ENTITY_MASK_WORDS; ++word)
+            {
+                avboitWork[mask + word] = 0u;
+            }
+        }
+        return;
+    }
+
+    if (avboitPass == 8)
+    {
+        if (all(lessThan(pixel, avboitVolumeSize)))
+        {
+            uint linear_cell =
+                uint(pixel.y * avboitVolumeSize.x + pixel.x);
+            uint interval = avboit_bounds_offset() + linear_cell * 2u;
+            uint minimum_bin = avboitWork[interval];
+            uint mask = avboit_entity_mask_offset() +
+                linear_cell * AVBOIT_ENTITY_MASK_WORDS;
+            uint merged_mask = 0u;
+            for (uint word = 0u;
+                 word < AVBOIT_ENTITY_MASK_WORDS; ++word)
+            {
+                merged_mask |= avboitWork[mask + word];
+            }
+            if (minimum_bin != 0xffffffffu && merged_mask != 0u)
+            {
+                // The interval is retained for the future per-entity Z-bin
+                // candidate stage. Coarse group bounds must not populate
+                // global Z occupancy: doing so erases real empty ranges and
+                // reduces adaptive precision.
+                for (int y = -1; y <= 1; ++y)
+                for (int x = -1; x <= 1; ++x)
+                {
+                    ivec2 neighbor = clamp(
+                        pixel + ivec2(x, y), ivec2(0),
+                        avboitVolumeSize - ivec2(1));
+                    atomicOr(avboitTileOccupancy[
+                        tile_occupancy_index(neighbor, 0u)], 1u);
+                }
+            }
+        }
+        return;
+    }
+
     if (avboitPass == 1)
     {
-        if (pixel == ivec2(0))
+        uint thread_index = gl_LocalInvocationIndex;
+        uint occupied_virtual = 0u;
+        for (uint virtual_index = thread_index;
+             virtual_index < 8192u; virtual_index += 256u)
         {
-            uint occupied_virtual = 0u;
-            for (uint virtual_index = 0u;
-                 virtual_index < 8192u; ++virtual_index)
+            occupied_virtual +=
+                avboitOccupancy[virtual_index] != 0u ? 1u : 0u;
+        }
+        avboitWarpScan[thread_index] = occupied_virtual;
+        barrier();
+        for (uint stride = 128u; stride > 0u; stride >>= 1u)
+        {
+            if (thread_index < stride)
             {
-                occupied_virtual +=
-                    avboitOccupancy[virtual_index] != 0u ? 1u : 0u;
+                avboitWarpScan[thread_index] +=
+                    avboitWarpScan[thread_index + stride];
             }
-            avboitDiagnostic[0] = occupied_virtual;
+            barrier();
+        }
+        if (thread_index == 0u)
+        {
+            avboitDiagnostic[0] = avboitWarpScan[0];
+            avboitDiagnostic[1] = 8192u;
+            avboitDiagnostic[3] = 0u;
+        }
+        memoryBarrierBuffer();
+        barrier();
 
-            // Coarsen virtual depth until occupied groups fit the physical pool.
-            uint group_shift = 0u;
-            for (uint candidate = 0u; candidate <= 6u; ++candidate)
+        // Test successively halved, reparameterized virtual resolutions.
+        for (uint candidate = 0u; candidate <= 6u; ++candidate)
+        {
+            uint candidate_count = 8192u >> candidate;
+            for (uint index = thread_index;
+                 index < 8192u; index += 256u)
             {
-                uint group_size = 1u << candidate;
-                uint occupied_groups = 0u;
-                for (uint start = 0u; start < 8192u; start += group_size)
+                avboitWarpScan[index] = 0u;
+            }
+            barrier();
+            for (uint virtual_index = thread_index;
+                 virtual_index < 8192u; virtual_index += 256u)
+            {
+                if (avboitOccupancy[virtual_index] != 0u)
                 {
-                    bool occupied = false;
-                    for (uint offset = 0u; offset < group_size; ++offset)
+                    uvec2 bins = avboit_reparameterized_bin_range(
+                        virtual_index, candidate);
+                    for (uint bin_index = bins.x;
+                         bin_index <= bins.y; ++bin_index)
                     {
-                        occupied = occupied ||
-                            avboitOccupancy[start + offset] != 0u;
+                        atomicOr(avboitWarpScan[bin_index], 1u);
                     }
-                    occupied_groups += occupied ? 1u : 0u;
-                }
-                group_shift = candidate;
-                if (occupied_groups <= AVBOIT_SLICES)
-                {
-                    break;
                 }
             }
+            barrier();
+            uint local_count = 0u;
+            for (uint index = thread_index;
+                 index < candidate_count; index += 256u)
+            {
+                local_count += avboitWarpScan[index];
+            }
+            avboitWarpScan[thread_index] = local_count;
+            barrier();
+            for (uint stride = 128u; stride > 0u; stride >>= 1u)
+            {
+                if (thread_index < stride)
+                {
+                    avboitWarpScan[thread_index] +=
+                        avboitWarpScan[thread_index + stride];
+                }
+                barrier();
+            }
+            if (thread_index == 0u &&
+                avboitDiagnostic[1] > AVBOIT_SLICES)
+            {
+                avboitDiagnostic[3] = candidate;
+                avboitDiagnostic[1] = avboitWarpScan[0];
+            }
+            memoryBarrierBuffer();
+            barrier();
+        }
 
-            uint group_size = 1u << group_shift;
-            uint physical = 0u;
-            for (uint start = 0u; start < 8192u; start += group_size)
+        uint group_shift = avboitDiagnostic[3];
+        uint group_count = 8192u >> group_shift;
+
+        // Rebuild the selected conservative occupancy and preserve it in the
+        // no-longer-needed high-resolution occupancy buffer during the scan.
+        for (uint index = thread_index;
+             index < 8192u; index += 256u)
+        {
+            avboitWarpScan[index] = 0u;
+        }
+        barrier();
+        for (uint virtual_index = thread_index;
+             virtual_index < 8192u; virtual_index += 256u)
+        {
+            if (avboitOccupancy[virtual_index] != 0u)
             {
-                bool occupied = false;
-                for (uint offset = 0u; offset < group_size; ++offset)
+                uvec2 bins = avboit_reparameterized_bin_range(
+                    virtual_index, group_shift);
+                for (uint bin_index = bins.x;
+                     bin_index <= bins.y; ++bin_index)
                 {
-                    occupied = occupied ||
-                        avboitOccupancy[start + offset] != 0u;
+                    atomicOr(avboitWarpScan[bin_index], 1u);
                 }
-                for (uint offset = 0u; offset < group_size; ++offset)
-                {
-                    float coordinate = float(physical);
-                    if (occupied)
-                    {
-                        coordinate += float(offset) / float(group_size);
-                    }
-                    uint encoded_coordinate = uint(
-                        clamp(coordinate, 0.0,
-                              float(AVBOIT_SLICES - 1u)) * 65536.0 + 0.5);
-                    avboitWarp[start + offset] = encoded_coordinate |
-                        (occupied ? AVBOIT_WARP_FILTERABLE : 0u);
-                }
-                physical += occupied ? 1u : 0u;
             }
-            avboitDiagnostic[1] = physical;
+        }
+        barrier();
+        for (uint index = thread_index;
+             index < 8192u; index += 256u)
+        {
+            avboitOccupancy[index] =
+                index < group_count ? avboitWarpScan[index] : 0u;
+        }
+        memoryBarrierBuffer();
+        barrier();
+
+        // In-place Blelloch exclusive prefix sum over group occupancy.
+        for (uint stride = 1u; stride < 8192u; stride <<= 1u)
+        {
+            uint step = stride << 1u;
+            for (uint index = (thread_index + 1u) * step - 1u;
+                 index < 8192u; index += 256u * step)
+            {
+                avboitWarpScan[index] +=
+                    avboitWarpScan[index - stride];
+            }
+            barrier();
+        }
+        if (thread_index == 0u)
+        {
+            avboitWarpScan[8191] = 0u;
+        }
+        barrier();
+        for (uint stride = 4096u; stride > 0u; stride >>= 1u)
+        {
+            uint step = stride << 1u;
+            for (uint index = (thread_index + 1u) * step - 1u;
+                 index < 8192u; index += 256u * step)
+            {
+                uint left = index - stride;
+                uint previous = avboitWarpScan[left];
+                avboitWarpScan[left] = avboitWarpScan[index];
+                avboitWarpScan[index] += previous;
+            }
+            barrier();
+        }
+
+        for (uint virtual_index = thread_index;
+             virtual_index < 8192u; virtual_index += 256u)
+        {
+            float high_depth =
+                avboit_high_virtual_depth(float(virtual_index));
+            float reduced_coordinate =
+                avboit_curve_coordinate(high_depth, group_shift);
+            uint group = min(uint(floor(reduced_coordinate)),
+                             group_count - 1u);
+            bool occupied = avboitOccupancy[group] != 0u;
+            bool previous_occupied =
+                group > 0u && avboitOccupancy[group - 1u] != 0u;
+            bool next_occupied =
+                group + 1u < group_count &&
+                avboitOccupancy[group + 1u] != 0u;
+            uint previous_group = group;
+            if (virtual_index > 0u)
+            {
+                previous_group = min(uint(floor(avboit_curve_coordinate(
+                    avboit_high_virtual_depth(float(virtual_index - 1u)),
+                    group_shift))), group_count - 1u);
+            }
+            uint next_group = group;
+            if (virtual_index + 1u < 8192u)
+            {
+                next_group = min(uint(floor(avboit_curve_coordinate(
+                    avboit_high_virtual_depth(float(virtual_index + 1u)),
+                    group_shift))), group_count - 1u);
+            }
+            bool range_begin = occupied && !previous_occupied &&
+                (virtual_index == 0u || previous_group != group);
+            bool range_end = occupied && !next_occupied &&
+                (virtual_index + 1u == 8192u || next_group != group);
+            float coordinate = float(avboitWarpScan[group]);
+            if (occupied)
+            {
+                coordinate += fract(reduced_coordinate);
+                if (range_end)
+                {
+                    coordinate = float(avboitWarpScan[group] + 1u);
+                }
+            }
+            uint encoded_coordinate = uint(
+                clamp(coordinate, 0.0,
+                      float(AVBOIT_SLICES - 1u)) * 65536.0 + 0.5);
+            uint metadata = occupied ? AVBOIT_WARP_FILTERABLE : 0u;
+            if (range_begin) metadata |= AVBOIT_WARP_RANGE_BEGIN;
+            if (range_end) metadata |= AVBOIT_WARP_RANGE_END;
+            if (occupied && !range_begin && !range_end)
+            {
+                metadata |= AVBOIT_WARP_RANGE_MIDDLE;
+            }
+            avboitWarp[virtual_index] = encoded_coordinate | metadata;
+            if (occupied)
+            {
+                uint lower_slice = min(uint(floor(coordinate)),
+                                       AVBOIT_SLICES - 1u);
+                uint upper_slice = min(lower_slice + 1u,
+                                       AVBOIT_SLICES - 1u);
+                uint depth_bits = floatBitsToUint(
+                    avboit_window_depth(avboit_high_virtual_depth(
+                        float(virtual_index + 1u))));
+                atomicMax(avboitWork[8u + lower_slice], depth_bits);
+                atomicMax(avboitWork[8u + upper_slice], depth_bits);
+            }
+        }
+        if (thread_index == 0u)
+        {
+            avboitDiagnostic[3] = 0u;
+        }
+        return;
+    }
+
+    if (avboitPass == 2)
+    {
+        if (all(lessThan(pixel, avboitVolumeSize)) &&
+            tile_is_occupied(pixel))
+        {
+            uint work_index = atomicAdd(avboitDiagnostic[3], 1u);
+            avboitWork[avboit_cell_offset() + work_index] =
+                uint(pixel.y) * uint(avboitVolumeSize.x) + uint(pixel.x);
+        }
+        return;
+    }
+
+    if (avboitPass == 4)
+    {
+        if (gl_GlobalInvocationID == uvec3(0u))
+        {
+            avboitWork[0] =
+                (avboitDiagnostic[3] + 255u) / 256u;
+            avboitWork[1] = 1u;
+            avboitWork[2] = 1u;
         }
         return;
     }
 
     if (avboitPass == 3)
     {
-        if (all(lessThan(pixel, avboitVolumeSize)))
+        uint work_index =
+            gl_WorkGroupID.x * 256u + gl_LocalInvocationIndex;
+        if (work_index < avboitDiagnostic[3])
         {
+            uint linear_cell =
+                avboitWork[avboit_cell_offset() + work_index];
+            pixel = ivec2(
+                int(linear_cell % uint(avboitVolumeSize.x)),
+                int(linear_cell / uint(avboitVolumeSize.x)));
             imageStore(avboitExtinctionOverflowDepth, pixel, uvec4(255u));
             imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(255u));
-            if (tile_is_occupied(pixel))
+            for (uint word = 0u; word < AVBOIT_PACKED_SLICES; ++word)
             {
-                for (uint word = 0u; word < AVBOIT_PACKED_SLICES; ++word)
-                {
-                    ivec3 coordinate = ivec3(pixel, int(word));
-                    imageStore(avboitExtinction, coordinate, uvec4(0u));
-                }
-                for (uint slice_index = 0u;
-                     slice_index < AVBOIT_SLICES; ++slice_index)
-                {
-                    ivec3 coordinate = ivec3(pixel, int(slice_index));
-                    // Saturated integration stops early, so untouched tail
-                    // slices must represent zero rather than full transmission.
-                    imageStore(avboitTransmittance, coordinate, vec4(0.0));
-                }
+                ivec3 coordinate = ivec3(pixel, int(word));
+                imageStore(avboitExtinction, coordinate, uvec4(0u));
+            }
+            for (uint slice_index = 0u;
+                 slice_index < AVBOIT_SLICES; ++slice_index)
+            {
+                ivec3 coordinate = ivec3(pixel, int(slice_index));
+                // Saturated integration stops early, so untouched tail
+                // slices must represent zero rather than full transmission.
+                imageStore(avboitTransmittance, coordinate, vec4(0.0));
             }
         }
         return;
@@ -169,8 +496,15 @@ void main()
 
     if (avboitPass == 5)
     {
-        if (all(lessThan(pixel, avboitVolumeSize)) && tile_is_occupied(pixel))
+        uint work_index =
+            gl_WorkGroupID.x * 256u + gl_LocalInvocationIndex;
+        if (work_index < avboitDiagnostic[3])
         {
+            uint linear_cell =
+                avboitWork[avboit_cell_offset() + work_index];
+            pixel = ivec2(
+                int(linear_cell % uint(avboitVolumeSize.x)),
+                int(linear_cell / uint(avboitVolumeSize.x)));
             float extinction = 0.0;
             uint zero_depth = 255u;
             uint overflow_depth =
@@ -200,6 +534,42 @@ void main()
                 }
             }
             imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(zero_depth));
+        }
+        return;
+    }
+
+    if (avboitPass == 6)
+    {
+        ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
+        if (all(lessThan(pixel, tile_count)))
+        {
+            ivec2 base_cell = pixel * 2;
+            uint zero_depth = 0u;
+            for (int y = 0; y < 2; ++y)
+            for (int x = 0; x < 2; ++x)
+            {
+                ivec2 cell = min(base_cell + ivec2(x, y),
+                                 avboitVolumeSize - ivec2(1));
+                zero_depth = max(
+                    zero_depth,
+                    imageLoad(avboitZeroTransmittanceDepth, cell).r);
+            }
+            if (zero_depth < AVBOIT_SLICES)
+            {
+                uint depth_bits =
+                    avboitWork[8u + zero_depth];
+                if (depth_bits != 0u)
+                {
+                    uint tile_index =
+                        atomicAdd(avboitWork[5], 1u);
+                    uint work_offset =
+                        avboit_tile_offset() + tile_index * 4u;
+                    avboitWork[work_offset] = uint(pixel.x);
+                    avboitWork[work_offset + 1u] = uint(pixel.y);
+                    avboitWork[work_offset + 2u] = depth_bits;
+                    avboitWork[work_offset + 3u] = 0u;
+                }
+            }
         }
         return;
     }

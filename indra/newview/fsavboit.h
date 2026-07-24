@@ -57,6 +57,7 @@ public:
     static bool beginDirectFrame(LLRenderTarget& screen);
     static void beginDirectRasterPass(S32 pass);
     static void configureDirectRasterShader(LLGLSLShader* shader);
+    static void rasterizeConservativeBounds();
     static void finishDirectOccupancy();
     static void finishDirectExtinction();
     static void finishDirectColorRaster();
@@ -77,6 +78,7 @@ private:
         GLuint occupancy = 0;
         GLuint warp = 0;
         GLuint tileOccupancy = 0;
+        GLuint work = 0;
         GLuint diagnostics = 0;
         GLuint accumulatedColorGlow = 0;
         GLuint accumulatedWeight = 0;

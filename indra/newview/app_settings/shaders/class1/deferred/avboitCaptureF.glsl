@@ -9,9 +9,13 @@ uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
 uniform sampler3D avboitTransmittanceSampler;
+uniform sampler2D avboitOpaqueDepthSampler;
 const uint AVBOIT_DIRECT_SLICES = 128u;
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
+const uint AVBOIT_WARP_RANGE_BEGIN = 0x40000000u;
+const uint AVBOIT_WARP_RANGE_END = 0x20000000u;
+const uint AVBOIT_WARP_RANGE_MIDDLE = 0x10000000u;
 const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
 const float AVBOIT_DIRECT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
 
@@ -33,8 +37,11 @@ float avboit_virtual_depth(float window_depth)
     float linear_depth = 2.0 * near_depth * far_depth /
         (far_depth + near_depth -
          ndc_depth * (far_depth - near_depth));
-    return clamp(log(max(linear_depth / near_depth, 1.0)) /
-                 log(far_depth / near_depth), 0.0, 1.0);
+    // PDF slide 49: n=8192 and a=16384 at the proposed high virtual
+    // resolution. The near plane is implicit in this parametrization.
+    const float linearization = 16384.0;
+    return clamp(log2(linear_depth / linearization + 1.0) /
+                 log2(far_depth / linearization + 1.0), 0.0, 1.0);
 }
 
 float avboit_warped_slice(float depth)
@@ -50,13 +57,23 @@ float avboit_warped_slice(float depth)
         float(upper_entry & AVBOIT_WARP_COORDINATE_MASK);
     bool lower_filterable = (lower_entry & AVBOIT_WARP_FILTERABLE) != 0u;
     bool upper_filterable = (upper_entry & AVBOIT_WARP_FILTERABLE) != 0u;
+    bool lower_range_end = (lower_entry & AVBOIT_WARP_RANGE_END) != 0u;
+    bool upper_range_begin = (upper_entry & AVBOIT_WARP_RANGE_BEGIN) != 0u;
     if (lower_filterable && upper_filterable)
     {
         return mix(lower_coordinate, upper_coordinate,
                    fract(virtual_coordinate)) / 65536.0;
     }
-    // Empty ranges are invariant. Snap to the adjacent occupied endpoint
-    // instead of filtering a physical coordinate across the empty interval.
+    // Empty ranges are invariant. Their boundary markers select the occupied
+    // endpoint and discard the interpolation fraction across empty depth.
+    if (lower_range_end)
+    {
+        return lower_coordinate / 65536.0;
+    }
+    if (upper_range_begin)
+    {
+        return upper_coordinate / 65536.0;
+    }
     return (lower_filterable ? lower_coordinate : upper_coordinate) / 65536.0;
 }
 
@@ -108,6 +125,22 @@ bool avboit_cull_fragment()
     return false;
 }
 
+bool avboit_behind_opaque_bounds(ivec2 cell)
+{
+    float farthest_depth = 0.0;
+    ivec2 base_pixel = cell * 8;
+    for (int y = 0; y < 8; ++y)
+    for (int x = 0; x < 8; ++x)
+    {
+        ivec2 sample_pixel = min(
+            base_pixel + ivec2(x, y), avboitViewport - ivec2(1));
+        farthest_depth = max(
+            farthest_depth,
+            texelFetch(avboitOpaqueDepthSampler, sample_pixel, 0).r);
+    }
+    return gl_FragCoord.z > farthest_depth;
+}
+
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     uint value = uint(clamp(
@@ -119,24 +152,14 @@ void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
     }
 
     uint shift = (slice_index & 3u) * 8u;
-    uint mask = 255u << shift;
     ivec3 coordinate = ivec3(cell, int(slice_index >> 2u));
-    uint expected = imageLoad(avboitExtinction, coordinate).r;
-    uint old_value = 0u;
-    for (;;)
-    {
-        old_value = (expected >> shift) & 255u;
-        uint saturated = min(old_value + value, 255u);
-        uint replacement = (expected & ~mask) | (saturated << shift);
-        uint observed = imageAtomicCompSwap(
-            avboitExtinction, coordinate, expected, replacement);
-        if (observed == expected)
-        {
-            break;
-        }
-        expected = observed;
-    }
-    if (old_value + value > 255u)
+    // Packed atomic addition deliberately permits carry into later slices.
+    // Once this lane overflows, integration saturates at the recorded minimum
+    // depth, so data in this and all later slices is irrelevant.
+    uint previous = imageAtomicAdd(
+        avboitExtinction, coordinate, value << shift);
+    uint previous_value = (previous >> shift) & 255u;
+    if (previous_value + value > 255u)
     {
         imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
     }
@@ -146,11 +169,17 @@ void avboit_direct_store(vec4 color)
 {
     float alpha = clamp(color.a, 0.0, 1.0);
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    ivec2 cell = avboitRasterPass == 0 ?
+        clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1)) :
+        clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
+    if (avboitRasterPass == 1 && avboit_behind_opaque_bounds(cell))
+    {
+        return;
+    }
     if (avboitRasterPass == 0)
     {
         if (alpha > 0.0 || oitGlow > 0.0)
         {
-            ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
             avboit_mark_tile(cell);
         }
         if (alpha > 0.0)
@@ -174,7 +203,6 @@ void avboit_direct_store(vec4 color)
             uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
             float upper_extinction = optical_depth * fract(slice_coordinate);
             float lower_extinction = optical_depth - upper_extinction;
-            ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
             if (upper_slice == lower_slice)
             {
                 avboit_add_extinction(cell, lower_slice, optical_depth);

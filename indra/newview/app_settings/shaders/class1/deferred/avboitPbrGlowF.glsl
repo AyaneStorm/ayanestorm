@@ -16,9 +16,13 @@ uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
 uniform sampler3D avboitTransmittanceSampler;
+uniform sampler2D avboitOpaqueDepthSampler;
 const uint AVBOIT_DIRECT_SLICES = 128u;
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
+const uint AVBOIT_WARP_RANGE_BEGIN = 0x40000000u;
+const uint AVBOIT_WARP_RANGE_END = 0x20000000u;
+const uint AVBOIT_WARP_RANGE_MIDDLE = 0x10000000u;
 const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
@@ -34,8 +38,9 @@ float avboit_virtual_depth(float window_depth)
     float linear_depth = 2.0 * near_depth * far_depth /
         (far_depth + near_depth -
          ndc_depth * (far_depth - near_depth));
-    return clamp(log(max(linear_depth / near_depth, 1.0)) /
-                 log(far_depth / near_depth), 0.0, 1.0);
+    const float linearization = 16384.0;
+    return clamp(log2(linear_depth / linearization + 1.0) /
+                 log2(far_depth / linearization + 1.0), 0.0, 1.0);
 }
 uint avboit_conservative_zero_depth(ivec2 pixel)
 {
@@ -55,9 +60,26 @@ uint avboit_conservative_zero_depth(ivec2 pixel)
 void avboit_store_glow(float glow)
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    ivec2 cell = avboitRasterPass == 0 ?
+        clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1)) :
+        clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
+    if (avboitRasterPass == 1)
+    {
+        float farthest_depth = 0.0;
+        ivec2 base_pixel = cell * 8;
+        for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x)
+        {
+            ivec2 sample_pixel = min(
+                base_pixel + ivec2(x, y), avboitViewport - ivec2(1));
+            farthest_depth = max(
+                farthest_depth,
+                texelFetch(avboitOpaqueDepthSampler, sample_pixel, 0).r);
+        }
+        if (gl_FragCoord.z > farthest_depth) return;
+    }
     if (avboitRasterPass == 0)
     {
-        ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
         for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
         {
@@ -86,12 +108,30 @@ void avboit_store_glow(float glow)
             (lower_entry & AVBOIT_WARP_FILTERABLE) != 0u;
         bool upper_filterable =
             (upper_entry & AVBOIT_WARP_FILTERABLE) != 0u;
-        float slice_coordinate =
-            (lower_filterable && upper_filterable ?
-                mix(lower_coordinate, upper_coordinate,
-                    fract(virtual_coordinate)) :
-                (lower_filterable ? lower_coordinate : upper_coordinate)) /
-            65536.0;
+        bool lower_range_end =
+            (lower_entry & AVBOIT_WARP_RANGE_END) != 0u;
+        bool upper_range_begin =
+            (upper_entry & AVBOIT_WARP_RANGE_BEGIN) != 0u;
+        float encoded_slice;
+        if (lower_filterable && upper_filterable)
+        {
+            encoded_slice = mix(lower_coordinate, upper_coordinate,
+                                fract(virtual_coordinate));
+        }
+        else if (lower_range_end)
+        {
+            encoded_slice = lower_coordinate;
+        }
+        else if (upper_range_begin)
+        {
+            encoded_slice = upper_coordinate;
+        }
+        else
+        {
+            encoded_slice =
+                lower_filterable ? lower_coordinate : upper_coordinate;
+        }
+        float slice_coordinate = encoded_slice / 65536.0;
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         float sample_slice = clamp(
             slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));

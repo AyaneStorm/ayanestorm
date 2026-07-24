@@ -10,7 +10,9 @@
 
 #include "fsavboit.h"
 #include "fsexactoit.h"
+#include "llspatialpartition.h"
 #include "llviewercontrol.h"
+#include "pipeline.h"
 
 namespace
 {
@@ -21,7 +23,7 @@ enum class TransparencyMode : S32
     AVBOIT = 2
 };
 
-void synchronizeModeSettings()
+TransparencyMode synchronizeModeSettings()
 {
     S32 mode = gSavedSettings.getS32("RenderOITMode");
     if (mode < static_cast<S32>(TransparencyMode::STANDARD) ||
@@ -46,6 +48,34 @@ void synchronizeModeSettings()
     {
         gSavedSettings.setBOOL("RenderAVBOIT", avboit);
     }
+    return static_cast<TransparencyMode>(mode);
+}
+
+void invalidateVanillaAlphaOrdering()
+{
+    const auto invalidate_visible =
+        [](LLCullResult::sg_iterator begin, LLCullResult::sg_iterator end)
+    {
+        for (LLCullResult::sg_iterator iter = begin; iter != end; ++iter)
+        {
+            LLSpatialGroup* group = *iter;
+            if (group && !group->isDead())
+            {
+                group->setState(LLSpatialGroup::ALPHA_DIRTY);
+                gPipeline.markRebuild(group);
+            }
+        }
+    };
+    invalidate_visible(
+        gPipeline.beginAlphaGroups(), gPipeline.endAlphaGroups());
+    invalidate_visible(
+        gPipeline.beginRiggedAlphaGroups(),
+        gPipeline.endRiggedAlphaGroups());
+
+    // The current cull result is insufficient: groups outside it can later
+    // enter view carrying OIT-era alpha ordering. Traverse all region
+    // volume/bridge octrees so Standard eventually sees only rebuilt data.
+    gPipeline.rebuildDrawInfo();
 }
 }
 
@@ -53,7 +83,14 @@ void FSOITDispatcher::beginFrame()
 {
     // Translate the single live UI choice without coupling either renderer module
     // to the other renderer or to preferences.
-    synchronizeModeSettings();
+    static TransparencyMode previous_mode = TransparencyMode::STANDARD;
+    const TransparencyMode mode = synchronizeModeSettings();
+    if (previous_mode != TransparencyMode::STANDARD &&
+        mode == TransparencyMode::STANDARD)
+    {
+        invalidateVanillaAlphaOrdering();
+    }
+    previous_mode = mode;
     FSAVBOIT::beginFrame();
     FSExactOIT::beginFrame();
 }
