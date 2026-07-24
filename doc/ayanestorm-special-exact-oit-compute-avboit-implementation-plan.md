@@ -306,11 +306,12 @@ low-resolution conservative prepass can return the scratch representation to
 packed 8-bit without losing individual contributions.
 
 V55 addresses runtime screenshots showing hard staircase artifacts aligned to
-the 8-by-8 extinction-volume footprint. The prototype used low-resolution
-effective-zero depth to reject full-resolution fragments, but does not yet
-implement the matching conservative low-resolution depth bounds from the
-reference pipeline. Dense coverage in part of a coarse cell could consequently
-discard visible hair, clothing, or foliage elsewhere in that cell.
+the 8-by-8 extinction-volume footprint. The prototype sampled
+low-resolution effective-zero depth independently for each full-resolution
+fragment instead of conservatively reducing it over a screen tile as required
+by the reference early-depth pipeline. Dense coverage in part of a coarse cell
+could consequently discard visible hair, clothing, or foliage elsewhere in
+that tile.
 
 Until matching conservative bounds exist, effective-zero depth remains
 available for diagnostics but does not reject full-resolution geometry.
@@ -318,6 +319,48 @@ Integrated transmittance is upgraded from `R8` to `R16F`, and the
 effective-zero threshold changes from 1/255 to 1/65536. This deliberately
 forgoes premature zero-transmittance culling for correctness and removes the
 8-bit threshold discontinuity that made coarse cells visibly blocky.
+
+V55 built and passed initial runtime visual testing. The previously persistent
+hair, clothing, and foliage corruption appeared fixed, and the user reported
+that AVBOIT looked very good.
+
+V56 replaces the remaining full-resolution-folding adaptation with the
+reference one-eighth-resolution transparency prepass. Occupancy and extinction
+geometry are now rasterized directly at the volume resolution, so extinction
+is no longer divided by 64 before quantization. This permits the specified four
+packed 8-bit slices per `R32UI` word, saturating compare-and-swap atomics,
+1/255 effective-zero threshold, and filterable `R8` integrated
+transmittance. The low-resolution passes use an isolated framebuffer rather
+than incorrectly testing their coordinates against the full-resolution scene
+depth attachment.
+
+Zero-transmittance rejection now uses a fixed 16-by-16 full-resolution tile.
+It reads the four corresponding extinction cells and uses their farthest
+zero-depth value; if any cell has not reached zero, the tile cannot reject.
+This matches the conservative reduction used to generate early-depth tiles in
+the reference pipeline. The current OpenGL implementation applies the result
+in the AVBOIT fragment output rather than generating indirect depth quads, so
+it restores correctness-preserving work rejection but not yet the paper's full
+hardware early-depth performance benefit.
+
+The paper's shared conservative opaque-depth bounds and indirect early-depth
+quad generation remain performance stages still to implement. The v56
+low-resolution extinction pass conservatively includes geometry hidden by
+opaque surfaces; this can waste prepass work but does not cause hidden
+extinction to attenuate visible fragments in front of it.
+
+V56 runtime testing brought back the same staircase corruption in visible
+geometry. Its fragment-stage 16-by-16 zero-depth reduction was therefore not
+equivalent to the paper's generated indirect early-depth quads. V57 disables
+all fragment-stage zero-depth rejection again, including glow/emissive draws.
+Zero depth remains diagnostic data until the actual indirect depth pipeline is
+implemented; no further approximation may stand in for that stage.
+
+The user also reported that all AVBOIT diagnostic modes stopped responding.
+V58 reads `RenderAVBOITDebugMode` explicitly on every resolve, clamps it to the
+implemented 0-5 range, and logs every live transition. This removes cached
+control ambiguity and provides direct evidence that the selected diagnostic
+value reaches the independent AVBOIT renderer.
 
 ## Lossless Exact OIT compute sorter
 
@@ -366,6 +409,105 @@ benchmark, with no avatar regression above 5 percent.
 AVBOIT remains explicitly approximate and opt-in unless its visual differences
 are accepted after smoke, splashes, foliage, hair, intersections, custom
 particles, glow, and bright-background testing.
+
+## AVBOIT PDF conformance checklist
+
+This checklist is authoritative for claims of conformance with
+`AVBOIT_SIG2025_MDROBOT-final.pdf`. Revision notes elsewhere in this document
+describe history, not completion. A stage must not be called implemented from
+the specification merely because a custom approximation exists.
+
+### Implemented directly from the PDF
+
+- [x] Convert alpha to logarithmic extinction with `-log(1-alpha)`.
+- [x] Use a one-eighth-resolution spatial extinction volume.
+- [x] Use 128 physical depth slices.
+- [x] Splat extinction into adjacent depth slices.
+- [x] Pack four 8-bit scalar-extinction slices into each `R32UI` word.
+- [x] Saturate packed atomic accumulation and record the earliest overflow
+  depth.
+- [x] Integrate extinction along view rays into filterable `R8`
+  transmittance.
+- [x] Stop integration at effective-zero transmittance or recorded overflow.
+- [x] Store the depth at which effective-zero transmittance is reached.
+- [x] Render full-resolution transparency in arbitrary order while sampling
+  estimated front transmittance.
+- [x] Resolve normalized accumulated transparent color over opaque color using
+  accumulated extinction.
+
+### Viewer integration requiring validation as mathematically equivalent
+
+- [ ] Audit the full-resolution MRT color, normalization-weight, glow, and
+  extinction equations line by line against the PDF equations.
+- [ ] Audit the two-slice sampling offset and self-occlusion avoidance against
+  the PDF's stated depth bias.
+- [ ] Verify custom source-over mapping and glow treatment are explicitly
+  outside the physical AVBOIT model rather than claiming PDF equivalence.
+- [ ] Verify the isolated low-resolution raster target uses the same required
+  visible-depth bounds as the reference prepass.
+
+### Missing adaptive depth-distribution stages
+
+- [ ] Parameterize the logarithmic depth curve from requested minimum slice
+  thickness over the visible depth range.
+- [ ] Generate coverage at the proposed high virtual-slice resolution.
+- [ ] Implement a parallel prefix sum of virtual Z occupancy.
+- [ ] Compact occupied virtual slices into physical slices.
+- [ ] When occupied slices exceed the 128-slice budget, halve/reparameterize
+  virtual resolution and conservatively rewrite occupancy until it fits.
+- [ ] Encode distinct range-begin, range-end, and range-middle filterability
+  metadata in the depth-warp LUT.
+- [ ] Recalculate the fractional coordinate within occupied ranges.
+- [ ] Snap sampling at empty-range boundaries exactly as described by the PDF.
+- [ ] Replace the current power-of-two grouping, serial scan, and one-bit
+  filterability approximation.
+
+### Missing sparse spatial-work stages
+
+- [ ] Gather transparent mesh and VFX bounding boxes/quads for a compute job.
+- [ ] Conservatively software-rasterize/voxelize those bounds into the
+  low-resolution occupancy bit buffer.
+- [ ] Separate scalar and RGB occupancy where the selected reference
+  configuration requires it.
+- [ ] Drive clear and integration dispatches from occupied work rather than
+  merely branching inside dense dispatches.
+- [ ] Confirm the same conservative depth bounds are shared with the
+  transparency prepass.
+
+### Missing zero-transmittance early-depth pipeline
+
+- [ ] Conservatively reduce `zeroTransmittanceDepth` for screen tiles of at
+  least 16 by 16 pixels.
+- [ ] Generate a tile-quad list and indirect draw command in compute.
+- [ ] Draw the generated quads at their conservative zero-transmittance depth
+  into the scene depth buffer.
+- [ ] Validate depth convention, reversed-Z state if applicable, viewport
+  edges, partial tiles, and hierarchical-Z behavior.
+- [ ] Re-enable zero-transmittance rejection only through this depth pipeline.
+- [x] Disable the invalid fragment-stage coarse-cell rejection.
+
+### Color extinction and advanced PDF stages
+
+- [ ] Determine and document whether AyaneStorm targets the scalar-only,
+  split scalar/RGB, or memory-constrained chroma-skew reference configuration.
+- [ ] If using split RGB extinction, implement its separate occupancy,
+  splatting, integration, and RGB integral storage.
+- [ ] Implement or explicitly exclude the PDF's slice-overlap detection and
+  color-skew self-correction.
+- [ ] Implement or explicitly exclude fog-transmittance interaction.
+
+### Required validation before claiming PDF conformance
+
+- [ ] Hair, clothing, foliage, and banana leaves have no grid-aligned holes.
+- [ ] Smoke and splashes retain the measured AVBOIT performance advantage.
+- [ ] Equal-depth and closely intersecting transparent surfaces show only
+  documented AVBOIT approximation, not implementation corruption.
+- [ ] Empty-range LUT boundaries are continuous under camera movement.
+- [ ] Overflow and effective-zero paths do not discard visible geometry.
+- [ ] Resize, world entry, live mode switching, shader failure, and fallback
+  remain stable.
+- [ ] Every unchecked item above is completed or explicitly documented as an
+  intentional exclusion accepted by the user.
 
 ## Validation contract
 

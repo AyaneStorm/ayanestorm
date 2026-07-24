@@ -39,10 +39,7 @@ float avboit_virtual_depth(float window_depth)
 }
 uint avboit_conservative_zero_depth(ivec2 pixel)
 {
-    vec2 volume_position =
-        ((vec2(pixel) + vec2(0.5)) / vec2(avboitViewport)) *
-        vec2(avboitVolumeSize) - vec2(0.5);
-    ivec2 base_cell = ivec2(floor(volume_position));
+    ivec2 base_cell = (pixel / 16) * 2;
     uint zero_depth = 0u;
     for (int y = 0; y <= 1; ++y)
     for (int x = 0; x <= 1; ++x)
@@ -60,7 +57,7 @@ void avboit_store_glow(float glow)
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     if (avboitRasterPass == 0)
     {
-        ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
+        ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
         for (int y = -1; y <= 1; ++y)
         for (int x = -1; x <= 1; ++x)
         {
@@ -95,8 +92,6 @@ void avboit_store_glow(float glow)
                     fract(virtual_coordinate)) :
                 (lower_filterable ? lower_coordinate : upper_coordinate)) /
             65536.0;
-        uint zero_depth = avboit_conservative_zero_depth(pixel);
-        if (zero_depth != 255u && slice_coordinate > float(zero_depth)) return;
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         float sample_slice = clamp(
             slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));

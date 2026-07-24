@@ -27,7 +27,7 @@ namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
 constexpr U32 AVBOIT_SLICES = 128;
-constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
+constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 
 void allocateAccumulationTexture(GLuint& texture, GLenum format,
@@ -72,6 +72,7 @@ LLGLSLShader gAVBOITPBRGlowProgram;
 LLGLSLShader gAVBOITSkinnedPBRGlowProgram;
 LLGLSLShader gAVBOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
 LLRenderTarget gAVBOITOpaqueTarget;
+LLRenderTarget gAVBOITPrepassTarget;
 
 bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
                         const std::string& name, const char* terminal)
@@ -145,7 +146,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v55";
+    return "AVBOIT shader revision v58";
 }
 
 bool FSAVBOIT::supported()
@@ -532,7 +533,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenTextures(1, &sResources.transmittance);
     glBindTexture(GL_TEXTURE_3D, sResources.transmittance);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R16F,
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8,
                    sResources.volumeWidth, sResources.volumeHeight, AVBOIT_SLICES);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -583,7 +584,9 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     return glGetError() == GL_NO_ERROR &&
-        gAVBOITOpaqueTarget.allocate(width, height, GL_RGBA16F);
+        gAVBOITOpaqueTarget.allocate(width, height, GL_RGBA16F) &&
+        gAVBOITPrepassTarget.allocate(
+            sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8);
 }
 
 void FSAVBOIT::allocateResources(U32 width, U32 height)
@@ -618,6 +621,7 @@ void FSAVBOIT::releaseResources()
     if (sResources.accumulatedExtinction)
         glDeleteTextures(1, &sResources.accumulatedExtinction);
     gAVBOITOpaqueTarget.release();
+    gAVBOITPrepassTarget.release();
     sDirectRasterPass = -1;
     sDirectFrameReady = false;
     sResources = Resources();
@@ -634,7 +638,7 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
          AVBOIT_PACKED_SLICES * sizeof(U32)) / (1024ull * 1024ull));
     info["AVBOIT_TRANSMITTANCE_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
-         AVBOIT_SLICES * 2ull) / (1024ull * 1024ull));
+         AVBOIT_SLICES) / (1024ull * 1024ull));
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
@@ -657,7 +661,8 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     }
     if (!available() || !sResources.accumulatedColorGlow ||
         !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
-        !gAVBOITOpaqueTarget.isComplete())
+        !gAVBOITOpaqueTarget.isComplete() ||
+        !gAVBOITPrepassTarget.isComplete())
     {
         return false;
     }
@@ -689,7 +694,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
                        GL_READ_WRITE, GL_R32UI);
     glBindImageTexture(4, sResources.transmittance, 0, GL_TRUE, 0,
-                       GL_READ_WRITE, GL_R16F);
+                       GL_READ_WRITE, GL_R8);
     glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R8UI);
     glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
@@ -699,6 +704,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, sResources.diagnostics);
 
+    gAVBOITPrepassTarget.bindTarget();
     sDirectFrameReady = false;
     beginDirectRasterPass(0);
     return true;
@@ -707,8 +713,15 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
 void FSAVBOIT::beginDirectRasterPass(S32 pass)
 {
     sDirectRasterPass = pass;
+    if (pass < 2)
+    {
+        // The reference AVBOIT extinction prepass rasterizes directly at
+        // one-eighth resolution; it does not fold 64 full-resolution samples.
+        glViewport(0, 0, sResources.volumeWidth, sResources.volumeHeight);
+    }
     if (pass == 2)
     {
+        glViewport(0, 0, sResources.viewportWidth, sResources.viewportHeight);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
                                GL_TEXTURE_2D,
                                sResources.accumulatedColorGlow, 0);
@@ -855,6 +868,7 @@ void FSAVBOIT::finishDirectExtinction()
     glDispatchCompute(groups_x, groups_y, 1u);
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+    gAVBOITPrepassTarget.flush();
     beginDirectRasterPass(2);
 }
 
@@ -877,7 +891,15 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
-    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderAVBOITDebugMode", 0);
+    const S32 debug_mode =
+        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 5);
+    static S32 previous_debug_mode = -1;
+    if (debug_mode != previous_debug_mode)
+    {
+        LL_INFOS("AVBOIT") << "AVBOIT diagnostic mode " << debug_mode
+                            << LL_ENDL;
+        previous_debug_mode = debug_mode;
+    }
     const U32 groups_x = (sResources.viewportWidth + 15u) / 16u;
     const U32 groups_y = (sResources.viewportHeight + 15u) / 16u;
 

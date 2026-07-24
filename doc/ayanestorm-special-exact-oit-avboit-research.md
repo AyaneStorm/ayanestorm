@@ -144,13 +144,11 @@ holes in hair, clothing, and foliage aligned to the one-eighth-resolution
 extinction grid. This identifies a coarse-cell decision rather than normal
 slice approximation or mesh-specific shading as the cause.
 
-The current full-resolution-folding prototype generated an effective-zero
-depth per coarse cell and used it to reject full-resolution fragments. The
-reference algorithm's rejection depends on matching conservative
-low-resolution depth bounds; those bounds are not present in this adaptation.
-A dense portion of a cell could therefore reject unrelated visible geometry
-sharing that cell. Eight-bit integrated transmittance made the boundary still
-more abrupt.
+The prototype generated an effective-zero depth per coarse cell and sampled
+nearby cells independently for each full-resolution fragment. The reference
+algorithm instead conservatively reduces zero depth over screen tiles before
+populating early depth. A dense portion of a cell could therefore reject
+unrelated visible geometry sharing the affected region.
 
 Shader-cache revision v55 disables that geometry rejection until conservative
 bounds are implemented, retains zero depth for diagnostics, stores integrated
@@ -164,3 +162,47 @@ cuts it into repeated axis-aligned stair steps unrelated to the texture's leaf
 edge. The AVBOIT debug image follows the same stepped footprint. This supports
 coarse-cell full-resolution rejection as the fault and not a banana-leaf
 material, alpha-mask, or mesh problem.
+
+V55 subsequently built and passed initial runtime visual testing. The user
+reported that the artifacts appeared fixed and that AVBOIT looked very good.
+This validates coarse-cell rejection as the source of the long-running hair,
+clothing, and foliage corruption. Longer testing is still appropriate before
+declaring every scene free of artifacts.
+
+## Reference-resolution prepass correction
+
+The paper specifies a transparency prepass at one-eighth resolution and packed
+8-bit extinction atomics. The earlier AyaneStorm adaptation rasterized the
+geometry at full resolution, divided every optical-depth contribution by 64,
+then folded it into the coarse volume. Quantizing before accumulation erased
+many ordinary-alpha contributions and led to the temporary 16-bit scratch and
+integral formats.
+
+Revision v56 rasterizes occupancy and extinction directly at the
+one-eighth-resolution volume viewport. Contributions therefore retain their
+original optical depth and can use the paper's four packed 8-bit slices per
+word with saturating compare-and-swap accumulation. Integrated transmittance
+returns to filterable `R8` and effective zero returns to 1/255. An isolated
+low-resolution framebuffer avoids comparing reduced-resolution fragments
+against unrelated pixels in the full-resolution depth attachment.
+
+The zero-depth decision is reduced conservatively over fixed 16-by-16 screen
+tiles: all four corresponding 8-by-8 extinction cells must reach zero, and the
+farthest zero depth is used. The OpenGL path currently performs this test at
+fragment output rather than spawning indirect depth quads, preserving the
+reference rejection semantics without yet obtaining its hardware early-depth
+benefit.
+
+The reference implementation also shares conservative opaque-depth bounds
+between transparency methods and generates indirect depth quads. V56 does not
+yet implement those performance stages. Its extinction prepass includes
+transparent geometry hidden behind opaque geometry, which adds work but does
+not affect front transmittance sampled by visible geometry.
+
+V56 runtime testing reproduced the earlier staircase corruption after
+fragment-stage zero-depth rejection was restored. The apparently conservative
+16-by-16 reduction is therefore not a valid substitute for the reference
+indirect early-depth pipeline. Revision v57 removes zero-depth rejection from
+ordinary, glow, and emissive fragment output. The generated zero-depth texture
+is diagnostic-only until the specified quad-generation and depth-draw stages
+exist.

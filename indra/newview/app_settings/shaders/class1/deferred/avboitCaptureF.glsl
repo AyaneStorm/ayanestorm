@@ -13,7 +13,7 @@ const uint AVBOIT_DIRECT_SLICES = 128u;
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
 const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
-const float AVBOIT_DIRECT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
+const float AVBOIT_DIRECT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
 
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
@@ -81,10 +81,10 @@ void avboit_mark_tile(ivec2 cell)
 
 uint avboit_conservative_zero_depth(ivec2 pixel)
 {
-    vec2 volume_position =
-        ((vec2(pixel) + vec2(0.5)) / vec2(avboitViewport)) *
-        vec2(avboitVolumeSize) - vec2(0.5);
-    ivec2 base_cell = ivec2(floor(volume_position));
+    // One early-depth tile covers 16x16 full-resolution pixels, or 2x2
+    // extinction cells. A tile can reject only when every covered cell has
+    // reached effective zero, so the farthest zero depth is conservative.
+    ivec2 base_cell = (pixel / 16) * 2;
     uint zero_depth = 0u;
     for (int y = 0; y <= 1; ++y)
     {
@@ -102,27 +102,41 @@ uint avboit_conservative_zero_depth(ivec2 pixel)
 
 bool avboit_cull_fragment()
 {
-    // Full-resolution folding has no matching conservative low-resolution
-    // depth bounds. Coarse zero-depth rejection would discard visible
-    // geometry at 8x8 cell boundaries.
+    // Do not substitute a fragment-stage coarse-cell test for the reference
+    // indirect early-depth quad pipeline. That substitution discards visible
+    // geometry at tile boundaries.
     return false;
 }
 
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     uint value = uint(clamp(
-        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 65535.0,
-        0.0, 65535.0) + 0.5);
+        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 255.0,
+        0.0, 255.0) + 0.5);
     if (value == 0u)
     {
         return;
     }
 
-    uint shift = (slice_index & 1u) * 16u;
-    uint old_word = imageAtomicAdd(
-        avboitExtinction, ivec3(cell, int(slice_index >> 1u)), value << shift);
-    uint old_value = (old_word >> shift) & 65535u;
-    if (old_value + value > 65535u)
+    uint shift = (slice_index & 3u) * 8u;
+    uint mask = 255u << shift;
+    ivec3 coordinate = ivec3(cell, int(slice_index >> 2u));
+    uint expected = imageLoad(avboitExtinction, coordinate).r;
+    uint old_value = 0u;
+    for (;;)
+    {
+        old_value = (expected >> shift) & 255u;
+        uint saturated = min(old_value + value, 255u);
+        uint replacement = (expected & ~mask) | (saturated << shift);
+        uint observed = imageAtomicCompSwap(
+            avboitExtinction, coordinate, expected, replacement);
+        if (observed == expected)
+        {
+            break;
+        }
+        expected = observed;
+    }
+    if (old_value + value > 255u)
     {
         imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
     }
@@ -136,7 +150,7 @@ void avboit_direct_store(vec4 color)
     {
         if (alpha > 0.0 || oitGlow > 0.0)
         {
-            ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
+            ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
             avboit_mark_tile(cell);
         }
         if (alpha > 0.0)
@@ -155,12 +169,12 @@ void avboit_direct_store(vec4 color)
     {
         if (alpha > 0.0)
         {
-            float optical_depth = -log(max(1.0 - alpha, 1.0 / 65536.0)) / 64.0;
+            float optical_depth = -log(max(1.0 - alpha, 1.0 / 255.0));
             uint lower_slice = uint(floor(slice_coordinate));
             uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
             float upper_extinction = optical_depth * fract(slice_coordinate);
             float lower_extinction = optical_depth - upper_extinction;
-            ivec2 cell = clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1));
+            ivec2 cell = clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
             if (upper_slice == lower_slice)
             {
                 avboit_add_extinction(cell, lower_slice, optical_depth);

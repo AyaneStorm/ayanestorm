@@ -6,7 +6,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
-layout(binding = 4, r16f) uniform coherent image3D avboitTransmittance;
+layout(binding = 4, r8) uniform coherent image3D avboitTransmittance;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
 layout(binding = 0, rgba16f) uniform readonly image2D avboitAccumulatedColorGlow;
@@ -41,16 +41,16 @@ uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 
 const uint AVBOIT_SLICES = 128u;
-const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2u;
+const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4u;
 const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
-const float AVBOIT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
+const float AVBOIT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
 
 float unpack_extinction(uint packed_word, uint slice_index)
 {
-    uint shift = (slice_index & 1u) * 16u;
-    return float((packed_word >> shift) & 65535u) *
-        (AVBOIT_ZERO_EXTINCTION / 65535.0);
+    uint shift = (slice_index & 3u) * 8u;
+    return float((packed_word >> shift) & 255u) *
+        (AVBOIT_ZERO_EXTINCTION / 255.0);
 }
 
 uint tile_occupancy_index(ivec2 cell, uint word)
@@ -189,7 +189,7 @@ void main()
                 {
                     uint packed_word = imageLoad(
                         avboitExtinction,
-                        ivec3(pixel, int(slice_index >> 1u))).r;
+                        ivec3(pixel, int(slice_index >> 2u))).r;
                     extinction += unpack_extinction(packed_word, slice_index);
                 }
                 if (zero_depth == 255u && extinction >= AVBOIT_ZERO_EXTINCTION)
