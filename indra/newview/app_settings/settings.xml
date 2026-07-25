@@ -11885,7 +11885,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderAVBOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>AVBOIT diagnostic: 0 normal rendering, 1 active pixels, 2 virtual-depth occupancy, 3 physical-slice utilization, 4 integrated transmittance, 5 effective-zero depth.</string>
+    <string>AVBOIT diagnostic: 0 normal rendering, 1 active pixels, 2 virtual-depth occupancy, 3 physical-slice utilization, 4 integrated transmittance, 5 effective-zero depth, 6 proxy coverage (green covered, red no proxy, yellow material nearer, magenta material farther).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

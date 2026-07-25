@@ -25,6 +25,8 @@ layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDep
 layout(std430, binding = 4) buffer AVBOITOccupancy { uint avboitOccupancy[8192]; };
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
+layout(std430, binding = 7) buffer AVBOITDiagnostics { uint avboitDiagnostic[8]; };
+layout(std430, binding = 3) buffer AVBOITWork { uint avboitWork[]; };
 layout(location = 1) out vec4 avboitAccumulatedColorGlow;
 layout(location = 2) out float avboitAccumulatedWeight;
 layout(location = 3) out float avboitAccumulatedExtinction;
@@ -81,6 +83,43 @@ uint avboit_tile_index(ivec2 cell, uint word)
 {
     return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) *
         AVBOIT_DIRECT_OCCUPANCY_WORDS + word;
+}
+
+uint avboit_proxy_bounds_offset()
+{
+    ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
+    return 8u + 128u +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) +
+        uint(tile_count.x * tile_count.y) * 4u +
+        8192u * 14u +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 8u;
+}
+
+uint avboit_dilated_proxy_bounds_offset()
+{
+    return avboit_proxy_bounds_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 2u;
+}
+
+void avboit_compare_proxy_coverage(ivec2 cell, uint virtual_slice)
+{
+    uint linear_cell =
+        uint(cell.y * avboitVolumeSize.x + cell.x);
+    uint interval =
+        avboit_dilated_proxy_bounds_offset() + linear_cell * 2u;
+    uint minimum_slice = avboitWork[interval];
+    uint maximum_slice = avboitWork[interval + 1u];
+    atomicAdd(avboitDiagnostic[4], 1u);
+    uint failure = minimum_slice == 0xffffffffu ? 1u :
+        (virtual_slice < minimum_slice ? 2u :
+         (virtual_slice > maximum_slice ? 4u : 0u));
+    if (failure != 0u)
+    {
+        atomicAdd(avboitDiagnostic[5], 1u);
+        uint miss_map = avboit_proxy_bounds_offset() +
+            uint(avboitVolumeSize.x * avboitVolumeSize.y) * 4u;
+        atomicOr(avboitWork[miss_map + linear_cell], failure);
+    }
 }
 
 void avboit_mark_tile(ivec2 cell)
@@ -188,6 +227,9 @@ void avboit_direct_store(vec4 color)
                                          avboit_virtual_depth(gl_FragCoord.z) *
                                          8191.0),
                                      8191u);
+            // Retain the material path while measuring whether conservative
+            // proxy intervals cover every alpha-tested occupancy sample.
+            avboit_compare_proxy_coverage(cell, virtual_slice);
             atomicOr(avboitOccupancy[virtual_slice], 1u);
         }
         return;

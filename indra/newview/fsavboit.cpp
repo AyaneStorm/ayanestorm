@@ -37,6 +37,7 @@ constexpr U32 AVBOIT_SLICES = 128;
 constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 constexpr U32 AVBOIT_Z_BINS = 8192;
+constexpr U32 AVBOIT_ZBIN_RMQ_LEVELS = 14;
 constexpr U32 AVBOIT_ENTITY_MASK_WORDS = 8;
 
 void allocateAccumulationTexture(GLuint& texture, GLenum format,
@@ -162,7 +163,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v72";
+    return "AVBOIT shader revision v89";
 }
 
 bool FSAVBOIT::supported()
@@ -600,11 +601,11 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     const U64 work_words = 8u + AVBOIT_SLICES +
         static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight +
         static_cast<U64>(tile_count) * 4u +
-        AVBOIT_Z_BINS +
+        AVBOIT_Z_BINS * AVBOIT_ZBIN_RMQ_LEVELS +
         static_cast<U64>(sResources.volumeWidth) *
             sResources.volumeHeight * AVBOIT_ENTITY_MASK_WORDS +
         static_cast<U64>(sResources.volumeWidth) *
-            sResources.volumeHeight * 2u;
+            sResources.volumeHeight * 5u;
     glGenBuffers(1, &sResources.work);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.work);
     glBufferData(GL_SHADER_STORAGE_BUFFER, work_words * sizeof(U32),
@@ -612,7 +613,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenBuffers(1, &sResources.diagnostics);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.diagnostics);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 4u * sizeof(U32),
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 8u * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
 
     allocateAccumulationTexture(sResources.accumulatedColorGlow,
@@ -830,6 +831,9 @@ void FSAVBOIT::rasterizeConservativeBounds()
     static LLStaticHashedString opaque_depth_sampler(
         "avboitOpaqueDepthSampler");
     static LLStaticHashedString entity_id_uniform("avboitEntityID");
+    static LLStaticHashedString proxy_depth_interval(
+        "avboitProxyDepthInterval");
+    static LLStaticHashedString exact_proxy("avboitExactProxy");
     const U32 groups_x = (sResources.volumeWidth + 15u) / 16u;
     const U32 groups_y = (sResources.volumeHeight + 15u) / 16u;
 
@@ -855,6 +859,10 @@ void FSAVBOIT::rasterizeConservativeBounds()
                                    camera->getFar());
     gAVBOITBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
+    gAVBOITBoundsProgram.uniform1i(exact_proxy, 0);
+    // AABB centers are in agent space. Clear any model matrix left by the
+    // preceding scene draw so their projection matches CPU camera depths.
+    LLRenderPass::applyModelMatrix(nullptr);
     gPipeline.mCubeVB->setBuffer();
 
     LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);
@@ -922,6 +930,10 @@ void FSAVBOIT::rasterizeConservativeBounds()
             BoundRecord record;
             record.center = LLVector3(center.getF32ptr());
             record.size = LLVector3(size.getF32ptr());
+            constexpr F32 proxy_fudge = 0.25f;
+            record.size.mV[0] += proxy_fudge;
+            record.size.mV[1] += proxy_fudge;
+            record.size.mV[2] += proxy_fudge;
             const F32 center_depth =
                 (record.center - camera_origin) * camera_at;
             const F32 depth_radius =
@@ -1010,6 +1022,40 @@ void FSAVBOIT::rasterizeConservativeBounds()
                 U32(zbin_min[bin]) | (U32(zbin_max[bin]) << 16u);
         }
     }
+    // Sparse-table range minima/maxima let the GL 4.3 compute path query all
+    // uniform Z bins intersecting a cell interval with two vector loads.
+    std::vector<U32> zbin_ranges(
+        AVBOIT_Z_BINS * AVBOIT_ZBIN_RMQ_LEVELS, 0xffffffffu);
+    std::copy(packed_zbins.begin(), packed_zbins.end(),
+              zbin_ranges.begin());
+    for (U32 level = 1u; level < AVBOIT_ZBIN_RMQ_LEVELS; ++level)
+    {
+        const U32 half_span = 1u << (level - 1u);
+        const U32 previous = (level - 1u) * AVBOIT_Z_BINS;
+        const U32 destination = level * AVBOIT_Z_BINS;
+        for (U32 bin = 0u; bin < AVBOIT_Z_BINS; ++bin)
+        {
+            const U32 left = zbin_ranges[previous + bin];
+            const U32 right_index = bin + half_span;
+            const U32 right = right_index < AVBOIT_Z_BINS ?
+                zbin_ranges[previous + right_index] : 0xffffffffu;
+            U32 minimum_id = left & 0xffffu;
+            U32 maximum_id =
+                minimum_id != 0xffffu ? left >> 16u : 0u;
+            if ((right & 0xffffu) != 0xffffu)
+            {
+                minimum_id = minimum_id == 0xffffu ?
+                    (right & 0xffffu) :
+                    llmin(minimum_id, right & 0xffffu);
+                maximum_id = llmax(maximum_id, right >> 16u);
+            }
+            if (minimum_id != 0xffffu)
+            {
+                zbin_ranges[destination + bin] =
+                    minimum_id | (maximum_id << 16u);
+            }
+        }
+    }
     const U32 tile_count =
         ((sResources.viewportWidth + 15u) / 16u) *
         ((sResources.viewportHeight + 15u) / 16u);
@@ -1020,8 +1066,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.work);
     glBufferSubData(GL_SHADER_STORAGE_BUFFER,
                     zbin_offset_words * sizeof(U32),
-                    packed_zbins.size() * sizeof(U32),
-                    packed_zbins.data());
+                    zbin_ranges.size() * sizeof(U32),
+                    zbin_ranges.data());
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1031,6 +1077,10 @@ void FSAVBOIT::rasterizeConservativeBounds()
         const BoundRecord& record = bounds[index];
         gAVBOITBoundsProgram.uniform1i(
             entity_id_uniform, S32(llmin(index, U32(0xfffeu))));
+        gAVBOITBoundsProgram.uniform2f(
+            proxy_depth_interval,
+            llmax(record.minimumDepth, near_depth),
+            llmin(record.maximumDepth, far_depth));
         gAVBOITBoundsProgram.uniform3fv(
             LLShaderMgr::BOX_CENTER, 1, record.center.mV);
         gAVBOITBoundsProgram.uniform3fv(
@@ -1044,7 +1094,89 @@ void FSAVBOIT::rasterizeConservativeBounds()
         gPipeline.mCubeVB->drawRange(
             LLRender::TRIANGLE_FAN, 0, 7, 8, far_fan);
     }
+
+    // Static draw geometry supplies a coordinate-exact conservative proxy.
+    // It intentionally ignores texture alpha, materials, and lighting, so
+    // every actual alpha-tested fragment remains covered. Group AABBs stay
+    // active for rigged geometry and as a coarse spatial fallback.
+    gAVBOITBoundsProgram.uniform1i(exact_proxy, 1);
+    gAVBOITBoundsProgram.uniform1i(entity_id_uniform, 0);
+    gAVBOITBoundsProgram.uniform3f(
+        LLShaderMgr::BOX_CENTER, 0.f, 0.f, 0.f);
+    gAVBOITBoundsProgram.uniform3f(
+        LLShaderMgr::BOX_SIZE, 1.f, 1.f, 1.f);
+    for (LLCullResult::sg_iterator iter = gPipeline.beginAlphaGroups();
+         iter != gPipeline.endAlphaGroups(); ++iter)
+    {
+        LLSpatialGroup* group = *iter;
+        if (!group || group->isDead() ||
+            !group->getSpatialPartition()->mRenderByGroup)
+        {
+            continue;
+        }
+        const U32 partition_type =
+            group->getSpatialPartition()->mPartitionType;
+        const bool particle =
+            partition_type == LLViewerRegion::PARTITION_PARTICLE ||
+            partition_type == LLViewerRegion::PARTITION_HUD_PARTICLE;
+        if (!gPipeline.sRenderParticles && particle)
+        {
+            continue;
+        }
+        const auto found =
+            group->mDrawMap.find(LLRenderPass::PASS_ALPHA);
+        if (found == group->mDrawMap.end())
+        {
+            continue;
+        }
+        for (LLPointer<LLDrawInfo>& draw : found->second)
+        {
+            if (draw.isNull() || draw->mAvatar != nullptr ||
+                draw->mVertexBuffer.isNull())
+            {
+                continue;
+            }
+            LLRenderPass::applyModelMatrix(*draw);
+            draw->mVertexBuffer->setBuffer();
+            draw->mVertexBuffer->drawRange(
+                LLRender::TRIANGLES, draw->mStart, draw->mEnd,
+                draw->mCount, draw->mOffset);
+        }
+    }
     gAVBOITBoundsProgram.unbind();
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+
+    // A box crossing the near plane is not guaranteed to leave a closed
+    // fixed-function proxy footprint. Conservatively seed every cell for
+    // those rare camera-intersecting bounds before spatial dilation.
+    gAVBOITVolumeProgram.bind();
+    gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
+                                   sResources.viewportHeight);
+    gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
+                                   sResources.volumeHeight);
+    gAVBOITVolumeProgram.uniform2f(depth_range, camera->getNear(),
+                                   camera->getFar());
+    for (U32 index = 0; index < bounds.size(); ++index)
+    {
+        const BoundRecord& record = bounds[index];
+        if (record.minimumDepth <= near_depth &&
+            record.maximumDepth >= near_depth)
+        {
+            gAVBOITVolumeProgram.uniform2f(
+                proxy_depth_interval, near_depth,
+                llmin(record.maximumDepth, far_depth));
+            gAVBOITVolumeProgram.uniform1i(
+                entity_id_uniform, S32(llmin(index, U32(0xfffeu))));
+            gAVBOITVolumeProgram.uniform1i(pass, 10);
+            glDispatchCompute(groups_x, groups_y, 1u);
+            glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+        }
+    }
+    // Dilate raw proxy intervals before material occupancy compares against
+    // them. This pass depends only on the completed bounds raster.
+    gAVBOITVolumeProgram.uniform1i(pass, 8);
+    glDispatchCompute(groups_x, groups_y, 1u);
+    gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // Return the material occupancy pass to the private opaque-depth target.
@@ -1149,12 +1281,6 @@ void FSAVBOIT::finishDirectOccupancy()
     const LLCamera& camera = *LLViewerCamera::getInstance();
     gAVBOITVolumeProgram.uniform2f(depth_range, camera.getNear(),
                                    camera.getFar());
-    // Bounds may conservatively enlarge spatial work, but only alpha-tested
-    // fragments define Z occupancy. Filling a coarse AABB's entire depth
-    // interval destroys the empty ranges that adaptive compaction relies on.
-    gAVBOITVolumeProgram.uniform1i(pass, 8);
-    glDispatchCompute(groups_x, groups_y, 1u);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     gAVBOITVolumeProgram.uniform1i(pass, 1);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1249,7 +1375,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
     const S32 debug_mode =
-        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 5);
+        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 6);
     static S32 previous_debug_mode = -1;
     if (debug_mode != previous_debug_mode)
     {

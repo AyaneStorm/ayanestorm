@@ -30,7 +30,7 @@ layout(std430, binding = 6) buffer AVBOITTileOccupancy
 
 layout(std430, binding = 7) buffer AVBOITDiagnostics
 {
-    uint avboitDiagnostic[4];
+    uint avboitDiagnostic[8];
 };
 
 layout(std430, binding = 3) buffer AVBOITWork
@@ -45,6 +45,8 @@ uniform int avboitDebugMode;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
+uniform vec2 avboitProxyDepthInterval;
+uniform int avboitEntityID;
 
 const uint AVBOIT_ENTITY_MASK_WORDS = 8u;
 
@@ -59,22 +61,35 @@ uint avboit_tile_offset()
         uint(avboitVolumeSize.x * avboitVolumeSize.y);
 }
 
-uint avboit_bounds_offset()
+uint avboit_zbin_offset()
 {
     ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
     return avboit_tile_offset() +
-        uint(tile_count.x * tile_count.y) * 4u +
-        8192u +
-        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
-            AVBOIT_ENTITY_MASK_WORDS;
+        uint(tile_count.x * tile_count.y) * 4u;
 }
 
 uint avboit_entity_mask_offset()
 {
-    ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
-    return avboit_tile_offset() +
-        uint(tile_count.x * tile_count.y) * 4u +
-        8192u;
+    return avboit_zbin_offset() + 8192u * 14u;
+}
+
+uint avboit_bounds_offset()
+{
+    return avboit_entity_mask_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
+            AVBOIT_ENTITY_MASK_WORDS;
+}
+
+uint avboit_proxy_miss_offset()
+{
+    return avboit_bounds_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 4u;
+}
+
+uint avboit_dilated_bounds_offset()
+{
+    return avboit_bounds_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 2u;
 }
 
 const uint AVBOIT_SLICES = 128u;
@@ -117,6 +132,69 @@ float avboit_window_depth(float linear_depth)
          2.0 * near_depth * far_depth / max(linear_depth, near_depth)) /
         (far_depth - near_depth);
     return clamp(ndc_depth * 0.5 + 0.5, 0.0, 1.0);
+}
+
+uint avboit_uniform_zbin(float linear_depth)
+{
+    float coordinate =
+        (linear_depth - avboitDepthRange.x) /
+        max(avboitDepthRange.y - avboitDepthRange.x, 0.0001);
+    return min(
+        uint(clamp(coordinate, 0.0, 0.99999994) * 8192.0),
+        8191u);
+}
+
+uvec2 avboit_zbin_range(uint first_bin, uint last_bin)
+{
+    uint range_length = last_bin - first_bin + 1u;
+    uint level = uint(findMSB(range_length));
+    uint span = 1u << level;
+    uint level_offset = avboit_zbin_offset() + level * 8192u;
+    uint left = avboitWork[level_offset + first_bin];
+    uint right = avboitWork[
+        level_offset + last_bin - span + 1u];
+    uint minimum_id = 0xffffu;
+    uint maximum_id = 0u;
+    if ((left & 0xffffu) != 0xffffu)
+    {
+        minimum_id = left & 0xffffu;
+        maximum_id = left >> 16u;
+    }
+    if ((right & 0xffffu) != 0xffffu)
+    {
+        minimum_id = minimum_id == 0xffffu ?
+            (right & 0xffffu) :
+            min(minimum_id, right & 0xffffu);
+        maximum_id = max(maximum_id, right >> 16u);
+    }
+    // An empty query must remain conservative rather than erase proxy work.
+    return minimum_id == 0xffffu ?
+        uvec2(0u, 0xfffeu) : uvec2(minimum_id, maximum_id);
+}
+
+uint avboit_mask_for_id_range(uint word, uvec2 id_range)
+{
+    uint word_begin = word * 32u;
+    uint bits = 0u;
+    if (id_range.x <= 254u)
+    {
+        uint normal_end = min(id_range.y, 254u);
+        uint first_bit = clamp(id_range.x, word_begin,
+                               word_begin + 32u) - word_begin;
+        uint end_bit = clamp(normal_end + 1u, word_begin,
+                             word_begin + 32u) - word_begin;
+        if (end_bit > first_bit)
+        {
+            uint width = end_bit - first_bit;
+            bits = width == 32u ? 0xffffffffu :
+                ((1u << width) - 1u) << first_bit;
+        }
+    }
+    if (word == 7u && id_range.y >= 255u)
+    {
+        bits |= 0x80000000u;
+    }
+    return bits;
 }
 
 uvec2 avboit_reparameterized_bin_range(uint virtual_index, uint divider)
@@ -163,6 +241,34 @@ void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 
+    if (avboitPass == 10)
+    {
+        if (all(lessThan(pixel, avboitVolumeSize)))
+        {
+            uint linear_cell =
+                uint(pixel.y * avboitVolumeSize.x + pixel.x);
+            uint interval = avboit_bounds_offset() + linear_cell * 2u;
+            uint minimum_bin = uint(floor(
+                avboit_curve_coordinate(
+                    avboitProxyDepthInterval.x, 0u)));
+            uint maximum_bin = uint(ceil(
+                avboit_curve_coordinate(
+                    avboitProxyDepthInterval.y, 0u)));
+            atomicMin(avboitWork[interval],
+                      minimum_bin > 0u ? minimum_bin - 1u : 0u);
+            atomicMax(avboitWork[interval + 1u],
+                      min(maximum_bin + 1u, 8191u));
+            uint mask_entity =
+                min(uint(max(avboitEntityID, 0)), 255u);
+            uint mask = avboit_entity_mask_offset() +
+                linear_cell * AVBOIT_ENTITY_MASK_WORDS +
+                (mask_entity >> 5u);
+            atomicOr(avboitWork[mask],
+                     1u << (mask_entity & 31u));
+        }
+        return;
+    }
+
     if (avboitPass == 9)
     {
         if (all(lessThan(pixel, avboitVolumeSize)))
@@ -189,15 +295,64 @@ void main()
         {
             uint linear_cell =
                 uint(pixel.y * avboitVolumeSize.x + pixel.x);
-            uint interval = avboit_bounds_offset() + linear_cell * 2u;
-            uint minimum_bin = avboitWork[interval];
+            uint minimum_bin = 0xffffffffu;
+            uint maximum_bin = 0u;
+            // Match the neighbor-cell dilation required by trilinear
+            // filtering without racing writes into the raw proxy intervals.
+            for (int y = -1; y <= 1; ++y)
+            for (int x = -1; x <= 1; ++x)
+            {
+                ivec2 neighbor = clamp(
+                    pixel + ivec2(x, y), ivec2(0),
+                    avboitVolumeSize - ivec2(1));
+                uint neighbor_cell =
+                    uint(neighbor.y * avboitVolumeSize.x + neighbor.x);
+                uint neighbor_interval =
+                    avboit_bounds_offset() + neighbor_cell * 2u;
+                uint neighbor_minimum =
+                    avboitWork[neighbor_interval];
+                if (neighbor_minimum != 0xffffffffu)
+                {
+                    minimum_bin = min(minimum_bin, neighbor_minimum);
+                    maximum_bin = max(
+                        maximum_bin,
+                        avboitWork[neighbor_interval + 1u]);
+                }
+            }
+            uint dilated_interval =
+                avboit_dilated_bounds_offset() + linear_cell * 2u;
+            avboitWork[dilated_interval] = minimum_bin;
+            avboitWork[dilated_interval + 1u] = maximum_bin;
             uint mask = avboit_entity_mask_offset() +
                 linear_cell * AVBOIT_ENTITY_MASK_WORDS;
             uint merged_mask = 0u;
-            for (uint word = 0u;
-                 word < AVBOIT_ENTITY_MASK_WORDS; ++word)
+            if (minimum_bin != 0xffffffffu)
             {
-                merged_mask |= avboitWork[mask + word];
+                uint first_zbin = avboit_uniform_zbin(
+                    avboit_high_virtual_depth(float(minimum_bin)));
+                uint last_zbin = avboit_uniform_zbin(
+                    avboit_high_virtual_depth(
+                        float(min(maximum_bin + 1u, 8192u))));
+                uvec2 id_range = avboit_zbin_range(
+                    min(first_zbin, last_zbin),
+                    max(first_zbin, last_zbin));
+                uint word_min = min(id_range.x >> 5u,
+                                    AVBOIT_ENTITY_MASK_WORDS - 1u);
+                uint word_max = min(id_range.y >> 5u,
+                                    AVBOIT_ENTITY_MASK_WORDS - 1u);
+                for (uint word = word_min; word <= word_max; ++word)
+                {
+                    uint candidates = avboitWork[mask + word] &
+                        avboit_mask_for_id_range(word, id_range);
+                    // Portable scalar bit iteration corresponding to DRO17's
+                    // wave-uniform merged-mask loop.
+                    while (candidates != 0u)
+                    {
+                        uint bit = uint(findLSB(candidates));
+                        merged_mask |= 1u;
+                        candidates ^= 1u << bit;
+                    }
+                }
             }
             if (minimum_bin != 0xffffffffu && merged_mask != 0u)
             {
@@ -633,6 +788,29 @@ void main()
                 vec3(1.0, float(zero_depth) /
                            float(AVBOIT_SLICES - 1u), 0.0);
             imageStore(avboitOutput, pixel, vec4(diagnostic, 0.0));
+            return;
+        }
+        if (avboitDebugMode == 6 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            uint failure = avboitWork[
+                avboit_proxy_miss_offset() +
+                uint(cell.y * avboitVolumeSize.x + cell.x)];
+            vec3 coverage = vec3(0.0, 1.0, 0.0);
+            if ((failure & 1u) != 0u)
+            {
+                coverage = vec3(1.0, 0.0, 0.0);
+            }
+            else if ((failure & 2u) != 0u)
+            {
+                coverage = vec3(1.0, 1.0, 0.0);
+            }
+            else if ((failure & 4u) != 0u)
+            {
+                coverage = vec3(1.0, 0.0, 1.0);
+            }
+            imageStore(avboitOutput, pixel,
+                       vec4(coverage, 0.0));
             return;
         }
         imageStore(avboitOutput, pixel,

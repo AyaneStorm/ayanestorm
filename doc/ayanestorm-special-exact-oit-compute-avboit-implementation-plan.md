@@ -549,6 +549,119 @@ Z-bin range for a voxel job, mask the first/last words, and iterate the merged
 candidate bits with a portable workgroup reduction. V72 passed build and
 runtime validation (`bokt`) with rendering unchanged from v71.
 
+V73 completes the portable range-masked iteration stage without allowing
+coarse bounds to alter adaptive Z occupancy. The CPU expands the packed Z-bin
+LUT into a 14-level sparse range-minimum/range-maximum table. A cell's
+logarithmic proxy interval is converted back to the uniform linear Z-bin
+domain; two table loads conservatively recover the minimum/maximum entity IDs
+across the entire interval. Compute then:
+
+1. derives the first and last relevant 32-bit entity words;
+2. masks IDs outside the packed range, including the conservative bit-255
+   overflow bucket; and
+3. iterates surviving bits with `findLSB`, matching DRO17's scalar candidate
+   loop without relying on unavailable core-GLSL-4.30 subgroup intrinsics.
+
+The range table, entity masks, and bound intervals remain in the unified
+binding-3 work SSBO. Fragment-derived alpha-tested coverage remains the sole
+input to virtual-Z compaction, so v73 cannot repeat v69's coarse-depth fill.
+The v68 material occupancy traversal is still retained pending a
+conservative-superset diagnostic. V73 build, shader-link, visual, and
+performance validation are pending.
+
+### V74 proxy-superset diagnostics
+
+V74 retains the v68 material traversal and compares each alpha-tested
+occupancy sample with the conservative proxy interval for its 8-by-8 cell.
+The diagnostics SSBO counts total and missed samples, while a per-cell miss
+bit supports `RenderAVBOITDebugMode = 6`: green means covered and red means a
+proxy miss. Normal rendering is unchanged.
+
+V75 added separate 3-by-3-dilated proxy intervals, but its first runtime test
+was entirely red because material comparison preceded the dilation compute
+pass. V76 moves dilation immediately after bounds rasterization and before the
+material occupancy traversal, preserving the raw/dilated separation without
+reading uninitialized intervals.
+
+V77 pads proxy depth intervals by one virtual bin to cover conversion-boundary
+rounding. Bounds crossing the camera near plane receive a conservative
+full-screen interval and entity mask before dilation, avoiding clipped proxy
+geometry at close camera distances. The material fallback remains enabled.
+
+V78 applies the viewer occlusion path's established 0.25-metre expansion to
+transparent proxy half-extents. This prevents thin planar bounds such as
+glass, foliage, and fences from collapsing under distant projection and also
+covers small frame-to-frame animated-bound discrepancies.
+
+V79 removes an erroneous additional half-pixel offset from proxy opaque-depth
+sampling. `gl_FragCoord.xy` already denotes the pixel center; shifting it
+again caused distant narrow glass and foliage proxies to sample adjacent
+opaque frames or walls and collapse to the wrong depth.
+
+V80 classifies proxy diagnostic failures: red denotes an absent proxy
+footprint, yellow a material sample nearer than its interval, and magenta a
+material sample farther than its interval. Green remains fully covered. This
+keeps rendering unchanged while distinguishing spatial-raster failures from
+depth-bound failures.
+
+V81 makes each proxy-touched cell consume the AABB's complete conservative
+CPU near/far interval rather than the depths of whichever cube surfaces happen
+to rasterize that cell. It also removes the redundant fragment-level Z-bin
+entity rejection, which could erase a thin proxy before its cell mask existed.
+The packed Z-bin range remains active in the later per-cell candidate stage.
+
+V82 adds a conservative depth guard of at least one metre, growing to one
+percent of view distance, around CPU proxy intervals. Runtime diagnostics
+showed only yellow misses on distant thin rigid geometry after v81, indicating
+that spatial coverage was complete but group bounds could lag LOD/drawable
+depth updates slightly.
+
+V83 removes the v82 depth guard after runtime testing showed substantially
+more yellow at zoomed-out distances. The implementation returns to v81's
+better CPU AABB intervals while the remaining transient near-bound mismatch is
+investigated without further heuristic expansion.
+
+V84 applies a 16-virtual-bin guard only to the camera-facing side of GPU
+per-cell proxy intervals. CPU AABB depths and Z-bin construction remain
+unchanged, avoiding v82's harmful range-order interaction. The guard targets
+the sole remaining yellow classification while preserving the packed Z-bin
+candidate structure and fragment-derived adaptive occupancy.
+
+V85 removes the ineffective v84 guard. Proxy near/far depth is now derived in
+the bounds vertex shader from the same model-view matrix that rasterizes the
+AABB, rather than from a separate CPU camera-dot calculation. This targets
+the large zoomed-out yellow mismatch directly while retaining only one bin of
+rounding padding.
+
+V86 reverts v85's GPU model-view interval after it increased yellow coverage
+in runtime testing. It restores v81's CPU AABB interval, the best validated
+configuration, pending replacement of coarse spatial-group bounds with more
+precise draw-entity bounds.
+
+V87 replaces one coarse AABB per alpha spatial group with per-drawable
+entities. A drawable is included only when one of its faces references an
+`LLDrawInfo` in the active static or rigged alpha draw list. Its maintained
+spatial extents provide the proxy; batched or synthetic draws without a
+recoverable face link retain the group AABB as a conservative fallback.
+
+V88 reverts v87 after aerial testing brought back red spatial misses and
+increased yellow coverage. The drawable extents were not a safe common-space
+replacement for render-group bounds. V88 restores the v81 group-bound
+configuration, which remains the best validated conservative proxy baseline.
+
+V89 supplements the restored group AABBs with coordinate-exact static alpha
+draw geometry rasterized through the lightweight bounds shader. This proxy
+uses the same vertex buffers and model matrices as the actual draw but skips
+textures, alpha tests, materials, and lighting, making it a conservative
+superset of static alpha coverage. Rigged geometry retains the validated group
+AABB path. This is deliberately a correctness step; later bounds optimization
+may replace the extra geometry only after diagnostics stay green.
+
+V89 also explicitly restores the camera-only model-view matrix before drawing
+agent-space AABBs. Earlier bounds passes could inherit the last object's model
+matrix from scene rendering, explaining distance- and object-dependent yellow
+intervals even when CPU bounds themselves were conservative.
+
 The v72 runtime also reconfirmed a mode-transition regression: after returning
 from either Exact OIT or AVBOIT to Standard, parts of the scene could retain
 OIT-era alpha ordering. Both renderer modules independently invalidated only
@@ -814,7 +927,9 @@ Current AyaneStorm status:
 - [x] Generate the uniform packed 16-bit minimum/maximum entity-ID LUT.
 - [x] Load and apply that Z-bin range in the proxy fragment stage.
 - [x] Generate eight per-cell entity bit words after Z-bin range acceptance.
-- [ ] Intersect tile words with the Z-bin range and iterate surviving entities.
+- [x] Intersect cell words with a conservative interval Z-bin range and
+  iterate surviving entity bits through the portable scalar path.
+- [x] Compare material occupancy against proxy intervals and visualize misses.
 - [ ] Replace the v68 material fallback only after conservative-superset
   diagnostics show no missing alpha-tested coverage.
 

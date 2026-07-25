@@ -418,6 +418,14 @@ visible alpha groups and traverses all region volume/bridge octrees on an
 OIT-to-Standard transition, covering groups that were outside the cull result
 when the switch occurred.
 
+Revision v73 adds portable range-masked entity iteration. A 14-level sparse
+table over the packed uniform Z bins returns conservative minimum/maximum IDs
+for a cell's complete logarithmic depth interval with two loads. Compute masks
+the eight cell words to that range and walks surviving bits with `findLSB`.
+This substitutes scalar per-invocation iteration for DRO17's platform wave
+intrinsics while retaining the same packed-range semantics. Bound candidates
+still do not populate the adaptive Z curve.
+
 ## Unresolved runtime observations
 
 The final runtime session reported three unresolved behaviors; they are

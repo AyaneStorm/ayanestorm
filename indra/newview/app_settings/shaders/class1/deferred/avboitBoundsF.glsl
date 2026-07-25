@@ -12,6 +12,8 @@ uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
 uniform sampler2D avboitOpaqueDepthSampler;
 uniform int avboitEntityID;
+uniform vec2 avboitProxyDepthInterval;
+uniform int avboitExactProxy;
 
 const uint AVBOIT_ENTITY_MASK_WORDS = 8u;
 
@@ -23,16 +25,16 @@ uint avboit_zbin_offset()
         uint(tile_count.x * tile_count.y) * 4u;
 }
 
-uint avboit_bounds_offset()
-{
-    return avboit_zbin_offset() + 8192u +
-        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
-            AVBOIT_ENTITY_MASK_WORDS;
-}
-
 uint avboit_entity_mask_offset()
 {
-    return avboit_zbin_offset() + 8192u;
+    return avboit_zbin_offset() + 8192u * 14u;
+}
+
+uint avboit_bounds_offset()
+{
+    return avboit_entity_mask_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
+            AVBOIT_ENTITY_MASK_WORDS;
 }
 
 float avboit_linear_depth(float window_depth)
@@ -55,6 +57,15 @@ uint avboit_virtual_bin(float window_depth)
     return min(uint(clamp(coordinate, 0.0, 1.0) * 8191.0), 8191u);
 }
 
+uint avboit_virtual_bin_from_linear(float linear_depth)
+{
+    float far_depth = max(avboitDepthRange.y, 0.0001);
+    float coordinate =
+        log2(max(linear_depth, avboitDepthRange.x) / 16384.0 + 1.0) /
+        log2(far_depth / 16384.0 + 1.0);
+    return min(uint(clamp(coordinate, 0.0, 1.0) * 8191.0), 8191u);
+}
+
 void main()
 {
     ivec2 cell = clamp(ivec2(gl_FragCoord.xy) / 8, ivec2(0),
@@ -62,28 +73,14 @@ void main()
     uint linear_cell =
         uint(cell.y * avboitVolumeSize.x + cell.x);
     uint interval = avboit_bounds_offset() + linear_cell * 2u;
-    vec2 opaque_uv =
-        (gl_FragCoord.xy + vec2(0.5)) / vec2(avboitViewport);
+    // gl_FragCoord.xy already addresses the pixel center. Adding another
+    // half pixel shifts distant thin proxies onto neighboring opaque texels.
+    vec2 opaque_uv = gl_FragCoord.xy / vec2(avboitViewport);
     float opaque_depth = texture(avboitOpaqueDepthSampler, opaque_uv).r;
     // The proxy interval and material prepass share the same conservative
     // opaque-depth bound; proxy depth beyond it is harmlessly clamped.
     float bounded_window_depth = min(gl_FragCoord.z, opaque_depth);
-    float linear_depth = avboit_linear_depth(bounded_window_depth);
-    float zbin_coordinate =
-        (linear_depth - avboitDepthRange.x) /
-        max(avboitDepthRange.y - avboitDepthRange.x, 0.0001);
-    uint zbin = min(
-        uint(clamp(zbin_coordinate, 0.0, 0.99999994) * 8192.0),
-        8191u);
-    uint packed_range = avboitWork[avboit_zbin_offset() + zbin];
     uint entity_id = uint(max(avboitEntityID, 0));
-    uint minimum_id = packed_range & 0xffffu;
-    uint maximum_id = packed_range >> 16u;
-    if (minimum_id == 0xffffu ||
-        entity_id < minimum_id || entity_id > maximum_id)
-    {
-        return;
-    }
     // Bit 255 is the conservative overflow bucket for IDs beyond the fixed
     // 256-bit portable mask budget.
     uint mask_entity = min(entity_id, 255u);
@@ -92,7 +89,16 @@ void main()
         (mask_entity >> 5u);
     atomicOr(avboitWork[mask_address],
              1u << (mask_entity & 31u));
-    uint depth_bin = avboit_virtual_bin(bounded_window_depth);
-    atomicMin(avboitWork[interval], depth_bin);
-    atomicMax(avboitWork[interval + 1u], depth_bin);
+    // Every touched cell receives the complete CPU AABB depth interval.
+    // Surface-fragment depth is not conservative: only a far-facing cube
+    // surface may cover a cell even though material exists near its front.
+    uint exact_bin = avboit_virtual_bin(bounded_window_depth);
+    uint minimum_bin = avboitExactProxy != 0 ? exact_bin :
+        avboit_virtual_bin_from_linear(avboitProxyDepthInterval.x);
+    uint maximum_bin = avboitExactProxy != 0 ? exact_bin :
+        avboit_virtual_bin_from_linear(avboitProxyDepthInterval.y);
+    atomicMin(avboitWork[interval],
+              minimum_bin > 0u ? minimum_bin - 1u : 0u);
+    atomicMax(avboitWork[interval + 1u],
+              min(maximum_bin + 1u, 8191u));
 }
