@@ -662,6 +662,68 @@ agent-space AABBs. Earlier bounds passes could inherit the last object's model
 matrix from scene rendering, explaining distance- and object-dependent yellow
 intervals even when CPU bounds themselves were conservative.
 
+V90 promotes the validated coordinate-exact static proxy to the source of
+static virtual-Z occupancy. Normal rendering skips the redundant static
+material occupancy traversal, while rigged geometry retains its skinned
+material traversal. Debug mode 6 keeps the static traversal solely for
+continued superset comparison. Extinction and weighted-color rendering are
+unchanged.
+
+V90 passed build and runtime testing (`bokt`) with no visual change. Static
+material occupancy removal is therefore validated; the remaining fallback is
+limited to rigged/skinned draws.
+
+V91 adds a skinned lightweight proxy variant using the viewer's existing
+object-skinning shader feature and matrix-palette uploader. Static and rigged
+exact proxy geometry now populate virtual-Z occupancy. Normal mode removes
+the final material occupancy traversal; debug mode 6 retains it solely to
+verify that both proxy variants remain conservative supersets.
+
+V91 passed build and runtime testing.
+
+V92 supersamples extinction coverage at two-by-two raster samples per
+one-eighth-resolution volume cell and averages optical depth by four. Fully
+covered surfaces retain their previous extinction, while thin hair, foliage,
+lace, and clothing receive stable fractional coverage instead of toggling
+between one full sample and no sample as the camera moves.
+
+V93 reverts v92 after runtime observation showed fence geometry becoming
+visible through banana leaves. Averaged sub-cell extinction weakened
+occlusion behind thin opaque coverage, violating the previously validated
+banana-leaf result. V93 restores v91's extinction raster exactly.
+
+V94 enables conservative effective-zero rejection during the weighted-color
+pass. A fragment is rejected only when every 8-by-8 extinction cell in its
+16-by-16 early-depth tile reached effective zero and the fragment is more than
+the documented two-slice self-occlusion bias behind the farthest zero depth.
+This targets opaque sprite/leaf layers visible through one another and avoids
+the earlier unsafe single-cell boundary test.
+
+V94 also resets Exact OIT's transient `sCaptureActive` flag at every frame
+start, matching AVBOIT and preventing an interrupted capture from routing
+later Standard-mode draws through an OIT shader.
+
+V94 built and ran without a visible improvement or regression.
+
+V95 removes the unrelated two-slice color-lookup bias from the effective-zero
+rejection comparison. The 16-by-16 conservative maximum still requires every
+covered extinction cell to be saturated, but color strictly behind that
+farthest zero depth is now rejected immediately.
+
+V96 reverts v95 after runtime testing produced severe 16-by-16 square holes in
+layered hair. The two-slice margin is restored, returning to v94 behavior.
+Effective-zero tightening is rejected as a solution for opaque sprite
+layering.
+
+V97 rebuilds alpha draw information on every transparency-renderer transition,
+not only OIT-to-Standard. Returning to Standard repeats the rebuild once after
+the next cull refresh so newly refreshed groups cannot retain OIT-era
+ordering. AVBOIT equations and v96 hair/leaf rendering are unchanged.
+
+V91 passed build and runtime testing (`bokt`). Normal rendering was visually
+unchanged and felt slightly faster. Debug mode 6 remained green, validating
+both static and skinned proxy coverage.
+
 The v72 runtime also reconfirmed a mode-transition regression: after returning
 from either Exact OIT or AVBOIT to Standard, parts of the scene could retain
 OIT-era alpha ordering. Both renderer modules independently invalidated only
@@ -930,7 +992,7 @@ Current AyaneStorm status:
 - [x] Intersect cell words with a conservative interval Z-bin range and
   iterate surviving entity bits through the portable scalar path.
 - [x] Compare material occupancy against proxy intervals and visualize misses.
-- [ ] Replace the v68 material fallback only after conservative-superset
+- [x] Replace the v68 material fallback after conservative-superset
   diagnostics show no missing alpha-tested coverage.
 
 The same source provides a more direct implementation route for the bounds

@@ -84,11 +84,22 @@ void FSOITDispatcher::beginFrame()
     // Translate the single live UI choice without coupling either renderer module
     // to the other renderer or to preferences.
     static TransparencyMode previous_mode = TransparencyMode::STANDARD;
+    static U32 vanilla_rebuild_frames = 0u;
     const TransparencyMode mode = synchronizeModeSettings();
-    if (previous_mode != TransparencyMode::STANDARD &&
-        mode == TransparencyMode::STANDARD)
+    if (previous_mode != mode)
     {
         invalidateVanillaAlphaOrdering();
+        if (mode == TransparencyMode::STANDARD)
+        {
+            // Repeat after the first refreshed Standard cull result.
+            vanilla_rebuild_frames = 1u;
+        }
+    }
+    else if (mode == TransparencyMode::STANDARD &&
+             vanilla_rebuild_frames > 0u)
+    {
+        invalidateVanillaAlphaOrdering();
+        --vanilla_rebuild_frames;
     }
     previous_mode = mode;
     FSAVBOIT::beginFrame();

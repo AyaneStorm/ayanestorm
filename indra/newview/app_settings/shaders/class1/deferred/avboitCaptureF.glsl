@@ -158,10 +158,17 @@ uint avboit_conservative_zero_depth(ivec2 pixel)
 
 bool avboit_cull_fragment()
 {
-    // Do not substitute a fragment-stage coarse-cell test for the reference
-    // indirect early-depth quad pipeline. That substitution discards visible
-    // geometry at tile boundaries.
-    return false;
+    if (avboitRasterPass != 2)
+    {
+        return false;
+    }
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    float slice_coordinate = avboit_warped_slice(gl_FragCoord.z);
+    uint zero_depth = avboit_conservative_zero_depth(pixel);
+    // Preserve the two-slice self-occlusion margin. Removing it exposes the
+    // 16x16 rejection granularity as visible blocks in layered hair.
+    return zero_depth < AVBOIT_DIRECT_SLICES &&
+        slice_coordinate > float(zero_depth) + 2.0;
 }
 
 bool avboit_behind_opaque_bounds(ivec2 cell)

@@ -76,6 +76,7 @@ LLGLSLShader gAVBOITVolumeProgram;
 LLGLSLShader gAVBOITResolveProgram;
 LLGLSLShader gAVBOITEarlyDepthProgram;
 LLGLSLShader gAVBOITBoundsProgram;
+LLGLSLShader gAVBOITSkinnedBoundsProgram;
 LLGLSLShader gAVBOITGLTFProgram;
 LLGLSLShader gAVBOITAlphaProgram;
 LLGLSLShader gAVBOITSkinnedAlphaProgram;
@@ -163,7 +164,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v89";
+    return "AVBOIT shader revision v97";
 }
 
 bool FSAVBOIT::supported()
@@ -228,10 +229,22 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITBoundsProgram.clearPermutations();
     gAVBOITBoundsProgram.addPermutation("AVBOIT", "1");
 
+    gAVBOITSkinnedBoundsProgram.mName =
+        "AVBOIT Skinned Conservative Bounds";
+    gAVBOITSkinnedBoundsProgram.mFeatures.attachNothing = false;
+    gAVBOITSkinnedBoundsProgram.mFeatures.hasObjectSkinning = true;
+    gAVBOITSkinnedBoundsProgram.mShaderFiles =
+        gAVBOITBoundsProgram.mShaderFiles;
+    gAVBOITSkinnedBoundsProgram.mShaderLevel = shader_level;
+    gAVBOITSkinnedBoundsProgram.clearPermutations();
+    gAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
+    gAVBOITSkinnedBoundsProgram.addPermutation("HAS_SKIN", "1");
+
     bool success = gAVBOITVolumeProgram.createShader() &&
         gAVBOITResolveProgram.createShader() &&
         gAVBOITEarlyDepthProgram.createShader() &&
-        gAVBOITBoundsProgram.createShader();
+        gAVBOITBoundsProgram.createShader() &&
+        gAVBOITSkinnedBoundsProgram.createShader();
     success = success && cloneCapturePair(
         gAVBOITAlphaProgram, gAVBOITSkinnedAlphaProgram,
         gDeferredAlphaProgram, "Deferred Alpha AVBOIT Shader",
@@ -313,6 +326,7 @@ void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
     shader_list.push_back(&gAVBOITResolveProgram);
     shader_list.push_back(&gAVBOITEarlyDepthProgram);
     shader_list.push_back(&gAVBOITBoundsProgram);
+    shader_list.push_back(&gAVBOITSkinnedBoundsProgram);
     shader_list.push_back(&gAVBOITGLTFProgram);
     shader_list.push_back(&gAVBOITAlphaProgram);
     shader_list.push_back(&gAVBOITSkinnedAlphaProgram);
@@ -339,6 +353,7 @@ void FSAVBOIT::unloadShaders()
     gAVBOITResolveProgram.unload();
     gAVBOITEarlyDepthProgram.unload();
     gAVBOITBoundsProgram.unload();
+    gAVBOITSkinnedBoundsProgram.unload();
     unloadMaterialShaders();
 }
 
@@ -348,6 +363,7 @@ bool FSAVBOIT::shadersReady()
         gAVBOITResolveProgram.mProgramObject &&
         gAVBOITEarlyDepthProgram.mProgramObject &&
         gAVBOITBoundsProgram.mProgramObject &&
+        gAVBOITSkinnedBoundsProgram.mProgramObject &&
         gAVBOITAlphaProgram.mProgramObject &&
         gAVBOITPBRAlphaProgram.mProgramObject &&
         gAVBOITFullbrightAlphaProgram.mProgramObject &&
@@ -402,7 +418,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
     pbr_emissive_shader = pbrGlowShader();
     LLGLSLShader::unbind();
 
-    const auto render_pass = [&pool]()
+    const auto render_pass = [&pool](bool include_static)
     {
         configureDirectRasterShader(&gAVBOITEmissiveProgram);
         configureDirectRasterShader(&gAVBOITSkinnedEmissiveProgram);
@@ -410,7 +426,10 @@ bool FSAVBOIT::renderPostDeferredCapture(
         configureDirectRasterShader(&gAVBOITSkinnedPBRGlowProgram);
         sCaptureActive = true;
         pool.forwardRender(true);
-        pool.forwardRender(false);
+        if (include_static)
+        {
+            pool.forwardRender(false);
+        }
         sCaptureActive = false;
     };
 
@@ -418,7 +437,12 @@ bool FSAVBOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
-        render_pass();
+        const bool compare_static_proxy =
+            gSavedSettings.getS32("RenderAVBOITDebugMode") == 6;
+        if (compare_static_proxy)
+        {
+            render_pass(true);
+        }
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT depth warp and sparse clear");
@@ -426,7 +450,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT extinction raster");
-        render_pass();
+        render_pass(true);
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT extinction integration");
@@ -434,7 +458,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT weighted color raster");
-        render_pass();
+        render_pass(true);
     }
     finishDirectColorRaster();
     gGL.setColorMask(true, true);
@@ -783,8 +807,6 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     }
     else if (pass == 1)
     {
-        // The reference AVBOIT extinction prepass rasterizes directly at
-        // one-eighth resolution; it does not fold 64 full-resolution samples.
         glViewport(0, 0, sResources.volumeWidth, sResources.volumeHeight);
     }
     if (pass == 2)
@@ -1144,6 +1166,52 @@ void FSAVBOIT::rasterizeConservativeBounds()
         }
     }
     gAVBOITBoundsProgram.unbind();
+
+    // Rigged draw geometry uses the viewer's object-skinning feature and
+    // palette uploader, producing the same skinned positions as alpha.
+    gAVBOITSkinnedBoundsProgram.bind();
+    gAVBOITSkinnedBoundsProgram.uniform2i(
+        viewport, sResources.viewportWidth, sResources.viewportHeight);
+    gAVBOITSkinnedBoundsProgram.uniform2i(
+        volume_size, sResources.volumeWidth, sResources.volumeHeight);
+    gAVBOITSkinnedBoundsProgram.uniform2f(
+        depth_range, camera->getNear(), camera->getFar());
+    gAVBOITSkinnedBoundsProgram.uniform1i(
+        opaque_depth_sampler, directOpaqueDepthTextureUnit());
+    gAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
+    gAVBOITSkinnedBoundsProgram.uniform1i(entity_id_uniform, 0);
+    for (LLCullResult::sg_iterator iter =
+             gPipeline.beginRiggedAlphaGroups();
+         iter != gPipeline.endRiggedAlphaGroups(); ++iter)
+    {
+        LLSpatialGroup* group = *iter;
+        if (!group || group->isDead() ||
+            !group->getSpatialPartition()->mRenderByGroup)
+        {
+            continue;
+        }
+        const auto found =
+            group->mDrawMap.find(LLRenderPass::PASS_ALPHA_RIGGED);
+        if (found == group->mDrawMap.end())
+        {
+            continue;
+        }
+        for (LLPointer<LLDrawInfo>& draw : found->second)
+        {
+            if (draw.isNull() || draw->mAvatar == nullptr ||
+                draw->mVertexBuffer.isNull() ||
+                !LLRenderPass::uploadMatrixPalette(*draw))
+            {
+                continue;
+            }
+            LLRenderPass::applyModelMatrix(*draw);
+            draw->mVertexBuffer->setBuffer();
+            draw->mVertexBuffer->drawRange(
+                LLRender::TRIANGLES, draw->mStart, draw->mEnd,
+                draw->mCount, draw->mOffset);
+        }
+    }
+    gAVBOITSkinnedBoundsProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // A box crossing the near plane is not guaranteed to leave a closed

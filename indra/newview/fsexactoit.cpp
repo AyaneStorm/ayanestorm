@@ -651,6 +651,7 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
 void FSExactOIT::beginFrame()
 {
     // Mode-transition invalidation is centralized in the neutral dispatcher.
+    sCaptureActive = false;
     sCaptureCompleted = false;
     sCaptureClearNeeded = true;
     sVanillaFallbackActive = false;

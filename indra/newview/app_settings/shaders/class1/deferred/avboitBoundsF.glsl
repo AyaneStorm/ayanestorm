@@ -6,6 +6,10 @@ layout(std430, binding = 3) buffer AVBOITWork
 {
     uint avboitWork[];
 };
+layout(std430, binding = 4) buffer AVBOITOccupancy
+{
+    uint avboitOccupancy[8192];
+};
 
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
@@ -77,6 +81,10 @@ void main()
     // half pixel shifts distant thin proxies onto neighboring opaque texels.
     vec2 opaque_uv = gl_FragCoord.xy / vec2(avboitViewport);
     float opaque_depth = texture(avboitOpaqueDepthSampler, opaque_uv).r;
+    if (avboitExactProxy != 0 && gl_FragCoord.z > opaque_depth)
+    {
+        return;
+    }
     // The proxy interval and material prepass share the same conservative
     // opaque-depth bound; proxy depth beyond it is harmlessly clamped.
     float bounded_window_depth = min(gl_FragCoord.z, opaque_depth);
@@ -93,6 +101,10 @@ void main()
     // Surface-fragment depth is not conservative: only a far-facing cube
     // surface may cover a cell even though material exists near its front.
     uint exact_bin = avboit_virtual_bin(bounded_window_depth);
+    if (avboitExactProxy != 0)
+    {
+        atomicOr(avboitOccupancy[exact_bin], 1u);
+    }
     uint minimum_bin = avboitExactProxy != 0 ? exact_bin :
         avboit_virtual_bin_from_linear(avboitProxyDepthInterval.x);
     uint maximum_bin = avboitExactProxy != 0 ? exact_bin :
