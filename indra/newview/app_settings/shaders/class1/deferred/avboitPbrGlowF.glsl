@@ -17,6 +17,10 @@ uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
 uniform sampler3D avboitTransmittanceSampler;
 uniform sampler2D avboitOpaqueDepthSampler;
+layout(std430, binding = 2) readonly buffer AVBOITNearestTransparent
+{
+    uint avboitNearestTransparent[];
+};
 const uint AVBOIT_DIRECT_SLICES = 128u;
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
@@ -133,11 +137,25 @@ void avboit_store_glow(float glow)
         }
         float slice_coordinate = encoded_slice / 65536.0;
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
+        // Match color capture at the emitting surface.
         float sample_slice = clamp(
-            slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
+            slice_coordinate, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
         float front = texture(avboitTransmittanceSampler,
                               vec3(sample_xy, (sample_slice + 0.5) /
                                   float(AVBOIT_DIRECT_SLICES))).r;
+        uint nearest = avboitNearestTransparent[
+            uint(pixel.y * avboitViewport.x + pixel.x)];
+        uint surface_depth24 =
+            uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+        uint nearest_depth24 = nearest >> 8u;
+        if (nearest != 0xffffffffu &&
+            surface_depth24 > nearest_depth24 + 1u)
+        {
+            float nearest_alpha =
+                float(255u - (nearest & 255u)) / 255.0;
+            front = min(front, 1.0 - nearest_alpha);
+        }
+        front = clamp(front, 0.0, 1.0);
         avboitAccumulatedColorGlow =
             vec4(0.0, 0.0, 0.0, max(glow, 0.0) * front);
         avboitAccumulatedWeight = 0.0;

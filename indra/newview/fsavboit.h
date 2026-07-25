@@ -75,6 +75,7 @@ private:
         GLuint transmittance = 0;
         GLuint zeroTransmittanceDepth = 0;
         GLuint extinctionOverflowDepth = 0;
+        GLuint nearestTransparent = 0;
         GLuint occupancy = 0;
         GLuint warp = 0;
         GLuint tileOccupancy = 0;

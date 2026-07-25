@@ -17,11 +17,15 @@ const uint AVBOIT_WARP_RANGE_BEGIN = 0x40000000u;
 const uint AVBOIT_WARP_RANGE_END = 0x20000000u;
 const uint AVBOIT_WARP_RANGE_MIDDLE = 0x10000000u;
 const uint AVBOIT_WARP_COORDINATE_MASK = 0x00ffffffu;
-const float AVBOIT_DIRECT_ZERO_EXTINCTION = 5.54126355; // -log(1 / 255)
+const float AVBOIT_DIRECT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
 
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
+layout(std430, binding = 2) buffer AVBOITNearestTransparent
+{
+    uint avboitNearestTransparent[];
+};
 layout(std430, binding = 4) buffer AVBOITOccupancy { uint avboitOccupancy[8192]; };
 layout(std430, binding = 5) buffer AVBOITWarp { uint avboitWarp[8192]; };
 layout(std430, binding = 6) buffer AVBOITTileOccupancy { uint avboitTileOccupancy[]; };
@@ -191,22 +195,22 @@ bool avboit_behind_opaque_bounds(ivec2 cell)
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     uint value = uint(clamp(
-        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 255.0,
-        0.0, 255.0) + 0.5);
+        optical_depth / AVBOIT_DIRECT_ZERO_EXTINCTION * 65535.0,
+        0.0, 65535.0) + 0.5);
     if (value == 0u)
     {
         return;
     }
 
-    uint shift = (slice_index & 3u) * 8u;
-    ivec3 coordinate = ivec3(cell, int(slice_index >> 2u));
+    uint shift = (slice_index & 1u) * 16u;
+    ivec3 coordinate = ivec3(cell, int(slice_index >> 1u));
     // Packed atomic addition deliberately permits carry into later slices.
     // Once this lane overflows, integration saturates at the recorded minimum
     // depth, so data in this and all later slices is irrelevant.
     uint previous = imageAtomicAdd(
         avboitExtinction, coordinate, value << shift);
-    uint previous_value = (previous >> shift) & 255u;
-    if (previous_value + value > 255u)
+    uint previous_value = (previous >> shift) & 65535u;
+    if (previous_value + value > 65535u)
     {
         imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
     }
@@ -231,6 +235,16 @@ void avboit_direct_store(vec4 color)
         }
         if (alpha > 0.0)
         {
+            // Pack monotonically ordered 24-bit window depth and inverted
+            // alpha. Atomic min selects the nearest layer and, for coincident
+            // samples, the greatest coverage.
+            uint depth24 = uint(clamp(gl_FragCoord.z, 0.0, 1.0) *
+                                16777215.0 + 0.5);
+            uint alpha8 = uint(alpha * 255.0 + 0.5);
+            uint nearest_index =
+                uint(pixel.y * avboitViewport.x + pixel.x);
+            atomicMin(avboitNearestTransparent[nearest_index],
+                      (depth24 << 8u) | (255u - alpha8));
             uint virtual_slice = min(uint(
                                          avboit_virtual_depth(gl_FragCoord.z) *
                                          8192.0),
@@ -248,7 +262,8 @@ void avboit_direct_store(vec4 color)
     {
         if (alpha > 0.0)
         {
-            float optical_depth = -log(max(1.0 - alpha, 1.0 / 255.0));
+            float optical_depth =
+                -log(max(1.0 - alpha, 1.0 / 65536.0));
             uint lower_slice = uint(floor(slice_coordinate));
             uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
             float upper_extinction = optical_depth * fract(slice_coordinate);
@@ -274,12 +289,32 @@ void avboit_direct_store(vec4 color)
         }
 
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
+        // Sample at the surface. The two-slice safety margin belongs only to
+        // conservative early-depth rejection; using it here overweights rear
+        // layer color.
         float sample_slice = clamp(
-            slice_coordinate - 2.0, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
+            slice_coordinate, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
         float front_transmittance = texture(
             avboitTransmittanceSampler,
             vec3(sample_xy, (sample_slice + 0.5) /
                 float(AVBOIT_DIRECT_SLICES))).r;
+        uint nearest = avboitNearestTransparent[
+            uint(pixel.y * avboitViewport.x + pixel.x)];
+        uint surface_depth24 =
+            uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+        uint nearest_depth24 = nearest >> 8u;
+        if (nearest != 0xffffffffu &&
+            surface_depth24 > nearest_depth24 + 1u)
+        {
+            float nearest_alpha =
+                float(255u - (nearest & 255u)) / 255.0;
+            // The coarse volume may attenuate more, but it may not overlook
+            // the exact nearest full-resolution foreground sample.
+            front_transmittance = min(
+                front_transmittance, 1.0 - nearest_alpha);
+        }
+        front_transmittance =
+            clamp(front_transmittance, 0.0, 1.0);
         float weight = alpha * front_transmittance;
         avboitAccumulatedColorGlow =
             vec4(max(color.rgb, vec3(0.0)) * weight,

@@ -34,7 +34,7 @@ namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
 constexpr U32 AVBOIT_SLICES = 128;
-constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 4;
+constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
 constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
 constexpr U32 AVBOIT_Z_BINS = 8192;
 constexpr U32 AVBOIT_ZBIN_RMQ_LEVELS = 14;
@@ -164,7 +164,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v99";
+    return "AVBOIT shader revision v107";
 }
 
 bool FSAVBOIT::supported()
@@ -437,12 +437,9 @@ bool FSAVBOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
-        const bool compare_static_proxy =
-            gSavedSettings.getS32("RenderAVBOITDebugMode") == 6;
-        if (compare_static_proxy)
-        {
-            render_pass(true);
-        }
+        // Material coverage supplies the full-resolution nearest transparent
+        // layer used to bound coarse-volume transmittance for rear layers.
+        render_pass(true);
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT depth warp and sparse clear");
@@ -645,6 +642,12 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glBufferData(GL_SHADER_STORAGE_BUFFER, 8u * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
 
+    glGenBuffers(1, &sResources.nearestTransparent);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 static_cast<U64>(width) * height * sizeof(U32),
+                 nullptr, GL_DYNAMIC_DRAW);
+
     allocateAccumulationTexture(sResources.accumulatedColorGlow,
                                 GL_RGBA16F, width, height);
     allocateAccumulationTexture(sResources.accumulatedWeight,
@@ -680,6 +683,8 @@ void FSAVBOIT::releaseResources()
         glDeleteTextures(1, &sResources.zeroTransmittanceDepth);
     if (sResources.extinctionOverflowDepth)
         glDeleteTextures(1, &sResources.extinctionOverflowDepth);
+    if (sResources.nearestTransparent)
+        glDeleteBuffers(1, &sResources.nearestTransparent);
     if (sResources.occupancy) glDeleteBuffers(1, &sResources.occupancy);
     if (sResources.warp) glDeleteBuffers(1, &sResources.warp);
     if (sResources.tileOccupancy) glDeleteBuffers(1, &sResources.tileOccupancy);
@@ -740,7 +745,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     }
     if (!available() || !sResources.accumulatedColorGlow ||
         !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
-        !sResources.work ||
+        !sResources.nearestTransparent || !sResources.work ||
         !opaque_depth ||
         !gAVBOITOpaqueTarget.isComplete() ||
         !gAVBOITPrepassTarget.isComplete())
@@ -764,6 +769,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
                        0, 0, 0, 0, width, height, 1);
 
     const U32 zero = 0u;
+    const U32 empty_nearest = 0xffffffffu;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.occupancy);
     glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
@@ -779,6 +785,9 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     const U32 draw_command[4] = { 6u, 0u, 0u, 0u };
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 4u * sizeof(U32),
                     sizeof(draw_command), draw_command);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
+    glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
+                      GL_RED_INTEGER, GL_UNSIGNED_INT, &empty_nearest);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
@@ -789,11 +798,14 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
                        GL_READ_WRITE, GL_R8UI);
     glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R32UI);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2,
+                     sResources.nearestTransparent);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sResources.occupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sResources.warp);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 7, sResources.diagnostics);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 3, sResources.work);
+
     gGL.getTexUnit(directOpaqueDepthTextureUnit())->bindManual(
         LLTexUnit::TT_TEXTURE, opaque_depth);
 

@@ -746,6 +746,72 @@ that transmittance never increases with depth and that slices after recorded
 effective zero remain zero within R8 precision. Debug mode 8 displays green
 when overflow/saturation integration is valid and red on any violation.
 
+V103 follows the user-confirmed regression boundary between
+`a7e9a6928b3fab228706dd090d477d9b0a963ac1` and
+`9ca84395c1dfb92c37cbb38bd1f83f99774c83a8`. That commit restored required
+additive MRT accumulation (V53) and increased extinction precision (V54);
+returning to the earlier overwrite behavior would also restore its severe
+hair/card corruption. With correct accumulation active, color, legacy glow,
+and PBR glow were sampling the transmittance integral two physical slices in
+front of every surface. This incorrectly reused the two-slice early-depth
+rejection margin and overrepresented rear layers. V103 samples the filterable
+integral at the actual fractional warped surface coordinate in all three
+paths. The two-slice margin remains only in conservative effective-zero
+culling.
+
+V104 addresses the V103 runtime result: changing the sampling coordinate alone
+produced no visible correction. The resolve normalization explained why. An
+exact integral satisfies `sum(alpha * T_front) == 1 - product(1 - alpha)`, so
+the normalization factor is one. With the coarse AVBOIT integral, accumulated
+weight can be smaller than aggregate alpha; the prior unrestricted
+`aggregateAlpha / weight` factor then amplified transmittance-weighted color
+and could cancel the intended attenuation of rear geometry. V104 caps this
+factor at one. It continues to normalize when the approximate weight is above
+aggregate alpha, remains mathematically neutral for an exact integral, and
+prevents the approximation from generating more transparent-layer radiance
+than capture integrated. The target is Vanilla/Exact-OIT visibility rather
+than generalized suppression.
+
+V105 responds to the V104 screenshot comparison. The capped normalization
+reduced visibility through the dress but created dark curved regions following
+underlying garment geometry, because it removed energy rather than correcting
+the foreground/rear color ratio. V105 restores normalized resolve and instead
+applies a live relative-depth correction to the sampled front transmittance
+before color weighting. `RenderAVBOITTransmittancePower` defaults to 1.5 and
+can be changed from 1.0 through 3.0 without rebuilding; 1.0 is the uncorrected
+reference. Because final normalization and aggregate extinction are
+unchanged, the control shifts contribution from rear layers toward foreground
+transparent layers without the V104 dark-energy deficit. Color, legacy glow,
+and PBR glow use the same correction.
+
+V106 supersedes V105 after the window test confirmed that a tunable depth
+power was compensating for a deterministic representation error. Extinction
+capture and integration saturated opaque alpha at `-log(1/255)`, but the
+full-resolution accumulated extinction used by resolve saturated the same
+fragment at `-log(1/65536)`. Thus color behind opaque or nearly opaque alpha
+surfaces retained up to 257 times the residual transmittance assumed by final
+opacity, violating the normalization identity even with otherwise exact
+sampling. V106 removes the power control and makes both paths use the same
+1/65536 endpoint. The extinction scratch returns to two 16-bit slices per
+R32UI word so the doubled range does not sacrifice sheer-alpha precision.
+Unlike V102, this is a focused representation correction: low-resolution
+extinction rasterization and the current adaptive pipeline remain unchanged.
+
+V107 follows the V106 close-up diagnosis: the opaque black underwear band,
+resolved through the opaque-background term, was correct; alpha-blended or
+alpha-masked lace behind the same dress remained overrepresented. This
+isolates the error to transparent-layer color weighting by the coarse 3D
+integral rather than aggregate opacity. V107 uses the specification's prior
+coverage stage to record the nearest surviving transparent sample per
+full-resolution pixel as packed 24-bit window depth plus 8-bit alpha. For a
+later transparent surface, the coarse transmittance is conservatively bounded
+by the exact transmittance of that nearest foreground sample. It is never
+increased, so existing multi-layer volume attenuation remains effective.
+This adds one full-resolution `uint` SSBO (four bytes per pixel) and makes
+material coverage run
+every frame rather than only for proxy diagnostics. It targets both dress-
+before-lace and window-before-avatar cases without resolve tuning.
+
 V98 passed build and runtime testing (`bokt`). Debug mode 7 remained entirely
 green during camera movement.
 
