@@ -164,7 +164,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v97";
+    return "AVBOIT shader revision v99";
 }
 
 bool FSAVBOIT::supported()
@@ -569,6 +569,11 @@ LLGLSLShader* FSAVBOIT::pbrGlowShader()
 
 bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 {
+    // Judge this allocation independently of stale errors from earlier GL
+    // work; failures below are still observed by the final error check.
+    while (glGetError() != GL_NO_ERROR)
+    {
+    }
     sResources.viewportWidth = width;
     sResources.viewportHeight = height;
     sResources.volumeWidth = (width + AVBOIT_SCALE - 1u) / AVBOIT_SCALE;
@@ -718,6 +723,10 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
 {
     const U32 width = screen.getWidth();
     const U32 height = screen.getHeight();
+    if (width == 0u || height == 0u)
+    {
+        return false;
+    }
     // screen shares deferredScreen's depth attachment but does not own the
     // texture name, so get the sampled depth from its actual owner.
     const GLuint opaque_depth = gPipeline.mRT ?
@@ -1352,6 +1361,9 @@ void FSAVBOIT::finishDirectOccupancy()
     gAVBOITVolumeProgram.uniform1i(pass, 1);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    gAVBOITVolumeProgram.uniform1i(pass, 11);
+    glDispatchCompute(1u, 1u, 1u);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
     gAVBOITVolumeProgram.uniform1i(pass, 2);
     glDispatchCompute(groups_x, groups_y, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1381,6 +1393,10 @@ void FSAVBOIT::finishDirectExtinction()
         ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
     const U32 tile_groups_y =
         ((sResources.viewportHeight + 15u) / 16u + 15u) / 16u;
+    const U32 volume_groups_x =
+        (sResources.volumeWidth + 15u) / 16u;
+    const U32 volume_groups_y =
+        (sResources.volumeHeight + 15u) / 16u;
     gAVBOITVolumeProgram.bind();
     gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
@@ -1390,6 +1406,10 @@ void FSAVBOIT::finishDirectExtinction()
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.work);
     glDispatchComputeIndirect(0);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
+    glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
+                    GL_SHADER_STORAGE_BARRIER_BIT);
+    gAVBOITVolumeProgram.uniform1i(pass, 12);
+    glDispatchCompute(volume_groups_x, volume_groups_y, 1u);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT);
     gAVBOITVolumeProgram.uniform1i(pass, 6);
@@ -1443,7 +1463,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
     const S32 debug_mode =
-        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 6);
+        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 8);
     static S32 previous_debug_mode = -1;
     if (debug_mode != previous_debug_mode)
     {

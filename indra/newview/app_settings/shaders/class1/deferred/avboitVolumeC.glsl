@@ -241,6 +241,85 @@ void main()
 {
     ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
 
+    if (avboitPass == 12)
+    {
+        if (all(lessThan(pixel, avboitVolumeSize)) &&
+            tile_is_occupied(pixel))
+        {
+            float previous = 1.0;
+            uint zero_depth =
+                imageLoad(avboitZeroTransmittanceDepth, pixel).r;
+            bool invalid = false;
+            for (uint slice_index = 0u;
+                 slice_index < AVBOIT_SLICES; ++slice_index)
+            {
+                float current = imageLoad(
+                    avboitTransmittance,
+                    ivec3(pixel, int(slice_index))).r;
+                invalid = invalid ||
+                    current > previous + (1.0 / 255.0) ||
+                    (zero_depth < AVBOIT_SLICES &&
+                     slice_index > zero_depth &&
+                     current > (1.0 / 255.0));
+                previous = current;
+            }
+            if (invalid)
+            {
+                atomicAdd(avboitDiagnostic[7], 1u);
+            }
+        }
+        return;
+    }
+
+    if (avboitPass == 11)
+    {
+        uint thread_index = gl_LocalInvocationIndex;
+        for (uint index = thread_index;
+             index < 8192u; index += 256u)
+        {
+            uint entry = avboitWarp[index];
+            uint coordinate = entry & 0x00ffffffu;
+            bool filterable =
+                (entry & AVBOIT_WARP_FILTERABLE) != 0u;
+            bool range_begin =
+                (entry & AVBOIT_WARP_RANGE_BEGIN) != 0u;
+            bool range_end =
+                (entry & AVBOIT_WARP_RANGE_END) != 0u;
+            bool range_middle =
+                (entry & AVBOIT_WARP_RANGE_MIDDLE) != 0u;
+            bool invalid = coordinate >
+                (AVBOIT_SLICES - 1u) * 65536u;
+            if (filterable)
+            {
+                invalid = invalid ||
+                    (range_middle && (range_begin || range_end)) ||
+                    (!range_begin && !range_end && !range_middle);
+            }
+            else
+            {
+                invalid = invalid ||
+                    range_begin || range_end || range_middle;
+            }
+            if (index > 0u)
+            {
+                uint previous = avboitWarp[index - 1u];
+                uint previous_coordinate =
+                    previous & 0x00ffffffu;
+                bool previous_filterable =
+                    (previous & AVBOIT_WARP_FILTERABLE) != 0u;
+                invalid = invalid ||
+                    coordinate < previous_coordinate ||
+                    (!filterable && !previous_filterable &&
+                     coordinate != previous_coordinate);
+            }
+            if (invalid)
+            {
+                atomicAdd(avboitDiagnostic[6], 1u);
+            }
+        }
+        return;
+    }
+
     if (avboitPass == 10)
     {
         if (all(lessThan(pixel, avboitVolumeSize)))
@@ -811,6 +890,22 @@ void main()
             }
             imageStore(avboitOutput, pixel,
                        vec4(coverage, 0.0));
+            return;
+        }
+        if (avboitDebugMode == 7 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            vec3 result = avboitDiagnostic[6] == 0u ?
+                vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            imageStore(avboitOutput, pixel, vec4(result, 0.0));
+            return;
+        }
+        if (avboitDebugMode == 8 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
+        {
+            vec3 result = avboitDiagnostic[7] == 0u ?
+                vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+            imageStore(avboitOutput, pixel, vec4(result, 0.0));
             return;
         }
         imageStore(avboitOutput, pixel,

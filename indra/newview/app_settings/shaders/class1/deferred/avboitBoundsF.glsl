@@ -58,7 +58,7 @@ uint avboit_virtual_bin(float window_depth)
     float coordinate =
         log2(linear_depth / 16384.0 + 1.0) /
         log2(far_depth / 16384.0 + 1.0);
-    return min(uint(clamp(coordinate, 0.0, 1.0) * 8191.0), 8191u);
+    return min(uint(clamp(coordinate, 0.0, 1.0) * 8192.0), 8191u);
 }
 
 uint avboit_virtual_bin_from_linear(float linear_depth)
@@ -67,7 +67,7 @@ uint avboit_virtual_bin_from_linear(float linear_depth)
     float coordinate =
         log2(max(linear_depth, avboitDepthRange.x) / 16384.0 + 1.0) /
         log2(far_depth / 16384.0 + 1.0);
-    return min(uint(clamp(coordinate, 0.0, 1.0) * 8191.0), 8191u);
+    return min(uint(clamp(coordinate, 0.0, 1.0) * 8192.0), 8191u);
 }
 
 void main()

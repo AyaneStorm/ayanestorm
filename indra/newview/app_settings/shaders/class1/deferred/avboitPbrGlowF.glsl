@@ -94,8 +94,8 @@ void avboit_store_glow(float glow)
     if (avboitRasterPass == 1) return;
     if (avboitRasterPass == 2)
     {
-        float virtual_coordinate =
-            avboit_virtual_depth(gl_FragCoord.z) * 8191.0;
+        float virtual_coordinate = min(
+            avboit_virtual_depth(gl_FragCoord.z) * 8192.0, 8191.0);
         uint lower_virtual = uint(floor(virtual_coordinate));
         uint upper_virtual = min(lower_virtual + 1u, 8191u);
         uint lower_entry = avboitWarp[lower_virtual];

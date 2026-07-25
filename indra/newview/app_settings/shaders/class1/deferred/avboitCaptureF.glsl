@@ -48,7 +48,8 @@ float avboit_virtual_depth(float window_depth)
 
 float avboit_warped_slice(float depth)
 {
-    float virtual_coordinate = avboit_virtual_depth(depth) * 8191.0;
+    float virtual_coordinate =
+        min(avboit_virtual_depth(depth) * 8192.0, 8191.0);
     uint lower_virtual = uint(floor(virtual_coordinate));
     uint upper_virtual = min(lower_virtual + 1u, 8191u);
     uint lower_entry = avboitWarp[lower_virtual];
@@ -232,7 +233,7 @@ void avboit_direct_store(vec4 color)
         {
             uint virtual_slice = min(uint(
                                          avboit_virtual_depth(gl_FragCoord.z) *
-                                         8191.0),
+                                         8192.0),
                                      8191u);
             // Retain the material path while measuring whether conservative
             // proxy intervals cover every alpha-tested occupancy sample.

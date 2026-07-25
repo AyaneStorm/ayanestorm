@@ -720,6 +720,35 @@ not only OIT-to-Standard. Returning to Standard repeats the rebuild once after
 the next cull refresh so newly refreshed groups cannot retain OIT-era
 ordering. AVBOIT equations and v96 hair/leaf rendering are unchanged.
 
+V97 passed runtime mode-transition testing. The previously reported OIT
+contamination after returning to Standard was no longer observable.
+
+V98 makes virtual-depth indexing consistent with the LUT builder's 8192-bin
+boundary convention. Material occupancy, exact proxy occupancy, proxy-bound
+conversion, and LUT sampling now multiply normalized depth by 8192 and clamp
+to index 8191; the previous 8191 multiplier disagreed with the compute
+inverse's division by 8192 and could shift boundaries during camera movement.
+The same correction is applied to legacy and PBR emissive/glow sampling so
+those contributions cannot cross a different virtual boundary than color.
+
+V98 also hardens resize/minimize lifecycle handling: zero-sized targets fall
+back without allocation, and allocation status ignores unrelated stale GL
+errors while still reporting errors produced by AVBOIT allocation itself.
+
+V98 adds an on-GPU conformance scan of all 8192 depth-warp entries after LUT
+construction. It checks coordinate bounds and monotonicity, legal
+begin/end/middle marker combinations, and invariant coordinates across
+consecutive empty entries. `RenderAVBOITDebugMode = 7` displays green when no
+violation exists and red otherwise.
+
+V99 adds an integration conformance scan over active volume cells. It verifies
+that transmittance never increases with depth and that slices after recorded
+effective zero remain zero within R8 precision. Debug mode 8 displays green
+when overflow/saturation integration is valid and red on any violation.
+
+V98 passed build and runtime testing (`bokt`). Debug mode 7 remained entirely
+green during camera movement.
+
 V91 passed build and runtime testing (`bokt`). Normal rendering was visually
 unchanged and felt slightly faster. Debug mode 6 remained green, validating
 both static and skinned proxy coverage.
@@ -1102,7 +1131,7 @@ named modes later without changing the scalar path's conformance claim.
 - [ ] Smoke and splashes retain the measured AVBOIT performance advantage.
 - [ ] Equal-depth and closely intersecting transparent surfaces show only
   documented AVBOIT approximation, not implementation corruption.
-- [ ] Empty-range LUT boundaries are continuous under camera movement.
+- [x] Empty-range LUT boundaries are continuous under camera movement.
 - [ ] Overflow and effective-zero paths do not discard visible geometry.
 - [ ] Resize, world entry, live mode switching, shader failure, and fallback
   remain stable.
