@@ -564,6 +564,101 @@ frame state. This prevents selection logic and cleanup from diverging again.
 Build/runtime validation of Exact-to-Standard, AVBOIT-to-Standard, and objects
 entering view after the switch is pending.
 
+### Runtime reports after the v72 transition-cleanup batch
+
+The following issues were reported during the final runtime session and remain
+unresolved. No corrective implementation was attempted in this batch:
+
+- some transparent assets are visibly more transparent than expected, with
+  the user's dress as a reproducible example;
+- opaque portions of mixed transparent/opaque content become more clearly
+  visible when viewed through transparency, including opaque underwear lace
+  behind transparent material and opaque hairstyle portions behind a window;
+- hair generally appears darker and seems to retain less shine than expected;
+- with long hair positioned over a slightly sheer dress, part of the hair can
+  suddenly become more transparent while panning the camera left and right;
+- overlapping sprites whose visible pixels should be opaque are not opaque:
+  individual sprite layers remain visible through one another;
+- contamination after switching from Exact OIT or AVBOIT back to Standard is
+  still present, so the centralized visible-group plus all-region
+  volume/bridge invalidation did not solve the full transition bug.
+
+These observations must remain separate until diagnostics identify whether
+the first two share a cause. In particular, they do not by themselves prove an
+aggregate-extinction error, an ordering-weight error, an alpha-mode
+classification error, an early-depth error, or lost specular/glow response.
+The long-hair report is explicitly camera-dependent and occurs across
+overlapping transparent layers; it must be tested for depth-warp boundary
+movement and ordering-weight instability without assuming either cause. The
+opaque-sprite report is a direct aggregate-opacity regression case and should
+be compared against Exact OIT using known `alpha = 1` texels. It remains
+unresolved and is not attributed to quantization, early depth, or material
+classification without diagnostics. The
+mode-switch validation checkbox remains unchecked.
+
+Historical clarification: these appearance issues have been observable for
+multiple recent revisions, but the user recalls that the earlier weighted-OIT
+implementation, before the work to align it with the AVBOIT specification, did
+not exhibit them. They should therefore be treated as unresolved behavioral
+changes introduced somewhere during the conformance evolution, not as
+intrinsic properties of the affected assets. The first offending revision is
+not yet known and must be established by revision bisection or equivalent
+feature isolation before attributing them to depth warping, packed extinction,
+early depth, direct rasterization, or another specification stage.
+
+The user identifies commit
+`9a2c2f3841ac6400757422be6f0d1082630e154e` as a possible, but uncertain,
+last-known visually good baseline. Read-only inspection identifies it as
+AVBOIT shader revision v55, commit subject `fixed!`, dated 2026-07-24
+01:41:22 +0200. Its relevant renderer changes were:
+
+- replace packed two-byte extinction lanes' effective-zero normalization
+  `-log(1/255)` with 16-bit normalization `-log(1/65536)`;
+- replace the integrated `R8` transmittance volume with filterable `R16F`;
+- raise the effective-zero threshold accordingly from `T <= 1/255` to
+  `T <= 1/65536`; and
+- disable the then-active coarse fragment-stage zero-depth rejection because
+  it could discard visible geometry at 8-by-8 cell boundaries.
+
+This commit is a high-value comparison point for the excessive transparency,
+camera-dependent long-hair, and dark/low-shine reports. It is not yet a proven
+good/bad boundary: the user is unsure, and v55 changed precision and culling
+together. Future isolation should compare those changes independently while
+remembering that the later 8-bit representation was deliberately restored to
+match the selected PDF configuration.
+
+### Screenshot evidence supplied 2026-07
+
+The user supplied twelve Normal/AVBOIT screenshots under
+`C:\Users\gabri\Documents\ShareX\Screenshots\2026-07`. They were inspected
+through the equivalent WSL path. The paired framing and camera position are not
+identical in every image, so these establish qualitative regressions rather
+than pixel-aligned numerical differences:
+
+- `avatar_through_window_avboit.png` versus
+  `avatar_through_window_normal.png`: the AVBOIT view makes avatar, clothing,
+  underwear detail, and hair structure more distinct through the window;
+- `eye_avboit.png` versus `eye_normal.png`: AVBOIT eyelashes and the eyelid
+  edge appear lighter and less solid than the darker Normal result;
+- `dress_sleeve_avboit.png` versus `dress_sleeve_normal.png`: AVBOIT exposes
+  overlapping sleeve layers and a localized block/step pattern, while Normal
+  reads as a substantially continuous opaque sleeve;
+- `hair_avboit_camera_angle_1.png` versus
+  `hair_avboit_camera_angle_2.png`: a small camera-angle change substantially
+  changes transmission through the long hair over the sheer dress, directly
+  confirming camera-dependent instability;
+- `dress_avboit.png` versus `dress_normal.png`: underwear seams and the central
+  opaque motif are plainly visible through the AVBOIT dress but are effectively
+  hidden in Normal; and
+- `sprites_avboit.jpg` versus `sprites_normal.jpg`: overlapping AVBOIT heart
+  sprites visibly transmit many underlying sprite layers, whereas Normal
+  sprites occlude one another much more strongly.
+
+Together these images strengthen the excessive-transmission report across
+multiple content types. They do not establish one common implementation cause:
+window transmission, material layers, alpha-textured hair/eyelashes, and
+sprites may exercise different shader and blend paths.
+
 ## Lossless Exact OIT compute sorter
 
 - Extend the shader loader for program-local OpenGL compute shaders.

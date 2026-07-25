@@ -418,6 +418,72 @@ visible alpha groups and traverses all region volume/bridge octrees on an
 OIT-to-Standard transition, covering groups that were outside the cull result
 when the switch occurred.
 
+## Unresolved runtime observations
+
+The final runtime session reported three unresolved behaviors; they are
+recorded without an asserted common cause:
+
+- the user's dress is more transparent than expected;
+- opaque content is unusually clear through transparent layers, including
+  opaque underwear lace and opaque hairstyle portions viewed through a window;
+- hair generally looks darker, with less apparent shine;
+- part of long hair suddenly becomes more transparent during left/right camera
+  pans when the hair lies over a slightly sheer dress;
+- overlapping sprites with pixels expected to be opaque remain visible through
+  one another instead of fully occluding the layers behind them;
+- Exact OIT/AVBOIT contamination remains after returning to Standard despite
+  the centralized transition invalidation.
+
+No fix was attempted for these reports during this session. Future diagnosis
+must distinguish opacity accumulation, weighted color ordering, material
+classification, early-depth rejection, and mode-transition state before
+changing the renderer. The hair report additionally requires separating base
+color weighting from specular, emissive/glow, and exposure behavior. The
+camera-dependent long-hair case must also be checked against adaptive-warp
+boundary motion and overlapping-layer ordering weights without presuming
+either explanation. The opaque-sprite case should be isolated with known
+`alpha = 1` texels and compared directly with Exact OIT before assigning a
+cause.
+
+The user recalls that the earlier weighted-OIT implementation predating the
+AVBOIT conformance work did not show these appearance problems. Although they
+have existed for several recent revisions, their first offending revision is
+unknown. Future work should use revision or feature-stage isolation rather
+than classify them as unavoidable AVBOIT asset behavior.
+
+Candidate visual baseline: commit
+`9a2c2f3841ac6400757422be6f0d1082630e154e` (`fixed!`, 2026-07-24,
+AVBOIT shader revision v55). The user thinks this may have looked best but is
+not certain. That commit jointly changed packed extinction from 8-bit
+`-log(1/255)` normalization to 16-bit `-log(1/65536)`, changed integrated
+transmittance from `R8` to `R16F`, moved effective zero from `1/255` to
+`1/65536`, and disabled unsafe coarse fragment culling. It is therefore useful
+for feature isolation, but it cannot establish which one of those changes
+controlled the reported appearance.
+
+## Screenshot comparison set
+
+Twelve screenshots in
+`C:\Users\gabri\Documents\ShareX\Screenshots\2026-07` provide qualitative
+Normal/AVBOIT evidence. Framing differs between some pairs, so they are not
+pixel-aligned measurements.
+
+- The window pair shows the avatar and normally obscured clothing/hair details
+  more clearly in AVBOIT.
+- The eye pair shows lighter, less-solid eyelashes and eyelid edges in AVBOIT.
+- The sleeve pair shows transparent layer repetition and a localized stepped
+  block in AVBOIT where Normal appears continuous and opaque.
+- Two AVBOIT hair angles directly show transmission changing with a small
+  camera pan over the sheer dress.
+- The dress pair shows underwear seams and its opaque central motif through
+  AVBOIT but not meaningfully through Normal.
+- The sprite pair gives the strongest aggregate-opacity example: many
+  underlying heart layers remain visible through AVBOIT hearts, while Normal
+  sprites occlude one another strongly.
+
+The set confirms excessive transmission across several content paths but does
+not prove that all examples share one defect.
+
 ## Selected extinction configuration
 
 AyaneStorm targets the presentation's scalar/monochrome AVBOIT configuration.
