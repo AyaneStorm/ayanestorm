@@ -37,6 +37,42 @@ float avboit_virtual_depth(float window_depth)
     return clamp(log2(linear_depth / linearization + 1.0) /
                  log2(far_depth / linearization + 1.0), 0.0, 1.0);
 }
+float avboit_warped_slice(float depth)
+{
+    float virtual_coordinate =
+        min(avboit_virtual_depth(depth) * 8192.0, 8191.0);
+    uint lower_virtual = uint(floor(virtual_coordinate));
+    uint upper_virtual = min(lower_virtual + 1u, 8191u);
+    uint lower_entry = avboitWarp[lower_virtual];
+    uint upper_entry = avboitWarp[upper_virtual];
+    float lower_coordinate =
+        float(lower_entry & AVBOIT_WARP_COORDINATE_MASK);
+    float upper_coordinate =
+        float(upper_entry & AVBOIT_WARP_COORDINATE_MASK);
+    bool lower_filterable =
+        (lower_entry & AVBOIT_WARP_FILTERABLE) != 0u;
+    bool upper_filterable =
+        (upper_entry & AVBOIT_WARP_FILTERABLE) != 0u;
+    bool lower_range_end =
+        (lower_entry & AVBOIT_WARP_RANGE_END) != 0u;
+    bool upper_range_begin =
+        (upper_entry & AVBOIT_WARP_RANGE_BEGIN) != 0u;
+    if (lower_filterable && upper_filterable)
+    {
+        return mix(lower_coordinate, upper_coordinate,
+                   fract(virtual_coordinate)) / 65536.0;
+    }
+    if (lower_range_end)
+    {
+        return lower_coordinate / 65536.0;
+    }
+    if (upper_range_begin)
+    {
+        return upper_coordinate / 65536.0;
+    }
+    return (lower_filterable ? lower_coordinate : upper_coordinate) /
+        65536.0;
+}
 uint avboit_conservative_zero_depth(ivec2 pixel)
 {
     ivec2 base_cell = (pixel / 16) * 2;

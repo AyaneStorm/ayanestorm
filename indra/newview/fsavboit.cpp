@@ -164,7 +164,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v107";
+    return "AVBOIT shader revision v111";
 }
 
 bool FSAVBOIT::supported()
@@ -645,7 +645,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glGenBuffers(1, &sResources.nearestTransparent);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
     glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 static_cast<U64>(width) * height * sizeof(U32),
+                 static_cast<U64>(width) * height * 2u * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
 
     allocateAccumulationTexture(sResources.accumulatedColorGlow,
@@ -786,8 +786,15 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 4u * sizeof(U32),
                     sizeof(draw_command), draw_command);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
-    glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
-                      GL_RED_INTEGER, GL_UNSIGNED_INT, &empty_nearest);
+    const U64 nearest_plane_bytes =
+        static_cast<U64>(sResources.viewportWidth) *
+        sResources.viewportHeight * sizeof(U32);
+    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0,
+                         nearest_plane_bytes, GL_RED_INTEGER,
+                         GL_UNSIGNED_INT, &empty_nearest);
+    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
+                         nearest_plane_bytes, nearest_plane_bytes,
+                         GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,

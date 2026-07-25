@@ -38,6 +38,11 @@ layout(std430, binding = 3) buffer AVBOITWork
     uint avboitWork[];
 };
 
+layout(std430, binding = 2) readonly buffer AVBOITNearestTransparent
+{
+    uint avboitNearestTransparent[];
+};
+
 uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
 uniform int avboitPass;
@@ -217,6 +222,13 @@ float unpack_extinction(uint packed_word, uint slice_index)
     uint shift = (slice_index & 1u) * 16u;
     return float((packed_word >> shift) & 65535u) *
         (AVBOIT_ZERO_EXTINCTION / 65535.0);
+}
+
+vec3 avboit_unpack_rgb10(uint packed_color)
+{
+    return vec3(packed_color & 1023u,
+                (packed_color >> 10u) & 1023u,
+                (packed_color >> 20u) & 1023u) / 1023.0;
 }
 
 uint tile_occupancy_index(ivec2 cell, uint word)
@@ -821,8 +833,14 @@ void main()
         float accumulated_glow = color_glow.a;
         float accumulated_extinction =
             imageLoad(avboitAccumulatedExtinction, pixel).r;
+        uint nearest_index =
+            uint(pixel.y * avboitViewport.x + pixel.x);
+        uint nearest = avboitNearestTransparent[nearest_index];
+        bool has_transparency =
+            weight > 0.0 || accumulated_glow > 0.0 ||
+            nearest != 0xffffffffu;
         if (avboitDebugMode == 1 &&
-            (weight > 0.0 || accumulated_glow > 0.0))
+            has_transparency)
         {
             imageStore(avboitOutput, pixel, vec4(1.0, 0.0, 1.0, 0.0));
             return;
@@ -834,7 +852,7 @@ void main()
         vec3 transparent = weight > 0.0 ?
             weighted_color * (aggregate_alpha / weight) : vec3(0.0);
         vec4 opaque = texelFetch(diffuseRect, pixel, 0);
-        if (avboitDebugMode == 2 && (weight > 0.0 || accumulated_glow > 0.0))
+        if (avboitDebugMode == 2 && has_transparency)
         {
             float occupancy = clamp(
                 float(avboitDiagnostic[0]) / 8192.0, 0.0, 1.0);
@@ -842,7 +860,7 @@ void main()
                        vec4(occupancy, 1.0 - occupancy, 0.0, 0.0));
             return;
         }
-        if (avboitDebugMode == 3 && (weight > 0.0 || accumulated_glow > 0.0))
+        if (avboitDebugMode == 3 && has_transparency)
         {
             float utilization = clamp(
                 float(avboitDiagnostic[1]) / float(AVBOIT_SLICES),
@@ -852,13 +870,19 @@ void main()
                             1.0 - utilization, 0.0));
             return;
         }
-        if (avboitDebugMode == 4 && (weight > 0.0 || accumulated_glow > 0.0))
+        if (avboitDebugMode == 4 && has_transparency)
         {
+            float combined_transmittance = total_transmittance;
+            if (nearest != 0xffffffffu)
+            {
+                combined_transmittance *=
+                    float(nearest & 255u) / 255.0;
+            }
             imageStore(avboitOutput, pixel,
-                       vec4(vec3(total_transmittance), 0.0));
+                       vec4(vec3(combined_transmittance), 0.0));
             return;
         }
-        if (avboitDebugMode == 5 && (weight > 0.0 || accumulated_glow > 0.0))
+        if (avboitDebugMode == 5 && has_transparency)
         {
             uint zero_depth =
                 imageLoad(avboitZeroTransmittanceDepth, cell).r;
@@ -870,7 +894,7 @@ void main()
             return;
         }
         if (avboitDebugMode == 6 &&
-            (weight > 0.0 || accumulated_glow > 0.0))
+            has_transparency)
         {
             uint failure = avboitWork[
                 avboit_proxy_miss_offset() +
@@ -893,7 +917,7 @@ void main()
             return;
         }
         if (avboitDebugMode == 7 &&
-            (weight > 0.0 || accumulated_glow > 0.0))
+            has_transparency)
         {
             vec3 result = avboitDiagnostic[6] == 0u ?
                 vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -901,16 +925,30 @@ void main()
             return;
         }
         if (avboitDebugMode == 8 &&
-            (weight > 0.0 || accumulated_glow > 0.0))
+            has_transparency)
         {
             vec3 result = avboitDiagnostic[7] == 0u ?
                 vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
             imageStore(avboitOutput, pixel, vec4(result, 0.0));
             return;
         }
+        vec3 rear_color =
+            transparent + opaque.rgb * total_transmittance;
+        float rear_glow =
+            accumulated_glow + opaque.a * total_transmittance;
+        if (nearest != 0xffffffffu)
+        {
+            uint color_offset =
+                uint(avboitViewport.x * avboitViewport.y);
+            vec3 nearest_color = avboit_unpack_rgb10(
+                avboitNearestTransparent[color_offset + nearest_index]);
+            float nearest_alpha =
+                float(255u - (nearest & 255u)) / 255.0;
+            rear_color = nearest_color * nearest_alpha +
+                rear_color * (1.0 - nearest_alpha);
+            rear_glow *= 1.0 - nearest_alpha;
+        }
         imageStore(avboitOutput, pixel,
-                   max(vec4(transparent + opaque.rgb * total_transmittance,
-                            accumulated_glow + opaque.a * total_transmittance),
-                       vec4(0.0)));
+                   max(vec4(rear_color, rear_glow), vec4(0.0)));
     }
 }

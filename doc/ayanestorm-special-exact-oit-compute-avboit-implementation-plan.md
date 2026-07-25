@@ -812,6 +812,41 @@ material coverage run
 every frame rather than only for proxy diagnostics. It targets both dress-
 before-lace and window-before-avatar cases without resolve tuning.
 
+V108 follows paired Exact-OIT normal/debug-5 window captures. The pane's debug
+color decodes to the ordinary source-alpha / one-minus-source-alpha tuple, so
+custom blend semantics are ruled out. V107's direct minimum bound fixed the
+near dress/lace case but could not preserve a distant avatar's internal
+transparent-layer ordering: window attenuation must multiply that existing
+transmittance rather than replace it, otherwise normalized resolve cancels the
+common factor. V108 samples the coarse integral immediately after the exact
+nearest surface, computes `exactNearestT / approximateNearestT` capped at one,
+and multiplies rear transmittance by that missing-attenuation ratio. If the
+volume already represented the foreground correctly the ratio is one; it can
+never increase transmittance. Color and both glow paths use the same rule.
+
+The first V108 runtime attempt fell back to Vanilla because the standalone
+legacy-emissive and PBR-glow shaders used the new nearest-depth correction but
+did not define the shared `avboit_warped_slice` helper. The viewer log reported
+GLSL C1503 at that call. V108 now includes the identical LUT decoding helper
+in both standalone shaders; the correction itself is unchanged.
+
+V110 replaces both V107's direct minimum and V108's ratio correction after
+runtime V109 restored AVBOIT but regressed the dress/lace result without
+fixing the window. The nearest full-resolution surface is now peeled as one
+exact front layer. Its final lit/fogged RGB is packed during the color pass;
+it contributes neither color nor extinction to the rear AVBOIT aggregate.
+Resolve first composites all remaining transparent and opaque content, then
+applies the peeled surface with ordinary source-alpha blending. This performs
+the exact first front-to-back operation for either dress-over-lace or
+glass-over-interior while retaining AVBOIT for all rear layers. The existing
+nearest-layer SSBO grows from one to two uints per pixel (depth/alpha plus
+RGB10 color); no additional geometry pass is added beyond V107.
+
+The first V110 runtime attempt fell back because the NVIDIA GLSL 4.30 compiler
+did not expose `unpackF2x11_1x10`. V111 uses explicit vendor-independent
+unsigned 10-bit packing and unpacking for each RGB channel. It keeps the same
+four-byte color plane and front-layer algorithm.
+
 V98 passed build and runtime testing (`bokt`). Debug mode 7 remained entirely
 green during camera movement.
 

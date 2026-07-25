@@ -84,6 +84,13 @@ float avboit_warped_slice(float depth)
     return (lower_filterable ? lower_coordinate : upper_coordinate) / 65536.0;
 }
 
+uint avboit_pack_rgb10(vec3 color)
+{
+    uvec3 encoded = uvec3(
+        clamp(color, vec3(0.0), vec3(1.0)) * 1023.0 + 0.5);
+    return encoded.r | (encoded.g << 10u) | (encoded.b << 20u);
+}
+
 uint avboit_tile_index(ivec2 cell, uint word)
 {
     return (uint(cell.y) * uint(avboitVolumeSize.x) + uint(cell.x)) *
@@ -304,14 +311,21 @@ void avboit_direct_store(vec4 color)
             uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
         uint nearest_depth24 = nearest >> 8u;
         if (nearest != 0xffffffffu &&
-            surface_depth24 > nearest_depth24 + 1u)
+            surface_depth24 <= nearest_depth24 + 1u)
         {
-            float nearest_alpha =
-                float(255u - (nearest & 255u)) / 255.0;
-            // The coarse volume may attenuate more, but it may not overlook
-            // the exact nearest full-resolution foreground sample.
-            front_transmittance = min(
-                front_transmittance, 1.0 - nearest_alpha);
+            uint nearest_index =
+                uint(pixel.y * avboitViewport.x + pixel.x);
+            uint color_offset =
+                uint(avboitViewport.x * avboitViewport.y);
+            avboitNearestTransparent[color_offset + nearest_index] =
+                avboit_pack_rgb10(color.rgb);
+            // Resolve composites this exact nearest layer separately.
+            avboitAccumulatedColorGlow =
+                vec4(0.0, 0.0, 0.0,
+                     max(oitGlow, 0.0) * front_transmittance);
+            avboitAccumulatedWeight = 0.0;
+            avboitAccumulatedExtinction = 0.0;
+            return;
         }
         front_transmittance =
             clamp(front_transmittance, 0.0, 1.0);
