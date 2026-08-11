@@ -78,6 +78,10 @@ public:
     static void retainNodePoolOnNextRelease();
     static void releaseResources();
     static void allocateResources(U32 width, U32 height);
+    // User intent AND hardware support, mirroring FSAVBOIT::requested(). Public
+    // so the neutral dispatcher can publish the selected transparency mode
+    // without reaching into either renderer's internals.
+    static bool isEnabled();
 
 private:
     enum class ValidationResult { INACTIVE, COMPLETE, FALLBACK_REQUIRED };
@@ -98,7 +102,6 @@ private:
         CaptureScope& operator=(const CaptureScope&) = delete;
     };
     static bool isSupported();
-    static bool isEnabled();
     static bool loadGLTFShaders(S32 shader_level, bool use_sun_shadow);
     static bool loadPBRGlowShaders(S32 shader_level);
     static bool loadEmissiveShaders(S32 shader_level);

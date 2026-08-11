@@ -79,6 +79,25 @@ void invalidateVanillaAlphaOrdering()
 }
 }
 
+// Snapshot of "an order-independent renderer will handle this frame's alpha".
+// Refreshed once per frame before culling; read per spatial group during
+// culling, so it must stay a plain load with no settings lookup behind it.
+static bool sOrderIndependentAlpha = false;
+
+void FSOITDispatcher::refreshOrderIndependentAlphaState()
+{
+    // Both accessors are user intent AND hardware support. Deliberately not
+    // FSAVBOIT::available(), which additionally requires allocated resources:
+    // those are created lazily at the first alpha pass, after culling, so it
+    // would read false on the frame the mode is enabled.
+    sOrderIndependentAlpha = FSExactOIT::isEnabled() || FSAVBOIT::requested();
+}
+
+bool FSOITDispatcher::orderIndependentAlphaActive()
+{
+    return sOrderIndependentAlpha;
+}
+
 void FSOITDispatcher::beginFrame()
 {
     // Translate the single live UI choice without coupling either renderer module

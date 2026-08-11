@@ -23,6 +23,13 @@ public:
     using PrepareShader = void (*)(LLGLSLShader*, bool, F32);
 
     static void beginFrame();
+    // Order-independent transparency makes alpha submission order irrelevant to
+    // the resolved image. Published as a per-frame snapshot refreshed before
+    // culling, so hot paths that only need to know whether that ordering still
+    // matters can read it without a settings lookup. beginFrame() runs after
+    // culling and is therefore too late to publish it.
+    static void refreshOrderIndependentAlphaState();
+    static bool orderIndependentAlphaActive();
     static bool captureActive();
     static bool captureCompleted();
     static bool renderPostDeferredCapture(
