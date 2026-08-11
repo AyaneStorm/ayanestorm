@@ -8,12 +8,13 @@ layout(std430, binding = 3) buffer AVBOITWork
 };
 layout(std430, binding = 4) buffer AVBOITOccupancy
 {
-    uint avboitOccupancy[8192];
+    uint avboitOccupancy[AVBOIT_VIRTUAL_SLICES];
 };
 
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
+uniform float avboitLinearization;
 uniform sampler2D avboitOpaqueDepthSampler;
 uniform int avboitEntityID;
 uniform vec2 avboitProxyDepthInterval;
@@ -31,7 +32,8 @@ uint avboit_zbin_offset()
 
 uint avboit_entity_mask_offset()
 {
-    return avboit_zbin_offset() + 8192u * 14u;
+    return avboit_zbin_offset() +
+        uint(AVBOIT_VIRTUAL_SLICES) * uint(AVBOIT_ZBIN_LEVELS);
 }
 
 uint avboit_bounds_offset()
@@ -56,18 +58,23 @@ uint avboit_virtual_bin(float window_depth)
     float linear_depth = avboit_linear_depth(window_depth);
     float far_depth = max(avboitDepthRange.y, 0.0001);
     float coordinate =
-        log2(linear_depth / 16384.0 + 1.0) /
-        log2(far_depth / 16384.0 + 1.0);
-    return min(uint(clamp(coordinate, 0.0, 1.0) * 8192.0), 8191u);
+        log2(linear_depth / avboitLinearization + 1.0) /
+        log2(far_depth / avboitLinearization + 1.0);
+    return min(
+        uint(clamp(coordinate, 0.0, 1.0) * float(AVBOIT_VIRTUAL_SLICES)),
+        uint(AVBOIT_VIRTUAL_SLICES) - 1u);
 }
 
 uint avboit_virtual_bin_from_linear(float linear_depth)
 {
     float far_depth = max(avboitDepthRange.y, 0.0001);
     float coordinate =
-        log2(max(linear_depth, avboitDepthRange.x) / 16384.0 + 1.0) /
-        log2(far_depth / 16384.0 + 1.0);
-    return min(uint(clamp(coordinate, 0.0, 1.0) * 8192.0), 8191u);
+        log2(max(linear_depth, avboitDepthRange.x) /
+             avboitLinearization + 1.0) /
+        log2(far_depth / avboitLinearization + 1.0);
+    return min(
+        uint(clamp(coordinate, 0.0, 1.0) * float(AVBOIT_VIRTUAL_SLICES)),
+        uint(AVBOIT_VIRTUAL_SLICES) - 1u);
 }
 
 void main()
@@ -112,5 +119,5 @@ void main()
     atomicMin(avboitWork[interval],
               minimum_bin > 0u ? minimum_bin - 1u : 0u);
     atomicMax(avboitWork[interval + 1u],
-              min(maximum_bin + 1u, 8191u));
+              min(maximum_bin + 1u, uint(AVBOIT_VIRTUAL_SLICES) - 1u));
 }

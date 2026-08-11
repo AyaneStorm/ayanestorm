@@ -6,21 +6,35 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
-layout(binding = 4, r8) uniform coherent image3D avboitTransmittance;
+// R16F rather than the presentation's R8. This volume is the entire ordering
+// weight for blended geometry, so its precision bounds how closely the
+// approximate weight can match the exact aggregate extinction that attenuates
+// opaque geometry. R8 quantizes the sheer range viewer clothing occupies to
+// 1/255 steps and cannot represent a 1/65536 effective-zero endpoint at all.
+layout(binding = 4, r16f) uniform coherent image3D avboitTransmittance;
 layout(binding = 6, r8ui) uniform coherent uimage2D avboitZeroTransmittanceDepth;
 layout(binding = 7, r32ui) uniform coherent uimage2D avboitExtinctionOverflowDepth;
 layout(binding = 0, rgba16f) uniform readonly image2D avboitAccumulatedColorGlow;
 layout(binding = 1, r16f) uniform readonly image2D avboitAccumulatedWeight;
 layout(binding = 5, r16f) uniform readonly image2D avboitAccumulatedExtinction;
 
+// Transient prefix-scan working array. At the reference 8192-slice domain this
+// fitted in shared memory, but a high-resolution domain exceeds
+// GL_MAX_COMPUTE_SHARED_MEMORY_SIZE, so it lives in shader storage. Image and
+// buffer binding points are separate namespaces, so SSBO binding 2 is free.
+layout(std430, binding = 2) buffer AVBOITWarpScan
+{
+    uint avboitWarpScan[AVBOIT_VIRTUAL_SLICES];
+};
+
 layout(std430, binding = 4) buffer AVBOITOccupancy
 {
-    uint avboitOccupancy[8192];
+    uint avboitOccupancy[AVBOIT_VIRTUAL_SLICES];
 };
 
 layout(std430, binding = 5) buffer AVBOITWarp
 {
-    uint avboitWarp[8192];
+    uint avboitWarp[AVBOIT_VIRTUAL_SLICES];
 };
 
 layout(std430, binding = 6) buffer AVBOITTileOccupancy
@@ -30,17 +44,12 @@ layout(std430, binding = 6) buffer AVBOITTileOccupancy
 
 layout(std430, binding = 7) buffer AVBOITDiagnostics
 {
-    uint avboitDiagnostic[8];
+    uint avboitDiagnostic[16];
 };
 
 layout(std430, binding = 3) buffer AVBOITWork
 {
     uint avboitWork[];
-};
-
-layout(std430, binding = 2) readonly buffer AVBOITNearestTransparent
-{
-    uint avboitNearestTransparent[];
 };
 
 uniform sampler2D diffuseRect;
@@ -50,6 +59,7 @@ uniform int avboitDebugMode;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
+uniform float avboitLinearization;
 uniform vec2 avboitProxyDepthInterval;
 uniform int avboitEntityID;
 
@@ -75,7 +85,8 @@ uint avboit_zbin_offset()
 
 uint avboit_entity_mask_offset()
 {
-    return avboit_zbin_offset() + 8192u * 14u;
+    return avboit_zbin_offset() +
+        uint(AVBOIT_VIRTUAL_SLICES) * uint(AVBOIT_ZBIN_LEVELS);
 }
 
 uint avboit_bounds_offset()
@@ -97,22 +108,73 @@ uint avboit_dilated_bounds_offset()
         uint(avboitVolumeSize.x * avboitVolumeSize.y) * 2u;
 }
 
+// Screen-space tile grid for per-tile depth ranging. Must match
+// AVBOIT_RANGE_TILE in avboitCaptureF.glsl and the tile count in fsavboit.cpp.
+const int AVBOIT_RANGE_TILE = 16;
+
+// Per-tile depth range, two depth keys per tile, after the proxy-bounds region.
+uint avboit_tile_range_offset()
+{
+    return avboit_bounds_offset() +
+        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 5u;
+}
+
+ivec2 avboit_range_tile_count()
+{
+    return max((avboitViewport + ivec2(AVBOIT_RANGE_TILE - 1)) /
+                   AVBOIT_RANGE_TILE,
+               ivec2(1));
+}
+
 const uint AVBOIT_SLICES = 128u;
-const uint AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2u;
+// Largest power-of-two divider the compaction search may use. It must be
+// able to reduce the virtual domain to the physical budget, so it scales
+// with the domain: 8192 needs 6, 65536 needs 9. A cap smaller than this
+// pins the search below a fitting candidate and compaction never fits.
+const uint AVBOIT_MAX_DIVIDER = uint(AVBOIT_MAX_DIVIDER_VALUE);
 const uint AVBOIT_OCCUPANCY_WORDS = AVBOIT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
 const uint AVBOIT_WARP_RANGE_BEGIN = 0x40000000u;
 const uint AVBOIT_WARP_RANGE_END = 0x20000000u;
 const uint AVBOIT_WARP_RANGE_MIDDLE = 0x10000000u;
-const float AVBOIT_ZERO_EXTINCTION = 11.0903549; // -log(1 / 65536)
+const float AVBOIT_ZERO_EXTINCTION_NARROW = 5.54126355;  // -log(1 / 255)
+const float AVBOIT_ZERO_EXTINCTION_WIDE = 11.09035489;   // -log(1 / 65536)
 
-shared uint avboitWarpScan[8192];
+// The scratch volume is always allocated for the wide two-lane layout. The
+// narrow four-lane layout simply leaves the upper half of its slices unused,
+// so the representation is switchable at runtime without reallocation.
+uniform int avboitWideExtinction;
+
+uint avboit_lanes_per_word()
+{
+    return avboitWideExtinction != 0 ? 2u : 4u;
+}
+
+uint avboit_packed_slices()
+{
+    return AVBOIT_SLICES / avboit_lanes_per_word();
+}
+
+float avboit_zero_extinction()
+{
+    return avboitWideExtinction != 0 ?
+        AVBOIT_ZERO_EXTINCTION_WIDE : AVBOIT_ZERO_EXTINCTION_NARROW;
+}
+
+// avboitWarpScan is a shader-storage buffer (declared above) rather than shared
+// memory, so every barrier() guarding it must be paired with
+// memoryBarrierBuffer() to make the writes visible across the workgroup.
+void avboit_scan_barrier()
+{
+    memoryBarrierBuffer();
+    barrier();
+}
 
 float avboit_curve_coordinate(float linear_depth, uint divider)
 {
     float scale = exp2(float(divider));
-    float slice_count = 8192.0 / scale;
-    float linearization = 16384.0 / scale;
+    float slice_count = float(AVBOIT_VIRTUAL_SLICES) / scale;
+    float linearization = avboitLinearization / scale;
     float far_depth = max(avboitDepthRange.y, 0.0001);
     return clamp(
         log2(linear_depth / linearization + 1.0) /
@@ -123,9 +185,11 @@ float avboit_curve_coordinate(float linear_depth, uint divider)
 float avboit_high_virtual_depth(float virtual_coordinate)
 {
     float far_depth = max(avboitDepthRange.y, 0.0001);
-    float normalized = clamp(virtual_coordinate / 8192.0, 0.0, 1.0);
-    return 16384.0 *
-        (exp2(normalized * log2(far_depth / 16384.0 + 1.0)) - 1.0);
+    float normalized =
+        clamp(virtual_coordinate / float(AVBOIT_VIRTUAL_SLICES), 0.0, 1.0);
+    return avboitLinearization *
+        (exp2(normalized *
+              log2(far_depth / avboitLinearization + 1.0)) - 1.0);
 }
 
 float avboit_window_depth(float linear_depth)
@@ -145,8 +209,9 @@ uint avboit_uniform_zbin(float linear_depth)
         (linear_depth - avboitDepthRange.x) /
         max(avboitDepthRange.y - avboitDepthRange.x, 0.0001);
     return min(
-        uint(clamp(coordinate, 0.0, 0.99999994) * 8192.0),
-        8191u);
+        uint(clamp(coordinate, 0.0, 0.99999994) *
+            float(AVBOIT_VIRTUAL_SLICES)),
+        uint(AVBOIT_VIRTUAL_SLICES) - 1u);
 }
 
 uvec2 avboit_zbin_range(uint first_bin, uint last_bin)
@@ -154,7 +219,8 @@ uvec2 avboit_zbin_range(uint first_bin, uint last_bin)
     uint range_length = last_bin - first_bin + 1u;
     uint level = uint(findMSB(range_length));
     uint span = 1u << level;
-    uint level_offset = avboit_zbin_offset() + level * 8192u;
+    uint level_offset =
+        avboit_zbin_offset() + level * uint(AVBOIT_VIRTUAL_SLICES);
     uint left = avboitWork[level_offset + first_bin];
     uint right = avboitWork[
         level_offset + last_bin - span + 1u];
@@ -212,23 +278,18 @@ uvec2 avboit_reparameterized_bin_range(uint virtual_index, uint divider)
         avboit_curve_coordinate(lower_depth, divider)));
     uint upper_bin = uint(floor(
         avboit_curve_coordinate(upper_depth, divider)));
-    uint slice_count = 8192u >> divider;
+    uint slice_count = uint(AVBOIT_VIRTUAL_SLICES) >> divider;
     return min(uvec2(lower_bin, upper_bin),
                uvec2(slice_count - 1u));
 }
 
 float unpack_extinction(uint packed_word, uint slice_index)
 {
-    uint shift = (slice_index & 1u) * 16u;
-    return float((packed_word >> shift) & 65535u) *
-        (AVBOIT_ZERO_EXTINCTION / 65535.0);
-}
-
-vec3 avboit_unpack_rgb10(uint packed_color)
-{
-    return vec3(packed_color & 1023u,
-                (packed_color >> 10u) & 1023u,
-                (packed_color >> 20u) & 1023u) / 1023.0;
+    uint lanes_per_word = avboit_lanes_per_word();
+    uint lane_mask = avboitWideExtinction != 0 ? 0xffffu : 0xffu;
+    uint shift = (slice_index % lanes_per_word) * (32u / lanes_per_word);
+    return float((packed_word >> shift) & lane_mask) *
+        (avboit_zero_extinction() / float(lane_mask));
 }
 
 uint tile_occupancy_index(ivec2 cell, uint word)
@@ -287,7 +348,7 @@ void main()
     {
         uint thread_index = gl_LocalInvocationIndex;
         for (uint index = thread_index;
-             index < 8192u; index += 256u)
+             index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u)
         {
             uint entry = avboitWarp[index];
             uint coordinate = entry & 0x00ffffffu;
@@ -348,7 +409,8 @@ void main()
             atomicMin(avboitWork[interval],
                       minimum_bin > 0u ? minimum_bin - 1u : 0u);
             atomicMax(avboitWork[interval + 1u],
-                      min(maximum_bin + 1u, 8191u));
+                      min(maximum_bin + 1u,
+                          uint(AVBOIT_VIRTUAL_SLICES) - 1u));
             uint mask_entity =
                 min(uint(max(avboitEntityID, 0)), 255u);
             uint mask = avboit_entity_mask_offset() +
@@ -356,6 +418,23 @@ void main()
                 (mask_entity >> 5u);
             atomicOr(avboitWork[mask],
                      1u << (mask_entity & 31u));
+        }
+        return;
+    }
+
+    // Resets the per-tile depth range to an empty interval. atomicMin and
+    // atomicMax in raster pass 0 close it around the transparency actually
+    // present, and an untouched tile keeps minimum > maximum so the capture
+    // shader falls back to the global curve.
+    if (avboitPass == 12)
+    {
+        ivec2 tile_count = avboit_range_tile_count();
+        if (all(lessThan(pixel, tile_count)))
+        {
+            uint range = avboit_tile_range_offset() +
+                (uint(pixel.y) * uint(tile_count.x) + uint(pixel.x)) * 2u;
+            avboitWork[range] = 0xffffffffu;
+            avboitWork[range + 1u] = 0u;
         }
         return;
     }
@@ -423,7 +502,8 @@ void main()
                     avboit_high_virtual_depth(float(minimum_bin)));
                 uint last_zbin = avboit_uniform_zbin(
                     avboit_high_virtual_depth(
-                        float(min(maximum_bin + 1u, 8192u))));
+                        float(min(maximum_bin + 1u,
+                                  uint(AVBOIT_VIRTUAL_SLICES)))));
                 uvec2 id_range = avboit_zbin_range(
                     min(first_zbin, last_zbin),
                     max(first_zbin, last_zbin));
@@ -470,13 +550,13 @@ void main()
         uint thread_index = gl_LocalInvocationIndex;
         uint occupied_virtual = 0u;
         for (uint virtual_index = thread_index;
-             virtual_index < 8192u; virtual_index += 256u)
+             virtual_index < uint(AVBOIT_VIRTUAL_SLICES); virtual_index += 256u)
         {
             occupied_virtual +=
                 avboitOccupancy[virtual_index] != 0u ? 1u : 0u;
         }
         avboitWarpScan[thread_index] = occupied_virtual;
-        barrier();
+        avboit_scan_barrier();
         for (uint stride = 128u; stride > 0u; stride >>= 1u)
         {
             if (thread_index < stride)
@@ -484,29 +564,29 @@ void main()
                 avboitWarpScan[thread_index] +=
                     avboitWarpScan[thread_index + stride];
             }
-            barrier();
+            avboit_scan_barrier();
         }
         if (thread_index == 0u)
         {
             avboitDiagnostic[0] = avboitWarpScan[0];
-            avboitDiagnostic[1] = 8192u;
+            avboitDiagnostic[1] = uint(AVBOIT_VIRTUAL_SLICES);
             avboitDiagnostic[3] = 0u;
         }
-        memoryBarrierBuffer();
-        barrier();
+        avboit_scan_barrier();
 
         // Test successively halved, reparameterized virtual resolutions.
-        for (uint candidate = 0u; candidate <= 6u; ++candidate)
+        for (uint candidate = 0u;
+             candidate <= AVBOIT_MAX_DIVIDER; ++candidate)
         {
-            uint candidate_count = 8192u >> candidate;
+            uint candidate_count = uint(AVBOIT_VIRTUAL_SLICES) >> candidate;
             for (uint index = thread_index;
-                 index < 8192u; index += 256u)
+                 index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u)
             {
                 avboitWarpScan[index] = 0u;
             }
-            barrier();
+            avboit_scan_barrier();
             for (uint virtual_index = thread_index;
-                 virtual_index < 8192u; virtual_index += 256u)
+                 virtual_index < uint(AVBOIT_VIRTUAL_SLICES); virtual_index += 256u)
             {
                 if (avboitOccupancy[virtual_index] != 0u)
                 {
@@ -519,7 +599,7 @@ void main()
                     }
                 }
             }
-            barrier();
+            avboit_scan_barrier();
             uint local_count = 0u;
             for (uint index = thread_index;
                  index < candidate_count; index += 256u)
@@ -527,7 +607,7 @@ void main()
                 local_count += avboitWarpScan[index];
             }
             avboitWarpScan[thread_index] = local_count;
-            barrier();
+            avboit_scan_barrier();
             for (uint stride = 128u; stride > 0u; stride >>= 1u)
             {
                 if (thread_index < stride)
@@ -535,7 +615,7 @@ void main()
                     avboitWarpScan[thread_index] +=
                         avboitWarpScan[thread_index + stride];
                 }
-                barrier();
+                avboit_scan_barrier();
             }
             if (thread_index == 0u &&
                 avboitDiagnostic[1] > AVBOIT_SLICES)
@@ -544,22 +624,31 @@ void main()
                 avboitDiagnostic[1] = avboitWarpScan[0];
             }
             memoryBarrierBuffer();
-            barrier();
+            avboit_scan_barrier();
         }
 
         uint group_shift = avboitDiagnostic[3];
-        uint group_count = 8192u >> group_shift;
+        avboitWork[7] = group_shift;
+        // Record whether the search actually found a fitting candidate. If the
+        // final occupied-group count still exceeds the physical budget, the
+        // divider is pinned at its maximum and the warp cannot represent the
+        // scene: compaction has failed rather than merely coarsened.
+        if (thread_index == 0u)
+        {
+            avboitDiagnostic[8] = group_shift;
+        }
+        uint group_count = uint(AVBOIT_VIRTUAL_SLICES) >> group_shift;
 
         // Rebuild the selected conservative occupancy and preserve it in the
         // no-longer-needed high-resolution occupancy buffer during the scan.
         for (uint index = thread_index;
-             index < 8192u; index += 256u)
+             index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u)
         {
             avboitWarpScan[index] = 0u;
         }
-        barrier();
+        avboit_scan_barrier();
         for (uint virtual_index = thread_index;
-             virtual_index < 8192u; virtual_index += 256u)
+             virtual_index < uint(AVBOIT_VIRTUAL_SLICES); virtual_index += 256u)
         {
             if (avboitOccupancy[virtual_index] != 0u)
             {
@@ -572,49 +661,50 @@ void main()
                 }
             }
         }
-        barrier();
+        avboit_scan_barrier();
         for (uint index = thread_index;
-             index < 8192u; index += 256u)
+             index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u)
         {
             avboitOccupancy[index] =
                 index < group_count ? avboitWarpScan[index] : 0u;
         }
-        memoryBarrierBuffer();
-        barrier();
+        avboit_scan_barrier();
 
         // In-place Blelloch exclusive prefix sum over group occupancy.
-        for (uint stride = 1u; stride < 8192u; stride <<= 1u)
+        for (uint stride = 1u;
+             stride < uint(AVBOIT_VIRTUAL_SLICES); stride <<= 1u)
         {
             uint step = stride << 1u;
             for (uint index = (thread_index + 1u) * step - 1u;
-                 index < 8192u; index += 256u * step)
+                 index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u * step)
             {
                 avboitWarpScan[index] +=
                     avboitWarpScan[index - stride];
             }
-            barrier();
+            avboit_scan_barrier();
         }
         if (thread_index == 0u)
         {
-            avboitWarpScan[8191] = 0u;
+            avboitWarpScan[uint(AVBOIT_VIRTUAL_SLICES) - 1u] = 0u;
         }
-        barrier();
-        for (uint stride = 4096u; stride > 0u; stride >>= 1u)
+        avboit_scan_barrier();
+        for (uint stride = uint(AVBOIT_VIRTUAL_SLICES) >> 1u;
+             stride > 0u; stride >>= 1u)
         {
             uint step = stride << 1u;
             for (uint index = (thread_index + 1u) * step - 1u;
-                 index < 8192u; index += 256u * step)
+                 index < uint(AVBOIT_VIRTUAL_SLICES); index += 256u * step)
             {
                 uint left = index - stride;
                 uint previous = avboitWarpScan[left];
                 avboitWarpScan[left] = avboitWarpScan[index];
                 avboitWarpScan[index] += previous;
             }
-            barrier();
+            avboit_scan_barrier();
         }
 
         for (uint virtual_index = thread_index;
-             virtual_index < 8192u; virtual_index += 256u)
+             virtual_index < uint(AVBOIT_VIRTUAL_SLICES); virtual_index += 256u)
         {
             float high_depth =
                 avboit_high_virtual_depth(float(virtual_index));
@@ -636,7 +726,7 @@ void main()
                     group_shift))), group_count - 1u);
             }
             uint next_group = group;
-            if (virtual_index + 1u < 8192u)
+            if (virtual_index + 1u < uint(AVBOIT_VIRTUAL_SLICES))
             {
                 next_group = min(uint(floor(avboit_curve_coordinate(
                     avboit_high_virtual_depth(float(virtual_index + 1u)),
@@ -645,7 +735,8 @@ void main()
             bool range_begin = occupied && !previous_occupied &&
                 (virtual_index == 0u || previous_group != group);
             bool range_end = occupied && !next_occupied &&
-                (virtual_index + 1u == 8192u || next_group != group);
+                (virtual_index + 1u == uint(AVBOIT_VIRTUAL_SLICES) ||
+                 next_group != group);
             float coordinate = float(avboitWarpScan[group]);
             if (occupied)
             {
@@ -723,7 +814,7 @@ void main()
                 int(linear_cell / uint(avboitVolumeSize.x)));
             imageStore(avboitExtinctionOverflowDepth, pixel, uvec4(255u));
             imageStore(avboitZeroTransmittanceDepth, pixel, uvec4(255u));
-            for (uint word = 0u; word < AVBOIT_PACKED_SLICES; ++word)
+            for (uint word = 0u; word < avboit_packed_slices(); ++word)
             {
                 ivec3 coordinate = ivec3(pixel, int(word));
                 imageStore(avboitExtinction, coordinate, uvec4(0u));
@@ -758,21 +849,26 @@ void main()
             for (uint slice_index = 0u;
                  slice_index < AVBOIT_SLICES; ++slice_index)
             {
-                imageStore(avboitTransmittance,
-                           ivec3(pixel, int(slice_index)),
-                           vec4(exp(-extinction)));
+                // The PDF integration sequence adds this slice's extinction
+                // before storing its integral sample. The -2 sampling bias is
+                // defined against this post-slice phase.
                 if (slice_index >= overflow_depth)
                 {
-                    extinction = AVBOIT_ZERO_EXTINCTION;
+                    extinction = avboit_zero_extinction();
                 }
                 else
                 {
                     uint packed_word = imageLoad(
                         avboitExtinction,
-                        ivec3(pixel, int(slice_index >> 1u))).r;
+                        ivec3(pixel,
+                              int(slice_index / avboit_lanes_per_word()))).r;
                     extinction += unpack_extinction(packed_word, slice_index);
                 }
-                if (zero_depth == 255u && extinction >= AVBOIT_ZERO_EXTINCTION)
+                imageStore(avboitTransmittance,
+                           ivec3(pixel, int(slice_index)),
+                           vec4(exp(-extinction)));
+                if (zero_depth == 255u &&
+                    extinction >= avboit_zero_extinction())
                 {
                     zero_depth = slice_index;
                     atomicAdd(avboitDiagnostic[2], 1u);
@@ -833,14 +929,8 @@ void main()
         float accumulated_glow = color_glow.a;
         float accumulated_extinction =
             imageLoad(avboitAccumulatedExtinction, pixel).r;
-        uint nearest_index =
-            uint(pixel.y * avboitViewport.x + pixel.x);
-        uint nearest = avboitNearestTransparent[nearest_index];
-        bool has_transparency =
-            weight > 0.0 || accumulated_glow > 0.0 ||
-            nearest != 0xffffffffu;
         if (avboitDebugMode == 1 &&
-            has_transparency)
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             imageStore(avboitOutput, pixel, vec4(1.0, 0.0, 1.0, 0.0));
             return;
@@ -852,15 +942,18 @@ void main()
         vec3 transparent = weight > 0.0 ?
             weighted_color * (aggregate_alpha / weight) : vec3(0.0);
         vec4 opaque = texelFetch(diffuseRect, pixel, 0);
-        if (avboitDebugMode == 2 && has_transparency)
+        if (avboitDebugMode == 2 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             float occupancy = clamp(
-                float(avboitDiagnostic[0]) / 8192.0, 0.0, 1.0);
+                float(avboitDiagnostic[0]) /
+                    float(AVBOIT_VIRTUAL_SLICES), 0.0, 1.0);
             imageStore(avboitOutput, pixel,
                        vec4(occupancy, 1.0 - occupancy, 0.0, 0.0));
             return;
         }
-        if (avboitDebugMode == 3 && has_transparency)
+        if (avboitDebugMode == 3 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             float utilization = clamp(
                 float(avboitDiagnostic[1]) / float(AVBOIT_SLICES),
@@ -870,19 +963,15 @@ void main()
                             1.0 - utilization, 0.0));
             return;
         }
-        if (avboitDebugMode == 4 && has_transparency)
+        if (avboitDebugMode == 4 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
-            float combined_transmittance = total_transmittance;
-            if (nearest != 0xffffffffu)
-            {
-                combined_transmittance *=
-                    float(nearest & 255u) / 255.0;
-            }
             imageStore(avboitOutput, pixel,
-                       vec4(vec3(combined_transmittance), 0.0));
+                       vec4(vec3(total_transmittance), 0.0));
             return;
         }
-        if (avboitDebugMode == 5 && has_transparency)
+        if (avboitDebugMode == 5 &&
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             uint zero_depth =
                 imageLoad(avboitZeroTransmittanceDepth, cell).r;
@@ -894,7 +983,7 @@ void main()
             return;
         }
         if (avboitDebugMode == 6 &&
-            has_transparency)
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             uint failure = avboitWork[
                 avboit_proxy_miss_offset() +
@@ -917,7 +1006,7 @@ void main()
             return;
         }
         if (avboitDebugMode == 7 &&
-            has_transparency)
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             vec3 result = avboitDiagnostic[6] == 0u ?
                 vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
@@ -925,30 +1014,160 @@ void main()
             return;
         }
         if (avboitDebugMode == 8 &&
-            has_transparency)
+            (weight > 0.0 || accumulated_glow > 0.0))
         {
             vec3 result = avboitDiagnostic[7] == 0u ?
                 vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
             imageStore(avboitOutput, pixel, vec4(result, 0.0));
             return;
         }
-        vec3 rear_color =
-            transparent + opaque.rgb * total_transmittance;
-        float rear_glow =
-            accumulated_glow + opaque.a * total_transmittance;
-        if (nearest != 0xffffffffu)
+        // Separate the two resolve terms so a wrong result can be attributed to
+        // aggregate opacity or to the normalized average color, rather than
+        // inferred from the composited output. Mode 9 shows aggregate alpha as
+        // greyscale; mode 10 shows the normalized average transparent color
+        // without applying that opacity or the opaque background.
+        // Unconditional so every pixel has a defined diagnostic value. Gating
+        // these on weight > 0.0 let alpha-zero pixels fall through to normal
+        // rendering, producing an image that mixed diagnostic and composited
+        // output and could not be read reliably.
+        if (avboitDebugMode == 9)
         {
-            uint color_offset =
-                uint(avboitViewport.x * avboitViewport.y);
-            vec3 nearest_color = avboit_unpack_rgb10(
-                avboitNearestTransparent[color_offset + nearest_index]);
-            float nearest_alpha =
-                float(255u - (nearest & 255u)) / 255.0;
-            rear_color = nearest_color * nearest_alpha +
-                rear_color * (1.0 - nearest_alpha);
-            rear_glow *= 1.0 - nearest_alpha;
+            imageStore(avboitOutput, pixel,
+                       vec4(vec3(aggregate_alpha), 0.0));
+            return;
+        }
+        if (avboitDebugMode == 10)
+        {
+            imageStore(avboitOutput, pixel,
+                       weight > 0.0 ?
+                           vec4(max(weighted_color / weight, vec3(0.0)), 0.0) :
+                           vec4(0.0, 0.0, 1.0, 0.0));
+            return;
+        }
+        // Selected compaction divider, as a distinct colour per value. This
+        // reports what the adaptive search actually chose, rather than the
+        // occupied-group ratio that mode 3 shows. A divider pinned at
+        // AVBOIT_MAX_DIVIDER means the search never found a fitting candidate.
+        //   black  0    grey 1   blue 2   cyan 3   green 4
+        //   yellow 5    orange 6  red 7   magenta 8   white 9 or more
+        if (avboitDebugMode == 15)
+        {
+            uint d = avboitDiagnostic[8];
+            vec3 c = vec3(1.0);
+            if (d == 0u)      c = vec3(0.05);
+            else if (d == 1u) c = vec3(0.4);
+            else if (d == 2u) c = vec3(0.0, 0.2, 1.0);
+            else if (d == 3u) c = vec3(0.0, 0.8, 1.0);
+            else if (d == 4u) c = vec3(0.0, 1.0, 0.0);
+            else if (d == 5u) c = vec3(1.0, 1.0, 0.0);
+            else if (d == 6u) c = vec3(1.0, 0.5, 0.0);
+            else if (d == 7u) c = vec3(1.0, 0.0, 0.0);
+            else if (d == 8u) c = vec3(1.0, 0.0, 1.0);
+            imageStore(avboitOutput, pixel, vec4(c, 0.0));
+            return;
+        }
+        // Raw accumulated optical depth, banded. aggregate_alpha = 1-exp(-x)
+        // compresses everything above about x=3 into visually identical white,
+        // so it cannot distinguish a correct single layer from many-times
+        // over-accumulation. Each band is one -log(1-alpha) unit:
+        //   black   x<0.1   (nothing)
+        //   blue    x~0.69  (one layer at alpha 0.5)
+        //   green   x~1.39  (two layers at alpha 0.5)
+        //   yellow  x~2.1   (three layers)
+        //   red     x>3     (over-accumulated or near-opaque)
+        if (avboitDebugMode == 11)
+        {
+            float x = accumulated_extinction;
+            vec3 band = vec3(0.0);
+            if (x >= 3.0)            band = vec3(1.0, 0.0, 0.0);
+            else if (x >= 1.75)      band = vec3(1.0, 1.0, 0.0);
+            else if (x >= 1.05)      band = vec3(0.0, 1.0, 0.0);
+            else if (x >= 0.4)       band = vec3(0.0, 0.4, 1.0);
+            else if (x >= 0.1)       band = vec3(0.3, 0.3, 0.3);
+            imageStore(avboitOutput, pixel, vec4(band, 0.0));
+            return;
+        }
+        // Average front transmittance actually used for ordering, banded. The
+        // capture pass substitutes T_front for color under this mode. Behind a
+        // 0.95-alpha garment a rear layer must report a low value; a high value
+        // means the volume lookup returns the wrong depth rather than the
+        // averaging being at fault.
+        //   grey   no coverage
+        //   green  T_front < 0.15   rear layers correctly suppressed
+        //   blue   0.15 - 0.5
+        //   yellow 0.5 - 0.85
+        //   red    T_front > 0.85   rear layers not suppressed at all
+        if (avboitDebugMode == 14)
+        {
+            if (weight <= 0.0)
+            {
+                imageStore(avboitOutput, pixel, vec4(0.15, 0.15, 0.15, 0.0));
+                return;
+            }
+            float average_front = clamp(weighted_color.r / weight, 0.0, 1.0);
+            vec3 band = vec3(0.0, 1.0, 0.0);
+            if (average_front > 0.85)      band = vec3(1.0, 0.0, 0.0);
+            else if (average_front > 0.5)  band = vec3(1.0, 1.0, 0.0);
+            else if (average_front > 0.15) band = vec3(0.0, 0.4, 1.0);
+            imageStore(avboitOutput, pixel, vec4(band, 0.0));
+            return;
+        }
+        // Compare the low-resolution volume against the exact full-resolution
+        // accumulation. Both measure how much light survives everything at this
+        // pixel, so they must agree. The volume's deepest slice is total
+        // transmittance; exp(-accumulated_extinction) is the exact value.
+        // Disagreement means the volume is not recording the extinction that
+        // the weighted-color pass relies on for ordering, which is the only
+        // remaining way a surface behind a near-opaque layer can stay visible.
+        //   green  volume matches exact within 0.05
+        //   blue   volume transmits MORE than exact (under-recorded occlusion)
+        //   red    volume transmits LESS than exact (over-recorded occlusion)
+        //   grey   no transparent coverage at this pixel
+        if (avboitDebugMode == 13)
+        {
+            if (weight <= 0.0)
+            {
+                imageStore(avboitOutput, pixel, vec4(0.15, 0.15, 0.15, 0.0));
+                return;
+            }
+            vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
+            float volume_tail = texture(
+                avboitTransmittanceSampler,
+                vec3(sample_xy,
+                     (float(AVBOIT_SLICES) - 0.5) /
+                         float(AVBOIT_SLICES))).r;
+            float difference = volume_tail - total_transmittance;
+            vec3 band = vec3(0.0, 1.0, 0.0);
+            if (difference > 0.05)       band = vec3(0.0, 0.4, 1.0);
+            else if (difference < -0.05) band = vec3(1.0, 0.0, 0.0);
+            imageStore(avboitOutput, pixel, vec4(band, 0.0));
+            return;
+        }
+        // Distinguish many correct layers from few layers with inflated alpha.
+        // weight is sum(alpha * T_front); for the frontmost layers T_front is
+        // near one, so weight approximates sum(alpha). Comparing that against
+        // accumulated optical depth separates the two causes of a red mode-11
+        // reading:
+        //   grey  weight < 0.1        no meaningful coverage
+        //   blue  weight ~ 0.5-1.5    one or two ordinary layers: if mode 11 is
+        //                             red here, individual alpha is inflated
+        //   green weight ~ 1.5-3      genuinely several overlapping layers
+        //   red   weight > 3          very dense real geometry
+        if (avboitDebugMode == 12)
+        {
+            float w = weight;
+            vec3 band = vec3(0.0);
+            if (w >= 3.0)            band = vec3(1.0, 0.0, 0.0);
+            else if (w >= 1.5)       band = vec3(0.0, 1.0, 0.0);
+            else if (w >= 0.4)       band = vec3(0.0, 0.4, 1.0);
+            else if (w >= 0.1)       band = vec3(0.3, 0.3, 0.3);
+            imageStore(avboitOutput, pixel, vec4(band, 0.0));
+            return;
         }
         imageStore(avboitOutput, pixel,
-                   max(vec4(rear_color, rear_glow), vec4(0.0)));
+                   max(vec4(transparent + opaque.rgb * total_transmittance,
+                            accumulated_glow +
+                                opaque.a * total_transmittance),
+                       vec4(0.0)));
     }
 }

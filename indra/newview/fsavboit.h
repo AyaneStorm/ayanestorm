@@ -67,6 +67,10 @@ public:
 private:
     static bool supported();
     static bool available();
+    // Chooses the virtual depth-slice domain for this session, falling back to
+    // the presentation's baseline when the driver or video memory cannot support
+    // the high-resolution path.
+    static void selectVirtualDomain();
     static bool allocateVolume(U32 width, U32 height);
 
     struct Resources
@@ -75,9 +79,11 @@ private:
         GLuint transmittance = 0;
         GLuint zeroTransmittanceDepth = 0;
         GLuint extinctionOverflowDepth = 0;
-        GLuint nearestTransparent = 0;
         GLuint occupancy = 0;
         GLuint warp = 0;
+        // Transient prefix-scan array. Shared memory cannot hold the
+        // high-resolution virtual domain, so the scan runs in shader storage.
+        GLuint warpScan = 0;
         GLuint tileOccupancy = 0;
         GLuint work = 0;
         GLuint diagnostics = 0;

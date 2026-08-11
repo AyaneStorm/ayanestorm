@@ -53,11 +53,11 @@ stops at the finest resolution whose occupied groups fit 128 physical slices.
 Sampling the resulting grouped LUT is equivalent to using that reduced
 logarithmic parametrization.
 
-The remaining gap is selection of the initial high-resolution curve:
-AyaneStorm fixes it at 8192 slices over the camera range rather than deriving
-its slice count and linearization factor from a requested minimum world-space
-slice thickness. That input and the presentation's exact curve equation are
-not specified in the available slide text, so they must not be guessed.
+Revision v117 completes selection of the initial high-resolution curve.
+AyaneStorm keeps the specified 8192 virtual slices but solves the
+linearization factor from a requested minimum world-space slice thickness and
+the live far plane. The default requested precision is one centimetre and is
+explicitly exposed as a viewer setting rather than hidden in the equation.
 
 The presentation uses 128 physical slices, an 8K depth-warp LUT, and a
 transmittance prepass at one-eighth resolution. Those values match the initial
@@ -515,3 +515,78 @@ volume at `warpedSlice - 2.0`. This is the PDF's stated `-2.0` slice bias for
 linear interpolation; the `-2.5` alternative applies only to bicubic sampling,
 which AyaneStorm does not use. Custom Second Life blend modes remain explicitly
 approximated as source-over rather than claimed as PDF-equivalent.
+
+## Low-resolution extinction alpha derivatives
+
+The one-eighth-resolution extinction raster changes implicit texture
+derivatives by approximately eight times relative to the full-resolution
+occupancy and weighted-color rasters. Without compensation, the passes can
+evaluate different alpha mip levels for the same transparent surface. The
+v114 experimentally scaled extinction-pass alpha derivatives by `1/8` before
+sampling. Runtime testing rejected and removed that experiment: it stabilized
+camera motion but worsened layered transparency and did not fix glass.
+
+## Extinction-integral phase
+
+The PDF integration sequence adds a slice's extinction before emitting that
+slice's integral value. Its linear-filtering `-2` bias assumes this post-slice
+phase. Storing the pre-slice value delays attenuation by one additional
+physical slice, which is especially damaging after empty-space compaction
+places otherwise distant surfaces in adjacent physical slices. AVBOIT v115
+corrects the integral to post-slice storage without changing the specified
+bias or resolve equation.
+
+## Full implementation audit in v116
+
+An end-to-end reread of the presentation and renderer confirmed that the
+generated zero-transmittance depth tiles must be the sole coarse culling
+mechanism. The extra fragment-stage tile decision was not part of the specified
+pipeline and could discard visible geometry, so v116 disables it.
+
+The audit also found two fragment-set/opacity mismatches. GLTF transparency is
+managed outside the alpha spatial-group draw maps and was absent from normal
+warp occupancy; it now receives its own occupancy traversal. Lit GLTF and
+legacy specular materials could also supply a different alpha to extinction
+than to weighted color. Their extinction evaluation now matches their final
+surface opacity.
+
+Revision v117 completes initial curve selection from a requested minimum
+world-space slice thickness. The viewer setting defaults to one centimetre,
+and the logarithmic linearization factor is solved from the requested
+near-camera thickness and live far plane. All depth producers and consumers
+use the same result before the existing halving/reparameterization stage.
+
+Revision v118 selects a higher-quality spatial construction for viewer alpha
+content. The extinction buffer remains one-eighth resolution, but all 64
+full-resolution coverage samples are folded into each cell instead of
+selecting one low-resolution raster sample. Contributions are divided by 64
+and accumulated in packed 16-bit lanes to preserve them through quantization.
+This remains the VBOIT extinction/integration model, but deliberately trades
+prepass work and scratch memory for alpha-texture coverage beyond the
+presentation's measured one-eighth-raster performance configuration.
+
+Runtime testing found no visible difference, so v118 was removed. Revision
+v119 instead corrects the ordering of sampling operations: the `-2` bias is
+applied in the selected virtual logarithmic curve before the Depth Warp LUT
+lookup. Subtracting it after compaction incorrectly crosses foreground events
+that became physically adjacent when empty world depth was removed. Applying
+the bias before the LUT preserves the presentation's empty-space invariance
+and lets range-boundary snapping select the preceding integral endpoint.
+
+### Specification-to-code status
+
+| Presentation stage | AyaneStorm status after v116 |
+| --- | --- |
+| Logarithmic depth distribution | Equation, live far plane, and requested minimum world-space thickness curve fit implemented in v117. |
+| Lower-resolution extinction splat | Implemented at one eighth resolution with linear two-slice splatting. |
+| Packed scalar extinction and overflow | Implemented as four 8-bit lanes per `R32UI`, atomic add, and earliest overflow depth. |
+| Extinction integration | Corrected to post-slice integral storage in v115; sparse work and effective-zero termination implemented. |
+| Linear transmittance sampling | Implemented with the specified `-2` slice bias. |
+| Adaptive Z occupancy and redistribution | 8K occupancy, conservative power-of-two reparameterization, prefix compaction, and boundary metadata implemented. |
+| Empty-range filtering | Begin/end snapping and invariant empty ranges implemented consistently in splat and sample paths. |
+| Conservative tiled bounds | Static and rigged alpha geometry implemented; GLTF occupancy added in v116. |
+| Zero-transmittance early depth | Indirect 16-by-16 depth tiles implemented; non-spec fragment culling disabled in v116. |
+| Full-resolution accumulation/resolve | PDF color, normalization weight, and total-extinction equations implemented; glow is a viewer adaptation. |
+| RGB extinction | Intentionally excluded by selecting the PDF's scalar configuration. |
+| DRO17 candidate optimization | CPU Z bins, cell masks, and portable range filtering exist, but the implementation remains primarily a spatial-work optimization rather than the presentation's complete wave-scalarized bounds pipeline. |
+| Viewer coverage | Main post-water world transparency is covered; HUD, impostor, cube-snapshot, and pre-water paths intentionally remain outside AVBOIT capture. |

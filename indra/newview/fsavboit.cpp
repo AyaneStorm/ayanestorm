@@ -15,6 +15,7 @@
 #include "fsavboit.h"
 
 #include "llenvironment.h"
+#include "gltfscenemanager.h"
 #include "llglslshader.h"
 #include "lldrawpoolalpha.h"
 #include "llrendertarget.h"
@@ -34,11 +35,148 @@ namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
 constexpr U32 AVBOIT_SLICES = 128;
+// The scratch extinction volume is always allocated for the widest supported
+// layout (two 16-bit lanes per word). The presentation's four-8-bit-lane layout
+// needs only half of those slices, so RenderAVBOITWideExtinction can be
+// switched at runtime without reallocating the volume.
 constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
-constexpr U32 AVBOIT_VIRTUAL_SLICES = 8192;
-constexpr U32 AVBOIT_Z_BINS = 8192;
-constexpr U32 AVBOIT_ZBIN_RMQ_LEVELS = 14;
+// Virtual depth-slice domain. The presentation's reference configuration is
+// 8192, which corresponds to about 8.9 mm of depth resolution at two metres on a
+// 128 metre draw distance. Second Life clothing layers are routinely a fraction
+// of a millimetre apart, so the reference domain merges them before compaction
+// can order them. Resolution scales linearly with the domain size, and the
+// domain costs only two U32 buffers, so a high-resolution domain is affordable:
+// 1048576 slices reach about 0.07 mm at two metres for 8 MB.
+//
+// The baseline domain remains available as a fallback for drivers that cannot
+// support the high-resolution path. See avboitVirtualSlices().
+// 65536 is an eightfold increase over the reference domain, reaching about
+// 1.1 mm at two metres. It is deliberately the largest domain the existing
+// single-workgroup prefix scan can absorb without restructuring: the scan
+// becomes 256 serial iterations per thread instead of 32. Reaching 0.07 mm
+// needs 1048576, which requires replacing that scan with a multi-pass
+// per-workgroup scan first.
+constexpr U32 AVBOIT_VIRTUAL_SLICES_BASELINE = 8192;
+constexpr U32 AVBOIT_VIRTUAL_SLICES_HIGH = 65536;
 constexpr U32 AVBOIT_ENTITY_MASK_WORDS = 8;
+
+// Selected once per session so buffer allocation, shader defines, and the CPU
+// Z-bin table can never disagree about the domain size.
+U32 sVirtualSlices = AVBOIT_VIRTUAL_SLICES_BASELINE;
+
+U32 avboitVirtualSlices()
+{
+    return sVirtualSlices;
+}
+
+// Largest power-of-two divider the compaction search may use. It must be able
+// to reduce the virtual domain to the 128-slice physical budget, so it scales
+// with the domain: 8192 needs 6, 65536 needs 9. A cap below this pins the
+// search short of any fitting candidate and compaction never fits.
+U32 avboitMaxDivider()
+{
+    U32 divider = 0;
+    while ((avboitVirtualSlices() >> divider) > AVBOIT_SLICES)
+    {
+        ++divider;
+    }
+    return divider;
+}
+
+// The range-minimum/maximum table needs one level per halving of the domain.
+U32 avboitZBinRMQLevels()
+{
+    U32 levels = 1;
+    while ((1u << levels) < avboitVirtualSlices())
+    {
+        ++levels;
+    }
+    return levels + 1;
+}
+
+bool wideExtinction()
+{
+    return gSavedSettings.getBOOL("RenderAVBOITWideExtinction");
+}
+
+// Per-tile depth ranging. The depth curve is otherwise shared by the entire
+// frame, so the slice spacing every pixel receives is set by the distinct
+// depths present anywhere on screen: one distant surface coarsens the spacing
+// for close clothing layers as well. Ranging each screen tile to the depth
+// actually occupied within it spends the 128 physical slices where the geometry
+// is, which is what separates layers a fraction of a millimetre apart.
+bool tileRange()
+{
+    return gSavedSettings.getBOOL("RenderAVBOITTileRange");
+}
+
+// Self-occlusion bias in virtual slices, clamped to the range the sampling
+// code can represent. Zero disables the bias.
+F32 samplingBias()
+{
+    return llclamp(
+        gSavedSettings.getF32("RenderAVBOITSamplingBias"), 0.f, 8.f);
+}
+
+// Linearization factor for the presentation's log depth curve
+//
+//     z(x) = log2(x/a + 1) / log2(b/a + 1) * n
+//
+// where b is the far plane, n the slice count, and a the linearization factor.
+// The slide "VBOIT : DEPTH DISTRIBUTION / LOG CURVE" gives the reference
+// configuration as n = 8192/2^d and a = 16384/2^d against a far plane
+// b = 32000. The key relationship is that a is proportional to the far plane:
+// a/b = 16384/32000 = 0.512, so at the finest divider the distribution is
+// almost uniform. That is what the companion slide means by "adjust slice count
+// together with linearization factor - keeps spatial slice resolution close to
+// camera ~constant". Precision is then changed by the divider, which scales n
+// and a together, not by reshaping the curve at a fixed n.
+//
+// The previous implementation instead solved a from a requested near-plane
+// thickness. That decoupled a from the far plane and could drive it arbitrarily
+// small: a requested 0.001 m over a 128 m far plane produced a = 1.95, an a/b
+// ratio of 0.015 against the reference 0.512, a curve roughly thirty times more
+// logarithmic than the paper's finest setting. Near-plane precision improved
+// only by starving everything beyond a few metres, which is why lowering the
+// setting traded the close layers against distant transparency instead of
+// improving both.
+//
+// This restores the specified proportionality. RenderAVBOITMinimumSliceThickness
+// is retained as a bounded adjustment of the reference ratio rather than an
+// unbounded solve, so the curve cannot leave the family the presentation uses.
+F32 fittedLinearization(F32 far_depth)
+{
+    // Reference ratio from the slide's a = 16384, b = 32000.
+    constexpr F64 reference_ratio = 16384.0 / 32000.0;
+    const F64 far_value = llmax(static_cast<F64>(far_depth), 0.0001);
+    const F64 requested = llmax(
+        static_cast<F64>(
+            gSavedSettings.getF32("RenderAVBOITMinimumSliceThickness")),
+        0.00001);
+    static F64 cached_far = -1.0;
+    static F64 cached_requested = -1.0;
+    static F32 cached_result = 1.f;
+    if (far_value == cached_far && requested == cached_requested)
+    {
+        return cached_result;
+    }
+
+    // The reference curve's near-plane slice thickness for this far plane.
+    const F64 reference_a = far_value * reference_ratio;
+    const F64 reference_thickness =
+        reference_a * std::log1p(far_value / reference_a) /
+        static_cast<F64>(avboitVirtualSlices());
+
+    // Scale a by the requested departure from that reference, bounded to one
+    // order of magnitude either side. Smaller a concentrates precision near the
+    // camera; the bound keeps the curve inside the presentation's family and
+    // prevents the far plane from collapsing into the last slices.
+    const F64 scale = llclamp(requested / reference_thickness, 0.1, 10.0);
+    cached_far = far_value;
+    cached_requested = requested;
+    cached_result = static_cast<F32>(llmax(reference_a * scale, 0.0001));
+    return cached_result;
+}
 
 void allocateAccumulationTexture(GLuint& texture, GLenum format,
                                   U32 width, U32 height)
@@ -119,6 +257,12 @@ bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
     destination.mShaderLevel = source.mShaderLevel;
     destination.mShaderGroup = source.mShaderGroup;
     destination.addPermutation("AVBOIT", "1");
+    destination.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    destination.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    destination.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     return destination.createShader();
 }
 
@@ -164,7 +308,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v111";
+    return "AVBOIT shader revision v134";
 }
 
 bool FSAVBOIT::supported()
@@ -172,6 +316,41 @@ bool FSAVBOIT::supported()
     return gGLManager.mGLVersion >= 4.29f &&
         (gGLManager.mGLSLVersionMajor > 4 ||
          (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30));
+}
+
+// Select the virtual depth domain for this session. The high-resolution domain
+// is what allows sub-millimetre layer separation; the baseline reproduces the
+// presentation's reference configuration and is the fallback.
+//
+// The high-resolution path does not depend on any extension beyond the 4.3
+// baseline: it replaces the single-workgroup shared-memory prefix scan with a
+// multi-pass scan over shader storage, so the domain is bounded by buffer size
+// rather than by GL_MAX_COMPUTE_SHARED_MEMORY_SIZE. It is gated on a driver
+// reporting OpenGL 4.6 and on sufficient reported video memory purely as a
+// conservative measure, because the deep scan issues more dispatches and the
+// domain costs two buffers of four bytes per slice.
+void FSAVBOIT::selectVirtualDomain()
+{
+    const bool requested_high =
+        gSavedSettings.getBOOL("RenderAVBOITHighDepthResolution");
+    const bool driver_capable = gGLManager.mGLVersion >= 4.59f;
+    // Two U32 domain buffers plus the Z-bin table; require headroom well beyond
+    // that before opting in.
+    const bool memory_capable = gGLManager.mVRAM >= 4096;
+
+    sVirtualSlices = (requested_high && driver_capable && memory_capable) ?
+        AVBOIT_VIRTUAL_SLICES_HIGH : AVBOIT_VIRTUAL_SLICES_BASELINE;
+
+    static U32 logged_slices = 0;
+    if (logged_slices != sVirtualSlices)
+    {
+        logged_slices = sVirtualSlices;
+        LL_INFOS("AVBOIT") << "AVBOIT virtual depth domain " << sVirtualSlices
+                           << " slices (requested high: " << requested_high
+                           << ", GL " << gGLManager.mGLVersion
+                           << ", VRAM " << gGLManager.mVRAM << " MB)"
+                           << LL_ENDL;
+    }
 }
 
 bool FSAVBOIT::requested()
@@ -192,12 +371,23 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         return;
     }
 
+    // The domain must be selected before any shader is compiled: every AVBOIT
+    // stage receives it as a compile-time define so the buffers, the depth
+    // curve, the Z-bin table, and the prefix scan cannot disagree.
+    selectVirtualDomain();
+
     gAVBOITVolumeProgram.mName = "AVBOIT Volume Compute";
     gAVBOITVolumeProgram.mFeatures.attachNothing = true;
     gAVBOITVolumeProgram.mShaderFiles.clear();
     gAVBOITVolumeProgram.mShaderFiles.emplace_back("deferred/avboitVolumeC.glsl", GL_COMPUTE_SHADER);
     gAVBOITVolumeProgram.mShaderLevel = shader_level;
     gAVBOITVolumeProgram.clearPermutations();
+    gAVBOITVolumeProgram.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    gAVBOITVolumeProgram.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITVolumeProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITVolumeProgram.addPermutation("AVBOIT_BUILD", "1");
 
     gAVBOITResolveProgram.mName = "AVBOIT Resolve Compute";
@@ -206,6 +396,12 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITResolveProgram.mShaderFiles.emplace_back("deferred/avboitVolumeC.glsl", GL_COMPUTE_SHADER);
     gAVBOITResolveProgram.mShaderLevel = shader_level;
     gAVBOITResolveProgram.clearPermutations();
+    gAVBOITResolveProgram.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    gAVBOITResolveProgram.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITResolveProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITResolveProgram.addPermutation("AVBOIT_RESOLVE", "1");
 
     gAVBOITEarlyDepthProgram.mName = "AVBOIT Early Depth";
@@ -217,6 +413,12 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         "deferred/avboitEarlyDepthF.glsl", GL_FRAGMENT_SHADER);
     gAVBOITEarlyDepthProgram.mShaderLevel = shader_level;
     gAVBOITEarlyDepthProgram.clearPermutations();
+    gAVBOITEarlyDepthProgram.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    gAVBOITEarlyDepthProgram.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITEarlyDepthProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
 
     gAVBOITBoundsProgram.mName = "AVBOIT Conservative Bounds";
     gAVBOITBoundsProgram.mFeatures.attachNothing = true;
@@ -227,6 +429,12 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         "deferred/avboitBoundsF.glsl", GL_FRAGMENT_SHADER);
     gAVBOITBoundsProgram.mShaderLevel = shader_level;
     gAVBOITBoundsProgram.clearPermutations();
+    gAVBOITBoundsProgram.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    gAVBOITBoundsProgram.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITBoundsProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITBoundsProgram.addPermutation("AVBOIT", "1");
 
     gAVBOITSkinnedBoundsProgram.mName =
@@ -237,6 +445,12 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         gAVBOITBoundsProgram.mShaderFiles;
     gAVBOITSkinnedBoundsProgram.mShaderLevel = shader_level;
     gAVBOITSkinnedBoundsProgram.clearPermutations();
+    gAVBOITSkinnedBoundsProgram.addPermutation(
+        "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+    gAVBOITSkinnedBoundsProgram.addPermutation(
+        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITSkinnedBoundsProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
     gAVBOITSkinnedBoundsProgram.addPermutation("HAS_SKIN", "1");
 
@@ -298,6 +512,12 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         gAVBOITGLTFProgram.mShaderGroup =
             gGLTFPBRMetallicRoughnessProgram.mShaderGroup;
         gAVBOITGLTFProgram.addPermutation("AVBOIT", "1");
+        gAVBOITGLTFProgram.addPermutation(
+            "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
+        gAVBOITGLTFProgram.addPermutation(
+            "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
+    gAVBOITGLTFProgram.addPermutation(
+        "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
         gAVBOITGLTFProgram.mGLTFVariants.resize(
             gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size());
         for (U32 i = 0;
@@ -437,9 +657,26 @@ bool FSAVBOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
-        // Material coverage supplies the full-resolution nearest transparent
-        // layer used to bound coarse-volume transmittance for rear layers.
-        render_pass(true);
+        const bool compare_static_proxy =
+            gSavedSettings.getS32("RenderAVBOITDebugMode") == 6;
+        if (compare_static_proxy)
+        {
+            render_pass(true);
+        }
+        else
+        {
+            // GLTF scene geometry is traversed outside the alpha spatial-group
+            // draw maps used by rasterizeConservativeBounds(). Give it the
+            // same material-tested occupancy pass before building the warp.
+            LLGLDepthTest depth_test(GL_TRUE, GL_FALSE, GL_LEQUAL);
+            LLGLDisable blend(GL_BLEND);
+            sCaptureActive = true;
+            LL::GLTFSceneManager::instance().render(false, false);
+            LL::GLTFSceneManager::instance().render(false, true);
+            LL::GLTFSceneManager::instance().render(false, false, true);
+            LL::GLTFSceneManager::instance().render(false, true, true);
+            sCaptureActive = false;
+        }
     }
     {
         LL_PROFILE_GPU_ZONE("AVBOIT depth warp and sparse clear");
@@ -584,7 +821,15 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenTextures(1, &sResources.transmittance);
     glBindTexture(GL_TEXTURE_3D, sResources.transmittance);
-    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R8,
+    // The integrated transmittance volume is the entire ordering weight for
+    // blended geometry, so its precision bounds how well the approximate
+    // weight can match the exact aggregate extinction used for opaque
+    // geometry. R8 cannot represent the wide layout's 1/65536 effective-zero
+    // endpoint at all, and quantizes the sheer range that viewer clothing
+    // occupies to 1/255 steps. Revision v55 used R16F here and was reported
+    // visually good; v56 returned it to R8 for storage conformance and the
+    // corruption returned with it.
+    glTexStorage3D(GL_TEXTURE_3D, 1, GL_R16F,
                    sResources.volumeWidth, sResources.volumeHeight, AVBOIT_SLICES);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -605,15 +850,23 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glBindTexture(GL_TEXTURE_2D, 0);
 
+    const U64 domain_bytes =
+        static_cast<U64>(avboitVirtualSlices()) * sizeof(U32);
+
     glGenBuffers(1, &sResources.occupancy);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.occupancy);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 AVBOIT_VIRTUAL_SLICES * sizeof(U32), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, domain_bytes,
+                 nullptr, GL_DYNAMIC_DRAW);
+
+    glGenBuffers(1, &sResources.warpScan);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.warpScan);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, domain_bytes,
+                 nullptr, GL_DYNAMIC_DRAW);
 
     glGenBuffers(1, &sResources.warp);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.warp);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 AVBOIT_VIRTUAL_SLICES * sizeof(U32), nullptr, GL_DYNAMIC_DRAW);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, domain_bytes,
+                 nullptr, GL_DYNAMIC_DRAW);
 
     glGenBuffers(1, &sResources.tileOccupancy);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.tileOccupancy);
@@ -627,11 +880,13 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     const U64 work_words = 8u + AVBOIT_SLICES +
         static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight +
         static_cast<U64>(tile_count) * 4u +
-        AVBOIT_Z_BINS * AVBOIT_ZBIN_RMQ_LEVELS +
+        static_cast<U64>(avboitVirtualSlices()) * avboitZBinRMQLevels() +
         static_cast<U64>(sResources.volumeWidth) *
             sResources.volumeHeight * AVBOIT_ENTITY_MASK_WORDS +
         static_cast<U64>(sResources.volumeWidth) *
-            sResources.volumeHeight * 5u;
+            sResources.volumeHeight * 5u +
+        // Per-tile depth range: minimum and maximum depth key per 16x16 tile.
+        static_cast<U64>(tile_count) * 2u;
     glGenBuffers(1, &sResources.work);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.work);
     glBufferData(GL_SHADER_STORAGE_BUFFER, work_words * sizeof(U32),
@@ -639,13 +894,7 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
 
     glGenBuffers(1, &sResources.diagnostics);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.diagnostics);
-    glBufferData(GL_SHADER_STORAGE_BUFFER, 8u * sizeof(U32),
-                 nullptr, GL_DYNAMIC_DRAW);
-
-    glGenBuffers(1, &sResources.nearestTransparent);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
-    glBufferData(GL_SHADER_STORAGE_BUFFER,
-                 static_cast<U64>(width) * height * 2u * sizeof(U32),
+    glBufferData(GL_SHADER_STORAGE_BUFFER, 16u * sizeof(U32),
                  nullptr, GL_DYNAMIC_DRAW);
 
     allocateAccumulationTexture(sResources.accumulatedColorGlow,
@@ -683,10 +932,9 @@ void FSAVBOIT::releaseResources()
         glDeleteTextures(1, &sResources.zeroTransmittanceDepth);
     if (sResources.extinctionOverflowDepth)
         glDeleteTextures(1, &sResources.extinctionOverflowDepth);
-    if (sResources.nearestTransparent)
-        glDeleteBuffers(1, &sResources.nearestTransparent);
     if (sResources.occupancy) glDeleteBuffers(1, &sResources.occupancy);
     if (sResources.warp) glDeleteBuffers(1, &sResources.warp);
+    if (sResources.warpScan) glDeleteBuffers(1, &sResources.warpScan);
     if (sResources.tileOccupancy) glDeleteBuffers(1, &sResources.tileOccupancy);
     if (sResources.work) glDeleteBuffers(1, &sResources.work);
     if (sResources.diagnostics) glDeleteBuffers(1, &sResources.diagnostics);
@@ -712,9 +960,13 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
     info["AVBOIT_PACKED_EXTINCTION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
          AVBOIT_PACKED_SLICES * sizeof(U32)) / (1024ull * 1024ull));
+    // Two bytes per voxel: the transmittance volume is R16F, not R8.
     info["AVBOIT_TRANSMITTANCE_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight *
-         AVBOIT_SLICES) / (1024ull * 1024ull));
+         AVBOIT_SLICES * 2ull) / (1024ull * 1024ull));
+    info["AVBOIT_VIRTUAL_SLICES"] = LLSD::Integer(avboitVirtualSlices());
+    info["AVBOIT_EXTINCTION_LANE_BITS"] = LLSD::Integer(
+        wideExtinction() ? 16 : 8);
     info["AVBOIT_DIRECT_RASTER"] = sDirectRasterPass >= 0 || sDirectFrameReady;
     info["AVBOIT_ACCUMULATION_MB"] = LLSD::Integer(
         (static_cast<U64>(sResources.viewportWidth) * sResources.viewportHeight *
@@ -745,7 +997,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     }
     if (!available() || !sResources.accumulatedColorGlow ||
         !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
-        !sResources.nearestTransparent || !sResources.work ||
+        !sResources.work ||
         !opaque_depth ||
         !gAVBOITOpaqueTarget.isComplete() ||
         !gAVBOITPrepassTarget.isComplete())
@@ -769,7 +1021,6 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
                        0, 0, 0, 0, width, height, 1);
 
     const U32 zero = 0u;
-    const U32 empty_nearest = 0xffffffffu;
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.occupancy);
     glClearBufferData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
                       GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
@@ -785,28 +1036,18 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     const U32 draw_command[4] = { 6u, 0u, 0u, 0u };
     glBufferSubData(GL_SHADER_STORAGE_BUFFER, 4u * sizeof(U32),
                     sizeof(draw_command), draw_command);
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nearestTransparent);
-    const U64 nearest_plane_bytes =
-        static_cast<U64>(sResources.viewportWidth) *
-        sResources.viewportHeight * sizeof(U32);
-    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI, 0,
-                         nearest_plane_bytes, GL_RED_INTEGER,
-                         GL_UNSIGNED_INT, &empty_nearest);
-    glClearBufferSubData(GL_SHADER_STORAGE_BUFFER, GL_R32UI,
-                         nearest_plane_bytes, nearest_plane_bytes,
-                         GL_RED_INTEGER, GL_UNSIGNED_INT, &zero);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
 
     glBindImageTexture(3, sResources.extinction, 0, GL_TRUE, 0,
                        GL_READ_WRITE, GL_R32UI);
+    // Must match the allocated internal format selected in allocateVolume().
     glBindImageTexture(4, sResources.transmittance, 0, GL_TRUE, 0,
-                       GL_READ_WRITE, GL_R8);
+                       GL_READ_WRITE, GL_R16F);
     glBindImageTexture(6, sResources.zeroTransmittanceDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R8UI);
     glBindImageTexture(7, sResources.extinctionOverflowDepth, 0, GL_FALSE, 0,
                        GL_READ_WRITE, GL_R32UI);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2,
-                     sResources.nearestTransparent);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 2, sResources.warpScan);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 4, sResources.occupancy);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 5, sResources.warp);
     glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 6, sResources.tileOccupancy);
@@ -878,6 +1119,7 @@ void FSAVBOIT::rasterizeConservativeBounds()
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString depth_range("avboitDepthRange");
+    static LLStaticHashedString linearization("avboitLinearization");
     static LLStaticHashedString opaque_depth_sampler(
         "avboitOpaqueDepthSampler");
     static LLStaticHashedString entity_id_uniform("avboitEntityID");
@@ -896,6 +1138,13 @@ void FSAVBOIT::rasterizeConservativeBounds()
                                    sResources.volumeHeight);
     gAVBOITVolumeProgram.uniform1i(pass, 9);
     glDispatchCompute(groups_x, groups_y, 1u);
+    // Reset the per-tile depth range before any capture pass reduces into it.
+    const U32 range_groups_x =
+        ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
+    const U32 range_groups_y =
+        ((sResources.viewportHeight + 15u) / 16u + 15u) / 16u;
+    gAVBOITVolumeProgram.uniform1i(pass, 12);
+    glDispatchCompute(range_groups_x, range_groups_y, 1u);
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
@@ -907,6 +1156,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
     LLCamera* camera = LLViewerCamera::getInstance();
     gAVBOITBoundsProgram.uniform2f(depth_range, camera->getNear(),
                                    camera->getFar());
+    gAVBOITBoundsProgram.uniform1f(
+        linearization, fittedLinearization(camera->getFar()));
     gAVBOITBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
     gAVBOITBoundsProgram.uniform1i(exact_proxy, 0);
@@ -1012,8 +1263,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
     // DRO17 CPU Z bins: bounds are ordered by conservative near depth and
     // every uniform bin stores a packed 16-bit minimum/maximum entity ID.
     // ID 65534 is the conservative overflow bucket; 0xffff marks no entity.
-    std::vector<U16> zbin_min(AVBOIT_Z_BINS, 0xffffu);
-    std::vector<U16> zbin_max(AVBOIT_Z_BINS, 0u);
+    std::vector<U16> zbin_min(avboitVirtualSlices(), 0xffffu);
+    std::vector<U16> zbin_max(avboitVirtualSlices(), 0u);
     const F32 near_depth = camera->getNear();
     const F32 far_depth = camera->getFar();
     const F32 depth_range_value =
@@ -1032,12 +1283,12 @@ void FSAVBOIT::rasterizeConservativeBounds()
     std::multiset<U16> active_ids;
     U32 start_cursor = 0u;
     U32 end_cursor = 0u;
-    for (U32 bin = 0; bin < AVBOIT_Z_BINS; ++bin)
+    for (U32 bin = 0; bin < avboitVirtualSlices(); ++bin)
     {
         const F32 bin_min = near_depth +
-            depth_range_value * (F32(bin) / F32(AVBOIT_Z_BINS));
+            depth_range_value * (F32(bin) / F32(avboitVirtualSlices()));
         const F32 bin_max = near_depth +
-            depth_range_value * (F32(bin + 1u) / F32(AVBOIT_Z_BINS));
+            depth_range_value * (F32(bin + 1u) / F32(avboitVirtualSlices()));
         while (start_cursor < bounds.size() &&
                bounds[start_cursor].minimumDepth <= bin_max)
         {
@@ -1063,8 +1314,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
             zbin_max[bin] = *active_ids.rbegin();
         }
     }
-    std::vector<U32> packed_zbins(AVBOIT_Z_BINS, 0xffffffffu);
-    for (U32 bin = 0; bin < AVBOIT_Z_BINS; ++bin)
+    std::vector<U32> packed_zbins(avboitVirtualSlices(), 0xffffffffu);
+    for (U32 bin = 0; bin < avboitVirtualSlices(); ++bin)
     {
         if (zbin_min[bin] != 0xffffu)
         {
@@ -1075,19 +1326,19 @@ void FSAVBOIT::rasterizeConservativeBounds()
     // Sparse-table range minima/maxima let the GL 4.3 compute path query all
     // uniform Z bins intersecting a cell interval with two vector loads.
     std::vector<U32> zbin_ranges(
-        AVBOIT_Z_BINS * AVBOIT_ZBIN_RMQ_LEVELS, 0xffffffffu);
+        static_cast<U64>(avboitVirtualSlices()) * avboitZBinRMQLevels(), 0xffffffffu);
     std::copy(packed_zbins.begin(), packed_zbins.end(),
               zbin_ranges.begin());
-    for (U32 level = 1u; level < AVBOIT_ZBIN_RMQ_LEVELS; ++level)
+    for (U32 level = 1u; level < avboitZBinRMQLevels(); ++level)
     {
         const U32 half_span = 1u << (level - 1u);
-        const U32 previous = (level - 1u) * AVBOIT_Z_BINS;
-        const U32 destination = level * AVBOIT_Z_BINS;
-        for (U32 bin = 0u; bin < AVBOIT_Z_BINS; ++bin)
+        const U32 previous = (level - 1u) * avboitVirtualSlices();
+        const U32 destination = level * avboitVirtualSlices();
+        for (U32 bin = 0u; bin < avboitVirtualSlices(); ++bin)
         {
             const U32 left = zbin_ranges[previous + bin];
             const U32 right_index = bin + half_span;
-            const U32 right = right_index < AVBOIT_Z_BINS ?
+            const U32 right = right_index < avboitVirtualSlices() ?
                 zbin_ranges[previous + right_index] : 0xffffffffu;
             U32 minimum_id = left & 0xffffu;
             U32 maximum_id =
@@ -1204,6 +1455,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
         volume_size, sResources.volumeWidth, sResources.volumeHeight);
     gAVBOITSkinnedBoundsProgram.uniform2f(
         depth_range, camera->getNear(), camera->getFar());
+    gAVBOITSkinnedBoundsProgram.uniform1f(
+        linearization, fittedLinearization(camera->getFar()));
     gAVBOITSkinnedBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
     gAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
@@ -1252,6 +1505,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
                                    sResources.volumeHeight);
     gAVBOITVolumeProgram.uniform2f(depth_range, camera->getNear(),
                                    camera->getFar());
+    gAVBOITVolumeProgram.uniform1f(
+        linearization, fittedLinearization(camera->getFar()));
     for (U32 index = 0; index < bounds.size(); ++index)
     {
         const BoundRecord& record = bounds[index];
@@ -1276,7 +1531,7 @@ void FSAVBOIT::rasterizeConservativeBounds()
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // Return the material occupancy pass to the private opaque-depth target.
-    gAVBOITOpaqueTarget.bindTarget();
+    gAVBOITPrepassTarget.bindTarget();
     glViewport(0, 0, sResources.viewportWidth, sResources.viewportHeight);
 }
 
@@ -1294,7 +1549,7 @@ void FSAVBOIT::finishDirectColorRaster()
     glDrawBuffers(1, &draw_buffer);
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT |
                     GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gAVBOITOpaqueTarget.flush();
+    gAVBOITPrepassTarget.flush();
 }
 
 void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
@@ -1310,6 +1565,11 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     static LLStaticHashedString transmittance_sampler("avboitTransmittanceSampler");
     static LLStaticHashedString opaque_depth_sampler("avboitOpaqueDepthSampler");
     static LLStaticHashedString depth_range("avboitDepthRange");
+    static LLStaticHashedString linearization("avboitLinearization");
+    static LLStaticHashedString wide_extinction("avboitWideExtinction");
+    static LLStaticHashedString sampling_bias("avboitSamplingBias");
+    static LLStaticHashedString tile_range("avboitTileRange");
+    static LLStaticHashedString capture_debug_mode("avboitDebugMode");
     GLint location = shader->getUniformLocation(raster_pass);
     if (location >= 0)
     {
@@ -1337,6 +1597,30 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
         glProgramUniform2i(shader->mProgramObject, location,
                            sResources.volumeWidth, sResources.volumeHeight);
     }
+    location = shader->getUniformLocation(wide_extinction);
+    if (location >= 0)
+    {
+        glProgramUniform1i(shader->mProgramObject, location,
+                           wideExtinction() ? 1 : 0);
+    }
+    location = shader->getUniformLocation(sampling_bias);
+    if (location >= 0)
+    {
+        glProgramUniform1f(shader->mProgramObject, location, samplingBias());
+    }
+    location = shader->getUniformLocation(tile_range);
+    if (location >= 0)
+    {
+        glProgramUniform1i(shader->mProgramObject, location,
+                           tileRange() ? 1 : 0);
+    }
+    location = shader->getUniformLocation(capture_debug_mode);
+    if (location >= 0)
+    {
+        glProgramUniform1i(
+            shader->mProgramObject, location,
+            llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 15));
+    }
     location = shader->getUniformLocation(transmittance_sampler);
     if (location >= 0)
     {
@@ -1356,6 +1640,13 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
         glProgramUniform2f(shader->mProgramObject, location,
                            camera.getNear(), camera.getFar());
     }
+    location = shader->getUniformLocation(linearization);
+    if (location >= 0)
+    {
+        const LLCamera& camera = *LLViewerCamera::getInstance();
+        glProgramUniform1f(shader->mProgramObject, location,
+                           fittedLinearization(camera.getFar()));
+    }
 }
 
 void FSAVBOIT::finishDirectOccupancy()
@@ -1366,6 +1657,8 @@ void FSAVBOIT::finishDirectOccupancy()
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString depth_range("avboitDepthRange");
+    static LLStaticHashedString linearization("avboitLinearization");
+    static LLStaticHashedString wide_extinction("avboitWideExtinction");
     const U32 groups_x = (sResources.volumeWidth + 15u) / 16u;
     const U32 groups_y = (sResources.volumeHeight + 15u) / 16u;
 
@@ -1374,9 +1667,12 @@ void FSAVBOIT::finishDirectOccupancy()
                                    sResources.viewportHeight);
     gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
+    gAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
     const LLCamera& camera = *LLViewerCamera::getInstance();
     gAVBOITVolumeProgram.uniform2f(depth_range, camera.getNear(),
                                    camera.getFar());
+    gAVBOITVolumeProgram.uniform1f(
+        linearization, fittedLinearization(camera.getFar()));
     gAVBOITVolumeProgram.uniform1i(pass, 1);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1397,7 +1693,7 @@ void FSAVBOIT::finishDirectOccupancy()
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     gAVBOITOpaqueTarget.flush();
-    gAVBOITPrepassTarget.bindTarget();
+    gAVBOITOpaqueTarget.bindTarget();
     beginDirectRasterPass(1);
 }
 
@@ -1408,6 +1704,7 @@ void FSAVBOIT::finishDirectExtinction()
     static LLStaticHashedString pass("avboitPass");
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
+    static LLStaticHashedString wide_extinction("avboitWideExtinction");
     const U32 tile_groups_x =
         ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
     const U32 tile_groups_y =
@@ -1421,6 +1718,7 @@ void FSAVBOIT::finishDirectExtinction()
                                    sResources.viewportHeight);
     gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
+    gAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
     gAVBOITVolumeProgram.uniform1i(pass, 5);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.work);
     glDispatchComputeIndirect(0);
@@ -1437,7 +1735,7 @@ void FSAVBOIT::finishDirectExtinction()
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT |
                     GL_TEXTURE_FETCH_BARRIER_BIT);
-    gAVBOITPrepassTarget.flush();
+    gAVBOITOpaqueTarget.flush();
 
     // Rasterize conservative zero-transmittance quads into a private copy of
     // opaque depth. The final color pass then receives ordinary early-Z/Hi-Z
@@ -1474,15 +1772,24 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     }
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gGL.getTexUnit(directTransmittanceTextureUnit())->unbind(LLTexUnit::TT_TEXTURE_3D);
     gGL.getTexUnit(directOpaqueDepthTextureUnit())->unbind(LLTexUnit::TT_TEXTURE);
 
     static LLStaticHashedString pass("avboitPass");
     static LLStaticHashedString viewport("avboitViewport");
     static LLStaticHashedString volume_size("avboitVolumeSize");
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
+    static LLStaticHashedString transmittance_sampler(
+        "avboitTransmittanceSampler");
     const S32 debug_mode =
-        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 8);
+        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 15);
+    // Diagnostic 13 compares the volume against the exact accumulation, so the
+    // transmittance volume must stay readable during resolve. Every other mode
+    // releases it as before.
+    if (debug_mode != 13)
+    {
+        gGL.getTexUnit(directTransmittanceTextureUnit())->unbind(
+            LLTexUnit::TT_TEXTURE_3D);
+    }
     static S32 previous_debug_mode = -1;
     if (debug_mode != previous_debug_mode)
     {
@@ -1508,6 +1815,11 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
                                     sResources.volumeHeight);
     gAVBOITResolveProgram.uniform1i(pass, 7);
     gAVBOITResolveProgram.uniform1i(debug_mode_uniform, debug_mode);
+    if (debug_mode == 13)
+    {
+        gAVBOITResolveProgram.uniform1i(transmittance_sampler,
+                                        directTransmittanceTextureUnit());
+    }
     gAVBOITResolveProgram.bindTexture(
         LLShaderMgr::DEFERRED_DIFFUSE, &gAVBOITOpaqueTarget,
         false, LLTexUnit::TFO_POINT, 0);

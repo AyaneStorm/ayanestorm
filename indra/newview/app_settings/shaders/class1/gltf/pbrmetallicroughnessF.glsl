@@ -213,7 +213,13 @@ void main()
     #if defined(AVBOIT) && defined(ALPHA_BLEND)
     if (avboitRasterPass < 2)
     {
-        avboit_store(vec4(0.0, 0.0, 0.0, basecolor.a));
+        // Lit GLTF's final alpha applies vertex alpha a second time below;
+        // extinction and weighted color must use the same surface opacity.
+        float avboit_alpha = basecolor.a;
+        #ifndef UNLIT
+        avboit_alpha *= vertex_color.a;
+        #endif
+        avboit_store(vec4(0.0, 0.0, 0.0, avboit_alpha));
         return;
     }
     #endif
