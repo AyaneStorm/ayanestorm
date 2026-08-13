@@ -26,8 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Exact OIT
+// <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
+#include "fsavboit.h"
 // </AS:Chanayane>
 
 #include "llappviewer.h"
@@ -4122,7 +4123,10 @@ LLSD LLAppViewer::getViewerInfo() const
     info["GRAPHICS_CARD_MEMORY"] = LLSD::Integer(gGLManager.mVRAM);
     info["GRAPHICS_CARD_MEMORY_DETECTED"] = gGLManager.mVRAMDetected; // <FS:Beq/> allow detected hardware to be overridden.
     // <AS:Chanayane> Exact OIT renderer diagnostics
+// <AS:Chanayane> OIT diagnostics.
     FSExactOIT::appendDiagnostics(info);
+    FSAVBOIT::appendDiagnostics(info);
+// </AS:Chanayane>
     // </AS:Chanayane>
 
 #if LL_WINDOWS

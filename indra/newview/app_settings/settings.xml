@@ -11801,17 +11801,162 @@ Change of this parameter will affect the layout of buttons in notification toast
     <integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> User-facing transparency renderer selection. -->
+  <key>RenderOITMode</key>
+  <map>
+    <key>Comment</key>
+    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>-1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Exact OIT diagnostics. -->
   <key>RenderExactOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode.</string>
+    <string>Exact OIT diagnostic view: 0 final, 1 fragment count, 2 nearest depth, 3 farthest depth, 4 sort validation, 5 blend mode, 6 capacity, 7 opaque-cutoff activity, 8 list-depth buckets, 9 compute-sort path.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>S32</string>
     <key>Value</key>
     <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderExactOITOpaqueCutoff</key>
+  <map>
+    <key>Comment</key>
+    <string>Enable exact opaque-cutoff pruning before Exact OIT sorting. Disable for rendering comparisons.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderExactOITNoOpCapture</key>
+  <map>
+    <key>Comment</key>
+    <string>Discard mathematically ineffective zero-alpha standard-blend fragments before Exact OIT allocation. Disable for rendering and performance comparisons.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderExactOITComputeSort</key>
+  <map>
+    <key>Comment</key>
+    <string>Use the experimental lossless Exact OIT compute sorter. Disable to use the proven fullscreen sorter.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOIT</key>
+  <map>
+    <key>Comment</key>
+    <string>Internal compatibility state for the AVBOIT transparency mode.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITDebugMode</key>
+  <map>
+    <key>Comment</key>
+    <string>AVBOIT diagnostic: 0 normal rendering, 1 active pixels, 2 virtual-depth occupancy, 3 physical-slice utilization, 4 integrated transmittance, 5 effective-zero depth, 6 proxy coverage (green covered, red no proxy, yellow material nearer, magenta material farther), 7 depth-warp conformance (green valid, red invalid), 8 transmittance integration conformance (green valid, red invalid), 9 aggregate alpha as greyscale, 10 normalized average transparent color (blue where weight is zero), 11 accumulated optical depth banded (grey under 0.4, blue about one alpha-0.5 layer, green two, yellow three, red over three or near opaque), 12 accumulated weight banded (grey trace, blue one or two layers, green several, red very dense), 13 volume versus exact transmittance (green agree, blue volume under-records occlusion, red volume over-records, grey no coverage).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>0</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITHighDepthResolution</key>
+  <map>
+    <key>Comment</key>
+    <string>Use a high-resolution AVBOIT virtual depth domain (65536 slices instead of the presentation's 8192). The reference domain resolves about 8.9 mm of depth at two metres on a 128 metre draw distance, which merges clothing layers that are a fraction of a millimetre apart before ordering can occur; the high-resolution domain resolves about 1.1 mm. Requires OpenGL 4.6 and 4 GB of video memory, and falls back to the reference domain otherwise. Costs two 256 KB buffers and makes the depth-warp prefix scan eight times longer.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITMinimumSliceThickness</key>
+  <map>
+    <key>Comment</key>
+    <string>Requested minimum AVBOIT virtual-slice thickness in metres near the camera, before adaptive resolution redistribution. This scales the presentation's linearization factor away from its reference ratio of 0.512 times the far plane, and is clamped to one order of magnitude either side so the depth curve stays within the family the presentation specifies. Lower values concentrate depth precision near the camera at the cost of distant transparency; the reference configuration corresponds to roughly 0.0087 at a 128 metre draw distance.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.01</real>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITSamplingBias</key>
+  <map>
+    <key>Comment</key>
+    <string>AVBOIT self-occlusion sampling bias in virtual slices. The presentation specifies 2.0 for linear filtering, assuming slices are thick relative to the spacing between distinct surfaces. Adaptive compaction removes empty world depth, so two layers of one garment can occupy adjacent slices and a 2.0 bias then samples transmittance from before the foreground layer. Lower values let close foreground layers attenuate what is behind them; 0.0 disables the bias entirely.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>1.0</real>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITWideExtinction</key>
+  <map>
+    <key>Comment</key>
+    <string>Store AVBOIT scratch extinction as two 16-bit lanes per word instead of the presentation's four 8-bit lanes. The 8-bit quantum is about 0.022 optical depth, which two-slice splatting halves again, so sheer surfaces below roughly alpha 0.04 contribute no extinction at all. Disable only to reproduce the presentation's exact storage configuration.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>RenderAVBOITTileRange</key>
+  <map>
+    <key>Comment</key>
+    <string>Range the AVBOIT depth slices to each 16x16 screen tile instead of to the whole frame. The shared frame-wide depth curve gives every pixel a slice spacing set by the distinct depths present anywhere on screen, so a single distant surface coarsens the spacing for close clothing layers too and layers less than a centimetre apart land in one slice. Per-tile ranging spends the 128 physical slices only on the depth occupied within each tile, separating layers a fraction of a millimetre apart. Disable to restore the frame-wide curve.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
     <key>Backup</key>
     <integer>0</integer>
   </map>

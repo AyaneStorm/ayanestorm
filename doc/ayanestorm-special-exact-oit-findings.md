@@ -330,6 +330,49 @@ that a smaller visual layer budget is acceptable.
     new GPU algorithm in this build. It was therefore removed rather than
     accepted as a stability risk. Shader cache revision v5 prevents cached v4
     composite binaries from loading.
+11. **Active-pixel natural-sort scheduling (crashed; removed):**
+    capture now appends one packed coordinate when a pixel receives its first
+    node. The existing validation readback supplies the active count, and a
+    dedicated vertex shader emits one one-pixel point per active coordinate for
+    every natural-sort pass. The proven fragment sorter is unchanged. This
+    avoids fullscreen sorting invocations for empty pixels without adding a
+    synchronization point. The sort path also returns before fetching the
+    opaque background, removing an unused texture read from every sort
+    invocation.
+
+    The initial queue was not compacted as pixels finished. The experiment
+    included a live setting that gated both capture collection and active
+    scheduling.
+
+    The first build remained on vanilla rendering, indicating that the new
+    optional shader or buffer failed the shared Exact OIT readiness gate. The
+    integration was corrected so either failure logs a warning and selects
+    fullscreen Exact OIT sorting instead of disabling Exact OIT.
+
+    The corrected build completed build and runtime testing (`bokt`). Exact OIT
+    and its diagnostic views worked again, and toggling active-pixel sorting
+    produced no visual difference. Log inspection showed that the active vertex
+    shader had failed because `packed` was used as a local variable even though
+    it is a reserved GLSL keyword. The optional fullscreen fallback therefore
+    handled both setting states, making that run invalid as a performance or
+    active-path parity comparison. The variable was renamed and shader-cache
+    revision v10 forces compilation of the correction.
+
+    The corrected active shader compiled, but the viewer then crashed at driver
+    level while the world loaded. The initial raw point draw used the active
+    pixel count as its vertex count while the screen-triangle buffer remained
+    bound. That buffer contains only three vertices; enabled or stale vertex
+    attributes could therefore cause out-of-range driver fetches despite the
+    shader indexing coordinates with `gl_VertexID`. The draw now instances one
+    point vertex per active pixel and indexes with `gl_InstanceID`, bounding all
+    vertex-buffer access to vertex zero. Enabling that corrected path still
+    crashed immediately. The experiment was therefore removed in full rather
+    than retained as an optional driver-stability risk. Shader-cache revision
+    v12 restores the proven four-word control layout, removes active-coordinate
+    capture and storage, removes the extra shader program, and retains
+    fullscreen natural-sort draws. The v12 removal build completed build and
+    runtime testing (`bokt`), confirming that baseline Exact OIT stability was
+    restored.
 
 ### Split-layout startup crash
 
@@ -383,6 +426,65 @@ The later optimizations were not present together in the build that created the
 latest analyzed crash dump. The current version needs testing in the same
 crowded location and in first-person view before its stability or performance
 can be considered confirmed.
+
+### Screen coverage dominates zoomed splash cost
+
+Runtime observation after the stable v12 restoration showed that sprite count
+alone does not predict the slowdown. Zooming closely onto water-splash sprites
+caused severe lag as their screen coverage increased.
+
+The regular alpha shaders multiply sampled texture alpha by vertex alpha and
+discard only below `MINIMUM_ALPHA`, currently `0.004` (approximately 1/255).
+Consequently, nearly every nonzero filtered splash texel can execute capture
+and allocate a 32-byte node. Cost therefore scales with covered pixels and
+overdraw, even when the scene contains only a few large sprites.
+
+This weakens the case for empty-pixel scheduling in the reported scene: a
+zoomed splash makes a large portion of the viewport active. The next trace must
+separate `Exact OIT capture`, natural sorting, and final blending. If capture
+dominates, further sort scheduling cannot resolve the slowdown. Raising the
+alpha threshold or reducing Exact OIT resolution would reduce work but would
+change the current rendering result and is not an exact optimization.
+
+Diagnostic inspection of the problematic water splashes showed white/yellow
+content in blend-mode view 5, while cutoff view 7 was almost entirely black
+with only a small amount of blue. Thus the splash fragments enter Exact OIT
+blend processing, but almost none satisfy the standard-tuple plus final-alpha
+exactly `1.0` cutoff predicate. The lossless opaque cutoff cannot materially
+reduce this splash workload; its cost comes predominantly from fractional-alpha
+screen coverage and any overlapping layers.
+
+Smoke produced the same mostly black cutoff visualization, as expected for
+soft fractional-alpha content. Smoke therefore represents a worst case for
+cutoff-based pruning: large filtered screen coverage and potentially deep
+overlap, with no mathematically complete overwrite that permits deeper nodes to
+be discarded.
+
+### Stale vanilla alpha order after disabling Exact OIT
+
+Runtime observation showed that some avatar alpha surfaces could continue to
+look Exact-OIT-like immediately after disabling the setting, then change to
+their vanilla appearance only after looking away and back.
+
+Shader routing itself checks `sCaptureActive` at draw time and therefore selects
+the vanilla shaders as soon as Exact OIT capture stops. However, changing
+`RenderExactOIT` does not invalidate cached within-group alpha ordering.
+`LLSpatialPartition::calcDistance` marks an alpha group `ALPHA_DIRTY` only after
+the view-angle difference exceeds its existing threshold. Looking away causes
+that rebuild, matching the reported transition.
+
+This indicates a stale vanilla alpha-sort transition rather than persistent
+Exact OIT compositing. `FSExactOIT::beginFrame()` now detects the
+enabled-to-disabled transition, marks the currently visible regular and rigged
+alpha groups `ALPHA_DIRTY`, and queues them for geometry rebuild. Vanilla
+ordering is therefore regenerated on the following rebuild pass without
+requiring a camera-angle change. A diagnostic-mode test can distinguish the
+paths: Exact OIT debug colors should disappear immediately while the queued
+vanilla ordering rebuild completes.
+
+The transition invalidation completed build and runtime testing (`bokt`).
+Disabling Exact OIT now makes the difference from vanilla rendering immediately
+noticeable without requiring the camera to look away and return.
 
 ## Diagnostics and evidence locations
 
@@ -505,10 +607,600 @@ Expected benefit varies by content:
 Whole-frame gains will be smaller because initial fragment shading and capture
 still occur. The optimization does not reduce the allocation count or prevent
 overflow by itself; it reduces sorting and final blending after capture.
-Discovery should be integrated into the first natural-sort traversal so scenes
-without a qualifying cutoff do not pay a separate extra list scan. Equal-depth
-sequence order must be considered when deciding which nodes are behind the
-cutoff.
+The initial implementation is now integrated into the first natural-sort
+fullscreen invocation. It accepts only ordinary color nodes with final alpha
+exactly `1.0` and the packed
+`SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA, ZERO,
+ONE_MINUS_SOURCE_ALPHA` color/alpha tuple. It selects the nearest qualifier
+using the existing depth and allocation-index total order, relinks the cutoff
+and all later nodes, stores the retained count, and passes the retained list
+directly to the natural merge pass. Glow-only and custom-blend nodes do not
+qualify. The shader-cache salt was advanced to revision v8 after the cutoff
+diagnostic was added.
+
+The discovery traversal counts the original list as it searches, avoiding a
+second discovery-only traversal when no cutoff exists. Natural sorting still
+traverses the list afterward, so no-cutoff pixels pay the planned `O(n)`
+discovery overhead. Pruned allocations remain part of capture totals and
+overflow decisions; this implementation cannot reduce allocation demand or
+prevent overflow.
+
+Rendering comparisons and GPU measurements for this implementation are still
+pending. In particular, the natural-sort, final-blend, and whole-frame GPU
+zones must be measured in both cutoff-heavy and no-qualifier scenes before the
+optimization is considered ready to ship.
+
+The default-enabled `RenderExactOITOpaqueCutoff` debug setting gates only
+cutoff discovery and pruning. Turning it off retains Exact OIT but restores the
+previous full-list sorting and compositing path for direct visual and timing
+comparisons.
+
+`RenderExactOITDebugMode = 7` exposes whether the optimization has useful work.
+Black means no qualifying cutoff, blue means a cutoff has no node behind it,
+and orange encodes the number of farther nodes behind the nearest cutoff. When
+pruning is enabled, affected orange pixels should become blue. This separates a
+non-triggering optimization from one whose GPU-time savings are merely below
+whole-frame measurement noise.
+
+#### Normal-composite traversal removal and depth buckets
+
+Shader-cache revision v13 removes a redundant linked-list traversal from normal
+compositing. The final pass previously calculated fragment count, nearest depth,
+and farthest depth for every populated pixel before checking whether diagnostic
+modes 1 through 4 needed those values. Mode 0 then traversed the same list again
+to blend it. Normal rendering now enters the blend traversal directly; the
+count/depth scan runs only for diagnostics that consume it. This is lossless and
+does not change sorting, blending, capture, allocation, or overflow behavior.
+Its expected benefit scales with the number of captured fragments covering the
+screen, making zoomed smoke and splash workloads the most relevant test.
+
+Diagnostic mode 8 provides a visual list-depth histogram without changing the
+capture buffers or scheduling. Populated pixels are bucketed as follows:
+
+- dark gray: 1 fragment;
+- blue: 2--4;
+- cyan: 5--8;
+- green: 9--16;
+- yellow: 17--32;
+- orange: 33--64;
+- magenta: 65 or more.
+
+This view is intended to decide whether a fixed small-list register sorter could
+cover enough pixels to justify another implementation. It deliberately precedes
+that experiment because the earlier dynamic insertion-sort completion path
+crashed the NVIDIA OpenGL driver.
+
+The viewer's separate Highlight Transparent overlay normally renders after the
+Exact OIT composite. It is suppressed while any Exact OIT diagnostic mode is
+active because otherwise it can paint transparent geometry over the diagnostic
+result. Normal mode 0 retains the existing overlay behavior.
+
+Shader-cache revision v14 makes all Exact OIT diagnostics write zero to the
+screen alpha channel. In this
+render target alpha carries glow rather than display opacity; the previous
+diagnostic alpha of `1.0` requested maximum glow on every diagnosed transparent
+pixel, allowing later post-processing to wash the intended colors out to white.
+Empty-list pixels retain the opaque scene RGB but likewise clear glow while a
+diagnostic mode is active. Mode 4 now performs only its sort-validation
+traversal instead of first calculating unrelated count and depth values.
+
+Runtime validation confirmed that revision v14 removes the pervasive white glow
+and leaves the intended mode 8 depth-bucket colors visible.
+
+Initial mode 8 scene observations after that fix:
+
+- hairstyles are commonly in the 2--4-fragment blue bucket;
+- grass fields can reach the 17--32-fragment yellow bucket;
+- trees range from blue through the 65-or-more magenta bucket;
+- smoke contains substantial 9--16 green, 17--32 yellow, and 65-or-more
+  magenta regions;
+- across general viewing, blue covers more pixels than any other individual
+  bucket.
+
+This distribution means a fixed sorter for at most eight fragments would help
+hair and shallow outer regions, but would not address the expensive centers of
+grass, trees, and smoke. Deep-list work must remain a primary optimization
+target. Visual area is not a GPU-work histogram: a magenta pixel contains at
+least 65 nodes versus 2--4 for blue and can require more global merge passes, so
+a much smaller magenta region may still account for more sorting and memory
+traffic than a large blue region.
+
+A close frontal avatar screenshot provides a more specific shallow-list case.
+The colored avatar regions are almost entirely dark gray, blue, and cyan:
+one-fragment, 2--4-fragment, and 5--8-fragment pixels. The hairstyle is
+predominantly blue with cyan strands and edges; large isolated transparent
+surface regions are one fragment. No material green, yellow, orange, or magenta
+avatar region is visible in that capture. A fixed exact fast path through eight
+fragments would therefore cover nearly all captured avatar transparency in this
+example, even though it would not solve the deep smoke, foliage, and grass
+hotspots.
+
+Some otherwise unrelated surfaces become blue when an alpha-masked tree is
+close to the camera, while the tree itself receives no mode 8 color. This
+confirms that the mask geometry remains outside Exact OIT. Mode 8 is
+screen-space: coloring a visible surface means that 2--4 captured transparent
+fragments lie on the same screen pixels, not that the surface or tree produced
+those fragments. The contributing draw is currently unidentified and must not
+be attributed to the masked tree without capture-path evidence.
+
+Separately, the regular alpha shader does not discard zero-alpha texels in every
+permutation, and `exact_oit_store()` currently allocates every fragment that
+reaches it. Alpha Blend cards, filtered or mipmapped texels, or additional
+blended/emissive passes can therefore create visually inconsequential nodes
+across a large projected area. This remains a general code finding rather than
+an explanation proven for the observed tree scene.
+
+A subsequent mode 8 screenshot of a confirmed Alpha Blend tree proves this
+behavior directly. The diagnostic buckets fill the complete rectangular
+foliage cards, including texels where no leaf is visible. Overlapping full cards
+form broad concentric regions from blue and cyan through green, yellow, orange,
+and a magenta 65-or-more-fragment center. Much of this tree's allocation and
+sorting cost is therefore exact-zero-alpha card area rather than visible leaf
+transparency. Capture-time rejection of mathematically no-op standard-alpha,
+zero-glow fragments is now higher priority than short-list register sorting:
+it can collapse both the shallow outer rectangles and the exceptionally deep
+invisible center before allocation.
+
+#### Exact zero-alpha capture rejection
+
+Shader-cache revision v15 implements lossless rejection in the shared color
+capture function. Before allocating a node, it requires all of:
+
+- `RenderExactOITNoOpCapture` is enabled;
+- the packed blend tuple is standard
+  `SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA, ZERO,
+  ONE_MINUS_SOURCE_ALPHA`;
+- final captured source alpha is exactly `0.0`;
+- captured glow is exactly `0.0`.
+
+For this tuple, zero source alpha multiplies source color by zero, leaves
+destination color and alpha unchanged, and leaves accumulated glow unchanged.
+The node is therefore mathematically ineffective regardless of its RGB or
+depth. Rejection occurs before the allocation atomic, node writes, head
+exchange, per-pixel count increment, and maximum-list update.
+
+The setting is default-enabled and uploaded per captured draw, so it can be
+changed live for visual, mode 8, allocation, overflow, and performance A/B
+comparisons. Regular and GLTF color capture use it. Custom/additive blend
+tuples, nonzero glow, fractional alpha, and separate glow-only nodes remain
+unchanged.
+
+Runtime mode 8 A/B screenshots confirm that the setting changes capture live.
+With rejection disabled, large solid shallow-list regions cover visually empty
+parts of avatar hair, face-overlay, and clothing cards. Enabling rejection
+removes those regions and reveals the normal face while retaining bucket colors
+on actual nonzero-alpha hair strands, lashes or makeup, garment surfaces, and
+edges. Large one-fragment gray garment regions remain, indicating a real
+nonzero-alpha surface rather than discarded empty card area. This validates the
+intended node-count reduction; mode 0 image parity and FPS measurements remain
+to be recorded.
+
+The initial mode 0 A/B test showed no observable FPS change. The optimization
+is visibly removing captured nodes, but rasterization, texture sampling,
+lighting, and the rest of each alpha fragment shader execute before
+`exact_oit_store()` can reject the result. Fullscreen sort-pass scheduling,
+nonzero-alpha lists, and the capture-validation synchronization also remain.
+The rejection is retained because it is lossless and reduces node writes,
+memory traffic, depth complexity, capacity demand, and overflow pressure, but
+it is not considered the primary solution to the measured frame-time problem.
+
+A paired normal/mode-8 screenshot of faint chimney smoke identifies the primary
+remaining workload. Although the smoke contributes only a subtle haze to the
+normal image, its projected plume contains broad yellow/orange regions and a
+very large magenta center, meaning at least 65 captured fragments per pixel.
+The diagnostic footprint follows most of the plume's large screen area.
+
+These are nonzero fractional-alpha fragments, so exact zero-alpha rejection
+cannot remove them. A small-list fast path would affect only the narrow outer
+bands, and active-pixel scheduling would still dispatch most of the plume
+because it densely covers the screen. This scene is the representative
+deep-list benchmark for future exact sorting work. Any effective-opacity cutoff
+that discards these small but nonzero contributions would be approximate rather
+than lossless and must not be folded into the exact path without an explicit
+quality-policy decision.
+
+#### Experimental compute sorter
+
+Shader-cache revision v17 adds a default-disabled lossless compute sorter. A
+16-by-16 classification kernel compacts pixels whose lists need sorting into a
+packed viewport queue. One 64-lane workgroup then applies the existing opaque
+cutoff, gathers linked nodes in blocks of 64, sorts each block with a fixed
+shared-memory bitonic network, and relinks the exact depth/allocation-index
+order. GPU-generated ping-pong queues send only unfinished pixels through
+subsequent natural-run merge kernels. The existing fullscreen fragment sorter
+remains the live fallback through `RenderExactOITComputeSort`.
+
+The implementation uses two four-byte-per-pixel queues with 16-byte indirect
+dispatch headers and no duplicate node pool. It also extends the shared shader
+loader with tagged compute-stage identification and program-local object
+lifetime handling. Runtime compilation, correctness, performance, and NVIDIA
+stability validation are pending.
+
+Initial enabled/disabled testing was visually identical, as required for exact
+sorting, but showed no observable FPS difference and did not establish whether
+the optional compute programs were active or silently falling back. Revision
+v17 therefore adds diagnostic mode 9: green captured pixels mean compute sorting
+was used for the frame, while red means the fullscreen fallback was used.
+`ExactOIT` log entries also report requested, available, and used state whenever
+one changes.
+
+Runtime validation of revision v17 confirmed that diagnostic mode 9 is red with
+`RenderExactOITComputeSort` disabled and green when it is enabled. The compute
+path is therefore compiling, allocating, dispatching, and switching live rather
+than silently falling back. Rendering remained visually identical. The observed
+performance change was approximately one FPS, which is below the acceptance
+threshold and may be measurement noise. The compute sorter remains
+default-disabled and is not a candidate for promotion based on this result.
+
+#### First wired AVBOIT prototype
+
+Shader-cache revision v18 adds a separate default-disabled `fsavboit` module and
+`RenderAVBOIT` setting. The first prototype deliberately reuses complete Exact
+OIT node capture, allowing immediate fallback without duplicating the full
+legacy, material, rigged, emissive, and GLTF shader family. It bypasses all
+linked-list sorting when active.
+
+Compute passes mark an 8K virtual depth occupancy domain, build a 128-slice
+adaptive warp, clear and populate a one-eighth-resolution integer extinction
+volume, integrate front transmittance, and resolve each full-resolution pixel
+by traversing its unsorted captured nodes. Ordinary and custom color nodes are
+approximated as source-over; glow nodes are accumulated with estimated front
+transmittance. The opaque scene is attenuated by total estimated
+transmittance.
+
+This prototype tests the central performance question—whether eliminating deep
+sorting materially helps the smoke workload—while retaining node-capture cost.
+It is not yet the final direct-raster AVBOIT architecture and is explicitly
+approximate. Shader/resource failure logs once and falls back to the existing
+Exact OIT composite. Build, visual, performance, resize, live-toggle, and
+fallback validation are pending.
+
+The first build correctly fell back to Exact OIT because the shared loader
+emitted `#version 420` for `avboitVolumeC.glsl`; SSBO declarations require GLSL
+4.30 and NVIDIA rejected both occupancy/warp blocks. Revision v19 makes every
+compute shader request GLSL 4.30 on supported hardware, matching the existing
+Exact OIT compute programs. The log provides direct confirmation of this
+failure and fallback rather than an inactive setting.
+
+After the GLSL fix, AVBOIT became visibly active, but a close hair comparison
+showed unacceptable dark striping and repeated card layers. The first resolve
+summed every straight-alpha color contribution after coarse front-transmittance
+weighting; fragments sharing a voxel slice therefore applied dense hair opacity
+multiple times. Revision v20 instead forms a front-transmittance-weighted color
+average and applies the exact order-independent per-pixel aggregate opacity
+`1 - product(1 - alpha)` once. This retains approximate depth preference while
+preventing same-slice contribution sums from producing layered bands.
+
+The v20 result substantially improved hair, but a close comparison still
+showed localized block-shaped color changes aligned with the one-eighth-scale
+volume. The integer transmittance volume was sampled from one coarse cell and
+one physical slice for every fragment. Revision v21 stores integrated
+transmittance in a filterable `R32F` volume and samples it trilinearly during
+resolve. Extinction accumulation remains integer-atomic. This smooths spatial
+cell and slice transitions without increasing the volume dimensions or capture
+cost.
+
+The SIGGRAPH 2025 AVBOIT presentation subsequently established that v21's
+filtering-only change was incomplete: linear sampling over point extinction
+splats can still self-occlude surfaces. Revision v22 linearly divides each
+extinction contribution between adjacent warped slices and applies the
+presentation's two-slice camera-side bias when sampling integrated
+transmittance. Detailed comparison notes are recorded in
+`doc/ayanestorm-special-avboit-siggraph-2025-notes.md`.
+
+Runtime comparison of v22 showed greatly reduced hair artifacts and generally
+acceptable approximate rendering. Remaining observations were minor hair
+patches, temporally unstable bands on an Alpha Blend trouser surface, and
+excessive bloom from a glowing opaque object viewed through glass. The glow
+case exposed a resolve error rather than an inherent AVBOIT limitation:
+opaque-scene RGB was attenuated by total pixel transmittance, while the
+opaque-scene glow stored in screen alpha was copied unchanged. Revision v23
+attenuates opaque glow by the same total pixel transmittance. Captured
+transparent glow remains weighted by estimated front transmittance.
+
+Revision v24 adds a bounded hybrid resolve for the remaining hair and clothing
+artifacts. Pixels containing at most 16 ordinary source-over or glow-only nodes
+are insertion-sorted by the Exact OIT total order and composited exactly.
+Deeper pixels and pixels using custom blend modes retain AVBOIT. This uses the
+nodes already captured by the prototype and is intended to protect shallow
+thin-layer content without restoring full sorting cost to dense smoke and
+splashes. Its performance impact must be measured; the bounded private array is
+specific to this captured-list prototype and is not part of the final
+direct-raster AVBOIT architecture.
+
+Runtime testing confirmed that v24 fixed excessive opaque glow behind glass.
+The trouser surface stopped flickering only when sufficiently close to the
+camera. This distance dependency is consistent with screen-space
+concentration: nearby layers spread across more pixels and fit the 16-node
+exact branch, while distant layers collapse into deeper per-pixel lists.
+Revision v25 raises the bounded exact source-over limit to 32 nodes, covering
+the previously observed 17–32 fragment range. GPU occupancy and whole-frame
+cost must be compared because the resolve shader's bounded private index array
+also grows from 16 to 32 entries.
+
+The v25 log confirmed AVBOIT activation at runtime, but the expanded exact
+branch made visual setting comparisons ambiguous. Revision v26 adds
+`RenderAVBOITDebugMode`. Mode 1 displays captured shallow-exact pixels in green
+and pixels using approximate AVBOIT in magenta; pixels without captured
+transparency retain the opaque scene. This setting is live and adds no normal
+mode readback.
+
+V26 runtime diagnostics showed both green shallow-exact pixels and magenta
+approximate pixels, confirming that AVBOIT was active rather than falling back
+wholly to Exact OIT. The hybrid result was reported as artifact-free with only
+very minor differences, mostly involving glow. It also exposed a regression in
+the shallow branch: after correctly attenuating opaque glow through glass, the
+branch restored the original opaque glow with a maximum operation and treated
+ordinary accumulated opacity as screen-alpha glow. Revision v27 writes only
+the ordered, attenuated glow recurrence to screen alpha.
+
+Revision v27 received `bokt`. Runtime testing confirmed that the glass/glow
+regression is fixed and the resulting hybrid AVBOIT rendering was described as
+looking perfect in the tested scenes. The earlier v26 diagnostic had already
+confirmed that this result includes both shallow-exact and approximate AVBOIT
+pixels rather than a whole-frame Exact OIT fallback.
+
+#### Sparse tiled AVBOIT volume
+
+Revision v29 begins the performance implementation described by the SIGGRAPH
+2025 presentation. A full-resolution `R8UI` classification image records empty,
+shallow-exact, and approximate pixels during the first occupancy traversal.
+Only approximate pixels now contribute to the 8K depth histogram, tiled
+occupancy, extinction volume, and integration work. Shallow-exact content such
+as the validated hair, clothing, and glass no longer populates the approximate
+volume.
+
+A physical 128-bit depth occupancy mask is stored for every one-eighth-scale
+volume cell. Approximate pixels mark their warped slices and a conservative
+three-by-three cell neighborhood so hardware trilinear sampling never reads an
+uncleared stale neighbor. Sparse clear and integration dispatch one invocation
+per volume cell and loop over 128 slices only for occupied cells. This replaces
+the previous clear dispatch of roughly
+`volume width * volume height * 128` invocations and avoids all image traffic
+for inactive cells. GPU zones distinguish tiled occupancy, sparse clear, and
+sparse integration.
+
+This is still a captured-list prototype. Classification, global occupancy,
+tiled occupancy, extinction, and resolve each traverse relevant lists, and the
+tiled mask uses conservative per-pixel atomics rather than the paper's
+primitive-bounds software rasterizer. Runtime visual, resize, activation, and
+performance validation are required before adding zero-transmittance culling.
+
+V29 passed runtime visual testing with rendering identical to v27. The observed
+performance change was only about one FPS, from 28 to 29 FPS. Sparse volume
+clear/integration is therefore not the dominant cost in the captured-list
+prototype; capture and repeated node traversal remain.
+
+Revision v30 adds the presentation's zero-transmittance depth representation.
+Sparse integration records the first physical slice where integrated
+transmittance falls to `1/65536` or lower and stops integrating that cell.
+Approximate resolve rejects color and glow contributions behind that slice and
+avoids their 3D transmittance samples, while retaining their alpha in total
+background attenuation. Shallow-exact pixels are unaffected.
+
+Because captured nodes are unsorted, resolve must still traverse deeper linked
+nodes to find all fragments and maintain total opacity. The production
+optimization culls those fragments before rasterization through generated
+depth geometry; that larger gain requires the planned direct AVBOIT capture
+path and cannot be reproduced by this resolve-only step.
+
+Revision v30 received `bokt`. Rendering remained visually correct, but no
+visible FPS improvement was observed. This confirms that zero-transmittance
+resolve rejection cannot overcome Exact OIT capture and linked-list traversal
+cost. The current hybrid is also intentionally mostly exact whenever debug
+mode 1 is mostly green: every pixel is first captured into Exact OIT nodes, and
+green pixels with at most 32 ordinary nodes are sorted and composited exactly.
+Only magenta pixels use the approximate voxel resolve. The prototype has
+therefore reached its useful performance limit and further optimization must
+decouple AVBOIT from Exact OIT capture.
+
+#### Independent direct-raster AVBOIT
+
+Revision v31 replaces the normal AVBOIT execution path with three independent
+transparency raster traversals and does not allocate or traverse fragment nodes:
+
+1. The occupancy traversal writes the 8K virtual-depth histogram and
+   conservative low-resolution spatial occupancy.
+2. Compute builds the adaptive warp and sparsely clears occupied volume cells.
+3. The extinction traversal atomically splats linearly divided logarithmic
+   extinction into the physical volume.
+4. Compute integrates transmittance and records effective-zero depth.
+5. The accumulation traversal samples front transmittance, rejects fragments
+   behind effective zero, and atomically accumulates fixed-point weighted RGB,
+   normalization weight, and glow at full resolution.
+6. Compute resolves accumulated transparency over a preserved opaque copy using
+   the low-resolution total transmittance.
+
+The fixed-point accumulation buffer uses five 32-bit values per screen pixel.
+It avoids requiring floating-point atomics or mixed framebuffer blend equations
+on the OpenGL 4.3 baseline. Each contribution uses 12 fractional bits and is
+clamped before atomic addition. Overflow and precision must be evaluated on
+extreme HDR/glow content.
+
+The existing Exact OIT shader family supplies the already-validated material,
+rigging, GLTF, fullbright, and emissive surface evaluation, but its terminal
+store function switches to direct AVBOIT raster output. No Exact OIT node
+counter, head pointer, node storage, classification, shallow exact sort, or
+linked-list resolve is touched on the successful direct path. If direct AVBOIT
+resource initialization fails, the previous Exact OIT/vanilla fallback routing
+remains available.
+
+In direct diagnostic mode 1, every contributing direct AVBOIT pixel is magenta
+and there are no green shallow-exact pixels. A log entry explicitly reports
+`Using independent direct-raster AVBOIT; Exact OIT nodes are not captured`.
+Runtime validation must first confirm shader compilation, world entry, resize,
+live toggling, coverage across legacy/PBR/GLTF/rigged/emissive content, visual
+quality, and performance.
+
+Revision v31 passed its first runtime test. The independent path was
+substantially faster than Exact OIT in the same glass-heavy scene: about
+34 FPS versus 23 FPS, approximately a 48% increase. Close-up smoke sprites that
+made Exact OIT lag severely rendered without the previous lag, and smoke was
+reported to look great. This confirms that removing node capture and list
+sorting addresses the dominant dense-transparency bottleneck.
+
+Hair looked visibly blurred. V31 used the one-eighth-resolution volume's total
+transmittance as final pixel opacity, so hardware filtering spread thin
+high-frequency silhouettes across neighboring volume cells. The SIGGRAPH
+presentation instead lists accumulated extinction as a full-resolution
+transparency output.
+
+Revision v32 expands direct accumulation from five to six 32-bit values per
+pixel. The sixth value atomically accumulates full-resolution logarithmic
+extinction. Resolve reconstructs exact order-independent per-pixel aggregate
+opacity as `exp(-sum(extinction))`; the low-resolution volume is now used only
+to estimate front transmittance for color and glow weighting. This should
+restore sharp alpha silhouettes while retaining approximate depth weighting.
+
+Runtime testing confirmed that v32 made hair substantially better while
+preserving the strong v31 performance gain. It removed the blurred silhouette,
+but exposed the same internal hair patches seen before the temporary 32-node
+Exact fallback. That fallback had concealed the AVBOIT approximation rather
+than repaired it. The remaining artifact is consistent with multiple hair
+layers mapping to one physical depth slice and receiving indistinguishable
+front-transmittance weights.
+
+Revision v33 increases the low-resolution extinction/transmittance volume from
+128 to 192 physical depth slices and expands each volume-cell occupancy mask
+from four to six 32-bit words. Full-resolution accumulation remains unchanged.
+This provides 50 percent more adaptive depth separation for hair and close
+intersections while retaining the direct, node-free path. It increases volume
+memory and integration work by 50 percent, so hair quality and whole-frame FPS
+must both be compared with v32.
+
+Screenshot comparison after v33 showed that the remaining pale hair glitches
+have rectangular, screen-space footprints. They are therefore attributed to
+spatial sharing in the one-eighth-resolution volume rather than inadequate
+depth-slice resolution.
+
+Revision v34 changes the direct AVBOIT volume scale from one-eighth to
+one-quarter resolution. A volume cell now represents 4 by 4 full-resolution
+pixels instead of 8 by 8. Extinction normalization changes correspondingly
+from 1/64 to 1/16 per raster sample. This provides four times the spatial
+precision and targets the visible hair patches, at the cost of approximately
+four times the low-resolution volume memory and integration work. The
+full-resolution accumulation buffers and raster-pass count are unchanged.
+
+Runtime testing rejected v34. It caused severe lag and did not remove or
+materially improve the hair glitches. Revision v35 therefore restores the
+one-eighth spatial volume and its 1/64 extinction normalization. This result
+rules out brute-force spatial resolution as a useful remedy and points the
+next investigation toward adaptive depth-warp construction, filtering across
+occupied-range boundaries, and same-slice color normalization.
+
+The user subsequently requested adherence to the presentation's official
+implementation rather than further brute-force configuration experiments.
+Revision v36 restores the presented 128 physical slices as well as the already
+restored one-eighth spatial scale. The unsuccessful 192-slice and
+one-quarter-scale experiments are retained only as diagnostic findings.
+
+Code review then found an off-by-one error in the adaptive depth-warp builder.
+The old LUT stored an occupied bin's ordinal and mapped following empty entries
+back to `ordinal - 1`. An isolated occupied virtual bin therefore had identical
+warp values at both boundaries: fractional depth across that bin collapsed to
+one physical slice. Increasing spatial or physical resolution could reduce
+some collisions but could not repair this collapse.
+
+Revision v37 changes the LUT to the presentation's prefix-at-boundaries form.
+Each entry stores the number of occupied bins preceding that boundary, then
+advances the prefix when the current bin is occupied. Occupied ranges now have
+a positive physical-depth slope while empty ranges remain constant. Mapping
+uses the inclusive physical coordinate range zero through 127. This is a
+correctness fix and is the primary candidate for the localized hair bands.
+
+Runtime screenshots rejected v37. Layered transparent clothing developed
+severe concentric depth bands. The prefix was incorrectly scaled over the
+entire 128-slice physical range, so a sparsely occupied virtual bin could be
+stretched across a large portion of the volume. The test made the mapping
+error much more visible.
+
+Revision v38 replaces that scaling with the presentation's adaptive packing
+sequence. It counts occupied virtual-depth groups and repeatedly halves virtual
+resolution until no more than 128 occupied groups remain. Each occupied group
+then consumes one compacted physical interval; empty groups remain flat.
+The LUT stores 16.16 fixed-point coordinates so fractional position can be
+recalculated inside a coarsened occupied group without stretching it across
+unused physical storage.
+
+The AVBOIT prototype still reused Exact OIT material shader objects and frame
+orchestration. This was expedient for complete legacy, rigged, PBR, GLTF, and
+emissive coverage, but it coupled module identity and shader-cache invalidation.
+Revision v39 begins separation by restoring the Exact OIT cache identity to its
+unchanged v17 algorithm revision and adding an independent AVBOIT cache
+revision. The viewer cache key includes both salts. This is organizational and
+does not change rendering; separate AVBOIT material programs and orchestration
+remain required to remove the deeper coupling.
+
+### AVBOIT extraction from Exact OIT
+
+The user rejected the prototype coupling and required every AVBOIT component
+to live outside Exact OIT. The extraction restores `fsexactoit.cpp`,
+`fsexactoit.h`, `exactOITCaptureF.glsl`, `exactOITEmissiveF.glsl`, and
+`exactOITPbrGlowF.glsl` byte-for-byte to the last pre-AVBOIT commit
+`6cd7da6a82`. A direct comparison against that commit reports no differences,
+and a case-insensitive search reports no AVBOIT reference in any Exact OIT
+source or shader.
+
+AVBOIT now owns:
+
+- `avboitCaptureF.glsl`, `avboitEmissiveF.glsl`, and
+  `avboitPbrGlowF.glsl`;
+- independent legacy, rigged, PBR, fullbright, material, GLTF, emissive, and
+  glow shader objects cloned from the corresponding vanilla configurations;
+- capture-active and capture-completed frame state;
+- occupancy, extinction, accumulation, integration, resolve, resources, and
+  shader-cache revision;
+- all three direct transparency raster traversals.
+
+`fsoitdispatcher` is the only module that knows about both renderers. It gives
+AVBOIT precedence when requested and ready, otherwise invokes Exact OIT when
+that independent setting is enabled, otherwise permits vanilla transparency.
+The alpha pool, GLTF scene manager, and pipeline call this neutral dispatcher
+rather than using Exact OIT as a host for AVBOIT.
+
+The obsolete AVBOIT captured-list composite and all Exact node/list
+declarations were removed from active AVBOIT code. Exact OIT is no longer
+enabled by `RenderAVBOIT`, AVBOIT no longer reads
+`RenderExactOITDebugMode`, and AVBOIT shader loading no longer depends on
+Exact OIT shader-load success. AVBOIT does require the vanilla deferred
+material family to load successfully because its independent programs clone
+those material configurations before appending AVBOIT-owned output shaders.
+
+Revision v40 completes the source-level separation. AVBOIT uses its own
+`AVBOIT` material permutation and `avboit_store` terminal instead of compiling
+through the Exact OIT permutation or terminal symbol. Static verification
+confirmed:
+
+- the Exact OIT module and three capture shaders have no difference from
+  pre-AVBOIT commit `6cd7da6a82`;
+- those Exact files contain no case-insensitive `avboit` match;
+- AVBOIT module and shaders contain no `FSExactOIT`, Exact shader object,
+  Exact node, head-pointer, linked-list, or `EXACT_OIT` dependency;
+- no renderer-specific capture call remains in the alpha pool, GLTF scene
+  manager, or pipeline outside `fsoitdispatcher`;
+- `git diff --check` reports no whitespace errors.
+
+AVBOIT independently invalidates visible vanilla alpha groups when it is
+disabled after an active frame. This preserves live switching without relying
+on Exact OIT's separate transition state or requiring camera movement.
+
+Compilation and runtime validation remain the user's responsibility. The first
+build must validate the independently cloned material program family before
+any further AVBOIT algorithm work.
+
+During the same test, Exact OIT temporarily appeared to render as vanilla and
+later recovered. The log recorded repeated required-node counts between
+approximately 68 and 110 million while the scene was rezzing, above the
+67.1-million-node maximum capacity. Exact OIT therefore entered its intended
+same-frame vanilla fallback until demand dropped below capacity. The user
+reported that this initial output was substantially worse than ordinary
+vanilla, so visual correctness of the overflow fallback is not established and
+must not be inferred from its log message. One likely difference is stale
+within-group vanilla alpha ordering: Exact OIT normally does not maintain that
+ordering while enabled, but the overflow path abruptly replays vanilla
+transparency without an Exact-to-vanilla setting transition. AVBOIT did not
+become active until after this interval, at 15:30:05, so it did not cause the
+initial regression.
 
 #### Deferred near-opaque exploration
 
@@ -571,3 +1263,53 @@ of any one shader invocation without imposing a fragment or layer limit.
 No future optimization may impose a fixed fragment limit per pixel, silently
 discard captured data, substitute approximate blending, or knowingly add visual
 artifacts without explicit approval.
+## AVBOIT packed-extinction quantization defect
+
+The persistent card-shaped artifacts across hair, clothing, and Alpha Blend
+foliage have a concrete numerical source. The direct prototype rasterizes at
+full resolution and averages each contribution into an 8-by-8 volume cell by
+dividing optical depth by 64. It then quantizes every individual divided
+fragment directly into the presentation's packed 8-bit extinction format.
+
+With effective-zero extinction `-log(1/255) = 5.54126355`, one packed unit is
+approximately `0.02173`. The current per-fragment packed values before rounding
+are:
+
+- alpha 0.1: 0.0758 units, rounded to 0;
+- alpha 0.2: 0.1604 units, rounded to 0;
+- alpha 0.3: 0.2565 units, rounded to 0;
+- alpha 0.4: 0.3673 units, rounded to 0;
+- alpha 0.5: 0.4984 units, rounded to 0;
+- alpha 0.6: 0.6588 units, rounded to 1.
+
+Linear depth splatting divides that already small contribution between two
+physical slices before quantization. Consequently even contributions above the
+nominal threshold can round to zero in both slices depending on the fractional
+warped depth. Small camera or warp changes therefore make entire fragments
+appear or disappear from the transmittance volume along mesh/card boundaries.
+
+Those fragments still contribute unquantized full-resolution extinction during
+the final color pass. The resolve therefore combines opacity from fragments
+which were absent from the front-transmittance function, producing the observed
+dark, transparent, or opaque-scene patches.
+
+The presentation avoids this ordering error by rasterizing a dedicated
+low-resolution extinction prepass and quantizing the resulting low-resolution
+fragment contribution, without first dividing each fragment by 64. Correct
+alternatives are:
+
+1. implement that low-resolution prepass with matching conservative depth
+   bounds, retaining the official packed 8-bit representation; or
+2. retain full-resolution folding but accumulate enough precision before
+   spatial averaging and quantize only after the cell/slice sum is complete.
+
+Simply changing filtering, slice count, or the final accumulation format cannot
+correct this defect.
+
+Revision v54 implements the high-precision-then-integrate alternative with two
+16-bit extinction slices packed into each `R32UI` word. At alpha 0.1 the
+divided contribution is approximately 19.5 packed units instead of 0.0758, so
+it survives both rounding and linear depth splitting. Overflow-min semantics
+remain valid for packed half-word carry. This is a correctness adaptation for
+the current full-resolution folding path, not a claim that the dedicated
+low-resolution prepass has been implemented.

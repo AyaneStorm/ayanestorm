@@ -26,8 +26,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Exact OIT
-#include "fsexactoit.h"
+// <AS:Chanayane> Independent OIT renderer selection
+#include "fsoitdispatcher.h"
 // </AS:Chanayane>
 
 #include "gltfscenemanager.h"
@@ -651,9 +651,9 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         return;
     }
 
-// <AS:Chanayane> Use exact capture variants only while the opt-in path is active.
+// <AS:Chanayane> Use the active OIT capture variants only while an opt-in path is active.
     // if (gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() <= variant)
-    LLGLSLShader& gltf_program = FSExactOIT::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
+    LLGLSLShader& gltf_program = FSOITDispatcher::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
     if (gltf_program.mGLTFVariants.size() <= variant)
 // </AS:Chanayane>
     {
@@ -668,8 +668,8 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
         if (batches.empty())
         {
-// <AS:Chanayane> Continue through the second cull mode during Exact OIT capture.
-            if (FSExactOIT::captureActive())
+// <AS:Chanayane> Continue through the second cull mode during OIT capture.
+            if (FSOITDispatcher::captureActive())
             {
                 continue;
             }
@@ -695,20 +695,20 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
             { // don't bind the shader until we know we have somthing to render
                 if (opaque)
                 {
-// <AS:Chanayane> Select through gltf_program for Exact OIT capture.
+// <AS:Chanayane> Select through gltf_program for OIT capture.
                     // gGLTFPBRMetallicRoughnessProgram.bind(variant);
                     gltf_program.bind(variant);
 // </AS:Chanayane>
                 }
                 else
                 { // alpha shaders need all the shadow map setup etc
-// <AS:Chanayane> Select through gltf_program for Exact OIT capture.
+// <AS:Chanayane> Select through gltf_program for OIT capture.
                     // gPipeline.bindDeferredShader(gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[variant]);
                     gPipeline.bindDeferredShader(gltf_program.mGLTFVariants[variant]);
-                    if (FSExactOIT::captureActive())
+                    if (FSOITDispatcher::captureActive())
                     {
                         LLGLSLShader& shader = gltf_program.mGLTFVariants[variant];
-                        FSExactOIT::configureGLTFCapturedDraw(shader);
+                        FSOITDispatcher::configureGLTFCapturedDraw(shader);
                     }
 // </AS:Chanayane>
                 }
@@ -1230,5 +1230,3 @@ void GLTFSceneManager::renderDebug()
     gDebugProgram.unbind();
 
 }
-
-

@@ -135,6 +135,65 @@ those cases, while producing the same final order and retaining every fragment.
 Later fullscreen sort draws may still be required by other pixels, but pixels
 that reach one run return immediately without traversing their lists again.
 
+### Skipping fragments hidden inside a transparent list
+
+Some textures use alpha blending even though parts of the texture produce a
+fully opaque alpha value. Such a fragment does not write to the ordinary depth
+buffer, so Exact OIT still captures transparent fragments behind it. Once the
+fully opaque fragment is known to replace the existing color, alpha, and glow
+completely, those deeper fragments cannot affect the result. Exact OIT can
+therefore remove them before sorting without changing the image.
+
+This applies only to a mathematically complete overwrite. Values such as
+`0.995` and `254/255` still leave some of the destination visible and are not
+cutoffs.
+
+#### Exact cutoff predicate and relinking
+
+Cutoff discovery runs only in the first natural-sort invocation and only after
+a complete, non-overflowed capture has been accepted. A color node qualifies
+when its final shader-produced alpha is exactly `1.0` and its packed color
+source, color destination, alpha source, and alpha destination factors are,
+respectively, `SOURCE_ALPHA`, `ONE_MINUS_SOURCE_ALPHA`, `ZERO`, and
+`ONE_MINUS_SOURCE_ALPHA`. Glow-only nodes use a sentinel blend value and cannot
+qualify.
+
+The discovery traversal selects the qualifying node latest in Exact OIT's
+far-to-near total order. Greater depth sorts first; allocation index, which is
+also capture sequence, breaks equal-depth ties with the lower index first. The
+list is then relinked in its existing traversal order to retain the cutoff and
+every node ordered nearer or later than it. The retained count replaces the
+pixel's pre-sort count, and the existing natural merge pass immediately sorts
+that retained list.
+
+Actual Alpha Mask materials are unaffected: rejected texels are discarded and
+accepted texels use their existing depth-writing path outside Exact OIT. A
+binary-looking texture configured as Alpha Blend does enter Exact OIT, so only
+its texels whose final alpha is exactly `1.0` can qualify; fractional filtered
+edges remain in the list.
+
+Pruned nodes remain allocated until the node pool is reused next frame. Capture
+allocation totals, capacity checks, overflow detection, and same-frame complete
+vanilla fallback therefore remain based on the full captured list, not the
+retained list.
+
+`RenderExactOITOpaqueCutoff` enables the optimization by default. Disabling it
+skips cutoff discovery and pruning while leaving Exact OIT capture, sorting,
+blending, and fallback behavior active, providing a direct runtime A/B
+comparison with the pre-optimization path.
+
+Normal rendering does not perform the count and depth traversal used by
+diagnostic modes. The final pass proceeds directly to the blend traversal, so
+the retained linked list is read once for output rather than once for unused
+diagnostic values and again for blending.
+
+Diagnostic mode 7 visualizes cutoff activity. Black pixels have no qualifying
+cutoff. Blue pixels contain a cutoff with no retained node behind it. Orange
+pixels have farther nodes behind the nearest cutoff; brighter orange represents
+more removable nodes. With pruning disabled, orange therefore shows the
+potential work reduction. With pruning enabled, affected pixels become blue
+because those farther nodes have already been removed.
+
 ### Blending and glow
 
 The final fullscreen pass starts with the saved opaque pixel and traverses the
@@ -160,6 +219,11 @@ Missing shaders, unsupported OpenGL capabilities, allocation failures, or
 other session-level Exact OIT failures also select the complete standard
 renderer. The implementation never displays a partially captured list and does
 not fall back to weighted blended OIT.
+
+Apple's native OpenGL 4.1 implementation does not provide the OpenGL 4.2/4.3
+image and shader-storage facilities required by this PPLL design. The platform
+limitation, translation layers, and possible OpenGL/Metal hybrid path are
+covered in [Exact OIT on macOS](ayanestorm-special-exact-oit-macos.md).
 
 The feature is controlled by `RenderExactOIT`. Disabling it leaves the standard
 transparency path active and avoids Exact OIT allocation and capture work. The

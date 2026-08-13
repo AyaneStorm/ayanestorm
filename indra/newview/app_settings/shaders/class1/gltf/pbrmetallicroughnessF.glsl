@@ -166,10 +166,14 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
 // ==================================
 // output definition
 // ==================================
-// <AS:Chanayane> Exact OIT fragment-node declarations; original outputs remain below.
+// <AS:Chanayane> Independent OIT declarations; original outputs remain below.
 // #if defined(ALPHA_BLEND) || defined(UNLIT)
 #if defined(EXACT_OIT) && defined(ALPHA_BLEND)
 void exact_oit_store(vec4 color);
+#elif defined(AVBOIT) && defined(ALPHA_BLEND)
+void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #elif defined(ALPHA_BLEND) || defined(UNLIT)
 // </AS:Chanayane>
 out vec4 frag_color;
@@ -204,6 +208,31 @@ void main()
     {
         discard;
     }
+
+    // <AS:Chanayane> AVBOIT prepasses stop after GLTF base-alpha evaluation.
+    #if defined(AVBOIT) && defined(ALPHA_BLEND)
+    if (avboitRasterPass < 2)
+    {
+        // Lit GLTF's final alpha applies vertex alpha a second time below;
+        // extinction and weighted color must use the same surface opacity.
+        float avboit_alpha = basecolor.a;
+        #ifndef UNLIT
+        avboit_alpha *= vertex_color.a;
+        #endif
+        avboit_store(vec4(0.0, 0.0, 0.0, avboit_alpha));
+        return;
+    }
+    #endif
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Cull saturated AVBOIT pixels before GLTF material shading.
+    #if defined(AVBOIT) && defined(ALPHA_BLEND)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+    #endif
+    // </AS:Chanayane>
 
     vec3 emissive = emissiveColor;
     emissive *= srgb_to_linear(texture(emissiveMap, emissive_uv.xy).rgb);
@@ -324,10 +353,12 @@ void main()
 
     float a = basecolor.a*vertex_color.a;
 
-    // <AS:Chanayane> Exact capture replaces only the original alpha framebuffer write.
+    // <AS:Chanayane> OIT capture replaces only the original alpha framebuffer write.
     // frag_color = max(vec4(color.rgb,a), vec4(0));
     #ifdef EXACT_OIT
     exact_oit_store(max(vec4(color.rgb,a), vec4(0)));
+    #elif defined(AVBOIT)
+    avboit_store(max(vec4(color.rgb,a), vec4(0)));
     #else
     frag_color = max(vec4(color.rgb,a), vec4(0));
     #endif
@@ -335,10 +366,12 @@ void main()
 #else // UNLIT
     vec4 color = basecolor;
     color.rgb += emissive.rgb;
-    // <AS:Chanayane> Exact capture replaces only the original unlit alpha framebuffer write.
+    // <AS:Chanayane> OIT capture replaces only the original unlit alpha framebuffer write.
     // frag_color = color;
     #ifdef EXACT_OIT
     exact_oit_store(color);
+    #elif defined(AVBOIT)
+    avboit_store(color);
     #else
     frag_color = color;
     #endif
@@ -346,4 +379,3 @@ void main()
 #endif
 #endif  // ALPHA_BLEND
 }
-

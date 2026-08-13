@@ -113,6 +113,8 @@ set(viewer_SOURCE_FILES
     fscontactsfriendsmenu.cpp
     fsdata.cpp
     fsdroptarget.cpp
+    fsavboit.cpp
+    fsoitdispatcher.cpp
     fsexactoit.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
@@ -975,6 +977,8 @@ set(viewer_HEADER_FILES
     fscontactsfriendsmenu.h
     fsdata.h
     fsdroptarget.h
+    fsavboit.h
+    fsoitdispatcher.h
     fsexactoit.h
     fsexportperms.h
     fsfloateraddtocontactset.h
