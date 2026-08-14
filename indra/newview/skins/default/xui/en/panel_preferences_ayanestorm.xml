@@ -120,6 +120,19 @@
     width="400"
     top_pad="20" />
 
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="10"
+    layout="topleft"
+    left="15"
+    name="render_oit_mode_label"
+    width="300"
+    top_pad="20">
+    Transparency rendering:
+  </text>
+
   <combo_box
     follows="left|top"
     layout="topleft"
@@ -129,17 +142,17 @@
     left="15"
     name="render_oit_mode"
     width="220"
-    top_pad="20">
+    top_pad="5">
     <combo_box.item
       label="Standard"
       name="standard"
       value="0" />
     <combo_box.item
-      label="Exact-OIT"
+      label="Exact-OIT (lossless)"
       name="exact_oit"
       value="1" />
     <combo_box.item
-      label="AVBOIT"
+      label="AVBOIT (experimental)"
       name="avboit"
       value="2" />
   </combo_box>
