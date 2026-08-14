@@ -10,283 +10,357 @@
   label="AyaneStorm"
   name="ayanestorm">
 
-  <!-- <AS:Chanayane> Exact OIT preference. -->
-  <check_box
-    follows="left|top"
+  <!-- [AS:Chanayane] Split into sub-tabs, content no longer fits a single page -->
+  <tab_container
+    label="AyaneStorm Prefs"
     layout="topleft"
-    height="16"
-    control_name="ASEnableUnencryptedCache"
-    label="Enable unencrypted cache"
-    tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
-    left="15"
-    mouse_opaque="true"
-    name="enable_unencrypted_cache"
-    radio_style="false"
-    width="400"
-    top="10">
-    <check_box.commit_callback
-      function="Pref.EnableUnencryptedCache" />
-  </check_box>
-  <text
-    type="string"
-    length="1"
-    follows="left|top"
-    height="10"
-    layout="topleft"
-    left="15"
-    name="Unencrypted Cache location"
-    width="300">
-    Unencrypted Cache folder location:
-  </text>
-  <line_editor
-    control_name="ASUnencryptedCacheLocation"
-    border_style="line"
-    border_thickness="1"
-    follows="left|top"
-    font="SansSerif"
-    height="23"
-    layout="topleft"
-    left="20"
-    max_length_chars="4096"
-    name="ASUnencryptedCacheLocation"
-    top_pad="10"
-    width="270" />
-  <button
-    enabled="true"
-    follows="left|top"
-    height="23"
-    label="Open"
-    label_selected="Open"
-    layout="topleft"
-    left_pad="5"
-    name="open_unencrypted_cache"
-    top_delta="-1"
-    width="45">
-    <button.commit_callback
-      function="Pref.BrowseUnencryptedCache" />
-  </button>
-  <button
-    follows="left|top"
-    height="23"
-    label="Set"
-    label_selected="Set"
-    layout="topleft"
-    left_pad="5"
-    name="set_unencrypted_cache"
-    top_delta="-0"
-    width="40">
-    <button.commit_callback
-      function="Pref.SetUnencryptedCache" />
-  </button>
-  <button
-    follows="left|top"
-    height="23"
-    label="Reset"
-    label_selected="Reset"
-    layout="topleft"
-    left_pad="3"
-    name="reset_unencrypted_cache"
-    top_delta="0"
-    width="50">
-    <button.commit_callback
-      function="Pref.ResetUnencryptedCache" />
-  </button>
+    follows="all"
+    top="1"
+    bottom="-1"
+    left="1"
+    right="-1"
+    name="ayanestorm_tabs"
+    tab_min_width="70"
+    tab_position="top">
 
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASShowOwnAvatarInRadar"
-    label="Show own avatar in Nearby People radar"
-    tool_tip="If checked, your own avatar will appear in the Nearby People radar list."
-    left="15"
-    mouse_opaque="true"
-    name="show_own_avatar_in_radar"
-    radio_style="false"
-    width="400"
-    top_pad="20" />
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="General"
+      name="tab-as-general">
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASEnableUnencryptedCache"
+        label="Enable unencrypted cache"
+        tool_tip="If checked, the viewer will store an unencrypted copy of assets in the unencrypted cache folder. Be aware that it can quickly take a lot of storage because assets are stored in lossless quality. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="enable_unencrypted_cache"
+        radio_style="false"
+        width="400"
+        top="10">
+        <check_box.commit_callback
+          function="Pref.EnableUnencryptedCache" />
+      </check_box>
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="10"
+        layout="topleft"
+        left="15"
+        name="Unencrypted Cache location"
+        width="300">
+        Unencrypted Cache folder location:
+      </text>
+      <line_editor
+        control_name="ASUnencryptedCacheLocation"
+        border_style="line"
+        border_thickness="1"
+        follows="left|top"
+        font="SansSerif"
+        height="23"
+        layout="topleft"
+        left="20"
+        max_length_chars="4096"
+        name="ASUnencryptedCacheLocation"
+        top_pad="10"
+        width="270" />
+      <button
+        enabled="true"
+        follows="left|top"
+        height="23"
+        label="Open"
+        label_selected="Open"
+        layout="topleft"
+        left_pad="5"
+        name="open_unencrypted_cache"
+        top_delta="-1"
+        width="45">
+        <button.commit_callback
+          function="Pref.BrowseUnencryptedCache" />
+      </button>
+      <button
+        follows="left|top"
+        height="23"
+        label="Set"
+        label_selected="Set"
+        layout="topleft"
+        left_pad="5"
+        name="set_unencrypted_cache"
+        top_delta="-0"
+        width="40">
+        <button.commit_callback
+          function="Pref.SetUnencryptedCache" />
+      </button>
+      <button
+        follows="left|top"
+        height="23"
+        label="Reset"
+        label_selected="Reset"
+        layout="topleft"
+        left_pad="3"
+        name="reset_unencrypted_cache"
+        top_delta="0"
+        width="50">
+        <button.commit_callback
+          function="Pref.ResetUnencryptedCache" />
+      </button>
 
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASSaveFinalSnapshot"
-    label="Save final snapshot on exit"
-    tool_tip="If checked, the viewer will save a snapshot on exit (original viewer behavior). Disabled by default."
-    left="15"
-    mouse_opaque="true"
-    name="save_final_snapshot"
-    radio_style="false"
-    width="400"
-    top_pad="20" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowOwnAvatarInRadar"
+        label="Show own avatar in Nearby People radar"
+        tool_tip="If checked, your own avatar will appear in the Nearby People radar list."
+        left="15"
+        mouse_opaque="true"
+        name="show_own_avatar_in_radar"
+        radio_style="false"
+        width="400"
+        top_pad="20" />
 
-  <text
-    type="string"
-    length="1"
-    follows="left|top"
-    height="10"
-    layout="topleft"
-    left="15"
-    name="render_oit_mode_label"
-    width="300"
-    top_pad="20">
-    Transparency rendering:
-  </text>
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASSaveFinalSnapshot"
+        label="Save final snapshot on exit"
+        tool_tip="If checked, the viewer will save a snapshot on exit (original viewer behavior). Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="save_final_snapshot"
+        radio_style="false"
+        width="400"
+        top_pad="20" />
+    </panel>
 
-  <combo_box
-    follows="left|top"
-    layout="topleft"
-    height="23"
-    control_name="RenderOITMode"
-    tool_tip="Select Standard transparency, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
-    left="15"
-    name="render_oit_mode"
-    width="220"
-    top_pad="5">
-    <combo_box.item
-      label="Standard"
-      name="standard"
-      value="0" />
-    <combo_box.item
-      label="Exact-OIT (lossless)"
-      name="exact_oit"
-      value="1" />
-    <combo_box.item
-      label="AVBOIT (experimental)"
-      name="avboit"
-      value="2" />
-  </combo_box>
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Rendering"
+      name="tab-as-rendering">
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="10"
+        layout="topleft"
+        left="15"
+        name="render_oit_mode_label"
+        width="300"
+        top="10">
+        Transparency rendering:
+      </text>
 
-  <text
-    type="string"
-    length="1"
-    follows="left|top"
-    height="10"
-    layout="topleft"
-    left="15"
-    name="preload_dullahan_label"
-    width="500"
-    top_pad="20">
-    Preload Dullahan hosts (accelerates window loading at the cost of dozens of processes):
-  </text>
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASPreloadDullahanDestinations"
-    label="Destinations"
-    tool_tip="If checked, the Dullahan (CEF) host for the Destinations floater will be preloaded at startup."
-    left="25"
-    mouse_opaque="true"
-    name="preload_dullahan_destinations"
-    radio_style="false"
-    width="400"
-    top_pad="8" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASPreloadDullahanAvatarWelcomePack"
-    label="Avatar welcome pack"
-    tool_tip="If checked, the Dullahan (CEF) host for the Avatar Welcome Pack floater will be preloaded at startup."
-    left="25"
-    mouse_opaque="true"
-    name="preload_dullahan_avatar_welcome_pack"
-    radio_style="false"
-    width="400"
-    top_pad="4" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASPreloadDullahanSearch"
-    label="Search"
-    tool_tip="If checked, the Dullahan (CEF) host for the Search floater will be preloaded at startup. Only effective when the FS legacy search mode is active."
-    left="25"
-    mouse_opaque="true"
-    name="preload_dullahan_search"
-    radio_style="false"
-    width="400"
-    top_pad="4" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASPreloadDullahanLegacySearch"
-    label="Legacy search"
-    tool_tip="If checked, the Dullahan (CEF) host for the Legacy Search floater will be preloaded at startup. Only effective when the FS legacy search mode is not active."
-    left="25"
-    mouse_opaque="true"
-    name="preload_dullahan_legacy_search"
-    radio_style="false"
-    width="400"
-    top_pad="4" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASPreloadDullahanMarketplace"
-    label="Marketplace"
-    tool_tip="If checked, the Dullahan (CEF) host for the Marketplace floater will be preloaded at startup."
-    left="25"
-    mouse_opaque="true"
-    name="preload_dullahan_marketplace"
-    radio_style="false"
-    width="400"
-    top_pad="4" />
+      <combo_box
+        follows="left|top"
+        layout="topleft"
+        height="23"
+        control_name="RenderOITMode"
+        tool_tip="Select Standard transparency, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
+        left="15"
+        name="render_oit_mode"
+        width="220"
+        top_pad="5">
+        <combo_box.item
+          label="Standard"
+          name="standard"
+          value="0" />
+        <combo_box.item
+          label="Exact-OIT (lossless)"
+          name="exact_oit"
+          value="1" />
+        <combo_box.item
+          label="AVBOIT (experimental)"
+          name="avboit"
+          value="2" />
+      </combo_box>
+    </panel>
 
-  <!-- <AS:chanayane> Stream keeper -->
-  <text
-    type="string"
-    length="1"
-    follows="left|top"
-    height="10"
-    layout="topleft"
-    left="15"
-    name="as_audio_streams_label"
-    width="500"
-    top_pad="20">
-    Audio streams:
-  </text>
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASKeepStreamAsk"
-    label="Ask before changing the audio stream"
-    tool_tip="If checked, when you enter a parcel with a different audio stream or with no stream, the viewer asks whether to keep listening to the current stream. The stream keeps playing while you decide. Disabled by default."
-    left="25"
-    mouse_opaque="true"
-    name="as_keep_stream_ask"
-    radio_style="false"
-    width="480"
-    top_pad="8" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASAutoPlayDefaultFavorite"
-    label="Play my default favorite stream instead of the parcel stream"
-    tool_tip="If checked, entering a parcel plays your default favorite stream instead of the parcel's own stream. Set the default from the Favorite Streams floater. Disabled by default."
-    left="25"
-    mouse_opaque="true"
-    name="as_autoplay_default_favorite"
-    radio_style="false"
-    width="480"
-    top_pad="4" />
-  <check_box
-    follows="left|top"
-    layout="topleft"
-    height="16"
-    control_name="ASShowAddFavoriteStreamButton"
-    label="Show the 'add stream to favorites' button in the status bar"
-    tool_tip="If checked, a button next to the stream toggle adds the currently playing stream to your favorites."
-    left="25"
-    mouse_opaque="true"
-    name="as_show_add_favorite_stream_button"
-    radio_style="false"
-    width="480"
-    top_pad="4" />
-  <!-- </AS:chanayane> -->
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Preload"
+      name="tab-as-preload">
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="10"
+        layout="topleft"
+        left="15"
+        name="preload_dullahan_label"
+        width="500"
+        top="10">
+        Preload Dullahan hosts (accelerates window loading at the cost of dozens of processes):
+      </text>
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASPreloadDullahanDestinations"
+        label="Destinations"
+        tool_tip="If checked, the Dullahan (CEF) host for the Destinations floater will be preloaded at startup."
+        left="25"
+        mouse_opaque="true"
+        name="preload_dullahan_destinations"
+        radio_style="false"
+        width="400"
+        top_pad="8" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASPreloadDullahanAvatarWelcomePack"
+        label="Avatar welcome pack"
+        tool_tip="If checked, the Dullahan (CEF) host for the Avatar Welcome Pack floater will be preloaded at startup."
+        left="25"
+        mouse_opaque="true"
+        name="preload_dullahan_avatar_welcome_pack"
+        radio_style="false"
+        width="400"
+        top_pad="4" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASPreloadDullahanSearch"
+        label="Search"
+        tool_tip="If checked, the Dullahan (CEF) host for the Search floater will be preloaded at startup. Only effective when the FS legacy search mode is active."
+        left="25"
+        mouse_opaque="true"
+        name="preload_dullahan_search"
+        radio_style="false"
+        width="400"
+        top_pad="4" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASPreloadDullahanLegacySearch"
+        label="Legacy search"
+        tool_tip="If checked, the Dullahan (CEF) host for the Legacy Search floater will be preloaded at startup. Only effective when the FS legacy search mode is not active."
+        left="25"
+        mouse_opaque="true"
+        name="preload_dullahan_legacy_search"
+        radio_style="false"
+        width="400"
+        top_pad="4" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASPreloadDullahanMarketplace"
+        label="Marketplace"
+        tool_tip="If checked, the Dullahan (CEF) host for the Marketplace floater will be preloaded at startup."
+        left="25"
+        mouse_opaque="true"
+        name="preload_dullahan_marketplace"
+        radio_style="false"
+        width="400"
+        top_pad="4" />
+    </panel>
+
+    <!-- <AS:chanayane> Stream keeper -->
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Streams"
+      name="tab-as-streams">
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="10"
+        layout="topleft"
+        left="15"
+        name="as_audio_streams_label"
+        width="500"
+        top="10">
+        Audio streams:
+      </text>
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASKeepStreamAsk"
+        label="Ask before changing the audio stream"
+        tool_tip="If checked, when you enter a parcel with a different audio stream or with no stream, the viewer asks whether to keep listening to the current stream. The stream keeps playing while you decide. Disabled by default."
+        left="25"
+        mouse_opaque="true"
+        name="as_keep_stream_ask"
+        radio_style="false"
+        width="480"
+        top_pad="8" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASAutoPlayDefaultFavorite"
+        label="Play my default favorite stream instead of the parcel stream"
+        tool_tip="If checked, entering a parcel plays your default favorite stream instead of the parcel's own stream. Set the default from the Favorite Streams floater. Disabled by default."
+        left="25"
+        mouse_opaque="true"
+        name="as_autoplay_default_favorite"
+        radio_style="false"
+        width="480"
+        top_pad="4" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowAddFavoriteStreamButton"
+        label="Show the 'add stream to favorites' button in the status bar"
+        tool_tip="If checked, a button next to the stream toggle adds the currently playing stream to your favorites."
+        left="25"
+        mouse_opaque="true"
+        name="as_show_add_favorite_stream_button"
+        radio_style="false"
+        width="480"
+        top_pad="4" />
+    </panel>
+    <!-- </AS:chanayane> -->
+
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Conversations"
+      name="tab-as-conversations">
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowConversationTabAvatarThumbnails"
+        label="Show avatar thumbnails on conversation tabs"
+        tool_tip="If checked, 1:1 avatar conversation tabs show a small profile picture thumbnail, with a yellow border while the other person is typing. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_conversation_tab_avatar_thumbnails"
+        radio_style="false"
+        width="480"
+        top="10" />
+    </panel>
+
+  </tab_container>
+  <!-- [/AS:Chanayane] -->
 
 </panel>

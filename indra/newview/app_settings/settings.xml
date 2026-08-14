@@ -25342,6 +25342,17 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <string/>
     </map>
+    <key>ASShowConversationTabAvatarThumbnails</key>
+    <map>
+      <key>Comment</key>
+      <string>If enabled, 1:1 avatar conversation tabs show the other participant's profile picture thumbnail, with a yellow border while they are typing</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>ASShowOwnAvatarInRadar</key>
     <map>
       <key>Comment</key>

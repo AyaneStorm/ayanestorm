@@ -119,7 +119,12 @@ protected:
     :   LLButton(p),
         mIcon(NULL),
         mIconAlignment(LLFontGL::HCENTER),
-        mIconCtrlPad(p.icon_ctrl_pad)
+        mIconCtrlPad(p.icon_ctrl_pad),
+        // <AS:Chanayane> Remember the button's original padding so setIcon(NULL) can
+        // restore it exactly, instead of assuming it was 0.
+        mOrigLeftHPad(p.pad_left),
+        mOrigRightHPad(p.pad_right)
+        // </AS:Chanayane>
     {}
 
 public:
@@ -127,6 +132,14 @@ public:
     void updateLayout()
     {
         LLRect button_rect = getRect();
+        // <AS:Chanayane> button_rect is in the PARENT's coordinate space, but mIcon is a
+        // child of this button, so the icon's rect must be computed in local (0,0-based)
+        // space. Left uncorrected, tabs whose button rect isn't already at parent-local
+        // (0,0) (e.g. any non-first tab in a vertical/left tab strip) get an icon rect
+        // that overshoots far off-screen once walked up via calcScreenRect(), so the icon
+        // is silently skipped by LLView::drawChildren()'s root-overlap test and never drawn.
+        button_rect.translate(-button_rect.mLeft, -button_rect.mBottom);
+        // </AS:Chanayane>
         LLRect icon_rect = mIcon->getRect();
 
         S32 icon_size = button_rect.getHeight() - 2*mIconCtrlPad;
@@ -156,19 +169,28 @@ public:
 
     void setIcon(LLIconCtrl* icon, LLFontGL::HAlign alignment = LLFontGL::LEFT)
     {
-        if(icon)
+        if(mIcon)
         {
-            if(mIcon)
-            {
-                removeChild(mIcon);
-                mIcon->die();
-            }
-            mIcon = icon;
-            mIconAlignment = alignment;
-
-            addChild(mIcon);
-            updateLayout();
+            removeChild(mIcon);
+            mIcon->die();
+            mIcon = NULL;
         }
+
+        // <AS:Chanayane> Passing icon == NULL removes any existing icon and restores the
+        // button's original padding, instead of silently doing nothing.
+        if (icon == NULL)
+        {
+            setLeftHPad(mOrigLeftHPad);
+            setRightHPad(mOrigRightHPad);
+            return;
+        }
+        // </AS:Chanayane>
+
+        mIcon = icon;
+        mIconAlignment = alignment;
+
+        addChild(mIcon);
+        updateLayout();
     }
 
     LLIconCtrl* getIconCtrl() const
@@ -180,6 +202,10 @@ private:
     LLIconCtrl* mIcon;
     LLFontGL::HAlign mIconAlignment;
     S32 mIconCtrlPad;
+    // <AS:Chanayane> Original button padding, restored by setIcon(NULL)
+    S32 mOrigLeftHPad;
+    S32 mOrigRightHPad;
+    // </AS:Chanayane>
 };
 //============================================================================
 

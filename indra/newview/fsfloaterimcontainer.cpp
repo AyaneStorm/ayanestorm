@@ -34,6 +34,11 @@
 #include "fsfloatercontacts.h"
 #include "fsfloaterim.h"
 #include "fsfloaternearbychat.h"
+// <AS:Chanayane> Avatar thumbnail on IM conversation tabs
+#include "llavatariconctrl.h"
+#include "llrender2dutils.h"
+#include "llspeakers.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llchiclet.h"
 #include "llchicletbar.h"
@@ -49,6 +54,38 @@
 // </FS:PP>
 
 constexpr F32 VOICE_STATUS_UPDATE_INTERVAL = 1.0f;
+
+// <AS:Chanayane> Avatar thumbnail on IM conversation tabs, with a typing indicator border
+class FSConversationTabAvatarIconCtrl : public LLAvatarIconCtrl
+{
+public:
+    struct Params : public LLInitParam::Block<Params, LLAvatarIconCtrl::Params>
+    {
+        Params() {}
+    };
+
+    FSConversationTabAvatarIconCtrl(const Params& p)
+    :   LLAvatarIconCtrl(p),
+        mTyping(false)
+    {}
+
+    void setTyping(bool typing) { mTyping = typing; }
+
+    void draw() override
+    {
+        LLAvatarIconCtrl::draw();
+
+        if (mTyping)
+        {
+            static LLUIColor typing_border_color = LLUIColorTable::instance().getColor("VoiceNotConnectedColor", LLColor4::yellow);
+            gl_rect_2d(getLocalRect(), typing_border_color.get(), false);
+        }
+    }
+
+private:
+    bool mTyping;
+};
+// </AS:Chanayane>
 
 //
 // FSFloaterIMContainer
@@ -91,6 +128,10 @@ bool FSFloaterIMContainer::postBuild()
     mActiveVoiceUpdateTimer.start();
 
     gSavedSettings.getControl("FSShowConversationVoiceStateIndicator")->getSignal()->connect(boost::bind(&FSFloaterIMContainer::onVoiceStateIndicatorChanged, this, _2));
+
+    // <AS:Chanayane> Live-toggle avatar thumbnails on existing tabs when the preference changes
+    gSavedSettings.getControl("ASShowConversationTabAvatarThumbnails")->getSignal()->connect(boost::bind(&FSFloaterIMContainer::onShowAvatarThumbnailsChanged, this));
+    // </AS:Chanayane>
 
     return true;
 }
@@ -378,6 +419,8 @@ void FSFloaterIMContainer::addFloater(LLFloater* floaterp,
     LLUUID session_id = floaterp->getKey();
     mSessions[session_id] = floaterp;
     floaterp->mCloseSignal.connect(boost::bind(&FSFloaterIMContainer::onCloseFloater, this, session_id));
+
+    addAvatarThumbnail(session_id, floaterp, type); // <AS:Chanayane>
 }
 
 void FSFloaterIMContainer::addNewSession(LLFloater* floaterp, EInstantMessage type)
@@ -445,6 +488,7 @@ void FSFloaterIMContainer::onCloseFloater(LLUUID& id)
     bool was_session_shown = session_floater && session_floater->isShown();
 
     mSessions.erase(id);
+    mAvatarThumbnailIcons.erase(id); // <AS:Chanayane> avatar thumbnail icon is owned/destroyed by its tab button
     if (was_session_shown && isShown())
     {
         setFocus(true);
@@ -650,8 +694,83 @@ void FSFloaterIMContainer::draw()
         mActiveVoiceUpdateTimer.setTimerExpirySec(VOICE_STATUS_UPDATE_INTERVAL);
     }
 
+    // <AS:Chanayane> Update typing indicator border on avatar conversation tab thumbnails
+    if (!mAvatarThumbnailIcons.empty())
+    {
+        updateAvatarThumbnailTypingIndicators();
+    }
+    // </AS:Chanayane>
+
     LLMultiFloater::draw();
 }
+
+// <AS:Chanayane> Poll each 1:1 session's speaker manager for the other participant's typing state
+void FSFloaterIMContainer::updateAvatarThumbnailTypingIndicators()
+{
+    for (auto& entry : mAvatarThumbnailIcons)
+    {
+        const LLUUID& session_id = entry.first;
+        FSConversationTabAvatarIconCtrl* icon = entry.second;
+
+        bool typing = false;
+        if (LLIMSpeakerMgr* speaker_mgr = LLIMModel::getInstance()->getSpeakerManager(session_id))
+        {
+            LLUUID other_id = LLIMModel::getInstance()->getOtherParticipantID(session_id);
+            LLPointer<LLSpeaker> speaker = speaker_mgr->findSpeaker(other_id);
+            typing = speaker.notNull() && speaker->mTyping;
+        }
+        icon->setTyping(typing);
+    }
+}
+
+void FSFloaterIMContainer::addAvatarThumbnail(const LLUUID& session_id, LLFloater* floaterp, EInstantMessage type)
+{
+    if (session_id.isNull() || (type != IM_NOTHING_SPECIAL && type != IM_SESSION_P2P_INVITE)
+        || !gSavedSettings.getBOOL("ASShowConversationTabAvatarThumbnails")
+        || mAvatarThumbnailIcons.find(session_id) != mAvatarThumbnailIcons.end())
+    {
+        return;
+    }
+
+    LLUUID other_id = LLIMModel::getInstance()->getOtherParticipantID(session_id);
+
+    FSConversationTabAvatarIconCtrl::Params icon_params;
+    icon_params.avatar_id = other_id;
+    icon_params.rect = LLRect(0, 16, 16, 0);
+    FSConversationTabAvatarIconCtrl* icon = LLUICtrlFactory::instance().create<FSConversationTabAvatarIconCtrl>(icon_params);
+    mTabContainer->setTabImage(floaterp, icon);
+    mAvatarThumbnailIcons[session_id] = icon;
+}
+
+// Live-toggle: add/remove thumbnails on all currently open 1:1 tabs when the preference changes
+void FSFloaterIMContainer::onShowAvatarThumbnailsChanged()
+{
+    bool show = gSavedSettings.getBOOL("ASShowConversationTabAvatarThumbnails");
+
+    if (show)
+    {
+        for (auto& entry : mSessions)
+        {
+            const LLUUID& session_id = entry.first;
+            EInstantMessage type = LLIMModel::getInstance()->getType(session_id);
+            addAvatarThumbnail(session_id, entry.second, type);
+        }
+    }
+    else
+    {
+        for (auto& entry : mAvatarThumbnailIcons)
+        {
+            const LLUUID& session_id = entry.first;
+            avatarID_panel_map_t::iterator session_it = mSessions.find(session_id);
+            if (session_it != mSessions.end())
+            {
+                mTabContainer->setTabImage(session_it->second, static_cast<LLIconCtrl*>(nullptr));
+            }
+        }
+        mAvatarThumbnailIcons.clear();
+    }
+}
+// </AS:Chanayane>
 
 LLFloater* FSFloaterIMContainer::getCurrentVoiceFloater()
 {
