@@ -613,6 +613,41 @@
     <key>Value</key>
     <integer>0</integer>
   </map>
+  <!-- <AS:chanayane> Stream keeper -->
+  <key>ASAutoPlayDefaultFavorite</key>
+  <map>
+    <key>Comment</key>
+    <string>If TRUE, play the default favorite audio stream instead of the parcel audio stream</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>ASKeepStreamAsk</key>
+  <map>
+    <key>Comment</key>
+    <string>If TRUE, ask whether to keep the current audio stream when entering a parcel with a different stream or no stream</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+  <key>ASShowAddFavoriteStreamButton</key>
+  <map>
+    <key>Comment</key>
+    <string>If TRUE, show the 'add audio stream to favorites' button in the status bar</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <!-- </AS:chanayane> -->
   <key>ASShowAnimationsOfOtherAvatars</key>
   <map>
     <key>Comment</key>

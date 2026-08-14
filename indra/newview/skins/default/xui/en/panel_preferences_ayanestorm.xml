@@ -235,4 +235,58 @@
     width="400"
     top_pad="4" />
 
+  <!-- <AS:chanayane> Stream keeper -->
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="10"
+    layout="topleft"
+    left="15"
+    name="as_audio_streams_label"
+    width="500"
+    top_pad="20">
+    Audio streams:
+  </text>
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASKeepStreamAsk"
+    label="Ask before changing the audio stream"
+    tool_tip="If checked, when you enter a parcel with a different audio stream or with no stream, the viewer asks whether to keep listening to the current stream. The stream keeps playing while you decide. Disabled by default."
+    left="25"
+    mouse_opaque="true"
+    name="as_keep_stream_ask"
+    radio_style="false"
+    width="480"
+    top_pad="8" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASAutoPlayDefaultFavorite"
+    label="Play my default favorite stream instead of the parcel stream"
+    tool_tip="If checked, entering a parcel plays your default favorite stream instead of the parcel's own stream. Set the default from the Favorite Streams floater. Disabled by default."
+    left="25"
+    mouse_opaque="true"
+    name="as_autoplay_default_favorite"
+    radio_style="false"
+    width="480"
+    top_pad="4" />
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="ASShowAddFavoriteStreamButton"
+    label="Show the 'add stream to favorites' button in the status bar"
+    tool_tip="If checked, a button next to the stream toggle adds the currently playing stream to your favorites."
+    left="25"
+    mouse_opaque="true"
+    name="as_show_add_favorite_stream_button"
+    radio_style="false"
+    width="480"
+    top_pad="4" />
+  <!-- </AS:chanayane> -->
+
 </panel>
