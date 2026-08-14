@@ -92,6 +92,8 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
+    asfloaterfavoritestreams.cpp
+    asstreamkeeper.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -954,6 +956,8 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
+    asfloaterfavoritestreams.h
+    asstreamkeeper.h
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h

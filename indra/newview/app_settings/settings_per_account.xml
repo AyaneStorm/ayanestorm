@@ -1,5 +1,18 @@
 <llsd>
     <map>
+    <!-- <AS:chanayane> Stream keeper -->
+    <key>ASDefaultFavoriteStreamURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL of the favorite audio stream to auto-play. Stored by URL so that reordering or removing favorites cannot silently repoint it.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+        <string></string>
+    </map>
+    <!-- </AS:chanayane> -->
     <key>AvatarHoverOffsetZ</key>
     <map>
       <key>Comment</key>

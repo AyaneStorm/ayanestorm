@@ -79,6 +79,9 @@
 #include "llviewerdisplay.h"
 #include "llviewermedia.h"
 #include "llviewerparcelaskplay.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 #include "llviewerparcelmedia.h"
 #include "llviewershadermgr.h"
 #include "llviewermediafocus.h"
@@ -2349,6 +2352,10 @@ bool LLAppViewer::cleanup()
         {
             LLViewerParcelAskPlay::getInstance()->saveSettings();
         }
+
+// <AS:chanayane> Stream keeper
+        ASStreamKeeper::onShutdown();
+// </AS:chanayane>
     }
     // <FS:Zi> Backup Settings
     }

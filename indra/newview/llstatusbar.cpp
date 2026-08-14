@@ -109,6 +109,9 @@
 #endif // OPENSIM
 #include "llviewerparcelmedia.h"
 #include "rlvhandler.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 
 //
 // Globals
@@ -220,6 +223,11 @@ LLStatusBar::LLStatusBar(const LLRect& rect)
 
     // <FS:PP> Option to hide volume controls (sounds, media, stream) in upper right
     gSavedSettings.getControl("FSEnableVolumeControls")->getSignal()->connect(boost::bind(&LLStatusBar::updateVolumeControlsVisibility, this, _2));
+
+// <AS:chanayane> Stream keeper
+    ASStreamKeeper::setAddFavoriteStreamButtonChangedCallback(
+        boost::bind(&LLStatusBar::updateAddFavoriteStreamButtonVisibility, this));
+// </AS:chanayane>
 
     buildFromFile("panel_status_bar.xml");
 }
@@ -337,6 +345,9 @@ bool LLStatusBar::postBuild()
     // <FS:Zi> Media/Stream separation
     mStreamToggle = getChild<LLButton>("stream_toggle_btn");
     mStreamToggle->setClickedCallback(&LLStatusBar::onClickStreamToggle, this);
+// <AS:chanayane> Stream keeper
+    getChild<LLButton>("as_add_favorite_stream_btn")->setClickedCallback(&LLStatusBar::onClickAddFavoriteStream, this);
+// </AS:chanayane>
     // </FS:Zi> Media/Stream separation
 
     mMediaToggle = getChild<LLButton>("media_toggle_btn");
@@ -541,6 +552,12 @@ bool LLStatusBar::postBuild()
         updateVolumeControlsVisibility(LLSD(false));
     }
     // </FS:PP>
+
+// <AS:chanayane> Stream keeper
+    // Applies the initial state; the block above only runs when the volume
+    // controls are hidden, so this is needed for the visible case too.
+    updateAddFavoriteStreamButtonVisibility();
+// </AS:chanayane>
 
     // <FS:Zi> FIRE-20390, FIRE-4269 - Option for 12/24 hour clock and seconds display
     mClockFormatChoices["12 Hour"] = "[hour12, datetime, slt]:[min, datetime, slt] [ampm, datetime, slt]";
@@ -783,10 +800,25 @@ void LLStatusBar::refresh()
 
     // <FS:Zi> Media/Stream separation
     static LLCachedControl<bool> audio_streaming_music(gSavedSettings, "AudioStreamingMusic");
-    button_enabled = (audio_streaming_music && media_inst->hasParcelAudio());
+// <AS:chanayane> Stream keeper
+    // hasParcelAudio()/isParcelAudioPlaying() are both derived from the parcel's
+    // own music URL, so a held stream playing on a parcel with no stream would
+    // otherwise grey this button out and show it as stopped.
+//  button_enabled = (audio_streaming_music && media_inst->hasParcelAudio());
+//
+//  mStreamToggle->setEnabled(button_enabled);
+//  mStreamToggle->setValue(!media_inst->isParcelAudioPlaying());
+    bool as_holding_stream = ASStreamKeeper::instanceExists()
+                             && ASStreamKeeper::getInstance()->isHoldingStream();
+    button_enabled = (audio_streaming_music && (media_inst->hasParcelAudio() || as_holding_stream));
 
     mStreamToggle->setEnabled(button_enabled);
-    mStreamToggle->setValue(!media_inst->isParcelAudioPlaying());
+
+    bool as_stream_playing = media_inst->isParcelAudioPlaying()
+                             || (as_holding_stream && gAudiop
+                                 && LLAudioEngine::AUDIO_PLAYING == gAudiop->isInternetStreamPlaying());
+    mStreamToggle->setValue(!as_stream_playing);
+// </AS:chanayane>
     // </FS:Zi> Media/Stream separation
 
     mParcelInfoText->setEnabled(!gRlvHandler.hasBehaviour(RLV_BHVR_SHOWLOC));
@@ -813,6 +845,9 @@ void LLStatusBar::setVisibleForMouselook(bool visible)
     bool FSEnableVolumeControls = gSavedSettings.getBOOL("FSEnableVolumeControls");
     mBtnVolume->setVisible(visible && FSEnableVolumeControls);
     mStreamToggle->setVisible(visible && FSEnableVolumeControls); // ## Zi: Media/Stream separation
+// <AS:chanayane> Stream keeper
+    updateAddFavoriteStreamButtonVisibility();
+// </AS:chanayane>
     mMediaToggle->setVisible(visible && FSEnableVolumeControls);
     // </FS:PP>
     bool showNetStats = gSavedSettings.getBOOL("ShowNetStats");
@@ -1185,6 +1220,16 @@ void LLStatusBar::onClickStreamToggle(void* data)
     status_bar->toggleStream(enable);
 }
 
+// <AS:chanayane> Stream keeper
+// static
+void LLStatusBar::onClickAddFavoriteStream(void* data)
+{
+    // Opens the favorites floater prefilled so the user can name the stream.
+    // Reporting the "nothing playing / already saved" case is the keeper's job.
+    ASStreamKeeper::promptAddCurrentStream();
+}
+// </AS:chanayane>
+
 void LLStatusBar::toggleStream(bool enable)
 {
     if (!gAudiop)
@@ -1194,25 +1239,51 @@ void LLStatusBar::toggleStream(bool enable)
 
     if(enable)
     {
+// <AS:chanayane> Stream keeper
+        // Resume whatever the user actually chose, not the parcel's stream.
+        bool as_holding_stream = ASStreamKeeper::instanceExists()
+                                 && ASStreamKeeper::getInstance()->isHoldingStream();
+        std::string as_url = as_holding_stream ? ASStreamKeeper::getInstance()->getHeldStreamURL()
+                                               : LLViewerMedia::getInstance()->getParcelAudioURL();
+// </AS:chanayane>
         if (LLAudioEngine::AUDIO_PAUSED == gAudiop->isInternetStreamPlaying())
         {
             // 'false' means unpause
-            LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLViewerMedia::getInstance()->getParcelAudioURL());
+// <AS:chanayane> Stream keeper
+//          LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLViewerMedia::getInstance()->getParcelAudioURL());
+            LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(as_url);
+// </AS:chanayane>
         }
         else
         {
-            if (gSavedSettings.getBOOL("MediaEnableFilter"))
+// <AS:chanayane> Stream keeper
+            // A held stream is user-chosen and therefore trusted, so it skips
+            // the media filter that vets parcel-supplied URLs.
+//          if (gSavedSettings.getBOOL("MediaEnableFilter"))
+            if (gSavedSettings.getBOOL("MediaEnableFilter") && !as_holding_stream)
+// </AS:chanayane>
             {
-                LLViewerParcelMedia::getInstance()->filterAudioUrl(LLViewerMedia::getInstance()->getParcelAudioURL());
+// <AS:chanayane> Stream keeper
+//              LLViewerParcelMedia::getInstance()->filterAudioUrl(LLViewerMedia::getInstance()->getParcelAudioURL());
+                LLViewerParcelMedia::getInstance()->filterAudioUrl(as_url);
+// </AS:chanayane>
             }
             else
             {
-                LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLViewerMedia::getInstance()->getParcelAudioURL());
+// <AS:chanayane> Stream keeper
+//              LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLViewerMedia::getInstance()->getParcelAudioURL());
+                LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(as_url);
+// </AS:chanayane>
             }
         }
     }
     else
     {
+// <AS:chanayane> Stream keeper
+        // Stopping from the status bar is unambiguous intent for silence, so it
+        // must not leave a hold behind that would block the next parcel's music.
+        ASStreamKeeper::releaseHoldIfAny();
+// </AS:chanayane>
         LLViewerAudio::getInstance()->stopInternetStreamWithAutoFade();
     }
 
@@ -1818,6 +1889,9 @@ void LLStatusBar::updateVolumeControlsVisibility(const LLSD& data)
 
     mBtnVolume->setVisible(showVolumeControls);
     mStreamToggle->setVisible(showVolumeControls);
+// <AS:chanayane> Stream keeper
+    updateAddFavoriteStreamButtonVisibility();
+// </AS:chanayane>
     mMediaToggle->setVisible(showVolumeControls);
 
     LLRect rect = mTimeMediaPanel->getRect();
@@ -1835,6 +1909,14 @@ void LLStatusBar::updateVolumeControlsVisibility(const LLSD& data)
     updateOmnifilterPanelPosition();
     update();
 }
+
+// <AS:chanayane> Stream keeper
+void LLStatusBar::updateAddFavoriteStreamButtonVisibility()
+{
+    ASStreamKeeper::updateAddFavoriteStreamButtonLayout(
+        this, mStreamToggle && mStreamToggle->getVisible());
+}
+// </AS:chanayane>
 
 void LLStatusBar::onShowFPSChanged(const LLSD& newvalue)
 {
