@@ -1,6 +1,6 @@
-# AyaneStorm Stream Keeper + Favorite Streams — Implementation Spec
+# AyaneStorm Stream Keeper + Favorite Streams — Implementation Notes
 
-**Audience:** an implementing agent. This is a build spec, not a discussion document. Follow it top to bottom.
+**Status:** implemented, commit `cf6e70c1feda4e6aaa0c9afb606ed402fdf33b25`. This originally was a pre-build spec; it has been updated to describe what was actually built. Sections below are annotated with **Actual:** notes where the implementation diverged from the original design.
 
 **Repo:** `e:\dev\AyaneStorm\ayanestorm-special`
 
@@ -172,6 +172,8 @@ private:
 #endif // AS_STREAMKEEPER_H
 ```
 
+**Actual:** `addCurrentStreamAsFavorite()` doesn't exist; replaced by static `promptAddCurrentStream()` (opens/creates the floater and calls `beginAddStream(name, url)` so the user names it before saving, rather than saving directly). Added beyond this spec: `suppressTeleportStreamFade()`, `releaseHoldIfAny()`, `removeFavoriteByURL()` (stable across list mutation, unlike index), `getAgentParcelMusicURL()`, `showAddFavoriteStreamButton()` + `setAddFavoriteStreamButtonChangedCallback()` + `updateAddFavoriteStreamButtonLayout(LLPanel*, bool)` (status-bar button visibility/layout, kept in this class per the "logic lives in AS files" rule), `getSuggestedNameForCurrentStream()` (name from URL host, not ICY metadata — see §4.8).
+
 ---
 
 ## 4. New file: `indra/newview/asstreamkeeper.cpp`
@@ -270,6 +272,8 @@ bool ASStreamKeeper::handleParcelStreamChange(const std::string& parcel_url)
 
 **Critical:** use `gAudiop->getInternetStreamURL()` (what is actually playing), **not** `LLViewerAudio::getNextStreamURI()` — during a fade the latter is the pending target and gives false positives.
 
+**Actual:** matches this shape. Order implemented: (1) `!instanceExists()` → false, (2) already holding/pending → true, (3) both settings off → false, (4) startup `< STATE_STARTED` → false, (5) `autoplay_fav` with valid default index → `playFavorite()`, return true, (6) `ask_keep` path as below.
+
 ### 4.3 `onPromptResponse()`
 
 ```cpp
@@ -312,6 +316,8 @@ bool ASStreamKeeper::onPromptResponse(const LLSD& notification, const LLSD& resp
 }
 ```
 
+**Actual:** matches, with `syncStatusBar(true)` called *before* `startStreamFiltered(parcel_url)` on the switch branch — the toggle shows "playing" optimistically even though the filter may itself prompt/deny; safe because `LLStatusBar::refresh()` re-derives the real state from `gAudiop` every frame.
+
 ### 4.4 Playback helpers
 
 ```cpp
@@ -328,7 +334,11 @@ bool ASStreamKeeper::startStreamFiltered(const std::string& url)
     }
     return true;
 }
+```
 
+**Actual:** before calling `filterAudioUrl(url)`, clears `LLViewerParcelMedia::mCurrentMusic` and `mAudioLastURL`. Both are fast-path caches that skip the prompt/filter entirely when they match `url`; they only get refreshed by the vanilla parcel-media flow, which the keep-prompt path bypasses — so without the clear, switching to a previously-filtered URL would auto-play with no filter prompt.
+
+```cpp
 void ASStreamKeeper::playStreamURL(const std::string& url, EHoldReason reason)
 {
     if (url.empty()) return;
@@ -442,6 +452,8 @@ void ASStreamKeeper::onShutdown()
 
 `cancelPrompt()` must mirror `LLViewerParcelAskPlay::cancelNotification()` ([llviewerparcelaskplay.cpp:108-121](../indra/newview/llviewerparcelaskplay.cpp#L108)): if `mPrompt` is set and not yet responded to, call `mPrompt->setIgnored(false)` then `LLNotifications::getInstance()->cancel(mPrompt)`, then null it. **Also reset `mHoldReason` to `HOLD_NONE` if it was `HOLD_PENDING`** — a cancelled prompt must not leave a permanent hold.
 
+**Actual:** `onTeleportStarted()` also calls `suppressTeleportStreamFade()` from the llvieweraudio.cpp hooks (see §5.2) — a teleport starts before the destination parcel is known, so no prompt can exist yet to gate on; the fade is suppressed pre-emptively whenever a prompt is *possible* on arrival, not just when one is open.
+
 ### 4.8 Favorites persistence
 
 **Filename — two-step probe is mandatory.** Before login `LL_PATH_PER_SL_ACCOUNT` resolves to empty, and `getExpandedFilename` would return a bare filename that lands in the CWD.
@@ -486,7 +498,7 @@ S32 ASStreamKeeper::getDefaultFavoriteIndex() const
 }
 ```
 
-`addCurrentStreamAsFavorite()`: get `getCurrentPlayingURL()` (from `gAudiop->getInternetStreamURL()`); bail if empty; derive a name from `gAudiop->getStreamingAudioImpl()->getCurrentMetadata()` — read the same LLSD keys `FSStreamTitleManager::processMetadataUpdate()` uses ([fsfloaterstreamtitle.cpp:62](../indra/newview/fsfloaterstreamtitle.cpp#L62)), do not guess key names — falling back to the URL host, then the raw URL.
+**Actual:** `addCurrentStreamAsFavorite()` doesn't exist. `getSuggestedNameForCurrentStream()` derives the name from the URL host only (scheme-strip + first `/`) — deliberately **not** `getStreamingAudioImpl()->getCurrentMetadata()`/ICY track metadata, which names the song playing right now, not the station, and would bake a stale track name into the entry. `promptAddCurrentStream()` (static): if `getCurrentPlayingURL()` is empty or already a favorite, shows the `ASFavoriteStreamNotAdded` notification and returns false; otherwise opens/creates the `as_favoritestreams` floater and calls `beginAddStream(name, url)` on it so the user can rename before saving — it does not call `addFavorite()` directly.
 
 ---
 
@@ -611,6 +623,8 @@ Add a tagged `#include "asstreamkeeper.h"`.
 
 **`onTeleportFinished()` (line 369)** — same, on `if (gAudiop && local && mWasPlaying)`.
 
+**Actual:** all three conditions also add `&& !ASStreamKeeper::suppressTeleportStreamFade()`. Reason: `onTeleportStarted()` fires before the destination parcel is known, so `mHoldReason` is still `HOLD_NONE` and `allowParcelStreamChange()` alone would let the fade run, killing the stream the keep-prompt is about to offer to keep. `suppressTeleportStreamFade()` returns true pre-emptively whenever a prompt is *possible* on arrival (holding, or `ASKeepStreamAsk` on + something actually `AUDIO_PLAYING` + logged in), not just when one is open.
+
 ### 5.3 `indra/newview/llviewermedia.cpp`
 
 Add a tagged `#include "asstreamkeeper.h"`.
@@ -627,6 +641,8 @@ Add a tagged `#include "asstreamkeeper.h"`.
     LLViewerAudio::getInstance()->stopInternetStreamWithAutoFade();
 ```
 
+**Actual:** matches this shape (uses `releaseHoldIfAny()`, the null-safe static, rather than `getInstance()->releaseHold()`).
+
 ### 5.4 `indra/newview/llstatusbar.h`
 
 Add a tagged setter next to `getAudioStreamEnabled()` (line 147):
@@ -636,6 +652,8 @@ Add a tagged setter next to `getAudioStreamEnabled()` (line 147):
 // </AS:chanayane>
 ```
 Also declare `LLButton* mAddFavoriteStreamBtn;` (tagged) near the other button members, and a `static void onClickAddFavoriteStream(void* data);`.
+
+**Actual:** the setter matches. **No `mAddFavoriteStreamBtn` member exists** — the button is looked up ad hoc by name (`findChild<LLButton>("as_add_favorite_stream_btn")`) inside `ASStreamKeeper::updateAddFavoriteStreamButtonLayout()`, keeping that logic in the AS class rather than LLStatusBar. Also added: private `void updateAddFavoriteStreamButtonVisibility()`, a thin one-line wrapper that forwards to `ASStreamKeeper::updateAddFavoriteStreamButtonLayout(this, ...)`.
 
 ### 5.5 `indra/newview/llstatusbar.cpp`
 
@@ -677,6 +695,15 @@ void LLStatusBar::onClickAddFavoriteStream(void* data)
 }
 ```
 Set its visibility from `ASShowAddFavoriteStreamButton`, and include it wherever `mStreamToggle` is hidden for mouselook.
+
+**Actual, all of §5.5:**
+- `toggleStream()` matches the described shape (uses `releaseHoldIfAny()`).
+- `onClickAddFavoriteStream(void*)` is a one-liner forwarding to the static `ASStreamKeeper::promptAddCurrentStream()`, not `addCurrentStreamAsFavorite()`.
+- `refresh()`: same OR-in-holding-state fix as spec, implemented via `ASStreamKeeper::isHoldingStream()`.
+- Constructor connects `ASStreamKeeper::setAddFavoriteStreamButtonChangedCallback(boost::bind(&LLStatusBar::updateAddFavoriteStreamButtonVisibility, this))` so the button's setting can change layout without a poll.
+- `postBuild()`: wires the button's click callback, then calls `updateAddFavoriteStreamButtonVisibility()` once explicitly — needed because that call also happens inside the `FSEnableVolumeControls` block, which only runs when volume controls are hidden.
+- `updateVolumeControlsVisibility()` and the mouselook-hide path both also call `updateAddFavoriteStreamButtonVisibility()`, so the button's width is always correctly reclaimed/restored alongside the other icons.
+- `updateAddFavoriteStreamButtonLayout()` (in asstreamkeeper.cpp) finds the button by name, sets `visible = stream_toggle_visible && showAddFavoriteStreamButton()`, and reclaims width by shifting **`stream_toggle_btn`** — the sibling to the button's *left* in `panel_status_bar.xml` — right when hidden, left when shown, by `button_width + 2`px. (`media_toggle_btn`, `volume_btn`, `FPSText` sit to the button's right and stay fixed, since `time_and_media_bg`'s right-edge anchor is effectively pinned by them.) A `static S32 applied_offset` prevents double-shifting on repeated calls.
 
 ### 5.6 Registration and lifecycle
 
@@ -752,6 +779,8 @@ Current: [CURRENT_URL]
 
 `default="true"` on Keep means ESC/dismiss preserves what is playing. No `<ignore>` checkbox — `ASKeepStreamAsk` is the global opt-out.
 
+**Actual:** both notifications ended up `type="alertmodal"` with `usetemplate name="okcancelbuttons"` (`yestext="Keep current"`, `notext="Switch to parcel stream"` / `"Stop playing"`), not `type="notify"` — a toast doesn't size to content, and with unwrapped long URLs in the body it rendered with buttons drawn over the text. No `default="true"`/`<ignore>` on these two either way. Three more notifications exist beyond this spec: `ASFavoriteStreamNotAdded` (okbutton, fired by `promptAddCurrentStream()` when nothing is playing or it's already a favorite), `ASConfirmRemoveFavoriteStream` (okcancelignore, keyed by URL not index so it can't go stale), and `ASEnableAutoPlayDefaultFavorite` (okcancelbuttons, offered when setting a default while the autoplay setting is off).
+
 ---
 
 ## 7. Settings
@@ -821,6 +850,8 @@ private:
 };
 ```
 
+**Actual:** matches, plus `mListPanel` and `mButtonsPanel` members (the edit panel and the buttons panel are mutually exclusive; the list panel's bottom edge is resized to clear whichever is visible) and `mAutoPlayChangedConnection` (rebuilds the list when `ASAutoPlayDefaultFavorite` is toggled elsewhere, e.g. Preferences). Also overrides `reshape()` to re-apply the list-bounds fixup after `LLFloater::reshape()`, since XUI's own follows-rules would otherwise restore the list's original bottom edge on resize.
+
 ### 8.2 `indra/newview/asfloaterfavoritestreams.cpp`
 
 - `postBuild()`: `getChild<>` all widgets; `mStreamList->setDoubleClickCallback(...)`; `setCommitCallback` for selection change; wire every button; hide the edit panel.
@@ -834,6 +865,8 @@ private:
 - `onEdit()` → `showEditPanel(true, index)` prefilled; `onSaveEdit()` → `addFavorite` when `mEditIndex < 0`, else `editFavorite`.
 - No per-row play buttons — `LLScrollListCtrl` has no clean support; double-click plus the Play button cover it.
 
+**Actual:** `addCurrentStreamAsFavorite()` doesn't exist. `onAddCurrent()` does the empty/`hasFavoriteURL` check inline (duplicating `ASStreamKeeper::promptAddCurrentStream()`'s logic rather than calling it, since that static also does an `LLFloaterReg::showInstance` this floater is already open as) and calls `beginAddStream(name, url)` to prefill the edit panel. Row label uses `[NAME] (default)` / `[NAME] (default, off)` floater strings with bold styling, not a `"* "` prefix. Setting a default while `ASAutoPlayDefaultFavorite` is off raises `ASEnableAutoPlayDefaultFavorite` to offer turning the setting on — not in the original spec. `showEditPanel()`/`updateListBounds()` toggle `mButtonsPanel`/`mEditPanel` mutual visibility and resize `mListPanel` to fit.
+
 ### 8.3 `indra/newview/skins/default/xui/en/floater_as_favoritestreams.xml`
 
 Root `<floater name="as_favoritestreams" title="Favorite Streams" single_instance="true" reuse_instance="true" save_rect="true" save_visibility="true" positioning="cascading" can_resize="true" ...>`.
@@ -841,6 +874,8 @@ Root `<floater name="as_favoritestreams" title="Favorite Streams" single_instanc
 Contains: `<scroll_list name="stream_list" multi_select="false" draw_heading="true" draw_stripes="true">` with columns `name` (dynamic_width) and `url`; a button row (`play`, `play_parcel`, `add_current`, `edit`, `remove`, `set_default`, `clear_default`); and a `<panel name="edit_panel" visible="false">` holding `name_editor` / `url_editor` line editors plus `save` / `cancel`.
 
 Floater-local strings go inline as `<floater.string name="...">`, not in `strings.xml`.
+
+**Actual:** scroll list has only a `name` column (URL shown as tool_tip, not a second column). Button row is Play, Play parcel stream, Set as default, Clear default, Add playing, Add..., Edit, Remove — "Add playing" (current stream) and "Add..." (blank form) are separate buttons rather than one `add_current`.
 
 ### 8.4 Menu entry
 
@@ -908,3 +943,7 @@ Floater-local strings go inline as `<floater.string name="...">`, not in `string
 - **`LLViewerMedia::getParcelAudioURL()` has no null check** on `getAgentParcel()` ([llviewermedia.cpp:1597](../indra/newview/llviewermedia.cpp#L1597)). Use `getAgentParcel()` directly with a null check.
 - **`cancelPrompt()` must clear `HOLD_PENDING`**, or a dismissed dialog leaves a permanent hold.
 - **Do not touch `LLViewerParcelMedia::filterAudioUrl()`'s signature.** Favorites bypass the filter by design; the prompt is raised before the filter is reached.
+- **A teleport starts before the destination parcel is known.** `onTeleportStarted()` can't gate on `HOLD_PENDING` alone since no prompt can exist yet — `suppressTeleportStreamFade()` was added to hold the fade pre-emptively whenever a prompt is *possible* on arrival.
+- **`filterAudioUrl()`'s fast-path caches (`mCurrentMusic`, `mAudioLastURL`) go stale under the keep-prompt path.** They're normally refreshed by the vanilla parcel-media flow, which the prompt bypasses; without clearing them in `startStreamFiltered()`, answering "Switch" to a previously-seen URL replays it with no filter prompt.
+- **Status-bar layout math must not touch the panel's own right-edge anchors.** An early version shifted `media_toggle_btn`/`volume_btn`/`FPSText` (which anchor `time_and_media_bg` to the window edge) and in the wrong direction, clipping the bar. The fix shifts only `stream_toggle_btn` — the button's left-hand sibling — and in the direction that keeps the right-side widgets fixed.
+- **Notification `type="notify"` doesn't size to content.** Long unwrapped URLs in the body overlapped the buttons; switched both keep-stream prompts to `type="alertmodal"` + `okcancelbuttons`.
