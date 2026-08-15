@@ -28,10 +28,77 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "fsexactoit.h"
+
+// Exact OIT depends on GLSL 4.30 compute shaders and SSBOs that macOS's
+// capped OpenGL 4.1 does not provide. isSupported() already refuses at
+// runtime there, but compile it out entirely on Darwin so the dead compute
+// paths never end up in the Mac binary. Every call site (pipeline.cpp,
+// llviewershadermgr.cpp, etc.) keeps linking against these inert stubs.
+#if LL_DARWIN
+
+bool FSExactOIT::sCaptureCompleted = false;
+bool FSExactOIT::sCaptureClearNeeded = false;
+bool FSExactOIT::sVanillaFallbackActive = false;
+bool FSExactOIT::sCaptureActive = false;
+bool FSExactOIT::sRuntimeAllocationAttempted = false;
+bool FSExactOIT::sRetainNodePoolOnRelease = false;
+LLRenderTarget FSExactOIT::sOpaqueTarget;
+FSExactOIT::Resources FSExactOIT::sResources;
+
+const char* FSExactOIT::shaderCacheRevision() { return "exact-oit-unsupported"; }
+bool FSExactOIT::isSupported() { return false; }
+bool FSExactOIT::isEnabled() { return false; }
+bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
+                             bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list)
+{
+    return success;
+}
+void FSExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
+void FSExactOIT::unloadShaders() {}
+void FSExactOIT::appendDiagnostics(LLSD& info) {}
+void FSExactOIT::beginFrame() {}
+bool FSExactOIT::captureCompleted() { return false; }
+bool FSExactOIT::captureActive() { return false; }
+bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
+                                           F32 water_sign, LLGLSLShader*& emissive_shader,
+                                           LLGLSLShader*& pbr_emissive_shader)
+{
+    return false;
+}
+void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
+                             LLVertexBuffer& screen_triangle, bool cube_snapshot,
+                             bool impostor_render, bool mouselook)
+{
+}
+bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
+                                               U32 color_destination, U32 alpha_source,
+                                               U32 alpha_destination)
+{
+    return false;
+}
+bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
+                                         std::vector<LLDrawInfo*>& emissives,
+                                         std::vector<LLDrawInfo*>& pbr_emissives,
+                                         std::vector<LLDrawInfo*>& rigged_emissives,
+                                         std::vector<LLDrawInfo*>& pbr_rigged_emissives)
+{
+    return false;
+}
+void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
+LLGLSLShader& FSExactOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
+LLGLSLShader* FSExactOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSExactOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
+void FSExactOIT::retainNodePoolOnNextRelease() {}
+void FSExactOIT::releaseResources() {}
+void FSExactOIT::allocateResources(U32 width, U32 height) {}
+
+#else // !LL_DARWIN
+
 #include <string>
 #include <utility>
-
-#include "fsexactoit.h"
 
 #include "llgl.h"
 #include "lldrawpoolalpha.h"
@@ -1514,3 +1581,5 @@ void FSExactOIT::allocateResources(U32 width, U32 height)
     allocateNodePool(width, height, allocateCaptureImages(width, height));
     allocateComputeSortQueues(width, height);
 }
+
+#endif // LL_DARWIN

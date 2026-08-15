@@ -6,13 +6,78 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "fsavboit.h"
+
+// AVBOIT depends on compute shaders and SSBO/image-load-store bindings that
+// macOS's capped OpenGL 4.1 does not provide. Compile it out entirely on
+// Darwin and fall back to inert stubs so every call site (pipeline.cpp,
+// llviewershadermgr.cpp, etc.) keeps linking without platform-specific edits.
+#if LL_DARWIN
+
+FSAVBOIT::Resources FSAVBOIT::sResources;
+S32 FSAVBOIT::sDirectRasterPass = -1;
+bool FSAVBOIT::sDirectFrameReady = false;
+bool FSAVBOIT::sCaptureActive = false;
+bool FSAVBOIT::sCaptureCompleted = false;
+
+const char* FSAVBOIT::shaderCacheRevision() { return "avboit-unsupported"; }
+bool FSAVBOIT::supported() { return false; }
+bool FSAVBOIT::requested() { return false; }
+bool FSAVBOIT::available() { return false; }
+void FSAVBOIT::selectVirtualDomain() {}
+void FSAVBOIT::loadShaders(S32 shader_level) {}
+void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
+void FSAVBOIT::unloadShaders() {}
+bool FSAVBOIT::shadersReady() { return false; }
+void FSAVBOIT::beginFrame() {}
+bool FSAVBOIT::captureActive() { return false; }
+bool FSAVBOIT::captureCompleted() { return false; }
+bool FSAVBOIT::renderPostDeferredCapture(
+    LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
+    LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
+{
+    return false;
+}
+bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader) { return false; }
+bool FSAVBOIT::handleCapturedEmissives(
+    LLDrawPoolAlpha& pool, bool depth_only,
+    std::vector<LLDrawInfo*>& emissives,
+    std::vector<LLDrawInfo*>& pbr_emissives,
+    std::vector<LLDrawInfo*>& rigged_emissives,
+    std::vector<LLDrawInfo*>& pbr_rigged_emissives)
+{
+    return false;
+}
+void FSAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
+bool FSAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen) { return false; }
+LLGLSLShader& FSAVBOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
+LLGLSLShader* FSAVBOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSAVBOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSAVBOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSAVBOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* FSAVBOIT::emissiveShader() { return nullptr; }
+LLGLSLShader* FSAVBOIT::pbrGlowShader() { return nullptr; }
+bool FSAVBOIT::allocateVolume(U32 width, U32 height) { return false; }
+void FSAVBOIT::allocateResources(U32 width, U32 height) {}
+void FSAVBOIT::releaseResources() {}
+void FSAVBOIT::appendDiagnostics(LLSD& info) {}
+bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen) { return false; }
+void FSAVBOIT::beginDirectRasterPass(S32 pass) {}
+void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader) {}
+void FSAVBOIT::rasterizeConservativeBounds() {}
+void FSAVBOIT::finishDirectOccupancy() {}
+void FSAVBOIT::finishDirectExtinction() {}
+void FSAVBOIT::finishDirectColorRaster() {}
+bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen) { return false; }
+bool FSAVBOIT::directFrameReady() { return false; }
+
+#else // !LL_DARWIN
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <set>
 #include <unordered_set>
-
-#include "fsavboit.h"
 
 #include "llenvironment.h"
 #include "gltfscenemanager.h"
@@ -1832,3 +1897,5 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     sDirectFrameReady = false;
     return true;
 }
+
+#endif // LL_DARWIN
