@@ -73,7 +73,7 @@ void show_task_item_profile(const LLUUID& item_uuid, const LLUUID& object_id);
 void show_item_original(const LLUUID& item_uuid);
 void reset_inventory_filter();
 
-// <AS:Chanayane> Delete from outfit context menu entry
+// <AS:Chanayane> Replace Links context menu entry
 void replace_links(const LLUUID& item_uuid);
 // </AS:Chanayane>
 
