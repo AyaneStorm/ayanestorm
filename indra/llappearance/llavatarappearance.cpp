@@ -1650,7 +1650,6 @@ bool LLAvatarBoneInfo::parseXml(LLXmlTreeNode* node)
         }
     }
 
-
     // parse children
     LLXmlTreeNode* child;
     for( child = node->getFirstChild(); child; child = node->getNextChild() )
