@@ -358,6 +358,19 @@
         radio_style="false"
         width="480"
         top="10" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowTypingTabItalics"
+        label="Show conversation tab name in italics when avatar is typing"
+        tool_tip="If checked, a 1:1 conversation tab's label is shown in italics while the other person is typing. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_typing_tab_italics"
+        radio_style="false"
+        width="480"
+        top_pad="4" />
     </panel>
 
   </tab_container>

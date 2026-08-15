@@ -116,9 +116,11 @@ private:
     avatarID_panel_map_t mSessions;
     boost::signals2::connection mNewMessageConnection;
 
-    // <AS:Chanayane> Avatar thumbnail on IM conversation tabs, with a typing indicator border
+    // <AS:Chanayane> Avatar thumbnail on IM conversation tabs, with a typing indicator border;
+    // and italic tab label while the other party is typing. Both driven by updateTypingIndicators().
     std::map<LLUUID, class FSConversationTabAvatarIconCtrl*> mAvatarThumbnailIcons;
-    void updateAvatarThumbnailTypingIndicators();
+    std::map<LLUUID, bool> mTabTypingStates;
+    void updateTypingIndicators();
     void onShowAvatarThumbnailsChanged();
     void addAvatarThumbnail(const LLUUID& session_id, LLFloater* floaterp, EInstantMessage type);
     // </AS:Chanayane>

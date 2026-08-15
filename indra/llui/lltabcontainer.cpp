@@ -1898,6 +1898,18 @@ void LLTabContainer::setTabImage(LLPanel* child, const LLUUID& image_id, const L
     }
 }
 
+// <AS:Chanayane> Allow overriding the tab label font (e.g. italics for a typing indicator)
+void LLTabContainer::setTabFont(LLPanel* child, const LLFontGL* font)
+{
+    LLTabTuple* tuple = getTabByPanel(child);
+    if (tuple)
+    {
+        tuple->mButton->setFont(font);
+        reshapeTuple(tuple);
+    }
+}
+// </AS:Chanayane>
+
 void LLTabContainer::setTabImage(LLPanel* child, LLIconCtrl* icon)
 {
     LLTabTuple* tuple = getTabByPanel(child);

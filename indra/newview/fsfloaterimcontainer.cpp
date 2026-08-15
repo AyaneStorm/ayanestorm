@@ -495,6 +495,7 @@ void FSFloaterIMContainer::onCloseFloater(LLUUID& id)
 
     mSessions.erase(id);
     mAvatarThumbnailIcons.erase(id); // <AS:Chanayane> avatar thumbnail icon is owned/destroyed by its tab button
+    mTabTypingStates.erase(id); // <AS:Chanayane> clear cached typing-italics state for closed session
     if (was_session_shown && isShown())
     {
         setFocus(true);
@@ -700,23 +701,38 @@ void FSFloaterIMContainer::draw()
         mActiveVoiceUpdateTimer.setTimerExpirySec(VOICE_STATUS_UPDATE_INTERVAL);
     }
 
-    // <AS:Chanayane> Update typing indicator border on avatar conversation tab thumbnails
-    if (!mAvatarThumbnailIcons.empty())
+    // <AS:Chanayane> Update typing indicators (thumbnail border + italic tab label) for 1:1 conversations
+    if (!mAvatarThumbnailIcons.empty() || gSavedSettings.getBOOL("ASShowTypingTabItalics"))
     {
-        updateAvatarThumbnailTypingIndicators();
+        updateTypingIndicators();
     }
     // </AS:Chanayane>
 
     LLMultiFloater::draw();
 }
 
-// <AS:Chanayane> Poll each 1:1 session's speaker manager for the other participant's typing state
-void FSFloaterIMContainer::updateAvatarThumbnailTypingIndicators()
+// <AS:Chanayane> Poll each 1:1 session's speaker manager for the other participant's typing state and
+// drive both the avatar thumbnail border and the italic tab label from that single source of truth
+void FSFloaterIMContainer::updateTypingIndicators()
 {
-    for (auto& entry : mAvatarThumbnailIcons)
+    bool italics_enabled = gSavedSettings.getBOOL("ASShowTypingTabItalics");
+
+    for (auto& entry : mSessions)
     {
         const LLUUID& session_id = entry.first;
-        FSConversationTabAvatarIconCtrl* icon = entry.second;
+        LLFloater* floaterp = entry.second;
+
+        if (LLIMModel::getInstance()->getType(session_id) != IM_NOTHING_SPECIAL)
+        {
+            continue;
+        }
+
+        std::map<LLUUID, FSConversationTabAvatarIconCtrl*>::iterator icon_it = mAvatarThumbnailIcons.find(session_id);
+        bool has_icon = icon_it != mAvatarThumbnailIcons.end();
+        if (!has_icon && !italics_enabled)
+        {
+            continue;
+        }
 
         bool typing = false;
         if (LLIMSpeakerMgr* speaker_mgr = LLIMModel::getInstance()->getSpeakerManager(session_id))
@@ -725,9 +741,24 @@ void FSFloaterIMContainer::updateAvatarThumbnailTypingIndicators()
             LLPointer<LLSpeaker> speaker = speaker_mgr->findSpeaker(other_id);
             typing = speaker.notNull() && speaker->mTyping;
         }
-        icon->setTyping(typing);
+
+        if (has_icon)
+        {
+            icon_it->second->setTyping(typing);
+        }
+
+        if (italics_enabled)
+        {
+            std::map<LLUUID, bool>::iterator state_it = mTabTypingStates.find(session_id);
+            if (state_it == mTabTypingStates.end() || state_it->second != typing)
+            {
+                mTabTypingStates[session_id] = typing;
+                mTabContainer->setTabFont(floaterp, typing ? LLFontGL::getFontSansSerifSmallItalic() : LLFontGL::getFontSansSerifSmall());
+            }
+        }
     }
 }
+// </AS:Chanayane>
 
 void FSFloaterIMContainer::addAvatarThumbnail(const LLUUID& session_id, LLFloater* floaterp, EInstantMessage type)
 {
