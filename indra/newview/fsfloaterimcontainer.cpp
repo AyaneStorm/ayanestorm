@@ -75,15 +75,18 @@ public:
     {
         LLAvatarIconCtrl::draw();
 
-        if (mTyping)
+        if (mTyping && gSavedSettings.getBOOL("ASShowConversationTabTypingBorder")) // <AS:Chanayane>
         {
             static LLUIColor typing_border_color = LLUIColorTable::instance().getColor("VoiceNotConnectedColor", LLColor4::yellow);
-            // <AS:Chanayane> gl_rect_2d has no line-width parameter, so draw two concentric
-            // outlines to double the apparent border thickness.
-            LLRect border_rect = getLocalRect();
-            gl_rect_2d(border_rect, typing_border_color.get(), false);
-            border_rect.stretch(-1);
-            gl_rect_2d(border_rect, typing_border_color.get(), false);
+            // <AS:Chanayane> gl_rect_2d has no line-width parameter, and two 1px-apart
+            // outlines leave a visible gap between them (reads as a double border), so draw
+            // solid 2px-wide edge strips instead for one continuous thick border.
+            LLRect r = getLocalRect();
+            const S32 t = 2;
+            gl_rect_2d(r.mLeft, r.mTop, r.mRight, r.mTop - t, typing_border_color.get(), true);
+            gl_rect_2d(r.mLeft, r.mBottom + t, r.mRight, r.mBottom, typing_border_color.get(), true);
+            gl_rect_2d(r.mLeft, r.mTop, r.mLeft + t, r.mBottom, typing_border_color.get(), true);
+            gl_rect_2d(r.mRight - t, r.mTop, r.mRight, r.mBottom, typing_border_color.get(), true);
             // </AS:Chanayane>
         }
     }

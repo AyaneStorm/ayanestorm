@@ -351,13 +351,28 @@
         height="16"
         control_name="ASShowConversationTabAvatarThumbnails"
         label="Show avatar thumbnails on conversation tabs"
-        tool_tip="If checked, 1:1 avatar conversation tabs show a small profile picture thumbnail, with a yellow border while the other person is typing. Disabled by default."
+        tool_tip="If checked, 1:1 avatar conversation tabs show a small profile picture thumbnail. Disabled by default."
         left="15"
         mouse_opaque="true"
         name="as_show_conversation_tab_avatar_thumbnails"
         radio_style="false"
         width="480"
         top="10" />
+      <!-- [AS:Chanayane] -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowConversationTabTypingBorder"
+        label="Show a yellow border on the thumbnail while the avatar is typing"
+        tool_tip="If checked, the avatar thumbnail on a 1:1 conversation tab shows a yellow border while the other person is typing. Requires avatar thumbnails to be enabled. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_conversation_tab_typing_border"
+        radio_style="false"
+        width="480"
+        top_pad="4" />
+      <!-- [/AS:Chanayane] -->
       <check_box
         follows="left|top"
         layout="topleft"
