@@ -66,6 +66,9 @@
 #include "llviewerparceloverlay.h"
 #include "llviewerregion.h"
 #include "llworld.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 #include "roles_constants.h"
 #include "llweb.h"
 #include "llvieweraudio.h"
@@ -2037,6 +2040,24 @@ void LLViewerParcelMgr::processParcelProperties(LLMessageSystem *msg, void **use
                 static LLCachedControl<bool> already_playing(gSavedSettings, "MediaTentativeAutoPlay", true);
                 if (!agent_parcel_update || already_playing)
                 {
+// <AS:chanayane> Stream keeper
+                // Work out the effective parcel stream URL up front so the stream
+                // keeper can decide before anything is stopped. An empty string
+                // here means "this parcel has no usable stream", which covers the
+                // invalid-URL and empty-URL branches below as well.
+                std::string as_effective_url = parcel->getMusicURL();
+                LLStringUtil::trim(as_effective_url);
+                if (as_effective_url.size() <= 12
+                    || (as_effective_url.substr(0, 7) != "http://"
+                        && as_effective_url.substr(0, 8) != "https://"))
+                {
+                    as_effective_url.clear();
+                }
+                // When this returns true the keeper has taken over: do not touch
+                // the stream, so whatever is playing keeps playing.
+                if (!ASStreamKeeper::handleParcelStreamChange(as_effective_url))
+                {
+// </AS:chanayane>
                     LLViewerParcelAskPlay::getInstance()->cancelNotification();
                     std::string music_url_raw = parcel->getMusicURL();
 
@@ -2070,13 +2091,23 @@ void LLViewerParcelMgr::processParcelProperties(LLMessageSystem *msg, void **use
                         // null value causes fade out
                         LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLStringUtil::null);
                     }
+// <AS:chanayane> Stream keeper
+                }
+// </AS:chanayane>
                 }
             }
             else
             {
+// <AS:chanayane> Stream keeper
+                if (!ASStreamKeeper::handleParcelStreamChange(LLStringUtil::null))
+                {
+// </AS:chanayane>
                 // Public land has no music
                 LLViewerParcelAskPlay::getInstance()->cancelNotification();
                 LLViewerAudio::getInstance()->stopInternetStreamWithAutoFade();
+// <AS:chanayane> Stream keeper
+                }
+// </AS:chanayane>
             }
         }//if gAudiop
     };
@@ -2151,6 +2182,15 @@ void LLViewerParcelMgr::optionallyStartMusic(const std::string &music_url, const
         // </FS>
                      && tentative_autoplay))
         {
+// <AS:chanayane> Stream keeper
+            // Second line of defence for the autoplay path. Normally the gate in
+            // processParcelProperties() has already handled things, so this only
+            // fires for callers that reach us directly.
+            if (ASStreamKeeper::handleParcelStreamChange(music_url))
+            {
+                return;
+            }
+// </AS:chanayane>
             if (gSavedSettings.getBOOL("MediaEnableFilter"))
             {
                 LLViewerParcelMedia::getInstance()->filterAudioUrl(music_url);

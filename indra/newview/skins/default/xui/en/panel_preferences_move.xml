@@ -523,7 +523,6 @@
          name="invert_mouse"
          top_delta="0"
          width="128" />
-
 	</panel>
 
     <!--Movement-->

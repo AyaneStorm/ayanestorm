@@ -44,6 +44,9 @@
 #include "llviewerparcelmgr.h"
 #include "llparcel.h"
 #include "llviewermessage.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 
 #include "llstreamingaudio.h"
 
@@ -315,6 +318,17 @@ F32 LLViewerAudio::getFadeVolume()
 
 void LLViewerAudio::onTeleportStarted()
 {
+// <AS:chanayane> Stream keeper
+    // Dismiss any open keep-stream prompt, then bail out entirely while a
+    // stream is held: this function fades out and clears the next stream URI
+    // directly, so it has to be gated here rather than further down.
+    ASStreamKeeper::onTeleportStarted();
+    if (!ASStreamKeeper::allowParcelStreamChange()
+        || ASStreamKeeper::suppressTeleportStreamFade())
+    {
+        return;
+    }
+// </AS:chanayane>
     if (gAudiop && !LLViewerAudio::getInstance()->getForcedTeleportFade())
     {
         // Even though the music was turned off it was starting up (with autoplay disabled) occasionally
@@ -348,7 +362,11 @@ void LLViewerAudio::onTeleportFailed()
     // its previous value
     audio_update_volume(false);
 
-    if (gAudiop && mWasPlaying)
+// <AS:chanayane> Stream keeper
+//  if (gAudiop && mWasPlaying)
+    if (gAudiop && mWasPlaying && ASStreamKeeper::allowParcelStreamChange()
+        && !ASStreamKeeper::suppressTeleportStreamFade())
+// </AS:chanayane>
     {
         LLParcel* parcel = LLViewerParcelMgr::getInstance()->getAgentParcel();
         if (parcel)
@@ -366,7 +384,11 @@ void LLViewerAudio::onTeleportFinished(const LLVector3d& pos, const bool& local)
     // its previous value
     audio_update_volume(false);
 
-    if (gAudiop && local && mWasPlaying)
+// <AS:chanayane> Stream keeper
+//  if (gAudiop && local && mWasPlaying)
+    if (gAudiop && local && mWasPlaying && ASStreamKeeper::allowParcelStreamChange()
+        && !ASStreamKeeper::suppressTeleportStreamFade())
+// </AS:chanayane>
     {
         LLParcel* parcel = LLViewerParcelMgr::getInstance()->getAgentParcel();
         if (parcel)

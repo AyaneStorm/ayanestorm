@@ -28,6 +28,7 @@
 
 #include "llviewerdisplay.h"
 
+#include "fsoitdispatcher.h"
 #include "fsyspath.h"
 #include "hexdump.h"
 #include "llagent.h"
@@ -913,6 +914,11 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         static LLCullResult result;
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
+        // <AS:Chanayane> Publish the transparency mode before culling reads it
+        // per spatial group. FSOITDispatcher::beginFrame() runs inside renderGeom,
+        // after culling, so it cannot serve this.
+        FSOITDispatcher::refreshOrderIndependentAlphaState();
+        // </AS:Chanayane>
         gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
         stop_glerror();
 

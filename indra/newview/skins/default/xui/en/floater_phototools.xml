@@ -3420,18 +3420,30 @@
 					 function="Advanced.HandleAttachedLightParticles"
 					 parameter="RenderAttachedParticles"/>
 				</check_box>
-				<!-- <AS:Chanayane> Exact OIT preference. -->
-				<check_box
+				<!-- <AS:Chanayane> Transparency renderer preference. -->
+				<combo_box
 				 follows="left|top"
 				 layout="topleft"
-				 height="16"
-				 control_name="RenderExactOIT"
-				 label="Use Exact OIT transparency"
-				 tool_tip="Renders supported transparent surfaces in exact per-pixel depth order. This improves overlapping hair, glass, particles, and other alpha surfaces, but can cost performance in transparency-heavy scenes. Disable it to use the standard transparency renderer."
+				 height="23"
+				 control_name="RenderOITMode"
+				 tool_tip="Select Standard transparency, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
 				 left="3"
-				 name="render_exact_oit"
+				 name="render_oit_mode"
 				 width="240"
-				 top_pad="0" />
+				 top_pad="0">
+					<combo_box.item
+					 label="Standard"
+					 name="standard"
+					 value="0" />
+					<combo_box.item
+					 label="Exact-OIT"
+					 name="exact_oit"
+					 value="1" />
+					<combo_box.item
+					 label="AVBOIT"
+					 name="avboit"
+					 value="2" />
+				</combo_box>
 				<!-- </AS:Chanayane> -->
 			</panel>
 
