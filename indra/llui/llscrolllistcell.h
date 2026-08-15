@@ -281,5 +281,4 @@ private:
     LLPointer<LLUIImage>    mIcon;
     S32                     mPad;
 };
-
 #endif
