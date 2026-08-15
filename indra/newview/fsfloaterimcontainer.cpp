@@ -78,7 +78,13 @@ public:
         if (mTyping)
         {
             static LLUIColor typing_border_color = LLUIColorTable::instance().getColor("VoiceNotConnectedColor", LLColor4::yellow);
-            gl_rect_2d(getLocalRect(), typing_border_color.get(), false);
+            // <AS:Chanayane> gl_rect_2d has no line-width parameter, so draw two concentric
+            // outlines to double the apparent border thickness.
+            LLRect border_rect = getLocalRect();
+            gl_rect_2d(border_rect, typing_border_color.get(), false);
+            border_rect.stretch(-1);
+            gl_rect_2d(border_rect, typing_border_color.get(), false);
+            // </AS:Chanayane>
         }
     }
 
@@ -739,6 +745,16 @@ void FSFloaterIMContainer::addAvatarThumbnail(const LLUUID& session_id, LLFloate
     icon_params.rect = LLRect(0, 16, 16, 0);
     FSConversationTabAvatarIconCtrl* icon = LLUICtrlFactory::instance().create<FSConversationTabAvatarIconCtrl>(icon_params);
     mTabContainer->setTabImage(floaterp, icon);
+
+    // <AS:Chanayane> LLCustomButtonIconCtrl::updateLayout() centers the icon within the tab
+    // button's full BTN_HEIGHT-tall rect, but the tab's border/background image visually eats
+    // into the top of that rect, so a mathematically-centered icon reads as sitting too low.
+    // Nudge it up to compensate.
+    LLRect icon_rect = icon->getRect();
+    icon_rect.translate(0, 1);
+    icon->setRect(icon_rect);
+    // </AS:Chanayane>
+
     mAvatarThumbnailIcons[session_id] = icon;
 }
 
