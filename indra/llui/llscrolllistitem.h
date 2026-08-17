@@ -50,6 +50,7 @@ class LLScrollListItem
 {
     friend class LLScrollListCtrl;
 public:
+
     struct Params : public LLInitParam::Block<Params>
     {
         Optional<bool>      enabled;

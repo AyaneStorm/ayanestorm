@@ -233,6 +233,9 @@ public:
     // <FS:Ansariel> Custom tab image overlay button alignment
     void        setTabImage(LLPanel* child, std::string img_name, LLFontGL::HAlign alignment, const LLColor4& color = LLColor4::white, const LLColor4& selected_color = LLColor4::white);
     // </FS:Ansariel>
+    // <AS:Chanayane> Allow overriding the tab label font (e.g. italics for a typing indicator)
+    void        setTabFont(LLPanel* child, const LLFontGL* font);
+    // </AS:Chanayane>
     void        setTitle( const std::string& title );
     const std::string getPanelTitle(S32 index);
 

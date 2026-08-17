@@ -73,6 +73,9 @@
 #include "llwindow.h"
 #include "llvieweraudio.h"
 #include "llcorehttputil.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 
 #include "llfloaterwebcontent.h"    // for handling window close requests and geometry change requests in media browser windows.
 
@@ -854,7 +857,11 @@ void LLViewerMedia::updateMedia(void *dummy_arg)
             static bool restore_parcel_audio = false;
             if( !inworld_audio_enabled)
             {
-                if(LLViewerMedia::isParcelAudioPlaying() && gAudiop && LLViewerMedia::hasParcelAudio())
+// <AS:chanayane> Stream keeper
+//              if(LLViewerMedia::isParcelAudioPlaying() && gAudiop && LLViewerMedia::hasParcelAudio())
+                if(LLViewerMedia::isParcelAudioPlaying() && gAudiop && LLViewerMedia::hasParcelAudio()
+                   && ASStreamKeeper::allowParcelStreamChange())
+// </AS:chanayane>
                 {
                     LLViewerAudio::getInstance()->stopInternetStreamWithAutoFade();
                     restore_parcel_audio = true;
@@ -863,7 +870,11 @@ void LLViewerMedia::updateMedia(void *dummy_arg)
             else
             {
                 static LLCachedControl<bool> auto_play(gSavedSettings, "MediaTentativeAutoPlay", true);
-                if(gAudiop && LLViewerMedia::hasParcelAudio() && restore_parcel_audio && auto_play())
+// <AS:chanayane> Stream keeper
+//              if(gAudiop && LLViewerMedia::hasParcelAudio() && restore_parcel_audio && auto_play())
+                if(gAudiop && LLViewerMedia::hasParcelAudio() && restore_parcel_audio && auto_play()
+                   && ASStreamKeeper::allowParcelStreamChange())
+// </AS:chanayane>
                 {
                     LLViewerAudio::getInstance()->startInternetStreamWithAutoFade(LLViewerMedia::getParcelAudioURL());
                     restore_parcel_audio = false;
@@ -1055,10 +1066,17 @@ void LLViewerMedia::setAllMediaPaused(bool val)
         }
 
         static LLCachedControl<bool> audio_streaming_music(gSavedSettings, "AudioStreamingMusic", true);
+// <AS:chanayane> Stream keeper
+//      if (audio_streaming_music &&
+//          !LLViewerMedia::isParcelAudioPlaying() &&
+//          gAudiop &&
+//          LLViewerMedia::hasParcelAudio())
         if (audio_streaming_music &&
             !LLViewerMedia::isParcelAudioPlaying() &&
             gAudiop &&
-            LLViewerMedia::hasParcelAudio())
+            LLViewerMedia::hasParcelAudio() &&
+            ASStreamKeeper::allowParcelStreamChange())
+// </AS:chanayane>
         {
             if (LLAudioEngine::AUDIO_PAUSED == gAudiop->isInternetStreamPlaying())
             {
@@ -1076,6 +1094,11 @@ void LLViewerMedia::setAllMediaPaused(bool val)
         LLViewerParcelMedia::getInstance()->stop();
         if (gAudiop)
         {
+// <AS:chanayane> Stream keeper
+            // Stopping all media is a deliberate user action, so it also gives
+            // up any held stream.
+            ASStreamKeeper::releaseHoldIfAny();
+// </AS:chanayane>
             LLViewerAudio::getInstance()->stopInternetStreamWithAutoFade();
         }
     }

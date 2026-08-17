@@ -145,6 +145,11 @@ public:
 
     LLPanelNearByMedia* getNearbyMediaPanel() { return mPanelNearByMedia; }
     bool getAudioStreamEnabled() const;
+// <AS:chanayane> Stream keeper
+    // Lets the stream keeper keep the "user wants streams" flag in sync when it
+    // starts or stops audio outside of the status bar.
+    void setAudioStreamEnabled(bool enabled) { mAudioStreamEnabled = enabled; }
+// </AS:chanayane>
 
     void setBackgroundColor( const LLColor4& color );
 
@@ -175,6 +180,9 @@ private:
     void onMouseEnterNearbyMedia();
 
     static void onClickStreamToggle(void* data);        // <FS:Zi> Media/Stream separation
+// <AS:chanayane> Stream keeper
+    static void onClickAddFavoriteStream(void* data);
+// </AS:chanayane>
     static void onClickMediaToggle(void* data);
     static void onClickVolume(void* data); // <FS:Ansariel> Open popup panels on click if FSStatusBarMenuButtonPopupOnRollover is disabled
 
@@ -311,6 +319,9 @@ private:
 
     void updateNetstatVisibility(const LLSD& data);
     void updateVolumeControlsVisibility(const LLSD& data); // <FS:PP> Option to hide volume controls (sounds, media, stream) in upper right
+// <AS:chanayane> Stream keeper
+    void updateAddFavoriteStreamButtonVisibility();
+// </AS:chanayane>
 
 public:
 

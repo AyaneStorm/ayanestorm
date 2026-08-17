@@ -177,6 +177,9 @@
 #include "llviewerparcelaskplay.h"
 #include "llviewerparcelmedia.h"
 #include "llviewerparcelmgr.h"
+// <AS:chanayane> Stream keeper
+#include "asstreamkeeper.h"
+// </AS:chanayane>
 #include "llviewerregion.h"
 #include "llviewerstats.h"
 #include "llviewerstatsrecorder.h"
@@ -2329,6 +2332,11 @@ bool idle_startup()
         {
             LLViewerParcelAskPlay::getInstance()->loadSettings();
         }
+
+// <AS:chanayane> Stream keeper
+        // Must run post-login: LL_PATH_PER_SL_ACCOUNT is empty before this.
+        ASStreamKeeper::onLoginComplete();
+// </AS:chanayane>
 
         // <FS:ND> FIRE-3066: Force creation or FSFLoaterContacts here, this way it will register with LLAvatarTracker early enough.
         // Otherwise it is only create if isChatMultriTab() == true and LLIMFloaterContainer::getInstance is called

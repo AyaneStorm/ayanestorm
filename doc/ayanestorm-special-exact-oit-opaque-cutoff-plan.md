@@ -15,6 +15,29 @@ outside Exact OIT. A binary-looking texture configured for alpha blending does
 enter Exact OIT; its fully opaque texels may qualify for the cutoff, while
 fractional texels produced around filtered edges may not.
 
+## Current status
+
+Implemented:
+
+- first-sort-pass-only cutoff discovery in the existing composite shader;
+- default-enabled `RenderExactOITOpaqueCutoff` debug toggle for A/B validation;
+- diagnostic mode 7 for cutoff eligibility and removable-node visualization;
+- exact standard-blend and final-alpha predicate;
+- nearest-cutoff selection using the existing depth/allocation-index order;
+- retained-list relinking and retained-count handoff to natural merge sort;
+- Exact OIT and AVBOIT shader-cache revision v20 after subsequent shader experiments,
+  restoration of the stable fullscreen sorter, removal of a redundant
+  normal-composite diagnostic traversal, correction of diagnostic glow, and
+  exact zero-alpha capture rejection, and the optional compute sorter;
+- implementation notes in the findings and how-it-works documents.
+
+Pending:
+
+- viewer shader compilation and runtime rendering validation;
+- the full correctness comparison matrix below;
+- cutoff-heavy and no-qualifier GPU measurements;
+- a ship/no-ship decision based on visual parity and whole-frame performance.
+
 ## Implementation
 
 ### Cutoff discovery
@@ -58,9 +81,9 @@ When a qualifying cutoff exists:
    natural merge pass.
 
 Run discovery and pruning only during the first natural-sort invocation. Add a
-first-sort-pass shader uniform for that purpose. Do not add another fullscreen
-draw, synchronous CPU readback, user-facing setting, approximation, or fallback
-path.
+first-sort-pass shader uniform for that purpose. A default-enabled debug setting
+may gate the optimization for A/B validation. Do not add another fullscreen
+draw, synchronous CPU readback, approximation, or fallback path.
 
 Allocated but pruned nodes may remain in the node buffer until the next frame;
 they simply become unreachable from the pixel list. Capture counts and overflow
@@ -75,8 +98,9 @@ decisions must continue to use the complete captured allocation count.
   failure.
 - Do not change capture resolution, discard visible fragments, introduce a
   layer limit, or use WBOIT as a fallback.
-- Add `<AS:Chanayane>` ownership tags around changed source code.
-- Bump the Exact OIT shader-cache revision from v6 to v7 when the shader changes.
+- Ownership tags are not required in Exact OIT-owned source files.
+- Bump the Exact OIT shader-cache revision whenever the shader changes. The
+  implementation currently uses v20.
 
 ## Validation
 

@@ -438,6 +438,20 @@
      tool_tip="Start/Stop Parcel Audio Stream"
      width="16" >
     </button>
+    <!-- <AS:chanayane> Stream keeper -->
+    <button
+     follows="right|top"
+     height="16"
+     image_unselected="AddItem_Off"
+     image_selected="AddItem_Press"
+     image_pressed="AddItem_Press"
+     left_pad="2"
+     top="1"
+     name="as_add_favorite_stream_btn"
+     tool_tip="Add the current audio stream to your favorite streams"
+     width="16" >
+    </button>
+    <!-- </AS:chanayane> -->
     <button
      follows="right|top"
      height="16"

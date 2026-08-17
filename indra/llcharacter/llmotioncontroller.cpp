@@ -874,7 +874,6 @@ void LLMotionController::updateMotions(bool force_update)
         }
         else
         {
-            //BD - Keep this, otherwise playing animations backwards doesn't work.
             mAnimTime = update_time;
         }
     }

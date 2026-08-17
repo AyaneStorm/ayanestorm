@@ -35,6 +35,9 @@ class LLFace;
 class LLColor4;
 class LLGLSLShader;
 class FSExactOIT;
+// <AS:Chanayane> Independent AVBOIT renderer access to alpha-pool draw helpers.
+class FSAVBOIT;
+// </AS:Chanayane>
 
 class LLDrawPoolAlpha final: public LLRenderPass
 {
@@ -74,6 +77,9 @@ public:
 private:
     // <AS:Chanayane> Exact OIT keeps its capture traversal in the owned module.
     friend class FSExactOIT;
+    // </AS:Chanayane>
+    // <AS:Chanayane> AVBOIT owns its capture traversal outside Exact OIT.
+    friend class FSAVBOIT;
     // </AS:Chanayane>
 
     LLGLSLShader* target_shader;

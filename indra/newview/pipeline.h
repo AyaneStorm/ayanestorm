@@ -55,6 +55,9 @@ class LLDrawPoolAlpha;
 // <AS:Chanayane> Exact OIT
 class FSExactOIT;
 // </AS:Chanayane>
+// <AS:Chanayane> Independent AVBOIT renderer.
+class FSAVBOIT;
+// </AS:Chanayane>
 class LLSettingsSky;
 
 typedef enum e_avatar_skinning_method
@@ -97,6 +100,9 @@ class LLPipeline
 {
     // <AS:Chanayane> Exact OIT keeps fallback/composite traversal in the owned module.
     friend class FSExactOIT;
+    // </AS:Chanayane>
+    // <AS:Chanayane> AVBOIT performs its own post-transparency debug traversal.
+    friend class FSAVBOIT;
     // </AS:Chanayane>
 
 public:

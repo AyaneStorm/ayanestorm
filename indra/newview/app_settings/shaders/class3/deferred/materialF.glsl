@@ -56,10 +56,14 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
 #if (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
 
-// <AS:Chanayane> Exact OIT fragment-node output declarations
+// <AS:Chanayane> Independent OIT output declarations
 // out vec4 frag_color;
 #ifdef EXACT_OIT
 void exact_oit_store(vec4 color);
+#elif defined(AVBOIT)
+void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
 #endif
@@ -308,6 +312,30 @@ void main()
     diffcol.rgb *= vertex_color.rgb;
     alphaMask(diffcol.a);
 
+// <AS:Chanayane> Occupancy needs only base alpha, which is also the alpha used
+// for extinction and weighting at the end of this shader. Specular glare is
+// deliberately excluded from all three: it is a single-blend presentation trick
+// rather than a physical opacity, and integrating it saturates AVBOIT's
+// aggregate extinction. See the AVBOIT output block below.
+#if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
+    if (avboitRasterPass == 0)
+    {
+        avboit_store(vec4(0.0, 0.0, 0.0,
+                          diffcol.a * vertex_color.a));
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Cull saturated AVBOIT pixels before material and lighting evaluation.
+#if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
     // spec == specular map combined with specular color
     vec4 spec = getSpecular();
     float env = env_intensity * spec.a;
@@ -431,10 +459,28 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color * final_scale, al), vec4(0));
 #ifdef EXACT_OIT
     exact_oit_store(max(vec4(color * final_scale, al), vec4(0)));
+#elif defined(AVBOIT)
+    // Specular glare is a single-blend presentation trick that raises output
+    // alpha so highlights read as solid. It is not a physical opacity. Feeding
+    // it into AVBOIT's -log(1-alpha) extinction saturates the aggregate: a
+    // sheer garment under several lights reaches glare 1.0 over broad areas and
+    // then integrates as fully opaque, which darkens everything behind it and
+    // varies with view direction. AVBOIT therefore receives the material's own
+    // alpha for extinction, while glare is preserved by scaling the emitted
+    // color so highlights keep the same luminance they contribute in Standard.
+    float avboit_alpha = clamp(diffcol.a * vertex_color.a, 0.0, 1.0);
+    vec3 avboit_color = color * final_scale;
+    if (avboit_alpha > 0.0 && al > avboit_alpha)
+    {
+        // Bounded: the ratio diverges as base alpha approaches zero, so an
+        // unclamped scale would turn nearly transparent glare into fireflies.
+        avboit_color *= min(al / avboit_alpha, 4.0);
+    }
+    avboit_store(max(vec4(avboit_color, avboit_alpha), vec4(0)));
 #else
     frag_color = max(vec4(color * final_scale, al), vec4(0));
 #endif
@@ -455,5 +501,3 @@ void main()
 
 #endif
 }
-
-

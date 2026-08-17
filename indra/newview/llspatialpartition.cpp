@@ -28,6 +28,7 @@
 
 #include "llspatialpartition.h"
 
+#include "fsoitdispatcher.h"
 #include "llappviewer.h"
 #include "lltexturecache.h"
 #include "lltexturefetch.h"
@@ -641,6 +642,8 @@ void LLSpatialGroup::updateDistance(LLCamera &camera)
     }
 }
 
+extern bool gCubeSnapshot;
+
 F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
@@ -660,7 +663,20 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
         dist = eye.getLength3().getF32();
         eye.normalize3fast();
 
-        if (!group->hasState(LLSpatialGroup::ALPHA_DIRTY))
+        // <AS:Chanayane> Order-independent transparency resolves each pixel from
+        // captured fragments, so the intra-group view-angle re-sort below -- and
+        // the full rebuildGeom that ALPHA_DIRTY triggers on every camera move --
+        // cannot change the image. Skip it only for frames an OIT mode actually
+        // captures: HUD, impostor and cube-snapshot renders are excluded from
+        // capture (see FSAVBOIT::renderPostDeferredCapture) and still blend in
+        // submission order, so they keep the vanilla sort.
+        const bool order_independent_alpha =
+            FSOITDispatcher::orderIndependentAlphaActive() &&
+            !LLPipeline::sRenderingHUDs &&
+            !LLPipeline::sImpostorRender &&
+            !gCubeSnapshot;
+        if (!order_independent_alpha && !group->hasState(LLSpatialGroup::ALPHA_DIRTY))
+        // </AS:Chanayane>
         {
             if (!group->getSpatialPartition()->isBridge())
             {
@@ -1445,8 +1461,6 @@ S32 LLSpatialPartition::cull(LLCamera &camera, std::vector<LLDrawable *>* result
 
     return 0;
 }
-
-extern bool gCubeSnapshot;
 
 S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
 {

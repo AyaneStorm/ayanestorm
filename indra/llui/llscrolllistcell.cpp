@@ -715,5 +715,3 @@ void LLScrollListIconText::draw(const LLColor4& color, const LLColor4& highlight
         mIcon->draw(start_icon_x, 0, icon_height, icon_height, mColor);
     }
 }
-
-

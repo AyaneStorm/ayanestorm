@@ -70,7 +70,6 @@
      width="120"
      follows="top|left"
      layout="topleft"/>
-<!-- [AS:chanayane] Preview button -->
     <button
      name="btn_preview"
      tool_tip="Toggle preview of your first life introduction"
@@ -84,7 +83,6 @@
      is_toggle="true"
      enabled="false"
      visible="false"/>
-<!-- [/AS:chanayane] -->
     <text_editor
      name="fl_description_edit"
      trusted_content="false"

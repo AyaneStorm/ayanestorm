@@ -7019,6 +7019,85 @@ Would you like to play it?
     </form>
   </notification>
 
+<!-- <AS:chanayane> Stream keeper -->
+  <notification
+   icon="alertmodal.tga"
+   label="Keep Current Audio Stream"
+   name="ASKeepCurrentStream"
+   persist="false"
+   type="alertmodal">
+This parcel plays a different audio stream. Would you like to keep listening to the current stream?
+
+Current:
+[CURRENT_URL]
+
+Parcel:
+[PARCEL_URL]
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Switch to parcel stream"
+     yestext="Keep current"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   label="Keep Current Audio Stream"
+   name="ASKeepCurrentStreamNoParcel"
+   persist="false"
+   type="alertmodal">
+This parcel has no audio stream. Would you like to keep listening to the current stream?
+
+Current:
+[CURRENT_URL]
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Stop playing"
+     yestext="Keep current"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="ASFavoriteStreamNotAdded"
+   type="alertmodal">
+Could not add this stream to your favorites. Either no audio stream is playing, or it is already in your list.
+    <tag>fail</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="ASConfirmRemoveFavoriteStream"
+   type="alertmodal">
+Remove &apos;[NAME]&apos; from your favorite streams?
+    <tag>confirm</tag>
+    <usetemplate
+     ignoretext="Confirm before I remove a favorite stream"
+     name="okcancelignore"
+     notext="Cancel"
+     yestext="Remove"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="ASEnableAutoPlayDefaultFavorite"
+   type="alertmodal">
+&apos;[NAME]&apos; is now your default stream.
+
+Auto-play of the default stream is currently turned off, so this will have no effect until you enable it. Would you like to enable it now?
+
+You can change this later in Preferences &gt; AyaneStorm.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Not now"
+     yestext="Enable"/>
+  </notification>
+<!-- </AS:chanayane> -->
+
   <notification
    icon="alertmodal.tga"
    name="ConfirmDeleteProtectedCategory"

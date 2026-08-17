@@ -452,6 +452,19 @@
            is_running_parameters="sound_explorer"
            />
 
+  <!-- <AS:Chanayane> Favorite audio streams toolbar command -->
+  <command name="favorite_streams"
+           available_in_toybox="true"
+           icon="sound_explorer"
+           label_ref="Command_Favorite_Streams_Label"
+           tooltip_ref="Command_Favorite_Streams_Tooltip"
+           execute_function="Floater.Toggle"
+           execute_parameters="as_favoritestreams"
+           is_running_function="Floater.IsOpen"
+           is_running_parameters="as_favoritestreams"
+           />
+  <!-- </AS:Chanayane> -->
+
   <command name="assetblacklist"
            available_in_toybox="true"
            icon="asset_blacklist"
