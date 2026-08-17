@@ -31,10 +31,14 @@
 #define NON_INDEXED 2
 #define NON_INDEXED_NO_COLOR 3
 
-// <AS:Chanayane> Exact OIT fragment-node output declarations
+// <AS:Chanayane> Independent OIT output declarations
 // out vec4 frag_color;
 #ifdef EXACT_OIT
 void exact_oit_store(vec4 color);
+#elif defined(AVBOIT)
+void avboit_store(vec4 color);
+bool avboit_cull_fragment();
+uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
 #endif
@@ -190,10 +194,6 @@ void main()
 
     float shadow = 1.0f;
 
-#ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
-#endif
-
 #ifdef USE_DIFFUSE_TEX
     vec4 diffuse_tap = texture(diffuseMap,vary_texcoord0.xy);
 #endif
@@ -249,6 +249,34 @@ void main()
     diffuse_srgb.rgb *= vertex_color.rgb;
     diffuse_linear.rgb = srgb_to_linear(diffuse_srgb.rgb);
 #endif // USE_VERTEX_COLOR
+
+// <AS:Chanayane> AVBOIT occupancy/extinction need only post-mask opacity.
+#if defined(AVBOIT)
+    if (avboitRasterPass < 2)
+    {
+        avboit_store(vec4(0.0, 0.0, 0.0, final_alpha));
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Reject fully attenuated AVBOIT fragments before lighting.
+#if defined(AVBOIT)
+    if (avboit_cull_fragment())
+    {
+        return;
+    }
+#endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Delay the original shadow sample until after AVBOIT early culling.
+// #ifdef HAS_SUN_SHADOW
+//     shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+// #endif
+#ifdef HAS_SUN_SHADOW
+    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+#endif
+// </AS:Chanayane>
 
     vec3 sunlit;
     vec3 amblit;
@@ -321,14 +349,15 @@ void main()
 #endif
 
     color.rgb *= final_scale;
-// <AS:Chanayane> Replace the original framebuffer output only during exact capture.
+// <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(color, vec4(0));
 #ifdef EXACT_OIT
     color = max(color, vec4(0));
     exact_oit_store(color);
+#elif defined(AVBOIT)
+    avboit_store(max(color, vec4(0)));
 #else
     frag_color = max(color, vec4(0));
 #endif
 // </AS:Chanayane>
 }
-

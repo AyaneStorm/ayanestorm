@@ -33,7 +33,6 @@
 #include <string>
 
 #include "llerror.h"
-#include "llframetimer.h"
 #include "llpose.h"
 #include "lluuid.h"
 

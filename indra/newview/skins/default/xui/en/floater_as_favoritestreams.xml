@@ -1,0 +1,208 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<floater
+ positioning="cascading"
+ can_close="true"
+ can_resize="true"
+ height="380"
+ help_topic="as_favorite_streams"
+ min_height="260"
+ min_width="420"
+ layout="topleft"
+ name="floater_as_favorite_streams"
+ save_rect="true"
+ save_visibility="true"
+ single_instance="true"
+ reuse_instance="true"
+ title="Favorite Streams"
+ width="520">
+	<floater.string name="DefaultSuffix">
+		[NAME] (default)
+	</floater.string>
+	<floater.string name="DefaultSuffixDisabled">
+		[NAME] (default, off)
+	</floater.string>
+	<panel
+	 follows="all"
+	 layout="topleft"
+	 name="list_panel"
+	 top="2"
+	 left="2"
+	 bottom="-64"
+	 right="-1">
+		<scroll_list
+		 draw_heading="true"
+		 follows="all"
+		 layout="topleft"
+		 top="0"
+		 left="0"
+		 bottom="-1"
+		 right="-1"
+		 name="stream_list"
+		 draw_stripes="true"
+		 multi_select="false">
+			<scroll_list.columns
+			 label="Name"
+			 name="name"
+			 dynamic_width="true" />
+		</scroll_list>
+	</panel>
+
+	<panel
+	 follows="left|right|bottom"
+	 height="56"
+	 layout="topleft"
+	 left="2"
+	 name="buttons_panel"
+	 right="-1"
+	 bottom="-2">
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Play"
+		 layout="topleft"
+		 left="3"
+		 name="play_btn"
+		 tool_tip="Play the selected stream and keep it playing across parcels"
+		 top="0"
+		 width="70" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Play parcel stream"
+		 layout="topleft"
+		 left_pad="3"
+		 name="play_parcel_btn"
+		 tool_tip="Stop keeping a stream and go back to this parcel's own stream"
+		 top_delta="0"
+		 width="120" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Set as default"
+		 layout="topleft"
+		 left_pad="3"
+		 name="set_default_btn"
+		 tool_tip="Auto-play this stream instead of the parcel stream (see Preferences)"
+		 top_delta="0"
+		 width="100" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Clear default"
+		 layout="topleft"
+		 left_pad="3"
+		 name="clear_default_btn"
+		 tool_tip="Stop auto-playing a default stream"
+		 top_delta="0"
+		 width="95" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Add playing"
+		 layout="topleft"
+		 left="3"
+		 name="add_current_btn"
+		 tool_tip="Add the stream that is playing right now"
+		 top_pad="4"
+		 width="90" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Add..."
+		 layout="topleft"
+		 left_pad="3"
+		 name="add_manual_btn"
+		 tool_tip="Add a stream by typing its name and URL"
+		 top_delta="0"
+		 width="70" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Edit"
+		 layout="topleft"
+		 left_pad="3"
+		 name="edit_btn"
+		 tool_tip="Edit the selected stream"
+		 top_delta="0"
+		 width="70" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Remove"
+		 layout="topleft"
+		 left_pad="3"
+		 name="remove_btn"
+		 tool_tip="Remove the selected stream"
+		 top_delta="0"
+		 width="80" />
+	</panel>
+
+	<panel
+	 background_visible="true"
+	 bevel_style="in"
+	 follows="left|right|bottom"
+	 height="88"
+	 layout="topleft"
+	 left="2"
+	 name="edit_panel"
+	 right="-1"
+	 bottom="-2"
+	 visible="false">
+		<text
+		 follows="left|top"
+		 height="16"
+		 layout="topleft"
+		 left="5"
+		 name="name_label"
+		 top="3"
+		 width="40">
+			Name:
+		</text>
+		<line_editor
+		 follows="left|top|right"
+		 height="20"
+		 layout="topleft"
+		 left_pad="3"
+		 max_length_chars="255"
+		 name="name_editor"
+		 top_delta="-2"
+		 right="-5" />
+		<text
+		 follows="left|top"
+		 height="16"
+		 layout="topleft"
+		 left="5"
+		 name="url_label"
+		 top_pad="6"
+		 width="40">
+			URL:
+		</text>
+		<line_editor
+		 follows="left|top|right"
+		 height="20"
+		 layout="topleft"
+		 left_pad="3"
+		 max_length_chars="4096"
+		 name="url_editor"
+		 top_delta="-2"
+		 right="-5" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Save"
+		 layout="topleft"
+		 left="48"
+		 name="save_btn"
+		 top_pad="4"
+		 width="70" />
+		<button
+		 follows="left|top"
+		 height="23"
+		 label="Cancel"
+		 layout="topleft"
+		 left_pad="3"
+		 name="cancel_btn"
+		 top_delta="0"
+		 width="70" />
+	</panel>
+</floater>

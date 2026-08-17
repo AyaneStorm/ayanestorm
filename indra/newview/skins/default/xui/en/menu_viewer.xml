@@ -1143,6 +1143,18 @@
              function="Floater.Toggle"
              parameter="fs_streamtitle" />
         </menu_item_check>
+        <!-- <AS:chanayane> Stream keeper -->
+        <menu_item_check
+             label="Favorite Streams"
+             name="Favorite Streams">
+            <menu_item_check.on_check
+             function="Floater.Visible"
+             parameter="as_favoritestreams" />
+            <menu_item_check.on_click
+             function="Floater.Toggle"
+             parameter="as_favoritestreams" />
+        </menu_item_check>
+        <!-- </AS:chanayane> -->
         <menu_item_separator/>
         
         <menu_item_call

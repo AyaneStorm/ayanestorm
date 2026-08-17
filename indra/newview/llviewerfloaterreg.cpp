@@ -209,6 +209,9 @@
 #include "fsfloaterimport.h"
 #include "fsfloaterim.h"
 #include "fsfloaterimcontainer.h"
+// <AS:chanayane> Stream keeper
+#include "asfloaterfavoritestreams.h"
+// </AS:chanayane>
 #include "fsfloaterpartialinventory.h"
 #include "fsfloaterplacedetails.h"
 #include "fsfloaterposestand.h"
@@ -653,6 +656,9 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("fs_placedetails", "floater_fs_placedetails.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPlaceDetails>);
     LLFloaterReg::add("fs_poser", "floater_fs_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPoser>); // <FS:AR> [FIRE-30873]: Poser
     LLFloaterReg::add("fs_protectedfolders", "floater_fs_protectedfolders.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterProtectedFolders>);
+// <AS:chanayane> Stream keeper
+    LLFloaterReg::add("as_favoritestreams", "floater_as_favoritestreams.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterFavoriteStreams>);
+// </AS:chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);
     LLFloaterReg::add("fs_streamtitle", "floater_fs_streamtitle.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterStreamTitle>);
