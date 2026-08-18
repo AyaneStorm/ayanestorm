@@ -2948,6 +2948,10 @@ void LLVOAvatar::updateMeshData()
                 f_num++ ;
             }
         }
+
+        mDirtyMesh = 0;
+        mNeedsSkin = true;
+        mDrawable->clearState(LLDrawable::REBUILD_GEOMETRY);
     }
 }
 
@@ -6072,9 +6076,6 @@ U32 LLVOAvatar::renderSkinned()
         if (needs_rebuild || mDirtyMesh >= 2 || mVisibilityRank <= 4)
         {
             updateMeshData();
-            mDirtyMesh = 0;
-            mNeedsSkin = true;
-            mDrawable->clearState(LLDrawable::REBUILD_GEOMETRY);
         }
     }
 
@@ -11996,9 +11997,6 @@ bool LLVOAvatar::updateLOD()
     if (mDirtyMesh >= 2 || mDrawable->isState(LLDrawable::REBUILD_GEOMETRY))
     {   //LOD changed or new mesh created, allocate new vertex buffer if needed
         updateMeshData();
-        mDirtyMesh = 0;
-        mNeedsSkin = true;
-        mDrawable->clearState(LLDrawable::REBUILD_GEOMETRY);
     }
     updateVisibility();
 
