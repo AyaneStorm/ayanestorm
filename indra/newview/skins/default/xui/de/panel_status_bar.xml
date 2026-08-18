@@ -34,7 +34,7 @@
 	<panel name="time_and_media_bg">
 		<icon name="dd_icon" tool_tip="Draw Distance"/>
 		<slider tool_tip="Maximale Distanz von der Kamera, die angezeigt werden soll (in Meter)" name="drawdistance"/>
-		<text name="TimeText" tool_tip="Aktuelle Zeit (Pazifik)" width="78">
+		<text name="TimeText" tool_tip="Aktuelle Zeit (Pazifik)" width="85">
 			24:00:00 PST
 		</text>
 		<button name="stream_toggle_btn" tool_tip="Audiostream der Parzelle starten/stoppen"/>
