@@ -386,6 +386,32 @@
         radio_style="false"
         width="480"
         top_pad="4" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowRadarInConversations"
+        label="Show an 'Avatars in range' tab in the Conversations window"
+        tool_tip="If checked, a Radar tab listing nearby avatars is docked in the Conversations window. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_radar_in_conversations"
+        radio_style="false"
+        width="480"
+        top_pad="10" />
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowRecentPeopleInConversations"
+        label="Show a 'Recent people' tab in the Conversations window"
+        tool_tip="If checked, a Recent people tab is docked in the Conversations window. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_recent_people_in_conversations"
+        radio_style="false"
+        width="480"
+        top_pad="4" />
     </panel>
 
   </tab_container>
