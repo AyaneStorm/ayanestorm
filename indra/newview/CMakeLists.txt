@@ -93,6 +93,7 @@ set(viewer_SOURCE_FILES
     aoengine.cpp
     aoset.cpp
     asfloaterfavoritestreams.cpp
+    aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
@@ -957,6 +958,7 @@ set(viewer_HEADER_FILES
     aoengine.h
     aoset.h
     asfloaterfavoritestreams.h
+    aspanelprefsayanestorm.h
     asstreamkeeper.h
     chatbar_as_cmdline.h
     daeexport.h
