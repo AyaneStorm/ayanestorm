@@ -37,6 +37,8 @@
 // llviewershadermgr.cpp, etc.) keeps linking against these inert stubs.
 #if LL_DARWIN
 
+#include "llrendertarget.h"
+
 bool FSExactOIT::sCaptureCompleted = false;
 bool FSExactOIT::sCaptureClearNeeded = false;
 bool FSExactOIT::sVanillaFallbackActive = false;
