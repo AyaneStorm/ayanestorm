@@ -216,6 +216,7 @@
 // </FS:Ansariel> [FS communication UI]
 #include "llwindowlistener.h"
 #include "llviewerwindowlistener.h"
+#include "llstatslistener.h"
 #include "llcleanup.h"
 #include "llimview.h"
 
@@ -1876,25 +1877,17 @@ bool LLViewerWindow::handleTimerEvent(LLWindow *window)
     return false;
 }
 
-// <FS:Dax> [FIRE-10419] Added deviceRemoved bool to prevent reinitialize on disconnect.
-// bool LLViewerWindow::handleDeviceChange(LLWindow* window)
-// {
-//     if (!LLViewerJoystick::getInstance()->isJoystickInitialized())
-//     {
-//         LLViewerJoystick::getInstance()->init(true);
-//         return true;
-//     }
-//     return false;
-// }
-// </FS>
-
-bool LLViewerWindow::handleDeviceChange(LLWindow *window, bool deviceRemoved) 
+bool LLViewerWindow::handleDeviceChange(LLWindow *window, const std::string& change_type, bool deviceIsJoystick, bool deviceRemoved) // <FS:Dax> [FIRE-10419] Added deviceRemoved bool to prevent reinitialize on disconnect.
 {
     // give a chance to use a joystick after startup (hot-plugging)
-    if (!deviceRemoved && !LLViewerJoystick::getInstance()->isJoystickInitialized())
+    if (deviceIsJoystick && !deviceRemoved && !LLViewerJoystick::getInstance()->isJoystickInitialized()) // <FS:Dax> [FIRE-10419] Added deviceRemoved bool to prevent reinitialize on disconnect.
     {
         LLViewerJoystick::getInstance()->init(true);
         return true;
+    }
+    else
+    {
+        LL_INFOS("Window") << "Device change event: " << change_type << LL_ENDL;
     }
     return false;
 }
@@ -1917,6 +1910,7 @@ bool LLViewerWindow::handleDPIChanged(LLWindow *window, F32 ui_scale_factor, S32
 
 bool LLViewerWindow::handleDisplayChanged()
 {
+    LL_INFOS("Window") << "Display change event" << LL_ENDL;
     LLFontGL::sResolutionGeneration++;
     return false;
 }
@@ -1999,6 +1993,7 @@ LLViewerWindow::LLViewerWindow(const Params& p)
     LLWindowListener::KeyboardGetter getter = [](){ return gKeyboard; };
     mWindowListener = std::make_unique<LLWindowListener>(this, getter);
     mViewerWindowListener = std::make_unique<LLViewerWindowListener>(this);
+    mStatsListener = std::make_unique<LLStatsListener>();
 
     mSystemChannel.reset(new LLNotificationChannel("System", "Visible", LLNotificationFilters::includeEverything));
     mCommunicationChannel.reset(new LLCommunicationChannel("Communication", "Visible"));
