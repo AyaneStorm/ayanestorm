@@ -125,6 +125,11 @@ private:
     void addAvatarThumbnail(const LLUUID& session_id, LLFloater* floaterp, EInstantMessage type);
     // </AS:Chanayane>
 
+    // <AS:Chanayane> Optional Avatars-in-range / Recent people tabs in Conversations
+    void onShowRadarTabChanged();
+    void onShowRecentPeopleTabChanged();
+    // </AS:Chanayane>
+
     void checkFlashing();
     uuid_vec_t  mFlashingSessions;
 

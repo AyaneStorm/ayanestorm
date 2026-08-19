@@ -206,7 +206,6 @@
 			<combo_box.item label="1024 Pixel" name="1024"/>
 			<combo_box.item label="2048 Pixel" name="2048"/>
 		</combo_box>
-		<slider label="Max. Anzahl gleichzeitiger HTTP-GET-Anfragen" name="HTTPFetchMaxRequests"/>
 		<text name="TextureDetailLabel">
 			Maximales Qualitätslevel für Texturen:
 		</text>

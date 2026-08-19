@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<floater
+ name="recent_people"
+ help_topic="as_recent_people"
+ title="Recent People"
+ width="400"
+ height="440"
+ min_width="290"
+ min_height="150"
+ reuse_instance="true"
+ single_instance="true"
+ save_rect="true"
+ save_visibility="true"
+ can_resize="true"
+ can_minimize="true"
+ can_close="true">
+	<string
+	 name="no_recent_people"
+	 value="No recent people." />
+	<avatar_list
+	 follows="all"
+	 layout="topleft"
+	 left="3"
+	 top="3"
+	 right="-3"
+	 bottom="-3"
+	 multi_select="true"
+	 name="avatar_list" />
+</floater>

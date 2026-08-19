@@ -176,6 +176,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/regex.hpp>
 #include <boost/throw_exception.hpp>
+#include <chrono>
 
 #if LL_WINDOWS
 #   include <share.h> // For _SH_DENYWR in processMarkerFiles
@@ -1559,7 +1560,11 @@ bool LLAppViewer::frame()
     {
         try
         {
+            const auto start = std::chrono::steady_clock::now();
             ret = doFrame();
+            const auto end = std::chrono::steady_clock::now();
+            const U64 doframe_time_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+            LLTrace::sample(LLStatViewer::DOFRAME_TIME_US, doframe_time_us);
         }
         catch (const LLContinueError&)
         {
@@ -2611,6 +2616,8 @@ bool LLAppViewer::cleanup()
     // deleteSingleton() methods.
     LLSingletonBase::deleteAll();
 
+    LLUICtrlFactory::deleteSingleton();
+
     LLSplashScreen::hide();
 
     LL_INFOS() << "Goodbye!" << LL_ENDL;
@@ -3616,14 +3623,21 @@ bool LLAppViewer::initConfiguration()
     // <FS:Ansariel> Voice in multiple instances
     //if (mSecondInstance)
     //{
-    //  // This is the second instance of SL. Mute voice,
-    //  // but make sure the setting is *not* persisted.
-    //  LLControlVariable* enable_voice = gSavedSettings.getControl("EnableVoiceChat");
-    //  if (enable_voice)
-    //  {
-    //      const bool DO_NOT_PERSIST = false;
-    //      enable_voice->setValue(LLSD(false), DO_NOT_PERSIST);
-    //  }
+    //    // This is the second concurrent instance of SL.
+    //    // Disable voice for this session only, user should
+    //    // be able to enable voice manually, after that it
+    //    // works the same way as on primary instance.
+    //    LLControlVariable* enable_voice = gSavedSettings.getControl("EnableVoiceChat");
+    //    if (enable_voice && enable_voice->getValue().asBoolean())
+    //    {
+    //        LL_DEBUGS("AppInit") << "Disabling voice for this session only" << LL_ENDL;
+    //        // Will be saved as mValues[2] which does not get written to the file.
+    //        // This feels like a hack, but otherwise way too many controls have to
+    //        // be tracked manually instead of using xmls' control_name.
+    //        const bool DO_NOT_PERSIST = false;
+    //        LLSD::Boolean new_value = false;
+    //        enable_voice->setValue(new_value, DO_NOT_PERSIST);
+    //    }
     //}
     // </FS:Ansariel>
 

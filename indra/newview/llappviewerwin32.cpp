@@ -271,6 +271,7 @@ namespace
             // </FS:Beq>
 
             LLAppViewer* app = LLAppViewer::instance();
+
             if (!app->isSecondInstance() && !app->errorMarkerExists())
             {
                 // If marker doesn't exist, create a marker with 'other' or 'logout' code for next launch

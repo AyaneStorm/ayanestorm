@@ -39,6 +39,10 @@
 #include "llrender2dutils.h"
 #include "llspeakers.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional Avatars-in-range / Recent people tabs in Conversations
+#include "asfloaterrecentpeople.h"
+#include "fsfloaterradar.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llchiclet.h"
 #include "llchicletbar.h"
@@ -142,6 +146,11 @@ bool FSFloaterIMContainer::postBuild()
     gSavedSettings.getControl("ASShowConversationTabAvatarThumbnails")->getSignal()->connect(boost::bind(&FSFloaterIMContainer::onShowAvatarThumbnailsChanged, this));
     // </AS:Chanayane>
 
+    // <AS:Chanayane> Live-toggle optional Avatars-in-range / Recent people tabs when the preference changes
+    gSavedSettings.getControl("ASShowRadarInConversations")->getSignal()->connect(boost::bind(&FSFloaterIMContainer::onShowRadarTabChanged, this));
+    gSavedSettings.getControl("ASShowRecentPeopleInConversations")->getSignal()->connect(boost::bind(&FSFloaterIMContainer::onShowRecentPeopleTabChanged, this));
+    // </AS:Chanayane>
+
     return true;
 }
 
@@ -195,6 +204,30 @@ void FSFloaterIMContainer::initTabs()
             addFloater(floater_chat, true, IM_NOTHING_SPECIAL);
         }
     }
+
+    // <AS:Chanayane> Optional Avatars-in-range / Recent people tabs in Conversations
+    if (gSavedSettings.getBOOL("ASShowRadarInConversations"))
+    {
+        LLFloater* floater_radar = LLFloaterReg::getInstance("fs_radar");
+        if (floater_radar && !LLFloater::isVisible(floater_radar) && (floater_radar->getHost() != this))
+        {
+            addFloater(floater_radar, false, IM_NOTHING_SPECIAL);
+            // Keep the standalone floater's own title as "Radar"; only the docked tab reads "Nearby", matching panel_people.xml's nearby_panel label
+            mTabContainer->setPanelTitle(mTabContainer->getIndexForPanel(floater_radar), "Nearby people");
+        }
+    }
+
+    if (gSavedSettings.getBOOL("ASShowRecentPeopleInConversations"))
+    {
+        LLFloater* floater_recent_people = LLFloaterReg::getInstance("as_recent_people");
+        if (floater_recent_people && !LLFloater::isVisible(floater_recent_people) && (floater_recent_people->getHost() != this))
+        {
+            addFloater(floater_recent_people, false, IM_NOTHING_SPECIAL);
+            // Match panel_people.xml's recent_panel label
+            mTabContainer->setPanelTitle(mTabContainer->getIndexForPanel(floater_recent_people), "Recent people");
+        }
+    }
+    // </AS:Chanayane>
 }
 
 // [SL:KB] - Patch: UI-TabRearrange | Checked: 2012-05-05 (Catznip-3.3.0)
@@ -818,6 +851,56 @@ void FSFloaterIMContainer::onShowAvatarThumbnailsChanged()
             }
         }
         mAvatarThumbnailIcons.clear();
+    }
+}
+// </AS:Chanayane>
+
+// <AS:Chanayane> Live-toggle optional Avatars-in-range / Recent people tabs when the preference changes
+void FSFloaterIMContainer::onShowRadarTabChanged()
+{
+    LLFloater* floater_radar = LLFloaterReg::getInstance("fs_radar");
+    if (!floater_radar)
+    {
+        return;
+    }
+
+    if (gSavedSettings.getBOOL("ASShowRadarInConversations"))
+    {
+        if (floater_radar->getHost() != this)
+        {
+            addFloater(floater_radar, true, IM_NOTHING_SPECIAL);
+            // Keep the standalone floater's own title as "Radar"; only the docked tab reads "Nearby", matching panel_people.xml's nearby_panel label
+            mTabContainer->setPanelTitle(mTabContainer->getIndexForPanel(floater_radar), "Nearby");
+        }
+    }
+    else if (floater_radar->getHost() == this)
+    {
+        removeFloater(floater_radar);
+        floater_radar->closeFloater();
+    }
+}
+
+void FSFloaterIMContainer::onShowRecentPeopleTabChanged()
+{
+    LLFloater* floater_recent_people = LLFloaterReg::getInstance("as_recent_people");
+    if (!floater_recent_people)
+    {
+        return;
+    }
+
+    if (gSavedSettings.getBOOL("ASShowRecentPeopleInConversations"))
+    {
+        if (floater_recent_people->getHost() != this)
+        {
+            addFloater(floater_recent_people, true, IM_NOTHING_SPECIAL);
+            // Match panel_people.xml's recent_panel label
+            mTabContainer->setPanelTitle(mTabContainer->getIndexForPanel(floater_recent_people), "Recent");
+        }
+    }
+    else if (floater_recent_people->getHost() == this)
+    {
+        removeFloater(floater_recent_people);
+        floater_recent_people->closeFloater();
     }
 }
 // </AS:Chanayane>

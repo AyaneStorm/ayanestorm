@@ -212,6 +212,9 @@
 // <AS:chanayane> Stream keeper
 #include "asfloaterfavoritestreams.h"
 // </AS:chanayane>
+// <AS:Chanayane> Optional Recent people tab in Conversations
+#include "asfloaterrecentpeople.h"
+// </AS:Chanayane>
 #include "fsfloaterpartialinventory.h"
 #include "fsfloaterplacedetails.h"
 #include "fsfloaterposestand.h"
@@ -659,6 +662,9 @@ void LLViewerFloaterReg::registerFloaters()
 // <AS:chanayane> Stream keeper
     LLFloaterReg::add("as_favoritestreams", "floater_as_favoritestreams.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterFavoriteStreams>);
 // </AS:chanayane>
+// <AS:Chanayane> Optional Recent people tab in Conversations
+    LLFloaterReg::add("as_recent_people", "floater_as_recent_people.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterRecentPeople>);
+// </AS:Chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);
     LLFloaterReg::add("fs_streamtitle", "floater_fs_streamtitle.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterStreamTitle>);
