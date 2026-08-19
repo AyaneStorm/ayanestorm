@@ -227,11 +227,9 @@ void display_update_camera()
     // Cut draw distance in half when customizing avatar,
     // but on the viewer only.
     F32 final_far = gAgentCamera.mDrawDistance;
-
     // <FS:TJ> [FIRE-35748] Only enable the LL Draw Distance VRAM optimization when the setting is enabled
     static LLCachedControl<bool> use_vram_optimization(gSavedSettings, "FSDrawDistanceVRAMOptimization", false);
     // </FS:TJ>
-
     if (gCubeSnapshot)
     {
         static LLCachedControl<F32> reflection_probe_draw_distance(gSavedSettings, "RenderReflectionProbeDrawDistance", 64.f);
@@ -249,7 +247,7 @@ void display_update_camera()
         final_far = llmax(32.f, final_far / mem_factor);
     }
 // <FS:CR> Aurora sim
-    if(LLWorld::getInstance()->getLockedDrawDistance())
+    if (LLWorld::getInstance()->getLockedDrawDistance())
     {
         //Reset the draw distance and do not update with the new val
         final_far = LLViewerCamera::getInstance()->getFar();
