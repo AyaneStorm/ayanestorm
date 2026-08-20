@@ -26,10 +26,7 @@
 
 #include "aspanelprefsayanestorm.h"
 
-#include "llcheckboxctrl.h"
-#include "llcombobox.h"
-#include "lltabcontainer.h"
-#include "lltextbox.h"
+#include "llview.h"
 
 static LLPanelInjector<ASPanelPrefsAyaneStorm> t_pref_ayanestorm("panel_preference_ayanestorm");
 
@@ -44,13 +41,23 @@ bool ASPanelPrefsAyaneStorm::postBuild()
     // capped OpenGL 4.1 does not provide - hide just that control. The
     // volumetric lighting checkbox in the same tab works down to GL 4.0, so
     // the tab itself stays visible on Mac (see ASVolumetricLighting::isSupported()).
-    LLComboBox* oit_mode_combo = findChild<LLComboBox>("render_oit_mode");
-    if (oit_mode_combo)
-        oit_mode_combo->setVisible(false);
+    const char* oit_controls[] =
+    {
+        "render_oit_mode",
+        "render_oit_mode_label",
+        "render_exact_oit_debug",
+        "render_exact_oit_debug_label",
+        "render_avboit_debug",
+        "render_avboit_debug_label"
+    };
 
-    LLTextBox* oit_mode_label = findChild<LLTextBox>("render_oit_mode_label");
-    if (oit_mode_label)
-        oit_mode_label->setVisible(false);
+    for (const char* control_name : oit_controls)
+    {
+        if (LLView* control = findChild<LLView>(control_name))
+        {
+            control->setVisible(false);
+        }
+    }
 #endif // LL_DARWIN
 
     return LLPanelPreference::postBuild();

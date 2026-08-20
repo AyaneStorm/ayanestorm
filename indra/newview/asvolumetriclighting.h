@@ -59,11 +59,12 @@ public:
     static void allocateResources(U32 width, U32 height);
     static void releaseResources();
 
-    // Raymarches sun/moon shadow occlusion into a half-res target, then
-    // additively composites the (bilateral-upsampled) result into `screen`.
-    // Call from the top of LLPipeline::renderFinalize(), before tonemap, so
-    // scattered light goes through the same HDR exposure as the rest of the
-    // scene. No-ops internally when !isEnabled() or during cube snapshots.
+    // Raymarches sun/moon illumination into a half-res target, then
+    // additively composites the upsampled result into `screen`. Call directly
+    // after LLPipeline::renderDeferredLighting(), while the shared deferred
+    // depth attachment still contains the current scene. The result remains
+    // in `screen` for the later HDR/tonemap pass. No-ops internally when
+    // !isEnabled() or during cube snapshots.
     static void renderPass(LLPipeline& pipeline, LLRenderTarget& screen);
 
     static S32 getSampleCount();

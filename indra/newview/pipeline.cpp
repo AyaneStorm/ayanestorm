@@ -8960,11 +8960,6 @@ void LLPipeline::renderFinalize()
     LL_RECORD_BLOCK_TIME(FTM_RENDER_BLOOM);
     LL_PROFILE_GPU_ZONE("renderFinalize");
 
-    // <AS:Chanayane> Composite optional volumetric lighting before tonemap so
-    // scattered light shares the same HDR exposure as the rest of the scene.
-    ASVolumetricLighting::renderPass(*this, mRT->screen);
-    // </AS:Chanayane>
-
     gGL.color4f(1, 1, 1, 1);
     LLGLDepthTest depth(GL_FALSE);
     LLGLDisable blend(GL_BLEND);

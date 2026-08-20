@@ -53,7 +53,7 @@ LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 // hash, which folds this in alongside FSExactOIT::shaderCacheRevision()).
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v1";
+    return "as-volumetric-lighting-v4";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -212,24 +212,12 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
         pipeline.bindDeferredShader(gASVolumetricLightProgram);
 
-        // TEMPORARY development aid - remove once the "always-far" depth
-        // bug is diagnosed. Logs the actual texture channel depthMap got
-        // mapped to, once, so we can tell whether bindDeferredShader's
-        // DEFERRED_DEPTH enableTexture() call is even resolving the uniform
-        // (index == -1 would mean depthMap is unbound and reading stale/
-        // default texture-unit content, explaining an always-far/white read).
-        {
-            static bool logged_once = false;
-            if (!logged_once)
-            {
-                S32 depth_uniform = gASVolumetricLightProgram.getUniformLocation(LLShaderMgr::DEFERRED_DEPTH);
-                S32 depth_channel = (LLShaderMgr::DEFERRED_DEPTH >= 0 && LLShaderMgr::DEFERRED_DEPTH < (S32)gASVolumetricLightProgram.mTexture.size())
-                    ? gASVolumetricLightProgram.mTexture[LLShaderMgr::DEFERRED_DEPTH] : -999;
-                LL_WARNS() << "AS Volumetric depthMap diagnostic: uniform_loc=" << depth_uniform
-                    << " texture_channel=" << depth_channel << LL_ENDL;
-                logged_once = true;
-            }
-        }
+        // Bind the shared depth attachment explicitly. This is the same path
+        // used by the working deferred post-process passes and avoids relying
+        // on the generic G-buffer attachment binding for a depth texture.
+        gASVolumetricLightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
+                                               &pipeline.mRT->deferredScreen,
+                                               true);
 
         gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
         gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
@@ -269,8 +257,14 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     {
         LLGLEnable blend(GL_BLEND);
         gGL.setSceneBlendType(debug_mode != 0 ? LLRender::BT_REPLACE : LLRender::BT_ADD);
+        // Preserve screen alpha. BT_ADD applies ONE,ONE to alpha as well as
+        // RGB, and the HDR screen alpha is consumed by later post-processing.
+        // Adding the composite shader's alpha every frame corrupts those
+        // passes and produces a full-screen whiteout unrelated to scatter RGB.
+        gGL.setColorMask(true, false);
         pipeline.mScreenTriangleVB->setBuffer();
         pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        gGL.setColorMask(true, true);
     }
 
     gASVolumetricCompositeProgram.unbind();

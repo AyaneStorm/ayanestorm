@@ -1,5 +1,145 @@
 # AyaneStorm Volumetric Lighting (God Rays) — Implementation Plan
 
+## Fresh audit correction (2026-08-20)
+
+The complete feature diff for commit
+`0e6eb17bf728264ad2b0eddeec39e290f18938ce` was reviewed against its parent,
+not merely its file statistics. This confirmed that the late
+`renderFinalize()` integration and inverted minimum-visibility calculation
+were present in the committed implementation itself. The resource lifecycle,
+shader-manager hooks, settings, feature-table entries, and preferences wiring
+did not explain the observed all-far depth result.
+
+The earlier handoff treated a valid `depthMap` sampler returning `1.0` as a
+shader reconstruction problem. That conclusion did not follow from the
+evidence: a valid texture binding says nothing about whether the shared depth
+attachment still contains the scene depth at that late point in the frame.
+
+The pass has therefore been moved from `LLPipeline::renderFinalize()` to
+immediately after `renderDeferredLighting()`, while the deferred G-buffer is
+still the active, authoritative source for the frame. The raymarch shader also
+binds `mRT->deferredScreen`'s depth attachment explicitly, matching the working
+deferred post-process binding pattern.
+
+A separate lighting-equation error was corrected. The old shader accumulated
+the darkest shadow sample and inverted it, causing shadowed air/occluders to
+produce light while open illuminated air produced none. The pass now integrates
+mean directional-light visibility along the view ray, and uses the moon color
+when the moon is the active directional light. Shader cache revision `v2`
+invalidates binaries compiled from the previous GLSL.
+
+This source audit was intentionally not followed by a build: repository policy
+requires the user to perform builds. Runtime verification should begin with
+debug mode 6; nearby geometry must no longer read uniformly white. Then verify
+mode 3 shows varying mean visibility before testing normal mode 0.
+
+### Build verification log
+
+- **2026-08-20, first build after the fresh audit: failed.** MSVC reported
+  C2100 at `llviewerdisplay.cpp:1181` because the new call dereferenced
+  `gPipeline.mRT->screen`, which is already an `LLRenderTarget` object rather
+  than a pointer. The call now passes `gPipeline.mRT->screen` directly.
+- Rebuild and runtime verification remain pending.
+
+### Runtime verification round after depth-lifetime fix
+
+The next build succeeded and the supplied screenshots materially changed the
+diagnosis:
+
+- **Mode 7:** uniform deep blue. This is a valid result for one fixed NDC input
+  across every fragment and demonstrates that `inv_proj` is populated and
+  non-identity.
+- **Mode 4:** contains a recognizable avatar silhouette plus perspective-shaped
+  X/Y color bands. Scene geometry is therefore present in reconstructed
+  positions; the old conclusion that `getPosition()` merely passed through NDC
+  was incorrect.
+- **Mode 1:** mostly dark with localized bright signal around the windows. The
+  raw scatter has spatial structure consistent with directional visibility, so
+  depth and shadow sampling are now operating end-to-end.
+- **Mode 0:** severe nearly full-frame whiteout. Since mode 1 is structured, the
+  remaining failure is signal magnitude in the HDR additive composite rather
+  than missing depth.
+- **Mode 2:** reported all white.
+- **Mode 3:** screenshot shows a large white region and dark foreground with a
+  clear geometry boundary. The camera was inside a room, with a window behind
+  the avatar and a door to camera-right; the white region must therefore not be
+  assumed to be sky. Mean shadow visibility is spatially non-uniform, but the
+  large fully-visible interior region may still indicate incorrect shadow
+  classification or sampling outside a valid cascade footprint.
+- **Mode 5:** all white because the tested view rays reach the shader's 128 m
+  march-distance cap; this does not diagnose a depth failure.
+- **Mode 6:** all white. Raw device depth is nonlinear and naturally packed
+  very close to 1.0 for most view-space distances under a perspective
+  projection. Treating this as proof of a far-plane sample was an invalid
+  diagnostic.
+
+Shader revision `v3` applied `SCATTER_RADIANCE_SCALE = 0.02` before multiplying the
+normalized visibility integral into the HDR directional-light color. This
+was a diagnostic magnitude reduction; the subsequent controlled test and its
+reversion are recorded below.
+
+A matching baseline screenshot with volumetric lighting disabled was supplied
+after the initial interpretation. It shows that mode 3's major boundary follows
+the room floor versus the walls/ceiling rather than a horizon. Mode 1's localized
+bright regions also line up with the rear window and the door/opening at the
+right. This scene-grounded comparison makes invalid cascade coverage less likely
+and supports the raw visibility signal being coherent. The immediate remaining
+test is whether shader revision `v3`'s radiance scale fixes mode 0 without erasing
+the opening-aligned structure visible in mode 1.
+
+### Runtime verification of shader revision v3
+
+Controlled indoor and outdoor triplets (disabled, mode 0, mode 1) showed that
+the `0.02` RGB scale made mode 1 approximately 50 times darker, but mode 0 still
+produced the same full-screen whiteout. Scatter RGB magnitude was therefore not
+the cause, and the v3 scale has been reverted.
+
+The composite used `LLRender::BT_ADD`, whose blend factors are `ONE, ONE` for
+both RGB and alpha, while `asVolumetricCompositeF.glsl` output alpha `1.0`.
+This added one into the HDR screen target's alpha channel before later
+screen-space-reflection and finalization passes consumed that target. The
+composite now outputs alpha zero and masks alpha writes around the draw,
+preserving the existing screen alpha while additively accumulating RGB only.
+Shader cache revision is now `v4`; indoor/outdoor mode 0 and mode 1 verification
+is pending.
+
+### Runtime verification of shader revision v4
+
+Controlled indoor and outdoor triplets confirm the alpha-preservation fix:
+
+- Mode 0 no longer whiteouts and remains visually close to the disabled
+  baseline.
+- Outdoor mode 1 contains coherent visibility shafts shaped by the house and
+  tree occluders.
+- Indoor mode 1 contains faint but recognizable rays aligned with the rear
+  window/opening.
+- Normal mode 0 is currently very subtle at the persisted default
+  `RenderVolumetricLightingIntensity = 0.5`, particularly indoors. This is now
+  an artistic/default-strength tuning issue rather than a broken rendering
+  pipeline.
+
+Before changing the shipped default or adding an intensity control to the
+preferences panel, test `RenderVolumetricLightingIntensity = 2.0` live through
+Debug Settings in mode 0. No rebuild is required for this cached setting.
+
+Per user decision, intensity is now exposed as a live Preferences slider under
+AyaneStorm > Rendering. It controls the existing persisted
+`RenderVolumetricLightingIntensity` setting over `0.0` to `5.0` in `0.1` steps
+and is disabled when volumetric lighting is off. The shipped default remains
+`0.5`; users can choose a stronger look without Debug Settings or a rebuild.
+
+The volumetric debug spinner is intentionally retained. The same Rendering
+panel now also exposes the existing Exact OIT diagnostic modes `0..9` and
+AVBOIT diagnostic modes `0..15`. Each spinner is enabled only while its
+corresponding transparency mode is active and includes an exhaustive mode list
+in its tooltip. These controls bind directly to `RenderExactOITDebugMode` and
+`RenderAVBOITDebugMode`; no rendering implementation was changed.
+
+On macOS, the transparency selector, both OIT diagnostic labels, and both OIT
+diagnostic spinners are hidden together. The Rendering tab itself remains
+visible so its GL 4.1-compatible volumetric lighting controls remain available;
+macOS users see no Exact OIT or AVBOIT UI.
+
 ## Handoff note (read this FIRST if picking this up cold)
 
 The feature is code-complete and builds, but is **not visually working**: the raymarch's reconstructed view-space depth reads as pegged-at-far-plane almost everywhere, even pointed at geometry a few meters from the camera (confirmed via debug mode 6, see Round 10/11 below). As of Round 11, the bug has been narrowed to: **`depthMap` IS bound to a real, valid texture channel (channel 0, confirmed via a runtime log), yet `getDepth(pos_screen)` — a direct, unconditional call with no math in between — still reads back `1.0`/far-plane everywhere in that same test.** Every other piece of the chain (shader attachment order, `inv_proj` non-degenerate per debug mode 7, vertex shader UV convention byte-identical to working shaders like `softenLightV.glsl`, texture-unit binding call correctness) has been individually verified correct through static reading. This combination — valid channel, wrong sampled content — could not be resolved further through source reading alone and needs one of:

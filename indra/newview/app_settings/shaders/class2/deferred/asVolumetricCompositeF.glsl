@@ -37,5 +37,5 @@ void main()
     // and draws into the full-res screen target, so a bilinear upsample here
     // is sufficient to hide the half-res source without a separate
     // depth-aware bilateral pass; the scatter signal is already low-frequency.
-    frag_color = texture(emissiveRect, vary_fragcoord);
+    frag_color = vec4(texture(emissiveRect, vary_fragcoord).rgb, 0.0);
 }

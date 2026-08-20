@@ -33,6 +33,7 @@ uniform vec3  sun_dir;
 uniform vec3  moon_dir;
 uniform int   sun_up_factor;
 uniform vec3  sunlight_color;
+uniform vec3  moonlight_color;
 
 uniform int   sample_count;
 uniform float scatter_intensity;
@@ -40,8 +41,8 @@ uniform float scatter_asymmetry;
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
-// mode). 2: output raw occlusion (1-min_visibility) in [0,1] as grayscale.
-// 3: output raw min_visibility directly (pre-inversion). 4: output the
+// mode). 2: output raw mean occlusion in [0,1] as grayscale.
+// 3: output raw mean visibility directly (pre-inversion). 4: output the
 // reconstructed view-space ray_end position as RGB (abs(pos)/64, clamped),
 // to sanity-check getPosition()/depth reconstruction independently of any
 // shadow logic - should vary smoothly across the screen and roughly match
@@ -131,14 +132,11 @@ void main()
     int   steps    = max(sample_count, 1);
     float step_len = ray_len / float(steps);
 
-    // Track the darkest point along the ray, not the average visibility.
-    // Open sky/unoccluded rays are lit almost everywhere (visibility ~1
-    // along the whole ray), so averaging visibility - as an earlier version
-    // of this shader did - adds a large, nearly uniform wash across the
-    // whole frame instead of a spatially-varying shaft effect. A real god
-    // ray is defined by rays that pass through at least one occluder; rays
-    // that never enter shadow should contribute ~nothing.
-    float min_visibility = 1.0;
+    // Integrate incident light along the ray. Lit air scatters light toward
+    // the camera; shadowed air does not. Inverting this term would make
+    // occluders glow and open shafts dark, which is the opposite of
+    // volumetric single scattering.
+    float accumulated_visibility = 0.0;
 
     for (int i = 0; i < steps; ++i)
     {
@@ -150,17 +148,15 @@ void main()
         // - the correct choice for a sample in empty space, not on a surface.
         float visibility = sampleDirectionalShadow(sample_pos, light_dir, pos_screen);
 
-        // Guard against NaN poisoning the whole ray via min() - clamp to a
-        // valid [0,1] visibility and skip anything non-finite.
+        // Guard against a bad shadow sample poisoning the whole integral.
         if (visibility == visibility) // false only for NaN
         {
-            min_visibility = min(min_visibility, clamp(visibility, 0.0, 1.0));
+            accumulated_visibility += clamp(visibility, 0.0, 1.0);
         }
     }
 
-    // Occlusion in [0,1]: 0 for rays that never touched shadow, up to 1 for
-    // rays that were fully shadowed somewhere along their length.
-    float occlusion = 1.0 - min_visibility;
+    float mean_visibility = accumulated_visibility / float(steps);
+    float occlusion = 1.0 - mean_visibility;
 
     if (debug_mode == 2)
     {
@@ -170,13 +166,14 @@ void main()
 
     if (debug_mode == 3)
     {
-        frag_color = vec4(vec3(min_visibility), 1.0);
+        frag_color = vec4(vec3(mean_visibility), 1.0);
         return;
     }
 
     float distance_factor = ray_len / MAX_MARCH_DISTANCE;
-    float scatter = occlusion * phase * scatter_intensity * distance_factor;
+    float scatter = mean_visibility * phase * scatter_intensity * distance_factor;
     scatter = clamp(scatter, 0.0, 1.0);
 
-    frag_color = vec4(sunlight_color * scatter, 1.0);
+    vec3 light_color = (sun_up_factor == 1) ? sunlight_color : moonlight_color;
+    frag_color = vec4(light_color * scatter, 1.0);
 }
