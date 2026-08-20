@@ -51,12 +51,13 @@ uniform float scatter_asymmetry;
 // grayscale (raw distance, cheaper to read than mode 4's RGB). 6: output the
 // raw device-depth proximity (1-getDepth), amplified for display, before any
 // inv_proj transform at all - isolates whether the depth buffer read itself
-// varies despite perspective depth clustering near 1. 7: output the absolute
-// normalized direction of getPositionWithNDC(vec3(0.5,0.25,0)) as RGB - a
-// FIXED off-center NDC point at mid-depth, independent of pos_screen entirely.
-// If this differs from what mode 4 shows at screen center, or reads as a
-// suspiciously round/zero value, inv_proj itself (not the depth read or the
-// screen-coordinate math) is the broken link.
+// varies despite perspective depth clustering near 1. 7: sanity-checks
+// getPositionWithNDC(vec3(0.5,0.25,0)) - a FIXED off-center NDC point at
+// mid-depth, independent of pos_screen entirely. A green ramp means only that
+// the result has a finite, nonzero magnitude; it does not prove the matrix is
+// otherwise correct. Black means a genuinely near-zero length, while magenta
+// means NaN/Inf (a NaN length fails every numeric comparison, so it must be
+// checked explicitly rather than falling through to the zero case).
 uniform int debug_mode;
 
 vec4 getPosition(vec2 pos_screen);
@@ -82,6 +83,17 @@ float phaseHG(float cos_theta, float g)
     float g2 = g * g;
     float denom = 1.0 + g2 - 2.0 * g * cos_theta;
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
+}
+
+// Interleaved gradient noise (Jimenez 2014): a cheap, high-frequency
+// per-pixel dither in [0,1). Offsetting each ray's first sample by this value
+// (scaled by one step length) turns the fixed banding from a constant sample
+// count into fine, far-less-objectionable grain, since neighboring pixels no
+// longer land on the same shadow-transition step.
+float interleavedGradientNoise(vec2 screen_pos)
+{
+    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(screen_pos, magic.xy)));
 }
 
 // Caps the march distance for sky/horizon pixels (effectively infinite depth)
@@ -126,9 +138,28 @@ void main()
         // legitimately normalize to almost pure blue and hide those terms.
         vec3 fixed_pos = getPositionWithNDC(vec3(0.5, 0.25, 0.0));
         float fixed_length = length(fixed_pos);
-        frag_color = fixed_length > 1e-6
-            ? vec4(abs(fixed_pos / fixed_length), 1.0)
-            : vec4(1.0, 0.0, 1.0, 1.0); // magenta explicitly flags a zero result
+        // Magenta previously meant "length <= 1e-6", conflating a genuinely
+        // near-zero vector with a NaN/Inf length (NaN > 1e-6 is false in
+        // GLSL, so a broken matrix producing NaN would ALSO show magenta
+        // here, indistinguishable from a real zero result). Encode the raw
+        // magnitude as a log-scaled green ramp so the cases are
+        // distinguishable: green = finite and nonzero, black = near-zero,
+        // and magenta = NaN/Inf. A finite result can still come from a stale
+        // or otherwise incorrect matrix, so green is not a correctness proof.
+        bool is_finite = (fixed_length == fixed_length) && (fixed_length < 1e30);
+        if (!is_finite)
+        {
+            frag_color = vec4(1.0, 0.0, 1.0, 1.0);
+        }
+        else if (fixed_length <= 1e-6)
+        {
+            frag_color = vec4(0.0, 0.0, 0.0, 1.0); // black: genuinely ~zero
+        }
+        else
+        {
+            float log_len = clamp(log2(fixed_length + 1.0) / 10.0, 0.0, 1.0);
+            frag_color = vec4(0.0, log_len, 0.0, 1.0); // green ramp: real magnitude
+        }
         return;
     }
 
@@ -140,6 +171,10 @@ void main()
     int   steps    = max(sample_count, 1);
     float step_len = ray_len / float(steps);
 
+    // Dither the ray's starting offset per-pixel so fixed-step banding turns
+    // into fine grain instead of visible stepped rings at shadow boundaries.
+    float jitter = interleavedGradientNoise(gl_FragCoord.xy);
+
     // Integrate incident light along the ray. Lit air scatters light toward
     // the camera; shadowed air does not. Inverting this term would make
     // occluders glow and open shafts dark, which is the opposite of
@@ -148,7 +183,7 @@ void main()
 
     for (int i = 0; i < steps; ++i)
     {
-        float t = (float(i) + 0.5) * step_len;
+        float t = (float(i) + jitter) * step_len;
         vec3 sample_pos = ray_dir * t;
 
         // norm = light_dir makes sampleDirectionalShadow's surface-bias term

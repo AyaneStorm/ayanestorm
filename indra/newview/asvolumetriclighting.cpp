@@ -65,12 +65,12 @@ bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 
-// Bump this string whenever a volumetric .glsl file changes so cached
-// program binaries do not go stale (see llviewershadermgr.cpp shader cache
-// hash, which folds this in alongside FSExactOIT::shaderCacheRevision()).
+// Bump this string whenever a volumetric .glsl file changes so cached program
+// binaries cannot survive a source change. This is folded into the shader
+// cache hash in llviewershadermgr.cpp alongside FSExactOIT's revision.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v11";
+    return "as-volumetric-lighting-v13";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is

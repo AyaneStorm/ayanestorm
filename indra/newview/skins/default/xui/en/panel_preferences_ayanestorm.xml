@@ -247,7 +247,7 @@
         max_val="9"
         min_val="0"
         name="render_volumetric_lighting_debug"
-        tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: normalized direction of inv_proj applied to a fixed off-center NDC point; expect uniform mixed RGB, while magenta flags zero. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. All non-zero modes replace the screen outright."
+        tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. All non-zero modes replace the screen outright."
         top="205"
         width="60" />
 
