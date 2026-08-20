@@ -14,8 +14,8 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 uniform int local_light_count;
-uniform vec4 local_light[8];       // agent-space xyz, radius in w
-uniform vec4 local_light_color[8]; // linear RGB, legacy falloff in w
+uniform vec4 local_light[32];       // agent-space xyz, radius in w
+uniform vec4 local_light_color[32]; // linear RGB, legacy falloff in w
 uniform float local_light_intensity;
 uniform mat4 modelview_matrix;
 

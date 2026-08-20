@@ -13269,7 +13269,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>RenderVolumetricLocalLightsMaxCount</key>
     <map>
       <key>Comment</key>
-      <string>Maximum scored nearby local lights included in the volumetric pass (0 through 8).</string>
+      <string>Maximum scored nearby local lights included in the volumetric pass (0 through 32).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

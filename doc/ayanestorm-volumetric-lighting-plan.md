@@ -208,6 +208,32 @@ volumetrics and `0.35` for local-light volumetrics. Existing persisted user
 values are intentionally preserved; these values apply to fresh or reset
 settings.
 
+The Rendering preferences layout was subsequently reorganized into distinct
+**Transparency / OIT** and **Volumetric lighting** sections separated by a
+horizontal divider. Within the volumetric section, the diagnostic mode now
+sits immediately after the sun/moon enable and intensity controls; optional
+local-light controls follow it as one contiguous subgroup. The main labels now
+say “Enable sun/moon god rays” and “Sun/moon intensity” to distinguish them
+from local-light settings.
+
+This revision was checked against the supplied 494x455 preferences screenshot,
+not inferred solely from XML. The screenshot specifically showed the OIT and
+volumetric rows reading as one uninterrupted list and the volumetric debug row
+stranded near the panel bottom after a large blank gap. The divider is sized to
+the visible panel width, and the reordered debug row removes that gap.
+
+The same screenshot also showed that the maximum-local-lights selector was not
+visible below Local intensity. The runtime log contained no control-binding or
+XUI creation error. Its embedded spinner label was replaced with an explicit
+text label plus a 60-pixel spinner in the common x=250 control column, matching
+the proven OIT and volumetric debug-row structure.
+
+Initial runtime testing showed no observable performance impact at the original
+eight-light ceiling on the test GPU. Revision `v7` therefore raises the
+configurable hard ceiling and shader arrays from 8 to 32 lights while retaining
+8 as the conservative shipped default. This permits hardware-dependent scaling
+without silently quadrupling the default per-pixel worst-case workload.
+
 Local-light support is feasible but is not a trivial extension of the current
 directional pass. `LLPipeline::renderDeferredLighting()` already gathers,
 distance-sorts, fades, and caps local lights through `mNearbyLights`, with point

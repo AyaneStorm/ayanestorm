@@ -74,12 +74,13 @@
         length="1"
         follows="left|top"
         height="10"
+        font="SansSerifSmallBold"
         layout="topleft"
         left="15"
         name="render_oit_mode_label"
         width="300"
         top="10">
-        Transparency rendering:
+        Transparency / OIT
       </text>
 
       <combo_box
@@ -162,21 +163,45 @@
         width="60" />
       <!-- [/AS:Chanayane] -->
 
+      <view_border
+        bevel_style="none"
+        border_thickness="1"
+        follows="top|left"
+        height="0"
+        left="15"
+        name="rendering_section_divider"
+        top="112"
+        width="460" />
+
       <!-- [AS:Chanayane] Optional volumetric lighting -->
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        font="SansSerifSmallBold"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_volumetric_lighting_section_label"
+        width="300"
+        top="125">
+        Volumetric lighting
+      </text>
+
       <check_box
         follows="left|top"
         layout="topleft"
         height="16"
         control_name="RenderVolumetricLighting"
         enabled_control="RenderShadowDetail"
-        label="Volumetric lighting (god rays)"
+        label="Enable sun/moon god rays"
         tool_tip="If checked, renders raymarched sun/moon light shafts through shadowed geometry. Requires Shadows to be enabled above None in the graphics preferences. Works on macOS."
         left="15"
         mouse_opaque="true"
         name="render_volumetric_lighting"
         radio_style="false"
         width="400"
-        top="120" />
+        top="150" />
 
       <slider
         can_edit_text="true"
@@ -186,8 +211,8 @@
         follows="left|top"
         height="16"
         increment="0.1"
-        label="Intensity"
-        label_width="60"
+        label="Sun/moon intensity"
+        label_width="115"
         layout="topleft"
         left="15"
         max_val="5.0"
@@ -195,8 +220,36 @@
         name="render_volumetric_lighting_intensity"
         show_text="true"
         tool_tip="Controls the strength of volumetric sun and moon light shafts. Changes are applied live."
-        top="150"
-        width="260" />
+        top="178"
+        width="315" />
+
+      <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_volumetric_lighting_debug_label"
+        width="225"
+        top="209">
+        Debug mode (0 = off):
+      </text>
+      <spinner
+        control_name="RenderVolumetricLightingDebug"
+        enabled_control="RenderVolumetricLighting"
+        decimal_digits="0"
+        follows="left|top"
+        increment="1"
+        label_width="0"
+        left="250"
+        max_val="7"
+        min_val="0"
+        name="render_volumetric_lighting_debug"
+        tool_tip="0: normal. 1: raw scatter (color+intensity). 2: mean occlusion grayscale. 3: mean visibility grayscale (shadow sampling only). 4: reconstructed view-space position as RGB - sanity-checks depth reconstruction, no shadow logic involved. 5: raw ray distance grayscale (cheaper than 4). 6: raw depth buffer value grayscale (before inv_proj transform). 7: inv_proj applied to a fixed NDC test point - flat/uniform color across the whole screen would indicate inv_proj is not being set. All non-zero modes replace the screen outright."
+        top="205"
+        width="60" />
 
       <check_box
         follows="left|top"
@@ -211,7 +264,7 @@
         name="render_volumetric_local_lights"
         radio_style="false"
         width="400"
-        top="180" />
+        top="240" />
 
       <slider
         can_edit_text="true"
@@ -230,26 +283,9 @@
         name="render_volumetric_local_lights_intensity"
         show_text="true"
         tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
-        top="210"
+        top="268"
         width="295" />
 
-      <spinner
-        control_name="RenderVolumetricLocalLightsMaxCount"
-        enabled_control="RenderVolumetricLocalLights"
-        decimal_digits="0"
-        follows="left|top"
-        increment="1"
-        label="Maximum local lights"
-        label_width="140"
-        left="15"
-        max_val="8"
-        min_val="0"
-        name="render_volumetric_local_lights_max_count"
-        tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
-        top="236"
-        width="200" />
-
-      <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
       <text
         type="string"
         length="1"
@@ -257,24 +293,24 @@
         height="14"
         layout="topleft"
         left="15"
-        name="render_volumetric_lighting_debug_label"
+        name="render_volumetric_local_lights_max_count_label"
         width="225"
-        top="275">
-        Volumetric lighting debug mode (0 = off):
+        top="300">
+        Maximum local lights:
       </text>
       <spinner
-        control_name="RenderVolumetricLightingDebug"
-        enabled_control="RenderVolumetricLighting"
+        control_name="RenderVolumetricLocalLightsMaxCount"
+        enabled_control="RenderVolumetricLocalLights"
         decimal_digits="0"
         follows="left|top"
         increment="1"
         label_width="0"
         left="250"
-        max_val="7"
+        max_val="32"
         min_val="0"
-        name="render_volumetric_lighting_debug"
-        tool_tip="0: normal. 1: raw scatter (color+intensity). 2: mean occlusion grayscale. 3: mean visibility grayscale (shadow sampling only). 4: reconstructed view-space position as RGB - sanity-checks depth reconstruction, no shadow logic involved. 5: raw ray distance grayscale (cheaper than 4). 6: raw depth buffer value grayscale (before inv_proj transform). 7: inv_proj applied to a fixed NDC test point - flat/uniform color across the whole screen would indicate inv_proj is not being set. All non-zero modes replace the screen outright."
-        top="271"
+        name="render_volumetric_local_lights_max_count"
+        tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
+        top="296"
         width="60" />
       <!-- [/AS:Chanayane] -->
     </panel>

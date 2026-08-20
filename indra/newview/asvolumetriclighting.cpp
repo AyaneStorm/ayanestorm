@@ -49,7 +49,7 @@ LLGLSLShader gASVolumetricLightProgram;
 LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
 
-constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 8;
+constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 32;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 
 struct LocalLight
@@ -70,7 +70,7 @@ LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 // hash, which folds this in alongside FSExactOIT::shaderCacheRevision()).
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v6";
+    return "as-volumetric-lighting-v7";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
