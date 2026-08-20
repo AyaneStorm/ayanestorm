@@ -65,9 +65,10 @@ bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 
-// Bump this string whenever a volumetric .glsl file changes so cached program
-// binaries cannot survive a source change. This is folded into the shader
-// cache hash in llviewershadermgr.cpp alongside FSExactOIT's revision.
+// Folded into the shader cache hash in llviewershadermgr.cpp alongside
+// FSExactOIT's revision. During active development the shader cache is cleared
+// manually, so do not bump this for every edit and trigger an avoidable LTO
+// relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
     return "as-volumetric-lighting-v13";
@@ -379,7 +380,15 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     screen.bindTarget();
 
     gASVolumetricCompositeProgram.bind();
-    gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sVolumetricTarget);
+    {
+        // Clamp explicitly rather than assume this render target's default
+        // wrap mode is clamp-to-edge.
+        S32 emissive_channel = gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sVolumetricTarget);
+        if (emissive_channel > -1)
+        {
+            gGL.getTexUnit(emissive_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        }
+    }
 
     {
         LLGLEnable blend(GL_BLEND);

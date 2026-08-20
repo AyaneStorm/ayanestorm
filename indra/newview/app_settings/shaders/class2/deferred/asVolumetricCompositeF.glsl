@@ -33,9 +33,13 @@ uniform sampler2D emissiveRect; // half-res volumetric scatter target
 
 void main()
 {
-    // Caller (ASVolumetricLighting::renderPass) binds GL_BLEND with BT_ADD
-    // and draws into the full-res screen target, so a bilinear upsample here
-    // is sufficient to hide the half-res source without a separate
-    // depth-aware bilateral pass; the scatter signal is already low-frequency.
+    // Plain bilinear upsample. A depth-aware (bilateral) variant was tried
+    // to reduce color bleed across opaque-geometry silhouettes, but the
+    // deferred depth buffer has no notion of alpha-blended surfaces (hair,
+    // foliage): getDepth() there returns whatever is behind them, which made
+    // the bilateral weighting glow/over-brighten hair against a bright
+    // background instead. Reverted rather than continuing to tune weight
+    // constants against a structurally blind comparison - see the plan doc's
+    // "Regression found in-game" entry for the full history.
     frag_color = vec4(texture(emissiveRect, vary_fragcoord).rgb, 0.0);
 }
