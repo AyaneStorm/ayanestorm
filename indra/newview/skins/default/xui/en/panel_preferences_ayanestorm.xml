@@ -115,8 +115,8 @@
         layout="topleft"
         left="15"
         name="render_exact_oit_debug_label"
-        width="190"
-        top_pad="12">
+        width="225"
+        top="65">
         Exact OIT debug mode (0 = off):
       </text>
       <spinner
@@ -126,12 +126,12 @@
         follows="left|top"
         increment="1"
         label_width="0"
-        left_pad="5"
+        left="250"
         max_val="9"
         min_val="0"
         name="render_exact_oit_debug"
         tool_tip="0: final. 1: fragment count. 2: nearest depth. 3: farthest depth. 4: sort validation. 5: blend mode. 6: capacity. 7: opaque-cutoff activity. 8: list-depth buckets. 9: compute-sort path."
-        top_delta="-4"
+        top="61"
         width="60" />
 
       <text
@@ -142,8 +142,8 @@
         layout="topleft"
         left="15"
         name="render_avboit_debug_label"
-        width="190"
-        top_pad="10">
+        width="225"
+        top="90">
         AVBOIT debug mode (0 = off):
       </text>
       <spinner
@@ -153,12 +153,12 @@
         follows="left|top"
         increment="1"
         label_width="0"
-        left_pad="5"
+        left="250"
         max_val="15"
         min_val="0"
         name="render_avboit_debug"
         tool_tip="0: final. 1: active pixels. 2: virtual-depth occupancy. 3: physical-slice utilization. 4: integrated transmittance. 5: effective-zero depth. 6: proxy coverage. 7: depth-warp conformance. 8: integration conformance. 9: aggregate alpha. 10: average transparent color. 11: optical-depth bands. 12: weight bands. 13: volume versus exact transmittance. 14: average front transmittance. 15: selected compaction divider."
-        top_delta="-4"
+        top="86"
         width="60" />
       <!-- [/AS:Chanayane] -->
 
@@ -176,7 +176,7 @@
         name="render_volumetric_lighting"
         radio_style="false"
         width="400"
-        top_pad="18" />
+        top="120" />
 
       <slider
         control_name="RenderVolumetricLightingIntensity"
@@ -194,7 +194,7 @@
         name="render_volumetric_lighting_intensity"
         show_text="true"
         tool_tip="Controls the strength of volumetric sun and moon light shafts. Changes are applied live."
-        top_pad="10"
+        top="150"
         width="260" />
 
       <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
@@ -206,8 +206,8 @@
         layout="topleft"
         left="15"
         name="render_volumetric_lighting_debug_label"
-        width="300"
-        top_pad="14">
+        width="225"
+        top="185">
         Volumetric lighting debug mode (0 = off):
       </text>
       <spinner
@@ -217,12 +217,12 @@
         follows="left|top"
         increment="1"
         label_width="0"
-        left_pad="5"
+        left="250"
         max_val="7"
         min_val="0"
         name="render_volumetric_lighting_debug"
         tool_tip="0: normal. 1: raw scatter (color+intensity). 2: mean occlusion grayscale. 3: mean visibility grayscale (shadow sampling only). 4: reconstructed view-space position as RGB - sanity-checks depth reconstruction, no shadow logic involved. 5: raw ray distance grayscale (cheaper than 4). 6: raw depth buffer value grayscale (before inv_proj transform). 7: inv_proj applied to a fixed NDC test point - flat/uniform color across the whole screen would indicate inv_proj is not being set. All non-zero modes replace the screen outright."
-        top_delta="-4"
+        top="181"
         width="60" />
       <!-- [/AS:Chanayane] -->
     </panel>

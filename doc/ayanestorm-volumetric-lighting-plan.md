@@ -140,6 +140,13 @@ diagnostic spinners are hidden together. The Rendering tab itself remains
 visible so its GL 4.1-compatible volumetric lighting controls remain available;
 macOS users see no Exact OIT or AVBOIT UI.
 
+Runtime inspection of the Rendering preferences panel found that the two OIT
+spinners overlapped vertically because their relative `top_delta` positioning
+chained through adjacent controls, while the volumetric debug spinner was
+pushed farther right by a wider label. The diagnostic rows now use explicit
+vertical positions and a common spinner column at x=250; all three labels use
+the same width and alignment.
+
 ## Handoff note (read this FIRST if picking this up cold)
 
 The feature is code-complete and builds, but is **not visually working**: the raymarch's reconstructed view-space depth reads as pegged-at-far-plane almost everywhere, even pointed at geometry a few meters from the camera (confirmed via debug mode 6, see Round 10/11 below). As of Round 11, the bug has been narrowed to: **`depthMap` IS bound to a real, valid texture channel (channel 0, confirmed via a runtime log), yet `getDepth(pos_screen)` — a direct, unconditional call with no math in between — still reads back `1.0`/far-plane everywhere in that same test.** Every other piece of the chain (shader attachment order, `inv_proj` non-degenerate per debug mode 7, vertex shader UV convention byte-identical to working shaders like `softenLightV.glsl`, texture-unit binding call correctness) has been individually verified correct through static reading. This combination — valid channel, wrong sampled content — could not be resolved further through source reading alone and needs one of:
