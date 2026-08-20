@@ -179,6 +179,7 @@
         top="120" />
 
       <slider
+        can_edit_text="true"
         control_name="RenderVolumetricLightingIntensity"
         enabled_control="RenderVolumetricLighting"
         decimal_digits="1"
@@ -197,6 +198,57 @@
         top="150"
         width="260" />
 
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="RenderVolumetricLocalLights"
+        enabled_control="RenderVolumetricLighting"
+        label="Include local lights (unshadowed)"
+        tool_tip="Adds bounded fog glow from nearby point and spot lights. Local lights are not shadowed and can leak through walls. Disabled by default."
+        left="15"
+        mouse_opaque="true"
+        name="render_volumetric_local_lights"
+        radio_style="false"
+        width="400"
+        top="180" />
+
+      <slider
+        can_edit_text="true"
+        control_name="RenderVolumetricLocalLightsIntensity"
+        enabled_control="RenderVolumetricLocalLights"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.01"
+        label="Local intensity"
+        label_width="95"
+        layout="topleft"
+        left="15"
+        max_val="6.0"
+        min_val="0.0"
+        name="render_volumetric_local_lights_intensity"
+        show_text="true"
+        tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
+        top="210"
+        width="295" />
+
+      <spinner
+        control_name="RenderVolumetricLocalLightsMaxCount"
+        enabled_control="RenderVolumetricLocalLights"
+        decimal_digits="0"
+        follows="left|top"
+        increment="1"
+        label="Maximum local lights"
+        label_width="140"
+        left="15"
+        max_val="8"
+        min_val="0"
+        name="render_volumetric_local_lights_max_count"
+        tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
+        top="236"
+        width="200" />
+
       <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
       <text
         type="string"
@@ -207,7 +259,7 @@
         left="15"
         name="render_volumetric_lighting_debug_label"
         width="225"
-        top="185">
+        top="275">
         Volumetric lighting debug mode (0 = off):
       </text>
       <spinner
@@ -222,7 +274,7 @@
         min_val="0"
         name="render_volumetric_lighting_debug"
         tool_tip="0: normal. 1: raw scatter (color+intensity). 2: mean occlusion grayscale. 3: mean visibility grayscale (shadow sampling only). 4: reconstructed view-space position as RGB - sanity-checks depth reconstruction, no shadow logic involved. 5: raw ray distance grayscale (cheaper than 4). 6: raw depth buffer value grayscale (before inv_proj transform). 7: inv_proj applied to a fixed NDC test point - flat/uniform color across the whole screen would indicate inv_proj is not being set. All non-zero modes replace the screen outright."
-        top="181"
+        top="271"
         width="60" />
       <!-- [/AS:Chanayane] -->
     </panel>

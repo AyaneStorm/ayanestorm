@@ -147,6 +147,103 @@ pushed farther right by a wider label. The diagnostic rows now use explicit
 vertical positions and a common spinner column at x=250; all three labels use
 the same width and alignment.
 
+## Optional local-light volumetrics — feasibility note
+
+### First experimental implementation (2026-08-20)
+
+The opt-in first version is now implemented for runtime evaluation:
+
+- `RenderVolumetricLocalLights` is disabled by default and requires the main
+  volumetric-lighting toggle.
+- A separate half-resolution local-light shader evaluates up to eight selected
+  nearby lights in one draw. It intersects the reconstructed camera ray with
+  each light sphere and integrates eight samples only across the chord in front
+  of visible scene depth, rather than illuminating the entire view ray.
+- Candidates reuse `LLPipeline::mNearbyLights` filtering/fading and are scored
+  by linear brightness, radius, and camera distance. The configurable count is
+  a hard safety ceiling, not a claim that four or eight is a renderer limit.
+- Point lights and spotlights currently share the same spherical, unshadowed
+  approximation. This should make street lamps visibly illuminate fog, but it
+  can leak through walls and does not yet reproduce a projector cone.
+- Preferences expose the local enable toggle, independent intensity
+  (`0..2`, default `0.35`), and maximum evaluated lights (`0..8`, default `8`).
+- Existing directional debug modes remain isolated: local-light accumulation
+  is skipped whenever `RenderVolumetricLightingDebug` is nonzero.
+- The initial experimental shader cache revision was
+  `as-volumetric-lighting-v5`.
+
+Build and runtime validation are pending. First test with the same street-lamp
+scene, debug mode 0, main volumetrics enabled, then toggle **Include local
+lights (unshadowed)** without moving the camera. If the effect is absent, check
+`AyaneStorm.log` for `AS Volumetric Local Light Shader`. If it is excessive,
+lower **Local intensity** before changing the shader equation. Also test from
+inside a closed room to quantify the expected unshadowed leakage.
+
+### First runtime result and intensity correction
+
+The pass builds and visibly responds to nearby lights, confirming that the
+light snapshot, selection, coordinate transform, depth limit, and additive
+composite are operating. The first comparison was much too strong even at UI
+intensity `0.05`. Local-light colors are direct-light scene radiance, while the
+fog approximation integrates them across a light-volume chord; sending that
+integral unnormalized into the HDR target was therefore badly scaled.
+
+Shader revision `v6` applies a `0.02` local-scatter radiance normalization
+(50x reduction) after integration. This is deliberately local to the new pass
+and does not alter the already validated sun/moon contribution. The local
+intensity slider increment is now `0.01` for finer live tuning. Rebuild and
+repeat the fixed-camera off/on comparison with the saved intensity unchanged;
+then try `0.25`, `0.5`, and `1.0` if necessary.
+
+Both the directional and local intensity sliders now allow direct numeric text
+entry (`can_edit_text=true`) in addition to mouse dragging.
+
+After the `v6` normalization test, local intensity `2.0` was judged a useful
+value that should sit around one third of the adjustment range. The local-only
+slider maximum is therefore `6.0` (still with `0.01` steps and direct entry);
+the directional sun/moon intensity range remains unchanged at `0..5`.
+
+Runtime tuning selected shipped defaults of `0.8` for directional sun/moon
+volumetrics and `0.35` for local-light volumetrics. Existing persisted user
+values are intentionally preserved; these values apply to fresh or reset
+settings.
+
+Local-light support is feasible but is not a trivial extension of the current
+directional pass. `LLPipeline::renderDeferredLighting()` already gathers,
+distance-sorts, fades, and caps local lights through `mNearbyLights`, with point
+light position/radius/color/falloff and spotlight projector data available.
+However, the renderer only maintains two projected spotlight shadow maps
+(`mSpotShadow[0..1]`). Ordinary point lights have no omnidirectional shadow map,
+and most spotlights therefore also lack shadow data in a given frame.
+
+Recommended scope for an optional first implementation:
+
+- Add a separately controlled local-volumetric pass, disabled by default.
+- Reuse the existing nearby-light ordering and expose a configurable safety
+  ceiling (for example `0..16`, with a conservative default around 4 or 8).
+  Four is not a technical limit and should not be treated as the primary work
+  budget.
+- Select lights primarily by estimated GPU work: projected screen coverage,
+  brightness, distance, overlap, shadow availability, and sample count. This
+  permits many small street lamps while rejecting a few nearby lights whose
+  volumes would cover most of the screen.
+- Restrict each draw/raymarch to the light's screen-space bounding volume.
+- Support point lights and unselected spotlights as explicitly **unshadowed**
+  fog glow, with depth-limited distance attenuation. Such light cannot produce
+  physically occluded shafts and may leak through walls.
+- Use real occlusion only for the at-most-two spotlights selected into the
+  existing projected shadow maps.
+- Reduce samples for small or distant light volumes and enforce a total
+  per-frame workload budget in addition to the configurable count ceiling.
+- Expose separate enable, intensity, maximum-light-count, and workload-budget
+  settings so this cost and the unshadowed approximation are opt-in.
+
+This is medium-to-high complexity: it needs a new light-data handoff from
+`LLPipeline` into the AS-owned module, new point/spot raymarch shader variants,
+bounded-volume rendering, projected-shadow integration, performance controls,
+and indoor leakage testing. It should remain a separate follow-up feature rather
+than being folded casually into the now-working sun/moon pass.
+
 ## Handoff note (read this FIRST if picking this up cold)
 
 The feature is code-complete and builds, but is **not visually working**: the raymarch's reconstructed view-space depth reads as pegged-at-far-plane almost everywhere, even pointed at geometry a few meters from the camera (confirmed via debug mode 6, see Round 10/11 below). As of Round 11, the bug has been narrowed to: **`depthMap` IS bound to a real, valid texture channel (channel 0, confirmed via a runtime log), yet `getDepth(pos_screen)` — a direct, unconditional call with no math in between — still reads back `1.0`/far-plane everywhere in that same test.** Every other piece of the chain (shader attachment order, `inv_proj` non-degenerate per debug mode 7, vertex shader UV convention byte-identical to working shaders like `softenLightV.glsl`, texture-unit binding call correctness) has been individually verified correct through static reading. This combination — valid channel, wrong sampled content — could not be resolved further through source reading alone and needs one of:

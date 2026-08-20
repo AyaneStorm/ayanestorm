@@ -80,6 +80,8 @@ public:
     static S32 getDebugMode();
 
 private:
+    static void renderLocalLights(LLPipeline& pipeline);
+
     static bool sSupportChecked;
     static bool sSupported;
     static bool sShadersLoaded;

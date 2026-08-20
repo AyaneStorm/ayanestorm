@@ -30,17 +30,34 @@
 #include "llenvironment.h"
 #include "llgl.h"
 #include "llglslshader.h"
+#include "lllightconstants.h"
 #include "llrender.h"
 #include "llshadermgr.h"
+#include "lldrawable.h"
 #include "llviewercontrol.h"
+#include "llvovolume.h"
 #include "pipeline.h"
+
+#include <algorithm>
+#include <vector>
 
 extern bool gCubeSnapshot;
 
 namespace
 {
 LLGLSLShader gASVolumetricLightProgram;
+LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
+
+constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 8;
+constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
+
+struct LocalLight
+{
+    LLVector4 center_radius;
+    LLVector4 color_falloff;
+    F32 score;
+};
 }
 
 bool ASVolumetricLighting::sSupportChecked = false;
@@ -53,7 +70,7 @@ LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 // hash, which folds this in alongside FSExactOIT::shaderCacheRevision()).
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v4";
+    return "as-volumetric-lighting-v6";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -101,6 +118,20 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
 
     if (success)
     {
+        gASVolumetricLocalLightProgram.unload();
+        gASVolumetricLocalLightProgram.mName = "AS Volumetric Local Light Shader";
+        gASVolumetricLocalLightProgram.mFeatures.isDeferred = true;
+        gASVolumetricLocalLightProgram.clearPermutations();
+        gASVolumetricLocalLightProgram.mShaderFiles.clear();
+        gASVolumetricLocalLightProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+        gASVolumetricLocalLightProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLocalLightF.glsl", GL_FRAGMENT_SHADER));
+        gASVolumetricLocalLightProgram.mShaderLevel = shader_level;
+
+        success = gASVolumetricLocalLightProgram.createShader();
+    }
+
+    if (success)
+    {
         gASVolumetricCompositeProgram.unload();
         gASVolumetricCompositeProgram.mName = "AS Volumetric Composite Shader";
         gASVolumetricCompositeProgram.mFeatures.isDeferred = true;
@@ -116,6 +147,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
     if (!success)
     {
         gASVolumetricLightProgram.unload();
+        gASVolumetricLocalLightProgram.unload();
         gASVolumetricCompositeProgram.unload();
     }
 
@@ -126,6 +158,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
 void ASVolumetricLighting::unloadShaders()
 {
     gASVolumetricLightProgram.unload();
+    gASVolumetricLocalLightProgram.unload();
     gASVolumetricCompositeProgram.unload();
     sShadersLoaded = false;
 }
@@ -160,7 +193,7 @@ S32 ASVolumetricLighting::getSampleCount()
 
 F32 ASVolumetricLighting::getScatterIntensity()
 {
-    static LLCachedControl<F32> intensity(gSavedSettings, "RenderVolumetricLightingIntensity", 0.5f);
+    static LLCachedControl<F32> intensity(gSavedSettings, "RenderVolumetricLightingIntensity", 0.8f);
     return intensity;
 }
 
@@ -177,6 +210,88 @@ S32 ASVolumetricLighting::getDebugMode()
 {
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderVolumetricLightingDebug", 0);
     return debug_mode;
+}
+
+void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
+{
+    static LLCachedControl<bool> enabled(gSavedSettings, "RenderVolumetricLocalLights", false);
+    static LLCachedControl<F32> intensity(gSavedSettings, "RenderVolumetricLocalLightsIntensity", 0.35f);
+    static LLCachedControl<S32> max_lights(gSavedSettings, "RenderVolumetricLocalLightsMaxCount", 8);
+
+    const S32 limit = llclamp((S32)max_lights, 0, MAX_VOLUMETRIC_LOCAL_LIGHTS);
+    if (!enabled || limit == 0 || intensity <= 0.f || getDebugMode() != 0)
+    {
+        return;
+    }
+
+    std::vector<LocalLight> lights;
+    lights.reserve(pipeline.mNearbyLights.size());
+
+    for (LLPipeline::light_set_t::const_iterator iter = pipeline.mNearbyLights.begin();
+         iter != pipeline.mNearbyLights.end(); ++iter)
+    {
+        LLDrawable* drawable = iter->drawable;
+        LLVOVolume* volume = drawable ? drawable->getVOVolume() : nullptr;
+        if (!volume || (volume->isAttachment() && !LLPipeline::sRenderAttachedLights))
+        {
+            continue;
+        }
+
+        F32 radius = volume->getLightRadius() * 1.5f;
+        LLColor3 color = volume->getLightLinearColor();
+        F32 fade = iter->fade >= 0.f ? iter->fade / LIGHT_FADE_TIME
+                                    : 1.f + iter->fade / LIGHT_FADE_TIME;
+        color *= llclamp(fade, 0.f, 1.f);
+        if (radius <= 0.001f || color.magVecSquared() < 0.001f)
+        {
+            continue;
+        }
+
+        LLVector3 center = drawable->getPositionAgent();
+        F32 brightness = color.mV[0] * 0.2126f + color.mV[1] * 0.7152f + color.mV[2] * 0.0722f;
+        F32 score = brightness * radius * radius / (1.f + llmax(iter->dist, 0.f));
+        lights.push_back({ LLVector4(center, radius),
+                           LLVector4(color.mV[0], color.mV[1], color.mV[2],
+                                     volume->getLightFalloff(VOLUMETRIC_LOCAL_LIGHT_FALLOFF)),
+                           score });
+    }
+
+    std::sort(lights.begin(), lights.end(), [](const LocalLight& a, const LocalLight& b)
+    {
+        return a.score > b.score;
+    });
+    if ((S32)lights.size() > limit)
+    {
+        lights.resize(limit);
+    }
+    if (lights.empty())
+    {
+        return;
+    }
+
+    LLVector4 centers[MAX_VOLUMETRIC_LOCAL_LIGHTS];
+    LLVector4 colors[MAX_VOLUMETRIC_LOCAL_LIGHTS];
+    for (S32 i = 0; i < (S32)lights.size(); ++i)
+    {
+        centers[i] = lights[i].center_radius;
+        colors[i] = lights[i].color_falloff;
+    }
+
+    LLGLEnable blend(GL_BLEND);
+    gGL.setSceneBlendType(LLRender::BT_ADD);
+    pipeline.bindDeferredShader(gASVolumetricLocalLightProgram);
+    gASVolumetricLocalLightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
+                                                &pipeline.mRT->deferredScreen, true);
+    gASVolumetricLocalLightProgram.uniform1i(LLStaticHashedString("local_light_count"), (S32)lights.size());
+    gASVolumetricLocalLightProgram.uniform4fv(LLStaticHashedString("local_light"), (S32)lights.size(), centers[0].mV);
+    gASVolumetricLocalLightProgram.uniform4fv(LLStaticHashedString("local_light_color"), (S32)lights.size(), colors[0].mV);
+    gASVolumetricLocalLightProgram.uniform1f(LLStaticHashedString("local_light_intensity"), intensity);
+    gGL.syncMatrices();
+    gGL.setColorMask(true, false);
+    pipeline.mScreenTriangleVB->setBuffer();
+    pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+    gGL.setColorMask(true, true);
+    pipeline.unbindDeferredShader(gASVolumetricLocalLightProgram);
 }
 
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
@@ -234,6 +349,13 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
         sVolumetricTarget.flush();
     }
+
+    // Add the optional, explicitly unshadowed local-light fog contribution.
+    // Sphere/ray intersection in the shader confines work and illumination to
+    // each light volume; the candidate count is bounded in preferences.
+    sVolumetricTarget.bindTarget();
+    renderLocalLights(pipeline);
+    sVolumetricTarget.flush();
 
     // ---- Composite: blend the (low-res) scatter into screen --------------
     // screen is bound as both the render target and (implicitly, via

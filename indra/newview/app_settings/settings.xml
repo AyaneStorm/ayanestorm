@@ -2004,7 +2004,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.5</real>
+      <real>0.8</real>
     </map>
     <key>AudioLevelMaster</key>
     <map>
@@ -13237,6 +13237,45 @@ Change of this parameter will affect the layout of buttons in notification toast
       <string>S32</string>
       <key>Value</key>
       <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLights</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable bounded unshadowed volumetric fog contributions from nearby local lights.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsIntensity</key>
+    <map>
+      <key>Comment</key>
+      <string>Intensity of the optional unshadowed local-light volumetric contribution.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.35</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsMaxCount</key>
+    <map>
+      <key>Comment</key>
+      <string>Maximum scored nearby local lights included in the volumetric pass (0 through 8).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>8</integer>
       <key>Backup</key>
       <integer>0</integer>
     </map>
