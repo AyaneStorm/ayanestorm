@@ -216,6 +216,12 @@ local-light controls follow it as one contiguous subgroup. The main labels now
 say “Enable sun/moon god rays” and “Sun/moon intensity” to distinguish them
 from local-light settings.
 
+The configurable sun/moon intensity ceiling was later raised from `5.0` to
+`8.0` for additional artistic headroom. Its shipped default remains `0.8`.
+Sun/moon intensity now also uses two decimal places and `0.01` increments,
+matching the local-light control and allowing values such as `0.01` through
+direct entry or slider-key adjustment.
+
 This revision was checked against the supplied 494x455 preferences screenshot,
 not inferred solely from XML. The screenshot specifically showed the OIT and
 volumetric rows reading as one uninterrupted list and the volumetric debug row
@@ -233,6 +239,36 @@ eight-light ceiling on the test GPU. Revision `v7` therefore raises the
 configurable hard ceiling and shader arrays from 8 to 32 lights while retaining
 8 as the conservative shipped default. This permits hardware-dependent scaling
 without silently quadrupling the default per-pixel worst-case workload.
+
+### Debug modes 6 and 7 display correction
+
+Later testing again reported mode 6 as white and mode 7 as black. Both were
+expected consequences of poor diagnostic display scaling rather than evidence
+of a new depth failure: perspective device depth clusters extremely close to
+1, while the fixed mid-depth inverse-projection position used by mode 7 can be
+tiny compared with the arbitrary 64-metre display divisor. Revision `v8`
+changes mode 6 to display `clamp((1-depth)*1000)` and mode 7 to display the
+absolute normalized reconstructed direction. Mode 7 uses explicit magenta only
+if inverse projection returns a zero-length vector. Tooltips were updated to
+describe the new encodings.
+
+### Local-light diagnostic modes
+
+Modes 1 through 7 originally did not respond when local lights were toggled
+because local accumulation was deliberately skipped for every nonzero debug
+mode, preserving the directional diagnostics. This separation is now explicit
+rather than implicit. Revision `v9` adds local-only mode 8 (raw local scatter,
+including its intensity and normalization) and mode 9 (grayscale fraction of
+selected local-light spheres intersecting each visible camera ray). Modes 1
+through 7 remain sun/moon-only. Local modes require **Include local lights** to
+be enabled; otherwise their correct result is black.
+
+Mode 7's first normalized-direction test rendered uniformly blue. That was a
+valid result for the chosen screen-center NDC point, whose reconstructed ray is
+almost entirely view-space Z, but it made the diagnostic unnecessarily weak.
+Revision `v10` uses fixed off-center NDC `(0.5, 0.25, 0.0)` so a valid inverse
+projection exercises X, Y, and Z and should display a uniform mixed RGB color.
+Magenta remains the explicit zero-vector failure signal.
 
 Local-light support is feasible but is not a trivial extension of the current
 directional pass. `LLPipeline::renderDeferredLighting()` already gathers,

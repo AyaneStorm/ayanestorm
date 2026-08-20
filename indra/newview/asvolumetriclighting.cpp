@@ -49,7 +49,7 @@ LLGLSLShader gASVolumetricLightProgram;
 LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
 
-constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 32;
+constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 
 struct LocalLight
@@ -70,7 +70,7 @@ LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 // hash, which folds this in alongside FSExactOIT::shaderCacheRevision()).
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v7";
+    return "as-volumetric-lighting-v11";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -219,7 +219,8 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     static LLCachedControl<S32> max_lights(gSavedSettings, "RenderVolumetricLocalLightsMaxCount", 8);
 
     const S32 limit = llclamp((S32)max_lights, 0, MAX_VOLUMETRIC_LOCAL_LIGHTS);
-    if (!enabled || limit == 0 || intensity <= 0.f || getDebugMode() != 0)
+    const S32 debug_mode = getDebugMode();
+    if (!enabled || limit == 0 || intensity <= 0.f || (debug_mode != 0 && debug_mode < 8))
     {
         return;
     }
@@ -286,6 +287,7 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     gASVolumetricLocalLightProgram.uniform4fv(LLStaticHashedString("local_light"), (S32)lights.size(), centers[0].mV);
     gASVolumetricLocalLightProgram.uniform4fv(LLStaticHashedString("local_light_color"), (S32)lights.size(), colors[0].mV);
     gASVolumetricLocalLightProgram.uniform1f(LLStaticHashedString("local_light_intensity"), intensity);
+    gASVolumetricLocalLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
     gGL.syncMatrices();
     gGL.setColorMask(true, false);
     pipeline.mScreenTriangleVB->setBuffer();
@@ -325,27 +327,30 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sVolumetricTarget.bindTarget();
         sVolumetricTarget.clear(GL_COLOR_BUFFER_BIT);
 
-        pipeline.bindDeferredShader(gASVolumetricLightProgram);
+        if (debug_mode < 8)
+        {
+            pipeline.bindDeferredShader(gASVolumetricLightProgram);
 
-        // Bind the shared depth attachment explicitly. This is the same path
-        // used by the working deferred post-process passes and avoids relying
-        // on the generic G-buffer attachment binding for a depth texture.
-        gASVolumetricLightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
-                                               &pipeline.mRT->deferredScreen,
-                                               true);
+            // Bind the shared depth attachment explicitly. This is the same path
+            // used by the working deferred post-process passes and avoids relying
+            // on the generic G-buffer attachment binding for a depth texture.
+            gASVolumetricLightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
+                                                   &pipeline.mRT->deferredScreen,
+                                                   true);
 
-        gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
-        gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
-        gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
-        gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
-        // bindDeferredShader() does not set this; renderDeferredLighting()'s
-        // callers normally do it per-shader (see softenLightF's soften_shader).
-        gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+            gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+            gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
+            // bindDeferredShader() does not set this; renderDeferredLighting()'s
+            // callers normally do it per-shader (see softenLightF's soften_shader).
+            gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
 
-        pipeline.mScreenTriangleVB->setBuffer();
-        pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            pipeline.mScreenTriangleVB->setBuffer();
+            pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-        pipeline.unbindDeferredShader(gASVolumetricLightProgram);
+            pipeline.unbindDeferredShader(gASVolumetricLightProgram);
+        }
 
         sVolumetricTarget.flush();
     }

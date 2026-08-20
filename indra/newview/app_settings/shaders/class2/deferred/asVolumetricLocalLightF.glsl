@@ -14,9 +14,10 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 uniform int local_light_count;
-uniform vec4 local_light[32];       // agent-space xyz, radius in w
-uniform vec4 local_light_color[32]; // linear RGB, legacy falloff in w
+uniform vec4 local_light[64];       // agent-space xyz, radius in w
+uniform vec4 local_light_color[64]; // linear RGB, legacy falloff in w
 uniform float local_light_intensity;
+uniform int debug_mode;
 uniform mat4 modelview_matrix;
 
 vec4 getPosition(vec2 pos_screen);
@@ -25,7 +26,7 @@ const int LOCAL_STEPS = 8;
 // The viewer's local-light colors are scene-radiance values intended for
 // direct surface lighting. Fog integrates that energy over distance, so using
 // it unchanged overwhelms the HDR target even at the bottom of the UI range.
-// Keep the user setting in an artist-friendly 0..2 range and normalize the
+// Keep the user setting in an artist-friendly 0..6 range and normalize the
 // approximation here instead.
 const float LOCAL_SCATTER_RADIANCE_SCALE = 0.02;
 
@@ -35,6 +36,7 @@ void main()
     float scene_distance = min(length(ray_end), 128.0);
     vec3 ray_dir = ray_end / max(length(ray_end), 1e-4);
     vec3 result = vec3(0.0);
+    float volume_hits = 0.0;
 
     for (int light_index = 0; light_index < local_light_count; ++light_index)
     {
@@ -57,6 +59,8 @@ void main()
             continue;
         }
 
+        volume_hits += 1.0;
+
         float step_length = (exit_distance - entry) / float(LOCAL_STEPS);
         float accumulated = 0.0;
         for (int sample_index = 0; sample_index < LOCAL_STEPS; ++sample_index)
@@ -75,5 +79,14 @@ void main()
         result += local_light_color[light_index].rgb * integrated;
     }
 
+    if (debug_mode == 9)
+    {
+        // Fraction of selected light volumes intersecting this visible ray.
+        frag_color = vec4(vec3(volume_hits / max(float(local_light_count), 1.0)), 0.0);
+        return;
+    }
+
+    // Mode 8 reaches this output through replace compositing, exposing only
+    // local scatter. Mode 0 additively combines the same signal normally.
     frag_color = vec4(result * local_light_intensity * LOCAL_SCATTER_RADIANCE_SCALE, 0.0);
 }

@@ -49,11 +49,11 @@ uniform float scatter_asymmetry;
 // scene depth (near geometry = small values/dark, far = larger/brighter,
 // sky = clamped to the MAX_MARCH_DISTANCE cap). 5: output ray_len/128 as
 // grayscale (raw distance, cheaper to read than mode 4's RGB). 6: output the
-// raw linear depth buffer value (getDepth()) as grayscale, before any
+// raw device-depth proximity (1-getDepth), amplified for display, before any
 // inv_proj transform at all - isolates whether the depth buffer read itself
-// is sane (should vary with scene depth, not be flat). 7: output
-// getPositionWithNDC(vec3(0,0,0)) as RGB (abs/64, clamped) - a FIXED NDC
-// point at screen center, mid-depth, independent of pos_screen entirely.
+// varies despite perspective depth clustering near 1. 7: output the absolute
+// normalized direction of getPositionWithNDC(vec3(0.5,0.25,0)) as RGB - a
+// FIXED off-center NDC point at mid-depth, independent of pos_screen entirely.
 // If this differs from what mode 4 shows at screen center, or reads as a
 // suspiciously round/zero value, inv_proj itself (not the depth read or the
 // screen-coordinate math) is the broken link.
@@ -113,14 +113,22 @@ void main()
 
     if (debug_mode == 6)
     {
-        frag_color = vec4(vec3(getDepth(pos_screen)), 1.0);
+        // Perspective device depth is packed extremely close to 1 for most
+        // scene distances. Reverse and amplify it so variation is visible.
+        float depth_proximity = clamp((1.0 - getDepth(pos_screen)) * 1000.0, 0.0, 1.0);
+        frag_color = vec4(vec3(depth_proximity), 1.0);
         return;
     }
 
     if (debug_mode == 7)
     {
-        vec3 fixed_pos = getPositionWithNDC(vec3(0.0, 0.0, 0.0));
-        frag_color = vec4(clamp(abs(fixed_pos) / 64.0, 0.0, 1.0), 1.0);
+        // An off-axis point exercises X/Y as well as Z. Screen-center would
+        // legitimately normalize to almost pure blue and hide those terms.
+        vec3 fixed_pos = getPositionWithNDC(vec3(0.5, 0.25, 0.0));
+        float fixed_length = length(fixed_pos);
+        frag_color = fixed_length > 1e-6
+            ? vec4(abs(fixed_pos / fixed_length), 1.0)
+            : vec4(1.0, 0.0, 1.0, 1.0); // magenta explicitly flags a zero result
         return;
     }
 
