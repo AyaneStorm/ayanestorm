@@ -596,3 +596,425 @@ User tested the corrected bilateral upsample against an avatar and reported a br
 **Decision: reverted the bilateral upsample entirely, back to plain bilinear.** User explicitly stated alpha/transparency-adjacent behavior (hair, OIT/AVBOIT rendering) must not be touched or risked further, given the amount of separate work already invested in getting that correct elsewhere in this codebase - the bilateral upsample's core premise (comparing against the opaque deferred depth buffer, which is fundamentally blind to alpha-blended geometry) could not be fixed by tuning weight constants, since the depth information it needs simply isn't there for hair. Rather than keep iterating blind against a structurally-limited approach, `asVolumetricCompositeF.glsl` was reverted to a single `texture(emissiveRect, vary_fragcoord)` bilinear sample - functionally identical to the pre-bilateral-upsample version. The now-unused C++ side (`asvolumetriclighting.cpp`'s composite section) had its `DEFERRED_DEPTH` bind and `emissiveRectDelta` uniform upload removed as dead code; the `TAM_CLAMP` address-mode fix on `emissiveRect` was kept since it's cheap, harmless, and still technically correct insurance for plain bilinear too.
 
 **Net result:** the depth-aware upsampling quality experiment (added, debugged, and ultimately reverted across this and the two preceding doc entries) is now fully backed out. The composite pass is back to its original, artifact-free plain-bilinear behavior. This is now considered a closed, non-viable direction for this codebase's volumetric pass - do not re-attempt bilateral/depth-aware upsampling here without first solving how to make the comparison alpha-aware (e.g. an alpha-coverage or hair-specific depth/mask input the volumetric pass could consult), which is a larger undertaking than this feature's scope.
+
+### Volumetric/transparency ordering correction
+
+Testing commit `37355c1f7fbba61bfbb0ffc69d3deaaba96b04a0` proved the bright
+hair/window artifact predated the bilateral experiment. Fixed-camera
+enabled/disabled screenshots showed volumetric RGB crossing fine alpha-blended
+hair only with the effect enabled. The original call in `llviewerdisplay.cpp`
+ran after `renderDeferredLighting()` returned, but that function had already
+rendered non-deferred alpha geometry and dispatched Standard alpha, Exact OIT,
+or AVBOIT. The additive composite therefore treated all volumetric light as if
+it were in front of every transparent fragment.
+
+The pass now runs inside `LLPipeline::renderDeferredLighting()`, after opaque
+deferred/local lighting and immediately before non-deferred transparency.
+Transparency consequently composites over and attenuates the volumetric
+result. Because `ASVolumetricLighting::renderPass()` flushes `mRT->screen`, the
+pipeline explicitly rebinds `screen_target` before continuing. The obsolete
+post-`renderDeferredLighting()` call and include were removed from
+`llviewerdisplay.cpp`. Plain-bilinear upsampling and shader revision `v13` are
+unchanged.
+
+This remains an approximation: all volumetric scatter is treated as behind
+transparent surfaces rather than split in front of and behind each fragment.
+That is preferable to the previous opposite approximation, which painted all
+scatter over hair and glass. Rebuild and repeat the supplied fixed-camera hair
+comparison in Standard, Exact OIT, and AVBOIT modes.
+
+The first build of this ordering change reached the world but left the login
+loading overlay visible. The log contained no shader or GL failure. Static
+inspection found a definite render-target stack error: `mRT->screen` was
+already bound at the insertion point, while `renderPass()` binds it for its
+composite, and the pipeline then bound it again. `LLRenderTarget::bindTarget()`
+explicitly forbids a target already present in its stack; the self-nesting left
+later UI rendering on the wrong framebuffer. The call site now uses the
+balanced sequence `screen_target->flush()`, volumetric `renderPass()`, then
+`screen_target->bindTarget()`. The existing final flush after transparency
+pops that single restored binding normally.
+
+The next outdoor test fixed hair but showed a horizontal band of small black
+alpha sprites/fragments. Moving the pass exposed a concrete texture-state leak:
+the composite bound `sVolumetricTarget` as `DEFERRED_EMISSIVE` but never unbound
+it, which was harmless only while volumetrics was the final scene draw. The
+composite now explicitly calls `unbindTexture(DEFERRED_EMISSIVE)` before shader
+unbind, matching the cleanup already used by Exact OIT and AVBOIT resolve
+passes. This is C++ state hygiene only; shader revision remains `v13`. Retest
+the same outdoor view in the active transparency mode before investigating
+texture content or blend semantics further.
+
+Additional high-intensity outdoor evidence corrected that provisional
+diagnosis. The screenshot shows water consistently retaining its dark green
+surface color while the volumetric layer brightens the world behind it, plus
+distant alpha foliage appearing as black cutouts and becoming normal when the
+camera zoom changes its alpha/LOD representation. These are coherent
+transparency exclusions, not random texture corruption. The explicit texture
+unbind remains required state hygiene, but cannot fix this visual result.
+
+Moving the entire volumetric composite before transparency solved hair because
+hair now attenuates the volumetric background. The same approximation also
+forces water and nearly opaque distant foliage to attenuate **all** volumetric
+scatter, including fog that should physically lie between those surfaces and
+the camera. The former post-OIT placement made the opposite error by placing
+all scatter in front. Neither single ordering can be correct without a
+transparent-fragment depth/transmittance-aware split.
+
+A pragmatic next experiment should reuse one raymarch target but split its
+composite energy between pre- and post-transparency stages (for example, most
+before transparency and a small configurable fraction after it). Opaque pixels
+still receive the same total energy; transparent water/foliage retain some
+foreground fog; hair no longer receives the full post-pass glow. This remains
+heuristic but is substantially cheaper and less invasive than adding
+volumetric integration to every Standard alpha, Exact OIT, and AVBOIT shader.
+Do not implement or tune the split from this extreme-intensity screenshot
+alone; first choose a conservative post fraction and compare normal-intensity
+hair, water, and foliage in all three transparency modes.
+
+A closer screenshot then showed a large tree and smoke particles remaining
+dark at every distance, confirming that the all-before ordering—not only
+foliage LOD—caused the exclusions. An 80/20 pre/post composite split was
+proposed and briefly implemented but explicitly rejected as an unacceptable
+artistic fudge; it and its development setting were removed before testing.
+
+The exact reason for the black appearance is now clear. The pre-transparency
+volumetric target contains the complete camera-to-opaque-depth scatter
+integral. Standard alpha/OIT then blends dark foliage, smoke, or water over
+that bright background, correctly attenuating the part behind the transparent
+fragment, but there is no separate contribution for fog between the camera and
+the transparent fragment. At extreme intensity this missing foreground
+integral makes transparent surfaces read as hard dark cutouts.
+
+A principled solution needs depth-resolved volumetric information at
+transparent-fragment depth. The least invasive serious design is to retain the
+pre-transparency full integral, capture a nearest-transparent-depth buffer for
+Standard alpha, Exact OIT, and AVBOIT, then perform a second half-resolution
+raymarch after transparency limited to that nearest depth and add only the
+camera-to-transparent-surface foreground integral. Multiple transparent layers
+would still be approximate, but the dominant front layer, hair, water,
+foliage, and particles would receive geometrically derived foreground fog
+rather than a fixed percentage. Implementing this requires a common auxiliary
+depth output across all three transparency paths and must be designed with OIT
+owners rather than patched into blend constants.
+
+### Visual-priority alternative: avatar-alpha protection mask
+
+If the desired result is specifically the original attractive post-transparency
+fog over water, smoke, and foliage while preventing hair glow, a narrower and
+cheaper alternative exists. Restore the volumetric composite after
+transparency, but populate a screen-space coverage mask while rendering
+rigged/avatar alpha. The final volumetric composite multiplies scatter by
+`1 - avatar_alpha_coverage`, so hair and other avatar alpha attenuate the
+otherwise post-composited fog while environmental transparency keeps the old
+look.
+
+The viewer cannot reliably classify a material as “hair”; the practical scope
+is all rigged/avatar alpha, including some clothing and accessories. The mask
+must be populated consistently by Standard alpha, Exact OIT, and AVBOIT paths
+(and by Standard alpha on macOS), preserve fractional coverage rather than a
+binary silhouette, and be cleared every frame. This is not physically complete
+and deliberately prioritizes the requested visual result, but unlike a global
+80/20 energy split it is spatially tied to the pixels exhibiting the regression
+and leaves water, smoke, and foliage unchanged from the original appearance.
+
+### Implemented visual-priority solution: OIT rigged-alpha depth endpoint
+
+The user selected the original post-transparency appearance as the required
+baseline: water, foliage, smoke, and glass must retain the attractive
+volumetric overlay, while avatar hair must not reveal the full scatter integral
+to the opaque scenery behind it.
+
+Source inspection found a narrower input already available without adding a
+new coverage render target. Standard alpha deliberately renders rigged alpha
+first with depth writes enabled. Exact OIT and AVBOIT, however, deliberately
+disable ordinary depth writes while capturing their fragments, so the deferred
+depth sampled by the volumetric raymarch still points through hair/clothing to
+the opaque wall, window, or sky behind it.
+
+The implementation now restores the original post-transparency volumetric
+placement inside `LLPipeline::renderDeferredLighting()`. After the active OIT
+renderer resolves, `ASVolumetricLighting::renderRiggedDepthForPostEffects()`
+re-submits only the post-water rigged-alpha draw map with color and blending
+disabled and depth writes enabled. It reuses the ordinary alpha/material
+shaders prepared by the pool traversal, preserving their texture alpha tests.
+The volumetric pass then reads this shared depth and stops its camera ray at
+avatar hair/clothing instead of integrating through to the opaque background.
+Standard mode needs no extra traversal because its existing rigged pass already
+writes that depth. Environmental transparency is intentionally absent from
+this guide and therefore keeps the previous post-composite look.
+
+While adding the guide, the original `depth_only` guard around emissive redraws
+was restored. The OIT routing refactor had left the dispatcher call unconditional
+when capture was inactive, causing DoF or post-effect depth traversals to submit
+glow batches despite color writes being masked. Depth-only traversal now skips
+those redraws as intended.
+
+The depth-guide implementation and GL state live in the AS-owned
+`asvolumetriclighting` module. The upstream/shared alpha pool exposes no new
+feature-specific method; its only functional edit is the restored one-line
+`depth_only` emissive guard. The pipeline retains only the scheduling call.
+
+This is a visual-priority, avatar-scoped solution rather than a physically
+complete multi-layer volumetric/transparency integrator. Its expected result is
+geometrically better than a binary coverage mask: the camera-to-hair foreground
+portion of the ray remains visible, while the much larger hair-to-background
+portion is excluded. It applies to all rigged alpha (including translucent
+clothing/accessories), because the renderer has no reliable semantic “hair”
+classification. No shader-cache revision was bumped.
+
+**Required runtime verification:** clear the shader cache, build, and use the
+same fixed camera/high-intensity scene. In Exact OIT first, confirm (1) hair no
+longer shows the window streak, (2) water, smoke, and distant foliage match the
+old attractive post-pass behavior, and (3) no loading-overlay/render-target
+regression. Then repeat hair in AVBOIT and Standard. Pay particular attention
+to partially transparent rigged clothing: it will currently create the same
+alpha-tested depth endpoint as hair, matching Standard's longstanding rigged
+depth behavior rather than preserving fractional transmittance.
+
+**Runtime result, corrected after direct enabled/disabled comparison:** outdoor
+transparency is visually correct again. Avatar hair is not itself being
+darkened: the pixels inside the marked hair region are effectively identical
+to rendering with volumetrics disabled. It *appears* much darker because the
+surrounding sky and scene receive strong scatter while the rigged-depth guide
+limits hair pixels to only the short camera-to-hair integral. Against a bright
+window the contrast is smaller, explaining why that case looks slightly better.
+
+The real missing term is volumetric scatter behind the fractionally transparent
+hair, attenuated by the hair's resolved transmittance. If `Vfull` is the full
+camera-to-opaque-depth integral, `Vfront` is the camera-to-hair-depth integral,
+and `T` is the OIT/alpha transmittance through hair, the desired contribution is
+approximately `Vfront + T * (Vfull - Vfront)`. The current depth-guide result is
+only `Vfront`; the original post-pass result was only `Vfull`. This is contrast
+from a missing transmitted contribution, not destructive RGB darkening.
+
+The cancelled depth-aware/bilateral half-resolution upsample cannot solve this.
+It only chooses scatter samples using opaque deferred-depth similarity during
+the final half-resolution upsample. It neither captures avatar-alpha coverage
+nor restores fractional OIT transmittance; previous testing also showed that
+its opaque-depth assumptions introduced the original hair silhouette streak.
+Do not restore it for this regression.
+
+The depth endpoint remains useful as `Vfront`, but is insufficient alone.
+Keeping the correct outdoor post-transparency placement requires a fractional
+avatar coverage/transmittance input so the composite can interpolate between
+`Vfront` and `Vfull`. The next viable direction is the AS-owned coverage target
+described above, populated consistently by Standard, Exact OIT, and AVBOIT (or
+derived from each OIT renderer's resolved transmittance where available).
+
+### Depth-resolved transparency implementation (in progress)
+
+The final design does not use an avatar mask or special-case hair. The normal
+far-to-near alpha equation supplies the correct multi-layer result if the full
+camera-to-opaque integral is already behind transparency and every transparent
+source color includes the cumulative camera-to-that-fragment integral. For two
+or more layers, ordinary recursive alpha blending expands to the correct
+piecewise volumetric segments automatically.
+
+To avoid raymarching separately for every transparent fragment, the AS module
+now builds a screen-sized 4x4 atlas containing 16 cumulative depth slices. Each
+tile is quarter resolution; total storage is therefore one full-resolution
+RGBA16F texture. Slice distances use a quadratic distribution over the existing
+128 m march range, concentrating precision near avatars and nearby geometry.
+Transparent shaders derive their view-space distance, interpolate the adjacent
+atlas tiles, and add that foreground scatter to their straight source RGB.
+
+`alphaF.glsl`, `pbralphaF.glsl`, and the alpha permutation of
+`fullbrightF.glsl` contain the shared sampling operation. These same sources are
+compiled for Standard, Exact OIT, and AVBOIT, so both OIT implementations retain
+their existing capture/resolve algorithms and node formats. Atlas allocation,
+generation, and texture binding live in `asvolumetriclighting`; the shared alpha
+pool has only one AS binding call in its existing shader-preparation function.
+The temporary rigged-depth endpoint was removed. The full volumetric composite
+again runs immediately before transparency with a balanced screen-target
+flush/bind sequence.
+
+This implementation is **not ready for a user build yet**. Directional
+sun/moon scatter is wired, but the atlas must still incorporate optional local
+lights, and transparent water/any alpha shader outside the three common alpha
+families must be audited and hooked before claiming consistent rendering.
+Static shader/API review and `git diff --check` are also required after those
+paths are complete. Shader revision remains unchanged during development.
+
+**First atlas runtime result:** the directional debug modes remained
+scene-shaped and mode 7 remained finite/green, so the established depth and
+inverse-projection path did not regress. Mode 0 instead painted a repeated
+orange material texture across alpha hair and produced green fragments on
+distant transparent geometry. This is texture-unit aliasing, not scatter: the
+atlas was bound during `prepare_alpha_shader()`, after which preparation of
+other shaders and normal per-material texture setup reused the unit. At draw
+time `asVolumetricAtlas` therefore sampled whichever diffuse/material texture
+was left on that channel.
+
+The alpha traversal now rebinds the AS atlas immediately after each actual
+PBR or ordinary alpha shader switch, before that draw's material submission.
+The preparation-time bind remains responsible for initializing the enabled
+uniform, while the draw-time bind guarantees the sampler sees the atlas rather
+than stale material state. All additions to `lldrawpoolalpha.cpp` and shared
+shader sources are enclosed in ownership tags; shader revision remains `v13`.
+
+**Correction after retest:** draw-time rebinding made no visual difference.
+Inspection of `LLGLSLShader` found the deeper API mismatch. Custom uniforms are
+recorded in `mUniformMap`, but custom samplers are not assigned entries in the
+reserved `mTexture` table. The string render-target `bindTexture()` overload
+looks up a raw OpenGL uniform location and forwards that integer to
+`bindTexture(S32)`, which interprets it as a reserved-uniform index. It therefore
+binds an unrelated mapped texture channel; repeating that call cannot repair
+the alias.
+
+`bindTransparencyAtlas()` now handles this custom sampler explicitly. It uses
+`shader.mActiveTextureChannels` (the first channel after every sampler mapped by
+the shader), assigns that channel to `asVolumetricAtlas` via `glUniform1i`, and
+binds the AS render-target texture manually with bilinear filtering and clamp
+addressing. This avoids modifying the global reserved-uniform enumeration and
+keeps the implementation in the AS module. Retest mode 0; the previous
+draw-time call sites remain useful because they restore this explicit binding
+after later shader preparation changes texture state.
+
+**Explicit binding retest:** the orange/green foreign-texture pattern is gone,
+confirming that the atlas sampler now reads the intended AS target. Hair and
+some distant alpha objects instead receive an excessive pale blue-white
+foreground contribution. This is real atlas content, not another material map.
+Do not tune intensity yet: the atlas slice values/mapping must be inspected.
+
+Mode 2/3 showed broad horizontal bands. Atlas sampling is disabled whenever
+debug mode is nonzero, so these cannot be the 16 atlas depth slices. An initial
+diagnosis attributed them entirely to transparent avatar layers composited over
+the extreme replacement image. The user correctly observed that the bands also
+continue through the surrounding scene, disproving that explanation as the sole
+cause. They are directional raymarch/shadow-sampling structure—likely sparse
+fixed-step sampling amplified by raw occlusion/visibility display, with shadow
+cascade transitions also a possible contributor. Transparency can make them
+more conspicuous on the avatar, but does not create the scene-wide bands.
+
+Therefore the bands are a real diagnostic signal/quality issue, although raw
+binary-like modes 2 and 3 exaggerate them compared with mode 0's colored,
+half-resolution, bilinearly upsampled result. They are independent of the new
+transparency atlas and should be addressed separately after mode-0 transparency
+composition is stable (e.g. temporally varying/stable blue-noise sampling or a
+better-integrated sample distribution, with cascade-boundary checks).
+
+The user counted approximately 16 horizontal bands regardless of camera zoom.
+This strongly identifies sample quantization rather than the four shadow
+cascades: the active directional march uses 16 samples, and modes 2/3 display
+the arithmetic mean of mostly binary shadow comparisons. Such a mean has only
+17 possible levels (`0/16` through `16/16`), naturally forming roughly 16
+contours. Per-pixel jitter moves where samples land but does not increase the
+number of possible mean values. This is expected for the current diagnostic
+estimator, but also documents a real low-sample quality ceiling. Mode 0 hides it
+with colored scaling, spatial jitter, half-resolution rendering, and bilinear
+upsampling; eliminating it rather than hiding it requires more samples,
+temporal accumulation, or filtering the visibility estimate—not cascade tuning.
+
+The atlas debug mode was briefly removed after concern about proliferating
+diagnostics, then restored as mode 10 after the user clarified that modes are
+welcome when genuinely useful. Mode 10 directly displays the 4x4 cumulative
+atlas (near-to-far, left-to-right then top-to-bottom), uniquely separating bad
+slice generation from bad sampling in transparent shaders. Do not add further
+modes without an equally specific diagnostic question. No shader revision bump
+during development.
+
+The first XUI edit accidentally matched the earlier Exact OIT spinner: it raised
+Exact OIT's maximum to 10 while leaving the volumetric spinner at 9, even though
+the volumetric tooltip documented mode 10. Corrected with control-specific
+context: Exact OIT is again capped at 9 and volumetric lighting is capped at 10.
+
+The first mode-10 capture appeared almost uniformly pale blue, with ordinary
+transparent scene fragments subsequently drawn over it. HDR exposure flattened
+the small raw floating-point atlas values, so this display could not reveal
+slice magnitude or even make tile boundaries reliable. Mode 10 now asks the
+atlas shader for exposure-resistant false color: red stores raw scatter, green
+stores 16x scatter, blue stores 256x scatter, all clamped; thin red tile borders
+make the 4x4 layout explicit. Near slices should start predominantly blue and
+progress smoothly toward cyan/white. This changes diagnostic output only;
+mode-0 atlas RGB remains the physical light-colored scatter.
+
+The false-color capture exposed a definite generation error: atlas brightness
+was not monotonic; later/farther tiles, notably the final row, became darker.
+The former implementation gave every slice the same small sample count spread
+over that slice's entire camera interval. Those independent estimates did not
+share samples, so a far slice could miss a lit near region counted by an earlier
+slice and report a smaller value—mathematically impossible for cumulative
+nonnegative scattering and the direct cause of inconsistent hair/distant-alpha
+foreground values.
+
+Atlas generation now integrates the 16 quadratic depth segments explicitly.
+Slice N recomputes the identical segments `0..N` with a stable per-screen-ray,
+per-segment jitter; slice N+1 contains those same nonnegative terms plus exactly
+one new segment. Scatter is derived from the accumulated visibility-distance
+integral divided by the common 128 m normalization. This guarantees monotonic
+cumulative values by construction, removes the obsolete atlas `sample_count`,
+and costs an average 8.5 shadow samples per atlas pixel (the whole 4x4 atlas is
+one screen's worth of pixels). Mode 0 and mode 10 require retesting; no shader
+revision bump during development.
+
+The next mode-10 capture supports the cumulative fix. The display order had
+been documented backwards because OpenGL texture origin is bottom-left: slices
+0..3 are the bottom row, then progression moves upward. The XUI tooltip now
+states the correct order. A later viewpoint corrected an imprecise description
+that entire tiles should become “progressively brighter cyan.” The actual
+invariant is per corresponding local pixel/ray: its encoded cumulative scatter
+must not decrease in later slices. Shadowed rays may remain black across several
+slices, while newly encountered lit segments add spatially structured blue/cyan
+regions. Whole-tile average color and uniform cyan brightness are not required.
+Normal transparent geometry is also drawn after the diagnostic and must not be
+mistaken for atlas contents.
+
+Mode 0 is substantially improved: avatar hair no longer receives the extreme
+white-blue atlas value. Remaining black and colored distant fragments are
+shader-coverage gaps. In particular, blended legacy materials use class-3
+`materialF.glsl`, which precomposited full background scatter but lacked the
+camera-to-fragment atlas term already present in alpha/PBR/fullbright alpha.
+Added the same tagged cumulative sampling hook to the blend-only branch.
+Standard and Exact OIT add it directly to source RGB; AVBOIT adds it after its
+legacy specular-glare rescaling so glare cannot incorrectly amplify foreground
+fog. Specialized transparency and local-light atlas coverage still require the
+planned audit.
+
+**Fullbright coverage finding:** after the legacy-material hook, the remaining
+runtime defects are concentrated on distant saturated windows, signs, flags,
+and small colored objects. The post-deferred ordering confirms these are
+consistent with fullbright geometry rather than another atlas-generation
+failure. Both `POOL_FULLBRIGHT` and `POOL_FULLBRIGHT_ALPHA_MASK` render after
+the full volumetric composite, but `fullbrightF.glsl` previously added the
+camera-to-fragment integral only for its `IS_ALPHA` permutation, and the two
+fullbright pools did not bind the atlas at all. Consequently ordinary and
+alpha-masked fullbright surfaces overwrote the fogged background with their
+unmodified saturated color.
+
+The cumulative foreground term now applies to every non-HUD fullbright
+permutation, and the ordinary/alpha-mask pools bind the atlas after selecting
+each static or rigged shader variant. HUD rendering remains excluded. The glow
+pass is deliberately untouched: it is an additive bloom contribution layered
+on an already-rendered surface, so adding foreground scatter there would count
+the same fog a second time. Retest the previously boxed flag, windows, and signs
+in mode 0; no shader-cache revision bump was made during development.
+
+### Opaque silhouette aliasing after the depth-resolved redesign
+
+A close avatar capture shows visible one-pixel staircase teeth along both outer
+shoulders only while volumetric lighting is enabled. The underlying avatar is
+smooth without the effect. This identifies the half-resolution volumetric
+composite as reintroducing a low-resolution opaque/background boundary; it is
+not aliasing in the avatar mesh or material.
+
+The earlier bilateral experiment was invalid in the old architecture because
+it ran against already-rendered transparent hair while deferred depth could
+only describe the opaque surface behind that hair. The current architecture
+changes that premise: the full volumetric field is composited against opaque
+depth first, and transparent hair is rendered afterward with its independently
+depth-resolved atlas contribution. Deferred depth is therefore an appropriate
+guide at the opaque composite stage now.
+
+Mode 0 again uses a four-tap depth-aware upsample, while every diagnostic mode
+retains its unmodified plain texture sample. This implementation avoids the old
+unbounded reciprocal weighting and nonlinear raw-device-depth epsilon. It
+reconstructs view-space Z for the full-resolution destination and four
+half-resolution source centers, weights the normal bilinear footprint by a
+bounded exponential of relative view-depth difference, and normalizes the
+result. Relative depth makes the rejection behave consistently for nearby and
+distant silhouettes. The composite program now binds deferred depth and
+receives the actual selected source texture size. If a subpixel opaque feature
+has no depth-compatible half-resolution tap, the shader explicitly falls back
+to the former bilinear sample rather than normalizing negligible weights into a
+black pinhole. Retest shoulders, hair against sky/windows, foliage, and thin
+distant geometry; no shader revision bump was made.

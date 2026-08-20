@@ -9876,6 +9876,14 @@ void LLPipeline::renderDeferredLighting()
         gGL.setColorMask(true, true);
     }
 
+// <AS:Chanayane> Composite the full opaque-depth integral first. Transparent
+// shaders add their camera-to-fragment cumulative atlas sample to the source
+// color, so ordinary blending supplies the correct depth-resolved split.
+    screen_target->flush();
+    ASVolumetricLighting::renderPass(*this, mRT->screen);
+    screen_target->bindTarget();
+// </AS:Chanayane>
+
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 

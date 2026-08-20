@@ -46,6 +46,30 @@ in vec3 vary_position;
 in vec4 vertex_color;
 in vec2 vary_texcoord0;
 
+// <AS:Chanayane> Cumulative foreground scatter for alpha transparency.
+uniform vec2 screen_res;
+uniform sampler2D asVolumetricAtlas;
+uniform int asVolumetricEnabled;
+
+vec3 asVolumetricForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return vec3(0.0);
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    vec3 hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    if (upper <= 0.0) return hi * clamp(coordinate, 0.0, 1.0);
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    return mix(lo, hi, weight);
+}
+// </AS:Chanayane>
+
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cl);
 
@@ -124,6 +148,14 @@ void main()
 #endif
 
 #endif
+
+// <AS:Chanayane> Add camera-to-fragment scatter to every non-HUD fullbright
+// path because blended and alpha-masked/opaque fullbright render after the
+// full volumetric composite.
+#if !defined(IS_HUD)
+    color.rgb += asVolumetricForeground(pos);
+#endif
+// </AS:Chanayane>
 
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(color, vec4(0));

@@ -48,6 +48,7 @@ namespace
 LLGLSLShader gASVolumetricLightProgram;
 LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
+LLGLSLShader gASVolumetricAtlasProgram;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
@@ -64,6 +65,7 @@ bool ASVolumetricLighting::sSupportChecked = false;
 bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
+LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
 // FSExactOIT's revision. During active development the shader cache is cleared
@@ -133,6 +135,20 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
 
     if (success)
     {
+        gASVolumetricAtlasProgram.unload();
+        gASVolumetricAtlasProgram.mName = "AS Volumetric Transparency Atlas Shader";
+        gASVolumetricAtlasProgram.mFeatures.isDeferred = true;
+        gASVolumetricAtlasProgram.mFeatures.hasShadows = true;
+        gASVolumetricAtlasProgram.clearPermutations();
+        gASVolumetricAtlasProgram.mShaderFiles.clear();
+        gASVolumetricAtlasProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+        gASVolumetricAtlasProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricAtlasF.glsl", GL_FRAGMENT_SHADER));
+        gASVolumetricAtlasProgram.mShaderLevel = shader_level;
+        success = gASVolumetricAtlasProgram.createShader();
+    }
+
+    if (success)
+    {
         gASVolumetricCompositeProgram.unload();
         gASVolumetricCompositeProgram.mName = "AS Volumetric Composite Shader";
         gASVolumetricCompositeProgram.mFeatures.isDeferred = true;
@@ -149,6 +165,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
     {
         gASVolumetricLightProgram.unload();
         gASVolumetricLocalLightProgram.unload();
+        gASVolumetricAtlasProgram.unload();
         gASVolumetricCompositeProgram.unload();
     }
 
@@ -160,6 +177,7 @@ void ASVolumetricLighting::unloadShaders()
 {
     gASVolumetricLightProgram.unload();
     gASVolumetricLocalLightProgram.unload();
+    gASVolumetricAtlasProgram.unload();
     gASVolumetricCompositeProgram.unload();
     sShadersLoaded = false;
 }
@@ -177,11 +195,40 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
     U32 target_height = llmax((U32)1, height / 2);
 
     sVolumetricTarget.allocate(target_width, target_height, GL_RGBA16F);
+    sTransparencyAtlas.allocate(llmax((U32)4, width), llmax((U32)4, height), GL_RGBA16F);
 }
 
 void ASVolumetricLighting::releaseResources()
 {
     sVolumetricTarget.release();
+    sTransparencyAtlas.release();
+}
+
+void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
+{
+    static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
+    static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
+    const bool enabled = isEnabled() && getDebugMode() == 0 && sShadersLoaded &&
+        sTransparencyAtlas.isComplete();
+    shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
+    if (enabled)
+    {
+        // Custom samplers are present in mUniformMap but not in the reserved
+        // mTexture table used by LLGLSLShader::bindTexture(). Assign the first
+        // channel after all shader-mapped samplers explicitly; passing a raw
+        // GL location to bindTexture(S32) would misinterpret it as a reserved
+        // uniform index and bind an unrelated material texture.
+        const S32 location = shader.getUniformLocation(atlas_sampler);
+        const S32 channel = shader.mActiveTextureChannels;
+        if (location > -1 && channel < gGLManager.mNumTextureImageUnits)
+        {
+            glUniform1i(location, channel);
+            gGL.getTexUnit(channel)->bindManual(sTransparencyAtlas.getUsage(),
+                                                sTransparencyAtlas.getTexture(0));
+            gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+            gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        }
+    }
 }
 
 S32 ASVolumetricLighting::getSampleCount()
@@ -304,7 +351,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         return;
     }
 
-    if (!sVolumetricTarget.isComplete())
+    if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())
     {
         return;
     }
@@ -356,6 +403,24 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sVolumetricTarget.flush();
     }
 
+    // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas. Each tile
+    // is quarter resolution, so the complete atlas occupies one screen-sized
+    // RGBA16F texture and is trilinearly reconstructed by transparent shaders.
+    {
+        LLGLDisable blend(GL_BLEND);
+        sTransparencyAtlas.bindTarget();
+        sTransparencyAtlas.clear(GL_COLOR_BUFFER_BIT);
+        pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
+        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+        gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
+        gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+        pipeline.mScreenTriangleVB->setBuffer();
+        pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        pipeline.unbindDeferredShader(gASVolumetricAtlasProgram);
+        sTransparencyAtlas.flush();
+    }
+
     // Add the optional, explicitly unshadowed local-light fog contribution.
     // Sphere/ray intersection in the shader confines work and illumination to
     // each light volume; the candidate count is bounded in preferences.
@@ -383,11 +448,27 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     {
         // Clamp explicitly rather than assume this render target's default
         // wrap mode is clamp-to-edge.
-        S32 emissive_channel = gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sVolumetricTarget);
+        LLRenderTarget* composite_source = debug_mode == 10 ?
+            &sTransparencyAtlas : &sVolumetricTarget;
+        S32 emissive_channel = gASVolumetricCompositeProgram.bindTexture(
+            LLShaderMgr::DEFERRED_EMISSIVE, composite_source);
         if (emissive_channel > -1)
         {
             gGL.getTexUnit(emissive_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
+
+        // The normal half-resolution composite uses full-resolution opaque
+        // depth to avoid enlarging its silhouette edges into visible stairs.
+        // Diagnostic modes remain plain samples so their output is unchanged.
+        gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
+                                                   &pipeline.mRT->deferredScreen,
+                                                   true);
+        gASVolumetricCompositeProgram.uniform2f(
+            LLStaticHashedString("emissiveRectDelta"),
+            1.f / (F32)composite_source->getWidth(),
+            1.f / (F32)composite_source->getHeight());
+        gASVolumetricCompositeProgram.uniform1i(
+            LLStaticHashedString("depthAwareUpsample"), debug_mode == 0 ? 1 : 0);
     }
 
     {
@@ -403,6 +484,9 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         gGL.setColorMask(true, true);
     }
 
+    // Do not leak the temporary scatter texture binding into later rendering.
+    gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
+    gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     gASVolumetricCompositeProgram.unbind();
 
     screen.flush();

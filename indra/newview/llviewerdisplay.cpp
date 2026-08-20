@@ -30,9 +30,6 @@
 
 #include "fsoitdispatcher.h"
 #include "fsyspath.h"
-// <AS:Chanayane> Optional volumetric lighting runs while deferred depth is still valid.
-#include "asvolumetriclighting.h"
-// </AS:Chanayane>
 #include "hexdump.h"
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -1175,11 +1172,6 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         if (LLPipeline::sRenderDeferred)
         {
             gPipeline.renderDeferredLighting();
-
-            // <AS:Chanayane> Consume the G-buffer before later frame work can
-            // clear or repurpose its shared depth attachment.
-            ASVolumetricLighting::renderPass(gPipeline, gPipeline.mRT->screen);
-            // </AS:Chanayane>
         }
 
         LLPipeline::sUnderWaterRender = false;

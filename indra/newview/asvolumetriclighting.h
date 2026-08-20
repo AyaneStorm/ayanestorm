@@ -29,6 +29,7 @@
 #include "llrendertarget.h"
 
 class LLPipeline;
+class LLGLSLShader;
 
 // Raymarched sun/moon god-ray pass. Reuses the existing cascaded shadow maps
 // and G-buffer, so it costs nothing beyond an extra half-res raymarch and
@@ -60,12 +61,15 @@ public:
     static void releaseResources();
 
     // Raymarches sun/moon illumination into a half-res target, then
-    // additively composites the upsampled result into `screen`. Call directly
-    // after LLPipeline::renderDeferredLighting(), while the shared deferred
-    // depth attachment still contains the current scene. The result remains
-    // in `screen` for the later HDR/tonemap pass. No-ops internally when
-    // !isEnabled() or during cube snapshots.
+    // additively composites the upsampled result into `screen`. Call from
+    // LLPipeline::renderDeferredLighting() after transparency/OIT and after
+    // restoring any required rigged-alpha depth. The caller must flush an
+    // already-bound `screen` first; render targets cannot nest themselves.
+    // No-ops internally when !isEnabled() or during cube snapshots.
     static void renderPass(LLPipeline& pipeline, LLRenderTarget& screen);
+
+    // Bind the cumulative depth atlas used by transparent material shaders.
+    static void bindTransparencyAtlas(LLGLSLShader& shader);
 
     static S32 getSampleCount();
     static F32 getScatterIntensity();
@@ -87,6 +91,7 @@ private:
     static bool sShadersLoaded;
 
     static LLRenderTarget sVolumetricTarget;
+    static LLRenderTarget sTransparencyAtlas;
 };
 
 #endif // AS_VOLUMETRICLIGHTING_H

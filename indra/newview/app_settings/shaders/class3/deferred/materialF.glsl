@@ -95,6 +95,29 @@ uniform mat4 proj_mat;
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
 
+// <AS:Chanayane> Cumulative foreground scatter for blended legacy materials.
+uniform sampler2D asVolumetricAtlas;
+uniform int asVolumetricEnabled;
+
+vec3 asVolumetricForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return vec3(0.0);
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    vec3 hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    if (upper <= 0.0) return hi * clamp(coordinate, 0.0, 1.0);
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    return mix(lo, hi, weight);
+}
+// </AS:Chanayane>
+
 uniform vec4 light_position[8];
 uniform vec3 light_direction[8];
 uniform vec4 light_attenuation[8];
@@ -461,8 +484,9 @@ void main()
         final_scale = 1.1;
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color * final_scale, al), vec4(0));
+    vec3 volumetric_foreground = asVolumetricForeground(pos.xyz);
 #ifdef EXACT_OIT
-    exact_oit_store(max(vec4(color * final_scale, al), vec4(0)));
+    exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
 #elif defined(AVBOIT)
     // Specular glare is a single-blend presentation trick that raises output
     // alpha so highlights read as solid. It is not a physical opacity. Feeding
@@ -480,9 +504,10 @@ void main()
         // unclamped scale would turn nearly transparent glare into fireflies.
         avboit_color *= min(al / avboit_alpha, 4.0);
     }
+    avboit_color += volumetric_foreground;
     avboit_store(max(vec4(avboit_color, avboit_alpha), vec4(0)));
 #else
-    frag_color = max(vec4(color * final_scale, al), vec4(0));
+    frag_color = max(vec4(color * final_scale + volumetric_foreground, al), vec4(0));
 #endif
 // </AS:Chanayane>
 
