@@ -96,6 +96,7 @@ set(viewer_SOURCE_FILES
     asfloaterrecentpeople.cpp
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
+    asvolumetriclighting.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -963,6 +964,7 @@ set(viewer_HEADER_FILES
     asfloaterrecentpeople.h
     aspanelprefsayanestorm.h
     asstreamkeeper.h
+    asvolumetriclighting.h
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h

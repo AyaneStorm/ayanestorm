@@ -105,6 +105,51 @@
           name="avboit"
           value="2" />
       </combo_box>
+
+      <!-- [AS:Chanayane] Optional volumetric lighting -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="RenderVolumetricLighting"
+        enabled_control="RenderShadowDetail"
+        label="Volumetric lighting (god rays)"
+        tool_tip="If checked, renders raymarched sun/moon light shafts through shadowed geometry. Requires Shadows to be enabled above None in the graphics preferences. Works on macOS."
+        left="15"
+        mouse_opaque="true"
+        name="render_volumetric_lighting"
+        radio_style="false"
+        width="400"
+        top_pad="20" />
+
+      <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_volumetric_lighting_debug_label"
+        width="300"
+        top_pad="10">
+        Volumetric lighting debug mode (0 = off):
+      </text>
+      <spinner
+        control_name="RenderVolumetricLightingDebug"
+        enabled_control="RenderVolumetricLighting"
+        decimal_digits="0"
+        follows="left|top"
+        increment="1"
+        label_width="0"
+        left_pad="5"
+        max_val="7"
+        min_val="0"
+        name="render_volumetric_lighting_debug"
+        tool_tip="0: normal. 1: raw scatter (color+intensity). 2: raw occlusion grayscale. 3: raw min_visibility grayscale (shadow sampling only). 4: reconstructed view-space position as RGB - sanity-checks depth reconstruction, no shadow logic involved. 5: raw ray distance grayscale (cheaper than 4). 6: raw depth buffer value grayscale (before inv_proj transform). 7: inv_proj applied to a fixed NDC test point - flat/uniform color across the whole screen would indicate inv_proj is not being set. All non-zero modes replace the screen outright."
+        top_delta="-4"
+        width="60" />
+      <!-- [/AS:Chanayane] -->
     </panel>
 
     <panel
