@@ -102,6 +102,7 @@ uniform vec3 sunlight_color;
 uniform vec3 moonlight_color;
 uniform float scatter_intensity;
 uniform float scatter_asymmetry;
+uniform float scatter_extinction;
 
 float asPhaseHG(float cos_theta, float g)
 {
@@ -131,11 +132,14 @@ vec3 asVolumetricForeground(vec3 view_position)
     vec2 screen_uv = gl_FragCoord.xy / screen_res;
     for (int i = 0; i < WATER_VOLUMETRIC_STEPS; ++i)
     {
-        vec3 sample_position = ray_direction * (float(i) + jitter) * step_length;
+        float sample_distance = (float(i) + jitter) * step_length;
+        vec3 sample_position = ray_direction * sample_distance;
         float visibility = sampleDirectionalShadow(sample_position, light_direction, screen_uv);
         if (visibility == visibility)
         {
-            visibility_integral += clamp(visibility, 0.0, 1.0) * step_length;
+            visibility_integral += clamp(visibility, 0.0, 1.0) *
+                                   exp(-scatter_extinction * sample_distance) *
+                                   step_length;
         }
     }
     float scatter = clamp((visibility_integral / MAX_MARCH_DISTANCE) *

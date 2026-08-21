@@ -252,6 +252,7 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 
         shader.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
         shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+        shader.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
     }
 }
 
@@ -277,6 +278,15 @@ F32 ASVolumetricLighting::getScatterAsymmetry()
     // looking roughly toward the sun.
     static LLCachedControl<F32> asymmetry(gSavedSettings, "RenderVolumetricLightingAsymmetry", 0.3f);
     return asymmetry;
+}
+
+F32 ASVolumetricLighting::getExtinction()
+{
+    // Beer-Lambert attenuation per view-space metre. This damps distant
+    // in-scatter without changing the directional-light or shadow geometry.
+    static LLCachedControl<F32> extinction(gSavedSettings,
+        "RenderVolumetricLightingExtinction", 0.012f);
+    return llmax((F32)extinction, 0.f);
 }
 
 S32 ASVolumetricLighting::getDebugMode()
@@ -430,6 +440,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
             // bindDeferredShader() does not set this; renderDeferredLighting()'s
             // callers normally do it per-shader (see softenLightF's soften_shader).
@@ -454,6 +465,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
         gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
         gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
         gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
         gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
         pipeline.mScreenTriangleVB->setBuffer();

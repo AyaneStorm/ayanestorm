@@ -38,6 +38,7 @@ uniform vec3  moonlight_color;
 uniform int   sample_count;
 uniform float scatter_intensity;
 uniform float scatter_asymmetry;
+uniform float scatter_extinction;
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
@@ -180,6 +181,7 @@ void main()
     // occluders glow and open shafts dark, which is the opposite of
     // volumetric single scattering.
     float accumulated_visibility = 0.0;
+    float attenuated_visibility_integral = 0.0;
 
     for (int i = 0; i < steps; ++i)
     {
@@ -194,7 +196,12 @@ void main()
         // Guard against a bad shadow sample poisoning the whole integral.
         if (visibility == visibility) // false only for NaN
         {
-            accumulated_visibility += clamp(visibility, 0.0, 1.0);
+            visibility = clamp(visibility, 0.0, 1.0);
+            accumulated_visibility += visibility;
+            // Beer-Lambert view-path extinction prevents a long sequence of
+            // weakly lit samples from remaining as prominent as nearby air.
+            attenuated_visibility_integral += visibility *
+                exp(-scatter_extinction * t) * step_len;
         }
     }
 
@@ -213,8 +220,8 @@ void main()
         return;
     }
 
-    float distance_factor = ray_len / MAX_MARCH_DISTANCE;
-    float scatter = mean_visibility * phase * scatter_intensity * distance_factor;
+    float scatter = (attenuated_visibility_integral / MAX_MARCH_DISTANCE) *
+                    phase * scatter_intensity;
     scatter = clamp(scatter, 0.0, 1.0);
 
     vec3 light_color = (sun_up_factor == 1) ? sunlight_color : moonlight_color;

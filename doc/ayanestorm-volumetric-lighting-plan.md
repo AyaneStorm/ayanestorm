@@ -1330,3 +1330,165 @@ scatter and its sharply defined shadow structure. Do not mirror or negate the
 light direction to remove physically valid anti-crepuscular geometry; assess it
 at the intended intensity first, then tune phase/asymmetry if it remains too
 strong.
+
+### Unity `VolumetricLight.shader` reference review
+
+The root-level Unity reference independently confirms the directional phase
+sign. It evaluates `dot(_LightDir, -rayDir)`, where Unity's directional-light
+vector follows the photon travel direction; AyaneStorm's `light_dir` points
+toward the light, so negating both operands gives the existing equivalent
+`dot(light_dir, ray_dir)`. Copying the Unity expression literally without
+accounting for this convention would mirror the phase lobe and be incorrect.
+
+The materially useful difference is extinction/transmittance. The reference
+integrates density-scaled scattering and extinction per step, weights each
+contribution by `exp(-extinction)`, and returns accumulated transmittance in
+alpha. AyaneStorm presently accumulates mean shadow visibility, multiplies it
+by phase/intensity/distance, then clamps; it has no optical-depth attenuation.
+Consequently long weak paths—including physically valid anti-solar shafts—can
+remain too visible, especially with elevated intensity. This reinforces the
+existing “Missing volumetric extinction/transmittance” finding. A reliable
+quality fix should implement a coherent scattering/extinction model rather
+than hide the anti-solar point by reversing directions or applying a
+screen-space mask.
+
+Other reference features are optional appearance controls rather than direct
+bug fixes: world-space density noise, exponential height fog, bounded point and
+spotlight volumes, and texture dithering. Its Unity cascade selection, light
+volumes, coordinate reconstruction, and blend setup are engine-specific and
+must not be transplanted directly.
+
+### Directional view-path extinction implementation
+
+Implemented the transferable Beer-Lambert part of the Unity reference without
+altering sun direction, phase convention, shadow coordinates, or shader cache
+revision. Each valid directional shadow sample is now weighted by
+`exp(-extinction * sample_distance)` before its segment length is accumulated.
+The same formula and setting are used by the main directional target, the
+16-slice transparency atlas, and water's direct camera-to-water foreground
+march, preventing those paths from disagreeing at transparent boundaries.
+
+Added persisted `RenderVolumetricLightingExtinction`, exposed as editable
+**Distance extinction** with range `0.000..0.250`, increment `0.001`, and a
+conservative default of `0.012` per view-space metre. Zero exactly restores the
+former unattenuated accumulation for comparison. The setting affects only
+sun/moon volumetrics; bounded local-light fog retains its existing range-based
+falloff. Raw visibility/occlusion debug modes 2 and 3 intentionally remain
+unattenuated so they continue to diagnose shadow sampling rather than the
+appearance model. Mode 1 and atlas mode 10 show the attenuated result.
+
+The explicit numeric-entry width is `60` pixels so all three decimals remain
+visible. The expanded maximum is an artist/development range rather than a
+physical limit: at `0.25`, the e-folding distance is only 4 metres and distant
+directional scatter is effectively eliminated.
+
+This implements attenuation of directional in-scatter along the camera path,
+which directly addresses over-prominent long/anti-solar shafts. It does not yet
+multiply the underlying scene by medium transmittance; doing that would change
+the full scene/alpha/water compositing equation and should not be smuggled into
+this targeted correction without separate validation. The requested shipped
+sun/moon intensity default is also corrected from `0.5` to `0.8`; persisted
+user values remain unchanged.
+
+### Bilateral blur applicability
+
+A bilateral blur smooths neighboring volumetric samples only when both their
+screen-space distance and a guide signal—normally scene depth, optionally
+normal—are similar. Unlike ordinary Gaussian blur, it can reduce raymarch
+dither/noise and half-resolution stair-stepping without freely bleeding light
+across opaque silhouettes. It is distinct from the cancelled bilateral
+**upsampling** experiment: upsampling chooses how a low-resolution pixel is
+reconstructed at full resolution, while a bilateral blur filters an already
+sampled volumetric field (although implementations often combine the two).
+
+It cannot correct the anti-solar convergence or excessive long-path energy;
+those are geometry/transport issues addressed by phase and extinction. It may
+help residual banding, grain, jagged shaft edges, and low-resolution shimmer in
+the default quality tier. However, a depth-guided blur using only the deferred
+opaque depth has the same structural limitation previously exposed by hair,
+foliage, smoke, fullbright alpha, and water: those surfaces may be absent or
+misrepresented in the guide, allowing the filter to mix foreground and
+background scatter across transparent silhouettes.
+
+Therefore do not add a generic deferred-depth bilateral blur to the final
+composite. A safe later experiment would filter the AS directional source
+before transparency correction, use a small separable radius, combine opaque
+depth rejection with the existing transparent depth-resolved information, and
+guarantee a strict bypass when volumetrics are disabled. High-quality
+full-resolution rendering needs less such filtering and should be the baseline
+for judging whether the added complexity is worthwhile.
+
+#### Root-level `BilateralBlur.shader` review
+
+The Unity reference is not merely a blur. It implements a complete resolution
+pipeline: checkerboard min/max depth downsampling, horizontal and vertical
+separable bilateral filtering, then a depth-aware upsample that uses bilinear
+color only away from depth edges and otherwise selects the low-resolution tap
+whose eye depth is closest to the full-resolution opaque depth.
+
+Transferable idea: use two one-dimensional passes rather than a square 2-D
+kernel. Its half-resolution radius 5 costs 11 color and 11 depth samples per
+pixel per direction, far less than an equivalent 11x11 kernel but still a
+material extra GPU pass pair. The full-resolution radius 7 costs 15 taps per
+direction. The Gaussian spatial weights are combined with
+`exp(-(depthDifference * 0.5)^2)`.
+
+Non-transferable assumptions:
+
+- The guide contains only Unity camera depth; it has no alpha-layer coverage or
+  depth and therefore cannot protect Second Life hair, foliage, smoke,
+  fullbright alpha, or water.
+- Checkerboard min/max depth intentionally alternates which surface wins inside
+  each 2x2 block. That can retain thin opaque edges in Unity's later nearest-tap
+  upsample, but would introduce a patterned foreground/background choice into
+  AyaneStorm's already depth-sensitive transparency handoff.
+- The upsample threshold is a fixed absolute eye-depth sum (`1.5`) and is not
+  suitable unchanged for the viewer's scale, far distances, or reconstructed
+  transparent depths.
+- Filtering only the main volumetric target would make it disagree with the
+  unfiltered cumulative transparency atlas and water foreground reconstruction.
+  All consumers would need a mathematically compatible filtered field.
+
+Conclusion: the separable-kernel structure can inspire a future quality filter,
+but this shader as written would revive the exact class of transparency defects
+already encountered. Do not port it as the current anti-solar/extinction fix.
+
+### Remaining transferable ideas from the Unity references
+
+Static comparison against the current AS shaders leaves the following useful
+items, in priority order:
+
+1. **End-to-end transmittance.** Unity returns `exp(-extinction)` and uses it to
+   attenuate the scene as well as weighting in-scatter. The newly implemented
+   AS distance extinction currently weights in-scatter only. Completing
+   `C_out = C_scene * T + V_scatter` consistently through opaque composite,
+   transparency atlas consumers, Exact OIT, AVBOIT, fullbright, and water is
+   the largest physically meaningful improvement and the existing plan already
+   describes the required representation.
+2. **Independent scattering and extinction coefficients.** Unity separates
+   them. AS currently has artist intensity plus extinction. That is adequate
+   for tuning, but a future density/medium model should define how both derive
+   from one atmospheric density rather than allowing unrelated energy values.
+3. **World-space density shaping.** Optional exponential height fog and
+   animated 3-D density noise would prevent perfectly uniform shafts and make
+   fog pool naturally. These require stable world/agent-space positions and a
+   suitable repeatable 3-D noise resource; screen-space noise must not be used
+   because it would stick to the camera. They are appearance features, not
+   correctness fixes.
+4. **True spotlight volumes.** Unity ray-intersects point-light spheres and
+   spotlight cones separately, with cookies and available shadow maps. AS
+   currently treats every selected local light as an unshadowed sphere. Cone
+   intersection for viewer spotlights is transferable and would stop their fog
+   glow outside the projected cone. Shadowed local volumetrics remain limited
+   by the viewer's available spot-shadow maps; ordinary point lights still lack
+   omnidirectional shadow maps.
+5. **Sky-path policy.** Unity allows separate skybox extinction. AS caps all
+   sky rays at 128 m. A deliberate sky coefficient could improve horizon
+   continuity, but must agree with the viewer's existing atmospheric haze and
+   avoid double fogging.
+
+Already present in AS under equivalent forms: bounded ray length, cascaded
+directional-shadow sampling, Henyey-Greenstein phase, per-pixel march jitter,
+depth-limited camera rays, additive HDR accumulation, and bounded point-light
+volume intersection. These should not be reimplemented merely to resemble the
+Unity source.

@@ -74,6 +74,7 @@ public:
     static S32 getSampleCount();
     static F32 getScatterIntensity();
     static F32 getScatterAsymmetry();
+    static F32 getExtinction();
 
     // Debug: when RenderVolumetricLightingDebug != 0, renderPass() bypasses
     // the additive blend and opaquely overwrites `screen` with the raw

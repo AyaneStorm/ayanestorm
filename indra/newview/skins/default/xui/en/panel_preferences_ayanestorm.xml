@@ -223,6 +223,27 @@
         top="178"
         width="315" />
 
+      <slider
+        can_edit_text="true"
+        control_name="RenderVolumetricLightingExtinction"
+        enabled_control="RenderVolumetricLighting"
+        decimal_digits="3"
+        follows="left|top"
+        height="16"
+        increment="0.001"
+        label="Distance extinction"
+        label_width="115"
+        layout="topleft"
+        left="15"
+        max_val="0.25"
+        min_val="0.0"
+        name="render_volumetric_lighting_extinction"
+        show_text="true"
+        text_width="60"
+        tool_tip="Attenuates distant sun/moon scatter through the atmosphere. Higher values shorten visible shafts and suppress distant anti-solar rays. Range: 0.000 to 0.250. Changes are applied live."
+        top="205"
+        width="315" />
+
       <check_box
         follows="left|top"
         layout="topleft"
@@ -236,7 +257,7 @@
         name="render_volumetric_lighting_high_quality"
         radio_style="false"
         width="400"
-        top="205" />
+        top="233" />
 
       <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
       <text
@@ -248,7 +269,7 @@
         left="15"
         name="render_volumetric_lighting_debug_label"
         width="225"
-        top="237">
+        top="265">
         Debug mode (0 = off):
       </text>
       <spinner
@@ -263,7 +284,7 @@
         min_val="0"
         name="render_volumetric_lighting_debug"
         tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. 10: raw 4x4 cumulative transparency atlas (near to far, left-to-right along each row, starting at the bottom and progressing upward). All non-zero modes replace the screen outright."
-        top="233"
+        top="261"
         width="60" />
 
       <check_box
@@ -279,7 +300,7 @@
         name="render_volumetric_local_lights"
         radio_style="false"
         width="400"
-        top="268" />
+        top="296" />
 
       <slider
         can_edit_text="true"
@@ -298,7 +319,7 @@
         name="render_volumetric_local_lights_intensity"
         show_text="true"
         tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
-        top="296"
+        top="324"
         width="295" />
 
       <text
@@ -310,7 +331,7 @@
         left="15"
         name="render_volumetric_local_lights_max_count_label"
         width="225"
-        top="328">
+        top="356">
         Maximum local lights:
       </text>
       <spinner
@@ -325,7 +346,7 @@
         min_val="0"
         name="render_volumetric_local_lights_max_count"
         tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
-        top="324"
+        top="352"
         width="60" />
       <!-- [/AS:Chanayane] -->
     </panel>

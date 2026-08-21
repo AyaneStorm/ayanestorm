@@ -16,6 +16,7 @@ uniform vec3 sunlight_color;
 uniform vec3 moonlight_color;
 uniform float scatter_intensity;
 uniform float scatter_asymmetry;
+uniform float scatter_extinction;
 uniform int atlas_debug;
 
 vec3 getPositionWithNDC(vec3 ndc);
@@ -68,11 +69,14 @@ void main()
         float segment_length = segment_far - segment_near;
         float jitter = interleavedGradientNoise(
             screen_uv * vec2(4096.0, 2160.0) + vec2(float(i) * 17.0));
-        vec3 sample_pos = ray_dir * mix(segment_near, segment_far, jitter);
+        float sample_distance = mix(segment_near, segment_far, jitter);
+        vec3 sample_pos = ray_dir * sample_distance;
         float visibility = sampleDirectionalShadow(sample_pos, light_dir, screen_uv);
         if (visibility == visibility)
         {
-            visibility_integral += clamp(visibility, 0.0, 1.0) * segment_length;
+            visibility_integral += clamp(visibility, 0.0, 1.0) *
+                                   exp(-scatter_extinction * sample_distance) *
+                                   segment_length;
         }
     }
 
