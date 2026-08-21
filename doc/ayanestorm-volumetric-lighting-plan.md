@@ -1018,3 +1018,315 @@ has no depth-compatible half-resolution tap, the shader explicitly falls back
 to the former bilinear sample rather than normalizing negligible weights into a
 black pinhole. Retest shoulders, hair against sky/windows, foliage, and thin
 distant geometry; no shader revision bump was made.
+
+### Specialized water composition gap
+
+The depth-aware mode-0 retest confirms smooth avatar shoulders. Two outdoor
+captures still show region water as a sharply bounded, nearly black/green layer
+against the fogged landscape, most strongly at grazing/reflection-heavy viewing
+angles. This is not an upsampling failure. `LLDrawPoolWater` runs after the full
+volumetric composite with blending disabled. Transparent water first copies the
+current framebuffer (which already includes full volumetric scatter), then
+`waterF.glsl` mixes that refracted copy with reflection/radiance according to
+Fresnel and shoreline fade. The reflection portion replaces the copied
+foreground scatter and previously never restored the camera-to-water term.
+
+Adding the complete foreground atlas value to all water would be wrong because
+the framebuffer/refraction portion already contains volumetrics. From the
+shader's two nested mixes, the retained framebuffer coefficient is
+`1 - fade * fresnel`; therefore the missing fraction is exactly
+`fade * fresnel`. The class-3 water shader now adds camera-to-water cumulative
+scatter multiplied by that missing fraction for transparent water. Opaque
+fallback water, whose synthetic background contains no precomposited scatter,
+receives the full foreground term. The water pool binds the atlas immediately
+before its draw. Both upstream edits are ownership-tagged, and disabled
+volumetrics still set the helper to return exact zero. Retest grazing and
+near-normal views, shorelines, reflections, and underwater rendering; no shader
+revision bump was made.
+
+### Debug mode 1 late-geometry silhouettes
+
+A pre-build mode-1 capture shows dark bushes/foliage and smoke particles over
+the raw scatter visualization. This is expected from the diagnostic's current
+placement and is not, by itself, a mode-0 shader-coverage failure. Mode 1
+replaces the opaque screen with the raw half-resolution scatter target at the
+normal pre-transparency volumetric call site. The regular post-deferred pass
+then draws water, foliage, particles, and other transparency over that replaced
+background. `bindTransparencyAtlas()` deliberately disables foreground-atlas
+addition for every nonzero debug mode, preventing diagnostic data from being
+fed back into ordinary material color. Consequently late geometry remains
+visible in its normal source colors and often appears nearly black against the
+raw mode-1 field.
+
+Do not use these silhouettes alone to justify another production shader hook.
+Judge foliage and smoke coverage in mode 0. A future cleanup could move the
+debug replacement display to the end of scene rendering (or suppress late
+geometry only while showing diagnostics) to provide an uncontaminated
+full-screen readout, but that is a debug-presentation improvement rather than a
+mode-0 correctness fix and is not included in the current build round.
+
+### Pre-build water wave-pattern observation
+
+Another mode-0 capture from the still-running old build shows conspicuous
+repeating vertical/wave bands across the dark water. The user explicitly took
+this before rebuilding, so it does **not** contain the pending specialized-water
+fix and cannot be used to evaluate that fix. The pattern follows the existing
+water normal/refraction direction rather than obvious 4x4 atlas tile boundaries.
+Do not add a second speculative compensation based on this capture. First test
+the pending Fresnel-weighted foreground restoration at the same viewpoint; then
+compare whether the dark cutout and pattern improve, remain, or worsen.
+
+**Correction after user clarified the build state:** the dark-water and
+repeating-pattern captures do include the pending water hook. The current
+session log is fresh and reports `Loaded water shaders`, with no compile/link
+failure, so the hook is active. Static inspection found another definite HDR
+integration error at the final water output: stock `waterF.glsl` clamps the
+entire `frag_color`, including RGB, to `1.0`. The surrounding screen and AS
+scatter are HDR and are tonemapped later. Water therefore discarded precisely
+the high-range scatter needed to match the fogged surroundings; wave/Fresnel
+variation reaching that ceiling unevenly can also emphasize repetition.
+
+When `asVolumetricEnabled != 0`, water now preserves nonnegative HDR RGB and
+clamps only output alpha to `[0,1]`. When volumetrics are disabled, the original
+whole-`vec4` clamp executes unchanged, preserving the existing vanilla/Exact
+OIT/AVBOIT-off appearance. Retest the same wide overhead and grazing views. The
+earlier note that the screenshots predated the water hook was based on a
+misunderstanding and is superseded by this correction.
+
+**HDR-clamp retest:** preserving water HDR produced little visible change; the
+surface remained a dark cutout. The clamp was a real incompatibility but not the
+dominant composition error. The Fresnel-weighted restoration is therefore
+replaced by an exact directional decomposition using the existing cumulative
+atlas. Transparent water's `screenTex` already contains the full volumetric
+integral to the refracted opaque point. Immediately after sampling it, the
+shader now subtracts `V(distort2, refPos distance)`. All ordinary water
+refraction/reflection/shoreline shading then operates on the scene contribution
+without precomposited directional fog. After those mixes, the shader adds
+`V(current pixel, water-surface distance)` exactly once.
+
+This directly represents camera-to-water foreground scatter and retains no
+Fresnel heuristic. It should also remove the repeating water-normal imprint
+caused by mixing spatially displaced precomposited fog. The atlas helper now
+accepts explicit screen UV and distance so both endpoints use the same
+cumulative representation. Optional local-light scatter is not yet present in
+the transparency atlas, so this exact subtraction/recomposition currently
+applies to directional sun/moon scatter; local-light water consistency remains
+part of the documented atlas-coverage audit. The HDR-output preservation stays
+in place because water must not clamp newly added scatter before scene
+tonemapping. A static follow-up also recomputes `refPos` after stock water's
+possible `distort2 = distort` fallback; otherwise subtraction could pair the
+fallback UV with the rejected distorted endpoint. No shader revision bump was
+made.
+
+### Missing volumetric extinction/transmittance
+
+A high-altitude mode-0 capture shows distant smoke and saturated fullbright
+objects remaining conspicuously visible through a very dense volumetric field.
+This is not another late-shader atlas binding omission. Static inspection
+confirms the current model computes and composites additive in-scattering only:
+the directional raymarch/atlas store scatter RGB, local lights add scatter RGB,
+and transparent/fullbright shaders add camera-to-fragment scatter to source
+color. No pass computes Beer-Lambert transmittance and no surface/emissive RGB
+is attenuated by the medium. Bright emission can therefore remain visible no
+matter how dense the added haze becomes.
+
+Do not patch this with a fullbright-only distance fade. The correct extension
+is systemic: carry cumulative transmittance alongside scatter (the existing
+RGBA16F targets provide an alpha channel), composite opaque color as
+`C * Tfull + Vfull`, and emit every late fragment as
+`C * Tfront + Vfront`. Ordinary alpha recursion then remains correct for
+Standard, Exact OIT, and AVBOIT: blending that source over the fully
+precomposited destination yields the required foreground medium plus attenuated
+surface/background segments. Water must use the same resolved full-field
+handoff, and local-light policy must be explicit (lights illuminate the shared
+medium but do not independently create extinction).
+
+This needs a defined extinction coefficient/control and coordinated changes to
+the opaque composite plus every atlas consumer. It is deliberately not folded
+into the pending water build as a narrow smoke/fullbright heuristic. The next
+implementation phase should add and validate transmittance end-to-end, including
+disabled-feature identity, before claiming distant emissive correctness.
+
+### Exact resolved-field handoff for near water
+
+The atlas-subtraction build is substantially better from high altitude, but a
+near-water capture shows large vertically warped blocks across the surface.
+This is a deterministic estimator mismatch: water subtracted the quarter-
+resolution cumulative atlas value from a framebuffer containing the separately
+raymarched half-resolution field after depth-aware full-resolution upsampling.
+Both approximate the same directional integral, but their sample patterns and
+resolutions are not identical. Refraction distortion makes the residual
+especially visible nearby; distance/filtering hides it in the aerial view.
+
+The AS module now owns an additional full-resolution RGBA16F resolved target.
+In normal mode, the half-resolution directional-plus-local field is first
+depth-aware-upsampled into this target with replacement blending. That exact
+resolved texture is then additively drawn into the scene without another
+filtering transform. The water shader receives the same resolved target and
+subtracts `texture(asVolumetricFull, distort2)` from its copied refracted
+framebuffer before stock water shading. It then adds the cumulative
+camera-to-water atlas value. Thus subtraction is sample-identical to what was
+added, eliminating the near-field residual rather than attempting to tune it.
+
+Debug modes retain their former direct replacement display and do not use the
+resolved handoff. Disabled volumetrics still skip the AS pass and set the water
+helper to zero, leaving original water output active. This costs one additional
+full-resolution RGBA16F target and one fullscreen copy in mode 0, chosen for
+correctness and stable water/refraction behavior. No shader revision bump was
+made.
+
+**Resolved-field retest:** both aerial and near captures remained approximately
+unchanged, including the vertically repeated near-water pattern. The RTX 3080
+Ti exposes 32 fragment texture units, but the water shader is sampler-heavy
+(reflection probes, shadows, refraction/depth, exclusion, and two normal maps).
+The AS binder incorrectly assumed `mActiveTextureChannels` and the following
+unit were free for its two custom samplers. If either appended unit is outside
+the shader's usable mapped set, the custom sampler retains its link-time value
+while the intended texture is never bound; sampling an aliased water/normal
+texture explains both the lack of correction and the repeated wave pattern.
+
+Shader creation already assigns every active custom sampler a unique texture
+channel even though custom names are not represented in the reserved
+`mTexture[]` lookup table. `bindTransparencyAtlas()` now obtains each custom
+sampler's assigned channel with `glGetUniformiv(program, location, &channel)`
+and binds the atlas/resolved target to that exact unit. This avoids both prior
+API errors: a raw uniform location is not passed as a reserved index, and no
+new unit is appended after a sampler-heavy shader's active set. Channel values
+are range-checked before binding. This correction applies to all atlas
+consumers and should finally make water's resolved-field subtraction sample the
+AS texture rather than an aliased material/water texture. No shader revision
+bump was made.
+
+**Sampler-binding regression and scope correction:** water improved after using
+its link-assigned sampler channels, but the same global change catastrophically
+corrupted generic alpha/fullbright rendering: avatar hair and distant foliage,
+lights, and alpha objects became white or sampled foreign material content.
+Those shaders use indexed/dynamic material texture submission after shader
+binding, which reuses link-mapped texture units. A custom atlas bound to its
+link-assigned unit is consequently overwritten before the draw. The previously
+working appended channel at `mActiveTextureChannels` is required for these
+dynamic material families.
+
+The queried-channel path is now restricted to shaders that declare
+`asVolumetricFull`, currently the fixed-sampler water shader. Water queries and
+binds both `asVolumetricAtlas` and `asVolumetricFull` on their link-assigned
+units. Every generic alpha, PBR alpha, legacy material, and fullbright consumer
+again assigns the atlas to the proven appended channel and rebinds it at its
+existing draw-time call sites. This preserves the water improvement without
+changing the dynamic-material binding contract. Retest hair first, then alpha
+foliage/fullbright and water. No shader revision bump was made.
+
+### Water-only filtering of moving foliage shadow stencils
+
+After scoping sampler binding, avatar hair/material alpha returned to normal and
+water improved, confirming both binding paths are now active. A remaining near
+capture shows large tree-leaf silhouettes moving over the smooth water surface
+with camera motion. These are no longer an aliased foreign texture or resolved-
+field subtraction residual. They are real directional-shadow visibility in the
+quarter-resolution cumulative foreground atlas. Scene detail hides this sparse
+shadow structure on most alpha surfaces, while smooth dark water exposes it as
+a high-contrast screen-space stencil.
+
+Water now filters each atlas depth slice with a five-tap cross kernel (center
+weight 4 plus four taps eight full-resolution pixels away, normalized by 8)
+before interpolating between cumulative depth slices. Tap UVs are clamped inside
+the current tile's valid screen-UV range, so filtering cannot bleed from one
+depth slice into another. This preserves broad volumetric shadowing while
+softening foliage-scale sample structure and camera movement. The filter exists
+only in `waterF.glsl`; generic alpha, PBR, material, and fullbright atlas reads
+remain unchanged. No shader revision bump was made.
+
+**Superseded before build by water-level evidence:** a closer capture reveals
+broad horizontal/curved bands and hard depth transitions over the water, in
+addition to foliage-shaped structure. The smooth near-horizontal plane crosses
+the atlas's 16 quadratic cumulative depth slices over large screen areas.
+Spatially filtering within a slice cannot remove that depth quantization, so
+the pending five-tap water filter was removed before testing.
+
+Water no longer samples the 16-slice foreground atlas. Its class-3 shader now
+computes the camera-to-water directional integral continuously per fragment
+with 16 dithered shadow samples, using the same Henyey-Greenstein phase,
+128-metre cap, sun/moon selection, visibility integration, intensity, and
+asymmetry as the AS directional implementation. `bindTransparencyAtlas()`
+uploads the two artist controls to water and binds only `asVolumetricFull` on
+water's fixed link-assigned sampler channel. The exact resolved background
+subtraction remains unchanged. Generic transparency retains the atlas and its
+proven appended-channel binding.
+
+This deliberately spends more GPU time on visible water in exchange for
+continuous depth and full screen-space resolution: no cumulative slice
+boundary can cross the water plane, and shadow structure is dithered per water
+fragment rather than enlarged from a quarter-resolution atlas tile. Other
+materials are unaffected. No shader revision bump was made.
+
+### Main directional-ray quality tier
+
+A current-build water-level capture also shows chunky, low-resolution
+foliage-shaped rays in the surrounding air, not only on water. This is the main
+directional field: it remained fixed at half resolution and used 24 samples at
+the highest shadow setting. The pending continuous water foreground march only
+addresses water-surface depth slicing and cannot improve this shared field.
+
+Volumetric resolution/sample count now follows the existing shadow-quality
+choice. `RenderShadowDetail >= 2` allocates the main target at full screen
+resolution and uses 32 directional samples; lower shadow detail retains the
+half-resolution 16-sample path. When source and resolved dimensions already
+match, the resolved-field pass disables its unnecessary four-tap depth-aware
+upsample and performs a plain exact copy. This substantially increases GPU cost
+at highest shadow detail (roughly four times the raymarch pixels plus the higher
+sample count) but keeps the lower tier and disabled-feature behavior unchanged.
+No shader revision bump was made.
+
+**Quality-control correction before build:** the user correctly objected that
+silently coupling an approximately fivefold raymarch cost increase to shadow
+detail is inappropriate. Added persisted Boolean
+`RenderVolumetricLightingHighQuality`, exposed beside the other volumetric
+controls as **High quality rays (full resolution)**. It defaults off:
+half-resolution, 16 directional samples. Enabling it selects full resolution
+and 32 samples, with a tooltip warning that GPU cost rises significantly.
+
+The setting is independent of OIT and remains visible on macOS with the rest of
+volumetric lighting. `renderPass()` detects a changed tier and reallocates only
+the AS-owned main volumetric source target after the caller has flushed the
+screen, so the choice applies live without rebuilding all viewer graphics
+buffers. The resolved full-resolution handoff and transparency atlas keep their
+existing sizes. The earlier shadow-detail-coupled policy is superseded. No
+shader revision bump was made.
+
+### Correction: apparent ground-origin shafts are sun rays
+
+The initial diagnosis of a rebuilt dusk capture as local-light fog was wrong;
+the user correctly identified the shafts as sun rays. The local-light shader is
+unshadowed and integrates smooth bounded light spheres. It can leak through
+terrain, but cannot generate the strongly occlusion-defined crepuscular shafts
+visible in this capture. Do not use radial-looking screen-space convergence
+alone to classify a volumetric source.
+
+The capture is consistent with a low-elevation sun hidden behind the terrain or
+rock edge: parallel three-dimensional rays project as a fan around the nearby
+occluder. The persisted sun/moon intensity is also extremely high at about
+`6.68`; the resulting HDR in-scatter can reduce the sun disk's contrast until
+it disappears into the bright surrounding sky. The high-quality tier changes
+only target resolution (half to full) and directional sample count (16 to 32),
+not sun/moon direction, selection, or sky-disk rendering. It can nevertheless
+make terrain/foliage shadow structure far sharper and expose an apparent source
+location that the former half-resolution field blurred.
+
+The user's more precise observation supersedes the missing/displaced-sun
+interpretation: the real sun remains correctly placed and produces normal
+shafts when viewed toward it. A second set appears to converge at the point
+opposite the sun. This is the anti-solar vanishing point, not a second light or
+a sign error by itself. Parallel world-space shafts project toward opposite
+vanishing points depending on viewing direction; with a low sun, the anti-solar
+point lies near the opposite horizon and can look like a source on the ground.
+
+The question is therefore prominence, not position. The shader's phase
+convention is internally consistent: `ray_dir` points camera-to-sample,
+`light_dir` points sample-to-sun, and their dot product is also the dot product
+of the photon travel direction with the sample-to-camera direction. Positive
+Henyey-Greenstein `g` correctly favors the solar view and suppresses the
+anti-solar view. Very high intensity can nevertheless expose weak backward
+scatter and its sharply defined shadow structure. Do not mirror or negate the
+light direction to remove physically valid anti-crepuscular geometry; assess it
+at the intended intensity first, then tune phase/asymmetry if it remains too
+strong.

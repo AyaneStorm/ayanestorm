@@ -90,6 +90,65 @@ uniform sampler2D depthMap;
 
 uniform sampler2D exclusionTex;
 
+// <AS:Chanayane> Cumulative camera-to-water scatter and the exact resolved
+// field precomposited into the framebuffer before late water rendering.
+uniform vec2 screen_res;
+uniform sampler2D asVolumetricFull;
+uniform int asVolumetricEnabled;
+uniform vec3 sun_dir;
+uniform vec3 moon_dir;
+uniform int sun_up_factor;
+uniform vec3 sunlight_color;
+uniform vec3 moonlight_color;
+uniform float scatter_intensity;
+uniform float scatter_asymmetry;
+
+float asPhaseHG(float cos_theta, float g)
+{
+    float g2 = g * g;
+    float denom = 1.0 + g2 - 2.0 * g * cos_theta;
+    return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
+}
+
+float asWaterNoise(vec2 p)
+{
+    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(p, magic.xy)));
+}
+
+vec3 asVolumetricForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return vec3(0.0);
+#ifdef HAS_SUN_SHADOW
+    const int WATER_VOLUMETRIC_STEPS = 16;
+    const float MAX_MARCH_DISTANCE = 128.0;
+    float ray_length = min(length(view_position), MAX_MARCH_DISTANCE);
+    vec3 ray_direction = view_position / max(length(view_position), 1e-4);
+    vec3 light_direction = normalize(sun_up_factor == 1 ? sun_dir : moon_dir);
+    float step_length = ray_length / float(WATER_VOLUMETRIC_STEPS);
+    float jitter = asWaterNoise(gl_FragCoord.xy);
+    float visibility_integral = 0.0;
+    vec2 screen_uv = gl_FragCoord.xy / screen_res;
+    for (int i = 0; i < WATER_VOLUMETRIC_STEPS; ++i)
+    {
+        vec3 sample_position = ray_direction * (float(i) + jitter) * step_length;
+        float visibility = sampleDirectionalShadow(sample_position, light_direction, screen_uv);
+        if (visibility == visibility)
+        {
+            visibility_integral += clamp(visibility, 0.0, 1.0) * step_length;
+        }
+    }
+    float scatter = clamp((visibility_integral / MAX_MARCH_DISTANCE) *
+                          asPhaseHG(dot(ray_direction, light_direction), scatter_asymmetry) *
+                          scatter_intensity, 0.0, 1.0);
+    vec3 light_color = sun_up_factor == 1 ? sunlight_color : moonlight_color;
+    return light_color * scatter;
+#else
+    return vec3(0.0);
+#endif
+}
+// </AS:Chanayane>
+
 uniform int classic_mode;
 uniform vec3 lightDir;
 uniform vec3 specular;
@@ -280,6 +339,11 @@ void main()
     }
 
     vec4 fb = texture(screenTex, distort2);
+    // <AS:Chanayane> Remove the exact resolved HDR field added to the screen.
+    // Using the independently sampled depth atlas here left large refraction-
+    // warped residuals at close range because its estimator/resolution differs.
+    fb.rgb = max(fb.rgb - texture(asVolumetricFull, distort2).rgb, vec3(0.0));
+    // </AS:Chanayane>
 
 #else
     vec4 fb = applyWaterFogViewLinear(viewVec*2048.0, vec4(1.0));
@@ -342,8 +406,26 @@ void main()
     fade = min(1, fade);
     color = mix(fb.rgb, color, fade);
 
+    // <AS:Chanayane> Add the camera-to-water integral after all water shading.
+    // Transparent water removed the copied background integral above; opaque
+    // fallback water starts from a synthetic background with no AS scatter.
+    color += asVolumetricForeground(pos);
+    // </AS:Chanayane>
+
     float spec = min(max(max(punctual.r, punctual.g), punctual.b), 0);
 
-    frag_color = min(vec4(1),max(vec4(color.rgb, spec * water_mask), vec4(0)));
+    // <AS:Chanayane> Preserve the original LDR clamp when volumetrics are off.
+    // Volumetric scatter is HDR, so clamping water RGB here makes the surface
+    // remain dark beside the later-tonemapped scene. Alpha stays in [0,1].
+    // frag_color = min(vec4(1),max(vec4(color.rgb, spec * water_mask), vec4(0)));
+    vec4 water_output = max(vec4(color.rgb, spec * water_mask), vec4(0));
+    if (asVolumetricEnabled != 0)
+    {
+        frag_color = vec4(water_output.rgb, min(water_output.a, 1.0));
+    }
+    else
+    {
+        frag_color = min(vec4(1), water_output);
+    }
+    // </AS:Chanayane>
 }
-

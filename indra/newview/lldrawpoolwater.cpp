@@ -49,6 +49,10 @@
 #include "llsettingssky.h"
 #include "llsettingswater.h"
 
+// <AS:Chanayane> Bind depth-resolved foreground scatter for late water rendering.
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
+
 bool LLDrawPoolWater::sSkipScreenCopy = false;
 bool LLDrawPoolWater::sNeedsReflectionUpdate = true;
 bool LLDrawPoolWater::sNeedsDistortionUpdate = true;
@@ -304,6 +308,10 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     }
 
     LLGLDisable cullface(GL_CULL_FACE);
+
+    // <AS:Chanayane> Water renders after the full volumetric composite.
+    ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    // </AS:Chanayane>
 
     // Only push the water planes once.
     // Previously we did this twice: once for void water and one for region water.

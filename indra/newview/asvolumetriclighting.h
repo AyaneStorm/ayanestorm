@@ -91,6 +91,7 @@ private:
     static bool sShadersLoaded;
 
     static LLRenderTarget sVolumetricTarget;
+    static LLRenderTarget sResolvedTarget;
     static LLRenderTarget sTransparencyAtlas;
 };
 

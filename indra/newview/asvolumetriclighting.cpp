@@ -65,6 +65,7 @@ bool ASVolumetricLighting::sSupportChecked = false;
 bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
+LLRenderTarget ASVolumetricLighting::sResolvedTarget;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
@@ -189,38 +190,41 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
         return;
     }
 
-    // Raymarching at full resolution is the dominant cost of this pass; the
-    // bilateral-upsample composite hides the loss of half-res detail.
-    U32 target_width  = llmax((U32)1, width / 2);
-    U32 target_height = llmax((U32)1, height / 2);
+    // High quality is explicit because full-resolution raymarching is a large
+    // GPU cost increase; the persisted default remains half resolution.
+    const bool full_resolution = gSavedSettings.getBOOL("RenderVolumetricLightingHighQuality");
+    U32 target_width  = llmax((U32)1, full_resolution ? width : width / 2);
+    U32 target_height = llmax((U32)1, full_resolution ? height : height / 2);
 
     sVolumetricTarget.allocate(target_width, target_height, GL_RGBA16F);
+    sResolvedTarget.allocate(llmax((U32)1, width), llmax((U32)1, height), GL_RGBA16F);
     sTransparencyAtlas.allocate(llmax((U32)4, width), llmax((U32)4, height), GL_RGBA16F);
 }
 
 void ASVolumetricLighting::releaseResources()
 {
     sVolumetricTarget.release();
+    sResolvedTarget.release();
     sTransparencyAtlas.release();
 }
 
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 {
     static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
+    static LLStaticHashedString resolved_sampler("asVolumetricFull");
     static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
     const bool enabled = isEnabled() && getDebugMode() == 0 && sShadersLoaded &&
         sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
     if (enabled)
     {
-        // Custom samplers are present in mUniformMap but not in the reserved
-        // mTexture table used by LLGLSLShader::bindTexture(). Assign the first
-        // channel after all shader-mapped samplers explicitly; passing a raw
-        // GL location to bindTexture(S32) would misinterpret it as a reserved
-        // uniform index and bind an unrelated material texture.
         const S32 location = shader.getUniformLocation(atlas_sampler);
-        const S32 channel = shader.mActiveTextureChannels;
-        if (location > -1 && channel < gGLManager.mNumTextureImageUnits)
+        const S32 resolved_location = shader.getUniformLocation(resolved_sampler);
+        const GLint channel = shader.mActiveTextureChannels;
+
+        // Generic/indexed alpha material submission reuses link-mapped units
+        // after shader binding, so the atlas uses the proven appended channel.
+        if (location > -1 && channel >= 0 && channel < gGLManager.mNumTextureImageUnits)
         {
             glUniform1i(location, channel);
             gGL.getTexUnit(channel)->bindManual(sTransparencyAtlas.getUsage(),
@@ -228,15 +232,36 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
+
+        // Fixed-sampler water removes the exact resolved field and performs a
+        // continuous per-fragment foreground march, so it needs no atlas unit.
+        GLint resolved_channel = -1;
+        if (resolved_location > -1)
+        {
+            glGetUniformiv(shader.mProgramObject, resolved_location, &resolved_channel);
+        }
+        if (resolved_location > -1 && resolved_channel >= 0 &&
+            resolved_channel < gGLManager.mNumTextureImageUnits &&
+            sResolvedTarget.isComplete())
+        {
+            gGL.getTexUnit(resolved_channel)->bindManual(sResolvedTarget.getUsage(),
+                                                         sResolvedTarget.getTexture(0));
+            gGL.getTexUnit(resolved_channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+            gGL.getTexUnit(resolved_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        }
+
+        shader.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
     }
 }
 
 S32 ASVolumetricLighting::getSampleCount()
 {
-    // Scale down with shadow detail: detail 1 gets a cheaper march than the
-    // highest detail level, since both already imply the user favors quality
-    // over raw framerate.
-    return LLPipeline::RenderShadowDetail >= 2 ? 24 : 16;
+    // The explicit quality control keeps the default affordable while letting
+    // users opt into a denser march independently of shadow-map quality.
+    static LLCachedControl<bool> high_quality(gSavedSettings,
+        "RenderVolumetricLightingHighQuality", false);
+    return high_quality ? 32 : 16;
 }
 
 F32 ASVolumetricLighting::getScatterIntensity()
@@ -351,7 +376,23 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         return;
     }
 
-    if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())
+    // Apply quality changes live. The caller flushes screen before entering
+    // this pass, so resizing the AS-owned source target here is safe.
+    static LLCachedControl<bool> high_quality(gSavedSettings,
+        "RenderVolumetricLightingHighQuality", false);
+    const U32 desired_width = llmax((U32)1,
+        high_quality ? screen.getWidth() : screen.getWidth() / 2);
+    const U32 desired_height = llmax((U32)1,
+        high_quality ? screen.getHeight() : screen.getHeight() / 2);
+    if (sVolumetricTarget.getWidth() != desired_width ||
+        sVolumetricTarget.getHeight() != desired_height)
+    {
+        sVolumetricTarget.release();
+        sVolumetricTarget.allocate(desired_width, desired_height, GL_RGBA16F);
+    }
+
+    if (!sVolumetricTarget.isComplete() || !sResolvedTarget.isComplete() ||
+        !sTransparencyAtlas.isComplete())
     {
         return;
     }
@@ -428,11 +469,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     renderLocalLights(pipeline);
     sVolumetricTarget.flush();
 
-    // ---- Composite: blend the (low-res) scatter into screen --------------
-    // screen is bound as both the render target and (implicitly, via
-    // GL_BLEND BT_ADD) the destination being added into - it must NOT also
-    // be bound as a source texture here, so only the volumetric target is
-    // sampled.
+    // ---- Composite: resolve scatter, then blend it into screen -----------
     //
     // Any non-zero debug mode replaces screen outright with the raw target
     // contents instead of blending, so the signal can be inspected without
@@ -442,16 +479,18 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // needs to show it verbatim rather than add it on top of the already
     // fully-lit scene (which is what made mode 2 read as "all white": it
     // was adding raw occlusion onto an already bright tonemapped frame).
-    screen.bindTarget();
-
-    gASVolumetricCompositeProgram.bind();
+    auto draw_composite = [&](LLRenderTarget& destination,
+                              LLRenderTarget& composite_source,
+                              bool depth_aware,
+                              bool replace)
     {
+        destination.bindTarget();
+        gASVolumetricCompositeProgram.bind();
+
         // Clamp explicitly rather than assume this render target's default
         // wrap mode is clamp-to-edge.
-        LLRenderTarget* composite_source = debug_mode == 10 ?
-            &sTransparencyAtlas : &sVolumetricTarget;
         S32 emissive_channel = gASVolumetricCompositeProgram.bindTexture(
-            LLShaderMgr::DEFERRED_EMISSIVE, composite_source);
+            LLShaderMgr::DEFERRED_EMISSIVE, &composite_source);
         if (emissive_channel > -1)
         {
             gGL.getTexUnit(emissive_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
@@ -465,15 +504,13 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                                                    true);
         gASVolumetricCompositeProgram.uniform2f(
             LLStaticHashedString("emissiveRectDelta"),
-            1.f / (F32)composite_source->getWidth(),
-            1.f / (F32)composite_source->getHeight());
+            1.f / (F32)composite_source.getWidth(),
+            1.f / (F32)composite_source.getHeight());
         gASVolumetricCompositeProgram.uniform1i(
-            LLStaticHashedString("depthAwareUpsample"), debug_mode == 0 ? 1 : 0);
-    }
+            LLStaticHashedString("depthAwareUpsample"), depth_aware ? 1 : 0);
 
-    {
         LLGLEnable blend(GL_BLEND);
-        gGL.setSceneBlendType(debug_mode != 0 ? LLRender::BT_REPLACE : LLRender::BT_ADD);
+        gGL.setSceneBlendType(replace ? LLRender::BT_REPLACE : LLRender::BT_ADD);
         // Preserve screen alpha. BT_ADD applies ONE,ONE to alpha as well as
         // RGB, and the HDR screen alpha is consumed by later post-processing.
         // Adding the composite shader's alpha every frame corrupts those
@@ -482,12 +519,28 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         pipeline.mScreenTriangleVB->setBuffer();
         pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         gGL.setColorMask(true, true);
+
+        // Do not leak temporary scatter/depth bindings into later rendering.
+        gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
+        gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        gASVolumetricCompositeProgram.unbind();
+        destination.flush();
+    };
+
+    if (debug_mode == 0)
+    {
+        // Keep the exact full-resolution field added to screen so late water
+        // can remove that same field from its refracted framebuffer sample.
+        const bool needs_depth_upsample =
+            sVolumetricTarget.getWidth() != sResolvedTarget.getWidth() ||
+            sVolumetricTarget.getHeight() != sResolvedTarget.getHeight();
+        draw_composite(sResolvedTarget, sVolumetricTarget, needs_depth_upsample, true);
+        draw_composite(screen, sResolvedTarget, false, false);
     }
-
-    // Do not leak the temporary scatter texture binding into later rendering.
-    gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
-    gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
-    gASVolumetricCompositeProgram.unbind();
-
-    screen.flush();
+    else
+    {
+        LLRenderTarget& debug_source = debug_mode == 10 ?
+            sTransparencyAtlas : sVolumetricTarget;
+        draw_composite(screen, debug_source, false, true);
+    }
 }

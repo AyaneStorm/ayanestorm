@@ -223,6 +223,21 @@
         top="178"
         width="315" />
 
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="RenderVolumetricLightingHighQuality"
+        enabled_control="RenderVolumetricLighting"
+        label="High quality rays (full resolution)"
+        tool_tip="Uses full-resolution raymarching with 32 samples instead of half resolution with 16 samples. Significantly increases GPU cost. Changes are applied live."
+        left="15"
+        mouse_opaque="true"
+        name="render_volumetric_lighting_high_quality"
+        radio_style="false"
+        width="400"
+        top="205" />
+
       <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
       <text
         type="string"
@@ -233,7 +248,7 @@
         left="15"
         name="render_volumetric_lighting_debug_label"
         width="225"
-        top="209">
+        top="237">
         Debug mode (0 = off):
       </text>
       <spinner
@@ -248,7 +263,7 @@
         min_val="0"
         name="render_volumetric_lighting_debug"
         tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. 10: raw 4x4 cumulative transparency atlas (near to far, left-to-right along each row, starting at the bottom and progressing upward). All non-zero modes replace the screen outright."
-        top="205"
+        top="233"
         width="60" />
 
       <check_box
@@ -264,7 +279,7 @@
         name="render_volumetric_local_lights"
         radio_style="false"
         width="400"
-        top="240" />
+        top="268" />
 
       <slider
         can_edit_text="true"
@@ -283,7 +298,7 @@
         name="render_volumetric_local_lights_intensity"
         show_text="true"
         tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
-        top="268"
+        top="296"
         width="295" />
 
       <text
@@ -295,7 +310,7 @@
         left="15"
         name="render_volumetric_local_lights_max_count_label"
         width="225"
-        top="300">
+        top="328">
         Maximum local lights:
       </text>
       <spinner
@@ -310,7 +325,7 @@
         min_val="0"
         name="render_volumetric_local_lights_max_count"
         tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
-        top="296"
+        top="324"
         width="60" />
       <!-- [/AS:Chanayane] -->
     </panel>
