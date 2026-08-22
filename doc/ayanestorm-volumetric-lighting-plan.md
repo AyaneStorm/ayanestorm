@@ -1854,6 +1854,13 @@ shadow sampler capable of perturbing the light-space lookup itself. Adding such
 a sampler is a separate quality feature with cascade, bias, and stability risk;
 it is not required for this removal of provably ineffective arithmetic.
 
+### Floater visibility persistence (2026-08-23)
+
+The standalone Volumetric Lighting floater already used `save_rect="true"`,
+which restores its position but not its open/closed state. Adding
+`save_visibility="true"` lets the registered-floater startup path restore the
+previous visibility at login, matching other persistent utility floaters.
+
 ### Priority 4: temporal accumulation as an optional quality mode
 
 Reproject and blend the previous directional-scatter frame using motion/depth

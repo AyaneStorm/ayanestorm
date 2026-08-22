@@ -5,6 +5,7 @@
   can_dock="false"
   can_resize="false"
   save_rect="true"
+  save_visibility="true"
   width="542"
   height="352"
   layout="topleft">
