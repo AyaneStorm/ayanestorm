@@ -2778,6 +2778,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Favorite audio streams toolbar command -->
   <string name="Command_Favorite_Streams_Label">Favorite Streams</string>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Volumetric lighting settings toolbar command -->
+  <string name="Command_ASVolumetricLighting_Label">Volumetric Lighting</string>
+  <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Label">Asset blacklist</string>
   <string name="Command_Phototools_Label">Phototools</string>
   <string name="Command_Phototools_Advanced_Label">Advanced Phototools</string>
@@ -2852,6 +2855,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_Sound_Explorer_Tooltip">Opens the sound explorer</string>
   <!-- <AS:Chanayane> Favorite audio streams toolbar command -->
   <string name="Command_Favorite_Streams_Tooltip">Show or hide favorite streams</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Volumetric lighting settings toolbar command -->
+  <string name="Command_ASVolumetricLighting_Tooltip">Show or hide volumetric lighting settings</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Tooltip">Opens the list of all the items you have blacklisted</string>
   <string name="Command_Phototools_Tooltip">Tools for full-featured image making (ALT+P).</string>

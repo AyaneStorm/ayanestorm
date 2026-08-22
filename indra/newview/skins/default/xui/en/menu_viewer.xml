@@ -1504,6 +1504,18 @@
                  function="RLV.EnableIfNot"
                  parameter="setenv" />
             </menu_item_call>
+            <!-- <AS:Chanayane> Volumetric lighting settings floater -->
+            <menu_item_check
+             label="Volumetric Lighting..."
+             name="as_volumetric_lighting">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_volumetric_lighting" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_volumetric_lighting" />
+            </menu_item_check>
+            <!-- </AS:Chanayane> -->
             <menu_item_separator/>
             <menu_item_check
              label="Pause Clouds"
@@ -6478,5 +6490,18 @@
                parameter="SlowMotionAnimation" />
          </menu_item_check>
       </menu>
+
+      <menu_item_separator />
+
+      <menu_item_check
+         label="Volumetric Lighting..."
+         name="AS Volumetric Lighting">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_volumetric_lighting" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_volumetric_lighting" />
+      </menu_item_check>
    </menu>
 </menu_bar>
