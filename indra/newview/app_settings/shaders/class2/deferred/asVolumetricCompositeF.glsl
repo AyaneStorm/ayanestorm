@@ -83,18 +83,27 @@ float depthSimilarity(vec2 uv, float center_depth)
 // otherwise verified correct since it exactly matched the disabled case at
 // extinction=0). Skip attenuation entirely at/beyond the boundary instead.
 const float SKY_DISTANCE = 128.0;
+// Start of the fade-to-1.0 band, ending at SKY_DISTANCE. A hard cutoff at
+// SKY_DISTANCE alone produces a visible seam: geometry a hair closer than the
+// boundary is attenuated, geometry a hair beyond it is not. Fading T back to
+// 1.0 across this band removes that pop while still landing on exactly 1.0
+// at SKY_DISTANCE, matching the sky-side assumption below unchanged.
+const float SKY_FADE_START = 100.0;
 
 // Beer-Lambert transmittance at a given view-space distance. Matches the
-// raymarch/atlas passes' exp(-extinction * distance) exactly for real,
-// finite-depth scene geometry; returns 1.0 (no attenuation) for anything at
-// or beyond SKY_DISTANCE, since that range is sky/atmosphere, not ground fog.
+// raymarch/atlas passes' exp(-extinction * distance) for real, finite-depth
+// scene geometry; smoothly fades to 1.0 (no attenuation) over
+// [SKY_FADE_START, SKY_DISTANCE), and is exactly 1.0 at or beyond
+// SKY_DISTANCE, since that range is sky/atmosphere, not ground fog.
 float sceneTransmittance(float dist)
 {
     if (dist >= SKY_DISTANCE)
     {
         return 1.0;
     }
-    return exp(-sceneExtinction * dist);
+    float beer_lambert = exp(-sceneExtinction * dist);
+    float fade = smoothstep(SKY_FADE_START, SKY_DISTANCE, dist);
+    return mix(beer_lambert, 1.0, fade);
 }
 
 vec3 attenuateAndComposite(vec2 pos_screen, float dist, vec3 scatter)

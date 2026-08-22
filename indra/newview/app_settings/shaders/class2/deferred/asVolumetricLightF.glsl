@@ -97,6 +97,33 @@ float interleavedGradientNoise(vec2 screen_pos)
     return fract(magic.z * fract(dot(screen_pos, magic.xy)));
 }
 
+// Real angular radius of the sun as seen from a planetary surface (~0.53
+// degrees, matched for the moon too - they appear almost the same size).
+// Used to jitter light_dir per march sample within the disc instead of
+// treating the light as an infinitesimal point (see the "sun/moon treated as
+// a point" limitation this addresses: a single occluded direction, e.g. a
+// roofline clipping the shadow-map sample point, was killing that sample's
+// entire visibility contribution even when most of the physical disc was
+// still unoccluded in the same frame).
+const float SUN_ANGULAR_RADIUS = 0.0093; // radians, ~0.53 degrees
+
+// Perturbs light_dir by a random offset within a cone of half-angle
+// max_angle, using two independent uniform randoms in [0,1). Builds an
+// orthonormal basis around light_dir and displaces within it, then
+// renormalizes - a small-angle disc sample, not a full hemisphere sample.
+vec3 jitterDiscDirection(vec3 light_dir, float max_angle, vec2 rand)
+{
+    vec3 up = abs(light_dir.y) < 0.999 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 tangent = normalize(cross(up, light_dir));
+    vec3 bitangent = cross(light_dir, tangent);
+
+    float radius = max_angle * sqrt(rand.x);
+    float theta = 6.28318530718 * rand.y;
+    vec2 disc_offset = vec2(cos(theta), sin(theta)) * radius;
+
+    return normalize(light_dir + tangent * disc_offset.x + bitangent * disc_offset.y);
+}
+
 // Caps the march distance for sky/horizon pixels (effectively infinite depth)
 // so the loop stays bounded and scatter does not blow out with distance.
 const float MAX_MARCH_DISTANCE = 128.0;
@@ -188,10 +215,21 @@ void main()
         float t = (float(i) + jitter) * step_len;
         vec3 sample_pos = ray_dir * t;
 
+        // Perturb the shadow-sample direction within the sun's/moon's actual
+        // angular disc instead of always testing the exact center direction.
+        // Fixes rays vanishing the instant that one exact direction clips an
+        // occluder, even when most of the disc remains visible - averaging
+        // across per-step disc samples approximates a soft area-light
+        // penumbra at negligible extra cost (no new texture fetches, reuses
+        // the existing per-pixel noise function with an offset input).
+        vec2 disc_rand = vec2(interleavedGradientNoise(gl_FragCoord.xy + float(i) * 13.0),
+                              interleavedGradientNoise(gl_FragCoord.yx + float(i) * 7.0));
+        vec3 sample_light_dir = jitterDiscDirection(light_dir, SUN_ANGULAR_RADIUS, disc_rand);
+
         // norm = light_dir makes sampleDirectionalShadow's surface-bias term
         // (dot(norm, light_dir)) evaluate to 1.0, i.e. no extra bias offset
         // - the correct choice for a sample in empty space, not on a surface.
-        float visibility = sampleDirectionalShadow(sample_pos, light_dir, pos_screen);
+        float visibility = sampleDirectionalShadow(sample_pos, sample_light_dir, pos_screen);
 
         // Guard against a bad shadow sample poisoning the whole integral.
         if (visibility == visibility) // false only for NaN
