@@ -58,6 +58,7 @@ uniform sampler2D exposureMap;
 uniform float debugExposure;
 
 vec4 getPosition(vec2 pos_screen);
+vec4 getNorm(vec2 pos_screen);
 
 float depthSimilarity(vec2 uv, float center_depth)
 {
@@ -65,6 +66,26 @@ float depthSimilarity(vec2 uv, float center_depth)
     float relative_difference = abs(tap_depth - center_depth) /
                                 max(max(tap_depth, center_depth), 1.0);
     return exp(-relative_difference * 64.0);
+}
+
+float normalSimilarity(vec2 uv, vec3 center_normal)
+{
+    vec3 tap_normal = getNorm(uv).xyz;
+    // Invalid/background normals should not suppress sky taps; opaque depth
+    // remains the complete guide in that case. For real surfaces, smoothly
+    // reject differently oriented geometry even when its depth is similar.
+    float center_length_squared = dot(center_normal, center_normal);
+    float tap_length_squared = dot(tap_normal, tap_normal);
+    // Express validity positively and negate the whole predicate: comparisons
+    // against NaN are false, so this also catches the NaN produced when the
+    // packed-normal decoder sees an empty background texel.
+    if (!(center_length_squared > 0.25 && center_length_squared < 1.5) ||
+        !(tap_length_squared > 0.25 && tap_length_squared < 1.5))
+    {
+        return 1.0;
+    }
+    return smoothstep(0.5, 0.9,
+                      dot(normalize(center_normal), normalize(tap_normal)));
 }
 
 // Same sky/horizon boundary the raymarch shader uses (MAX_MARCH_DISTANCE in
@@ -149,10 +170,12 @@ void main()
                         (1.0 - fraction.x) * fraction.y,
                         fraction.x * fraction.y);
     float center_depth = abs(getPosition(vary_fragcoord).z);
-    vec4 weights = spatial * vec4(depthSimilarity(uv00, center_depth),
-                                  depthSimilarity(uv10, center_depth),
-                                  depthSimilarity(uv01, center_depth),
-                                  depthSimilarity(uv11, center_depth));
+    vec3 center_normal = getNorm(vary_fragcoord).xyz;
+    vec4 weights = spatial *
+        vec4(depthSimilarity(uv00, center_depth) * normalSimilarity(uv00, center_normal),
+             depthSimilarity(uv10, center_depth) * normalSimilarity(uv10, center_normal),
+             depthSimilarity(uv01, center_depth) * normalSimilarity(uv01, center_normal),
+             depthSimilarity(uv11, center_depth) * normalSimilarity(uv11, center_normal));
     float weight_sum = dot(weights, vec4(1.0));
     if (weight_sum < 1e-6)
     {

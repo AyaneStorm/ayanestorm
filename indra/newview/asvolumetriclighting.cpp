@@ -749,6 +749,21 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
                                                    &pipeline.mRT->deferredScreen,
                                                    true);
+        S32 normal_channel = -1;
+        if (depth_aware)
+        {
+            // The normal guide is only useful for the half-resolution
+            // upsample. Bind deferredScreen attachment 2 explicitly; the
+            // generic LLRenderTarget overload would bind attachment 0.
+            normal_channel = gASVolumetricCompositeProgram.enableTexture(
+                LLShaderMgr::NORMAL_MAP, pipeline.mRT->deferredScreen.getUsage());
+            if (normal_channel > -1)
+            {
+                pipeline.mRT->deferredScreen.bindTexture(
+                    2, normal_channel, LLTexUnit::TFO_POINT);
+                gGL.getTexUnit(normal_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+            }
+        }
         gASVolumetricCompositeProgram.uniform2f(
             LLStaticHashedString("emissiveRectDelta"),
             1.f / (F32)composite_source.getWidth(),
@@ -778,6 +793,11 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         // Do not leak temporary scatter/depth bindings into later rendering.
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        if (normal_channel > -1)
+        {
+            gASVolumetricCompositeProgram.disableTexture(
+                LLShaderMgr::NORMAL_MAP, pipeline.mRT->deferredScreen.getUsage());
+        }
         if (show_alpha_channel)
         {
             gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP);

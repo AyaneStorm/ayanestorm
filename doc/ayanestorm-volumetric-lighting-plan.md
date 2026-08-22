@@ -1863,6 +1863,12 @@ previous visibility at login, matching other persistent utility floaters.
 
 ### Priority 4: temporal accumulation as an optional quality mode
 
+**Deferred by decision on 2026-08-23.** The viewer has no active temporal
+velocity/history pipeline to reuse (`SMAA_REPROJECTION` is disabled). A robust
+implementation would require new history targets, depth/motion rejection,
+camera-cut and lighting reset rules, and another fullscreen pass. That scope
+and ghosting risk are not justified for the current stable path.
+
 Reproject and blend the previous directional-scatter frame using motion/depth
 rejection, allowing fewer current-frame shadow samples for similar apparent
 quality. This has the highest potential quality-per-sample gain but also the
@@ -1873,7 +1879,14 @@ for the stable non-temporal path.
 
 ### Priority 5: improve the depth-aware upsample guide
 
-The current four-tap upsampler rejects samples using relative depth only. For
+**Implemented 2026-08-23; awaiting build/runtime validation.** The
+half-resolution final composite now multiplies its existing relative-depth
+weights by smooth normal-similarity weights. Invalid/background normals fall
+back to depth-only weighting. The normal attachment is bound only when the
+depth-aware upsample is active, leaving full-resolution and debug composites
+unchanged.
+
+The previous four-tap upsampler rejected samples using relative depth only. For
 opaque geometry, adding a normal-similarity term can better preserve creases
 and adjacent surfaces at similar depth, reducing light bleed without a blur.
 This costs additional G-buffer samples and should be limited to the default
