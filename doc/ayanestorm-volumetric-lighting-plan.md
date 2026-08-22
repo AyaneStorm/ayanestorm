@@ -1830,17 +1830,29 @@ near avatars, thin occluders, and debug visibility modes before shipping.
 
 ### Priority 3: cheaper sun/moon disc sampling
 
-Every directional march step currently generates two gradient-noise values,
+**Implemented 2026-08-23; awaiting build/runtime validation.** Static review of
+the shared `sampleDirectionalShadow(pos, norm, pos_screen)` implementation
+showed that its second argument is a surface normal, not a sampleable light
+direction. Moreover, `pcfShadow()` does not use that normal argument; changing
+it only introduced a tiny surface-bias offset in the wrapper. The former
+per-step "disc jitter" therefore never moved the shadow-map lookup at all.
+
+The ineffective work has been removed rather than replaced with a constant
+disc sequence: two noise evaluations, `sqrt`, `sin`, `cos`, basis construction,
+and normalization are gone from every active march step. Empty-space samples
+now pass the actual light direction as their normal, producing the intended
+zero surface-bias offset. The once-per-pixel march-position jitter, built-in
+five-tap shadow PCF, and phase-function sun/moon disc width remain unchanged.
+
+Every directional march step previously generated two gradient-noise values,
 evaluates `sqrt`, `cos`, and `sin`, builds a tangent basis, and normalizes a
 jittered light direction. The shadow lookup remains the dominant operation,
 but this arithmetic is repeated at every pixel and step.
 
-Replace it with a small constant low-discrepancy disc sequence (for example 16
-predefined 2-D offsets), rotated once per pixel by one noise-derived angle.
-Precompute the light-direction tangent/bitangent once per fragment, outside the
-loop. This retains soft-disc coverage while removing per-step trigonometry and
-basis construction. A small blue-noise texture could further reduce structured
-grain, but adds a sampler/binding dependency; start with a constant sequence.
+A constant low-discrepancy disc sequence would only be meaningful with a new
+shadow sampler capable of perturbing the light-space lookup itself. Adding such
+a sampler is a separate quality feature with cascade, bias, and stability risk;
+it is not required for this removal of provably ineffective arithmetic.
 
 ### Priority 4: temporal accumulation as an optional quality mode
 
