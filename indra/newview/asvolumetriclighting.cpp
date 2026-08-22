@@ -304,7 +304,8 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
         }
 
         shader.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
-        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
+                          getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
         shader.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
     }
 }
@@ -324,13 +325,22 @@ F32 ASVolumetricLighting::getScatterIntensity()
     return intensity;
 }
 
-F32 ASVolumetricLighting::getScatterAsymmetry()
+F32 ASVolumetricLighting::getScatterAsymmetry(bool sun_up)
 {
     // Henyey-Greenstein g parameter; positive values bias scatter toward the
     // view direction (forward scattering), matching how sunbeams look when
-    // looking roughly toward the sun.
-    static LLCachedControl<F32> asymmetry(gSavedSettings, "RenderVolumetricLightingAsymmetry", 0.3f);
-    return asymmetry;
+    // looking roughly toward the sun/moon. Separate settings per source:
+    // confirmed by the user that the moon's much dimmer light wants a
+    // sharper forward bias (0.7) to show a visible sky gradient, while the
+    // sun is bright enough that the same g looks overblown - 0.4 reads
+    // better for the sun.
+    if (sun_up)
+    {
+        static LLCachedControl<F32> sun_asymmetry(gSavedSettings, "RenderVolumetricLightingSunAsymmetry", 0.4f);
+        return sun_asymmetry;
+    }
+    static LLCachedControl<F32> moon_asymmetry(gSavedSettings, "RenderVolumetricLightingAsymmetry", 0.7f);
+    return moon_asymmetry;
 }
 
 F32 ASVolumetricLighting::getExtinction()
@@ -507,7 +517,8 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
 
     pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
-    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
+                                         getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
     // Mode 11 shows the REAL (non-debug) atlas's alpha channel, not a special
     // diagnostic encoding - transmittance is already a naturally-visible
@@ -649,7 +660,8 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
-            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
+                                                 getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
             // bindDeferredShader() does not set this; renderDeferredLighting()'s

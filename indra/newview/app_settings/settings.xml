@@ -13244,13 +13244,26 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>RenderVolumetricLightingAsymmetry</key>
     <map>
       <key>Comment</key>
-      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass. Positive biases scatter toward the view direction.</string>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the moon is the active light source. Positive biases scatter toward the view direction.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.3</real>
+      <real>0.7</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingSunAsymmetry</key>
+    <map>
+      <key>Comment</key>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the sun is the active light source. Positive biases scatter toward the view direction. The sun is bright enough that a lower value than the moon's looks correct.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.4</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>
