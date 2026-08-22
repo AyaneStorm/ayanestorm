@@ -279,7 +279,6 @@ void ASVolumetricLighting::releaseResources()
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 {
     static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
-    static LLStaticHashedString resolved_sampler("asVolumetricFull");
     static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
     const bool enabled = isEnabled() && getDebugMode() == 0 && sShadersLoaded &&
         sTransparencyAtlas.isComplete();
@@ -287,7 +286,6 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
     if (enabled)
     {
         const S32 location = shader.getUniformLocation(atlas_sampler);
-        const S32 resolved_location = shader.getUniformLocation(resolved_sampler);
         const GLint channel = shader.mActiveTextureChannels;
 
         // Generic/indexed alpha material submission reuses link-mapped units
@@ -299,23 +297,6 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
                                                 sTransparencyAtlas.getTexture(0));
             gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
-        }
-
-        // Fixed-sampler water removes the exact resolved field and performs a
-        // continuous per-fragment foreground march, so it needs no atlas unit.
-        GLint resolved_channel = -1;
-        if (resolved_location > -1)
-        {
-            glGetUniformiv(shader.mProgramObject, resolved_location, &resolved_channel);
-        }
-        if (resolved_location > -1 && resolved_channel >= 0 &&
-            resolved_channel < gGLManager.mNumTextureImageUnits &&
-            sResolvedTarget.isComplete())
-        {
-            gGL.getTexUnit(resolved_channel)->bindManual(sResolvedTarget.getUsage(),
-                                                         sResolvedTarget.getTexture(0));
-            gGL.getTexUnit(resolved_channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
-            gGL.getTexUnit(resolved_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
 
         shader.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());

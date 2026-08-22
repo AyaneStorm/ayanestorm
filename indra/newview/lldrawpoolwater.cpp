@@ -49,7 +49,7 @@
 #include "llsettingssky.h"
 #include "llsettingswater.h"
 
-// <AS:Chanayane> Bind depth-resolved foreground scatter for late water rendering.
+// <AS:Chanayane> Bind depth-resolved volumetric inputs for late water rendering.
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 

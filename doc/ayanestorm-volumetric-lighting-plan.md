@@ -1533,8 +1533,8 @@ The atlas construction is now incremental:
 Every public atlas tile retains the existing consumer contract:
 `light_color * clamp(raw_integral / MAX_MARCH_DISTANCE * phase * intensity)`.
 The raw R16F scratch values are private to atlas generation; alpha, PBR alpha,
-legacy material, fullbright, and water shaders continue to consume the RGBA16F
-atlas as before. The R16F handoff does quantize the running sum between slices,
+legacy material, and fullbright shaders continue to consume the RGBA16F atlas
+as before. The R16F handoff does quantize the running sum between slices,
 so equivalence is functional rather than bit-identical to the former single
 fragment invocation.
 
@@ -1562,3 +1562,44 @@ This change is **not yet built or runtime-tested**. Before acceptance:
 
 Per the developer's active testing workflow, `shaderCacheRevision()` remains
 at `v13`; the shader cache is cleared manually before each test build.
+
+### Water flattening correction
+
+Runtime comparison with volumetric lighting toggled showed that the
+water-specific correction from commit `71d1838862` made the surface appear
+nearly flat. That path subtracted `asVolumetricFull` from water's copied
+framebuffer, completed ordinary reflection/refraction shading, then added a
+separate smooth 16-step camera-to-water scatter march after all surface detail.
+At long water-view distances the additive scatter dominated the waves,
+reflection probes, refraction, and punctual highlights. Disabling the original
+water RGB clamp exposed the oversized HDR term directly.
+
+Moving the same foreground term into `fb` before the BRDF was runtime-tested
+and remained flat: the smooth duplicate radiance still dominated wherever the
+water equation retained a substantial refracted/background contribution, so
+wave normals were calculated but visually overwhelmed.
+
+The final correction removes the duplicate water-only estimator entirely.
+Water no longer subtracts `asVolumetricFull` or performs another 16-step shadow
+march. Its ordinary wave/Fresnel/reflection/refraction equation instead shades
+the already-volumetric scene copied through `screenTex`. This is not a bypass:
+volumetric radiance remains present in the scene being refracted, but it is no
+longer added a second time as a smooth field unique to water. HDR output remains
+enabled while volumetrics are active so the scene tonemapper, rather than the
+legacy water clamp, handles that copied radiance.
+
+A subsequent night/fog runtime test confirmed that this restored waves but
+left water conspicuously dark: `screenTex` supplied volumetrics through the
+refracted share, while the Fresnel-reflected share replaced it with dark probe
+radiance. The targeted correction now samples the existing cumulative atlas at
+the water surface depth and adds it only in proportion to `df2.x`, the same
+Fresnel reflection weight used by the water BRDF (and shoreline `fade`). Thus
+the refracted share retains its already-volumetric scene input and only the
+missing reflected share receives camera-to-water scatter. This costs two atlas
+lookups rather than restoring the removed 16-shadow-sample water march, and it
+avoids the former full-strength post-BRDF overlay that erased wave contrast.
+
+Runtime test passed: water wave and reflection detail remains visible, and the
+surface now blends correctly with the volumetrically lit scene. The
+Fresnel-weighted atlas correction is accepted as build-OK and runtime-tested
+for the reported water regression (`bokt`).
