@@ -98,15 +98,6 @@ private:
     static LLRenderTarget sVolumetricTarget;
     static LLRenderTarget sTransparencyAtlas;
 
-    // Scratch copy of "screen" taken just before the opaque composite draw,
-    // at sVolumetricTarget's resolution (half-res by default, same tradeoff
-    // as the raymarch/atlas targets). The composite shader reads scene color
-    // from this copy rather than the live destination, since a texture
-    // cannot be sampled while simultaneously bound as the draw target -
-    // needed so the composite can multiply existing scene color by
-    // transmittance instead of only additively blending scatter on top.
-    static LLRenderTarget sSceneCopyTarget;
-
     // The atlas is built one tile (slice) per draw call instead of all 16 in
     // a single full-resolution draw, so each slice only computes its own new
     // depth segment instead of redundantly re-summing every earlier segment

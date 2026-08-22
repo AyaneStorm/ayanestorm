@@ -1767,3 +1767,118 @@ Runtime test passed: water wave and reflection detail remains visible, and the
 surface now blends correctly with the volumetrically lit scene. The
 Fresnel-weighted atlas correction is accepted as build-OK and runtime-tested
 for the reported water regression (`bokt`).
+
+## Prioritized performance and quality roadmap (2026-08-22)
+
+This list reflects the current implementation after atlas O(n) accumulation,
+Fresnel-weighted water integration, opaque transmittance, and removal of the
+obsolete resolved target. Profile before and after each item; do not combine
+multiple rendering changes into one runtime test.
+
+### Priority 1: composite scatter and transmittance with destination blending
+
+**Implemented 2026-08-22; awaiting build/runtime validation.** The composite
+shader now outputs scatter in RGB and Beer-Lambert transmittance in alpha, and
+the normal composite uses `ONE, SRC_ALPHA` destination blending. The
+`sSceneCopyTarget` allocation, copy draw, sampler, and associated bandwidth
+have been removed. Debug modes still replace the destination, while the alpha
+write mask preserves the screen alpha used by later post-processing.
+
+The previous opaque-transmittance path copied `screen` into
+`sSceneCopyTarget`, then replaced `screen` with
+`sceneCopy * transmittance + scatter`. In the default quality tier the copy
+target is only half resolution, so this both adds a fullscreen copy/pass and
+reconstructs the entire opaque scene from a lower-resolution texture. That is
+an avoidable bandwidth cost and a potential base-scene quality regression.
+
+The fixed-function blend unit can express the same RGB equation directly:
+
+`C_out = C_src * ONE + C_dst * SRC_ALPHA`
+
+The composite shader outputs scatter in RGB and per-pixel Beer-Lambert
+transmittance in alpha, then uses separate RGB/alpha blending via
+`blendFunc(BF_ONE, BF_SOURCE_ALPHA, BF_ZERO, BF_ONE)`. The existing color mask
+preserves destination alpha. This removes `sSceneCopyTarget`, its RGBA16F
+allocation, the screen-copy draw, the `sceneCopy` sampler, and the associated
+texture bandwidth while retaining full-resolution destination detail. Debug
+replace modes keep their existing non-blended behavior.
+
+Expected result: the largest remaining low-risk performance win and a quality
+improvement in the default half-resolution tier. Validate exact disabled
+bypass, screen alpha, sky fade-to-unity, opaque transmittance, transparency,
+water, and post-tonemap output before acceptance.
+
+### Priority 2: distance-proportional directional sample count
+
+The directional shader currently executes the full configured 16 or 32 shadow
+samples even when opaque depth ends the ray only a few metres from the camera.
+Keep approximately constant sample spacing instead:
+
+`steps = clamp(ceil(sample_count * ray_len / 128), minimum, sample_count)`
+
+A minimum of 4-6 samples should protect near-field stability. This can
+substantially reduce shadow lookups in interiors and scenes dominated by nearby
+geometry, with little reason to spend 16 samples over a two-metre ray. Because
+sample count affects noise and shadow-transition stability, test camera motion,
+near avatars, thin occluders, and debug visibility modes before shipping.
+
+### Priority 3: cheaper sun/moon disc sampling
+
+Every directional march step currently generates two gradient-noise values,
+evaluates `sqrt`, `cos`, and `sin`, builds a tangent basis, and normalizes a
+jittered light direction. The shadow lookup remains the dominant operation,
+but this arithmetic is repeated at every pixel and step.
+
+Replace it with a small constant low-discrepancy disc sequence (for example 16
+predefined 2-D offsets), rotated once per pixel by one noise-derived angle.
+Precompute the light-direction tangent/bitangent once per fragment, outside the
+loop. This retains soft-disc coverage while removing per-step trigonometry and
+basis construction. A small blue-noise texture could further reduce structured
+grain, but adds a sampler/binding dependency; start with a constant sequence.
+
+### Priority 4: temporal accumulation as an optional quality mode
+
+Reproject and blend the previous directional-scatter frame using motion/depth
+rejection, allowing fewer current-frame shadow samples for similar apparent
+quality. This has the highest potential quality-per-sample gain but also the
+highest implementation and regression risk: camera cuts, animated foliage,
+moving avatars, changing sun direction, water, and disocclusion can ghost.
+Keep it optional, reset history aggressively, and do not make it a prerequisite
+for the stable non-temporal path.
+
+### Priority 5: improve the depth-aware upsample guide
+
+The current four-tap upsampler rejects samples using relative depth only. For
+opaque geometry, adding a normal-similarity term can better preserve creases
+and adjacent surfaces at similar depth, reducing light bleed without a blur.
+This costs additional G-buffer samples and should be limited to the default
+half-resolution tier. Transparency is rendered later and has its own atlas, so
+the earlier alpha/hair objection to an opaque-depth bilateral final composite
+does not apply in the same way here; nevertheless test foliage silhouettes and
+thin geometry carefully.
+
+### Priority 6: conditional atlas production
+
+The 16-slice atlas is built every enabled frame even if no atlas-consuming
+transparent geometry or water is ultimately visible. A conservative previous-
+frame visibility flag from alpha/material/water submission could skip atlas
+generation after consecutive unused frames, with immediate reactivation and a
+one-frame-safe fallback when a consumer appears. This is attractive in opaque
+scenes but invasive because incorrect visibility prediction would cause stale
+or missing transparency lighting. Attempt only after GPU profiling shows the
+optimized atlas remains material.
+
+### Lower-priority or avoid
+
+- Local-light fog defaults off. Its CPU-transform and conditional-FBO changes
+  already remove common-path waste; tiled light culling or instanced light
+  volumes are not justified unless profiling with the option enabled shows a
+  real bottleneck.
+- Do not restore a generic bilateral blur. It adds multiple passes and repeats
+  previously documented transparency/guide problems.
+- Do not increase default atlas resolution or slice count before profiling the
+  current half-resolution 16-slice result. Prefer gutters/inset corrections
+  only if runtime captures show actual tile bleeding.
+- Dynamic resolution based on measured GPU time is useful eventually, but it
+  changes visual sharpness during play and needs hysteresis. First expose or
+  profile fixed quarter/half/full tiers to establish a stable cost curve.

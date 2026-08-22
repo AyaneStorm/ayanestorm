@@ -1,6 +1,6 @@
 /**
  * @file asVolumetricCompositeF.glsl
- * @brief AyaneStorm optional volumetric lighting - upsample and additive composite.
+ * @brief AyaneStorm optional volumetric lighting - upsample and transmittance composite.
  * @author chanayane@firestorm
  *
  * $LicenseInfo:firstyear=2026&license=viewerlgpl$
@@ -37,17 +37,14 @@ uniform int depthAwareUpsample;
 // content. Never set outside a diagnostic debug mode.
 uniform int showAlphaChannel;
 // Opaque scene attenuation: attenuateScene is only set for the real (debug
-// mode 0) composite. sceneCopy is a copy of "screen" taken just before this
-// draw (see ASVolumetricLighting::renderPass()'s use of sSceneCopyTarget) -
-// a texture cannot be sampled while simultaneously bound as this draw's
-// destination, so the existing scene color has to be read from a separate
-// copy rather than the live destination. sceneDensity is the same
+// mode 0) composite. RGB contains scatter and alpha contains transmittance;
+// destination blending evaluates scene * transmittance + scatter without
+// sampling or copying the live destination. sceneDensity is the same
 // Beer-Lambert coefficient the raymarch/atlas passes already use
 // (RenderVolumetricLightingDensity) - T is derived directly from this
 // pass's own full-resolution depth sample rather than from the transparency
 // atlas, since that atlas is keyed to per-object view_position lookups from
 // alpha/material shaders, not to this full-screen opaque pass.
-uniform sampler2D sceneCopy;
 uniform float sceneDensity;
 uniform int attenuateScene;
 // Debug-only: postDeferredTonemap.glsl (upstream, runs after this composite)
@@ -106,14 +103,13 @@ float sceneTransmittance(float dist)
     return mix(beer_lambert, 1.0, fade);
 }
 
-vec3 attenuateAndComposite(vec2 pos_screen, float dist, vec3 scatter)
+float compositeTransmittance(float dist)
 {
     if (attenuateScene == 0)
     {
-        return scatter;
+        return 0.0;
     }
-    vec3 scene_color = texture(sceneCopy, pos_screen).rgb;
-    return scene_color * sceneTransmittance(dist) + scatter;
+    return sceneTransmittance(dist);
 }
 
 void main()
@@ -129,7 +125,7 @@ void main()
             return;
         }
         float dist = abs(getPosition(vary_fragcoord).z);
-        frag_color = vec4(attenuateAndComposite(vary_fragcoord, dist, sampled.rgb), 0.0);
+        frag_color = vec4(sampled.rgb, compositeTransmittance(dist));
         return;
     }
 
@@ -163,7 +159,7 @@ void main()
         // A subpixel surface may have no representative half-resolution tap.
         // Preserve the former bilinear behavior instead of creating a hole.
         vec3 scatter = texture(emissiveRect, vary_fragcoord).rgb;
-        frag_color = vec4(attenuateAndComposite(vary_fragcoord, center_depth, scatter), 0.0);
+        frag_color = vec4(scatter, compositeTransmittance(center_depth));
         return;
     }
 
@@ -172,5 +168,5 @@ void main()
                    texture(emissiveRect, uv01).rgb * weights.z +
                    texture(emissiveRect, uv11).rgb * weights.w;
     scatter /= weight_sum;
-    frag_color = vec4(attenuateAndComposite(vary_fragcoord, center_depth, scatter), 0.0);
+    frag_color = vec4(scatter, compositeTransmittance(center_depth));
 }
