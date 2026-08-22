@@ -46,9 +46,9 @@ uniform vec3 moon_dir;
 uniform int sun_up_factor;
 uniform vec3 sunlight_color;
 uniform vec3 moonlight_color;
-uniform float scatter_intensity;
+uniform float scatter_albedo;
 uniform float scatter_asymmetry;
-uniform float scatter_extinction;
+uniform float scatter_density;
 uniform int atlas_debug;
 
 // Raw cumulative integral (R channel, unbounded, pre-color, pre-clamp)
@@ -63,6 +63,12 @@ float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
 const float MAX_MARCH_DISTANCE = 128.0;
 const float ATLAS_SLICES = 16.0;
 const float ATLAS_GRID = 4.0;
+
+// Keep numerically identical to asVolumetricLightF.glsl's constant of the
+// same name - both shaders must agree on the same brightness normalization
+// so the raymarch and atlas paths produce matching scatter for the same
+// density/albedo settings. See that file for the derivation/tuning note.
+const float BRIGHTNESS_SCALE = 64.0;
 
 float phaseHG(float cos_theta, float g)
 {
@@ -112,7 +118,7 @@ void main()
     if (visibility == visibility)
     {
         new_segment_integral = clamp(visibility, 0.0, 1.0) *
-                               exp(-scatter_extinction * sample_distance) *
+                               exp(-scatter_density * sample_distance) *
                                segment_length;
     }
 
@@ -139,14 +145,14 @@ void main()
     // Real atlas tile: identical format/derivation to the original
     // single-draw version's per-slice output - every tile is independently
     // a full, valid, final light_color * clamped-scatter value.
-    float scatter = clamp((visibility_integral / MAX_MARCH_DISTANCE) *
-                          phase * scatter_intensity, 0.0, 1.0);
+    float scatter = clamp(scatter_density * scatter_albedo * BRIGHTNESS_SCALE *
+                          phase * (visibility_integral / MAX_MARCH_DISTANCE), 0.0, 1.0);
 
     // Beer-Lambert transmittance at this tile's far boundary. A deterministic
-    // function of slice_index and the constant extinction coefficient only -
+    // function of slice_index and the constant density coefficient only -
     // no dependency on shadow visibility, so (unlike visibility_integral)
     // this needs no cumulative ping-pong across slices.
-    float transmittance = exp(-scatter_extinction * segment_far);
+    float transmittance = exp(-scatter_density * segment_far);
 
     if (atlas_debug != 0)
     {

@@ -41,14 +41,14 @@ uniform int showAlphaChannel;
 // draw (see ASVolumetricLighting::renderPass()'s use of sSceneCopyTarget) -
 // a texture cannot be sampled while simultaneously bound as this draw's
 // destination, so the existing scene color has to be read from a separate
-// copy rather than the live destination. sceneExtinction is the same
+// copy rather than the live destination. sceneDensity is the same
 // Beer-Lambert coefficient the raymarch/atlas passes already use
-// (RenderVolumetricLightingExtinction) - T is derived directly from this
+// (RenderVolumetricLightingDensity) - T is derived directly from this
 // pass's own full-resolution depth sample rather than from the transparency
 // atlas, since that atlas is keyed to per-object view_position lookups from
 // alpha/material shaders, not to this full-screen opaque pass.
 uniform sampler2D sceneCopy;
-uniform float sceneExtinction;
+uniform float sceneDensity;
 uniform int attenuateScene;
 // Debug-only: postDeferredTonemap.glsl (upstream, runs after this composite)
 // unconditionally multiplies whatever lands in "screen" by exposure *
@@ -101,7 +101,7 @@ float sceneTransmittance(float dist)
     {
         return 1.0;
     }
-    float beer_lambert = exp(-sceneExtinction * dist);
+    float beer_lambert = exp(-sceneDensity * dist);
     float fade = smoothstep(SKY_FADE_START, SKY_DISTANCE, dist);
     return mix(beer_lambert, 1.0, fade);
 }

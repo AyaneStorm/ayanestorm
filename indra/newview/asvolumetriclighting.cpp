@@ -80,7 +80,7 @@ U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v13";
+    return "as-volumetric-lighting-v14";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -303,10 +303,10 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
 
-        shader.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+        shader.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
         shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                           getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
-        shader.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
+        shader.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
     }
 }
 
@@ -319,10 +319,13 @@ S32 ASVolumetricLighting::getSampleCount()
     return high_quality ? 32 : 16;
 }
 
-F32 ASVolumetricLighting::getScatterIntensity()
+F32 ASVolumetricLighting::getScatterAlbedo()
 {
-    static LLCachedControl<F32> intensity(gSavedSettings, "RenderVolumetricLightingIntensity", 0.8f);
-    return intensity;
+    // Single-scattering albedo fraction. Combined with density and the fixed
+    // BRIGHTNESS_SCALE shader constant to derive final scatter brightness -
+    // see the formula comment in asVolumetricLightF.glsl.
+    static LLCachedControl<F32> albedo(gSavedSettings, "RenderVolumetricLightingAlbedo", 1.0f);
+    return llclamp((F32)albedo, 0.f, 1.f);
 }
 
 F32 ASVolumetricLighting::getScatterAsymmetry(bool sun_up)
@@ -343,13 +346,15 @@ F32 ASVolumetricLighting::getScatterAsymmetry(bool sun_up)
     return moon_asymmetry;
 }
 
-F32 ASVolumetricLighting::getExtinction()
+F32 ASVolumetricLighting::getScatterDensity()
 {
-    // Beer-Lambert attenuation per view-space metre. This damps distant
-    // in-scatter without changing the directional-light or shadow geometry.
-    static LLCachedControl<F32> extinction(gSavedSettings,
-        "RenderVolumetricLightingExtinction", 0.012f);
-    return llmax((F32)extinction, 0.f);
+    // Beer-Lambert per-view-space-metre coefficient (formerly "Extinction").
+    // Damps distant in-scatter without changing directional-light/shadow
+    // geometry, and now also directly scales scatter brightness together
+    // with albedo (see BRIGHTNESS_SCALE in asVolumetricLightF.glsl).
+    static LLCachedControl<F32> density(gSavedSettings,
+        "RenderVolumetricLightingDensity", 0.012f);
+    return llmax((F32)density, 0.f);
 }
 
 S32 ASVolumetricLighting::getDebugMode()
@@ -516,10 +521,10 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
     S32 write_buffer = 0;
 
     pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
-    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                                          getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
-    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
     // Mode 11 shows the REAL (non-debug) atlas's alpha channel, not a special
     // diagnostic encoding - transmittance is already a naturally-visible
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
@@ -659,10 +664,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                                                    true);
 
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
-            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                                                  getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
-            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
             // bindDeferredShader() does not set this; renderDeferredLighting()'s
             // callers normally do it per-shader (see softenLightF's soften_shader).
@@ -766,7 +771,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                 gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
             }
             gASVolumetricCompositeProgram.uniform1f(
-                LLStaticHashedString("sceneExtinction"), getExtinction());
+                LLStaticHashedString("sceneDensity"), getScatterDensity());
         }
 
         // Clamp explicitly rather than assume this render target's default

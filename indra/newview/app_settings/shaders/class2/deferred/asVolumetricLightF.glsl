@@ -36,9 +36,9 @@ uniform vec3  sunlight_color;
 uniform vec3  moonlight_color;
 
 uniform int   sample_count;
-uniform float scatter_intensity;
+uniform float scatter_albedo;
 uniform float scatter_asymmetry;
-uniform float scatter_extinction;
+uniform float scatter_density;
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
@@ -127,6 +127,17 @@ vec3 jitterDiscDirection(vec3 light_dir, float max_angle, vec2 rand)
 // Caps the march distance for sky/horizon pixels (effectively infinite depth)
 // so the loop stays bounded and scatter does not blow out with distance.
 const float MAX_MARCH_DISTANCE = 128.0;
+
+// Fixed brightness normalization so that density*albedo (a physically
+// bounded [0, ~0.25]*[0,1] product) produces roughly the same visible
+// scatter brightness the old dimensionless scatter_intensity multiplier
+// (default 0.8) used to. Derived from matching output at density=0.012,
+// albedo=1.0 (this feature's new defaults) against the old formula's
+// default output - NOT analytically exact, since it depends on phaseHG's
+// existing normalization and this integral's existing scale. Expect to
+// re-tune this after first build/playtest. Must stay numerically identical
+// to asVolumetricAtlasF.glsl's copy of the same constant.
+const float BRIGHTNESS_SCALE = 64.0;
 
 void main()
 {
@@ -239,7 +250,7 @@ void main()
             // Beer-Lambert view-path extinction prevents a long sequence of
             // weakly lit samples from remaining as prominent as nearby air.
             attenuated_visibility_integral += visibility *
-                exp(-scatter_extinction * t) * step_len;
+                exp(-scatter_density * t) * step_len;
         }
     }
 
@@ -258,8 +269,8 @@ void main()
         return;
     }
 
-    float scatter = (attenuated_visibility_integral / MAX_MARCH_DISTANCE) *
-                    phase * scatter_intensity;
+    float scatter = scatter_density * scatter_albedo * BRIGHTNESS_SCALE *
+                    phase * (attenuated_visibility_integral / MAX_MARCH_DISTANCE);
     scatter = clamp(scatter, 0.0, 1.0);
 
     vec3 light_color = (sun_up_factor == 1) ? sunlight_color : moonlight_color;

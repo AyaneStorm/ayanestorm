@@ -13201,17 +13201,16 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
-    <key>RenderVolumetricLightingIntensity</key>
+    <key>RenderVolumetricLightingAlbedo</key>
     <map>
       <key>Comment</key>
-      <string>Intensity of the optional volumetric lighting scatter contribution.</string>
+      <string>Single-scattering albedo fraction for the optional volumetric lighting pass. Combined with density to derive scatter brightness.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <!-- <real>0.5</real> -->
-      <real>0.8</real>
+      <real>1.0</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>
@@ -13228,10 +13227,10 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
-    <key>RenderVolumetricLightingExtinction</key>
+    <key>RenderVolumetricLightingDensity</key>
     <map>
       <key>Comment</key>
-      <string>Beer-Lambert view-path extinction per metre for directional volumetric lighting.</string>
+      <string>Beer-Lambert view-path extinction (scattering density) per metre for directional volumetric lighting. Also scales scatter brightness together with albedo.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

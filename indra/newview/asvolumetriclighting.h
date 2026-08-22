@@ -74,9 +74,9 @@ public:
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
     static S32 getSampleCount();
-    static F32 getScatterIntensity();
+    static F32 getScatterAlbedo();
     static F32 getScatterAsymmetry(bool sun_up);
-    static F32 getExtinction();
+    static F32 getScatterDensity();
 
     // Debug: when RenderVolumetricLightingDebug != 0, renderPass() bypasses
     // the additive blend and opaquely overwrites `screen` with the raw
