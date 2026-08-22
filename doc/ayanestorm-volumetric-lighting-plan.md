@@ -1458,13 +1458,19 @@ already encountered. Do not port it as the current anti-solar/extinction fix.
 Static comparison against the current AS shaders leaves the following useful
 items, in priority order:
 
-1. **End-to-end transmittance.** Unity returns `exp(-extinction)` and uses it to
-   attenuate the scene as well as weighting in-scatter. The newly implemented
-   AS distance extinction currently weights in-scatter only. Completing
-   `C_out = C_scene * T + V_scatter` consistently through opaque composite,
-   transparency atlas consumers, Exact OIT, AVBOIT, fullbright, and water is
-   the largest physically meaningful improvement and the existing plan already
-   describes the required representation.
+1. ~~**End-to-end transmittance.**~~ **Done (2026-08-22).** Implemented in full:
+   the transparency atlas now carries per-tile Beer-Lambert `T` in its alpha
+   channel (`asVolumetricAtlasF.glsl`), all five upstream consumers (alphaF,
+   pbralphaF, materialF, fullbrightF, waterF) attenuate their own scene-color
+   term by `T` via a per-file `asVolumetricTransmittance()`/
+   `asVolumetricWaterTransmittance()` helper before adding scatter, and the
+   opaque composite (`asVolumetricCompositeF.glsl`) attenuates the full scene
+   via a scene-copy target with a smooth fade-to-1.0 band approaching the
+   128 m sky/ground boundary so the sky itself is never double-attenuated.
+   Water attenuates only its Fresnel-reflected share, since the refracted
+   share already receives scene attenuation for free via `screenTex`. See
+   (deleted) `doc/ayanestorm-volumetric-transmittance-plan.md` for the
+   original scoping if the design rationale is needed again.
 2. **Independent scattering and extinction coefficients.** Unity separates
    them. AS currently has artist intensity plus extinction. That is adequate
    for tuning, but a future density/medium model should define how both derive
