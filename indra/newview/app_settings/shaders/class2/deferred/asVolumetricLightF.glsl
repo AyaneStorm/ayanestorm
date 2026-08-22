@@ -227,7 +227,16 @@ void main()
     float cos_theta = cos(disc_clamped_angle);
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
-    int   steps    = max(sample_count, 1);
+    // Preserve approximately the configured full-range sample spacing while
+    // avoiding the full 16/32 shadow lookups for rays ending on nearby
+    // geometry. Four samples is the conservative floor for stable near-field
+    // shadow transitions; rays reaching MAX_MARCH_DISTANCE retain the exact
+    // configured count and therefore their previous long-range quality.
+    int max_steps = max(sample_count, 1);
+    int min_steps = min(4, max_steps);
+    int steps = clamp(int(ceil(float(max_steps) * ray_len /
+                               MAX_MARCH_DISTANCE)),
+                      min_steps, max_steps);
     float step_len = ray_len / float(steps);
 
     // Dither the ray's starting offset per-pixel so fixed-step banding turns

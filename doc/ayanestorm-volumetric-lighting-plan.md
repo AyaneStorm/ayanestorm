@@ -1810,13 +1810,19 @@ water, and post-tonemap output before acceptance.
 
 ### Priority 2: distance-proportional directional sample count
 
-The directional shader currently executes the full configured 16 or 32 shadow
+**Implemented 2026-08-23; awaiting build/runtime validation.** The directional
+raymarch now scales its active step count with the depth-limited ray length,
+using a four-step floor and retaining the configured 16/32 steps at the 128 m
+march limit. The physical step length and Beer-Lambert integral remain derived
+from the actual active step count, so brightness does not intentionally change.
+
+The previous directional shader executed the full configured 16 or 32 shadow
 samples even when opaque depth ends the ray only a few metres from the camera.
-Keep approximately constant sample spacing instead:
+The implemented count keeps approximately constant sample spacing instead:
 
-`steps = clamp(ceil(sample_count * ray_len / 128), minimum, sample_count)`
+`steps = clamp(ceil(sample_count * ray_len / 128), 4, sample_count)`
 
-A minimum of 4-6 samples should protect near-field stability. This can
+A minimum of four samples protects near-field stability. This can
 substantially reduce shadow lookups in interiors and scenes dominated by nearby
 geometry, with little reason to spend 16 samples over a two-metre ray. Because
 sample count affects noise and shadow-transition stability, test camera motion,
