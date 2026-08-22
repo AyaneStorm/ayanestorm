@@ -61,10 +61,12 @@ public:
     static void releaseResources();
 
     // Raymarches sun/moon illumination into a half-res target, then
-    // additively composites the upsampled result into `screen`. Call from
-    // LLPipeline::renderDeferredLighting() after transparency/OIT and after
-    // restoring any required rigged-alpha depth. The caller must flush an
-    // already-bound `screen` first; render targets cannot nest themselves.
+    // composites the upsampled result into `screen` as
+    // scene * transmittance + scatter (attenuating the existing scene by
+    // Beer-Lambert transmittance, not just adding scatter on top of it). Call
+    // from LLPipeline::renderDeferredLighting() after transparency/OIT and
+    // after restoring any required rigged-alpha depth. The caller must flush
+    // an already-bound `screen` first; render targets cannot nest themselves.
     // No-ops internally when !isEnabled() or during cube snapshots.
     static void renderPass(LLPipeline& pipeline, LLRenderTarget& screen);
 
@@ -95,6 +97,15 @@ private:
 
     static LLRenderTarget sVolumetricTarget;
     static LLRenderTarget sTransparencyAtlas;
+
+    // Scratch copy of "screen" taken just before the opaque composite draw,
+    // at sVolumetricTarget's resolution (half-res by default, same tradeoff
+    // as the raymarch/atlas targets). The composite shader reads scene color
+    // from this copy rather than the live destination, since a texture
+    // cannot be sampled while simultaneously bound as the draw target -
+    // needed so the composite can multiply existing scene color by
+    // transmittance instead of only additively blending scatter on top.
+    static LLRenderTarget sSceneCopyTarget;
 
     // The atlas is built one tile (slice) per draw call instead of all 16 in
     // a single full-resolution draw, so each slice only computes its own new

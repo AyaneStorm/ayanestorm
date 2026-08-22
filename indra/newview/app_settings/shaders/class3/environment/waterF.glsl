@@ -114,6 +114,30 @@ vec3 asVolumetricWaterForeground(vec3 view_position)
     vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
     return mix(lo, hi, weight);
 }
+
+// Scene transmittance T, same atlas alpha channel - mirrors
+// asVolumetricWaterForeground's tile lookup, reading .a instead of .rgb, with
+// no near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
+// Only water's own Fresnel-reflected share needs this locally; the refracted
+// share's transmittance already arrives via screenTex once the opaque
+// composite attenuates the scene itself (see the file header comment above).
+float asVolumetricWaterTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return 1.0;
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    if (upper <= 0.0) return hi;
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    return mix(lo, hi, weight);
+}
 // </AS:Chanayane>
 
 uniform int classic_mode;
@@ -352,7 +376,16 @@ void main()
     radiance *= df2.y;
     //radiance = toneMapNoExposure(radiance);
     vec3 color = vec3(0);
-    color = mix(fb.rgb, radiance, min(1, df2.x)) + punctual.rgb;
+// <AS:Chanayane> Attenuate only the Fresnel-reflected share (radiance,
+// punctual) by scene transmittance - the refracted share (fb.rgb, sampled
+// from screenTex) already carries its own transmittance once the opaque
+// composite attenuates the scene itself, so attenuating it again here would
+// double-apply it.
+// color = mix(fb.rgb, radiance, min(1, df2.x)) + punctual.rgb;
+    float water_transmittance = asVolumetricWaterTransmittance(pos);
+    color = mix(fb.rgb, radiance * water_transmittance, min(1, df2.x)) +
+            punctual.rgb * water_transmittance;
+// </AS:Chanayane>
 
     float water_haze_scale = 4;
 

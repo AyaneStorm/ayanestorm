@@ -1486,6 +1486,19 @@ items, in priority order:
    sky rays at 128 m. A deliberate sky coefficient could improve horizon
    continuity, but must agree with the viewer's existing atmospheric haze and
    avoid double fogging.
+6. **Sun/moon treated as a point direction, not a disc.** Observed 2026-08-22:
+   god rays visibly converge toward a single point rather than radiating from
+   across the sun's/moon's visible disc, and rays vanish almost entirely as
+   soon as that one point is occluded (e.g. by a roofline), even though most
+   of the disc is still visible and unoccluded in the same screenshot. Root
+   cause: `asVolumetricLightF.glsl`'s phase function evaluates
+   `dot(ray_dir, light_dir)` against a single `sun_dir`/`moon_dir` vector with
+   no angular radius, so the light is effectively a point/pure-directional
+   source rather than an area light with a soft, disc-shaped falloff. A fix
+   would need to sample (or analytically integrate) visibility/phase across
+   the sun's/moon's actual angular size rather than one fixed direction -
+   a scattering-model change, not a transmittance or correctness fix, so it
+   should be scoped and built separately from item 1's work.
 
 Already present in AS under equivalent forms: bounded ray length, cascaded
 directional-shadow sampling, Henyey-Greenstein phase, per-pixel march jitter,

@@ -12,15 +12,23 @@
  * unconditionally, so the deepest tile alone repeated all 16 segments' work,
  * at full screen resolution, every frame.
  *
- * Every tile written to the real atlas (frag_color) is still the exact same
- * final, independently valid light_color * clamped-scatter value the old
- * version produced for that slice - consumers (alphaF.glsl, pbralphaF.glsl,
- * materialF.glsl, fullbrightF.glsl) sample and blend between arbitrary
- * tiles based on distance, not just the deepest one, so every tile must
- * remain self-contained in that same format. previous_slice_integral is a
- * SEPARATE scratch texture carrying only the raw, unclamped, uncolored
- * running sum between slices - it is never sampled by any alpha/material
- * shader and never substitutes for a real atlas tile.
+ * Every tile written to the real atlas (frag_color.rgb) is still the exact
+ * same final, independently valid light_color * clamped-scatter value the
+ * old version produced for that slice - consumers (alphaF.glsl,
+ * pbralphaF.glsl, materialF.glsl, fullbrightF.glsl, waterF.glsl) sample and
+ * blend between arbitrary tiles based on distance, not just the deepest
+ * one, so every tile must remain self-contained in that same format.
+ * previous_slice_integral is a SEPARATE scratch texture carrying only the
+ * raw, unclamped, uncolored running sum between slices - it is never
+ * sampled by any alpha/material shader and never substitutes for a real
+ * atlas tile.
+ *
+ * frag_color.a carries scene transmittance T = exp(-extinction * distance)
+ * at this tile's far boundary, per the Beer-Lambert law. Unlike the RGB
+ * scatter value, T needs no cumulative ping-pong: extinction is a constant
+ * coefficient and each tile already knows its own far-boundary distance
+ * from slice_index alone, so T is computed directly per-tile with no
+ * dependency on shadow visibility or the previous slice's result.
  */
 
 /*[EXTRA_CODE_HERE]*/
@@ -133,6 +141,13 @@ void main()
     // a full, valid, final light_color * clamped-scatter value.
     float scatter = clamp((visibility_integral / MAX_MARCH_DISTANCE) *
                           phase * scatter_intensity, 0.0, 1.0);
+
+    // Beer-Lambert transmittance at this tile's far boundary. A deterministic
+    // function of slice_index and the constant extinction coefficient only -
+    // no dependency on shadow visibility, so (unlike visibility_integral)
+    // this needs no cumulative ping-pong across slices.
+    float transmittance = exp(-scatter_extinction * segment_far);
+
     if (atlas_debug != 0)
     {
         // Exposure-safe magnitude encoding: R is the raw [0,1] range, G is
@@ -148,5 +163,5 @@ void main()
         return;
     }
     vec3 light_color = sun_up_factor == 1 ? sunlight_color : moonlight_color;
-    frag_color = vec4(light_color * scatter, 1.0);
+    frag_color = vec4(light_color * scatter, transmittance);
 }

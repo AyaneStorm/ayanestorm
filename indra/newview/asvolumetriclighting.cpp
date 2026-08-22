@@ -68,6 +68,7 @@ bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
+LLRenderTarget ASVolumetricLighting::sSceneCopyTarget;
 U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
 U32 ASVolumetricLighting::sAtlasFBO = 0;
 U32 ASVolumetricLighting::sAtlasIntegralWidth = 0;
@@ -203,6 +204,10 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
 
     sVolumetricTarget.allocate(target_width, target_height, GL_RGBA16F);
 
+    // Same resolution/tradeoff as sVolumetricTarget - see the opaque
+    // composite's use of this target in renderPass() for why it exists.
+    sSceneCopyTarget.allocate(target_width, target_height, GL_RGBA16F);
+
     // Half resolution here still leaves each of the 4x4 atlas tiles at a
     // real width/8 x height/8 - the atlas is already trilinearly sampled by
     // every consumer (per-tile bilinear plus a lerp across adjacent slices),
@@ -271,6 +276,7 @@ void ASVolumetricLighting::releaseResources()
 {
     sVolumetricTarget.release();
     sTransparencyAtlas.release();
+    sSceneCopyTarget.release();
     releaseAtlasIntegralAttachments();
 }
 
@@ -503,6 +509,9 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
+    // Mode 11 shows the REAL (non-debug) atlas's alpha channel, not a special
+    // diagnostic encoding - transmittance is already a naturally-visible
+    // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
     gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
     gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
 
@@ -668,23 +677,85 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // entirely rather than paying for it around a no-op.
     renderLocalLights(pipeline);
 
-    // ---- Composite: upsample scatter and blend it directly into screen ---
+    // ---- Composite: upsample scatter, attenuate scene by transmittance ----
+    //
+    // Mode 0 (the real composite) now attenuates screen's existing contents
+    // by transmittance before adding scatter (scene * T + scatter), reading
+    // scene color from sSceneCopyTarget since screen cannot be sampled while
+    // simultaneously bound as this draw's own destination - see
+    // asVolumetricCompositeF.glsl's attenuateAndComposite().
     //
     // Any non-zero debug mode replaces screen outright with the raw target
-    // contents instead of blending, so the signal can be inspected without
-    // going through tonemap/composite math. Mode 1's target holds scatter
-    // (color+intensity applied); mode 2's holds raw grayscale occlusion -
-    // either way, once it is in sVolumetricTarget this composite step just
-    // needs to show it verbatim rather than add it on top of the already
-    // fully-lit scene (which is what made mode 2 read as "all white": it
-    // was adding raw occlusion onto an already bright tonemapped frame).
+    // contents instead, so the signal can be inspected without going through
+    // tonemap/composite math. Mode 1's target holds scatter (color+intensity
+    // applied); mode 2's holds raw grayscale occlusion - either way, once it
+    // is in sVolumetricTarget this composite step just needs to show it
+    // verbatim rather than add it on top of the already fully-lit scene
+    // (which is what made mode 2 read as "all white": it was adding raw
+    // occlusion onto an already bright tonemapped frame).
     auto draw_composite = [&](LLRenderTarget& destination,
                               LLRenderTarget& composite_source,
                               bool depth_aware,
-                              bool replace)
+                              bool replace,
+                              bool show_alpha_channel = false,
+                              bool attenuate_scene = false)
     {
         destination.bindTarget();
         gASVolumetricCompositeProgram.bind();
+        gASVolumetricCompositeProgram.uniform1i(
+            LLStaticHashedString("showAlphaChannel"), show_alpha_channel ? 1 : 0);
+        if (show_alpha_channel)
+        {
+            // Cancel out postDeferredTonemap.glsl's later exposure multiply
+            // (see the shader-side comment) so the debug view reads as the
+            // raw stored scalar regardless of scene brightness/RenderExposure.
+            gASVolumetricCompositeProgram.bindTexture(
+                LLShaderMgr::EXPOSURE_MAP, &pipeline.mExposureMap);
+            static LLCachedControl<F32> exposure(gSavedSettings, "RenderExposure", 1.f);
+            gASVolumetricCompositeProgram.uniform1f(
+                LLStaticHashedString("debugExposure"), llclamp(exposure(), 0.5f, 4.f));
+        }
+
+        gASVolumetricCompositeProgram.uniform1i(
+            LLStaticHashedString("attenuateScene"), attenuate_scene ? 1 : 0);
+        if (attenuate_scene)
+        {
+            // sceneCopy is not a reserved uniform (see LLShaderMgr::mReservedUniforms),
+            // so it cannot use the bindTexture(string, ...) convenience overload -
+            // that overload indexes mTexture[] (sized to mReservedUniforms) using
+            // getUniformLocation()'s raw GLSL location, which silently aliases some
+            // other reserved uniform's channel for any non-reserved name.
+            // mActiveTextureChannels is likewise the wrong tool here - it is only
+            // populated for shaders with mFeatures.mIndexedTextureChannels set
+            // (the multi-texture-batching alpha/material shaders that
+            // asVolumetricAtlas/previous_slice_integral's channel pattern was
+            // designed for elsewhere in this file); this composite shader has no
+            // indexed texture channels, so mActiveTextureChannels stays at its
+            // default 0 and binding sceneCopy there overwrote whichever reserved
+            // uniform (depthMap or emissiveRect) actually occupies channel 0 -
+            // that corrupted the depth read for the WHOLE shader (both this
+            // sceneCopy path and getPosition()'s own depth sampling), producing
+            // the flat gray-washed frame seen when this was first tried.
+            // Instead, derive a channel guaranteed free of this shader's own
+            // reserved-uniform bindings by querying their assigned channels
+            // directly and picking one past the highest.
+            static LLStaticHashedString scene_copy_sampler("sceneCopy");
+            const S32 location = gASVolumetricCompositeProgram.getUniformLocation(scene_copy_sampler);
+            S32 channel = gASVolumetricCompositeProgram.getTextureChannel(LLShaderMgr::DEFERRED_EMISSIVE);
+            channel = llmax(channel, gASVolumetricCompositeProgram.getTextureChannel(LLShaderMgr::DEFERRED_DEPTH));
+            channel = llmax(channel, gASVolumetricCompositeProgram.getTextureChannel(LLShaderMgr::EXPOSURE_MAP));
+            channel += 1;
+            if (location > -1 && channel >= 0 && channel < gGLManager.mNumTextureImageUnits)
+            {
+                glUniform1i(location, channel);
+                gGL.getTexUnit(channel)->bindManual(sSceneCopyTarget.getUsage(),
+                                                    sSceneCopyTarget.getTexture(0));
+                gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
+                gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+            }
+            gASVolumetricCompositeProgram.uniform1f(
+                LLStaticHashedString("sceneExtinction"), getExtinction());
+        }
 
         // Clamp explicitly rather than assume this render target's default
         // wrap mode is clamp-to-edge.
@@ -722,27 +793,52 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         // Do not leak temporary scatter/depth bindings into later rendering.
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+        if (show_alpha_channel)
+        {
+            gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP);
+        }
+        // sceneCopy uses the same manual appended-channel bind as
+        // asVolumetricAtlas/previous_slice_integral elsewhere in this file,
+        // which likewise leaves its texture unit bound rather than
+        // explicitly unbinding it (the next frame's bind overwrites it).
         gASVolumetricCompositeProgram.unbind();
         destination.flush();
     };
 
     if (debug_mode == 0)
     {
-        // Composite straight from the raymarch target into screen. An
-        // intermediate full-resolution "resolved" bounce target used to sit
-        // here so late water could separately subtract that same exact field
-        // from its refracted framebuffer sample - water no longer does that
-        // (it samples the transparency atlas instead, like every other
-        // transparent consumer), so nothing needs that intermediate anymore.
+        // Copy screen's current contents before this draw - a texture cannot
+        // be sampled while simultaneously bound as the draw target, so the
+        // shader needs a separate copy to read existing scene color from in
+        // order to attenuate it by transmittance (see sSceneCopyTarget's
+        // declaration and the shader-side comment in
+        // asVolumetricCompositeF.glsl). Deliberately NOT
+        // pipeline.copyRenderTarget(): that helper's shader
+        // (postDeferredNoDoFF.glsl) unconditionally writes gl_FragDepth from
+        // mRT->deferredScreen, and every one of its other call sites targets
+        // a destination that actually has a depth attachment - sSceneCopyTarget
+        // does not (it only ever needs to be sampled as a color texture), so
+        // reusing it here was untested territory for that helper and is the
+        // suspected cause of a flat gray-washed frame. Reuse this file's own
+        // composite shader instead, in its plain-passthrough mode (no
+        // depth-aware upsample, no attenuation), which is already verified to
+        // write only frag_color.
+        draw_composite(sSceneCopyTarget, screen, false, true);
+
+        // The composite shader now performs the "attenuate existing scene,
+        // then add scatter" arithmetic itself against sceneCopy, so this
+        // draw replaces screen outright instead of relying on GL blending
+        // against the live target (which could only express addition, never
+        // multiply-then-add against the destination).
         const bool needs_depth_upsample =
             sVolumetricTarget.getWidth() != screen.getWidth() ||
             sVolumetricTarget.getHeight() != screen.getHeight();
-        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, false);
+        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, true, false, true);
     }
     else
     {
-        LLRenderTarget& debug_source = debug_mode == 10 ?
+        LLRenderTarget& debug_source = (debug_mode == 10 || debug_mode == 11) ?
             sTransparencyAtlas : sVolumetricTarget;
-        draw_composite(screen, debug_source, false, true);
+        draw_composite(screen, debug_source, false, true, debug_mode == 11);
     }
 }

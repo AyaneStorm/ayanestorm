@@ -116,6 +116,27 @@ vec3 asVolumetricForeground(vec3 view_position)
     vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
     return mix(lo, hi, weight);
 }
+
+// Scene transmittance T, same atlas alpha channel - mirrors
+// asVolumetricForeground's tile lookup, reading .a instead of .rgb, with no
+// near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
+float asVolumetricTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return 1.0;
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    if (upper <= 0.0) return hi;
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    return mix(lo, hi, weight);
+}
 // </AS:Chanayane>
 
 uniform vec4 light_position[8];
@@ -485,8 +506,10 @@ void main()
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color * final_scale, al), vec4(0));
     vec3 volumetric_foreground = asVolumetricForeground(pos.xyz);
+    float volumetric_transmittance = asVolumetricTransmittance(pos.xyz);
 #ifdef EXACT_OIT
-    exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
+    // exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
+    exact_oit_store(max(vec4(color * final_scale * volumetric_transmittance + volumetric_foreground, al), vec4(0)));
 #elif defined(AVBOIT)
     // Specular glare is a single-blend presentation trick that raises output
     // alpha so highlights read as solid. It is not a physical opacity. Feeding
@@ -497,7 +520,10 @@ void main()
     // alpha for extinction, while glare is preserved by scaling the emitted
     // color so highlights keep the same luminance they contribute in Standard.
     float avboit_alpha = clamp(diffcol.a * vertex_color.a, 0.0, 1.0);
-    vec3 avboit_color = color * final_scale;
+    // Attenuate by transmittance before the glare-preserving rescale below, so
+    // that rescale still operates on the correctly-attenuated base color.
+    // vec3 avboit_color = color * final_scale;
+    vec3 avboit_color = color * final_scale * volumetric_transmittance;
     if (avboit_alpha > 0.0 && al > avboit_alpha)
     {
         // Bounded: the ratio diverges as base alpha approaches zero, so an
@@ -507,7 +533,8 @@ void main()
     avboit_color += volumetric_foreground;
     avboit_store(max(vec4(avboit_color, avboit_alpha), vec4(0)));
 #else
-    frag_color = max(vec4(color * final_scale + volumetric_foreground, al), vec4(0));
+    // frag_color = max(vec4(color * final_scale + volumetric_foreground, al), vec4(0));
+    frag_color = max(vec4(color * final_scale * volumetric_transmittance + volumetric_foreground, al), vec4(0));
 #endif
 // </AS:Chanayane>
 

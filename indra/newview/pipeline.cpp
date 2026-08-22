@@ -9884,6 +9884,18 @@ void LLPipeline::renderDeferredLighting()
     screen_target->bindTarget();
 // </AS:Chanayane>
 
+// <AS:Chanayane> A non-zero RenderVolumetricLightingDebug mode replaces
+// "screen" outright with a raw diagnostic signal (see renderPass()) - every
+// diagnostic mode is meant to be read in isolation. renderGeomPostDeferred()
+// below forward-renders terrain/water/alpha/avatar geometry directly on top
+// of "screen" regardless, which silently overwrites most of a normal scene's
+// visible pixels with ordinary lit content again, hiding the diagnostic
+// signal wherever that geometry covers the frame. Skip this whole forward
+// pass (and the OIT dispatch that depends on its output) while a debug mode
+// is active so the replaced screen survives untouched for inspection.
+    if (ASVolumetricLighting::getDebugMode() == 0)
+    {
+// </AS:Chanayane>
     {  // render non-deferred geometry (alpha, fullbright, glow)
         LLGLDisable blend(GL_BLEND);
 
@@ -9931,6 +9943,7 @@ void LLPipeline::renderDeferredLighting()
     FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
                                  gCubeSnapshot, sImpostorRender,
                                  gAgentCamera.cameraMouselook());
+    }
 // </AS:Chanayane>
 
     screen_target->flush();

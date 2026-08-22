@@ -87,6 +87,27 @@ vec3 asVolumetricForeground(vec3 view_position)
     vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
     return mix(lo, hi, weight);
 }
+
+// Scene transmittance T, same atlas alpha channel - mirrors
+// asVolumetricForeground's tile lookup, reading .a instead of .rgb, with no
+// near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
+float asVolumetricTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return 1.0;
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    if (upper <= 0.0) return hi;
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    return mix(lo, hi, weight);
+}
 // </AS:Chanayane>
 
 in vec2 base_color_texcoord;
@@ -271,8 +292,11 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-// <AS:Chanayane> Add camera-to-fragment scatter before alpha blending.
-    color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
+// <AS:Chanayane> Attenuate scene color by transmittance, then add
+// camera-to-fragment scatter, before alpha blending.
+// color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
+    color.rgb = color.rgb * final_scale * asVolumetricTransmittance(pos.xyz) +
+                asVolumetricForeground(pos.xyz);
 // </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
