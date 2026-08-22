@@ -86,6 +86,8 @@ public:
 
 private:
     static void renderLocalLights(LLPipeline& pipeline);
+    static void renderTransparencyAtlas(LLPipeline& pipeline);
+    static void releaseAtlasIntegralAttachments();
 
     static bool sSupportChecked;
     static bool sSupported;
@@ -94,6 +96,25 @@ private:
     static LLRenderTarget sVolumetricTarget;
     static LLRenderTarget sResolvedTarget;
     static LLRenderTarget sTransparencyAtlas;
+
+    // The atlas is built one tile (slice) per draw call instead of all 16 in
+    // a single full-resolution draw, so each slice only computes its own new
+    // depth segment instead of redundantly re-summing every earlier segment
+    // (see asVolumetricAtlasF.glsl's file header for the full rationale).
+    // Every slice's draw therefore needs the PREVIOUS slice's raw cumulative
+    // integral as an input while writing the CURRENT slice's integral as an
+    // output - since a texture cannot be sampled while simultaneously bound
+    // as a framebuffer attachment, this needs two separate raw textures that
+    // swap roles (source/destination) each slice, attached as a second color
+    // attachment alongside sTransparencyAtlas's own real-color attachment 0
+    // via direct glFramebufferTexture2D calls (LLRenderTarget's managed
+    // attachment APIs are mutually exclusive with each other - neither
+    // supports "swap one attachment's texture on an existing multi-
+    // attachment target" - see renderTransparencyAtlas()'s definition).
+    static U32 sAtlasIntegralTex[2];
+    static U32 sAtlasFBO;
+    static U32 sAtlasIntegralWidth;
+    static U32 sAtlasIntegralHeight;
 };
 
 #endif // AS_VOLUMETRICLIGHTING_H

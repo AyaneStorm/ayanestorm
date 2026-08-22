@@ -30,6 +30,7 @@
 #include "llenvironment.h"
 #include "llgl.h"
 #include "llglslshader.h"
+#include "llimagegl.h"
 #include "lllightconstants.h"
 #include "llrender.h"
 #include "llshadermgr.h"
@@ -67,6 +68,10 @@ bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 LLRenderTarget ASVolumetricLighting::sResolvedTarget;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
+U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
+U32 ASVolumetricLighting::sAtlasFBO = 0;
+U32 ASVolumetricLighting::sAtlasIntegralWidth = 0;
+U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
 // FSExactOIT's revision. During active development the shader cache is cleared
@@ -198,7 +203,69 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
 
     sVolumetricTarget.allocate(target_width, target_height, GL_RGBA16F);
     sResolvedTarget.allocate(llmax((U32)1, width), llmax((U32)1, height), GL_RGBA16F);
-    sTransparencyAtlas.allocate(llmax((U32)4, width), llmax((U32)4, height), GL_RGBA16F);
+
+    // Half resolution here still leaves each of the 4x4 atlas tiles at a
+    // real width/8 x height/8 - the atlas is already trilinearly sampled by
+    // every consumer (per-tile bilinear plus a lerp across adjacent slices),
+    // so a coarser source grid is visually forgiving the same way the main
+    // raymarch target already relies on its own half-res + upsample design.
+    // This was the single largest new GPU cost in the feature: the atlas
+    // shader runs its cumulative shadow-sampling loop at full resolution,
+    // with the deepest tile alone doing 16 shadow samples per pixel.
+    //
+    // Rounded UP to a multiple of 4 (not just clamped to a minimum of 4):
+    // renderTransparencyAtlas()'s per-slice scissor rects are computed from
+    // exact integer tile boundaries (x0 = width*tile/4, x1 = width*(tile+1)/4)
+    // rather than a single floored "tile_width" constant, but that alone
+    // only prevents OVERLAP/gaps between tiles - it does not by itself
+    // guarantee the last tile reaches the true right/top edge of a
+    // dimension that isn't a multiple of 4. Rounding the allocation itself
+    // removes the ambiguity entirely: every tile boundary lands on an exact
+    // integer pixel with no remainder to strand.
+    const U32 atlas_width  = llmax((U32)4, ((width  / 2 + 3) / 4) * 4);
+    const U32 atlas_height = llmax((U32)4, ((height / 2 + 3) / 4) * 4);
+    sTransparencyAtlas.allocate(atlas_width, atlas_height, GL_RGBA16F);
+
+    // Two ping-pong single-channel scratch textures carrying the raw
+    // cumulative integral between per-slice atlas draws (see the header
+    // comment on sAtlasIntegralTex in asvolumetriclighting.h for why this
+    // can't just be a second managed LLRenderTarget attachment). Must match
+    // sTransparencyAtlas's resolution exactly since both are attached to the
+    // same FBO as MRT outputs during the atlas-building draws.
+    releaseAtlasIntegralAttachments();
+    sAtlasIntegralWidth = sTransparencyAtlas.getWidth();
+    sAtlasIntegralHeight = sTransparencyAtlas.getHeight();
+    LLImageGL::generateTextures(2, sAtlasIntegralTex);
+    for (U32 i = 0; i < 2; ++i)
+    {
+        gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sAtlasIntegralTex[i]);
+        LLImageGL::setManualImage(GL_TEXTURE_2D, 0, GL_R16F,
+                                   sAtlasIntegralWidth, sAtlasIntegralHeight,
+                                   GL_RED, GL_FLOAT, NULL, false);
+        gGL.getTexUnit(0)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        gGL.getTexUnit(0)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+    }
+    gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+
+    if (sAtlasFBO == 0)
+    {
+        glGenFramebuffers(1, &sAtlasFBO);
+    }
+}
+
+void ASVolumetricLighting::releaseAtlasIntegralAttachments()
+{
+    if (sAtlasIntegralTex[0] != 0 || sAtlasIntegralTex[1] != 0)
+    {
+        glDeleteTextures(2, sAtlasIntegralTex);
+        sAtlasIntegralTex[0] = 0;
+        sAtlasIntegralTex[1] = 0;
+    }
+    if (sAtlasFBO != 0)
+    {
+        glDeleteFramebuffers(1, &sAtlasFBO);
+        sAtlasFBO = 0;
+    }
 }
 
 void ASVolumetricLighting::releaseResources()
@@ -206,6 +273,7 @@ void ASVolumetricLighting::releaseResources()
     sVolumetricTarget.release();
     sResolvedTarget.release();
     sTransparencyAtlas.release();
+    releaseAtlasIntegralAttachments();
 }
 
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
@@ -379,6 +447,143 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     pipeline.unbindDeferredShader(gASVolumetricLocalLightProgram);
 }
 
+// Builds the transparency atlas one tile (slice) at a time instead of all 16
+// in a single full-resolution draw, so each slice computes only its own new
+// depth segment rather than redundantly re-summing every earlier segment's
+// shadow sampling (the previous version made the deepest tile alone repeat
+// all 16 segments' work, at full screen resolution, every frame - this was
+// the single largest new GPU cost in the feature). See
+// asVolumetricAtlasF.glsl's file header for the shader-side half of this.
+//
+// Every tile written to sTransparencyAtlas is still exactly the same final,
+// independently valid light_color * clamped-scatter value the old version
+// produced for that slice - alpha/material consumers are completely
+// unaffected by this restructure, only the cost of producing that value
+// changes. sAtlasIntegralTex[0]/[1] are a private implementation detail
+// never sampled by anything outside this function.
+void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
+{
+    if (sAtlasFBO == 0 || sAtlasIntegralTex[0] == 0 || sAtlasIntegralTex[1] == 0)
+    {
+        return;
+    }
+
+    const U32 atlas_tex = sTransparencyAtlas.getTexture(0);
+    const U32 atlas_width = sTransparencyAtlas.getWidth();
+    const U32 atlas_height = sTransparencyAtlas.getHeight();
+
+    const S32 debug_mode = getDebugMode();
+
+    LLGLDisable blend(GL_BLEND);
+    LLGLEnable scissor(GL_SCISSOR_TEST);
+
+    // This function bypasses LLRenderTarget's own bindTarget()/flush() for
+    // the duration of the 16-slice loop (LLRenderTarget has no API for
+    // "swap one MRT attachment's texture between draws" - see the header
+    // comment on sAtlasIntegralTex in asvolumetriclighting.h), so its static
+    // FBO/viewport bookkeeping (sCurFBO/sCurResX/sCurResY, asserted against
+    // elsewhere, e.g. LLRenderTarget::flush()) must be saved and restored by
+    // hand rather than left pointing at whatever this function's raw GL
+    // calls last touched.
+    const U32 saved_fbo = LLRenderTarget::sCurFBO;
+    const U32 saved_res_x = LLRenderTarget::sCurResX;
+    const U32 saved_res_y = LLRenderTarget::sCurResY;
+
+    glBindFramebuffer(GL_FRAMEBUFFER, sAtlasFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, atlas_tex, 0);
+    glViewport(0, 0, atlas_width, atlas_height);
+
+    static const GLenum draw_buffers[2] = { GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1 };
+    glDrawBuffers(2, draw_buffers);
+
+    // Slice 0's shader draw never samples previous_slice_integral (guarded
+    // by slice_index > 0 in the shader), so leaving buffer 0 uninitialized
+    // going into slice 0 is safe - it is only ever a write target that draw.
+    S32 read_buffer = 1;
+    S32 write_buffer = 0;
+
+    pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
+    gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
+    gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+
+    // This shader-specific sampler has no predefined mTexture[] slot. Keep
+    // it on the appended channel proven by the working atlas implementation
+    // rather than disturbing any link-assigned deferred/shadow sampler unit.
+    static const LLStaticHashedString previous_slice_sampler("previous_slice_integral");
+    const S32 previous_slice_channel = gASVolumetricAtlasProgram.mActiveTextureChannels;
+    const bool have_previous_slice_channel =
+        gASVolumetricAtlasProgram.getUniformLocation(previous_slice_sampler) > -1 &&
+        previous_slice_channel >= 0 &&
+        previous_slice_channel < gGLManager.mNumTextureImageUnits;
+    if (!have_previous_slice_channel)
+    {
+        pipeline.unbindDeferredShader(gASVolumetricAtlasProgram);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+        glBindFramebuffer(GL_FRAMEBUFFER, saved_fbo);
+        glViewport(0, 0, saved_res_x, saved_res_y);
+        LLRenderTarget::sCurFBO = saved_fbo;
+        LLRenderTarget::sCurResX = saved_res_x;
+        LLRenderTarget::sCurResY = saved_res_y;
+        return;
+    }
+    gASVolumetricAtlasProgram.uniform1i(previous_slice_sampler, previous_slice_channel);
+
+    for (S32 slice_index = 0; slice_index < 16; ++slice_index)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D,
+                                sAtlasIntegralTex[write_buffer], 0);
+
+        // Exact integer tile boundaries rather than a single floored
+        // "tile_width" constant: atlas_width/height are now always rounded
+        // up to a multiple of 4 at allocation time (see allocateResources()),
+        // but computing each edge from width*tile/GRID here as well removes
+        // any remaining ambiguity and matches the shader's own tile-local
+        // UV decode exactly, with no assumption that width % 4 == 0 baked
+        // into a separate, potentially-inconsistent tile size elsewhere.
+        const S32 tile_x = slice_index % 4;
+        const S32 tile_y = slice_index / 4;
+        const S32 x0 = (S32)((U64)atlas_width * tile_x / 4);
+        const S32 x1 = (S32)((U64)atlas_width * (tile_x + 1) / 4);
+        const S32 y0 = (S32)((U64)atlas_height * tile_y / 4);
+        const S32 y1 = (S32)((U64)atlas_height * (tile_y + 1) / 4);
+        glScissor(x0, y0, x1 - x0, y1 - y0);
+
+        gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("slice_index"), slice_index);
+        if (slice_index > 0)
+        {
+            gGL.getTexUnit(previous_slice_channel)->bindManual(LLTexUnit::TT_TEXTURE,
+                                                                 sAtlasIntegralTex[read_buffer]);
+        }
+
+        pipeline.mScreenTriangleVB->setBuffer();
+        pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+        std::swap(read_buffer, write_buffer);
+    }
+
+    pipeline.unbindDeferredShader(gASVolumetricAtlasProgram);
+
+    // Detach both MRT color attachments before restoring the caller's FBO -
+    // leaving atlas_tex/sAtlasIntegralTex bound to sAtlasFBO's attachment
+    // points would keep them "in use as a framebuffer attachment" from GL's
+    // point of view even while unbound, which is exactly the read-while-
+    // attached hazard this whole ping-pong scheme exists to avoid for the
+    // NEXT frame's slice 0 draw (which samples the real atlas via
+    // bindTransparencyAtlas() elsewhere, and reuses these same two integral
+    // textures again next frame).
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, 0, 0);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, saved_fbo);
+    glViewport(0, 0, saved_res_x, saved_res_y);
+    LLRenderTarget::sCurFBO = saved_fbo;
+    LLRenderTarget::sCurResX = saved_res_x;
+    LLRenderTarget::sCurResY = saved_res_y;
+}
+
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
 {
     if (!isEnabled() || !sShadersLoaded || gCubeSnapshot || LLPipeline::sRenderingHUDs)
@@ -455,24 +660,8 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sVolumetricTarget.flush();
     }
 
-    // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas. Each tile
-    // is quarter resolution, so the complete atlas occupies one screen-sized
-    // RGBA16F texture and is trilinearly reconstructed by transparent shaders.
-    {
-        LLGLDisable blend(GL_BLEND);
-        sTransparencyAtlas.bindTarget();
-        sTransparencyAtlas.clear(GL_COLOR_BUFFER_BIT);
-        pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
-        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_intensity"), getScatterIntensity());
-        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry());
-        gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_extinction"), getExtinction());
-        gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
-        gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
-        pipeline.mScreenTriangleVB->setBuffer();
-        pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-        pipeline.unbindDeferredShader(gASVolumetricAtlasProgram);
-        sTransparencyAtlas.flush();
-    }
+    // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas.
+    renderTransparencyAtlas(pipeline);
 
     // Add the optional, explicitly unshadowed local-light fog contribution.
     // Sphere/ray intersection in the shader confines work and illumination to

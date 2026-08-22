@@ -1492,3 +1492,73 @@ directional-shadow sampling, Henyey-Greenstein phase, per-pixel march jitter,
 depth-limited camera rays, additive HDR accumulation, and bounded point-light
 volume intersection. These should not be reimplemented merely to resemble the
 Unity source.
+
+### Transparency-atlas GPU cost reduction
+
+The transparency-correct volumetric path originally built its 4x4 cumulative
+depth atlas with one fullscreen draw. Although each atlas tile represented one
+depth slice, the fragment shader independently recomputed every preceding
+shadowed segment for that tile. The deepest tile therefore performed 16 shadow
+samples per pixel, and the complete atlas performed an average of 8.5 segment
+samples per atlas pixel every frame. This cumulative O(n²) work was identified
+as the cause of substantially increased GPU load and fan noise.
+
+The atlas construction is now incremental:
+
+- `sTransparencyAtlas` is allocated at half the previous width and height,
+  rounded up to multiples of four so all 16 tiles have exact integer bounds.
+- `renderTransparencyAtlas()` issues 16 scissored draws, one per slice. Each
+  draw samples only its new depth segment instead of repeating earlier shadow
+  samples.
+- Two full-atlas `GL_R16F` textures carry the raw, unclamped cumulative
+  integral between slices. They ping-pong as the read source and MRT color
+  attachment 1 because OpenGL forbids sampling the texture currently used as
+  a render attachment.
+- A hand-managed FBO attaches the final `GL_RGBA16F` atlas as color attachment
+  0 and the current integral scratch texture as color attachment 1. The code
+  saves and restores `LLRenderTarget`'s current FBO and resolution bookkeeping
+  around this raw-GL section.
+- The shader reconstructs tile-local screen UVs explicitly because scissoring
+  clips fragments but does not remap the fullscreen triangle's interpolated
+  `vary_fragcoord`. It samples the preceding slice from that slice's atlas-tile
+  offset in the opposite ping-pong texture.
+- `previous_slice_integral` uses the program's appended manual texture channel,
+  leaving the link-assigned deferred and shadow sampler units undisturbed. An
+  attempted change to reuse and explicitly unbind the sampler's link-assigned
+  unit caused the main god-ray composite to disappear and corrupted later water
+  rendering, so that change was reverted. If no appended unit is available,
+  atlas rendering restores its shader, FBO, viewport, and render-target
+  bookkeeping without drawing a partially valid cumulative atlas.
+
+Every public atlas tile retains the existing consumer contract:
+`light_color * clamp(raw_integral / MAX_MARCH_DISTANCE * phase * intensity)`.
+The raw R16F scratch values are private to atlas generation; alpha, PBR alpha,
+legacy material, fullbright, and water shaders continue to consume the RGBA16F
+atlas as before. The R16F handoff does quantize the running sum between slices,
+so equivalence is functional rather than bit-identical to the former single
+fragment invocation.
+
+Expected cost reduction comes from eliminating the cumulative redundant shadow
+lookups and reducing atlas pixel throughput by approximately four times. The
+tradeoff is 16 small draw submissions and two additional half-resolution
+single-channel scratch textures.
+
+This change is **not yet built or runtime-tested**. Before acceptance:
+
+1. Clear the shader cache manually, build, and confirm that the atlas shader
+   links with both fragment outputs and without GL/FBO errors in
+   `AyaneStorm.log`.
+2. Compare GPU utilization, frame time, temperature, and fan behavior against
+   the preceding build in the same scene and camera position.
+3. Inspect debug mode 10 and normal transparency for seams between atlas tiles,
+   especially near viewport edges where bilinear filtering has the least
+   inset at the new resolution.
+4. Test Standard alpha, PBR alpha, legacy materials, fullbright alpha, Exact
+   OIT, AVBOIT, and water at near, intermediate, and maximum atlas depths.
+5. Resize the window through odd and even dimensions and confirm complete tile
+   coverage, stable UV alignment, and correct resource reallocation.
+6. Toggle volumetric lighting and shadow detail repeatedly and confirm no stale
+   atlas contents, texture feedback warnings, or persistent GL-state changes.
+
+Per the developer's active testing workflow, `shaderCacheRevision()` remains
+at `v13`; the shader cache is cleared manually before each test build.
