@@ -97,15 +97,17 @@ float interleavedGradientNoise(vec2 screen_pos)
     return fract(magic.z * fract(dot(screen_pos, magic.xy)));
 }
 
-// Real angular radius of the sun as seen from a planetary surface (~0.53
-// degrees, matched for the moon too - they appear almost the same size).
-// Used to jitter light_dir per march sample within the disc instead of
-// treating the light as an infinitesimal point (see the "sun/moon treated as
-// a point" limitation this addresses: a single occluded direction, e.g. a
-// roofline clipping the shadow-map sample point, was killing that sample's
-// entire visibility contribution even when most of the physical disc was
-// still unoccluded in the same frame).
-const float SUN_ANGULAR_RADIUS = 0.0093; // radians, ~0.53 degrees
+// Real angular radius of the sun/moon as seen from a planetary surface is
+// only ~0.53 degrees (0.0093 rad) - too small to visibly soften ray
+// convergence or occlusion-edge penumbra at typical in-viewer distances.
+// Exaggerated 4x here for a visible artistic effect (not physically
+// accurate) so the disc-jitter fix (see the "sun/moon treated as a point"
+// limitation this addresses: a single occluded direction, e.g. a roofline
+// clipping the shadow-map sample point, was killing that sample's entire
+// visibility contribution even when most of the physical disc was still
+// unoccluded in the same frame) is actually noticeable. Revisit this
+// multiplier if it reads as too soft/too sharp once tested in-viewer.
+const float SUN_MOON_ANGULAR_RADIUS = 0.0372; // radians, ~2.1 degrees (4x real size)
 
 // Perturbs light_dir by a random offset within a cone of half-angle
 // max_angle, using two independent uniform randoms in [0,1). Builds an
@@ -204,7 +206,25 @@ void main()
 
     vec3 light_dir = normalize((sun_up_factor == 1) ? sun_dir : moon_dir);
 
-    float cos_theta = dot(ray_dir, light_dir);
+    // Rays visually converged to a single point at the sun/moon's exact
+    // center regardless of its true angular size, no matter how wide the
+    // per-step shadow-sample disc jitter below was made - jittering
+    // light_dir per-pixel only adds noise around the same fixed peak, it
+    // does not widen it, since phaseHG's falloff (sharpened by a high
+    // scatter_asymmetry) is angularly far narrower than the disc's actual
+    // radius. Instead, clamp the angle fed into phaseHG so it can never read
+    // sharper than the disc's own angular radius: any ray_dir within
+    // SUN_MOON_ANGULAR_RADIUS of light_dir is treated as if it were exactly
+    // at that radius (the disc's edge), giving every direction inside the
+    // disc a comparably high phase value instead of only the exact center
+    // direction - this is what actually gives the bright region real
+    // angular width. Computed once per pixel (not per march step): it only
+    // depends on the fixed light_dir/ray_dir pair for this pixel, not on
+    // the per-step shadow-sampling jitter.
+    float raw_cos_theta = dot(ray_dir, light_dir);
+    float raw_angle = acos(clamp(raw_cos_theta, -1.0, 1.0));
+    float disc_clamped_angle = max(raw_angle - SUN_MOON_ANGULAR_RADIUS, 0.0);
+    float cos_theta = cos(disc_clamped_angle);
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
     int   steps    = max(sample_count, 1);
@@ -235,7 +255,7 @@ void main()
         // the existing per-pixel noise function with an offset input).
         vec2 disc_rand = vec2(interleavedGradientNoise(gl_FragCoord.xy + float(i) * 13.0),
                               interleavedGradientNoise(gl_FragCoord.yx + float(i) * 7.0));
-        vec3 sample_light_dir = jitterDiscDirection(light_dir, SUN_ANGULAR_RADIUS, disc_rand);
+        vec3 sample_light_dir = jitterDiscDirection(light_dir, SUN_MOON_ANGULAR_RADIUS, disc_rand);
 
         // norm = light_dir makes sampleDirectionalShadow's surface-bias term
         // (dot(norm, light_dir)) evaluate to 1.0, i.e. no extra bias offset

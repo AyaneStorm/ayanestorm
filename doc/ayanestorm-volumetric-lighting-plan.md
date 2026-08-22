@@ -1471,10 +1471,25 @@ items, in priority order:
    share already receives scene attenuation for free via `screenTex`. See
    (deleted) `doc/ayanestorm-volumetric-transmittance-plan.md` for the
    original scoping if the design rationale is needed again.
-2. **Independent scattering and extinction coefficients.** Unity separates
-   them. AS currently has artist intensity plus extinction. That is adequate
-   for tuning, but a future density/medium model should define how both derive
-   from one atmospheric density rather than allowing unrelated energy values.
+2. ~~**Independent scattering and extinction coefficients.**~~ **Done
+   (2026-08-22).** Replaced `RenderVolumetricLightingIntensity` (unrelated
+   artist multiplier) and `RenderVolumetricLightingExtinction` with a
+   physically-derived `RenderVolumetricLightingDensity`/
+   `RenderVolumetricLightingAlbedo` pair: `density` keeps extinction's exact
+   Beer-Lambert role (`exp(-density * distance)`, same range/behavior as the
+   old extinction setting), and `albedo` is a new `[0,1]` single-scattering
+   fraction. Final scatter brightness is now `density * albedo *
+   BRIGHTNESS_SCALE * phase * (visibility_integral / MAX_MARCH_DISTANCE)`,
+   with `BRIGHTNESS_SCALE = 64.0` a new fixed shader constant (not user-
+   exposed) chosen so the new defaults (`density=0.012, albedo=1.0`) land
+   near the old default's brightness (`intensity=0.8`) - flagged as a
+   starting point needing live-tuning, not an exact derivation. Applied
+   consistently across all three consumers (raymarch, atlas, composite) so
+   they stay in sync. Per explicit user decision this was a full replacement
+   with no migration: old settings are gone outright, existing tuned values
+   are not preserved. UI: `panel_as_volumetric_lighting.xml`'s "Sun/moon
+   intensity" and "Distance extinction" sliders became "Scatter albedo"
+   (0.00-1.00) and "Scatter density" (0.000-0.250).
 3. **World-space density shaping.** Optional exponential height fog and
    animated 3-D density noise would prevent perfectly uniform shafts and make
    fog pool naturally. These require stable world/agent-space positions and a
@@ -1492,19 +1507,99 @@ items, in priority order:
    sky rays at 128 m. A deliberate sky coefficient could improve horizon
    continuity, but must agree with the viewer's existing atmospheric haze and
    avoid double fogging.
-6. **Sun/moon treated as a point direction, not a disc.** Observed 2026-08-22:
-   god rays visibly converge toward a single point rather than radiating from
-   across the sun's/moon's visible disc, and rays vanish almost entirely as
-   soon as that one point is occluded (e.g. by a roofline), even though most
-   of the disc is still visible and unoccluded in the same screenshot. Root
-   cause: `asVolumetricLightF.glsl`'s phase function evaluates
-   `dot(ray_dir, light_dir)` against a single `sun_dir`/`moon_dir` vector with
-   no angular radius, so the light is effectively a point/pure-directional
-   source rather than an area light with a soft, disc-shaped falloff. A fix
-   would need to sample (or analytically integrate) visibility/phase across
-   the sun's/moon's actual angular size rather than one fixed direction -
-   a scattering-model change, not a transmittance or correctness fix, so it
-   should be scoped and built separately from item 1's work.
+6. **Sun/moon treated as a point direction, not a disc.** Observed
+   2026-08-22: god rays visibly converge toward a single point rather than
+   radiating from across the sun's/moon's visible disc, confirmed via a
+   moon screenshot with a treeline occluder clipping close to the visible
+   convergence point.
+
+   **First fix attempt (wrong, reverted in the same session):** evaluated
+   `phaseHG` per-step against the existing shadow-sample disc jitter
+   (`jitterDiscDirection`/`sample_light_dir`) instead of once against a
+   single fixed `light_dir`. Rebuilt and retested with the jitter radius
+   even exaggerated 4x (real ~0.53° -> ~2.1°) - **no visible change**, rays
+   still converged to the same sharp point. Root cause of why this didn't
+   work: per-pixel random jitter around a fixed center direction is just
+   noise around that same center - it does not widen the angular region
+   that reads as "bright," since the phase function already produces some
+   falloff and jittering its input doesn't change where that falloff peaks
+   on average. The real cause is that `phaseHG`'s falloff width (governed by
+   `scatter_asymmetry`, tuned high at ~0.4-0.9 for a strong forward-scatter
+   look) is much narrower than the disc's actual angular size, regardless of
+   how the direction is sampled.
+
+   **Second fix (correct, implemented):** clamp the angle fed into
+   `phaseHG` so it can never read sharper than the disc's own angular
+   radius - compute `raw_angle = acos(dot(ray_dir, light_dir))` once per
+   pixel, then `disc_clamped_angle = max(raw_angle - SUN_MOON_ANGULAR_RADIUS, 0.0)`
+   before taking its cosine and passing that into `phaseHG`. Every direction
+   within the disc's radius of the true center now reads as angle-zero (the
+   phase function's peak value), not just the exact center direction, so the
+   bright region has real angular width matching the disc instead of always
+   collapsing to a point irrespective of asymmetry. This `phase` value is
+   computed once per pixel (it does not depend on shadow occlusion at all)
+   and multiplies the final scatter output exactly as it did before this
+   investigation began; the per-step shadow-sample disc jitter is unrelated
+   and was left in place (it's still correct for soft shadow-edge penumbra,
+   just was never the fix for this specific symptom).
+
+   Also renamed `SUN_ANGULAR_RADIUS` -> `SUN_MOON_ANGULAR_RADIUS` (it was
+   always used for both, name was misleading) and exaggerated its value 4x
+   over the real ~0.53° (to ~2.1°, `0.0372` rad) for a more visible artistic
+   effect.
+
+   **Verification (temporary debug mode 12, added and removed within this
+   session):** a raw phase-magnitude debug view (normalized against the
+   asymmetry's own on-axis peak) confirmed the angle-clamp fix genuinely
+   works at the phase level - the bright region has real, visibly soft
+   angular width around the light's position, not a single point. This
+   first required fixing a wiring bug in the debug view itself: mode 12 was
+   initially gated out by `renderPass()`'s `if (debug_mode < 8)` raymarch
+   dispatch (that check exists to exclude modes 8-11, which belong to
+   local-light/atlas shaders, but 12 needs the raymarch shader to run) -
+   the view read all-black at first purely because the shader containing it
+   never executed, not because the fix was broken. Once let through, mode 12
+   confirmed the fix works. Debug mode 12 has since been removed (shader,
+   `renderPass()` dispatch, and XUI tooltip/`max_val`) now that its purpose
+   - verifying this one fix - is done.
+
+   `asVolumetricAtlasF.glsl` (the transparency atlas, used for
+   transparent/foreground objects) has no disc-of-origin handling at all
+   and was left untouched - it doesn't share this exact symptom today, but
+   giving it the same angle-clamped-phase treatment would be a reasonable,
+   still-open follow-up if foreground god-rays through glass/water ever show
+   the same point-convergence look.
+
+7. **Ray-shaft sharpness is shadow-map-bound, not phase-bound (open, found
+   during item 6's verification).** Despite item 6's phase gradient now
+   being correctly wide, normal mode 0 still shows sharp, narrow ray shafts
+   converging to what looks like a point - because ray *shape/sharpness* in
+   the final image is actually governed by `sampleDirectionalShadow`'s
+   shadow-map occlusion boundary, not by the phase function's brightness
+   falloff. The existing per-step disc jitter (`jitterDiscDirection`/
+   `sample_light_dir`, used for the shadow lookup's surface-bias term) does
+   not soften this: the shadow matrix used to reproject `sample_pos` into
+   shadow-map space is still built from a single, un-jittered `light_dir`,
+   so jittering the bias vector alone does not change which shadow-map
+   texels actually get sampled - there is no real angular spread in the
+   shadow lookup itself. Genuinely softening ray-shaft sharpness would need
+   multi-tap shadow sampling across several angularly-offset light
+   directions/matrices per march step (or an equivalent penumbra
+   approximation) - a real cost/complexity increase, not a quick follow-up.
+
+8. **Future feature: lens flare.** Not part of volumetric lighting proper -
+   conceptually separate (screen-space lens-artifact overlay: internal
+   reflections, aperture diffraction, anamorphic streaks keyed on the
+   sun/moon's screen position and visibility) rather than a 3D participating-
+   media raymarch. Should be its own new module (e.g. `ASLensFlare`), not
+   folded into `ASVolumetricLighting` - different rendering technique,
+   different shader stage, different failure modes. The one thing worth
+   reusing: this module's raymarch already computes a sun/moon
+   shadow-visibility/occlusion signal as a byproduct
+   (`sampleDirectionalShadow`-based `mean_visibility`/`occlusion` in
+   `asVolumetricLightF.glsl`) that a lens-flare pass could query rather than
+   recomputing its own occlusion test from scratch. Needs its own scoping
+   pass before implementation - not yet started.
 
 Already present in AS under equivalent forms: bounded ray length, cascaded
 directional-shadow sampling, Henyey-Greenstein phase, per-pixel march jitter,
