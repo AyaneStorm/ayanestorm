@@ -1493,6 +1493,56 @@ depth-limited camera rays, additive HDR accumulation, and bounded point-light
 volume intersection. These should not be reimplemented merely to resemble the
 Unity source.
 
+## GPU cost reductions with no visual change (2026-08-22)
+
+Three optimizations were applied on top of the already-shipped atlas ping-pong
+rewrite (which turned the 16-slice transparency atlas from an O(n^2) to an
+O(n) shadow-sampling cost). All three are pure relocations or removals of
+already-redundant work, not formula or blend-mode changes, so none of them
+should alter a single output pixel.
+
+1. **Local-light centers transformed once on the CPU instead of per-fragment
+   on the GPU.** `asVolumetricLocalLightF.glsl` was computing
+   `(modelview_matrix * vec4(local_light[i].xyz, 1.0)).xyz` inside the
+   per-light loop of a full-screen fragment shader - identical work repeated
+   for every screen pixel times every one of up to 64 candidate lights. Since
+   each light's center is constant for the entire draw call, `renderLocalLights()`
+   now transforms agent-space centers to view space once per light on the CPU
+   (`LLViewerCamera::getInstance()->getModelview()`) and uploads the
+   already-transformed `vec4`s. The shader's `modelview_matrix` uniform was
+   removed as dead. Radius is unaffected since it is scale-invariant under a
+   rotation+translation matrix.
+2. **`sVolumetricTarget`'s FBO bind/flush moved inside `renderLocalLights()`,
+   after its early-return checks.** Previously `renderPass()` unconditionally
+   wrapped the call in `sVolumetricTarget.bindTarget()`/`flush()` even when
+   `renderLocalLights()` was about to no-op (disabled setting, zero candidate
+   lights, excluded debug mode) - `RenderVolumetricLocalLights` defaults off,
+   so every normal frame was paying for a bind/flush pair around nothing. The
+   bind/flush now happens only once the function has confirmed it has an
+   actual draw to make.
+3. **Removed the `sResolvedTarget` intermediate composite bounce buffer.**
+   The normal (`debug_mode == 0`) composite path used to run two full-screen
+   draws every frame: raymarch target -> `sResolvedTarget` (a full-resolution
+   scratch copy), then `sResolvedTarget` -> `screen`. That intermediate
+   existed solely so late water could separately sample and subtract the
+   exact same resolved field from its own refracted framebuffer read (see
+   the original `asVolumetricFull`/`fb.rgb -= texture(...)` mechanism). Water
+   no longer does that - the "fixed water for real" pass (2026-08-22, see
+   above) switched water to sampling the transparency atlas like every other
+   transparent consumer, so `sResolvedTarget` had no remaining reader anywhere
+   in the codebase. `renderPass()` now composites directly from
+   `sVolumetricTarget` into `screen` in one draw; `sResolvedTarget`'s
+   allocation, release, and completeness check were removed along with it.
+   This is the largest of the three: it drops a full-resolution render target
+   allocation, an extra FBO bind/flush pair, and a whole full-screen
+   composite draw from every frame volumetrics are enabled, in the default
+   (non-high-quality) case as well as high-quality.
+
+None of these required a shader cache revision bump: the atlas F-shader's
+math and output format are untouched by items 1-2, and item 3's shader
+(`asVolumetricCompositeF.glsl`) was not modified at all - only which render
+targets `renderPass()` wires into it changed.
+
 ### Transparency-atlas GPU cost reduction
 
 The transparency-correct volumetric path originally built its 4x4 cumulative

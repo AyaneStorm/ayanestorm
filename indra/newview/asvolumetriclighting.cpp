@@ -35,6 +35,7 @@
 #include "llrender.h"
 #include "llshadermgr.h"
 #include "lldrawable.h"
+#include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llvovolume.h"
 #include "pipeline.h"
@@ -66,7 +67,6 @@ bool ASVolumetricLighting::sSupportChecked = false;
 bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
-LLRenderTarget ASVolumetricLighting::sResolvedTarget;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
 U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
 U32 ASVolumetricLighting::sAtlasFBO = 0;
@@ -202,7 +202,6 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
     U32 target_height = llmax((U32)1, full_resolution ? height : height / 2);
 
     sVolumetricTarget.allocate(target_width, target_height, GL_RGBA16F);
-    sResolvedTarget.allocate(llmax((U32)1, width), llmax((U32)1, height), GL_RGBA16F);
 
     // Half resolution here still leaves each of the 4x4 atlas tiles at a
     // real width/8 x height/8 - the atlas is already trilinearly sampled by
@@ -271,7 +270,6 @@ void ASVolumetricLighting::releaseAtlasIntegralAttachments()
 void ASVolumetricLighting::releaseResources()
 {
     sVolumetricTarget.release();
-    sResolvedTarget.release();
     sTransparencyAtlas.release();
     releaseAtlasIntegralAttachments();
 }
@@ -402,13 +400,29 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
         return;
     }
 
+    // Each light's center is the same for every fragment of this full-screen
+    // draw, so transform agent space -> view space once here on the CPU
+    // instead of repeating `modelview_matrix * vec4(center, 1.0)` per light
+    // per fragment in the shader. Radius is a scale-invariant scalar under
+    // this rotation+translation matrix, so it is copied through unchanged.
+    const LLMatrix4& modelview = LLViewerCamera::getInstance()->getModelview();
     LLVector4 centers[MAX_VOLUMETRIC_LOCAL_LIGHTS];
     LLVector4 colors[MAX_VOLUMETRIC_LOCAL_LIGHTS];
     for (S32 i = 0; i < (S32)lights.size(); ++i)
     {
-        centers[i] = lights[i].center_radius;
+        LLVector3 agent_center(lights[i].center_radius.mV[VX],
+                               lights[i].center_radius.mV[VY],
+                               lights[i].center_radius.mV[VZ]);
+        LLVector3 view_center = agent_center * modelview;
+        centers[i] = LLVector4(view_center, lights[i].center_radius.mV[VW]);
         colors[i] = lights[i].color_falloff;
     }
+
+    // Bind/flush sVolumetricTarget only now that a draw is actually going to
+    // happen - every early return above (disabled, no candidates, debug mode
+    // excluded) skips this FBO bind/flush pair entirely, which matters since
+    // RenderVolumetricLocalLights defaults off.
+    sVolumetricTarget.bindTarget();
 
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ADD);
@@ -426,6 +440,8 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
     gGL.setColorMask(true, true);
     pipeline.unbindDeferredShader(gASVolumetricLocalLightProgram);
+
+    sVolumetricTarget.flush();
 }
 
 // Builds the transparency atlas one tile (slice) at a time instead of all 16
@@ -587,8 +603,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sVolumetricTarget.allocate(desired_width, desired_height, GL_RGBA16F);
     }
 
-    if (!sVolumetricTarget.isComplete() || !sResolvedTarget.isComplete() ||
-        !sTransparencyAtlas.isComplete())
+    if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())
     {
         return;
     }
@@ -647,11 +662,13 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // Add the optional, explicitly unshadowed local-light fog contribution.
     // Sphere/ray intersection in the shader confines work and illumination to
     // each light volume; the candidate count is bounded in preferences.
-    sVolumetricTarget.bindTarget();
+    // renderLocalLights() binds/flushes sVolumetricTarget itself, but only
+    // once it knows it actually has a draw to make - RenderVolumetricLocalLights
+    // defaults off, so the common frame skips this FBO bind/flush pair
+    // entirely rather than paying for it around a no-op.
     renderLocalLights(pipeline);
-    sVolumetricTarget.flush();
 
-    // ---- Composite: resolve scatter, then blend it into screen -----------
+    // ---- Composite: upsample scatter and blend it directly into screen ---
     //
     // Any non-zero debug mode replaces screen outright with the raw target
     // contents instead of blending, so the signal can be inspected without
@@ -711,13 +728,16 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
     if (debug_mode == 0)
     {
-        // Keep the exact full-resolution field added to screen so late water
-        // can remove that same field from its refracted framebuffer sample.
+        // Composite straight from the raymarch target into screen. An
+        // intermediate full-resolution "resolved" bounce target used to sit
+        // here so late water could separately subtract that same exact field
+        // from its refracted framebuffer sample - water no longer does that
+        // (it samples the transparency atlas instead, like every other
+        // transparent consumer), so nothing needs that intermediate anymore.
         const bool needs_depth_upsample =
-            sVolumetricTarget.getWidth() != sResolvedTarget.getWidth() ||
-            sVolumetricTarget.getHeight() != sResolvedTarget.getHeight();
-        draw_composite(sResolvedTarget, sVolumetricTarget, needs_depth_upsample, true);
-        draw_composite(screen, sResolvedTarget, false, false);
+            sVolumetricTarget.getWidth() != screen.getWidth() ||
+            sVolumetricTarget.getHeight() != screen.getHeight();
+        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, false);
     }
     else
     {

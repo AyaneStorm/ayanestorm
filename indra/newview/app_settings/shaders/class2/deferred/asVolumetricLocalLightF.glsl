@@ -14,11 +14,14 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 uniform int local_light_count;
-uniform vec4 local_light[64];       // agent-space xyz, radius in w
+// View-space xyz (pre-transformed on the CPU - identical for every fragment
+// of this full-screen draw, so paying for modelview_matrix * center once per
+// light there instead of once per light per fragment here is a pure win),
+// radius in w.
+uniform vec4 local_light[64];
 uniform vec4 local_light_color[64]; // linear RGB, legacy falloff in w
 uniform float local_light_intensity;
 uniform int debug_mode;
-uniform mat4 modelview_matrix;
 
 vec4 getPosition(vec2 pos_screen);
 
@@ -40,7 +43,7 @@ void main()
 
     for (int light_index = 0; light_index < local_light_count; ++light_index)
     {
-        vec3 center = (modelview_matrix * vec4(local_light[light_index].xyz, 1.0)).xyz;
+        vec3 center = local_light[light_index].xyz;
         float radius = local_light[light_index].w;
 
         float along = dot(center, ray_dir);

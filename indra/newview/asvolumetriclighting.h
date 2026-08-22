@@ -94,7 +94,6 @@ private:
     static bool sShadersLoaded;
 
     static LLRenderTarget sVolumetricTarget;
-    static LLRenderTarget sResolvedTarget;
     static LLRenderTarget sTransparencyAtlas;
 
     // The atlas is built one tile (slice) per draw call instead of all 16 in
