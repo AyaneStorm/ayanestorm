@@ -444,7 +444,11 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         {
             const LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
             const F32 elevation = psky->getMoonDirection().mV[VZ];
-            const F32 height_t = llclamp(elevation / 0.35f, 0.f, 1.f);
+            // <AS:Chanayane> Use the configurable tint fade angle for the halo.
+            // const F32 height_t = llclamp(elevation / 0.35f, 0.f, 1.f);
+            const F32 tint_height = sinf(llclamp(gSavedSettings.getF32("ASMoonHorizonTintAngle"), 0.5f, 90.f) * DEG_TO_RAD);
+            const F32 height_t = llclamp(elevation / tint_height, 0.f, 1.f);
+            // </AS:Chanayane>
             const F32 horizon_amount = (1.f - height_t * height_t * (3.f - 2.f * height_t))
                                      * llclamp(gSavedSettings.getF32("ASMoonHorizonTintStrength"), 0.f, 1.f);
             const LLColor4 tint = gSavedSettings.getColor4("ASMoonHorizonTint");
@@ -553,6 +557,8 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
             moon_shader->uniform3fv(LLShaderMgr::MOON_HORIZON_TINT, 1, moon_horizon_tint.mV);
             moon_shader->uniform1f(LLShaderMgr::MOON_HORIZON_TINT_STRENGTH,
                                    gSavedSettings.getF32("ASMoonHorizonTintStrength"));
+            moon_shader->uniform1f(LLStaticHashedString("moon_horizon_tint_height"),
+                                   sinf(llclamp(gSavedSettings.getF32("ASMoonHorizonTintAngle"), 0.5f, 90.f) * DEG_TO_RAD));
             moon_shader->uniform1i(LLStaticHashedString("moon_render_partial"),
                                    gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon") ? 1 : 0);
             moon_shader->uniform1f(LLStaticHashedString("moon_phase"),

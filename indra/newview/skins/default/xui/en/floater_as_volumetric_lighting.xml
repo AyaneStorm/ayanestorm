@@ -6,7 +6,7 @@
   can_resize="false"
   save_rect="true"
   save_visibility="true"
-  width="542"
+  width="432"
   height="352"
   layout="topleft">
   <panel
@@ -17,5 +17,5 @@
     left="1"
     name="as_volumetric_lighting"
     top="1"
-    width="540" />
+    width="430" />
 </floater>

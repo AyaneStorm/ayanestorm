@@ -167,6 +167,7 @@ with the same filename but different name
   <texture name="Command_MiniMap_Icon"      file_name="toolbar_icons/mini_map.png"     preload="true" />
   <texture name="Command_Move_Icon"         file_name="toolbar_icons/move.png"         preload="true" />
   <texture name="Command_ASVolumetricLighting_Icon" file_name="toolbar_icons/advanced_lighting.png" preload="true" />     <!-- AS:Chanayane -->
+  <texture name="Command_ASMoonSettings_Icon" file_name="toolbar_icons/moon_settings.png" preload="true" />             <!-- AS:Chanayane -->
   <texture name="Command_Environments_Icon" file_name="toolbar_icons/environments.png" preload="true" />
   <texture name="Command_Omnifilter_Icon"   file_name="toolbar_icons/omnifilter.png"   preload="true" />     <!-- FS:Zi: Omnifilter -->
   <texture name="Command_People_Icon"       file_name="toolbar_icons/people.png"       preload="true" />

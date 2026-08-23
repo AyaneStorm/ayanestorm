@@ -173,18 +173,50 @@
         top="112"
         width="460" />
 
-      <!-- [AS:Chanayane] Optional volumetric lighting - shared with the
-           standalone floater_as_volumetric_lighting.xml via this include, so
-           the two never drift out of sync (see panel_as_volumetric_lighting.xml). -->
-      <panel
-        filename="panel_as_volumetric_lighting.xml"
+      <!-- [AS:Chanayane] Keep only the volumetric master control and links to
+           the dedicated rendering settings floaters on this preferences tab. -->
+      <check_box
+        control_name="RenderVolumetricLighting"
+        enabled_control="RenderShadowDetail"
         follows="left|top"
-        height="330"
+        height="16"
+        label="Enable sun/moon god rays"
         layout="topleft"
-        left="0"
-        name="as_volumetric_lighting"
-        top="120"
-        width="540" />
+        left="15"
+        mouse_opaque="true"
+        name="render_volumetric_lighting"
+        radio_style="false"
+        tool_tip="If checked, renders raymarched sun/moon light shafts through shadowed geometry. Requires Shadows to be enabled above None in the graphics preferences. Works on macOS."
+        top="135"
+        width="400" />
+
+      <button
+        follows="left|top"
+        height="23"
+        label="Volumetric lighting settings"
+        layout="topleft"
+        left="15"
+        name="open_volumetric_lighting_settings"
+        top="170"
+        width="220">
+        <button.commit_callback
+          function="Floater.ToggleOrBringToFront"
+          parameter="as_volumetric_lighting" />
+      </button>
+
+      <button
+        follows="left|top"
+        height="23"
+        label="Moon settings"
+        layout="topleft"
+        left="15"
+        name="open_moon_settings"
+        top="205"
+        width="220">
+        <button.commit_callback
+          function="Floater.ToggleOrBringToFront"
+          parameter="as_moon_settings" />
+      </button>
       <!-- [/AS:Chanayane] -->
     </panel>
 
@@ -197,7 +229,8 @@
       right="-1"
       follows="all"
       label="Rendering 2"
-      name="tab-as-rendering-2">
+      name="tab-as-rendering-2"
+      visible="false">
       <text
         type="string"
         length="1"

@@ -34,6 +34,7 @@ uniform float moon_brightness;
 uniform float moon_horizon_min_opacity;
 uniform vec3 moon_horizon_tint;
 uniform float moon_horizon_tint_strength;
+uniform float moon_horizon_tint_height;
 uniform int moon_render_partial;
 uniform float moon_phase;
 uniform float moon_phase_curvature;
@@ -250,8 +251,8 @@ void main()
 
     c.rgb *= moon_brightness;
     // <AS:Chanayane> Warm only the visible moon disc near the horizon. The
-    // effect smoothly ends by moon_dir.z 0.35 (approximately 20 degrees).
-    float horizon_tint_amount = (1.0 - smoothstep(0.0, 0.35, max(moon_dir.z, 0.0)))
+    // user-selected elevation controls where the effect smoothly ends.
+    float horizon_tint_amount = (1.0 - smoothstep(0.0, moon_horizon_tint_height, max(moon_dir.z, 0.0)))
                               * clamp(moon_horizon_tint_strength, 0.0, 1.0);
     c.rgb *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
     // </AS:Chanayane>

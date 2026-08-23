@@ -6,13 +6,12 @@
   layout="topleft"
   left="1"
   top="1"
-  width="540"
+  width="430"
   name="as_volumetric_lighting">
 
-  <!-- [AS:Chanayane] Volumetric lighting controls, shared between the
-       AyaneStorm preferences Rendering tab (panel_preferences_ayanestorm.xml)
-       and the standalone floater_as_volumetric_lighting.xml via this file's
-       own path, so the two never drift out of sync. -->
+  <!-- [AS:Chanayane] Volumetric lighting controls for the standalone
+       settings floater. The preferences Rendering tab contains only the
+       master switch and a button that opens this panel. -->
   <text
     type="string"
     length="1"

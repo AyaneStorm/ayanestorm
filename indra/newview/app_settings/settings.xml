@@ -25698,6 +25698,19 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>ASMoonHorizonTintAngle</key>
+    <map>
+      <key>Comment</key>
+      <string>Moon elevation in degrees at which the viewer-local horizon tint has fully faded</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>20.4873</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
     <key>ASRenderPartialMoonBelowHorizon</key>
     <map>
       <key>Comment</key>

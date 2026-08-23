@@ -124,6 +124,8 @@ void applyMoonAppearance(LLGLSLShader& shader)
     shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
                      gSavedSettings.getF32("ASMoonHorizonTintStrength"));
     shader.uniform1f(LLStaticHashedString("moon_horizon_elevation"), elevation);
+    shader.uniform1f(LLStaticHashedString("moon_horizon_tint_height"),
+                     sinf(llclamp(gSavedSettings.getF32("ASMoonHorizonTintAngle"), 0.5f, 90.f) * DEG_TO_RAD));
     shader.uniform1f(LLStaticHashedString("moon_phase_illumination"), illuminated_fraction);
 }
 
