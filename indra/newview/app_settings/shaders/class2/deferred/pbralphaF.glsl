@@ -60,11 +60,55 @@ out vec4 frag_color;
 
 in vec3 vary_fragcoord;
 
-#ifdef HAS_SUN_SHADOW
-  uniform vec2 screen_res;
-#endif
+// <AS:Chanayane> Cumulative foreground scatter for alpha transparency.
+// #ifdef HAS_SUN_SHADOW
+//   uniform vec2 screen_res;
+// #endif
+uniform vec2 screen_res;
+uniform sampler2D asVolumetricAtlas;
+uniform int asVolumetricEnabled;
 
 in vec3 vary_position;
+
+vec3 asVolumetricForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return vec3(0.0);
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    vec3 hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    if (upper <= 0.0) return hi * clamp(coordinate, 0.0, 1.0);
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    return mix(lo, hi, weight);
+}
+
+// Scene transmittance T, same atlas alpha channel - mirrors
+// asVolumetricForeground's tile lookup, reading .a instead of .rgb, with no
+// near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
+float asVolumetricTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return 1.0;
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    if (upper <= 0.0) return hi;
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    return mix(lo, hi, weight);
+}
+// </AS:Chanayane>
 
 in vec2 base_color_texcoord;
 in vec2 normal_texcoord;
@@ -248,14 +292,22 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
+// <AS:Chanayane> Preserve forward-alpha surface radiance and add foreground
+// scatter. The opaque background has already received scene transmittance;
+// attenuating minified alpha cards here caused the red/blue LOD discontinuity
+// seen in shadowed volumetric regions.
+// color.rgb = color.rgb * final_scale * asVolumetricTransmittance(pos.xyz) +
+//             asVolumetricForeground(pos.xyz);
+    color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
+// </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
 #ifdef EXACT_OIT
-    exact_oit_store(max(vec4(color.rgb * final_scale, a), vec4(0)));
+    exact_oit_store(max(vec4(color.rgb, a), vec4(0)));
 #elif defined(AVBOIT)
-    avboit_store(max(vec4(color.rgb * final_scale, a), vec4(0)));
+    avboit_store(max(vec4(color.rgb, a), vec4(0)));
 #else
-    frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
+    frag_color = max(vec4(color.rgb,a), vec4(0));
 #endif
 // </AS:Chanayane>
 }

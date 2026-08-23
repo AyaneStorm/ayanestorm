@@ -38,6 +38,10 @@
 #include "llrender.h"
 #include "gltfscenemanager.h"
 
+// <AS:Chanayane> Bind cumulative volumetric scatter for late fullbright geometry.
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
+
 static LLTrace::BlockTimerStatHandle FTM_RENDER_SIMPLE_DEFERRED("Deferred Simple");
 static LLTrace::BlockTimerStatHandle FTM_RENDER_GRASS_DEFERRED("Deferred Grass");
 
@@ -171,12 +175,18 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
 
     // render static
     shader->bind();
+    // <AS:Chanayane> Fullbright is drawn after the volumetric composite.
+    ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    // </AS:Chanayane>
     pushBatches(LLRenderPass::PASS_FULLBRIGHT, true, true);
 
     if (!LLPipeline::sRenderingHUDs)
     {
         // render rigged
         shader->bind(true);
+        // <AS:Chanayane> bind(true) selects the rigged shader variant.
+        ASVolumetricLighting::bindTransparencyAtlas(*shader->mRiggedVariant);
+        // </AS:Chanayane>
         pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true, true);
     }
 }
@@ -203,13 +213,18 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
 
     // render static
     shader->bind();
+    // <AS:Chanayane> Alpha-masked fullbright also follows the composite.
+    ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    // </AS:Chanayane>
     pushMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, true, true);
 
     if (!LLPipeline::sRenderingHUDs)
     {
         // render rigged
         shader->bind(true);
+        // <AS:Chanayane> bind(true) selects the rigged shader variant.
+        ASVolumetricLighting::bindTransparencyAtlas(*shader->mRiggedVariant);
+        // </AS:Chanayane>
         pushRiggedMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true, true);
     }
 }
-

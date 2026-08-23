@@ -2004,7 +2004,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.5</real>
+      <real>0.8</real>
     </map>
     <key>AudioLevelMaster</key>
     <map>
@@ -6067,7 +6067,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>3.0</real>
+      <real>2.5</real>
     </map>
     <key>FullScreenAutoDetectAspectRatio</key>
     <map>
@@ -13187,6 +13187,138 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>2</integer>
     </map>
+    <!-- <AS:Chanayane> Optional raymarched volumetric (god-ray) lighting. -->
+    <key>RenderVolumetricLighting</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable optional raymarched volumetric sun/moon lighting (god rays). Requires RenderShadowDetail > 0.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingAlbedo</key>
+    <map>
+      <key>Comment</key>
+      <string>Single-scattering albedo fraction for the optional volumetric lighting pass. Combined with density to derive scatter brightness.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>1.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingHighQuality</key>
+    <map>
+      <key>Comment</key>
+      <string>Use full-resolution 32-sample directional volumetric lighting instead of the default half-resolution 16-sample path.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingDensity</key>
+    <map>
+      <key>Comment</key>
+      <string>Beer-Lambert view-path extinction (scattering density) per metre for directional volumetric lighting. Also scales scatter brightness together with albedo.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.012</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingAsymmetry</key>
+    <map>
+      <key>Comment</key>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the moon is the active light source. Positive biases scatter toward the view direction.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.7</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingSunAsymmetry</key>
+    <map>
+      <key>Comment</key>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the sun is the active light source. Positive biases scatter toward the view direction. The sun is bright enough that a lower value than the moon's looks correct.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.4</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingDebug</key>
+    <map>
+      <key>Comment</key>
+      <string>TEMPORARY development aid, remove once the volumetric lighting effect is confirmed working: 0 normal, non-zero replaces the screen with the raw upsampled raymarch output instead of blending it in, bypassing tonemap.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLights</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable bounded unshadowed volumetric fog contributions from nearby local lights.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsIntensity</key>
+    <map>
+      <key>Comment</key>
+      <string>Intensity of the optional unshadowed local-light volumetric contribution.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.35</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsMaxCount</key>
+    <map>
+      <key>Comment</key>
+      <string>Maximum scored nearby local lights included in the volumetric pass (0 through 64).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>8</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
   <key>RenderReflectionsEnabled</key>
   <map>
     <key>Comment</key>
@@ -16335,7 +16467,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.5</real>
+      <real>3.0</real>
     </map>
     <key>UIAutoScale</key>
     <map>
@@ -25393,6 +25525,281 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <!-- <AS:Chanayane> Viewer-local procedural sun and moon appearance. -->
+    <key>ASProceduralSunEnabled</key>
+    <map>
+      <key>Comment</key><string>Render a viewer-local procedural sunset sun disc beneath transparent EEP sun textures</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>1</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunStartAngle</key>
+    <map>
+      <key>Comment</key><string>Sun elevation in degrees where the procedural sunset disc begins fading in</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>10.0</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunFinalColor</key>
+    <map>
+      <key>Comment</key><string>Warm procedural sun limb color at its scale-aware below-horizon cutoff</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Color4</string>
+      <key>Value</key><array><real>1.0</real><real>0.12</real><real>0.02</real><real>1.0</real></array>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunBrightness</key>
+    <map>
+      <key>Comment</key><string>Procedural sun hotness from configured color to white at zero through one, then emitted intensity above one</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>1.15</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunFeather</key>
+    <map>
+      <key>Comment</key><string>Soft-edge width of the procedural sun disc in normalized disc-radius units</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.095</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunShimmer</key>
+    <map>
+      <key>Comment</key><string>Strength of subtle animated atmospheric refraction on the procedural sun near the horizon</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.020</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunHaloStrength</key>
+    <map>
+      <key>Comment</key><string>Strength of the additive procedural sun halo during the final horizon approach</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.75</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunHaloRadius</key>
+    <map>
+      <key>Comment</key><string>Outer procedural sun halo radius measured in sun-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>7.20</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunHaloSoftness</key>
+    <map>
+      <key>Comment</key><string>Fraction of the procedural sun halo radius used for its smooth outer fade</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.30</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHorizonMinOpacity</key>
+    <map>
+      <key>Comment</key>
+      <string>Minimum moon-disc opacity at the horizon; zero reproduces the legacy fade and one disables horizon dimming</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.65</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonBrightnessMultiplier</key>
+    <map>
+      <key>Comment</key>
+      <string>Viewer-local 0-to-5 multiplier applied to the active environment asset's moon-disc brightness</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>3.15</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhase</key>
+    <map>
+      <key>Comment</key>
+      <string>Viewer-local moon phase cycle: 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter, 1 new</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.5</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseCurvature</key>
+    <map>
+      <key>Comment</key>
+      <string>Nonlinear artistic moon terminator curvature; one is spherical while quarter, full, and new phases remain exact</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>1.25</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseSoftness</key>
+    <map>
+      <key>Comment</key>
+      <string>Width of the terminator-centered nonlinear moon phase transition; zero retains antialiasing only</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.25</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseTilt</key>
+    <map>
+      <key>Comment</key>
+      <string>Counterclockwise rotation in degrees of the moon phase terminator around the disc</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>28.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonEarthshineStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Minimum moon-texture visibility blended over the sky in phase shadow as artistic earthshine</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.10</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonTerminatorReliefStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Directional crater-detail contrast near the moon phase terminator</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>1.75</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonTerminatorReliefWidth</key>
+    <map>
+      <key>Comment</key>
+      <string>Width of the moon phase terminator crater-detail band</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.35</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Strength of the procedural atmospheric halo around the moon</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.50</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloEnabled</key>
+    <map>
+      <key>Comment</key>
+      <string>Render the viewer-local atmospheric moon halo</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>1</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloRadius</key>
+    <map>
+      <key>Comment</key>
+      <string>Outer moon halo radius in moon-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>2.35</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloSoftness</key>
+    <map>
+      <key>Comment</key>
+      <string>Radial falloff width of the moon halo in moon-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.45</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHorizonTint</key>
+    <map>
+      <key>Comment</key>
+      <string>Color multiplied into the visible moon disc near the horizon</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Color4</string>
+      <key>Value</key>
+      <array>
+        <real>1.0</real>
+        <real>0.40</real>
+        <real>0.0</real>
+        <real>1.0</real>
+      </array>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonHorizonTintStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Strength of the moon-disc horizon tint; zero disables the effect</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.8</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonHorizonTintAngle</key>
+    <map>
+      <key>Comment</key>
+      <string>Moon elevation in degrees at which the viewer-local horizon tint has fully faded</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>20.4873</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASRenderPartialMoonBelowHorizon</key>
+    <map>
+      <key>Comment</key>
+      <!-- <AS:Chanayane> Setting now applies symmetrically to both discs. -->
+      <!-- <string>Continue rendering the moon disc until its upper edge passes below the horizon instead of hiding it when its center crosses the horizon</string> -->
+      <string>Continue rendering sun and moon discs until their upper edges pass below the horizon instead of hiding them when their centers cross the horizon</string>
+      <!-- </AS:Chanayane> -->
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
     <key>ASPreloadDullahanDestinations</key>
     <map>
       <key>Comment</key>
