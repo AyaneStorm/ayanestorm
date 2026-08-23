@@ -49,6 +49,14 @@ uniform vec3 moonlight_color;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
+// Beer-Lambert coefficient for the alpha channel's scene transmittance only
+// (matches the opaque composite's sceneDensity - see
+// asVolumetricCompositeF.glsl). Kept separate from scatter_density, which
+// also drives the RGB scatter/god-ray brightness above and must not fade
+// with camera altitude the way scene-darkening transmittance does; only
+// this coefficient is scaled by ASVolumetricLighting::renderPass()'s
+// altitude fade before being set here.
+uniform float transmittance_density;
 uniform int atlas_debug;
 
 // Raw cumulative integral (R channel, unbounded, pre-color, pre-clamp)
@@ -148,11 +156,34 @@ void main()
     float scatter = clamp(scatter_density * scatter_albedo * BRIGHTNESS_SCALE *
                           phase * (visibility_integral / MAX_MARCH_DISTANCE), 0.0, 1.0);
 
-    // Beer-Lambert transmittance at this tile's far boundary. A deterministic
-    // function of slice_index and the constant density coefficient only -
-    // no dependency on shadow visibility, so (unlike visibility_integral)
-    // this needs no cumulative ping-pong across slices.
-    float transmittance = exp(-scatter_density * segment_far);
+    // Match asVolumetricCompositeF.glsl's opaque sceneTransmittance(): the
+    // sky/atmosphere is not a physical surface for this ground-fog effect, so
+    // fade extinction back to 1.0 over the final 100-128 m band. Without the
+    // same horizon rule here, an object that changes from deferred alpha-mask
+    // to the forward alpha pass with distance abruptly starts sampling a much
+    // darker transmittance value from this atlas. Dense foliage and layered
+    // glass make that render-path mismatch especially visible.
+    // Match the opaque composite's smooth optical-depth ceiling as well as
+    // its horizon fade. The single-scattering model has no ambient/multiple
+    // scatter to fill a shadowed ray, so unconstrained extinction otherwise
+    // drives dense shadow volumes and every surface inside them to black.
+    // This retains unit slope at low optical depth and asymptotically leaves
+    // about 10% direct scene light at the exposed density extreme.
+    const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
+    // Alpha/material shaders select the slice with radial view_position
+    // length because RGB scatter is integrated along that ray. Opaque scene
+    // transmittance, however, is evaluated from abs(view_position.z). Store
+    // atlas alpha using that same view-depth metric so a material switching
+    // between a forward alpha pass (red debug category) and the deferred
+    // alpha-mask pass (blue) does not jump between two extinction distances.
+    // Keep radial segment_far for RGB scatter above; only atlas alpha uses Z.
+    float view_depth = segment_far * abs(ray_dir.z);
+    float optical_depth = transmittance_density * view_depth;
+    float limited_depth = MAX_SCENE_OPTICAL_DEPTH *
+                          (1.0 - exp(-optical_depth / MAX_SCENE_OPTICAL_DEPTH));
+    float beer_lambert = exp(-limited_depth);
+    float sky_fade = smoothstep(100.0, MAX_MARCH_DISTANCE, view_depth);
+    float transmittance = mix(beer_lambert, 1.0, sky_fade);
 
     if (atlas_debug != 0)
     {

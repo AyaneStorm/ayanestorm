@@ -506,10 +506,9 @@ void main()
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color * final_scale, al), vec4(0));
     vec3 volumetric_foreground = asVolumetricForeground(pos.xyz);
-    float volumetric_transmittance = asVolumetricTransmittance(pos.xyz);
 #ifdef EXACT_OIT
-    // exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
-    exact_oit_store(max(vec4(color * final_scale * volumetric_transmittance + volumetric_foreground, al), vec4(0)));
+    // exact_oit_store(max(vec4(color * final_scale * asVolumetricTransmittance(pos.xyz) + volumetric_foreground, al), vec4(0)));
+    exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
 #elif defined(AVBOIT)
     // Specular glare is a single-blend presentation trick that raises output
     // alpha so highlights read as solid. It is not a physical opacity. Feeding
@@ -520,10 +519,10 @@ void main()
     // alpha for extinction, while glare is preserved by scaling the emitted
     // color so highlights keep the same luminance they contribute in Standard.
     float avboit_alpha = clamp(diffcol.a * vertex_color.a, 0.0, 1.0);
-    // Attenuate by transmittance before the glare-preserving rescale below, so
-    // that rescale still operates on the correctly-attenuated base color.
-    // vec3 avboit_color = color * final_scale;
-    vec3 avboit_color = color * final_scale * volumetric_transmittance;
+    // Preserve forward-alpha surface radiance; the opaque background already
+    // carries scene transmittance from the main composite.
+    // vec3 avboit_color = color * final_scale * asVolumetricTransmittance(pos.xyz);
+    vec3 avboit_color = color * final_scale;
     if (avboit_alpha > 0.0 && al > avboit_alpha)
     {
         // Bounded: the ratio diverges as base alpha approaches zero, so an
@@ -533,8 +532,8 @@ void main()
     avboit_color += volumetric_foreground;
     avboit_store(max(vec4(avboit_color, avboit_alpha), vec4(0)));
 #else
-    // frag_color = max(vec4(color * final_scale + volumetric_foreground, al), vec4(0));
-    frag_color = max(vec4(color * final_scale * volumetric_transmittance + volumetric_foreground, al), vec4(0));
+    // frag_color = max(vec4(color * final_scale * asVolumetricTransmittance(pos.xyz) + volumetric_foreground, al), vec4(0));
+    frag_color = max(vec4(color * final_scale + volumetric_foreground, al), vec4(0));
 #endif
 // </AS:Chanayane>
 

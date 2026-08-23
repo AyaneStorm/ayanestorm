@@ -292,11 +292,13 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-// <AS:Chanayane> Attenuate scene color by transmittance, then add
-// camera-to-fragment scatter, before alpha blending.
-// color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
-    color.rgb = color.rgb * final_scale * asVolumetricTransmittance(pos.xyz) +
-                asVolumetricForeground(pos.xyz);
+// <AS:Chanayane> Preserve forward-alpha surface radiance and add foreground
+// scatter. The opaque background has already received scene transmittance;
+// attenuating minified alpha cards here caused the red/blue LOD discontinuity
+// seen in shadowed volumetric regions.
+// color.rgb = color.rgb * final_scale * asVolumetricTransmittance(pos.xyz) +
+//             asVolumetricForeground(pos.xyz);
+    color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
 // </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));

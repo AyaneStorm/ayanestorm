@@ -38,6 +38,7 @@
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llvovolume.h"
+#include "llworld.h"
 #include "pipeline.h"
 
 #include <algorithm>
@@ -473,7 +474,8 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
 // unaffected by this restructure, only the cost of producing that value
 // changes. sAtlasIntegralTex[0]/[1] are a private implementation detail
 // never sampled by anything outside this function.
-void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
+void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
+                                                     F32 attenuate_scene_strength)
 {
     if (sAtlasFBO == 0 || sAtlasIntegralTex[0] == 0 || sAtlasIntegralTex[1] == 0)
     {
@@ -519,6 +521,13 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline)
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                                          getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+    // Scaled by the altitude fade so the atlas's baked-in scene transmittance
+    // (sampled by foliage/glass/water) fades out at altitude in step with
+    // the opaque composite's sceneDensity, instead of staying at full
+    // density while the opaque darkening fades away - see renderPass()'s
+    // attenuate_scene_strength computation for the full rationale.
+    gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("transmittance_density"),
+                                          getScatterDensity() * attenuate_scene_strength);
     // Mode 11 shows the REAL (non-debug) atlas's alpha channel, not a special
     // diagnostic encoding - transmittance is already a naturally-visible
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
@@ -639,6 +648,31 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
     S32 debug_mode = getDebugMode();
 
+    // Fade scene-attenuating transmittance out with camera altitude above the
+    // ground beneath it: a wide, zoomed-out or high-altitude view spans far
+    // more distant terrain/objects at once than a ground-level view, so the
+    // same per-pixel density reads as a much larger, more oppressive dark
+    // area the higher the camera sits. Full strength at/below
+    // ALTITUDE_FADE_START, fading to none by ALTITUDE_FADE_END; both are
+    // agent-space metres above the terrain directly below the camera, not
+    // sea level, so this still reads correctly over hills/valleys. Computed
+    // once here and threaded into both the opaque composite AND the
+    // transparency atlas (renderTransparencyAtlas() below) - transparent
+    // materials (foliage, glass, water) sample the atlas's own baked-in
+    // transmittance, which is a completely separate code path from the
+    // composite's sceneDensity; scaling only one of the two left the other
+    // at full density at altitude, an inconsistency between opaque and
+    // transparent surfaces that looked like foliage/water going darker than
+    // everything else the higher the camera flew.
+    const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
+    const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
+    const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
+    const F32 ALTITUDE_FADE_START = 10.f;
+    const F32 ALTITUDE_FADE_END = 100.f;
+    const F32 attenuate_scene_strength = 1.f - llclamp(
+        (camera_altitude - ALTITUDE_FADE_START) / (ALTITUDE_FADE_END - ALTITUDE_FADE_START),
+        0.f, 1.f);
+
     // ---- Raymarch pass: sample shadow occlusion along the view ray -------
     {
         LLGLDisable blend(GL_BLEND);
@@ -677,7 +711,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     }
 
     // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas.
-    renderTransparencyAtlas(pipeline);
+    renderTransparencyAtlas(pipeline, attenuate_scene_strength);
 
     // Add the optional, explicitly unshadowed local-light fog contribution.
     // Sphere/ray intersection in the shader confines work and illumination to
@@ -708,8 +742,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                               bool depth_aware,
                               bool replace,
                               bool show_alpha_channel = false,
-                              bool attenuate_scene = false)
+                              F32 attenuate_scene_strength = 0.f)
     {
+        const bool attenuate_scene = attenuate_scene_strength > 0.f;
+
         destination.bindTarget();
         gASVolumetricCompositeProgram.bind();
         gASVolumetricCompositeProgram.uniform1i(
@@ -730,8 +766,14 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             LLStaticHashedString("attenuateScene"), attenuate_scene ? 1 : 0);
         if (attenuate_scene)
         {
+            // Scaling density itself (rather than gating attenuation on/off)
+            // makes transmittance exp(-density*strength*dist) vary smoothly
+            // as strength ramps 0->1 - at strength=0 this is exp(0)=1, i.e.
+            // exactly the same "no attenuation" result as the disabled case,
+            // so there is no seam where the fade begins.
             gASVolumetricCompositeProgram.uniform1f(
-                LLStaticHashedString("sceneDensity"), getScatterDensity());
+                LLStaticHashedString("sceneDensity"),
+                getScatterDensity() * attenuate_scene_strength);
         }
 
         // Clamp explicitly rather than assume this render target's default
@@ -811,7 +853,8 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         const bool needs_depth_upsample =
             sVolumetricTarget.getWidth() != screen.getWidth() ||
             sVolumetricTarget.getHeight() != screen.getHeight();
-        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, false, false, true);
+        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, false, false,
+                        attenuate_scene_strength);
     }
     else
     {

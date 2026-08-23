@@ -88,7 +88,7 @@ public:
 
 private:
     static void renderLocalLights(LLPipeline& pipeline);
-    static void renderTransparencyAtlas(LLPipeline& pipeline);
+    static void renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
 
     static bool sSupportChecked;

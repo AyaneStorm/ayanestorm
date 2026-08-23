@@ -187,7 +187,8 @@ void main()
 //     color.rgb += asVolumetricForeground(pos);
 // #endif
 #if defined(IS_ALPHA)
-    color.rgb = color.rgb * asVolumetricTransmittance(pos) + asVolumetricForeground(pos);
+    // color.rgb = color.rgb * asVolumetricTransmittance(pos) + asVolumetricForeground(pos);
+    color.rgb += asVolumetricForeground(pos);
 #endif
 // </AS:Chanayane>
 

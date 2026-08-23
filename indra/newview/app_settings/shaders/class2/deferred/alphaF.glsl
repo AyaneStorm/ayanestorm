@@ -425,11 +425,16 @@ void main()
 #endif
 
     color.rgb *= final_scale;
-// <AS:Chanayane> Attenuate scene color by transmittance, then add
-// camera-to-fragment scatter, before alpha blending.
-// color.rgb += asVolumetricForeground(vary_position);
-    color.rgb = color.rgb * asVolumetricTransmittance(vary_position) +
-                asVolumetricForeground(vary_position);
+// <AS:Chanayane> Add camera-to-fragment scatter without applying the atlas
+// transmittance to the forward alpha surface itself. Multiplying these
+// minified alpha cards by T made the red forward-alpha LOD turn black inside
+// shadowed volumetric regions, while the same asset's blue deferred alpha-mask
+// LOD remained normal. The opaque scene behind it is already attenuated by the
+// main composite, so ordinary alpha blending still places the transparent
+// surface into the fogged scene without the red/blue discontinuity.
+// color.rgb = color.rgb * asVolumetricTransmittance(vary_position) +
+//             asVolumetricForeground(vary_position);
+    color.rgb += asVolumetricForeground(vary_position);
 // </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(color, vec4(0));

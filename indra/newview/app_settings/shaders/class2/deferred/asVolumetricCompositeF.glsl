@@ -107,6 +107,15 @@ const float SKY_DISTANCE = 128.0;
 // 1.0 across this band removes that pop while still landing on exactly 1.0
 // at SKY_DISTANCE, matching the sky-side assumption below unchanged.
 const float SKY_FADE_START = 100.0;
+// The directional model contains only single scattering. In a shadowed ray
+// its scatter can approach zero while unconstrained Beer-Lambert extinction
+// also removes essentially all scene light, producing an unphysical black
+// mass because ambient/multiple scattering is absent. Smoothly saturating
+// optical depth preserves the configured response near zero (unit slope) but
+// leaves roughly 10% direct scene transmittance at the extreme instead of
+// converging to black. Keep this value and formula identical to
+// asVolumetricAtlasF.glsl so opaque and transparent surfaces remain matched.
+const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
 
 // Beer-Lambert transmittance at a given view-space distance. Matches the
 // raymarch/atlas passes' exp(-extinction * distance) for real, finite-depth
@@ -119,7 +128,10 @@ float sceneTransmittance(float dist)
     {
         return 1.0;
     }
-    float beer_lambert = exp(-sceneDensity * dist);
+    float optical_depth = sceneDensity * dist;
+    float limited_depth = MAX_SCENE_OPTICAL_DEPTH *
+                          (1.0 - exp(-optical_depth / MAX_SCENE_OPTICAL_DEPTH));
+    float beer_lambert = exp(-limited_depth);
     float fade = smoothstep(SKY_FADE_START, SKY_DISTANCE, dist);
     return mix(beer_lambert, 1.0, fade);
 }

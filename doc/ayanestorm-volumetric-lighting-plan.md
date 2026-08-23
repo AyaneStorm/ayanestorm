@@ -1906,6 +1906,106 @@ scenes but invasive because incorrect visibility prediction would cause stale
 or missing transparency lighting. Attempt only after GPU profiling shows the
 optimized atlas remains material.
 
+### Altitude-faded scene transmittance (2026-08-23)
+
+Runtime testing showed that Beer-Lambert scene transmittance made the entire
+view progressively darker with distance and camera zoom - a dark region that
+visibly shifted as the camera panned or flew, since panning/zooming changes
+which on-screen pixels are "far enough" to hit real attenuation, with no
+brightening term to compensate. A separate attempt to add an environment-
+tinted ambient-fill term (`scene * T + ambient_fog_color * (1 - T) +
+directional_scatter`, with `ambient_fog_color` derived from the active sky's
+haze/ambient color) was tried and rejected: getting it bright enough to avoid
+a black mass at high density made daytime scenes wash out toward white
+instead.
+
+The accepted fix instead fades the attenuation's effective density with
+camera altitude above the ground directly beneath it, rather than adding a
+compensating brightness term:
+
+`effective_density = configured_density * attenuate_scene_strength`
+
+`attenuate_scene_strength` is `1.0` at or below 10 m above local terrain,
+linearly fading to `0.0` by 100 m, computed once per frame in
+`ASVolumetricLighting::renderPass()`. A high or zoomed-out view spans far
+more distant terrain at once than a ground-level view, so the same per-pixel
+density read as a much larger, more oppressive dark area the higher the
+camera sat; fading the density itself (rather than gating attenuation on/off)
+keeps `exp(-density * strength * dist)` continuous, with no seam where the
+fade begins. The same `attenuate_scene_strength` value is threaded into both
+the opaque composite's `sceneDensity` and the transparency atlas's separate
+`transmittance_density` uniform (kept distinct from the atlas's own
+`scatter_density`, which still drives god-ray brightness and must not fade
+with altitude), so vegetation, glass, and water darken/lighten in step with
+opaque geometry instead of lagging behind it at altitude. Runtime validation
+is pending across dense foliage, building silhouettes against god rays,
+water/glass across the 100 m altitude threshold, and the disabled-feature
+path.
+
+The atlas transmittance also uses the opaque composite's existing horizon
+rule: Beer-Lambert extinction fades back to `1.0` from 100 m through the
+128 m ground-fog boundary. Previously only opaque geometry applied that fade.
+An alpha-masked material switching from the deferred pass to a forward alpha
+pass with distance therefore changed from the horizon-safe opaque result to
+the atlas's fully extinguished result, making particular distant bushes and
+layered glass appear dark in Standard, Exact OIT, and AVBOIT alike. Matching
+the rule in the atlas fixes the shared input rather than altering any OIT
+compositor or globally weakening the normal-aware opaque upsampler.
+
+Runtime screenshots further isolated the conspicuously dark foliage to the
+screen-space shadowed volumetric region: identical bush assets appeared
+normal outside it and dark only while intersecting it, independent of the
+selected Standard, Exact OIT, or AVBOIT mode. This is not a foliage or OIT
+defect. In the directional single-scattering model, shadow visibility can
+remove nearly all scatter while unrestricted optical depth simultaneously
+drives transmittance toward zero. Since the model has no ambient or multiple
+scatter, the combination incorrectly converges toward black.
+
+Both opaque and atlas transmittance therefore apply the same smooth optical-
+depth ceiling before conversion to transmittance:
+
+`limited_depth = 2.3 * (1 - exp(-optical_depth / 2.3))`
+
+`T = exp(-limited_depth)`
+
+The mapping has unit slope at zero, so ordinary low-density attenuation is
+preserved, while extreme density approaches a transmittance floor of
+`exp(-2.3)`, approximately 10%. Unlike the rejected ambient-fill experiment,
+this adds no light or environment tint; it only prevents the incomplete
+single-scattering approximation from removing essentially all existing scene
+light. The identical formula in the opaque composite and transparency atlas
+keeps foliage, glass, water, and opaque geometry consistent.
+
+The atlas alpha calculation additionally uses view-space Z depth
+(`segment_far * abs(ray_dir.z)`), matching the opaque composite's
+`abs(view_position.z)`, while atlas RGB continues using radial ray distance
+for its scatter integral. Alpha/material shaders necessarily select atlas
+slices by radial distance to retrieve the correct scatter integral, but using
+that radial distance for extinction made forward alpha geometry receive more
+attenuation than deferred opaque/alpha-mask geometry away from the exact
+screen center. A foliage LOD switching between the red forward-alpha debug
+category and blue deferred material-alpha-mask category could consequently
+change brightness abruptly while remaining inside the same volumetric shadow.
+Matching the depth metric removes that pass-transition discontinuity.
+
+Increasing atlas shadow samples and matching the main raymarch's sun/moon
+phase clamp was runtime-tested and rejected: it did not correct the red alpha
+objects and made their shadowed appearance slightly worse while quadrupling
+atlas shadow lookups. The atlas retains its optimized one-sample-per-segment
+construction.
+
+The confirmed discontinuity instead came from applying atlas transmittance to
+the forward alpha surface color itself. Minified red-category alpha cards
+inside shadowed volumetric regions became nearly black, while the same asset's
+blue deferred alpha-mask LOD remained normal. Forward alpha shaders now retain
+their material surface radiance and add only the camera-to-fragment atlas
+scatter. The opaque background being blended through those fragments already
+contains scene transmittance from the main composite. This correction is made
+before Standard, Exact OIT, or AVBOIT storage, so all three modes receive the
+same source color; water remains on its separately validated Fresnel-aware
+path. Volumetric-disabled output remains the original shader result because
+the atlas foreground helper returns zero when disabled.
+
 ### Lower-priority or avoid
 
 - Local-light fog defaults off. Its CPU-transform and conditional-FBO changes
