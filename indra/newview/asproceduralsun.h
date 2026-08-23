@@ -8,7 +8,9 @@
 #define AS_PROCEDURAL_SUN_H
 
 #include "v3color.h"
+#include "v3math.h"
 
+class LLEnvironment;
 class LLSettingsSky;
 class LLFace;
 class LLGLSLShader;
@@ -25,8 +27,17 @@ namespace ASProceduralSun
         LLColor3 limb_color;
     };
 
+    struct WaterLightState
+    {
+        LLVector3 direction;
+        bool sun_up = false;
+    };
+
     RenderParams getRenderParams(const LLSettingsSky* sky);
+    WaterLightState getWaterLightState(const LLEnvironment& environment,
+                                       const LLSettingsSky* sky);
     void renderHalo(LLFace* face, LLGLSLShader* shader, const RenderParams& params);
+    void renderDisc(LLFace* face, const RenderParams& params);
     void configureDiscShader(LLGLSLShader* shader, const RenderParams& params,
                              bool texture_available);
 }

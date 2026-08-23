@@ -25531,7 +25531,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key><string>Render a viewer-local procedural sunset sun disc beneath transparent EEP sun textures</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>Boolean</string>
-      <key>Value</key><integer>0</integer>
+      <key>Value</key><integer>1</integer>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASProceduralSunStartAngle</key>
@@ -25552,10 +25552,10 @@ Change of this parameter will affect the layout of buttons in notification toast
     </map>
     <key>ASProceduralSunBrightness</key>
     <map>
-      <key>Comment</key><string>Peak brightness multiplier for the viewer-local procedural sunset sun disc</string>
+      <key>Comment</key><string>Procedural sun hotness from configured color to white at zero through one, then emitted intensity above one</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>F32</string>
-      <key>Value</key><real>1.0</real>
+      <key>Value</key><real>1.15</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASProceduralSunFeather</key>
@@ -25563,7 +25563,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key><string>Soft-edge width of the procedural sun disc in normalized disc-radius units</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>F32</string>
-      <key>Value</key><real>0.08</real>
+      <key>Value</key><real>0.095</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASProceduralSunShimmer</key>
@@ -25571,7 +25571,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key><string>Strength of subtle animated atmospheric refraction on the procedural sun near the horizon</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>F32</string>
-      <key>Value</key><real>0.015</real>
+      <key>Value</key><real>0.020</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASProceduralSunHaloStrength</key>
@@ -25579,7 +25579,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key><string>Strength of the additive procedural sun halo during the final horizon approach</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>F32</string>
-      <key>Value</key><real>0.60</real>
+      <key>Value</key><real>0.75</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASProceduralSunHaloRadius</key>
@@ -25587,7 +25587,15 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Comment</key><string>Outer procedural sun halo radius measured in sun-disc radii</string>
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>F32</string>
-      <key>Value</key><real>2.25</real>
+      <key>Value</key><real>7.20</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunHaloSoftness</key>
+    <map>
+      <key>Comment</key><string>Fraction of the procedural sun halo radius used for its smooth outer fade</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.30</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <key>ASMoonHorizonMinOpacity</key>

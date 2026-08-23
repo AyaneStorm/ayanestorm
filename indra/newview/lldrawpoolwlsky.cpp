@@ -441,7 +441,11 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
                 sun_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);
                 sun_shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
-                face->renderIndexed();
+                // <AS:Chanayane> Preserve the glow mask for a procedural disc
+                // so only its explicit configurable halo is generated.
+                // face->renderIndexed();
+                ASProceduralSun::renderDisc(face, procedural_sun);
+                // </AS:Chanayane>
 
                 gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
                 gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);

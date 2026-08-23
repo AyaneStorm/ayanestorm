@@ -10,6 +10,7 @@
 
 #include "ascelestialtwilight.h"
 #include "llappviewer.h"
+#include "llenvironment.h"
 #include "llface.h"
 #include "llgl.h"
 #include "llglslshader.h"
@@ -29,6 +30,21 @@ namespace
         value = llclamp(value, 0.f, 1.f);
         return value * value * (3.f - 2.f * value);
     }
+
+    LLColor3 mixSunsetColor(const LLColor3& hot, const LLColor3& final_color,
+                            F32 warmth)
+    {
+        warmth = llclamp(warmth, 0.f, 1.f);
+        LLColor3 color;
+        color.mV[0] = lerp(hot.mV[0], final_color.mV[0], warmth);
+        color.mV[1] = lerp(hot.mV[1], final_color.mV[1], warmth);
+        // A straight white-to-red RGB blend retains blue too long and passes
+        // through pink. Remove blue earlier while green falls normally to
+        // create the yellow/orange temperatures seen between white and red.
+        const F32 blue_warmth = powf(warmth, 0.25f);
+        color.mV[2] = lerp(hot.mV[2], final_color.mV[2], blue_warmth);
+        return color;
+    }
 }
 
 ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsSky* sky)
@@ -40,10 +56,6 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     }
 
     const F32 brightness = llclamp(gSavedSettings.getF32("ASProceduralSunBrightness"), 0.f, 5.f);
-    if (brightness <= 0.f)
-    {
-        return params;
-    }
 
     const F32 elevation = asinf(llclamp(sky->getSunDirection().mV[VZ], -1.f, 1.f));
     const F32 start = llclamp(gSavedSettings.getF32("ASProceduralSunStartAngle"), 0.f, 45.f) * DEG_TO_RAD;
@@ -63,9 +75,15 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     }
     else
     {
-        visibility = peak > cutoff
-                   ? smoothStep((elevation - cutoff) / (peak - cutoff))
-                   : 0.f;
+        // Keep the descending disc bright through most of its horizon
+        // crossing, then smoothly extinguish only its final sliver. A regular
+        // smoothstep dims too early and makes the upper edge disappear before
+        // the scale-aware billboard cutoff is reached.
+        const F32 descent = peak > cutoff
+                          ? llclamp((elevation - cutoff) / (peak - cutoff), 0.f, 1.f)
+                          : 0.f;
+        visibility = smoothStep(llmin(descent / 0.28f, 1.f))
+                   * (0.72f + 0.28f * smoothStep(descent));
     }
 
     LLColor3 start_color = sky->getSunlightColor();
@@ -84,7 +102,9 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     const F32 color_mix = smoothStep((start - elevation) / llmax(start - cutoff, F_APPROXIMATELY_ZERO));
 
     params.enabled = true;
-    params.opacity = visibility * llmin(brightness, 1.f);
+    // Opacity follows elevation only. The brightness control below changes
+    // chroma up to one, then emitted intensity above one.
+    params.opacity = visibility;
     // Activate refraction when the scale-aware lower limb approaches the
     // horizon, not only when the disc center does. Large EEP suns can begin
     // crossing while their centers are still several degrees high.
@@ -96,16 +116,34 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     // Add the procedural halo only through the final horizon approach.
     params.halo_factor = (1.f - smoothStep(llmax(elevation, 0.f)
                                            / (2.f * DEG_TO_RAD))) * visibility;
-    // A real low sun remains white-hot across most of its apparent surface.
-    // Preserve only a little EEP chroma in the core and move the configured
-    // sunset color toward the limb/feather where atmospheric attenuation is
-    // visually strongest. Broad red emission remains the EEP haze's job.
+    // A real low sun remains very bright across most of its apparent surface,
+    // but is no longer neutral white at the horizon. Preserve EEP chroma and
+    // add a restrained, spatially uniform warm tint as atmospheric attenuation
+    // increases. Broad red emission remains the separate halo's job.
     const LLColor3 hot_core = 0.75f * LLColor3::white + 0.25f * start_color;
-    params.color = ((1.f - 0.12f * color_mix) * hot_core
-                  + (0.12f * color_mix) * final_color) * brightness;
+    const F32 brightness_mix = llclamp(brightness, 0.f, 1.f);
+    const F32 disc_color_mix = lerp(1.f, 0.24f * color_mix, brightness_mix);
+    const F32 intensity = llmax(brightness, 1.f);
+    params.color = mixSunsetColor(hot_core, final_color, disc_color_mix) * intensity;
     params.limb_color = ((1.f - color_mix) * hot_core
-                       + color_mix * final_color) * brightness;
+                       + color_mix * final_color);
     return params;
+}
+
+ASProceduralSun::WaterLightState
+ASProceduralSun::getWaterLightState(const LLEnvironment& environment,
+                                    const LLSettingsSky* sky)
+{
+    // Match water's celestial source to the actual procedural-disc lifetime;
+    // the original center-based test switches to moonlight too early while a
+    // scale-aware part of the sunset sun remains visible.
+    WaterLightState state;
+    const bool procedural_sun_visible = getRenderParams(sky).enabled;
+    state.direction = procedural_sun_visible && sky
+                    ? sky->getSunDirection()
+                    : environment.getLightDirection();
+    state.sun_up = environment.getIsSunUp() || procedural_sun_visible;
+    return state;
 }
 
 void ASProceduralSun::renderHalo(LLFace* face, LLGLSLShader* shader,
@@ -130,18 +168,46 @@ void ASProceduralSun::renderHalo(LLFace* face, LLGLSLShader* shader,
     shader->uniform1i(LLStaticHashedString("procedural_sun_halo_pass"), 1);
     shader->uniform3fv(LLStaticHashedString("procedural_sun_center"), 1, center.mV);
     shader->uniform1f(LLStaticHashedString("procedural_sun_halo_radius"),
-                      llclamp(gSavedSettings.getF32("ASProceduralSunHaloRadius"), 1.1f, 4.f));
+                      llclamp(gSavedSettings.getF32("ASProceduralSunHaloRadius"), 1.1f, 8.f));
     shader->uniform1f(LLStaticHashedString("procedural_sun_halo_opacity"),
                       params.halo_factor * strength);
+    shader->uniform1f(LLStaticHashedString("procedural_sun_halo_softness"),
+                      llclamp(gSavedSettings.getF32("ASProceduralSunHaloSoftness"), 0.1f, 1.f));
     shader->uniform3fv(LLStaticHashedString("procedural_sun_limb_color"), 1,
                        params.limb_color.mV);
     {
         LLGLDepthTest halo_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
-        gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
+        // The shader premultiplies halo RGB and writes zero glow-mask alpha.
+        // Pure additive blending preserves that zero alpha while compositing
+        // the visible halo, preventing a second post-process bloom halo.
+        gGL.setSceneBlendType(LLRender::BT_ADD);
         face->renderIndexed();
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     }
     shader->unbind();
+}
+
+void ASProceduralSun::renderDisc(LLFace* face, const RenderParams& params)
+{
+    if (!face)
+    {
+        return;
+    }
+
+    if (params.enabled)
+    {
+        // Blend visible disc RGB normally but preserve the destination alpha.
+        // Scene alpha is the post-process glow mask; allowing the procedural
+        // disc to write it creates a second automatic halo around the explicit
+        // configurable halo.
+        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
+                      LLRender::BF_ZERO, LLRender::BF_ONE);
+        face->renderIndexed();
+        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        return;
+    }
+
+    face->renderIndexed();
 }
 
 void ASProceduralSun::configureDiscShader(LLGLSLShader* shader,

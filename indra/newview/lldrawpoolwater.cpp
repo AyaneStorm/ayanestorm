@@ -50,6 +50,7 @@
 #include "llsettingswater.h"
 
 // <AS:Chanayane> Bind depth-resolved volumetric inputs for late water rendering.
+#include "asproceduralsun.h"
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 
@@ -162,8 +163,14 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
         return;
     }
     // </FS:Beq>
-    LLVector3              light_dir       = environment.getLightDirection();
-    bool                   sun_up          = environment.getIsSunUp();
+    // <AS:Chanayane> Delegate scale-aware procedural-sun water source policy.
+    // LLVector3              light_dir       = environment.getLightDirection();
+    // bool                   sun_up          = environment.getIsSunUp();
+    const ASProceduralSun::WaterLightState water_light =
+        ASProceduralSun::getWaterLightState(environment, psky.get());
+    LLVector3              light_dir       = water_light.direction;
+    bool                   sun_up          = water_light.sun_up;
+    // </AS:Chanayane>
     bool                   moon_up         = environment.getIsMoonUp();
     // <FS:Zi> Render speedup for water parameters
     //bool                   has_normal_mips = gSavedSettings.getBOOL("RenderWaterMipNormal");

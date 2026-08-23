@@ -44,6 +44,7 @@ uniform vec3 procedural_sun_color;
 uniform vec3 procedural_sun_limb_color;
 uniform int procedural_sun_halo_pass;
 uniform float procedural_sun_halo_opacity;
+uniform float procedural_sun_halo_softness;
 // </AS:Chanayane>
 in vec2 vary_texcoord0;
 in float sun_fade;
@@ -55,9 +56,14 @@ void main()
     if (procedural_sun_halo_pass != 0)
     {
         float halo_radius = length(vary_texcoord0 * 2.0 - 1.0);
-        float halo_alpha = pow(max(1.0 - halo_radius, 0.0), 2.0)
-                         * procedural_sun_halo_opacity;
-        if (halo_alpha <= 0.0001)
+        // Separate the broad glow profile from its outer transition. Softness
+        // controls how much of the billboard radius is devoted to reaching a
+        // true zero, avoiding a visible boundary even under HDR exposure.
+        float halo_profile = 1.0 / (1.0 + 4.0 * halo_radius * halo_radius);
+        float fade_start = 1.0 - procedural_sun_halo_softness;
+        float outer_fade = 1.0 - smoothstep(fade_start, 1.0, halo_radius);
+        float halo_alpha = halo_profile * outer_fade * procedural_sun_halo_opacity;
+        if (halo_alpha <= 0.000001)
         {
             discard;
         }
@@ -67,9 +73,11 @@ void main()
         // a translucent halo creates a dark outer ring.
         frag_data[2] = vec4(0.0);
 #if defined(HAS_EMISSIVE)
-        frag_data[3] = vec4(procedural_sun_limb_color, halo_alpha);
+        // Premultiplied RGB is added directly; zero alpha prevents this
+        // atmospheric layer from becoming a second post-process glow source.
+        frag_data[3] = vec4(procedural_sun_limb_color * halo_alpha, 0.0);
 #else
-        frag_data[0] = vec4(procedural_sun_limb_color, halo_alpha);
+        frag_data[0] = vec4(procedural_sun_limb_color * halo_alpha, 0.0);
 #endif
         return;
     }
@@ -104,10 +112,10 @@ void main()
         float inner_radius = max(0.0, outer_radius - feather);
         float disc_coverage = 1.0 - smoothstep(inner_radius, outer_radius, radius);
         float procedural_alpha = procedural_sun_opacity;
-        float limb_mix = smoothstep(max(0.0, 0.72 - feather), 1.0, radius);
-        vec3 procedural_color = mix(procedural_sun_color,
-                                    procedural_sun_limb_color,
-                                    limb_mix);
+        // Keep the solar surface chromatically uniform. Feathering represents
+        // optical coverage at the limb, not a red interior color ring; the
+        // separate enlarged halo carries the warmer atmospheric emission.
+        vec3 procedural_color = procedural_sun_color;
         // An opaque EEP sun texture otherwise hides every procedural edge
         // control. Preserve its color/detail but share the analytic silhouette
         // so feathering and horizon refraction remain effective.
@@ -118,6 +126,15 @@ void main()
                                         + procedural_color * procedural_alpha * (1.0 - c.a);
             c = vec4(combined_premultiplied / combined_alpha,
                      combined_alpha * disc_coverage);
+        }
+
+        // Do not let fully feathered fragments write the categorical
+        // skip-atmosphere G-buffer flag below. That metadata is not scaled by
+        // the visible emissive alpha and otherwise exposes the billboard edge
+        // as a hard border around an analytically soft disc.
+        if (c.a <= 0.0001)
+        {
+            discard;
         }
     }
     // </AS:Chanayane>
