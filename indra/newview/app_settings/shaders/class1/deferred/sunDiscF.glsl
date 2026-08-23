@@ -42,12 +42,39 @@ uniform float procedural_sun_horizon_factor;
 uniform float procedural_sun_time;
 uniform vec3 procedural_sun_color;
 uniform vec3 procedural_sun_limb_color;
+uniform int procedural_sun_halo_pass;
+uniform float procedural_sun_halo_opacity;
 // </AS:Chanayane>
 in vec2 vary_texcoord0;
 in float sun_fade;
 
 void main()
 {
+    // <AS:Chanayane> Separate additive low-horizon atmospheric glow. The
+    // enlarged billboard is drawn before the ordinary sun disc.
+    if (procedural_sun_halo_pass != 0)
+    {
+        float halo_radius = length(vary_texcoord0 * 2.0 - 1.0);
+        float halo_alpha = pow(max(1.0 - halo_radius, 0.0), 2.0)
+                         * procedural_sun_halo_opacity;
+        if (halo_alpha <= 0.0001)
+        {
+            discard;
+        }
+        frag_data[0] = vec4(0.0);
+        frag_data[1] = vec4(0.0);
+        // Preserve existing sky metadata; blending a categorical flag through
+        // a translucent halo creates a dark outer ring.
+        frag_data[2] = vec4(0.0);
+#if defined(HAS_EMISSIVE)
+        frag_data[3] = vec4(procedural_sun_limb_color, halo_alpha);
+#else
+        frag_data[0] = vec4(procedural_sun_limb_color, halo_alpha);
+#endif
+        return;
+    }
+    // </AS:Chanayane>
+
     // <AS:Chanayane> Preserve the original texture result exactly while the
     // fallback is disabled, and avoid sampling unbound textures when absent.
     vec4 c = vec4(0.0);

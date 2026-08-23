@@ -25574,6 +25574,22 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key><real>0.015</real>
       <key>Backup</key><integer>0</integer>
     </map>
+    <key>ASProceduralSunHaloStrength</key>
+    <map>
+      <key>Comment</key><string>Strength of the additive procedural sun halo during the final horizon approach</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.60</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunHaloRadius</key>
+    <map>
+      <key>Comment</key><string>Outer procedural sun halo radius measured in sun-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>2.25</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
     <key>ASMoonHorizonMinOpacity</key>
     <map>
       <key>Comment</key>

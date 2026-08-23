@@ -31,7 +31,8 @@ rays, or water reflections.
 
 `ASProceduralSunEnabled`, `ASProceduralSunStartAngle`,
 `ASProceduralSunFinalColor`, `ASProceduralSunBrightness`,
-`ASProceduralSunFeather`, and `ASProceduralSunShimmer` are exposed in the Sun
+`ASProceduralSunFeather`, `ASProceduralSunShimmer`,
+`ASProceduralSunHaloStrength`, and `ASProceduralSunHaloRadius` are exposed in the Sun
 Settings floater and apply live. Feathering widens the analytic limb transition.
 Shimmer applies two low-amplitude animated refraction waves as the scale-aware
 lower limb enters the five-degree horizon band and does not alter the actual
@@ -40,6 +41,10 @@ inside the finite sun billboard so the quad cannot clip them into a hard edge.
 While the procedural
 feature is active, both controls shape the final analytic silhouette, including
 opaque EEP texture pixels; authored texture color and interior detail remain.
+The halo is a separate enlarged, additive, depth-tested billboard drawn behind
+the disc. It fades in from two degrees to the horizon, uses the configured warm
+limb color, does not write depth, and remains occluded by subsequently rendered
+clouds.
 Validate absent, transparent, partially
 transparent, and opaque EEP sun textures; multiple sun scales; HDR and non-HDR;
 cloud occlusion; haze blending; foreground depth; and elevations around the

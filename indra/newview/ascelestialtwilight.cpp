@@ -10,17 +10,19 @@
 
 #include "llmath.h"
 #include "llsettingssky.h"
+#include "llviewercontrol.h"
+#include "llvosky.h"
 
 namespace
 {
-    constexpr F32 HEAVENLY_BODY_FACTOR = 0.1f;
+    constexpr F32 AS_HEAVENLY_BODY_FACTOR = 0.1f;
     constexpr F32 HORIZON_VERTICAL_ENLARGEMENT = 1.2f;
 }
 
 F32 ASCelestialTwilight::discEdgeElevation(F32 scale, F32 disc_radius)
 {
     const F32 half_height = llclamp(HORIZON_VERTICAL_ENLARGEMENT * scale *
-                                    HEAVENLY_BODY_FACTOR * disc_radius,
+                                    AS_HEAVENLY_BODY_FACTOR * disc_radius,
                                     0.f, 1.f);
     return -asinf(half_height);
 }
@@ -76,4 +78,47 @@ F32 ASCelestialTwilight::glowFactor(const LLSettingsSky* sky)
         return 1.f;
     }
     return moonInfluence(sky) > 0.f ? sky->getMoonBrightness() * 0.25f : 0.f;
+}
+
+bool ASCelestialTwilight::shouldDrawDisc(bool geometry_valid,
+                                         const LLHeavenBody& body,
+                                         bool center_visible)
+{
+    if (!geometry_valid)
+    {
+        return false;
+    }
+    if (!gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon"))
+    {
+        return center_visible;
+    }
+
+    F32 highest_edge = body.corner(0).mV[VZ];
+    for (S32 corner = 1; corner < 4; ++corner)
+    {
+        highest_edge = llmax(highest_edge, body.corner(corner).mV[VZ]);
+    }
+    return highest_edge >= 0.f;
+}
+
+ASCelestialTwilight::LegacyLightState
+ASCelestialTwilight::legacyLightState(const LLSettingsSky* sky)
+{
+    LegacyLightState state;
+    if (!sky)
+    {
+        return state;
+    }
+
+    state.sun_influence = sunInfluence(sky);
+    state.moon_influence = moonInfluence(sky);
+    state.sun_active = state.sun_influence > 0.f;
+    state.moon_active = state.moon_influence > 0.f;
+    state.sun_direction = sky->getSunDirection();
+    state.moon_direction = sky->getMoonDirection();
+    state.sun_direction.mV[VZ] = llmax(0.f, state.sun_direction.mV[VZ]);
+    state.moon_direction.mV[VZ] = llmax(0.f, state.moon_direction.mV[VZ]);
+    state.sun_direction.normalize();
+    state.moon_direction.normalize();
+    return state;
 }

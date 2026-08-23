@@ -10,6 +10,8 @@
 #include "v3color.h"
 
 class LLSettingsSky;
+class LLFace;
+class LLGLSLShader;
 
 namespace ASProceduralSun
 {
@@ -18,11 +20,15 @@ namespace ASProceduralSun
         bool enabled = false;
         F32 opacity = 0.f;
         F32 horizon_factor = 0.f;
+        F32 halo_factor = 0.f;
         LLColor3 color;
         LLColor3 limb_color;
     };
 
     RenderParams getRenderParams(const LLSettingsSky* sky);
+    void renderHalo(LLFace* face, LLGLSLShader* shader, const RenderParams& params);
+    void configureDiscShader(LLGLSLShader* shader, const RenderParams& params,
+                             bool texture_available);
 }
 
 #endif

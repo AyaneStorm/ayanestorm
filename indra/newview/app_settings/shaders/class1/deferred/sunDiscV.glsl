@@ -28,6 +28,9 @@ uniform mat4 modelview_matrix;
 uniform mat4 modelview_projection_matrix;
 // <AS:Chanayane> Opt into true EEP-direction alignment for the procedural sun.
 uniform int procedural_sun_alignment_enabled;
+uniform int procedural_sun_halo_pass;
+uniform vec3 procedural_sun_center;
+uniform float procedural_sun_halo_radius;
 // </AS:Chanayane>
 
 in vec3 position;
@@ -45,11 +48,17 @@ void main()
     // from the atmospheric sun direction near the horizon. Preserve it for
     // compatibility unless the viewer-local procedural sun is enabled.
     // vec3 offset = vec3(0, 0, 50);
+    vec3 vertex_position = position.xyz;
+    if (procedural_sun_halo_pass != 0)
+    {
+        vertex_position = procedural_sun_center
+                        + (vertex_position - procedural_sun_center) * procedural_sun_halo_radius;
+    }
     vec3 offset = procedural_sun_alignment_enabled != 0
                 ? vec3(0.0)
                 : vec3(0, 0, 50);
+    vec4 vert = vec4(vertex_position - offset, 1.0);
     // </AS:Chanayane>
-    vec4 vert = vec4(position.xyz - offset, 1.0);
     vec4 pos  = modelview_projection_matrix*vert;
 
     sun_fade = smoothstep(0.3, 1.0, (position.z + 50) / 512.0f);

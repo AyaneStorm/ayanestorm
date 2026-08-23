@@ -9,9 +9,16 @@
 #include "asproceduralsun.h"
 
 #include "ascelestialtwilight.h"
+#include "llappviewer.h"
+#include "llface.h"
+#include "llgl.h"
+#include "llglslshader.h"
 #include "llmath.h"
+#include "llrender.h"
 #include "llsettingssky.h"
+#include "llsky.h"
 #include "llviewercontrol.h"
+#include "llvosky.h"
 
 namespace
 {
@@ -85,6 +92,10 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     const F32 lower_limb_elevation = elevation - disc_half_angle;
     params.horizon_factor = 1.f - smoothStep(llmax(lower_limb_elevation, 0.f)
                                              / (5.f * DEG_TO_RAD));
+    // The EEP atmosphere commonly supplies enough glow above two degrees.
+    // Add the procedural halo only through the final horizon approach.
+    params.halo_factor = (1.f - smoothStep(llmax(elevation, 0.f)
+                                           / (2.f * DEG_TO_RAD))) * visibility;
     // A real low sun remains white-hot across most of its apparent surface.
     // Preserve only a little EEP chroma in the core and move the configured
     // sunset color toward the limb/feather where atmospheric attenuation is
@@ -95,4 +106,69 @@ ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsS
     params.limb_color = ((1.f - color_mix) * hot_core
                        + color_mix * final_color) * brightness;
     return params;
+}
+
+void ASProceduralSun::renderHalo(LLFace* face, LLGLSLShader* shader,
+                                 const RenderParams& params)
+{
+    const F32 strength = llclamp(gSavedSettings.getF32("ASProceduralSunHaloStrength"), 0.f, 2.f);
+    if (!face || !shader || !params.enabled || params.halo_factor <= 0.f || strength <= 0.f ||
+        !gSky.mVOSkyp)
+    {
+        return;
+    }
+
+    LLVector3 center;
+    for (S32 corner = 0; corner < 4; ++corner)
+    {
+        center += gSky.mVOSkyp->getSun().corner(corner);
+    }
+    center = center * 0.25f + gSky.mVOSkyp->getCameraPosAgent();
+
+    shader->bind();
+    shader->uniform1i(LLStaticHashedString("procedural_sun_alignment_enabled"), 1);
+    shader->uniform1i(LLStaticHashedString("procedural_sun_halo_pass"), 1);
+    shader->uniform3fv(LLStaticHashedString("procedural_sun_center"), 1, center.mV);
+    shader->uniform1f(LLStaticHashedString("procedural_sun_halo_radius"),
+                      llclamp(gSavedSettings.getF32("ASProceduralSunHaloRadius"), 1.1f, 4.f));
+    shader->uniform1f(LLStaticHashedString("procedural_sun_halo_opacity"),
+                      params.halo_factor * strength);
+    shader->uniform3fv(LLStaticHashedString("procedural_sun_limb_color"), 1,
+                       params.limb_color.mV);
+    {
+        LLGLDepthTest halo_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
+        gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
+        face->renderIndexed();
+        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    }
+    shader->unbind();
+}
+
+void ASProceduralSun::configureDiscShader(LLGLSLShader* shader,
+                                          const RenderParams& params,
+                                          bool texture_available)
+{
+    if (!shader)
+    {
+        return;
+    }
+
+    shader->uniform1i(LLStaticHashedString("procedural_sun_halo_pass"), 0);
+    shader->uniform1i(LLStaticHashedString("procedural_sun_alignment_enabled"),
+                      gSavedSettings.getBOOL("ASProceduralSunEnabled") ? 1 : 0);
+    shader->uniform1i(LLStaticHashedString("sun_texture_available"),
+                      texture_available ? 1 : 0);
+    shader->uniform1i(LLStaticHashedString("procedural_sun_enabled"),
+                      params.enabled ? 1 : 0);
+    shader->uniform1f(LLStaticHashedString("procedural_sun_opacity"), params.opacity);
+    shader->uniform1f(LLStaticHashedString("procedural_sun_feather"),
+                      llclamp(gSavedSettings.getF32("ASProceduralSunFeather"), 0.f, 0.35f));
+    shader->uniform1f(LLStaticHashedString("procedural_sun_shimmer"),
+                      llclamp(gSavedSettings.getF32("ASProceduralSunShimmer"), 0.f, 0.10f));
+    shader->uniform1f(LLStaticHashedString("procedural_sun_horizon_factor"),
+                      params.horizon_factor);
+    shader->uniform1f(LLStaticHashedString("procedural_sun_time"), gFrameTimeSeconds);
+    shader->uniform3fv(LLStaticHashedString("procedural_sun_color"), 1, params.color.mV);
+    shader->uniform3fv(LLStaticHashedString("procedural_sun_limb_color"), 1,
+                       params.limb_color.mV);
 }

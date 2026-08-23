@@ -6419,29 +6419,19 @@ void LLPipeline::setupHWLights()
     // booleans elsewhere for shadow and deferred-light source selection.
     // bool sun_up  = environment.getIsSunUp();
     // bool moon_up = environment.getIsMoonUp();
-    const F32 sun_influence = ASCelestialTwilight::sunInfluence(psky.get());
-    const F32 moon_influence = ASCelestialTwilight::moonInfluence(psky.get());
-    // The renderer has one legacy celestial light slot. Give solar twilight
-    // priority, then hand it to the moon once the solar tail has ended.
-    bool sun_up = sun_influence > 0.f;
-    bool moon_up = moon_influence > 0.f;
+    const ASCelestialTwilight::LegacyLightState twilight =
+        ASCelestialTwilight::legacyLightState(psky.get());
+    bool sun_up = twilight.sun_active;
+    bool moon_up = twilight.moon_active;
     // </AS:Chanayane>
 
     // Light 0 = Sun or Moon (All objects)
     {
-        // <AS:Chanayane> Below-horizon energy represents atmospheric twilight,
-        // not illumination rising through the ground. Hold its legacy light
-        // direction at the horizon while the smooth tail is active.
+        // <AS:Chanayane> Use AS-owned horizon-clamped twilight directions.
         // LLVector4 sun_dir(environment.getSunDirection(), 0.0f);
         // LLVector4 moon_dir(environment.getMoonDirection(), 0.0f);
-        LLVector3 sun_direction(environment.getSunDirection());
-        LLVector3 moon_direction(environment.getMoonDirection());
-        sun_direction.mV[VZ] = llmax(0.f, sun_direction.mV[VZ]);
-        moon_direction.mV[VZ] = llmax(0.f, moon_direction.mV[VZ]);
-        sun_direction.normalize();
-        moon_direction.normalize();
-        LLVector4 sun_dir(sun_direction, 0.0f);
-        LLVector4 moon_dir(moon_direction, 0.0f);
+        LLVector4 sun_dir(twilight.sun_direction, 0.0f);
+        LLVector4 moon_dir(twilight.moon_direction, 0.0f);
         // </AS:Chanayane>
 
         mSunDir.setVec(sun_dir);
@@ -6465,8 +6455,8 @@ void LLPipeline::setupHWLights()
         mMoonDiffuse.clamp();
 
         // <AS:Chanayane> Smoothly remove the remaining below-horizon energy.
-        mSunDiffuse *= sun_influence;
-        mMoonDiffuse *= moon_influence;
+        mSunDiffuse *= twilight.sun_influence;
+        mMoonDiffuse *= twilight.moon_influence;
         // </AS:Chanayane>
 
         // prevent underlighting from having neither lightsource facing us

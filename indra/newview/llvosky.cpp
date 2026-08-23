@@ -28,6 +28,10 @@
 
 #include "llvosky.h"
 
+// <AS:Chanayane> Viewer-local celestial visibility policy.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 #include "llfeaturemanager.h"
 #include "llviewercontrol.h"
 #include "llframetimer.h"
@@ -1073,44 +1077,13 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     // <FS:Ansariel> Factor out instance() calls
     LLEnvironment& environment = LLEnvironment::instance();
 
-    // <AS:Chanayane> One compatibility setting controls whether both celestial
-    // discs use edge-based or original center-based horizon visibility.
-    static LLCachedControl<bool> render_partial_celestial_bodies(gSavedSettings,
-        "ASRenderPartialMoonBelowHorizon", true);
-    const auto upper_edge_visible = [](const LLHeavenBody& body)
-    {
-        F32 highest_edge = body.corner(0).mV[VZ];
-        for (S32 corner = 1; corner < 4; ++corner)
-        {
-            highest_edge = llmax(highest_edge, body.corner(corner).mV[VZ]);
-        }
-        return highest_edge >= 0.f;
-    };
-    // </AS:Chanayane>
-
-    // <AS:Chanayane> Render both bodies until their upper edge passes below
-    // the horizon when enabled. The original sun cutoff used center elevation.
+    // <AS:Chanayane> Delegate viewer-local edge-based visibility policy.
     // draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
-    if (render_partial_celestial_bodies)
-    {
-        draw_sun &= upper_edge_visible(mSun);
-    }
-    else
-    {
-        draw_sun &= environment.getIsSunUp();
-    }
-    // </AS:Chanayane>
-    // <AS:Chanayane> Optionally keep the moon quad alive until its upper edge,
-    // rather than its center, passes below the camera-relative horizon.
     // draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
-    if (render_partial_celestial_bodies)
-    {
-        draw_moon &= upper_edge_visible(mMoon);
-    }
-    else
-    {
-        draw_moon &= environment.getIsMoonUp();
-    }
+    draw_sun = ASCelestialTwilight::shouldDrawDisc(draw_sun, mSun,
+                                                    environment.getIsSunUp());
+    draw_moon = ASCelestialTwilight::shouldDrawDisc(draw_moon, mMoon,
+                                                     environment.getIsMoonUp());
     // </AS:Chanayane>
 
     mSun.setDraw(draw_sun);
