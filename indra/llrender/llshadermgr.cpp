@@ -1573,6 +1573,9 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("rainbow_map");
     mReservedUniforms.push_back("halo_map");
     mReservedUniforms.push_back("moon_brightness");
+    // <AS:Chanayane> Configurable minimum moon-disc opacity at the horizon.
+    mReservedUniforms.push_back("moon_horizon_min_opacity");
+    // </AS:Chanayane>
     mReservedUniforms.push_back("cloud_variance");
     mReservedUniforms.push_back("reflection_probe_ambiance");
     mReservedUniforms.push_back("max_probe_lod");

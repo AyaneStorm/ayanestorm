@@ -451,6 +451,10 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
             F32 moon_brightness = (float)psky->getMoonBrightness();
 
             moon_shader->uniform1f(LLShaderMgr::MOON_BRIGHTNESS, moon_brightness);
+            // <AS:Chanayane> Apply the live moon horizon visibility preference.
+            moon_shader->uniform1f(LLShaderMgr::MOON_HORIZON_MIN_OPACITY,
+                                   gSavedSettings.getF32("ASMoonHorizonMinOpacity"));
+            // </AS:Chanayane>
             moon_shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, gSky.mVOSkyp->getMoon().getColor().mV);
             moon_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);
             //moon_shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);

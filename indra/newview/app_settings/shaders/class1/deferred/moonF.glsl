@@ -30,16 +30,28 @@ out vec4 frag_data[4];
 uniform vec4 color;
 uniform vec3 moon_dir;
 uniform float moon_brightness;
+// <AS:Chanayane> User-controlled lower bound for the legacy horizon fade.
+uniform float moon_horizon_min_opacity;
+// </AS:Chanayane>
 uniform sampler2D diffuseMap;
 
 in vec2 vary_texcoord0;
 
 void main()
 {
-    // Restore Pre-EEP alpha fade moon near horizon
+    // <AS:Chanayane> Preserve the legacy fade shape but prevent the moon from
+    // disappearing into horizon haze. A setting of zero reproduces upstream.
+    // // Restore Pre-EEP alpha fade moon near horizon
+    // float fade = 1.0;
+    // if( moon_dir.z > 0 )
+    //     fade = clamp( moon_dir.z*moon_dir.z*4.0, 0.0, 1.0 );
     float fade = 1.0;
-    if( moon_dir.z > 0 )
-        fade = clamp( moon_dir.z*moon_dir.z*4.0, 0.0, 1.0 );
+    if (moon_dir.z > 0.0)
+    {
+        float legacy_fade = clamp(moon_dir.z * moon_dir.z * 4.0, 0.0, 1.0);
+        fade = mix(clamp(moon_horizon_min_opacity, 0.0, 1.0), 1.0, legacy_fade);
+    }
+    // </AS:Chanayane>
 
     vec4 c      = texture(diffuseMap, vary_texcoord0.xy);
 

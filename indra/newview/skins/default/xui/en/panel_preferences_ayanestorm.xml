@@ -188,6 +188,52 @@
       <!-- [/AS:Chanayane] -->
     </panel>
 
+    <!-- [AS:Chanayane] Additional rendering controls kept separate because
+         the primary Rendering tab is full. -->
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Rendering 2"
+      name="tab-as-rendering-2">
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        font="SansSerifSmallBold"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_sky_section_label"
+        width="300"
+        top="10">
+        Sky rendering
+      </text>
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonHorizonMinOpacity"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.05"
+        label="Moon visibility at horizon"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="1.0"
+        min_val="0.0"
+        name="moon_horizon_min_opacity"
+        show_text="true"
+        text_width="50"
+        tool_tip="Minimum opacity of the moon disc at the horizon. 0.00 reproduces the legacy fade; 1.00 disables horizon dimming. Changes are applied live."
+        top="38"
+        width="380" />
+    </panel>
+    <!-- [/AS:Chanayane] -->
+
     <panel
       top_pad="5"
       bottom="-1"
