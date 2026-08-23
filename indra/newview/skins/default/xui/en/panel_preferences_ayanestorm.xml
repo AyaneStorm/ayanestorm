@@ -229,7 +229,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Minimum opacity of the moon disc at the horizon. 0.00 reproduces the legacy fade; 1.00 disables horizon dimming. Changes are applied live."
-        top="38"
+        top="34"
         width="380" />
 
       <slider
@@ -249,7 +249,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Multiplies the current environment's moon-disc brightness without modifying the environment asset. 1.00 preserves its original brightness. Changes are applied live."
-        top="68"
+        top="60"
         width="380" />
 
       <slider
@@ -269,7 +269,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Viewer-local moon phase: 0.00 New, 0.25 First quarter, 0.50 Full, 0.75 Last quarter, 1.00 New. The illuminated fraction also scales moon god rays. Changes are applied live."
-        top="98"
+        top="86"
         width="380" />
 
       <slider
@@ -289,7 +289,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Nonlinearly reshapes the moon terminator. 1.00 is spherical; higher and lower values provide artistic curve control. Quarter, full, and new moons remain exact. Changes are applied live."
-        top="128"
+        top="112"
         width="380" />
 
       <slider
@@ -303,13 +303,13 @@
         label_width="180"
         layout="topleft"
         left="15"
-        max_val="0.15"
+        max_val="0.30"
         min_val="0.0"
         name="moon_phase_softness"
         show_text="true"
         text_width="50"
-        tool_tip="Width of the soft transition between the lit and dark portions of the moon. 0.000 keeps only pixel antialiasing. Changes are applied live."
-        top="158"
+        tool_tip="Width of the nonlinear transition centered on the geometric phase boundary. 0.000 keeps only pixel antialiasing. Changes are applied live."
+        top="138"
         width="380" />
 
       <slider
@@ -329,8 +329,32 @@
         show_text="true"
         text_width="50"
         tool_tip="Rotates the crescent and phase terminator around the moon disc. Positive angles rotate counterclockwise; 0 preserves the vertical terminator. Changes are applied live."
-        top="188"
+        top="164"
         width="380" />
+
+      <slider
+        can_edit_text="true" control_name="ASMoonTerminatorReliefStrength"
+        decimal_digits="2" follows="left|top" height="16" increment="0.05"
+        label="Moon terminator relief" label_width="180" layout="topleft" left="15"
+        max_val="2.0" min_val="0.0" name="moon_terminator_relief_strength" show_text="true"
+        text_width="50" top="190" width="380"
+        tool_tip="Directional crater-detail contrast near the phase boundary. 0.00 disables it. Changes are applied live." />
+
+      <slider
+        can_edit_text="true" control_name="ASMoonTerminatorReliefWidth"
+        decimal_digits="2" follows="left|top" height="16" increment="0.01"
+        label="Terminator relief width" label_width="180" layout="topleft" left="15"
+        max_val="0.50" min_val="0.01" name="moon_terminator_relief_width" show_text="true"
+        text_width="50" top="216" width="380"
+        tool_tip="Width of the enhanced crater-detail band around the phase boundary. Changes are applied live." />
+
+      <slider
+        can_edit_text="true" control_name="ASMoonEarthshineStrength"
+        decimal_digits="2" follows="left|top" height="16" increment="0.01"
+        label="Moon earthshine" label_width="180" layout="topleft" left="15"
+        max_val="0.30" min_val="0.00" name="moon_earthshine_strength" show_text="true"
+        text_width="50" top="242" width="380"
+        tool_tip="Minimum moon texture visibility blended over the sky on the shadowed side. 0.00 fully reveals the sky. It does not contribute to halo or god rays. Changes are applied live." />
 
       <text
         type="string"
@@ -340,7 +364,7 @@
         layout="topleft"
         left="15"
         name="moon_horizon_tint_label"
-        top="222"
+        top="272"
         width="180">
         Moon horizon color
       </text>
@@ -348,7 +372,7 @@
       <color_swatch
         border_color="0.45098, 0.517647, 0.607843, 1"
         can_apply_immediately="true"
-        color="1.0, 0.55, 0.25, 1.0"
+        color="1.0, 0.40, 0.0, 1.0"
         control_name="ASMoonHorizonTint"
         follows="left|top"
         height="24"
@@ -359,7 +383,7 @@
         mouse_opaque="true"
         name="moon_horizon_tint"
         tool_tip="Color multiplied into the moon disc near the horizon. Changes are applied live."
-        top="218"
+        top="268"
         width="44" />
 
       <slider
@@ -379,7 +403,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Strength of the warm moon tint at the horizon. 0.00 disables the effect; the tint smoothly disappears as the moon rises. Changes are applied live."
-        top="258"
+        top="302"
         width="380" />
 
       <check_box
@@ -393,8 +417,35 @@
         name="render_partial_moon_below_horizon"
         radio_style="false"
         tool_tip="Keeps rendering the moon until its upper edge passes below the horizon. Disable for the original Firestorm center-based cutoff. Changes are applied live."
-        top="292"
+        top="330"
         width="430" />
+
+      <check_box
+        control_name="ASMoonHaloEnabled" follows="left|top" height="16"
+        label="Enable moon halo" layout="topleft" left="15" mouse_opaque="true"
+        name="moon_halo_enabled" radio_style="false" top="356" width="430"
+        tool_tip="Render the viewer-local atmospheric halo around the moon. Changes are applied live." />
+      <slider
+        can_edit_text="true" control_name="ASMoonHaloStrength"
+        decimal_digits="2" follows="left|top" height="16" increment="0.05"
+        label="Moon halo strength" label_width="180" layout="topleft" left="15"
+        max_val="2.0" min_val="0.0" name="moon_halo_strength" show_text="true"
+        text_width="50" top="382" width="380"
+        tool_tip="Strength of the circular, phase-attenuated atmospheric halo. Moon brightness also scales it through a calibrated saturating response. Changes are applied live." />
+      <slider
+        can_edit_text="true" control_name="ASMoonHaloRadius"
+        decimal_digits="2" follows="left|top" height="16" increment="0.10"
+        label="Moon halo radius" label_width="180" layout="topleft" left="15"
+        max_val="4.0" min_val="1.25" name="moon_halo_radius" show_text="true"
+        text_width="50" top="408" width="380"
+        tool_tip="Outer halo radius measured in moon-disc radii. Changes are applied live." />
+      <slider
+        can_edit_text="true" control_name="ASMoonHaloSoftness"
+        decimal_digits="2" follows="left|top" height="16" increment="0.05"
+        label="Moon halo softness" label_width="180" layout="topleft" left="15"
+        max_val="2.0" min_val="0.10" name="moon_halo_softness" show_text="true"
+        text_width="50" top="434" width="380"
+        tool_tip="Width of the halo's radial falloff in moon-disc radii. Changes are applied live." />
     </panel>
     <!-- [/AS:Chanayane] -->
 

@@ -59,7 +59,7 @@ constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 // Numerically integrate the nonlinear phase mask used by moonF.glsl. The
 // cached result changes only when a phase control changes, avoiding per-frame
 // integration while keeping god-ray energy tied to visible lunar surface.
-F32 getMoonPhaseIlluminatedFraction(F32 phase, F32 curvature, F32 softness)
+F32 calculateMoonPhaseIlluminatedFraction(F32 phase, F32 curvature, F32 softness)
 {
     static F32 cached_phase = -1.f;
     static F32 cached_curvature = -1.f;
@@ -95,6 +95,7 @@ F32 getMoonPhaseIlluminatedFraction(F32 phase, F32 curvature, F32 softness)
             const F32 surface_z = powf(sqrtf(llmax(1.f - radius_squared, 0.f)), curvature);
             const F32 phase_light = px * light_x + surface_z * light_z;
             const F32 t = llclamp((phase_light + edge_width) / (2.f * edge_width), 0.f, 1.f);
+            // Match moonF.glsl's terminator-centered smooth transition.
             mask_sum += t * t * (3.f - 2.f * t);
             ++disc_samples;
         }
@@ -116,9 +117,9 @@ void applyMoonAppearance(LLGLSLShader& shader)
     const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
     const F32 phase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
     const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f);
-    const F32 softness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.15f);
+    const F32 softness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f);
     const F32 illuminated_fraction =
-        getMoonPhaseIlluminatedFraction(phase, curvature, softness);
+        calculateMoonPhaseIlluminatedFraction(phase, curvature, softness);
     shader.uniform3fv(LLStaticHashedString("moon_horizon_tint"), 1, tint.mV);
     shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
                      gSavedSettings.getF32("ASMoonHorizonTintStrength"));
@@ -132,6 +133,14 @@ struct LocalLight
     LLVector4 color_falloff;
     F32 score;
 };
+}
+
+F32 ASVolumetricLighting::getMoonPhaseIlluminatedFraction()
+{
+    const F32 phase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
+    const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f);
+    const F32 softness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f);
+    return calculateMoonPhaseIlluminatedFraction(phase, curvature, softness);
 }
 
 bool ASVolumetricLighting::sSupportChecked = false;

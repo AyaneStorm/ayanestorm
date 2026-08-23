@@ -44,6 +44,9 @@
 #include "llvowlsky.h"
 #include "llsettingsvo.h"
 #include "llviewercontrol.h"
+// <AS:Chanayane> Share phase-integrated moon energy with the circular halo.
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
 
 extern bool gCubeSnapshot;
 
@@ -416,6 +419,92 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         }
     }
 
+    // <AS:Chanayane> Render the procedural atmospheric halo behind the moon.
+    face = gSky.mVOSkyp->mFace[LLVOSky::FACE_BLOOM];
+    LLFace* moon_face = gSky.mVOSkyp->mFace[LLVOSky::FACE_MOON];
+    LLViewerTexture* halo_mask_texture = moon_face
+                                      ? moon_face->getTexture(LLRender::DIFFUSE_MAP)
+                                      : nullptr;
+    if (gSavedSettings.getBOOL("ASMoonHaloEnabled") &&
+        gSky.mVOSkyp->getMoon().getDraw() && face && face->getGeomCount() &&
+        halo_mask_texture && moon_shader)
+    {
+        // Link atmospheric glow to disc brightness through a saturating curve.
+        // Direct multiplication makes the additive halo hit solid white around
+        // multipliers 2-4. This remains exactly zero at zero, yields ~0.59 at
+        // one, ~0.98 at the preferred 3.15 default, and asymptotically limits
+        // growth while preserving the independent halo-strength control.
+        const F32 moon_brightness_multiplier =
+            llclamp(gSavedSettings.getF32("ASMoonBrightnessMultiplier"), 0.f, 5.f);
+        const F32 halo_brightness_response = moon_brightness_multiplier
+                                           / (1.f + 0.7f * moon_brightness_multiplier);
+        const F32 halo_strength = llclamp(gSavedSettings.getF32("ASMoonHaloStrength"), 0.f, 2.f)
+                                * halo_brightness_response;
+        if (halo_strength > 0.f)
+        {
+            const LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
+            const F32 elevation = psky->getMoonDirection().mV[VZ];
+            const F32 height_t = llclamp(elevation / 0.35f, 0.f, 1.f);
+            const F32 horizon_amount = (1.f - height_t * height_t * (3.f - 2.f * height_t))
+                                     * llclamp(gSavedSettings.getF32("ASMoonHorizonTintStrength"), 0.f, 1.f);
+            const LLColor4 tint = gSavedSettings.getColor4("ASMoonHorizonTint");
+            LLColor3 halo_color;
+            for (S32 component = 0; component < 3; ++component)
+            {
+                halo_color.mV[component] = lerp(1.f, tint.mV[component], horizon_amount);
+            }
+
+            moon_shader->bind();
+            moon_shader->bindTexture(LLShaderMgr::DIFFUSE_MAP, halo_mask_texture,
+                                     LLTexUnit::TT_TEXTURE);
+            moon_shader->uniform1i(LLStaticHashedString("moon_halo_pass"), 1);
+            moon_shader->uniform3fv(LLStaticHashedString("moon_halo_color"), 1, halo_color.mV);
+            moon_shader->uniform1f(LLStaticHashedString("moon_halo_strength"), halo_strength);
+            moon_shader->uniform1f(LLStaticHashedString("moon_halo_radius"),
+                                   llclamp(gSavedSettings.getF32("ASMoonHaloRadius"), 1.25f, 4.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_halo_softness"),
+                                   llclamp(gSavedSettings.getF32("ASMoonHaloSoftness"), 0.1f, 2.f));
+            const F32 moon_phase_illumination =
+                ASVolumetricLighting::getMoonPhaseIlluminatedFraction();
+            // Preserve the preferred phase-0.80 appearance (integrated energy
+            // ~0.406 with the defaults) and compress only brighter phases.
+            // Linear phase energy makes additive full-moon glow much too strong.
+            constexpr F32 HALO_PHASE_COMPRESSION_START = 0.406f;
+            const F32 halo_phase_excess = moon_phase_illumination
+                                        - HALO_PHASE_COMPRESSION_START;
+            const F32 halo_phase_illumination = moon_phase_illumination <= HALO_PHASE_COMPRESSION_START
+                                              ? moon_phase_illumination
+                                              : moon_phase_illumination
+                                                / (1.f + 1.52f * halo_phase_excess
+                                                               * halo_phase_excess);
+            moon_shader->uniform1f(LLStaticHashedString("moon_halo_illumination"),
+                                   halo_phase_illumination);
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_curvature"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_softness"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_tilt"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseTilt"), -180.f, 180.f));
+            // The halo and disc share the same celestial depth. Do not let the
+            // larger halo quad write depth or it will z-fight with the moon
+            // drawn immediately afterward and expose triangular artifacts.
+            {
+                LLGLDepthTest halo_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
+                // A glow must add light. Conventional alpha blending replaces
+                // part of an HDR sky with the halo source and can therefore
+                // darken it, producing a ring wherever halo alpha is partial.
+                gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
+                face->renderIndexed();
+                gGL.setSceneBlendType(LLRender::BT_ALPHA);
+            }
+            gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+            moon_shader->unbind();
+        }
+    }
+    // </AS:Chanayane>
+
     face = gSky.mVOSkyp->mFace[LLVOSky::FACE_MOON];
 
     if (gSky.mVOSkyp->getMoon().getDraw() && face && face->getTexture(LLRender::DIFFUSE_MAP) && face->getGeomCount() && moon_shader)
@@ -428,6 +517,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         if (can_use_vertex_shaders && can_use_windlight_shaders && (tex_a || tex_b))
         {
             moon_shader->bind();
+            moon_shader->uniform1i(LLStaticHashedString("moon_halo_pass"), 0);
 
             if (tex_a && (!tex_b || (tex_a == tex_b)))
             {
@@ -470,9 +560,15 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
             moon_shader->uniform1f(LLStaticHashedString("moon_phase_curvature"),
                                    llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f));
             moon_shader->uniform1f(LLStaticHashedString("moon_phase_softness"),
-                                   llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.15f));
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f));
             moon_shader->uniform1f(LLStaticHashedString("moon_phase_tilt"),
                                    llclamp(gSavedSettings.getF32("ASMoonPhaseTilt"), -180.f, 180.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_earthshine_strength"),
+                                   llclamp(gSavedSettings.getF32("ASMoonEarthshineStrength"), 0.f, 0.30f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_terminator_relief_strength"),
+                                   llclamp(gSavedSettings.getF32("ASMoonTerminatorReliefStrength"), 0.f, 2.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_terminator_relief_width"),
+                                   llclamp(gSavedSettings.getF32("ASMoonTerminatorReliefWidth"), 0.01f, 0.5f));
             // </AS:Chanayane>
             moon_shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, gSky.mVOSkyp->getMoon().getColor().mV);
             moon_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);

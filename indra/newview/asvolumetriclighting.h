@@ -78,6 +78,9 @@ public:
     static F32 getScatterAsymmetry(bool sun_up);
     static F32 getScatterDensity();
 
+    // Projected visible moon fraction shared by god rays and the circular halo.
+    static F32 getMoonPhaseIlluminatedFraction();
+
     // Debug: when RenderVolumetricLightingDebug != 0, renderPass() bypasses
     // the additive blend and opaquely overwrites `screen` with the raw
     // half-res raymarch output (upsampled, no tonemap), so the raw scatter

@@ -25548,7 +25548,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.0</real>
+      <real>3.15</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>
@@ -25574,20 +25574,20 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.75</real>
+      <real>1.25</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>
     <key>ASMoonPhaseSoftness</key>
     <map>
       <key>Comment</key>
-      <string>Width of the soft transition across the moon phase terminator; zero retains antialiasing only</string>
+      <string>Width of the terminator-centered nonlinear moon phase transition; zero retains antialiasing only</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.09</real>
+      <real>0.25</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>
@@ -25600,9 +25600,72 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.0</real>
+      <real>28.0</real>
       <key>Backup</key>
       <integer>0</integer>
+    </map>
+    <key>ASMoonEarthshineStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Minimum moon-texture visibility blended over the sky in phase shadow as artistic earthshine</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.10</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonTerminatorReliefStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Directional crater-detail contrast near the moon phase terminator</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>1.75</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonTerminatorReliefWidth</key>
+    <map>
+      <key>Comment</key>
+      <string>Width of the moon phase terminator crater-detail band</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.35</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Strength of the procedural atmospheric halo around the moon</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.50</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloEnabled</key>
+    <map>
+      <key>Comment</key>
+      <string>Render the viewer-local atmospheric moon halo</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>1</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloRadius</key>
+    <map>
+      <key>Comment</key>
+      <string>Outer moon halo radius in moon-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>2.35</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASMoonHaloSoftness</key>
+    <map>
+      <key>Comment</key>
+      <string>Radial falloff width of the moon halo in moon-disc radii</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.45</real>
+      <key>Backup</key><integer>0</integer>
     </map>
     <key>ASMoonHorizonTint</key>
     <map>
@@ -25615,8 +25678,8 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <array>
         <real>1.0</real>
-        <real>0.55</real>
-        <real>0.25</real>
+        <real>0.40</real>
+        <real>0.0</real>
         <real>1.0</real>
       </array>
       <key>Backup</key>
@@ -25631,7 +25694,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.5</real>
+      <real>0.8</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>

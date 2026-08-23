@@ -1097,6 +1097,17 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     mSun.setDraw(draw_sun);
     mMoon.setDraw(draw_moon);
 
+    // <AS:Chanayane> Populate the otherwise dormant bloom face with a larger
+    // moon-centered billboard for the procedural atmospheric halo pass. Its
+    // fixed maximum size lets radius changes apply live without rebuilding sky
+    // geometry. Do this after the partial-disc test because it updates corners.
+    if (draw_moon)
+    {
+        updateHeavenlyBodyGeometry(drawable, mMoonScale * 4.f,
+                                   FACE_BLOOM, mMoon, up, right);
+    }
+    // </AS:Chanayane>
+
     const F32 water_height = gAgent.getRegion()->getWaterHeight() + 0.01f;
         // LLWorld::getInstance()->getWaterHeight() + 0.01f;
     const F32 camera_height = mCameraPosAgent.mV[2];
