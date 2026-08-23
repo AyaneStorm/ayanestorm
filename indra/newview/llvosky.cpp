@@ -28,6 +28,10 @@
 
 #include "llvosky.h"
 
+// <AS:Chanayane> Viewer-local celestial visibility policy.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 #include "llfeaturemanager.h"
 #include "llviewercontrol.h"
 #include "llframetimer.h"
@@ -1073,11 +1077,28 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     // <FS:Ansariel> Factor out instance() calls
     LLEnvironment& environment = LLEnvironment::instance();
 
-    draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
-    draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
+    // <AS:Chanayane> Delegate viewer-local edge-based visibility policy.
+    // draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
+    // draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
+    draw_sun = ASCelestialTwilight::shouldDrawDisc(draw_sun, mSun,
+                                                    environment.getIsSunUp());
+    draw_moon = ASCelestialTwilight::shouldDrawDisc(draw_moon, mMoon,
+                                                     environment.getIsMoonUp());
+    // </AS:Chanayane>
 
     mSun.setDraw(draw_sun);
     mMoon.setDraw(draw_moon);
+
+    // <AS:Chanayane> Populate the otherwise dormant bloom face with a larger
+    // moon-centered billboard for the procedural atmospheric halo pass. Its
+    // fixed maximum size lets radius changes apply live without rebuilding sky
+    // geometry. Do this after the partial-disc test because it updates corners.
+    if (draw_moon)
+    {
+        updateHeavenlyBodyGeometry(drawable, mMoonScale * 4.f,
+                                   FACE_BLOOM, mMoon, up, right);
+    }
+    // </AS:Chanayane>
 
     const F32 water_height = gAgent.getRegion()->getWaterHeight() + 0.01f;
         // LLWorld::getInstance()->getWaterHeight() + 0.01f;
