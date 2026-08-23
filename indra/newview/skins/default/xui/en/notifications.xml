@@ -3373,7 +3373,7 @@ Are you sure you want to delete this list?
     </form>
   </notification>
 
-    <notification
+  <notification
    icon="alertmodal.tga"
    name="InvalidAutoReplaceEntry"
    type="alertmodal">
@@ -15133,7 +15133,7 @@ https://wiki.firestormviewer.org/antivirus_whitelisting
    icon="alertmodal.tga"
    name="PrimfeedLoginRequestFailed"
    persist="false"
-   log_to_im="true"
+   log_to_im="true"   
    type="notify">
 Login request denied by Primfeed.
   </notification>

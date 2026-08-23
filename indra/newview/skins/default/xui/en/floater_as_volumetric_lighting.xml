@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<floater
+  name="as_volumetric_lighting"
+  title="Volumetric Lighting"
+  can_dock="false"
+  can_resize="false"
+  save_rect="true"
+  save_visibility="true"
+  width="432"
+  height="352"
+  layout="topleft">
+  <panel
+    filename="panel_as_volumetric_lighting.xml"
+    follows="all"
+    height="330"
+    layout="topleft"
+    left="1"
+    name="as_volumetric_lighting"
+    top="1"
+    width="430" />
+</floater>

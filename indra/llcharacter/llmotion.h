@@ -165,7 +165,7 @@ protected:
     // it will be deactivated
     virtual bool onActivate() = 0;
 
-	void addJointState(const LLPointer<LLJointState>& jointState);
+    void addJointState(const LLPointer<LLJointState>& jointState);
 
 protected:
     LLPose      mPose;

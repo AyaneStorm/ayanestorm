@@ -32,15 +32,112 @@ vec3 srgb_to_linear(vec3 c);
 uniform sampler2D diffuseMap;
 uniform sampler2D altDiffuseMap;
 uniform float blend_factor; // interp factor between sunDisc A/B
+// <AS:Chanayane> Optional viewer-local fallback beneath transparent EEP suns.
+uniform int sun_texture_available;
+uniform int procedural_sun_enabled;
+uniform float procedural_sun_opacity;
+uniform float procedural_sun_feather;
+uniform float procedural_sun_shimmer;
+uniform float procedural_sun_horizon_factor;
+uniform float procedural_sun_time;
+uniform vec3 procedural_sun_color;
+uniform vec3 procedural_sun_limb_color;
+uniform int procedural_sun_halo_pass;
+uniform float procedural_sun_halo_opacity;
+uniform float procedural_sun_halo_softness;
+// </AS:Chanayane>
 in vec2 vary_texcoord0;
 in float sun_fade;
 
 void main()
 {
-    vec4 sunDiscA = texture(diffuseMap, vary_texcoord0.xy);
-    vec4 sunDiscB = texture(altDiffuseMap, vary_texcoord0.xy);
-    vec4 c     = mix(sunDiscA, sunDiscB, blend_factor);
+    // <AS:Chanayane> Separate additive low-horizon atmospheric glow. The
+    // enlarged billboard is drawn before the ordinary sun disc.
+    if (procedural_sun_halo_pass != 0)
+    {
+        float halo_radius = length(vary_texcoord0 * 2.0 - 1.0);
+        // Separate the broad glow profile from its outer transition. Softness
+        // controls how much of the billboard radius is devoted to reaching a
+        // true zero, avoiding a visible boundary even under HDR exposure.
+        float halo_profile = 1.0 / (1.0 + 4.0 * halo_radius * halo_radius);
+        float fade_start = 1.0 - procedural_sun_halo_softness;
+        float outer_fade = 1.0 - smoothstep(fade_start, 1.0, halo_radius);
+        float halo_alpha = halo_profile * outer_fade * procedural_sun_halo_opacity;
+        if (halo_alpha <= 0.000001)
+        {
+            discard;
+        }
+        frag_data[0] = vec4(0.0);
+        frag_data[1] = vec4(0.0);
+        // Preserve existing sky metadata; blending a categorical flag through
+        // a translucent halo creates a dark outer ring.
+        frag_data[2] = vec4(0.0);
+#if defined(HAS_EMISSIVE)
+        // Premultiplied RGB is added directly; zero alpha prevents this
+        // atmospheric layer from becoming a second post-process glow source.
+        frag_data[3] = vec4(procedural_sun_limb_color * halo_alpha, 0.0);
+#else
+        frag_data[0] = vec4(procedural_sun_limb_color * halo_alpha, 0.0);
+#endif
+        return;
+    }
+    // </AS:Chanayane>
 
+    // <AS:Chanayane> Preserve the original texture result exactly while the
+    // fallback is disabled, and avoid sampling unbound textures when absent.
+    vec4 c = vec4(0.0);
+    if (sun_texture_available != 0)
+    {
+        vec4 sunDiscA = texture(diffuseMap, vary_texcoord0.xy);
+        vec4 sunDiscB = texture(altDiffuseMap, vary_texcoord0.xy);
+        c = mix(sunDiscA, sunDiscB, blend_factor);
+    }
+
+    if (procedural_sun_enabled != 0 && procedural_sun_opacity > 0.0)
+    {
+        vec2 disc_pos = vary_texcoord0 * 2.0 - 1.0;
+        // Atmospheric refraction makes the low solar limb drift and ripple.
+        // Keep amplitudes small and use two incommensurate waves to avoid an
+        // obviously mechanical oscillation.
+        float shimmer = procedural_sun_shimmer * procedural_sun_horizon_factor;
+        disc_pos.x += shimmer * (0.55 * sin(procedural_sun_time * 0.73 + disc_pos.y * 10.0)
+                               + 0.25 * sin(procedural_sun_time * 1.37 - disc_pos.y * 17.0));
+        disc_pos.y += shimmer * 0.18 * sin(procedural_sun_time * 0.41);
+        float radius = length(disc_pos);
+        float feather = max(fwidth(radius) * 1.5, procedural_sun_feather);
+        // The billboard ends at radius 1 along its cardinal axes. Keep the
+        // complete soft transition and shimmer displacement inside that quad
+        // or rasterization clips them back into a hard edge.
+        float outer_radius = 1.0 - shimmer * 0.8;
+        float inner_radius = max(0.0, outer_radius - feather);
+        float disc_coverage = 1.0 - smoothstep(inner_radius, outer_radius, radius);
+        float procedural_alpha = procedural_sun_opacity;
+        // Keep the solar surface chromatically uniform. Feathering represents
+        // optical coverage at the limb, not a red interior color ring; the
+        // separate enlarged halo carries the warmer atmospheric emission.
+        vec3 procedural_color = procedural_sun_color;
+        // An opaque EEP sun texture otherwise hides every procedural edge
+        // control. Preserve its color/detail but share the analytic silhouette
+        // so feathering and horizon refraction remain effective.
+        float combined_alpha = c.a + procedural_alpha * (1.0 - c.a);
+        if (combined_alpha > 0.0)
+        {
+            vec3 combined_premultiplied = c.rgb * c.a
+                                        + procedural_color * procedural_alpha * (1.0 - c.a);
+            c = vec4(combined_premultiplied / combined_alpha,
+                     combined_alpha * disc_coverage);
+        }
+
+        // Do not let fully feathered fragments write the categorical
+        // skip-atmosphere G-buffer flag below. That metadata is not scaled by
+        // the visible emissive alpha and otherwise exposes the billboard edge
+        // as a hard border around an analytically soft disc.
+        if (c.a <= 0.0001)
+        {
+            discard;
+        }
+    }
+    // </AS:Chanayane>
 
     // SL-9806 stars poke through
     //c.a *= sun_fade;
@@ -55,4 +152,3 @@ void main()
     frag_data[0] = c;
 #endif
 }
-

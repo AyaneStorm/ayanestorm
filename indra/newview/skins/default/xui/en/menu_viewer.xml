@@ -1504,6 +1504,38 @@
                  function="RLV.EnableIfNot"
                  parameter="setenv" />
             </menu_item_call>
+            <!-- <AS:Chanayane> Volumetric lighting settings floater -->
+            <menu_item_check
+             label="Volumetric Lighting..."
+             name="as_volumetric_lighting">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_volumetric_lighting" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_volumetric_lighting" />
+            </menu_item_check>
+            <menu_item_check
+             label="Moon Settings..."
+             name="as_moon_settings">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_moon_settings" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_moon_settings" />
+            </menu_item_check>
+            <menu_item_check
+             label="Sun Settings..."
+             name="as_sun_settings">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_sun_settings" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_sun_settings" />
+            </menu_item_check>
+            <!-- </AS:Chanayane> -->
             <menu_item_separator/>
             <menu_item_check
              label="Pause Clouds"
@@ -6478,5 +6510,44 @@
                parameter="SlowMotionAnimation" />
          </menu_item_check>
       </menu>
+
+      <menu_item_separator />
+
+      <menu_item_check
+         label="Volumetric Lighting..."
+         name="AS Volumetric Lighting">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_volumetric_lighting" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_volumetric_lighting" />
+      </menu_item_check>
+
+      <!-- <AS:Chanayane> Moon settings floater -->
+      <menu_item_check
+         label="Moon Settings..."
+         name="AS Moon Settings">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_moon_settings" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_moon_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
+      <!-- <AS:Chanayane> Sun settings floater -->
+      <menu_item_check
+         label="Sun Settings..."
+         name="AS Sun Settings">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_sun_settings" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_sun_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
    </menu>
 </menu_bar>

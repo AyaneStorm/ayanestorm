@@ -614,6 +614,13 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("snapshot", "floater_snapshot.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSnapshot>);
     LLFloaterReg::add("simple_snapshot", "floater_simple_snapshot.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSimpleSnapshot>);
     LLFloaterReg::add("snapshot_guide_settings", "floater_snapshot_guide_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);// <FS:Beq/> photo guide settings
+    // <AS:Chanayane> Standalone volumetric lighting settings floater
+    LLFloaterReg::add("as_volumetric_lighting", "floater_as_volumetric_lighting.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    LLFloaterReg::add("as_moon_settings", "floater_as_moon_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // <AS:Chanayane> Viewer-local procedural sunset sun controls.
+    LLFloaterReg::add("as_sun_settings", "floater_as_sun_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
+    // </AS:Chanayane>
     // <FS:CR> Search floater is deferred to login now so we can tell what grid we're in.
     //LLFloaterReg::add("search", "floater_search.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSearch>);
     LLFloaterReg::add("legacy_search", "floater_directory.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterDirectory>);
@@ -681,7 +688,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("omnifilter", "floater_omnifilter.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<Omnifilter>);        // <FS:Zi> Omnifilter support
     LLFloaterReg::add("particle_editor","floater_particle_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ParticleEditor>);
     LLFloaterReg::add("performance", "floater_fs_performance.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPerformance>);
-    // <FS:William_W:FixPhototoolsTypo> [PhotoTools] Corrected typo in Phototools floater registration - using string literal instead of PHOTOTOOLS_FLOATER constant (likely intended).
+	// <FS:William_W:FixPhototoolsTypo> [PhotoTools] Corrected typo in Phototools floater registration - using string literal instead of PHOTOTOOLS_FLOATER constant (likely intended).
 	// LLFloaterReg::add(PHOTOTOOLS_FLOATER, "floater_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>); // Original line with likely typo
 	LLFloaterReg::add("phototools", "floater_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>); // Corrected line - using string literal "phototools"
     LLFloaterReg::add(PHOTOTOOLS_FLOATER_ADVANCED, "floater_advanced_phototools.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterQuickPrefs>);

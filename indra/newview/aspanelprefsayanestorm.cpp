@@ -26,7 +26,7 @@
 
 #include "aspanelprefsayanestorm.h"
 
-#include "lltabcontainer.h"
+#include "llview.h"
 
 static LLPanelInjector<ASPanelPrefsAyaneStorm> t_pref_ayanestorm("panel_preference_ayanestorm");
 
@@ -37,14 +37,26 @@ ASPanelPrefsAyaneStorm::ASPanelPrefsAyaneStorm() : LLPanelPreference()
 bool ASPanelPrefsAyaneStorm::postBuild()
 {
 #if LL_DARWIN
-    // The rendering sub-tab exposes GL-specific WBOIT/OIT settings that
-    // aren't applicable on macOS - hide it there.
-    LLTabContainer* tab_container = getChild<LLTabContainer>("ayanestorm_tabs");
-    if (tab_container)
+    // Only RenderOITMode (Exact OIT / AVBOIT) requires GL 4.3, which macOS's
+    // capped OpenGL 4.1 does not provide - hide just that control. The
+    // volumetric lighting checkbox in the same tab works down to GL 4.0, so
+    // the tab itself stays visible on Mac (see ASVolumetricLighting::isSupported()).
+    const char* oit_controls[] =
     {
-        LLPanel* rendering_panel = tab_container->getPanelByName("tab-as-rendering");
-        if (rendering_panel)
-            tab_container->removeTabPanel(rendering_panel);
+        "render_oit_mode",
+        "render_oit_mode_label",
+        "render_exact_oit_debug",
+        "render_exact_oit_debug_label",
+        "render_avboit_debug",
+        "render_avboit_debug_label"
+    };
+
+    for (const char* control_name : oit_controls)
+    {
+        if (LLView* control = findChild<LLView>(control_name))
+        {
+            control->setVisible(false);
+        }
     }
 #endif // LL_DARWIN
 
