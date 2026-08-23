@@ -25714,7 +25714,10 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASRenderPartialMoonBelowHorizon</key>
     <map>
       <key>Comment</key>
-      <string>Continue rendering the moon disc until its upper edge passes below the horizon instead of hiding it when its center crosses the horizon</string>
+      <!-- <AS:Chanayane> Setting now applies symmetrically to both discs. -->
+      <!-- <string>Continue rendering the moon disc until its upper edge passes below the horizon instead of hiding it when its center crosses the horizon</string> -->
+      <string>Continue rendering sun and moon discs until their upper edges pass below the horizon instead of hiding them when their centers cross the horizon</string>
+      <!-- </AS:Chanayane> -->
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

@@ -28,6 +28,10 @@
 
 #include "lldrawpoolwlsky.h"
 
+// <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 #include "llerror.h"
 #include "llface.h"
 #include "llimage.h"
@@ -208,9 +212,18 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
         sky_shader->uniform1f(LLShaderMgr::DROPLET_RADIUS, droplet_radius);
         sky_shader->uniform1f(LLShaderMgr::ICE_LEVEL, ice_level);
 
-        sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        // <AS:Chanayane> Preserve solar haze glow through its smooth tail.
+        // sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR,
+                              ASCelestialTwilight::glowFactor(psky.get()));
+        // </AS:Chanayane>
 
-        sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, psky->getIsSunUp() ? 1 : 0);
+        // <AS:Chanayane> Do not overwrite the extended solar-atmosphere
+        // lifetime with the original center-at-horizon boolean.
+        // sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, psky->getIsSunUp() ? 1 : 0);
+        const bool atmospheric_sun = ASCelestialTwilight::isSunSource(psky.get());
+        sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, atmospheric_sun ? 1 : 0);
+        // </AS:Chanayane>
 
         /// Render the skydome
         renderDome(origin, camHeightLocal, sky_shader);
@@ -342,7 +355,11 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
 
         cloudshader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
         cloudshader->uniform1f(LLShaderMgr::CLOUD_VARIANCE, cloud_variance);
-        cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        // <AS:Chanayane> Preserve solar cloud/haze glow through its smooth tail.
+        // cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR,
+                               ASCelestialTwilight::glowFactor(psky.get()));
+        // </AS:Chanayane>
 
         /// Render the skydome
         renderDome(camPosLocal, camHeightLocal, cloudshader);

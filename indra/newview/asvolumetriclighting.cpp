@@ -26,6 +26,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "asvolumetriclighting.h"
+#include "ascelestialtwilight.h"
 
 #include "llenvironment.h"
 #include "llgl.h"
@@ -55,6 +56,15 @@ LLGLSLShader gASVolumetricAtlasProgram;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
+
+// Match the single-source priority used by atmospheric twilight. This keeps
+// moon-only phase/tint controls off while the solar twilight tail is active.
+bool isVolumetricSunSource()
+{
+    LLEnvironment& environment = LLEnvironment::instance();
+    const LLSettingsSky::ptr_t sky = environment.getCurrentSky();
+    return ASCelestialTwilight::isSunSource(sky.get());
+}
 
 // Numerically integrate the nonlinear phase mask used by moonF.glsl. The
 // cached result changes only when a phase control changes, avoiding per-frame
@@ -390,7 +400,7 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 
         shader.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
         shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                          getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
+                          getScatterAsymmetry(isVolumetricSunSource()));
         shader.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
     }
 }
@@ -609,7 +619,7 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                                         getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
+                                         getScatterAsymmetry(isVolumetricSunSource()));
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
     // Scaled by the altitude fade so the atlas's baked-in scene transmittance
     // (sampled by foliage/glass/water) fades out at altitude in step with
@@ -622,7 +632,7 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     // diagnostic encoding - transmittance is already a naturally-visible
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
     gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
-    gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+    gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, isVolumetricSunSource() ? 1 : 0);
     applyMoonAppearance(gASVolumetricAtlasProgram);
 
     // This shader-specific sampler has no predefined mTexture[] slot. Keep
@@ -809,12 +819,12 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                                                 getScatterAsymmetry(LLEnvironment::instance().getIsSunUp()));
+                                                 getScatterAsymmetry(isVolumetricSunSource()));
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
             // bindDeferredShader() does not set this; renderDeferredLighting()'s
             // callers normally do it per-shader (see softenLightF's soften_shader).
-            gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+            gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, isVolumetricSunSource() ? 1 : 0);
             applyMoonAppearance(gASVolumetricLightProgram);
 
             pipeline.mScreenTriangleVB->setBuffer();

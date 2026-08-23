@@ -173,7 +173,7 @@
         top="112"
         width="460" />
 
-      <!-- [AS:Chanayane] Keep only the volumetric master control and links to
+      <!-- <AS:Chanayane> Keep only the volumetric master control and links to
            the dedicated rendering settings floaters on this preferences tab. -->
       <check_box
         control_name="RenderVolumetricLighting"
@@ -190,6 +190,20 @@
         top="135"
         width="400" />
 
+      <check_box
+        control_name="ASRenderPartialMoonBelowHorizon"
+        follows="left|top"
+        height="16"
+        label="Render partial sun and moon across horizon"
+        layout="topleft"
+        left="15"
+        mouse_opaque="true"
+        name="render_partial_celestial_bodies"
+        radio_style="false"
+        tool_tip="Keeps sun and moon discs visible until their upper edges pass below the horizon. Disable for the original center-based cutoffs. Atmospheric influence remains independent. Changes are applied live."
+        top="160"
+        width="430" />
+
       <button
         follows="left|top"
         height="23"
@@ -197,7 +211,7 @@
         layout="topleft"
         left="15"
         name="open_volumetric_lighting_settings"
-        top="170"
+        top="190"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -211,17 +225,18 @@
         layout="topleft"
         left="15"
         name="open_moon_settings"
-        top="205"
+        top="225"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
           parameter="as_moon_settings" />
       </button>
-      <!-- [/AS:Chanayane] -->
+      <!-- </AS:Chanayane> -->
     </panel>
 
-    <!-- [AS:Chanayane] Additional rendering controls kept separate because
-         the primary Rendering tab is full. -->
+    <!-- <AS:Chanayane> Legacy duplicate retained only as commented reference. -->
+    <!-- The former Rendering 2 controls live in the dedicated Moon Settings
+         floater. Keep the old markup out of the tab container.
     <panel
       top_pad="5"
       bottom="-1"
@@ -443,13 +458,13 @@
         control_name="ASRenderPartialMoonBelowHorizon"
         follows="left|top"
         height="16"
-        label="Render partial moon during moonrise/moonset"
+        label="Render partial sun and moon across horizon"
         layout="topleft"
         left="15"
         mouse_opaque="true"
         name="render_partial_moon_below_horizon"
         radio_style="false"
-        tool_tip="Keeps rendering the moon until its upper edge passes below the horizon. Disable for the original Firestorm center-based cutoff. Changes are applied live."
+        tool_tip="Keeps rendering sun and moon discs until their upper edges pass below the horizon. Disable for the original center-based cutoffs. Atmospheric influence remains independent. Changes are applied live."
         top="330"
         width="430" />
 
@@ -480,7 +495,8 @@
         text_width="50" top="434" width="380"
         tool_tip="Width of the halo's radial falloff in moon-disc radii. Changes are applied live." />
     </panel>
-    <!-- [/AS:Chanayane] -->
+    -->
+    <!-- </AS:Chanayane> -->
 
     <panel
       top_pad="5"

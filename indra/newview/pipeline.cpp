@@ -38,6 +38,10 @@
 
 #include "pipeline.h"
 
+// <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 // library includes
 #include "llimagepng.h"
 #include "llaudioengine.h" // For debugging.
@@ -6410,19 +6414,35 @@ void LLPipeline::setupHWLights()
 
     gGL.setAmbientLightColor(ambient);
 
-    bool sun_up  = environment.getIsSunUp();
-    // <AS:Chanayane> Keep the moon light/shadow source alive while the optional
-    // partial moon disc is still visible below the center-based horizon cutoff.
+    // <AS:Chanayane> Keep celestial influence alive below the scale-derived
+    // disc edge, then fade it smoothly. Preserve the original center-based
+    // booleans elsewhere for shadow and deferred-light source selection.
+    // bool sun_up  = environment.getIsSunUp();
     // bool moon_up = environment.getIsMoonUp();
-    bool moon_up = environment.getIsMoonUp() ||
-        (gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon") &&
-         gSky.mVOSkyp.notNull() && gSky.mVOSkyp->getMoon().getDraw());
+    const F32 sun_influence = ASCelestialTwilight::sunInfluence(psky.get());
+    const F32 moon_influence = ASCelestialTwilight::moonInfluence(psky.get());
+    // The renderer has one legacy celestial light slot. Give solar twilight
+    // priority, then hand it to the moon once the solar tail has ended.
+    bool sun_up = sun_influence > 0.f;
+    bool moon_up = moon_influence > 0.f;
     // </AS:Chanayane>
 
     // Light 0 = Sun or Moon (All objects)
     {
-        LLVector4 sun_dir(environment.getSunDirection(), 0.0f);
-        LLVector4 moon_dir(environment.getMoonDirection(), 0.0f);
+        // <AS:Chanayane> Below-horizon energy represents atmospheric twilight,
+        // not illumination rising through the ground. Hold its legacy light
+        // direction at the horizon while the smooth tail is active.
+        // LLVector4 sun_dir(environment.getSunDirection(), 0.0f);
+        // LLVector4 moon_dir(environment.getMoonDirection(), 0.0f);
+        LLVector3 sun_direction(environment.getSunDirection());
+        LLVector3 moon_direction(environment.getMoonDirection());
+        sun_direction.mV[VZ] = llmax(0.f, sun_direction.mV[VZ]);
+        moon_direction.mV[VZ] = llmax(0.f, moon_direction.mV[VZ]);
+        sun_direction.normalize();
+        moon_direction.normalize();
+        LLVector4 sun_dir(sun_direction, 0.0f);
+        LLVector4 moon_dir(moon_direction, 0.0f);
+        // </AS:Chanayane>
 
         mSunDir.setVec(sun_dir);
         mMoonDir.setVec(moon_dir);
@@ -6443,6 +6463,11 @@ void LLPipeline::setupHWLights()
             mMoonDiffuse *= 1.f/max_color;
         }
         mMoonDiffuse.clamp();
+
+        // <AS:Chanayane> Smoothly remove the remaining below-horizon energy.
+        mSunDiffuse *= sun_influence;
+        mMoonDiffuse *= moon_influence;
+        // </AS:Chanayane>
 
         // prevent underlighting from having neither lightsource facing us
         if (!sun_up && !moon_up)
@@ -7541,7 +7566,12 @@ void LLPipeline::renderAlphaObjects(bool rigged)
     assertInitialized();
     gGL.loadMatrix(gGLModelView);
     gGLLastMatrix = NULL;
-    S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
+    // <AS:Chanayane> Volumetric solar twilight uses the shadow map below
+    // center elevation zero, so its alpha-shadow source must stay on the sun.
+    // S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
+    S32 sun_up = ASCelestialTwilight::isSunSource(
+        LLEnvironment::instance().getCurrentSky().get()) ? 1 : 0;
+    // </AS:Chanayane>
     U32 target_width = LLRenderTarget::sCurResX;
     U32 type = LLRenderPass::PASS_ALPHA;
     // for gDeferredShadowAlphaMaskProgram
@@ -9602,8 +9632,18 @@ void LLPipeline::renderDeferredLighting()
 
             LLEnvironment &environment = LLEnvironment::instance();
 
-            soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
-            soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+            // <AS:Chanayane> The deferred atmospheric/direct-light composite
+            // was the remaining visible zero-degree discontinuity: it replaced
+            // the smoothly fading solar source with moon lighting at z < 0.
+            // soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+            // soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+            const LLSettingsSky::ptr_t soften_sky = environment.getCurrentSky();
+            const bool soften_sun = ASCelestialTwilight::isSunSource(soften_sky.get());
+            soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, soften_sun ? 1 : 0);
+            soften_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1,
+                (soften_sun ? environment.getClampedSunNorm()
+                            : environment.getClampedMoonNorm()).mV);
+            // </AS:Chanayane>
 
             soften_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
 
@@ -10015,8 +10055,17 @@ void LLPipeline::doAtmospherics()
         bindDeferredShader(haze_shader, nullptr, &mWaterDis);
 
         LLEnvironment& environment = LLEnvironment::instance();
-        haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
-        haze_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+        // <AS:Chanayane> Keep deferred haze on the same smooth celestial
+        // source as the skydome instead of switching abruptly at zero degrees.
+        // haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+        // haze_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1, environment.getClampedLightNorm().mV);
+        const LLSettingsSky::ptr_t haze_sky = environment.getCurrentSky();
+        const bool haze_sun = ASCelestialTwilight::isSunSource(haze_sky.get());
+        haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, haze_sun ? 1 : 0);
+        haze_shader.uniform3fv(LLShaderMgr::LIGHTNORM, 1,
+            (haze_sun ? environment.getClampedSunNorm()
+                      : environment.getClampedMoonNorm()).mV);
+        // </AS:Chanayane>
 
         haze_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
 
@@ -10589,7 +10638,11 @@ void LLPipeline::renderShadow(const glm::mat4& view, const glm::mat4& proj, LLCa
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_PIPELINE("shadow alpha");
         LL_PROFILE_GPU_ZONE("shadow alpha");
-        const S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
+        // <AS:Chanayane> Keep shadow alpha materials on the volumetric source.
+        // const S32 sun_up = LLEnvironment::instance().getIsSunUp() ? 1 : 0;
+        const S32 sun_up = ASCelestialTwilight::isSunSource(
+            LLEnvironment::instance().getCurrentSky().get()) ? 1 : 0;
+        // </AS:Chanayane>
         U32 target_width = LLRenderTarget::sCurResX;
 
         for (int i = 0; i < 2; ++i)
@@ -11024,7 +11077,13 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     glm::mat4 view[6];
     glm::mat4 proj[6];
 
-    LLVector3 caster_dir(environment.getIsSunUp() ? mSunDir : mMoonDir);
+    // <AS:Chanayane> Keep the shadow caster aligned with solar volumetrics
+    // throughout the smooth below-horizon twilight tail.
+    // LLVector3 caster_dir(environment.getIsSunUp() ? mSunDir : mMoonDir);
+    const bool shadow_sun = ASCelestialTwilight::isSunSource(
+        environment.getCurrentSky().get());
+    LLVector3 caster_dir(shadow_sun ? mSunDir : mMoonDir);
+    // </AS:Chanayane>
 
     //put together a universal "near clip" plane for shadow frusta
     LLPlane shadow_near_clip;

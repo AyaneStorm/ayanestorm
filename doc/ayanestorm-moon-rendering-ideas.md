@@ -35,10 +35,12 @@ volumetric lighting work.
 
 ## Moonrise and moonset disc cutoff
 
-`ASRenderPartialMoonBelowHorizon` replaces the original center-based moon-disc
-draw cutoff when enabled. AyaneStorm continues drawing while the highest moon
-quad corner remains above the camera-relative horizon, automatically accounting
-for the environment's moon scale. Disabling it restores Firestorm behavior.
+`ASRenderPartialMoonBelowHorizon` now controls both celestial discs while
+retaining its original internal name for saved-setting compatibility. When
+enabled, AyaneStorm continues drawing while the highest sun or moon quad corner
+remains above the camera-relative horizon, automatically accounting for the
+environment's respective disc scale. Disabling it restores the original
+center-based cutoff for both bodies.
 Moonlight, shadows, and god-ray source activation use the same extended lifetime
 so the visible below-center sliver continues to illuminate consistently.
 While enabled, the below-center portion retains the configured minimum horizon
@@ -126,3 +128,82 @@ not contribute to the direct-light halo or volumetric god rays.
 Relevant starting points: `indra/newview/app_settings/shaders/class1/deferred/moonV.glsl`
 and `moonF.glsl` for current haze/disc rendering; `llpaneleditsky.h` and
 `app_settings/settings.xml` for any phase-related settings already exposed.
+
+## Below-horizon atmospheric influence
+
+Feasibility review (2026-08-23): the moon's current abrupt end near -3.12
+degrees is the lower edge of `ASRenderPartialMoonBelowHorizon`. The moon disc,
+moon light/shadow source, and AyaneStorm god-ray activation share that extended
+draw lifetime, so all three currently stop when the last quad corner passes the
+camera-relative horizon. The ordinary sun remains center-gated at zero degrees.
+
+A progressive below-horizon atmospheric contribution is feasible for both
+bodies, but it should be independent of disc visibility and direct surface
+lighting/shadows. Add a continuous twilight influence derived from world-space
+elevation, equal to 1 at the body's existing disappearance boundary and faded
+with `smoothstep` to 0 at a configurable lower elevation. Apply it to atmospheric
+scattering/haze/cloud illumination (and optionally volumetrics), while retaining
+the existing geometry cutoff and preventing a below-ground directional light or
+shadow caster.
+
+The existing `sun_up_factor` is a boolean source selector used throughout sky,
+haze, deferred lighting, water, clouds, and volumetrics; changing only that flag
+would merely move the hard transition and cannot blend sun and moon twilight
+simultaneously. A contained AyaneStorm module should calculate separate sun and
+moon atmospheric weights and upload dedicated uniforms to the relevant sky and
+volumetric shaders. Direct scene lighting can continue to use the existing
+single-source selection. Suggested first-pass fade ranges are moon -3.12 to -8
+degrees and sun 0 to -6 degrees, exposed independently for runtime tuning.
+
+Do not redefine `LLSettingsSky::getIsSunUp()` or `getIsMoonUp()` globally:
+both currently mean that the body's center direction has `z >= 0`, and many
+unrelated render paths use that binary meaning to select direct lighting and
+shadows. Introduce explicit concepts instead: `isSunDiscVisible()` and
+`isMoonDiscVisible()` for geometry, plus continuous sun/moon atmospheric
+influence weights. Disc visibility should use the highest generated billboard
+corner, as the partial-moon implementation already does, so its first-visible
+elevation automatically follows each asset's configured disc scale rather than
+hard-coding -3.12 degrees. The below-horizon fade begins at that derived edge
+crossing and reaches zero at the separately configured twilight depth.
+
+Implemented first pass (2026-08-23): `ascelestialtwilight` derives the lower
+disc-edge elevation from the environment scale and reproduces the billboard's
+horizon enlargement. The sun disc now uses the same upper-edge visibility rule
+as the moon. The legacy hardware celestial light in `LLPipeline::setupHWLights`
+keeps full strength through the derived edge, then fades smoothly to zero at
+-6 degrees for the sun and -8 degrees for the moon. Solar twilight has priority
+while it remains nonzero because that path has one shared sun/moon light slot.
+`LLSettingsVOSky::applySpecial` applies the same source, direction, and energy
+fade to skydome, haze, and cloud atmospheric uniforms.
+Center-based `getIsSunUp()` and `getIsMoonUp()` semantics, deferred source
+selection, and shadow selection remain unchanged. A later shader pass is still
+needed for genuinely simultaneous, atmosphere-only sun and moon contributions.
+
+AyaneStorm volumetric lighting also remains intentionally single-source. When
+both bodies are visible, the sun wins; moon phase, horizon tint, and moon scatter
+asymmetry are applied only after the active solar twilight tail ends. The
+volumetric source test uses the same scale-aware solar influence helper, avoiding
+a mismatch where volumetrics switched to moon controls at zero degrees while
+the atmosphere still rendered solar twilight down to -6 degrees. Moon disc,
+earthshine, halo, and other disc-local appearance controls remain independent
+and can still be visible while the sun owns volumetric lighting.
+
+The deferred soften/composite pass had a separate center-based
+`getIsSunUp()` override. This caused overall scene lighting to jump from the
+smooth solar tail to moon lighting immediately below zero even while skydome
+and haze illumination continued fading correctly. Its source flag and light
+normal now use the same scale-aware solar lifetime as the atmospheric passes.
+
+The primary zero-degree atmospheric discontinuity was
+`getSunMoonGlowFactor()`, not sun-disc geometry, depth, water, or avatar
+lighting. It returned 1.0 for sun mode and immediately returned the much lower
+moon factor or zero below center elevation zero. Sky shaders interpret any
+factor below 1.0 as a binary removal of solar haze glow. The three atmospheric
+upload sites now use `ASCelestialTwilight::glowFactor()`, which holds solar glow
+mode through the twilight tail while the already-scaled sunlight color supplies
+the continuous energy fade. Speculative changes to unrelated paths and sun-disc
+shaders were removed after runtime confirmation. Shadow-source alignment is
+required, however: extended solar volumetrics otherwise raymarch toward the sun
+while the shadow caster, alpha shadow materials, trees, and terrain switch to
+moon direction at -0.01 degrees. Those shadow-only paths use the shared twilight
+source lifetime.

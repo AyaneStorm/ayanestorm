@@ -1073,20 +1073,39 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     // <FS:Ansariel> Factor out instance() calls
     LLEnvironment& environment = LLEnvironment::instance();
 
-    draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
+    // <AS:Chanayane> One compatibility setting controls whether both celestial
+    // discs use edge-based or original center-based horizon visibility.
+    static LLCachedControl<bool> render_partial_celestial_bodies(gSavedSettings,
+        "ASRenderPartialMoonBelowHorizon", true);
+    const auto upper_edge_visible = [](const LLHeavenBody& body)
+    {
+        F32 highest_edge = body.corner(0).mV[VZ];
+        for (S32 corner = 1; corner < 4; ++corner)
+        {
+            highest_edge = llmax(highest_edge, body.corner(corner).mV[VZ]);
+        }
+        return highest_edge >= 0.f;
+    };
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Render both bodies until their upper edge passes below
+    // the horizon when enabled. The original sun cutoff used center elevation.
+    // draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
+    if (render_partial_celestial_bodies)
+    {
+        draw_sun &= upper_edge_visible(mSun);
+    }
+    else
+    {
+        draw_sun &= environment.getIsSunUp();
+    }
+    // </AS:Chanayane>
     // <AS:Chanayane> Optionally keep the moon quad alive until its upper edge,
     // rather than its center, passes below the camera-relative horizon.
     // draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
-    static LLCachedControl<bool> render_partial_moon(gSavedSettings,
-        "ASRenderPartialMoonBelowHorizon", true);
-    if (render_partial_moon)
+    if (render_partial_celestial_bodies)
     {
-        F32 highest_moon_edge = mMoon.corner(0).mV[VZ];
-        for (S32 corner = 1; corner < 4; ++corner)
-        {
-            highest_moon_edge = llmax(highest_moon_edge, mMoon.corner(corner).mV[VZ]);
-        }
-        draw_moon &= highest_moon_edge >= 0.f;
+        draw_moon &= upper_edge_visible(mMoon);
     }
     else
     {

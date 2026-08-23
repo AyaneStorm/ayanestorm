@@ -94,6 +94,9 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Scale-aware sun/moon twilight module.
+    ascelestialtwilight.cpp
+    # </AS:Chanayane>
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     asvolumetriclighting.cpp
@@ -962,6 +965,9 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Scale-aware sun/moon twilight module.
+    ascelestialtwilight.h
+    # </AS:Chanayane>
     aspanelprefsayanestorm.h
     asstreamkeeper.h
     asvolumetriclighting.h

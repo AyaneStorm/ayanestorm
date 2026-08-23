@@ -41,7 +41,6 @@ void main()
     vec4 sunDiscB = texture(altDiffuseMap, vary_texcoord0.xy);
     vec4 c     = mix(sunDiscA, sunDiscB, blend_factor);
 
-
     // SL-9806 stars poke through
     //c.a *= sun_fade;
 
@@ -55,4 +54,3 @@ void main()
     frag_data[0] = c;
 #endif
 }
-
