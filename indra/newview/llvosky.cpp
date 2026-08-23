@@ -1074,7 +1074,25 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     LLEnvironment& environment = LLEnvironment::instance();
 
     draw_sun  &= environment.getIsSunUp(); // <FS:Ansariel> Factor out instance() calls
-    draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
+    // <AS:Chanayane> Optionally keep the moon quad alive until its upper edge,
+    // rather than its center, passes below the camera-relative horizon.
+    // draw_moon &= environment.getIsMoonUp(); // <FS:Ansariel> Factor out instance() calls
+    static LLCachedControl<bool> render_partial_moon(gSavedSettings,
+        "ASRenderPartialMoonBelowHorizon", true);
+    if (render_partial_moon)
+    {
+        F32 highest_moon_edge = mMoon.corner(0).mV[VZ];
+        for (S32 corner = 1; corner < 4; ++corner)
+        {
+            highest_moon_edge = llmax(highest_moon_edge, mMoon.corner(corner).mV[VZ]);
+        }
+        draw_moon &= highest_moon_edge >= 0.f;
+    }
+    else
+    {
+        draw_moon &= environment.getIsMoonUp();
+    }
+    // </AS:Chanayane>
 
     mSun.setDraw(draw_sun);
     mMoon.setDraw(draw_moon);

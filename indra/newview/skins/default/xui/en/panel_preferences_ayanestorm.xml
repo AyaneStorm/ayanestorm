@@ -231,6 +231,90 @@
         tool_tip="Minimum opacity of the moon disc at the horizon. 0.00 reproduces the legacy fade; 1.00 disables horizon dimming. Changes are applied live."
         top="38"
         width="380" />
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonBrightnessMultiplier"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.05"
+        label="Moon brightness multiplier"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="5.0"
+        min_val="0.0"
+        name="moon_brightness_multiplier"
+        show_text="true"
+        text_width="50"
+        tool_tip="Multiplies the current environment's moon-disc brightness without modifying the environment asset. 1.00 preserves its original brightness. Changes are applied live."
+        top="68"
+        width="380" />
+
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="16"
+        layout="topleft"
+        left="15"
+        name="moon_horizon_tint_label"
+        top="102"
+        width="180">
+        Moon horizon color
+      </text>
+
+      <color_swatch
+        border_color="0.45098, 0.517647, 0.607843, 1"
+        can_apply_immediately="true"
+        color="1.0, 0.55, 0.25, 1.0"
+        control_name="ASMoonHorizonTint"
+        follows="left|top"
+        height="24"
+        label=""
+        label_height="0"
+        layout="topleft"
+        left="200"
+        mouse_opaque="true"
+        name="moon_horizon_tint"
+        tool_tip="Color multiplied into the moon disc near the horizon. Changes are applied live."
+        top="98"
+        width="44" />
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonHorizonTintStrength"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.05"
+        label="Moon horizon color strength"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="1.0"
+        min_val="0.0"
+        name="moon_horizon_tint_strength"
+        show_text="true"
+        text_width="50"
+        tool_tip="Strength of the warm moon tint at the horizon. 0.00 disables the effect; the tint smoothly disappears as the moon rises. Changes are applied live."
+        top="138"
+        width="380" />
+
+      <check_box
+        control_name="ASRenderPartialMoonBelowHorizon"
+        follows="left|top"
+        height="16"
+        label="Render partial moon during moonrise/moonset"
+        layout="topleft"
+        left="15"
+        mouse_opaque="true"
+        name="render_partial_moon_below_horizon"
+        radio_style="false"
+        tool_tip="Keeps rendering the moon until its upper edge passes below the horizon. Disable for the original Firestorm center-based cutoff. Changes are applied live."
+        top="172"
+        width="430" />
     </panel>
     <!-- [/AS:Chanayane] -->
 

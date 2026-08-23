@@ -448,12 +448,23 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
             LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
-            F32 moon_brightness = (float)psky->getMoonBrightness();
+            // <AS:Chanayane> Apply a viewer-local multiplier without changing
+            // the active environment asset's moon brightness.
+            // F32 moon_brightness = (float)psky->getMoonBrightness();
+            F32 moon_brightness = (float)psky->getMoonBrightness()
+                                * llclamp(gSavedSettings.getF32("ASMoonBrightnessMultiplier"), 0.f, 5.f);
+            // </AS:Chanayane>
 
             moon_shader->uniform1f(LLShaderMgr::MOON_BRIGHTNESS, moon_brightness);
             // <AS:Chanayane> Apply the live moon horizon visibility preference.
             moon_shader->uniform1f(LLShaderMgr::MOON_HORIZON_MIN_OPACITY,
                                    gSavedSettings.getF32("ASMoonHorizonMinOpacity"));
+            const LLColor4 moon_horizon_tint = gSavedSettings.getColor4("ASMoonHorizonTint");
+            moon_shader->uniform3fv(LLShaderMgr::MOON_HORIZON_TINT, 1, moon_horizon_tint.mV);
+            moon_shader->uniform1f(LLShaderMgr::MOON_HORIZON_TINT_STRENGTH,
+                                   gSavedSettings.getF32("ASMoonHorizonTintStrength"));
+            moon_shader->uniform1i(LLStaticHashedString("moon_render_partial"),
+                                   gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon") ? 1 : 0);
             // </AS:Chanayane>
             moon_shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, gSky.mVOSkyp->getMoon().getColor().mV);
             moon_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);

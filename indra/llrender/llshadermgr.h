@@ -334,6 +334,8 @@ public:
         MOON_BRIGHTNESS,                    //  "moon_brightness"
         // <AS:Chanayane> Configurable minimum moon-disc opacity at the horizon.
         MOON_HORIZON_MIN_OPACITY,           //  "moon_horizon_min_opacity"
+        MOON_HORIZON_TINT,                  //  "moon_horizon_tint"
+        MOON_HORIZON_TINT_STRENGTH,         //  "moon_horizon_tint_strength"
         // </AS:Chanayane>
 
         CLOUD_VARIANCE,                     //  "cloud_variance"

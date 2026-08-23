@@ -6411,7 +6411,13 @@ void LLPipeline::setupHWLights()
     gGL.setAmbientLightColor(ambient);
 
     bool sun_up  = environment.getIsSunUp();
-    bool moon_up = environment.getIsMoonUp();
+    // <AS:Chanayane> Keep the moon light/shadow source alive while the optional
+    // partial moon disc is still visible below the center-based horizon cutoff.
+    // bool moon_up = environment.getIsMoonUp();
+    bool moon_up = environment.getIsMoonUp() ||
+        (gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon") &&
+         gSky.mVOSkyp.notNull() && gSky.mVOSkyp->getMoon().getDraw());
+    // </AS:Chanayane>
 
     // Light 0 = Sun or Moon (All objects)
     {

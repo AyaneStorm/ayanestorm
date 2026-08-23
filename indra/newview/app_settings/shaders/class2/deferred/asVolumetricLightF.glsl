@@ -34,6 +34,9 @@ uniform vec3  moon_dir;
 uniform int   sun_up_factor;
 uniform vec3  sunlight_color;
 uniform vec3  moonlight_color;
+uniform vec3  moon_horizon_tint;
+uniform float moon_horizon_tint_strength;
+uniform float moon_horizon_elevation;
 
 uniform int   sample_count;
 uniform float scatter_albedo;
@@ -279,5 +282,12 @@ void main()
     scatter = clamp(scatter, 0.0, 1.0);
 
     vec3 light_color = (sun_up_factor == 1) ? sunlight_color : moonlight_color;
+    // Match the moon disc's warm horizon tint without changing scene light.
+    if (sun_up_factor != 1)
+    {
+        float horizon_tint_amount = (1.0 - smoothstep(0.0, 0.35, max(moon_horizon_elevation, 0.0)))
+                                  * clamp(moon_horizon_tint_strength, 0.0, 1.0);
+        light_color *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
+    }
     frag_color = vec4(light_color * scatter, 1.0);
 }

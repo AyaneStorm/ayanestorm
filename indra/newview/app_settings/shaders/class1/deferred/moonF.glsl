@@ -32,6 +32,9 @@ uniform vec3 moon_dir;
 uniform float moon_brightness;
 // <AS:Chanayane> User-controlled lower bound for the legacy horizon fade.
 uniform float moon_horizon_min_opacity;
+uniform vec3 moon_horizon_tint;
+uniform float moon_horizon_tint_strength;
+uniform int moon_render_partial;
 // </AS:Chanayane>
 uniform sampler2D diffuseMap;
 
@@ -46,7 +49,12 @@ void main()
     // if( moon_dir.z > 0 )
     //     fade = clamp( moon_dir.z*moon_dir.z*4.0, 0.0, 1.0 );
     float fade = 1.0;
-    if (moon_dir.z > 0.0)
+    if (moon_render_partial != 0)
+    {
+        float legacy_fade = clamp(max(moon_dir.z, 0.0) * max(moon_dir.z, 0.0) * 4.0, 0.0, 1.0);
+        fade = mix(clamp(moon_horizon_min_opacity, 0.0, 1.0), 1.0, legacy_fade);
+    }
+    else if (moon_dir.z > 0.0)
     {
         float legacy_fade = clamp(moon_dir.z * moon_dir.z * 4.0, 0.0, 1.0);
         fade = mix(clamp(moon_horizon_min_opacity, 0.0, 1.0), 1.0, legacy_fade);
@@ -63,6 +71,12 @@ void main()
     }
 
     c.rgb *= moon_brightness;
+    // <AS:Chanayane> Warm only the visible moon disc near the horizon. The
+    // effect smoothly ends by moon_dir.z 0.35 (approximately 20 degrees).
+    float horizon_tint_amount = (1.0 - smoothstep(0.0, 0.35, max(moon_dir.z, 0.0)))
+                              * clamp(moon_horizon_tint_strength, 0.0, 1.0);
+    c.rgb *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
+    // </AS:Chanayane>
     c.a   *= fade;
 
     frag_data[0] = vec4(0);
@@ -79,4 +93,3 @@ void main()
     // Added and commented out for a ground truth.  Do not uncomment - Geenz
     //gl_FragDepth = 0.999985f;
 }
-

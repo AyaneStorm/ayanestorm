@@ -56,6 +56,19 @@ LLGLSLShader gASVolumetricAtlasProgram;
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 
+// Keep moonrise god rays visually consistent with the separately rendered
+// moon disc without altering the environment's general moonlight color.
+void applyMoonHorizonTint(LLGLSLShader& shader)
+{
+    const LLColor4 tint = gSavedSettings.getColor4("ASMoonHorizonTint");
+    const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+    const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
+    shader.uniform3fv(LLStaticHashedString("moon_horizon_tint"), 1, tint.mV);
+    shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
+                     gSavedSettings.getF32("ASMoonHorizonTintStrength"));
+    shader.uniform1f(LLStaticHashedString("moon_horizon_elevation"), elevation);
+}
+
 struct LocalLight
 {
     LLVector4 center_radius;
@@ -83,7 +96,7 @@ U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v14";
+    return "as-volumetric-lighting-v16";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -542,6 +555,7 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
     gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
     gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+    applyMoonHorizonTint(gASVolumetricAtlasProgram);
 
     // This shader-specific sampler has no predefined mTexture[] slot. Keep
     // it on the appended channel proven by the working atlas implementation
@@ -733,6 +747,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             // bindDeferredShader() does not set this; renderDeferredLighting()'s
             // callers normally do it per-shader (see softenLightF's soften_shader).
             gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
+            applyMoonHorizonTint(gASVolumetricLightProgram);
 
             pipeline.mScreenTriangleVB->setBuffer();
             pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
