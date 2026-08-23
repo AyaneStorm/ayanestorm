@@ -288,7 +288,7 @@
         name="moon_phase_curvature"
         show_text="true"
         text_width="50"
-        tool_tip="Controls the moon terminator shape. Values below 1.00 make crescents fuller; 1.00 is spherical. Quarter, full, and new moons remain exact. Changes are applied live."
+        tool_tip="Nonlinearly reshapes the moon terminator. 1.00 is spherical; higher and lower values provide artistic curve control. Quarter, full, and new moons remain exact. Changes are applied live."
         top="128"
         width="380" />
 

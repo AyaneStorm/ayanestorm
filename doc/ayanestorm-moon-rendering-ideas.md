@@ -22,9 +22,11 @@ volumetric lighting work.
    effectively full-looking plateau around 0.45-0.55 and producing more useful
    crescents. The same illuminated-area fraction scales AyaneStorm moon god
    rays, while general scene moonlight is unchanged. `ASMoonPhaseCurvature`
-   defaults to the artistically selected 2.5; 1.0 restores the spherical
+   defaults to the artistically selected 1.75; 1.0 restores the spherical
    terminator, and the exposed range extends to 5.0 for artistic headroom.
-   The adjusted projected area also drives ray energy.
+   It applies a nonlinear exponent to reconstructed lunar depth, genuinely
+   reshaping the curve instead of merely changing effective phase angle.
+   God-ray energy uses a cached numerical integration of the same phase mask.
    `ASMoonPhaseSoftness` adds a short configurable transition across the
    terminator on top of resolution-dependent antialiasing; its artistically
    selected default is 0.09.

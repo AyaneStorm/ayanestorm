@@ -56,6 +56,57 @@ LLGLSLShader gASVolumetricAtlasProgram;
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 
+// Numerically integrate the nonlinear phase mask used by moonF.glsl. The
+// cached result changes only when a phase control changes, avoiding per-frame
+// integration while keeping god-ray energy tied to visible lunar surface.
+F32 getMoonPhaseIlluminatedFraction(F32 phase, F32 curvature, F32 softness)
+{
+    static F32 cached_phase = -1.f;
+    static F32 cached_curvature = -1.f;
+    static F32 cached_softness = -1.f;
+    static F32 cached_fraction = 1.f;
+
+    if (phase == cached_phase && curvature == cached_curvature && softness == cached_softness)
+    {
+        return cached_fraction;
+    }
+
+    const F32 linear_fraction = 1.f - fabsf(2.f * phase - 1.f);
+    const F32 light_z = 2.f * linear_fraction - 1.f;
+    F32 light_x = sqrtf(llmax(1.f - light_z * light_z, 0.f));
+    light_x *= phase <= 0.5f ? 1.f : -1.f;
+
+    constexpr S32 GRID_SIZE = 96;
+    F32 mask_sum = 0.f;
+    S32 disc_samples = 0;
+    const F32 edge_width = llmax(softness, 0.002f);
+    for (S32 y = 0; y < GRID_SIZE; ++y)
+    {
+        const F32 py = 2.f * ((F32)y + 0.5f) / (F32)GRID_SIZE - 1.f;
+        for (S32 x = 0; x < GRID_SIZE; ++x)
+        {
+            const F32 px = 2.f * ((F32)x + 0.5f) / (F32)GRID_SIZE - 1.f;
+            const F32 radius_squared = px * px + py * py;
+            if (radius_squared > 1.f)
+            {
+                continue;
+            }
+
+            const F32 surface_z = powf(sqrtf(llmax(1.f - radius_squared, 0.f)), curvature);
+            const F32 phase_light = px * light_x + surface_z * light_z;
+            const F32 t = llclamp((phase_light + edge_width) / (2.f * edge_width), 0.f, 1.f);
+            mask_sum += t * t * (3.f - 2.f * t);
+            ++disc_samples;
+        }
+    }
+
+    cached_phase = phase;
+    cached_curvature = curvature;
+    cached_softness = softness;
+    cached_fraction = disc_samples > 0 ? mask_sum / (F32)disc_samples : 0.f;
+    return cached_fraction;
+}
+
 // Keep god-ray horizon tint and phase energy visually consistent with the
 // separately rendered moon disc without altering general moonlight color.
 void applyMoonAppearance(LLGLSLShader& shader)
@@ -64,15 +115,10 @@ void applyMoonAppearance(LLGLSLShader& shader)
     const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
     const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
     const F32 phase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
-    const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 1.5f);
-    // The manual phase control advances linearly by projected illuminated
-    // area so its entire range remains visually useful at normal moon sizes.
-    const F32 linear_fraction = 1.f - fabsf(2.f * phase - 1.f);
-    const F32 phase_light_z = 2.f * linear_fraction - 1.f;
-    const F32 phase_light_x = sqrtf(llmax(1.f - phase_light_z * phase_light_z, 0.f));
-    const F32 adjusted_light_z = curvature * phase_light_z /
-        sqrtf(phase_light_x * phase_light_x + curvature * curvature * phase_light_z * phase_light_z);
-    const F32 illuminated_fraction = 0.5f * (1.f + adjusted_light_z);
+    const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f);
+    const F32 softness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.15f);
+    const F32 illuminated_fraction =
+        getMoonPhaseIlluminatedFraction(phase, curvature, softness);
     shader.uniform3fv(LLStaticHashedString("moon_horizon_tint"), 1, tint.mV);
     shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
                      gSavedSettings.getF32("ASMoonHorizonTintStrength"));

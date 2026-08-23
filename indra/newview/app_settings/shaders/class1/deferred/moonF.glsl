@@ -79,8 +79,11 @@ void main()
     // terminator for crescent, quarter, gibbous, and full phases while keeping
     // the environment's moon texture detail intact.
     vec2 phase_position = vary_texcoord0.xy * 2.0 - 1.0;
-    float phase_surface_z = sqrt(max(1.0 - dot(phase_position, phase_position), 0.0))
-                          * clamp(moon_phase_curvature, 0.25, 5.0);
+    float phase_surface_z = sqrt(max(1.0 - dot(phase_position, phase_position), 0.0));
+    // A nonlinear depth warp genuinely changes the projected terminator
+    // shape. Linear scaling here only renormalized the effective light angle.
+    phase_surface_z = pow(phase_surface_z,
+                          clamp(moon_phase_curvature, 0.25, 5.0));
     // Map the artistic control linearly by visible illuminated area rather
     // than orbital angle. The former cosine mapping compressed almost all
     // visible gibbous change into a few pixels around 0.45/0.55 and made
