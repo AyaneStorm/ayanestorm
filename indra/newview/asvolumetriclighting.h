@@ -88,7 +88,7 @@ public:
 
 private:
     static void renderLocalLights(LLPipeline& pipeline);
-    static void renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
+    static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
 
     static bool sSupportChecked;
@@ -116,6 +116,15 @@ private:
     static U32 sAtlasFBO;
     static U32 sAtlasIntegralWidth;
     static U32 sAtlasIntegralHeight;
+
+    // Consumer bindings happen after atlas production in the frame. Keep a
+    // conservative demand history: two consecutive frames with no consumer
+    // are required before production is skipped. A consumer that returns on
+    // a skipped frame gets the shader's no-atlas fallback for that frame and
+    // re-enables production for the next one, never sampling stale contents.
+    static bool sAtlasConsumerSeen;
+    static bool sAtlasProducedThisFrame;
+    static U32 sAtlasUnusedFrames;
 };
 
 #endif // AS_VOLUMETRICLIGHTING_H

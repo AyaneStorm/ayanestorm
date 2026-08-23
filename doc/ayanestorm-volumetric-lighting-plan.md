@@ -1897,14 +1897,24 @@ thin geometry carefully.
 
 ### Priority 6: conditional atlas production
 
-The 16-slice atlas is built every enabled frame even if no atlas-consuming
-transparent geometry or water is ultimately visible. A conservative previous-
-frame visibility flag from alpha/material/water submission could skip atlas
-generation after consecutive unused frames, with immediate reactivation and a
-one-frame-safe fallback when a consumer appears. This is attractive in opaque
-scenes but invasive because incorrect visibility prediction would cause stale
-or missing transparency lighting. Attempt only after GPU profiling shows the
-optimized atlas remains material.
+**Implemented 2026-08-23; awaiting build/runtime validation.** Atlas-consuming
+shader bindings now record previous-frame demand. Production continues until
+two consecutive enabled frames report no consumer, then the 16-slice atlas is
+skipped. If a consumer returns during a skipped frame, its atlas uniform is
+disabled for a one-frame-safe fallback rather than sampling stale contents;
+that binding records demand and production resumes on the following frame.
+Atlas debug modes 10 and 11 always force production.
+
+The resource-completeness early return also explicitly invalidates the
+same-frame production flag. Resource allocation is synchronous in the current
+renderer, but this prevents stale-atlas eligibility if that lifecycle changes.
+
+This intentionally favors correctness over the earliest possible skip. Test an
+opaque-only scene for the expected GPU-time reduction, then introduce/remove
+foliage, alpha materials, fullbright geometry, and water at the edge of the
+frustum. The reappearance frame may omit volumetric transparency correction,
+but must never flash stale atlas lighting; correction should return one frame
+later.
 
 ### Altitude-faded scene transmittance (2026-08-23)
 

@@ -73,6 +73,9 @@ U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
 U32 ASVolumetricLighting::sAtlasFBO = 0;
 U32 ASVolumetricLighting::sAtlasIntegralWidth = 0;
 U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
+bool ASVolumetricLighting::sAtlasConsumerSeen = true;
+bool ASVolumetricLighting::sAtlasProducedThisFrame = false;
+U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
 // FSExactOIT's revision. During active development the shader cache is cleared
@@ -273,14 +276,20 @@ void ASVolumetricLighting::releaseResources()
     sVolumetricTarget.release();
     sTransparencyAtlas.release();
     releaseAtlasIntegralAttachments();
+    sAtlasConsumerSeen = true;
+    sAtlasProducedThisFrame = false;
+    sAtlasUnusedFrames = 0;
 }
 
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 {
     static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
     static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
-    const bool enabled = isEnabled() && getDebugMode() == 0 && sShadersLoaded &&
-        sTransparencyAtlas.isComplete();
+    const bool atlas_consumer = isEnabled() && getDebugMode() == 0 &&
+        !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+    sAtlasConsumerSeen = sAtlasConsumerSeen || atlas_consumer;
+    const bool enabled = atlas_consumer && sAtlasProducedThisFrame &&
+        sShadersLoaded && sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
     if (enabled)
     {
@@ -474,12 +483,12 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
 // unaffected by this restructure, only the cost of producing that value
 // changes. sAtlasIntegralTex[0]/[1] are a private implementation detail
 // never sampled by anything outside this function.
-void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
+bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
                                                      F32 attenuate_scene_strength)
 {
     if (sAtlasFBO == 0 || sAtlasIntegralTex[0] == 0 || sAtlasIntegralTex[1] == 0)
     {
-        return;
+        return false;
     }
 
     const U32 atlas_tex = sTransparencyAtlas.getTexture(0);
@@ -552,7 +561,7 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
         LLRenderTarget::sCurFBO = saved_fbo;
         LLRenderTarget::sCurResX = saved_res_x;
         LLRenderTarget::sCurResY = saved_res_y;
-        return;
+        return false;
     }
     gASVolumetricAtlasProgram.uniform1i(previous_slice_sampler, previous_slice_channel);
 
@@ -607,6 +616,7 @@ void ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     LLRenderTarget::sCurFBO = saved_fbo;
     LLRenderTarget::sCurResX = saved_res_x;
     LLRenderTarget::sCurResY = saved_res_y;
+    return true;
 }
 
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
@@ -633,6 +643,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
     if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())
     {
+        // Resource allocation is synchronous today, but do not leave a
+        // previous frame's atlas marked current if either target becomes
+        // incomplete during a future lifecycle refactor.
+        sAtlasProducedThisFrame = false;
         return;
     }
 
@@ -647,6 +661,25 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     LLGLDisable   cull(GL_CULL_FACE);
 
     S32 debug_mode = getDebugMode();
+
+    // Atlas consumers are submitted later in the frame, so this flag records
+    // demand observed during the previous frame. Preserve two full unused
+    // frames before skipping to avoid flicker from transient visibility or
+    // draw-pool changes. Debug modes 10/11 inspect the atlas itself and must
+    // always produce it. Reset before forward rendering so later bindings
+    // accumulate demand for the next frame.
+    if (sAtlasConsumerSeen)
+    {
+        sAtlasUnusedFrames = 0;
+    }
+    else
+    {
+        sAtlasUnusedFrames = llmin(sAtlasUnusedFrames + 1, (U32)2);
+    }
+    const bool produce_atlas = debug_mode == 10 || debug_mode == 11 ||
+        sAtlasUnusedFrames < 2;
+    sAtlasConsumerSeen = false;
+    sAtlasProducedThisFrame = false;
 
     // Fade scene-attenuating transmittance out with camera altitude above the
     // ground beneath it: a wide, zoomed-out or high-altitude view spans far
@@ -710,8 +743,13 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sVolumetricTarget.flush();
     }
 
-    // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas.
-    renderTransparencyAtlas(pipeline, attenuate_scene_strength);
+    // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas only while
+    // late transparent/fullbright/water submission has recently consumed it.
+    if (produce_atlas)
+    {
+        sAtlasProducedThisFrame = renderTransparencyAtlas(
+            pipeline, attenuate_scene_strength);
+    }
 
     // Add the optional, explicitly unshadowed local-light fog contribution.
     // Sphere/ray intersection in the shader confines work and illumination to
