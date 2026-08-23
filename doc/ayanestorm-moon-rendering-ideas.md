@@ -14,8 +14,22 @@ volumetric lighting work.
    derived tint is applied to AyaneStorm moon god rays, but not to general
    scene moonlight. God rays receive true world-space moon elevation because
    their existing `moon_dir` uniform is transformed into camera space.
-3. **Moon phase**: the moon should support a configurable phase (crescent,
-   gibbous, etc.) rather than always rendering full moon.
+3. **Moon phase (implemented 2026-08-23)**: `ASMoonPhase` drives an analytic
+   spherical terminator reconstructed from the moon disc's UV coordinates.
+   The 0-to-1 cycle runs New, First quarter, Full, Last quarter, New, with
+   0.5 as the compatibility default. The manual slider advances linearly by
+   projected illuminated area rather than orbital angle, preventing an
+   effectively full-looking plateau around 0.45-0.55 and producing more useful
+   crescents. The same illuminated-area fraction scales AyaneStorm moon god
+   rays, while general scene moonlight is unchanged. `ASMoonPhaseCurvature`
+   defaults to the artistically selected 2.5; 1.0 restores the spherical
+   terminator, and the exposed range extends to 5.0 for artistic headroom.
+   The adjusted projected area also drives ray energy.
+   `ASMoonPhaseSoftness` adds a short configurable transition across the
+   terminator on top of resolution-dependent antialiasing; its artistically
+   selected default is 0.09.
+   `ASMoonPhaseTilt` rotates the terminator around the disc from -180 to 180
+   degrees without changing illuminated area or god-ray energy.
 
 ## Moonrise and moonset disc cutoff
 

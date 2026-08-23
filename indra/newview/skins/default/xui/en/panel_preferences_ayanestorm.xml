@@ -252,6 +252,86 @@
         top="68"
         width="380" />
 
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonPhase"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.01"
+        label="Moon phase"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="1.0"
+        min_val="0.0"
+        name="moon_phase"
+        show_text="true"
+        text_width="50"
+        tool_tip="Viewer-local moon phase: 0.00 New, 0.25 First quarter, 0.50 Full, 0.75 Last quarter, 1.00 New. The illuminated fraction also scales moon god rays. Changes are applied live."
+        top="98"
+        width="380" />
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonPhaseCurvature"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.05"
+        label="Moon phase curvature"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="5.0"
+        min_val="0.25"
+        name="moon_phase_curvature"
+        show_text="true"
+        text_width="50"
+        tool_tip="Controls the moon terminator shape. Values below 1.00 make crescents fuller; 1.00 is spherical. Quarter, full, and new moons remain exact. Changes are applied live."
+        top="128"
+        width="380" />
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonPhaseSoftness"
+        decimal_digits="3"
+        follows="left|top"
+        height="16"
+        increment="0.005"
+        label="Moon phase softness"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="0.15"
+        min_val="0.0"
+        name="moon_phase_softness"
+        show_text="true"
+        text_width="50"
+        tool_tip="Width of the soft transition between the lit and dark portions of the moon. 0.000 keeps only pixel antialiasing. Changes are applied live."
+        top="158"
+        width="380" />
+
+      <slider
+        can_edit_text="true"
+        control_name="ASMoonPhaseTilt"
+        decimal_digits="0"
+        follows="left|top"
+        height="16"
+        increment="1.0"
+        label="Moon phase tilt (degrees)"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="180.0"
+        min_val="-180.0"
+        name="moon_phase_tilt"
+        show_text="true"
+        text_width="50"
+        tool_tip="Rotates the crescent and phase terminator around the moon disc. Positive angles rotate counterclockwise; 0 preserves the vertical terminator. Changes are applied live."
+        top="188"
+        width="380" />
+
       <text
         type="string"
         length="1"
@@ -260,7 +340,7 @@
         layout="topleft"
         left="15"
         name="moon_horizon_tint_label"
-        top="102"
+        top="222"
         width="180">
         Moon horizon color
       </text>
@@ -279,7 +359,7 @@
         mouse_opaque="true"
         name="moon_horizon_tint"
         tool_tip="Color multiplied into the moon disc near the horizon. Changes are applied live."
-        top="98"
+        top="218"
         width="44" />
 
       <slider
@@ -299,7 +379,7 @@
         show_text="true"
         text_width="50"
         tool_tip="Strength of the warm moon tint at the horizon. 0.00 disables the effect; the tint smoothly disappears as the moon rises. Changes are applied live."
-        top="138"
+        top="258"
         width="380" />
 
       <check_box
@@ -313,7 +393,7 @@
         name="render_partial_moon_below_horizon"
         radio_style="false"
         tool_tip="Keeps rendering the moon until its upper edge passes below the horizon. Disable for the original Firestorm center-based cutoff. Changes are applied live."
-        top="172"
+        top="292"
         width="430" />
     </panel>
     <!-- [/AS:Chanayane] -->

@@ -6067,7 +6067,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>3.0</real>
+      <real>2.5</real>
     </map>
     <key>FullScreenAutoDetectAspectRatio</key>
     <map>
@@ -16467,7 +16467,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.5</real>
+      <real>3.0</real>
     </map>
     <key>UIAutoScale</key>
     <map>
@@ -25549,6 +25549,58 @@ Change of this parameter will affect the layout of buttons in notification toast
       <string>F32</string>
       <key>Value</key>
       <real>1.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhase</key>
+    <map>
+      <key>Comment</key>
+      <string>Viewer-local moon phase cycle: 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter, 1 new</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.5</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseCurvature</key>
+    <map>
+      <key>Comment</key>
+      <string>Artistic moon terminator curvature; values below one produce fuller crescents while preserving quarter, full, and new phases</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>2.5</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseSoftness</key>
+    <map>
+      <key>Comment</key>
+      <string>Width of the soft transition across the moon phase terminator; zero retains antialiasing only</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.09</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASMoonPhaseTilt</key>
+    <map>
+      <key>Comment</key>
+      <string>Counterclockwise rotation in degrees of the moon phase terminator around the disc</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.0</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>

@@ -49,6 +49,7 @@ uniform vec3 moonlight_color;
 uniform vec3 moon_horizon_tint;
 uniform float moon_horizon_tint_strength;
 uniform float moon_horizon_elevation;
+uniform float moon_phase_illumination;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
@@ -209,6 +210,7 @@ void main()
         float horizon_tint_amount = (1.0 - smoothstep(0.0, 0.35, max(moon_horizon_elevation, 0.0)))
                                   * clamp(moon_horizon_tint_strength, 0.0, 1.0);
         light_color *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
+        light_color *= clamp(moon_phase_illumination, 0.0, 1.0);
     }
     frag_color = vec4(light_color * scatter, transmittance);
 }

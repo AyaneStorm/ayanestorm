@@ -35,6 +35,10 @@ uniform float moon_horizon_min_opacity;
 uniform vec3 moon_horizon_tint;
 uniform float moon_horizon_tint_strength;
 uniform int moon_render_partial;
+uniform float moon_phase;
+uniform float moon_phase_curvature;
+uniform float moon_phase_softness;
+uniform float moon_phase_tilt;
 // </AS:Chanayane>
 uniform sampler2D diffuseMap;
 
@@ -69,6 +73,32 @@ void main()
     {
         discard;
     }
+
+    // <AS:Chanayane> Reconstruct the front hemisphere from the disc UV and
+    // intersect it with a rotating light direction. This produces a spherical
+    // terminator for crescent, quarter, gibbous, and full phases while keeping
+    // the environment's moon texture detail intact.
+    vec2 phase_position = vary_texcoord0.xy * 2.0 - 1.0;
+    float phase_surface_z = sqrt(max(1.0 - dot(phase_position, phase_position), 0.0))
+                          * clamp(moon_phase_curvature, 0.25, 5.0);
+    // Map the artistic control linearly by visible illuminated area rather
+    // than orbital angle. The former cosine mapping compressed almost all
+    // visible gibbous change into a few pixels around 0.45/0.55 and made
+    // crescents unnecessarily thin on typical on-screen moon sizes.
+    float phase_cycle = clamp(moon_phase, 0.0, 1.0);
+    float illuminated_fraction = 1.0 - abs(2.0 * phase_cycle - 1.0);
+    float phase_light_z = 2.0 * illuminated_fraction - 1.0;
+    float phase_light_x = sqrt(max(1.0 - phase_light_z * phase_light_z, 0.0));
+    phase_light_x *= phase_cycle <= 0.5 ? 1.0 : -1.0;
+    float phase_tilt_radians = clamp(moon_phase_tilt, -180.0, 180.0) * 0.01745329252;
+    vec2 phase_light_xy = phase_light_x * vec2(cos(phase_tilt_radians),
+                                               sin(phase_tilt_radians));
+    vec3 phase_light_dir = vec3(phase_light_xy, phase_light_z);
+    float phase_light = dot(vec3(phase_position, phase_surface_z), phase_light_dir);
+    float phase_edge_width = max(fwidth(phase_light), 0.002)
+                           + clamp(moon_phase_softness, 0.0, 0.15);
+    c.a *= smoothstep(-phase_edge_width, phase_edge_width, phase_light);
+    // </AS:Chanayane>
 
     c.rgb *= moon_brightness;
     // <AS:Chanayane> Warm only the visible moon disc near the horizon. The

@@ -465,6 +465,14 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
                                    gSavedSettings.getF32("ASMoonHorizonTintStrength"));
             moon_shader->uniform1i(LLStaticHashedString("moon_render_partial"),
                                    gSavedSettings.getBOOL("ASRenderPartialMoonBelowHorizon") ? 1 : 0);
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_curvature"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_softness"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.15f));
+            moon_shader->uniform1f(LLStaticHashedString("moon_phase_tilt"),
+                                   llclamp(gSavedSettings.getF32("ASMoonPhaseTilt"), -180.f, 180.f));
             // </AS:Chanayane>
             moon_shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, gSky.mVOSkyp->getMoon().getColor().mV);
             moon_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);

@@ -56,17 +56,28 @@ LLGLSLShader gASVolumetricAtlasProgram;
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
 
-// Keep moonrise god rays visually consistent with the separately rendered
-// moon disc without altering the environment's general moonlight color.
-void applyMoonHorizonTint(LLGLSLShader& shader)
+// Keep god-ray horizon tint and phase energy visually consistent with the
+// separately rendered moon disc without altering general moonlight color.
+void applyMoonAppearance(LLGLSLShader& shader)
 {
     const LLColor4 tint = gSavedSettings.getColor4("ASMoonHorizonTint");
     const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
     const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
+    const F32 phase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
+    const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 1.5f);
+    // The manual phase control advances linearly by projected illuminated
+    // area so its entire range remains visually useful at normal moon sizes.
+    const F32 linear_fraction = 1.f - fabsf(2.f * phase - 1.f);
+    const F32 phase_light_z = 2.f * linear_fraction - 1.f;
+    const F32 phase_light_x = sqrtf(llmax(1.f - phase_light_z * phase_light_z, 0.f));
+    const F32 adjusted_light_z = curvature * phase_light_z /
+        sqrtf(phase_light_x * phase_light_x + curvature * curvature * phase_light_z * phase_light_z);
+    const F32 illuminated_fraction = 0.5f * (1.f + adjusted_light_z);
     shader.uniform3fv(LLStaticHashedString("moon_horizon_tint"), 1, tint.mV);
     shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
                      gSavedSettings.getF32("ASMoonHorizonTintStrength"));
     shader.uniform1f(LLStaticHashedString("moon_horizon_elevation"), elevation);
+    shader.uniform1f(LLStaticHashedString("moon_phase_illumination"), illuminated_fraction);
 }
 
 struct LocalLight
@@ -96,7 +107,7 @@ U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v16";
+    return "as-volumetric-lighting-v17";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -555,7 +566,7 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
     gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
     gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
-    applyMoonHorizonTint(gASVolumetricAtlasProgram);
+    applyMoonAppearance(gASVolumetricAtlasProgram);
 
     // This shader-specific sampler has no predefined mTexture[] slot. Keep
     // it on the appended channel proven by the working atlas implementation
@@ -747,7 +758,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             // bindDeferredShader() does not set this; renderDeferredLighting()'s
             // callers normally do it per-shader (see softenLightF's soften_shader).
             gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, LLEnvironment::instance().getIsSunUp() ? 1 : 0);
-            applyMoonHorizonTint(gASVolumetricLightProgram);
+            applyMoonAppearance(gASVolumetricLightProgram);
 
             pipeline.mScreenTriangleVB->setBuffer();
             pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
