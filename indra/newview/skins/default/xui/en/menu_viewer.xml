@@ -1525,6 +1525,16 @@
                  function="Floater.Visible"
                  parameter="as_moon_settings" />
             </menu_item_check>
+            <menu_item_check
+             label="Sun Settings..."
+             name="as_sun_settings">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_sun_settings" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_sun_settings" />
+            </menu_item_check>
             <!-- </AS:Chanayane> -->
             <menu_item_separator/>
             <menu_item_check
@@ -6524,6 +6534,19 @@
          <menu_item_check.on_click
             function="Floater.Toggle"
             parameter="as_moon_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
+      <!-- <AS:Chanayane> Sun settings floater -->
+      <menu_item_check
+         label="Sun Settings..."
+         name="AS Sun Settings">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_sun_settings" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_sun_settings" />
       </menu_item_check>
       <!-- </AS:Chanayane> -->
    </menu>

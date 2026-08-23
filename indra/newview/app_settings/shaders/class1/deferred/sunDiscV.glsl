@@ -26,6 +26,9 @@
 uniform mat4 texture_matrix0;
 uniform mat4 modelview_matrix;
 uniform mat4 modelview_projection_matrix;
+// <AS:Chanayane> Opt into true EEP-direction alignment for the procedural sun.
+uniform int procedural_sun_alignment_enabled;
+// </AS:Chanayane>
 
 in vec3 position;
 in vec2 texcoord0;
@@ -38,7 +41,14 @@ void calcAtmospherics(vec3 eye_pos);
 void main()
 {
     //transform vertex
-    vec3 offset = vec3(0, 0, 50);
+    // <AS:Chanayane> SL-10303's legacy 50 m displacement diverges visibly
+    // from the atmospheric sun direction near the horizon. Preserve it for
+    // compatibility unless the viewer-local procedural sun is enabled.
+    // vec3 offset = vec3(0, 0, 50);
+    vec3 offset = procedural_sun_alignment_enabled != 0
+                ? vec3(0.0)
+                : vec3(0, 0, 50);
+    // </AS:Chanayane>
     vec4 vert = vec4(position.xyz - offset, 1.0);
     vec4 pos  = modelview_projection_matrix*vert;
 

@@ -25525,7 +25525,55 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>0</integer>
     </map>
-    <!-- <AS:Chanayane> Minimum moon-disc opacity near the horizon. -->
+    <!-- <AS:Chanayane> Viewer-local procedural sun and moon appearance. -->
+    <key>ASProceduralSunEnabled</key>
+    <map>
+      <key>Comment</key><string>Render a viewer-local procedural sunset sun disc beneath transparent EEP sun textures</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunStartAngle</key>
+    <map>
+      <key>Comment</key><string>Sun elevation in degrees where the procedural sunset disc begins fading in</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>10.0</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunFinalColor</key>
+    <map>
+      <key>Comment</key><string>Warm procedural sun limb color at its scale-aware below-horizon cutoff</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Color4</string>
+      <key>Value</key><array><real>1.0</real><real>0.12</real><real>0.02</real><real>1.0</real></array>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunBrightness</key>
+    <map>
+      <key>Comment</key><string>Peak brightness multiplier for the viewer-local procedural sunset sun disc</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>1.0</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunFeather</key>
+    <map>
+      <key>Comment</key><string>Soft-edge width of the procedural sun disc in normalized disc-radius units</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.08</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASProceduralSunShimmer</key>
+    <map>
+      <key>Comment</key><string>Strength of subtle animated atmospheric refraction on the procedural sun near the horizon</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.015</real>
+      <key>Backup</key><integer>0</integer>
+    </map>
     <key>ASMoonHorizonMinOpacity</key>
     <map>
       <key>Comment</key>

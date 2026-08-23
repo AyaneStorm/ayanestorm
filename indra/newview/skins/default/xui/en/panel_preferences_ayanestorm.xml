@@ -231,6 +231,19 @@
           function="Floater.ToggleOrBringToFront"
           parameter="as_moon_settings" />
       </button>
+      <button
+        follows="left|top"
+        height="23"
+        label="Sun settings"
+        layout="topleft"
+        left="250"
+        name="open_sun_settings"
+        top="225"
+        width="220">
+        <button.commit_callback
+          function="Floater.ToggleOrBringToFront"
+          parameter="as_sun_settings" />
+      </button>
       <!-- </AS:Chanayane> -->
     </panel>
 

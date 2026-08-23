@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
 #include "ascelestialtwilight.h"
+#include "asproceduralsun.h"
 // </AS:Chanayane>
 
 #include "llerror.h"
@@ -388,6 +389,10 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
     bool can_use_windlight_shaders = gPipeline.canUseWindLightShaders();
 
 
+    // <AS:Chanayane> Keep the sun quad usable as a procedural fallback when
+    // the active EEP has no sun texture.
+    const ASProceduralSun::RenderParams procedural_sun =
+        ASProceduralSun::getRenderParams(LLEnvironment::instance().getCurrentSky().get());
     if (gSky.mVOSkyp->getSun().getDraw() && face && face->getGeomCount())
     {
         LLPointer<LLViewerTexture> tex_a = face->getTexture(LLRender::DIFFUSE_MAP);
@@ -397,12 +402,36 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
 
         // if we even have sun disc textures to work with...
-        if (tex_a || tex_b)
+        // <AS:Chanayane> Also draw when only the procedural fallback exists.
+        // if (tex_a || tex_b)
+        if (tex_a || tex_b || procedural_sun.enabled)
+        // </AS:Chanayane>
         {
             // if and only if we have a texture defined, render the sun disc
             if (can_use_vertex_shaders && can_use_windlight_shaders)
             {
                 sun_shader->bind();
+
+                sun_shader->uniform1i(LLStaticHashedString("procedural_sun_alignment_enabled"),
+                                      gSavedSettings.getBOOL("ASProceduralSunEnabled") ? 1 : 0);
+                sun_shader->uniform1i(LLStaticHashedString("sun_texture_available"),
+                                      (tex_a || tex_b) ? 1 : 0);
+                sun_shader->uniform1i(LLStaticHashedString("procedural_sun_enabled"),
+                                      procedural_sun.enabled ? 1 : 0);
+                sun_shader->uniform1f(LLStaticHashedString("procedural_sun_opacity"),
+                                      procedural_sun.opacity);
+                sun_shader->uniform1f(LLStaticHashedString("procedural_sun_feather"),
+                                      llclamp(gSavedSettings.getF32("ASProceduralSunFeather"), 0.f, 0.35f));
+                sun_shader->uniform1f(LLStaticHashedString("procedural_sun_shimmer"),
+                                      llclamp(gSavedSettings.getF32("ASProceduralSunShimmer"), 0.f, 0.10f));
+                sun_shader->uniform1f(LLStaticHashedString("procedural_sun_horizon_factor"),
+                                      procedural_sun.horizon_factor);
+                sun_shader->uniform1f(LLStaticHashedString("procedural_sun_time"),
+                                      gFrameTimeSeconds);
+                sun_shader->uniform3fv(LLStaticHashedString("procedural_sun_color"),
+                                       1, procedural_sun.color.mV);
+                sun_shader->uniform3fv(LLStaticHashedString("procedural_sun_limb_color"),
+                                       1, procedural_sun.limb_color.mV);
 
                 if (tex_a && (!tex_b || (tex_a == tex_b)))
                 {
@@ -435,6 +464,7 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
             }
         }
     }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> Render the procedural atmospheric halo behind the moon.
     face = gSky.mVOSkyp->mFace[LLVOSky::FACE_BLOOM];

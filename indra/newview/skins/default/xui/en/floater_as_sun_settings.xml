@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<floater can_close="true" can_minimize="true" height="245" layout="topleft" name="as_sun_settings" save_rect="true" title="Sun Settings" width="460">
+  <!-- Generic panel keeps all controls live through their saved settings. -->
+  <panel filename="panel_as_sun_settings.xml" follows="all" height="215" layout="topleft" left="0" name="as_sun_settings_panel" top="18" width="460" />
+</floater>
