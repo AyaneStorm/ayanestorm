@@ -54,6 +54,26 @@ uniform sampler2D diffuseMap;
 
 in vec2 vary_texcoord0;
 
+// <AS:Chanayane> Sample the moon mask with a transparent border.
+// The moon mask must behave as if it had a transparent border. The texture is
+// configured clamp-to-edge, so sampling outside [0,1] would otherwise repeat
+// nonzero edge alpha and create a discontinuity where mask filtering stops.
+float moonMaskAlpha(vec2 uv, vec2 texel_size)
+{
+    // Emulate bilinear filtering against transparent border texels. Sampling
+    // the clamped edge alone repeats its alpha; a hard bounds test would move
+    // the same discontinuity to UV 0/1. At the boundary the edge texel carries
+    // half weight, reaching full edge weight half a texel inward and zero half
+    // a texel outward.
+    vec2 lower_weight = clamp(uv / texel_size + vec2(0.5), 0.0, 1.0);
+    vec2 upper_weight = clamp((vec2(1.0) - uv) / texel_size + vec2(0.5), 0.0, 1.0);
+    float border_weight = lower_weight.x * lower_weight.y
+                        * upper_weight.x * upper_weight.y;
+    return texture(diffuseMap, clamp(uv, vec2(0.0), vec2(1.0))).a
+         * border_weight;
+}
+// </AS:Chanayane>
+
 void main()
 {
     // <AS:Chanayane> Larger procedural billboard rendered behind the disc.
@@ -84,11 +104,11 @@ void main()
             float mask_spacing = mix(1.5, 4.0, clamp(softness * 0.5, 0.0, 1.0));
             vec2 mask_step = mask_direction * max(mask_texel.x, mask_texel.y)
                            * mask_spacing;
-            moon_coverage = (texture(diffuseMap, moon_mask_uv - 2.0 * mask_step).a
-                           + 4.0 * texture(diffuseMap, moon_mask_uv - mask_step).a
-                           + 6.0 * texture(diffuseMap, moon_mask_uv).a
-                           + 4.0 * texture(diffuseMap, moon_mask_uv + mask_step).a
-                           + texture(diffuseMap, moon_mask_uv + 2.0 * mask_step).a)
+            moon_coverage = (moonMaskAlpha(moon_mask_uv - 2.0 * mask_step, mask_texel)
+                           + 4.0 * moonMaskAlpha(moon_mask_uv - mask_step, mask_texel)
+                           + 6.0 * moonMaskAlpha(moon_mask_uv, mask_texel)
+                           + 4.0 * moonMaskAlpha(moon_mask_uv + mask_step, mask_texel)
+                           + moonMaskAlpha(moon_mask_uv + 2.0 * mask_step, mask_texel))
                           / 16.0;
         }
         // Treat 50% filtered texture coverage as the visible moon border. Keep
@@ -101,18 +121,10 @@ void main()
                                             moon_halo_radius,
                                             distance_in_disc_radii);
         profile *= outer_fade;
-        // Apple OpenGL exposes discard at this radial epsilon as a dotted arc.
-        // Under the premultiplied pure-additive halo contract, writing zero to
-        // every attachment is an exact no-op and avoids that raster boundary.
+        // Fully masked fragments must not reach any MRT.
         if (profile <= 0.0001)
         {
-            frag_data[0] = vec4(0.0);
-            frag_data[1] = vec4(0.0);
-            frag_data[2] = vec4(0.0);
-#if defined(HAS_EMISSIVE)
-            frag_data[3] = vec4(0.0);
-#endif
-            return;
+            discard;
         }
 
         // Keep a circular atmospheric base, but weight it toward the visibly
@@ -145,10 +157,9 @@ void main()
         float energy = clamp(moon_halo_strength, 0.0, 10.0)
                      * clamp(moon_halo_illumination, 0.0, 1.0)
                      * halo_limb_weight;
-        // Premultiply for pure additive blending, matching the proven
-        // procedural-sun halo path. Zero alpha preserves the scene glow mask.
-        float halo_alpha = clamp(profile * energy, 0.0, 1.0);
-        vec4 halo = vec4(clamp(moon_halo_color, 0.0, 1.0) * halo_alpha, 0.0);
+        // Keep strength linear under the alpha-modulated additive blend.
+        vec4 halo = vec4(clamp(moon_halo_color, 0.0, 1.0),
+                         clamp(profile * energy, 0.0, 1.0));
         frag_data[0] = vec4(0.0);
         frag_data[1] = vec4(0.0);
         // Preserve the sky's existing G-buffer metadata. Writing a categorical
