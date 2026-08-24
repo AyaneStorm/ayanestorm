@@ -61,14 +61,6 @@ void main()
     {
         // FACE_BLOOM always spans four disc radii so radius changes are live.
         float distance_in_disc_radii = length(vary_texcoord0.xy * 2.0 - 1.0) * 4.0;
-        // Reject the square billboard outside the requested circular radius
-        // before texture sampling or MRT output. The later smooth fade should
-        // also reach zero here, but an explicit geometric cutoff avoids
-        // driver-dependent precision leaving a faint quad edge on macOS.
-        if (distance_in_disc_radii >= moon_halo_radius)
-        {
-            discard;
-        }
         float outside_disc = max(distance_in_disc_radii - 1.0, 0.0);
         float softness = max(moon_halo_softness, 0.01);
         float profile = exp(-0.5 * outside_disc * outside_disc / (softness * softness));
