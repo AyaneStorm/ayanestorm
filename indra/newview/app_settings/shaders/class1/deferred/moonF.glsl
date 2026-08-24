@@ -101,12 +101,18 @@ void main()
                                             moon_halo_radius,
                                             distance_in_disc_radii);
         profile *= outer_fade;
-        // Masked fragments must not reach any MRT. In particular, writing the
-        // skip-atmosphere G-buffer flag with zero emissive alpha creates a dark
-        // ring even though no visible halo color is contributed.
+        // Apple OpenGL exposes discard at this radial epsilon as a dotted arc.
+        // Under the premultiplied pure-additive halo contract, writing zero to
+        // every attachment is an exact no-op and avoids that raster boundary.
         if (profile <= 0.0001)
         {
-            discard;
+            frag_data[0] = vec4(0.0);
+            frag_data[1] = vec4(0.0);
+            frag_data[2] = vec4(0.0);
+#if defined(HAS_EMISSIVE)
+            frag_data[3] = vec4(0.0);
+#endif
+            return;
         }
 
         // Keep a circular atmospheric base, but weight it toward the visibly
@@ -139,9 +145,10 @@ void main()
         float energy = clamp(moon_halo_strength, 0.0, 10.0)
                      * clamp(moon_halo_illumination, 0.0, 1.0)
                      * halo_limb_weight;
-        // Keep strength linear under the sky pass's conventional alpha blend.
-        vec4 halo = vec4(clamp(moon_halo_color, 0.0, 1.0),
-                         clamp(profile * energy, 0.0, 1.0));
+        // Premultiply for pure additive blending, matching the proven
+        // procedural-sun halo path. Zero alpha preserves the scene glow mask.
+        float halo_alpha = clamp(profile * energy, 0.0, 1.0);
+        vec4 halo = vec4(clamp(moon_halo_color, 0.0, 1.0) * halo_alpha, 0.0);
         frag_data[0] = vec4(0.0);
         frag_data[1] = vec4(0.0);
         // Preserve the sky's existing G-buffer metadata. Writing a categorical
