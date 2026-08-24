@@ -54,21 +54,40 @@ value; the Rendering 2 control exposes a 0.0 to 5.0 range.
 
 ## Phase-aware atmospheric moon halo
 
-### macOS halo-boundary MRT correction (2026-08-24)
+### macOS halo-boundary rendering correction (2026-08-24)
 
 A macOS runtime report showed short dark tangents at the halo's four cardinal
 extremes that disappeared when the procedural halo was disabled. An explicit
 circular shader discard was tested first; Windows remained correct, but macOS
 screenshots showed the same lines, ruling out a faint outer-quad profile.
 
-The halo draw now saves the indexed color-write masks and enables writes only
-for the attachment that carries halo color: attachment 3 with the emissive
-buffer enabled, or attachment 0 without it. This prevents the translucent halo
-shader's zero-valued outputs from touching the other deferred attachments on
-Apple OpenGL. Every indexed mask is restored immediately after the draw, before
-the ordinary moon pass, so the workaround cannot leak render state. The failed
-hard-radius discard was removed and the existing smooth profile remains
-unchanged. macOS runtime verification and a Windows comparison remain pending.
+Restricting writes to the halo's one color attachment was then runtime-tested:
+Windows remained correct, but macOS still showed the same lines, ruling out
+cross-attachment G-buffer writes. That workaround and the failed hard-radius
+discard were both removed.
+
+The remaining concrete platform-sensitive difference was the blend contract.
+The moon encoded its fade in source alpha and used `SRC_ALPHA, ONE` blending
+into an RGB-only emissive attachment on the macOS GL 4.1 path. The already
+stable procedural sun halo instead premultiplies RGB, writes zero alpha, and
+uses `ONE, ONE`. The moon now follows that proven path. Its RGB contribution
+is mathematically unchanged (`color * halo_alpha`), while zero alpha preserves
+the scene glow mask and avoids source-alpha blending against an attachment with
+no stored alpha channel. macOS runtime verification and a Windows comparison
+remain pending.
+
+The reported marks are exactly one pixel wide and appear on the halo's left and
+bottom. A later screenshot with the moon in an extreme viewport corner showed
+that they are dotted curves following the projected halo circle, not straight
+quad edges. This ruled out the proposed far-depth separation before runtime
+testing; the moon vertex shader remains unchanged.
+
+The arc coincides with the fragment shader's `profile <= 0.0001` discard
+contour. Under the new premultiplied `ONE, ONE` blend contract, discard is not
+needed to protect the G-buffer: emitting zero to every attachment is an exact
+additive no-op. The epsilon branch now returns zero outputs instead, avoiding
+Apple's visible discard boundary while retaining the existing smooth radial
+profile and skipping the more expensive phase calculation outside it.
 
 The dormant `FACE_BLOOM` sky face now carries a fixed-size procedural
 moon-centered billboard rendered behind the disc. `ASMoonHaloStrength`,
