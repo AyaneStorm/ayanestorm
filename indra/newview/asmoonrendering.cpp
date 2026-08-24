@@ -84,10 +84,7 @@ void ASMoonRendering::renderHalo(LLFace* halo_face, LLFace* moon_face,
                       llclamp(gSavedSettings.getF32("ASMoonPhaseTilt"), -180.f, 180.f));
     {
         LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
-        // Match the proven procedural-sun halo path: the shader premultiplies
-        // RGB and writes zero alpha, so pure addition avoids driver-dependent
-        // source-alpha blending into macOS's RGB-only emissive attachment.
-        gGL.setSceneBlendType(LLRender::BT_ADD);
+        gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
         halo_face->renderIndexed();
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     }
