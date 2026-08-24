@@ -54,6 +54,18 @@ value; the Rendering 2 control exposes a 0.0 to 5.0 range.
 
 ## Phase-aware atmospheric moon halo
 
+### macOS square-billboard cutoff correction (2026-08-24)
+
+A macOS runtime report showed a square around the moon that disappeared when
+the procedural halo was disabled, identifying the enlarged `FACE_BLOOM` quad
+as the source. The halo fragment shader now explicitly discards every fragment
+at or beyond `moon_halo_radius` before texture sampling or MRT output. The
+existing smooth outer fade remains unchanged inside the circle. This makes the
+already-intended zero-coverage boundary explicit instead of relying on the
+driver to carry `smoothstep` and profile multiplication precisely to the later
+epsilon discard. macOS runtime verification and a Windows comparison remain
+pending.
+
 The dormant `FACE_BLOOM` sky face now carries a fixed-size procedural
 moon-centered billboard rendered behind the disc. `ASMoonHaloStrength`,
 `ASMoonHaloRadius`, and `ASMoonHaloSoftness` control it independently of global

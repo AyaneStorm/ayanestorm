@@ -121,11 +121,11 @@ const float MAX_MARCH_DISTANCE = 128.0;
 // Fixed brightness normalization so that density*albedo (a physically
 // bounded [0, ~0.25]*[0,1] product) produces roughly the same visible
 // scatter brightness the old dimensionless scatter_intensity multiplier
-// (default 0.8) used to. Derived from matching output at density=0.012,
-// albedo=1.0 (this feature's new defaults) against the old formula's
-// default output - NOT analytically exact, since it depends on phaseHG's
-// existing normalization and this integral's existing scale. Expect to
-// re-tune this after first build/playtest. Must stay numerically identical
+// (default 0.8) used to. Derived from matching output at the original
+// density=0.012, albedo=1.0 tuning point against the old formula's default
+// output - NOT analytically exact, since it depends on phaseHG's existing
+// normalization and this integral's existing scale. The shipped albedo
+// default was subsequently tuned to 0.35. Must stay numerically identical
 // to asVolumetricAtlasF.glsl's copy of the same constant.
 const float BRIGHTNESS_SCALE = 64.0;
 

@@ -9929,10 +9929,10 @@ void LLPipeline::renderDeferredLighting()
 // signal wherever that geometry covers the frame. Skip this whole forward
 // pass (and the OIT dispatch that depends on its output) while a debug mode
 // is active so the replaced screen survives untouched for inspection.
+// {  // render non-deferred geometry (alpha, fullbright, glow)
     if (ASVolumetricLighting::getDebugMode() == 0)
-    {
-// </AS:Chanayane>
     {  // render non-deferred geometry (alpha, fullbright, glow)
+// </AS:Chanayane>
         LLGLDisable blend(GL_BLEND);
 
         // <AS:Chanayane> Reset independent OIT renderer state before transparency.
@@ -9975,10 +9975,13 @@ void LLPipeline::renderDeferredLighting()
         popRenderTypeMask();
     }
 
-// <AS:Chanayane> Dispatch the active independent OIT renderer or vanilla fallback.
-    FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
-                                 gCubeSnapshot, sImpostorRender,
-                                 gAgentCamera.cameraMouselook());
+// <AS:Chanayane> Dispatch the active independent OIT renderer or vanilla
+// fallback only when its forward-rendering input was produced above.
+    if (ASVolumetricLighting::getDebugMode() == 0)
+    {
+        FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
+                                     gCubeSnapshot, sImpostorRender,
+                                     gAgentCamera.cameraMouselook());
     }
 // </AS:Chanayane>
 
@@ -11189,7 +11192,11 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
     // convenience array of 4 near clip plane distances
     F32 dist[] = { near_clip, mSunClipPlanes.mV[0], mSunClipPlanes.mV[1], mSunClipPlanes.mV[2], mSunClipPlanes.mV[3] };
 
-    if (mSunDiffuse == LLColor4::black)
+    // <AS:Chanayane> Test the selected twilight shadow source. Fading the
+    // inactive sun to black must not suppress moon shadow maps and god rays.
+    // if (mSunDiffuse == LLColor4::black)
+    if ((shadow_sun ? mSunDiffuse : mMoonDiffuse) == LLColor4::black)
+    // </AS:Chanayane>
     { //sun diffuse is totally black shadows don't matter
         skipRenderingShadows();
     }
