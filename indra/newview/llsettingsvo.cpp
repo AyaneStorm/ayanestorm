@@ -26,6 +26,10 @@
 */
 
 #include "llviewerprecompiledheaders.h"
+
+// <AS:Chanayane> Scale-aware below-horizon atmospheric influence.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
 #include "llviewercontrol.h"
 #include "llsettingsvo.h"
 
@@ -749,7 +753,20 @@ void LLSettingsVOSky::applyToUniforms(void* ptarget)
 void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SHADER;
-    LLVector3 light_direction = LLVector3(LLEnvironment::instance().getClampedLightNorm().mV);
+    // <AS:Chanayane> Continue using one atmospheric source, but fade it below
+    // its scale-derived disc edge. Solar twilight has priority until its tail
+    // reaches zero, after which the moon becomes the atmospheric source.
+    // LLVector3 light_direction = LLVector3(LLEnvironment::instance().getClampedLightNorm().mV);
+    LLEnvironment& environment = LLEnvironment::instance();
+    LLSettingsSky::ptr_t psky = environment.getCurrentSky();
+    const F32 sun_influence = ASCelestialTwilight::sunInfluence(psky.get());
+    const F32 moon_influence = ASCelestialTwilight::moonInfluence(psky.get());
+    const bool atmospheric_sun = ASCelestialTwilight::isSunSource(psky.get());
+    const F32 atmospheric_influence = atmospheric_sun ? sun_influence : moon_influence;
+    LLVector3 light_direction = LLVector3((atmospheric_sun
+        ? environment.getClampedSunNorm()
+        : environment.getClampedMoonNorm()).mV);
+    // </AS:Chanayane>
 
     bool irradiance_pass = gCubeSnapshot && !gPipeline.mReflectionMapManager.isRadiancePass();
 
@@ -776,11 +793,15 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
     vect_c_p_d1 += cloud_scroll;
     shader->uniform3fv(LLShaderMgr::CLOUD_POS_DENSITY1, LLVector3(vect_c_p_d1.mV));
 
-    LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
-
     // TODO -- make these getters return vec3s
     LLVector3 sun_light_color = LLVector3(psky->getSunlightColor().mV);
     LLVector3 moon_light_color = LLVector3(psky->getMoonlightColor().mV);
+
+    // <AS:Chanayane> The selected atmosphere smoothly loses energy below the
+    // disc edge; keep both uniforms coherent for shaders with either branch.
+    sun_light_color *= atmospheric_influence;
+    moon_light_color *= atmospheric_influence;
+    // </AS:Chanayane>
 
     shader->uniform3fv(LLShaderMgr::SUNLIGHT_COLOR, sun_light_color);
     shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, moon_light_color);
@@ -860,8 +881,16 @@ void LLSettingsVOSky::applySpecial(void *ptarget, bool force)
 
     shader->uniform1f(LLShaderMgr::REFLECTION_PROBE_AMBIANCE, probe_ambiance);
 
-    shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, getIsSunUp() ? 1 : 0);
-    shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, getSunMoonGlowFactor());
+    // <AS:Chanayane> Use the extended atmospheric lifetime without changing
+    // the public center-based getIsSunUp() contract.
+    // shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, getIsSunUp() ? 1 : 0);
+    shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, atmospheric_sun ? 1 : 0);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Avoid the center-based glow cutoff at sun elevation zero.
+    // shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, getSunMoonGlowFactor());
+    shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR,
+                      ASCelestialTwilight::glowFactor(psky.get()));
+    // </AS:Chanayane>
     shader->uniform1f(LLShaderMgr::DENSITY_MULTIPLIER, getDensityMultiplier());
     shader->uniform1f(LLShaderMgr::DISTANCE_MULTIPLIER, getDistanceMultiplier());
 

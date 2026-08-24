@@ -28,6 +28,12 @@
 
 #include "lldrawpoolwlsky.h"
 
+// <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
+#include "ascelestialtwilight.h"
+#include "asmoonrendering.h"
+#include "asproceduralsun.h"
+// </AS:Chanayane>
+
 #include "llerror.h"
 #include "llface.h"
 #include "llimage.h"
@@ -44,7 +50,6 @@
 #include "llvowlsky.h"
 #include "llsettingsvo.h"
 #include "llviewercontrol.h"
-
 extern bool gCubeSnapshot;
 
 static LLStaticHashedString sCamPosLocal("camPosLocal");
@@ -205,9 +210,18 @@ void LLDrawPoolWLSky::renderSkyHazeDeferred(const LLVector3& camPosLocal, F32 ca
         sky_shader->uniform1f(LLShaderMgr::DROPLET_RADIUS, droplet_radius);
         sky_shader->uniform1f(LLShaderMgr::ICE_LEVEL, ice_level);
 
-        sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        // <AS:Chanayane> Preserve solar haze glow through its smooth tail.
+        // sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        sky_shader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR,
+                              ASCelestialTwilight::glowFactor(psky.get()));
+        // </AS:Chanayane>
 
-        sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, psky->getIsSunUp() ? 1 : 0);
+        // <AS:Chanayane> Do not overwrite the extended solar-atmosphere
+        // lifetime with the original center-at-horizon boolean.
+        // sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, psky->getIsSunUp() ? 1 : 0);
+        const bool atmospheric_sun = ASCelestialTwilight::isSunSource(psky.get());
+        sky_shader->uniform1i(LLShaderMgr::SUN_UP_FACTOR, atmospheric_sun ? 1 : 0);
+        // </AS:Chanayane>
 
         /// Render the skydome
         renderDome(origin, camHeightLocal, sky_shader);
@@ -339,7 +353,11 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
 
         cloudshader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
         cloudshader->uniform1f(LLShaderMgr::CLOUD_VARIANCE, cloud_variance);
-        cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        // <AS:Chanayane> Preserve solar cloud/haze glow through its smooth tail.
+        // cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR, psky->getSunMoonGlowFactor());
+        cloudshader->uniform1f(LLShaderMgr::SUN_MOON_GLOW_FACTOR,
+                               ASCelestialTwilight::glowFactor(psky.get()));
+        // </AS:Chanayane>
 
         /// Render the skydome
         renderDome(camPosLocal, camHeightLocal, cloudshader);
@@ -368,6 +386,11 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
     bool can_use_windlight_shaders = gPipeline.canUseWindLightShaders();
 
 
+    // <AS:Chanayane> Keep the sun quad usable as a procedural fallback when
+    // the active EEP has no sun texture.
+    const ASProceduralSun::RenderParams procedural_sun =
+        ASProceduralSun::getRenderParams(LLEnvironment::instance().getCurrentSky().get());
+    // </AS:Chanayane>
     if (gSky.mVOSkyp->getSun().getDraw() && face && face->getGeomCount())
     {
         LLPointer<LLViewerTexture> tex_a = face->getTexture(LLRender::DIFFUSE_MAP);
@@ -377,12 +400,24 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
         gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
 
         // if we even have sun disc textures to work with...
-        if (tex_a || tex_b)
+        // <AS:Chanayane> Also draw when only the procedural fallback exists.
+        // if (tex_a || tex_b)
+        if (tex_a || tex_b || procedural_sun.enabled)
+        // </AS:Chanayane>
         {
             // if and only if we have a texture defined, render the sun disc
             if (can_use_vertex_shaders && can_use_windlight_shaders)
             {
+                // <AS:Chanayane> AS-owned optional low-horizon halo pass.
+                ASProceduralSun::renderHalo(face, sun_shader, procedural_sun);
+                // </AS:Chanayane>
+
                 sun_shader->bind();
+
+                // <AS:Chanayane> Upload viewer-local procedural sun state.
+                ASProceduralSun::configureDiscShader(sun_shader, procedural_sun,
+                                                     tex_a || tex_b);
+                // </AS:Chanayane>
 
                 if (tex_a && (!tex_b || (tex_a == tex_b)))
                 {
@@ -406,7 +441,11 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
                 sun_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);
                 sun_shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
-                face->renderIndexed();
+                // <AS:Chanayane> Preserve the glow mask for a procedural disc
+                // so only its explicit configurable halo is generated.
+                // face->renderIndexed();
+                ASProceduralSun::renderDisc(face, procedural_sun);
+                // </AS:Chanayane>
 
                 gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
                 gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);
@@ -415,6 +454,10 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
             }
         }
     }
+    // <AS:Chanayane> AS-owned moon halo pass.
+    ASMoonRendering::renderHalo(gSky.mVOSkyp->mFace[LLVOSky::FACE_BLOOM],
+                                gSky.mVOSkyp->mFace[LLVOSky::FACE_MOON], moon_shader);
+    // </AS:Chanayane>
 
     face = gSky.mVOSkyp->mFace[LLVOSky::FACE_MOON];
 
@@ -448,9 +491,9 @@ void LLDrawPoolWLSky::renderHeavenlyBodies()
 
             LLSettingsSky::ptr_t psky = LLEnvironment::instance().getCurrentSky();
 
-            F32 moon_brightness = (float)psky->getMoonBrightness();
-
-            moon_shader->uniform1f(LLShaderMgr::MOON_BRIGHTNESS, moon_brightness);
+            // <AS:Chanayane> Upload AS-owned moon appearance state.
+            ASMoonRendering::configureDiscShader(moon_shader, psky.get());
+            // </AS:Chanayane>
             moon_shader->uniform3fv(LLShaderMgr::MOONLIGHT_COLOR, 1, gSky.mVOSkyp->getMoon().getColor().mV);
             moon_shader->uniform4fv(LLShaderMgr::DIFFUSE_COLOR, 1, color.mV);
             //moon_shader->uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);

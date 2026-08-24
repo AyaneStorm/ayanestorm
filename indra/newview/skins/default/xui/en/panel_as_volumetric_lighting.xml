@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<panel
+  border="false"
+  follows="all"
+  height="330"
+  layout="topleft"
+  left="1"
+  top="1"
+  width="430"
+  name="as_volumetric_lighting">
+
+  <!-- [AS:Chanayane] Volumetric lighting controls for the standalone
+       settings floater. The preferences Rendering tab contains only the
+       master switch and a button that opens this panel. -->
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    font="SansSerifSmallBold"
+    height="14"
+    layout="topleft"
+    left="15"
+    name="render_volumetric_lighting_section_label"
+    width="300"
+    top="10">
+    Volumetric lighting
+  </text>
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="RenderVolumetricLighting"
+    enabled_control="RenderShadowDetail"
+    label="Enable sun/moon god rays"
+    tool_tip="If checked, renders raymarched sun/moon light shafts through shadowed geometry. Requires Shadows to be enabled above None in the graphics preferences. Works on macOS."
+    left="15"
+    mouse_opaque="true"
+    name="render_volumetric_lighting"
+    radio_style="false"
+    width="400"
+    top="35" />
+
+  <slider
+    can_edit_text="true"
+    control_name="RenderVolumetricLightingAlbedo"
+    enabled_control="RenderVolumetricLighting"
+    decimal_digits="2"
+    follows="left|top"
+    height="16"
+    increment="0.01"
+    label="Scatter albedo"
+    label_width="115"
+    layout="topleft"
+    left="15"
+    max_val="1.0"
+    min_val="0.0"
+    name="render_volumetric_lighting_albedo"
+    show_text="true"
+    tool_tip="Single-scattering albedo fraction for volumetric sun and moon light shafts. Higher values scatter more of the incident light toward the camera. Range: 0.00 to 1.00. Changes are applied live."
+    top="63"
+    width="315" />
+
+  <slider
+    can_edit_text="true"
+    control_name="RenderVolumetricLightingDensity"
+    enabled_control="RenderVolumetricLighting"
+    decimal_digits="3"
+    follows="left|top"
+    height="16"
+    increment="0.001"
+    label="Scatter density"
+    label_width="115"
+    layout="topleft"
+    left="15"
+    max_val="0.25"
+    min_val="0.0"
+    name="render_volumetric_lighting_density"
+    show_text="true"
+    text_width="60"
+    tool_tip="Density of the scattering medium for sun/moon volumetric lighting. Higher values shorten visible shafts, suppress distant anti-solar rays, and (together with albedo) increase overall scatter brightness. Range: 0.000 to 0.250. Changes are applied live."
+    top="90"
+    width="315" />
+
+  <slider
+    can_edit_text="true"
+    control_name="RenderVolumetricLightingSunAsymmetry"
+    enabled_control="RenderVolumetricLighting"
+    decimal_digits="2"
+    follows="left|top"
+    height="16"
+    increment="0.01"
+    label="Sky gradient (sun)"
+    label_width="115"
+    layout="topleft"
+    left="15"
+    max_val="0.9"
+    min_val="0.0"
+    name="render_volumetric_lighting_sun_asymmetry"
+    show_text="true"
+    tool_tip="Henyey-Greenstein scattering asymmetry (g) while the sun is up. Higher values sharpen the sky's brightness gradient around the sun (brighter near it, darker away from it); lower values look flatter/more uniform. Changes are applied live."
+    top="118"
+    width="315" />
+
+  <slider
+    can_edit_text="true"
+    control_name="RenderVolumetricLightingAsymmetry"
+    enabled_control="RenderVolumetricLighting"
+    decimal_digits="2"
+    follows="left|top"
+    height="16"
+    increment="0.01"
+    label="Sky gradient (moon)"
+    label_width="115"
+    layout="topleft"
+    left="15"
+    max_val="0.9"
+    min_val="0.0"
+    name="render_volumetric_lighting_asymmetry"
+    show_text="true"
+    tool_tip="Henyey-Greenstein scattering asymmetry (g) while the moon is up. Higher values sharpen the sky's brightness gradient around the moon (brighter near it, darker away from it); lower values look flatter/more uniform. Changes are applied live."
+    top="146"
+    width="315" />
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="RenderVolumetricLightingHighQuality"
+    enabled_control="RenderVolumetricLighting"
+    label="High quality rays (full resolution)"
+    tool_tip="Uses full-resolution raymarching with 32 samples instead of half resolution with 16 samples. Significantly increases GPU cost. Changes are applied live."
+    left="15"
+    mouse_opaque="true"
+    name="render_volumetric_lighting_high_quality"
+    radio_style="false"
+    width="400"
+    top="174" />
+
+  <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="14"
+    layout="topleft"
+    left="15"
+    name="render_volumetric_lighting_debug_label"
+    width="225"
+    top="206">
+    Debug mode (0 = off):
+  </text>
+  <spinner
+    control_name="RenderVolumetricLightingDebug"
+    enabled_control="RenderVolumetricLighting"
+    decimal_digits="0"
+    follows="left|top"
+    height="20"
+    increment="1"
+    label_width="0"
+    layout="topleft"
+    left="250"
+    max_val="11"
+    min_val="0"
+    name="render_volumetric_lighting_debug"
+    tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. 10: raw 4x4 cumulative transparency atlas (near to far, left-to-right along each row, starting at the bottom and progressing upward). 11: same atlas layout, showing raw scene transmittance T (white/1.0 = no attenuation, black/0.0 = fully attenuated) instead of scatter color. All non-zero modes replace the screen outright."
+    top="202"
+    width="60" />
+
+  <check_box
+    follows="left|top"
+    layout="topleft"
+    height="16"
+    control_name="RenderVolumetricLocalLights"
+    enabled_control="RenderVolumetricLighting"
+    label="Include local lights (unshadowed)"
+    tool_tip="Adds bounded fog glow from nearby point and spot lights. Local lights are not shadowed and can leak through walls. Disabled by default."
+    left="15"
+    mouse_opaque="true"
+    name="render_volumetric_local_lights"
+    radio_style="false"
+    width="400"
+    top="237" />
+
+  <slider
+    can_edit_text="true"
+    control_name="RenderVolumetricLocalLightsIntensity"
+    enabled_control="RenderVolumetricLocalLights"
+    decimal_digits="2"
+    follows="left|top"
+    height="16"
+    increment="0.01"
+    label="Local intensity"
+    label_width="95"
+    layout="topleft"
+    left="15"
+    max_val="6.0"
+    min_val="0.0"
+    name="render_volumetric_local_lights_intensity"
+    show_text="true"
+    tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
+    top="265"
+    width="295" />
+
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="14"
+    layout="topleft"
+    left="15"
+    name="render_volumetric_local_lights_max_count_label"
+    width="225"
+    top="297">
+    Maximum local lights:
+  </text>
+  <spinner
+    control_name="RenderVolumetricLocalLightsMaxCount"
+    enabled_control="RenderVolumetricLocalLights"
+    decimal_digits="0"
+    follows="left|top"
+    height="20"
+    increment="1"
+    label_width="0"
+    layout="topleft"
+    left="250"
+    max_val="64"
+    min_val="0"
+    name="render_volumetric_local_lights_max_count"
+    tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
+    top="293"
+    width="60" />
+  <!-- [/AS:Chanayane] -->
+</panel>

@@ -28,6 +28,10 @@
 
 #include "lldrawpoolterrain.h"
 
+// <AS:Chanayane> Shared twilight source selection for volumetric shadow maps.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 #include "llfasttimer.h"
 
 #include "llagent.h"
@@ -174,7 +178,11 @@ void LLDrawPoolTerrain::beginShadowPass(S32 pass)
     gDeferredShadowProgram.bind();
 
     LLEnvironment& environment = LLEnvironment::instance();
-    gDeferredShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+    // <AS:Chanayane> Match terrain shadow direction to the active volumetric source.
+    // gDeferredShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+    gDeferredShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR,
+        ASCelestialTwilight::isSunSource(environment.getCurrentSky().get()) ? 1 : 0);
+    // </AS:Chanayane>
 }
 
 void LLDrawPoolTerrain::endShadowPass(S32 pass)

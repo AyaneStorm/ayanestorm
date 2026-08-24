@@ -26,6 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Depth-resolved volumetric input for transparency shaders.
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
+
 // <AS:Chanayane> Independent OIT renderer selection
 #include "fsoitdispatcher.h"
 // </AS:Chanayane>
@@ -111,6 +115,9 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     }
 
     shader->bind();
+// <AS:Chanayane> Bind the AS-owned cumulative scatter atlas when available.
+    ASVolumetricLighting::bindTransparencyAtlas(*shader);
+// </AS:Chanayane>
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
 
     if (LLPipeline::sRenderingHUDs)
@@ -751,6 +758,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     if (current_shader != target_shader)
                     {
                         gPipeline.bindDeferredShaderFast(*target_shader);
+// <AS:Chanayane> Shader preparation is followed by other shader/texture setup;
+// restore this shader's atlas binding at the actual PBR alpha draw switch.
+                        ASVolumetricLighting::bindTransparencyAtlas(*target_shader);
+// </AS:Chanayane>
                     }
 
                     params.mGLTFMaterial->bind(params.mTexture);
@@ -822,6 +833,10 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                     {// If we need shaders, and we're not ALREADY using the proper shader, then bind it
                     // (this way we won't rebind shaders unnecessarily).
                         gPipeline.bindDeferredShaderFast(*target_shader);
+// <AS:Chanayane> Restore the per-shader atlas binding immediately before the
+// alpha material textures are submitted; preparation-time bindings are stale.
+                        ASVolumetricLighting::bindTransparencyAtlas(*target_shader);
+// </AS:Chanayane>
 
                         if (params.mFullbright)
                         { // make sure the bind the exposure map for fullbright shaders so they can cancel out exposure
@@ -925,10 +940,12 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 }
             }
 
-// <AS:Chanayane> Route emissive draws to Exact OIT capture when active.
+// <AS:Chanayane> Route emissive draws to OIT capture when active, but preserve
+// the original depth-only guard so post-effect and DoF depth passes never
+// submit glow redraws.
             // // render emissive faces into alpha channel for bloom effects
             // if (!depth_only)
-            if (!FSOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
+            if (!depth_only && !FSOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
 // </AS:Chanayane>
             {
                 gPipeline.enableLightsDynamic();

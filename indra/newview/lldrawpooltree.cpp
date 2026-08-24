@@ -28,6 +28,10 @@
 
 #include "lldrawpooltree.h"
 
+// <AS:Chanayane> Shared twilight source selection for volumetric shadow maps.
+#include "ascelestialtwilight.h"
+// </AS:Chanayane>
+
 #include "lldrawable.h"
 #include "llface.h"
 #include "llsky.h"
@@ -121,7 +125,11 @@ void LLDrawPoolTree::beginShadowPass(S32 pass)
     LLEnvironment& environment = LLEnvironment::instance();
 
     gDeferredTreeShadowProgram.bind();
-    gDeferredTreeShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+    // <AS:Chanayane> Match tree shadow direction to the active volumetric source.
+    // gDeferredTreeShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
+    gDeferredTreeShadowProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR,
+        ASCelestialTwilight::isSunSource(environment.getCurrentSky().get()) ? 1 : 0);
+    // </AS:Chanayane>
     gDeferredTreeShadowProgram.setMinimumAlpha(0.5f);
 }
 
@@ -165,4 +173,3 @@ LLColor3 LLDrawPoolTree::getDebugColor() const
 {
     return LLColor3(1.f, 0.f, 1.f);
 }
-

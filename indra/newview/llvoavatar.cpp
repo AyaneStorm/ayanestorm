@@ -7034,7 +7034,7 @@ bool LLVOAvatar::processSingleAnimationStateChange( const LLUUID& anim_id, bool 
     // keep appearances in sync, but not so often that animations
     // cause constant jiggling of the body or camera. Possible
     // compromise is to do it on animation changes:
-	computeBodySize();
+    computeBodySize();
 
     bool result = false;
 

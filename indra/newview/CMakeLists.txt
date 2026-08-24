@@ -94,8 +94,14 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Scale-aware sun/moon twilight module.
+    ascelestialtwilight.cpp
+    asmoonrendering.cpp
+    asproceduralsun.cpp
+    # </AS:Chanayane>
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
+    asvolumetriclighting.cpp
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -961,8 +967,14 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Scale-aware sun/moon twilight module.
+    ascelestialtwilight.h
+    asmoonrendering.h
+    asproceduralsun.h
+    # </AS:Chanayane>
     aspanelprefsayanestorm.h
     asstreamkeeper.h
+    asvolumetriclighting.h
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h

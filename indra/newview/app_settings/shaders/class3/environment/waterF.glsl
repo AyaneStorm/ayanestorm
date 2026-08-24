@@ -90,6 +90,56 @@ uniform sampler2D depthMap;
 
 uniform sampler2D exclusionTex;
 
+// <AS:Chanayane> Preserve HDR water output when the copied scene contains
+// volumetric lighting; the normal water BRDF shades that scene through
+// screenTex without a separate water-only scatter estimator.
+uniform int asVolumetricEnabled;
+uniform vec2 screen_res;
+uniform sampler2D asVolumetricAtlas;
+
+vec3 asVolumetricWaterForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return vec3(0.0);
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    vec3 hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    if (upper <= 0.0) return hi * clamp(coordinate, 0.0, 1.0);
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    vec3 lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).rgb;
+    return mix(lo, hi, weight);
+}
+
+// Scene transmittance T, same atlas alpha channel - mirrors
+// asVolumetricWaterForeground's tile lookup, reading .a instead of .rgb, with
+// no near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
+// Only water's own Fresnel-reflected share needs this locally; the refracted
+// share's transmittance already arrives via screenTex once the opaque
+// composite attenuates the scene itself (see the file header comment above).
+float asVolumetricWaterTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0) return 1.0;
+    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float weight = fract(coordinate);
+    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+                    vec2(1.0) - 2.0 / screen_res);
+    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    if (upper <= 0.0) return hi;
+    float lower = upper - 1.0;
+    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    return mix(lo, hi, weight);
+}
+// </AS:Chanayane>
+
 uniform int classic_mode;
 uniform vec3 lightDir;
 uniform vec3 specular;
@@ -326,7 +376,16 @@ void main()
     radiance *= df2.y;
     //radiance = toneMapNoExposure(radiance);
     vec3 color = vec3(0);
-    color = mix(fb.rgb, radiance, min(1, df2.x)) + punctual.rgb;
+// <AS:Chanayane> Attenuate only the Fresnel-reflected share (radiance,
+// punctual) by scene transmittance - the refracted share (fb.rgb, sampled
+// from screenTex) already carries its own transmittance once the opaque
+// composite attenuates the scene itself, so attenuating it again here would
+// double-apply it.
+// color = mix(fb.rgb, radiance, min(1, df2.x)) + punctual.rgb;
+    float water_transmittance = asVolumetricWaterTransmittance(pos);
+    color = mix(fb.rgb, radiance * water_transmittance, min(1, df2.x)) +
+            punctual.rgb * water_transmittance;
+// </AS:Chanayane>
 
     float water_haze_scale = 4;
 
@@ -342,8 +401,28 @@ void main()
     fade = min(1, fade);
     color = mix(fb.rgb, color, fade);
 
+    // <AS:Chanayane> `screenTex` already supplies volumetrics through the
+    // refracted share of the water equation. Add only the camera-to-water
+    // atlas value corresponding to the Fresnel-reflected share; adding the
+    // full foreground field here previously overwhelmed all wave detail.
+    // color += asVolumetricForeground(pos);
+    color += asVolumetricWaterForeground(pos) * min(1.0, df2.x) * fade;
+    // </AS:Chanayane>
+
     float spec = min(max(max(punctual.r, punctual.g), punctual.b), 0);
 
-    frag_color = min(vec4(1),max(vec4(color.rgb, spec * water_mask), vec4(0)));
+    // <AS:Chanayane> Preserve HDR volumetric radiance until the scene
+    // tonemapper while retaining the original output when the effect is off.
+    // frag_color = min(vec4(1),max(vec4(color.rgb, spec * water_mask), vec4(0)));
+    vec4 water_output = max(vec4(color.rgb, spec * water_mask), vec4(0));
+    if (asVolumetricEnabled != 0)
+    {
+        frag_color = vec4(water_output.rgb, min(water_output.a, 1.0));
+    }
+    else
+    {
+        // Exact Firestorm output path when volumetric lighting is disabled.
+        frag_color = min(vec4(1),max(vec4(color.rgb, spec * water_mask), vec4(0)));
+    }
+    // </AS:Chanayane>
 }
-

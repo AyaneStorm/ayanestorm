@@ -65,6 +65,7 @@ RenderReflectionProbeLevel  1   3
 RenderDeferred				1	1
 RenderDeferredSSAO			1	1
 RenderShadowDetail			1	2
+RenderVolumetricLighting	1	0
 RenderUseStreamVBO			1	1
 RenderFSAAType			    1	2
 RenderFSAASamples			1	3
@@ -412,6 +413,7 @@ RenderTerrainDetail 		1	0
 RenderTransparentWater      1   0
 RenderDeferredSSAO			0	0
 RenderShadowDetail			0	0
+RenderVolumetricLighting	0	0
 RenderReflectionProbeDetail	0	-1
 RenderMirrors				0	0
 RenderDisableVintageMode           1   0

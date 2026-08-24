@@ -1329,7 +1329,7 @@ void LLWearableItemsList::ContextMenu::updateItemsVisibility(LLContextMenu* menu
     setMenuItemEnabled(menu, "create_new",          LLAppearanceMgr::instance().canAddWearables(ids));
     setMenuItemVisible(menu, "show_original",       !standalone);
     setMenuItemEnabled(menu, "show_original",       n_items == 1 && n_links == n_items);
-// <AS:Chanayane> Replace links context menu entry
+// <AS:Chanayane> Replace Links context menu entry
     setMenuItemVisible(menu, "replace_links",       n_links >= 1);
     setMenuItemEnabled(menu, "replace_links",       n_links == 1);
 // </AS:Chanayane>

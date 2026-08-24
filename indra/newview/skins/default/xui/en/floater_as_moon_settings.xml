@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<floater
+  name="as_moon_settings"
+  title="Moon Settings"
+  can_dock="false"
+  can_resize="false"
+  save_rect="true"
+  save_visibility="true"
+  width="462"
+  height="508"
+  layout="topleft">
+  <!-- AyaneStorm moon rendering controls live in a dedicated reusable panel. -->
+  <panel
+    filename="panel_as_moon_settings.xml"
+    follows="all"
+    height="486"
+    layout="topleft"
+    left="1"
+    name="as_moon_settings_panel"
+    top="1"
+    width="460" />
+</floater>

@@ -2015,7 +2015,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>0.5</real>
+      <real>0.8</real>
     </map>
     <key>AudioLevelMaster</key>
     <map>
@@ -6078,7 +6078,7 @@
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>3.0</real>
+      <real>2.5</real>
     </map>
     <key>FullScreenAutoDetectAspectRatio</key>
     <map>
@@ -13198,6 +13198,138 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>2</integer>
     </map>
+    <!-- <AS:Chanayane> Optional raymarched volumetric (god-ray) lighting. -->
+    <key>RenderVolumetricLighting</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable optional raymarched volumetric sun/moon lighting (god rays). Requires RenderShadowDetail > 0.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingAlbedo</key>
+    <map>
+      <key>Comment</key>
+      <string>Single-scattering albedo fraction for the optional volumetric lighting pass. Combined with density to derive scatter brightness.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>1.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingHighQuality</key>
+    <map>
+      <key>Comment</key>
+      <string>Use full-resolution 32-sample directional volumetric lighting instead of the default half-resolution 16-sample path.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingDensity</key>
+    <map>
+      <key>Comment</key>
+      <string>Beer-Lambert view-path extinction (scattering density) per metre for directional volumetric lighting. Also scales scatter brightness together with albedo.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.012</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingAsymmetry</key>
+    <map>
+      <key>Comment</key>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the moon is the active light source. Positive biases scatter toward the view direction.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.7</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingSunAsymmetry</key>
+    <map>
+      <key>Comment</key>
+      <string>Henyey-Greenstein scattering asymmetry (g) for the optional volumetric lighting pass when the sun is the active light source. Positive biases scatter toward the view direction. The sun is bright enough that a lower value than the moon's looks correct.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.4</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingDebug</key>
+    <map>
+      <key>Comment</key>
+      <string>TEMPORARY development aid, remove once the volumetric lighting effect is confirmed working: 0 normal, non-zero replaces the screen with the raw upsampled raymarch output instead of blending it in, bypassing tonemap.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLights</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable bounded unshadowed volumetric fog contributions from nearby local lights.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsIntensity</key>
+    <map>
+      <key>Comment</key>
+      <string>Intensity of the optional unshadowed local-light volumetric contribution.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.35</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLocalLightsMaxCount</key>
+    <map>
+      <key>Comment</key>
+      <string>Maximum scored nearby local lights included in the volumetric pass (0 through 64).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>8</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
   <key>RenderReflectionsEnabled</key>
   <map>
     <key>Comment</key>
@@ -16346,7 +16478,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.5</real>
+      <real>3.0</real>
     </map>
     <key>UIAutoScale</key>
     <map>
@@ -25324,151 +25456,6 @@ Change of this parameter will affect the layout of buttons in notification toast
       <string>String</string>
       <key>Value</key>
       <string/>
-    </map>
-    <key>ASUnencryptedCacheLocation</key>
-    <map>
-      <key>Comment</key>
-      <string>Location for the unencrypted cache; Uses default cache directory/unencryptedcache if empty</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>String</string>
-      <key>Value</key>
-      <string/>
-    </map>
-    <key>ASShowConversationTabAvatarThumbnails</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, 1:1 avatar conversation tabs show the other participant's profile picture thumbnail</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASShowConversationTabTypingBorder</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the avatar thumbnail on a 1:1 conversation tab shows a yellow border while the other participant is typing. Requires ASShowConversationTabAvatarThumbnails</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASShowTypingTabItalics</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, a 1:1 conversation tab's label is shown in italics while the other participant is typing</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <!-- <AS:Chanayane> Optional Avatars-in-range / Recent people tabs in Conversations -->
-    <key>ASShowRadarInConversations</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, an Avatars in range (Radar) tab is docked in the Conversations window</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASShowRecentPeopleInConversations</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, a Recent people tab is docked in the Conversations window</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <!-- </AS:Chanayane> -->
-    <key>ASShowOwnAvatarInRadar</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, own avatar is shown in the Nearby People radar list</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>1</integer>
-    </map>
-    <key>ASSaveFinalSnapshot</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the viewer saves a final snapshot on exit</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASPreloadDullahanDestinations</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the Dullahan (CEF) host for the Destinations floater is preloaded at startup</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASPreloadDullahanAvatarWelcomePack</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the Dullahan (CEF) host for the Avatar Welcome Pack floater is preloaded at startup</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASPreloadDullahanSearch</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the Dullahan (CEF) host for the Search floater is preloaded at startup</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASPreloadDullahanLegacySearch</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the Dullahan (CEF) host for the Legacy Search floater is preloaded at startup</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ASPreloadDullahanMarketplace</key>
-    <map>
-      <key>Comment</key>
-      <string>If enabled, the Dullahan (CEF) host for the Marketplace floater is preloaded at startup</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
     </map>
     <key>FSTurnAvatarToSelectedObject</key>
     <map>

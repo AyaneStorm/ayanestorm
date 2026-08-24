@@ -34,6 +34,9 @@
 #include "fsexactoit.h"
 #include "fsavboit.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional volumetric lighting
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
 #include "llviewershadermgr.h"
 #include "llviewercontrol.h"
 #include "llversioninfo.h"
@@ -562,6 +565,9 @@ void LLViewerShaderMgr::setShaders()
 // <AS:Chanayane> Include independent OIT shader revisions in the cache key.
             hash_obj.update(FSExactOIT::shaderCacheRevision());
             hash_obj.update(FSAVBOIT::shaderCacheRevision());
+// </AS:Chanayane>
+// <AS:Chanayane> Include volumetric lighting shader revision in the cache key.
+            hash_obj.update(ASVolumetricLighting::shaderCacheRevision());
 // </AS:Chanayane>
             current_cache_version = hash_obj.digest();
 
@@ -1159,6 +1165,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // <AS:Chanayane> Unload independent OIT shader families.
         FSAVBOIT::unloadShaders();
         FSExactOIT::unloadShaders();
+// </AS:Chanayane>
+// <AS:Chanayane> Unload optional volumetric lighting shaders.
+        ASVolumetricLighting::unloadShaders();
 // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
@@ -3071,6 +3080,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         FSAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     success = FSExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
+// </AS:Chanayane>
+// <AS:Chanayane> Load optional volumetric lighting independently; a compile
+// failure here must not fail the whole deferred shader load.
+    ASVolumetricLighting::loadShaders(mShaderLevel[SHADER_DEFERRED]);
 // </AS:Chanayane>
     return success;
 }

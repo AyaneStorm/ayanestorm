@@ -67,11 +67,87 @@ uniform float minimum_alpha;
 uniform mat4 proj_mat;
 uniform mat4 inv_proj;
 uniform vec2 screen_res;
+// <AS:Chanayane> Cumulative foreground scatter for alpha transparency.
+uniform sampler2D asVolumetricAtlas;
+uniform int asVolumetricEnabled;
 uniform int sun_up_factor;
 uniform vec4 light_position[8];
 uniform vec3 light_direction[8];
 uniform vec4 light_attenuation[8];
 uniform vec3 light_diffuse[8];
+
+vec3 asVolumetricForeground(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0)
+    {
+        return vec3(0.0);
+    }
+
+    const float max_distance = 128.0;
+    float coordinate = sqrt(clamp(length(view_position) / max_distance, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float blend_weight = fract(coordinate);
+    if (coordinate >= 16.0)
+    {
+        upper = 15.0;
+        blend_weight = 1.0;
+    }
+
+    vec2 screen_uv = gl_FragCoord.xy / screen_res;
+    vec2 inset = 2.0 / screen_res;
+    screen_uv = clamp(screen_uv, inset, vec2(1.0) - inset);
+    vec2 upper_tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    vec3 upper_value = texture(asVolumetricAtlas, (upper_tile + screen_uv) * 0.25).rgb;
+    if (upper <= 0.0)
+    {
+        return upper_value * clamp(coordinate, 0.0, 1.0);
+    }
+
+    float lower = upper - 1.0;
+    vec2 lower_tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    vec3 lower_value = texture(asVolumetricAtlas, (lower_tile + screen_uv) * 0.25).rgb;
+    return mix(lower_value, upper_value, blend_weight);
+}
+
+// Scene transmittance T = exp(-extinction * distance), carried in the same
+// atlas's alpha channel - mirrors asVolumetricForeground's own tile lookup
+// exactly (see asVolumetricAtlasF.glsl) but reads .a instead of .rgb, and has
+// no near-camera clamp-by-coordinate term since T is not a cumulative
+// scatter quantity that fades in from zero at the camera; it is already 1.0
+// there.
+float asVolumetricTransmittance(vec3 view_position)
+{
+    if (asVolumetricEnabled == 0)
+    {
+        return 1.0;
+    }
+
+    const float max_distance = 128.0;
+    float coordinate = sqrt(clamp(length(view_position) / max_distance, 0.0, 1.0)) * 16.0;
+    float upper = clamp(floor(coordinate), 0.0, 15.0);
+    float blend_weight = fract(coordinate);
+    if (coordinate >= 16.0)
+    {
+        upper = 15.0;
+        blend_weight = 1.0;
+    }
+
+    vec2 screen_uv = gl_FragCoord.xy / screen_res;
+    vec2 inset = 2.0 / screen_res;
+    screen_uv = clamp(screen_uv, inset, vec2(1.0) - inset);
+    vec2 upper_tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    float upper_value = texture(asVolumetricAtlas, (upper_tile + screen_uv) * 0.25).a;
+    if (upper <= 0.0)
+    {
+        return upper_value;
+    }
+
+    float lower = upper - 1.0;
+    vec2 lower_tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    float lower_value = texture(asVolumetricAtlas, (lower_tile + screen_uv) * 0.25).a;
+    return mix(lower_value, upper_value, blend_weight);
+}
+// </AS:Chanayane>
 
 void waterClip(vec3 pos);
 
@@ -349,6 +425,17 @@ void main()
 #endif
 
     color.rgb *= final_scale;
+// <AS:Chanayane> Add camera-to-fragment scatter without applying the atlas
+// transmittance to the forward alpha surface itself. Multiplying these
+// minified alpha cards by T made the red forward-alpha LOD turn black inside
+// shadowed volumetric regions, while the same asset's blue deferred alpha-mask
+// LOD remained normal. The opaque scene behind it is already attenuated by the
+// main composite, so ordinary alpha blending still places the transparent
+// surface into the fogged scene without the red/blue discontinuity.
+// color.rgb = color.rgb * asVolumetricTransmittance(vary_position) +
+//             asVolumetricForeground(vary_position);
+    color.rgb += asVolumetricForeground(vary_position);
+// </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(color, vec4(0));
 #ifdef EXACT_OIT
