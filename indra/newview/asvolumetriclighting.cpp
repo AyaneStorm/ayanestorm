@@ -419,7 +419,7 @@ F32 ASVolumetricLighting::getScatterAlbedo()
     // Single-scattering albedo fraction. Combined with density and the fixed
     // BRIGHTNESS_SCALE shader constant to derive final scatter brightness -
     // see the formula comment in asVolumetricLightF.glsl.
-    static LLCachedControl<F32> albedo(gSavedSettings, "RenderVolumetricLightingAlbedo", 1.0f);
+    static LLCachedControl<F32> albedo(gSavedSettings, "RenderVolumetricLightingAlbedo", 0.35f);
     return llclamp((F32)albedo, 0.f, 1.f);
 }
 

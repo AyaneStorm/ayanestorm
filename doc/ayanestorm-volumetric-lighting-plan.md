@@ -1,5 +1,27 @@
 # AyaneStorm Volumetric Lighting (God Rays) — Implementation Plan
 
+## Scatter albedo default correction (2026-08-24)
+
+The shipped `RenderVolumetricLightingAlbedo` default and its C++ fallback are
+`0.35`, superseding the initial `1.0` tuning point documented later in this
+file. Persisted user values remain unchanged; the corrected value applies to
+fresh or reset settings.
+
+## Moon shadow-map regression correction (2026-08-24)
+
+The scale-aware twilight change fades `mSunDiffuse` to black after the solar
+tail ends while leaving `mMoonDiffuse` active. `generateSunShadow()` still used
+the old sun-only `mSunDiffuse == black` early-out, so it skipped all directional
+shadow-map generation at night even though its caster direction had correctly
+switched to the moon. The volumetric raymarch consequently had no structured
+moon shadow visibility from which to form shafts.
+
+The early-out now tests the diffuse color of the already-selected twilight
+shadow source (`shadow_sun ? mSunDiffuse : mMoonDiffuse`). This preserves the
+existing daytime and no-active-source skips while allowing moon shadows and
+moon god rays to render throughout the documented moon-source lifetime.
+Build and runtime verification remain with the user per repository policy.
+
 ## Fresh audit correction (2026-08-20)
 
 The complete feature diff for commit
@@ -1481,9 +1503,11 @@ items, in priority order:
    fraction. Final scatter brightness is now `density * albedo *
    BRIGHTNESS_SCALE * phase * (visibility_integral / MAX_MARCH_DISTANCE)`,
    with `BRIGHTNESS_SCALE = 64.0` a new fixed shader constant (not user-
-   exposed) chosen so the new defaults (`density=0.012, albedo=1.0`) land
-   near the old default's brightness (`intensity=0.8`) - flagged as a
-   starting point needing live-tuning, not an exact derivation. Applied
+   exposed) originally chosen so the initial tuning point
+   (`density=0.012, albedo=1.0`) landed near the old default's brightness
+   (`intensity=0.8`) - flagged as a starting point needing live-tuning, not
+   an exact derivation. The shipped albedo default was subsequently set to
+   `0.35`. Applied
    consistently across all three consumers (raymarch, atlas, composite) so
    they stay in sync. Per explicit user decision this was a full replacement
    with no migration: old settings are gone outright, existing tuned values
