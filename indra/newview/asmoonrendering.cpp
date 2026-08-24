@@ -85,36 +85,7 @@ void ASMoonRendering::renderHalo(LLFace* halo_face, LLFace* moon_face,
     {
         LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
         gGL.setSceneBlendType(LLRender::BT_ADD_WITH_ALPHA);
-
-        // Restrict this translucent pass to the attachment that actually
-        // carries its color. Apple OpenGL exposed short dark tangents at the
-        // halo boundary when the shader also wrote zero-valued outputs to the
-        // other deferred attachments. Save and restore every mask so this
-        // local workaround cannot leak state into the following moon draw.
-        static LLCachedControl<bool> emissive_buffer(
-            gSavedSettings, "RenderEnableEmissiveBuffer", false);
-        const GLuint attachment_count = emissive_buffer ? 4u : 3u;
-        const GLuint halo_attachment = emissive_buffer ? 3u : 0u;
-        GLboolean saved_color_masks[4][4];
-        for (GLuint attachment = 0; attachment < attachment_count; ++attachment)
-        {
-            glGetBooleani_v(GL_COLOR_WRITEMASK, attachment,
-                            saved_color_masks[attachment]);
-            const GLboolean write = attachment == halo_attachment
-                                  ? GL_TRUE : GL_FALSE;
-            glColorMaski(attachment, write, write, write, write);
-        }
-
         halo_face->renderIndexed();
-
-        for (GLuint attachment = 0; attachment < attachment_count; ++attachment)
-        {
-            glColorMaski(attachment,
-                         saved_color_masks[attachment][0],
-                         saved_color_masks[attachment][1],
-                         saved_color_masks[attachment][2],
-                         saved_color_masks[attachment][3]);
-        }
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     }
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);

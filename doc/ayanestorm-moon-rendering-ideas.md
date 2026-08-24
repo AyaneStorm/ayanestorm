@@ -54,21 +54,30 @@ value; the Rendering 2 control exposes a 0.0 to 5.0 range.
 
 ## Phase-aware atmospheric moon halo
 
-### macOS halo-boundary MRT correction (2026-08-24)
+### macOS halo-boundary rendering correction (2026-08-24)
 
-A macOS runtime report showed short dark tangents at the halo's four cardinal
-extremes that disappeared when the procedural halo was disabled. An explicit
-circular shader discard was tested first; Windows remained correct, but macOS
-screenshots showed the same lines, ruling out a faint outer-quad profile.
+A macOS runtime report showed one-pixel dotted curves on the halo's left and
+bottom. Moving the moon to a viewport corner revealed that the marks follow a
+projected circle. Earlier discard, MRT-mask, blend, and depth hypotheses were
+runtime-tested or ruled out and have been reverted.
 
-The halo draw now saves the indexed color-write masks and enables writes only
-for the attachment that carries halo color: attachment 3 with the emissive
-buffer enabled, or attachment 0 without it. This prevents the translucent halo
-shader's zero-valued outputs from touching the other deferred attachments on
-Apple OpenGL. Every indexed mask is restored immediately after the draw, before
-the ordinary moon pass, so the workaround cannot leak render state. The failed
-hard-radius discard was removed and the existing smooth profile remains
-unchanged. macOS runtime verification and a Windows comparison remain pending.
+The discontinuity was in the moon-mask math. Mask filtering intentionally runs
+out to `distance_in_disc_radii < 1.25`, while
+`moon_mask_uv = 0.5 + 0.5 * halo_position` is already outside `[0,1]` beyond
+radius 1. The texture uses clamp-to-edge, so those samples repeated the outer
+edge alpha. At radius 1.25 the conditional abruptly replaced that repeated
+coverage with zero. Only the left and bottom arcs appeared because those moon
+texture edges contain nonzero alpha; the opposite edges do not.
+
+The five mask taps now use `moonMaskAlpha()`, which emulates bilinear filtering
+against a transparent one-texel border instead of sampling the clamped edge.
+The edge texel has half weight exactly at UV 0/1, reaches full weight half a
+texel inward, and fades to zero half a texel outward. This avoids both the
+original repeated-edge discontinuity and a replacement hard bounds cutoff.
+Coverage reaches zero well before the radius-1.25 optimization boundary. The
+original halo blend, discard, MRT outputs, depth, and radial profile are
+otherwise restored unchanged. macOS runtime verification and a Windows
+comparison remain pending.
 
 The dormant `FACE_BLOOM` sky face now carries a fixed-size procedural
 moon-centered billboard rendered behind the disc. `ASMoonHaloStrength`,
