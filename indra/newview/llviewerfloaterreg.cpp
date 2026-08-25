@@ -31,6 +31,9 @@
 // <AS:Chanayane> Register viewer-local aurora settings callbacks.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Register viewer-local camera effects callbacks.
+#include "aslensflare.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llviewerfloaterreg.h"
 
@@ -626,6 +629,10 @@ void LLViewerFloaterReg::registerFloaters()
     // </AS:Chanayane>
     // <AS:Chanayane> Viewer-local procedural sunset sun controls.
     LLFloaterReg::add("as_sun_settings", "floater_as_sun_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Viewer-local camera effects controls.
+    ASLensFlare::registerUICallbacks();
+    LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     // </AS:Chanayane>
     // </AS:Chanayane>
     // <FS:CR> Search floater is deferred to login now so we can tell what grid we're in.

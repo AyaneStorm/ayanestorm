@@ -97,6 +97,9 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local celestial lens flare module.
+    aslensflare.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.cpp
     asmoonrendering.cpp
@@ -972,6 +975,9 @@ set(viewer_HEADER_FILES
     asfloaterrecentpeople.h
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local celestial lens flare module.
+    aslensflare.h
     # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.h
