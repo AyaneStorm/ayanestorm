@@ -218,6 +218,22 @@
           parameter="as_volumetric_lighting" />
       </button>
 
+      <!-- <AS:Chanayane> Dedicated viewer-local camera effects controls. -->
+      <button
+        follows="left|top"
+        height="23"
+        label="Camera effects settings"
+        layout="topleft"
+        left="250"
+        name="open_camera_effects"
+        top="190"
+        width="220">
+        <button.commit_callback
+          function="Floater.ToggleOrBringToFront"
+          parameter="as_camera_effects" />
+      </button>
+      <!-- </AS:Chanayane> -->
+
       <button
         follows="left|top"
         height="23"

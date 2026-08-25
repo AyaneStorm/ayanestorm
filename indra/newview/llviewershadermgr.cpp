@@ -33,6 +33,9 @@
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local celestial lens flare shader lifecycle.
+#include "aslensflare.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
 #include "fsavboit.h"
@@ -458,6 +461,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gEnvironmentMapProgram);
     // <AS:Chanayane> Register the independent optional aurora shader.
     ASAurora::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the independent optional lens flare shader.
+    ASLensFlare::registerShader(mShaderList);
     // </AS:Chanayane>
     mShaderList.push_back(&gDeferredWLSkyProgram);
     mShaderList.push_back(&gDeferredWLCloudProgram);
@@ -1177,6 +1183,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional aurora shader.
         ASAurora::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional lens flare shader.
+        ASLensFlare::unloadShader();
         // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
@@ -2976,6 +2985,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // Aurora is optional and must not take down the core sky shaders if a
         // driver rejects it; configureShader() skips an incomplete program.
         ASAurora::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Build the optional screen-space lens flare pass.
+    if (success)
+    {
+        ASLensFlare::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 

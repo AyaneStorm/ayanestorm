@@ -31,7 +31,7 @@ class LLAvatarList;
 
 // Lists people the agent has recently interacted with (LLRecentPeople), so it
 // can be docked as an optional tab in the Conversations window.
-class ASFloaterRecentPeople : public LLFloater, public boost::signals2::trackable
+class ASFloaterRecentPeople : public LLFloater
 {
 public:
     ASFloaterRecentPeople(const LLSD& key);

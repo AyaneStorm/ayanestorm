@@ -36,6 +36,10 @@
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Optional screen-space celestial lens flares.
+#include "aslensflare.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
@@ -9136,6 +9140,11 @@ void LLPipeline::renderFinalize()
     }
 
     gDeferredPostNoDoFNoiseProgram.unbind();
+
+    // <AS:Chanayane> Composite depth-occluded sun/moon lens flares over the
+    // completed 3D image, before snapshot guides and other UI overlays.
+    ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    // </AS:Chanayane>
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
