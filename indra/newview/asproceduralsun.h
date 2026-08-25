@@ -17,6 +17,9 @@ class LLGLSLShader;
 
 namespace ASProceduralSun
 {
+    // Registers reset buttons used by the standalone settings panel.
+    void registerUICallbacks();
+
     struct RenderParams
     {
         bool enabled = false;

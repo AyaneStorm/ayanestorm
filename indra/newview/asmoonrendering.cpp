@@ -9,6 +9,7 @@
 #include "asmoonrendering.h"
 
 #include "asvolumetriclighting.h"
+#include "llcontrol.h"
 #include "llenvironment.h"
 #include "llface.h"
 #include "llgl.h"
@@ -20,6 +21,33 @@
 #include "llviewercontrol.h"
 #include "llviewertexture.h"
 #include "llvosky.h"
+#include "lluictrl.h"
+
+void ASMoonRendering::registerUICallbacks()
+{
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASMoonRendering.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            static const std::vector<std::string> moon_controls = {
+                "ASMoonHorizonMinOpacity", "ASMoonBrightnessMultiplier",
+                "ASMoonPhase", "ASMoonPhaseCurvature", "ASMoonPhaseSoftness",
+                "ASMoonPhaseTilt", "ASMoonTerminatorReliefStrength",
+                "ASMoonTerminatorReliefWidth", "ASMoonEarthshineStrength",
+                "ASMoonHorizonTint", "ASMoonHorizonTintStrength",
+                "ASMoonHorizonTintAngle", "ASMoonHaloStrength",
+                "ASMoonHaloRadius", "ASMoonHaloSoftness"
+            };
+            const std::string control_name = data.asString();
+            if (std::find(moon_controls.begin(), moon_controls.end(), control_name) != moon_controls.end())
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(control_name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
+}
 
 void ASMoonRendering::renderHalo(LLFace* halo_face, LLFace* moon_face,
                                  LLGLSLShader* shader)

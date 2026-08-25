@@ -26,6 +26,9 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "asvolumetriclighting.h"
+
+#include "llcontrol.h"
+#include "lluictrl.h"
 #include "ascelestialtwilight.h"
 
 #include "llenvironment.h"
@@ -145,6 +148,30 @@ struct LocalLight
     LLVector4 color_falloff;
     F32 score;
 };
+}
+
+void ASVolumetricLighting::registerUICallbacks()
+{
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASVolumetricLighting.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            static const std::vector<std::string> volumetric_controls = {
+                "RenderVolumetricLightingAlbedo", "RenderVolumetricLightingDensity",
+                "RenderVolumetricLightingSunAsymmetry", "RenderVolumetricLightingAsymmetry",
+                "RenderVolumetricLightingHighQuality", "RenderVolumetricLightingDebug",
+                "RenderVolumetricLocalLightsIntensity", "RenderVolumetricLocalLightsMaxCount"
+            };
+            const std::string control_name = data.asString();
+            if (std::find(volumetric_controls.begin(), volumetric_controls.end(), control_name)
+                != volumetric_controls.end())
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(control_name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
 }
 
 F32 ASVolumetricLighting::getMoonPhaseIlluminatedFraction()
