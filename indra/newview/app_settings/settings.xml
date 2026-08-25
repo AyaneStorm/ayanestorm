@@ -25582,7 +25582,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     </map>
     <key>ASAuroraQuality</key>
     <map>
-      <key>Comment</key><string>Aurora quality: zero low, one medium, two high, three ultra</string>
+      <key>Comment</key><string>Aurora quality: 0 low, 1 medium, 2 high, 3 ultra, 4 extreme, 5 maximum</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
       <key>Value</key><integer>3</integer><key>Backup</key><integer>0</integer>
     </map>

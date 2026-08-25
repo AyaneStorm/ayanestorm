@@ -10,6 +10,8 @@
     <combo_box.item label="Medium (20 samples)" name="medium" value="1" />
     <combo_box.item label="High (32 samples)" name="high" value="2" />
     <combo_box.item label="Ultra (64 samples)" name="ultra" value="3" />
+    <combo_box.item label="Extreme (128 samples)" name="extreme" value="4" />
+    <combo_box.item label="Maximum (256 samples)" name="maximum" value="5" />
   </combo_box>
   <slider can_edit_text="true" control_name="ASAuroraIntensity" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Intensity" label_width="190" layout="topleft" left="15" max_val="4.0" min_val="0.0" name="aurora_intensity" show_text="true" text_width="50" top="92" width="390" />
   <slider can_edit_text="true" control_name="ASAuroraCoverage" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Sky coverage" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="aurora_coverage" show_text="true" text_width="50" top="120" width="390" tool_tip="Controls how much sky contains aurora groups; lower values leave more empty sky." />

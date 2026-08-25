@@ -91,8 +91,9 @@ bool ASAurora::configureShader()
     const LLVector3d camera = gAgentCamera.getCameraPositionGlobal();
     const LLColor4 low_color = gSavedSettings.getColor4("ASAuroraLowColor");
     const LLColor4 high_color = gSavedSettings.getColor4("ASAuroraHighColor");
-    const S32 quality = llclamp(gSavedSettings.getS32("ASAuroraQuality"), 0, 3);
+    const S32 quality = llclamp(gSavedSettings.getS32("ASAuroraQuality"), 0, 5);
     const F32 seed = (F32)llclamp(gSavedSettings.getS32("ASAuroraSeed"), 0, 999999);
+    const F32 thickness = llclamp(gSavedSettings.getF32("ASAuroraThickness"), 0.03f, 1.0f);
 
     sAuroraProgram.bind();
     sAuroraProgram.uniform1f(sAuroraTime, gFrameTimeSeconds);
@@ -101,10 +102,12 @@ bool ASAurora::configureShader()
     sAuroraProgram.uniform1f(sAuroraScale, llclamp(gSavedSettings.getF32("ASAuroraScale"), 0.1f, 4.f));
     sAuroraProgram.uniform1f(sAuroraCoverage, llclamp(gSavedSettings.getF32("ASAuroraCoverage"), 0.f, 1.f));
     sAuroraProgram.uniform1f(sAuroraHeight, llclamp(gSavedSettings.getF32("ASAuroraHeight"), 0.15f, 0.9f));
-    sAuroraProgram.uniform1f(sAuroraThickness, llclamp(gSavedSettings.getF32("ASAuroraThickness"), 0.03f, 1.0f));
+    sAuroraProgram.uniform1f(sAuroraThickness, thickness);
     sAuroraProgram.uniform1i(sAuroraSteps, quality == 0 ? 12 :
                                            quality == 1 ? 20 :
-                                           quality == 2 ? 32 : 64);
+                                           quality == 2 ? 32 :
+                                           quality == 3 ? 64 :
+                                           quality == 4 ? 128 : 256);
     sAuroraProgram.uniform2f(sAuroraWorldOrigin, (F32)fmod(camera.mdV[VX], 65536.0),
                                                 (F32)fmod(camera.mdV[VY], 65536.0));
     sAuroraProgram.uniform3fv(sAuroraLowColor, 1, low_color.mV);

@@ -69,7 +69,7 @@ void main()
         float time = aurora_time * aurora_speed;
         float jitter = as_hash(gl_FragCoord.xy) - 0.5;
 
-        for (int sample_index = 0; sample_index < 64; ++sample_index)
+        for (int sample_index = 0; sample_index < 256; ++sample_index)
         {
             if (sample_index >= aurora_steps)
             {

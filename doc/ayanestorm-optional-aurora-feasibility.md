@@ -209,9 +209,9 @@ An original broad occupancy envelope now groups fine curtains into localized
 displays. The new live `ASAuroraCoverage` control ranges from no occupied sky at
 zero to broad coverage at one and defaults to a sparse `0.35`.
 
-The Ultra quality tier extends integration to 64 samples. Low, Medium, and High
-remain 12, 20, and 32 samples. Following runtime tuning, Ultra is the default;
-it can approximately double aurora fragment sampling cost relative to High.
+Low, Medium, High, Ultra, Extreme, and Maximum use 12, 20, 32, 64, 128, and 256
+depth samples. Ultra remains the default. The experimental vertical field blur
+was removed after runtime testing showed it cost more FPS than direct sampling.
 
 Post-Ultra attempts to evaluate coverage once and reject integration early were
 reverted after runtime regressions: the shell-center version formed detached
@@ -222,3 +222,7 @@ A persistent `ASAuroraSeed` selects stable coverage and fine-curtain noise
 domains. The Aurora Settings floater exposes both the numeric seed and a
 `Randomize seed` action, allowing instant arrangement changes without affecting
 quality or meaningfully changing rendering cost.
+
+A rolling trapezoidal density blend was tested and removed: summing adjacent
+averages produces nearly the same integrated result apart from endpoint
+weights, so its user control had no meaningful visible effect.
