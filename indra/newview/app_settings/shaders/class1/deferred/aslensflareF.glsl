@@ -12,6 +12,8 @@ uniform vec2 flare_source_position[2];
 uniform vec3 flare_source_color[2];
 uniform float flare_source_strength[2];
 uniform float flare_saturation;
+uniform vec3 flare_snapshot_tile;
+uniform int flare_snapshot_render;
 
 in vec2 vary_fragcoord;
 
@@ -45,6 +47,14 @@ vec3 ghost(vec2 point, vec2 source, float radius, float offset, float focus)
 
 float sourceVisibility(vec2 source)
 {
+    // Other snapshot tiles do not contain the depth texel at the celestial
+    // source. The scene is therefore composited consistently without the
+    // viewport-only depth test when assembling a tiled snapshot.
+    if (flare_snapshot_render != 0)
+    {
+        return 1.0;
+    }
+
     vec2 texel = 1.0 / screen_res;
     float visible = 0.0;
     visible += step(0.999, texture(depthMap, source).r) * 0.40;
@@ -75,7 +85,9 @@ vec3 lensFlare(vec2 point, vec2 source)
 
 void main()
 {
-    vec2 point = vary_fragcoord - vec2(0.5);
+    // Convert the current snapshot tile back to full-image UV coordinates.
+    vec2 full_fragcoord = (vary_fragcoord + flare_snapshot_tile.yz) / flare_snapshot_tile.x;
+    vec2 point = full_fragcoord - vec2(0.5);
     point.x *= screen_res.x / screen_res.y;
     vec3 color = vec3(0.0);
 

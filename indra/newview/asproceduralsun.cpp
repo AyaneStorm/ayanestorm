@@ -9,6 +9,7 @@
 #include "asproceduralsun.h"
 
 #include "ascelestialtwilight.h"
+#include "llcontrol.h"
 #include "llappviewer.h"
 #include "llenvironment.h"
 #include "llface.h"
@@ -20,6 +21,7 @@
 #include "llsky.h"
 #include "llviewercontrol.h"
 #include "llvosky.h"
+#include "lluictrl.h"
 
 namespace
 {
@@ -45,6 +47,29 @@ namespace
         color.mV[2] = lerp(hot.mV[2], final_color.mV[2], blue_warmth);
         return color;
     }
+}
+
+void ASProceduralSun::registerUICallbacks()
+{
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASProceduralSun.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            static const std::vector<std::string> sun_controls = {
+                "ASProceduralSunStartAngle", "ASProceduralSunFinalColor",
+                "ASProceduralSunBrightness", "ASProceduralSunFeather",
+                "ASProceduralSunShimmer", "ASProceduralSunHaloStrength",
+                "ASProceduralSunHaloRadius", "ASProceduralSunHaloSoftness"
+            };
+            const std::string control_name = data.asString();
+            if (std::find(sun_controls.begin(), sun_controls.end(), control_name) != sun_controls.end())
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(control_name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
 }
 
 ASProceduralSun::RenderParams ASProceduralSun::getRenderParams(const LLSettingsSky* sky)

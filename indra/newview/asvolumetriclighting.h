@@ -41,6 +41,9 @@ class LLGLSLShader;
 class ASVolumetricLighting
 {
 public:
+    // Registers reset buttons used by the standalone settings panel.
+    static void registerUICallbacks();
+
     // Cache-salt string folded into the deferred shader cache hash
     // (llviewershadermgr.cpp) so edited .glsl files are not served stale.
     static const char* shaderCacheRevision();

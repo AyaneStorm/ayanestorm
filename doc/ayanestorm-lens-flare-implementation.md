@@ -29,6 +29,18 @@ additively draws a full-screen triangle and samples the deferred depth buffer at
 the projected celestial source. A small cross-shaped depth test makes the flare
 fade when geometry occludes the source.
 
+Snapshot rendering uses the same full-image flare coordinate system at both
+window and high resolutions. When the legacy snapshot path divides an image
+into zoomed subregions, the module converts the current tile projection back to
+full-snapshot UV coordinates and the shader converts each tile fragment into
+that same space before evaluating the aperture ghosts. Celestial projection
+derives its scaled bounds from the live raw viewport because high-resolution
+snapshot allocation changes that rectangle without refreshing the viewer's
+cached scaled rectangle. Snapshot passes bypass
+the source-depth test because their depth texture does not reliably preserve
+the viewport sky sentinel; using the viewport's `0.999` threshold suppresses
+the complete flare. Ordinary viewport rendering retains depth occlusion.
+
 The GLSL keeps the main visual vocabulary and constants of `lensflares.shader`:
 procedural radial noise, a chromatic burst, circular/hexagonal aperture ghosts,
 and ghost placements along the source-to-screen-center axis. The remaining
@@ -57,4 +69,6 @@ explicit source budget and performance testing.
 Build and test on Windows with the checkbox enabled. Verify sun and moon flares
 near the center and edges of the screen, complete disappearance behind opaque
 geometry, no flare in cube/reflection captures, and correct behavior with HDR,
-FXAA/SMAA, DOF, and each OIT mode.
+FXAA/SMAA, DOF, and each OIT mode. Capture both window-sized and high-resolution
+snapshots and verify that the ghost chain remains continuous across tile
+boundaries. Snapshot flares currently do not use source-depth occlusion.
