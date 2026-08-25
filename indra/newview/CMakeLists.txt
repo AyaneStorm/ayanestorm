@@ -94,6 +94,9 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Viewer-local procedural aurora module.
+    asaurora.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.cpp
     asmoonrendering.cpp
@@ -967,6 +970,9 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Viewer-local procedural aurora module.
+    asaurora.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.h
     asmoonrendering.h

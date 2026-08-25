@@ -244,6 +244,21 @@
           function="Floater.ToggleOrBringToFront"
           parameter="as_sun_settings" />
       </button>
+      <!-- <AS:Chanayane> Dedicated viewer-local aurora controls. -->
+      <button
+        follows="left|top"
+        height="23"
+        label="Aurora settings"
+        layout="topleft"
+        left="15"
+        name="open_aurora_settings"
+        top="260"
+        width="220">
+        <button.commit_callback
+          function="Floater.ToggleOrBringToFront"
+          parameter="as_aurora_settings" />
+      </button>
+      <!-- </AS:Chanayane> -->
       <!-- </AS:Chanayane> -->
     </panel>
 
