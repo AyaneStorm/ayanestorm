@@ -30,6 +30,9 @@
 #include <boost/lexical_cast.hpp>
 
 #include "llfeaturemanager.h"
+// <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
+#include "asaurora.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
 #include "fsavboit.h"
@@ -453,6 +456,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gDeferredAvatarEyesProgram);
     mShaderList.push_back(&gDeferredAvatarAlphaProgram);
     mShaderList.push_back(&gEnvironmentMapProgram);
+    // <AS:Chanayane> Register the independent optional aurora shader.
+    ASAurora::registerShader(mShaderList);
+    // </AS:Chanayane>
     mShaderList.push_back(&gDeferredWLSkyProgram);
     mShaderList.push_back(&gDeferredWLCloudProgram);
     mShaderList.push_back(&gDeferredWLMoonProgram);
@@ -1169,6 +1175,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // <AS:Chanayane> Unload optional volumetric lighting shaders.
         ASVolumetricLighting::unloadShaders();
 // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional aurora shader.
+        ASAurora::unloadShader();
+        // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
         gDeferredAvatarEyesProgram.unload();
@@ -2960,6 +2969,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gDeferredWLCloudProgram.createShader();
         llassert(success);
     }
+
+    // <AS:Chanayane> Build the independent aurora pass beside the sky shaders.
+    if (success)
+    {
+        // Aurora is optional and must not take down the core sky shaders if a
+        // driver rejects it; configureShader() skips an incomplete program.
+        ASAurora::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
 
     if (success)
     {

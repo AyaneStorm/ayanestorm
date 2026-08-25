@@ -51,6 +51,11 @@ bool ASFloaterRecentPeople::postBuild()
     mRecentList->setContextMenu(&LLPanelPeopleMenus::gPeopleContextMenu);
     mRecentList->setItemDoubleClickCallback(boost::bind(&ASFloaterRecentPeople::onAvatarListDoubleClicked, this, _1));
 
+    // Keep the docked list synchronized even though adding it to the
+    // Conversations container does not call LLFloater::onOpen().
+    LLRecentPeople::instance().setChangedCallback(boost::bind(&ASFloaterRecentPeople::updateList, this));
+    updateList();
+
     return true;
 }
 

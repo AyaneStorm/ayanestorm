@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<panel border="false" follows="all" height="390" layout="topleft" left="1" top="1" width="460" name="as_aurora_settings">
+  <!-- All controls apply live and remain local to this viewer. -->
+  <text follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="aurora_label" top="10" width="300">Northern lights</text>
+  <check_box control_name="ASAuroraEnabled" follows="left|top" height="16" label="Enable procedural aurora" layout="topleft" left="15" name="aurora_enabled" top="34" width="410" tool_tip="Displays the AyaneStorm viewer-local northern-lights effect. Changes are applied live." />
+  <text follows="left|top" height="16" layout="topleft" left="15" name="aurora_quality_label" top="64" width="190">Quality</text>
+  <combo_box control_name="ASAuroraQuality" follows="left|top" height="23" layout="topleft" left="205" name="aurora_quality" top="58" width="200" tool_tip="Controls the number of samples used per sky pixel.">
+    <combo_box.item label="Low (12 samples)" name="low" value="0" />
+    <combo_box.item label="Medium (20 samples)" name="medium" value="1" />
+    <combo_box.item label="High (32 samples)" name="high" value="2" />
+    <combo_box.item label="Ultra (64 samples)" name="ultra" value="3" />
+    <combo_box.item label="Extreme (128 samples)" name="extreme" value="4" />
+    <combo_box.item label="Maximum (256 samples)" name="maximum" value="5" />
+  </combo_box>
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_quality" top="60" tool_tip="Reset quality to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraQuality" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraIntensity" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Intensity" label_width="190" layout="topleft" left="15" max_val="4.0" min_val="0.0" name="aurora_intensity" show_text="true" text_width="50" top="92" width="390" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_intensity" top="90" tool_tip="Reset intensity to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraIntensity" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraCoverage" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Sky coverage" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="aurora_coverage" show_text="true" text_width="50" top="120" width="390" tool_tip="Controls how much sky contains aurora groups; lower values leave more empty sky." />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_coverage" top="118" tool_tip="Reset sky coverage to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraCoverage" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraSpeed" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Animation speed" label_width="190" layout="topleft" left="15" max_val="3.0" min_val="0.0" name="aurora_speed" show_text="true" text_width="50" top="148" width="390" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_speed" top="146" tool_tip="Reset animation speed to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraSpeed" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraScale" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Curtain scale" label_width="190" layout="topleft" left="15" max_val="4.0" min_val="0.1" name="aurora_scale" show_text="true" text_width="50" top="176" width="390" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_scale" top="174" tool_tip="Reset curtain scale to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraScale" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraHeight" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Height" label_width="190" layout="topleft" left="15" max_val="0.9" min_val="0.15" name="aurora_height" show_text="true" text_width="50" top="204" width="390" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_height" top="202" tool_tip="Reset height to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraHeight" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraThickness" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Curtain thickness" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.03" name="aurora_thickness" show_text="true" text_width="50" top="232" width="390" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_thickness" top="230" tool_tip="Reset curtain thickness to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraThickness" /></button>
+  <slider can_edit_text="true" control_name="ASAuroraSunFadeAngle" decimal_digits="1" follows="left|top" height="16" increment="0.5" label="Sun fade angle" label_width="190" layout="topleft" left="15" max_val="5.0" min_val="-18.0" name="aurora_sun_fade" show_text="true" text_width="50" top="260" width="390" tool_tip="The aurora fades out over the six degrees above this sun elevation." />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_aurora_sun_fade" top="258" tool_tip="Reset sun fade angle to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraSunFadeAngle" /></button>
+  <text follows="left|top" height="16" layout="topleft" left="15" name="aurora_low_color_label" top="294" width="190">Lower color</text>
+  <color_swatch border_color="0.45, 0.52, 0.61, 1" can_apply_immediately="true" color="0.08, 0.95, 0.42, 1" control_name="ASAuroraLowColor" follows="left|top" height="24" label="" label_height="0" layout="topleft" left="205" name="aurora_low_color" top="288" width="44" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="260" name="reset_aurora_low_color" top="290" tool_tip="Reset lower color to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraLowColor" /></button>
+  <text follows="left|top" height="16" layout="topleft" left="15" name="aurora_high_color_label" top="328" width="190">Upper color</text>
+  <color_swatch border_color="0.45, 0.52, 0.61, 1" can_apply_immediately="true" color="0.30, 0.38, 1.0, 1" control_name="ASAuroraHighColor" follows="left|top" height="24" label="" label_height="0" layout="topleft" left="205" name="aurora_high_color" top="322" width="44" />
+  <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="260" name="reset_aurora_high_color" top="324" tool_tip="Reset upper color to its default value" width="20"><button.commit_callback function="ASAurora.ResetDefault" parameter="ASAuroraHighColor" /></button>
+  <text follows="left|top" height="16" layout="topleft" left="15" name="aurora_seed_label" top="362" width="120">Pattern seed</text>
+  <spinner control_name="ASAuroraSeed" decimal_digits="0" follows="left|top" height="23" increment="1" label_width="0" layout="topleft" left="135" max_val="999999" min_val="0" name="aurora_seed" top="354" width="100" />
+  <button follows="left|top" height="23" label="Randomize seed" layout="topleft" left="250" name="randomize_aurora_seed" top="354" width="155">
+    <button.commit_callback function="ASAurora.RandomizeSeed" />
+  </button>
+</panel>

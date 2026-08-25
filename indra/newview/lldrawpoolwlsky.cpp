@@ -29,6 +29,7 @@
 #include "lldrawpoolwlsky.h"
 
 // <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
+#include "asaurora.h"
 #include "ascelestialtwilight.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
@@ -533,6 +534,19 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
         if (!gCubeSnapshot)
         {
             renderStarsDeferred(origin);
+            // <AS:Chanayane> Auroras occupy the upper atmosphere: composite
+            // them over celestial bodies and stars, but before nearby clouds.
+            // Disable depth testing because the sky dome and celestial passes
+            // have already populated sky depth.
+            if (ASAurora::configureShader())
+            {
+                LLGLSPipelineBlendSkyBox aurora_state(false, false);
+                gGL.setSceneBlendType(LLRender::BT_ADD);
+                renderDome(origin, camHeightLocal, &ASAurora::getShader());
+                ASAurora::getShader().unbind();
+                gGL.setSceneBlendType(LLRender::BT_ALPHA);
+            }
+            // </AS:Chanayane>
         }
 
         if (!gCubeSnapshot || gPipeline.mReflectionMapManager.isRadiancePass()) // don't draw clouds in irradiance maps to avoid popping

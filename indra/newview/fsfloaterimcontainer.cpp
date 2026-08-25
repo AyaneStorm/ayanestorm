@@ -758,6 +758,11 @@ void FSFloaterIMContainer::updateTypingIndicators()
         const LLUUID& session_id = entry.first;
         LLFloater* floaterp = entry.second;
 
+        if (session_id.isNull())
+        {
+            continue;
+        }
+
         if (LLIMModel::getInstance()->getType(session_id) != IM_NOTHING_SPECIAL)
         {
             continue;
@@ -835,6 +840,10 @@ void FSFloaterIMContainer::onShowAvatarThumbnailsChanged()
         for (auto& entry : mSessions)
         {
             const LLUUID& session_id = entry.first;
+            if (session_id.isNull())
+            {
+                continue;
+            }
             EInstantMessage type = LLIMModel::getInstance()->getType(session_id);
             addAvatarThumbnail(session_id, entry.second, type);
         }
