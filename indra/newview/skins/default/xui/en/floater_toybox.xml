@@ -1,10 +1,18 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- <AS:Chanayane> Give the toolbar command buttons 50 more pixels of vertical space.
+Original layout values:
+<floater height="575" />
+<toolbar name="toybox_toolbar" bottom="350" />
+<panel bottom="535" top="535" />
+<button name="btn_clear_all" top="545" />
+<button name="btn_restore_defaults" top="545" />
+-->
 <floater
   can_close="true"
   can_dock="false"
   can_minimize="false"
   can_resize="false"
-  height="575"
+  height="625"
   help_topic="toybox"
   layout="topleft"
   legacy_header_height="18"
@@ -43,7 +51,7 @@
       Buttons will appear as shown or as icon-only depending on each toolbar's settings.
   </text>
   <toolbar
-    bottom="350"
+    bottom="400"
     button_display_mode="icons_with_text"
     follows="all"
     left="20"
@@ -79,11 +87,11 @@
   <panel
     bevel_style="none"
     border="true"
-    bottom="535"
+    bottom="585"
     follows="left|bottom|right"
     left="20"
     right="-20"
-    top="535" />
+    top="585" />
   <button
     follows="left|bottom|right"
     height="23"
@@ -93,7 +101,7 @@
     layout="topleft"
     left="185"
     name="btn_clear_all"
-    top="545"
+    top="595"
     width="130">
     <button.commit_callback function="Toybox.ClearAll" />
   </button>
@@ -106,7 +114,7 @@
     layout="topleft"
     left="335"
     name="btn_restore_defaults"
-    top="545"
+    top="595"
     width="130">
     <button.commit_callback function="Toybox.RestoreDefaults" />
   </button>
