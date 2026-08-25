@@ -25530,25 +25530,25 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Render the viewer-local procedural aurora</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-      <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+      <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
     </map>
     <key>ASAuroraIntensity</key>
     <map>
       <key>Comment</key><string>Brightness and density of the procedural aurora</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASAuroraSpeed</key>
     <map>
       <key>Comment</key><string>Animation speed of the procedural aurora</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>1.05</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASAuroraScale</key>
     <map>
       <key>Comment</key><string>Horizontal scale of procedural aurora curtains</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>1.45</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>1.7</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASAuroraCoverage</key>
     <map>
@@ -25566,7 +25566,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Apparent base height of the procedural aurora shell</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>0.73</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>0.9</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASAuroraThickness</key>
     <map>

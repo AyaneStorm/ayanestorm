@@ -10,6 +10,7 @@
 
 #include "llagentcamera.h"
 #include "llappviewer.h"
+#include "llcontrol.h"
 #include "llenvironment.h"
 #include "llmath.h"
 #include "llrand.h"
@@ -39,6 +40,26 @@ void ASAurora::registerUICallbacks()
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASAurora.RandomizeSeed",
         [](LLUICtrl*, const LLSD&) { gSavedSettings.setS32("ASAuroraSeed", ll_rand(1000000)); });
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASAurora.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            static const std::vector<std::string> aurora_controls = {
+                "ASAuroraQuality", "ASAuroraIntensity",
+                "ASAuroraCoverage", "ASAuroraSpeed", "ASAuroraScale",
+                "ASAuroraHeight", "ASAuroraThickness", "ASAuroraSunFadeAngle",
+                "ASAuroraLowColor", "ASAuroraHighColor"
+            };
+            const std::string control_name = data.asString();
+            if (std::find(aurora_controls.begin(), aurora_controls.end(), control_name)
+                != aurora_controls.end())
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(control_name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
 }
 
 void ASAurora::registerShader(std::vector<LLGLSLShader*>& shaders)
