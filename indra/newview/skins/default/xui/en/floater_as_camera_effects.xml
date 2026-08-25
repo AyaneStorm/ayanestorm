@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<floater can_close="true" can_minimize="true" height="180" layout="topleft" name="as_camera_effects" save_rect="true" save_visibility="true" title="Camera Effects" width="460">
+<floater can_close="true" can_minimize="true" height="360" layout="topleft" name="as_camera_effects" save_rect="true" save_visibility="true" title="Camera Effects" width="460">
   <!-- Generic panel leaves room for additional viewer-local camera effects. -->
-  <panel filename="panel_as_camera_effects.xml" follows="all" height="150" layout="topleft" left="0" name="as_camera_effects_panel" top="18" width="460" />
+  <panel filename="panel_as_camera_effects.xml" follows="all" height="330" layout="topleft" left="0" name="as_camera_effects_panel" top="18" width="460" />
 </floater>

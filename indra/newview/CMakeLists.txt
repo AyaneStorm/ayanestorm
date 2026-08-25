@@ -100,6 +100,9 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local vignette module.
+    asvignette.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.cpp
     asmoonrendering.cpp
@@ -978,6 +981,9 @@ set(viewer_HEADER_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local vignette module.
+    asvignette.h
     # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.h

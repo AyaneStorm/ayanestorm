@@ -40,6 +40,10 @@
 #include "aslensflare.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Optional screen-space vignette.
+#include "asvignette.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
@@ -9144,6 +9148,11 @@ void LLPipeline::renderFinalize()
     // <AS:Chanayane> Composite depth-occluded sun/moon lens flares over the
     // completed 3D image, before snapshot guides and other UI overlays.
     ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Darken the completed 3D image with the optional vignette,
+    // after additive lens flares and before snapshot guides and UI overlays.
+    ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
     // </AS:Chanayane>
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
