@@ -36,6 +36,9 @@
 // <AS:Chanayane> Viewer-local celestial lens flare shader lifecycle.
 #include "aslensflare.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local vignette shader lifecycle.
+#include "asvignette.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
 #include "fsavboit.h"
@@ -464,6 +467,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional lens flare shader.
     ASLensFlare::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the independent optional vignette shader.
+    ASVignette::registerShader(mShaderList);
     // </AS:Chanayane>
     mShaderList.push_back(&gDeferredWLSkyProgram);
     mShaderList.push_back(&gDeferredWLCloudProgram);
@@ -1186,6 +1192,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional lens flare shader.
         ASLensFlare::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional vignette shader.
+        ASVignette::unloadShader();
         // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
@@ -2992,6 +3001,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         ASLensFlare::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Build the optional screen-space vignette pass.
+    if (success)
+    {
+        ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
