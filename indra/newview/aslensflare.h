@@ -16,6 +16,7 @@ class LLVertexBuffer;
 
 namespace ASLensFlare
 {
+    void registerUICallbacks();
     void registerShader(std::vector<LLGLSLShader*>& shaders);
     bool createShader(S32 shader_level);
     void unloadShader();

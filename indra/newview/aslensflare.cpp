@@ -8,12 +8,14 @@
 
 #include "aslensflare.h"
 
+#include "llcontrol.h"
 #include "llenvironment.h"
 #include "llgl.h"
 #include "llrender.h"
 #include "llrendertarget.h"
 #include "llsettingssky.h"
 #include "llshadermgr.h"
+#include "lluictrl.h"
 #include "llvertexbuffer.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
@@ -51,6 +53,24 @@ namespace
 }
 
 extern bool gCubeSnapshot;
+
+void ASLensFlare::registerUICallbacks()
+{
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASLensFlare.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            const std::string control_name = data.asString();
+            if (control_name == "ASLensFlareStrength" ||
+                control_name == "ASLensFlareSaturation")
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(control_name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
+}
 
 void ASLensFlare::registerShader(std::vector<LLGLSLShader*>& shaders)
 {
