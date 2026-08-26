@@ -6440,33 +6440,8 @@
          tear_off="true">
 
          <menu_item_check
-            label="BD Poser"
-            name="BD Poser"
-            use_mac_ctrl="true">
-            <menu_item_check.on_check
-               function="Floater.Visible"
-               parameter="bd_poser" />
-            <menu_item_check.on_click
-               function="Floater.Toggle"
-               parameter="bd_poser" />
-         </menu_item_check>
-
-         <menu_item_check
-            label="BD Pose Creator"
-            name="BD Pose Creator">
-            <menu_item_check.on_check
-               function="Floater.Visible"
-               parameter="bd_poser_creator" />
-            <menu_item_check.on_click
-               function="Floater.Toggle"
-               parameter="bd_poser_creator" />
-         </menu_item_check>
-
-         <menu_item_separator />
-
-         <menu_item_check
-            label="New Poser"
-            name="New Poser"
+            label="Poser"
+            name="Poser"
             use_mac_ctrl="true">
             <menu_item_check.on_check
                function="Floater.Visible"
