@@ -134,3 +134,5 @@ firestorm.code-workspace
 checks.json
 /*.shader
 
+.phoenix-firestorm-master
+

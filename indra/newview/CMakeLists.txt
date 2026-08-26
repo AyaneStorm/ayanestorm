@@ -94,10 +94,22 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Viewer-local procedural aurora module.
+    asaurora.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local celestial lens flare module.
+    aslensflare.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local vignette module.
+    asvignette.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.cpp
     asmoonrendering.cpp
     asproceduralsun.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Reusable sun/moon position controls.
+    aspanelcelestialposition.cpp
     # </AS:Chanayane>
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
@@ -967,10 +979,22 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Viewer-local procedural aurora module.
+    asaurora.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local celestial lens flare module.
+    aslensflare.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local vignette module.
+    asvignette.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.h
     asmoonrendering.h
     asproceduralsun.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Reusable sun/moon position controls.
+    aspanelcelestialposition.h
     # </AS:Chanayane>
     aspanelprefsayanestorm.h
     asstreamkeeper.h

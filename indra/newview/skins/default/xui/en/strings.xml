@@ -2784,6 +2784,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Moon settings toolbar command -->
   <string name="Command_ASMoonSettings_Label">Moon Settings</string>
   <string name="Command_ASSunSettings_Label">Sun Settings</string>
+  <string name="Command_ASAuroraSettings_Label">Aurora Settings</string>
+  <string name="Command_ASCameraEffects_Label">Camera Effects</string>
+  <string name="Command_ASEnvironmentEffects_Label">Environment Effects</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Label">Asset blacklist</string>
   <string name="Command_Phototools_Label">Phototools</string>
@@ -2866,6 +2869,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Moon settings toolbar command -->
   <string name="Command_ASMoonSettings_Tooltip">Show or hide moon settings</string>
   <string name="Command_ASSunSettings_Tooltip">Show or hide sun settings</string>
+  <string name="Command_ASAuroraSettings_Tooltip">Show or hide aurora settings</string>
+  <string name="Command_ASCameraEffects_Tooltip">Show or hide camera effects settings</string>
+  <string name="Command_ASEnvironmentEffects_Tooltip">Show or hide environment effects settings</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Tooltip">Opens the list of all the items you have blacklisted</string>
   <string name="Command_Phototools_Tooltip">Tools for full-featured image making (ALT+P).</string>

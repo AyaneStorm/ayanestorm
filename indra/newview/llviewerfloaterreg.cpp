@@ -28,6 +28,20 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Register viewer-local aurora settings callbacks.
+#include "asaurora.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Register viewer-local celestial and volumetric settings callbacks.
+#include "asmoonrendering.h"
+#include "asproceduralsun.h"
+#include "asvolumetriclighting.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Register viewer-local camera effects callbacks.
+#include "aslensflare.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Register viewer-local vignette callbacks.
+#include "asvignette.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llviewerfloaterreg.h"
 
@@ -615,10 +629,25 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("simple_snapshot", "floater_simple_snapshot.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSimpleSnapshot>);
     LLFloaterReg::add("snapshot_guide_settings", "floater_snapshot_guide_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);// <FS:Beq/> photo guide settings
     // <AS:Chanayane> Standalone volumetric lighting settings floater
+    ASVolumetricLighting::registerUICallbacks();
     LLFloaterReg::add("as_volumetric_lighting", "floater_as_volumetric_lighting.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    ASMoonRendering::registerUICallbacks();
     LLFloaterReg::add("as_moon_settings", "floater_as_moon_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // <AS:Chanayane> Viewer-local aurora controls.
+    ASAurora::registerUICallbacks();
+    LLFloaterReg::add("as_aurora_settings", "floater_as_aurora_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
     // <AS:Chanayane> Viewer-local procedural sunset sun controls.
+    ASProceduralSun::registerUICallbacks();
     LLFloaterReg::add("as_sun_settings", "floater_as_sun_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Viewer-local camera effects controls.
+    ASLensFlare::registerUICallbacks();
+    ASVignette::registerUICallbacks();
+    LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Combined tabbed environment effects controls.
+    LLFloaterReg::add("as_environment_effects", "floater_as_environment_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     // </AS:Chanayane>
     // </AS:Chanayane>
     // <FS:CR> Search floater is deferred to login now so we can tell what grid we're in.

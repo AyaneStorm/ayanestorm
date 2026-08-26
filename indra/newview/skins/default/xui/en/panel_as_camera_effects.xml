@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<panel border="false" follows="all" height="330" layout="topleft" left="1" top="1" width="460" name="as_camera_effects">
+  <!-- Viewer-local optical effects do not alter the active EEP asset. -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="lens_flare_section_label" top="10" width="300">Lens flares</text>
+
+  <check_box control_name="ASLensFlareEnabled" follows="left|top" height="16" label="Enable sun and moon lens flares" layout="topleft" left="15" mouse_opaque="true" name="render_lens_flares" radio_style="false" tool_tip="Renders screen-space camera flares for visible, unoccluded sun and moon sources. Changes are applied live." top="35" width="430" />
+
+  <slider can_edit_text="true" control_name="ASLensFlareStrength" decimal_digits="2" enabled_control="ASLensFlareEnabled" follows="left|top" height="16" increment="0.05" label="Lens flare strength" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="lens_flare_strength" show_text="true" text_width="50" tool_tip="Controls the overall intensity of sun and moon lens flare ghosts. Zero hides them." top="67" width="390" />
+  <button enabled_control="ASLensFlareEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_lens_flare_strength" top="65" tool_tip="Reset lens flare strength to its default value" width="20"><button.commit_callback function="ASLensFlare.ResetDefault" parameter="ASLensFlareStrength" /></button>
+
+  <slider can_edit_text="true" control_name="ASLensFlareSaturation" decimal_digits="2" enabled_control="ASLensFlareEnabled" follows="left|top" height="16" increment="0.05" label="Lens flare saturation" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="lens_flare_saturation" show_text="true" text_width="50" tool_tip="At zero, ghosts use only the current source-light color. At one, they retain their full aperture colors." top="99" width="390" />
+  <button enabled_control="ASLensFlareEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_lens_flare_saturation" top="97" tool_tip="Reset lens flare saturation to its default value" width="20"><button.commit_callback function="ASLensFlare.ResetDefault" parameter="ASLensFlareSaturation" /></button>
+
+  <!-- Vignette is a separate optical effect and remains available without lens flares. -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="vignette_section_label" top="130" width="300">Vignette</text>
+
+  <check_box control_name="ASVignetteEnabled" follows="left|top" height="16" label="Enable vignette" layout="topleft" left="15" mouse_opaque="true" name="render_vignette" radio_style="false" tool_tip="Darkens the outer camera image. Changes are applied live." top="155" width="430" />
+
+  <slider can_edit_text="true" control_name="ASVignetteStrength" decimal_digits="2" enabled_control="ASVignetteEnabled" follows="left|top" height="16" increment="0.05" label="Strength" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="vignette_strength" show_text="true" text_width="50" tool_tip="Controls maximum outer darkness. Zero has the same visual result as disabling the vignette." top="187" width="390" />
+  <button enabled_control="ASVignetteEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_vignette_strength" top="185" tool_tip="Reset vignette strength to its default value" width="20"><button.commit_callback function="ASVignette.ResetDefault" parameter="ASVignetteStrength" /></button>
+
+  <slider can_edit_text="true" control_name="ASVignetteRadius" decimal_digits="2" enabled_control="ASVignetteEnabled" follows="left|top" height="16" increment="0.05" label="Radius" label_width="180" layout="topleft" left="15" max_val="10.0" min_val="0.0" name="vignette_radius" show_text="true" text_width="50" tool_tip="At one, the circular vignette diameter equals the shorter screen dimension. Zero darkens the entire image." top="219" width="390" />
+  <button enabled_control="ASVignetteEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_vignette_radius" top="217" tool_tip="Reset vignette radius to its default value" width="20"><button.commit_callback function="ASVignette.ResetDefault" parameter="ASVignetteRadius" /></button>
+
+  <slider can_edit_text="true" control_name="ASVignetteSmoothness" decimal_digits="2" enabled_control="ASVignetteEnabled" follows="left|top" height="16" increment="0.05" label="Smoothness" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="vignette_smoothness" show_text="true" text_width="50" tool_tip="Zero creates a hard edge. One fades gradually from the center to the outer darkness." top="251" width="390" />
+  <button enabled_control="ASVignetteEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_vignette_smoothness" top="249" tool_tip="Reset vignette smoothness to its default value" width="20"><button.commit_callback function="ASVignette.ResetDefault" parameter="ASVignetteSmoothness" /></button>
+
+  <slider can_edit_text="true" control_name="ASVignetteShape" decimal_digits="2" enabled_control="ASVignetteEnabled" follows="left|top" height="16" increment="0.05" label="Shape" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="-1.0" name="vignette_shape" show_text="true" text_width="50" tool_tip="Zero is circular; negative values make a horizontal ellipse and positive values make a vertical ellipse." top="283" width="390" />
+  <button enabled_control="ASVignetteEnabled" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_vignette_shape" top="281" tool_tip="Reset vignette shape to its default value" width="20"><button.commit_callback function="ASVignette.ResetDefault" parameter="ASVignetteShape" /></button>
+</panel>

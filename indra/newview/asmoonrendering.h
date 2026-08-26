@@ -13,6 +13,9 @@ class LLSettingsSky;
 
 namespace ASMoonRendering
 {
+    // Registers reset buttons used by the standalone settings panel.
+    void registerUICallbacks();
+
     void renderHalo(LLFace* halo_face, LLFace* moon_face, LLGLSLShader* shader);
     void configureDiscShader(LLGLSLShader* shader, const LLSettingsSky* sky);
 }
