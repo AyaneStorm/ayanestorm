@@ -646,6 +646,9 @@ void LLViewerFloaterReg::registerFloaters()
     ASVignette::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     // </AS:Chanayane>
+    // <AS:Chanayane> Combined tabbed environment effects controls.
+    LLFloaterReg::add("as_environment_effects", "floater_as_environment_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
     // </AS:Chanayane>
     // <FS:CR> Search floater is deferred to login now so we can tell what grid we're in.
     //LLFloaterReg::add("search", "floater_search.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSearch>);

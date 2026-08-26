@@ -108,6 +108,9 @@ set(viewer_SOURCE_FILES
     asmoonrendering.cpp
     asproceduralsun.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Reusable sun/moon position controls.
+    aspanelcelestialposition.cpp
+    # </AS:Chanayane>
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     asvolumetriclighting.cpp
@@ -989,6 +992,9 @@ set(viewer_HEADER_FILES
     ascelestialtwilight.h
     asmoonrendering.h
     asproceduralsun.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Reusable sun/moon position controls.
+    aspanelcelestialposition.h
     # </AS:Chanayane>
     aspanelprefsayanestorm.h
     asstreamkeeper.h

@@ -171,6 +171,7 @@ with the same filename but different name
   <texture name="Command_ASSunSettings_Icon" file_name="toolbar_icons/sun_settings.png" preload="true" />               <!-- AS:Chanayane -->
   <texture name="Command_ASAuroraSettings_Icon" file_name="toolbar_icons/aurora_settings.png" preload="true" />         <!-- AS:Chanayane -->
   <texture name="Command_ASCameraEffects_Icon" file_name="toolbar_icons/camera_effects.png" preload="true" />          <!-- AS:Chanayane -->
+  <texture name="Command_ASEnvironmentEffects_Icon" file_name="toolbar_icons/environment_effects.png" preload="true" /> <!-- AS:Chanayane -->
   <texture name="Command_Environments_Icon" file_name="toolbar_icons/environments.png" preload="true" />
   <texture name="Command_Omnifilter_Icon"   file_name="toolbar_icons/omnifilter.png"   preload="true" />     <!-- FS:Zi: Omnifilter -->
   <texture name="Command_People_Icon"       file_name="toolbar_icons/people.png"       preload="true" />

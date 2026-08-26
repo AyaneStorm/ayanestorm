@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<panel border="false" follows="all" height="298" layout="topleft" left="1" top="1" width="460" name="as_sun_settings">
+<panel border="false" class="as_celestial_position_panel" follows="all" height="346" layout="topleft" left="1" top="1" width="460" name="as_sun_settings">
   <!-- Viewer-local controls do not alter the active EEP asset. -->
   <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="sun_rendering_label" top="10" width="300">Sun rendering</text>
   <check_box control_name="ASProceduralSunEnabled" follows="left|top" height="16" label="Enable procedural sunset sun" layout="topleft" left="15" name="procedural_sun_enabled" top="34" width="410" tool_tip="Fills transparent areas of the active EEP sun with a soft viewer-local disc near the horizon. Changes are applied live." />
@@ -21,4 +21,7 @@
   <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_procedural_sun_halo_radius" top="232" tool_tip="Reset horizon halo radius to its default value" width="20"><button.commit_callback function="ASProceduralSun.ResetDefault" parameter="ASProceduralSunHaloRadius" /></button>
   <slider can_edit_text="true" control_name="ASProceduralSunHaloSoftness" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Horizon halo softness" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.1" name="procedural_sun_halo_softness" show_text="true" text_width="50" top="262" width="390" tool_tip="Fraction of the halo radius used for its progressive outer fade. Higher values make the boundary more diffuse. Changes are applied live." />
   <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_procedural_sun_halo_softness" top="260" tool_tip="Reset horizon halo softness to its default value" width="20"><button.commit_callback function="ASProceduralSun.ResetDefault" parameter="ASProceduralSunHaloSoftness" /></button>
+  <!-- Full-width copies of the Personal Lighting position sliders provide precise mouse control. -->
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Azimuth" label_width="190" layout="topleft" left="15" max_val="359.99" min_val="0" name="as_sun_azimuth" show_text="true" text_width="50" top="290" width="390" tool_tip="Sets the sun azimuth using a local environment override." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Elevation" label_width="190" layout="topleft" left="15" max_val="90" min_val="-90" name="as_sun_elevation" show_text="true" text_width="50" top="318" width="390" tool_tip="Sets the sun elevation using a local environment override." />
 </panel>
