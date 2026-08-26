@@ -9,7 +9,7 @@
 - Sun and moon settings
 - Lens flares and vignette effects
 - Avatar thumbnails in the Conversations panel
-- Favorite streams panel
+- Favorite Streams panel
 - Continues playing the previous stream after teleporting
 - Nearby and recent people in the Conversations panel
 - Snapshots up to 11500x11500 resolution

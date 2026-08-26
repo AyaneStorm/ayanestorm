@@ -1504,7 +1504,22 @@
                  function="RLV.EnableIfNot"
                  parameter="setenv" />
             </menu_item_call>
-            <!-- <AS:Chanayane> Volumetric lighting settings floater -->
+            <!-- <AS:Chanayane> Viewer-local environment effects settings floaters -->
+            <menu
+             create_jump_keys="true"
+             label="Environment Effects"
+             name="AS Environment Effects"
+             tear_off="true">
+            <menu_item_check
+             label="Environment Effects..."
+             name="as_environment_effects">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_environment_effects" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_environment_effects" />
+            </menu_item_check>
             <menu_item_check
              label="Volumetric Lighting..."
              name="as_volumetric_lighting">
@@ -1535,6 +1550,27 @@
                  function="Floater.Visible"
                  parameter="as_sun_settings" />
             </menu_item_check>
+            <menu_item_check
+             label="Camera Effects..."
+             name="as_camera_effects">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_camera_effects" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_camera_effects" />
+            </menu_item_check>
+            <menu_item_check
+             label="Aurora Settings..."
+             name="as_aurora_settings">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_aurora_settings" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_aurora_settings" />
+            </menu_item_check>
+            </menu>
             <!-- </AS:Chanayane> -->
             <menu_item_separator/>
             <menu_item_check
@@ -6513,6 +6549,34 @@
 
       <menu_item_separator />
 
+      <!-- <AS:Chanayane> Favorite Streams panel shortcut -->
+      <menu_item_check
+         label="Favorite Streams"
+         name="AS Favorite Streams">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_favoritestreams" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_favoritestreams" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
+      <menu_item_separator />
+
+      <!-- <AS:Chanayane> Combined environment effects settings floater -->
+      <menu_item_check
+         label="Environment Effects..."
+         name="AS Environment Effects">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_environment_effects" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_environment_effects" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <menu_item_check
          label="Volumetric Lighting..."
          name="AS Volumetric Lighting">
@@ -6547,6 +6611,32 @@
          <menu_item_check.on_click
             function="Floater.Toggle"
             parameter="as_sun_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
+      <!-- <AS:Chanayane> Camera effects settings floater -->
+      <menu_item_check
+         label="Camera Effects..."
+         name="AS Camera Effects">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_camera_effects" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_camera_effects" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
+      <!-- <AS:Chanayane> Aurora settings floater -->
+      <menu_item_check
+         label="Aurora Settings..."
+         name="AS Aurora Settings">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_aurora_settings" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_aurora_settings" />
       </menu_item_check>
       <!-- </AS:Chanayane> -->
    </menu>
