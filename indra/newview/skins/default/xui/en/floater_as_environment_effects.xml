@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<floater
+  name="as_environment_effects"
+  title="Environment Effects"
+  can_dock="false"
+  can_resize="false"
+  save_rect="true"
+  save_visibility="true"
+  width="462"
+  height="595"
+  layout="topleft">
+  <!-- Reuse the standalone settings panels so both entry points stay in sync. -->
+  <tab_container
+    follows="all"
+    height="570"
+    layout="topleft"
+    left="1"
+    name="environment_effects_tabs"
+    tab_position="top"
+    top="18"
+    width="460">
+    <panel
+      filename="panel_as_volumetric_lighting.xml"
+      label="Volumetric Lighting"
+      name="volumetric_lighting_tab" />
+    <panel
+      filename="panel_as_camera_effects.xml"
+      label="Camera Effects"
+      name="camera_effects_tab" />
+    <panel
+      class="as_celestial_position_panel"
+      filename="panel_as_sun_settings.xml"
+      label="Sun"
+      name="sun_settings_tab" />
+    <panel
+      class="as_celestial_position_panel"
+      filename="panel_as_moon_settings.xml"
+      label="Moon"
+      name="moon_settings_tab" />
+    <panel
+      filename="panel_as_aurora_settings.xml"
+      label="Auroras"
+      name="aurora_settings_tab" />
+  </tab_container>
+</floater>

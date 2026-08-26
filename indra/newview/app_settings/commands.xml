@@ -530,6 +530,19 @@
            />
   <!-- </AS:Chanayane> -->
 
+  <!-- <AS:Chanayane> Combined environment effects toolbar command -->
+  <command name="as_environment_effects"
+           available_in_toybox="true"
+           icon="Command_ASEnvironmentEffects_Icon"
+           label_ref="Command_ASEnvironmentEffects_Label"
+           tooltip_ref="Command_ASEnvironmentEffects_Tooltip"
+           execute_function="Floater.Toggle"
+           execute_parameters="as_environment_effects"
+           is_running_function="Floater.IsOpen"
+           is_running_parameters="as_environment_effects"
+           />
+  <!-- </AS:Chanayane> -->
+
   <command name="assetblacklist"
            available_in_toybox="true"
            icon="asset_blacklist"

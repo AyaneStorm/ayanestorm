@@ -8,13 +8,14 @@
   save_rect="true"
   save_visibility="true"
   width="462"
-  height="508"
+  height="568"
   layout="topleft">
   <!-- AyaneStorm moon rendering controls live in a dedicated reusable panel. -->
   <panel
+    class="as_celestial_position_panel"
     filename="panel_as_moon_settings.xml"
     follows="all"
-    height="486"
+    height="546"
     layout="topleft"
     left="1"
     name="as_moon_settings_panel"

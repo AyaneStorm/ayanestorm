@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<panel border="false" follows="all" height="486" layout="topleft" left="1" top="1" width="460" name="as_moon_settings">
+<panel border="false" class="as_celestial_position_panel" follows="all" height="546" layout="topleft" left="1" top="1" width="460" name="as_moon_settings">
   <!-- AyaneStorm moon appearance settings moved from the former Rendering 2 tab. -->
   <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="render_sky_section_label" width="300" top="10">Moon rendering</text>
   <slider can_edit_text="true" control_name="ASMoonHorizonMinOpacity" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Moon visibility at horizon" label_width="180" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="moon_horizon_min_opacity" show_text="true" text_width="50" top="34" width="380" tool_tip="Minimum opacity of the moon disc at the horizon. 0.00 reproduces the legacy fade; 1.00 disables horizon dimming. Changes are applied live." />
@@ -36,4 +36,7 @@
   <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_moon_halo_strength" top="406" tool_tip="Reset moon halo strength to its default value" width="20"><button.commit_callback function="ASMoonRendering.ResetDefault" parameter="ASMoonHaloStrength" /></button>
   <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_moon_halo_radius" top="432" tool_tip="Reset moon halo radius to its default value" width="20"><button.commit_callback function="ASMoonRendering.ResetDefault" parameter="ASMoonHaloRadius" /></button>
   <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_moon_halo_softness" top="458" tool_tip="Reset moon halo softness to its default value" width="20"><button.commit_callback function="ASMoonRendering.ResetDefault" parameter="ASMoonHaloSoftness" /></button>
+  <!-- Full-width copies of the Personal Lighting position sliders provide precise mouse control. -->
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Azimuth" label_width="180" layout="topleft" left="15" max_val="359.99" min_val="0" name="as_moon_azimuth" show_text="true" text_width="50" top="490" width="380" tool_tip="Sets the moon azimuth using a local environment override." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.01" label="Elevation" label_width="180" layout="topleft" left="15" max_val="90" min_val="-90" name="as_moon_elevation" show_text="true" text_width="50" top="518" width="380" tool_tip="Sets the moon elevation using a local environment override." />
 </panel>
