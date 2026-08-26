@@ -5,8 +5,13 @@
 # AyaneStorm - A fork of Firestorm for photographers
 
 ## Features (so far ; some features might get merged in official Firestorm)
-- Added poser from BlackDragon
-- Added camera roll/tilt buttons from Blackdragon (+ key bindings) (merged in Firestorm)
+- Volumetric lighting
+- Sun and moon settings
+- Lens flares and vignette effects
+- Avatar thumbnails in the Conversations panel
+- Favorite streams panel
+- Continues playing the previous stream after teleporting
+- Nearby and recent people in the Conversations panel
 - Snapshots up to 11500x11500 resolution
 - AVX2 optimized build (now also in Firestorm)
 - Made the Animation Speed menu easily accessible: it is no longer in Developer > Avatar > Animation Speed, it is now directly accessible in AyaneStorm > animation
