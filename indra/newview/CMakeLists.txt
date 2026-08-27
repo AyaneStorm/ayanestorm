@@ -103,6 +103,9 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Self-lighting floater background isolate module.
+    asbackgroundisolate.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.cpp
     asmoonrendering.cpp
@@ -114,6 +117,10 @@ set(viewer_SOURCE_FILES
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     asvolumetriclighting.cpp
+    # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
+    aslightrig.cpp
+    asfloatermylight.cpp
+    # </AS:Chanayane>
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -988,6 +995,9 @@ set(viewer_HEADER_FILES
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.h
     # </AS:Chanayane>
+    # <AS:Chanayane> Self-lighting floater background isolate module.
+    asbackgroundisolate.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Scale-aware sun/moon twilight module.
     ascelestialtwilight.h
     asmoonrendering.h
@@ -999,6 +1009,10 @@ set(viewer_HEADER_FILES
     aspanelprefsayanestorm.h
     asstreamkeeper.h
     asvolumetriclighting.h
+    # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
+    aslightrig.h
+    asfloatermylight.h
+    # </AS:Chanayane>
     chatbar_as_cmdline.h
     daeexport.h
     dialogstack.h

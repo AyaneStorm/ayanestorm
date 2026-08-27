@@ -8,6 +8,7 @@
 
 #include "asvignette.h"
 
+#include "asbackgroundisolate.h"
 #include "llcontrol.h"
 #include "llgl.h"
 #include "llrender.h"
@@ -73,7 +74,8 @@ void ASVignette::unloadShader()
 void ASVignette::render(S32 width, S32 height, LLVertexBuffer& screen_triangle)
 {
     if (!gSavedSettings.getBOOL("ASVignetteEnabled") ||
-        !sVignetteProgram.isComplete() || gCubeSnapshot || width <= 0 || height <= 0)
+        !sVignetteProgram.isComplete() || gCubeSnapshot || width <= 0 || height <= 0 ||
+        ASBackgroundIsolate::isActive())
     {
         return;
     }

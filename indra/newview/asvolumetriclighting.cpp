@@ -27,6 +27,7 @@
 
 #include "asvolumetriclighting.h"
 
+#include "asbackgroundisolate.h"
 #include "llcontrol.h"
 #include "lluictrl.h"
 #include "ascelestialtwilight.h"
@@ -223,7 +224,8 @@ bool ASVolumetricLighting::isEnabled()
     return isSupported()
         && LLPipeline::sRenderDeferred
         && LLPipeline::RenderShadowDetail > 0
-        && gSavedSettings.getBOOL("RenderVolumetricLighting");
+        && gSavedSettings.getBOOL("RenderVolumetricLighting")
+        && !ASBackgroundIsolate::isActive();
 }
 
 bool ASVolumetricLighting::loadShaders(S32 shader_level)

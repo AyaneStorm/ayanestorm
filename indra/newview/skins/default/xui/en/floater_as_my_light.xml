@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<floater
+ positioning="cascading"
+ can_close="true"
+ can_resize="false"
+ height="470"
+ layout="topleft"
+ name="floater_as_my_light"
+ save_rect="true"
+ save_visibility="true"
+ single_instance="true"
+ reuse_instance="true"
+ title="My Light"
+ width="640">
+
+  <check_box follows="left|top" height="16" label="Enable My Lights" layout="topleft" left="15" name="as_light_master_enabled" top="10" width="200" value="true" tool_tip="Master switch: turns every light in the list on or off at once, without changing their settings." />
+
+  <!-- Left column: editor for the selected light -->
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="15" name="as_light_name_label" top="36" width="60">Name</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="70" name="as_light_name" top="34" width="290" max_length_chars="63" />
+
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_presets_label" top="64" width="300">Position presets</text>
+  <button follows="left|top" height="22" layout="topleft" left="15" name="as_light_preset_head" top="82" width="90" label="Head" />
+  <button follows="left|top" height="22" layout="topleft" left="115" name="as_light_preset_chest" top="82" width="90" label="Chest" />
+  <button follows="left|top" height="22" layout="topleft" left="215" name="as_light_preset_back" top="82" width="90" label="Back" />
+
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Distance (m)" label_width="150" layout="topleft" left="15" max_val="3.0" min_val="0.05" name="as_light_distance" show_text="true" text_width="50" top="118" width="390" tool_tip="Distance from the anchor joint." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Height (m)" label_width="150" layout="topleft" left="15" max_val="2.0" min_val="-2.0" name="as_light_height" show_text="true" text_width="50" top="142" width="390" tool_tip="Vertical offset from the anchor joint." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Azimuth (deg)" label_width="150" layout="topleft" left="15" max_val="359.9" min_val="0.0" name="as_light_azimuth" show_text="true" text_width="50" top="166" width="390" tool_tip="Angle around the anchor joint; 0 is in front." />
+
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Intensity" label_width="150" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="as_light_intensity" show_text="true" text_width="50" top="202" width="390" tool_tip="Light intensity, capped at 1.0 by the underlying light protocol. For a brighter effect, increase Radius or decrease Softness instead." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.1" label="Radius (m)" label_width="150" layout="topleft" left="15" max_val="20.0" min_val="0.1" name="as_light_radius" show_text="true" text_width="50" top="226" width="390" tool_tip="Light falloff distance." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Softness" label_width="150" layout="topleft" left="15" max_val="2.0" min_val="0.0" name="as_light_falloff" show_text="true" text_width="50" top="250" width="390" tool_tip="Softness of the light's edge falloff." />
+
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="15" name="as_light_color_label" top="282" width="150">Color</text>
+  <color_swatch border_color="0.45098, 0.517647, 0.607843, 1" can_apply_immediately="true" color="1.0, 1.0, 1.0, 1.0" follows="left|top" height="24" label="" label_height="0" layout="topleft" left="165" name="as_light_color" top="278" width="44" tool_tip="Light color." />
+
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_background_label" top="316" width="150">Background</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="150" name="as_light_background" top="312" width="150" tool_tip="Overrides the scene background for isolate-avatar photography.">
+    <combo_box.item label="None" name="none" value="None" />
+    <combo_box.item label="All Black" name="all_black" value="All Black" />
+    <combo_box.item label="All White" name="all_white" value="All White" />
+  </combo_box>
+
+  <check_box follows="left|top" height="16" label="Show light beacons" layout="topleft" left="15" name="as_light_show_beacon" top="344" width="250" tool_tip="Shows a cross marker at each light's position. Never appears in snapshots." />
+  <check_box follows="left|top" height="16" label="Freeze animations" layout="topleft" left="15" name="as_light_freeze_anim" top="366" width="250" tool_tip="Freezes all avatar animations in view (same as AyaneStorm &gt; Animation &gt; Freeze Animations)." />
+
+  <button follows="left|top" height="23" layout="topleft" left="15" name="as_light_open_poser" top="392" width="150" label="Open Poser" />
+
+  <!-- Right column: list of lights + presets -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_list_label" top="10" width="200">Lights</text>
+  <scroll_list draw_heading="false" follows="left|top" layout="topleft" left="420" top="28" height="170" width="205" name="as_light_list" draw_stripes="true" multi_select="false">
+    <scroll_list.columns label="Name" name="name" dynamic_width="true" />
+  </scroll_list>
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_add" top="202" width="98" label="Add Light" />
+  <button follows="left|top" height="22" layout="topleft" left="527" name="as_light_delete" top="202" width="98" label="Delete Light" />
+
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_presets_header" top="236" width="200">Rig presets</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="420" name="as_light_preset_name" top="254" width="205" max_length_chars="63" tool_tip="Name for Save preset." />
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_save_preset" top="278" width="98" label="Save preset..." />
+  <combo_box allow_text_entry="false" follows="left|top" height="23" layout="topleft" left="420" name="as_light_preset_combo" top="304" width="205" tool_tip="Presets saved to disk." />
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_load_preset" top="330" width="205" label="Load preset..." />
+</floater>

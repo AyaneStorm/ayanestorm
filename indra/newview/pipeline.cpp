@@ -44,6 +44,10 @@
 #include "asvignette.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Self-lighting floater background isolate pass.
+#include "asbackgroundisolate.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
@@ -9148,6 +9152,16 @@ void LLPipeline::renderFinalize()
     // <AS:Chanayane> Composite depth-occluded sun/moon lens flares over the
     // completed 3D image, before snapshot guides and other UI overlays.
     ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Self-lighting floater: paint the isolate-mode solid
+    // background color over the fully composited image (tonemap, bloom,
+    // DoF, FSAA/SMAA all already applied), so the color is immune to every
+    // post effect instead of being re-tinted/smeared by them -- depth-tested
+    // in-shader against the preserved scene depth so the avatar (and our own
+    // invisible light-rig objects) stay untouched. No-op unless isolate mode
+    // is active.
+    ASBackgroundIsolate::render(mRT->deferredScreen, *mScreenTriangleVB);
     // </AS:Chanayane>
 
     // <AS:Chanayane> Darken the completed 3D image with the optional vignette,

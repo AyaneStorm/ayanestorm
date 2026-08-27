@@ -6452,6 +6452,20 @@
          </menu_item_check>
       </menu>
 
+      <!-- <AS:Chanayane> Self-lighting floater (viewer-local photography lights) -->
+      <menu_item_check
+         label="My Light"
+         name="My Light"
+         use_mac_ctrl="true">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_my_light" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_my_light" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <menu_item_separator />
 
       <menu
