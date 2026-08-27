@@ -38,10 +38,12 @@
 
   <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_background_label" top="316" width="150">Background</text>
   <combo_box follows="left|top" height="23" layout="topleft" left="150" name="as_light_background" top="312" width="150" tool_tip="Overrides the scene background for isolate-avatar photography.">
-    <combo_box.item label="None" name="none" value="None" />
+    <combo_box.item label="Normal Scene" name="none" value="None" />
     <combo_box.item label="All Black" name="all_black" value="All Black" />
     <combo_box.item label="All White" name="all_white" value="All White" />
+    <combo_box.item label="Custom" name="custom" value="Custom" />
   </combo_box>
+  <color_swatch border_color="0.45098, 0.517647, 0.607843, 1" can_apply_immediately="true" color="0.5, 0.5, 0.5, 1.0" follows="left|top" height="24" label="" label_height="0" layout="topleft" left="305" name="as_light_background_color" top="310" width="34" tool_tip="Custom background color, used when Background is set to Custom." />
 
   <check_box follows="left|top" height="16" label="Show light beacons" layout="topleft" left="15" name="as_light_show_beacon" top="344" width="250" tool_tip="Shows a cross marker at each light's position. Never appears in snapshots." />
   <check_box follows="left|top" height="16" label="Freeze animations" layout="topleft" left="15" name="as_light_freeze_anim" top="366" width="250" tool_tip="Freezes all avatar animations in view (same as AyaneStorm &gt; Animation &gt; Freeze Animations)." />

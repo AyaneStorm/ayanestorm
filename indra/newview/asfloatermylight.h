@@ -73,6 +73,7 @@ private:
     // Master switch, background, freeze animations, beacon, poser
     void onMasterEnabledChanged();
     void onBackgroundModeChanged();
+    void onBackgroundColorChanged();
     void onFreezeAnimationsChanged();
     void onBeaconToggled();
     void onOpenPoser();
@@ -105,6 +106,7 @@ private:
     LLColorSwatchCtrl* mColorSwatch;
     LLCheckBoxCtrl* mMasterEnabledCheck;
     LLComboBox* mBackgroundCombo;
+    LLColorSwatchCtrl* mBackgroundColorSwatch;
     LLCheckBoxCtrl* mFreezeAnimationsCheck;
     LLCheckBoxCtrl* mBeaconCheck;
     LLLineEditor* mPresetNameEditor;

@@ -52,6 +52,7 @@ ASFloaterMyLight::ASFloaterMyLight(const LLSD& key)
     mColorSwatch(nullptr),
     mMasterEnabledCheck(nullptr),
     mBackgroundCombo(nullptr),
+    mBackgroundColorSwatch(nullptr),
     mFreezeAnimationsCheck(nullptr),
     mBeaconCheck(nullptr),
     mPresetNameEditor(nullptr),
@@ -78,6 +79,7 @@ bool ASFloaterMyLight::postBuild()
     mColorSwatch = getChild<LLColorSwatchCtrl>("as_light_color");
     mMasterEnabledCheck = getChild<LLCheckBoxCtrl>("as_light_master_enabled");
     mBackgroundCombo = getChild<LLComboBox>("as_light_background");
+    mBackgroundColorSwatch = getChild<LLColorSwatchCtrl>("as_light_background_color");
     mFreezeAnimationsCheck = getChild<LLCheckBoxCtrl>("as_light_freeze_anim");
     mBeaconCheck = getChild<LLCheckBoxCtrl>("as_light_show_beacon");
     mPresetNameEditor = getChild<LLLineEditor>("as_light_preset_name");
@@ -103,6 +105,7 @@ bool ASFloaterMyLight::postBuild()
 
     mMasterEnabledCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onMasterEnabledChanged(); });
     mBackgroundCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundModeChanged(); });
+    mBackgroundColorSwatch->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundColorChanged(); });
     mFreezeAnimationsCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onFreezeAnimationsChanged(); });
     mBeaconCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBeaconToggled(); });
     getChild<LLUICtrl>("as_light_open_poser")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onOpenPoser(); });
@@ -516,7 +519,7 @@ void ASFloaterMyLight::onBackgroundModeChanged()
 {
     const std::string mode = mBackgroundCombo->getSelectedItemLabel();
 
-    if (mode == "None")
+    if (mode == "Normal Scene")
     {
         ASBackgroundIsolate::setActive(false, LLColor4::black);
         ASBackgroundIsolate::restoreAllHiddenDrawables();
@@ -525,10 +528,26 @@ void ASFloaterMyLight::onBackgroundModeChanged()
 
     ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
 
-    const LLColor4 color = (mode == "All White")
-        ? LLColor4(1.f, 1.f, 1.f, 1.f)
-        : LLColor4(0.f, 0.f, 0.f, 1.f);
+    LLColor4 color(0.f, 0.f, 0.f, 1.f);
+    if (mode == "All White")
+    {
+        color = LLColor4(1.f, 1.f, 1.f, 1.f);
+    }
+    else if (mode == "Custom")
+    {
+        color = mBackgroundColorSwatch->get();
+    }
     ASBackgroundIsolate::setActive(true, color);
+}
+
+void ASFloaterMyLight::onBackgroundColorChanged()
+{
+    if (mBackgroundCombo->getSelectedItemLabel() != "Custom")
+    {
+        return;
+    }
+    ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
+    ASBackgroundIsolate::setActive(true, mBackgroundColorSwatch->get());
 }
 
 void ASFloaterMyLight::onFreezeAnimationsChanged()
