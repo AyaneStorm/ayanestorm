@@ -141,7 +141,12 @@ void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
         return;
     }
 
-    const bool should_hide = shouldHideDrawable(drawable);
+    // Shadow maps must retain the isolated scene as occluding geometry. If
+    // the room is removed from the shadow draw maps along with the visible
+    // scene, walls and roofs stop blocking the sun and a sun-direction-reactive
+    // highlight appears on the avatar. Temporarily restore those drawables
+    // during shadow state sorting; the main-camera pass hides them again.
+    const bool should_hide = !LLPipeline::sShadowRender && shouldHideDrawable(drawable);
     const bool currently_hidden = drawable->isState(LLDrawable::FORCE_INVISIBLE);
 
     if (should_hide == currently_hidden)

@@ -842,3 +842,12 @@ this section and the text above as this section winning.
    the screen target's shared scene depth. `finishDirectFrame()` now flushes the
    private target after compute resolve and restores the caller's screen target
    before drawing isolate coverage.
+
+   A final comparison against the normal scene showed an extra highlight whose
+   position changed with sun elevation and azimuth. This was not exposure: hiding the room via
+   `FORCE_INVISIBLE` also removed its walls/roof from the sun shadow draw maps, so
+   direct sunlight that the room normally occluded reached the avatar. During
+   `LLPipeline::sShadowRender`, `updateDrawableHiddenState()` now temporarily
+   restores isolated scene drawables so they remain shadow casters; the ordinary
+   camera pass hides them again. Thus the scene stays visually absent while its
+   real sun occlusion is preserved.
