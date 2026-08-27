@@ -98,17 +98,10 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   every idle tick from its anchor joint's current world transform plus its stored
   offset, which is what makes it move continuously with the avatar (walking,
   running, flying, sitting, any animation).
-- **Background isolate mode**: `gPipeline.toggleRenderType(LLPipeline::RENDER_TYPE_SKY /
-  RENDER_TYPE_WATER / RENDER_TYPE_CLOUDS / RENDER_TYPE_TERRAIN)`
-  ([pipeline.h:433](indra/newview/pipeline.h#L433), example call site
-  [llmaniptranslate.cpp:1723-1751](indra/newview/llmaniptranslate.cpp#L1723-L1751)).
-  The unconditional main-frame clear-color hook is
-  [llviewerdisplay.cpp:936](indra/newview/llviewerdisplay.cpp#L936)
-  (`glClearColor(0.f, 0.f, 0.f, 0.f)`, runs every normal frame, not snapshot-only).
-  Disabling `RENDER_TYPE_SKY` plus overriding this clear color to solid black/white
-  produces a correctly depth-tested isolate background with the avatar on top — no
-  custom fullscreen quad needed. No `RENDER_TYPE_GROUND`; `RENDER_TYPE_TERRAIN`
-  covers land.
+- **Background isolate mode — SUPERSEDED, see "Status update" below for the actual
+  shipped design.** (Original research, kept for history: `gPipeline.toggleRenderType`
+  and a `glClearColor` override were the first idea; both were replaced after several
+  rounds of real-world testing surfaced correctness problems described below.)
 - **Freeze animations**: `Advanced.AnimFreeze`
   ([llviewermenu.cpp:2234-2243](indra/newview/llviewermenu.cpp#L2234-L2243)) is
   fire-and-forget: `set_all_animation_time_factors(0.0f)` across all
@@ -198,11 +191,19 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
 - Add a menu entry under the existing `AyaneStorm` menu
   ([menu_viewer.xml:6430](indra/newview/skins/default/xui/en/menu_viewer.xml#L6430))
   using the same `Floater.Toggle` / `Floater.Visible` pattern as the Poser entry.
-- `indra/newview/CMakeLists.txt`: add the new AS-owned source files to the source list.
-- `indra/newview/llviewerdisplay.cpp:936`: minimal call-out before the existing
-  `glClearColor` into `ASFloaterMyLight::getBackgroundClearOverride(color)`.
+- `indra/newview/CMakeLists.txt`: add the new AS-owned source files to the source list
+  (as shipped: `asfloatermylight.{h,cpp}`, `aslightrig.{h,cpp}`,
+  `asbackgroundisolate.{h,cpp}` — see "Status update" below; `aspanellightpad.*` was
+  never implemented, sliders proved sufficient).
 - `indra/newview/llviewerdisplay.cpp` (beacon call site, ~1886-1894): minimal
   call-out into `ASFloaterMyLight::renderAllLightBeacons()`.
+- `indra/newview/pipeline.cpp` (`LLPipeline::stateSort(LLDrawable*, LLCamera&)`):
+  as-shipped isolate-background mode needed one more call-out here — see "Status
+  update" below. Not part of the original plan.
+- `indra/newview/llviewershadermgr.cpp`: shader lifecycle registration for the
+  as-shipped `ASBackgroundIsolate` shader (mirrors the existing `ASLensFlare`/
+  `ASVignette` registration pattern already in this file) — also not part of the
+  original plan.
 - `indra/newview/llviewermenu.cpp`: only if `set_all_animation_time_factors` needs to
   become non-file-local; check first.
 
@@ -294,31 +295,10 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   height; Head: `mHead`, ~0.4m in front, head height; Back: `mChest`/`mPelvis`,
   ~0.5m behind, level height). New lights default to the Chest preset.
 - **Background combo** (`None` / `All Black` / `All White`) — global to the floater,
-  not per-light:
-  - `None`: ordinary unmodified scene — re-enable
-    `RENDER_TYPE_SKY/WATER/CLOUDS/TERRAIN` and clear the override state.
-  - `All Black` / `All White`: `toggleRenderType` off for `RENDER_TYPE_SKY`,
-    `RENDER_TYPE_WATER`/`RENDER_TYPE_VOIDWATER`, `RENDER_TYPE_CLOUDS`,
-    `RENDER_TYPE_TERRAIN`; set override color state.
-  - State lives in `ASFloaterMyLight` via a static accessor
-    `getBackgroundClearOverride(LLColor4& out)`. Only touch to upstream code is the
-    tag-wrapped call-out at
-    [llviewerdisplay.cpp:936](indra/newview/llviewerdisplay.cpp#L936):
-    ```cpp
-    // <AS:Chanayane> allow the self-light floater to override the frame clear color for isolate-background photography
-    // glClearColor(0.f, 0.f, 0.f, 0.f);
-    LLColor4 as_clear_override;
-    if (ASFloaterMyLight::getBackgroundClearOverride(as_clear_override))
-    {
-        glClearColor(as_clear_override.mV[0], as_clear_override.mV[1], as_clear_override.mV[2], as_clear_override.mV[3]);
-    }
-    else
-    {
-        glClearColor(0.f, 0.f, 0.f, 0.f);
-    }
-    // </AS:Chanayane>
-    ```
-  - Other avatars/objects remain visible; only sky/water/clouds/terrain suppressed.
+  not per-light. **As originally planned this only hid sky/water/clouds/terrain.
+  The shipped behavior is a true self-only isolate (avatar + attachments + our
+  light-rig objects, EVERYTHING else hidden) — see "Status update" below for the
+  full story and the final design.**
 - **Freeze Animations checkbox**: on/off calls `set_all_animation_time_factors(0.0f)`
   / `(1.0f)` (the helper already used by `LLAdvancedAnimFreeze`,
   [llviewermenu.cpp:2234](indra/newview/llviewermenu.cpp#L2234) — currently
@@ -424,3 +404,222 @@ edits are complete, ask the user to build and report back "bok" (build OK) or "b
 - Close the floater and confirm every light object and any render-type/clear
   overrides are cleanly removed (no leftover lights or black/white screen after
   closing).
+
+## Status update (post-implementation, superseding several sections above)
+
+Everything above this section is the original plan as approved before implementation
+started. Real in-world testing surfaced correctness problems in the original
+background-isolate design that required three successive redesigns. This section is
+the authoritative description of what actually shipped; treat any conflict between
+this section and the text above as this section winning.
+
+**Shipped, not originally planned:**
+- No placement pad / `ASPanelLightPad` — sliders with numeric entry (Distance/
+  Height/Azimuth) proved sufficient; the pad was dropped, not built.
+- Master "Enable My Lights" switch state persists across sessions
+  (`ASLightRigMasterEnabled` in `settings.xml`), added after initial ship per a
+  later explicit request.
+- Lights (and isolate-background mode) now survive closing/reopening the floater —
+  only destroyed/reset on an actual viewer quit, not on a plain close. The full rig
+  also auto-saves to a per-account file on quit and auto-loads on next login
+  (`ASFloaterMyLight::getAutosaveFilename()`), independent of the named-preset
+  save/load feature.
+- New toolbar command `as_my_light` (`app_settings/commands.xml`,
+  `Command_ASMyLight_Icon`) with a custom hand-drawn 18×18 icon
+  (`toolbar_icons/my_light.png`), matching the existing AS command style (e.g.
+  `as_sun_settings`).
+- The light-position beacon's color now matches each light's own configured color
+  instead of a fixed yellow.
+
+**Background isolate mode — three redesigns, final architecture:**
+
+1. *Original plan (never shipped as designed)*: toggle
+   `RENDER_TYPE_SKY/WATER/CLOUDS/TERRAIN` off and override the frame `glClearColor`.
+   Abandoned before ship: this only ever hid sky/water/clouds/terrain, not other
+   avatars or other people's builds — nowhere near "isolate the self avatar," and
+   disabling `RENDER_TYPE_SKY` specifically broke `LLVOSky::updateSky()`'s
+   atmospherics refresh and corrupted `LLReflectionMapManager`'s baked ambient/
+   irradiance cubemaps (the global render-type mask also suppresses sky during the
+   probe manager's own internal capture passes), producing a camera-reactive magenta
+   tint on every surface.
+
+2. *Redesign 1 — depth-tested full-screen quad + per-object `FORCE_INVISIBLE`
+   hiding.* Replaced the `glClearColor` override with a solid-color quad drawn via
+   `gSolidColorProgram`, depth-tested against the opaque scene so the avatar
+   naturally occludes it (no render-type disabling, so sky/probes render normally
+   under the hood while being painted over on screen). Other avatars were hidden via
+   `LLVOAvatar::setVisualMuteSettings(AV_DO_NOT_RENDER)` (a real per-instance
+   mechanism); non-avatar objects (other people's prims/mesh) were hidden via
+   `LLPipeline::hideObject()` (`LLDrawable::FORCE_INVISIBLE`), the same mechanism the
+   pathfinding floaters use, re-applied every idle tick because
+   `LLViewerObject::processUpdateMessage()` silently clears `FORCE_INVISIBLE` on any
+   routine inbound object-update packet (terse updates, interest-list refreshes) —
+   a one-shot hide gets undone within a frame or two of normal sim traffic.
+   Root-caused but never fully fixed: leftover fragments (terrain edges, distant
+   trees, parts of nearby buildings) stayed stubbornly visible, and objects would
+   not reliably reappear when switching back to "None" without the user manually
+   zooming the camera out and back in to force a fresh cull/redraw. Multiple research
+   passes confirmed `FORCE_INVISIBLE` itself is correctly respected by
+   `LLPipeline::stateSort`'s per-frame visibility gate and that occlusion/octree
+   culling re-evaluates fully every frame regardless of camera movement — the
+   remaining bugs were never fully pinned down before the approach was abandoned in
+   favor of a structurally different fix.
+   Also discovered and fixed in this phase, independent of the above: the isolate
+   quad originally drew too early in the pipeline (right after `renderGeomDeferred()`,
+   into the deferred G-buffer), so later lighting/tonemap/bloom/vignette passes
+   re-tinted the flat color (black wasn't fully black under volumetric lighting,
+   white showed a gradient from bloom/vignette) — this part of the fix (draw the
+   backdrop after the whole post-process chain) carried forward into the final
+   design below.
+
+3. *Redesign 2 — live per-frame allowlist in `LLPipeline::stateSort`, but only
+   early-returning (no FORCE_INVISIBLE) — turned out to be a no-op for ordinary
+   prims/mesh.* The user's own suggestion after redesign 1 kept failing: instead of
+   hiding a denylist of "everything else" (fighting the sim's own update traffic
+   and the pipeline's cull/visibility caching), allowlist only what should render:
+   self avatar, self attachments, and our own light-rig objects.
+   `ASBackgroundIsolate::shouldHideDrawable(LLDrawable*)`
+   (`indra/newview/asbackgroundisolate.{h,cpp}`) was called once per drawable per
+   frame from a new call-out in `LLPipeline::stateSort(LLDrawable*, LLCamera&)`
+   (right after the existing `LLSelectMgr::mHideSelectedObjects` early-out) and, if
+   the drawable should be hidden, simply `return`ed early from `stateSort` without
+   drawing it.
+   This looked promising in early testing (most of a test scene hid correctly) but
+   turned out to be **fixing the wrong thing**: for ordinary prim/mesh ("volume")
+   drawables, `stateSort(LLDrawable*, camera)` only calls `setVisible()` and (for
+   non-volume drawables only) enqueues faces directly — for volumes,
+   `drawablep->getVOVolume()` is true, so the immediate-mode face-enqueue path is
+   skipped entirely (`pipeline.cpp` ~3589, `if (!drawablep->getVOVolume())`).
+   Volume geometry instead draws from `LLSpatialGroup::mDrawMap`, a persistent
+   batch built once per group by `LLVolumeGeometryManager::rebuildGeom()`
+   (`llvovolume.cpp`), completely independent of that frame's `stateSort()`
+   outcome. **Early-returning from `stateSort` therefore had zero effect on volume
+   rendering** — the apparent partial success in testing was actually just the
+   solid-color backdrop pass (see below) painting over background-depth pixels,
+   not real object hiding. This was only discovered by direct real-world log
+   evidence (see redesign 4).
+   A second, compounding bug found in this phase: `LLSpatialGroup::changeLOD()`
+   gates whether a `render_by_group` group (`PARTITION_VOLUME`, i.e. ordinary
+   prims/mesh — includes large static builds like houses) ever recurses into the
+   per-drawable `stateSort()` overload at all (`LLPipeline::stateSort(LLSpatialGroup*,
+   LLCamera&)`, `pipeline.cpp` ~3462). For a static camera that hasn't crossed the
+   group's ~25% distance-change slop ratio, `changeLOD()` stays false indefinitely,
+   so static geometry (a house, landscaping, a wall) never got visited by our
+   filter at all — explaining "always the same objects" staying visible regardless
+   of isolate mode. Fixed by forcing the group's inner loop to always run while
+   `ASBackgroundIsolate::isActive()`, independent of `changeLOD()`'s answer
+   (the original distance-bookkeeping is preserved, only gated on the real
+   `changeLOD()` result, not the forced one).
+   A third, separate bug found via GPU occlusion culling: `LLPipeline::stateSort(
+   LLCamera&, LLCullResult&)`'s visible-groups loop (`pipeline.cpp` ~3423) routes
+   any group whose GPU occlusion query returned `OCCLUDED` into `markOccluder()`
+   instead of `stateSort(group, camera)` — skipping our filter entirely for
+   occluded groups. Room-scale/static geometry is occluded by other room-scale/
+   static geometry very commonly (indoors especially), so most of a scene could
+   get stuck in a stale, partially-hidden state. Fixed by also bypassing the
+   `OCCLUDED` branch while isolate mode is active (the underlying `checkOcclusion()`
+   GPU query itself is untouched, so it resumes normally the instant isolate mode
+   turns off).
+
+4. *Redesign 3 / final design (shipped, confirmed working) — same live allowlist,
+   but actually setting `LLDrawable::FORCE_INVISIBLE` + forcing a real geometry
+   rebuild.* Even after fixing both the `changeLOD()` and occlusion gates above, a
+   subtle bug remained that took direct log-evidence debugging to find: real
+   in-world testing captured specific object UUIDs that were confirmed via log
+   output to have `FORCE_INVISIBLE` correctly set (`should_hide=1` logged,
+   `setState`/`markRebuild` both called) yet **stayed visually rendered anyway**.
+   Root cause: `LLPipeline::markRebuild(LLDrawable*, REBUILD_ALL)` only queues the
+   *drawable's own* `updateGeometry()` (a no-op for a static prim) — it never
+   touches the drawable's owning `LLSpatialGroup`. `LLVolumeGeometryManager::
+   rebuildGeom()` (the function that actually reads `FORCE_INVISIBLE` when
+   rebuilding `mDrawMap` — confirmed real, current code at `llvovolume.cpp`
+   ~6017) is gated inside `LLSpatialPartition::rebuildGeom(group)` on the *group*
+   carrying `LLSpatialGroup::GEOM_DIRTY`, which is a completely separate flag from
+   anything `markRebuild(drawable, ...)` touches. Without it, a static group just
+   keeps drawing from its previously-built `mDrawMap` forever, no matter how many
+   times `FORCE_INVISIBLE` is toggled or the drawable-level rebuild is requested.
+   **The fix**, in `ASBackgroundIsolate::updateDrawableHiddenState()`
+   (`asbackgroundisolate.cpp`): alongside the existing
+   `gPipeline.markRebuild(drawable, REBUILD_ALL)`, also call
+   `drawable->getSpatialGroup()->dirtyGeom()` and `gPipeline.markRebuild(group)` —
+   the same pairing `restoreAllHiddenDrawables()` uses on the way back out. This
+   was confirmed fixed by a real in-world test (user-provided object UUIDs
+   cross-referenced against diagnostic log output before AND after this specific
+   fix) — the previous three sub-fixes (early-return, changeLOD bypass, occlusion
+   bypass) were each real, necessary, and individually confirmed-insufficient
+   steps toward this one.
+   Final architecture, all pieces together:
+   - `ASBackgroundIsolate::shouldHideDrawable(LLDrawable*)` — the live per-frame
+     classification: allows the self avatar (`obj->asAvatar()->isSelf()`), any
+     object whose `getAvatarAncestor()` is the self avatar (worn attachments,
+     including rigged mesh clothing — critically, `RENDER_TYPE_VOLUME` is shared
+     by every `LLVOVolume` drawable including self attachments, so a
+     render-type-level exclusion can never distinguish "my attachment" from
+     "someone else's object"; per-object identity is required), and any object id
+     in a small exempt set kept current via `ASBackgroundIsolate::setLightRigIds()`
+     (called from `ASFloaterMyLight::updateLights()`'s idle callback). Everything
+     else returns `true` (should be hidden).
+   - `ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable*)` — called from a
+     tag-wrapped call-out in `LLPipeline::stateSort(LLDrawable*, LLCamera&)`
+     (`pipeline.cpp`, right after the existing `LLSelectMgr::mHideSelectedObjects`
+     early-out). Sets/clears `FORCE_INVISIBLE` to match `shouldHideDrawable()`'s
+     live answer and, on any state change, forces both a drawable-level and a
+     group-level geometry rebuild (see fix above) so it takes effect the same
+     frame. Recomputed live every single call, so it can never go stale on its own
+     and self-heals against the sim's routine object-update traffic silently
+     clearing `FORCE_INVISIBLE` (`LLViewerObject::processUpdateMessage()`).
+   - `LLPipeline::stateSort(LLSpatialGroup*, LLCamera&)` (`pipeline.cpp`) — forces
+     its inner per-drawable loop to always run while
+     `ASBackgroundIsolate::isActive()`, bypassing the normal `changeLOD()` gate so
+     static/unmoving groups still get visited every frame (original distance
+     bookkeeping preserved, gated on the real `changeLOD()` result only).
+   - `LLPipeline::stateSort(LLCamera&, LLCullResult&)`'s visible-groups loop
+     (`pipeline.cpp`) — also bypasses the `OCCLUDED`/`markOccluder()` branch while
+     isolate mode is active, so occluded static geometry (extremely common
+     indoors) still reaches the filter every frame; the underlying occlusion query
+     itself (`checkOcclusion()`) is untouched and resumes normally once isolate
+     mode turns off.
+   - `ASBackgroundIsolate::restoreAllHiddenDrawables()` — called right after
+     `setActive(false, ...)` turns isolate mode off (from both
+     `ASFloaterMyLight::onBackgroundModeChanged()`'s "None" branch and
+     `onClose(true)` on viewer quit). Explicitly walks every object id this module
+     hid (tracked in a small set) and clears `FORCE_INVISIBLE` + forces the same
+     drawable+group rebuild pairing directly, rather than depending on incidental
+     future traversal of that object's group — this is what makes turning isolate
+     mode off immediate and reliable rather than needing a camera nudge.
+   - `ASBackgroundIsolate::setActive(bool, LLColor4)` also toggles a small, fixed
+     set of render types wholesale: `RENDER_TYPE_TERRAIN`, `RENDER_TYPE_WATER`,
+     `RENDER_TYPE_VOIDWATER`, `RENDER_TYPE_WATEREXCLUSION`, `RENDER_TYPE_CLOUDS`,
+     `RENDER_TYPE_GRASS`, `RENDER_TYPE_PARTICLES`. These render through entirely
+     separate geometry managers (`LLSurfacePatch` for terrain, `LLVOWater`,
+     `LLVOGrass`, the particle system) that were confirmed (by grepping for
+     `FORCE_INVISIBLE` in `llsurfacepatch.cpp` — zero hits) to never check
+     `FORCE_INVISIBLE` at all, so no amount of per-object flagging can hide them;
+     unlike `RENDER_TYPE_VOLUME`/`RENDER_TYPE_AVATAR`, none of these can ever be
+     "mine," so disabling them wholesale for the whole isolate-mode duration is
+     always safe. `RENDER_TYPE_SKY`/`RENDER_TYPE_WL_SKY` are deliberately still
+     excluded from this list (see redesign 1's magenta-tint root cause) — the sky
+     dome keeps rendering normally and is simply painted over by the backdrop pass.
+   - The solid-color backdrop itself (`ASBackgroundIsolate::render()`) runs as a
+     shader pass at the very end of `LLPipeline::renderFinalize()` (`pipeline.cpp`,
+     alongside the existing `ASLensFlare::render()`/`ASVignette::render()` call
+     sites), via a small dedicated GLSL fragment shader (`asBackgroundIsolateF.glsl`)
+     that samples scene depth and writes the isolate color only where nothing
+     opaque was drawn (background/far-plane pixels) — immune to tonemap/bloom/
+     DoF/FSAA/vignette since it draws after all of them. `ASBackgroundIsolate::
+     isActive()` also gates `ASLensFlare`, `ASVignette`, and
+     `ASVolumetricLighting::isEnabled()` so none of those draw over the solid
+     backdrop during isolate mode (but behave completely normally when isolate
+     mode is "None" — this bypass is scoped strictly to Black/White, never affects
+     normal rendering). Moon halo and procedural sun render as part of the
+     sky-dome geometry itself (not a separate post-pass), so they need no separate
+     bypass — the backdrop already covers the sky.
+   - New shader-lifecycle wiring in `llviewershadermgr.cpp` (register/create/unload
+     hooks) follows the exact existing pattern used by `ASLensFlare`/`ASVignette`.
+
+**Open follow-up requests (not yet implemented):**
+- Background isolate color is currently limited to the two-item combo (`All Black` /
+  `All White`); the underlying mechanism (`ASBackgroundIsolate::setActive(bool,
+  const LLColor4&)`) already accepts any color, so supporting a user-chosen custom
+  color is a small follow-up (e.g. a color-swatch control or a "Custom" combo entry)
+  rather than a rendering change.

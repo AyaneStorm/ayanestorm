@@ -12,7 +12,6 @@
 
 #include "asbackgroundisolate.h"
 #include "llcallbacklist.h"
-#include "llcharacter.h"
 #include "llcheckboxctrl.h"
 #include "llcolorswatch.h"
 #include "llcombobox.h"
@@ -31,224 +30,12 @@
 #include "llviewercontrol.h"
 #include "llfloaterreg.h"
 #include "llviewermenu.h"
-#include "llviewerobject.h"
-#include "llviewerobjectlist.h"
-#include "llvoavatar.h"
-#include "pipeline.h"
 
 #include <set>
 
-extern LLPipeline gPipeline;
-
 namespace
 {
-    // Whether the isolate render-type toggles / per-object hiding are
-    // currently applied -- the actual backdrop color/paint is owned by
-    // ASBackgroundIsolate (a late-pipeline shader pass, see
-    // asbackgroundisolate.h), which also gates lens flare/vignette/
-    // volumetric lighting so nothing draws over the solid isolate color.
-    bool sBackgroundOverrodeRenderTypes = false;
-    // UUIDs of other avatars we forced to AV_DO_NOT_RENDER, so we restore
-    // exactly and only those, without disturbing a user's own mute/render
-    // choices for avatars we never touched.
-    std::set<LLUUID> sHiddenAvatarIds;
-    // UUIDs of non-self objects we force-hid via LLPipeline::hideObject, so
-    // we restore exactly and only those on exit.
-    std::set<LLUUID> sHiddenObjectIds;
-
     const std::string PRESET_SUBDIR = "as_light_presets";
-
-    // Render types covering non-self scene content that are safe to disable
-    // outright. RENDER_TYPE_SKY/RENDER_TYPE_WL_SKY are deliberately excluded:
-    // disabling them stops LLVOSky::updateSky() from refreshing atmospherics
-    // and leaves the reflection-probe manager baking ambient/irradiance
-    // cubemaps from a degenerate (sky/terrain/water-less) scene, which every
-    // surface then samples for lighting -- this is what caused the
-    // camera-reactive magenta tint. Sky is instead painted over visually by
-    // ASBackgroundIsolate::render() (asbackgroundisolate.cpp), a solid-color
-    // shader pass drawn after the whole post-process chain, so sky/
-    // atmosphere/probes keep rendering normally under the hood while being
-    // invisible on screen.
-    // RENDER_TYPE_AVATAR and RENDER_TYPE_VOLUME are deliberately excluded
-    // too: every LLVOVolume drawable (rigged mesh attachments included)
-    // carries RENDER_TYPE_VOLUME regardless of whether it belongs to the
-    // self avatar, so disabling it hid the self avatar's own worn mesh
-    // clothing/attachments along with everyone else's builds. Both other
-    // avatars and other people's/world's non-avatar objects are instead
-    // hidden per-instance below, leaving self (avatar + attachments) and
-    // our own light-rig objects untouched.
-    // RENDER_TYPE_PARTICLES stays disabled here rather than per-instance:
-    // particles render through their own LLVOPartGroup drawable, entirely
-    // separate from the emitting source object, so hiding the source via
-    // refreshHiddenObjects() below has no effect on its particles -- and our
-    // own light rig never emits particles, so there's no self-owned case
-    // that needs preserving.
-    const U32 sIsolateRenderTypes[] = {
-        LLPipeline::RENDER_TYPE_CLOUDS,
-        LLPipeline::RENDER_TYPE_TERRAIN,
-        LLPipeline::RENDER_TYPE_GRASS,
-        LLPipeline::RENDER_TYPE_TREE,
-        LLPipeline::RENDER_TYPE_WATER,
-        LLPipeline::RENDER_TYPE_VOIDWATER,
-        LLPipeline::RENDER_TYPE_WATEREXCLUSION,
-        LLPipeline::RENDER_TYPE_PARTICLES,
-    };
-
-    void hideOtherAvatars()
-    {
-        for (LLCharacter* character : LLCharacter::sInstances)
-        {
-            LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(character);
-            if (avatar && !avatar->isSelf() && !avatar->isDead())
-            {
-                avatar->setVisualMuteSettings(LLVOAvatar::AV_DO_NOT_RENDER);
-                sHiddenAvatarIds.insert(avatar->getID());
-            }
-        }
-    }
-
-    void showOtherAvatars()
-    {
-        for (LLCharacter* character : LLCharacter::sInstances)
-        {
-            LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(character);
-            if (avatar && sHiddenAvatarIds.count(avatar->getID()))
-            {
-                avatar->setVisualMuteSettings(LLVOAvatar::AV_RENDER_NORMALLY);
-            }
-        }
-        sHiddenAvatarIds.clear();
-    }
-
-    // Hides every non-avatar object in the scene that isn't attached to the
-    // self avatar and isn't one of our own light-rig objects, via the
-    // per-drawable FORCE_INVISIBLE state (LLPipeline::hideObject) -- the
-    // same non-destructive, server-desync-free mechanism the pathfinding
-    // floaters already use to hide objects, rather than the render-type
-    // mask (which has no way to distinguish "my attachment" from "someone
-    // else's object", since they share the same RENDER_TYPE_VOLUME bucket).
-    //
-    // LLViewerObject::processUpdateMessage() silently clears FORCE_INVISIBLE
-    // on any inbound object-update packet for a non-orphaned object -- which
-    // happens continuously during normal gameplay (terse updates, interest
-    // list refreshes) -- so a single one-shot hide pass gets undone within a
-    // frame or two of routine sim traffic. This must be called repeatedly
-    // (every idle tick, see updateLights()) for the duration of isolate mode
-    // to keep re-asserting the hide, not just once on entry. Safe/cheap to
-    // call every frame: re-hiding an already-hidden object is a harmless
-    // state re-set, and newly-appeared objects get caught on the next tick.
-    void refreshHiddenObjects(const std::set<LLUUID>& exemptIds)
-    {
-        const S32 count = gObjectList.getNumObjects();
-        S32 no_drawable = 0;
-        S32 hidden = 0;
-        for (S32 i = 0; i < count; ++i)
-        {
-            LLViewerObject* obj = gObjectList.getObject(i);
-            if (!obj || obj->isDead() || obj->asAvatar())
-            {
-                continue;
-            }
-            if (exemptIds.count(obj->getID()))
-            {
-                continue;
-            }
-            LLVOAvatar* ancestor = obj->getAvatarAncestor();
-            if (ancestor && ancestor->isSelf())
-            {
-                continue;
-            }
-            // <AS:Chanayane> temporary diagnostic: confirm whether leftover
-            // visible objects have a null mDrawable at scan time (hideObject
-            // silently no-ops in that case) versus something else clearing
-            // FORCE_INVISIBLE after a successful hide.
-            if (!obj->mDrawable)
-            {
-                ++no_drawable;
-                if (no_drawable <= 5)
-                {
-                    LL_INFOS("ASMyLight") << "refreshHiddenObjects: no drawable yet for "
-                        << obj->getID() << " pcode=" << (S32)obj->getPCode() << LL_ENDL;
-                }
-                continue;
-            }
-            ++hidden;
-            // </AS:Chanayane>
-            gPipeline.hideObject(obj->getID());
-            sHiddenObjectIds.insert(obj->getID());
-        }
-        // <AS:Chanayane> temporary diagnostic
-        static S32 sTickCount = 0;
-        if ((++sTickCount % 90) == 1)
-        {
-            LL_INFOS("ASMyLight") << "refreshHiddenObjects: scanned=" << count
-                << " hidden=" << hidden << " no_drawable=" << no_drawable << LL_ENDL;
-        }
-        // </AS:Chanayane>
-    }
-
-    void showOtherObjects()
-    {
-        // <AS:Chanayane> temporary diagnostic
-        LL_INFOS("ASMyLight") << "showOtherObjects: restoring " << sHiddenObjectIds.size() << " objects" << LL_ENDL;
-        // </AS:Chanayane>
-        for (const LLUUID& id : sHiddenObjectIds)
-        {
-            gPipeline.restoreHiddenObject(id);
-        }
-        sHiddenObjectIds.clear();
-    }
-
-    void enterBackgroundIsolateRenderState(const std::set<LLUUID>& exemptIds)
-    {
-        if (sBackgroundOverrodeRenderTypes)
-        {
-            return;
-        }
-        for (U32 type : sIsolateRenderTypes)
-        {
-            if (gPipeline.hasRenderType(type)) gPipeline.toggleRenderType(type);
-        }
-
-        hideOtherAvatars();
-        refreshHiddenObjects(exemptIds);
-
-        sBackgroundOverrodeRenderTypes = true;
-    }
-
-    void exitBackgroundIsolateRenderState()
-    {
-        if (!sBackgroundOverrodeRenderTypes)
-        {
-            return;
-        }
-        // Flip the flag first so refreshBackgroundIsolateHiding() (called
-        // from the per-frame idle tick) can never re-hide an object we're
-        // about to restore below, regardless of call ordering.
-        sBackgroundOverrodeRenderTypes = false;
-
-        for (U32 type : sIsolateRenderTypes)
-        {
-            if (!gPipeline.hasRenderType(type)) gPipeline.toggleRenderType(type);
-        }
-
-        showOtherAvatars();
-        showOtherObjects();
-    }
-
-    // Called every idle tick while isolate mode is active (see
-    // ASFloaterMyLight::updateLights()) to keep re-asserting the hide state
-    // against the sim's routine object-update traffic clearing it. No-op if
-    // isolate mode isn't currently active.
-    void refreshBackgroundIsolateHiding(const std::set<LLUUID>& exemptIds)
-    {
-        if (!sBackgroundOverrodeRenderTypes)
-        {
-            return;
-        }
-        hideOtherAvatars();
-        refreshHiddenObjects(exemptIds);
-    }
 }
 
 ASFloaterMyLight::ASFloaterMyLight(const LLSD& key)
@@ -362,13 +149,13 @@ void ASFloaterMyLight::onClose(bool app_quitting)
     // Isolate-background mode survives a plain close/reopen, same as the
     // lights themselves -- closing the floater is just hiding the panel,
     // not leaving photography mode. It must never survive an actual viewer
-    // quit though, since ASBackgroundIsolate/exitBackgroundIsolateRenderState()
-    // rely on static state that would otherwise leave next session's world
-    // view stuck black/white with no floater open to explain why.
+    // quit though, since ASBackgroundIsolate relies on static state that
+    // would otherwise leave next session's world view stuck black/white
+    // with no floater open to explain why.
     if (app_quitting)
     {
         ASBackgroundIsolate::setActive(false, LLColor4::black);
-        exitBackgroundIsolateRenderState();
+        ASBackgroundIsolate::restoreAllHiddenDrawables();
         mBackgroundCombo->setValue("None");
     }
 
@@ -431,13 +218,11 @@ void ASFloaterMyLight::updateLights()
         rig->updateTransform();
     }
 
-    // Re-assert isolate-mode object hiding every tick -- the sim's routine
-    // object-update traffic (terse updates, interest-list refreshes) clears
-    // LLDrawable::FORCE_INVISIBLE on affected objects within a frame or two
-    // of a one-shot hide, so this has to keep re-hiding for the whole time
-    // isolate mode is active, not just once when it's turned on. No-op if
-    // isolate mode isn't currently active.
-    refreshBackgroundIsolateHiding(getLightRigObjectIds());
+    // Keep ASBackgroundIsolate's exempt-object set current -- cheap (a
+    // small set copy) and simplest way to handle lights being added/
+    // removed/enabled while isolate mode is active, without a separate
+    // change-notification path.
+    ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
 }
 
 std::set<LLUUID> ASFloaterMyLight::getLightRigObjectIds() const
@@ -733,12 +518,12 @@ void ASFloaterMyLight::onBackgroundModeChanged()
 
     if (mode == "None")
     {
-        exitBackgroundIsolateRenderState();
         ASBackgroundIsolate::setActive(false, LLColor4::black);
+        ASBackgroundIsolate::restoreAllHiddenDrawables();
         return;
     }
 
-    enterBackgroundIsolateRenderState(getLightRigObjectIds());
+    ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
 
     const LLColor4 color = (mode == "All White")
         ? LLColor4(1.f, 1.f, 1.f, 1.f)
