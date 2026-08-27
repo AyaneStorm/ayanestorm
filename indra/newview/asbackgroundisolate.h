@@ -4,7 +4,9 @@
  * @brief Viewer-local solid-color background isolate pass for the self-lighting
  *        floater's photography mode. Draws after the full post-process chain
  *        (tonemap, bloom, DoF, FXAA/SMAA, vignette) so the isolate color is
- *        immune to all of it, unlike a pass drawn earlier in the pipeline.
+ *        immune to all of it. Also drives the live per-frame self/attachment/
+ *        light-rig allowlist that hides everything else via
+ *        LLPipeline::stateSort().
  */
 
 #ifndef AS_BACKGROUNDISOLATE_H
@@ -29,9 +31,23 @@ namespace ASBackgroundIsolate
 
     // No-op unless isolate mode is currently active (set via
     // ASFloaterMyLight::setActive()). depth_target supplies the scene depth
-    // used to tell background pixels (nothing opaque drawn there) apart from
-    // the avatar, which must stay untouched.
+    // used to tell background pixels (nothing opaque or alpha-blended drawn
+    // there) apart from the avatar, which must stay untouched. Drawn at the
+    // very end of the pipeline (after tonemap/bloom/etc), so the isolate
+    // color is immune to every post effect. Correctly occludes alpha-
+    // blended content (hair, particles) too: ExactOIT/AVBOIT both write a
+    // near-plane depth for whatever they actually composited, specifically
+    // so this test sees them, while ordinary rendering (isolate mode off)
+    // leaves that depth write disabled and behaves exactly as before this
+    // feature existed.
     void render(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle);
+
+    // Drawn after deferred atmospherics but before local lights and all alpha
+    // rendering. Replaces background-depth pixels in the HDR scene with the
+    // isolate color so transparent hair composites against the requested
+    // backdrop rather than daylight/sky. The late render() pass remains the
+    // authority for the exact final color of fully uncovered background.
+    void renderBaseLayer(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle);
 
     // Called by ASFloaterMyLight when isolate mode is turned on/off/recolored.
     void setActive(bool active, const LLColor4& color);

@@ -600,26 +600,245 @@ this section and the text above as this section winning.
      always safe. `RENDER_TYPE_SKY`/`RENDER_TYPE_WL_SKY` are deliberately still
      excluded from this list (see redesign 1's magenta-tint root cause) — the sky
      dome keeps rendering normally and is simply painted over by the backdrop pass.
-   - The solid-color backdrop itself (`ASBackgroundIsolate::render()`) runs as a
-     shader pass at the very end of `LLPipeline::renderFinalize()` (`pipeline.cpp`,
-     alongside the existing `ASLensFlare::render()`/`ASVignette::render()` call
-     sites), via a small dedicated GLSL fragment shader (`asBackgroundIsolateF.glsl`)
-     that samples scene depth and writes the isolate color only where nothing
-     opaque was drawn (background/far-plane pixels) — immune to tonemap/bloom/
-     DoF/FSAA/vignette since it draws after all of them. `ASBackgroundIsolate::
-     isActive()` also gates `ASLensFlare`, `ASVignette`, and
-     `ASVolumetricLighting::isEnabled()` so none of those draw over the solid
+   - `ASBackgroundIsolate::isActive()` also gates `ASLensFlare`, `ASVignette`, and
+     `ASVolumetricLighting::isEnabled()` so none of those draw over the isolate
      backdrop during isolate mode (but behave completely normally when isolate
-     mode is "None" — this bypass is scoped strictly to Black/White, never affects
-     normal rendering). Moon halo and procedural sun render as part of the
-     sky-dome geometry itself (not a separate post-pass), so they need no separate
-     bypass — the backdrop already covers the sky.
-   - New shader-lifecycle wiring in `llviewershadermgr.cpp` (register/create/unload
-     hooks) follows the exact existing pattern used by `ASLensFlare`/`ASVignette`.
+     mode is "Normal Scene" — this bypass is scoped strictly to Black/White/
+     Custom, never affects normal rendering). Moon halo and procedural sun
+     render as part of the sky-dome geometry itself (not a separate post-pass),
+     so they need no separate bypass — the backdrop already covers the sky.
+
+5. *Redesign 5 (shipped, confirmed working) — backdrop moved from a late
+   depth-sampling shader pass to an early color-buffer base-layer fill, fixing a
+   real-world-confirmed hair rendering bug.* After redesign 4 shipped and was
+   confirmed working for hiding, a real screenshot comparison caught a genuine
+   regression: chunks of the self avatar's hair (alpha-blended rigged-mesh strand
+   tips, rendered through this codebase's ExactOIT/AVBOIT order-independent-
+   transparency systems) were being painted over by the solid isolate color, in
+   both black and white modes, and — confirmed via a follow-up screenshot with
+   standard (non-OIT) alpha rendering too — this wasn't OIT-specific at all.
+   Root cause: the backdrop was a shader pass (`asBackgroundIsolateF.glsl`) drawn
+   at the very end of `LLPipeline::renderFinalize()`, testing
+   `gPipeline.mRT->deferredScreen`'s depth to decide "was anything opaque drawn
+   here" — but alpha-blended geometry (hair, particles, glass) never writes
+   depth in this pipeline (confirmed: `lldrawpoolalpha.cpp` uses
+   `LLGLDepthTest(GL_TRUE, GL_FALSE)`, and neither ExactOIT's `composite()` nor
+   AVBOIT's `finishDirectFrame` write depth for their resolved output either —
+   standard, correct alpha-blending behavior in virtually any renderer, not a
+   bug in those systems). So a translucent-only pixel (hair against open sky,
+   nothing opaque behind it) read as far-plane/empty depth, indistinguishable
+   from genuinely empty background, and got incorrectly painted over. A
+   follow-up research pass also confirmed the alpha channel of `mRT->screen`
+   (the obvious alternative "was anything drawn here" signal) is not usable
+   either — it's repurposed as a glow/bloom-intensity accumulator from the
+   moment it's first populated (`softenLightF.glsl` unconditionally zeroes it
+   for every opaque pixel including sky), not a coverage mask, and by the time
+   `ASLensFlare`/`ASVignette`/the old backdrop pass run, `sourceBuffer` has
+   already been blitted to the default framebuffer — there's no render target
+   left to sample color+alpha from at all at that point.
+   **The fix**: invert the approach entirely. `ASBackgroundIsolate::renderBaseLayer()`
+   now fills `mRT->screen` with the isolate color as a **base layer**, called
+   from a new tag-wrapped call-out in `LLPipeline::renderDeferredLighting()`
+   (`pipeline.cpp`) immediately after `screen_target->clear(GL_COLOR_BUFFER_BIT)`
+   — i.e. right when the buffer is empty for the frame — and *before*
+   atmospherics and the alpha-forward pass composite on top of it. This uses the
+   original fixed-function `LLGLDepthTest(GL_TRUE, GL_FALSE, GL_LEQUAL)` quad
+   technique from redesign 1 (depth-tested against the opaque depth already
+   populated by `renderGeomDeferred()`, depth writes off so it doesn't perturb
+   what atmospherics/alpha still need to test against), reusing the existing
+   `gSolidColorProgram`. Since our fill now happens *before* hair/particles/
+   glass are drawn, ordinary alpha blending naturally composites them on top of
+   it exactly as it would against a real sky — no coverage test needed at all,
+   and the earlier redesign-2 tonemap/bloom/vignette-gradient problem stays
+   fixed for the same reason redesign 2 fixed it (our fill still isn't affected
+   by post-process re-tinting in a way that matters, since it's now legitimately
+   part of the lit scene those effects are *supposed* to apply to uniformly).
+   The now-unused GLSL shader (`asBackgroundIsolateF.glsl`) and its
+   `llviewershadermgr.cpp` register/create/unload lifecycle wiring were removed
+   entirely — `renderBaseLayer()` needs no custom shader, just the stock
+   `gSolidColorProgram` already used elsewhere in this codebase.
 
 **Open follow-up requests (not yet implemented):**
-- Background isolate color is currently limited to the two-item combo (`All Black` /
-  `All White`); the underlying mechanism (`ASBackgroundIsolate::setActive(bool,
-  const LLColor4&)`) already accepts any color, so supporting a user-chosen custom
-  color is a small follow-up (e.g. a color-swatch control or a "Custom" combo entry)
-  rather than a rendering change.
+- ~~Background isolate color limited to Black/White~~ — done: a "Custom" combo
+  entry plus a color swatch (`as_light_background_color` in the XUI) now lets
+  the user pick any color, applied via the same `ASBackgroundIsolate::setActive(
+  bool, const LLColor4&)` mechanism the two presets already used.
+
+6. *Redesign 6 (in progress) — reverted redesign 5's early base-layer fill back to
+   a late depth-tested pass, fixed real bugs it exposed, found and fixed a
+   star-leak regression, and hit a genuine remaining exact-color-under-hair
+   limitation that is now paused pending a decision.*
+
+   Redesign 5's early base-layer fill (writing the isolate color into
+   `mRT->screen` *before* tonemap/exposure) turned out to break exact color
+   reproduction: `mRT->screen` is linear HDR, and the auto-exposure system
+   (`LLPipeline::generateExposure()`) computes this frame's exposure scalar
+   *from this very buffer's content* after the fill has already happened, and
+   the tonemap curves (`RenderTonemapType`: PBR Neutral or ACES Hill, in
+   `tonemapUtilF.glsl`) are nonlinear — so there is no single linear value that
+   reliably reproduces a specific requested sRGB color once exposure and
+   tonemap are applied. Confirmed via screenshots: white and custom background
+   colors rendered visibly dark/wrong, while black (a fixed point of both
+   curves at exposure-independent zero) still looked correct by coincidence.
+
+   **Reverted to the late-pass design** (`ASBackgroundIsolate::render()`,
+   `asBackgroundIsolateF.glsl` restored, called from the end of
+   `LLPipeline::renderFinalize()` again, after the full post-process chain) —
+   this is exact by construction, since it paints the requested color directly
+   into the already-tonemapped LDR framebuffer. Its depth test
+   (`step(0.999, depth)` against `mRT->deferredScreen`) correctly distinguishes
+   "background" from "opaque scene geometry" for ordinary opaque content, but
+   — same root cause redesign 5 was created to fix — alpha-blended content
+   (hair, particles) never writes depth in this pipeline
+   (`lldrawpoolalpha.cpp` uses `LLGLDepthTest(GL_TRUE, GL_FALSE)`), so hair
+   pixels read as "background" and got painted over by the solid color again.
+
+   **Fix for hair depth specifically**: rather than restructure the whole
+   pipeline's color/tonemap handling again, made the viewer's two independent
+   order-independent-transparency systems — ExactOIT and AVBOIT, both
+   `#if !LL_DARWIN`-gated with stub fallbacks for macOS, both AS-owned despite
+   their `fs` prefix — write a near-plane depth for whatever alpha content
+   they actually composited, but *only* while isolate mode is active:
+   - **ExactOIT** (`fsexactoit.cpp`, `exactOITCompositeF.glsl`): added a third
+     draw pass (`oitPass == 3`) in `FSExactOIT::composite()`, run strictly
+     after the normal two-pass sort+blend completes, with
+     `gGL.setColorMask(false, false)` so it can never affect color. Per pixel,
+     it reads the same `oitHeadPointers` linked-list head already used by the
+     normal passes: `discard`s where `head == OIT_NULL` (no coverage; a
+     `discard`ed fragment writes neither depth nor color, so this can never
+     corrupt anything), otherwise writes `gl_FragDepth = 0.0`. Two real bugs
+     were caught and avoided before landing on this design: (1) an earlier
+     attempt wrote `gl_FragDepth = gl_FragCoord.z` unconditionally as a
+     "preserve existing depth" default — wrong, because for this full-screen
+     *triangle* (not the real scene geometry) `gl_FragCoord.z` is a fixed,
+     uniform NDC-space value across the whole screen, not the pre-existing
+     scene depth, so this stomped depth everywhere with a single wrong flat
+     value; (2) reading back `mRT->deferredScreen`'s existing depth via
+     `texelFetch` to explicitly echo it on non-coverage pixels was considered
+     and rejected — that attachment is simultaneously bound for writing in the
+     same draw call, which is an undefined/illegal read-after-write hazard.
+     Confirmed working: user screenshots showed standard rendering and
+     ExactOIT both producing exact background colors with correct hair
+     transparency (mostly — see the star-leak paragraph below).
+   - **AVBOIT** (`fsavboit.cpp`, new `avboitIsolateDepthF.glsl`): AVBOIT's
+     resolve step is a compute shader (`gAVBOITResolveProgram`, dispatched
+     from `FSAVBOIT::finishDirectFrame()`) that writes color via
+     `glBindImageTexture`+`imageStore` — compute shaders cannot `imageStore`
+     into a depth-format texture, so the ExactOIT technique (an extra pass of
+     the *same* shader) doesn't transfer directly. Instead, added a small
+     ordinary fragment-shader pass (`gAVBOITIsolateDepthProgram`) run right
+     after the compute resolve dispatch (still inside `finishDirectFrame()`,
+     while `mRT->screen` — which shares its depth attachment with
+     `mRT->deferredScreen` via `shareDepthBuffer()`, confirmed in
+     `LLPipeline::allocateScreenBuffer()` — is still the bound framebuffer),
+     sampling AVBOIT's own per-pixel coverage textures
+     (`sResources.accumulatedWeight`, `GL_R16F`; `sResources.accumulatedColorGlow`,
+     `GL_RGBA16F`) as ordinary `sampler2D`s via `texelFetch` (they're real GL
+     textures, not just compute images, so this is legal outside the compute
+     dispatch). Same discard-or-near-plane-depth logic as ExactOIT's pass 3.
+     Confirmed the shader itself compiles successfully (log: "Loaded cached
+     binary for shader: AVBOIT Isolate Depth"), and confirmed via code reading
+     that it draws into the correct, correctly-shared depth attachment (an
+     earlier hypothesis that it might be targeting the wrong bound framebuffer
+     was checked and ruled out) — the mechanism itself is sound.
+
+   **Star-leak regression, found and fixed.** After the above depth-write
+   fixes, the user reported (with screenshots) faint white dots visible inside
+   hair strands even against a white background, and separately "I can see
+   stars in the transparent parts of the hair" more broadly, for *both*
+   standard rendering and ExactOIT (i.e. not an OIT-specific bug). Root cause:
+   `ASBackgroundIsolate::setActive()` deliberately leaves `RENDER_TYPE_SKY`/
+   `RENDER_TYPE_WL_SKY` enabled during isolate mode (disabling them wholesale
+   was redesign 1's original approach and caused a magenta ambient-lighting
+   tint bug, because `LLVOSky::updateSky()` early-returns and stops refreshing
+   its atmospherics cache when `RENDER_TYPE_SKY` is off, and this cache feeds
+   the deferred lighting shaders directly) — so the sky dome, including stars
+   (`LLDrawPoolWLSky::renderStarsDeferred()`), keeps rendering normally into
+   `mRT->screen` every frame, same as outside isolate mode. The late backdrop
+   pass only repaints pixels whose *depth* reads as fully background; it
+   cannot retroactively fix color that alpha-blended hair already composited
+   *against* sky/star color earlier in the frame (forward alpha rendering
+   happens well before the late backdrop pass, and blending is irreversible —
+   the sky color is baked into the result the moment hair blends over it).
+   So any hair pixel with partial alpha coverage necessarily shows a trace of
+   whatever was behind it at blend time, and that was the actual sky (with
+   stars), not the isolate color.
+   **Fix**: added a narrow, tag-wrapped bypass directly inside
+   `LLDrawPoolWLSky::renderDeferred()` (`lldrawpoolwlsky.cpp`) — while isolate
+   mode is active, this function now returns immediately after its existing
+   `RENDER_TYPE_SKY`/null checks, before drawing the sky dome, heavenly
+   bodies, stars, aurora, or clouds. This is a different, narrower lever than
+   toggling `RENDER_TYPE_SKY` itself: that render-type flag stays on (so
+   `updateSky()` keeps refreshing its cache, and `LLReflectionMapManager`'s
+   own internal probe captures — which force sky on via their own
+   `pushRenderTypeMask()`/`andRenderTypeMask()`/`popRenderTypeMask()`
+   regardless of outside state, confirmed in `llreflectionmapmanager.cpp` —
+   are unaffected either way), only this one draw call is skipped. Not yet
+   confirmed by the user with a fresh build (this fix landed at the very end
+   of the session), but the logic directly matches the confirmed root cause
+   and the screenshot evidence (two isolated star dots, not widespread
+   corruption).
+
+   **Remaining open problem: exact color under partially-transparent hair.**
+   Independent of the star leak, the user also reported (screenshot) that
+   white background specifically "is not correct, transparency is weird" —
+   this is a *different*, deeper issue than stars: even with sky/stars fully
+   suppressed, hair's semi-transparent pixels now blend against whatever *is*
+   left in `mRT->screen` at blend time, which is near-`(0,0,0,0)` (the
+   frame's initial clear color) rather than the isolate color itself, since
+   nothing fills that buffer with the isolate color before hair renders in
+   this (reverted-to) late-pass design. This produces visible dark/black
+   fringing at hair edges against light backgrounds (white, light custom
+   colors) — physically correct in the sense that alpha blending against
+   whatever's actually there is well-defined, but not what the user needs for
+   a clean photography backdrop.
+   Three fix approaches were scoped and presented to the user, who asked to
+   pause here and document rather than pick one yet:
+   1. **Full tonemap-inversion early fill** — reintroduce an early color fill
+      (like redesign 5's, but *only* for background-depth pixels, using the
+      existing late pass's `mRT->deferredScreen` depth test, applied right
+      after the atmospheric soften pass and before local lights/forward alpha
+      in `LLPipeline::renderDeferredLighting()`) that inverts the *exact*
+      tonemap+exposure+gamma pipeline (there are 6 real shader variants —
+      `NO_POST` × `GAMMA_CORRECT` × `LEGACY_GAMMA` combinations, selected at
+      runtime by `gSnapshotNoPost`/build-tools-open/probe-ambiance checks in
+      `LLPipeline::tonemap()`) via a numeric (e.g. bisection) per-channel
+      inversion, using last frame's exposure scalar (`mExposureMap`, a 1x1
+      `GL_R16F` target — still holds last frame's value at this point in the
+      frame, since `generateExposure()` doesn't overwrite it until
+      `renderFinalize()`, later). Most correct — hair would blend against a
+      value that reproduces the exact requested color after this frame's real
+      tonemap runs — but duplicates real tonemap logic in a second shader
+      that must be kept in sync if the tonemap pipeline ever changes.
+   2. **Simple un-inverted linear fill** — same early fill, but store
+      `isolate_color / last_frame_exposure` directly with no tonemap
+      inversion. Exact for pure black (a fixed point of both tonemap curves
+      at any exposure); close-but-not-exact for white/custom (both curves are
+      compressive near 1.0, so pure linear white doesn't tonemap back to
+      pure white except coincidentally). Much simpler, no duplicated tonemap
+      math, small but real color error on non-black backgrounds.
+   3. **Leave as-is (current state)** — keep only the late pass; accept
+      dark/black fringing on hair edges against non-black isolate colors as a
+      known limitation.
+   **Implemented follow-up after daylight-EEP screenshot review:** option 2's
+   hybrid base-layer approach is now active. `ASBackgroundIsolate::renderBaseLayer()`
+   runs immediately after the deferred atmospheric soften pass and before local
+   lights/forward alpha/ExactOIT/AVBOIT. It replaces only far-depth background
+   pixels in `mRT->screen`, so transparent hair composites against the requested
+   isolate color instead of preserving the cyan/white daylight atmosphere. The
+   existing late post-tonemap `render()` remains authoritative for fully uncovered
+   pixels, keeping the visible solid background exact; only partially transparent
+   pixels can expose the early HDR color's tonemap difference. The safe separate
+   ExactOIT pass 3 and AVBOIT coverage-depth pass remain in place so the late pass
+   preserves those already-correctly-composited hair pixels. The narrow WL-sky draw
+   bypass also remains to prevent stars and sky geometry from entering the buffer.
+
+   Follow-up runtime testing exposed two implementation bugs. First, the early
+   base-layer draw initially wrote alpha as well as RGB; `mRT->screen` alpha is the
+   glow accumulator, so white/custom backgrounds became full-screen bloom emitters
+   and produced severe overexposure/colored halos. The base layer now masks alpha
+   writes and seeds RGB only. Second, AVBOIT's isolate-depth pass ran while
+   `gAVBOITOpaqueTarget` was still bound, updating its private depth copy rather than
+   the screen target's shared scene depth. `finishDirectFrame()` now flushes the
+   private target after compute resolve and restores the caller's screen target
+   before drawing isolate coverage.

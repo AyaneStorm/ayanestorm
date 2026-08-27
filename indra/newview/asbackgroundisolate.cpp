@@ -260,3 +260,34 @@ void ASBackgroundIsolate::render(LLRenderTarget& depth_target, LLVertexBuffer& s
     sBackgroundIsolateProgram.unbind();
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 }
+
+void ASBackgroundIsolate::renderBaseLayer(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
+{
+    if (!sActive || !sBackgroundIsolateProgram.isComplete() || gCubeSnapshot)
+    {
+        return;
+    }
+
+    // Opaque depth is complete here, but alpha/OIT has not rendered. The
+    // shader's binary background mask replaces only far-depth atmospherics;
+    // opaque avatar pixels remain untouched and hair blends over this color.
+    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLGLEnable blend(GL_BLEND);
+    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    // mRT->screen alpha is the glow/bloom accumulator, not scene coverage.
+    // Writing the isolate mask's alpha here makes every background pixel emit
+    // maximum glow. Seed only RGB and preserve the existing zero glow channel.
+    gGL.setColorMask(true, false);
+
+    sBackgroundIsolateProgram.bind();
+    sBackgroundIsolateProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &depth_target, true, LLTexUnit::TFO_POINT);
+    sBackgroundIsolateProgram.uniform4fv(sIsolateColor, 1, sColor.mV);
+
+    screen_triangle.setBuffer();
+    screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+
+    sBackgroundIsolateProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    sBackgroundIsolateProgram.unbind();
+    gGL.setColorMask(true, true);
+    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+}

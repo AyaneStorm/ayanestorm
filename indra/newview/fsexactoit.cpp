@@ -102,6 +102,7 @@ void FSExactOIT::allocateResources(U32 width, U32 height) {}
 #include <string>
 #include <utility>
 
+#include "asbackgroundisolate.h"
 #include "llgl.h"
 #include "lldrawpoolalpha.h"
 #include "llrender.h"
@@ -1272,7 +1273,6 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
 {
     copyOpaqueScene(screen);
     LLGLDisable blend(GL_BLEND);
-    LLGLDepthTest depth(GL_FALSE);
     bindCompositeResources();
 
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
@@ -1282,32 +1282,43 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     static LLStaticHashedString oit_compute_sort_active("oitComputeSortActive");
     // Limit opaque-cutoff discovery to the first natural-sort invocation.
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
-    gGL.setColorMask(false, false);
-    const bool used_compute_sort =
-        sortWithCompute(screen.getWidth(), screen.getHeight(), maximum_list);
-    if (!used_compute_sort)
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: see the
+    // dedicated pass 3 block below and asbackgroundisolate.h for the full
+    // story.
+    const bool isolate_write_depth = ASBackgroundIsolate::isActive();
+    // </AS:Chanayane>
+
+    bool used_compute_sort = false;
     {
-        gExactOITCompositeProgram.bind();
-        gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
-        screen_triangle.setBuffer();
+        LLGLDepthTest depth(GL_FALSE);
+        gGL.setColorMask(false, false);
+        used_compute_sort =
+            sortWithCompute(screen.getWidth(), screen.getHeight(), maximum_list);
+        if (!used_compute_sort)
         {
-            LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
-            gExactOITCompositeProgram.uniform1i(oit_pass, 1);
-            for (U32 width = 1; width < maximum_list; width <<= 1)
+            gExactOITCompositeProgram.bind();
+            gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+            screen_triangle.setBuffer();
             {
-                LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
-                // Prune fully hidden nodes before the first merge pass.
-                gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
-                                                    opaque_cutoff && width == 1);
-                screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
-                glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
+                gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+                for (U32 width = 1; width < maximum_list; width <<= 1)
+                {
+                    LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
+                    // Prune fully hidden nodes before the first merge pass.
+                    gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
+                                                        opaque_cutoff && width == 1);
+                    screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+                    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                }
             }
+            gExactOITCompositeProgram.unbind();
         }
-        gExactOITCompositeProgram.unbind();
     }
 
     {
         LL_PROFILE_GPU_ZONE("Exact OIT final blend");
+        LLGLDepthTest depth(GL_FALSE);
         gGL.setColorMask(true, true);
         gExactOITCompositeProgram.bind();
         gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
@@ -1320,6 +1331,33 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
         gExactOITCompositeProgram.unbind();
     }
+
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: a
+    // separate depth-only re-pass, run only while isolate mode is active,
+    // AFTER the color blend above has fully completed. It discards on every
+    // pixel with no real captured OIT coverage and writes a near-plane
+    // depth everywhere else (see the oitPass == 3 branch in
+    // exactOITCompositeF.glsl), so a later depth-tested isolate backdrop
+    // pass correctly treats OIT-composited content as occupied instead of
+    // painting over it. Color writes are masked off for this pass -- it
+    // only ever touches depth. Doing this as a fully separate pass (rather
+    // than writing depth inline during the color blend) avoids ever
+    // needing to read the scene's existing depth while that same
+    // attachment is simultaneously bound for writing, which is undefined
+    // behavior.
+    if (isolate_write_depth)
+    {
+        LL_PROFILE_GPU_ZONE("Exact OIT isolate depth");
+        LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
+        gGL.setColorMask(false, false);
+        gExactOITCompositeProgram.bind();
+        gExactOITCompositeProgram.uniform1i(oit_pass, 3);
+        screen_triangle.setBuffer();
+        screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+        gExactOITCompositeProgram.unbind();
+        gGL.setColorMask(true, true);
+    }
+    // </AS:Chanayane>
 
     static bool previous_requested = false;
     static bool previous_available = false;

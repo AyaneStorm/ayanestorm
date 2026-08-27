@@ -9216,8 +9216,9 @@ void LLPipeline::renderFinalize()
     // DoF, FSAA/SMAA all already applied), so the color is immune to every
     // post effect instead of being re-tinted/smeared by them -- depth-tested
     // in-shader against the preserved scene depth so the avatar (and our own
-    // invisible light-rig objects) stay untouched. No-op unless isolate mode
-    // is active.
+    // invisible light-rig objects, and now ExactOIT/AVBOIT-resolved alpha
+    // content while isolate mode is active) stay untouched. No-op unless
+    // isolate mode is active.
     ASBackgroundIsolate::render(mRT->deferredScreen, *mScreenTriangleVB);
     // </AS:Chanayane>
 
@@ -9737,6 +9738,13 @@ void LLPipeline::renderDeferredLighting()
 
             unbindDeferredShader(gDeferredSoftenProgram);
         }
+
+        // <AS:Chanayane> Seed isolate-background pixels before alpha/OIT so
+        // translucent hair blends against the requested color instead of the
+        // EEP sky/atmospherics written by the deferred soften pass. The late
+        // isolate pass still enforces the exact final solid color.
+        ASBackgroundIsolate::renderBaseLayer(mRT->deferredScreen, *mScreenTriangleVB);
+        // </AS:Chanayane>
 
         static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
         static LLCachedControl<S32> probe_level(gSavedSettings, "RenderReflectionProbeLevel", 0);
