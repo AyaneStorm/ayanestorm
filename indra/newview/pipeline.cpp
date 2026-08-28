@@ -48,6 +48,10 @@
 #include "asbackgroundisolate.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Optional viewer-object-free My Lights backend.
+#include "aslightrigrenderer.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
@@ -6569,8 +6573,19 @@ void LLPipeline::setupHWLights()
 
     if (local_light_count >= 1)
     {
+        // <AS:Chanayane> Direct My Lights have no drawable and therefore
+        // never enter mNearbyLights. Populate the same hardware-light state
+        // explicitly so forward-rendered alpha receives identical lighting.
+        cur_light = ASLightRigRenderer::appendForwardLights(*this, cur_light, light_scale);
+        // </AS:Chanayane>
+
+        // <AS:Chanayane> Synthetic My Lights may already occupy every local
+        // slot; do not enter the original loop and index slot 8 in that case.
+        // for (light_set_t::iterator iter = mNearbyLights.begin();
+        //      iter != mNearbyLights.end(); ++iter)
         for (light_set_t::iterator iter = mNearbyLights.begin();
-             iter != mNearbyLights.end(); ++iter)
+             iter != mNearbyLights.end() && cur_light < 8; ++iter)
+        // </AS:Chanayane>
         {
             LLDrawable* drawable = iter->drawable;
             LLVOVolume* light = drawable->getVOVolume();
@@ -10005,6 +10020,11 @@ void LLPipeline::renderDeferredLighting()
                 gDeferredMultiSpotLightProgram.disableTexture(LLShaderMgr::DEFERRED_PROJECTION);
                 unbindDeferredShader(gDeferredMultiSpotLightProgram);
             }
+
+            // <AS:Chanayane> Submit optional viewer-object-free My Lights
+            // through the same deferred point-light shaders as stock lights.
+            ASLightRigRenderer::render(*this, light_scale);
+            // </AS:Chanayane>
         }
 
         gGL.setColorMask(true, true);

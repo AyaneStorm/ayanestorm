@@ -11,6 +11,7 @@
 #include <algorithm>
 
 #include "asbackgroundisolate.h"
+#include "aslightrigrenderer.h"
 #include "llcallbacklist.h"
 #include "llcheckboxctrl.h"
 #include "llcolorswatch.h"
@@ -51,6 +52,7 @@ ASFloaterMyLights::ASFloaterMyLights(const LLSD& key)
     mFalloffSlider(nullptr),
     mColorSwatch(nullptr),
     mMasterEnabledCheck(nullptr),
+    mRenderBackendCombo(nullptr),
     mBackgroundCombo(nullptr),
     mBackgroundColorSwatch(nullptr),
     mFreezeAnimationsCheck(nullptr),
@@ -78,6 +80,7 @@ bool ASFloaterMyLights::postBuild()
     mFalloffSlider = getChild<LLUICtrl>("as_light_falloff");
     mColorSwatch = getChild<LLColorSwatchCtrl>("as_light_color");
     mMasterEnabledCheck = getChild<LLCheckBoxCtrl>("as_light_master_enabled");
+    mRenderBackendCombo = getChild<LLComboBox>("as_light_render_backend");
     mBackgroundCombo = getChild<LLComboBox>("as_light_background");
     mBackgroundColorSwatch = getChild<LLColorSwatchCtrl>("as_light_background_color");
     mFreezeAnimationsCheck = getChild<LLCheckBoxCtrl>("as_light_freeze_anim");
@@ -104,6 +107,7 @@ bool ASFloaterMyLights::postBuild()
     getChild<LLUICtrl>("as_light_preset_back")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onPresetBack(); });
 
     mMasterEnabledCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onMasterEnabledChanged(); });
+    mRenderBackendCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onRenderBackendChanged(); });
     mBackgroundCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundModeChanged(); });
     mBackgroundColorSwatch->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundColorChanged(); });
     mFreezeAnimationsCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onFreezeAnimationsChanged(); });
@@ -117,6 +121,7 @@ bool ASFloaterMyLights::postBuild()
     mBeaconCheck->setValue(gSavedSettings.getBOOL("ASRenderLightBeacon"));
     mMasterEnabled = gSavedSettings.getBOOL("ASLightRigMasterEnabled");
     mMasterEnabledCheck->setValue(mMasterEnabled);
+    mRenderBackendCombo->setValue(gSavedSettings.getString("ASLightRigRenderBackend"));
 
     setControlsEnabled(false);
     refreshPresetList();
@@ -189,7 +194,8 @@ void ASFloaterMyLights::renderAllLightBeacons()
     gGL.begin(LLRender::LINES);
     for (const auto& rig : self->mLights)
     {
-        if (!rig->isCreated() || !rig->isEnabled())
+        if ((!rig->isCreated() && !ASLightRigRenderer::usesShaderBackend()) ||
+            !rig->isEnabled())
         {
             continue;
         }
@@ -216,10 +222,22 @@ void ASFloaterMyLights::onIdle(void* userdata)
 
 void ASFloaterMyLights::updateLights()
 {
+    std::vector<ASLightRigRenderer::Light> shader_lights;
     for (auto& rig : mLights)
     {
         rig->updateTransform();
+        if (rig->isEnabled())
+        {
+            ASLightRigRenderer::Light light;
+            light.position_agent = rig->getObjectPositionAgent();
+            light.color_srgb = rig->mColor;
+            light.intensity = rig->mIntensity;
+            light.radius = rig->mRadius;
+            light.falloff = rig->mFalloff;
+            shader_lights.push_back(light);
+        }
     }
+    ASLightRigRenderer::setLights(shader_lights);
 
     // Keep ASBackgroundIsolate's exempt-object set current -- cheap (a
     // small set copy) and simplest way to handle lights being added/
@@ -513,6 +531,12 @@ void ASFloaterMyLights::onMasterEnabledChanged()
     {
         rig->setEnabled(mMasterEnabled);
     }
+}
+
+void ASFloaterMyLights::onRenderBackendChanged()
+{
+    gSavedSettings.setString("ASLightRigRenderBackend", mRenderBackendCombo->getValue().asString());
+    updateLights();
 }
 
 void ASFloaterMyLights::onBackgroundModeChanged()

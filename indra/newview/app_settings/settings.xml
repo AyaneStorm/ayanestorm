@@ -26000,6 +26000,14 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key><integer>1</integer>
       <key>Backup</key><integer>0</integer>
     </map>
+    <key>ASLightRigRenderBackend</key>
+    <map>
+      <key>Comment</key><string>Rendering backend for My Lights: LLVOVolume or direct deferred Shader</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>String</string>
+      <key>Value</key><string>LLVOVolume</string>
+      <key>Backup</key><integer>0</integer>
+    </map>
     <!-- </AS:Chanayane> -->
     <key>FSTurnAvatarToSelectedObject</key>
     <map>
