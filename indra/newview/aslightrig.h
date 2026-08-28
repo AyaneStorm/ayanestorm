@@ -38,7 +38,7 @@ public:
     LLUUID getObjectId() const;
 
     // Current world position of the live object, for beacon rendering.
-    // Returns a zero vector if not created.
+    // Also available in the shader backend, which has no live object.
     LLVector3 getObjectPositionAgent() const;
 
     // Recomputes this light's world position from its anchor joint's current
@@ -73,6 +73,9 @@ public:
 
 private:
     bool mEnabled;
+    // Cached independently of mObject so shader-only lights and beacons use
+    // the same joint-derived position without creating viewer geometry.
+    LLVector3 mPositionAgent;
     LLPointer<LLVOVolume> mObject;
 };
 

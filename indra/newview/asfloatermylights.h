@@ -72,6 +72,7 @@ private:
 
     // Master switch, background, freeze animations, beacon, poser
     void onMasterEnabledChanged();
+    void onRenderBackendChanged();
     void onBackgroundModeChanged();
     void onBackgroundColorChanged();
     void onFreezeAnimationsChanged();
@@ -105,6 +106,7 @@ private:
     LLUICtrl* mFalloffSlider;
     LLColorSwatchCtrl* mColorSwatch;
     LLCheckBoxCtrl* mMasterEnabledCheck;
+    LLComboBox* mRenderBackendCombo;
     LLComboBox* mBackgroundCombo;
     LLColorSwatchCtrl* mBackgroundColorSwatch;
     LLCheckBoxCtrl* mFreezeAnimationsCheck;
