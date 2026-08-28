@@ -88,9 +88,9 @@ namespace ASBackgroundIsolate
     // (LLViewerObject::processUpdateMessage()), and needs no explicit
     // restore step when isolate mode turns off -- the flag just stops being
     // re-asserted and a rebuild is forced to reflect that immediately.
-    // Returns true when the drawable must also be skipped by the current
-    // state-sort call. This is required for avatars, whose non-volume faces
-    // can otherwise be enqueued after FORCE_INVISIBLE is set.
+    // Returns true only for a hidden avatar drawable that must also be skipped
+    // by the current state-sort call. Other drawable types retain the original
+    // state-sort bookkeeping after their hidden flag is updated.
     bool updateDrawableHiddenState(LLDrawable* drawable);
 
     // Called by ASFloaterMyLights right after setActive(false, ...) turns
@@ -102,6 +102,10 @@ namespace ASBackgroundIsolate
     // explicitly un-hides every drawable this module hid, so turning
     // isolate mode off is never dependent on incidental group traversal.
     void restoreAllHiddenDrawables();
+
+    // Re-evaluates objects already tracked by this module after an allowlist
+    // preference changes, without temporarily restoring unrelated scenery.
+    void refreshHiddenDrawables();
 }
 
 #endif

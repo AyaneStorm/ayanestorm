@@ -113,9 +113,13 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
         return false;
     }
 
+    static LLCachedControl<bool> show_other_avatars(gSavedSettings,
+                                                     "ASLightRigShowOtherAvatars", false);
+
     if (obj->asAvatar())
     {
-        return !obj->asAvatar()->isSelf();
+        LLVOAvatar* avatar = obj->asAvatar();
+        return !avatar->isSelf() && (!show_other_avatars || avatar->isControlAvatar());
     }
 
     if (sLightRigIds.count(obj->getID()))
@@ -124,7 +128,8 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
     }
 
     LLVOAvatar* ancestor = obj->getAvatarAncestor();
-    if (ancestor && ancestor->isSelf())
+    if (ancestor && (ancestor->isSelf() ||
+                     (show_other_avatars && !ancestor->isControlAvatar())))
     {
         return false;
     }
@@ -154,7 +159,7 @@ bool ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
 
     if (should_hide == currently_hidden)
     {
-        return should_hide;
+        return should_hide && drawable->isAvatar();
     }
 
     LLViewerObject* obj = drawable->getVObj();
@@ -197,7 +202,7 @@ bool ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
         gPipeline.markRebuild(group);
     }
 
-    return should_hide;
+    return should_hide && drawable->isAvatar();
 }
 
 void ASBackgroundIsolate::restoreAllHiddenDrawables()
@@ -224,6 +229,22 @@ void ASBackgroundIsolate::restoreAllHiddenDrawables()
         }
     }
     sHiddenObjectIds.clear();
+}
+
+void ASBackgroundIsolate::refreshHiddenDrawables()
+{
+    // updateDrawableHiddenState() can erase ids as objects become allowed, so
+    // iterate a stable copy. Objects that remain disallowed keep their flags
+    // and do not trigger redundant geometry rebuilds.
+    const std::set<LLUUID> hidden_ids = sHiddenObjectIds;
+    for (const LLUUID& id : hidden_ids)
+    {
+        LLViewerObject* obj = gObjectList.findObject(id);
+        if (obj && obj->mDrawable.notNull())
+        {
+            updateDrawableHiddenState(obj->mDrawable);
+        }
+    }
 }
 
 void ASBackgroundIsolate::registerShader(std::vector<LLGLSLShader*>& shaders)
