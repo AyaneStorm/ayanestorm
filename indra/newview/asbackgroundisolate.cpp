@@ -137,11 +137,11 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
     return true;
 }
 
-void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
+bool ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
 {
     if (!drawable || drawable->isDead())
     {
-        return;
+        return false;
     }
 
     // Shadow maps must retain the isolated scene as occluding geometry. If
@@ -154,7 +154,7 @@ void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
 
     if (should_hide == currently_hidden)
     {
-        return;
+        return should_hide;
     }
 
     LLViewerObject* obj = drawable->getVObj();
@@ -196,6 +196,8 @@ void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
         group->dirtyGeom();
         gPipeline.markRebuild(group);
     }
+
+    return should_hide;
 }
 
 void ASBackgroundIsolate::restoreAllHiddenDrawables()
