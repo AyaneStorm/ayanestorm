@@ -59,3 +59,25 @@ A shader-submitted synthetic local-light backend is the cleaner long-term
 architecture. Preserve the current `ASLightRig` data model and UI so the change
 is limited to position output and renderer submission rather than user-facing
 behavior or preset compatibility.
+
+## A/B implementation
+
+The My Lights panel now exposes a persistent **Backend** combo box:
+
+- **LLVOVolume** retains the original viewer-local object implementation and
+  remains the default.
+- **Shader** destroys the rig's viewer objects and submits cached light data
+  directly through the stock deferred point-light shaders.
+
+Changing the combo applies immediately without altering the rig list or saved
+presets. Compare opaque-surface appearance, FPS, teleport behavior, and light
+editing between both modes.
+
+The experimental shader backend targets the deferred opaque lighting pass and
+also populates the same hardware-light uniforms used by forward-rendered
+transparency. Synthetic lights reserve the available local slots before normal
+nearby lights, ensuring My Lights remains available to alpha hair and clothing
+without viewer objects. It is still absent from the optional volumetric
+local-light collector, which currently discovers lights through pipeline
+drawables. That difference should be checked before choosing a permanent
+backend.

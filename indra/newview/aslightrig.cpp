@@ -7,6 +7,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "aslightrig.h"
+#include "aslightrigrenderer.h"
 
 #include "indra_constants.h"
 #include "llagent.h"
@@ -26,6 +27,7 @@ namespace
     // without a visible mesh -- no "invisiprim" primitive exists in this
     // codebase, so a near-zero sphere is the pragmatic stand-in.
     const F32 LIGHT_OBJECT_SCALE = 0.01f;
+
 }
 
 ASLightRig::ASLightRig()
@@ -39,7 +41,8 @@ ASLightRig::ASLightRig()
     mRadius(5.f),
     mFalloff(1.f),
     mColor(1.f, 1.f, 1.f),
-    mEnabled(true)
+    mEnabled(true),
+    mPositionAgent(LLVector3::zero)
 {
 }
 
@@ -50,7 +53,8 @@ ASLightRig::~ASLightRig()
 
 void ASLightRig::create()
 {
-    if ((isCreated() && !mObject->isDead()) || !gAgentAvatarp)
+    if (ASLightRigRenderer::usesShaderBackend() ||
+        (isCreated() && !mObject->isDead()) || !gAgentAvatarp)
     {
         return;
     }
@@ -120,6 +124,11 @@ void ASLightRig::destroy()
 
 void ASLightRig::updateTransform()
 {
+    if (ASLightRigRenderer::usesShaderBackend() && mObject.notNull())
+    {
+        destroy();
+    }
+
     if (!mEnabled || !gAgentAvatarp)
     {
         return;
@@ -128,17 +137,6 @@ void ASLightRig::updateTransform()
     LLViewerRegion* region = gAgent.getRegion();
     if (!region || gAgentAvatarp->getRegion() != region)
     {
-        return;
-    }
-
-    // Viewer-local objects retain their creation region. Teleports can kill
-    // the old object, and merely moving a surviving old-region object uses
-    // the wrong region-to-agent transform. Recreate it in the settled agent
-    // region so the light resumes following the avatar.
-    if (mObject.isNull() || mObject->isDead() || mObject->getRegion() != region)
-    {
-        destroy();
-        create();
         return;
     }
 
@@ -161,12 +159,30 @@ void ASLightRig::updateTransform()
     offset.rotVec(LLQuaternion(mAzimuth * DEG_TO_RAD, LLVector3::z_axis));
     offset.rotVec(joint_rot);
 
-    mObject->setPositionAgent(joint_pos + offset);
+    mPositionAgent = joint_pos + offset;
+
+    if (ASLightRigRenderer::usesShaderBackend())
+    {
+        return;
+    }
+
+    // Viewer-local objects retain their creation region. Teleports can kill
+    // the old object, and merely moving a surviving old-region object uses
+    // the wrong region-to-agent transform. Recreate it in the settled agent
+    // region so the light resumes following the avatar.
+    if (mObject.isNull() || mObject->isDead() || mObject->getRegion() != region)
+    {
+        destroy();
+        create();
+        return;
+    }
+
+    mObject->setPositionAgent(mPositionAgent);
 }
 
 LLVector3 ASLightRig::getObjectPositionAgent() const
 {
-    return mObject.notNull() ? mObject->getPositionAgent() : LLVector3::zero;
+    return mPositionAgent;
 }
 
 LLUUID ASLightRig::getObjectId() const

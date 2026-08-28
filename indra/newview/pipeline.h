@@ -58,6 +58,9 @@ class FSExactOIT;
 // <AS:Chanayane> Independent AVBOIT renderer.
 class FSAVBOIT;
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-object-free My Lights renderer.
+class ASLightRigRenderer;
+// </AS:Chanayane>
 class LLSettingsSky;
 
 typedef enum e_avatar_skinning_method
@@ -103,6 +106,10 @@ class LLPipeline
     // </AS:Chanayane>
     // <AS:Chanayane> AVBOIT performs its own post-transparency debug traversal.
     friend class FSAVBOIT;
+    // </AS:Chanayane>
+    // <AS:Chanayane> Allow the isolated AS module to populate protected
+    // hardware-light bookkeeping without moving its logic into LLPipeline.
+    friend class ASLightRigRenderer;
     // </AS:Chanayane>
 
 public:

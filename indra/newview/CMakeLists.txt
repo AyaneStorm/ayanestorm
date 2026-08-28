@@ -119,6 +119,7 @@ set(viewer_SOURCE_FILES
     asvolumetriclighting.cpp
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.cpp
+    aslightrigrenderer.cpp
     asfloatermylights.cpp
     # </AS:Chanayane>
     chatbar_as_cmdline.cpp
@@ -1011,6 +1012,7 @@ set(viewer_HEADER_FILES
     asvolumetriclighting.h
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.h
+    aslightrigrenderer.h
     asfloatermylights.h
     # </AS:Chanayane>
     chatbar_as_cmdline.h
