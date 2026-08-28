@@ -113,9 +113,13 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
         return false;
     }
 
+    static LLCachedControl<bool> show_other_avatars(gSavedSettings,
+                                                     "ASLightRigShowOtherAvatars", false);
+
     if (obj->asAvatar())
     {
-        return !obj->asAvatar()->isSelf();
+        LLVOAvatar* avatar = obj->asAvatar();
+        return !avatar->isSelf() && (!show_other_avatars || avatar->isControlAvatar());
     }
 
     if (sLightRigIds.count(obj->getID()))
@@ -124,7 +128,8 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
     }
 
     LLVOAvatar* ancestor = obj->getAvatarAncestor();
-    if (ancestor && ancestor->isSelf())
+    if (ancestor && (ancestor->isSelf() ||
+                     (show_other_avatars && !ancestor->isControlAvatar())))
     {
         return false;
     }
@@ -137,11 +142,39 @@ bool ASBackgroundIsolate::shouldHideDrawable(LLDrawable* drawable)
     return true;
 }
 
-void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
+bool ASBackgroundIsolate::shouldHideHUDText(LLViewerObject* source_object)
+{
+    if (!sActive)
+    {
+        return false;
+    }
+    if (!source_object)
+    {
+        return true;
+    }
+
+    static LLCachedControl<bool> show_other_avatars(gSavedSettings,
+                                                     "ASLightRigShowOtherAvatars", false);
+    LLVOAvatar* avatar = source_object->asAvatar();
+    if (avatar)
+    {
+        return !avatar->isSelf() && (!show_other_avatars || avatar->isControlAvatar());
+    }
+
+    LLVOAvatar* ancestor = source_object->getAvatarAncestor();
+    if (ancestor)
+    {
+        return !ancestor->isSelf() && (!show_other_avatars || ancestor->isControlAvatar());
+    }
+
+    return true;
+}
+
+bool ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
 {
     if (!drawable || drawable->isDead())
     {
-        return;
+        return false;
     }
 
     // Shadow maps must retain the isolated scene as occluding geometry. If
@@ -149,12 +182,26 @@ void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
     // scene, walls and roofs stop blocking the sun and a sun-direction-reactive
     // highlight appears on the avatar. Temporarily restore those drawables
     // during shadow state sorting; the main-camera pass hides them again.
-    const bool should_hide = !LLPipeline::sShadowRender && shouldHideDrawable(drawable);
+    const bool isolate_hide = shouldHideDrawable(drawable);
+    bool other_avatar_content = false;
+    if (isolate_hide)
+    {
+        LLViewerObject* obj = drawable->getVObj();
+        LLVOAvatar* avatar = obj ? obj->asAvatar() : nullptr;
+        LLVOAvatar* ancestor = obj ? obj->getAvatarAncestor() : nullptr;
+        other_avatar_content = (avatar && !avatar->isSelf()) ||
+                               (ancestor && !ancestor->isSelf());
+    }
+
+    // Avoid reveal/rebuild/hide cycles for crowded avatar attachment sets.
+    // Ordinary scenery still renders into shadows so it can shade self.
+    const bool should_hide = isolate_hide &&
+                             (!LLPipeline::sShadowRender || other_avatar_content);
     const bool currently_hidden = drawable->isState(LLDrawable::FORCE_INVISIBLE);
 
     if (should_hide == currently_hidden)
     {
-        return;
+        return should_hide && drawable->isAvatar();
     }
 
     LLViewerObject* obj = drawable->getVObj();
@@ -196,6 +243,8 @@ void ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable* drawable)
         group->dirtyGeom();
         gPipeline.markRebuild(group);
     }
+
+    return should_hide && drawable->isAvatar();
 }
 
 void ASBackgroundIsolate::restoreAllHiddenDrawables()
@@ -222,6 +271,22 @@ void ASBackgroundIsolate::restoreAllHiddenDrawables()
         }
     }
     sHiddenObjectIds.clear();
+}
+
+void ASBackgroundIsolate::refreshHiddenDrawables()
+{
+    // updateDrawableHiddenState() can erase ids as objects become allowed, so
+    // iterate a stable copy. Objects that remain disallowed keep their flags
+    // and do not trigger redundant geometry rebuilds.
+    const std::set<LLUUID> hidden_ids = sHiddenObjectIds;
+    for (const LLUUID& id : hidden_ids)
+    {
+        LLViewerObject* obj = gObjectList.findObject(id);
+        if (obj && obj->mDrawable.notNull())
+        {
+            updateDrawableHiddenState(obj->mDrawable);
+        }
+    }
 }
 
 void ASBackgroundIsolate::registerShader(std::vector<LLGLSLShader*>& shaders)

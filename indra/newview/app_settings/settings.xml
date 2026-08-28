@@ -26008,6 +26008,14 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key><string>LLVOVolume</string>
       <key>Backup</key><integer>0</integer>
     </map>
+    <key>ASLightRigShowOtherAvatars</key>
+    <map>
+      <key>Comment</key><string>Keep other avatars and their attachments visible in My Lights isolate-background mode</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
     <!-- </AS:Chanayane> -->
     <key>FSTurnAvatarToSelectedObject</key>
     <map>

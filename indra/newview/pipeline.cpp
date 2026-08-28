@@ -3564,8 +3564,8 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     // every call (cheap early-out when inactive), so it never goes stale
     // and needs no explicit un-hide step when the mode turns off.
     //
-    // This sets/clears LLDrawable::FORCE_INVISIBLE rather than early-
-    // returning from stateSort() -- volume (ordinary prim/mesh) geometry is
+    // This sets/clears LLDrawable::FORCE_INVISIBLE before returning from
+    // stateSort() -- volume (ordinary prim/mesh) geometry is
     // batched once per group into LLSpatialGroup::mDrawMap by
     // LLVolumeGeometryManager::rebuildGeom(), independent of any given
     // frame's setVisible()/stateSort() outcome, so skipping this function
@@ -3578,7 +3578,14 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     // own -- the same staleness problem the old hideObject()-based
     // approach hit, now solved by driving it from this always-live check
     // instead of a one-shot call).
-    ASBackgroundIsolate::updateDrawableHiddenState(drawablep);
+    // The original call only updated FORCE_INVISIBLE. Preserve
+    // that volume-batch mechanism, but also stop non-volume avatar faces from
+    // being enqueued later in this stateSort() call.
+    // ASBackgroundIsolate::updateDrawableHiddenState(drawablep);
+    if (ASBackgroundIsolate::updateDrawableHiddenState(drawablep))
+    {
+        return;
+    }
     // </AS:Chanayane>
 
     if (drawablep->isAvatar())
