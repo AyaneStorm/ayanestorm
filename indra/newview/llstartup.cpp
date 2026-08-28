@@ -3374,6 +3374,15 @@ bool idle_startup()
         FSFavoriteGroups::getInstance()->loadFavorites();
         // </FS:PP>
 
+        // <AS:Chanayane> Restore viewer-local My Lights at login even when
+        // the floater is not opened. LLFloaterReg creates registered floaters
+        // lazily, while ASFloaterMyLights::postBuild() owns autosave loading
+        // and its persistent idle callback. Constructing the hidden instance
+        // here starts that controller after the account path and avatar are
+        // available without showing the floater.
+        LLFloaterReg::getInstance("as_my_lights");
+        // </AS:Chanayane>
+
         LLStartUp::setStartupState( STATE_STARTED );
         do_startup_frame();
 
