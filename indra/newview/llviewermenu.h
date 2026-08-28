@@ -45,6 +45,10 @@ class LLViewerObject;
 void set_use_wireframe(bool useWireframe);
 // [/RLVa:KB]
 
+// <AS:Chanayane> exposed for the self-lighting floater's Freeze Animations toggle
+void set_all_animation_time_factors(F32 time_factor);
+// </AS:Chanayane>
+
 void initialize_edit_menu();
 void initialize_spellcheck_menu();
 void initialize_volume_controls_callbacks(); //<FS:KC> Centralize a some of these volume panel callbacks

@@ -44,6 +44,10 @@
 #include "asvignette.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Self-lighting floater background isolate pass.
+#include "asbackgroundisolate.h"
+// </AS:Chanayane>
+
 #include "pipeline.h"
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
@@ -3424,7 +3428,27 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
             continue;
         }
         group->checkOcclusion();
-        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED))
+        // <AS:Chanayane> Self-lighting floater isolate-background mode: an
+        // OCCLUDED group never reaches stateSort(LLSpatialGroup*, camera)
+        // below via the normal path -- markOccluder() only queues a fresh
+        // GPU occlusion query, it doesn't draw or rebuild anything. Since
+        // our isolate-mode allowlist filter (which sets/clears
+        // LLDrawable::FORCE_INVISIBLE) only runs inside that call, an
+        // occluded group's drawables would never get their hidden state
+        // updated -- worse, a group briefly unoccluded once would freeze
+        // whatever FORCE_INVISIBLE state it had at that moment, since its
+        // mDrawMap batch isn't rebuilt again until next unoccluded. Room-
+        // scale/static geometry is occluded by other room-scale/static
+        // geometry very commonly (indoors especially), so most of a scene
+        // would get stuck in a stale, inconsistent hidden/visible state.
+        // Treat occlusion as effectively disabled while isolate mode is
+        // active so every group's members always get a fresh answer from
+        // the filter, every frame -- this doesn't touch the occlusion
+        // query machinery itself (checkOcclusion() above still runs
+        // normally), it only stops an occluded result from skipping the
+        // one code path our filter depends on.
+        if (sUseOcclusion > 1 && group->isOcclusionState(LLSpatialGroup::OCCLUDED) &&
+            !ASBackgroundIsolate::isActive())
         {
             markOccluder(group);
         }
@@ -3437,6 +3461,7 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
                 group->rebuildMesh();
             }
         }
+        // </AS:Chanayane>
     }}
 
     {
@@ -3457,7 +3482,19 @@ void LLPipeline::stateSort(LLCamera& camera, LLCullResult &result)
 
 void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
 {
-    if (group->changeLOD())
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: a
+    // render_by_group spatial group (PARTITION_VOLUME -- ordinary prims and
+    // mesh, which includes large static builds like houses/landscaping)
+    // only recurses into the per-drawable stateSort() overload -- where our
+    // isolate-mode allowlist filter lives -- when changeLOD() is true. A
+    // static group whose camera distance hasn't crossed its LOD slop ratio
+    // stays permanently gated out, so its drawables never reach our filter
+    // and keep rendering from a stale cached batch regardless of isolate
+    // mode. Force the loop to run every frame while isolate mode is active
+    // so the filter always gets a chance to run, without disturbing the
+    // original changeLOD()-gated distance bookkeeping below.
+    const bool changed_lod = group->changeLOD();
+    if (changed_lod || ASBackgroundIsolate::isActive())
     {
         for (LLSpatialGroup::element_iter i = group->getDataBegin(); i != group->getDataEnd(); ++i)
         {
@@ -3465,11 +3502,12 @@ void LLPipeline::stateSort(LLSpatialGroup* group, LLCamera& camera)
             stateSort(drawablep, camera);
         }
 
-        if (LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
+        if (changed_lod && LLViewerCamera::sCurCameraID == LLViewerCamera::CAMERA_WORLD && !gCubeSnapshot)
         { //avoid redundant stateSort calls
             group->mLastUpdateDistance = group->mDistance;
         }
     }
+    // </AS:Chanayane>
 }
 
 void LLPipeline::stateSort(LLSpatialBridge* bridge, LLCamera& camera, bool fov_changed)
@@ -3515,6 +3553,29 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
             return;
         }
     }
+
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: keep
+    // everything except the self avatar/its attachments and our own
+    // light-rig objects hidden. Recomputed live from current object state
+    // every call (cheap early-out when inactive), so it never goes stale
+    // and needs no explicit un-hide step when the mode turns off.
+    //
+    // This sets/clears LLDrawable::FORCE_INVISIBLE rather than early-
+    // returning from stateSort() -- volume (ordinary prim/mesh) geometry is
+    // batched once per group into LLSpatialGroup::mDrawMap by
+    // LLVolumeGeometryManager::rebuildGeom(), independent of any given
+    // frame's setVisible()/stateSort() outcome, so skipping this function
+    // has no rendering effect for volumes at all. rebuildGeom() DOES check
+    // FORCE_INVISIBLE when building mDrawMap, which is why that flag (not a
+    // stateSort early-return) is the layer that actually works. We still
+    // need to force a rebuild on state change so it takes effect the same
+    // frame rather than waiting for the group's own next geometry-dirty
+    // cycle (which, for a static, unmoving group, may never happen on its
+    // own -- the same staleness problem the old hideObject()-based
+    // approach hit, now solved by driving it from this always-live check
+    // instead of a one-shot call).
+    ASBackgroundIsolate::updateDrawableHiddenState(drawablep);
+    // </AS:Chanayane>
 
     if (drawablep->isAvatar())
     { //don't draw avatars beyond render distance or if we don't have a spatial group.
@@ -9150,6 +9211,17 @@ void LLPipeline::renderFinalize()
     ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
     // </AS:Chanayane>
 
+    // <AS:Chanayane> Self-lighting floater: paint the isolate-mode solid
+    // background color over the fully composited image (tonemap, bloom,
+    // DoF, FSAA/SMAA all already applied), so the color is immune to every
+    // post effect instead of being re-tinted/smeared by them -- depth-tested
+    // in-shader against the preserved scene depth so the avatar (and our own
+    // invisible light-rig objects, and now ExactOIT/AVBOIT-resolved alpha
+    // content while isolate mode is active) stay untouched. No-op unless
+    // isolate mode is active.
+    ASBackgroundIsolate::render(mRT->deferredScreen, *mScreenTriangleVB);
+    // </AS:Chanayane>
+
     // <AS:Chanayane> Darken the completed 3D image with the optional vignette,
     // after additive lens flares and before snapshot guides and UI overlays.
     ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
@@ -9666,6 +9738,14 @@ void LLPipeline::renderDeferredLighting()
 
             unbindDeferredShader(gDeferredSoftenProgram);
         }
+
+        // <AS:Chanayane> Seed isolate-background pixels before alpha/OIT so
+        // translucent hair blends against the requested color instead of the
+        // EEP sky/atmospherics written by the deferred soften pass. The late
+        // isolate pass still enforces the exact final solid color.
+        ASBackgroundIsolate::renderBaseLayer(mRT->deferredScreen, mExposureMap,
+                                             *mScreenTriangleVB);
+        // </AS:Chanayane>
 
         static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
         static LLCachedControl<S32> probe_level(gSavedSettings, "RenderReflectionProbeLevel", 0);

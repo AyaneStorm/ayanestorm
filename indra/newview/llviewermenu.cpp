@@ -2221,7 +2221,10 @@ class LLAdvancedForceParamsToDefault : public view_listener_t
 //////////////////////////
 
 // Utility function to set all AV time factors to the same global value
-static void set_all_animation_time_factors(F32  time_factor)
+// <AS:Chanayane> exposed (was static) so the self-lighting floater's Freeze
+// Animations toggle can reuse this instead of duplicating the loop
+void set_all_animation_time_factors(F32  time_factor)
+// </AS:Chanayane>
 {
     LLMotionController::setCurrentTimeFactor(time_factor);
     for (LLCharacter* character : LLCharacter::sInstances)

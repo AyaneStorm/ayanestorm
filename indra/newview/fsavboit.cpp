@@ -79,6 +79,7 @@ bool FSAVBOIT::directFrameReady() { return false; }
 #include <set>
 #include <unordered_set>
 
+#include "asbackgroundisolate.h"
 #include "llenvironment.h"
 #include "gltfscenemanager.h"
 #include "llglslshader.h"
@@ -278,6 +279,11 @@ S32 directOpaqueDepthTextureUnit()
 LLGLSLShader gAVBOITVolumeProgram;
 LLGLSLShader gAVBOITResolveProgram;
 LLGLSLShader gAVBOITEarlyDepthProgram;
+// <AS:Chanayane> Self-lighting floater isolate-background mode: writes
+// depth for AVBOIT-resolved pixels only when isolate mode is active. See
+// avboitIsolateDepthF.glsl and FSAVBOIT::finishDirectFrame().
+LLGLSLShader gAVBOITIsolateDepthProgram;
+// </AS:Chanayane>
 LLGLSLShader gAVBOITBoundsProgram;
 LLGLSLShader gAVBOITSkinnedBoundsProgram;
 LLGLSLShader gAVBOITGLTFProgram;
@@ -485,6 +491,21 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITEarlyDepthProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
 
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: see
+    // gAVBOITIsolateDepthProgram's declaration above and finishDirectFrame()
+    // below. No AVBOIT-specific permutations needed -- it just samples the
+    // plain 2D coverage textures via ordinary texelFetch.
+    gAVBOITIsolateDepthProgram.mName = "AVBOIT Isolate Depth";
+    gAVBOITIsolateDepthProgram.mFeatures.attachNothing = true;
+    gAVBOITIsolateDepthProgram.mShaderFiles.clear();
+    gAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
+        "deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
+    gAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
+        "deferred/avboitIsolateDepthF.glsl", GL_FRAGMENT_SHADER);
+    gAVBOITIsolateDepthProgram.mShaderLevel = shader_level;
+    gAVBOITIsolateDepthProgram.clearPermutations();
+    // </AS:Chanayane>
+
     gAVBOITBoundsProgram.mName = "AVBOIT Conservative Bounds";
     gAVBOITBoundsProgram.mFeatures.attachNothing = true;
     gAVBOITBoundsProgram.mShaderFiles.clear();
@@ -522,6 +543,7 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     bool success = gAVBOITVolumeProgram.createShader() &&
         gAVBOITResolveProgram.createShader() &&
         gAVBOITEarlyDepthProgram.createShader() &&
+        gAVBOITIsolateDepthProgram.createShader() &&
         gAVBOITBoundsProgram.createShader() &&
         gAVBOITSkinnedBoundsProgram.createShader();
     success = success && cloneCapturePair(
@@ -610,6 +632,7 @@ void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
     shader_list.push_back(&gAVBOITVolumeProgram);
     shader_list.push_back(&gAVBOITResolveProgram);
     shader_list.push_back(&gAVBOITEarlyDepthProgram);
+    shader_list.push_back(&gAVBOITIsolateDepthProgram);
     shader_list.push_back(&gAVBOITBoundsProgram);
     shader_list.push_back(&gAVBOITSkinnedBoundsProgram);
     shader_list.push_back(&gAVBOITGLTFProgram);
@@ -637,6 +660,7 @@ void FSAVBOIT::unloadShaders()
     gAVBOITVolumeProgram.unload();
     gAVBOITResolveProgram.unload();
     gAVBOITEarlyDepthProgram.unload();
+    gAVBOITIsolateDepthProgram.unload();
     gAVBOITBoundsProgram.unload();
     gAVBOITSkinnedBoundsProgram.unload();
     unloadMaterialShaders();
@@ -1892,6 +1916,52 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     gAVBOITResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     gAVBOITResolveProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
+
+    // <AS:Chanayane> All AVBOIT raster passes above target the private opaque
+    // copy. Restore the caller's screen target now: the compute resolve wrote
+    // screen color through imageStore and did not need an FBO, while the
+    // isolate coverage pass below must update screen's shared scene depth.
+    // Leaving gAVBOITOpaqueTarget bound made that pass write the private depth
+    // copy instead, so the late isolate pass painted over AVBOIT transparency.
+    gAVBOITOpaqueTarget.flush();
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Self-lighting floater isolate-background mode: the
+    // compute resolve above writes color only -- imageStore cannot target a
+    // depth-format texture, so gPipeline.mRT->deferredScreen's shared depth
+    // never gets written for AVBOIT-resolved pixels. Without this, a later
+    // depth-tested isolate backdrop pass can't tell "AVBOIT drew real alpha
+    // content here" from "nothing was drawn here" and paints over it. This
+    // small fragment pass samples the same per-pixel coverage data
+    // (accumulatedWeight/accumulatedColorGlow, still valid GL textures at
+    // this point) and writes a near-plane depth wherever coverage is
+    // non-zero. No-op with zero cost when isolate mode is inactive, and has
+    // no effect whatsoever on AVBOIT's own color output either way.
+    if (ASBackgroundIsolate::isActive() && gAVBOITIsolateDepthProgram.mProgramObject)
+    {
+        LL_PROFILE_GPU_ZONE("AVBOIT isolate depth");
+        static LLStaticHashedString isolate_weight("avboitIsolateWeight");
+        static LLStaticHashedString isolate_color_glow("avboitIsolateColorGlow");
+        const S32 weight_unit = directOpaqueDepthTextureUnit();
+        const S32 color_glow_unit = directTransmittanceTextureUnit();
+
+        LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LEQUAL);
+        gAVBOITIsolateDepthProgram.bind();
+        gGL.getTexUnit(weight_unit)->bindManual(
+            LLTexUnit::TT_TEXTURE, sResources.accumulatedWeight);
+        gAVBOITIsolateDepthProgram.uniform1i(isolate_weight, weight_unit);
+        gGL.getTexUnit(color_glow_unit)->bindManual(
+            LLTexUnit::TT_TEXTURE, sResources.accumulatedColorGlow);
+        gAVBOITIsolateDepthProgram.uniform1i(isolate_color_glow, color_glow_unit);
+
+        gPipeline.mScreenTriangleVB->setBuffer();
+        gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+        gGL.getTexUnit(weight_unit)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTexUnit(color_glow_unit)->unbind(LLTexUnit::TT_TEXTURE);
+        gAVBOITIsolateDepthProgram.unbind();
+    }
+    // </AS:Chanayane>
 
     sDirectRasterPass = -1;
     sDirectFrameReady = false;
