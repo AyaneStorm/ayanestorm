@@ -47,7 +47,8 @@ namespace ASBackgroundIsolate
     // isolate color so transparent hair composites against the requested
     // backdrop rather than daylight/sky. The late render() pass remains the
     // authority for the exact final color of fully uncovered background.
-    void renderBaseLayer(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle);
+    void renderBaseLayer(LLRenderTarget& depth_target, LLRenderTarget& exposure_target,
+                         LLVertexBuffer& screen_triangle);
 
     // Called by ASFloaterMyLight when isolate mode is turned on/off/recolored.
     void setActive(bool active, const LLColor4& color);

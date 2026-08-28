@@ -9743,7 +9743,8 @@ void LLPipeline::renderDeferredLighting()
         // translucent hair blends against the requested color instead of the
         // EEP sky/atmospherics written by the deferred soften pass. The late
         // isolate pass still enforces the exact final solid color.
-        ASBackgroundIsolate::renderBaseLayer(mRT->deferredScreen, *mScreenTriangleVB);
+        ASBackgroundIsolate::renderBaseLayer(mRT->deferredScreen, mExposureMap,
+                                             *mScreenTriangleVB);
         // </AS:Chanayane>
 
         static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);

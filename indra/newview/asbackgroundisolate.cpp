@@ -15,6 +15,7 @@
 #include "llrendertarget.h"
 #include "llshadermgr.h"
 #include "llvertexbuffer.h"
+#include "llviewercontrol.h"
 #include "llviewerobject.h"
 #include "llviewerobjectlist.h"
 #include "llvoavatar.h"
@@ -24,6 +25,8 @@ namespace
 {
     LLGLSLShader sBackgroundIsolateProgram;
     const LLStaticHashedString sIsolateColor("isolate_color");
+    const LLStaticHashedString sBaseLayer("base_layer");
+    const LLStaticHashedString sExposure("exposure");
 
     bool sActive = false;
     LLColor4 sColor(0.f, 0.f, 0.f, 1.f);
@@ -255,6 +258,7 @@ void ASBackgroundIsolate::render(LLRenderTarget& depth_target, LLVertexBuffer& s
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 
     sBackgroundIsolateProgram.bind();
+    sBackgroundIsolateProgram.uniform1i(sBaseLayer, 0);
     sBackgroundIsolateProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &depth_target, true, LLTexUnit::TFO_POINT);
     sBackgroundIsolateProgram.uniform4fv(sIsolateColor, 1, sColor.mV);
 
@@ -266,7 +270,8 @@ void ASBackgroundIsolate::render(LLRenderTarget& depth_target, LLVertexBuffer& s
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
 }
 
-void ASBackgroundIsolate::renderBaseLayer(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
+void ASBackgroundIsolate::renderBaseLayer(LLRenderTarget& depth_target, LLRenderTarget& exposure_target,
+                                          LLVertexBuffer& screen_triangle)
 {
     if (!sActive || !sBackgroundIsolateProgram.isComplete() || gCubeSnapshot)
     {
@@ -285,13 +290,18 @@ void ASBackgroundIsolate::renderBaseLayer(LLRenderTarget& depth_target, LLVertex
     gGL.setColorMask(true, false);
 
     sBackgroundIsolateProgram.bind();
+    sBackgroundIsolateProgram.uniform1i(sBaseLayer, 1);
     sBackgroundIsolateProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &depth_target, true, LLTexUnit::TFO_POINT);
+    sBackgroundIsolateProgram.bindTexture(LLShaderMgr::EXPOSURE_MAP, &exposure_target, false, LLTexUnit::TFO_POINT);
+    static LLCachedControl<F32> render_exposure(gSavedSettings, "RenderExposure", 1.f);
+    sBackgroundIsolateProgram.uniform1f(sExposure, llclamp(render_exposure(), 0.5f, 4.f));
     sBackgroundIsolateProgram.uniform4fv(sIsolateColor, 1, sColor.mV);
 
     screen_triangle.setBuffer();
     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
 
     sBackgroundIsolateProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    sBackgroundIsolateProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP);
     sBackgroundIsolateProgram.unbind();
     gGL.setColorMask(true, true);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);

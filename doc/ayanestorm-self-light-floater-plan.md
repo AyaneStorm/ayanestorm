@@ -851,3 +851,12 @@ this section and the text above as this section winning.
    restores isolated scene drawables so they remain shadow casters; the ordinary
    camera pass hides them again. Thus the scene stays visually absent while its
    real sun occlusion is preserved.
+
+   Certain dark/custom colors then exposed a display-space mismatch beneath hair:
+   the early under-color used the swatch's sRGB components directly as linear HDR,
+   so later exposure and gamma made dark grey appear light grey and dark red appear
+   vivid red only through partially transparent strands. The base-layer shader now
+   converts the requested sRGB color to linear and divides by the exposure scalar
+   sampled from `mExposureMap` (including the user `RenderExposure` multiplier).
+   The late pass explicitly disables this conversion and continues writing the
+   exact requested display-space color for fully uncovered background pixels.
