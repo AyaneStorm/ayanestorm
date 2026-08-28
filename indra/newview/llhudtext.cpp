@@ -26,6 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> My Lights isolate-background floating-text filter.
+#include "asbackgroundisolate.h"
+// </AS:Chanayane>
+
 #include "llhudtext.h"
 
 #include "llrender.h"
@@ -122,7 +126,12 @@ LLHUDText::~LLHUDText()
 
 void LLHUDText::render()
 {
-    if (!mOnHUDAttachment && sDisplayText)
+    // <AS:Chanayane> Floating text bypasses drawable state sorting, so apply
+    // the AS-owned isolate allowlist at this narrow render entry point.
+    // if (!mOnHUDAttachment && sDisplayText)
+    if (!mOnHUDAttachment && sDisplayText &&
+        !ASBackgroundIsolate::shouldHideHUDText(mSourceObject))
+    // </AS:Chanayane>
     {
         // <FS:minerjr> [FIRE-35019] Add LLHUDNameTag background to floating text and hover highlights
         //LLGLDepthTest gls_depth(GL_TRUE, GL_FALSE);
