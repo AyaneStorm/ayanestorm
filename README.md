@@ -5,6 +5,7 @@
 # AyaneStorm - A fork of Firestorm for photographers
 
 ## Features (so far ; some features might get merged in official Firestorm)
+- My Lights floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
 - Volumetric lighting
 - Sun and moon settings
 - Lens flares and vignette effects
