@@ -41,6 +41,20 @@ uniform int oitPass;
 uniform int oitFirstSortPass;
 // Reports whether compute sorting completed this frame for diagnostic mode 9.
 uniform int oitComputeSortActive;
+// <AS:Chanayane> Self-lighting floater isolate-background mode: pass 3 is a
+// depth-only re-pass (see FSExactOIT::composite()), drawn AFTER the normal
+// color blend (pass 2) completes, with color writes masked off and depth
+// writes on. It discards on every pixel this shader has no real captured
+// coverage for (head == OIT_NULL) and writes a near-plane depth everywhere
+// else, so a later depth-tested isolate backdrop pass correctly treats
+// OIT-composited pixels as "something was drawn" instead of painting over
+// them -- alpha-blended content never writes depth in this pipeline by
+// default (correct, ordinary alpha-blending behavior), which is exactly
+// what made hair/OIT content vanish under isolate mode originally. Doing
+// this as a separate discard-driven pass (rather than writing depth inline
+// during the color pass) avoids ever needing to read the scene's existing
+// depth while it's simultaneously bound for writing, which is undefined
+// behavior. Pass 3 never runs at all unless isolate mode is active.
 
 in vec2 vary_fragcoord;
 out vec4 frag_color;
@@ -217,6 +231,22 @@ void main()
 {
     ivec2 pixel = ivec2(gl_FragCoord.xy);
     uint head = imageLoad(oitHeadPointers, pixel).r;
+
+    // <AS:Chanayane> See the block comment above oitDebugMode's uniform
+    // declarations: pass 3 only ever runs for isolate mode, after the
+    // normal color blend (pass 2) is already complete, with color writes
+    // masked off. It never reads any list-mutation state, only the
+    // (already-final, untouched by pass 3) head pointer.
+    if (oitPass == 3)
+    {
+        if (head == OIT_NULL)
+        {
+            discard;
+        }
+        gl_FragDepth = 0.0;
+        return;
+    }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> The original pass 0 list traversal is replaced by exact
     // atomic counts written as each successfully allocated node is captured.

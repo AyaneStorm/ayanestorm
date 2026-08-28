@@ -8,6 +8,7 @@
 
 #include "aslensflare.h"
 
+#include "asbackgroundisolate.h"
 #include "llcontrol.h"
 #include "llenvironment.h"
 #include "llgl.h"
@@ -124,7 +125,8 @@ void ASLensFlare::unloadShader()
 void ASLensFlare::render(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
 {
     if (!gSavedSettings.getBOOL("ASLensFlareEnabled") ||
-        !sLensFlareProgram.isComplete() || gCubeSnapshot)
+        !sLensFlareProgram.isComplete() || gCubeSnapshot ||
+        ASBackgroundIsolate::isActive())
     {
         return;
     }

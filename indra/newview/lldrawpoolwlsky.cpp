@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
 #include "asaurora.h"
+#include "asbackgroundisolate.h"
 #include "ascelestialtwilight.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
@@ -519,6 +520,23 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
     {
         return;
     }
+
+    // <AS:Chanayane> Self-lighting floater isolate-background mode leaves
+    // RENDER_TYPE_SKY enabled (LLVOSky::updateSky() needs it to keep
+    // refreshing its atmospherics cache, and LLReflectionMapManager force-
+    // enables it for its own captures regardless), but must stop the sky
+    // dome/stars/heavenly bodies/clouds from actually writing color into
+    // the frame -- otherwise their color (stars in particular) leaks
+    // through under alpha-blended content like hair, since alpha geometry
+    // blends directly against whatever is already in the HDR buffer at the
+    // time it renders, well before our solid-color isolate backdrop pass
+    // (which only runs much later, post-tonemap, and only overwrites
+    // fully-unoccluded background pixels).
+    if (ASBackgroundIsolate::isActive())
+    {
+        return;
+    }
+    // </AS:Chanayane>
 
     // TODO: remove gSky.mVOSkyp and fold sun/moon into LLVOWLSky
     gSky.mVOSkyp->updateGeometry(gSky.mVOSkyp->mDrawable);

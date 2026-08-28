@@ -39,6 +39,9 @@
 // <AS:Chanayane> Viewer-local vignette shader lifecycle.
 #include "asvignette.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Self-lighting floater background isolate shader lifecycle.
+#include "asbackgroundisolate.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "fsexactoit.h"
 #include "fsavboit.h"
@@ -470,6 +473,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional vignette shader.
     ASVignette::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
+    ASBackgroundIsolate::registerShader(mShaderList);
     // </AS:Chanayane>
     mShaderList.push_back(&gDeferredWLSkyProgram);
     mShaderList.push_back(&gDeferredWLCloudProgram);
@@ -1195,6 +1201,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional vignette shader.
         ASVignette::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
+        ASBackgroundIsolate::unloadShader();
         // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
@@ -3008,6 +3017,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Build the self-lighting floater's background isolate pass.
+    if (success)
+    {
+        ASBackgroundIsolate::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
