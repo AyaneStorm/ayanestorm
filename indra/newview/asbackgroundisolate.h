@@ -22,6 +22,7 @@
 class LLRenderTarget;
 class LLVertexBuffer;
 class LLDrawable;
+class LLViewerObject;
 
 namespace ASBackgroundIsolate
 {
@@ -70,6 +71,10 @@ namespace ASBackgroundIsolate
     // current object/avatar state on every call (cheap early-out when
     // isolate mode is inactive), so it can never go stale on its own.
     bool shouldHideDrawable(LLDrawable* drawable);
+
+    // Applies the same isolate allowlist to floating text, which renders via
+    // LLHUDText after the 3D drawable pipeline.
+    bool shouldHideHUDText(LLViewerObject* source_object);
 
     // Called from LLPipeline::stateSort(LLDrawable*, LLCamera&) for every
     // drawable, every frame -- the single chokepoint all drawables already

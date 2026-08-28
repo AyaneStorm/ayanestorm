@@ -289,3 +289,37 @@ Enable a solid background with several avatars nearby. Toggle **Show other
 avatars** on and confirm their bodies and attachments appear while the scene
 stays isolated. Toggle it off and confirm they disappear. Repeat while another
 avatar arrives or changes attachments.
+
+## Isolate background: crowded avatars and floating text
+
+### Symptoms
+
+With **Show other avatars** disabled in a crowded club, isolate mode became
+substantially slower. Object hover text and attachment-owned text also remained
+visible after their source geometry was hidden.
+
+### Causes
+
+Hidden avatar bodies and attachments were restored during shadow passes and
+hidden again for the main pass. This repeatedly dirtied and rebuilt large
+attachment geometry sets. Floating `LLHUDText` follows a separate post-scene
+render path and never reaches drawable state sorting.
+
+### Resolution
+
+Non-self resident and animesh content now remains hidden during shadow passes
+when excluded by the isolate allowlist. Ordinary scenery still participates in
+shadows so rooms and roofs can shade the self avatar.
+
+`ASBackgroundIsolate::shouldHideHUDText()` applies the matching source-object
+policy at the narrow `LLHUDText::render()` entry point: object-owned and
+source-less world text is hidden; self text is allowed; other resident text
+follows **Show other avatars**; control-avatar text remains hidden. HUD
+attachment text is unaffected.
+
+### Runtime verification
+
+Compare FPS with **Show other avatars** on and off in a crowded location. Test
+object `llSetText`, attachment text, and resident avatar text in Normal Scene
+and solid backgrounds. Confirm world text follows the allowlist while HUD UI
+remains unchanged.
