@@ -15,6 +15,11 @@
  width="640">
 
   <check_box follows="left|top" height="16" label="Enable My Lights" layout="topleft" left="15" name="as_light_master_enabled" top="10" width="200" value="true" tool_tip="Master switch: turns every light in the list on or off at once, without changing their settings." />
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="220" name="as_light_render_backend_label" top="10" width="65">Backend</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="285" name="as_light_render_backend" top="7" width="120" tool_tip="A/B test the current viewer-object lights against direct deferred-shader lights.">
+    <combo_box.item label="LLVOVolume" name="llvovolume" value="LLVOVolume" />
+    <combo_box.item label="Shader" name="shader" value="Shader" />
+  </combo_box>
 
   <!-- Left column: editor for the selected light -->
   <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="15" name="as_light_name_label" top="36" width="60">Name</text>
