@@ -1,12 +1,12 @@
 /**
- * @file asfloatermylight.cpp
+ * @file asfloatermylights.cpp
  * @author chanayane@firestorm
- * @brief See asfloatermylight.h
+ * @brief See asfloatermylights.h
  */
 
 #include "llviewerprecompiledheaders.h"
 
-#include "asfloatermylight.h"
+#include "asfloatermylights.h"
 
 #include <algorithm>
 
@@ -38,7 +38,7 @@ namespace
     const std::string PRESET_SUBDIR = "as_light_presets";
 }
 
-ASFloaterMyLight::ASFloaterMyLight(const LLSD& key)
+ASFloaterMyLights::ASFloaterMyLights(const LLSD& key)
 :   LLFloater(key),
     mMasterEnabled(true),
     mLightList(nullptr),
@@ -61,12 +61,12 @@ ASFloaterMyLight::ASFloaterMyLight(const LLSD& key)
 {
 }
 
-ASFloaterMyLight::~ASFloaterMyLight()
+ASFloaterMyLights::~ASFloaterMyLights()
 {
     gIdleCallbacks.deleteFunction(onIdle, this);
 }
 
-bool ASFloaterMyLight::postBuild()
+bool ASFloaterMyLights::postBuild()
 {
     mLightList = getChild<LLScrollListCtrl>("as_light_list");
     mNameEditor = getChild<LLLineEditor>("as_light_name");
@@ -127,7 +127,7 @@ bool ASFloaterMyLight::postBuild()
     return true;
 }
 
-void ASFloaterMyLight::onClose(bool app_quitting)
+void ASFloaterMyLights::onClose(bool app_quitting)
 {
     // Lights are meant to survive a plain close/reopen -- only destroy them
     // when the viewer itself is quitting, since the underlying objects
@@ -166,14 +166,14 @@ void ASFloaterMyLight::onClose(bool app_quitting)
 }
 
 // static
-void ASFloaterMyLight::renderAllLightBeacons()
+void ASFloaterMyLights::renderAllLightBeacons()
 {
     if (!gSavedSettings.getBOOL("ASRenderLightBeacon"))
     {
         return;
     }
 
-    ASFloaterMyLight* self = LLFloaterReg::findTypedInstance<ASFloaterMyLight>("as_my_light");
+    ASFloaterMyLights* self = LLFloaterReg::findTypedInstance<ASFloaterMyLights>("as_my_lights");
     if (!self)
     {
         return;
@@ -208,13 +208,13 @@ void ASFloaterMyLight::renderAllLightBeacons()
 }
 
 // static
-void ASFloaterMyLight::onIdle(void* userdata)
+void ASFloaterMyLights::onIdle(void* userdata)
 {
-    ASFloaterMyLight* self = static_cast<ASFloaterMyLight*>(userdata);
+    ASFloaterMyLights* self = static_cast<ASFloaterMyLights*>(userdata);
     self->updateLights();
 }
 
-void ASFloaterMyLight::updateLights()
+void ASFloaterMyLights::updateLights()
 {
     for (auto& rig : mLights)
     {
@@ -228,7 +228,7 @@ void ASFloaterMyLight::updateLights()
     ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
 }
 
-std::set<LLUUID> ASFloaterMyLight::getLightRigObjectIds() const
+std::set<LLUUID> ASFloaterMyLights::getLightRigObjectIds() const
 {
     std::set<LLUUID> ids;
     for (const auto& rig : mLights)
@@ -245,7 +245,7 @@ std::set<LLUUID> ASFloaterMyLight::getLightRigObjectIds() const
 // List panel
 //
 
-void ASFloaterMyLight::onAddLight()
+void ASFloaterMyLights::onAddLight()
 {
     auto rig = std::make_unique<ASLightRig>();
     rig->mName = llformat("Light %d", (int)mLights.size() + 1);
@@ -266,7 +266,7 @@ void ASFloaterMyLight::onAddLight()
     setControlsEnabled(true);
 }
 
-void ASFloaterMyLight::onDeleteLight()
+void ASFloaterMyLights::onDeleteLight()
 {
     LLScrollListItem* item = mLightList->getFirstSelected();
     if (!item)
@@ -296,7 +296,7 @@ void ASFloaterMyLight::onDeleteLight()
     }
 }
 
-void ASFloaterMyLight::onLightSelected()
+void ASFloaterMyLights::onLightSelected()
 {
     LLScrollListItem* item = mLightList->getFirstSelected();
     if (!item)
@@ -307,14 +307,14 @@ void ASFloaterMyLight::onLightSelected()
     refreshControlsFromSelectedLight();
 }
 
-void ASFloaterMyLight::selectLight(const LLUUID& id)
+void ASFloaterMyLights::selectLight(const LLUUID& id)
 {
     mSelectedLightId = id;
     mLightList->setSelectedByValue(LLSD(id), true);
     refreshControlsFromSelectedLight();
 }
 
-ASLightRig* ASFloaterMyLight::getSelectedLight()
+ASLightRig* ASFloaterMyLights::getSelectedLight()
 {
     for (auto& rig : mLights)
     {
@@ -326,7 +326,7 @@ ASLightRig* ASFloaterMyLight::getSelectedLight()
     return nullptr;
 }
 
-void ASFloaterMyLight::onNameChanged()
+void ASFloaterMyLights::onNameChanged()
 {
     ASLightRig* rig = getSelectedLight();
     if (!rig)
@@ -337,7 +337,7 @@ void ASFloaterMyLight::onNameChanged()
     refreshListRow(rig);
 }
 
-void ASFloaterMyLight::refreshListRow(const ASLightRig* rig)
+void ASFloaterMyLights::refreshListRow(const ASLightRig* rig)
 {
     LLScrollListItem* item = mLightList->getItem(LLSD(rig->mId));
     if (item)
@@ -346,7 +346,7 @@ void ASFloaterMyLight::refreshListRow(const ASLightRig* rig)
     }
 }
 
-void ASFloaterMyLight::rebuildList()
+void ASFloaterMyLights::rebuildList()
 {
     mLightList->deleteAllItems();
     for (const auto& rig : mLights)
@@ -363,7 +363,7 @@ void ASFloaterMyLight::rebuildList()
 // Edit controls
 //
 
-void ASFloaterMyLight::setControlsEnabled(bool enabled)
+void ASFloaterMyLights::setControlsEnabled(bool enabled)
 {
     mNameEditor->setEnabled(enabled);
     mDistanceSlider->setEnabled(enabled);
@@ -379,7 +379,7 @@ void ASFloaterMyLight::setControlsEnabled(bool enabled)
     getChild<LLUICtrl>("as_light_delete")->setEnabled(enabled);
 }
 
-void ASFloaterMyLight::refreshControlsFromSelectedLight()
+void ASFloaterMyLights::refreshControlsFromSelectedLight()
 {
     ASLightRig* rig = getSelectedLight();
     if (!rig)
@@ -402,7 +402,7 @@ void ASFloaterMyLight::refreshControlsFromSelectedLight()
     mUpdatingControls = false;
 }
 
-void ASFloaterMyLight::onDistanceChanged()
+void ASFloaterMyLights::onDistanceChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -411,7 +411,7 @@ void ASFloaterMyLight::onDistanceChanged()
     rig->updateTransform();
 }
 
-void ASFloaterMyLight::onHeightChanged()
+void ASFloaterMyLights::onHeightChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -420,7 +420,7 @@ void ASFloaterMyLight::onHeightChanged()
     rig->updateTransform();
 }
 
-void ASFloaterMyLight::onAzimuthChanged()
+void ASFloaterMyLights::onAzimuthChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -429,7 +429,7 @@ void ASFloaterMyLight::onAzimuthChanged()
     rig->updateTransform();
 }
 
-void ASFloaterMyLight::onIntensityChanged()
+void ASFloaterMyLights::onIntensityChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -438,7 +438,7 @@ void ASFloaterMyLight::onIntensityChanged()
     rig->applyParams();
 }
 
-void ASFloaterMyLight::onRadiusChanged()
+void ASFloaterMyLights::onRadiusChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -447,7 +447,7 @@ void ASFloaterMyLight::onRadiusChanged()
     rig->applyParams();
 }
 
-void ASFloaterMyLight::onFalloffChanged()
+void ASFloaterMyLights::onFalloffChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -456,7 +456,7 @@ void ASFloaterMyLight::onFalloffChanged()
     rig->applyParams();
 }
 
-void ASFloaterMyLight::onColorChanged()
+void ASFloaterMyLights::onColorChanged()
 {
     if (mUpdatingControls) return;
     ASLightRig* rig = getSelectedLight();
@@ -465,7 +465,7 @@ void ASFloaterMyLight::onColorChanged()
     rig->applyParams();
 }
 
-void ASFloaterMyLight::onPresetHead()
+void ASFloaterMyLights::onPresetHead()
 {
     ASLightRig* rig = getSelectedLight();
     if (!rig) return;
@@ -477,7 +477,7 @@ void ASFloaterMyLight::onPresetHead()
     rig->updateTransform();
 }
 
-void ASFloaterMyLight::onPresetChest()
+void ASFloaterMyLights::onPresetChest()
 {
     ASLightRig* rig = getSelectedLight();
     if (!rig) return;
@@ -489,7 +489,7 @@ void ASFloaterMyLight::onPresetChest()
     rig->updateTransform();
 }
 
-void ASFloaterMyLight::onPresetBack()
+void ASFloaterMyLights::onPresetBack()
 {
     ASLightRig* rig = getSelectedLight();
     if (!rig) return;
@@ -505,7 +505,7 @@ void ASFloaterMyLight::onPresetBack()
 // Master switch / background / freeze animations / beacon / poser
 //
 
-void ASFloaterMyLight::onMasterEnabledChanged()
+void ASFloaterMyLights::onMasterEnabledChanged()
 {
     mMasterEnabled = mMasterEnabledCheck->get();
     gSavedSettings.setBOOL("ASLightRigMasterEnabled", mMasterEnabled);
@@ -515,7 +515,7 @@ void ASFloaterMyLight::onMasterEnabledChanged()
     }
 }
 
-void ASFloaterMyLight::onBackgroundModeChanged()
+void ASFloaterMyLights::onBackgroundModeChanged()
 {
     const std::string mode = mBackgroundCombo->getSelectedItemLabel();
 
@@ -540,7 +540,7 @@ void ASFloaterMyLight::onBackgroundModeChanged()
     ASBackgroundIsolate::setActive(true, color);
 }
 
-void ASFloaterMyLight::onBackgroundColorChanged()
+void ASFloaterMyLights::onBackgroundColorChanged()
 {
     if (mBackgroundCombo->getSelectedItemLabel() != "Custom")
     {
@@ -550,17 +550,17 @@ void ASFloaterMyLight::onBackgroundColorChanged()
     ASBackgroundIsolate::setActive(true, mBackgroundColorSwatch->get());
 }
 
-void ASFloaterMyLight::onFreezeAnimationsChanged()
+void ASFloaterMyLights::onFreezeAnimationsChanged()
 {
     set_all_animation_time_factors(mFreezeAnimationsCheck->get() ? 0.f : 1.f);
 }
 
-void ASFloaterMyLight::onBeaconToggled()
+void ASFloaterMyLights::onBeaconToggled()
 {
     gSavedSettings.setBOOL("ASRenderLightBeacon", mBeaconCheck->get());
 }
 
-void ASFloaterMyLight::onOpenPoser()
+void ASFloaterMyLights::onOpenPoser()
 {
     LLFloaterReg::toggleInstance("fs_poser");
 }
@@ -569,14 +569,14 @@ void ASFloaterMyLight::onOpenPoser()
 // Presets
 //
 
-std::string ASFloaterMyLight::getPresetDir() const
+std::string ASFloaterMyLights::getPresetDir() const
 {
     std::string dir = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, PRESET_SUBDIR, "");
     LLFile::mkdir(dir);
     return dir;
 }
 
-void ASFloaterMyLight::onSavePreset()
+void ASFloaterMyLights::onSavePreset()
 {
     std::string name = mPresetNameEditor->getText();
     if (name.empty())
@@ -590,7 +590,7 @@ void ASFloaterMyLight::onSavePreset()
     refreshPresetList();
 }
 
-void ASFloaterMyLight::onLoadPreset()
+void ASFloaterMyLights::onLoadPreset()
 {
     const std::string name = mPresetCombo->getSelectedItemLabel();
     if (name.empty())
@@ -602,7 +602,7 @@ void ASFloaterMyLight::onLoadPreset()
     loadLightsFromFile(filename);
 }
 
-void ASFloaterMyLight::saveLightsToFile(const std::string& filename) const
+void ASFloaterMyLights::saveLightsToFile(const std::string& filename) const
 {
     LLSD data(LLSD::emptyArray());
     for (const auto& rig : mLights)
@@ -618,7 +618,7 @@ void ASFloaterMyLight::saveLightsToFile(const std::string& filename) const
     }
 }
 
-void ASFloaterMyLight::loadLightsFromFile(const std::string& filename)
+void ASFloaterMyLights::loadLightsFromFile(const std::string& filename)
 {
     if (!LLFile::isfile(filename))
     {
@@ -661,12 +661,12 @@ void ASFloaterMyLight::loadLightsFromFile(const std::string& filename)
     }
 }
 
-std::string ASFloaterMyLight::getAutosaveFilename() const
+std::string ASFloaterMyLights::getAutosaveFilename() const
 {
-    return gDirUtilp->getExpandedFilename(LL_PATH_PER_SL_ACCOUNT, "as_my_light_autosave.xml");
+    return gDirUtilp->getExpandedFilename(LL_PATH_PER_SL_ACCOUNT, "as_my_lights_autosave.xml");
 }
 
-void ASFloaterMyLight::refreshPresetList()
+void ASFloaterMyLights::refreshPresetList()
 {
     mPresetCombo->removeall();
 

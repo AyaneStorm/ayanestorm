@@ -1,5 +1,5 @@
 /**
- * @file asfloatermylight.h
+ * @file asfloatermylights.h
  * @author chanayane@firestorm
  * @brief Self-only photography lighting floater. Manages a list of
  *        viewer-local light sources that follow the avatar, an isolate
@@ -7,8 +7,8 @@
  *        beacon -- plus quick access to the Firestorm Poser.
  */
 
-#ifndef AS_FLOATERMYLIGHT_H
-#define AS_FLOATERMYLIGHT_H
+#ifndef AS_FLOATERMYLIGHTS_H
+#define AS_FLOATERMYLIGHTS_H
 
 #include "llfloater.h"
 #include "aslightrig.h"
@@ -25,11 +25,11 @@ class LLLineEditor;
 class LLComboBox;
 class LLCheckBoxCtrl;
 
-class ASFloaterMyLight : public LLFloater
+class ASFloaterMyLights : public LLFloater
 {
 public:
-    ASFloaterMyLight(const LLSD& key);
-    virtual ~ASFloaterMyLight();
+    ASFloaterMyLights(const LLSD& key);
+    virtual ~ASFloaterMyLights();
 
     bool postBuild() override;
     void onClose(bool app_quitting) override;
@@ -115,4 +115,4 @@ private:
     bool mUpdatingControls;
 };
 
-#endif // AS_FLOATERMYLIGHT_H
+#endif // AS_FLOATERMYLIGHTS_H

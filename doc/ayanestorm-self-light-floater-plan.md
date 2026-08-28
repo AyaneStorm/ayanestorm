@@ -168,7 +168,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
 ## Implementation plan
 
 ### 1. New files (AS-owned, no ownership tags needed, normal comments only)
-- `indra/newview/asfloatermylight.h` / `.cpp` — the floater class `ASFloaterMyLight`;
+- `indra/newview/asfloatermylights.h` / `.cpp` — the floater class `ASFloaterMyLights`;
   owns the list of lights, the currently-selected-light editing state, background
   override state, freeze-animation toggle, and preset save/load.
 - `indra/newview/aslightrig.h` / `.cpp` — `ASLightRig`, a small struct/class holding
@@ -180,23 +180,23 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   testable/reusable.
 - `indra/newview/aspanellightpad.h` / `.cpp` — the placement-pad widget
   `ASPanelLightPad`, editing whichever `ASLightRig` is currently selected.
-- `indra/newview/skins/default/xui/en/floater_as_my_light.xml` — layout.
+- `indra/newview/skins/default/xui/en/floater_as_my_lights.xml` — layout.
 - `doc/ayanestorm-self-light-floater.md` — research/design notes, following the
   existing `/doc` precedent.
 
 ### 1b. Edits to existing LL/FS files (must be wrapped in `<AS:Chanayane>` tags,
      original code preserved as comments inside the tags)
 - Register in `indra/newview/llviewerfloaterreg.cpp`:
-  `LLFloaterReg::add("as_my_light", "floater_as_my_light.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLight>);`
+  `LLFloaterReg::add("as_my_lights", "floater_as_my_lights.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLights>);`
 - Add a menu entry under the existing `AyaneStorm` menu
   ([menu_viewer.xml:6430](indra/newview/skins/default/xui/en/menu_viewer.xml#L6430))
   using the same `Floater.Toggle` / `Floater.Visible` pattern as the Poser entry.
 - `indra/newview/CMakeLists.txt`: add the new AS-owned source files to the source list
-  (as shipped: `asfloatermylight.{h,cpp}`, `aslightrig.{h,cpp}`,
+  (as shipped: `asfloatermylights.{h,cpp}`, `aslightrig.{h,cpp}`,
   `asbackgroundisolate.{h,cpp}` — see "Status update" below; `aspanellightpad.*` was
   never implemented, sliders proved sufficient).
 - `indra/newview/llviewerdisplay.cpp` (beacon call site, ~1886-1894): minimal
-  call-out into `ASFloaterMyLight::renderAllLightBeacons()`.
+  call-out into `ASFloaterMyLights::renderAllLightBeacons()`.
 - `indra/newview/pipeline.cpp` (`LLPipeline::stateSort(LLDrawable*, LLCamera&)`):
   as-shipped isolate-background mode needed one more call-out here — see "Status
   update" below. Not part of the original plan.
@@ -234,7 +234,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   `updateTransform()` (no need to keep repositioning a light that isn't contributing)
   while still existing for the list/editor.
 
-### 3. `ASFloaterMyLight` class responsibilities
+### 3. `ASFloaterMyLights` class responsibilities
 - **Ctor**: private, `friend class LLFloaterReg`, matching `LLFloaterJoystick`.
   Holds `std::vector<std::unique_ptr<ASLightRig>> mLights`, an index/id of the
   currently-selected rig for editing, and a single `bool mMasterEnabled` (default
@@ -311,7 +311,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   - New standalone bool `gSavedSettings "ASRenderLightBeacon"`, mirroring the
     sun/moon-beacon pattern
     ([llviewermenu.cpp:11970-11976](indra/newview/llviewermenu.cpp#L11970-L11976)).
-  - `ASFloaterMyLight::renderAllLightBeacons()` (static method, AS-owned) iterates
+  - `ASFloaterMyLights::renderAllLightBeacons()` (static method, AS-owned) iterates
     `mLights` and draws a 3-axis cross (immediate-mode `LLRender`, matching
     `renderObjectBeacons()`'s idiom in
     [llglsandbox.cpp](indra/newview/llglsandbox.cpp)) at each rig's current world
@@ -322,7 +322,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
     // <AS:Chanayane> draw self-light position beacons under the same UI-debug-feature gate as stock beacons, so they are excluded from snapshots automatically
     if (gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
-        ASFloaterMyLight::renderAllLightBeacons();
+        ASFloaterMyLights::renderAllLightBeacons();
     }
     // </AS:Chanayane>
     ```
@@ -346,7 +346,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   - Loading a preset does not touch the background/freeze-animation/beacon toggles —
     only the light list itself.
 
-### 4. XUI layout (`floater_as_my_light.xml`)
+### 4. XUI layout (`floater_as_my_lights.xml`)
 Two-column layout: left = light editor, right = collapsible light list panel.
 
 Top of floater, spanning both columns:
@@ -422,10 +422,10 @@ this section and the text above as this section winning.
 - Lights (and isolate-background mode) now survive closing/reopening the floater —
   only destroyed/reset on an actual viewer quit, not on a plain close. The full rig
   also auto-saves to a per-account file on quit and auto-loads on next login
-  (`ASFloaterMyLight::getAutosaveFilename()`), independent of the named-preset
+  (`ASFloaterMyLights::getAutosaveFilename()`), independent of the named-preset
   save/load feature.
-- New toolbar command `as_my_light` (`app_settings/commands.xml`,
-  `Command_ASMyLight_Icon`) with a custom hand-drawn 18×18 icon
+- New toolbar command `as_my_lights` (`app_settings/commands.xml`,
+  `Command_ASMyLights_Icon`) with a custom hand-drawn 18×18 icon
   (`toolbar_icons/my_light.png`), matching the existing AS command style (e.g.
   `as_sun_settings`).
 - The light-position beacon's color now matches each light's own configured color
@@ -557,7 +557,7 @@ this section and the text above as this section winning.
      render-type-level exclusion can never distinguish "my attachment" from
      "someone else's object"; per-object identity is required), and any object id
      in a small exempt set kept current via `ASBackgroundIsolate::setLightRigIds()`
-     (called from `ASFloaterMyLight::updateLights()`'s idle callback). Everything
+     (called from `ASFloaterMyLights::updateLights()`'s idle callback). Everything
      else returns `true` (should be hidden).
    - `ASBackgroundIsolate::updateDrawableHiddenState(LLDrawable*)` — called from a
      tag-wrapped call-out in `LLPipeline::stateSort(LLDrawable*, LLCamera&)`
@@ -581,7 +581,7 @@ this section and the text above as this section winning.
      mode turns off.
    - `ASBackgroundIsolate::restoreAllHiddenDrawables()` — called right after
      `setActive(false, ...)` turns isolate mode off (from both
-     `ASFloaterMyLight::onBackgroundModeChanged()`'s "None" branch and
+     `ASFloaterMyLights::onBackgroundModeChanged()`'s "None" branch and
      `onClose(true)` on viewer quit). Explicitly walks every object id this module
      hid (tracked in a small set) and clears `FORCE_INVISIBLE` + forces the same
      drawable+group rebuild pairing directly, rather than depending on incidental

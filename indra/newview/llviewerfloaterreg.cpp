@@ -230,7 +230,7 @@
 #include "asfloaterrecentpeople.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
-#include "asfloatermylight.h"
+#include "asfloatermylights.h"
 // </AS:Chanayane>
 #include "fsfloaterpartialinventory.h"
 #include "fsfloaterplacedetails.h"
@@ -705,7 +705,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("as_recent_people", "floater_as_recent_people.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterRecentPeople>);
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
-    LLFloaterReg::add("as_my_light", "floater_as_my_light.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLight>);
+    LLFloaterReg::add("as_my_lights", "floater_as_my_lights.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLights>);
 // </AS:Chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);

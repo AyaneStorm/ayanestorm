@@ -32,7 +32,7 @@
 #include "fsyspath.h"
 #include "hexdump.h"
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
-#include "asfloatermylight.h"
+#include "asfloatermylights.h"
 // </AS:Chanayane>
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -1895,7 +1895,7 @@ void render_ui_3d()
         gObjectList.resetObjectBeacons();
         gSky.addSunMoonBeacons();
         // <AS:Chanayane> draw self-light position beacons under the same UI-debug-feature gate as stock beacons, so they are excluded from snapshots automatically
-        ASFloaterMyLight::renderAllLightBeacons();
+        ASFloaterMyLights::renderAllLightBeacons();
         // </AS:Chanayane>
     }
     else

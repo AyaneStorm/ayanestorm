@@ -30,7 +30,7 @@ namespace ASBackgroundIsolate
     void unloadShader();
 
     // No-op unless isolate mode is currently active (set via
-    // ASFloaterMyLight::setActive()). depth_target supplies the scene depth
+    // ASFloaterMyLights::setActive()). depth_target supplies the scene depth
     // used to tell background pixels (nothing opaque or alpha-blended drawn
     // there) apart from the avatar, which must stay untouched. Drawn at the
     // very end of the pipeline (after tonemap/bloom/etc), so the isolate
@@ -50,10 +50,10 @@ namespace ASBackgroundIsolate
     void renderBaseLayer(LLRenderTarget& depth_target, LLRenderTarget& exposure_target,
                          LLVertexBuffer& screen_triangle);
 
-    // Called by ASFloaterMyLight when isolate mode is turned on/off/recolored.
+    // Called by ASFloaterMyLights when isolate mode is turned on/off/recolored.
     void setActive(bool active, const LLColor4& color);
 
-    // Called by ASFloaterMyLight whenever its light-rig object list changes,
+    // Called by ASFloaterMyLights whenever its light-rig object list changes,
     // so the live stateSort() allowlist check (below) always exempts exactly
     // the currently-live light-rig objects, not a stale snapshot.
     void setLightRigIds(const std::set<LLUUID>& ids);
@@ -90,7 +90,7 @@ namespace ASBackgroundIsolate
     // re-asserted and a rebuild is forced to reflect that immediately.
     void updateDrawableHiddenState(LLDrawable* drawable);
 
-    // Called by ASFloaterMyLight right after setActive(false, ...) turns
+    // Called by ASFloaterMyLights right after setActive(false, ...) turns
     // isolate mode off. A hidden drawable only gets revisited by
     // updateDrawableHiddenState() (and so un-hidden) when its owning
     // spatial group is next traversed -- for a group that isn't otherwise

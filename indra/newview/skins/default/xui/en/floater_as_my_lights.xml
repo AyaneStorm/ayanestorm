@@ -6,12 +6,12 @@
  can_resize="false"
  height="470"
  layout="topleft"
- name="floater_as_my_light"
+ name="floater_as_my_lights"
  save_rect="true"
  save_visibility="true"
  single_instance="true"
  reuse_instance="true"
- title="My Light"
+ title="My Lights"
  width="640">
 
   <check_box follows="left|top" height="16" label="Enable My Lights" layout="topleft" left="15" name="as_light_master_enabled" top="10" width="200" value="true" tool_tip="Master switch: turns every light in the list on or off at once, without changing their settings." />
