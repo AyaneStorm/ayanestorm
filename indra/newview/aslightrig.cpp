@@ -50,9 +50,16 @@ ASLightRig::~ASLightRig()
 
 void ASLightRig::create()
 {
-    if (isCreated() || !gAgentAvatarp)
+    if ((isCreated() && !mObject->isDead()) || !gAgentAvatarp)
     {
         return;
+    }
+
+    // A viewer-local object can be killed with the region that owned it.
+    // Release that stale reference so teleport recovery can create a new one.
+    if (mObject.notNull())
+    {
+        mObject = nullptr;
     }
 
     LLViewerRegion* region = gAgent.getRegion();
@@ -113,8 +120,25 @@ void ASLightRig::destroy()
 
 void ASLightRig::updateTransform()
 {
-    if (mObject.isNull() || !mEnabled || !gAgentAvatarp)
+    if (!mEnabled || !gAgentAvatarp)
     {
+        return;
+    }
+
+    LLViewerRegion* region = gAgent.getRegion();
+    if (!region || gAgentAvatarp->getRegion() != region)
+    {
+        return;
+    }
+
+    // Viewer-local objects retain their creation region. Teleports can kill
+    // the old object, and merely moving a surviving old-region object uses
+    // the wrong region-to-agent transform. Recreate it in the settled agent
+    // region so the light resumes following the avatar.
+    if (mObject.isNull() || mObject->isDead() || mObject->getRegion() != region)
+    {
+        destroy();
+        create();
         return;
     }
 
