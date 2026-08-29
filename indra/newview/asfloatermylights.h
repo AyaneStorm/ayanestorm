@@ -75,6 +75,7 @@ private:
     void onRenderBackendChanged();
     void onBackgroundModeChanged();
     void onBackgroundColorChanged();
+    void onShowOtherAvatarsChanged();
     void onFreezeAnimationsChanged();
     void onBeaconToggled();
     void onOpenPoser();
@@ -109,6 +110,7 @@ private:
     LLComboBox* mRenderBackendCombo;
     LLComboBox* mBackgroundCombo;
     LLColorSwatchCtrl* mBackgroundColorSwatch;
+    LLCheckBoxCtrl* mShowOtherAvatarsCheck;
     LLCheckBoxCtrl* mFreezeAnimationsCheck;
     LLCheckBoxCtrl* mBeaconCheck;
     LLLineEditor* mPresetNameEditor;

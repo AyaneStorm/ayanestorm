@@ -22,6 +22,7 @@
 class LLRenderTarget;
 class LLVertexBuffer;
 class LLDrawable;
+class LLViewerObject;
 
 namespace ASBackgroundIsolate
 {
@@ -71,6 +72,10 @@ namespace ASBackgroundIsolate
     // isolate mode is inactive), so it can never go stale on its own.
     bool shouldHideDrawable(LLDrawable* drawable);
 
+    // Applies the same isolate allowlist to floating text, which renders via
+    // LLHUDText after the 3D drawable pipeline.
+    bool shouldHideHUDText(LLViewerObject* source_object);
+
     // Called from LLPipeline::stateSort(LLDrawable*, LLCamera&) for every
     // drawable, every frame -- the single chokepoint all drawables already
     // pass through regardless of network/update traffic. Sets or clears
@@ -88,7 +93,10 @@ namespace ASBackgroundIsolate
     // (LLViewerObject::processUpdateMessage()), and needs no explicit
     // restore step when isolate mode turns off -- the flag just stops being
     // re-asserted and a rebuild is forced to reflect that immediately.
-    void updateDrawableHiddenState(LLDrawable* drawable);
+    // Returns true only for a hidden avatar drawable that must also be skipped
+    // by the current state-sort call. Other drawable types retain the original
+    // state-sort bookkeeping after their hidden flag is updated.
+    bool updateDrawableHiddenState(LLDrawable* drawable);
 
     // Called by ASFloaterMyLights right after setActive(false, ...) turns
     // isolate mode off. A hidden drawable only gets revisited by
@@ -99,6 +107,10 @@ namespace ASBackgroundIsolate
     // explicitly un-hides every drawable this module hid, so turning
     // isolate mode off is never dependent on incidental group traversal.
     void restoreAllHiddenDrawables();
+
+    // Re-evaluates objects already tracked by this module after an allowlist
+    // preference changes, without temporarily restoring unrelated scenery.
+    void refreshHiddenDrawables();
 }
 
 #endif

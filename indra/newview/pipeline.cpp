@@ -48,6 +48,10 @@
 #include "asbackgroundisolate.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Viewer-local world-space weather.
+#include "asweather.h"
+// </AS:Chanayane>
+
 // <AS:Chanayane> Optional viewer-object-free My Lights backend.
 #include "aslightrigrenderer.h"
 // </AS:Chanayane>
@@ -3564,8 +3568,8 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     // every call (cheap early-out when inactive), so it never goes stale
     // and needs no explicit un-hide step when the mode turns off.
     //
-    // This sets/clears LLDrawable::FORCE_INVISIBLE rather than early-
-    // returning from stateSort() -- volume (ordinary prim/mesh) geometry is
+    // This sets/clears LLDrawable::FORCE_INVISIBLE before returning from
+    // stateSort() -- volume (ordinary prim/mesh) geometry is
     // batched once per group into LLSpatialGroup::mDrawMap by
     // LLVolumeGeometryManager::rebuildGeom(), independent of any given
     // frame's setVisible()/stateSort() outcome, so skipping this function
@@ -3578,7 +3582,14 @@ void LLPipeline::stateSort(LLDrawable* drawablep, LLCamera& camera)
     // own -- the same staleness problem the old hideObject()-based
     // approach hit, now solved by driving it from this always-live check
     // instead of a one-shot call).
-    ASBackgroundIsolate::updateDrawableHiddenState(drawablep);
+    // The original call only updated FORCE_INVISIBLE. Preserve
+    // that volume-batch mechanism, but also stop non-volume avatar faces from
+    // being enqueued later in this stateSort() call.
+    // ASBackgroundIsolate::updateDrawableHiddenState(drawablep);
+    if (ASBackgroundIsolate::updateDrawableHiddenState(drawablep))
+    {
+        return;
+    }
     // </AS:Chanayane>
 
     if (drawablep->isAvatar())
@@ -10100,6 +10111,13 @@ void LLPipeline::renderDeferredLighting()
         FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
                                      gCubeSnapshot, sImpostorRender,
                                      gAgentCamera.cameraMouselook());
+        // <AS:Chanayane> Prepare and render Weather only after every ordinary
+        // scene draw-pool consumer has finished. Shelter capture rebuilds draw
+        // information, so running it earlier leaves later pools (notably glow)
+        // holding stale LLDrawInfo model-matrix pointers.
+        ASWeather::prepare(*this, *LLViewerCamera::getInstance());
+        ASWeather::render(*this, *LLViewerCamera::getInstance(), mRT->screen);
+        // </AS:Chanayane>
     }
 // </AS:Chanayane>
 

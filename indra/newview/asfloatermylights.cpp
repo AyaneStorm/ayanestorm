@@ -55,6 +55,7 @@ ASFloaterMyLights::ASFloaterMyLights(const LLSD& key)
     mRenderBackendCombo(nullptr),
     mBackgroundCombo(nullptr),
     mBackgroundColorSwatch(nullptr),
+    mShowOtherAvatarsCheck(nullptr),
     mFreezeAnimationsCheck(nullptr),
     mBeaconCheck(nullptr),
     mPresetNameEditor(nullptr),
@@ -83,6 +84,7 @@ bool ASFloaterMyLights::postBuild()
     mRenderBackendCombo = getChild<LLComboBox>("as_light_render_backend");
     mBackgroundCombo = getChild<LLComboBox>("as_light_background");
     mBackgroundColorSwatch = getChild<LLColorSwatchCtrl>("as_light_background_color");
+    mShowOtherAvatarsCheck = getChild<LLCheckBoxCtrl>("as_light_show_other_avatars");
     mFreezeAnimationsCheck = getChild<LLCheckBoxCtrl>("as_light_freeze_anim");
     mBeaconCheck = getChild<LLCheckBoxCtrl>("as_light_show_beacon");
     mPresetNameEditor = getChild<LLLineEditor>("as_light_preset_name");
@@ -110,6 +112,7 @@ bool ASFloaterMyLights::postBuild()
     mRenderBackendCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onRenderBackendChanged(); });
     mBackgroundCombo->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundModeChanged(); });
     mBackgroundColorSwatch->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBackgroundColorChanged(); });
+    mShowOtherAvatarsCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onShowOtherAvatarsChanged(); });
     mFreezeAnimationsCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onFreezeAnimationsChanged(); });
     mBeaconCheck->setCommitCallback([this](LLUICtrl*, const LLSD&) { onBeaconToggled(); });
     getChild<LLUICtrl>("as_light_open_poser")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onOpenPoser(); });
@@ -122,6 +125,7 @@ bool ASFloaterMyLights::postBuild()
     mMasterEnabled = gSavedSettings.getBOOL("ASLightRigMasterEnabled");
     mMasterEnabledCheck->setValue(mMasterEnabled);
     mRenderBackendCombo->setValue(gSavedSettings.getString("ASLightRigRenderBackend"));
+    mShowOtherAvatarsCheck->setValue(gSavedSettings.getBOOL("ASLightRigShowOtherAvatars"));
 
     setControlsEnabled(false);
     refreshPresetList();
@@ -572,6 +576,12 @@ void ASFloaterMyLights::onBackgroundColorChanged()
     }
     ASBackgroundIsolate::setLightRigIds(getLightRigObjectIds());
     ASBackgroundIsolate::setActive(true, mBackgroundColorSwatch->get());
+}
+
+void ASFloaterMyLights::onShowOtherAvatarsChanged()
+{
+    gSavedSettings.setBOOL("ASLightRigShowOtherAvatars", mShowOtherAvatarsCheck->get());
+    ASBackgroundIsolate::refreshHiddenDrawables();
 }
 
 void ASFloaterMyLights::onFreezeAnimationsChanged()

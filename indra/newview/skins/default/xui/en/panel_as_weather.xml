@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Generic container for independent weather effects. -->
+<panel border="false" follows="all" height="400" layout="topleft" left="1" name="as_weather" top="1" width="458">
+  <tab_container follows="all" height="398" layout="topleft" left="1"
+                 name="weather_effect_tabs" tab_position="top" top="1" width="456">
+    <panel filename="panel_as_weather_snow.xml" label="Snow" name="snow_tab" />
+  </tab_container>
+</panel>
