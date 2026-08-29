@@ -6,20 +6,19 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include <chrono>
+#include <unordered_map>
+
 #include "asweathersnow.h"
 
 #include "asweather.h"
 #include "llappviewer.h"
 #include "llcontrol.h"
-#include "lldrawable.h"
 #include "llenvironment.h"
-#include "llface.h"
 #include "llgl.h"
-#include "llgltfmaterial.h"
-#include "llmaterial.h"
 #include "llrender.h"
 #include "llsettingssky.h"
-#include "lltextureentry.h"
+#include "lltimer.h"
 #include "pipeline.h"
 #include "llviewercontrol.h"
 #include "llviewercamera.h"
@@ -47,6 +46,7 @@ namespace
         F32 timer{ 0.f };
         U32 generation{ 0 };
         F32 blockerHeight{ 0.f };
+        LLVector3 blockerNormal;
         LLVector3 sampledPosition;
         LLUUID supportId;
         F32 targetDriftX{ 0.f };
@@ -65,10 +65,51 @@ namespace
     bool sLoggedFirstRender = false;
     U32 sCollisionCursor = 0;
     U32 sNearCollisionCursor = 0;
+    U32 sIndoorSweepFrame = 0;
     F32 sAllocatedRadius = 0.f;
+    U32 sTimingFrames = 0;
+    F64 sCollisionMs = 0.0;
+    F64 sSimulationMs = 0.0;
+    F64 sIndoorMs = 0.0;
+    F64 sGeometryMs = 0.0;
+    F64 sDrawMs = 0.0;
+    U64 sCollisionCacheHits = 0;
+    U64 sCollisionCacheMisses = 0;
+
+    struct CollisionCell
+    {
+        LLVector3 normal;
+        LLUUID supportId;
+        F32 sampleX{ 0.f };
+        F32 sampleY{ 0.f };
+        F32 blockerHeight{ 0.f };
+        F64 updatedAt{ 0.0 };
+        bool valid{ false };
+        bool retains{ false };
+    };
+
+    std::unordered_map<U64, CollisionCell> sCollisionCells;
+    LLVector3 sCollisionCacheCenter;
+    bool sCollisionCacheCenterValid = false;
+    F64 sCollisionNow = 0.0;
 
     const LLStaticHashedString sLightColor("snow_light_color");
     const LLStaticHashedString sShape("snow_shape");
+
+    F64 milliseconds(const std::chrono::steady_clock::time_point& begin,
+                     const std::chrono::steady_clock::time_point& end)
+    {
+        return std::chrono::duration<F64, std::milli>(end - begin).count();
+    }
+
+    U64 collisionCellKey(const LLVector3& position)
+    {
+        // Half-metre cells share a surface query while the cached plane normal
+        // preserves accurate landing height across sloped geometry.
+        const S32 x = (S32)floorf(position.mV[VX] * 2.f);
+        const S32 y = (S32)floorf(position.mV[VY] * 2.f);
+        return ((U64)(U32)x << 32) | (U32)y;
+    }
 
     F32 distanceAreaScale(const ASWeather::FrameContext& context)
     {
@@ -154,38 +195,12 @@ namespace
         particle.state = ParticleState::FALLING;
     }
 
-    bool excludedBlocker(const LLViewerObject* object)
+    bool expensiveDynamicBlocker(const LLViewerObject* object)
     {
-        if (!object || object->isAvatar() || object->isAttachment()) return true;
-        const LLPCode pcode = object->getPCode();
-        return pcode == LL_PCODE_LEGACY_TREE || pcode == LL_PCODE_TREE_NEW ||
-               pcode == LL_PCODE_LEGACY_GRASS ||
-               pcode == LLViewerObject::LL_VO_PART_GROUP;
-    }
-
-    bool nonRetainingFace(const LLViewerObject* object, S32 face)
-    {
-        if (!object || face < 0 || face >= object->getNumTEs()) return false;
-        const LLTextureEntry* te = object->getTE((U8)face);
-        if (!te) return false;
-        if (te->getAlpha() < 0.999f) return true;
-        if (const LLMaterialPtr material = te->getMaterialParams())
-        {
-            if (material->getDiffuseAlphaMode() == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
-                return true;
-        }
-        const LLGLTFMaterial* gltf = te->getGLTFRenderMaterial();
-        if (gltf && gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND) return true;
-
-        // The rendered face pool already resolves legacy texture alpha and
-        // material mode without querying the texture's raw GL format. The
-        // latter logs for compressed/modern formats and is unsuitable here.
-        if (object->mDrawable.notNull() && face < object->mDrawable->getNumFaces())
-        {
-            const LLFace* render_face = object->mDrawable->getFace(face);
-            return render_face && render_face->isInAlphaPool();
-        }
-        return false;
+        // Avatar picking also includes name-tag geometry and rigged triangle
+        // traversal. It cannot participate in the per-flake ray path without
+        // a dedicated broad-phase cache.
+        return object && object->isAvatar();
     }
 
     bool sweptSideBlocked(const Particle& particle, LLPipeline& pipeline,
@@ -212,7 +227,7 @@ namespace
                     start, end, true, false, true, false, &face, nullptr, nullptr,
                     &intersection, nullptr, &normal, nullptr);
                 if (!object) return false;
-                if (excludedBlocker(object))
+                if (expensiveDynamicBlocker(object))
                 {
                     LLVector3 next(intersection.getF32ptr());
                     LLVector3 direction = to - next;
@@ -221,9 +236,7 @@ namespace
                     start.load3(next.mV);
                     continue;
                 }
-
-                return nonRetainingFace(object, face) ||
-                       normal.getF32ptr()[VZ] < 0.642787610f;
+                return normal.getF32ptr()[VZ] < 0.642787610f;
             }
             return false;
         };
@@ -257,6 +270,7 @@ namespace
         normal.normVec();
 
         particle.blockerHeight = height + region->getOriginAgent().mV[VZ];
+        particle.blockerNormal = normal;
         particle.supportId = region->getRegionID();
         particle.retains = normal.mV[VZ] >= 0.642787610f;
     }
@@ -280,7 +294,7 @@ namespace
                 start, end, true, false, true, false, &face, nullptr, nullptr,
                 &intersection, nullptr, nullptr, nullptr);
             if (!object) return false;
-            if (excludedBlocker(object))
+            if (expensiveDynamicBlocker(object))
             {
                 LLVector3 next(intersection.getF32ptr());
                 next.mV[VZ] += 0.05f;
@@ -288,6 +302,7 @@ namespace
                 continue;
             }
             particle.blockerHeight = intersection.getF32ptr()[VZ];
+            particle.blockerNormal.set(0.f, 0.f, -1.f);
             particle.supportId = object->getID();
             particle.retains = false;
             return true;
@@ -309,6 +324,7 @@ namespace
         end.load3(end3.mV);
         particle.collisionValid = true;
         particle.blockerHeight = context.bottom;
+        particle.blockerNormal.set(0.f, 0.f, 1.f);
         particle.retains = false;
         particle.supportId.setNull();
         particle.sampledPosition = particle.position;
@@ -319,7 +335,8 @@ namespace
             return;
         }
 
-        // Skip non-weather geometry by continuing immediately below each hit.
+        // Every world surface is weather geometry; only water has distinct
+        // impact behaviour, and retention otherwise depends solely on slope.
         for (U32 attempt = 0; attempt < 8; ++attempt)
         {
             S32 face = -1;
@@ -333,21 +350,20 @@ namespace
                 sampleTerrainFallback(particle);
                 return;
             }
-            if (excludedBlocker(object))
+            if (expensiveDynamicBlocker(object))
             {
                 LLVector3 next(intersection.getF32ptr());
                 next.mV[VZ] -= 0.05f;
                 start.load3(next.mV);
                 continue;
             }
-
             particle.blockerHeight = intersection.getF32ptr()[VZ];
+            particle.blockerNormal.set(normal.getF32ptr());
             particle.supportId = object->getID();
             const LLPCode pcode = object->getPCode();
             const bool water = pcode == LLViewerObject::LL_VO_WATER ||
                                pcode == LLViewerObject::LL_VO_VOID_WATER;
-            particle.retains = !water && !nonRetainingFace(object, face) &&
-                               normal.getF32ptr()[VZ] >= 0.642787610f;
+            particle.retains = !water && normal.getF32ptr()[VZ] >= 0.642787610f;
             if (validating_landed && particle.supportId != previous_support)
             {
                 particle.collisionValid = false;
@@ -356,6 +372,75 @@ namespace
             return;
         }
         sampleTerrainFallback(particle);
+    }
+
+    void prepareCollisionCache(const ASWeather::FrameContext& context)
+    {
+        sCollisionNow = LLTimer::getTotalSeconds();
+        const F32 reset_distance = llmax(16.f, context.radius * 0.5f);
+        if (!sCollisionCacheCenterValid ||
+            (context.center - sCollisionCacheCenter).lengthSquared() >
+                reset_distance * reset_distance ||
+            sCollisionCells.size() > 400000)
+        {
+            sCollisionCells.clear();
+            sCollisionCacheCenter = context.center;
+            sCollisionCacheCenterValid = true;
+        }
+    }
+
+    void sampleCollisionCached(Particle& particle,
+                               const ASWeather::FrameContext& context,
+                               LLPipeline& pipeline)
+    {
+        const U64 key = collisionCellKey(particle.position);
+        const F64 maximum_age = particle.state == ParticleState::LANDED ? 0.5 : 5.0;
+        const auto found = sCollisionCells.find(key);
+        if (found != sCollisionCells.end() &&
+            sCollisionNow - found->second.updatedAt <= maximum_age)
+        {
+            ++sCollisionCacheHits;
+            const CollisionCell& cell = found->second;
+            const LLUUID previous_support = particle.supportId;
+            particle.collisionValid = cell.valid;
+            particle.blockerHeight = cell.blockerHeight;
+            particle.blockerNormal = cell.normal;
+            particle.supportId = cell.supportId;
+            particle.retains = cell.retains;
+            particle.sampledPosition = particle.position;
+
+            // Reconstruct the local height from the cached surface plane so a
+            // half-metre cell does not quantize landed flakes on slopes.
+            if (fabsf(cell.normal.mV[VZ]) > 0.05f)
+            {
+                particle.blockerHeight -=
+                    (cell.normal.mV[VX] * (particle.position.mV[VX] - cell.sampleX) +
+                     cell.normal.mV[VY] * (particle.position.mV[VY] - cell.sampleY)) /
+                    cell.normal.mV[VZ];
+            }
+            if (particle.state == ParticleState::LANDED &&
+                previous_support.notNull() && particle.supportId != previous_support)
+            {
+                particle.collisionValid = false;
+                particle.retains = false;
+            }
+            return;
+        }
+
+        ++sCollisionCacheMisses;
+        sampleCollision(particle, context, pipeline);
+        if (particle.collisionValid)
+        {
+            CollisionCell& cell = sCollisionCells[key];
+            cell.normal = particle.blockerNormal;
+            cell.supportId = particle.supportId;
+            cell.sampleX = particle.position.mV[VX];
+            cell.sampleY = particle.position.mV[VY];
+            cell.blockerHeight = particle.blockerHeight;
+            cell.updatedAt = sCollisionNow;
+            cell.valid = true;
+            cell.retains = particle.retains;
+        }
     }
 
     void refreshCollisionCache(const ASWeather::FrameContext& context, LLPipeline& pipeline)
@@ -367,16 +452,13 @@ namespace
         const U32 budget = llmax(1u, (U32)ll_round(
             1536.f * distanceAreaScale(context)));
         const U32 active_budget = llmax(1u, (U32)llceil((F32)budget * intensity));
+        prepareCollisionCache(context);
         auto refresh_particle = [&](Particle& particle)
         {
-            if (sweptSideBlocked(particle, pipeline))
-            {
-                recycleParticle(particle, context);
-            }
-            else
-            {
-                sampleCollision(particle, context, pipeline);
-            }
+            // The cached vertical blocker rejects a flake after it enters a
+            // roofed cell. Nearby indoor wall crossings retain their stricter
+            // per-frame swept test in sweepIndoorNearby().
+            sampleCollisionCached(particle, context, pipeline);
         };
 
         // Spend most queries near the camera, where a wall crossing is visible.
@@ -426,6 +508,10 @@ namespace
         camera_probe.position = context.center;
         sampleCollision(camera_probe, context, pipeline);
         if (camera_probe.blockerHeight <= context.center.mV[VZ] + 0.10f) return;
+        // Sweep the complete accumulated path at a lower cadence. Nearby
+        // flakes move only a few centimetres in four frames, while detailed
+        // per-flake world intersections every frame dominate indoor cost.
+        if (++sIndoorSweepFrame % 4u != 0u) return;
 
         // Indoor leakage is a correctness failure, not a quality tradeoff.
         // This runs after simulation so a flake crossing a nearby wall in the
@@ -454,6 +540,7 @@ namespace
     {
         const U32 count = particleCount(context);
         sParticles.assign(count, Particle());
+        sCollisionCells.reserve(llmin(count, 300000u));
         for (U32 index = 0; index < count; ++index)
         {
             Particle& particle = sParticles[index];
@@ -689,11 +776,17 @@ void ASWeatherSnow::releaseResources()
 {
     sVertexBuffer = nullptr;
     sParticles.clear();
+    std::unordered_map<U64, CollisionCell>().swap(sCollisionCells);
     sVisibleVertices = 0;
     sLoggedFirstRender = false;
     sCollisionCursor = 0;
     sNearCollisionCursor = 0;
+    sIndoorSweepFrame = 0;
     sAllocatedRadius = 0.f;
+    sCollisionCacheCenterValid = false;
+    sTimingFrames = 0;
+    sCollisionMs = sSimulationMs = sIndoorMs = sGeometryMs = sDrawMs = 0.0;
+    sCollisionCacheHits = sCollisionCacheMisses = 0;
 }
 
 bool ASWeatherSnow::isSupported()
@@ -726,10 +819,16 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     {
         return;
     }
+    const auto collision_begin = std::chrono::steady_clock::now();
     refreshCollisionCache(context, pipeline);
+    const auto simulation_begin = std::chrono::steady_clock::now();
     simulate(context);
+    const auto indoor_begin = std::chrono::steady_clock::now();
     sweepIndoorNearby(context, pipeline);
-    if (!updateGeometry(context, camera) || !sVisibleVertices)
+    const auto geometry_begin = std::chrono::steady_clock::now();
+    const bool geometry_ready = updateGeometry(context, camera);
+    const auto geometry_end = std::chrono::steady_clock::now();
+    if (!geometry_ready || !sVisibleVertices)
     {
         return;
     }
@@ -766,8 +865,34 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     // channel. Snow is a lit translucent overlay, not emissive geometry, so
     // preserve destination alpha and blend colour only.
     gGL.setColorMask(true, false);
+    const auto draw_begin = std::chrono::steady_clock::now();
     sVertexBuffer->setBuffer();
     sVertexBuffer->drawArrays(LLRender::TRIANGLES, 0, sVisibleVertices);
+    const auto draw_end = std::chrono::steady_clock::now();
     gGL.setColorMask(true, true);
     LLGLSLShader::unbind();
+
+    sCollisionMs += milliseconds(collision_begin, simulation_begin);
+    sSimulationMs += milliseconds(simulation_begin, indoor_begin);
+    sIndoorMs += milliseconds(indoor_begin, geometry_begin);
+    sGeometryMs += milliseconds(geometry_begin, geometry_end);
+    sDrawMs += milliseconds(draw_begin, draw_end);
+    if (++sTimingFrames >= 120)
+    {
+        const F64 divisor = 1.0 / (F64)sTimingFrames;
+        LL_INFOS("Weather") << "Snow timing average over " << sTimingFrames
+                            << " frames: collision=" << sCollisionMs * divisor
+                            << "ms simulation=" << sSimulationMs * divisor
+                            << "ms indoor=" << sIndoorMs * divisor
+                            << "ms geometry/map=" << sGeometryMs * divisor
+                            << "ms draw-submit=" << sDrawMs * divisor
+                            << "ms particles=" << sParticles.size()
+                            << " visible=" << sVisibleVertices / 6
+                            << " cache=" << sCollisionCells.size()
+                            << " hits=" << sCollisionCacheHits
+                            << " misses=" << sCollisionCacheMisses << LL_ENDL;
+        sTimingFrames = 0;
+        sCollisionMs = sSimulationMs = sIndoorMs = sGeometryMs = sDrawMs = 0.0;
+        sCollisionCacheHits = sCollisionCacheMisses = 0;
+    }
 }

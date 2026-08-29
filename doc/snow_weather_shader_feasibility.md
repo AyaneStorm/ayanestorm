@@ -305,12 +305,14 @@ does not make it safe inside the active scene frame.
 The top-down render capture and depth readback have therefore been removed.
 Shelter is now sampled without rendering through bounded vertical world
 intersection queries. Each particle caches blocker height, surface normal,
-glass/water retention classification, and support identity. Queries are spread
+water classification, and support identity. Queries are spread
 over frames, and unsampled flakes remain hidden during the short cache warm-up.
 This path does not change render targets, cameras, draw pools, cull results, or
-scene LOD state. Foliage, grass, avatars, attachments, and particles are skipped;
-glass blocks falling snow but cannot retain it; retaining normals must remain
-within 50 degrees of world-up.
+scene LOD state. The performant query scope currently covers terrain and volume
+geometry, including ordinary attachments. Except for water, retaining normals
+must remain within 50 degrees of world-up; material and transparency do not
+affect retention. Expensive dynamic and foliage categories require a cached
+broad phase before they can be included safely.
 
 Snow uses a configurable 8–128 metre radius (32 metres by default). Particle
 reserve and shelter-query throughput scale with radius squared from the default
@@ -448,3 +450,47 @@ recycled particle cohorts. Particle random streams now start from an independent
 avalanched 32-bit state and advance that full state on every recycle. Intensity
 selection remains a separate stable low-discrepancy value, and the correction adds
 no particle memory.
+
+## Universal Surface Blocking and Retention
+
+Snow collision no longer classifies glass or alpha blending as special cases.
+Any queried non-water impact whose upward normal is within fifty degrees retains
+the flake; steeper surfaces recycle it, and water removes it. This also removes
+material and texture inspection from the collision path.
+
+An initial attempt to apply that rule through exact rigged, avatar, animesh,
+tree, and grass triangle intersections reduced frame rate by three to four times.
+Those partitions and rigged picking were removed from the per-flake ray path.
+Supporting all dynamic/foliage blockers requires a cached broad phase rather than
+repeating their expensive detailed intersection for thousands of flakes.
+
+## Snow Stage Timing Diagnostics
+
+When Snow renders, the Weather log reports a 120-frame average for collision
+refresh, simulation, indoor sweep, geometry/VBO mapping, and draw submission,
+along with allocated and visible particle counts. This distinguishes serialized
+CPU ray work from buffer-map stalls and draw submission without per-frame log
+noise. The timers do not force GPU synchronization, so draw time measures CPU
+submission rather than completion on the GPU.
+
+The first timing capture at Distance 64 with falloff (72-metre outer radius)
+reported 243,000 particles and 38,785 visible flakes. Collision refresh averaged
+113.96 ms of the 123.2 ms measured Snow frame cost; simulation was 2.15 ms and
+geometry/VBO mapping 7.06 ms. System-wide CPU/GPU utilization was therefore
+misleading: detailed world intersections serialized the frame.
+
+Vertical blocker results are now shared through world-aligned half-metre cells.
+Each entry stores its sampled surface plane, retention state, water/support
+identity, and age; the plane reconstructs local landing height on slopes. Falling
+entries live five seconds, while landed support entries live only half a second.
+The cache resets after substantial camera displacement, excessive growth, or
+Snow resource release. General periodic lateral raycasts were removed because a
+flake entering a roofed cell is rejected by its vertical result; the strict
+sixteen-metre indoor swept-wall pass remains. Timing output includes cache size,
+hits, and misses so both performance and reuse can be verified.
+
+A subsequent indoor walk measured 15.6–22.9 ms in the strict nearby lateral
+sweep versus 0.04–0.11 ms outdoors. The sixteen-metre sweep now runs every
+fourth frame and tests the full path accumulated since its previous run. This
+retains continuous wall-crossing coverage with at most a three-frame detection
+delay, while targeting an approximately fourfold reduction in indoor sweep cost.
