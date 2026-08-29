@@ -420,3 +420,31 @@ or alpha, producing thousands of log lines for compressed/modern textures.
 Glass classification now uses TE alpha, legacy/PBR material alpha mode, and the
 already-resolved rendered face alpha pool; it no longer inspects texture GL
 formats or emits those warnings.
+
+## Snow Performance Optimizations
+
+Flakes beyond 16 metres use the Soft fragment path regardless of selected
+Shape; camera-relative distance is evaluated every frame, so approaching a
+flake restores Hexagonal or Branched detail immediately. The fragment shader
+avoids arm and polar/trigonometric detail work for distant flakes.
+
+CPU billboard generation rejects particles outside the exact camera frustum
+before writing six vertices. Intensity membership uses the existing uniform
+particle seed instead of recomputing a float hash in simulation, collision, and
+geometry loops. The superseded continuous sine meander was removed because the
+new gradual direction target every roughly two metres already supplies unique
+motion; this removes one `sin()` per active falling particle per frame and two
+floats per particle. Intensity zero releases particle and vertex-buffer memory.
+
+The native six-vertex billboard layout remains unchanged. More aggressive
+memory reductions would require returning to instancing/raw buffers or changing
+landed/support state representation, both of which carry reliability or visual
+correctness risk disproportionate to the saving.
+
+## Large-Distance Random Distribution
+
+At large Distance settings, long landed hold times revealed rows of flakes from
+recycled particle cohorts. Particle random streams now start from an independently
+avalanched 32-bit state and advance that full state on every recycle. Intensity
+selection remains a separate stable low-discrepancy value, and the correction adds
+no particle memory.

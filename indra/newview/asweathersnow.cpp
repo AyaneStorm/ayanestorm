@@ -49,8 +49,6 @@ namespace
         F32 blockerHeight{ 0.f };
         LLVector3 sampledPosition;
         LLUUID supportId;
-        F32 lateralPhase{ 0.f };
-        F32 lateralRate{ 1.f };
         F32 targetDriftX{ 0.f };
         F32 targetDriftY{ 0.f };
         F32 nextDirectionHeight{ 0.f };
@@ -92,7 +90,10 @@ namespace
 
     bool activeAtIntensity(const Particle& particle, F32 intensity)
     {
-        return hash01(particle.seed * 97.13f) < intensity;
+        // Seed is already a uniform low-discrepancy value; spawn attributes
+        // pass through a separate integer avalanche, so this remains spatially
+        // decorrelated without another per-particle field or hot-loop hash.
+        return particle.seed < intensity;
     }
 
     U32 hashBits(U32 value)
@@ -128,9 +129,11 @@ namespace
 
     void recycleParticle(Particle& particle, const ASWeather::FrameContext& context)
     {
-        ++particle.generation;
-        U32 random_state = hashBits((U32)(particle.seed * 16777215.f) ^
-                                    particle.generation * 0x85ebca6bu);
+        // Advance a full-width stream state. A small generation counter makes
+        // large particle populations recycle in visible cohorts, especially
+        // when landed flakes remain long enough to expose their distribution.
+        particle.generation = hashBits(particle.generation + 0x9e3779b9u);
+        U32 random_state = particle.generation;
         const F32 angle = random01(random_state) * F_TWO_PI;
         const F32 distance = sqrtf(random01(random_state)) * context.radius;
         particle.position.set(context.center.mV[VX] + cosf(angle) * distance,
@@ -140,8 +143,6 @@ namespace
                               context.drift.mV[VY] + (random01(random_state) - 0.5f) * 0.22f,
                               -(1.2f + random01(random_state) * 1.4f));
         particle.size = 0.65f + random01(random_state) * 0.70f;
-        particle.lateralPhase = random01(random_state) * F_TWO_PI;
-        particle.lateralRate = 0.45f + random01(random_state) * 0.85f;
         particle.directionStep = 0;
         particle.targetDriftX = particle.velocity.mV[VX];
         particle.targetDriftY = particle.velocity.mV[VY];
@@ -457,7 +458,9 @@ namespace
         {
             Particle& particle = sParticles[index];
             particle.seed = hash01((F32)index * 0.754877666f + 0.17f);
-            particle.generation = index % 17;
+            // Give every particle an independently avalanched 32-bit stream;
+            // seed remains reserved for the stable Intensity selection.
+            particle.generation = hashBits(index ^ 0xa511e9b3u);
             recycleParticle(particle, context);
             // Pre-distribute initial flakes through the visible height so
             // enabling Snow or walking outdoors does not require a 20-metre
@@ -515,10 +518,8 @@ namespace
                     (particle.targetDriftX - particle.velocity.mV[VX]) * steering;
                 particle.velocity.mV[VY] +=
                     (particle.targetDriftY - particle.velocity.mV[VY]) * steering;
-                const F32 meander = sinf(particle.lateralPhase +
-                                         particle.timer * particle.lateralRate) * 0.09f;
-                particle.position.mV[VX] += (particle.velocity.mV[VX] + meander) * delta;
-                particle.position.mV[VY] += (particle.velocity.mV[VY] - meander * 0.65f) * delta;
+                particle.position.mV[VX] += particle.velocity.mV[VX] * delta;
+                particle.position.mV[VY] += particle.velocity.mV[VY] * delta;
                 particle.position.mV[VZ] += particle.velocity.mV[VZ] * speed * delta;
 
                 const LLVector3 offset = particle.position - context.center;
@@ -607,6 +608,15 @@ namespace
             {
                 continue;
             }
+            if (!activeAtIntensity(particle, intensity))
+            {
+                continue;
+            }
+            const F32 metres = particle.size * size_scale * 0.045f;
+            if (!camera.sphereInFrustum(particle.position, metres * 1.5f))
+            {
+                continue;
+            }
             F32 local_intensity = intensity;
             if (context.radius > context.fullDensityRadius)
             {
@@ -633,8 +643,12 @@ namespace
                 continue;
             }
 
-            const F32 metres = particle.size * size_scale * 0.045f;
-            const LLColor4U color(255, 255, 255, (U8)ll_round(alpha * 209.f));
+            const bool near_shape =
+                (particle.position - camera.getOrigin()).lengthSquared() <= 256.f;
+            // RGB was uniformly white. Reuse red as a normalized near/far bit;
+            // the fragment shader uses EEP light directly for actual colour.
+            const LLColor4U color(near_shape ? 255 : 0, 255, 255,
+                                  (U8)ll_round(alpha * 209.f));
             for (U32 corner = 0; corner < 6; ++corner)
             {
                 vertices[sVisibleVertices] = particle.position +
@@ -692,6 +706,14 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
 {
     if (!isSupported())
     {
+        return;
+    }
+    if (gSavedSettings.getF32("ASWeatherSnowIntensity") <= 0.f)
+    {
+        if (!sParticles.empty())
+        {
+            releaseResources();
+        }
         return;
     }
 
