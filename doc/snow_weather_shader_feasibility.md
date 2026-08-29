@@ -325,3 +325,14 @@ made that correlation visible as curved precipitation bands. Spawn attributes
 now use separate integer-avalanche samples, while cache traversal uses a stride
 coprime with every quality particle count. This produces uniform coverage and
 an evenly distributed cache warm-up instead of strips.
+
+Exact OIT stores its resolved scene glow mask in the screen target alpha
+channel. Ordinary alpha blending made Snow coverage alter that mask, producing
+strong bloom around flakes only in Exact OIT. Weather now writes blended RGB
+while preserving destination alpha, because Snow is lit but non-emissive.
+
+The initial motion update also forced every flake to the identical horizontal
+drift vector every frame. At high density this made parallel projected paths
+look like repeated flakes falling through fixed lanes. Each recycled flake now
+has small stable drift variation plus an independently phased low-amplitude
+meander, while the shared Weather vector remains the prevailing direction.

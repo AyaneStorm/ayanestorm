@@ -45,6 +45,8 @@ namespace
         F32 blockerHeight{ 0.f };
         LLVector3 sampledPosition;
         LLUUID supportId;
+        F32 lateralPhase{ 0.f };
+        F32 lateralRate{ 1.f };
         bool collisionValid{ false };
         bool retains{ false };
         ParticleState state{ ParticleState::FALLING };
@@ -106,9 +108,12 @@ namespace
         particle.position.set(context.center.mV[VX] + cosf(angle) * distance,
                               context.center.mV[VY] + sinf(angle) * distance,
                               context.center.mV[VZ] + 20.f + random01(random_state) * 12.f);
-        particle.velocity.set(context.drift.mV[VX], context.drift.mV[VY],
+        particle.velocity.set(context.drift.mV[VX] + (random01(random_state) - 0.5f) * 0.22f,
+                              context.drift.mV[VY] + (random01(random_state) - 0.5f) * 0.22f,
                               -(1.2f + random01(random_state) * 1.4f));
         particle.size = 0.65f + random01(random_state) * 0.70f;
+        particle.lateralPhase = random01(random_state) * F_TWO_PI;
+        particle.lateralRate = 0.45f + random01(random_state) * 0.85f;
         particle.timer = 0.f;
         particle.collisionValid = false;
         particle.retains = false;
@@ -274,10 +279,10 @@ namespace
             if (particle.state == ParticleState::FALLING)
             {
                 const LLVector3 previous = particle.position;
-                particle.velocity.mV[VX] = context.drift.mV[VX];
-                particle.velocity.mV[VY] = context.drift.mV[VY];
-                particle.position.mV[VX] += particle.velocity.mV[VX] * delta;
-                particle.position.mV[VY] += particle.velocity.mV[VY] * delta;
+                const F32 meander = sinf(particle.lateralPhase +
+                                         particle.timer * particle.lateralRate) * 0.09f;
+                particle.position.mV[VX] += (particle.velocity.mV[VX] + meander) * delta;
+                particle.position.mV[VY] += (particle.velocity.mV[VY] - meander * 0.65f) * delta;
                 particle.position.mV[VZ] += particle.velocity.mV[VZ] * speed * delta;
 
                 const LLVector3 offset = particle.position - context.center;
@@ -488,7 +493,12 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    // Exact OIT stores its resolved glow mask in the scene target's alpha
+    // channel. Snow is a lit translucent overlay, not emissive geometry, so
+    // preserve destination alpha and blend colour only.
+    gGL.setColorMask(true, false);
     sVertexBuffer->setBuffer();
     sVertexBuffer->drawArrays(LLRender::TRIANGLES, 0, sVisibleVertices);
+    gGL.setColorMask(true, true);
     LLGLSLShader::unbind();
 }
