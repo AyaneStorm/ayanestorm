@@ -371,3 +371,10 @@ Runtime close-ups showed that twelvefold High silhouette looked gear-like,
 while Medium's sixfold/hexagonal profile read as natural snow. High now retains
 sixfold symmetry and adds paired side branches along the six primary arms
 instead of introducing six rotated primary arms.
+
+Weather initially called `LLViewerObject::isImageAlphaBlended()` for every
+collision sample. That helper warns for texture formats other than raw RGB(A)
+or alpha, producing thousands of log lines for compressed/modern textures.
+Glass classification now uses TE alpha, legacy/PBR material alpha mode, and the
+already-resolved rendered face alpha pool; it no longer inspects texture GL
+formats or emits those warnings.

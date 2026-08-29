@@ -19,7 +19,7 @@
           name="snow_speed" show_text="true" text_width="50" top="126" width="390" />
   <slider can_edit_text="true" control_name="ASWeatherSnowLandedHold" decimal_digits="1"
           enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="0.5"
-          label="Landed hold (seconds)" label_width="170" layout="topleft" left="15" max_val="30.0" min_val="0.0"
+          label="Landed hold (seconds)" label_width="170" layout="topleft" left="15" max_val="60.0" min_val="0.0"
           name="snow_landed_hold" show_text="true" text_width="50" top="160" width="390" />
   <slider can_edit_text="true" control_name="ASWeatherSnowLandedFade" decimal_digits="1"
           enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="0.1"

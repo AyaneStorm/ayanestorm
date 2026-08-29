@@ -11,7 +11,9 @@
 #include "asweather.h"
 #include "llappviewer.h"
 #include "llcontrol.h"
+#include "lldrawable.h"
 #include "llenvironment.h"
+#include "llface.h"
 #include "llgl.h"
 #include "llgltfmaterial.h"
 #include "llmaterial.h"
@@ -139,14 +141,24 @@ namespace
         if (!object || face < 0 || face >= object->getNumTEs()) return false;
         const LLTextureEntry* te = object->getTE((U8)face);
         if (!te) return false;
-        if (te->getAlpha() < 0.999f || object->isImageAlphaBlended((U8)face)) return true;
+        if (te->getAlpha() < 0.999f) return true;
         if (const LLMaterialPtr material = te->getMaterialParams())
         {
             if (material->getDiffuseAlphaMode() == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
                 return true;
         }
         const LLGLTFMaterial* gltf = te->getGLTFRenderMaterial();
-        return gltf && gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
+        if (gltf && gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND) return true;
+
+        // The rendered face pool already resolves legacy texture alpha and
+        // material mode without querying the texture's raw GL format. The
+        // latter logs for compressed/modern formats and is unsuitable here.
+        if (object->mDrawable.notNull() && face < object->mDrawable->getNumFaces())
+        {
+            const LLFace* render_face = object->mDrawable->getFace(face);
+            return render_face && render_face->isInAlphaPool();
+        }
+        return false;
     }
 
     bool sweptSideBlocked(const Particle& particle, LLPipeline& pipeline)
@@ -404,7 +416,7 @@ namespace
 
         const F32 delta = llclamp(gFrameIntervalSeconds.value(), 0.f, 0.1f);
         const F32 speed = llclamp(gSavedSettings.getF32("ASWeatherSnowSpeed"), 0.25f, 2.f);
-        const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 30.f);
+        const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 60.f);
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
 
@@ -489,7 +501,7 @@ namespace
         }
 
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
-        const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 30.f);
+        const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 60.f);
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
         const F32 size_scale = llclamp(gSavedSettings.getF32("ASWeatherSnowSize"), 0.1f, 2.f);
         const LLVector3 right = camera.getLeftAxis();
