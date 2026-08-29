@@ -323,3 +323,65 @@ Compare FPS with **Show other avatars** on and off in a crowded location. Test
 object `llSetText`, attachment text, and resident avatar text in Normal Scene
 and solid backgrounds. Confirm world text follows the allowlist while HUD UI
 remains unchanged.
+
+## Isolate background: legacy tree leak and render-type coverage
+
+### Symptom
+
+With **My Lights > Background** set to a solid color such as black, legacy
+Second Life trees and bushes could remain visible while the rest of the world
+was isolated.
+
+### Cause
+
+Legacy vegetation represented by `LLVOTree` renders through
+`LLPipeline::RENDER_TYPE_TREE`. This dedicated geometry path does not reliably
+honor `LLDrawable::FORCE_INVISIBLE`. The background isolate render-type list
+already disabled other world-only paths, including grass, but omitted trees.
+
+### Resolution
+
+Include `RENDER_TYPE_TREE` in `ASBackgroundIsolate`'s isolate render-type list.
+Entering isolate mode now disables legacy trees, and leaving it restores their
+previous render-type state through the existing symmetric toggle logic.
+
+### Render-type coverage audit
+
+The isolate list now contains every dedicated world-only render type that must
+be suppressed directly:
+
+- `RENDER_TYPE_TERRAIN`
+- `RENDER_TYPE_WATER`
+- `RENDER_TYPE_VOIDWATER`
+- `RENDER_TYPE_WATEREXCLUSION`
+- `RENDER_TYPE_CLOUDS`
+- `RENDER_TYPE_TREE`
+- `RENDER_TYPE_GRASS`
+- `RENDER_TYPE_PARTICLES`
+
+Other render types are intentionally not added:
+
+- Volume material pools and passes (`SIMPLE`, `ALPHA`, `ALPHA_MASK`,
+  `FULLBRIGHT`, `BUMP`, `MATERIALS`, `GLTF_PBR`, `GLOW`, and their pass and
+  rigged variants) are shared by scenery and the user's attachments.
+  `ASBackgroundIsolate::updateDrawableHiddenState()` filters their underlying
+  volume drawables, and `LLVolumeGeometryManager::rebuildGeom()` excludes
+  drawables marked `FORCE_INVISIBLE` from all those batches.
+- `RENDER_TYPE_AVATAR` and `RENDER_TYPE_CONTROL_AV` are shared with the self
+  avatar and attachment/animesh paths. They are filtered per drawable so the
+  self avatar remains visible.
+- `RENDER_TYPE_SKY` and `RENDER_TYPE_WL_SKY` remain enabled deliberately.
+  Disabling them interferes with atmosphere and reflection-probe updates; the
+  final isolate shader covers their pixels instead.
+- `RENDER_TYPE_HUD` and `RENDER_TYPE_HUD_PARTICLES` belong to the separate HUD
+  render path and are not part of the photographed world background.
+
+Thus no additional current `LLPipeline::LLRenderTypeMask` value should be
+added to the global isolate list. Debug overlays and viewer UI are controlled
+by debug-feature masks and UI rendering, not by scene render types.
+
+### Runtime verification
+
+Set **My Lights > Background** to **Black** in a region containing legacy trees
+or bushes. Confirm that vegetation disappears immediately and returns when the
+background mode is set to **None**.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Reuses the extensible Weather panel. -->
+<floater can_close="true" can_minimize="true" height="430" layout="topleft"
+         name="as_weather" save_rect="true" save_visibility="true"
+         title="Weather" width="460">
+  <panel filename="panel_as_weather.xml" follows="all" height="400"
+         layout="topleft" left="0" name="as_weather_panel" top="18" width="460" />
+</floater>

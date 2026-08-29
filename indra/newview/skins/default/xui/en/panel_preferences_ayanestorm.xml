@@ -274,6 +274,12 @@
           function="Floater.ToggleOrBringToFront"
           parameter="as_aurora_settings" />
       </button>
+      <!-- Viewer-local extensible Weather settings. -->
+      <button follows="left|top" height="23" label="Weather settings"
+              layout="topleft" left="250" name="open_weather_settings"
+              top="260" width="220">
+        <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_weather" />
+      </button>
       <!-- </AS:Chanayane> -->
       <!-- </AS:Chanayane> -->
     </panel>
