@@ -490,7 +490,16 @@ sixteen-metre indoor swept-wall pass remains. Timing output includes cache size,
 hits, and misses so both performance and reuse can be verified.
 
 A subsequent indoor walk measured 15.6–22.9 ms in the strict nearby lateral
-sweep versus 0.04–0.11 ms outdoors. The sixteen-metre sweep now runs every
-fourth frame and tests the full path accumulated since its previous run. This
-retains continuous wall-crossing coverage with at most a three-frame detection
-delay, while targeting an approximately fourfold reduction in indoor sweep cost.
+sweep versus 0.04–0.11 ms outdoors. A four-frame cadence reduced the indoor
+average to roughly 3.3–6.4 ms. A tested five-centimetre movement threshold
+regressed indoor cost to 12–13 ms at default settings and 22.6 ms at Distance
+64, because flakes reached the threshold too frequently at the resulting frame
+rate. The validated four-frame cadence was restored; each sweep still covers
+the complete path accumulated since the previous one.
+
+Particle intensity thresholds are ordered, while independently hashed spawn and
+motion streams retain spatial randomness. Intensity therefore selects a compact
+active prefix: simulation, collision selection, indoor checks, and geometry no
+longer scan inactive suffix particles. Distance and falloff changes are debounced
+for 250 ms in shared Weather frame preparation, preventing complete particle/VBO
+reallocation at every intermediate slider value.

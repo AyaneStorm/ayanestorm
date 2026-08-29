@@ -131,10 +131,17 @@ namespace
 
     bool activeAtIntensity(const Particle& particle, F32 intensity)
     {
-        // Seed is already a uniform low-discrepancy value; spawn attributes
-        // pass through a separate integer avalanche, so this remains spatially
-        // decorrelated without another per-particle field or hot-loop hash.
+        // Ordered uniform thresholds make Intensity a compact prefix; spawn
+        // attributes use an independent integer avalanche, so membership
+        // remains spatially decorrelated.
         return particle.seed < intensity;
+    }
+
+    U32 activeParticleCount(F32 intensity)
+    {
+        return llmin((U32)sParticles.size(),
+                     (U32)llceil(llclamp(intensity, 0.f, 1.f) *
+                                 (F32)sParticles.size()));
     }
 
     U32 hashBits(U32 value)
@@ -451,6 +458,7 @@ namespace
         const U32 budget = llmax(1u, (U32)ll_round(
             1536.f * distanceAreaScale(context)));
         const U32 active_budget = llmax(1u, (U32)llceil((F32)budget * intensity));
+        const U32 active_count = activeParticleCount(intensity);
         prepareCollisionCache(context);
         auto refresh_particle = [&](Particle& particle)
         {
@@ -464,14 +472,14 @@ namespace
         const U32 near_budget = llmax(1u, active_budget * 3u / 4u);
         U32 near_queried = 0;
         U32 examined = 0;
-        while (near_queried < near_budget && examined++ < sParticles.size())
+        while (near_queried < near_budget && examined++ < active_count)
         {
-            const U32 index = ((sNearCollisionCursor++ % sParticles.size()) * 7919u) %
-                              (U32)sParticles.size();
+            // Spawn streams are independently hashed, so sequential logical
+            // indices remain spatially random without searching inactive data.
+            const U32 index = sNearCollisionCursor++ % active_count;
             Particle& particle = sParticles[index];
             const LLVector3 offset = particle.position - context.center;
-            if (!activeAtIntensity(particle, intensity) ||
-                offset.mV[VX] * offset.mV[VX] + offset.mV[VY] * offset.mV[VY] > 144.f)
+            if (offset.mV[VX] * offset.mV[VX] + offset.mV[VY] * offset.mV[VY] > 144.f)
             {
                 continue;
             }
@@ -481,18 +489,10 @@ namespace
 
         U32 queried = near_queried;
         examined = 0;
-        while (queried < active_budget && examined++ < sParticles.size())
+        while (queried < active_budget && examined++ < active_count)
         {
-            // 7919 is coprime with the particle count. This walks the whole
-            // buffer without exposing sequential spawn IDs as bands.
-            const U32 index = ((sCollisionCursor++ % sParticles.size()) * 7919u) %
-                              (U32)sParticles.size();
+            const U32 index = sCollisionCursor++ % active_count;
             Particle& particle = sParticles[index];
-            if (!activeAtIntensity(particle, intensity))
-            {
-                particle.collisionValid = false;
-                continue;
-            }
             refresh_particle(particle);
             ++queried;
         }
@@ -507,18 +507,17 @@ namespace
         camera_probe.position = context.center;
         sampleCollision(camera_probe, context, pipeline);
         if (camera_probe.blockerHeight <= context.center.mV[VZ] + 0.10f) return;
-        // Sweep the complete accumulated path at a lower cadence. Nearby
-        // flakes move only a few centimetres in four frames, while detailed
-        // per-flake world intersections every frame dominate indoor cost.
+        // The validated four-frame cadence bounds indoor cost while the
+        // complete unswept path preserves continuous wall-crossing coverage.
         if (++sIndoorSweepFrame % 4u != 0u) return;
-
         // Indoor leakage is a correctness failure, not a quality tradeoff.
         // This runs after simulation so a flake crossing a nearby wall in the
         // current frame is recycled before geometry is submitted.
-        for (Particle& particle : sParticles)
+        const U32 active_count = activeParticleCount(intensity);
+        for (U32 index = 0; index < active_count; ++index)
         {
-            if (!activeAtIntensity(particle, intensity) ||
-                !particle.collisionValid || particle.state != ParticleState::FALLING)
+            Particle& particle = sParticles[index];
+            if (!particle.collisionValid || particle.state != ParticleState::FALLING)
             {
                 continue;
             }
@@ -543,7 +542,9 @@ namespace
         for (U32 index = 0; index < count; ++index)
         {
             Particle& particle = sParticles[index];
-            particle.seed = hash01((F32)index * 0.754877666f + 0.17f);
+            // Ordered thresholds make Intensity an active prefix. Spawn and
+            // motion remain spatially independent through the 32-bit stream.
+            particle.seed = ((F32)index + 0.5f) / (F32)count;
             // Give every particle an independently avalanched 32-bit stream;
             // seed remains reserved for the stable Intensity selection.
             particle.generation = hashBits(index ^ 0xa511e9b3u);
@@ -586,12 +587,10 @@ namespace
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
 
-        for (Particle& particle : sParticles)
+        const U32 active_count = activeParticleCount(intensity);
+        for (U32 index = 0; index < active_count; ++index)
         {
-            if (!activeAtIntensity(particle, intensity))
-            {
-                continue;
-            }
+            Particle& particle = sParticles[index];
             particle.timer += delta;
             if (particle.state == ParticleState::FALLING)
             {
@@ -687,15 +686,13 @@ namespace
         static const F32 corner_y[6] = { -1.f, -1.f, 1.f, 1.f, -1.f, 1.f };
 
         sVisibleVertices = 0;
-        for (const Particle& particle : sParticles)
+        const U32 active_count = activeParticleCount(intensity);
+        for (U32 index = 0; index < active_count; ++index)
         {
+            const Particle& particle = sParticles[index];
             // Do not display a flake until its vertical shelter query is valid.
             // This prevents indoor leakage while the bounded cache warms up.
             if (!particle.collisionValid)
-            {
-                continue;
-            }
-            if (!activeAtIntensity(particle, intensity))
             {
                 continue;
             }

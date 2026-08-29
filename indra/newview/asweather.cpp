@@ -15,6 +15,7 @@
 #include "pipeline.h"
 #include "llviewercontrol.h"
 #include "llviewercamera.h"
+#include "lltimer.h"
 
 extern bool gCubeSnapshot;
 
@@ -23,6 +24,12 @@ namespace
     ASWeather::FrameContext sFrameContext;
     bool sFramePrepared = false;
     bool sLoggedEnabled = false;
+    F32 sAppliedDistance = 32.f;
+    F32 sPendingDistance = 32.f;
+    bool sAppliedFalloff = true;
+    bool sPendingFalloff = true;
+    bool sDistanceInitialized = false;
+    F64 sDistanceChangedAt = 0.0;
 
 }
 
@@ -50,6 +57,7 @@ void ASWeather::releaseResources()
     }
     sFramePrepared = false;
     sLoggedEnabled = false;
+    sDistanceInitialized = false;
     ASWeatherSnow::releaseResources();
 }
 
@@ -78,10 +86,34 @@ void ASWeather::prepare(LLPipeline& pipeline, LLCamera& camera)
 
     sFrameContext.center = camera.getOrigin();
     sFrameContext.drift.set(0.22f, 0.08f, 0.f);
-    sFrameContext.fullDensityRadius = llclamp(
+    const F32 requested_distance = llclamp(
         gSavedSettings.getF32("ASWeatherSnowDistance"), 8.f, 128.f);
-    sFrameContext.radius = sFrameContext.fullDensityRadius +
-        (gSavedSettings.getBOOL("ASWeatherSnowDistanceFalloff") ? 8.f : 0.f);
+    const bool requested_falloff =
+        gSavedSettings.getBOOL("ASWeatherSnowDistanceFalloff");
+    const F64 now = LLTimer::getTotalSeconds();
+    if (!sDistanceInitialized)
+    {
+        sAppliedDistance = sPendingDistance = requested_distance;
+        sAppliedFalloff = sPendingFalloff = requested_falloff;
+        sDistanceChangedAt = now;
+        sDistanceInitialized = true;
+    }
+    else if (requested_distance != sPendingDistance ||
+             requested_falloff != sPendingFalloff)
+    {
+        sPendingDistance = requested_distance;
+        sPendingFalloff = requested_falloff;
+        sDistanceChangedAt = now;
+    }
+    else if ((sAppliedDistance != sPendingDistance ||
+              sAppliedFalloff != sPendingFalloff) &&
+             now - sDistanceChangedAt >= 0.25)
+    {
+        sAppliedDistance = sPendingDistance;
+        sAppliedFalloff = sPendingFalloff;
+    }
+    sFrameContext.fullDensityRadius = sAppliedDistance;
+    sFrameContext.radius = sAppliedDistance + (sAppliedFalloff ? 8.f : 0.f);
     sFrameContext.top = sFrameContext.center.mV[VZ] + 128.f;
     sFrameContext.bottom = sFrameContext.center.mV[VZ] - 128.f;
     sFrameContext.waterHeight = LLEnvironment::instance().getWaterHeight();
