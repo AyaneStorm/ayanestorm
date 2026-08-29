@@ -497,6 +497,11 @@ regressed indoor cost to 12–13 ms at default settings and 22.6 ms at Distance
 rate. The validated four-frame cadence was restored; each sweep still covers
 the complete path accumulated since the previous one.
 
+The strict indoor lateral sweep now rejects off-camera candidates before scene
+intersection. Only flakes in the current camera frustum can produce a visible
+indoor artifact; newly viewed flakes become eligible before the same frame's
+geometry submission. The sixteen-metre range and four-frame cadence are unchanged.
+
 Particle intensity thresholds are ordered, while independently hashed spawn and
 motion streams retain spatial randomness. Intensity therefore selects a compact
 active prefix: simulation, collision selection, indoor checks, and geometry no
@@ -535,3 +540,14 @@ The blocker normal is needed only while populating a collision cell, not during
 particle simulation. It is now returned as temporary query output instead of
 being stored in every particle, removing twelve bytes of persistent state per
 particle (about 2.8 MiB at the 243,000-particle 64-metre test allocation).
+
+## Maximum-Distance Stress Test
+
+Distance 128 with falloff produced a 136-metre outer radius, 867,000 particles,
+up to 205,000 visible flakes, and roughly 255,000 collision cells. Collision
+cost reached 42–63 ms because the refresh scheduler still scaled detailed lookup
+attempts by area despite shared cells; geometry reached 15–21 ms and simulation
+5–7 ms. Detailed refresh attempts are now capped at 8,192 per frame, approximately
+the already-validated Distance-64 workload. Smaller settings are unchanged.
+Particle/VBO reallocation also clears the old spatial cache, preventing a
+128-metre cache from remaining resident after Distance is reduced.

@@ -492,8 +492,10 @@ namespace
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
         if (intensity <= 0.f) return;
 
-        const U32 budget = llmax(1u, (U32)ll_round(
-            1536.f * distanceAreaScale(context)));
+        // Shared cells remove the need for unbounded area-scaled detailed
+        // refresh. Keep the already-validated 64-metre workload as the ceiling.
+        const U32 budget = llmin(8192u, llmax(1u, (U32)ll_round(
+            1536.f * distanceAreaScale(context))));
         const U32 active_budget = llmax(1u, (U32)llceil((F32)budget * intensity));
         const U32 active_count = activeParticleCount(intensity);
         prepareCollisionCache(context);
@@ -535,7 +537,8 @@ namespace
         }
     }
 
-    void sweepIndoorNearby(const ASWeather::FrameContext& context, LLPipeline& pipeline)
+    void sweepIndoorNearby(const ASWeather::FrameContext& context, LLPipeline& pipeline,
+                           LLCamera& camera)
     {
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
         if (intensity <= 0.f) return;
@@ -560,6 +563,10 @@ namespace
             }
             const LLVector3 offset = particle.position - context.center;
             if (offset.lengthSquared() > 256.f) continue;
+            // Off-camera flakes cannot create a visible indoor artifact. The
+            // current camera is tested before geometry submission, so a flake
+            // becomes eligible as soon as it enters view.
+            if (!camera.sphereInFrustum(particle.position, 0.15f)) continue;
             if (sweptSideBlocked(particle, pipeline, true))
             {
                 recycleParticle(particle, context);
@@ -575,6 +582,8 @@ namespace
     {
         const U32 count = particleCount(context);
         sParticles.assign(count, Particle());
+        sCollisionCells.clear();
+        sCollisionCacheCenterValid = false;
         sVisibleParticles.clear();
         sVisibleParticles.reserve(count / 4u);
         sCollisionCells.reserve(llmin(count, 300000u));
@@ -877,7 +886,7 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     const auto simulation_begin = std::chrono::steady_clock::now();
     simulate(context);
     const auto indoor_begin = std::chrono::steady_clock::now();
-    sweepIndoorNearby(context, pipeline);
+    sweepIndoorNearby(context, pipeline, camera);
     const auto geometry_begin = std::chrono::steady_clock::now();
     const bool geometry_ready = updateGeometry(context, camera);
     const auto geometry_end = std::chrono::steady_clock::now();
