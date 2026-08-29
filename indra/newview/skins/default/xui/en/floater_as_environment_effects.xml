@@ -7,7 +7,7 @@
   can_resize="false"
   save_rect="true"
   save_visibility="true"
-  width="622"
+  width="490"
   height="595"
   layout="topleft">
   <!-- Reuse the standalone settings panels so both entry points stay in sync. -->
@@ -19,7 +19,7 @@
     name="environment_effects_tabs"
     tab_position="top"
     top="18"
-    width="620">
+    width="488">
     <panel
       filename="panel_as_volumetric_lighting.xml"
       label="Volumetric Lighting"
