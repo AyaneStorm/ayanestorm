@@ -5,7 +5,7 @@
  */
 
 uniform vec3 snow_light_color;
-uniform int snow_quality;
+uniform int snow_shape;
 
 in vec2 snow_uv;
 in vec4 snow_color;
@@ -20,9 +20,9 @@ void main()
         min(abs(point.x), min(abs(dot(point, vec2(0.5, 0.866025))),
                               abs(dot(point, vec2(0.5, -0.866025))))));
     float arm_mask = arms * (1.0 - smoothstep(0.35, 1.0, radius));
-    float shape = snow_quality <= 0 ?
+    float shape = snow_shape <= 0 ?
         1.0 - smoothstep(0.18, 0.88, radius) : max(core, arm_mask);
-    if (snow_quality >= 2)
+    if (snow_shape >= 2)
     {
         // Preserve real snow's sixfold symmetry. Fold the polar angle into one
         // 60-degree sector, then add paired side branches to every main arm.

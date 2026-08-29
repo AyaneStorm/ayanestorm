@@ -104,7 +104,8 @@ Add persistent settings to the appropriate AyaneStorm settings file, with safe
 defaults. The implemented names are `ASWeatherSnowEnabled`,
 `ASWeatherSnowIntensity`, `ASWeatherSnowSpeed`, `ASWeatherSnowSize`,
 `ASWeatherSnowLandedHold`, `ASWeatherSnowLandedFade`, and
-`ASWeatherSnowQuality`. V1 wind is a deliberately slow fixed drift; a future
+`ASWeatherSnowShape`, `ASWeatherSnowDistance`, and
+`ASWeatherSnowDistanceFalloff`. V1 wind is a deliberately slow fixed drift; a future
 Wind tab will own configurable wind.
 
 The implemented Snow appearance is tinted and dimmed from the active EEP
@@ -311,9 +312,11 @@ scene LOD state. Foliage, grass, avatars, attachments, and particles are skipped
 glass blocks falling snow but cannot retain it; retaining normals must remain
 within 50 degrees of world-up.
 
-All qualities now use a 64-metre-wide precipitation volume and a shared reserve
-of 48,000 particles. Quality controls the bounded shelter-query budget rather
-than changing storm area or density. Intensity selects a proportional active
+Snow uses a configurable 8–128 metre radius (32 metres by default). Particle
+reserve and shelter-query throughput scale with radius squared from the default
+48,000 particles and 1,536 queries per frame, preserving density and cache
+warm-up time as area changes. Shape changes only the procedural flake profile;
+Intensity selects a proportional active
 subset, so it alone controls flakes per cubic metre and lower intensity avoids
 the corresponding simulation, raycast, and geometry work. Compared with the
 original 6,000-particle, 128-metre-wide Medium volume, maximum horizontal
@@ -349,7 +352,7 @@ left to the landing path. Three quarters of the bounded query budget is biased
 to particles within 12 metres of the camera so visible indoor crossings are
 resolved promptly, while the remaining budget maintains the full volume.
 When a vertical probe detects shelter above the camera, falling flakes within
-eight metres additionally receive a short swept test every frame after
+sixteen metres additionally receive a short swept test every frame after
 simulation. A current-frame wall or glass crossing is therefore recycled
 before its billboard is submitted, without charging that cost while outdoors.
 
@@ -361,11 +364,46 @@ terrain normal for the same 50-degree retention rule. Terrain above water can
 retain flakes; the existing water-height removal still prevents retention on
 water or submerged land.
 
-Because Intensity alone now controls volumetric density, settled outdoor scenes
-initially looked identical across Quality settings; only shelter-query budgets
-differed. Quality now also selects flake detail without changing density: Low
-uses a soft round profile, Medium uses the six-arm profile, and High adds finer
-crystalline arms. Collision correctness remains enabled at every quality.
+Initial allocation formerly overwrote safely recycled heights with a uniform
+range from 16 metres below to 32 metres above the camera. That directly seeded
+flakes inside rooms. Initial flakes now retain the normal above-camera spawn
+height. In addition, the bounded collision refresh checks upward for an
+overhead ceiling before its top-down landing query; this supports mesh ceilings
+whose upper faces are not returned reliably, without adding a per-particle
+every-frame query.
+
+After the missing Volume-partition input was corrected, the initial vertical
+distribution was restored. Unsampled flakes are still hidden and building
+collisions now participate reliably, so indoor candidates are retired before
+drawing while outdoor snow no longer waits to fall 20 metres into view.
+At the default 32-metre radius, the shelter-query budget is 1,536 per frame.
+Both particle count and query budget scale with horizontal area when Distance
+changes, so coverage no longer changes flakes per square metre.
+
+Distance falloff is enabled by default. The configured Distance remains the
+full-density radius; an additional eight-metre band uses a smooth density curve
+down to zero. Resource scaling uses the outer radius, preserving density inside
+the configured distance instead of redistributing its particles into the fade.
+
+Thin mesh walls may expose only one triangle winding to segment intersection.
+Lateral flake sweeps now test both travel directions, so either face orientation
+blocks a crossing while eligible near-horizontal hits remain landing events.
+
+Further indoor testing showed terrain-valid flakes throughout a room even with
+lateral and overhead checks. `LLPipeline::lineSegmentIntersectInWorld()` gates
+each spatial partition through the current render-type mask. Weather dispatches
+after post-OIT scene passes, where Volume is not guaranteed enabled, so ordinary
+building geometry could be absent from every query while the direct terrain
+fallback still validated flakes against land beneath the house. Weather now
+saves the mask, enables Volume and Terrain for its read-only intersections, and
+restores the exact prior mask afterward. This performs no render, recull, LOD,
+or draw-info operation.
+
+Because Intensity alone controls volumetric density, the former Quality control
+is now Shape: Soft uses a round profile, Hexagonal uses the six-arm profile, and
+Branched adds crystalline branches while preserving sixfold symmetry. Distance
+separately controls precipitation radius. Collision correctness is independent
+of Shape.
 The first High secondary arms were sub-pixel at ordinary viewing distances and
 looked identical to Medium. They are now thicker and extend nearly to the flake
 edge, yielding a readable twelve-arm High silhouette without changing density,

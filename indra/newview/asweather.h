@@ -23,6 +23,7 @@ namespace ASWeather
         LLVector3 center;
         LLVector3 drift;
         F32 radius{ 0.f };
+        F32 fullDensityRadius{ 0.f };
         F32 top{ 0.f };
         F32 bottom{ 0.f };
         F32 waterHeight{ 0.f };

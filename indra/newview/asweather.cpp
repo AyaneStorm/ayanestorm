@@ -24,13 +24,6 @@ namespace
     bool sFramePrepared = false;
     bool sLoggedEnabled = false;
 
-    F32 radiusForQuality(S32 quality)
-    {
-        (void)quality;
-        // Intensity controls volumetric density; Quality must not change the
-        // area over which the same storm is measured.
-        return 32.f;
-    }
 }
 
 void ASWeather::registerShaders(std::vector<LLGLSLShader*>& shaders)
@@ -83,10 +76,12 @@ void ASWeather::prepare(LLPipeline& pipeline, LLCamera& camera)
         sLoggedEnabled = true;
     }
 
-    const S32 quality = llclamp(gSavedSettings.getS32("ASWeatherSnowQuality"), 0, 2);
     sFrameContext.center = camera.getOrigin();
     sFrameContext.drift.set(0.22f, 0.08f, 0.f);
-    sFrameContext.radius = radiusForQuality(quality);
+    sFrameContext.fullDensityRadius = llclamp(
+        gSavedSettings.getF32("ASWeatherSnowDistance"), 8.f, 128.f);
+    sFrameContext.radius = sFrameContext.fullDensityRadius +
+        (gSavedSettings.getBOOL("ASWeatherSnowDistanceFalloff") ? 8.f : 0.f);
     sFrameContext.top = sFrameContext.center.mV[VZ] + 128.f;
     sFrameContext.bottom = sFrameContext.center.mV[VZ] - 128.f;
     sFrameContext.waterHeight = LLEnvironment::instance().getWaterHeight();
@@ -98,6 +93,21 @@ void ASWeather::render(LLPipeline& pipeline, LLCamera& camera, LLRenderTarget& s
     (void)screen;
     if (sFramePrepared && gSavedSettings.getBOOL("ASWeatherSnowEnabled"))
     {
+        // World intersection skips an entire spatial partition when its
+        // drawable render type is disabled. Weather runs after scene passes,
+        // where Volume is not guaranteed to remain enabled; explicitly expose
+        // structural volumes to read-only shelter queries, then restore the
+        // exact prior mask. No rendering or culling occurs in this scope.
+        LL_INFOS_ONCE("Weather") << "Shelter query input mask: volume="
+                                 << pipeline.hasRenderType(LLPipeline::RENDER_TYPE_VOLUME)
+                                 << " terrain="
+                                 << pipeline.hasRenderType(LLPipeline::RENDER_TYPE_TERRAIN)
+                                 << LL_ENDL;
+        pipeline.pushRenderTypeMask();
+        pipeline.setRenderTypeMask(LLPipeline::RENDER_TYPE_VOLUME,
+                                   LLPipeline::RENDER_TYPE_TERRAIN,
+                                   LLPipeline::END_RENDER_TYPES);
         ASWeatherSnow::updateAndRender(sFrameContext, pipeline, camera);
+        pipeline.popRenderTypeMask();
     }
 }

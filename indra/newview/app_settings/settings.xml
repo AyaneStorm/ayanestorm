@@ -28666,8 +28666,12 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Seconds a landed flake remains fully visible</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>5.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASWeatherSnowLandedFade</key>
     <map><key>Comment</key><string>Seconds a landed flake takes to fade</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASWeatherSnowQuality</key>
-    <map><key>Comment</key><string>Snow quality: 0 low, 1 medium, 2 high</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASWeatherSnowShape</key>
+    <map><key>Comment</key><string>Snowflake shape: 0 soft, 1 hexagonal, 2 branched</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASWeatherSnowDistance</key>
+    <map><key>Comment</key><string>Viewer-local snow radius in metres</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>32.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASWeatherSnowDistanceFalloff</key>
+    <map><key>Comment</key><string>Fade snow density over eight metres beyond the configured distance</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->
     <key>FSUseFSLegacySearch</key>
     <map>

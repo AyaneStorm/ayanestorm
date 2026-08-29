@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm. Snow is independent of future Rain/Wind tabs. -->
-<panel border="false" follows="all" height="365" layout="topleft" left="1" name="as_weather_snow" top="1" width="454">
+<panel border="false" follows="all" height="390" layout="topleft" left="1" name="as_weather_snow" top="1" width="454">
   <check_box control_name="ASWeatherSnowEnabled" follows="left|top" height="18"
              label="Snowing" layout="topleft" left="15" mouse_opaque="true"
              name="snow_enabled" radio_style="false" top="18" width="420"
@@ -25,14 +25,22 @@
           enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="0.1"
           label="Landed fade (seconds)" label_width="170" layout="topleft" left="15" max_val="10.0" min_val="0.1"
           name="snow_landed_fade" show_text="true" text_width="50" top="194" width="390" />
-  <text follows="left|top" height="16" layout="topleft" left="15" name="snow_quality_label" top="230" width="170">Quality</text>
-  <combo_box control_name="ASWeatherSnowQuality" enabled_control="ASWeatherSnowEnabled"
-             follows="left|top" height="23" layout="topleft" left="185" name="snow_quality" top="226" width="160">
-    <combo_box.item label="Low" name="low" value="0" />
-    <combo_box.item label="Medium" name="medium" value="1" />
-    <combo_box.item label="High" name="high" value="2" />
+  <slider can_edit_text="true" control_name="ASWeatherSnowDistance" decimal_digits="0"
+          enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="1.0"
+          label="Distance (metres)" label_width="170" layout="topleft" left="15" max_val="128.0" min_val="8.0"
+          name="snow_distance" show_text="true" text_width="50" top="228" width="390" />
+  <check_box control_name="ASWeatherSnowDistanceFalloff" enabled_control="ASWeatherSnowEnabled"
+             follows="left|top" height="18" label="Distance falloff (+8 m)" layout="topleft"
+             left="185" name="snow_distance_falloff" top="258" width="220"
+             tool_tip="Fade snow density smoothly to zero over eight metres beyond Distance." />
+  <text follows="left|top" height="16" layout="topleft" left="15" name="snow_shape_label" top="294" width="170">Shape</text>
+  <combo_box control_name="ASWeatherSnowShape" enabled_control="ASWeatherSnowEnabled"
+             follows="left|top" height="23" layout="topleft" left="185" name="snow_shape" top="290" width="160">
+    <combo_box.item label="Soft" name="soft" value="0" />
+    <combo_box.item label="Hexagonal" name="hexagonal" value="1" />
+    <combo_box.item label="Branched" name="branched" value="2" />
   </combo_box>
-  <text follows="left|top" height="60" layout="topleft" left="15" name="snow_info" top="270" width="420" wrap="true">
+  <text follows="left|top" height="50" layout="topleft" left="15" name="snow_info" top="334" width="420" wrap="true">
     Snow color follows the current EEP lighting. Flakes rest briefly on terrain and near-horizontal solid surfaces, but not on glass or water.
   </text>
 </panel>
