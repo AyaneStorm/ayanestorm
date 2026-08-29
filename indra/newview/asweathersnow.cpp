@@ -6,7 +6,11 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#define AS_SNOW_PERFORMANCE_LOGGING 0
+
+#if AS_SNOW_PERFORMANCE_LOGGING
 #include <chrono>
+#endif
 #include <unordered_map>
 
 #include "asweathersnow.h"
@@ -73,6 +77,7 @@ namespace
     U32 sNearCollisionCursor = 0;
     U32 sIndoorSweepFrame = 0;
     F32 sAllocatedRadius = 0.f;
+#if AS_SNOW_PERFORMANCE_LOGGING
     U32 sTimingFrames = 0;
     F64 sCollisionMs = 0.0;
     F64 sSimulationMs = 0.0;
@@ -81,6 +86,7 @@ namespace
     F64 sDrawMs = 0.0;
     U64 sCollisionCacheHits = 0;
     U64 sCollisionCacheMisses = 0;
+#endif
 
     struct CollisionCell
     {
@@ -105,11 +111,13 @@ namespace
     const LLStaticHashedString sLightColor("snow_light_color");
     const LLStaticHashedString sShape("snow_shape");
 
+#if AS_SNOW_PERFORMANCE_LOGGING
     F64 milliseconds(const std::chrono::steady_clock::time_point& begin,
                      const std::chrono::steady_clock::time_point& end)
     {
         return std::chrono::duration<F64, std::milli>(end - begin).count();
     }
+#endif
 
     U64 collisionCellKey(const LLVector3& position)
     {
@@ -131,11 +139,6 @@ namespace
         // Preserve flakes per square metre as Distance changes. Shape does not
         // alter density; Intensity selects the active fraction of this reserve.
         return llmax(1u, (U32)ll_round(48000.f * distanceAreaScale(context)));
-    }
-
-    F32 hash01(F32 value)
-    {
-        return value - floorf(value);
     }
 
     bool activeAtIntensity(const Particle& particle, F32 intensity)
@@ -427,7 +430,9 @@ namespace
         }
         if (reusable)
         {
+#if AS_SNOW_PERFORMANCE_LOGGING
             ++sCollisionCacheHits;
+#endif
             const CollisionCell& cell = found->second;
             const LLUUID previous_support = particle.supportId;
             particle.collisionValid = true;
@@ -453,7 +458,9 @@ namespace
             return;
         }
 
+#if AS_SNOW_PERFORMANCE_LOGGING
         ++sCollisionCacheMisses;
+#endif
         LLVector3 blocker_normal;
         sampleCollision(particle, context, pipeline, &blocker_normal);
         if (particle.collisionValid)
@@ -846,9 +853,11 @@ void ASWeatherSnow::releaseResources()
     sIndoorSweepFrame = 0;
     sAllocatedRadius = 0.f;
     sCollisionCacheCenterValid = false;
+#if AS_SNOW_PERFORMANCE_LOGGING
     sTimingFrames = 0;
     sCollisionMs = sSimulationMs = sIndoorMs = sGeometryMs = sDrawMs = 0.0;
     sCollisionCacheHits = sCollisionCacheMisses = 0;
+#endif
 }
 
 bool ASWeatherSnow::isSupported()
@@ -881,15 +890,25 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     {
         return;
     }
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto collision_begin = std::chrono::steady_clock::now();
+#endif
     refreshCollisionCache(context, pipeline);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto simulation_begin = std::chrono::steady_clock::now();
+#endif
     simulate(context);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto indoor_begin = std::chrono::steady_clock::now();
+#endif
     sweepIndoorNearby(context, pipeline, camera);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto geometry_begin = std::chrono::steady_clock::now();
+#endif
     const bool geometry_ready = updateGeometry(context, camera);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto geometry_end = std::chrono::steady_clock::now();
+#endif
     if (!geometry_ready || !sVisibleVertices)
     {
         return;
@@ -927,13 +946,18 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     // channel. Snow is a lit translucent overlay, not emissive geometry, so
     // preserve destination alpha and blend colour only.
     gGL.setColorMask(true, false);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto draw_begin = std::chrono::steady_clock::now();
+#endif
     sVertexBuffer->setBuffer();
     sVertexBuffer->drawArrays(LLRender::TRIANGLES, 0, sVisibleVertices);
+#if AS_SNOW_PERFORMANCE_LOGGING
     const auto draw_end = std::chrono::steady_clock::now();
+#endif
     gGL.setColorMask(true, true);
     LLGLSLShader::unbind();
 
+#if AS_SNOW_PERFORMANCE_LOGGING
     sCollisionMs += milliseconds(collision_begin, simulation_begin);
     sSimulationMs += milliseconds(simulation_begin, indoor_begin);
     sIndoorMs += milliseconds(indoor_begin, geometry_begin);
@@ -957,4 +981,5 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
         sCollisionMs = sSimulationMs = sIndoorMs = sGeometryMs = sDrawMs = 0.0;
         sCollisionCacheHits = sCollisionCacheMisses = 0;
     }
+#endif
 }
