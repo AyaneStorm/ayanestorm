@@ -491,7 +491,7 @@ namespace
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
         const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 30.f);
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
-        const F32 size_scale = llclamp(gSavedSettings.getF32("ASWeatherSnowSize"), 0.5f, 2.f);
+        const F32 size_scale = llclamp(gSavedSettings.getF32("ASWeatherSnowSize"), 0.1f, 2.f);
         const LLVector3 right = camera.getLeftAxis();
         const LLVector3 up = camera.getUpAxis();
         static const LLVector2 uv[6] = {

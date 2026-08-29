@@ -24,15 +24,17 @@ void main()
         1.0 - smoothstep(0.18, 0.88, radius) : max(core, arm_mask);
     if (snow_quality >= 2)
     {
-        // Keep the secondary arms thick enough to survive the few-pixel
-        // footprint of ordinary distant flakes; the previous fine lines were
-        // visually indistinguishable from Medium after rasterization.
-        float fine_arms = 1.0 - smoothstep(0.075, 0.19,
-            min(abs(dot(point, vec2(0.866025, 0.5))),
-                min(abs(dot(point, vec2(0.0, 1.0))),
-                    abs(dot(point, vec2(0.866025, -0.5))))));
-        float crystal = fine_arms * (1.0 - smoothstep(0.32, 0.98, radius));
-        shape = max(shape, crystal * 0.92);
+        // Preserve real snow's sixfold symmetry. Fold the polar angle into one
+        // 60-degree sector, then add paired side branches to every main arm.
+        float sector = abs(mod(atan(point.y, point.x) + 0.523598776,
+                               1.047197551) - 0.523598776);
+        vec2 hex_point = vec2(radius * cos(sector), radius * sin(sector));
+        float branch_line = abs(hex_point.y -
+                                abs(hex_point.x - 0.53) * 0.48);
+        float branches = 1.0 - smoothstep(0.035, 0.105, branch_line);
+        float branch_range = smoothstep(0.25, 0.36, hex_point.x) *
+                             (1.0 - smoothstep(0.68, 0.82, hex_point.x));
+        shape = max(shape, branches * branch_range * 0.88);
     }
     float alpha = shape * snow_color.a;
     if (alpha < 0.01)

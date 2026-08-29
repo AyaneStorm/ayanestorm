@@ -366,3 +366,8 @@ The first High secondary arms were sub-pixel at ordinary viewing distances and
 looked identical to Medium. They are now thicker and extend nearly to the flake
 edge, yielding a readable twelve-arm High silhouette without changing density,
 billboard size, brightness, or glow contribution.
+
+Runtime close-ups showed that twelvefold High silhouette looked gear-like,
+while Medium's sixfold/hexagonal profile read as natural snow. High now retains
+sixfold symmetry and adds paired side branches along the six primary arms
+instead of introducing six rotated primary arms.

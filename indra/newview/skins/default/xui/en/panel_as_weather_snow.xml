@@ -11,7 +11,7 @@
           name="snow_intensity" show_text="true" text_width="50" top="58" width="390" />
   <slider can_edit_text="true" control_name="ASWeatherSnowSize" decimal_digits="2"
           enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="0.05"
-          label="Flake size" label_width="170" layout="topleft" left="15" max_val="2.0" min_val="0.5"
+          label="Flake size" label_width="170" layout="topleft" left="15" max_val="2.0" min_val="0.1"
           name="snow_size" show_text="true" text_width="50" top="92" width="390" />
   <slider can_edit_text="true" control_name="ASWeatherSnowSpeed" decimal_digits="2"
           enabled_control="ASWeatherSnowEnabled" follows="left|top" height="18" increment="0.05"
