@@ -22,7 +22,9 @@
 #include "llviewercontrol.h"
 #include "llviewercamera.h"
 #include "llviewerobject.h"
+#include "llviewerregion.h"
 #include "llvertexbuffer.h"
+#include "llworld.h"
 
 extern bool gSnapshot;
 
@@ -59,8 +61,10 @@ namespace
     U32 sVisibleVertices = 0;
     bool sLoggedFirstRender = false;
     U32 sCollisionCursor = 0;
+    U32 sNearCollisionCursor = 0;
 
     const LLStaticHashedString sLightColor("snow_light_color");
+    const LLStaticHashedString sQuality("snow_quality");
 
     U32 countForQuality(S32 quality)
     {
@@ -145,6 +149,74 @@ namespace
         return gltf && gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND;
     }
 
+    bool sweptSideBlocked(const Particle& particle, LLPipeline& pipeline)
+    {
+        if (!particle.collisionValid || particle.state != ParticleState::FALLING ||
+            (particle.position - particle.sampledPosition).lengthSquared() < 0.0001f)
+        {
+            return false;
+        }
+
+        LLVector4a start;
+        LLVector4a end;
+        start.load3(particle.sampledPosition.mV);
+        end.load3(particle.position.mV);
+        for (U32 attempt = 0; attempt < 8; ++attempt)
+        {
+            S32 face = -1;
+            LLVector4a intersection;
+            LLVector4a normal;
+            LLViewerObject* object = pipeline.lineSegmentIntersectInWorld(
+                start, end, true, false, true, false, &face, nullptr, nullptr,
+                &intersection, nullptr, &normal, nullptr);
+            if (!object)
+            {
+                return false;
+            }
+            if (excludedBlocker(object))
+            {
+                LLVector3 next(intersection.getF32ptr());
+                LLVector3 direction = particle.position - next;
+                if (direction.normVec() == 0.f) return false;
+                next += direction * 0.01f;
+                start.load3(next.mV);
+                continue;
+            }
+
+            // A retaining near-horizontal hit is handled by the ordinary
+            // landing test. Walls, steep faces, and glass block lateral entry.
+            return nonRetainingFace(object, face) ||
+                   normal.getF32ptr()[VZ] < 0.642787610f;
+        }
+        return false;
+    }
+
+    void sampleTerrainFallback(Particle& particle)
+    {
+        LLViewerRegion* region = LLWorld::getInstance()->getRegionFromPosAgent(particle.position);
+        if (!region) return;
+
+        LLVector3 region_position = particle.position - region->getOriginAgent();
+        const F32 height = region->getLandHeightRegion(region_position);
+        const F32 step = 0.25f;
+        LLVector3 east = region_position;
+        LLVector3 west = region_position;
+        LLVector3 north = region_position;
+        LLVector3 south = region_position;
+        east.mV[VX] += step;
+        west.mV[VX] -= step;
+        north.mV[VY] += step;
+        south.mV[VY] -= step;
+        LLVector3 normal(region->getLandHeightRegion(west) - region->getLandHeightRegion(east),
+                         region->getLandHeightRegion(south) - region->getLandHeightRegion(north),
+                         step * 2.f);
+        normal.normVec();
+
+        particle.blockerHeight = height + region->getOriginAgent().mV[VZ];
+        particle.supportId = region->getRegionID();
+        particle.retains = normal.mV[VZ] >= 0.642787610f;
+    }
+
     void sampleCollision(Particle& particle, const ASWeather::FrameContext& context,
                          LLPipeline& pipeline)
     {
@@ -174,6 +246,7 @@ namespace
                 &intersection, nullptr, &normal, nullptr);
             if (!object)
             {
+                sampleTerrainFallback(particle);
                 return;
             }
             if (excludedBlocker(object))
@@ -190,7 +263,7 @@ namespace
             const bool water = pcode == LLViewerObject::LL_VO_WATER ||
                                pcode == LLViewerObject::LL_VO_VOID_WATER;
             particle.retains = !water && !nonRetainingFace(object, face) &&
-                               normal.getF32ptr()[VZ] >= 0.906307787f;
+                               normal.getF32ptr()[VZ] >= 0.642787610f;
             if (validating_landed && particle.supportId != previous_support)
             {
                 particle.collisionValid = false;
@@ -198,6 +271,7 @@ namespace
             }
             return;
         }
+        sampleTerrainFallback(particle);
     }
 
     void refreshCollisionCache(const ASWeather::FrameContext& context, LLPipeline& pipeline,
@@ -206,14 +280,46 @@ namespace
         if (sParticles.empty()) return;
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
         if (intensity <= 0.f) return;
+
         const U32 budget = quality <= 0 ? 192 : quality == 1 ? 384 : 768;
         const U32 active_budget = llmax(1u, (U32)llceil((F32)budget * intensity));
-        U32 queried = 0;
+        auto refresh_particle = [&](Particle& particle)
+        {
+            if (sweptSideBlocked(particle, pipeline))
+            {
+                recycleParticle(particle, context);
+            }
+            else
+            {
+                sampleCollision(particle, context, pipeline);
+            }
+        };
+
+        // Spend most queries near the camera, where a wall crossing is visible.
+        const U32 near_budget = llmax(1u, active_budget * 3u / 4u);
+        U32 near_queried = 0;
         U32 examined = 0;
+        while (near_queried < near_budget && examined++ < sParticles.size())
+        {
+            const U32 index = ((sNearCollisionCursor++ % sParticles.size()) * 7919u) %
+                              (U32)sParticles.size();
+            Particle& particle = sParticles[index];
+            const LLVector3 offset = particle.position - context.center;
+            if (!activeAtIntensity(particle, intensity) ||
+                offset.mV[VX] * offset.mV[VX] + offset.mV[VY] * offset.mV[VY] > 144.f)
+            {
+                continue;
+            }
+            refresh_particle(particle);
+            ++near_queried;
+        }
+
+        U32 queried = near_queried;
+        examined = 0;
         while (queried < active_budget && examined++ < sParticles.size())
         {
-            // 7919 is coprime with every supported particle count. This walks
-            // the whole buffer without exposing sequential spawn IDs as bands.
+            // 7919 is coprime with the particle count. This walks the whole
+            // buffer without exposing sequential spawn IDs as bands.
             const U32 index = ((sCollisionCursor++ % sParticles.size()) * 7919u) %
                               (U32)sParticles.size();
             Particle& particle = sParticles[index];
@@ -222,8 +328,41 @@ namespace
                 particle.collisionValid = false;
                 continue;
             }
-            sampleCollision(particle, context, pipeline);
+            refresh_particle(particle);
             ++queried;
+        }
+    }
+
+    void sweepIndoorNearby(const ASWeather::FrameContext& context, LLPipeline& pipeline)
+    {
+        const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
+        if (intensity <= 0.f) return;
+
+        Particle camera_probe;
+        camera_probe.position = context.center;
+        sampleCollision(camera_probe, context, pipeline);
+        if (camera_probe.blockerHeight <= context.center.mV[VZ] + 0.10f) return;
+
+        // Indoor leakage is a correctness failure, not a quality tradeoff.
+        // This runs after simulation so a flake crossing a nearby wall in the
+        // current frame is recycled before geometry is submitted.
+        for (Particle& particle : sParticles)
+        {
+            if (!activeAtIntensity(particle, intensity) ||
+                !particle.collisionValid || particle.state != ParticleState::FALLING)
+            {
+                continue;
+            }
+            const LLVector3 offset = particle.position - context.center;
+            if (offset.lengthSquared() > 64.f) continue;
+            if (sweptSideBlocked(particle, pipeline))
+            {
+                recycleParticle(particle, context);
+            }
+            else
+            {
+                particle.sampledPosition = particle.position;
+            }
         }
     }
 
@@ -431,6 +570,7 @@ void ASWeatherSnow::releaseResources()
     sVisibleVertices = 0;
     sLoggedFirstRender = false;
     sCollisionCursor = 0;
+    sNearCollisionCursor = 0;
 }
 
 bool ASWeatherSnow::isSupported()
@@ -461,6 +601,7 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
 
     refreshCollisionCache(context, pipeline, quality);
     simulate(context);
+    sweepIndoorNearby(context, pipeline);
     if (!updateGeometry(context, camera) || !sVisibleVertices)
     {
         return;
@@ -490,6 +631,7 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
 
     sRenderProgram.bind();
     sRenderProgram.uniform3fv(sLightColor, 1, snow_light.mV);
+    sRenderProgram.uniform1i(sQuality, quality);
     LLGLDepthTest depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ALPHA);

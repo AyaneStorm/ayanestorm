@@ -250,7 +250,7 @@ The selected implementation uses new `asweather` and `asweathersnow` modules,
 two top-down depth maps (all blockers versus retaining opaque/terrain
 surfaces), CPU particle state, and native `LLVertexBuffer` camera-facing
 billboards. Shelter depth is read back at a throttled cadence for CPU collision
-and support validation. Landed flakes are limited to surfaces within 25
+and support validation. Landed flakes are limited to surfaces within 50
 degrees of horizontal, exclude glass and water, hold for a configurable default
 of five seconds, then fade for a separately configurable default of two
 seconds.
@@ -309,7 +309,7 @@ over frames, and unsampled flakes remain hidden during the short cache warm-up.
 This path does not change render targets, cameras, draw pools, cull results, or
 scene LOD state. Foliage, grass, avatars, attachments, and particles are skipped;
 glass blocks falling snow but cannot retain it; retaining normals must remain
-within 25 degrees of world-up.
+within 50 degrees of world-up.
 
 All qualities now use a 64-metre-wide precipitation volume and a shared reserve
 of 48,000 particles. Quality controls the bounded shelter-query budget rather
@@ -336,3 +336,33 @@ drift vector every frame. At high density this made parallel projected paths
 look like repeated flakes falling through fixed lanes. Each recycled flake now
 has small stable drift variation plus an independently phased low-amplitude
 meander, while the shared Weather vector remains the prevailing direction.
+
+Vertical shelter queries alone allowed a drifting flake to cross a side wall
+between cache refreshes. Each falling particle now sweeps the segment from its
+last sampled position to its current position when refreshed. Glass, walls,
+and steep geometry recycle the particle; near-horizontal eligible geometry is
+left to the landing path. Three quarters of the bounded query budget is biased
+to particles within 12 metres of the camera so visible indoor crossings are
+resolved promptly, while the remaining budget maintains the full volume.
+When a vertical probe detects shelter above the camera, falling flakes within
+eight metres additionally receive a short swept test every frame after
+simulation. A current-frame wall or glass crossing is therefore recycled
+before its billboard is submitted, without charging that cost while outdoors.
+
+Simulator terrain required a separate fallback: `LLVOSurfacePatch` computes its
+intersection step from horizontal ray length and therefore cannot reliably
+intersect Weather's perfectly vertical shelter ray. ASWeather now queries the
+owning region's land-height field directly and derives a finite-difference
+terrain normal for the same 50-degree retention rule. Terrain above water can
+retain flakes; the existing water-height removal still prevents retention on
+water or submerged land.
+
+Because Intensity alone now controls volumetric density, settled outdoor scenes
+initially looked identical across Quality settings; only shelter-query budgets
+differed. Quality now also selects flake detail without changing density: Low
+uses a soft round profile, Medium uses the six-arm profile, and High adds finer
+crystalline arms. Collision correctness remains enabled at every quality.
+The first High secondary arms were sub-pixel at ordinary viewing distances and
+looked identical to Medium. They are now thicker and extend nearly to the flake
+edge, yielding a readable twelve-arm High silhouette without changing density,
+billboard size, brightness, or glow contribution.
