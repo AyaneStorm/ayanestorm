@@ -311,6 +311,17 @@ scene LOD state. Foliage, grass, avatars, attachments, and particles are skipped
 glass blocks falling snow but cannot retain it; retaining normals must remain
 within 25 degrees of world-up.
 
-The precipitation volumes are 48, 64, and 96 metres across for Low, Medium,
-and High. Medium originally covered 128 metres across; reducing it to 64 metres
-quadruples horizontal flake density with the same 6,000-particle budget.
+All qualities now use a 64-metre-wide precipitation volume and a shared reserve
+of 48,000 particles. Quality controls the bounded shelter-query budget rather
+than changing storm area or density. Intensity selects a proportional active
+subset, so it alone controls flakes per cubic metre and lower intensity avoids
+the corresponding simulation, raycast, and geometry work. Compared with the
+original 6,000-particle, 128-metre-wide Medium volume, maximum horizontal
+density is thirty-two times greater.
+
+The initial deterministic polar spawn reused one linear floating-point key for
+radius, angle, height, velocity, and size. Sequential raycast-cache validation
+made that correlation visible as curved precipitation bands. Spawn attributes
+now use separate integer-avalanche samples, while cache traversal uses a stride
+coprime with every quality particle count. This produces uniform coverage and
+an evenly distributed cache warm-up instead of strips.

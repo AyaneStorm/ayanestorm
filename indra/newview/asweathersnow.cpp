@@ -62,7 +62,10 @@ namespace
 
     U32 countForQuality(S32 quality)
     {
-        return quality <= 0 ? 2000 : quality == 1 ? 6000 : 12000;
+        (void)quality;
+        // Every quality shares one density ceiling. Quality controls shelter
+        // refresh work; Intensity selects the active fraction of this reserve.
+        return 48000;
     }
 
     F32 hash01(F32 value)
@@ -70,18 +73,42 @@ namespace
         return value - floorf(value);
     }
 
+    bool activeAtIntensity(const Particle& particle, F32 intensity)
+    {
+        return hash01(particle.seed * 97.13f) < intensity;
+    }
+
+    U32 hashBits(U32 value)
+    {
+        // Integer avalanche keeps successive particle IDs and generations
+        // from forming correlated polar arcs in the precipitation volume.
+        value ^= value >> 16;
+        value *= 0x7feb352du;
+        value ^= value >> 15;
+        value *= 0x846ca68bu;
+        value ^= value >> 16;
+        return value;
+    }
+
+    F32 random01(U32& state)
+    {
+        state = hashBits(state + 0x9e3779b9u);
+        return (F32)(state >> 8) * (1.f / 16777216.f);
+    }
+
     void recycleParticle(Particle& particle, const ASWeather::FrameContext& context)
     {
         ++particle.generation;
-        const F32 key = particle.seed + (F32)particle.generation * 0.618033989f;
-        const F32 angle = hash01(key * 13.37f) * F_TWO_PI;
-        const F32 distance = sqrtf(hash01(key * 29.71f)) * context.radius;
+        U32 random_state = hashBits((U32)(particle.seed * 16777215.f) ^
+                                    particle.generation * 0x85ebca6bu);
+        const F32 angle = random01(random_state) * F_TWO_PI;
+        const F32 distance = sqrtf(random01(random_state)) * context.radius;
         particle.position.set(context.center.mV[VX] + cosf(angle) * distance,
                               context.center.mV[VY] + sinf(angle) * distance,
-                              context.center.mV[VZ] + 20.f + hash01(key * 47.53f) * 12.f);
+                              context.center.mV[VZ] + 20.f + random01(random_state) * 12.f);
         particle.velocity.set(context.drift.mV[VX], context.drift.mV[VY],
-                              -(1.2f + hash01(key * 71.19f) * 1.4f));
-        particle.size = 0.65f + hash01(key * 91.73f) * 0.70f;
+                              -(1.2f + random01(random_state) * 1.4f));
+        particle.size = 0.65f + random01(random_state) * 0.70f;
         particle.timer = 0.f;
         particle.collisionValid = false;
         particle.retains = false;
@@ -172,11 +199,26 @@ namespace
                                S32 quality)
     {
         if (sParticles.empty()) return;
-        const U32 budget = quality <= 0 ? 96 : quality == 1 ? 192 : 320;
-        for (U32 query = 0; query < budget; ++query)
+        const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
+        if (intensity <= 0.f) return;
+        const U32 budget = quality <= 0 ? 192 : quality == 1 ? 384 : 768;
+        const U32 active_budget = llmax(1u, (U32)llceil((F32)budget * intensity));
+        U32 queried = 0;
+        U32 examined = 0;
+        while (queried < active_budget && examined++ < sParticles.size())
         {
-            Particle& particle = sParticles[sCollisionCursor++ % sParticles.size()];
+            // 7919 is coprime with every supported particle count. This walks
+            // the whole buffer without exposing sequential spawn IDs as bands.
+            const U32 index = ((sCollisionCursor++ % sParticles.size()) * 7919u) %
+                              (U32)sParticles.size();
+            Particle& particle = sParticles[index];
+            if (!activeAtIntensity(particle, intensity))
+            {
+                particle.collisionValid = false;
+                continue;
+            }
             sampleCollision(particle, context, pipeline);
+            ++queried;
         }
     }
 
@@ -220,9 +262,14 @@ namespace
         const F32 speed = llclamp(gSavedSettings.getF32("ASWeatherSnowSpeed"), 0.25f, 2.f);
         const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 30.f);
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
+        const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
 
         for (Particle& particle : sParticles)
         {
+            if (!activeAtIntensity(particle, intensity))
+            {
+                continue;
+            }
             particle.timer += delta;
             if (particle.state == ParticleState::FALLING)
             {
@@ -319,7 +366,7 @@ namespace
             {
                 continue;
             }
-            if (hash01(particle.seed * 97.13f) > intensity)
+            if (!activeAtIntensity(particle, intensity))
             {
                 continue;
             }
@@ -395,7 +442,7 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     }
 
     const S32 quality = llclamp(gSavedSettings.getS32("ASWeatherSnowQuality"), 0, 2);
-    if (sParticles.empty() || sAllocatedQuality != quality)
+    if (sParticles.empty())
     {
         allocateParticles(quality, context);
     }
@@ -403,6 +450,9 @@ void ASWeatherSnow::updateAndRender(const ASWeather::FrameContext& context,
     {
         return;
     }
+    // Quality only changes the live shelter-query budget; the shared density
+    // reserve no longer needs reallocation when the user changes quality.
+    sAllocatedQuality = quality;
 
     refreshCollisionCache(context, pipeline, quality);
     simulate(context);

@@ -26,9 +26,10 @@ namespace
 
     F32 radiusForQuality(S32 quality)
     {
-        // Diameters are 48/64/96 m. Medium previously spanned 128 m, which
-        // made the fixed particle budget unnecessarily sparse near the camera.
-        return quality <= 0 ? 24.f : quality == 1 ? 32.f : 48.f;
+        (void)quality;
+        // Intensity controls volumetric density; Quality must not change the
+        // area over which the same storm is measured.
+        return 32.f;
     }
 }
 
