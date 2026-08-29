@@ -336,6 +336,10 @@ drift vector every frame. At high density this made parallel projected paths
 look like repeated flakes falling through fixed lanes. Each recycled flake now
 has small stable drift variation plus an independently phased low-amplitude
 meander, while the shared Weather vector remains the prevailing direction.
+Additionally, after approximately every two metres of descent, each flake
+independently selects a slightly different target drift and steers toward it
+gradually. This breaks short repeated landing trajectories without producing
+visible direction snaps or changing the prevailing Weather direction.
 
 Vertical shelter queries alone allowed a drifting flake to cross a side wall
 between cache refreshes. Each falling particle now sweeps the segment from its

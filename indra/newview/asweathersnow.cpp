@@ -51,6 +51,10 @@ namespace
         LLUUID supportId;
         F32 lateralPhase{ 0.f };
         F32 lateralRate{ 1.f };
+        F32 targetDriftX{ 0.f };
+        F32 targetDriftY{ 0.f };
+        F32 nextDirectionHeight{ 0.f };
+        U32 directionStep{ 0 };
         bool collisionValid{ false };
         bool retains{ false };
         ParticleState state{ ParticleState::FALLING };
@@ -104,6 +108,19 @@ namespace
         return (F32)(state >> 8) * (1.f / 16777216.f);
     }
 
+    void chooseNextDirection(Particle& particle, const ASWeather::FrameContext& context)
+    {
+        U32 state = hashBits((U32)(particle.seed * 16777215.f) ^
+                             particle.generation * 0x85ebca6bu ^
+                             ++particle.directionStep * 0xc2b2ae35u);
+        particle.targetDriftX = context.drift.mV[VX] +
+                                (random01(state) - 0.5f) * 0.28f;
+        particle.targetDriftY = context.drift.mV[VY] +
+                                (random01(state) - 0.5f) * 0.28f;
+        particle.nextDirectionHeight = particle.position.mV[VZ] -
+                                       (1.75f + random01(state) * 0.50f);
+    }
+
     void recycleParticle(Particle& particle, const ASWeather::FrameContext& context)
     {
         ++particle.generation;
@@ -120,6 +137,10 @@ namespace
         particle.size = 0.65f + random01(random_state) * 0.70f;
         particle.lateralPhase = random01(random_state) * F_TWO_PI;
         particle.lateralRate = 0.45f + random01(random_state) * 0.85f;
+        particle.directionStep = 0;
+        particle.targetDriftX = particle.velocity.mV[VX];
+        particle.targetDriftY = particle.velocity.mV[VY];
+        particle.nextDirectionHeight = particle.position.mV[VZ] - 2.f;
         particle.timer = 0.f;
         particle.collisionValid = false;
         particle.retains = false;
@@ -389,6 +410,7 @@ namespace
             particle.generation = index % 17;
             recycleParticle(particle, context);
             particle.position.mV[VZ] = context.center.mV[VZ] - 16.f + ll_frand() * 48.f;
+            particle.nextDirectionHeight = particle.position.mV[VZ] - 2.f;
         }
 
         sVertexBuffer = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX |
@@ -430,6 +452,15 @@ namespace
             if (particle.state == ParticleState::FALLING)
             {
                 const LLVector3 previous = particle.position;
+                if (particle.position.mV[VZ] <= particle.nextDirectionHeight)
+                {
+                    chooseNextDirection(particle, context);
+                }
+                const F32 steering = llclamp(delta * 1.8f, 0.f, 1.f);
+                particle.velocity.mV[VX] +=
+                    (particle.targetDriftX - particle.velocity.mV[VX]) * steering;
+                particle.velocity.mV[VY] +=
+                    (particle.targetDriftY - particle.velocity.mV[VY]) * steering;
                 const F32 meander = sinf(particle.lateralPhase +
                                          particle.timer * particle.lateralRate) * 0.09f;
                 particle.position.mV[VX] += (particle.velocity.mV[VX] + meander) * delta;
