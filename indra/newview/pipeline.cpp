@@ -48,6 +48,10 @@
 #include "asbackgroundisolate.h"
 // </AS:Chanayane>
 
+// <AS:Chanayane> Viewer-local world-space weather.
+#include "asweather.h"
+// </AS:Chanayane>
+
 // <AS:Chanayane> Optional viewer-object-free My Lights backend.
 #include "aslightrigrenderer.h"
 // </AS:Chanayane>
@@ -10107,6 +10111,13 @@ void LLPipeline::renderDeferredLighting()
         FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
                                      gCubeSnapshot, sImpostorRender,
                                      gAgentCamera.cameraMouselook());
+        // <AS:Chanayane> Prepare and render Weather only after every ordinary
+        // scene draw-pool consumer has finished. Shelter capture rebuilds draw
+        // information, so running it earlier leaves later pools (notably glow)
+        // holding stale LLDrawInfo model-matrix pointers.
+        ASWeather::prepare(*this, *LLViewerCamera::getInstance());
+        ASWeather::render(*this, *LLViewerCamera::getInstance(), mRT->screen);
+        // </AS:Chanayane>
     }
 // </AS:Chanayane>
 

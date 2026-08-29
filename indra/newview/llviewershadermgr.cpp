@@ -33,6 +33,9 @@
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local weather shader family.
+#include "asweather.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Viewer-local celestial lens flare shader lifecycle.
 #include "aslensflare.h"
 // </AS:Chanayane>
@@ -476,6 +479,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
     ASBackgroundIsolate::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register independent viewer-local weather shaders.
+    ASWeather::registerShaders(mShaderList);
     // </AS:Chanayane>
     mShaderList.push_back(&gDeferredWLSkyProgram);
     mShaderList.push_back(&gDeferredWLCloudProgram);
@@ -1204,6 +1210,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
         ASBackgroundIsolate::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload viewer-local weather shaders and resources.
+        ASWeather::unloadShaders();
         // </AS:Chanayane>
         gDeferredEmissiveProgram.unload();
         gDeferredSkinnedEmissiveProgram.unload();
@@ -3024,6 +3033,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         ASBackgroundIsolate::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Build optional viewer-local weather shaders.
+    if (success)
+    {
+        ASWeather::createShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
