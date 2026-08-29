@@ -188,6 +188,7 @@ namespace
         particle.targetDriftX = particle.velocity.mV[VX];
         particle.targetDriftY = particle.velocity.mV[VY];
         particle.nextDirectionHeight = particle.position.mV[VZ] - 2.f;
+        particle.sampledPosition = particle.position;
         particle.timer = 0.f;
         particle.collisionValid = false;
         particle.retains = false;
@@ -327,7 +328,6 @@ namespace
         particle.blockerNormal.set(0.f, 0.f, 1.f);
         particle.retains = false;
         particle.supportId.setNull();
-        particle.sampledPosition = particle.position;
 
         if (particle.state == ParticleState::FALLING &&
             sampleOverheadBlocker(particle, context, pipeline))
@@ -407,7 +407,6 @@ namespace
             particle.blockerNormal = cell.normal;
             particle.supportId = cell.supportId;
             particle.retains = cell.retains;
-            particle.sampledPosition = particle.position;
 
             // Reconstruct the local height from the cached surface plane so a
             // half-metre cell does not quantize landed flakes on slopes.
@@ -555,6 +554,7 @@ namespace
             // indoor candidates are recycled before geometry submission.
             particle.position.mV[VZ] = context.center.mV[VZ] - 16.f + ll_frand() * 48.f;
             particle.nextDirectionHeight = particle.position.mV[VZ] - 2.f;
+            particle.sampledPosition = particle.position;
         }
 
         sVertexBuffer = new LLVertexBuffer(LLVertexBuffer::MAP_VERTEX |
