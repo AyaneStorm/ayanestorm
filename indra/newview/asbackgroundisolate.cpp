@@ -44,9 +44,9 @@ extern LLPipeline gPipeline;
 
 namespace
 {
-    // Terrain, water, clouds, and grass render through their own geometry
+    // Terrain, water, clouds, trees, and grass render through their own geometry
     // managers (LLSurfacePatch/LLVOSurfacePatch for terrain, LLVOSky/
-    // LLVOWLSky for sky/clouds, LLVOWater, LLVOGrass) that never check
+    // LLVOWLSky for sky/clouds, LLVOWater, LLVOTree, LLVOGrass) that never check
     // LLDrawable::FORCE_INVISIBLE -- unlike ordinary volume geometry, no
     // amount of setting that flag hides them. None of these can ever be
     // "mine" though (there's no such thing as a self-owned patch of
@@ -68,6 +68,7 @@ namespace
         LLPipeline::RENDER_TYPE_VOIDWATER,
         LLPipeline::RENDER_TYPE_WATEREXCLUSION,
         LLPipeline::RENDER_TYPE_CLOUDS,
+        LLPipeline::RENDER_TYPE_TREE,
         LLPipeline::RENDER_TYPE_GRASS,
         LLPipeline::RENDER_TYPE_PARTICLES,
     };
