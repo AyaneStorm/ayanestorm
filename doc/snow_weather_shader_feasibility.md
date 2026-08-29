@@ -503,3 +503,35 @@ active prefix: simulation, collision selection, indoor checks, and geometry no
 longer scan inactive suffix particles. Distance and falloff changes are debounced
 for 250 ms in shared Weather frame preparation, preventing complete particle/VBO
 reallocation at every intermediate slider value.
+
+## Native Billboard Rendering Constraints
+
+The viewer exposes OpenGL instancing entry points but no `LLVertexBuffer`
+instancing wrapper used elsewhere in the viewer. Its ordinary index strider is
+16-bit; a single indexed Snow buffer exceeds 65,535 vertices at useful density.
+Although `setIndexData(U32*)` contains a 32-bit conversion path, it relies on a
+buffer-size conversion hack and direct bound-buffer upload. Given the earlier
+raw rendering crash, Snow does not adopt either mechanism without a separately
+validated engine abstraction. The stable six-vertex native draw remains.
+
+The stable path nevertheless had a major avoidable upload: striders were mapped
+without a count, marking the complete maximum VBO dirty even when frustum and
+shelter tests left only a small visible subset. Geometry now first records exact
+visible particle indices and colours, then maps and writes only `visible * 6`
+vertices. Billboard shape, ordering, attributes, and draw call are unchanged;
+only unused buffer capacity is excluded from the per-frame upload.
+
+## Shared Landed-Support Validation
+
+Landed flakes formerly forced their collision cells to expire after 0.5 seconds.
+Cells now retain the same five-second lifetime as falling blockers. Terrain is
+recognized as stable; object-backed cells store support identity, agent position,
+and rotation. A landed lookup reuses its plane only while that object still exists
+at the same transform. Moved or deleted supports fall back to detailed collision
+immediately, preserving remnant retirement while avoiding repeated rays against
+unchanged terrain and objects.
+
+The blocker normal is needed only while populating a collision cell, not during
+particle simulation. It is now returned as temporary query output instead of
+being stored in every particle, removing twelve bytes of persistent state per
+particle (about 2.8 MiB at the 243,000-particle 64-metre test allocation).

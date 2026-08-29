@@ -23,6 +23,7 @@
 #include "llviewercontrol.h"
 #include "llviewercamera.h"
 #include "llviewerobject.h"
+#include "llviewerobjectlist.h"
 #include "llviewerregion.h"
 #include "llvertexbuffer.h"
 #include "llworld.h"
@@ -46,7 +47,6 @@ namespace
         F32 timer{ 0.f };
         U32 generation{ 0 };
         F32 blockerHeight{ 0.f };
-        LLVector3 blockerNormal;
         LLVector3 sampledPosition;
         LLUUID supportId;
         F32 targetDriftX{ 0.f };
@@ -61,6 +61,12 @@ namespace
     LLGLSLShader sRenderProgram;
     LLPointer<LLVertexBuffer> sVertexBuffer;
     std::vector<Particle> sParticles;
+    struct VisibleParticle
+    {
+        U32 index;
+        LLColor4U color;
+    };
+    std::vector<VisibleParticle> sVisibleParticles;
     U32 sVisibleVertices = 0;
     bool sLoggedFirstRender = false;
     U32 sCollisionCursor = 0;
@@ -79,13 +85,16 @@ namespace
     struct CollisionCell
     {
         LLVector3 normal;
+        LLVector3 supportPosition;
+        LLQuaternion supportRotation;
         LLUUID supportId;
         F32 sampleX{ 0.f };
         F32 sampleY{ 0.f };
         F32 blockerHeight{ 0.f };
         F64 updatedAt{ 0.0 };
-        bool valid{ false };
         bool retains{ false };
+        bool terrainSupport{ false };
+        bool trackedSupport{ false };
     };
 
     std::unordered_map<U64, CollisionCell> sCollisionCells;
@@ -256,7 +265,7 @@ namespace
                 blocked_between(particle.position, particle.sampledPosition));
     }
 
-    void sampleTerrainFallback(Particle& particle)
+    void sampleTerrainFallback(Particle& particle, LLVector3* blocker_normal = nullptr)
     {
         LLViewerRegion* region = LLWorld::getInstance()->getRegionFromPosAgent(particle.position);
         if (!region) return;
@@ -278,14 +287,14 @@ namespace
         normal.normVec();
 
         particle.blockerHeight = height + region->getOriginAgent().mV[VZ];
-        particle.blockerNormal = normal;
+        if (blocker_normal) *blocker_normal = normal;
         particle.supportId = region->getRegionID();
         particle.retains = normal.mV[VZ] >= 0.642787610f;
     }
 
     bool sampleOverheadBlocker(Particle& particle,
                                const ASWeather::FrameContext& context,
-                               LLPipeline& pipeline)
+                               LLPipeline& pipeline, LLVector3* blocker_normal)
     {
         LLVector3 start3 = particle.position;
         start3.mV[VZ] += 0.02f;
@@ -310,7 +319,7 @@ namespace
                 continue;
             }
             particle.blockerHeight = intersection.getF32ptr()[VZ];
-            particle.blockerNormal.set(0.f, 0.f, -1.f);
+            if (blocker_normal) blocker_normal->set(0.f, 0.f, -1.f);
             particle.supportId = object->getID();
             particle.retains = false;
             return true;
@@ -319,7 +328,7 @@ namespace
     }
 
     void sampleCollision(Particle& particle, const ASWeather::FrameContext& context,
-                         LLPipeline& pipeline)
+                         LLPipeline& pipeline, LLVector3* blocker_normal = nullptr)
     {
         const LLUUID previous_support = particle.supportId;
         const bool validating_landed = particle.state == ParticleState::LANDED &&
@@ -332,12 +341,12 @@ namespace
         end.load3(end3.mV);
         particle.collisionValid = true;
         particle.blockerHeight = context.bottom;
-        particle.blockerNormal.set(0.f, 0.f, 1.f);
+        if (blocker_normal) blocker_normal->set(0.f, 0.f, 1.f);
         particle.retains = false;
         particle.supportId.setNull();
 
         if (particle.state == ParticleState::FALLING &&
-            sampleOverheadBlocker(particle, context, pipeline))
+            sampleOverheadBlocker(particle, context, pipeline, blocker_normal))
         {
             return;
         }
@@ -354,7 +363,7 @@ namespace
                 &intersection, nullptr, &normal, nullptr);
             if (!object)
             {
-                sampleTerrainFallback(particle);
+                sampleTerrainFallback(particle, blocker_normal);
                 return;
             }
             if (expensiveDynamicBlocker(object))
@@ -365,7 +374,7 @@ namespace
                 continue;
             }
             particle.blockerHeight = intersection.getF32ptr()[VZ];
-            particle.blockerNormal.set(normal.getF32ptr());
+            if (blocker_normal) blocker_normal->set(normal.getF32ptr());
             particle.supportId = object->getID();
             const LLPCode pcode = object->getPCode();
             const bool water = pcode == LLViewerObject::LL_VO_WATER ||
@@ -378,7 +387,7 @@ namespace
             }
             return;
         }
-        sampleTerrainFallback(particle);
+        sampleTerrainFallback(particle, blocker_normal);
     }
 
     void prepareCollisionCache(const ASWeather::FrameContext& context)
@@ -401,17 +410,28 @@ namespace
                                LLPipeline& pipeline)
     {
         const U64 key = collisionCellKey(particle.position);
-        const F64 maximum_age = particle.state == ParticleState::LANDED ? 0.5 : 5.0;
-        const auto found = sCollisionCells.find(key);
-        if (found != sCollisionCells.end() &&
-            sCollisionNow - found->second.updatedAt <= maximum_age)
+        auto found = sCollisionCells.find(key);
+        bool reusable = found != sCollisionCells.end() &&
+                        sCollisionNow - found->second.updatedAt <= 5.0;
+        if (reusable && particle.state == ParticleState::LANDED &&
+            found->second.supportId.notNull() && !found->second.terrainSupport)
+        {
+            // Validate a supporting object by identity and transform instead
+            // of repeating the detailed surface ray every half-second.
+            LLViewerObject* support = found->second.trackedSupport
+                ? gObjectList.findObject(found->second.supportId) : nullptr;
+            reusable = support &&
+                (support->getPositionAgent() - found->second.supportPosition).lengthSquared() <
+                    0.000001f &&
+                fabsf(dot(support->getRotation(), found->second.supportRotation)) > 0.999999f;
+        }
+        if (reusable)
         {
             ++sCollisionCacheHits;
             const CollisionCell& cell = found->second;
             const LLUUID previous_support = particle.supportId;
-            particle.collisionValid = cell.valid;
+            particle.collisionValid = true;
             particle.blockerHeight = cell.blockerHeight;
-            particle.blockerNormal = cell.normal;
             particle.supportId = cell.supportId;
             particle.retains = cell.retains;
 
@@ -434,18 +454,35 @@ namespace
         }
 
         ++sCollisionCacheMisses;
-        sampleCollision(particle, context, pipeline);
+        LLVector3 blocker_normal;
+        sampleCollision(particle, context, pipeline, &blocker_normal);
         if (particle.collisionValid)
         {
             CollisionCell& cell = sCollisionCells[key];
-            cell.normal = particle.blockerNormal;
+            cell.normal = blocker_normal;
             cell.supportId = particle.supportId;
             cell.sampleX = particle.position.mV[VX];
             cell.sampleY = particle.position.mV[VY];
             cell.blockerHeight = particle.blockerHeight;
             cell.updatedAt = sCollisionNow;
-            cell.valid = true;
             cell.retains = particle.retains;
+            cell.terrainSupport = false;
+            cell.trackedSupport = false;
+            if (particle.supportId.notNull())
+            {
+                LLViewerRegion* region =
+                    LLWorld::getInstance()->getRegionFromPosAgent(particle.position);
+                cell.terrainSupport = region && region->getRegionID() == particle.supportId;
+                if (!cell.terrainSupport)
+                {
+                    if (LLViewerObject* support = gObjectList.findObject(particle.supportId))
+                    {
+                        cell.supportPosition = support->getPositionAgent();
+                        cell.supportRotation = support->getRotation();
+                        cell.trackedSupport = true;
+                    }
+                }
+            }
         }
     }
 
@@ -538,6 +575,8 @@ namespace
     {
         const U32 count = particleCount(context);
         sParticles.assign(count, Particle());
+        sVisibleParticles.clear();
+        sVisibleParticles.reserve(count / 4u);
         sCollisionCells.reserve(llmin(count, 300000u));
         for (U32 index = 0; index < count; ++index)
         {
@@ -660,32 +699,11 @@ namespace
             return false;
         }
 
-        LLStrider<LLVector3> vertices;
-        LLStrider<LLVector2> texcoords;
-        LLStrider<LLColor4U> colors;
-        if (!sVertexBuffer->getVertexStrider(vertices) ||
-            !sVertexBuffer->getTexCoord0Strider(texcoords) ||
-            !sVertexBuffer->getColorStrider(colors))
-        {
-            sVertexBuffer->unmapBuffer();
-            LL_WARNS("Weather") << "Unable to map native Snow vertex buffer" << LL_ENDL;
-            return false;
-        }
-
         const F32 intensity = llclamp(gSavedSettings.getF32("ASWeatherSnowIntensity"), 0.f, 1.f);
         const F32 hold = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedHold"), 0.f, 60.f);
         const F32 fade = llclamp(gSavedSettings.getF32("ASWeatherSnowLandedFade"), 0.1f, 10.f);
         const F32 size_scale = llclamp(gSavedSettings.getF32("ASWeatherSnowSize"), 0.1f, 2.f);
-        const LLVector3 right = camera.getLeftAxis();
-        const LLVector3 up = camera.getUpAxis();
-        static const LLVector2 uv[6] = {
-            LLVector2(0.f, 0.f), LLVector2(1.f, 0.f), LLVector2(0.f, 1.f),
-            LLVector2(0.f, 1.f), LLVector2(1.f, 0.f), LLVector2(1.f, 1.f)
-        };
-        static const F32 corner_x[6] = { -1.f, 1.f, -1.f, -1.f, 1.f, 1.f };
-        static const F32 corner_y[6] = { -1.f, -1.f, 1.f, 1.f, -1.f, 1.f };
-
-        sVisibleVertices = 0;
+        sVisibleParticles.clear();
         const U32 active_count = activeParticleCount(intensity);
         for (U32 index = 0; index < active_count; ++index)
         {
@@ -733,14 +751,51 @@ namespace
             // the fragment shader uses EEP light directly for actual colour.
             const LLColor4U color(near_shape ? 255 : 0, 255, 255,
                                   (U8)ll_round(alpha * 209.f));
+            sVisibleParticles.push_back({ index, color });
+        }
+
+        const U32 visible_count = (U32)sVisibleParticles.size();
+        sVisibleVertices = visible_count * 6u;
+        if (!sVisibleVertices)
+        {
+            return true;
+        }
+
+        LLStrider<LLVector3> vertices;
+        LLStrider<LLVector2> texcoords;
+        LLStrider<LLColor4U> colors;
+        if (!sVertexBuffer->getVertexStrider(vertices, 0, sVisibleVertices) ||
+            !sVertexBuffer->getTexCoord0Strider(texcoords, 0, sVisibleVertices) ||
+            !sVertexBuffer->getColorStrider(colors, 0, sVisibleVertices))
+        {
+            sVertexBuffer->unmapBuffer();
+            LL_WARNS("Weather") << "Unable to map native Snow vertex buffer" << LL_ENDL;
+            return false;
+        }
+
+        const LLVector3 right = camera.getLeftAxis();
+        const LLVector3 up = camera.getUpAxis();
+        static const LLVector2 uv[6] = {
+            LLVector2(0.f, 0.f), LLVector2(1.f, 0.f), LLVector2(0.f, 1.f),
+            LLVector2(0.f, 1.f), LLVector2(1.f, 0.f), LLVector2(1.f, 1.f)
+        };
+        static const F32 corner_x[6] = { -1.f, 1.f, -1.f, -1.f, 1.f, 1.f };
+        static const F32 corner_y[6] = { -1.f, -1.f, 1.f, 1.f, -1.f, 1.f };
+
+        U32 vertex = 0;
+        for (U32 visible = 0; visible < visible_count; ++visible)
+        {
+            const Particle& particle = sParticles[sVisibleParticles[visible].index];
+            const F32 metres = particle.size * size_scale * 0.045f;
+            const LLColor4U color = sVisibleParticles[visible].color;
             for (U32 corner = 0; corner < 6; ++corner)
             {
-                vertices[sVisibleVertices] = particle.position +
+                vertices[vertex] = particle.position +
                     right * (corner_x[corner] * metres) +
                     up * (corner_y[corner] * metres);
-                texcoords[sVisibleVertices] = uv[corner];
-                colors[sVisibleVertices] = color;
-                ++sVisibleVertices;
+                texcoords[vertex] = uv[corner];
+                colors[vertex] = color;
+                ++vertex;
             }
         }
         sVertexBuffer->unmapBuffer();
@@ -773,6 +828,7 @@ void ASWeatherSnow::releaseResources()
 {
     sVertexBuffer = nullptr;
     sParticles.clear();
+    std::vector<VisibleParticle>().swap(sVisibleParticles);
     std::unordered_map<U64, CollisionCell>().swap(sCollisionCells);
     sVisibleVertices = 0;
     sLoggedFirstRender = false;
