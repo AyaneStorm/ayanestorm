@@ -68,6 +68,31 @@ horizon reduces star contrast naturally. The layer intentionally does not add
 spatial star attenuation, avoiding an upstream shader modification and keeping
 the established celestial render order intact.
 
+## Cloud scattering tint
+
+When horizon scattering is enabled, an AS-owned optional fragment shader is
+selected for the viewer's normal EEP cloud draw. It
+uses the same live sunlight colour, artistic tint, strength, blend opacity, and
+solar activation window as the horizon. The EEP cloud vertex lighting supplies
+the sun-facing signal, while the original noise and self-shadow fields keep
+dense interiors darker and warm exposed regions, following the reference
+shader's attenuated ambient plus forward in-scattering principle. A bounded
+multiple-scattering approximation lifts and warms dense interiors without
+reducing their EEP opacity. An AS-owned derivative of the viewer cloud vertex
+stage exports true angular view elevation and sun alignment; the stock altitude
+blend is only a visibility fade and cannot classify low versus overhead clouds.
+Warm transport is confined to long paths within roughly 5–30 degrees of the
+horizon, higher clouds fade back to EEP white/ambient lighting, and normal
+self-shadow keeps the overhead ceiling dark. Cloud in-scattering is added
+independently of the already-dark EEP base colour; otherwise dense clouds would
+incorrectly reject nearly all sunset radiance.
+
+The shader reproduces the standard cloud base colour before tinting and does
+not alter cloud density or opacity. It preserves all non-radiance G-buffer
+targets. The original Linden cloud shader is selected unchanged when
+the Horizon feature is disabled, inactive by elevation, unavailable after a
+shader failure, or excluded by HDRI/background-isolation rendering.
+
 ## Controls
 
 - Enable procedural horizon light

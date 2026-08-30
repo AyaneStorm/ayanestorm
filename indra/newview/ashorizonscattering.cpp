@@ -23,7 +23,9 @@
 namespace
 {
     LLGLSLShader sHorizonProgram;
+    LLGLSLShader sCloudTintProgram;
     bool sShaderAvailable = false;
+    bool sCloudShaderAvailable = false;
 
     const LLStaticHashedString sSunDirection("as_horizon_sun_direction");
     const LLStaticHashedString sSunColor("as_horizon_sun_color");
@@ -42,6 +44,8 @@ namespace
     const LLStaticHashedString sBlendMode("as_horizon_blend_mode");
     const LLStaticHashedString sPass("as_horizon_pass");
     const LLStaticHashedString sCamPosLocal("camPosLocal");
+    const LLStaticHashedString sCloudTintColor("as_horizon_cloud_tint");
+    const LLStaticHashedString sCloudTintStrength("as_horizon_cloud_strength");
 
     F32 smoothStep(F32 value)
     {
@@ -156,6 +160,7 @@ void ASHorizonScattering::registerUICallbacks()
 void ASHorizonScattering::registerShader(std::vector<LLGLSLShader*>& shaders)
 {
     shaders.push_back(&sHorizonProgram);
+    shaders.push_back(&sCloudTintProgram);
 }
 
 bool ASHorizonScattering::createShader(S32 shader_level)
@@ -183,13 +188,44 @@ bool ASHorizonScattering::createShader(S32 shader_level)
             << LL_ENDL;
         sHorizonProgram.unload();
     }
+
+    sCloudShaderAvailable = false;
+    if (sShaderAvailable)
+    {
+        sCloudTintProgram.mName = "AyaneStorm Horizon Cloud Tint Shader";
+        sCloudTintProgram.mShaderFiles.clear();
+        sCloudTintProgram.clearPermutations();
+        sCloudTintProgram.mFeatures.calculatesAtmospherics = true;
+        sCloudTintProgram.mFeatures.hasAtmospherics = true;
+        sCloudTintProgram.mFeatures.hasGamma = true;
+        sCloudTintProgram.mFeatures.hasSrgb = true;
+        sCloudTintProgram.mFeatures.isDeferred = true;
+        sCloudTintProgram.mShaderFiles.emplace_back("deferred/asHorizonCloudTintV.glsl", GL_VERTEX_SHADER);
+        sCloudTintProgram.mShaderFiles.emplace_back("deferred/asHorizonCloudTintF.glsl", GL_FRAGMENT_SHADER);
+        sCloudTintProgram.mShaderLevel = shader_level;
+        sCloudTintProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+        if (gSavedSettings.getBOOL("RenderEnableEmissiveBuffer"))
+        {
+            sCloudTintProgram.addPermutation("HAS_EMISSIVE", "1");
+        }
+        sCloudShaderAvailable = sCloudTintProgram.createShader();
+        if (!sCloudShaderAvailable)
+        {
+            LL_WARNS("ASHorizonScattering")
+                << "Cloud tint shader failed to load; leaving EEP clouds unchanged."
+                << LL_ENDL;
+            sCloudTintProgram.unload();
+        }
+    }
     return sShaderAvailable;
 }
 
 void ASHorizonScattering::unloadShader()
 {
     sShaderAvailable = false;
+    sCloudShaderAvailable = false;
     sHorizonProgram.unload();
+    sCloudTintProgram.unload();
 }
 
 namespace
@@ -305,4 +341,50 @@ void ASHorizonScattering::render(bool hdri_sky_active)
 
     sHorizonProgram.unbind();
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
+}
+
+LLGLSLShader* ASHorizonScattering::getCloudShader(bool hdri_sky_active)
+{
+    if (hdri_sky_active || !gSavedSettings.getBOOL("ASHorizonScatteringEnabled") ||
+        !sCloudShaderAvailable || !sCloudTintProgram.isComplete())
+    {
+        return nullptr;
+    }
+
+    const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+    if (!sky)
+    {
+        return nullptr;
+    }
+
+    const F32 sun_fade = getSunFade(sky.get(), getHorizonDip(sky.get()));
+    F32 strength = llclamp(gSavedSettings.getF32("ASHorizonScatteringStrength"), 0.f, 4.f)
+                 * sun_fade;
+    if (getBlendMode() != BLEND_ADDITIVE)
+    {
+        strength *= llclamp(gSavedSettings.getF32("ASHorizonScatteringOverrideOpacity"), 0.f, 1.f);
+    }
+    if (strength <= 0.0001f)
+    {
+        return nullptr;
+    }
+
+    const LLColor3 sun_color = normalizedSunColor(sky.get());
+    const LLColor4 tint_setting = gSavedSettings.getColor4("ASHorizonScatteringTint");
+    const F32 tint_mix = llclamp(gSavedSettings.getF32("ASHorizonScatteringTintMix"), 0.f, 1.f);
+    const F32 cloud_tint_mix = 0.5f + 0.5f * tint_mix;
+    LLColor3 cloud_tint;
+    for (S32 channel = 0; channel < 3; ++channel)
+    {
+        cloud_tint.mV[channel] = sun_color.mV[channel]
+                                * lerp(1.f, tint_setting.mV[channel], cloud_tint_mix);
+    }
+
+    // Upload once here; the established cloud renderer binds this program
+    // again and supplies all ordinary EEP cloud textures and uniforms.
+    sCloudTintProgram.bind();
+    sCloudTintProgram.uniform3fv(sCloudTintColor, 1, cloud_tint.mV);
+    sCloudTintProgram.uniform1f(sCloudTintStrength, llmin(strength, 2.f));
+    sCloudTintProgram.unbind();
+    return &sCloudTintProgram;
 }

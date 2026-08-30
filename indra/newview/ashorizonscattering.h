@@ -28,6 +28,9 @@ namespace ASHorizonScattering
     // Owns configuration, dome geometry, transform, and blend state. The
     // caller supplies only whether the established sky path selected HDRI.
     void render(bool hdri_sky_active);
+    // Returns an AS-owned viewer-cloud shader only while horizon scattering
+    // is active; otherwise the caller retains the original EEP cloud shader.
+    LLGLSLShader* getCloudShader(bool hdri_sky_active);
     BlendMode getBlendMode();
 
 }
