@@ -103,6 +103,8 @@ shader failure, or excluded by HDRI/background-isolation rendering.
 - Mie forward concentration and azimuth spread
 - Artistic tint and tint mix
 - Start and end solar elevations
+- Cloud tint strength (independent multiplier on the horizon-scattering
+  cloud tint; defaults to 1.0, reproducing the original fixed strength)
 
 Every value is viewer-local, applies live, and is clamped again at shader
 upload. Adjustable values have individual reset buttons; the enable checkbox

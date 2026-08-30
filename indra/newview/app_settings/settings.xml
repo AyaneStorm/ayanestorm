@@ -25682,6 +25682,8 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Sun elevation in degrees where horizon illumination finishes fading in</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>12.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringEndElevation</key>
     <map><key>Comment</key><string>Below-horizon sun elevation where horizon illumination reaches zero</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>-12.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringCloudStrength</key>
+    <map><key>Comment</key><string>Multiplier on horizon-scattering cloud tint strength, independent of horizon band light strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local procedural sun and moon appearance. -->
     <key>ASProceduralSunEnabled</key>

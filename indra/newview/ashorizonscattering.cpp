@@ -144,7 +144,7 @@ void ASHorizonScattering::registerUICallbacks()
                 "ASHorizonScatteringAerosolStrength", "ASHorizonScatteringMieAnisotropy",
                 "ASHorizonScatteringAzimuthSpread", "ASHorizonScatteringTint",
                 "ASHorizonScatteringTintMix", "ASHorizonScatteringStartElevation",
-                "ASHorizonScatteringEndElevation"
+                "ASHorizonScatteringEndElevation", "ASHorizonScatteringCloudStrength"
             };
             const std::string name = data.asString();
             if (std::find(controls.begin(), controls.end(), name) != controls.end())
@@ -364,6 +364,9 @@ LLGLSLShader* ASHorizonScattering::getCloudShader(bool hdri_sky_active)
     {
         strength *= llclamp(gSavedSettings.getF32("ASHorizonScatteringOverrideOpacity"), 0.f, 1.f);
     }
+    // Independent artistic multiplier for cloud tinting only; defaults to 1.0
+    // so it reproduces the prior fixed cloud strength exactly.
+    strength *= llclamp(gSavedSettings.getF32("ASHorizonScatteringCloudStrength"), 0.f, 2.f);
     if (strength <= 0.0001f)
     {
         return nullptr;
