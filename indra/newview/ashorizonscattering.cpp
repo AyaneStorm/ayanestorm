@@ -40,6 +40,7 @@ namespace
     const LLStaticHashedString sSunFade("as_horizon_sun_fade");
     const LLStaticHashedString sHorizonDip("as_horizon_dip");
     const LLStaticHashedString sBlendMode("as_horizon_blend_mode");
+    const LLStaticHashedString sPass("as_horizon_pass");
     const LLStaticHashedString sCamPosLocal("camPosLocal");
 
     F32 smoothStep(F32 value)
@@ -235,8 +236,16 @@ bool configureShader()
 
 ASHorizonScattering::BlendMode ASHorizonScattering::getBlendMode()
 {
-    return gSavedSettings.getS32("ASHorizonScatteringBlendMode") == BLEND_REPLACE
-         ? BLEND_REPLACE : BLEND_ADDITIVE;
+    const S32 mode = gSavedSettings.getS32("ASHorizonScatteringBlendMode");
+    if (mode == BLEND_ATMOSPHERIC)
+    {
+        return BLEND_ATMOSPHERIC;
+    }
+    if (mode == BLEND_REPLACE)
+    {
+        return BLEND_REPLACE;
+    }
+    return BLEND_ADDITIVE;
 }
 
 void ASHorizonScattering::render(bool hdri_sky_active)
@@ -247,17 +256,6 @@ void ASHorizonScattering::render(bool hdri_sky_active)
     }
 
     LLGLSPipelineBlendSkyBox horizon_state(false, false);
-    if (getBlendMode() == BLEND_REPLACE)
-    {
-        // Replace visible RGB by coverage but preserve destination alpha,
-        // which is the post-process glow mask.
-        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
-                      LLRender::BF_ZERO, LLRender::BF_ONE);
-    }
-    else
-    {
-        gGL.setSceneBlendType(LLRender::BT_ADD);
-    }
 
     const LLVector3& origin = LLViewerCamera::getInstance()->getOrigin();
     const F32 cam_height = LLEnvironment::instance().getCamHeight();
@@ -278,6 +276,29 @@ void ASHorizonScattering::render(bool hdri_sky_active)
     gGL.scalef(0.333f, 0.333f, 0.333f);
     gGL.translatef(0.f, -cam_height, 0.f);
     sHorizonProgram.uniform3f(sCamPosLocal, 0.f, cam_height, 0.f);
+
+    if (getBlendMode() == BLEND_ATMOSPHERIC)
+    {
+        // Beer-Lambert extinction: destination RGB *= shader transmittance.
+        // Preserve destination alpha, which carries the glow mask.
+        sHorizonProgram.uniform1i(sPass, 0);
+        gGL.blendFunc(LLRender::BF_ZERO, LLRender::BF_SOURCE_COLOR,
+                      LLRender::BF_ZERO, LLRender::BF_ONE);
+        gSky.mVOWLSkyp->drawDome();
+    }
+
+    // In-scattering is emitted radiance. Atmospheric and additive modes add
+    // it; replace mode alpha-blends the generated band over EEP.
+    sHorizonProgram.uniform1i(sPass, 1);
+    if (getBlendMode() == BLEND_REPLACE)
+    {
+        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA, LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
+                      LLRender::BF_ZERO, LLRender::BF_ONE);
+    }
+    else
+    {
+        gGL.setSceneBlendType(LLRender::BT_ADD);
+    }
     gSky.mVOWLSkyp->drawDome();
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.popMatrix();

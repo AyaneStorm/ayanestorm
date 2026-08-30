@@ -16,7 +16,8 @@ namespace ASHorizonScattering
     enum BlendMode
     {
         BLEND_ADDITIVE = 0,
-        BLEND_REPLACE = 1
+        BLEND_ATMOSPHERIC = 1,
+        BLEND_REPLACE = 2
     };
 
     void registerUICallbacks();

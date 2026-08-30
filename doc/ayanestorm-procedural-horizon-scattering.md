@@ -46,14 +46,17 @@ effects in the same coordinate convention.
 
 ## Compositing and G-buffer behavior
 
-**Add to EEP** uses premultiplied additive radiance. The pass writes zero to
-the glow-mask alpha and adds zero to the existing sky metadata targets.
+**Additive (brighten EEP)** adds generated radiance without attenuating the
+existing sky. It is retained as an artistic option and can only brighten.
 
-**Replace EEP horizon** uses the generated vertical and twilight coverage as
-ordinary RGB source alpha. Separate alpha blend factors preserve destination
-alpha because it is the post-process glow mask. The shader emits the same
-skip-atmosphere metadata as the already-rendered sky while the blend state
-preserves its categorical alpha value.
+**Atmospheric blend** is the default and uses two dome draws. The first applies
+RGB Beer-Lambert extinction as `EEP * transmittance`; the second adds Rayleigh
+and Mie in-scattering. Blend opacity scales both terms. Separate alpha factors
+preserve the post-process glow mask, and white/zero writes preserve every
+non-radiance G-buffer target during the multiply/add passes.
+
+**Replace EEP horizon** alpha-blends the generated band over EEP. It is retained
+as a stronger artistic override and uses blend opacity as its coverage limit.
 
 The generated field does not change EEP direct lighting, shadows, scene fog,
 water-light selection, or environmental asset data.
@@ -68,8 +71,8 @@ the established celestial render order intact.
 ## Controls
 
 - Enable procedural horizon light
-- Additive or replace compositing
-- Light strength and replacement opacity
+- Additive, atmospheric, or replace compositing
+- Light strength and blend opacity
 - Band height and upper softness
 - Rayleigh and aerosol strengths
 - Mie forward concentration and azimuth spread
@@ -78,14 +81,14 @@ the established celestial render order intact.
 
 Every value is viewer-local, applies live, and is clamped again at shader
 upload. Adjustable values have individual reset buttons; the enable checkbox
-does not need one. Replacement opacity is disabled in additive mode.
+does not need one. Blend opacity is disabled in additive mode.
 
 ## Runtime validation
 
 The user performs builds. After a successful build, validate:
 
 - disabled mode against the unmodified EEP image;
-- additive and replace modes with bright, dark, saturated, legacy-haze, and
+- additive, atmospheric, and replace modes with bright, dark, saturated, legacy-haze, and
   current-atmosphere EEP skies;
 - solar elevations `15`, `12`, `5`, `2`, `0`, `-6`, `-12`, and `-15` degrees;
 - multiple solar azimuths and camera pitches;

@@ -21,6 +21,7 @@ uniform float as_horizon_tint_mix;
 uniform float as_horizon_sun_fade;
 uniform float as_horizon_dip;
 uniform int as_horizon_blend_mode;
+uniform int as_horizon_pass;
 
 out vec4 frag_data[4];
 
@@ -86,21 +87,42 @@ void main()
                    as_horizon_aerosol_strength * (0.45 + optical_depth * 0.045);
     float activation = band * as_horizon_sun_fade;
     vec3 radiance = base_color * (broad + aureole) * as_horizon_strength * activation;
+    if (as_horizon_blend_mode == 1)
+    {
+        radiance *= as_horizon_override_opacity;
+    }
     radiance = min(radiance, vec3(16.0));
 
     float coverage = clamp(activation * as_horizon_override_opacity, 0.0, 1.0);
-    float output_alpha = as_horizon_blend_mode == 1 ? coverage : 0.0;
+    vec3 extinction = mix(vec3(1.0), transmittance, coverage);
+
+    if (as_horizon_pass == 0)
+    {
+        // The extinction draw uses (ZERO, SOURCE_COLOR), so white preserves
+        // every non-radiance MRT while RGB transmittance attenuates only the
+        // active sky radiance target. Alpha is preserved by separate factors.
+        frag_data[0] = vec4(1.0);
+        frag_data[1] = vec4(1.0);
+        frag_data[2] = vec4(1.0);
+        frag_data[3] = vec4(1.0);
+#if defined(HAS_EMISSIVE)
+        frag_data[3] = vec4(extinction, 1.0);
+#else
+        frag_data[0] = vec4(extinction, 1.0);
+#endif
+        return;
+    }
 
     frag_data[0] = vec4(0.0);
     frag_data[1] = vec4(0.0);
-    // Match the already-rendered EEP sky metadata in replacement mode and add
-    // zero in additive mode, avoiding interpolation of categorical flags.
-    frag_data[2] = as_horizon_blend_mode == 1
+    // In replace mode, per-target source alpha keeps categorical metadata
+    // unchanged while the radiance target uses generated band coverage.
+    frag_data[2] = as_horizon_blend_mode == 2
                  ? vec4(0.0, 0.0, 0.0, GBUFFER_FLAG_SKIP_ATMOS)
                  : vec4(0.0);
 #if defined(HAS_EMISSIVE)
-    frag_data[3] = vec4(radiance, output_alpha);
+    frag_data[3] = vec4(radiance, as_horizon_blend_mode == 2 ? coverage : 0.0);
 #else
-    frag_data[0] = vec4(radiance, output_alpha);
+    frag_data[0] = vec4(radiance, as_horizon_blend_mode == 2 ? coverage : 0.0);
 #endif
 }

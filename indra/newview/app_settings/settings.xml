@@ -25657,11 +25657,11 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASHorizonScatteringEnabled</key>
     <map><key>Comment</key><string>Enable viewer-local analytic horizon illumination</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringBlendMode</key>
-    <map><key>Comment</key><string>Horizon compositing mode: 0 additive, 1 replace EEP horizon</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Horizon compositing mode: 0 additive, 1 Beer-Lambert atmospheric blend, 2 replace EEP horizon</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringStrength</key>
     <map><key>Comment</key><string>Emitted strength of procedural horizon scattering</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringOverrideOpacity</key>
-    <map><key>Comment</key><string>EEP horizon replacement opacity in replace mode</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.85</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Compositing opacity in atmospheric and replace modes</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.85</real><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringBandHeight</key>
     <map><key>Comment</key><string>Full-strength horizon band height in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>12.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringBandSoftness</key>
