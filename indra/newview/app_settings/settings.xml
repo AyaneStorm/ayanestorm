@@ -25653,6 +25653,36 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Viewer-local analytic horizon scattering. -->
+    <key>ASHorizonScatteringEnabled</key>
+    <map><key>Comment</key><string>Enable viewer-local analytic horizon illumination</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringBlendMode</key>
+    <map><key>Comment</key><string>Horizon compositing mode: 0 additive, 1 replace EEP horizon</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringStrength</key>
+    <map><key>Comment</key><string>Emitted strength of procedural horizon scattering</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringOverrideOpacity</key>
+    <map><key>Comment</key><string>EEP horizon replacement opacity in replace mode</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.85</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringBandHeight</key>
+    <map><key>Comment</key><string>Full-strength horizon band height in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>12.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringBandSoftness</key>
+    <map><key>Comment</key><string>Vertical fade above the horizon band in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>6.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringRayleighStrength</key>
+    <map><key>Comment</key><string>Broad spectral Rayleigh contribution to horizon light</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringAerosolStrength</key>
+    <map><key>Comment</key><string>Forward aerosol or Mie contribution to horizon light</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringMieAnisotropy</key>
+    <map><key>Comment</key><string>Forward concentration of the horizon Mie phase lobe</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.76</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringAzimuthSpread</key>
+    <map><key>Comment</key><string>Angular width of sun-oriented horizon illumination in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringTint</key>
+    <map><key>Comment</key><string>Artistic tint multiplied into EEP-derived horizon light</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>1.0</real><real>0.58</real><real>0.22</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringTintMix</key>
+    <map><key>Comment</key><string>Mix between live EEP sunlight color and configured horizon tint</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.35</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringStartElevation</key>
+    <map><key>Comment</key><string>Sun elevation in degrees where horizon illumination finishes fading in</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>12.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringEndElevation</key>
+    <map><key>Comment</key><string>Below-horizon sun elevation where horizon illumination reaches zero</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>-12.0</real><key>Backup</key><integer>0</integer></map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local procedural sun and moon appearance. -->
     <key>ASProceduralSunEnabled</key>
     <map>

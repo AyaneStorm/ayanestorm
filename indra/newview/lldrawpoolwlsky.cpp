@@ -32,6 +32,7 @@
 #include "asaurora.h"
 #include "asbackgroundisolate.h"
 #include "ascelestialtwilight.h"
+#include "ashorizonscattering.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
 // </AS:Chanayane>
@@ -548,6 +549,9 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
     if (gPipeline.canUseWindLightShaders())
     {
         renderSkyHazeDeferred(origin, camHeightLocal);
+        // <AS:Chanayane> AS-owned horizon layer at the sky-order insertion point.
+        ASHorizonScattering::render(use_hdri_sky());
+        // </AS:Chanayane>
         renderHeavenlyBodies();
         if (!gCubeSnapshot)
         {

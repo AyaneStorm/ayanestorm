@@ -34,6 +34,10 @@
       label="Sun"
       name="sun_settings_tab" />
     <panel
+      filename="panel_as_horizon_settings.xml"
+      label="Horizon"
+      name="horizon_settings_tab" />
+    <panel
       class="as_celestial_position_panel"
       filename="panel_as_moon_settings.xml"
       label="Moon"
