@@ -411,9 +411,19 @@ LLGLSLShader* ASHorizonScattering::getCloudShader(bool hdri_sky_active)
                                 * lerp(1.f, tint_setting.mV[channel], cloud_tint_mix);
     }
 
+    // As the sun descends through the sunset band, bias the transported
+    // cloud light toward coral pink-orange while retaining the EEP/panel hue.
+    const F32 sun_elevation = asinf(llclamp(sky->getSunDirection().mV[VZ], -1.f, 1.f))
+                              * RAD_TO_DEG;
+    const F32 sunset_color_mix = 0.55f * (1.f - smoothStep((sun_elevation + 6.f) / 16.f));
+    const LLColor3 sunset_cloud_color(1.f, 0.32f, 0.24f);
+    cloud_tint = lerp(cloud_tint, sunset_cloud_color, sunset_color_mix);
+
     // Upload once here; the established cloud renderer binds this program
     // again and supplies all ordinary EEP cloud textures and uniforms.
     sCloudTintProgram.bind();
+    const LLVector3 sun_direction = getDomeSunDirection(sky.get());
+    sCloudTintProgram.uniform3fv(sSunDirection, 1, sun_direction.mV);
     sCloudTintProgram.uniform3fv(sCloudTintColor, 1, cloud_tint.mV);
     sCloudTintProgram.uniform1f(sCloudTintStrength, llmin(strength, 2.f));
     sCloudTintProgram.unbind();

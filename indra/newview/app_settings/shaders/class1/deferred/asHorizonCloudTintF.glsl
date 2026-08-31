@@ -20,6 +20,7 @@ in vec2 vary_texcoord3;
 in float altitude_blend_factor;
 in float as_horizon_view_elevation;
 in float as_horizon_sun_alignment;
+in float as_horizon_sun_elevation;
 
 uniform sampler2D cloud_noise_texture;
 uniform sampler2D cloud_noise_texture_next;
@@ -82,18 +83,24 @@ void main()
     // signal as the directional term, then let cloud self-shadow retain dark
     // interiors while exposed edges receive warm scattered light.
     float solar_signal = smoothstep(0.0, 0.92, as_horizon_sun_alignment);
-    // Sunset3's warm transport is concentrated in long paths close to the
-    // horizon. Higher clouds return to their EEP white/ambient lighting, and
-    // the existing self-shadow keeps the cloud ceiling above the camera dark.
-    float low_horizon = 1.0 - smoothstep(0.0872665, 0.523599,
-                                        max(as_horizon_view_elevation, 0.0));
+    // The sunward illumination field continues through the zenith. Azimuth
+    // becomes undefined directly overhead, so smoothly converge there on the
+    // lit side instead of producing an arbitrary gray hole. Near the horizon,
+    // the anti-solar side retains the ordinary gray EEP cloud appearance.
+    float overhead = smoothstep(0.610865, 1.308997,
+                                max(as_horizon_view_elevation, 0.0));
+    float directional_alignment = mix(as_horizon_sun_alignment, 1.0, overhead);
+    // Begin fading only at the exact anti-solar direction and use nearly the
+    // full hemisphere for the transition. This avoids a visible cutoff while
+    // preserving a natural gray destination behind the viewer.
+    float solar_reach = smoothstep(-1.0, 0.65, directional_alignment);
 
     // Opaque low-cloud interiors receive a bounded multiple-scattering
     // contribution; exposed regions receive the stronger forward component.
     // This changes illumination, not cloud density or alpha.
     float forward_light = (1.0 - self_shadow) * (0.3 + 0.7 * solar_signal);
     float cloud_light = clamp(0.38 + 0.62 * forward_light, 0.0, 1.0);
-    float tint_amount = low_horizon * cloud_light
+    float tint_amount = solar_reach * cloud_light
                       * clamp(as_horizon_cloud_strength * 0.90, 0.0, 0.90);
 
     // Reproduce the viewer cloud base colour, then apply extinction-coloured
@@ -113,9 +120,19 @@ void main()
     float multiple_scattering = 0.32 + 0.68 * (1.0 - self_shadow);
     float forward_scattering = (0.25 + 0.75 * solar_signal)
                              * (1.0 - self_shadow);
-    vec3 in_scattering = as_horizon_cloud_tint * low_horizon
+    // Low-angle sunlight remains visible beneath the cloud layer after the
+    // disc reaches the horizon. Spread it by solar azimuth and favor the
+    // self-shadowed (visually lower) parts of the cloud instead of recoloring
+    // the complete cloud sheet. The common twilight fade still bounds its
+    // lifetime and the existing strength control bounds its energy.
+    float sunset_height = 1.0 - smoothstep(0.0349066, 0.209440,
+                                           abs(as_horizon_sun_elevation));
+    float underside = 0.25 + 0.75 * self_shadow;
+    float underside_scattering = sunset_height * solar_reach * underside;
+    vec3 in_scattering = as_horizon_cloud_tint * solar_reach
                        * scattering_strength
-                       * (0.48 * multiple_scattering + 0.72 * forward_scattering);
+                       * (0.48 * multiple_scattering + 0.72 * forward_scattering
+                          + 0.42 * underside_scattering);
     vec3 color = min(extincted_color + in_scattering, vec3(4.0));
 
     frag_data[0] = vec4(0.0);
