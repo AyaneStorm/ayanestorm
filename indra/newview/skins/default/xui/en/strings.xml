@@ -2802,6 +2802,7 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Label">Environment Effects</string>
+  <string name="Command_ASWeather_Label">Weather</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Label">Asset blacklist</string>
   <string name="Command_Phototools_Label">Phototools</string>
@@ -2902,6 +2903,7 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Tooltip">Show or hide environment effects settings</string>
+  <string name="Command_ASWeather_Tooltip">Show or hide weather settings</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Tooltip">Opens the list of all the items you have blacklisted</string>
   <string name="Command_Phototools_Tooltip">Tools for full-featured image making (ALT+P).</string>
