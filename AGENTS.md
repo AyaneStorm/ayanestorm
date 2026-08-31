@@ -44,8 +44,8 @@ new code here;
 ## Building and Testing
 
 - Do not attempt to build the project. The user performs all builds.
-- `bok` means “build OK.”
-- `bokt` means “build OK and tested at runtime.”
+- `bok` means "build OK" but NOT tested at runtime".
+- `bokt` means "build OK and tested at runtime."
 - The build script DELETES the shader cache. Do NOT ever challenge that. A stale cache is NEVER the cause of issues.
 - Do NOT edit files when I say I am building the project. Just don't. For any reason.
 - Avoid asking for a rebuild for every minimal change. Building the project takes a lot of time. The developer's time is valuable. Make it count.
