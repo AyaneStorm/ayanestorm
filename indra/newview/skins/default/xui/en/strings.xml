@@ -7,8 +7,12 @@
 
 	<!-- Default Args - these arguments will be replaced in all strings -->
 	<string name="SECOND_LIFE">[CURRENT_GRID]</string>
+	<!-- <AS:Chanayane> AyaneStorm application branding. -->
+	<!-- <string name="APP_NAME">Firestorm</string> -->
 	<string name="APP_NAME">AyaneStorm</string>
+	<!-- <string name="CAPITALIZED_APP_NAME">FIRESTORM</string> -->
 	<string name="CAPITALIZED_APP_NAME">AYANESTORM</string>
+	<!-- </AS:Chanayane> -->
 	<string name="SECOND_LIFE_GRID">Second Life Grid</string>
 	<string name="SUPPORT_SITE">Firestorm Support Portal</string>
 	<string name="DOWNLOAD_URL">https://www.firestormviewer.org/choose-your-platform/</string>
@@ -947,9 +951,9 @@ If you continue to receive this message, please contact Second Life support for 
 	<string name="Textures"      value=" Textures," />
 	<string name="Settings"      value=" Settings," />
 	<string name="Snapshots"     value=" Snapshots," />
-	<!-- [AS:Chanayane] Search folders only -->
+	<!-- <AS:Chanayane> Search folders only. -->
 	<string name="Folders"       value=" Folders," />
-	<!-- [/AS:Chanayane] -->
+	<!-- </AS:Chanayane> -->
 	<string name="No Filters"    value="No " />
 	<string name="Since Logoff"  value=" - Since Logoff" />
 	<!-- <FS:Zi> FIRE-1175 - Filter Permissions Menu -->
@@ -2781,11 +2785,22 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Volumetric lighting settings toolbar command -->
   <string name="Command_ASVolumetricLighting_Label">Volumetric Lighting</string>
   <!-- </AS:Chanayane> -->
-  <!-- <AS:Chanayane> Moon settings toolbar command -->
+  <!-- <AS:Chanayane> Moon settings toolbar command. -->
   <string name="Command_ASMoonSettings_Label">Moon Settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Sun settings toolbar command. -->
   <string name="Command_ASSunSettings_Label">Sun Settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Aurora settings toolbar command. -->
   <string name="Command_ASAuroraSettings_Label">Aurora Settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Horizon lighting toolbar command. -->
+  <string name="Command_ASHorizonSettings_Label">Horizon Lighting</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Camera effects toolbar command. -->
   <string name="Command_ASCameraEffects_Label">Camera Effects</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Label">Environment Effects</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Label">Asset blacklist</string>
@@ -2811,7 +2826,7 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_Beacons_Label">Beacons</string>
   <string name="Command_Poser_Label">Poser</string>
   <string name="Command_Poser_Tooltip">Pose your avatar and animated objects</string>
-  <!-- <AS:Chanayane> -->
+  <!-- <AS:Chanayane> Self-lighting toolbar command. -->
   <string name="Command_ASMyLights_Label">My Lights</string>
   <string name="Command_ASMyLights_Tooltip">Self-only photography lighting rig</string>
   <!-- </AS:Chanayane> -->
@@ -2870,11 +2885,22 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Volumetric lighting settings toolbar command -->
   <string name="Command_ASVolumetricLighting_Tooltip">Show or hide volumetric lighting settings</string>
   <!-- </AS:Chanayane> -->
-  <!-- <AS:Chanayane> Moon settings toolbar command -->
+  <!-- <AS:Chanayane> Moon settings toolbar command. -->
   <string name="Command_ASMoonSettings_Tooltip">Show or hide moon settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Sun settings toolbar command. -->
   <string name="Command_ASSunSettings_Tooltip">Show or hide sun settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Aurora settings toolbar command. -->
   <string name="Command_ASAuroraSettings_Tooltip">Show or hide aurora settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Horizon lighting toolbar command. -->
+  <string name="Command_ASHorizonSettings_Tooltip">Show or hide procedural horizon lighting settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Camera effects toolbar command. -->
   <string name="Command_ASCameraEffects_Tooltip">Show or hide camera effects settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Tooltip">Show or hide environment effects settings</string>
   <!-- </AS:Chanayane> -->
   <string name="Command_Asset_Blacklist_Tooltip">Opens the list of all the items you have blacklisted</string>
