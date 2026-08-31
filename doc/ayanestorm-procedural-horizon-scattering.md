@@ -6,8 +6,14 @@ The optional viewer-local horizon layer adds the broad atmospheric illumination
 seen around realistic sunrise and sunset without modifying the active EEP asset.
 It is independent from the procedural sun disc and its compact billboard halo.
 
-The feature is disabled by default. It is available in the Environment Effects
+The feature is enabled by default. It is available in the Environment Effects
 **Horizon** tab and the standalone **Horizon Lighting** floater.
+
+The 2026-08-31 tuned panel state is now the shipped default: enabled, Additive
+mode, band height `19.5`, softness `16`, Mie anisotropy `0.19`, tint mix `1`,
+cloud strength `1.15`, water reach/intensity `1.5`/`1`, and sky haze
+reach/intensity `1.16`/`0.5`. Controls absent from the saved override file keep
+their existing defaults.
 
 **Two separate floaters embed `panel_as_horizon_settings.xml`** —
 `floater_as_horizon_settings.xml` (the standalone floater) and
