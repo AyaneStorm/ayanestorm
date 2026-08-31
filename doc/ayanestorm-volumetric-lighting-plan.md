@@ -2054,3 +2054,24 @@ the atlas foreground helper returns zero when disabled.
 - Dynamic resolution based on measured GPU time is useful eventually, but it
   changes visual sharpness during play and needs hysteresis. First expose or
   profile fixed quarter/half/full tiers to establish a stable cost curve.
+## Water horizon transmittance boundary
+
+Water is forward-rendered after the opaque volumetric composite. The
+transparency atlas alpha fades extinction to unity over 100--128 m so generic
+transparent fragments at background depth do not darken the sky. Applying
+that alpha to the known physical water plane produced a camera-centred band:
+near water was attenuated while water beyond the atlas sky cutoff was not.
+
+Water now evaluates the same limited Beer--Lambert transmittance directly from
+view-space depth and the altitude-adjusted scene density. Extinction depth is
+capped at 100 m, then its result fades smoothly to unity over 64--512 m of
+camera depth. This replaces the conspicuous 100--128 m shell with a broad
+distant-water gradient while preventing the whole ocean from retaining the
+dark 100 m value. Atlas RGB remains in use for water foreground scatter.
+
+The water transmittance also has a reflection-protection mask centered on the
+active celestial light's horizontal azimuth. It is fully weighted within 6
+degrees, feathers to zero by 35 degrees, and restores at most 90% of the light
+removed by volumetric extinction. The broad soft edge avoids a new visible
+stripe while retaining some volumetric darkening through the sun/moon glitter
+path.

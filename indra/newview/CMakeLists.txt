@@ -97,6 +97,12 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
+    ashorizonscattering.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local water horizon fog module.
+    aswaterhorizonfog.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.cpp
     # </AS:Chanayane>
@@ -993,6 +999,12 @@ set(viewer_HEADER_FILES
     asfloaterrecentpeople.h
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
+    ashorizonscattering.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local water horizon fog module.
+    aswaterhorizonfog.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.h

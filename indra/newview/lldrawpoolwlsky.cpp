@@ -32,6 +32,7 @@
 #include "asaurora.h"
 #include "asbackgroundisolate.h"
 #include "ascelestialtwilight.h"
+#include "ashorizonscattering.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
 // </AS:Chanayane>
@@ -548,6 +549,9 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
     if (gPipeline.canUseWindLightShaders())
     {
         renderSkyHazeDeferred(origin, camHeightLocal);
+        // <AS:Chanayane> AS-owned horizon layer at the sky-order insertion point.
+        ASHorizonScattering::render(use_hdri_sky());
+        // </AS:Chanayane>
         renderHeavenlyBodies();
         if (!gCubeSnapshot)
         {
@@ -569,7 +573,13 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
 
         if (!gCubeSnapshot || gPipeline.mReflectionMapManager.isRadiancePass()) // don't draw clouds in irradiance maps to avoid popping
         {
-            renderSkyCloudsDeferred(origin, camHeightLocal, cloud_shader);
+            // <AS:Chanayane> Use the AS-owned scattering-aware cloud shader
+            // only while Horizon is active; otherwise preserve the original.
+            // renderSkyCloudsDeferred(origin, camHeightLocal, cloud_shader);
+            LLGLSLShader* horizon_cloud_shader = ASHorizonScattering::getCloudShader(use_hdri_sky());
+            renderSkyCloudsDeferred(origin, camHeightLocal,
+                                    horizon_cloud_shader ? horizon_cloud_shader : cloud_shader);
+            // </AS:Chanayane>
         }
     }
 }

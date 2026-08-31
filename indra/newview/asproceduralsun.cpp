@@ -244,9 +244,9 @@ void ASProceduralSun::configureDiscShader(LLGLSLShader* shader,
         return;
     }
 
-    shader->uniform1i(LLStaticHashedString("procedural_sun_halo_pass"), 0);
     shader->uniform1i(LLStaticHashedString("procedural_sun_alignment_enabled"),
                       gSavedSettings.getBOOL("ASProceduralSunEnabled") ? 1 : 0);
+    shader->uniform1i(LLStaticHashedString("procedural_sun_halo_pass"), 0);
     shader->uniform1i(LLStaticHashedString("sun_texture_available"),
                       texture_available ? 1 : 0);
     shader->uniform1i(LLStaticHashedString("procedural_sun_enabled"),

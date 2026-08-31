@@ -33,6 +33,9 @@
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local analytic horizon-scattering shader lifecycle.
+#include "ashorizonscattering.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Viewer-local weather shader family.
 #include "asweather.h"
 // </AS:Chanayane>
@@ -470,6 +473,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gEnvironmentMapProgram);
     // <AS:Chanayane> Register the independent optional aurora shader.
     ASAurora::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the independent optional horizon shader.
+    ASHorizonScattering::registerShader(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional lens flare shader.
     ASLensFlare::registerShader(mShaderList);
@@ -1201,6 +1207,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional aurora shader.
         ASAurora::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional horizon-scattering shader.
+        ASHorizonScattering::unloadShader();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional lens flare shader.
         ASLensFlare::unloadShader();
@@ -3012,6 +3021,15 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // Aurora is optional and must not take down the core sky shaders if a
         // driver rejects it; configureShader() skips an incomplete program.
         ASAurora::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Build the independent broad horizon-scattering pass.
+    if (success)
+    {
+        // Optional: an incomplete program simply disables the viewer-local
+        // layer and leaves the core EEP sky operational.
+        ASHorizonScattering::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
