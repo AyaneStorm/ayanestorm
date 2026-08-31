@@ -49,6 +49,7 @@ new code here;
 - The build script DELETES the shader cache. Do NOT ever challenge that. A stale cache is NEVER the cause of issues.
 - Do NOT edit files when I say I am building the project. Just don't. For any reason.
 - Avoid asking for a rebuild for every minimal change. Building the project takes a lot of time. The developer's time is valuable. Make it count.
+- No bumping shader version during development. It forces a build that triggers Link Time Optimization which takes a lot of time.
 
 ## Windows and WSL Paths
 

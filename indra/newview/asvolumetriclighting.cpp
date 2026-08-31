@@ -202,7 +202,7 @@ U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v17";
+    return "as-volumetric-lighting-v20";
 }
 
 // GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
@@ -431,6 +431,17 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
         shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                           getScatterAsymmetry(isVolumetricSunSource()));
         shader.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+
+        // Water is a real surface beyond the atlas's 128 m sky cutoff, so it
+        // evaluates bounded scene extinction itself instead of consuming the
+        // atlas alpha's sky fade. Other consumers optimize this uniform out.
+        const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
+        const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
+        const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
+        const F32 altitude_fade = 1.f - llclamp((camera_altitude - 10.f) / 90.f,
+                                                0.f, 1.f);
+        shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"),
+                         getScatterDensity() * altitude_fade);
     }
 }
 

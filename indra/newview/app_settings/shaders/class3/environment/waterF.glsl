@@ -96,6 +96,7 @@ uniform sampler2D exclusionTex;
 uniform int asVolumetricEnabled;
 uniform vec2 screen_res;
 uniform sampler2D asVolumetricAtlas;
+uniform float asVolumetricSceneDensity;
 
 // Strength of the optional horizon-fog blend toward atmospheric haze color
 // at distance; 0.0 reproduces the unmodified upstream water look. Controls
@@ -124,28 +125,68 @@ vec3 asVolumetricWaterForeground(vec3 view_position)
     return mix(lo, hi, weight);
 }
 
-// Scene transmittance T, same atlas alpha channel - mirrors
-// asVolumetricWaterForeground's tile lookup, reading .a instead of .rgb, with
-// no near-camera clamp-by-coordinate term (T is already 1.0 at the camera).
-// Only water's own Fresnel-reflected share needs this locally; the refracted
-// share's transmittance already arrives via screenTex once the opaque
-// composite attenuates the scene itself (see the file header comment above).
-float asVolumetricWaterTransmittance(vec3 view_position)
+// Scene transmittance T for water's Fresnel-reflected share. The refracted
+// share already arrives through screenTex with opaque-scene transmittance.
+float asVolumetricWaterTransmittance(vec3 view_position,
+                                     float reflection_protection)
 {
     if (asVolumetricEnabled == 0) return 1.0;
-    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
-    float upper = clamp(floor(coordinate), 0.0, 15.0);
-    float weight = fract(coordinate);
-    if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
-    vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
-                    vec2(1.0) - 2.0 / screen_res);
-    vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
-    float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
-    if (upper <= 0.0) return hi;
-    float lower = upper - 1.0;
-    tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
-    float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
-    return mix(lo, hi, weight);
+    // Original atlas-alpha lookup replaced below:
+    // float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    // float upper = clamp(floor(coordinate), 0.0, 15.0);
+    // float weight = fract(coordinate);
+    // if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
+    // vec2 uv = clamp(gl_FragCoord.xy / screen_res, 2.0 / screen_res,
+    //                 vec2(1.0) - 2.0 / screen_res);
+    // vec2 tile = vec2(mod(upper, 4.0), floor(upper / 4.0));
+    // float hi = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    // if (upper <= 0.0) return hi;
+    // float lower = upper - 1.0;
+    // tile = vec2(mod(lower, 4.0), floor(lower / 4.0));
+    // float lo = texture(asVolumetricAtlas, (tile + uv) * 0.25).a;
+    // return mix(lo, hi, weight);
+    // The atlas alpha fades back to 1 over 100..128 m because it cannot tell
+    // distant geometry from sky. Water is known to be a real surface, so that
+    // camera-centred cutoff made a moving bright/dark ring on the water.
+    // Preserve the matching optical-depth limiter, but replace the atlas's
+    // narrow 100..128 m sky fade with a broad, camera-depth gradient. This
+    // keeps nearby water grounded without leaving the whole ocean dark or
+    // recreating a visible camera-centred shell.
+    const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
+    const float WATER_FADE_START = 64.0;
+    const float WATER_FADE_END = 512.0;
+    float view_depth = min(abs(view_position.z), 100.0);
+    float optical_depth = asVolumetricSceneDensity * view_depth;
+    float limited_depth = MAX_SCENE_OPTICAL_DEPTH *
+                          (1.0 - exp(-optical_depth / MAX_SCENE_OPTICAL_DEPTH));
+    float transmittance = exp(-limited_depth);
+    float distance_fade = smoothstep(WATER_FADE_START, WATER_FADE_END,
+                                     abs(view_position.z));
+    transmittance = mix(transmittance, 1.0, distance_fade);
+    // Preserve most, but deliberately not all, of the sun/moon glitter path.
+    // reflection_protection is a soft azimuth mask computed from the flat
+    // water plane below, independent of noisy per-fragment wave normals.
+    return mix(transmittance, 1.0, 0.90 * reflection_protection);
+}
+
+float asVolumetricReflectionProtection(vec3 view_direction,
+                                        vec3 up_direction,
+                                        vec3 light_direction)
+{
+    vec3 view_horizontal = view_direction - up_direction *
+                           dot(view_direction, up_direction);
+    vec3 light_horizontal = light_direction - up_direction *
+                            dot(light_direction, up_direction);
+    float view_length = length(view_horizontal);
+    float light_length = length(light_horizontal);
+    if (view_length <= 0.0001 || light_length <= 0.0001) return 0.0;
+
+    float azimuth = acos(clamp(dot(view_horizontal / view_length,
+                                   light_horizontal / light_length),
+                               -1.0, 1.0));
+    const float INNER_RADIUS = radians(6.0);
+    const float OUTER_RADIUS = radians(35.0);
+    return 1.0 - smoothstep(INNER_RADIUS, OUTER_RADIUS, azimuth);
 }
 // </AS:Chanayane>
 
@@ -391,7 +432,10 @@ void main()
 // composite attenuates the scene itself, so attenuating it again here would
 // double-apply it.
 // color = mix(fb.rgb, radiance, min(1, df2.x)) + punctual.rgb;
-    float water_transmittance = asVolumetricWaterTransmittance(pos);
+    float reflection_protection = asVolumetricReflectionProtection(
+        viewVec, up, vary_light_dir);
+    float water_transmittance = asVolumetricWaterTransmittance(
+        pos, reflection_protection);
     color = mix(fb.rgb, radiance * water_transmittance, min(1, df2.x)) +
             punctual.rgb * water_transmittance;
 // </AS:Chanayane>
