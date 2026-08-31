@@ -554,7 +554,158 @@ strength `0`. The wider nine-tap filter best suppresses the interleaved lattice
 without altering ray positions or producing displaced shadow silhouettes.
 These are now the defaults; the non-persistent controls remain for diagnostics.
 
+### Root Cause of Blue-Noise Ghosting
+
+The displaced shadow silhouettes previously attributed to blue noise itself
+(observed even at `BlueNoiseStrength = 1.0`, i.e. no blend with coherent
+jitter) were traced to how the noise texture reached the GPU, not to the
+jittering scheme. `sBlueNoiseImage` was loaded via `LLUI::getUIImage("ASBlue
+Noise")`, the same generic UI-icon texture path used everywhere else in the
+codebase for buttons, drag handles, and scroll-list icons
+(`indra/llui/llbutton.cpp`, `lliconctrl.cpp`, etc.). That path resolves
+through `LLViewerFetchedTexture`'s ordinary asset-streaming machinery:
+progressive discard-level loading driven by on-screen draw size, and no
+guarantee of an uncompressed internal format. A 1024x1024 texture never drawn
+as a screen quad has no draw-size signal telling the streamer to fetch it at
+full resolution, so it could sit at a reduced discard level indefinitely,
+sampling a downsampled approximation of the source PNG. Either failure
+(discard streaming or compression) destroys the exact per-texel byte values
+the void-and-cluster generator produced, reintroducing spatial correlation and
+producing displaced-looking shadow edges — this matches the observed symptom
+far better than any property of blue noise as a jittering scheme.
+
+The fix loads the texture directly through
+`LLViewerTextureManager::getFetchedTextureFromFile()` instead of the UI-image
+convenience wrapper, following the same pattern already used in
+`llviewertexturelist.cpp` for `sFlatNormalImagep` (a normal map with the same
+"must stay exact" requirement, loaded outside the discardable pipeline
+specifically because a dataserver copy "has compression artifacts"):
+
+- `MIPMAP_NO` and explicit `GL_RGBA`/`GL_RGBA` internal/primary format prevent
+  mipmap generation and compressed-format upload.
+- `LLGLTexture::BOOST_UI` matches the asset's registration in `textures.xml`
+  and exempts it from ordinary discard-priority eviction.
+- `setKnownDrawSize()` is called once with the texture's own full width and
+  height immediately after fetch, since a texture sampled only via
+  `texelFetch()` in a fullscreen pass has no natural on-screen draw size to
+  report and would otherwise still compute a nonzero desired discard level.
+
+This has not yet been validated at runtime. If it resolves the ghosting,
+`RenderVolumetricLightingBlueNoiseStrength` should be revisited as a shipping
+default rather than left at `0`, since the underlying decorrelation benefit
+described in the Moments-in-Graphics article would no longer be blocked by a
+texture-loading defect.
+
+### Texture-Loading Fix Did Not Resolve Ghosting
+
+Runtime testing after the texture-loading fix above still shows ghosting at
+`RenderVolumetricLightingBlueNoiseStrength = 1.0`: a faint, duplicated copy of
+real scene silhouette (leaf clusters and branches from the actual foreground
+tree) appears offset to the right of the tree, overlapping the light shaft.
+The same screen region at `BlueNoiseStrength = 0.0` (coherent interleaved
+gradient noise only) shows no such duplication at all. This rules out the
+texture-loading hypothesis (discard-level streaming or compressed internal
+format corrupting the noise distribution) as the sole or primary cause — a
+merely-degraded-quality noise texture would not reliably reproduce a coherent
+duplicate of actual scene geometry. The fix should still be kept (it removes a
+real defect: this texture must never be discard-streamed or compressed
+regardless of its effect on this specific artifact), but it is not sufficient.
+
+That the artifact is a duplicate of real scene content, not generic noise or
+grain, points toward the jitter value affecting *which discrete sample or
+shadow-map region* a ray reads, in a way that is spatially incoherent between
+neighboring pixels only when blue noise (high pixel-to-pixel variance by
+design) drives it — rather than a property of the noise texture's fidelity.
+Two mechanisms were identified as plausible but unconfirmed and warrant
+investigation with the viewer running:
+
+1. **Far-tail early-exit branch instability**
+   (`asVolumetricLightF.glsl`, the `sample_pos.z <= -shadow_clip.w` check
+   inside the raymarch loop). Whether a given ray takes this branch at step
+   `i` depends on `sample_pos.z`, which starts at `jitter * step_len` per
+   pixel. Interleaved gradient noise varies smoothly pixel-to-pixel, so
+   neighboring rays near this boundary transition through the branch
+   similarly. Blue noise deliberately maximizes pixel-to-pixel variance, so
+   two adjacent pixels near the boundary can resolve to structurally
+   different code paths (full per-step loop vs. closed-form geometric-series
+   tail) essentially independently — a candidate source of per-pixel
+   incoherence at exactly the depth boundaries where shadow silhouettes sit.
+
+2. **Blue-noise texture tiling aliasing against scene geometry**
+   (`volumetricJitter()`'s `ivec2(screen_pos) % noise_size` wraparound,
+   where `noise_size` is 1024x1024 and `screen_pos` is the volumetric
+   target's own pixel coordinates, half display resolution in Normal mode).
+   If the render target's pixel dimensions are not much larger than 1024 in
+   the relevant axis, or the tree happens to repeat near a tile boundary,
+   this could beat against scene structure. This does not obviously explain
+   a duplicated *silhouette* rather than repeated *noise texture content*, so
+   it is the weaker of the two hypotheses.
+
+The most direct way to distinguish these (and rule out a third, unconsidered
+mechanism) is a debug mode that visualizes the raw per-pixel jitter value
+(before it is used to offset the first raymarch sample) as grayscale, so the
+jitter field itself can be inspected directly against the ghost's screen
+position — isolating "the noise input looks wrong" from "the noise input is
+fine but the raymarch does something wrong with it." This has not been
+implemented yet.
+
+Current state: `RenderVolumetricLightingBlueNoiseStrength` remains at its
+shipped default of `0` (coherent interleaved gradient noise only, no
+ghosting). This is not a regression — it is the same conclusion the doc
+already reached before the texture-loading investigation — but the ghosting's
+actual root cause in the raymarch/jitter logic is still open.
+
 `AS_VOLUMETRIC_PERFORMANCE_LOGGING` is now set to `0`. GPU stage timing and the
 periodic log line are compiled out; the non-persistent debug settings
 (`RenderVolumetricLightingSampleCountOverride`, blur strength/radius, blue-noise
 strength) remain available since they do not depend on the logging macro.
+
+## Future Work: Moment Shadow Maps
+
+Review of Peters et al.'s "Beyond Hard Shadows" paper and its accompanying
+`ParticipatingMediaUtility.fx`/`ParticipatingMedia.fx` reference implementation
+(`.MSMBeyondHardShadowsCode/`) confirms the applicable lessons already adopted
+here: whole-lattice single-scalar ray jitter (matching `ComputeSingleScattering
+RayMarchingDirectional`'s `InitialLerpFactor` and `bluenoisefog.shader`'s
+`startRayOffset`), and exact Beer-Lambert segment integration in place of a
+left-point approximation. Rejecting `bluenoisefog.shader`'s temporal scrambling
+(`fract(blue_noise + frame * goldenRatioConjugate)`) without an active temporal
+reprojection stage is also consistent with the paper's own single-scattering
+technique, which is likewise static per frame.
+
+The paper's actual novel contribution — moment shadow maps (MSM) — is not yet
+used here. Storing 4 (or 6) depth moments per shadow-map texel and prefiltering
+them into transmittance-weighted row prefix sums lets single scattering along
+each view ray be evaluated with **one shadow-map lookup**, replacing the
+current per-step PCF raymarch entirely. The paper reports six-moment prefiltered
+single scattering at 0.71–1.36 ms versus 1.48 ms for 32 ray-marched PCF
+samples, at a cost that is independent of sample count (Section 2.6, Figure 8).
+Applied here this would attack the directional pass directly, currently ~96%
+of High's GPU cost.
+
+This is a distinct architectural phase, not a tuning change, and would require:
+
+- A rectified shadow-map coordinate system (Section 2.2) so view rays map to
+  shadow-map rows with constant depth — either the paper's linear rectification
+  or the non-linear resampling variant used for its final results.
+- A new shadow-map format storing 4 or 6 moments with an optimized affine
+  quantization transform (Section 1.2, 2.5), replacing today's `sampler2DShadow`
+  cascades for the volumetric path specifically. The existing four-cascade PCF
+  shadow maps used by surface shading would be unaffected.
+- A prefix-sum generation pass per frame (compute shader, one thread per row)
+  producing transmittance-weighted moments (Section 2.2, 2.6).
+- Reconstruction (`EstimateIntegralFrom4Moments`/`6Moments`-equivalent) at each
+  pixel from a single filtered sample, plus tuned biasing to control light
+  leaking (the paper found biasing artifacts much less objectionable for
+  scattering than for hard shadows).
+- A decision on four versus six moments: four is faster but comparably weaker
+  for the complex, whole-scene-spanning depth distributions typical of
+  epipolar planes; six is the paper's recommended trade-off.
+
+Because this replaces the shadow-sampling method rather than tuning existing
+parameters, it does not meet the current pass's lossless/no-quality-regression
+constraints as a drop-in change — it would need its own validation pass
+(silhouette accuracy, light leaking at cascade-adjacent and epipole-adjacent
+directions, and a fresh GPU-time comparison against the current five-tap PCF
+sampler). Treat it as a separately approved phase, not an extension of the
+current lossless optimization.

@@ -43,6 +43,8 @@
 #include "lldrawable.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
+#include "llviewertexture.h"
+#include "llviewertexturelist.h"
 #include "llvovolume.h"
 #include "llworld.h"
 #include "pipeline.h"
@@ -61,7 +63,12 @@ LLGLSLShader gASVolumetricLightProgram;
 LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
 LLGLSLShader gASVolumetricAtlasProgram;
-LLUIImagePtr sBlueNoiseImage;
+// Loaded directly rather than via LLUI::getUIImage(): that path shares the
+// generic UI-icon texture pipeline (asset streaming, discard levels, and
+// compressed internal formats), any of which would corrupt this texture's
+// per-texel blue-noise distribution. BOOST_UI plus an explicit uncompressed
+// format and no mipmaps guarantee the exact source bytes reach the GPU.
+LLPointer<LLViewerFetchedTexture> sBlueNoiseImage;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
@@ -1116,12 +1123,31 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                                                    true);
             if (sBlueNoiseImage.isNull())
             {
-                sBlueNoiseImage = LLUI::getUIImage("ASBlueNoise");
+                // MIPMAP_NO + explicit uncompressed GL_RGBA/GL_RGBA keep the
+                // source PNG's per-texel byte values intact; BOOST_UI forces
+                // an immediate full-resolution decode instead of the
+                // progressive discard-level streaming used for world assets,
+                // any of which would silently corrupt the blue-noise
+                // distribution and reintroduce spatial correlation.
+                sBlueNoiseImage = LLViewerTextureManager::getFetchedTextureFromFile(
+                    "as/as_blue_noise.png", FTT_LOCAL_FILE, MIPMAP_NO,
+                    LLGLTexture::BOOST_UI, LLViewerTexture::FETCHED_TEXTURE,
+                    GL_RGBA, GL_RGBA);
+                if (sBlueNoiseImage.notNull())
+                {
+                    // Drives the desired discard level to 0: the streamer
+                    // otherwise sizes texel-per-pixel expectations against
+                    // on-screen draw size, which this texture never has since
+                    // it is never drawn as a quad.
+                    sBlueNoiseImage->setKnownDrawSize(
+                        sBlueNoiseImage->getFullWidth(),
+                        sBlueNoiseImage->getFullHeight());
+                }
             }
-            if (sBlueNoiseImage.notNull() && sBlueNoiseImage->getImage().notNull())
+            if (sBlueNoiseImage.notNull())
             {
                 gASVolumetricLightProgram.bindTexture(
-                    "blueNoiseMap", sBlueNoiseImage->getImage().get());
+                    "blueNoiseMap", sBlueNoiseImage.get());
             }
             static LLCachedControl<F32> blue_noise_strength(gSavedSettings,
                 "RenderVolumetricLightingBlueNoiseStrength", 0.f);
