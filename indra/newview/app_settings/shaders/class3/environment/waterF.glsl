@@ -97,6 +97,15 @@ uniform int asVolumetricEnabled;
 uniform vec2 screen_res;
 uniform sampler2D asVolumetricAtlas;
 
+// Strength of the optional horizon-fog blend toward atmospheric haze color
+// at distance; 0.0 reproduces the unmodified upstream water look. Controls
+// REACH (how far outward from the horizon the band extends).
+uniform float as_horizon_fog_strength;
+
+// Opacity/darkness of the horizon-fog blend, independent of how far it
+// reaches. 0.0 reproduces the unmodified upstream water look.
+uniform float as_horizon_fog_intensity;
+
 vec3 asVolumetricWaterForeground(vec3 view_position)
 {
     if (asVolumetricEnabled == 0) return vec3(0.0);
@@ -396,6 +405,58 @@ void main()
     // These values were finagled in to try and bring back some of the distant brightening on legacy water.  Also works reasonably well on PBR skies such as PBR midday.
     // color = mix(color, additive * water_haze_scale, (1 - atten));
 
+    // <AS:Chanayane> Optional viewer-local horizon fog measured by view
+    // elevation on the flat water plane. Level (zero elevation) is the
+    // planar horizon; angular distance below it is independent of camera
+    // far clip and progressive world loading.
+    float reach_control = clamp(as_horizon_fog_strength / 4.0, 0.0, 1.0);
+    float reach_radians = radians(20.0) * reach_control;
+
+    // ASWaterHorizonFogStrength ("reach") controls how far below the
+    // horizon the fog gradient extends; ASWaterHorizonFogIntensity
+    // controls its peak opacity, independently (see the doc for the
+    // history of earlier wrong shapes: a flat-opacity plateau, a
+    // shrinking-window approach that degenerated into a hard edge, and two
+    // derivative-based (fwidth/dFdy) attempts that were both abandoned as
+    // unreliable across the screen -- all rejected after real
+    // screenshots).
+    //
+    float view_elevation = asin(clamp(dot(viewVec, up), -1.0, 1.0));
+    float below_horizon = max(-view_elevation, 0.0);
+    float safe_reach = max(reach_radians, 0.000001);
+    float fog_falloff = 1.0 - smoothstep(0.0, safe_reach, below_horizon);
+    // Analytic coverage keeps a subpixel angular reach barely visible
+    // without changing the intensity control's meaning.
+    float pixel_angle_width = max(fwidth(below_horizon), 0.000001);
+    fog_falloff *= min(reach_radians / pixel_angle_width, 1.0);
+    // as_horizon_fog_intensity is 0..1 (its own separate range from
+    // reach's 0..4), so used directly as the opacity multiplier.
+    float intensity = clamp(as_horizon_fog_intensity, 0.0, 1.0);
+    fog_falloff *= intensity;
+    // ASWaterHorizonFogIntensity now defaults to 0.5 (not 0.0), so relying
+    // on intensity alone to make the DEFAULT (untouched reach) state a
+    // true no-op is wrong -- the guarded minimum-width distance window can
+    // still exist with zero reach. Explicitly force
+    // the whole effect off when reach is at its own zero default,
+    // independent of intensity.
+    fog_falloff *= step(0.0001, as_horizon_fog_strength);
+
+    // Fade fog around the sun azimuth, preserving every reflection source
+    // there (probe/radiance and punctual) rather than reconstructing only
+    // the punctual term after darkening.
+    vec3 view_horizontal = viewVec - up * dot(viewVec, up);
+    vec3 sun_horizontal = vary_light_dir - up * dot(vary_light_dir, up);
+    float view_horizontal_length = length(view_horizontal);
+    float sun_horizontal_length = length(sun_horizontal);
+    if (view_horizontal_length > 0.0001 && sun_horizontal_length > 0.0001)
+    {
+        float sun_azimuth = acos(clamp(dot(view_horizontal / view_horizontal_length,
+                                           sun_horizontal / sun_horizontal_length), -1.0, 1.0));
+        fog_falloff *= smoothstep(radians(8.0), radians(45.0), sun_azimuth);
+    }
+
+    // </AS:Chanayane>
+
     // We shorten the fade here at the shoreline so it doesn't appear too soft from a distance.
     fade *= 60;
     fade = min(1, fade);
@@ -407,6 +468,12 @@ void main()
     // full foreground field here previously overwhelmed all wave detail.
     // color += asVolumetricForeground(pos);
     color += asVolumetricWaterForeground(pos) * min(1.0, df2.x) * fade;
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Attenuate the completed water lighting. Applying fog
+    // before volumetric foreground allowed that later addition to recreate
+    // the gray/bright horizon strip.
+    color *= 1.0 - 0.8 * fog_falloff;
     // </AS:Chanayane>
 
     float spec = min(max(max(punctual.r, punctual.g), punctual.b), 0);

@@ -52,6 +52,7 @@
 // <AS:Chanayane> Bind depth-resolved volumetric inputs for late water rendering.
 #include "asproceduralsun.h"
 #include "asvolumetriclighting.h"
+#include "aswaterhorizonfog.h"
 // </AS:Chanayane>
 
 bool LLDrawPoolWater::sSkipScreenCopy = false;
@@ -318,6 +319,10 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
 
     // <AS:Chanayane> Water renders after the full volumetric composite.
     ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    // </AS:Chanayane>
+
+    // <AS:Chanayane> Delegate viewer-local horizon fog to its AS-owned module.
+    ASWaterHorizonFog::uploadUniforms(*shader);
     // </AS:Chanayane>
 
     // Only push the water planes once.

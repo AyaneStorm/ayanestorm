@@ -8,12 +8,17 @@
   save_rect="true"
   save_visibility="true"
   width="490"
-  height="595"
+  height="700"
   layout="topleft">
-  <!-- Reuse the standalone settings panels so both entry points stay in sync. -->
+  <!-- Reuse the standalone settings panels so both entry points stay in sync.
+       Sized to fit the tallest embedded panel (currently
+       panel_as_horizon_settings.xml at height=680); this container's own
+       height was never grown as horizon settings rows were added across
+       several sessions, silently clipping the panel's later rows (e.g. the
+       Sky horizon haze intensity slider) with no scrollbar to reveal them. -->
   <tab_container
     follows="all"
-    height="570"
+    height="675"
     layout="topleft"
     left="1"
     name="environment_effects_tabs"

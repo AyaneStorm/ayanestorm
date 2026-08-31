@@ -22,6 +22,8 @@ uniform float as_horizon_sun_fade;
 uniform float as_horizon_dip;
 uniform int as_horizon_blend_mode;
 uniform int as_horizon_pass;
+uniform float as_horizon_sky_haze_strength;
+uniform float as_horizon_sky_haze_intensity;
 
 out vec4 frag_data[4];
 
@@ -94,7 +96,102 @@ void main()
     radiance = min(radiance, vec3(16.0));
 
     float coverage = clamp(activation * as_horizon_override_opacity, 0.0, 1.0);
-    vec3 extinction = mix(vec3(1.0), transmittance, coverage);
+    // In Additive mode (as_horizon_blend_mode == 0) the extinction draw is
+    // normally never issued at all -- additive mode only adds light. It is
+    // now ALSO issued in that mode, but ONLY to carry sky horizon haze's
+    // own darkening (see below); the base scattering band's own
+    // transmittance-based extinction must stay a no-op here so enabling
+    // haze doesn't quietly introduce a second, unrelated darkening effect
+    // into additive mode's established brighten-only look.
+    vec3 extinction = as_horizon_blend_mode == 0
+                     ? vec3(1.0)
+                     : mix(vec3(1.0), transmittance, coverage);
+
+    // Sky-side companion to ASWaterHorizonFogStrength: the reference look
+    // (a pale, warm haze band the sky and water both fade into at the
+    // horizon) comes from lightening BOTH sides of the line, not from
+    // blurring the seam between them (that approach was tried as a
+    // screen-space post-process and abandoned -- see the doc). Reuse a
+    // narrower core of the existing band/activation falloff so the haze
+    // concentrates right at the horizon rather than spreading across the
+    // whole existing scattering band.
+    if (as_horizon_sky_haze_strength > 0.0001)
+    {
+        // haze_core's reach must scale with as_horizon_sky_haze_strength,
+        // not be a fixed fraction of as_horizon_band_height (an earlier
+        // version used `as_horizon_band_height * 0.6`, a constant ~7.2
+        // degrees at the default band height, completely independent of
+        // the strength slider -- so 0.1 and 1.0 produced the identical
+        // vertical extent, only differing in opacity, which read as "the
+        // gradient is always too tall regardless of the slider").
+        //
+        // Mirrors water horizon fog's own fix and the lessons learned
+        // there, including one found only after a real screenshot test: a
+        // "fixed-width window whose START moves outward with strength"
+        // shape (`smoothstep(reach, reach + width, elevation)`) is a FLAT,
+        // fully-opaque plateau from the horizon out to `reach`, fading
+        // only at its far edge -- not a gradient peaking at the horizon,
+        // and not genuinely subtle at low reach (a small reach still
+        // produces a fully-opaque, if narrow, band). Fixed the same way as
+        // water: a single smoothstep spanning the ENTIRE reach distance,
+        // 1.0 (peak) exactly at the horizon (`absolute_elevation == 0`),
+        // fading smoothly to 0.0 by `absolute_elevation == haze_reach`.
+        // Reach still grows with strength; a separate intensity multiplier
+        // fades the whole haze toward fully invisible independent of
+        // reach.
+        // Reach (as_horizon_sky_haze_strength, 0..2) and intensity
+        // (as_horizon_sky_haze_intensity, 0..1, separate uniform/slider)
+        // are independently controllable, mirroring water horizon fog's
+        // own reach/intensity split per explicit user request.
+        //
+        // An fwidth(absolute_elevation)-based pixel-space reach was tried
+        // here to match water horizon fog's own attempt at the same fix,
+        // but produced visible horizontal banding across the WHOLE sky
+        // (not just near the horizon) -- fwidth() on the sky dome's
+        // triangulated mesh geometry evaluates inconsistently across
+        // triangle/seam boundaries, and that inconsistency became visible
+        // as discrete stripes rather than a smooth reach. Reverted to a
+        // plain angular reach (same conclusion reached independently on
+        // the water side after its own derivative attempts proved
+        // unreliable): a small floor and a moderate ceiling, calibrated by
+        // eye against real screenshots rather than derivative machinery.
+        float haze_reach = mix(0.001, 0.12, clamp(as_horizon_sky_haze_strength / 2.0, 0.0, 1.0));
+        float haze_core_raw = 1.0 - smoothstep(0.0, haze_reach, absolute_elevation);
+        // Squaring a decreasing falloff narrows it; it does not broaden it.
+        // Keep the smoothstep result itself so the middle of the gradient
+        // remains visible instead of collapsing into a hard horizon strip.
+        float haze_core = haze_core_raw;
+        float haze_intensity = clamp(as_horizon_sky_haze_intensity, 0.0, 1.0);
+        // Keep the haze horizontal. Combining elevation with an azimuth
+        // cone bent the gradient down into the horizon around the sun.
+        float haze_gate = clamp(haze_core * as_horizon_sun_fade, 0.0, 1.0);
+        float haze_amount = haze_gate * haze_intensity;
+        // Desaturate and mute toward a pale, dim haze tone rather than
+        // brightening -- the reference look darkens/desaturates the sky
+        // right at the line (mirroring water horizon fog's own darkening of
+        // the water), not an added glow. haze_color's own darkness lowered
+        // further still (* 0.05, was * 0.15, before that * 0.4) per
+        // explicit user direction that intensity=1.0 still wasn't dark
+        // enough -- this is another largely unverified guess at the right
+        // absolute darkness, not measured against a debug view.
+        float haze_luma = dot(base_color, vec3(0.299, 0.587, 0.114));
+        vec3 haze_color = mix(vec3(haze_luma), base_color, 0.4) * 0.05;
+        radiance = mix(radiance, haze_color, clamp(haze_amount, 0.0, 1.0));
+
+        // Darkening ONLY `radiance` (this shader's own small additive
+        // contribution on top of EEP) left the underlying EEP sky's own
+        // brightness completely untouched, so the visible effect was
+        // dwarfed by however bright EEP already was -- "close to nothing"
+        // even at half strength. `extinction` (computed above) is the
+        // MULTIPLICATIVE term that actually attenuates the EEP sky color
+        // itself; darkening it too is what water horizon fog's equivalent
+        // does structurally (it darkens the full composited `color`, not
+        // an additive delta on top of it). Pull extinction darker/toward
+        // the haze tone's luminance by the same haze_amount so the whole
+        // visible sky pixel dims near the horizon, not just this
+        // feature's own small contribution to it.
+        extinction *= mix(vec3(1.0), vec3(haze_luma * 0.05), clamp(haze_amount, 0.0, 1.0));
+    }
 
     if (as_horizon_pass == 0)
     {

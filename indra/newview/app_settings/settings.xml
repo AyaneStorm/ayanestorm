@@ -25684,6 +25684,14 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Below-horizon sun elevation where horizon illumination reaches zero</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>-12.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASHorizonScatteringCloudStrength</key>
     <map><key>Comment</key><string>Multiplier on horizon-scattering cloud tint strength, independent of horizon band light strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASWaterHorizonFogStrength</key>
+    <map><key>Comment</key><string>Reach of viewer-local water horizon fog: how far outward from the horizon the fog band extends. 0 reproduces the unmodified upstream water look</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASWaterHorizonFogIntensity</key>
+    <map><key>Comment</key><string>Opacity/darkness of viewer-local water horizon fog (0..1), independent of its reach. 0 makes the whole effect a no-op regardless of reach</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringSkyHazeStrength</key>
+    <map><key>Comment</key><string>Reach of viewer-local sky-side horizon haze: how far outward from the horizon the sky darkens/desaturates toward a haze tone, meeting water horizon fog. 0 reproduces the unmodified horizon-scattering band look</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASHorizonScatteringSkyHazeIntensity</key>
+    <map><key>Comment</key><string>Opacity/darkness of viewer-local sky-side horizon haze (0..1), independent of its reach. 0 makes the whole effect a no-op regardless of reach</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local procedural sun and moon appearance. -->
     <key>ASProceduralSunEnabled</key>

@@ -46,6 +46,8 @@ namespace
     const LLStaticHashedString sCamPosLocal("camPosLocal");
     const LLStaticHashedString sCloudTintColor("as_horizon_cloud_tint");
     const LLStaticHashedString sCloudTintStrength("as_horizon_cloud_strength");
+    const LLStaticHashedString sSkyHazeStrength("as_horizon_sky_haze_strength");
+    const LLStaticHashedString sSkyHazeIntensity("as_horizon_sky_haze_intensity");
 
     F32 smoothStep(F32 value)
     {
@@ -144,7 +146,9 @@ void ASHorizonScattering::registerUICallbacks()
                 "ASHorizonScatteringAerosolStrength", "ASHorizonScatteringMieAnisotropy",
                 "ASHorizonScatteringAzimuthSpread", "ASHorizonScatteringTint",
                 "ASHorizonScatteringTintMix", "ASHorizonScatteringStartElevation",
-                "ASHorizonScatteringEndElevation", "ASHorizonScatteringCloudStrength"
+                "ASHorizonScatteringEndElevation", "ASHorizonScatteringCloudStrength",
+                "ASWaterHorizonFogStrength", "ASWaterHorizonFogIntensity",
+                "ASHorizonScatteringSkyHazeStrength", "ASHorizonScatteringSkyHazeIntensity"
             };
             const std::string name = data.asString();
             if (std::find(controls.begin(), controls.end(), name) != controls.end())
@@ -266,6 +270,10 @@ bool configureShader()
     sHorizonProgram.uniform1f(sTintMix,
         llclamp(gSavedSettings.getF32("ASHorizonScatteringTintMix"), 0.f, 1.f));
     sHorizonProgram.uniform1i(sBlendMode, (S32)ASHorizonScattering::getBlendMode());
+    sHorizonProgram.uniform1f(sSkyHazeStrength,
+        llclamp(gSavedSettings.getF32("ASHorizonScatteringSkyHazeStrength"), 0.f, 2.f));
+    sHorizonProgram.uniform1f(sSkyHazeIntensity,
+        llclamp(gSavedSettings.getF32("ASHorizonScatteringSkyHazeIntensity"), 0.f, 1.f));
     return true;
 }
 }
@@ -313,7 +321,26 @@ void ASHorizonScattering::render(bool hdri_sky_active)
     gGL.translatef(0.f, -cam_height, 0.f);
     sHorizonProgram.uniform3f(sCamPosLocal, 0.f, cam_height, 0.f);
 
-    if (getBlendMode() == BLEND_ATMOSPHERIC)
+    // <AS:Chanayane> Sky horizon haze needs a genuine multiplicative
+    // darkening pass to actually dim the sky near the horizon -- additive
+    // mode has no such pass by design (it can only ADD light on top of
+    // EEP), so with the extinction draw gated to Atmospheric-only, sky
+    // horizon haze silently had no visible effect at all in Additive mode
+    // regardless of its own strength slider (confirmed against the user's
+    // actual saved ASHorizonScatteringBlendMode = 0/Additive). Per explicit
+    // user request ("find a way to make it work like a subtractive pass"
+    // rather than switch away from the additive look they prefer), the
+    // SAME extinction draw used by Atmospheric mode is now also issued in
+    // Additive mode whenever sky horizon haze is active, layered alongside
+    // (not replacing) additive mode's existing radiance-only glow pass
+    // below. This makes Additive mode's horizon band capable of local
+    // darkening for the first time -- an intentional, labeled exception to
+    // "additive can only brighten" (see the Sky horizon haze slider's
+    // tooltip and doc), scoped tightly to this one sub-feature.
+    const bool sky_haze_active =
+        llclamp(gSavedSettings.getF32("ASHorizonScatteringSkyHazeStrength"), 0.f, 2.f) > 0.0001f;
+    if (getBlendMode() == BLEND_ATMOSPHERIC ||
+        (getBlendMode() == BLEND_ADDITIVE && sky_haze_active))
     {
         // Beer-Lambert extinction: destination RGB *= shader transmittance.
         // Preserve destination alpha, which carries the glow mask.
@@ -322,6 +349,7 @@ void ASHorizonScattering::render(bool hdri_sky_active)
                       LLRender::BF_ZERO, LLRender::BF_ONE);
         gSky.mVOWLSkyp->drawDome();
     }
+    // </AS:Chanayane>
 
     // In-scattering is emitted radiance. Atmospheric and additive modes add
     // it; replace mode alpha-blends the generated band over EEP.
