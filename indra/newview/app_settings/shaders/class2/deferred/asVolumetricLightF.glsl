@@ -44,6 +44,12 @@ uniform int   sample_count;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
+uniform vec3  as_active_light_dir;
+uniform vec3  as_active_light_color;
+uniform vec2  as_disc_sin_cos; // x = sin(radius), y = cos(radius)
+uniform vec4  shadow_clip;
+uniform sampler2D blueNoiseMap;
+uniform float blueNoiseStrength;
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
@@ -79,7 +85,7 @@ vec3 getPositionWithNDC(vec3 ndc);
 // all checking out individually under static review - rather than keep
 // debugging a reimplementation, this calls the exact function every other
 // shadow-consuming shader in the codebase already relies on.
-float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
+float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen);
 
 // Henyey-Greenstein phase function: biases in-scatter toward (g > 0) or away
 // from (g < 0) the view direction, matching how sunbeams brighten as you
@@ -91,15 +97,28 @@ float phaseHG(float cos_theta, float g)
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
-// Interleaved gradient noise (Jimenez 2014): a cheap, high-frequency
-// per-pixel dither in [0,1). Offsetting each ray's first sample by this value
-// (scaled by one step length) turns the fixed banding from a constant sample
-// count into fine, far-less-objectionable grain, since neighboring pixels no
-// longer land on the same shadow-transition step.
+// Interleaved gradient noise keeps neighbouring first-sample offsets coherent
+// enough to avoid the displaced shadow silhouettes produced by fully
+// decorrelated blue noise. Its fine lattice is handled by the composite filter.
 float interleavedGradientNoise(vec2 screen_pos)
 {
     const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
     return fract(magic.z * fract(dot(screen_pos, magic.xy)));
+}
+
+float volumetricJitter(vec2 screen_pos)
+{
+    float coherent_jitter = interleavedGradientNoise(screen_pos);
+    if (blueNoiseStrength <= 0.0)
+    {
+        return coherent_jitter;
+    }
+
+    ivec2 noise_size = textureSize(blueNoiseMap, 0);
+    ivec2 pixel = ivec2(screen_pos) % noise_size;
+    float blue_jitter = texelFetch(blueNoiseMap, pixel, 0).a;
+    return mix(coherent_jitter, blue_jitter,
+               clamp(blueNoiseStrength, 0.0, 1.0));
 }
 
 // Real angular radius of the sun/moon as seen from a planetary surface is
@@ -112,8 +131,6 @@ float interleavedGradientNoise(vec2 screen_pos)
 // visibility contribution even when most of the physical disc was still
 // unoccluded in the same frame) is actually noticeable. Revisit this
 // multiplier if it reads as too soft/too sharp once tested in-viewer.
-const float SUN_MOON_ANGULAR_RADIUS = 0.0372; // radians, ~2.1 degrees (4x real size)
-
 // Caps the march distance for sky/horizon pixels (effectively infinite depth)
 // so the loop stays bounded and scatter does not blow out with distance.
 const float MAX_MARCH_DISTANCE = 128.0;
@@ -137,8 +154,9 @@ void main()
     // View space: the camera sits at the origin, so the ray is just the
     // fragment's own view-space position.
     vec3  ray_end   = pos.xyz;
-    float ray_len   = min(length(ray_end), MAX_MARCH_DISTANCE);
-    vec3  ray_dir   = ray_end / max(length(ray_end), 1e-4);
+    float endpoint_length = length(ray_end);
+    float ray_len   = min(endpoint_length, MAX_MARCH_DISTANCE);
+    vec3  ray_dir   = ray_end / max(endpoint_length, 1e-4);
 
     if (debug_mode == 4)
     {
@@ -192,7 +210,7 @@ void main()
         return;
     }
 
-    vec3 light_dir = normalize((sun_up_factor == 1) ? sun_dir : moon_dir);
+    vec3 light_dir = as_active_light_dir;
 
     // Rays visually converged to a single point at the sun/moon's exact
     // center regardless of its true angular size, no matter how wide the
@@ -209,10 +227,14 @@ void main()
     // angular width. Computed once per pixel (not per march step): it only
     // depends on the fixed light_dir/ray_dir pair for this pixel, not on
     // the per-step shadow-sampling jitter.
-    float raw_cos_theta = dot(ray_dir, light_dir);
-    float raw_angle = acos(clamp(raw_cos_theta, -1.0, 1.0));
-    float disc_clamped_angle = max(raw_angle - SUN_MOON_ANGULAR_RADIUS, 0.0);
-    float cos_theta = cos(disc_clamped_angle);
+    float raw_cos_theta = clamp(dot(ray_dir, light_dir), -1.0, 1.0);
+    float cos_theta = 1.0;
+    if (raw_cos_theta < as_disc_sin_cos.y)
+    {
+        float sin_theta = sqrt(max(1.0 - raw_cos_theta * raw_cos_theta, 0.0));
+        cos_theta = raw_cos_theta * as_disc_sin_cos.y +
+                    sin_theta * as_disc_sin_cos.x;
+    }
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
     // Preserve approximately the configured full-range sample spacing while
@@ -229,7 +251,7 @@ void main()
 
     // Dither the ray's starting offset per-pixel so fixed-step banding turns
     // into fine grain instead of visible stepped rings at shadow boundaries.
-    float jitter = interleavedGradientNoise(gl_FragCoord.xy);
+    float jitter = volumetricJitter(gl_FragCoord.xy);
 
     // Integrate incident light along the ray. Lit air scatters light toward
     // the camera; shadowed air does not. Inverting this term would make
@@ -238,19 +260,65 @@ void main()
     float accumulated_visibility = 0.0;
     float attenuated_visibility_integral = 0.0;
 
+    float sample_distance = jitter * step_len;
+    vec3 sample_pos = ray_dir * sample_distance;
+    vec3 sample_step = ray_dir * step_len;
+    float attenuation = scatter_density > 0.0
+        ? exp(-scatter_density * sample_distance) : 1.0;
+    float attenuation_decay = scatter_density > 0.0
+        ? exp(-scatter_density * step_len) : 1.0;
+
+    // Integrate Beer-Lambert transmittance over the complete represented
+    // segment instead of evaluating it only at the jittered sample point.
+    // Dividing by density preserves the existing outer density multiplier
+    // and converges to step_len as density approaches zero. Use the series
+    // form near zero to avoid cancellation in 1-exp(-x).
+    float optical_step = scatter_density * step_len;
+    float unattenuated_segment_integral;
+    if (scatter_density <= 0.0)
+    {
+        unattenuated_segment_integral = step_len;
+    }
+    else if (optical_step < 1e-3)
+    {
+        unattenuated_segment_integral = step_len *
+            (1.0 - 0.5 * optical_step +
+             optical_step * optical_step * (1.0 / 6.0));
+    }
+    else
+    {
+        unattenuated_segment_integral =
+            (1.0 - attenuation_decay) / scatter_density;
+    }
+    float segment_integral = attenuation * unattenuated_segment_integral;
+
     for (int i = 0; i < steps; ++i)
     {
-        float t = (float(i) + jitter) * step_len;
-        vec3 sample_pos = ray_dir * t;
+        // The established shadow contract returns fully lit at and beyond
+        // this boundary. Later samples on the same forward ray are farther
+        // away, so their discrete contribution can be summed directly.
+        if (ray_dir.z < 0.0 && sample_pos.z <= -shadow_clip.w)
+        {
+            int remaining_steps = steps - i;
+            float remaining = float(remaining_steps);
+            accumulated_visibility += remaining;
 
-        // norm = light_dir makes sampleDirectionalShadow's surface-bias term
-        // (dot(norm, light_dir)) evaluate to 1.0, i.e. no extra bias offset
-        // - the correct choice for a sample in empty space, not on a surface.
-        // A former per-step "disc jitter" perturbed this normal, but the
-        // shared sampler does not accept a light direction and pcfShadow()
-        // does not use its normal argument. That work never moved a shadow
-        // lookup; its only effect was a tiny, inappropriate surface offset.
-        float visibility = sampleDirectionalShadow(sample_pos, light_dir, pos_screen);
+            float segment_sum;
+            if (abs(1.0 - attenuation_decay) < 1e-6)
+            {
+                segment_sum = segment_integral * remaining;
+            }
+            else
+            {
+                segment_sum = segment_integral *
+                    (1.0 - pow(attenuation_decay, remaining)) /
+                    (1.0 - attenuation_decay);
+            }
+            attenuated_visibility_integral += segment_sum;
+            break;
+        }
+
+        float visibility = asVolumetricDirectionalShadow(sample_pos, pos_screen);
 
         // Guard against a bad shadow sample poisoning the whole integral.
         if (visibility == visibility) // false only for NaN
@@ -259,9 +327,11 @@ void main()
             accumulated_visibility += visibility;
             // Beer-Lambert view-path extinction prevents a long sequence of
             // weakly lit samples from remaining as prominent as nearby air.
-            attenuated_visibility_integral += visibility *
-                exp(-scatter_density * t) * step_len;
+            attenuated_visibility_integral += visibility * segment_integral;
         }
+
+        sample_pos += sample_step;
+        segment_integral *= attenuation_decay;
     }
 
     float mean_visibility = accumulated_visibility / float(steps);
@@ -283,14 +353,5 @@ void main()
                     phase * (attenuated_visibility_integral / MAX_MARCH_DISTANCE);
     scatter = clamp(scatter, 0.0, 1.0);
 
-    vec3 light_color = (sun_up_factor == 1) ? sunlight_color : moonlight_color;
-    // Match the moon disc's warm horizon tint without changing scene light.
-    if (sun_up_factor != 1)
-    {
-        float horizon_tint_amount = (1.0 - smoothstep(0.0, moon_horizon_tint_height, max(moon_horizon_elevation, 0.0)))
-                                  * clamp(moon_horizon_tint_strength, 0.0, 1.0);
-        light_color *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
-        light_color *= clamp(moon_phase_illumination, 0.0, 1.0);
-    }
-    frag_color = vec4(light_color * scatter, 1.0);
+    frag_color = vec4(as_active_light_color * scatter, 1.0);
 }

@@ -56,6 +56,8 @@ uniform int attenuateScene;
 // cancels it out so the displayed value approximates the raw stored scalar.
 uniform sampler2D exposureMap;
 uniform float debugExposure;
+uniform float scatterBlurStrength;
+uniform float scatterBlurRadius;
 
 vec4 getPosition(vec2 pos_screen);
 vec4 getNorm(vec2 pos_screen);
@@ -86,6 +88,54 @@ float normalSimilarity(vec2 uv, vec3 center_normal)
     }
     return smoothstep(0.5, 0.9,
                       dot(normalize(center_normal), normalize(tap_normal)));
+}
+
+// 3x3 box filter for the one-pixel diagonal/checker structure produced by the
+// stationary raymarch jitter. Full-resolution scene depth rejects taps across
+// silhouettes. At Normal quality emissiveRectDelta naturally makes the radius
+// two display pixels; High uses a one-display-pixel radius.
+vec3 depthAwareScatterBlur(vec2 center_uv, float center_depth)
+{
+    vec2 min_uv = emissiveRectDelta * 0.5;
+    vec2 max_uv = vec2(1.0) - min_uv;
+    float radius = clamp(scatterBlurRadius, 1.0, 2.0);
+    vec2 dx = vec2(emissiveRectDelta.x * radius, 0.0);
+    vec2 dy = vec2(0.0, emissiveRectDelta.y * radius);
+    vec2 uv_left  = clamp(center_uv - dx, min_uv, max_uv);
+    vec2 uv_right = clamp(center_uv + dx, min_uv, max_uv);
+    vec2 uv_down  = clamp(center_uv - dy, min_uv, max_uv);
+    vec2 uv_up    = clamp(center_uv + dy, min_uv, max_uv);
+    vec2 uv_left_down  = clamp(center_uv - dx - dy, min_uv, max_uv);
+    vec2 uv_right_down = clamp(center_uv + dx - dy, min_uv, max_uv);
+    vec2 uv_left_up    = clamp(center_uv - dx + dy, min_uv, max_uv);
+    vec2 uv_right_up   = clamp(center_uv + dx + dy, min_uv, max_uv);
+
+    float weight_left  = depthSimilarity(uv_left, center_depth);
+    float weight_right = depthSimilarity(uv_right, center_depth);
+    float weight_down  = depthSimilarity(uv_down, center_depth);
+    float weight_up    = depthSimilarity(uv_up, center_depth);
+    float weight_left_down  = depthSimilarity(uv_left_down, center_depth);
+    float weight_right_down = depthSimilarity(uv_right_down, center_depth);
+    float weight_left_up    = depthSimilarity(uv_left_up, center_depth);
+    float weight_right_up   = depthSimilarity(uv_right_up, center_depth);
+    const float center_weight = 1.0;
+    const float axis_weight = 1.0;
+    float weight_sum = center_weight +
+                       axis_weight * (weight_left + weight_right +
+                                      weight_down + weight_up) +
+                       weight_left_down + weight_right_down +
+                       weight_left_up + weight_right_up;
+
+    vec3 scatter = texture(emissiveRect, center_uv).rgb * center_weight;
+    scatter += texture(emissiveRect, uv_left).rgb * weight_left * axis_weight;
+    scatter += texture(emissiveRect, uv_right).rgb * weight_right * axis_weight;
+    scatter += texture(emissiveRect, uv_down).rgb * weight_down * axis_weight;
+    scatter += texture(emissiveRect, uv_up).rgb * weight_up * axis_weight;
+    scatter += texture(emissiveRect, uv_left_down).rgb * weight_left_down;
+    scatter += texture(emissiveRect, uv_right_down).rgb * weight_right_down;
+    scatter += texture(emissiveRect, uv_left_up).rgb * weight_left_up;
+    scatter += texture(emissiveRect, uv_right_up).rgb * weight_right_up;
+    return scatter / max(weight_sum, 1e-6);
 }
 
 // Same sky/horizon boundary the raymarch shader uses (MAX_MARCH_DISTANCE in
@@ -158,7 +208,14 @@ void main()
             return;
         }
         float dist = abs(getPosition(vary_fragcoord).z);
-        frag_color = vec4(sampled.rgb, compositeTransmittance(dist));
+        vec3 scatter = sampled.rgb;
+        if (scatterBlurStrength > 0.0)
+        {
+            scatter = mix(scatter,
+                          depthAwareScatterBlur(vary_fragcoord, dist),
+                          clamp(scatterBlurStrength, 0.0, 1.0));
+        }
+        frag_color = vec4(scatter, compositeTransmittance(dist));
         return;
     }
 
@@ -203,5 +260,11 @@ void main()
                    texture(emissiveRect, uv01).rgb * weights.z +
                    texture(emissiveRect, uv11).rgb * weights.w;
     scatter /= weight_sum;
+    if (scatterBlurStrength > 0.0)
+    {
+        scatter = mix(scatter,
+                      depthAwareScatterBlur(vary_fragcoord, center_depth),
+                      clamp(scatterBlurStrength, 0.0, 1.0));
+    }
     frag_color = vec4(scatter, compositeTransmittance(center_depth));
 }

@@ -93,6 +93,8 @@ public:
     static S32 getDebugMode();
 
 private:
+    static void applyDirectionalInvariants(LLGLSLShader& shader, LLPipeline& pipeline,
+                                           bool sun_source);
     static void renderLocalLights(LLPipeline& pipeline);
     static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();

@@ -39,6 +39,8 @@ with the same filename but different name
   <texture name="Accordion_Over" file_name="containers/Accordion_Over.png" preload="false" />
   <texture name="Accordion_Selected" file_name="containers/Accordion_Selected.png" preload="false" />
 
+  <texture name="ASBlueNoise" file_name="as/as_blue_noise.png" preload="true" />
+
   <texture name="Activate_Checkmark" file_name="taskpanel/Activate_Checkmark.png" preload="false" />
 
   <texture name="AddItem_Disabled" file_name="icons/AddItem_Disabled.png" preload="false" />
