@@ -46,6 +46,7 @@ out vec2 vary_texcoord3;
 out float altitude_blend_factor;
 out float as_horizon_view_elevation;
 out float as_horizon_sun_alignment;
+out float as_horizon_sun_elevation;
 
 // Inputs
 uniform vec3 camPosLocal;
@@ -70,6 +71,7 @@ uniform float sun_moon_glow_factor;
 uniform vec3 cloud_color;
 
 uniform float cloud_scale;
+uniform vec3 as_horizon_sun_direction;
 
 // NOTE: Keep these in sync!
 //       indra\newview\app_settings\shaders\class1\deferred\skyV.glsl
@@ -118,10 +120,14 @@ void main()
     float rel_pos_len  = length(rel_pos);
 
     // AS-owned: true angular view elevation (radians above horizon) and
-    // sun alignment (-1 anti-solar .. 1 facing the sun), independent of the
-    // altitude fade above which only measures dome visibility, not angle.
+    // solar azimuth alignment (-1 anti-solar .. 1 facing the sun), independent
+    // of solar elevation so low and slightly submerged sunlight can still
+    // reach cloud undersides around the correct part of the horizon.
     as_horizon_view_elevation = asin(clamp(rel_pos_norm.y, -1.0, 1.0));
-    as_horizon_sun_alignment  = dot(rel_pos_norm, lightnorm.xyz);
+    vec2 view_azimuth = normalize(rel_pos_norm.xz + vec2(1e-6, 0.0));
+    vec2 sun_azimuth = normalize(as_horizon_sun_direction.xz + vec2(1e-6, 0.0));
+    as_horizon_sun_alignment = dot(view_azimuth, sun_azimuth);
+    as_horizon_sun_elevation = asin(clamp(as_horizon_sun_direction.y, -1.0, 1.0));
 
     // Initialize temp variables
     vec3 sunlight = sunlight_color;
