@@ -1144,16 +1144,32 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                         sBlueNoiseImage->getFullHeight());
                 }
             }
+            // blueNoiseMap has no predefined mTexture[] slot (it is neither a
+            // reserved uniform nor in this shader's per-shader uniform list),
+            // so bindTexture()/unbindTexture() by name would index the wrong
+            // table (see previous_slice_integral in renderTransparencyAtlas()
+            // for the same defect worked around the same way). Use the
+            // appended channel directly instead.
+            static const LLStaticHashedString blue_noise_sampler("blueNoiseMap");
+            S32 blue_noise_channel = -1;
             if (sBlueNoiseImage.notNull())
             {
-                gASVolumetricLightProgram.bindTexture(
-                    "blueNoiseMap", sBlueNoiseImage.get());
+                const S32 location = gASVolumetricLightProgram.getUniformLocation(blue_noise_sampler);
+                const S32 channel = gASVolumetricLightProgram.mActiveTextureChannels;
+                if (location > -1 && channel >= 0 && channel < gGLManager.mNumTextureImageUnits)
+                {
+                    glUniform1i(location, channel);
+                    gGL.getTexUnit(channel)->bind(sBlueNoiseImage.get());
+                    gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+                    gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_WRAP);
+                    blue_noise_channel = channel;
+                }
             }
             static LLCachedControl<F32> blue_noise_strength(gSavedSettings,
                 "RenderVolumetricLightingBlueNoiseStrength", 0.f);
             gASVolumetricLightProgram.uniform1f(
                 LLStaticHashedString("blueNoiseStrength"),
-                llclamp((F32)blue_noise_strength, 0.f, 1.f));
+                blue_noise_channel > -1 ? llclamp((F32)blue_noise_strength, 0.f, 1.f) : 0.f);
 
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
@@ -1170,7 +1186,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             pipeline.mScreenTriangleVB->setBuffer();
             pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
-            gASVolumetricLightProgram.unbindTexture("blueNoiseMap");
+            if (blue_noise_channel > -1)
+            {
+                gGL.getTexUnit(blue_noise_channel)->unbind(LLTexUnit::TT_TEXTURE);
+            }
             pipeline.unbindDeferredShader(gASVolumetricLightProgram);
         }
 
