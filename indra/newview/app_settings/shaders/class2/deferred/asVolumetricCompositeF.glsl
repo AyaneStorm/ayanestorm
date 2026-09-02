@@ -86,22 +86,14 @@ float depthWeight(float tap_depth, float center_depth)
 }
 
 // Single depth-aware gather over the 4x4 source-texel window around this
-// display pixel. Serves both Normal (source = half res) and High (source =
-// full res) - see doc/volumetric_lighting_bugfix_and_speedup_plan.md
-// section 3. Uniform (box) spatial weight, not a tent: the Bayer jitter
-// (asVolumetricLightF.glsl's volumetricJitter()) is exactly periodic with
-// period 4, so any 4x4 window at any offset contains each of the 16 phases
-// exactly once - a sliding box is the exact reconstruction. A tent weight
-// gives unequal per-phase contribution (up to 25% from one phase, and at
-// High quality's near-zero fractional offset the 4th column/row can drop
-// to zero weight entirely), which let each raymarch step's shell boundary
-// survive as a ghost of the shadowing geometry displaced along the ray
-// instead of averaging away. Depth weighting is kept - it is the only
-// remaining source of missing phases, and only at real silhouettes.
+// display pixel. Box weight: Bayer is 4-periodic, so any 4x4 window holds
+// each of the 16 phases once and a sliding box is the exact
+// reconstruction. Edge-class texels (alpha 1, diagnostic only) march a
+// phase-refined multiple of the flat count, so mixing them here keeps the
+// phase weights balanced; no class split is needed (see
+// doc/volumetric_lighting_sample_count_question.md, round 4).
 vec3 gatherScatter(vec2 uv, float center_depth)
 {
-    // Nearest 4x4 source texels to this display pixel: window centre is
-    // within 0.5 texel of src.
     vec2 src = uv / emissiveRectDelta - 0.5;
     vec2 base = floor(src + 0.5);
     vec2 min_uv = emissiveRectDelta * 0.5;

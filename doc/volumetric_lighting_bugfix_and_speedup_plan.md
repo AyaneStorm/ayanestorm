@@ -499,14 +499,56 @@ middle of the old blend band.
 
 ### 4.3 Fewer steps per pixel with interleaved sampling (section 3 required)
 
-With Bayer 4x4 in place, set `getSampleCount()` to 8 Normal / 12 High
-(High effective 192 samples per 4x4 block, Normal 128). Keep
-`RenderVolumetricLightingSampleCountOverride` (4..32) for tuning. Keep the
-`min_steps = 4` near-geometry floor. Check open-sky shafts and roofline
-shafts at 8, 12, 16 in High; pick the lowest count with no visible
-banding in motion.
+REVISED 2026-09-02, round 5. DONE: implemented, built, tested (T1/T4/T3 in
+`volumetric_lighting_sample_count_question.md`), all passing. Shipped.
 
-Expected: High -60..-75% of what remains after 4.1 (~3 -> ~1 ms).
+Mechanism: a flat count shells at silhouettes because the depth-aware
+gather drops phases there and the residual scales with `step_len`
+(expected, not a bug). Scheme:
+
+- `getSampleCount()` = flat count, 16 for both qualities (round 5: 8/4x
+  and 12/2x at High both left an outline and/or camera-motion ghosts vs
+  the override-32 reference; 16/2x is the cheapest config that passed at
+  both qualities); the override (4..32) applies to this value only.
+- `getEdgeSampleMultiplier()` = 4 for flat <= 8, 2 for flat <= 16, else 1
+  (no edge class, so override 32 is the reference). Both qualities: 16 ->
+  32 at edges.
+- The "bigger tree" seen in modes 1/2 at override 32 is the real shadow
+  volume (bayer ghost report addendum), not a defect; judge in mode 0.
+- Light shader probes depth at the +-1 ring plus +-2 axial (12 taps);
+  any probe with rel > 0.25 -> edge class. Edge texels march
+  `flat_ray_steps * mult` with jitter `fract(mult * bayer_phase)`, so
+  their samples are the union of the flat sample sets at phases
+  `phase + k/mult` (a Bayer 2x2 quad). The composite's plain box gather
+  then mixes edge and flat taps with balanced phase weights. Uniforms:
+  `sample_edge_mult`, `as_target_delta`, `zNear`, `zFar`.
+- Target alpha carries the class (1 edge / 0 flat) as a diagnostic only.
+  Round 3's class-exclusive gather is removed: in the sparse end of the
+  transition band it reduced the window to 1-4 raw taps, which was the
+  round-4 silhouette outline.
+- Keep the `min_steps = 4` near-geometry floor.
+
+Known residual: on flat sky the reconstruction equals 16 x flat steps
+uniform samples. T2 (mode 0, 3x density) passed at High 12 (round 4, still
+valid - the residual only improves as the flat count rose to 16). Do not
+judge from mode 1/2 or FPS - override 32 remains marginally better in
+modes 1/2 (the technique's known floor per round 5; only temporal
+accumulation, section 6, deferred, goes further) but T1/T4 in mode 0 found
+no visible difference.
+
+Final build timings (`directional=`, round 5, flat 16/edge 32 both
+qualities vs override 32 reference):
+
+| Scene | Quality | override 0 (directional=) | override 32 (directional=) |
+|---|---|---:|---:|
+| open | Normal | 0.4082 ms | 0.5578 ms |
+| open | High | 1.2115 ms | 1.9967 ms |
+| canopy | Normal | 0.3937 ms | 0.3891 ms |
+| canopy | High | 1.1212 ms | 1.3506 ms |
+
+Open scenes: Normal -27%, High -39%. Canopy scenes near break-even (most
+texels are edge-class there, as expected - the saving is realized in
+flat/open regions, which dominate a typical frame).
 
 ### 4.4 Shadow-space recurrence (optional, after 4.1-4.3 are measured)
 

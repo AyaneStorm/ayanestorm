@@ -30,6 +30,16 @@ out vec4 frag_color;
 in vec2 vary_fragcoord;
 
 uniform int   sample_count;
+// Silhouette-adaptive step count (plan section 4.3). Edge-class texels
+// (volumetricNearSilhouette()) march sample_count * sample_edge_mult steps
+// with jitter fract(sample_edge_mult * bayer_phase): their sample set is
+// the union of the flat sample sets at phases phase + k/mult, so the
+// composite's plain box gather can mix edge and flat taps with balanced
+// phase weights (doc/volumetric_lighting_sample_count_question.md, round 4).
+uniform int   sample_edge_mult; // 1 (off), 2 or 4
+uniform vec2  as_target_delta; // 1 / volumetric target size (source texels)
+uniform float zNear;
+uniform float zFar;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
@@ -37,6 +47,8 @@ uniform vec3  as_active_light_dir;
 uniform vec3  as_active_light_color;
 uniform vec2  as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 uniform vec4  shadow_clip;
+
+float linearDepth(float d, float znear, float zfar);
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
@@ -117,6 +129,30 @@ const float MAX_MARCH_DISTANCE = 128.0;
 // default was subsequently tuned to 0.35. Must stay numerically identical
 // to asVolumetricAtlasF.glsl's copy of the same constant.
 const float BRIGHTNESS_SCALE = 64.0;
+
+// True when any texel within the composite's reach would get depthWeight
+// < ~0.14 (rel > 0.25) against this texel. The +-1 ring catches 1-texel
+// features (twigs, leaf edges); the +-2 axial taps cover the rest of the
+// 4x4 gather window's reach. 12 point-sampled depth fetches.
+bool volumetricNearSilhouette(vec2 pos_screen, float center_depth)
+{
+    float c = min(center_depth, MAX_MARCH_DISTANCE);
+    vec2 min_uv = as_target_delta * 0.5;
+    vec2 max_uv = vec2(1.0) - min_uv;
+    const vec2 probes[12] = vec2[12](
+        vec2(-1.0, -1.0), vec2(0.0, -1.0), vec2(1.0, -1.0),
+        vec2(-1.0,  0.0),                  vec2(1.0,  0.0),
+        vec2(-1.0,  1.0), vec2(0.0,  1.0), vec2(1.0,  1.0),
+        vec2(-2.0,  0.0), vec2(2.0,  0.0), vec2(0.0, -2.0), vec2(0.0, 2.0));
+    float max_rel = 0.0;
+    for (int i = 0; i < 12; ++i)
+    {
+        vec2 uv = clamp(pos_screen + probes[i] * as_target_delta, min_uv, max_uv);
+        float t = min(linearDepth(getDepth(uv), zNear, zFar), MAX_MARCH_DISTANCE);
+        max_rel = max(max_rel, abs(t - c) / max(max(t, c), 1.0));
+    }
+    return max_rel > 0.25;
+}
 
 void main()
 {
@@ -214,16 +250,26 @@ void main()
     // geometry. Four samples is the conservative floor for stable near-field
     // shadow transitions; rays reaching MAX_MARCH_DISTANCE retain the exact
     // configured count and therefore their previous long-range quality.
-    int max_steps = max(sample_count, 1);
-    int min_steps = min(4, max_steps);
-    int steps = clamp(int(ceil(float(max_steps) * ray_len /
-                               MAX_MARCH_DISTANCE)),
-                      min_steps, max_steps);
+    // Flat step count scaled by ray length (min 4); edge class multiplies
+    // it so edge steps are an exact multiple of flat steps (required by the
+    // phase-refinement argument in
+    // doc/volumetric_lighting_sample_count_question.md, round 4).
+    int flat_steps = max(sample_count, 1);
+    int edge_mult = clamp(sample_edge_mult, 1, 4);
+    bool edge_class = edge_mult > 1 &&
+                      volumetricNearSilhouette(pos_screen, abs(ray_end.z));
+    int min_steps = min(4, flat_steps);
+    int flat_ray_steps = clamp(int(ceil(float(flat_steps) * ray_len /
+                                        MAX_MARCH_DISTANCE)),
+                               min_steps, flat_steps);
+    int steps = edge_class ? flat_ray_steps * edge_mult : flat_ray_steps;
     float step_len = ray_len / float(steps);
 
-    // Dither the ray's starting offset per-pixel so fixed-step banding turns
-    // into fine grain instead of visible stepped rings at shadow boundaries.
-    float jitter = volumetricJitter(gl_FragCoord.xy);
+    // Bayer phase per pixel; edge class refines it so its samples contain
+    // the flat sample positions of its own phase plus the k/mult shifts.
+    float bayer_phase = volumetricJitter(gl_FragCoord.xy);
+    float jitter = edge_class ? fract(bayer_phase * float(edge_mult))
+                              : bayer_phase;
 
     // Integrate incident light along the ray. Lit air scatters light toward
     // the camera; shadowed air does not. Inverting this term would make
@@ -325,5 +371,7 @@ void main()
                     phase * (attenuated_visibility_integral / MAX_MARCH_DISTANCE);
     scatter = clamp(scatter, 0.0, 1.0);
 
-    frag_color = vec4(as_active_light_color * scatter, 1.0);
+    // Alpha = step-count class tag for the composite gather (1 = edge,
+    // 0 = flat). Local lights add RGB only (alpha write masked).
+    frag_color = vec4(as_active_light_color * scatter, edge_class ? 1.0 : 0.0);
 }

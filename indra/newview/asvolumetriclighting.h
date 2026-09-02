@@ -77,6 +77,7 @@ public:
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
     static S32 getSampleCount();
+    static S32 getEdgeSampleMultiplier();
     static F32 getScatterAlbedo();
     static F32 getScatterAsymmetry(bool sun_up);
     static F32 getScatterDensity();

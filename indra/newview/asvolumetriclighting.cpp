@@ -53,7 +53,7 @@
 #include <cmath>
 #include <vector>
 
-#define AS_VOLUMETRIC_PERFORMANCE_LOGGING 1
+#define AS_VOLUMETRIC_PERFORMANCE_LOGGING 0
 
 extern bool gCubeSnapshot;
 
@@ -572,20 +572,45 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 
 S32 ASVolumetricLighting::getSampleCount()
 {
+    // Flat-region step count (plan 4.3). Silhouette texels use
+    // getEdgeSampleMultiplier() via asVolumetricLightF.glsl's
+    // volumetricNearSilhouette(); the composite mixes flat and edge taps
+    // freely since edge steps are a phase-refined exact multiple of flat
+    // steps (round 4 fix for the shell ghost round 3's class-exclusive
+    // gather caused). Both qualities are 16 (edge 32, mult 2), not the
+    // original 8/12: round 5 found flat 8/mult 4 left a faint outline at
+    // Normal's half-res gather, and High flat 8/mult 4 both brought the
+    // outline back AND still showed camera-motion ghosts vs override 32 -
+    // flat 16/mult 2 is the cheapest config that passed T1 and T4 at both
+    // qualities. History: doc/volumetric_lighting_sample_count_question.md
+    // (rounds 1-5).
     static LLCachedControl<S32> sample_override(gSavedSettings,
         "RenderVolumetricLightingSampleCountOverride", 0);
     if (sample_override != 0)
     {
         return llclamp((S32)sample_override, 4, 32);
     }
-    // 4.3's 8/12-step target still showed banding and step-shell ghosts
-    // after the box-weight gather fix (2026-09-02 build/user testing); only
-    // 32 fully cleared both, for both qualities. Until the gather/filter is
-    // revisited, keep the pre-4.3 High step count for both qualities rather
-    // than ship a known-banded default. See
-    // doc/volumetric_lighting_bugfix_and_speedup_plan.md section 4.3 and
-    // doc/volumetric_lighting_bayer_ghost_report.md.
-    return 32;
+    return 16;
+}
+
+S32 ASVolumetricLighting::getEdgeSampleMultiplier()
+{
+    // Edge-class texels march getSampleCount() * this. Must be 1, 2 or 4
+    // (phase refinement of the Bayer 4x4 pattern). Both qualities are flat
+    // 16 -> edge 32 (round 5: lower flat/higher-multiplier combinations at
+    // either quality left an outline and/or camera-motion ghosts against
+    // the override-32 reference). Overrides above 16 disable the edge
+    // class so override 32 stays the reference render.
+    const S32 flat = getSampleCount();
+    if (flat <= 8)
+    {
+        return 4;
+    }
+    if (flat <= 16)
+    {
+        return 2;
+    }
+    return 1;
 }
 
 F32 ASVolumetricLighting::getScatterAlbedo()
@@ -1076,6 +1101,12 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
                                                    &pipeline.mRT->deferredScreen,
                                                    true);
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
+            gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_edge_mult"), getEdgeSampleMultiplier());
+            gASVolumetricLightProgram.uniform2f(LLStaticHashedString("as_target_delta"),
+                1.f / (F32)sVolumetricTarget.getWidth(),
+                1.f / (F32)sVolumetricTarget.getHeight());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("zNear"), LLViewerCamera::getInstance()->getNear());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("zFar"), LLViewerCamera::getInstance()->getFar());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
                                                  getScatterAsymmetry(sun_source));
