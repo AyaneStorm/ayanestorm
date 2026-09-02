@@ -56,6 +56,7 @@
 #define AS_VOLUMETRIC_PERFORMANCE_LOGGING 0
 
 extern bool gCubeSnapshot;
+extern U32 gFrameCount;
 
 namespace
 {
@@ -181,9 +182,9 @@ void logVolumetricGpuTiming()
         return;
     }
 
+    static const char* tier_names[4] = { "normal", "high", "very_high", "ultra" };
     LL_INFOS("Volumetric") << "Volumetric GPU timing average: quality="
-                            << (gSavedSettings.getBOOL("RenderVolumetricLightingHighQuality")
-                                ? "high" : "normal")
+                            << tier_names[ASVolumetricLighting::getQualityTier()]
                             << " samples=" << ASVolumetricLighting::getSampleCount()
                             << " directional="
                             << sDirectionalGpuTimer.averageMs() << "ms/"
@@ -280,7 +281,7 @@ void ASVolumetricLighting::registerUICallbacks()
             static const std::vector<std::string> volumetric_controls = {
                 "RenderVolumetricLightingAlbedo", "RenderVolumetricLightingDensity",
                 "RenderVolumetricLightingSunAsymmetry", "RenderVolumetricLightingAsymmetry",
-                "RenderVolumetricLightingHighQuality", "RenderVolumetricLightingDebug",
+                "RenderVolumetricLightingQuality", "RenderVolumetricLightingDebug",
                 "RenderVolumetricLocalLightsIntensity", "RenderVolumetricLocalLightsMaxCount"
             };
             const std::string control_name = data.asString();
@@ -315,6 +316,11 @@ U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
 bool ASVolumetricLighting::sAtlasConsumerSeen = true;
 bool ASVolumetricLighting::sAtlasProducedThisFrame = false;
 U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
+bool ASVolumetricLighting::sFrameAtlasConsumer = false;
+F32  ASVolumetricLighting::sFrameScatterAlbedo = 0.f;
+F32  ASVolumetricLighting::sFrameScatterAsymmetry = 0.f;
+F32  ASVolumetricLighting::sFrameScatterDensity = 0.f;
+F32  ASVolumetricLighting::sFrameSceneDensity = 0.f;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
 // FSExactOIT's revision. During active development the shader cache is cleared
@@ -341,10 +347,16 @@ bool ASVolumetricLighting::isSupported()
 
 bool ASVolumetricLighting::isEnabled()
 {
+    // Called several times per frame from pipeline.cpp and from
+    // bindTransparencyAtlas() (itself called per-draw from the alpha/
+    // simple/water pools) - LLCachedControl avoids a string-keyed
+    // gSavedSettings lookup on every call (plan section 2.3).
+    static LLCachedControl<bool> volumetric_enabled(gSavedSettings,
+        "RenderVolumetricLighting", false);
     return isSupported()
         && LLPipeline::sRenderDeferred
         && LLPipeline::RenderShadowDetail > 0
-        && gSavedSettings.getBOOL("RenderVolumetricLighting")
+        && volumetric_enabled
         && !ASBackgroundIsolate::isActive();
 }
 
@@ -441,9 +453,10 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
         return;
     }
 
-    // High quality is explicit because full-resolution raymarching is a large
-    // GPU cost increase; the persisted default remains half resolution.
-    const bool full_resolution = gSavedSettings.getBOOL("RenderVolumetricLightingHighQuality");
+    // Full resolution (High tier and above) is explicit because it is a
+    // large GPU cost increase; the persisted default remains half
+    // resolution (Normal).
+    const bool full_resolution = isFullResolution();
     U32 target_width  = llmax((U32)1, full_resolution ? width : width / 2);
     U32 target_height = llmax((U32)1, full_resolution ? height : height / 2);
 
@@ -528,12 +541,42 @@ void ASVolumetricLighting::releaseResources()
 
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 {
+    // Called per-draw from the alpha/simple/water pools, several times per
+    // frame (plan section 2.3). isEnabled()/getDebugMode() (string-keyed
+    // gSavedSettings lookups), the scatter/density getters, and
+    // resolveLandHeightAgent()'s altitude fade are refreshed once per frame
+    // here (guarded by gFrameCount, since this - not renderPass(), which
+    // early-returns whenever the feature is disabled - is the only call
+    // site guaranteed to run every frame a consumer exists) rather than
+    // recomputed on every draw call.
     static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
     static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
-    const bool atlas_consumer = isEnabled() && getDebugMode() == 0 &&
-        !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
-    sAtlasConsumerSeen = sAtlasConsumerSeen || atlas_consumer;
-    const bool enabled = atlas_consumer && sAtlasProducedThisFrame &&
+    static U32 last_frame = (U32)-1;
+    if (gFrameCount != last_frame)
+    {
+        last_frame = gFrameCount;
+        sFrameAtlasConsumer = isEnabled() && getDebugMode() == 0 &&
+            !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+        if (sFrameAtlasConsumer)
+        {
+            sFrameScatterAlbedo = getScatterAlbedo();
+            sFrameScatterAsymmetry = getScatterAsymmetry(isVolumetricSunSource());
+            sFrameScatterDensity = getScatterDensity();
+
+            // Water is a real surface beyond the atlas's 128 m sky cutoff, so
+            // it evaluates bounded scene extinction itself instead of
+            // consuming the atlas alpha's sky fade. Other consumers optimize
+            // this uniform out.
+            const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
+            const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
+            const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
+            const F32 altitude_fade = 1.f - llclamp((camera_altitude - 10.f) / 90.f,
+                                                    0.f, 1.f);
+            sFrameSceneDensity = sFrameScatterDensity * altitude_fade;
+        }
+    }
+    sAtlasConsumerSeen = sAtlasConsumerSeen || sFrameAtlasConsumer;
+    const bool enabled = sFrameAtlasConsumer && sAtlasProducedThisFrame &&
         sShadersLoaded && sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
     if (enabled)
@@ -552,22 +595,33 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
 
-        shader.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
-        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                          getScatterAsymmetry(isVolumetricSunSource()));
-        shader.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+        shader.uniform1f(LLStaticHashedString("scatter_albedo"), sFrameScatterAlbedo);
+        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), sFrameScatterAsymmetry);
+        shader.uniform1f(LLStaticHashedString("scatter_density"), sFrameScatterDensity);
 
         // Water is a real surface beyond the atlas's 128 m sky cutoff, so it
         // evaluates bounded scene extinction itself instead of consuming the
         // atlas alpha's sky fade. Other consumers optimize this uniform out.
-        const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
-        const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
-        const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
-        const F32 altitude_fade = 1.f - llclamp((camera_altitude - 10.f) / 90.f,
-                                                0.f, 1.f);
-        shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"),
-                         getScatterDensity() * altitude_fade);
+        shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"), sFrameSceneDensity);
     }
+}
+
+S32 ASVolumetricLighting::getQualityTier()
+{
+    // 0 Normal, 1 High, 2 Very High, 3 Ultra. See RenderVolumetricLightingQuality
+    // in settings.xml and getSampleCount()/getEdgeSampleMultiplier()/
+    // isFullResolution() below for what each tier actually changes.
+    static LLCachedControl<S32> quality(gSavedSettings,
+        "RenderVolumetricLightingQuality", 0);
+    return llclamp((S32)quality, 0, 3);
+}
+
+bool ASVolumetricLighting::isFullResolution()
+{
+    // Normal is the only tier that halves the target resolution; High,
+    // Very High and Ultra all raymarch at full resolution and differ only
+    // in sample count.
+    return getQualityTier() != 0;
 }
 
 S32 ASVolumetricLighting::getSampleCount()
@@ -577,30 +631,38 @@ S32 ASVolumetricLighting::getSampleCount()
     // volumetricNearSilhouette(); the composite mixes flat and edge taps
     // freely since edge steps are a phase-refined exact multiple of flat
     // steps (round 4 fix for the shell ghost round 3's class-exclusive
-    // gather caused). Both qualities are 16 (edge 32, mult 2), not the
-    // original 8/12: round 5 found flat 8/mult 4 left a faint outline at
-    // Normal's half-res gather, and High flat 8/mult 4 both brought the
-    // outline back AND still showed camera-motion ghosts vs override 32 -
-    // flat 16/mult 2 is the cheapest config that passed T1 and T4 at both
-    // qualities. History: doc/volumetric_lighting_sample_count_question.md
-    // (rounds 1-5).
+    // gather caused). Normal and High are both flat 16 (edge 32, mult 2),
+    // not the original 8/12: round 5 found flat 8/mult 4 left a faint
+    // outline at Normal's half-res gather, and High flat 8/mult 4 both
+    // brought the outline back AND still showed camera-motion ghosts vs
+    // override 32 - flat 16/mult 2 is the cheapest config that passed T1
+    // and T4 at both qualities. Very High and Ultra are flat 32/64 with no
+    // edge class (see getEdgeSampleMultiplier()) - a simple, predictable
+    // maximum-quality option for users who want it regardless of cost,
+    // added on top of the plan's own 4.3 scope. History:
+    // doc/volumetric_lighting_sample_count_question.md (rounds 1-5).
     static LLCachedControl<S32> sample_override(gSavedSettings,
         "RenderVolumetricLightingSampleCountOverride", 0);
     if (sample_override != 0)
     {
-        return llclamp((S32)sample_override, 4, 32);
+        return llclamp((S32)sample_override, 4, 64);
     }
-    return 16;
+    switch (getQualityTier())
+    {
+        case 2: return 32; // Very High
+        case 3: return 64; // Ultra
+        default: return 16; // Normal, High
+    }
 }
 
 S32 ASVolumetricLighting::getEdgeSampleMultiplier()
 {
     // Edge-class texels march getSampleCount() * this. Must be 1, 2 or 4
-    // (phase refinement of the Bayer 4x4 pattern). Both qualities are flat
+    // (phase refinement of the Bayer 4x4 pattern). Normal/High are flat
     // 16 -> edge 32 (round 5: lower flat/higher-multiplier combinations at
     // either quality left an outline and/or camera-motion ghosts against
-    // the override-32 reference). Overrides above 16 disable the edge
-    // class so override 32 stays the reference render.
+    // the override-32 reference). Very High/Ultra (flat 32/64) and any
+    // override above 16 get multiplier 1 - no edge class, flat everywhere.
     const S32 flat = getSampleCount();
     if (flat <= 8)
     {
@@ -972,7 +1034,22 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
 
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
 {
-    if (!isEnabled() || !sShadersLoaded || gCubeSnapshot || LLPipeline::sRenderingHUDs)
+    const bool enabled = isEnabled();
+    if (!enabled)
+    {
+        // Release the VRAM (29-59 MB, see plan 4b) instead of leaving it
+        // allocated until the next resolution change - isEnabled() already
+        // covers the user setting, shader/deferred/shadow support, and
+        // background isolation, so this only fires while the feature is
+        // genuinely off, not on the transient per-frame conditions below
+        // (cube snapshot, HUD-only render) which do not warrant a release.
+        if (sVolumetricTarget.isComplete() || sTransparencyAtlas.isComplete())
+        {
+            releaseResources();
+        }
+        return;
+    }
+    if (!sShadersLoaded || gCubeSnapshot || LLPipeline::sRenderingHUDs)
     {
         return;
     }
@@ -982,35 +1059,44 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // it contains. Dropping pending diagnostic queries on a live quality or
     // sample-count change is safe and avoids a mixed transition interval.
     static bool timing_initialized = false;
-    static bool timing_high_quality = false;
+    static S32 timing_quality_tier = 0;
     static S32 timing_sample_count = 0;
-    const bool current_high_quality =
-        gSavedSettings.getBOOL("RenderVolumetricLightingHighQuality");
+    const S32 current_quality_tier = getQualityTier();
     const S32 current_sample_count = getSampleCount();
     if (timing_initialized &&
-        (current_high_quality != timing_high_quality ||
+        (current_quality_tier != timing_quality_tier ||
          current_sample_count != timing_sample_count))
     {
         resetVolumetricGpuTiming();
     }
     timing_initialized = true;
-    timing_high_quality = current_high_quality;
+    timing_quality_tier = current_quality_tier;
     timing_sample_count = current_sample_count;
 #endif
 
     // Apply quality changes live. The caller flushes screen before entering
     // this pass, so resizing the AS-owned source target here is safe.
-    static LLCachedControl<bool> high_quality(gSavedSettings,
-        "RenderVolumetricLightingHighQuality", false);
+    const bool full_resolution = isFullResolution();
     const U32 desired_width = llmax((U32)1,
-        high_quality ? screen.getWidth() : screen.getWidth() / 2);
+        full_resolution ? screen.getWidth() : screen.getWidth() / 2);
     const U32 desired_height = llmax((U32)1,
-        high_quality ? screen.getHeight() : screen.getHeight() / 2);
+        full_resolution ? screen.getHeight() : screen.getHeight() / 2);
     if (sVolumetricTarget.getWidth() != desired_width ||
         sVolumetricTarget.getHeight() != desired_height)
     {
         sVolumetricTarget.release();
         sVolumetricTarget.allocate(desired_width, desired_height, GL_RGBA16F);
+    }
+
+    // Lazily re-create the atlas/integral textures if a prior frame
+    // released them because the feature was disabled (plan 4b item 5,
+    // below): allocateResources() derives every target's size from the
+    // screen dimensions the same way this block derives
+    // sVolumetricTarget's, so re-running it here is equivalent to what the
+    // window-resize call site does, just triggered by re-enabling instead.
+    if (!sTransparencyAtlas.isComplete())
+    {
+        allocateResources(screen.getWidth(), screen.getHeight());
     }
 
     if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())

@@ -76,6 +76,10 @@ public:
     // Bind the cumulative depth atlas used by transparent material shaders.
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
+    // 0 Normal, 1 High, 2 Very High, 3 Ultra (RenderVolumetricLightingQuality).
+    static S32 getQualityTier();
+    // True for High/Very High/Ultra (full-resolution target); false for Normal.
+    static bool isFullResolution();
     static S32 getSampleCount();
     static S32 getEdgeSampleMultiplier();
     static F32 getScatterAlbedo();
@@ -134,6 +138,19 @@ private:
     static bool sAtlasConsumerSeen;
     static bool sAtlasProducedThisFrame;
     static U32 sAtlasUnusedFrames;
+
+    // Per-frame cache for bindTransparencyAtlas(), refreshed once per frame
+    // (gFrameCount-guarded) inside bindTransparencyAtlas() itself instead of
+    // per-draw (plan section 2.3): isEnabled()/getDebugMode() (string-keyed
+    // gSavedSettings lookups), getScatterAlbedo/Asymmetry/Density(), and
+    // resolveLandHeightAgent()'s altitude fade, which together are
+    // otherwise recomputed on every alpha/simple/water pool draw call that
+    // consumes the atlas.
+    static bool sFrameAtlasConsumer;
+    static F32  sFrameScatterAlbedo;
+    static F32  sFrameScatterAsymmetry;
+    static F32  sFrameScatterDensity;
+    static F32  sFrameSceneDensity;
 };
 
 #endif // AS_VOLUMETRICLIGHTING_H

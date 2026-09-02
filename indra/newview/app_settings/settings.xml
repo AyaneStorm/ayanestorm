@@ -13214,14 +13214,14 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
-    <key>RenderVolumetricLightingHighQuality</key>
+    <key>RenderVolumetricLightingQuality</key>
     <map>
       <key>Comment</key>
-      <string>Use full-resolution 32-sample directional volumetric lighting instead of the default half-resolution 16-sample path.</string>
+      <string>Volumetric lighting quality tier. 0 - Normal (half resolution, 16 samples, edge-adaptive up to 32), 1 - High (full resolution, 16 samples, edge-adaptive up to 32), 2 - Very High (full resolution, flat 32 samples), 3 - Ultra (full resolution, flat 64 samples).</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
-      <string>Boolean</string>
+      <string>S32</string>
       <key>Value</key>
       <integer>0</integer>
       <key>Backup</key>

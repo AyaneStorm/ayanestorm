@@ -550,6 +550,36 @@ Open scenes: Normal -27%, High -39%. Canopy scenes near break-even (most
 texels are edge-class there, as expected - the saving is realized in
 flat/open regions, which dominate a typical frame).
 
+### 4.3b Quality tiers (Very High / Ultra) - user addition, out of plan scope
+
+Not part of this plan; not reviewed by the plan author. Added 2026-09-03 at
+the user's request, after 4.3 above was closed. Replaces the
+`RenderVolumetricLightingHighQuality` bool with an integer
+`RenderVolumetricLightingQuality` (0 Normal, 1 High, 2 Very High, 3 Ultra)
+and a combo box in the XUI panel.
+
+- Normal and High are UNCHANGED from the closed 4.3 scheme above (flat
+  16/edge 32, half-res vs full-res). No new code path for either.
+- Very High = flat 32, full resolution, no edge class
+  (`getEdgeSampleMultiplier()` returns 1 once flat > 16) - i.e. exactly
+  the `RenderVolumetricLightingSampleCountOverride = 32` configuration
+  already validated as the reference render throughout rounds 1-5 of
+  `volumetric_lighting_sample_count_question.md`. Not new code, not newly
+  tested - reuses the same flat path already exercised extensively.
+- Ultra = flat 64, full resolution, no edge class. Same code path as Very
+  High, double the step count. NOT independently visually verified by the
+  user - no reason specific to expect a new failure mode (identical
+  mechanism to Very High), but nobody has looked at it yet.
+- `getSampleCount()`'s manual override clamp raised from `(4, 32)` to
+  `(4, 64)` so `RenderVolumetricLightingSampleCountOverride` can still
+  reach Ultra's range for debugging.
+
+Files touched beyond 4.3: `asvolumetriclighting.h/.cpp` (new
+`getQualityTier()`/`isFullResolution()`, `getSampleCount()` switch),
+`settings.xml` (new setting, old bool removed - grepped clean, see
+AGENTS.md rule 13), `panel_as_volumetric_lighting.xml` (checkbox ->
+combo_box). Not built or tested by the user as of this note.
+
 ### 4.4 Shadow-space recurrence (optional, after 4.1-4.3 are measured)
 
 Per pixel and per cascade, compute once
@@ -686,13 +716,30 @@ earlier ones are in place.
 
 **Phase C - CPU and memory (1 build, no visual change)**
 
-10. 2.3 per-frame cache for `bindTransparencyAtlas()`; `LLCachedControl`
-    in `isEnabled()`.
-11. 4b item 5: release targets when the feature is disabled, lazy
-    re-allocate.
-12. 2.6 / 4b item 2: `R11F_G11F_B10F` for `sVolumetricTarget` (optional;
-    include only if the user accepted the moonlight banding test).
-13. Set `AS_VOLUMETRIC_PERFORMANCE_LOGGING 0`. User builds.
+10. DONE, built and tested 2026-09-03, no visual regression. 2.3
+    per-frame cache for `bindTransparencyAtlas()` (refreshed once per
+    frame via a `gFrameCount` guard inside the function itself, since
+    `renderPass()` early-returns whenever the feature is disabled and is
+    not a reliable once-per-frame call site); `LLCachedControl` in
+    `isEnabled()`.
+11. DONE, built and tested 2026-09-03. 4b item 5: `renderPass()` releases
+    `sVolumetricTarget`/`sTransparencyAtlas`/the integral textures via the
+    existing `releaseResources()` the frame the feature transitions to
+    disabled; lazily re-allocated via `allocateResources()` when
+    `sTransparencyAtlas` is found incomplete on a later enabled frame.
+    User confirmed: toggling on/off repeatedly, mid-transparency-draw,
+    and across quality tiers all look clean, no flicker/glitch. VRAM
+    delta is real but small relative to the user's 12 GB card - expected,
+    matches the plan's own ~29-59 MB estimate.
+12. NOT DONE - deferred, not scheduled. 2.6 / 4b item 2:
+    `R11F_G11F_B10F` for `sVolumetricTarget`. Needs the moonlight-banding
+    test (dim scatter, debug mode 0, moon up) before either applying it
+    directly to existing tiers or considering a `1c` follow-up idea (a
+    "Low" tier reusing Normal's resolution/step count with this format
+    for extra VRAM/bandwidth savings) - not decided, held pending the
+    test result.
+13. Set `AS_VOLUMETRIC_PERFORMANCE_LOGGING 0`. Done as part of closing
+    section 4.3 above.
 
 **Phase D - optional, only if Phase B misses the target**
 
