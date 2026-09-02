@@ -148,7 +148,7 @@ silently shipped.
 | 2.1 blue-noise binding fix | Removes a ghost artifact. | Improvement |
 | 2.3, 2.4, 2.6 CPU/uniform cleanups | Bit-identical output. | Lossless |
 | 2.5 linear depth in composite | Same depth value via a cheaper formula; drop of the normal guide removes false rejection of scatter on curved continuous surfaces. | Lossless / slight improvement |
-| Section 3 Bayer 4x4 + 4x4 gather | Replaces the IGN lattice (which needed a blur to hide) with exact stratification. Fewer bands, no ghosts, sharper silhouettes because the gather is depth-aware at 16 taps instead of 9. | Improvement |
+| Section 3 Bayer 4x4 + 4x4 gather | Replaces the IGN lattice (which needed a blur to hide) with exact stratification. Fewer bands, no ghosts, sharper silhouettes because the gather is depth-aware at 16 taps instead of 9. Requires UNIFORM (box) phase weights; a tent gather ghosts (2026-09-02 build). | Improvement |
 | 4.1 one hardware-bilinear fetch instead of 5 taps | Per-step shadow edge is slightly less soft (2x2 vs ~4x4 texel footprint). Because every pixel integrates 8-32 steps and the 4x4 gather averages 16 pixels, the softening the 5-tap provided is reproduced by the integration and filter. Expected to be indistinguishable in stills and motion; contact shadows inside thin shafts are the place to look. | Trade, expected unnoticeable; verify |
 | 4.2 single-cascade selection | Cross-fade is a surface-shading device. Inside the integral, a hard split changes shadow-map texel size at one depth; jitter and the gather blend it. Possible faint band at a split with very fine occluders (foliage). Ship only behind the `#define` and only if no band is visible at all four splits in motion. | Trade, must verify; revert if visible |
 | 4.3 fewer steps per pixel (8/12) with interleaved sampling | Effective samples per 4x4 block rise from 16 (today, with IGN's approximate 3x3 stratification) to 128-192 with exact stratification. Per-pixel raw noise before the gather is higher; after the gather it is lower than today. If 12 shows any banding in High, use 16 (still 2x cheaper than 32 and, after the gather, better than today's 32). | Improvement after filter; verify count |
@@ -329,9 +329,11 @@ float volumetricJitter(vec2 screen_pos)
 
 Composite (`asVolumetricCompositeF.glsl`): replace the 2x2 bilateral
 upsample + 3x3 blur with ONE depth-aware gather over the 4x4 source-texel
-window `floor(source_position) - 1 .. + 2` (16 scatter taps, 16 depth taps
-using 2.5's cheap linear depth). Weight = bilinear tent over the window
-(or plain box) x `depthSimilarity`. Keep the existing bilinear fallback
+window `floor(src + 0.5) - 2 .. + 1` (16 scatter taps, 16 depth taps
+using 2.5's cheap linear depth). Weight = plain BOX (uniform) x
+`depthSimilarity`. NOT a tent: the 16 Bayer phases must be averaged with
+equal weight or step-shell silhouette copies survive (tried; produced the
+ghost documented in `volumetric_lighting_bayer_ghost_report.md`). Keep the existing bilinear fallback
 when the weight sum is ~0. This single path serves both Normal (source =
 half res) and High (source = full res); `depthAwareUpsample` and
 `scatterBlurStrength/Radius` become unnecessary. Remove the
@@ -342,35 +344,42 @@ Reference implementation (replaces everything in `main()` after the
 `linearDepth(getDepth(uv), zNear, zFar)` from 2.5):
 
 ```glsl
+const float MAX_MARCH_DISTANCE = 128.0; // same as the raymarch shaders
+
 float depthWeight(float tap_depth, float center_depth)
 {
+    // Rays beyond MAX_MARCH_DISTANCE are identical for scatter: never
+    // reject sky vs. far geometry. 64.0/16.0 starved dense foliage of
+    // taps and let the raw dither through (2026-09-02); 8.0 keeps leaf-gap
+    // variation (rel ~0.1 -> 0.45) and still kills sky-vs-near (rel ~1).
+    tap_depth    = min(tap_depth, MAX_MARCH_DISTANCE);
+    center_depth = min(center_depth, MAX_MARCH_DISTANCE);
     float rel = abs(tap_depth - center_depth) / max(max(tap_depth, center_depth), 1.0);
-    return exp(-rel * 64.0);
+    return exp(-rel * 8.0);
 }
 
 vec3 gatherScatter(vec2 uv, float center_depth)
 {
-    // Source texel containing this display pixel, and the 4x4 window
-    // floor-1 .. floor+2 around it. Works for both half-res and full-res
-    // sources; at full res the window is the pixel's own 4x4 Bayer block
-    // neighbourhood.
+    // Nearest 4x4 source texels (window centre within 0.5 texel of src).
+    // UNIFORM spatial weight: a sliding 4x4 box over the 4-periodic Bayer
+    // tile contains each of the 16 phases exactly once at any offset, so
+    // every block averages 16 x steps shells. A tent (1-f,2-f,1+f,f)
+    // weights phases unequally (one phase up to 25%, one column/row 0 at
+    // f~0) and leaves step-shell silhouette copies visible - see
+    // volumetric_lighting_bayer_ghost_report.md.
     vec2 src = uv / emissiveRectDelta - 0.5;
-    vec2 base = floor(src);
-    vec2 f = src - base;
+    vec2 base = floor(src + 0.5);
     vec2 min_uv = emissiveRectDelta * 0.5;
     vec2 max_uv = vec2(1.0) - min_uv;
     vec3 sum = vec3(0.0);
     float wsum = 0.0;
-    for (int y = -1; y <= 2; ++y)
+    for (int y = -2; y <= 1; ++y)
     {
-        // Tent in y: distance from the sub-texel position, width 2 texels.
-        float wy = max(0.0, 2.0 - abs(float(y) - f.y));
-        for (int x = -1; x <= 2; ++x)
+        for (int x = -2; x <= 1; ++x)
         {
-            float wx = max(0.0, 2.0 - abs(float(x) - f.x));
             vec2 tap_uv = clamp((base + vec2(float(x), float(y)) + 0.5) * emissiveRectDelta,
                                 min_uv, max_uv);
-            float w = wx * wy * depthWeight(linearViewDepth(tap_uv), center_depth);
+            float w = depthWeight(linearViewDepth(tap_uv), center_depth);
             sum += texture(emissiveRect, tap_uv).rgb * w;
             wsum += w;
         }
@@ -389,15 +398,18 @@ frag_color = vec4(s, compositeTransmittance(d));`. Modes 2/3/10/11 keep the
 plain `texture()` sample. Delete `depthSimilarity`, `normalSimilarity`,
 `depthAwareScatterBlur`, the `depthAwareUpsample`, `scatterBlurStrength`
 and `scatterBlurRadius` uniforms, and the `NORMAL_MAP` bind in
-`draw_composite`. The tent weights already give bilinear reconstruction at
-Normal, so no separate upsample step is needed.
+`draw_composite`. The box over the nearest 4x4 source texels replaces the
+old bilinear upsample at Normal; no separate upsample step is needed.
 
 Cost note: 32 fetches/pixel at 8.4M pixels is ~0.4-0.6 ms in High. If that
 shows up in timing, make it separable: a horizontal 4-tap pass into a
 second source-res target, vertical 4-tap in the composite (8+8 fetches).
 Start with the single 16-tap gather; it is simpler.
 
-Debug: keep modes 2/3 unfiltered; apply the gather in mode 1.
+Debug: keep modes 2/3 unfiltered; apply the gather in mode 1. With
+interleaved sampling, mode 2/3 raw output ALWAYS shows 4x4 dither and
+displaced step-shell copies of occluder silhouettes; that is expected and
+not a bug. Judge ghosts/banding in modes 0/1 only.
 
 ## 4. Directional Raymarch Speed-Ups (in priority order)
 
@@ -623,6 +635,12 @@ earlier ones are in place.
    `ASBlueNoise` entry from `textures.xml`; list both PNGs for the user to
    delete. Grep `indra/newview` for every removed name before finishing.
 9. Set `AS_VOLUMETRIC_PERFORMANCE_LOGGING 1`. User builds and captures.
+9b. (Added 2026-09-02: the step-9 build showed ray-locked canopy ghosts
+    in modes 0/1.) Replace the composite tent weights with the uniform
+    box in the section 3 reference; `depthWeight` per section 3 (clamp
+    to 128, exponent 8.0). User builds. If modes 0/1 still ghost, test `SampleCountOverride` 16
+    before touching anything else. See
+    `volumetric_lighting_bayer_ghost_report.md`.
 
 **Phase C - CPU and memory (1 build, no visual change)**
 

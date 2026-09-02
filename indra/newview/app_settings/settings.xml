@@ -13240,45 +13240,6 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
-    <key>RenderVolumetricLightingBlueNoiseStrength</key>
-    <map>
-      <key>Comment</key>
-      <string>Development diagnostic blend between coherent interleaved volumetric ray jitter (0) and fully decorrelated blue-noise jitter (1).</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>F32</string>
-      <key>Value</key>
-      <real>0.0</real>
-      <key>Backup</key>
-      <integer>0</integer>
-    </map>
-    <key>RenderVolumetricLightingBlurStrength</key>
-    <map>
-      <key>Comment</key>
-      <string>Development diagnostic strength for the depth-aware volumetric scatter cross filter. 0 disables it and 1 applies the complete filter.</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>F32</string>
-      <key>Value</key>
-      <real>1.0</real>
-      <key>Backup</key>
-      <integer>0</integer>
-    </map>
-    <key>RenderVolumetricLightingBlurRadius</key>
-    <map>
-      <key>Comment</key>
-      <string>Development diagnostic radius in source texels for the volumetric scatter filter. Valid range is 1 to 2.</string>
-      <key>Persist</key>
-      <integer>0</integer>
-      <key>Type</key>
-      <string>F32</string>
-      <key>Value</key>
-      <real>2.0</real>
-      <key>Backup</key>
-      <integer>0</integer>
-    </map>
     <key>RenderVolumetricLightingDensity</key>
     <map>
       <key>Comment</key>

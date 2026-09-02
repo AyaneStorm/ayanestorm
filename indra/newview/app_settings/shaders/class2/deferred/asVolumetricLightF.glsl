@@ -29,17 +29,6 @@ out vec4 frag_color;
 
 in vec2 vary_fragcoord;
 
-uniform vec3  sun_dir;
-uniform vec3  moon_dir;
-uniform int   sun_up_factor;
-uniform vec3  sunlight_color;
-uniform vec3  moonlight_color;
-uniform vec3  moon_horizon_tint;
-uniform float moon_horizon_tint_strength;
-uniform float moon_horizon_elevation;
-uniform float moon_horizon_tint_height;
-uniform float moon_phase_illumination;
-
 uniform int   sample_count;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
@@ -48,8 +37,6 @@ uniform vec3  as_active_light_dir;
 uniform vec3  as_active_light_color;
 uniform vec2  as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 uniform vec4  shadow_clip;
-uniform sampler2D blueNoiseMap;
-uniform float blueNoiseStrength;
 
 // TEMPORARY development aid - remove once the effect is confirmed working.
 // 0: normal. 1: (unused here, composite pass handles the "replace screen"
@@ -76,15 +63,9 @@ vec4 getPosition(vec2 pos_screen);
 float getDepth(vec2 pos_screen);
 vec3 getPositionWithNDC(vec3 ndc);
 
-// The known-working, real shadow entry point used by every other caller in
-// this codebase (sunLightF.glsl, alphaF.glsl, materialF.glsl, waterF.glsl,
-// etc.) - defined in shadowUtil.glsl, forward-declared here the same way
-// those callers do it. A custom single-cascade selector was tried here
-// first and produced ~100% occlusion everywhere despite the cascade index
-// mapping, matrix math, GL_TEXTURE_COMPARE_FUNC, and edge-clamp behavior
-// all checking out individually under static review - rather than keep
-// debugging a reimplementation, this calls the exact function every other
-// shadow-consuming shader in the codebase already relies on.
+// Defined in asVolumetricShadowUtil.glsl, which this program links in
+// separately (see AS_VOL_SINGLE_CASCADE there for the current single-cascade,
+// single-fetch selector).
 float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen);
 
 // Henyey-Greenstein phase function: biases in-scatter toward (g > 0) or away
@@ -97,28 +78,19 @@ float phaseHG(float cos_theta, float g)
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
-// Interleaved gradient noise keeps neighbouring first-sample offsets coherent
-// enough to avoid the displaced shadow silhouettes produced by fully
-// decorrelated blue noise. Its fine lattice is handled by the composite filter.
-float interleavedGradientNoise(vec2 screen_pos)
-{
-    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(screen_pos, magic.xy)));
-}
-
+// 4x4 Bayer matrix: exactly stratified offsets over a 4x4 pixel block, so the
+// composite's 4x4 depth-aware gather reconstructs 16x sample_count uniformly
+// spaced samples per block with no lattice bands and no silhouette ghosts
+// (see doc/volumetric_lighting_bugfix_and_speedup_plan.md section 3).
 float volumetricJitter(vec2 screen_pos)
 {
-    float coherent_jitter = interleavedGradientNoise(screen_pos);
-    if (blueNoiseStrength <= 0.0)
-    {
-        return coherent_jitter;
-    }
-
-    ivec2 noise_size = textureSize(blueNoiseMap, 0);
-    ivec2 pixel = ivec2(screen_pos) % noise_size;
-    float blue_jitter = texelFetch(blueNoiseMap, pixel, 0).a;
-    return mix(coherent_jitter, blue_jitter,
-               clamp(blueNoiseStrength, 0.0, 1.0));
+    const float bayer[16] = float[16](
+         0.0,  8.0,  2.0, 10.0,
+        12.0,  4.0, 14.0,  6.0,
+         3.0, 11.0,  1.0,  9.0,
+        15.0,  7.0, 13.0,  5.0);
+    ivec2 p = ivec2(screen_pos) & 3;
+    return (bayer[p.y * 4 + p.x] + 0.5) / 16.0;
 }
 
 // Real angular radius of the sun/moon as seen from a planetary surface is

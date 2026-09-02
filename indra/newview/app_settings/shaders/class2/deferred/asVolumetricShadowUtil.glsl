@@ -19,21 +19,13 @@ uniform mat4 shadow_matrix[6];
 uniform vec4 shadow_clip;
 uniform float shadow_bias;
 
-float asVolumetricPCFShadow(sampler2DShadow shadow_map, vec4 stc,
-                            vec2 pos_screen)
-{
-    stc.xyz /= stc.w;
-    stc.z += shadow_bias * 2.0;
-    stc.x = floor(stc.x * shadow_res.x +
-                  fract(pos_screen.y * shadow_res.y)) / shadow_res.x;
+#define AS_VOL_SINGLE_CASCADE 1
 
-    float center = texture(shadow_map, stc.xyz);
-    float shadow = center * 4.0;
-    shadow += texture(shadow_map, stc.xyz + vec3( 1.5 / shadow_res.x,  0.5 / shadow_res.y, 0.0));
-    shadow += texture(shadow_map, stc.xyz + vec3( 0.5 / shadow_res.x, -1.5 / shadow_res.y, 0.0));
-    shadow += texture(shadow_map, stc.xyz + vec3(-1.5 / shadow_res.x, -0.5 / shadow_res.y, 0.0));
-    shadow += texture(shadow_map, stc.xyz + vec3(-0.5 / shadow_res.x,  1.5 / shadow_res.y, 0.0));
-    return clamp(shadow * 0.125, 0.0, 1.0);
+float asVolumetricShadowFetch(sampler2DShadow shadow_map, vec4 stc)
+{
+    stc.xyz /= stc.w;               // orthographic: w == 1, kept for safety
+    stc.z += shadow_bias * 2.0;
+    return texture(shadow_map, stc.xyz); // hardware bilinear 2x2 compare
 }
 
 float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
@@ -48,6 +40,30 @@ float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
         return 1.0;
     }
 
+#if AS_VOL_SINGLE_CASCADE
+    // Hard cascade split (no cross-fade): the volumetric integral plus the
+    // interleaved reconstruction filter already blends across depth, so a
+    // single texel-perfect cascade avoids the four-comparison weighted
+    // blend entirely. See doc/volumetric_lighting_bugfix_and_speedup_plan.md
+    // section 4.2.
+    if (spos.z < -shadow_clip.z)
+    {
+        float shadow = asVolumetricShadowFetch(shadowMap3, shadow_matrix[3] * spos);
+        // Same far fade as upstream so visibility reaches 1 at shadow_clip.w.
+        shadow += max((spos.z + shadow_clip.z) /
+                      (shadow_clip.z - shadow_clip.w) * 2.0 - 1.0, 0.0);
+        return clamp(shadow, 0.0, 1.0);
+    }
+    if (spos.z < -shadow_clip.y)
+    {
+        return asVolumetricShadowFetch(shadowMap2, shadow_matrix[2] * spos);
+    }
+    if (spos.z < -shadow_clip.x)
+    {
+        return asVolumetricShadowFetch(shadowMap1, shadow_matrix[1] * spos);
+    }
+    return asVolumetricShadowFetch(shadowMap0, shadow_matrix[0] * spos);
+#else
     vec4 near_split = shadow_clip * -0.75;
     vec4 far_split = shadow_clip * -1.25;
     vec4 transition_domain = near_split - far_split;
@@ -58,9 +74,7 @@ float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
     {
         float w = 1.0;
         w -= max(spos.z - far_split.z, 0.0) / transition_domain.z;
-        shadow += asVolumetricPCFShadow(shadowMap3,
-                                        shadow_matrix[3] * spos,
-                                        pos_screen) * w;
+        shadow += asVolumetricShadowFetch(shadowMap3, shadow_matrix[3] * spos) * w;
         weight += w;
         // Preserve the viewer's far-cascade fade exactly.
         shadow += max((sample_pos.z + shadow_clip.z) /
@@ -72,9 +86,7 @@ float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
         float w = 1.0;
         w -= max(spos.z - far_split.y, 0.0) / transition_domain.y;
         w -= max(near_split.z - spos.z, 0.0) / transition_domain.z;
-        shadow += asVolumetricPCFShadow(shadowMap2,
-                                        shadow_matrix[2] * spos,
-                                        pos_screen) * w;
+        shadow += asVolumetricShadowFetch(shadowMap2, shadow_matrix[2] * spos) * w;
         weight += w;
     }
 
@@ -83,9 +95,7 @@ float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
         float w = 1.0;
         w -= max(spos.z - far_split.x, 0.0) / transition_domain.x;
         w -= max(near_split.y - spos.z, 0.0) / transition_domain.y;
-        shadow += asVolumetricPCFShadow(shadowMap1,
-                                        shadow_matrix[1] * spos,
-                                        pos_screen) * w;
+        shadow += asVolumetricShadowFetch(shadowMap1, shadow_matrix[1] * spos) * w;
         weight += w;
     }
 
@@ -93,11 +103,10 @@ float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen)
     {
         float w = 1.0;
         w -= max(near_split.x - spos.z, 0.0) / transition_domain.x;
-        shadow += asVolumetricPCFShadow(shadowMap0,
-                                        shadow_matrix[0] * spos,
-                                        pos_screen) * w;
+        shadow += asVolumetricShadowFetch(shadowMap0, shadow_matrix[0] * spos) * w;
         weight += w;
     }
 
     return shadow / weight;
+#endif
 }

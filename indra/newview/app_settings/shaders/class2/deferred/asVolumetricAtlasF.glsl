@@ -41,16 +41,6 @@ out vec4 frag_color;
 layout(location = 1) out float integral_out;
 in vec2 vary_fragcoord;
 
-uniform vec3 sun_dir;
-uniform vec3 moon_dir;
-uniform int sun_up_factor;
-uniform vec3 sunlight_color;
-uniform vec3 moonlight_color;
-uniform vec3 moon_horizon_tint;
-uniform float moon_horizon_tint_strength;
-uniform float moon_horizon_elevation;
-uniform float moon_horizon_tint_height;
-uniform float moon_phase_illumination;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
@@ -93,10 +83,19 @@ float phaseHG(float cos_theta, float g)
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
-float interleavedGradientNoise(vec2 p)
+// Same 4x4 Bayer pattern as asVolumetricLightF.glsl's volumetricJitter(),
+// for consistency between the directional raymarch and the atlas (see
+// doc/volumetric_lighting_bugfix_and_speedup_plan.md item 2.6). Slice index
+// offsets the pattern so the 16 slices do not all dither identically.
+float volumetricJitter(vec2 screen_pos, int slice)
 {
-    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(p, magic.xy)));
+    const float bayer[16] = float[16](
+         0.0,  8.0,  2.0, 10.0,
+        12.0,  4.0, 14.0,  6.0,
+         3.0, 11.0,  1.0,  9.0,
+        15.0,  7.0, 13.0,  5.0);
+    ivec2 p = (ivec2(screen_pos) + ivec2(slice * 7, slice * 5)) & 3;
+    return (bayer[p.y * 4 + p.x] + 0.5) / 16.0;
 }
 
 void main()
@@ -124,8 +123,7 @@ void main()
     float segment_near = near_fraction * near_fraction * MAX_MARCH_DISTANCE;
     float segment_far = far_fraction * far_fraction * MAX_MARCH_DISTANCE;
     float segment_length = segment_far - segment_near;
-    float jitter = interleavedGradientNoise(
-        screen_uv * vec2(4096.0, 2160.0) + vec2(float(slice_index) * 17.0));
+    float jitter = volumetricJitter(gl_FragCoord.xy, slice_index);
     float sample_distance = mix(segment_near, segment_far, jitter);
     vec3 sample_pos = ray_dir * sample_distance;
     float visibility = sample_pos.z <= -shadow_clip.w
