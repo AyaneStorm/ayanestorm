@@ -94,7 +94,8 @@ Fix A applied 2026-09-03: `draw_info->mHasGlow = true;` added in
 `LLVolumeGeometryManager::registerFace()` (`llvovolume.cpp`, new-info `else`
 branch, right after `draw_info->mModelMatrix = model_mat;`), tagged. Comment
 above `drop_no_glow` in `fsexactoit.cpp` corrected to match. No shader
-source changed; no shader cache revision bump needed.
+source changed; no shader cache revision bump needed. Verified in testing:
+lamp glows again in Exact OIT, matching vanilla and AVBOIT.
 
 ## Verify
 
