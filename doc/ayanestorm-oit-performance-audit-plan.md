@@ -53,7 +53,7 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 | 2026-09-03 | Fence wait residual cost | found: ~8.5ms/frame CPU stall in `waitValidation()` even with zero transparent geometry on screen (35 vs 45 FPS), surviving E4/E7/E9/E11. Root cause is architectural (the fence forces a synchronous CPU/GPU rendezvous every frame, absorbing whatever GPU backlog already existed from the rest of the pipeline), not a bug in any implemented item. Not fixed; details and why in `ayanestorm-oit-fence-wait-residual-cost.md`. GPU-side `Exact OIT capture` zone broken into sub-zones and confirmed to be the same mechanism (98% of it lands on the `glFenceSync`/copy call) — one cost, not two; doc updated |
 | 2026-09-03 | E2-B | committed. `mHasGlow` now means "actually non-zero glow" (was "wrote any glow data", always true for particles); Exact OIT drops zero-glow emissive draws before dispatch. Vanilla unaffected (selects by `TYPE_EMISSIVE`, never reads `mHasGlow`) |
 | 2026-09-03 | E10a + E10b | committed. Initial pool 4x -> 2x w*h, floored at both retained capacity and peakNodes*5/4 (survives resize after a shrink). New rolling 600-frame demand window in `waitValidation()`; shrinks to `max(initialCapacity, windowPeak*2)` when peak stays under capacity/4 for a full window, deferred to `beginFrame()` (same race-avoidance pattern as E1 growth). Mutually exclusive with a same-frame growth request by construction. Verified in the log: grew 19M -> 38M -> 67M nodes under sprite load, correctly shrank to ~9.7M once demand dropped and a full window elapsed. E10c (opaque copy via texture barrier) skipped — confirmed low-value by `ayanestorm-oit-fence-wait-residual-cost.md` (55.69µs mean, <0.5% of the real fixed cost) |
-| 2026-09-03 | E12 | item 1 fixed: removed the `!FSOITDispatcher::captureCompleted()` clause added to the DoF depth-only alpha pass in `lldrawpoolalpha.cpp`, restoring vanilla behaviour. Confirmed safe: `renderGeomPostDeferred()` (which runs this pass) completes before `FSOITDispatcher::finishFrame()`/composite() is even called (see `pipeline.cpp`), so composite never observed these depth writes either way — the guard bought nothing, it only cost DoF focus on transparent surfaces while Exact OIT was active. Item 2 (rigged alpha depth) needs no change per the plan's own "document only" call. Not yet built/tested |
+| 2026-09-03 | E12 | committed. Item 1 fixed: removed the `!FSOITDispatcher::captureCompleted()` clause added to the DoF depth-only alpha pass in `lldrawpoolalpha.cpp`, restoring vanilla behaviour. Confirmed safe by call-ordering (`renderGeomPostDeferred()` completes before composite() is even called) and visually: with focus locked on a sand wall, a foreground palm frond now correctly blurs instead of staying artificially sharp. Item 2 (rigged alpha depth) needs no change per the plan's own "document only" call |
 
 Two plan defects were found by implementation so far, both mine: E4 mapped
 the atomically written buffer, and E1 reallocated mid-frame. Both corrected
@@ -896,6 +896,21 @@ diagnostics; the payload struct must stay 16-byte aligned in std430
 
 **Gain:** unknown until measured; likely 10–30% of the sort cost in deep-list
 scenes. Skip if E5/E6 already make sorting negligible in the profile.
+
+**MEASURED (2026-09-03), skip this item.** Tracy capture in a deliberately
+deep-list scene (avatar with alpha hair posing in front of a heavy sprite
+field, ~190 frames): `Exact OIT natural sort` 205.32 µs mean (85/189 frames —
+most frames stayed under E5's shallow threshold K and never call it),
+`Exact OIT natural sort pass` 192.4 µs mean, `Exact OIT speculative sort
+pass` (E4's pass 1, runs every frame) 240.03 µs mean. Sorting costs low
+hundreds of microseconds total per frame even here — the same order as
+composite (418.85 µs) and final blend (268.97 µs), two orders of magnitude
+below the real costs in this same trace: `Exact OIT capture` 5.6 ms mean and
+`Exact OIT capture readback copy + fence` 4.88 ms mean (see
+`ayanestorm-oit-fence-wait-residual-cost.md` — same architectural fence
+issue, confirmed present here too via the CPU-side `Exact OIT fence wait`
+zone at 9.02 ms mean). E5/E6 already made sorting negligible, exactly the
+condition the plan names for skipping E8. Not implemented.
 
 ---
 
