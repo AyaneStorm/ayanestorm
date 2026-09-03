@@ -11982,6 +11982,19 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Backup</key>
     <integer>0</integer>
   </map>
+  <key>RenderAVBOITFrontLayers</key>
+  <map>
+    <key>Comment</key>
+    <string>A9: give the two nearest transparent layers at each pixel an exact source-over weight instead of the volume's per-8x8-cell approximation. Fixes an under-garment popping through a dress and darkened patches in dense hair, both cases where the volume's cell average let a fragment behind the true front layer win. Layers past the second still use the volume, bounded so they can never outweigh what the two exact layers allow. Disable to compare against the pre-A9 volume-only estimate.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+    <key>Backup</key>
+    <integer>0</integer>
+  </map>
   <!-- </AS:Chanayane> -->
   <key>RenderDeferredNoise</key>
   <map>

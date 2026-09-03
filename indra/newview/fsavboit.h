@@ -59,6 +59,12 @@ public:
     static void configureDirectRasterShader(LLGLSLShader* shader);
     static void rasterizeConservativeBounds();
     static void finishDirectOccupancy();
+    // A9: the pass-1 (extinction raster) setup that used to be
+    // finishDirectOccupancy()'s last two lines, split out so
+    // renderPostDeferredCapture() can insert pass 3 (front key) between
+    // finishDirectOccupancy()'s compute/cell-depth-bake work and pass 1's
+    // own target bind, while gAVBOITOpaqueTarget is the current target.
+    static void beginPass1();
     static void finishDirectExtinction();
     static void finishDirectColorRaster();
     static bool finishDirectFrame(LLRenderTarget& screen);
@@ -90,6 +96,13 @@ private:
         GLuint accumulatedColorGlow = 0;
         GLuint accumulatedWeight = 0;
         GLuint accumulatedExtinction = 0;
+        // A9: per-pixel front key (nearest, second-nearest distinct depth),
+        // full resolution. See FSAVBOIT::renderPostDeferredCapture()'s pass 3.
+        GLuint frontKey0 = 0;
+        GLuint frontKey1 = 0;
+        // FBO wrapping frontKey0/frontKey1 as color attachments, used only by
+        // the glClearTexImage fallback path (drivers below GL 4.4).
+        GLuint frontKeyFBO = 0;
         U32 volumeWidth = 0;
         U32 volumeHeight = 0;
         U32 viewportWidth = 0;

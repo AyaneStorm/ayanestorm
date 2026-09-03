@@ -44,6 +44,12 @@ const int AVBOIT_RANGE_TILE = 16;
 // avboitCaptureF.glsl, which every raster program shares uniform uploads
 // with (FSAVBOIT::configureDirectRasterShader()).
 uniform int avboitPass1Subsample;
+// A9: per-pixel exact front-two-layer key. Must match avboitCaptureF.glsl's
+// declarations exactly -- see doc/ayanestorm-oit-performance-audit-plan.md's
+// A9 section for the full design.
+uniform int avboitFrontLayers;
+layout(binding = 0, r32ui) uniform coherent uimage2D avboitFrontKey0;
+layout(binding = 1, r32ui) uniform coherent uimage2D avboitFrontKey1;
 
 uint avboit_glow_proxy_bounds_offset()
 {
@@ -281,8 +287,40 @@ void avboit_store_glow(float glow)
                         vec3(sample_xy, (sample_slice + 0.5) /
                             float(AVBOIT_DIRECT_SLICES))).r;
         }
+        // A9: same front-key bound as avboitCaptureF.glsl's colour path.
+        // Glow-only fragments (this shader) share their surface's depth
+        // with its colour fragment, so a front-surface glow texel's
+        // gl_FragCoord.z matches key0 exactly and gets front_factor = 1,
+        // same as vanilla's unattenuated emissive.
+        uint my_depth = uint(
+            clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+        uint key0 = imageLoad(avboitFrontKey0, pixel).r;
+        uint key1 = imageLoad(avboitFrontKey1, pixel).r;
+        float key_alpha0 = key0 == 0xffffffffu ?
+            0.0 : float(key0 & 255u) / 255.0;
+        float key_alpha1 = key1 == 0xffffffffu ?
+            0.0 : float(key1 & 255u) / 255.0;
+        float front_factor;
+        if (avboitFrontLayers != 0 && key0 != 0xffffffffu &&
+            my_depth == (key0 >> 8u))
+        {
+            front_factor = 1.0;
+        }
+        else if (avboitFrontLayers != 0 && key1 != 0xffffffffu &&
+                 my_depth == (key1 >> 8u))
+        {
+            front_factor = 1.0 - key_alpha0;
+        }
+        else if (avboitFrontLayers != 0)
+        {
+            front_factor = min(front, (1.0 - key_alpha0) * (1.0 - key_alpha1));
+        }
+        else
+        {
+            front_factor = front;
+        }
         avboitAccumulatedColorGlow =
-            vec4(0.0, 0.0, 0.0, max(glow, 0.0) * front);
+            vec4(0.0, 0.0, 0.0, max(glow, 0.0) * front_factor);
         avboitAccumulatedWeight = 0.0;
         avboitAccumulatedExtinction = 0.0;
         return;

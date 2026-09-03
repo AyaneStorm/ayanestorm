@@ -209,8 +209,10 @@ void main()
     }
 
     // <AS:Chanayane> AVBOIT prepasses stop after GLTF base-alpha evaluation.
+    // Also covers A9's pass 3 (front key), which needs only alpha.
+    // if (avboitRasterPass < 2)
     #if defined(AVBOIT) && defined(ALPHA_BLEND)
-    if (avboitRasterPass < 2)
+    if (avboitRasterPass != 2)
     {
         // Lit GLTF's final alpha applies vertex alpha a second time below;
         // extinction and weighted color must use the same surface opacity.

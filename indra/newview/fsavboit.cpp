@@ -66,6 +66,7 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass) {}
 void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader) {}
 void FSAVBOIT::rasterizeConservativeBounds() {}
 void FSAVBOIT::finishDirectOccupancy() {}
+void FSAVBOIT::beginPass1() {}
 void FSAVBOIT::finishDirectExtinction() {}
 void FSAVBOIT::finishDirectColorRaster() {}
 bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen) { return false; }
@@ -183,7 +184,29 @@ S32 debugMode()
 {
     static LLCachedControl<S32> debug_mode(
         gSavedSettings, "RenderAVBOITDebugMode", 0);
+    // A9 names debug modes 16/17 (front-key diagnostics) but they are not
+    // implemented -- the resolve compute shader is already at GL's 8-image-
+    // unit limit and both spare slots (6/7) are format-mismatched or
+    // already spoken for; see doc/ayanestorm-oit-performance-audit-plan.md
+    // A9's "Diagnostics" section and the AVBOIT hair-flicker-regression-todo
+    // doc's A9 implementation notes for the binding conflict.
     return llclamp(S32(debug_mode), 0, 15);
+}
+
+// A9: per-pixel exact front-two-layer key. Without it, a hair strand or
+// sheer garment layer's weight comes from the volume's per-8x8-cell summed
+// extinction, which mixes in whatever else shares that cell's slices --
+// the sheer-over-sheer and hair-lighter-than-vanilla bugs. With it, the two
+// nearest distinct-depth fragments at a pixel get an exact source-over
+// weight (see doc/ayanestorm-oit-performance-audit-plan.md A9's proof);
+// only the third and deeper layers still fall back to the volume. Default
+// on so the fix is live by default; exposed as a live A/B toggle since the
+// plan's design keeps both code paths for exactly that comparison.
+bool frontLayers()
+{
+    static LLCachedControl<bool> front_layers(
+        gSavedSettings, "RenderAVBOITFrontLayers", true);
+    return front_layers;
 }
 
 // Self-occlusion bias in virtual slices, clamped to the range the sampling
@@ -834,6 +857,33 @@ bool FSAVBOIT::renderPostDeferredCapture(
         finishDirectOccupancy();
     }
     {
+        // A9: full-resolution front-key pass. Must run before
+        // finishDirectExtinction()'s conservative early-depth-tile raster
+        // (dispatched from inside the following extinction-integration
+        // block below), otherwise a tile could reject a fragment that is a
+        // legitimate second layer. gAVBOITOpaqueTarget is already the
+        // current target here (finishDirectOccupancy() leaves it bound,
+        // see its trailing comment); pass 3 draws into it directly, same as
+        // pass 0's occupancy raster does.
+        LL_PROFILE_GPU_ZONE("AVBOIT front key raster");
+        beginDirectRasterPass(3);
+        render_pass(true);
+        {
+            // GLTF scene geometry is traversed outside the alpha spatial-
+            // group draw maps render_pass() covers -- see the identical
+            // block for pass 0's occupancy raster above.
+            LLGLDepthTest depth_test(GL_TRUE, GL_FALSE, GL_LEQUAL);
+            LLGLDisable blend(GL_BLEND);
+            sCaptureActive = true;
+            LL::GLTFSceneManager::instance().render(false, false);
+            LL::GLTFSceneManager::instance().render(false, true);
+            LL::GLTFSceneManager::instance().render(false, false, true);
+            LL::GLTFSceneManager::instance().render(false, true, true);
+            sCaptureActive = false;
+        }
+        beginPass1();
+    }
+    {
         LL_PROFILE_GPU_ZONE("AVBOIT extinction raster");
         render_pass(true);
     }
@@ -887,8 +937,11 @@ bool FSAVBOIT::handleCapturedEmissives(
     }
     // Pass 1 (extinction raster) never stores glow: avboit_store_glow()
     // returns immediately for it. Skip the draws entirely instead of paying
-    // for vertex transform + texture fetch just to hit that return.
-    if (!depth_only && sDirectRasterPass != 1)
+    // for vertex transform + texture fetch just to hit that return. A9's
+    // pass 3 (front key) has no glow store at all -- it only needs alpha,
+    // via the shared shaders' own early-return for that pass -- so skip it
+    // there too.
+    if (!depth_only && sDirectRasterPass != 1 && sDirectRasterPass != 3)
     {
         if (sDirectRasterPass == 2)
         {
@@ -1065,9 +1118,27 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
                                 GL_R16F, width, height);
     allocateAccumulationTexture(sResources.accumulatedExtinction,
                                 GL_R16F, width, height);
+    // A9: full-resolution per-pixel front key. Cleared to 0xffffffff (no
+    // key) at the start of every frame, not here -- this only sizes storage.
+    allocateAccumulationTexture(sResources.frontKey0, GL_R32UI, width, height);
+    allocateAccumulationTexture(sResources.frontKey1, GL_R32UI, width, height);
+    // FBO for the glClearTexImage (GL 4.4) fallback path -- see
+    // beginDirectRasterPass()'s pass-3 clear. Built even when the driver
+    // supports glClearTexImage so a mid-session driver/context change (rare,
+    // but selectVirtualDomain()-style capability checks elsewhere in this
+    // file treat that as possible) still has a working fallback.
+    glGenFramebuffers(1, &sResources.frontKeyFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, sResources.frontKeyFBO);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, sResources.frontKey0, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                           GL_TEXTURE_2D, sResources.frontKey1, 0);
+    const bool front_key_fbo_complete =
+        glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+    glBindFramebuffer(GL_FRAMEBUFFER, LLRenderTarget::sCurFBO);
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    return glGetError() == GL_NO_ERROR &&
+    return glGetError() == GL_NO_ERROR && front_key_fbo_complete &&
         // A7: color is never sampled (the resolve reads screen's own texel
         // directly now) and no AVBOIT raster pass writes fragment color to
         // this target's attachment 0 either (the shared shaders' AVBOIT path
@@ -1118,6 +1189,10 @@ void FSAVBOIT::releaseResources()
         glDeleteTextures(1, &sResources.accumulatedWeight);
     if (sResources.accumulatedExtinction)
         glDeleteTextures(1, &sResources.accumulatedExtinction);
+    if (sResources.frontKey0) glDeleteTextures(1, &sResources.frontKey0);
+    if (sResources.frontKey1) glDeleteTextures(1, &sResources.frontKey1);
+    if (sResources.frontKeyFBO)
+        glDeleteFramebuffers(1, &sResources.frontKeyFBO);
     gAVBOITOpaqueTarget.release();
     gAVBOITPrepassTarget.release();
     gAVBOITCellDepthTarget.release();
@@ -1172,6 +1247,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     }
     if (!available() || !sResources.accumulatedColorGlow ||
         !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
+        !sResources.frontKey0 || !sResources.frontKey1 ||
         !sResources.work ||
         !opaque_depth ||
         !gAVBOITOpaqueTarget.isComplete() ||
@@ -1253,7 +1329,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
 void FSAVBOIT::beginDirectRasterPass(S32 pass)
 {
     sDirectRasterPass = pass;
-    if (pass == 0)
+    if (pass == 0 || pass == 3)
     {
         glViewport(0, 0, sResources.viewportWidth,
                    sResources.viewportHeight);
@@ -1266,6 +1342,43 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
         // target ahead of this call) is scaled up by that factor.
         glViewport(0, 0, sResources.volumeWidth * AVBOIT_PASS1_SUBSAMPLE,
                    sResources.volumeHeight * AVBOIT_PASS1_SUBSAMPLE);
+    }
+    if (pass == 3)
+    {
+        // A9: full-resolution front-key pass. Two smallest-distinct-depth
+        // keys per pixel, atomically inserted by every alpha fragment
+        // (avboit_store_front_key() in avboitCaptureF.glsl); pass 2 reads
+        // them back to give the front two layers an exact source-over
+        // weight instead of the volume's per-cell approximation. Cleared to
+        // the "no key" sentinel every frame, including the first frame
+        // after allocation -- avboit_front_key()'s match in pass 2 must
+        // never see stale data from a previous frame.
+        //
+        // E11 in fsexactoit.cpp uses the identical glClearTexImage-with-
+        // fallback pattern for its own R32UI head/count images; mirrored
+        // here rather than assuming the GL 4.4 function is always present
+        // on an AVBOIT-capable (GL 4.3 baseline) driver.
+        const GLuint no_key = 0xffffffffu;
+        if (glClearTexImage)
+        {
+            glClearTexImage(sResources.frontKey0, 0, GL_RED_INTEGER,
+                            GL_UNSIGNED_INT, &no_key);
+            glClearTexImage(sResources.frontKey1, 0, GL_RED_INTEGER,
+                            GL_UNSIGNED_INT, &no_key);
+        }
+        else
+        {
+            const GLint previous_fbo = LLRenderTarget::sCurFBO;
+            const GLuint no_key_rgba[4] = { no_key, no_key, no_key, no_key };
+            glBindFramebuffer(GL_FRAMEBUFFER, sResources.frontKeyFBO);
+            glClearBufferuiv(GL_COLOR, 0, no_key_rgba);
+            glClearBufferuiv(GL_COLOR, 1, no_key_rgba);
+            glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+        }
+        glBindImageTexture(0, sResources.frontKey0, 0, GL_FALSE, 0,
+                           GL_READ_WRITE, GL_R32UI);
+        glBindImageTexture(1, sResources.frontKey1, 0, GL_FALSE, 0,
+                           GL_READ_WRITE, GL_R32UI);
     }
     if (pass == 2)
     {
@@ -1656,6 +1769,7 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     static LLStaticHashedString tile_range("avboitTileRange");
     static LLStaticHashedString capture_debug_mode("avboitDebugMode");
     static LLStaticHashedString pass1_subsample("avboitPass1Subsample");
+    static LLStaticHashedString front_layers_uniform("avboitFrontLayers");
     GLint location = shader->getUniformLocation(raster_pass);
     if (location >= 0)
     {
@@ -1705,6 +1819,12 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     {
         glProgramUniform1i(shader->mProgramObject, location,
                            static_cast<GLint>(AVBOIT_PASS1_SUBSAMPLE));
+    }
+    location = shader->getUniformLocation(front_layers_uniform);
+    if (location >= 0)
+    {
+        glProgramUniform1i(shader->mProgramObject, location,
+                           frontLayers() ? 1 : 0);
     }
     location = shader->getUniformLocation(capture_debug_mode);
     if (location >= 0)
@@ -1821,7 +1941,14 @@ void FSAVBOIT::finishDirectOccupancy()
         gAVBOITCellDepthProgram.unbind();
         gAVBOITCellDepthTarget.flush();
     }
+    // gAVBOITOpaqueTarget is the current target here (the cell-depth bake
+    // above pushed and flushed gAVBOITCellDepthTarget in a balanced pair) --
+    // A9's pass 3 (front key), inserted by the caller between this function
+    // and beginPass1(), reads/writes it directly rather than rebinding it.
+}
 
+void FSAVBOIT::beginPass1()
+{
     gAVBOITCellDepthTarget.bindTarget();
     beginDirectRasterPass(1);
 }

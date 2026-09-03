@@ -325,9 +325,11 @@ void main()
     diffuse_linear.rgb = srgb_to_linear(diffuse_srgb.rgb);
 #endif // USE_VERTEX_COLOR
 
-// <AS:Chanayane> AVBOIT occupancy/extinction need only post-mask opacity.
+// <AS:Chanayane> AVBOIT occupancy/extinction/front-key (A9, pass 3) need
+// only post-mask opacity.
+// if (avboitRasterPass < 2)
 #if defined(AVBOIT)
-    if (avboitRasterPass < 2)
+    if (avboitRasterPass != 2)
     {
         avboit_store(vec4(0.0, 0.0, 0.0, final_alpha));
         return;

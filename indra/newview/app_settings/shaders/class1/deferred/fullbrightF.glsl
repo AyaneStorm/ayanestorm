@@ -130,8 +130,10 @@ void main()
 #endif
 
 // <AS:Chanayane> AVBOIT prepasses stop after texture alpha and masking.
+// Also covers A9's pass 3 (front key), which needs only alpha.
+// if (avboitRasterPass < 2)
 #if defined(AVBOIT)
-    if (avboitRasterPass < 2)
+    if (avboitRasterPass != 2)
     {
         avboit_store(vec4(0.0, 0.0, 0.0, final_alpha));
         return;

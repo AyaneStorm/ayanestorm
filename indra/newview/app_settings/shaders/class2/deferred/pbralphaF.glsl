@@ -197,9 +197,11 @@ void main()
     }
 #endif
 
-// <AS:Chanayane> AVBOIT prepasses avoid PBR normal, ORM, probe, and light evaluation.
+// <AS:Chanayane> AVBOIT prepasses avoid PBR normal, ORM, probe, and light
+// evaluation. Also covers A9's pass 3 (front key), which needs only alpha.
+// if (avboitRasterPass < 2)
 #if defined(AVBOIT)
-    if (avboitRasterPass < 2)
+    if (avboitRasterPass != 2)
     {
         avboit_store(vec4(0.0, 0.0, 0.0,
                           basecolor.a * vertex_color.a));

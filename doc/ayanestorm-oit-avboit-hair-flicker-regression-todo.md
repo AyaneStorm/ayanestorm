@@ -1,40 +1,37 @@
 # AVBOIT: hair flicker + tile-range corruption (handoff -- two fixes tried, both still broken)
 
-**Current status (2026-09-03, after round 9): read "Round 9: residual
-speckle" and its "Round 9 implementation status" near the end of this file
-first.** Rounds 1-3 fixed the flicker, hair colour, clothing-showing-
-through, black dashes, and coarse 8px-block moire, in that order -- all
-confirmed by rebuild. Round 3 (pass-1 supersampling) then exposed a new
-artifact: fine periodic striping on hair and fabric. Rounds 4 and 5 each
-proposed and live-tested a raster-grid mechanism (slice-periodic own-splat;
-cell-periodic tilted-sheet self-occlusion) -- both ruled out by direct
-testing (`RenderAVBOITSamplingBias` raised progressively; stripes never
-faded). The zoom/pan behaviour observed after round 5 briefly suggested a
-geometry-domain cause, but **round 6 found the real mechanism**: AVBOIT's
-per-cell average extinction has no per-pixel front-layer knowledge, so
-overlapping near-coplanar strand/garment cards blend into a beat pattern --
-the pre-existing **A9** limitation the plan already named, not a bug in
-rounds 1-5, and a separate, larger follow-up (not implemented this round).
-**Round 7** found a second, distinct 2px-period raster artifact on top of
-that (screen-row-locked), which **round 8** root-caused: pass 1's per-cell
-sub-samples (round 3) sit at different depths across a tilted surface, so a
-pass-2 pixel can read transmittance already polluted by nearer parts of its
-own surface within the same cell. Round 8's fix (project every sample of a
-cell to that cell's own centre depth before mapping to a slice) was
-**built and tested: the periodic lines are gone.** Remaining: grey speckle,
-heaviest on flat/camera-facing surfaces. **Round 9** root-caused this as a
-precision issue -- a near-flat tile's real depth span collapses below what
-the two rasterizers (pass 1 half-res, pass 2 full-res) can agree on when
-interpolating the same plane, so their computed depths disagree by many of
-the resulting hyper-fine slices. Fix: a minimum tile span
-(`AVBOIT_TILE_MIN_SPAN = 6e-4`) floors how far the 127 slices can ever be
-spread, implemented in all three fragment shaders that compute a tile span;
-an optional slope-proportional margin from the same round was deliberately
-skipped (would need `fwidth()` on a value only computed inside a data-
-dependent branch, not safely computable as specified). Not yet built or
-tested. Everything above this note is earlier rounds' history, kept for the
-record; read bottom-up for the current picture, or jump straight to the
-round-9 sections near the end.
+**Current status (2026-09-03, after round 10): read "Round 10: remaining
+cell popping -> implement A9" and its "Round 10 implementation status" near
+the end of this file first.** Rounds 1-3 fixed the flicker, hair colour,
+clothing-showing-through, black dashes, and coarse 8px-block moire, in that
+order. Round 3 exposed fine periodic striping; rounds 4-5's raster-grid
+theories were ruled out by live testing. Round 6 correctly identified the
+underlying limitation as pre-existing **A9** (no per-pixel front-layer
+knowledge -- overlapping near-coplanar cards blend into a beat pattern),
+deferred as a separate follow-up at the time. Round 7 found a second, 2px-
+period artifact; round 8 root-caused and fixed it (cell-centre depth
+projection so a surface can't occlude its own sub-samples) -- confirmed by
+rebuild, periodic lines gone. Round 9 found and fixed residual speckle on
+flat/camera-facing surfaces (a minimum tile span, since near-flat tiles'
+real depth range could collapse below what the two rasterizers agree on) --
+confirmed by rebuild, flat fabric clean. What remained after round 9 (dark
+squares of under-garment popping through the dress under camera motion;
+faint squarish patches in dense hair vs. Exact OIT) is exactly the round-6
+A9 limitation, not a new bug and not fixable by further tile-range tuning.
+**Round 10 implements A9**: a full-resolution front-key raster pass (pass
+3) records the two nearest distinct transparent depths/alphas per pixel via
+32-bit image atomics; pass 2 gives the front fragment exact weight
+`alpha_F` (transmittance 1), the second fragment exact source-over weight
+`alpha_S(1-alpha_F)`, and only the third-and-deeper layers still fall back
+to the volume, bounded by `(1-alpha_F)(1-alpha_S)`. Implemented per the
+plan's design with one structural deviation (a bind-stack ordering fix,
+required because the plan's literal pass-3 placement predates rounds 1-9's
+restructuring) and one deliberately skipped part (debug modes 16/17, an
+image-unit conflict in the resolve shader) -- both documented in the
+round-10 implementation-status section. Not yet built or tested. Everything
+above this note is earlier rounds' history, kept for the record; read
+bottom-up for the current picture, or jump straight to the round-10
+sections near the end.
 
 Author: chanayane@firestorm. Date: 2026-09-03. Original status (round 1,
 superseded by the note above): **unresolved after three build/test cycles.
@@ -1800,3 +1797,119 @@ layers three and deeper.
 Verification after A9: (1) dress over under-garment under camera motion,
 no popping; (2) hair crop versus Exact OIT, no squarish patches; (3) mode
 12 unchanged on flat fabric; (4) ranging off still renders as before.
+
+## Round 10 implementation status (2026-09-03)
+
+Implemented per the plan's A9 design in full, with one deliberate
+deviation from the plan's literal pass-3 insertion snippet (a structural
+bind-stack conflict, described below) and one deliberately skipped part
+(debug modes 16/17, an image-unit conflict), both flagged clearly rather
+than silently worked around.
+
+**CPU side (`fsavboit.h`/`fsavboit.cpp`):**
+- `Resources` gained `frontKey0`/`frontKey1` (full-resolution `GL_R32UI`
+  images, allocated via the existing `allocateAccumulationTexture()`
+  helper -- it is format-agnostic and integer images are always nearest-
+  filtered by spec, so no new allocator needed) and `frontKeyFBO` (an FBO
+  wrapping both as color attachments 0/1, used only by the
+  `glClearTexImage` fallback below).
+- `frontLayers()` accessor added next to `tileRange()`/`debugMode()`,
+  reading a new `RenderAVBOITFrontLayers` boolean setting (default on).
+- **Bind-stack conflict with the plan's literal pass-3 placement:** the
+  plan's snippet calls `gAVBOITOpaqueTarget.bindTarget()` before pass 3,
+  but by the time `finishDirectOccupancy()` returns (as currently
+  structured, after rounds 1-9's changes), `gAVBOITOpaqueTarget` is
+  already the current bound target -- `finishDirectOccupancy()`'s own
+  trailing code left `gAVBOITCellDepthTarget` bound instead, unflushed,
+  as pass 1's render target. Calling `bindTarget()` on an already-current
+  target a second time would push a self-referential stack entry, exactly
+  the corruption several existing comments in this file warn against.
+  Fixed by splitting `finishDirectOccupancy()`: its last two lines
+  (`gAVBOITCellDepthTarget.bindTarget(); beginDirectRasterPass(1);`) moved
+  into a new `FSAVBOIT::beginPass1()` (declared in the header, stubbed for
+  `LL_DARWIN` alongside every other public function), called explicitly
+  by `renderPostDeferredCapture()` after the new pass-3 block. Pass 3 now
+  runs while `gAVBOITOpaqueTarget` is already current, matching how pass
+  0's occupancy raster works, and does not rebind it.
+- `beginDirectRasterPass()` gained a `pass == 3` branch: full viewport,
+  clears both front-key images to the `0xffffffffu` sentinel, binds them
+  read-write at image units 0/1. The clear uses the same
+  `glClearTexImage`-with-fallback pattern `fsexactoit.cpp`'s E11 already
+  established for its own R32UI head/count images (`if (glClearTexImage)`
+  direct clear, else bind `frontKeyFBO` and `glClearBufferuiv` per
+  attachment) rather than assuming GL 4.4's function is always present on
+  an AVBOIT-capable (GL 4.3 baseline) driver.
+- `renderPostDeferredCapture()`: inserted the pass-3 block between
+  `finishDirectOccupancy()` and the extinction raster (pass 1), per the
+  plan's ordering requirement (pass 3 must run before
+  `finishDirectExtinction()`'s conservative early-depth-tile raster, or a
+  tile could reject a legitimate second layer). Runs `render_pass(true)`
+  plus GLTF's own draw (GLTF is traversed outside the alpha spatial-group
+  draw maps `render_pass()` covers, same as pass 0's occupancy raster
+  handles it), then calls the new `beginPass1()`.
+- `configureDirectRasterShader()`: uploads `avboitFrontLayers` alongside
+  the other per-pass uniforms, guarded by `getUniformLocation()` same as
+  every other uniform there.
+- `handleCapturedEmissives()`'s pass-skip guard widened from
+  `sDirectRasterPass != 1` to `!= 1 && != 3` -- pass 3 has no glow store at
+  all (it only needs alpha, via the shared shaders' own `avboitRasterPass
+  != 2` early return), so emissive draws there would be pure waste.
+- `beginDirectFrame()`'s resource-completeness gate checks
+  `frontKey0`/`frontKey1` alongside the existing accumulation textures.
+
+**Shader side:**
+- `avboitCaptureF.glsl`: `avboitFrontLayers` uniform, `avboitFrontKey0`/
+  `avboitFrontKey1` image declarations (bindings 0/1, `coherent
+  uimage2D`), `avboit_front_key()`, `avboit_store_front_key()` (the exact
+  two-key atomic insertion from the plan, with its correctness argument
+  preserved verbatim in comments), and the pass-3 early-return branch in
+  `avboit_direct_store()`. Pass 2's `weight` computation replaced with the
+  plan's `front_factor` logic exactly: front layer gets 1.0, second layer
+  gets `1.0 - alpha0`, everything else gets
+  `min(front_transmittance, (1-alpha0)(1-alpha1))`, and the whole thing
+  falls back to plain `front_transmittance` when `avboitFrontLayers == 0`
+  for the live A/B comparison. Debug mode 14 left untouched (per the
+  plan: it becomes less meaningful for exact F/S pixels now, but its code
+  doesn't need to change since it never reads `front_factor`).
+- Both glow shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
+  identical `avboitFrontLayers`/image declarations and `front_factor`
+  computation in their pass-2 branch, replacing `max(glow, 0.0) * front`
+  with `max(glow, 0.0) * front_factor`. A front-surface glow texel shares
+  its depth with the colour fragment at the same surface, so it matches
+  `key0` and gets `front_factor = 1.0`, unattenuated, matching vanilla.
+- Five shared/upstream shaders (`alphaF.glsl`, `fullbrightF.glsl`,
+  `pbralphaF.glsl`, `materialF.glsl`, `pbrmetallicroughnessF.glsl`): each
+  had exactly one `avboitRasterPass < 2` early-store gate, changed to
+  `!= 2` so the same cheap early exit (alpha only, no lighting) also
+  covers pass 3, per the plan. All five already used `< 2` (the plan's
+  note that only `materialF.glsl` had been updated to `< 2` while others
+  were still `< 1` did not match the current tree -- confirmed via grep
+  before editing). Each edit wrapped in the required `<AS:Chanayane>` tags
+  per this repo's ownership rules, with the original `< 2` line preserved
+  as a comment inside the tag.
+
+**Deliberately not implemented: debug modes 16/17.** The plan's own
+diagnostics section already flags the resolve compute shader
+(`avboitVolumeC.glsl`) is at GL's 8-image-unit limit during resolve
+(units 0,1,2,5 actively rebound by `finishDirectFrame()`; 3,4,6,7
+declared but left holding whatever the raster passes bound). Unit 7
+happens to already be `r32ui` (`avboitExtinctionOverflowDepth`) and could
+in principle share format with `frontKey1`, but unit 6 is `r8ui`
+(`avboitZeroTransmittanceDepth`), format-mismatched against `frontKey0`'s
+`r32ui`. Two ways to resolve this were considered: (a) a second,
+differently-formatted GLSL declaration aliased onto the same binding
+index 6, relying on only one declaration ever being read per branch --
+legal-looking but not something the GLSL/GL spec guarantees, and
+unverifiable without a build across multiple drivers; (b) skip the
+diagnostics entirely for this round. Chose (b) on the user's explicit
+direction. `debugMode()`'s clamp left at its pre-A9 range (0-15); modes
+16/17 are simply unavailable. Verification should use mode 0 (visual) and
+the existing mode 9/10/14 diagnostics instead. If modes 16/17 are wanted
+later, the cleanest fix is probably freeing a unit during resolve (e.g.
+folding `avboitExtinctionOverflowDepth`'s read into a buffer instead of
+an image) rather than aliasing.
+
+**Not yet built/tested.** Shader source, uniform set, and CPU-side raster
+pass sequencing all changed; needs a cache bump, held per standing
+guidance. Verification should follow Round 10's own four-item list above
+once built.

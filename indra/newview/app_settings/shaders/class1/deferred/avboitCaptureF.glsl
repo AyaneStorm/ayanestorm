@@ -39,6 +39,11 @@ uniform int avboitTileRange;
 // whichever single strand or garment layer happened to land on one sample --
 // see FSAVBOIT::AVBOIT_PASS1_SUBSAMPLE.
 uniform int avboitPass1Subsample;
+// A9: per-pixel exact front-two-layer key. See doc/ayanestorm-oit-
+// performance-audit-plan.md's A9 section for the full design and proof.
+uniform int avboitFrontLayers;
+layout(binding = 0, r32ui) uniform coherent uimage2D avboitFrontKey0;   // nearest
+layout(binding = 1, r32ui) uniform coherent uimage2D avboitFrontKey1;   // second nearest, distinct depth
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_NARROW = 5.54126355;  // -log(1 / 255)
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_WIDE = 11.09035489;   // -log(1 / 65536)
 
@@ -440,10 +445,54 @@ float avboit_front_transmittance(ivec2 pixel, float biased_window_depth,
     return result;
 }
 
+// A9: 24-bit window depth (resolves ~6e-8, so a 0.1 mm gap at 2 m -- about
+// 6e-6 -- still gets a distinct key) packed with an 8-bit alpha into one
+// r32ui word, so the two-key insertion below needs only 32-bit atomics.
+uint avboit_front_key(float alpha)
+{
+    uint depth_bits = uint(clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+    return (depth_bits << 8u) | uint(clamp(alpha, 0.0, 1.0) * 255.0 + 0.5);
+}
+
+// Exact "two smallest distinct depth values" with only atomicMin, one call
+// per fragment. The final Key0 is the global minimum m1 by definition of
+// atomicMin. Every other value either arrives already not smaller than the
+// then-current front (goes to Key1 directly) or was itself the front once
+// and gets displaced into Key1 the moment something smaller arrives; values
+// at the SAME depth as the current front are skipped so double-sided
+// geometry or overlapping triangles at one surface never consume the
+// second slot. Hence Key1 ends the frame holding
+// min{ v : depth(v) != depth(m1) } = m2, the second distinct depth, exactly.
+// Raster pass 3 only, full resolution, dispatched ahead of pass 1.
+void avboit_store_front_key(float alpha)
+{
+    if (alpha <= 0.0)
+    {
+        return;  // invisible texels are not layers
+    }
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    uint key = avboit_front_key(alpha);
+    uint previous = imageAtomicMin(avboitFrontKey0, pixel, key);
+    if ((previous >> 8u) == (key >> 8u))
+    {
+        return;  // same depth as current front: duplicate, not a new layer
+    }
+    uint displaced = key < previous ? previous : key;
+    if (displaced != 0xffffffffu)
+    {
+        imageAtomicMin(avboitFrontKey1, pixel, displaced);
+    }
+}
+
 void avboit_direct_store(vec4 color)
 {
     float alpha = clamp(color.a, 0.0, 1.0);
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    if (avboitRasterPass == 3)
+    {
+        avboit_store_front_key(alpha);
+        return;
+    }
     // Pass 0 is full-res (8x8 pixels per cell); pass 1 rasterizes at
     // avboitPass1Subsample sub-cell fragments per axis per cell (round 3),
     // so gl_FragCoord there needs its own, coarser scale-down; every other
@@ -698,7 +747,42 @@ void avboit_direct_store(vec4 color)
             front_transmittance = max(front_transmittance, 1.0 / 16384.0);
         }
 
-        float weight = alpha * front_transmittance;
+        // A9: bound (or replace) the volume's per-cell estimate with the
+        // exact per-pixel front-two-layer key from pass 3. `my_depth` uses
+        // the same quantization as avboit_front_key(); pass 3 runs the same
+        // vertex program with the same matrices, so gl_FragCoord.z here is
+        // bit-identical to pass 3's for this fragment and the key match is
+        // exact, never approximate.
+        uint my_depth = uint(
+            clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
+        uint key0 = imageLoad(avboitFrontKey0, pixel).r;
+        uint key1 = imageLoad(avboitFrontKey1, pixel).r;
+        float key_alpha0 = key0 == 0xffffffffu ?
+            0.0 : float(key0 & 255u) / 255.0;
+        float key_alpha1 = key1 == 0xffffffffu ?
+            0.0 : float(key1 & 255u) / 255.0;
+        float front_factor;
+        if (avboitFrontLayers != 0 && key0 != 0xffffffffu &&
+            my_depth == (key0 >> 8u))
+        {
+            front_factor = 1.0;  // I am the front layer
+        }
+        else if (avboitFrontLayers != 0 && key1 != 0xffffffffu &&
+                 my_depth == (key1 >> 8u))
+        {
+            front_factor = 1.0 - key_alpha0;  // I am the second layer
+        }
+        else if (avboitFrontLayers != 0)
+        {
+            front_factor = min(front_transmittance,
+                               (1.0 - key_alpha0) * (1.0 - key_alpha1));
+        }
+        else
+        {
+            front_factor = front_transmittance;  // A/B: old behaviour
+        }
+
+        float weight = alpha * front_factor;
         // Glow accumulates separately through avboit_store_glow() in the
         // emissive/PBR-glow shaders; this path never carries any.
         avboitAccumulatedColorGlow =
