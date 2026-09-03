@@ -3,7 +3,6 @@
  */
 
 layout(early_fragment_tests) in;
-uniform float oitGlow;
 uniform int avboitRasterPass;
 uniform ivec2 avboitViewport;
 uniform ivec2 avboitVolumeSize;
@@ -321,12 +320,14 @@ void avboit_direct_store(vec4 color)
     // needed.
     if (avboitRasterPass == 0)
     {
-        if (alpha > 0.0 || oitGlow > 0.0)
-        {
-            avboit_mark_tile(cell);
-        }
+        // avboit_direct_store never carries glow (glow accumulates through
+        // avboit_store_glow() in the emissive/PBR-glow shaders instead), so
+        // the original "alpha > 0.0 || oitGlow > 0.0" mark-tile test reduces
+        // to alpha > 0.0 -- the same condition already gating the block
+        // below, so both collapse into one.
         if (alpha > 0.0)
         {
+            avboit_mark_tile(cell);
             // Reduce this fragment into its tile's depth range. The range is
             // only complete once every pass-0 fragment has been processed, so
             // occupancy below must use the global curve rather than the
@@ -460,9 +461,10 @@ void avboit_direct_store(vec4 color)
             front_transmittance * exp(own_share), 0.0, 1.0);
 
         float weight = alpha * front_transmittance;
+        // Glow accumulates separately through avboit_store_glow() in the
+        // emissive/PBR-glow shaders; this path never carries any.
         avboitAccumulatedColorGlow =
-            vec4(max(color.rgb, vec3(0.0)) * weight,
-                 max(oitGlow, 0.0) * front_transmittance);
+            vec4(max(color.rgb, vec3(0.0)) * weight, 0.0);
         avboitAccumulatedWeight = weight;
         avboitAccumulatedExtinction =
             -log(max(1.0 - alpha, 1.0 / 65536.0));

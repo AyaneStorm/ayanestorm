@@ -149,7 +149,9 @@ U32 avboitMaxDivider()
 
 bool wideExtinction()
 {
-    return gSavedSettings.getBOOL("RenderAVBOITWideExtinction");
+    static LLCachedControl<bool> wide_extinction(
+        gSavedSettings, "RenderAVBOITWideExtinction", true);
+    return wide_extinction;
 }
 
 // Per-tile depth ranging. The depth curve is otherwise shared by the entire
@@ -160,15 +162,25 @@ bool wideExtinction()
 // is, which is what separates layers a fraction of a millimetre apart.
 bool tileRange()
 {
-    return gSavedSettings.getBOOL("RenderAVBOITTileRange");
+    static LLCachedControl<bool> tile_range(
+        gSavedSettings, "RenderAVBOITTileRange", true);
+    return tile_range;
+}
+
+S32 debugMode()
+{
+    static LLCachedControl<S32> debug_mode(
+        gSavedSettings, "RenderAVBOITDebugMode", 0);
+    return llclamp(S32(debug_mode), 0, 15);
 }
 
 // Self-occlusion bias in virtual slices, clamped to the range the sampling
 // code can represent. Zero disables the bias.
 F32 samplingBias()
 {
-    return llclamp(
-        gSavedSettings.getF32("RenderAVBOITSamplingBias"), 0.f, 8.f);
+    static LLCachedControl<F32> sampling_bias(
+        gSavedSettings, "RenderAVBOITSamplingBias", 1.f);
+    return llclamp(F32(sampling_bias), 0.f, 8.f);
 }
 
 // Linearization factor for the presentation's log depth curve
@@ -728,6 +740,35 @@ bool FSAVBOIT::renderPostDeferredCapture(
 
     const auto render_pass = [&pool](bool include_static)
     {
+        // A3: configure every AVBOIT program's per-pass uniforms once here
+        // instead of via configureCapturedDrawIfActive()/
+        // configureGLTFCapturedDraw() on every draw. lldrawpoolalpha.cpp
+        // resolves LLGLSLShader::mRiggedVariant to the actual bound program
+        // for a rigged draw (see the `target_shader = target_shader->
+        // mRiggedVariant` sites), so both halves of every base/rigged pair
+        // need their own call -- configuring only the base object would
+        // leave every rigged draw silently falling back to whatever stale
+        // uniforms that program object last had.
+        configureDirectRasterShader(&gAVBOITAlphaProgram);
+        configureDirectRasterShader(&gAVBOITSkinnedAlphaProgram);
+        configureDirectRasterShader(&gAVBOITPBRAlphaProgram);
+        configureDirectRasterShader(&gAVBOITSkinnedPBRAlphaProgram);
+        configureDirectRasterShader(&gAVBOITFullbrightAlphaProgram);
+        configureDirectRasterShader(&gAVBOITSkinnedFullbrightAlphaProgram);
+        for (LLGLSLShader& shader : gAVBOITMaterialAlphaProgram)
+        {
+            if (shader.mProgramObject)
+            {
+                configureDirectRasterShader(&shader);
+            }
+        }
+        for (LLGLSLShader& variant : gAVBOITGLTFProgram.mGLTFVariants)
+        {
+            if (variant.mProgramObject)
+            {
+                configureDirectRasterShader(&variant);
+            }
+        }
         configureDirectRasterShader(&gAVBOITEmissiveProgram);
         configureDirectRasterShader(&gAVBOITSkinnedEmissiveProgram);
         configureDirectRasterShader(&gAVBOITPBRGlowProgram);
@@ -745,8 +786,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
-        const bool compare_static_proxy =
-            gSavedSettings.getS32("RenderAVBOITDebugMode") == 6;
+        const bool compare_static_proxy = debugMode() == 6;
         if (compare_static_proxy)
         {
             render_pass(true);
@@ -794,11 +834,19 @@ bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
     {
         return false;
     }
-    if (shader)
+    // A3: per-pass uniforms (avboitViewport, avboitDepthRange, etc.) are
+    // configured once per pass in renderPostDeferredCapture()'s render_pass
+    // lambda instead of on every draw; oitGlow is now a shader-side literal
+    // (see avboitCaptureF.glsl). LLDrawPoolAlpha disables ordinary
+    // framebuffer blending for capture, and that LLGLDisable scope is per
+    // forwardRender() call (i.e. per pass) rather than per draw, so the
+    // independent additive accumulation blend state must still be
+    // re-applied here on every draw in pass 2 -- see A3 in
+    // doc/ayanestorm-oit-performance-audit-plan.md for why a per-pass-only
+    // fix for this specific piece was rejected as fragile.
+    if (shader && sDirectRasterPass == 2)
     {
-        static LLStaticHashedString glow("oitGlow");
-        shader->uniform1f(glow, 0.f);
-        configureDirectRasterShader(shader);
+        configureAccumulationBlend();
     }
     return true;
 }
@@ -831,9 +879,12 @@ bool FSAVBOIT::handleCapturedEmissives(
 
 void FSAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
-    static LLStaticHashedString glow("oitGlow");
-    shader.uniform1f(glow, 0.f);
-    configureDirectRasterShader(&shader);
+    // A3: per-pass uniforms are now configured once per pass in
+    // renderPostDeferredCapture()'s render_pass lambda (which loops
+    // gAVBOITGLTFProgram.mGLTFVariants), and oitGlow is a shader-side
+    // literal (see avboitCaptureF.glsl). Nothing left to do per draw here;
+    // this function is kept (rather than removed) as the dispatcher's
+    // established per-GLTF-draw hook, matching configureCapturedDrawIfActive().
 }
 
 bool FSAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen)
@@ -1595,9 +1646,7 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     location = shader->getUniformLocation(capture_debug_mode);
     if (location >= 0)
     {
-        glProgramUniform1i(
-            shader->mProgramObject, location,
-            llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 15));
+        glProgramUniform1i(shader->mProgramObject, location, debugMode());
     }
     location = shader->getUniformLocation(transmittance_sampler);
     if (location >= 0)
@@ -1800,8 +1849,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     static LLStaticHashedString debug_mode_uniform("avboitDebugMode");
     static LLStaticHashedString transmittance_sampler(
         "avboitTransmittanceSampler");
-    const S32 debug_mode =
-        llclamp(gSavedSettings.getS32("RenderAVBOITDebugMode"), 0, 15);
+    const S32 debug_mode = debugMode();
     // Diagnostic 13 compares the volume against the exact accumulation, so the
     // transmittance volume must stay readable during resolve. Every other mode
     // releases it as before.
