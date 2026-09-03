@@ -140,6 +140,10 @@ private:
         U32* readbackMapped = nullptr;
         GLsync captureFence = 0;
         U32 capacity = 0;
+        // E10a: capacity allocateNodePool() first settled on for the current
+        // screen size, before any E1 growth or E10b shrink. Used as the
+        // floor E10b's shrink policy will not go below.
+        U32 initialCapacity = 0;
         U32 peakNodes = 0;
         U32 overflowCount = 0;
         U32 lastRequiredNodes = 0;
@@ -151,10 +155,20 @@ private:
         // against sResources.nodes. Reallocating that buffer immediately
         // races that in-flight work. 0 means no growth pending.
         U32 pendingGrowthNodes = 0;
+        // E10b: rolling-window shrink tracking, same deferred-reallocation
+        // reasoning as pendingGrowthNodes above (applied in beginFrame(),
+        // never mid-frame). windowPeakNodes is the max control[0] seen since
+        // the window opened; windowFramesRemaining counts down to 0, at
+        // which point waitValidation() decides whether to shrink and resets
+        // the window. 0 means no shrink pending.
+        U32 windowPeakNodes = 0;
+        U32 windowFramesRemaining = 0;
+        U32 pendingShrinkCapacity = 0;
         bool available = false;
     };
     static bool captureOverflowed(U32 required_nodes, U32 overflow_flag);
     static bool growNodePool(U32 required_nodes);
+    static void shrinkNodePool(U32 target_capacity);
     static void recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook);
     static void bindCompositeResources();
     static void copyOpaqueScene(LLRenderTarget& screen);

@@ -798,6 +798,14 @@ void FSExactOIT::beginFrame()
     }
     sResources.pendingGrowthNodes = 0;
 
+    // E10b: deferred shrink, same same-frame-safety reasoning as growth
+    // above (waitValidation() never reallocates directly, only requests).
+    if (sResources.pendingShrinkCapacity > 0 && isEnabled() && sResources.nodes)
+    {
+        shrinkNodePool(sResources.pendingShrinkCapacity);
+    }
+    sResources.pendingShrinkCapacity = 0;
+
     // Decremented once per frame here (captureEligible() runs for both alpha
     // pools and must not double-decrement). The debug overlay wants to see
     // every frame's diagnostics, so the predictive skip never engages while
@@ -1269,6 +1277,35 @@ bool FSExactOIT::growNodePool(U32 required_nodes)
     return sResources.capacity >= required_nodes;
 }
 
+// E10b: reallocates the node pool down to `target_capacity` (a glBufferData
+// orphan, same as growNodePool()). Caller must guarantee no GPU work from
+// this or an earlier frame is still queued against sResources.nodes -- same
+// requirement as growNodePool(), so this is only ever called from
+// beginFrame() via pendingShrinkCapacity, never mid-frame.
+void FSExactOIT::shrinkNodePool(U32 target_capacity)
+{
+    constexpr U64 node_bytes = 32;
+    if (target_capacity >= sResources.capacity)
+    {
+        return;
+    }
+
+    while (glGetError() != GL_NO_ERROR) {}
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nodes);
+    glBufferData(GL_SHADER_STORAGE_BUFFER,
+                 GLsizeiptr(static_cast<U64>(target_capacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    if (glGetError() == GL_NO_ERROR)
+    {
+        sResources.capacity = target_capacity;
+        LL_INFOS("ExactOIT") << "Shrank exact OIT node capacity to " << target_capacity
+            << " (demand has been low for a while)." << LL_ENDL;
+    }
+    // On failure the buffer keeps its prior storage (glBufferData with a
+    // failing allocation does not touch the existing one); nothing else to
+    // do here, unlike growNodePool() this is not correctness-critical.
+}
+
 // Handles overflow failure and buffer-growth policy; returns true when vanilla fallback is required.
 bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
 {
@@ -1427,6 +1464,39 @@ FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& max
         // policy on top of this; doubling here too jumped a 29M-node demand
         // straight to the 2GB safe cap.
         sResources.pendingGrowthNodes = llmax(sResources.pendingGrowthNodes, control[0]);
+    }
+
+    // E10b: shrink policy. Track a rolling 600-frame peak of control[0]; if
+    // that peak stays under 1/4 of capacity for the whole window, demand has
+    // genuinely dropped (not just one quiet frame) and it's worth giving the
+    // VRAM back. Skip entirely on a frame that also requested growth above:
+    // nonsensical to shrink and grow at once, and it can't happen in
+    // practice (a >3/4-capacity frame can't also be <1/4 of the window
+    // peak), but the buffers reallocate through the same deferred
+    // beginFrame() path, so keep the two mutually exclusive by construction.
+    if (sResources.pendingGrowthNodes == 0)
+    {
+        if (sResources.windowFramesRemaining == 0)
+        {
+            // First frame after allocation, or a window just closed and was
+            // reset below: (re)open a fresh 600-frame window rather than
+            // judging a shrink off a single frame's demand.
+            sResources.windowPeakNodes = control[0];
+            sResources.windowFramesRemaining = 600;
+        }
+        else
+        {
+            sResources.windowPeakNodes = llmax(sResources.windowPeakNodes, control[0]);
+            if (--sResources.windowFramesRemaining == 0)
+            {
+                if (sResources.windowPeakNodes < sResources.capacity / 4 &&
+                    sResources.capacity > sResources.initialCapacity)
+                {
+                    const U32 target = llmax(sResources.initialCapacity, sResources.windowPeakNodes * 2u);
+                    sResources.pendingShrinkCapacity = target;
+                }
+            }
+        }
     }
     return ValidationResult::COMPLETE;
 }
@@ -1744,10 +1814,14 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
     sResources.control = 0;
     sResources.readback = 0;
     sResources.pendingGrowthNodes = 0;
+    sResources.pendingShrinkCapacity = 0;
+    sResources.windowPeakNodes = 0;
+    sResources.windowFramesRemaining = 0;
     if (!preserve_node_pool)
     {
         sResources.nodes = 0;
         sResources.capacity = 0;
+        sResources.initialCapacity = 0;
     }
     sResources.available = false;
 }
@@ -1818,10 +1892,20 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
     constexpr U64 node_bytes = 32;
     const U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
     const U64 safe_bytes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull);
-    const U64 wanted_nodes = static_cast<U64>(width) * static_cast<U64>(height) * 4ull;
-    const U64 safe_nodes = safe_bytes / node_bytes;
+    // E10a: 2x screen resolution (was 4x). Combined with E1's proactive growth
+    // (computeGrownCapacity() below) a session that needs more grows within
+    // one fallback frame; this just lowers the default footprint for scenes
+    // that never need it.
+    const U64 wanted_nodes = static_cast<U64>(width) * static_cast<U64>(height) * 2ull;
+    const U64 safe_nodes = safeNodeCapacity();
     const U32 requested_capacity = U32(llmin<U64>(wanted_nodes, llmin<U64>(safe_nodes, 0xfffffffeull)));
-    const U32 retained_capacity = U32(llmin<U64>(sResources.capacity, llmin<U64>(safe_nodes, 0xfffffffeull)));
+    // Floor at both the currently-retained capacity (preserves growth across
+    // a viewport resize, preserve_node_pool keeps sResources.capacity intact)
+    // and peakNodes with E1's headroom formula (preserves what this session
+    // is known to need even across a resize that follows an E10b shrink).
+    const U64 peak_with_headroom = (static_cast<U64>(sResources.peakNodes) * 5ull + 3ull) / 4ull;
+    const U32 retained_capacity = U32(llmin<U64>(
+        llmax<U64>(sResources.capacity, peak_with_headroom), llmin<U64>(safe_nodes, 0xfffffffeull)));
     const U32 allocation_capacity = llmax(requested_capacity, retained_capacity);
 
     if (!capture_images_ready || allocation_capacity == 0)
@@ -1834,6 +1918,9 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
     {
         glGenBuffers(1, &sResources.nodes);
     }
+    // allocation_capacity >= sResources.capacity always (retained_capacity
+    // floors at sResources.capacity), so this only ever grows; E10b's shrink
+    // goes through growNodePool()-style deferred reallocation instead.
     if (allocation_capacity > sResources.capacity)
     {
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.nodes);
@@ -1841,6 +1928,10 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
                      GLsizeiptr(static_cast<U64>(allocation_capacity) * node_bytes), nullptr, GL_DYNAMIC_DRAW);
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
         sResources.capacity = allocation_capacity;
+    }
+    if (sResources.initialCapacity == 0)
+    {
+        sResources.initialCapacity = allocation_capacity;
     }
 
     glGenBuffers(1, &sResources.control);
