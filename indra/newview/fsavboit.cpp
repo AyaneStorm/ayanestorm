@@ -271,6 +271,11 @@ LLGLSLShader gAVBOITEarlyDepthProgram;
 // avboitIsolateDepthF.glsl and FSAVBOIT::finishDirectFrame().
 LLGLSLShader gAVBOITIsolateDepthProgram;
 // </AS:Chanayane>
+// A2: per-cell farthest opaque depth, baked once before pass 1 so its
+// hardware early-depth test rejects against the correct 8x8 block instead
+// of a single full-res pixel. See avboitCellDepthF.glsl and
+// FSAVBOIT::finishDirectOccupancy().
+LLGLSLShader gAVBOITCellDepthProgram;
 LLGLSLShader gAVBOITBoundsProgram;
 LLGLSLShader gAVBOITSkinnedBoundsProgram;
 LLGLSLShader gAVBOITGLTFProgram;
@@ -287,6 +292,11 @@ LLGLSLShader gAVBOITSkinnedPBRGlowProgram;
 LLGLSLShader gAVBOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
 LLRenderTarget gAVBOITOpaqueTarget;
 LLRenderTarget gAVBOITPrepassTarget;
+// A2: volume-resolution depth-only target holding each cell's baked
+// farthest opaque depth, bound during pass 1 so early_fragment_tests tests
+// against the correct per-cell value. Distinct from gAVBOITPrepassTarget,
+// which is an unrelated pass-0 null color sink.
+LLRenderTarget gAVBOITCellDepthTarget;
 
 bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
                         const std::string& name, const char* terminal)
@@ -485,6 +495,19 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITIsolateDepthProgram.clearPermutations();
     // </AS:Chanayane>
 
+    // A2: bakes each volume cell's farthest opaque depth once, ahead of
+    // pass 1, so pass 1's hardware depth test rejects against the correct
+    // 8x8 block. See avboitCellDepthF.glsl.
+    gAVBOITCellDepthProgram.mName = "AVBOIT Cell Depth";
+    gAVBOITCellDepthProgram.mFeatures.attachNothing = true;
+    gAVBOITCellDepthProgram.mShaderFiles.clear();
+    gAVBOITCellDepthProgram.mShaderFiles.emplace_back(
+        "deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
+    gAVBOITCellDepthProgram.mShaderFiles.emplace_back(
+        "deferred/avboitCellDepthF.glsl", GL_FRAGMENT_SHADER);
+    gAVBOITCellDepthProgram.mShaderLevel = shader_level;
+    gAVBOITCellDepthProgram.clearPermutations();
+
     gAVBOITBoundsProgram.mName = "AVBOIT Conservative Bounds";
     gAVBOITBoundsProgram.mFeatures.attachNothing = true;
     gAVBOITBoundsProgram.mShaderFiles.clear();
@@ -519,6 +542,7 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         gAVBOITResolveProgram.createShader() &&
         gAVBOITEarlyDepthProgram.createShader() &&
         gAVBOITIsolateDepthProgram.createShader() &&
+        gAVBOITCellDepthProgram.createShader() &&
         gAVBOITBoundsProgram.createShader() &&
         gAVBOITSkinnedBoundsProgram.createShader();
     success = success && cloneCapturePair(
@@ -606,6 +630,7 @@ void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
     shader_list.push_back(&gAVBOITResolveProgram);
     shader_list.push_back(&gAVBOITEarlyDepthProgram);
     shader_list.push_back(&gAVBOITIsolateDepthProgram);
+    shader_list.push_back(&gAVBOITCellDepthProgram);
     shader_list.push_back(&gAVBOITBoundsProgram);
     shader_list.push_back(&gAVBOITSkinnedBoundsProgram);
     shader_list.push_back(&gAVBOITGLTFProgram);
@@ -634,6 +659,7 @@ void FSAVBOIT::unloadShaders()
     gAVBOITResolveProgram.unload();
     gAVBOITEarlyDepthProgram.unload();
     gAVBOITIsolateDepthProgram.unload();
+    gAVBOITCellDepthProgram.unload();
     gAVBOITBoundsProgram.unload();
     gAVBOITSkinnedBoundsProgram.unload();
     unloadMaterialShaders();
@@ -967,7 +993,11 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     return glGetError() == GL_NO_ERROR &&
         gAVBOITOpaqueTarget.allocate(width, height, GL_RGBA16F, true) &&
         gAVBOITPrepassTarget.allocate(
-            sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8);
+            sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8) &&
+        // A2: depth-only, volume resolution. Color is never read; only
+        // gl_FragDepth from avboitCellDepthF.glsl matters.
+        gAVBOITCellDepthTarget.allocate(
+            sResources.volumeWidth, sResources.volumeHeight, GL_R8, true);
 }
 
 void FSAVBOIT::allocateResources(U32 width, U32 height)
@@ -1005,6 +1035,7 @@ void FSAVBOIT::releaseResources()
         glDeleteTextures(1, &sResources.accumulatedExtinction);
     gAVBOITOpaqueTarget.release();
     gAVBOITPrepassTarget.release();
+    gAVBOITCellDepthTarget.release();
     sDirectRasterPass = -1;
     sDirectFrameReady = false;
     sResources = Resources();
@@ -1059,7 +1090,8 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
         !sResources.work ||
         !opaque_depth ||
         !gAVBOITOpaqueTarget.isComplete() ||
-        !gAVBOITPrepassTarget.isComplete())
+        !gAVBOITPrepassTarget.isComplete() ||
+        !gAVBOITCellDepthTarget.isComplete())
     {
         return false;
     }
@@ -1465,7 +1497,13 @@ void FSAVBOIT::rasterizeConservativeBounds()
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    // Return the material occupancy pass to the private opaque-depth target.
+    // Bind a disposable target sized far smaller than the viewport for pass
+    // 0's material occupancy draws: color output is masked off and unread
+    // (occupancy is tracked via SSBO/image atomics instead), so any
+    // fragment landing outside this target's bounds simply has its color
+    // write discarded by GL -- a cheap sink, not a real render target for
+    // this pass. Distinct from gAVBOITCellDepthTarget (A2), which holds
+    // real per-cell depth data consumed by pass 1's hardware depth test.
     gAVBOITPrepassTarget.bindTarget();
     glViewport(0, 0, sResources.viewportWidth, sResources.viewportHeight);
 }
@@ -1484,7 +1522,12 @@ void FSAVBOIT::finishDirectColorRaster()
     glDrawBuffers(1, &draw_buffer);
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT |
                     GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gAVBOITPrepassTarget.flush();
+    // Pass 2's color raster (between finishDirectExtinction() and here) drew
+    // into gAVBOITOpaqueTarget, not gAVBOITPrepassTarget -- flush whatever
+    // is actually bound. gAVBOITPrepassTarget was bound only transiently for
+    // pass 0's occupancy draws and left unflushed once pass 1 rebinds a
+    // different target (see finishDirectOccupancy()).
+    gAVBOITOpaqueTarget.flush();
 }
 
 void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
@@ -1586,6 +1629,15 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
 
 void FSAVBOIT::finishDirectOccupancy()
 {
+    // Pop back off gAVBOITPrepassTarget (pass 0's disposable occupancy
+    // sink, bound by rasterizeConservativeBounds()) to the target it was
+    // pushed on top of (gAVBOITOpaqueTarget, from beginDirectFrame()).
+    // LLRenderTarget's bind stack must be flushed in the same order it was
+    // pushed -- skipping this flush would leave gAVBOITPrepassTarget
+    // buried under every target bound below, and its eventual flush() call
+    // would then rebind the wrong target.
+    gAVBOITPrepassTarget.flush();
+
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
     static LLStaticHashedString pass("avboitPass");
@@ -1627,8 +1679,34 @@ void FSAVBOIT::finishDirectOccupancy()
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gAVBOITOpaqueTarget.flush();
-    gAVBOITOpaqueTarget.bindTarget();
+    // gAVBOITOpaqueTarget is already the current target here (restored by
+    // the gAVBOITPrepassTarget.flush() at the top of this function) -- no
+    // flush/rebind needed before pushing the new depth-prepass target below.
+
+    // A2: bake each cell's farthest opaque depth into a small volume-
+    // resolution target before pass 1 binds it, so pass 1's hardware
+    // early_fragment_tests rejects against the correct 8x8 block instead of
+    // a single full-res pixel sampled at the wrong location. See
+    // avboitCellDepthF.glsl and doc/ayanestorm-oit-performance-audit-plan.md
+    // A2.
+    {
+        static LLStaticHashedString cell_depth_sampler(
+            "avboitOpaqueDepthSampler");
+        gAVBOITCellDepthTarget.bindTarget();
+        LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
+        gAVBOITCellDepthTarget.clear(GL_DEPTH_BUFFER_BIT);
+        gAVBOITCellDepthProgram.bind();
+        gAVBOITCellDepthProgram.uniform2i(
+            viewport, sResources.viewportWidth, sResources.viewportHeight);
+        gAVBOITCellDepthProgram.uniform1i(
+            cell_depth_sampler, directOpaqueDepthTextureUnit());
+        gPipeline.mScreenTriangleVB->setBuffer();
+        gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        gAVBOITCellDepthProgram.unbind();
+        gAVBOITCellDepthTarget.flush();
+    }
+
+    gAVBOITCellDepthTarget.bindTarget();
     beginDirectRasterPass(1);
 }
 
@@ -1670,12 +1748,19 @@ void FSAVBOIT::finishDirectExtinction()
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT |
                     GL_TEXTURE_FETCH_BARRIER_BIT);
-    gAVBOITOpaqueTarget.flush();
+    // A2: pass 1's material raster (between finishDirectOccupancy() and
+    // here) drew into gAVBOITCellDepthTarget, not gAVBOITOpaqueTarget.
+    // Flushing it pops the bind stack back to gAVBOITOpaqueTarget (its
+    // mPreviousRT, set when finishDirectOccupancy() bound it for pass 1),
+    // which is therefore already the current target afterward -- do not
+    // bindTarget() it again, that would push a second, self-referential
+    // entry onto the stack (gAVBOITOpaqueTarget is already its own
+    // ancestor here) and corrupt the eventual unbind-to-screen.
+    gAVBOITCellDepthTarget.flush();
 
     // Rasterize conservative zero-transmittance quads into a private copy of
     // opaque depth. The final color pass then receives ordinary early-Z/Hi-Z
     // rejection without modifying the viewer's shared scene depth texture.
-    gAVBOITOpaqueTarget.bindTarget();
     {
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LEQUAL);
         gAVBOITEarlyDepthProgram.bind();

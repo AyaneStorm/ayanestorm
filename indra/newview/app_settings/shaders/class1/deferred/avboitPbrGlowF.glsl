@@ -18,7 +18,6 @@ uniform vec2 avboitDepthRange;
 uniform float avboitLinearization;
 uniform float avboitSamplingBias;
 uniform sampler3D avboitTransmittanceSampler;
-uniform sampler2D avboitOpaqueDepthSampler;
 const uint AVBOIT_DIRECT_SLICES = 128u;
 // Must match the compaction search range in avboitVolumeC.glsl.
 const uint AVBOIT_MAX_DIVIDER = uint(AVBOIT_MAX_DIVIDER_VALUE);
@@ -123,21 +122,11 @@ void avboit_store_glow(float glow)
     ivec2 cell = avboitRasterPass == 0 ?
         clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1)) :
         clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
-    if (avboitRasterPass == 1)
-    {
-        float farthest_depth = 0.0;
-        ivec2 base_pixel = cell * 8;
-        for (int y = 0; y < 8; ++y)
-        for (int x = 0; x < 8; ++x)
-        {
-            ivec2 sample_pixel = min(
-                base_pixel + ivec2(x, y), avboitViewport - ivec2(1));
-            farthest_depth = max(
-                farthest_depth,
-                texelFetch(avboitOpaqueDepthSampler, sample_pixel, 0).r);
-        }
-        if (gl_FragCoord.z > farthest_depth) return;
-    }
+    // A2: pass 1's hardware early_fragment_tests now rejects against the
+    // correct per-cell farthest opaque depth (see avboitCellDepthF.glsl and
+    // FSAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
+    // point in pass 1 has already survived that test -- no manual re-test
+    // needed.
     if (avboitRasterPass == 0)
     {
         for (int y = -1; y <= 1; ++y)
