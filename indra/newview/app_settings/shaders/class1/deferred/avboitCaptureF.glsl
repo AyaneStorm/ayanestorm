@@ -122,9 +122,7 @@ uint avboit_proxy_bounds_offset()
     ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
     return 8u + 128u +
         uint(avboitVolumeSize.x * avboitVolumeSize.y) +
-        uint(tile_count.x * tile_count.y) * 4u +
-        uint(AVBOIT_VIRTUAL_SLICES) * uint(AVBOIT_ZBIN_LEVELS) +
-        uint(avboitVolumeSize.x * avboitVolumeSize.y) * 8u;
+        uint(tile_count.x * tile_count.y) * 4u;
 }
 
 uint avboit_dilated_proxy_bounds_offset()

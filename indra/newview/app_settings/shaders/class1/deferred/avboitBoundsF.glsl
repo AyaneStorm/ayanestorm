@@ -16,31 +16,15 @@ uniform ivec2 avboitVolumeSize;
 uniform vec2 avboitDepthRange;
 uniform float avboitLinearization;
 uniform sampler2D avboitOpaqueDepthSampler;
-uniform int avboitEntityID;
 uniform vec2 avboitProxyDepthInterval;
 uniform int avboitExactProxy;
 
-const uint AVBOIT_ENTITY_MASK_WORDS = 8u;
-
-uint avboit_zbin_offset()
+uint avboit_bounds_offset()
 {
     ivec2 tile_count = (avboitViewport + ivec2(15)) / 16;
     return 8u + 128u +
         uint(avboitVolumeSize.x * avboitVolumeSize.y) +
         uint(tile_count.x * tile_count.y) * 4u;
-}
-
-uint avboit_entity_mask_offset()
-{
-    return avboit_zbin_offset() +
-        uint(AVBOIT_VIRTUAL_SLICES) * uint(AVBOIT_ZBIN_LEVELS);
-}
-
-uint avboit_bounds_offset()
-{
-    return avboit_entity_mask_offset() +
-        uint(avboitVolumeSize.x * avboitVolumeSize.y) *
-            AVBOIT_ENTITY_MASK_WORDS;
 }
 
 float avboit_linear_depth(float window_depth)
@@ -95,15 +79,6 @@ void main()
     // The proxy interval and material prepass share the same conservative
     // opaque-depth bound; proxy depth beyond it is harmlessly clamped.
     float bounded_window_depth = min(gl_FragCoord.z, opaque_depth);
-    uint entity_id = uint(max(avboitEntityID, 0));
-    // Bit 255 is the conservative overflow bucket for IDs beyond the fixed
-    // 256-bit portable mask budget.
-    uint mask_entity = min(entity_id, 255u);
-    uint mask_address = avboit_entity_mask_offset() +
-        linear_cell * AVBOIT_ENTITY_MASK_WORDS +
-        (mask_entity >> 5u);
-    atomicOr(avboitWork[mask_address],
-             1u << (mask_entity & 31u));
     // Every touched cell receives the complete CPU AABB depth interval.
     // Surface-fragment depth is not conservative: only a far-facing cube
     // surface may cover a cell even though material exists near its front.

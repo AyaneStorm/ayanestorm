@@ -76,7 +76,6 @@ bool FSAVBOIT::directFrameReady() { return false; }
 #include <algorithm>
 #include <cmath>
 #include <cstring>
-#include <set>
 #include <unordered_set>
 
 #include "asbackgroundisolate.h"
@@ -124,10 +123,9 @@ constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
 // per-workgroup scan first.
 constexpr U32 AVBOIT_VIRTUAL_SLICES_BASELINE = 8192;
 constexpr U32 AVBOIT_VIRTUAL_SLICES_HIGH = 65536;
-constexpr U32 AVBOIT_ENTITY_MASK_WORDS = 8;
 
-// Selected once per session so buffer allocation, shader defines, and the CPU
-// Z-bin table can never disagree about the domain size.
+// Selected once per session so buffer allocation and shader defines can
+// never disagree about the domain size.
 U32 sVirtualSlices = AVBOIT_VIRTUAL_SLICES_BASELINE;
 
 U32 avboitVirtualSlices()
@@ -147,17 +145,6 @@ U32 avboitMaxDivider()
         ++divider;
     }
     return divider;
-}
-
-// The range-minimum/maximum table needs one level per halving of the domain.
-U32 avboitZBinRMQLevels()
-{
-    U32 levels = 1;
-    while ((1u << levels) < avboitVirtualSlices())
-    {
-        ++levels;
-    }
-    return levels + 1;
 }
 
 bool wideExtinction()
@@ -331,8 +318,6 @@ bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
     destination.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
     destination.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
-    destination.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     return destination.createShader();
 }
@@ -379,7 +364,7 @@ bool FSAVBOIT::sCaptureCompleted = false;
 
 const char* FSAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v134";
+    return "AVBOIT shader revision v135";
 }
 
 bool FSAVBOIT::supported()
@@ -456,8 +441,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITVolumeProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
     gAVBOITVolumeProgram.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
-    gAVBOITVolumeProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITVolumeProgram.addPermutation("AVBOIT_BUILD", "1");
 
@@ -469,8 +452,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITResolveProgram.clearPermutations();
     gAVBOITResolveProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITResolveProgram.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
     gAVBOITResolveProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITResolveProgram.addPermutation("AVBOIT_RESOLVE", "1");
@@ -486,8 +467,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITEarlyDepthProgram.clearPermutations();
     gAVBOITEarlyDepthProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITEarlyDepthProgram.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
     gAVBOITEarlyDepthProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
 
@@ -518,8 +497,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITBoundsProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
     gAVBOITBoundsProgram.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
-    gAVBOITBoundsProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITBoundsProgram.addPermutation("AVBOIT", "1");
 
@@ -533,8 +510,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     gAVBOITSkinnedBoundsProgram.clearPermutations();
     gAVBOITSkinnedBoundsProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITSkinnedBoundsProgram.addPermutation(
-        "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
     gAVBOITSkinnedBoundsProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
     gAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
@@ -601,8 +576,6 @@ void FSAVBOIT::loadShaders(S32 shader_level)
         gAVBOITGLTFProgram.addPermutation("AVBOIT", "1");
         gAVBOITGLTFProgram.addPermutation(
             "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-        gAVBOITGLTFProgram.addPermutation(
-            "AVBOIT_ZBIN_LEVELS", llformat("%u", avboitZBinRMQLevels()));
     gAVBOITGLTFProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
         gAVBOITGLTFProgram.mGLTFVariants.resize(
@@ -969,9 +942,6 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     const U64 work_words = 8u + AVBOIT_SLICES +
         static_cast<U64>(sResources.volumeWidth) * sResources.volumeHeight +
         static_cast<U64>(tile_count) * 4u +
-        static_cast<U64>(avboitVirtualSlices()) * avboitZBinRMQLevels() +
-        static_cast<U64>(sResources.volumeWidth) *
-            sResources.volumeHeight * AVBOIT_ENTITY_MASK_WORDS +
         static_cast<U64>(sResources.volumeWidth) *
             sResources.volumeHeight * 5u +
         // Per-tile depth range: minimum and maximum depth key per 16x16 tile.
@@ -1211,7 +1181,6 @@ void FSAVBOIT::rasterizeConservativeBounds()
     static LLStaticHashedString linearization("avboitLinearization");
     static LLStaticHashedString opaque_depth_sampler(
         "avboitOpaqueDepthSampler");
-    static LLStaticHashedString entity_id_uniform("avboitEntityID");
     static LLStaticHashedString proxy_depth_interval(
         "avboitProxyDepthInterval");
     static LLStaticHashedString exact_proxy("avboitExactProxy");
@@ -1341,132 +1310,13 @@ void FSAVBOIT::rasterizeConservativeBounds()
     gather_group_range(gPipeline.beginRiggedAlphaGroups(),
                        gPipeline.endRiggedAlphaGroups(),
                        LLRenderPass::PASS_ALPHA_RIGGED);
-    std::sort(bounds.begin(), bounds.end(),
-              [](const BoundRecord& left, const BoundRecord& right)
-              {
-                  return left.minimumDepth < right.minimumDepth ||
-                      (left.minimumDepth == right.minimumDepth &&
-                       left.maximumDepth < right.maximumDepth);
-              });
 
-    // DRO17 CPU Z bins: bounds are ordered by conservative near depth and
-    // every uniform bin stores a packed 16-bit minimum/maximum entity ID.
-    // ID 65534 is the conservative overflow bucket; 0xffff marks no entity.
-    std::vector<U16> zbin_min(avboitVirtualSlices(), 0xffffu);
-    std::vector<U16> zbin_max(avboitVirtualSlices(), 0u);
     const F32 near_depth = camera->getNear();
     const F32 far_depth = camera->getFar();
-    const F32 depth_range_value =
-        llmax(far_depth - near_depth, 0.0001f);
-    std::vector<U32> end_order(bounds.size());
-    for (U32 index = 0; index < end_order.size(); ++index)
-    {
-        end_order[index] = index;
-    }
-    std::sort(end_order.begin(), end_order.end(),
-              [&bounds](U32 left, U32 right)
-              {
-                  return bounds[left].maximumDepth <
-                      bounds[right].maximumDepth;
-              });
-    std::multiset<U16> active_ids;
-    U32 start_cursor = 0u;
-    U32 end_cursor = 0u;
-    for (U32 bin = 0; bin < avboitVirtualSlices(); ++bin)
-    {
-        const F32 bin_min = near_depth +
-            depth_range_value * (F32(bin) / F32(avboitVirtualSlices()));
-        const F32 bin_max = near_depth +
-            depth_range_value * (F32(bin + 1u) / F32(avboitVirtualSlices()));
-        while (start_cursor < bounds.size() &&
-               bounds[start_cursor].minimumDepth <= bin_max)
-        {
-            active_ids.insert(
-                U16(llmin(start_cursor, U32(0xfffeu))));
-            ++start_cursor;
-        }
-        while (end_cursor < end_order.size() &&
-               bounds[end_order[end_cursor]].maximumDepth < bin_min)
-        {
-            const U16 entity_id =
-                U16(llmin(end_order[end_cursor], U32(0xfffeu)));
-            const auto active = active_ids.find(entity_id);
-            if (active != active_ids.end())
-            {
-                active_ids.erase(active);
-            }
-            ++end_cursor;
-        }
-        if (!active_ids.empty())
-        {
-            zbin_min[bin] = *active_ids.begin();
-            zbin_max[bin] = *active_ids.rbegin();
-        }
-    }
-    std::vector<U32> packed_zbins(avboitVirtualSlices(), 0xffffffffu);
-    for (U32 bin = 0; bin < avboitVirtualSlices(); ++bin)
-    {
-        if (zbin_min[bin] != 0xffffu)
-        {
-            packed_zbins[bin] =
-                U32(zbin_min[bin]) | (U32(zbin_max[bin]) << 16u);
-        }
-    }
-    // Sparse-table range minima/maxima let the GL 4.3 compute path query all
-    // uniform Z bins intersecting a cell interval with two vector loads.
-    std::vector<U32> zbin_ranges(
-        static_cast<U64>(avboitVirtualSlices()) * avboitZBinRMQLevels(), 0xffffffffu);
-    std::copy(packed_zbins.begin(), packed_zbins.end(),
-              zbin_ranges.begin());
-    for (U32 level = 1u; level < avboitZBinRMQLevels(); ++level)
-    {
-        const U32 half_span = 1u << (level - 1u);
-        const U32 previous = (level - 1u) * avboitVirtualSlices();
-        const U32 destination = level * avboitVirtualSlices();
-        for (U32 bin = 0u; bin < avboitVirtualSlices(); ++bin)
-        {
-            const U32 left = zbin_ranges[previous + bin];
-            const U32 right_index = bin + half_span;
-            const U32 right = right_index < avboitVirtualSlices() ?
-                zbin_ranges[previous + right_index] : 0xffffffffu;
-            U32 minimum_id = left & 0xffffu;
-            U32 maximum_id =
-                minimum_id != 0xffffu ? left >> 16u : 0u;
-            if ((right & 0xffffu) != 0xffffu)
-            {
-                minimum_id = minimum_id == 0xffffu ?
-                    (right & 0xffffu) :
-                    llmin(minimum_id, right & 0xffffu);
-                maximum_id = llmax(maximum_id, right >> 16u);
-            }
-            if (minimum_id != 0xffffu)
-            {
-                zbin_ranges[destination + bin] =
-                    minimum_id | (maximum_id << 16u);
-            }
-        }
-    }
-    const U32 tile_count =
-        ((sResources.viewportWidth + 15u) / 16u) *
-        ((sResources.viewportHeight + 15u) / 16u);
-    const U64 zbin_offset_words = 8u + AVBOIT_SLICES +
-        static_cast<U64>(sResources.volumeWidth) *
-            sResources.volumeHeight +
-        static_cast<U64>(tile_count) * 4u;
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.work);
-    glBufferSubData(GL_SHADER_STORAGE_BUFFER,
-                    zbin_offset_words * sizeof(U32),
-                    zbin_ranges.size() * sizeof(U32),
-                    zbin_ranges.data());
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-    glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT |
-                    GL_SHADER_STORAGE_BARRIER_BIT);
 
     for (U32 index = 0; index < bounds.size(); ++index)
     {
         const BoundRecord& record = bounds[index];
-        gAVBOITBoundsProgram.uniform1i(
-            entity_id_uniform, S32(llmin(index, U32(0xfffeu))));
         gAVBOITBoundsProgram.uniform2f(
             proxy_depth_interval,
             llmax(record.minimumDepth, near_depth),
@@ -1490,7 +1340,6 @@ void FSAVBOIT::rasterizeConservativeBounds()
     // every actual alpha-tested fragment remains covered. Group AABBs stay
     // active for rigged geometry and as a coarse spatial fallback.
     gAVBOITBoundsProgram.uniform1i(exact_proxy, 1);
-    gAVBOITBoundsProgram.uniform1i(entity_id_uniform, 0);
     gAVBOITBoundsProgram.uniform3f(
         LLShaderMgr::BOX_CENTER, 0.f, 0.f, 0.f);
     gAVBOITBoundsProgram.uniform3f(
@@ -1549,7 +1398,6 @@ void FSAVBOIT::rasterizeConservativeBounds()
     gAVBOITSkinnedBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
     gAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
-    gAVBOITSkinnedBoundsProgram.uniform1i(entity_id_uniform, 0);
     for (LLCullResult::sg_iterator iter =
              gPipeline.beginRiggedAlphaGroups();
          iter != gPipeline.endRiggedAlphaGroups(); ++iter)
@@ -1605,8 +1453,6 @@ void FSAVBOIT::rasterizeConservativeBounds()
             gAVBOITVolumeProgram.uniform2f(
                 proxy_depth_interval, near_depth,
                 llmin(record.maximumDepth, far_depth));
-            gAVBOITVolumeProgram.uniform1i(
-                entity_id_uniform, S32(llmin(index, U32(0xfffeu))));
             gAVBOITVolumeProgram.uniform1i(pass, 10);
             glDispatchCompute(groups_x, groups_y, 1u);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
