@@ -45,8 +45,10 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 |------|------|-------|
 | 2026-09-03 | Phase 0, Phase 1 (E1, E2-A, E3, E11) | committed `b49aefce07` |
 | 2026-09-03 | E4 | implemented; first version regressed to ~1 FPS with sprites because the control SSBO was host-mapped. Corrected text below; details in `ayanestorm-oit-e4-fence-stall-question.md` |
-| 2026-09-03 | E5, E6 | implemented, unstaged |
+| 2026-09-03 | E5, E6 | committed |
 | 2026-09-03 | E1 growth timing | mid-frame `glBufferData` crashed (GPU hang on garbage links). Growth now deferred to `beginFrame()`; E1 and E10b text corrected; details in `ayanestorm-oit-e1-e4-growth-race.md` |
+| 2026-09-03 | E7 | committed. 29->40 FPS in the reference sprite scene; no change in avatar-only scenes (expected, sparse lists). Wave-level allocation needed 3 separate physical shader files (marker-position and duplicate-symbol toolchain limits, not predicted by the plan) instead of one `#ifdef`-gated file; see the shader files' own comments for the mechanics. |
+| 2026-09-03 | E9 | full removal (recommended option), in progress |
 
 Two plan defects were found by implementation so far, both mine: E4 mapped
 the atomically written buffer, and E1 reallocated mid-frame. Both corrected

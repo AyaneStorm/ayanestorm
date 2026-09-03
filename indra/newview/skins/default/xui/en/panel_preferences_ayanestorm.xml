@@ -128,10 +128,10 @@
         increment="1"
         label_width="0"
         left="250"
-        max_val="9"
+        max_val="8"
         min_val="0"
         name="render_exact_oit_debug"
-        tool_tip="0: final. 1: fragment count. 2: nearest depth. 3: farthest depth. 4: sort validation. 5: blend mode. 6: capacity. 7: opaque-cutoff activity. 8: list-depth buckets. 9: compute-sort path."
+        tool_tip="0: final. 1: fragment count. 2: nearest depth. 3: farthest depth. 4: sort validation. 5: blend mode. 6: capacity. 7: opaque-cutoff activity. 8: list-depth buckets."
         top="61"
         width="60" />
 

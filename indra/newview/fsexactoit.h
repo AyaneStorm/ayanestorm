@@ -111,7 +111,6 @@ private:
     static bool loadFullbrightAlphaShaders(S32 shader_level);
     static bool loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
                                          std::vector<LLGLSLShader*>& shader_list);
-    static void loadComputeSortShaders(S32 shader_level);
     static bool shadersReady();
     static void discardCapture();
     static void setVanillaFallback(bool active);
@@ -129,7 +128,6 @@ private:
     static ValidationResult waitValidation(bool mouselook, U32& maximum_list);
     static void composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
                           bool sort_pass_1_issued, U32 shallow_limit);
-    static bool sortWithCompute(U32 width, U32 height, U32 maximum_list);
     static void releaseResources(bool preserve_node_pool);
     struct Resources
     {
@@ -141,9 +139,7 @@ private:
         GLuint readback = 0;          // 16-byte host-visible copy of the control words
         U32* readbackMapped = nullptr;
         GLsync captureFence = 0;
-        GLuint sortQueues[2] = {};
         U32 capacity = 0;
-        U32 sortQueueCapacity = 0;
         U32 peakNodes = 0;
         U32 overflowCount = 0;
         U32 lastRequiredNodes = 0;
@@ -155,7 +151,6 @@ private:
         // against sResources.nodes. Reallocating that buffer immediately
         // races that in-flight work. 0 means no growth pending.
         U32 pendingGrowthNodes = 0;
-        bool computeSortAvailable = false;
         bool available = false;
     };
     static bool captureOverflowed(U32 required_nodes, U32 overflow_flag);
@@ -167,7 +162,6 @@ private:
     static bool beginResourceAllocation(U32 width, U32 height);
     static bool allocateCaptureImages(U32 width, U32 height);
     static void allocateNodePool(U32 width, U32 height, bool capture_images_ready);
-    static void allocateComputeSortQueues(U32 width, U32 height);
     static bool sCaptureCompleted;
     static bool sCaptureClearNeeded;
     static bool sVanillaFallbackActive;

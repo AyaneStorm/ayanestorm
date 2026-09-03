@@ -39,8 +39,6 @@ uniform int oitDebugMode;
 uniform int oitPass;
 // Enables lossless opaque-cutoff discovery on the first sort pass only.
 uniform int oitFirstSortPass;
-// Reports whether compute sorting completed this frame for diagnostic mode 9.
-uniform int oitComputeSortActive;
 // <AS:Chanayane> Shallow-list fast path (E5): pixels with count <= K (in
 // normal mode; forced to 0, i.e. disabled, in any debug mode so every
 // diagnostic keeps seeing the fully-sorted path) are sorted and blended in
@@ -398,7 +396,7 @@ void main()
     vec4 dst = texelFetch(diffuseRect, pixel, 0);
     if (head == OIT_NULL)
     {
-        if (oitDebugMode >= 1 && oitDebugMode <= 9)
+        if (oitDebugMode >= 1 && oitDebugMode <= 8)
         {
             // Screen alpha carries glow, not display opacity. Diagnostics
             // clear it so later post-processing cannot turn the
@@ -412,13 +410,6 @@ void main()
             discard;
             // </AS:Chanayane>
         }
-        return;
-    }
-
-    if (oitDebugMode == 9)
-    {
-        frag_color = oitComputeSortActive != 0 ?
-            vec4(0.0, 0.8, 0.15, 0.0) : vec4(0.9, 0.0, 0.0, 0.0);
         return;
     }
 
