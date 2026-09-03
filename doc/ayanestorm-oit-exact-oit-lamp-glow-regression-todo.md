@@ -1,7 +1,6 @@
-# Exact OIT: lamp glow regression (cause found, fix instructions)
+# Exact OIT: lamp glow regression (fixed)
 
-Author: chanayane@firestorm. Date: 2026-09-03. Status: **root cause confirmed
-by code reading, fix not yet applied.**
+Author: chanayane@firestorm. Date: 2026-09-03. Status: **fixed, verified.**
 
 ## Symptom
 
@@ -88,6 +87,14 @@ Remove the `drop_no_glow` lambda and its four calls from
 (E2-A alone). Cost: glow-less particle draws are submitted again (vertex
 work only; they still allocate nothing). Leave the `llvopartgroup.cpp`
 tagged block in place; it is harmless.
+
+## Applied
+
+Fix A applied 2026-09-03: `draw_info->mHasGlow = true;` added in
+`LLVolumeGeometryManager::registerFace()` (`llvovolume.cpp`, new-info `else`
+branch, right after `draw_info->mModelMatrix = model_mat;`), tagged. Comment
+above `drop_no_glow` in `fsexactoit.cpp` corrected to match. No shader
+source changed; no shader cache revision bump needed.
 
 ## Verify
 

@@ -1151,9 +1151,9 @@ bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
     // unconditionally. mHasGlow now reflects whether that glow is actually
     // non-zero (see llvopartgroup.cpp), so drop the ones that aren't: their
     // capture shader would allocate nothing per E2-A anyway (glow == 0.0
-    // early return), so the draw call itself is pure overhead. Non-particle
-    // emissive draws (LLVOVolume) only ever get TYPE_EMISSIVE when glow > 0,
-    // so mHasGlow is already true for them and this filter is a no-op there.
+    // early return), so the draw call itself is pure overhead. Prim draws
+    // set mHasGlow = true in registerFace() (llvovolume.cpp) so they always
+    // pass; only particle draws with known-zero glow are dropped.
     auto drop_no_glow = [](std::vector<LLDrawInfo*>& v)
     {
         v.erase(std::remove_if(v.begin(), v.end(),
