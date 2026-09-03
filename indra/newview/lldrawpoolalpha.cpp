@@ -237,9 +237,13 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 // </AS:Chanayane>
 
     // final pass, render to depth for depth of field effects
-// <AS:Chanayane> OIT capture completed
-    // if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
-    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER && !FSOITDispatcher::captureCompleted())
+// <AS:Chanayane> E12: restored to vanilla. This runs after
+// renderGeomPostDeferred() returns, which is strictly before
+// FSOITDispatcher::finishFrame()/composite() (see pipeline.cpp) even starts,
+// so Exact OIT's composite never observes these depth writes either way;
+// skipping this pass while capturing only cost DoF focus on transparent
+// surfaces for no benefit. See doc/ayanestorm-oit-performance-audit-plan.md E12.
+    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField && !gCubeSnapshot && !LLPipeline::sRenderingHUDs && getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
 // </AS:Chanayane>
     {
         //update depth buffer sampler
