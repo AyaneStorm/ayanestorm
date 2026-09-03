@@ -768,6 +768,31 @@ void FSExactOIT::beginFrame()
     sCaptureClearNeeded = true;
     sVanillaFallbackActive = false;
 
+    // Deferred node-pool growth (see pendingGrowthNodes): the previous
+    // frame's GPU work (capture, any speculative/natural sort passes,
+    // composite) was already issued in submission order before this call, so
+    // reallocating sResources.nodes here cannot race it. This frame's own
+    // capture draws have not been issued yet. Reallocating mid-frame instead
+    // (right after that frame's own capture) raced GPU work still queued
+    // against the buffer -- see doc/ayanestorm-oit-e1-e4-growth-race.md.
+    // Guarded by isEnabled() && nodes: a pending request must not trigger a
+    // multi-GB glBufferData on the frame Exact OIT gets disabled or its
+    // resources are already being torn down.
+    if (sResources.pendingGrowthNodes > 0 && isEnabled() && sResources.nodes)
+    {
+        if (!growNodePool(sResources.pendingGrowthNodes))
+        {
+            // Grew (or tried to), but the safe VRAM cap still leaves
+            // capacity short of what was requested; captureOverflowed() /
+            // the predictive-skip policy handle the ongoing consequence,
+            // this just makes the ceiling visible in the log.
+            LL_INFOS("ExactOIT") << "Exact OIT node pool grew to " << sResources.capacity
+                << " but requested " << sResources.pendingGrowthNodes
+                << " remains short of the safe VRAM cap." << LL_ENDL;
+        }
+    }
+    sResources.pendingGrowthNodes = 0;
+
     // Decremented once per frame here (captureEligible() runs for both alpha
     // pools and must not double-decrement). The debug overlay wants to see
     // every frame's diagnostics, so the predictive skip never engages while
@@ -1148,16 +1173,28 @@ static U64 safeNodeCapacity()
     return llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull) / node_bytes;
 }
 
-// Grows the node pool toward `required_nodes` (with headroom) when capacity allows it.
+// Computes the capacity growNodePool() would grow to for `required_nodes`,
+// without performing any GL call. Pure policy, safe to call at any time.
+static U32 computeGrownCapacity(U32 required_nodes, U32 current_capacity)
+{
+    const U64 safe_nodes = safeNodeCapacity();
+    const U64 demand_with_headroom = (static_cast<U64>(required_nodes) * 5ull + 3ull) / 4ull;
+    const U64 geometric_growth = static_cast<U64>(current_capacity) * 2ull;
+    const U64 requested = llmax(demand_with_headroom, geometric_growth);
+    return U32(llmin<U64>(requested, llmin<U64>(safe_nodes, 0xfffffffeull)));
+}
+
+// Grows the node pool toward `required_nodes` (with headroom) when capacity
+// allows it (a glBufferData orphan). Caller must guarantee no GPU work from
+// this or an earlier frame is still queued against sResources.nodes (see
+// pendingGrowthNodes / beginFrame()): reallocating while capture, a
+// speculative sort pass, or an abandoned overflow frame's sort work is still
+// in flight races that GPU work against the new (garbage) storage.
 // Returns true if capacity now covers `required_nodes`.
 bool FSExactOIT::growNodePool(U32 required_nodes)
 {
     constexpr U64 node_bytes = 32;
-    const U64 safe_nodes = safeNodeCapacity();
-    const U64 demand_with_headroom = (static_cast<U64>(required_nodes) * 5ull + 3ull) / 4ull;
-    const U64 geometric_growth = static_cast<U64>(sResources.capacity) * 2ull;
-    const U64 requested = llmax(demand_with_headroom, geometric_growth);
-    const U32 grown_capacity = U32(llmin<U64>(requested, llmin<U64>(safe_nodes, 0xfffffffeull)));
+    const U32 grown_capacity = computeGrownCapacity(required_nodes, sResources.capacity);
 
     if (grown_capacity > sResources.capacity)
     {
@@ -1195,9 +1232,17 @@ bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
         << "); rendering complete vanilla transparency for this frame." << LL_ENDL;
     discardCapture();
 
-    const U32 capacity_before = sResources.capacity;
-    const bool grown = growNodePool(required_nodes);
-    if (!grown && sResources.capacity == capacity_before)
+    // Defer the actual glBufferData reallocation to next frame's
+    // beginFrame(), before any capture or speculative sort work has touched
+    // the buffer this frame -- see pendingGrowthNodes. Predict success from
+    // the policy alone (no GL call) to decide the skip-frame policy now.
+    const U32 grown_capacity = computeGrownCapacity(required_nodes, sResources.capacity);
+    const bool will_grow = grown_capacity > sResources.capacity;
+    if (will_grow)
+    {
+        sResources.pendingGrowthNodes = llmax(sResources.pendingGrowthNodes, required_nodes);
+    }
+    if (!will_grow)
     {
         // Demand already exceeds the safe VRAM cap: growth is impossible this
         // session. Skip capture for a growing number of frames instead of
@@ -1317,12 +1362,20 @@ FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& max
     }
 
     // Not overflowed this frame: reset the escalating skip policy and, if
-    // demand is approaching capacity, grow now rather than waiting for an
-    // overflow (and a double-render) frame later.
+    // demand is approaching capacity, request growth for next frame rather
+    // than waiting for an overflow (and a double-render) frame later. The
+    // actual reallocation is deferred to beginFrame() (see
+    // pendingGrowthNodes): this frame's capture data is already live in
+    // sResources.nodes and, with the speculative pass (E4), a sort pass may
+    // already be queued against it -- reallocating here would race that
+    // in-flight GPU work.
     sResources.consecutiveOverflowsAtCap = 0;
     if (control[0] > sResources.capacity * 3 / 4 && sResources.capacity < U32(safeNodeCapacity()))
     {
-        growNodePool(control[0] * 2u);
+        // computeGrownCapacity() already applies its own headroom/doubling
+        // policy on top of this; doubling here too jumped a 29M-node demand
+        // straight to the 2GB safe cap.
+        sResources.pendingGrowthNodes = llmax(sResources.pendingGrowthNodes, control[0]);
     }
     return ValidationResult::COMPLETE;
 }
@@ -1414,12 +1467,18 @@ void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
                        screen.getWidth(), screen.getHeight(), 1);
 }
 
+// E6: chunk size take_run() sorts in registers before falling back to
+// natural-run detection. Must match OIT_CHUNK in exactOITCompositeF.glsl.
+constexpr U32 OIT_CHUNK = 16u;
+
 // Sorts every captured pixel list and blends the exact result over the opaque scene.
 // `sort_pass_1_issued` is true when finishFrame() already ran the fragment
 // sorter's first pass speculatively (overlapped with the capture fence wait);
 // this then resumes from the second pass instead of redoing the first.
+// `shallow_limit` is E5's K, computed once in finishFrame() and shared with
+// the speculative pass issued there; it must not be recomputed here.
 void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
-                           bool sort_pass_1_issued)
+                           bool sort_pass_1_issued, U32 shallow_limit)
 {
     copyOpaqueScene(screen);
     LLGLDisable blend(GL_BLEND);
@@ -1432,6 +1491,8 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     static LLStaticHashedString oit_compute_sort_active("oitComputeSortActive");
     // Limit opaque-cutoff discovery to the first natural-sort invocation.
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
+    static LLStaticHashedString oit_shallow_limit("oitShallowLimit");
+    static LLStaticHashedString oit_opaque_cutoff("oitOpaqueCutoff");
     // <AS:Chanayane> Self-lighting floater isolate-background mode: see the
     // dedicated pass 3 block below and asbackgroundisolate.h for the full
     // story.
@@ -1449,21 +1510,39 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         {
             gExactOITCompositeProgram.bind();
             gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+            gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+            gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
             screen_triangle.setBuffer();
+            // E5: pass 1 (and thus any further merge rounds) is skipped
+            // entirely when every pixel's raw count could be at most
+            // max(K, 1) -- i.e. nothing on screen needs a fullscreen sort
+            // pass at all. The speculative pass in finishFrame(), if issued,
+            // already ran with this same shallow_limit and is a no-op per
+            // pixel in that case, so skipping the remaining rounds here is
+            // still correct.
+            if (maximum_list > llmax(shallow_limit, 1u))
             {
                 LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
                 gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+                // E6: take_run() chunks natural runs shorter than OIT_CHUNK,
+                // so after the first round every run has >= OIT_CHUNK nodes
+                // except the last: runs <= ceil(maximum_list / OIT_CHUNK),
+                // and each further round halves the run count.
+                const U32 runs = (maximum_list + OIT_CHUNK - 1u) / OIT_CHUNK;
+                U32 total_passes = 1u;
+                while ((1u << total_passes) < runs) ++total_passes;
                 // Pass 1 (oitPass == 1) never reads oitDebugMode, only
-                // oitFirstSortPass, so the speculative pass in finishFrame()
-                // is a bit-identical stand-in for width == 1 here regardless
-                // of debug mode; skip straight to width == 2 when it ran.
-                const U32 start_width = sort_pass_1_issued ? 2u : 1u;
-                for (U32 width = start_width; width < maximum_list; width <<= 1)
+                // oitFirstSortPass/oitShallowLimit/oitOpaqueCutoff, so the
+                // speculative pass in finishFrame() is a bit-identical
+                // stand-in for round 1 here regardless of debug mode; skip
+                // straight to round 2 when it ran.
+                const U32 start_round = sort_pass_1_issued ? 2u : 1u;
+                for (U32 round = start_round; round <= total_passes; ++round)
                 {
                     LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
                     // Prune fully hidden nodes before the first merge pass.
                     gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
-                                                        opaque_cutoff && width == 1);
+                                                        opaque_cutoff && round == 1u);
                     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
                     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
                     ++sort_passes;
@@ -1498,6 +1577,15 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
         gExactOITCompositeProgram.uniform1i(oit_compute_sort_active, used_compute_sort);
         gExactOITCompositeProgram.uniform1i(oit_pass, 2);
+        // Pass 2 reads oitShallowLimit/oitOpaqueCutoff unconditionally
+        // (blend_shallow() dispatch); set them here too, since the fragment
+        // sort loop above -- the only other place that sets them this frame
+        // -- is skipped whenever the compute sorter ran or every pixel was
+        // shallow. A stale value from a previous bind of this program object
+        // would silently desync pass 1's OIT_SORTED flag from pass 2's
+        // dispatch.
+        gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+        gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
         gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                               &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
         screen_triangle.setBuffer();
@@ -1559,11 +1647,17 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
 // then overlaps the fence wait in waitValidation() instead of running after.
 // Only used for the fragment sorter; the compute-sort path still needs
 // maximum_list up front for its dispatch counts and is issued after the wait.
-static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle)
+// `shallow_limit` must equal the K composite() uses this same frame (see the
+// E4/E5 interaction note in the performance plan): a mismatch would make
+// this pass sort pixels composite() then treats as unsorted, or skip pixels
+// composite() treats as sorted.
+static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle, U32 shallow_limit)
 {
     static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_pass("oitPass");
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
+    static LLStaticHashedString oit_shallow_limit("oitShallowLimit");
+    static LLStaticHashedString oit_opaque_cutoff("oitOpaqueCutoff");
 
     LL_PROFILE_GPU_ZONE("Exact OIT speculative sort pass");
     LLGLDepthTest depth(GL_FALSE);
@@ -1575,6 +1669,8 @@ static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle)
     // Equivalent to composite()'s (opaque_cutoff && width == 1) test: this
     // speculative pass always is width == 1.
     gExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
+    gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+    gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
     screen_triangle.setBuffer();
     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
@@ -1594,6 +1690,15 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
 
     beginValidation();
 
+    // Shallow-list limit K (E5): 16 in normal mode, 0 (disabled, i.e. every
+    // diagnostic sees the fully-sorted path) in any debug mode. Computed
+    // once here and passed to both the speculative pass below and
+    // composite(): they must agree, or the speculative pass would sort
+    // pixels composite() then treats as unsorted, or skip pixels composite()
+    // treats as sorted.
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    const U32 shallow_limit = debug_mode == 0 ? 16u : 0u;
+
     // The compute sorter needs maximum_list up front for its dispatch counts,
     // so it cannot be issued speculatively; only the fragment path overlaps
     // the fence wait below with GPU work. This mirrors sortWithCompute()'s own
@@ -1609,7 +1714,7 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
         // the same image/SSBO units bound from capture; composite()'s own
         // bindCompositeResources() call below is then a harmless repeat.
         bindCompositeResources();
-        issueSpeculativeFirstSortPass(screen_triangle);
+        issueSpeculativeFirstSortPass(screen_triangle, shallow_limit);
     }
 
     U32 maximum_list = 0;
@@ -1635,8 +1740,7 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
     }
 
     LL_PROFILE_GPU_ZONE("Exact OIT composite");
-    composite(screen, screen_triangle, maximum_list, sort_pass_1_issued);
-    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    composite(screen, screen_triangle, maximum_list, sort_pass_1_issued, shallow_limit);
     // The viewer's Highlight Transparent overlay is drawn after compositing and
     // would obscure Exact OIT diagnostic colors.
     if (debug_mode == 0)
@@ -1703,6 +1807,7 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
     sResources.sortQueues[1] = 0;
     sResources.sortQueueCapacity = 0;
     sResources.computeSortAvailable = false;
+    sResources.pendingGrowthNodes = 0;
     if (!preserve_node_pool)
     {
         sResources.nodes = 0;

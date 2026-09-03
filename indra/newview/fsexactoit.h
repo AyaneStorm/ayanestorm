@@ -128,7 +128,7 @@ private:
     static void beginValidation();
     static ValidationResult waitValidation(bool mouselook, U32& maximum_list);
     static void composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
-                          bool sort_pass_1_issued);
+                          bool sort_pass_1_issued, U32 shallow_limit);
     static bool sortWithCompute(U32 width, U32 height, U32 maximum_list);
     static void releaseResources(bool preserve_node_pool);
     struct Resources
@@ -149,6 +149,12 @@ private:
         U32 lastRequiredNodes = 0;
         U32 skipFramesRemaining = 0;
         U32 consecutiveOverflowsAtCap = 0;
+        // Deferred growth target (E4/E1 race fix): waitValidation() may run
+        // while GPU work from this same frame (the speculative pass 1 sort,
+        // or an overflowed capture's abandoned sort work) is still queued
+        // against sResources.nodes. Reallocating that buffer immediately
+        // races that in-flight work. 0 means no growth pending.
+        U32 pendingGrowthNodes = 0;
         bool computeSortAvailable = false;
         bool available = false;
     };

@@ -39,6 +39,20 @@ Each item has: **Goal**, **Why** (evidence from code), **Change** (exact edits),
 Terminology: "node" = one captured fragment (32 bytes). "list" = a pixel's
 linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 
+### Status and corrections log (keep current)
+
+| Date | Item | State |
+|------|------|-------|
+| 2026-09-03 | Phase 0, Phase 1 (E1, E2-A, E3, E11) | committed `b49aefce07` |
+| 2026-09-03 | E4 | implemented; first version regressed to ~1 FPS with sprites because the control SSBO was host-mapped. Corrected text below; details in `ayanestorm-oit-e4-fence-stall-question.md` |
+| 2026-09-03 | E5, E6 | implemented, unstaged |
+| 2026-09-03 | E1 growth timing | mid-frame `glBufferData` crashed (GPU hang on garbage links). Growth now deferred to `beginFrame()`; E1 and E10b text corrected; details in `ayanestorm-oit-e1-e4-growth-race.md` |
+
+Two plan defects were found by implementation so far, both mine: E4 mapped
+the atomically written buffer, and E1 reallocated mid-frame. Both corrected
+in place. When a later item contradicts a correction here, the correction
+wins.
+
 ---
 
 ## 1. Findings summary
@@ -118,10 +132,16 @@ the usual trigger (huge overdraw, few nodes reclaimable).
 2. In `validateCapture()` after reading `control`, store
    `sResources.lastRequiredNodes = control[0]`.
 3. Proactive growth: at the end of `validateCapture()` when NOT overflowed, if
-   `control[0] > capacity * 3 / 4` and `capacity < safe_nodes`, grow now using
-   the same policy as `captureOverflowed()` (factor out the growth block into
-   `growNodePool(U32 required)` and call it from both places). Growing here
-   costs one `glBufferData` but avoids a double-render frame later.
+   `control[0] > capacity * 3 / 4` and `capacity < safe_nodes`, **request**
+   growth by recording `pendingGrowthNodes = max(pendingGrowthNodes, control[0])`.
+   The actual `glBufferData` runs in `beginFrame()` of the next frame, before
+   any capture draw. **Never reallocate the node pool mid-frame**: the
+   composite that follows would read the orphaned buffer's fresh,
+   uninitialised storage, traverse garbage links and hang the GPU (this
+   happened; see `ayanestorm-oit-e1-e4-growth-race.md`). The overflow path
+   requests growth the same way. Factor the capacity policy into a pure
+   `computeGrownCapacity(required, capacity)` so the skip decision below can
+   predict growth without a GL call.
 4. Predictive skip: in `captureEligible()` add
    `if (sResources.skipFramesRemaining > 0) { --sResources.skipFramesRemaining; return false; }`
    placed after the `isEnabled()` block. In `captureOverflowed()`, when growth
@@ -392,6 +412,11 @@ section). The steps below are the corrected version.
 - A `static LLCachedControl` read only at allocation time is not a live
   toggle; changing such a setting does nothing until the resource is
   reallocated. Do not use that pattern for A/B diagnostics.
+- Never `glBufferData`/reallocate any shader-visible buffer between a
+  frame's capture and its composite. Commands issued after the reallocation
+  see new uninitialised storage; the list traversals are unbounded and a
+  garbage cycle hangs the GPU. All reallocations go through a pending
+  request applied in `beginFrame()` (E1, E10b, E8, E9).
 - Reading the mapped pointer without waiting on the fence gives stale data.
   Never read it anywhere else.
 - Pass 1 runs before the overflow decision. An overflowed capture has `next`
@@ -897,7 +922,9 @@ fallback frame.
 `U32 windowFrames`). When the window closes and `windowPeak < capacity / 4`
 and `capacity > initial_capacity`, reallocate to
 `llmax(initial_capacity, windowPeak * 2)`. Reallocation is a `glBufferData`
-(orphan). Never shrink twice within 600 frames.
+(orphan) and, like growth, must be *requested* and executed only in
+`beginFrame()` before that frame's capture (same `pending*` pattern as E1).
+Never shrink twice within 600 frames.
 
 **E10c. Opaque copy via texture barrier (optional).** Requires
 `glTextureBarrier != nullptr` and `gGLManager.mGLVersion >= 4.49f` (or the
