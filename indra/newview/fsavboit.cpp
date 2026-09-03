@@ -162,8 +162,10 @@ bool wideExtinction()
 // is, which is what separates layers a fraction of a millimetre apart.
 bool tileRange()
 {
+    // Off by default (A5): pass 0 only feeds this in debug mode 6 or for
+    // GLTF alpha geometry, so it is currently inert for ordinary content.
     static LLCachedControl<bool> tile_range(
-        gSavedSettings, "RenderAVBOITTileRange", true);
+        gSavedSettings, "RenderAVBOITTileRange", false);
     return tile_range;
 }
 

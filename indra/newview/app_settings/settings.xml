@@ -11972,13 +11972,13 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderAVBOITTileRange</key>
   <map>
     <key>Comment</key>
-    <string>Range the AVBOIT depth slices to each 16x16 screen tile instead of to the whole frame. The shared frame-wide depth curve gives every pixel a slice spacing set by the distinct depths present anywhere on screen, so a single distant surface coarsens the spacing for close clothing layers too and layers less than a centimetre apart land in one slice. Per-tile ranging spends the 128 physical slices only on the depth occupied within each tile, separating layers a fraction of a millimetre apart. Disable to restore the frame-wide curve.</string>
+    <string>Range the AVBOIT depth slices to each 16x16 screen tile instead of to the whole frame. Only raster pass 0 feeds this, and pass 0 only runs ordinary (non-GLTF) alpha geometry in debug mode 6; for everything else pass 0 is GLTF-only, so this is currently inert for ordinary content and, where GLTF alpha exists, rescales a tile inconsistently with its untouched neighbours. Off by default until it is wired to a pass that covers all alpha geometry.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>Boolean</string>
     <key>Value</key>
-    <integer>1</integer>
+    <integer>0</integer>
     <key>Backup</key>
     <integer>0</integer>
   </map>

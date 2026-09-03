@@ -62,6 +62,7 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 
 | 2026-09-03 | **E2-B regression: prim glow lost** | fixed, committed. Lamp glass dark in Exact OIT only. Cause: `LLDrawInfo::mHasGlow` is written only by `LLParticlePartition::getGeometry()`; `registerFace()` (llvovolume.cpp) never sets it, so every prim emissive draw had `mHasGlow == false` and E2-B's `drop_no_glow` filter in `FSExactOIT::handleCapturedEmissives()` discarded it. The E2 trap claim "prims keep mHasGlow true" was wrong (plan defect #3). Fix A applied: one tagged `draw_info->mHasGlow = true;` in `registerFace()`'s new-`LLDrawInfo` branch, plus the corrected comment above `drop_no_glow`. Verified: lamp glows again in Exact OIT, matching vanilla/AVBOIT. Details in `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md` |
 | 2026-09-03 | **AVBOIT head/hair colour mismatch** | found, not a separate bug. Hair looks lighter/washed and eye makeup/lashes fainter in AVBOIT than in vanilla and Exact OIT (which match). Verified the fragment colour path is identical in all three modes (`alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl` all pass the same `color` to `frag_color` / `exact_oit_store` / `avboit_store`; shadow sampling identical). The difference is the resolve: per-pixel weighted average with a 1/8-resolution volume transmittance, so back strands/layers that the front strand hides in vanilla still contribute their (differently lit, usually brighter) colour. Same representational cause as the sheer-over-sheer bug; A9 fixes both. Details in A9 |
+| 2026-09-03 | AVBOIT A5 | committed (option B). `RenderAVBOITTileRange` default flipped `1` -> `0` in `settings.xml`, `FSAVBOIT::tileRange()`'s fallback default matched (`true` -> `false`). Confirmed via `renderPostDeferredCapture()` that pass 0 still only runs the ordinary alpha pools in `debugMode() == 6`, otherwise GLTF-only, so the feature remains genuinely inert for non-GLTF content and this is a zero-visual-change default flip that removes the GLTF-tile inconsistency for everyone not explicitly opting in. Both comments corrected to state the inertness rather than describe the feature as working. Option A (wire it to a pass that covers all alpha geometry) deferred to after A9, which is the actual fix for the bug this feature was meant to address |
 
 Three plan defects were found by implementation so far, all mine: E4 mapped
 the atomically written buffer, E1 reallocated mid-frame, and E2's trap text
@@ -1244,6 +1245,15 @@ so neighbouring tiles with different depth mappings blend incompatible slices.
 Recommendation: B now (zero visual change for non-GLTF scenes, removes the
 GLTF-tile inconsistency), and decide A vs C after E-phase profiling. Do not
 implement A without the user's approval: it changes AVBOIT's output everywhere.
+
+**Done (2026-09-03):** B applied. `settings.xml`'s `RenderAVBOITTileRange`
+default changed `1` -> `0`; `FSAVBOIT::tileRange()`'s `LLCachedControl`
+fallback default changed `true` -> `false` to match. Comments in both places
+updated to state the current inertness plainly rather than describe the
+feature as if it worked. No shader change (the pass-0 gating this relies on
+is untouched), no UI reference existed to update. A vs C left for after A9,
+per the recommendation above — A9 is the real fix for the bug this feature
+was originally meant to address (see A9's "Established cause").
 
 Context from `ayanestorm-special/doc/...-compute-avboit-implementation-plan.md`
 ("Next: per-tile depth ranging"): this feature was designed as *the* fix for
