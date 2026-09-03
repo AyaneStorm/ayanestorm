@@ -48,12 +48,16 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 | 2026-09-03 | E5, E6 | committed |
 | 2026-09-03 | E1 growth timing | mid-frame `glBufferData` crashed (GPU hang on garbage links). Growth now deferred to `beginFrame()`; E1 and E10b text corrected; details in `ayanestorm-oit-e1-e4-growth-race.md` |
 | 2026-09-03 | E7 | committed. 29->40 FPS in the reference sprite scene; no change in avatar-only scenes (expected, sparse lists). Wave-level allocation needed 3 separate physical shader files (marker-position and duplicate-symbol toolchain limits, not predicted by the plan) instead of one `#ifdef`-gated file; see the shader files' own comments for the mechanics. |
-| 2026-09-03 | E9 | full removal (recommended option), in progress |
+| 2026-09-03 | E9 | committed (full removal, recommended option) |
+| 2026-09-03 | E11 | committed (3 of 4 sub-items were already done by earlier phases; added the `glClearTexImage` fast path for the 4th) |
+| 2026-09-03 | Fence wait residual cost | found: ~8.5ms/frame CPU stall in `waitValidation()` even with zero transparent geometry on screen (35 vs 45 FPS), surviving E4/E7/E9/E11. Root cause is architectural (the fence forces a synchronous CPU/GPU rendezvous every frame, absorbing whatever GPU backlog already existed from the rest of the pipeline), not a bug in any implemented item. Not fixed; details and why in `ayanestorm-oit-fence-wait-residual-cost.md` |
 
 Two plan defects were found by implementation so far, both mine: E4 mapped
 the atomically written buffer, and E1 reallocated mid-frame. Both corrected
 in place. When a later item contradicts a correction here, the correction
-wins.
+wins. A third finding (the fence-wait residual cost above) is not a defect
+in any item as implemented; it is a real architectural cost of the fence
+design that the plan did not budget for, recorded for later prioritization.
 
 ---
 
@@ -432,10 +436,22 @@ section). The steps below are the corrected version.
 wait" is short; GPU zone for pass 1 overlaps the wait. FPS in the "almost no
 transparency" scene approaches Standard mode.
 
+**CORRECTION (2026-09-03, after E7/E9/E11):** "fence wait is short" and "FPS
+approaches Standard mode" have not held up in re-measurement: a zero-transparency
+scene still shows ~8.5ms/frame in "Exact OIT fence wait" and a 35 vs 45 FPS
+gap. This is not a bug in E4's implementation (the host-mapped-buffer
+pathology E4 fixed is gone and confirmed working); it is an architectural
+cost of the fence design itself, that the pathological case was simply
+masking. Full diagnosis in `ayanestorm-oit-fence-wait-residual-cost.md`. Not
+fixed; the doc lays out what a real fix would require (overlapping the wait
+across frame boundaries) and why that is out of scope for a "small" item.
+
 **Exactness:** exact (same data, same decision).
 
 **Gain:** potentially the largest global FPS gain; removes a full pipeline
-drain per frame.
+drain per frame. Confirmed for the sprite-heavy regression case; the
+"almost no transparency" case still pays a real, unexplained-by-E4 cost — see
+the correction above.
 
 ---
 

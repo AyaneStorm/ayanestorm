@@ -1055,37 +1055,50 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
     LLGLSLShader::unbind();
 
     LL_PROFILE_GPU_ZONE("Exact OIT capture");
-    prepareCaptureBuffers();
     {
+        LL_PROFILE_GPU_ZONE("Exact OIT capture buffer prep");
+        prepareCaptureBuffers();
+    }
+    {
+        LL_PROFILE_GPU_ZONE("Exact OIT capture traversal");
         CaptureScope capture_scope;
-        pool.forwardRender(true);
-        pool.forwardRender(false);
+        {
+            LL_PROFILE_GPU_ZONE("Exact OIT capture traversal (rigged)");
+            pool.forwardRender(true);
+        }
+        {
+            LL_PROFILE_GPU_ZONE("Exact OIT capture traversal (non-rigged)");
+            pool.forwardRender(false);
+        }
     }
     markCaptureCompleted();
 
-    if (sResources.readbackMapped)
     {
-        // Make the fragments' SSBO atomics visible to the copy below, then
-        // copy the four control words into the host-visible readback buffer
-        // on the GPU. The control buffer itself is never mapped (see
-        // allocateNodePool()); this copy is the only host-visible path.
-        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
-        glBindBuffer(GL_COPY_READ_BUFFER, sResources.control);
-        glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
-        glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, 4 * sizeof(U32));
-        glBindBuffer(GL_COPY_READ_BUFFER, 0);
-        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
-    }
+        LL_PROFILE_GPU_ZONE("Exact OIT capture readback copy + fence");
+        if (sResources.readbackMapped)
+        {
+            // Make the fragments' SSBO atomics visible to the copy below, then
+            // copy the four control words into the host-visible readback buffer
+            // on the GPU. The control buffer itself is never mapped (see
+            // allocateNodePool()); this copy is the only host-visible path.
+            glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+            glBindBuffer(GL_COPY_READ_BUFFER, sResources.control);
+            glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+            glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, 4 * sizeof(U32));
+            glBindBuffer(GL_COPY_READ_BUFFER, 0);
+            glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+        }
 
-    // Fence marks "capture (and, if any, the readback copy) is done" on the
-    // GPU timeline. The CPU only waits on this fence (in waitValidation(),
-    // after sort pass 1 has already been issued), not on the full pipeline,
-    // so the GPU can keep working while validation is pending.
-    if (sResources.captureFence)
-    {
-        glDeleteSync(sResources.captureFence);
+        // Fence marks "capture (and, if any, the readback copy) is done" on the
+        // GPU timeline. The CPU only waits on this fence (in waitValidation(),
+        // after sort pass 1 has already been issued), not on the full pipeline,
+        // so the GPU can keep working while validation is pending.
+        if (sResources.captureFence)
+        {
+            glDeleteSync(sResources.captureFence);
+        }
+        sResources.captureFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     }
-    sResources.captureFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     return true;
 }
 
