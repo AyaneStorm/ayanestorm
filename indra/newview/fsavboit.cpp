@@ -1122,6 +1122,8 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     // key) at the start of every frame, not here -- this only sizes storage.
     allocateAccumulationTexture(sResources.frontKey0, GL_R32UI, width, height);
     allocateAccumulationTexture(sResources.frontKey1, GL_R32UI, width, height);
+    allocateAccumulationTexture(sResources.frontKey2, GL_R32UI, width, height);
+    allocateAccumulationTexture(sResources.frontKey3, GL_R32UI, width, height);
     // FBO for the glClearTexImage (GL 4.4) fallback path -- see
     // beginDirectRasterPass()'s pass-3 clear. Built even when the driver
     // supports glClearTexImage so a mid-session driver/context change (rare,
@@ -1133,6 +1135,10 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
                            GL_TEXTURE_2D, sResources.frontKey0, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
                            GL_TEXTURE_2D, sResources.frontKey1, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2,
+                           GL_TEXTURE_2D, sResources.frontKey2, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT3,
+                           GL_TEXTURE_2D, sResources.frontKey3, 0);
     const bool front_key_fbo_complete =
         glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     glBindFramebuffer(GL_FRAMEBUFFER, LLRenderTarget::sCurFBO);
@@ -1191,6 +1197,8 @@ void FSAVBOIT::releaseResources()
         glDeleteTextures(1, &sResources.accumulatedExtinction);
     if (sResources.frontKey0) glDeleteTextures(1, &sResources.frontKey0);
     if (sResources.frontKey1) glDeleteTextures(1, &sResources.frontKey1);
+    if (sResources.frontKey2) glDeleteTextures(1, &sResources.frontKey2);
+    if (sResources.frontKey3) glDeleteTextures(1, &sResources.frontKey3);
     if (sResources.frontKeyFBO)
         glDeleteFramebuffers(1, &sResources.frontKeyFBO);
     gAVBOITOpaqueTarget.release();
@@ -1248,6 +1256,7 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     if (!available() || !sResources.accumulatedColorGlow ||
         !sResources.accumulatedWeight || !sResources.accumulatedExtinction ||
         !sResources.frontKey0 || !sResources.frontKey1 ||
+        !sResources.frontKey2 || !sResources.frontKey3 ||
         !sResources.work ||
         !opaque_depth ||
         !gAVBOITOpaqueTarget.isComplete() ||
@@ -1365,6 +1374,10 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
                             GL_UNSIGNED_INT, &no_key);
             glClearTexImage(sResources.frontKey1, 0, GL_RED_INTEGER,
                             GL_UNSIGNED_INT, &no_key);
+            glClearTexImage(sResources.frontKey2, 0, GL_RED_INTEGER,
+                            GL_UNSIGNED_INT, &no_key);
+            glClearTexImage(sResources.frontKey3, 0, GL_RED_INTEGER,
+                            GL_UNSIGNED_INT, &no_key);
         }
         else
         {
@@ -1373,11 +1386,22 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
             glBindFramebuffer(GL_FRAMEBUFFER, sResources.frontKeyFBO);
             glClearBufferuiv(GL_COLOR, 0, no_key_rgba);
             glClearBufferuiv(GL_COLOR, 1, no_key_rgba);
+            glClearBufferuiv(GL_COLOR, 2, no_key_rgba);
+            glClearBufferuiv(GL_COLOR, 3, no_key_rgba);
             glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
         }
         glBindImageTexture(0, sResources.frontKey0, 0, GL_FALSE, 0,
                            GL_READ_WRITE, GL_R32UI);
         glBindImageTexture(1, sResources.frontKey1, 0, GL_FALSE, 0,
+                           GL_READ_WRITE, GL_R32UI);
+        // Image unit 2 is free during the raster passes -- the resolve
+        // rebinds it to the screen texture later in the frame, after pass 2
+        // has finished reading the keys.
+        glBindImageTexture(2, sResources.frontKey2, 0, GL_FALSE, 0,
+                           GL_READ_WRITE, GL_R32UI);
+        // Image unit 5 is likewise free until the resolve rebinds it to
+        // accumulatedExtinction in finishDirectFrame(), after pass 2.
+        glBindImageTexture(5, sResources.frontKey3, 0, GL_FALSE, 0,
                            GL_READ_WRITE, GL_R32UI);
     }
     if (pass == 2)

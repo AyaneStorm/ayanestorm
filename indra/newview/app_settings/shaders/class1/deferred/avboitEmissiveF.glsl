@@ -41,6 +41,10 @@ uniform int avboitPass1Subsample;
 uniform int avboitFrontLayers;
 layout(binding = 0, r32ui) uniform coherent uimage2D avboitFrontKey0;
 layout(binding = 1, r32ui) uniform coherent uimage2D avboitFrontKey1;
+// Glass darkening fix: third and fourth nearest, distinct depth. See
+// doc/ayanestorm-oit-avboit-glass-darkening.md.
+layout(binding = 2, r32ui) uniform coherent uimage2D avboitFrontKey2;
+layout(binding = 5, r32ui) uniform coherent uimage2D avboitFrontKey3;
 
 uint avboit_emissive_proxy_bounds_offset()
 {
@@ -287,10 +291,16 @@ void avboit_store_glow(float glow)
             clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
         uint key0 = imageLoad(avboitFrontKey0, pixel).r;
         uint key1 = imageLoad(avboitFrontKey1, pixel).r;
+        uint key2 = imageLoad(avboitFrontKey2, pixel).r;
+        uint key3 = imageLoad(avboitFrontKey3, pixel).r;
         float key_alpha0 = key0 == 0xffffffffu ?
             0.0 : float(key0 & 255u) / 255.0;
         float key_alpha1 = key1 == 0xffffffffu ?
             0.0 : float(key1 & 255u) / 255.0;
+        float key_alpha2 = key2 == 0xffffffffu ?
+            0.0 : float(key2 & 255u) / 255.0;
+        float key_alpha3 = key3 == 0xffffffffu ?
+            0.0 : float(key3 & 255u) / 255.0;
         float front_factor;
         if (avboitFrontLayers != 0 && key0 != 0xffffffffu &&
             my_depth == (key0 >> 8u))
@@ -302,9 +312,24 @@ void avboit_store_glow(float glow)
         {
             front_factor = 1.0 - key_alpha0;
         }
+        else if (avboitFrontLayers != 0 && key2 != 0xffffffffu &&
+                 my_depth == (key2 >> 8u))
+        {
+            front_factor = (1.0 - key_alpha0) * (1.0 - key_alpha1);
+        }
+        else if (avboitFrontLayers != 0 && key3 != 0xffffffffu &&
+                 my_depth == (key3 >> 8u))
+        {
+            front_factor =
+                (1.0 - key_alpha0) * (1.0 - key_alpha1) * (1.0 - key_alpha2);
+        }
         else if (avboitFrontLayers != 0)
         {
-            front_factor = min(front, (1.0 - key_alpha0) * (1.0 - key_alpha1));
+            // Glow keeps the plain bound (no relative-volume-weight
+            // refinement) -- see doc/ayanestorm-oit-avboit-glass-
+            // darkening.md: not worth the extra reads for glow.
+            front_factor = min(front, (1.0 - key_alpha0) * (1.0 - key_alpha1) *
+                               (1.0 - key_alpha2) * (1.0 - key_alpha3));
         }
         else
         {

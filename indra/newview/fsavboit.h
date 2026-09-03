@@ -100,7 +100,13 @@ private:
         // full resolution. See FSAVBOIT::renderPostDeferredCapture()'s pass 3.
         GLuint frontKey0 = 0;
         GLuint frontKey1 = 0;
-        // FBO wrapping frontKey0/frontKey1 as color attachments, used only by
+        // Third- and fourth-nearest distinct depth. See doc/ayanestorm-oit-
+        // avboit-glass-darkening.md: keeps hair's two exact strands intact
+        // behind a pane (frontKey2) or a thick two-face pane (frontKey3),
+        // either of which would otherwise consume a key slot itself.
+        GLuint frontKey2 = 0;
+        GLuint frontKey3 = 0;
+        // FBO wrapping frontKey0/1/2/3 as color attachments, used only by
         // the glClearTexImage fallback path (drivers below GL 4.4).
         GLuint frontKeyFBO = 0;
         U32 volumeWidth = 0;

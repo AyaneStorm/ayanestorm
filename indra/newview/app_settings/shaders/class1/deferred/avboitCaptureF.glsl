@@ -44,6 +44,12 @@ uniform int avboitPass1Subsample;
 uniform int avboitFrontLayers;
 layout(binding = 0, r32ui) uniform coherent uimage2D avboitFrontKey0;   // nearest
 layout(binding = 1, r32ui) uniform coherent uimage2D avboitFrontKey1;   // second nearest, distinct depth
+// Glass darkening fix: third and fourth nearest, distinct depth. See
+// doc/ayanestorm-oit-avboit-glass-darkening.md -- keeps a glass pane (or a
+// thick two-face pane) in front from consuming hair's two exact strand
+// slots.
+layout(binding = 2, r32ui) uniform coherent uimage2D avboitFrontKey2;
+layout(binding = 5, r32ui) uniform coherent uimage2D avboitFrontKey3;
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_NARROW = 5.54126355;  // -log(1 / 255)
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_WIDE = 11.09035489;   // -log(1 / 65536)
 
@@ -478,9 +484,29 @@ void avboit_store_front_key(float alpha)
         return;  // same depth as current front: duplicate, not a new layer
     }
     uint displaced = key < previous ? previous : key;
+    if (displaced == 0xffffffffu)
+    {
+        return;
+    }
+    previous = imageAtomicMin(avboitFrontKey1, pixel, displaced);
+    if ((previous >> 8u) == (displaced >> 8u))
+    {
+        return;
+    }
+    displaced = displaced < previous ? previous : displaced;
+    if (displaced == 0xffffffffu)
+    {
+        return;
+    }
+    previous = imageAtomicMin(avboitFrontKey2, pixel, displaced);
+    if ((previous >> 8u) == (displaced >> 8u))
+    {
+        return;
+    }
+    displaced = displaced < previous ? previous : displaced;
     if (displaced != 0xffffffffu)
     {
-        imageAtomicMin(avboitFrontKey1, pixel, displaced);
+        imageAtomicMin(avboitFrontKey3, pixel, displaced);
     }
 }
 
@@ -757,10 +783,16 @@ void avboit_direct_store(vec4 color)
             clamp(gl_FragCoord.z, 0.0, 1.0) * 16777215.0 + 0.5);
         uint key0 = imageLoad(avboitFrontKey0, pixel).r;
         uint key1 = imageLoad(avboitFrontKey1, pixel).r;
+        uint key2 = imageLoad(avboitFrontKey2, pixel).r;
+        uint key3 = imageLoad(avboitFrontKey3, pixel).r;
         float key_alpha0 = key0 == 0xffffffffu ?
             0.0 : float(key0 & 255u) / 255.0;
         float key_alpha1 = key1 == 0xffffffffu ?
             0.0 : float(key1 & 255u) / 255.0;
+        float key_alpha2 = key2 == 0xffffffffu ?
+            0.0 : float(key2 & 255u) / 255.0;
+        float key_alpha3 = key3 == 0xffffffffu ?
+            0.0 : float(key3 & 255u) / 255.0;
         float front_factor;
         if (avboitFrontLayers != 0 && key0 != 0xffffffffu &&
             my_depth == (key0 >> 8u))
@@ -772,10 +804,66 @@ void avboit_direct_store(vec4 color)
         {
             front_factor = 1.0 - key_alpha0;  // I am the second layer
         }
+        else if (avboitFrontLayers != 0 && key2 != 0xffffffffu &&
+                 my_depth == (key2 >> 8u))
+        {
+            // I am the third layer. Glass darkening fix: without this slot
+            // a pane in front consumes key0, leaving hair only one exact
+            // strand -- see doc/ayanestorm-oit-avboit-glass-darkening.md.
+            front_factor = (1.0 - key_alpha0) * (1.0 - key_alpha1);
+        }
+        else if (avboitFrontLayers != 0 && key3 != 0xffffffffu &&
+                 my_depth == (key3 >> 8u))
+        {
+            // I am the fourth layer. A pane with thickness, a pane plus a
+            // curtain, or glasses lenses plus hair take two slots before
+            // hair's own two strands; this keeps them exact too.
+            front_factor =
+                (1.0 - key_alpha0) * (1.0 - key_alpha1) * (1.0 - key_alpha2);
+        }
         else if (avboitFrontLayers != 0)
         {
-            front_factor = min(front_transmittance,
-                               (1.0 - key_alpha0) * (1.0 - key_alpha1));
+            uint last_key = key3 != 0xffffffffu ? key3 :
+                            key2 != 0xffffffffu ? key2 :
+                            key1 != 0xffffffffu ? key1 : key0;
+            float bound = (1.0 - key_alpha0) * (1.0 - key_alpha1) *
+                          (1.0 - key_alpha2) * (1.0 - key_alpha3);
+            if (last_key == 0xffffffffu)
+            {
+                front_factor = front_transmittance;  // no keys: old behaviour
+            }
+            else
+            {
+                // Relative volume weight: bound the volume's per-cell
+                // estimate for this fragment by its attenuation relative to
+                // the deepest keyed layer's own read, not to the camera, so
+                // the keyed layers' cell-averaged extinction is never
+                // counted twice (once exactly via `bound`, again via the
+                // raw volume read) -- see doc/ayanestorm-oit-avboit-glass-
+                // darkening.md, "Relative volume weight for deeper layers".
+                float key_depth = float(last_key >> 8u) / 16777215.0;
+                float key_transmittance;
+                if (avboitTileRange != 0)
+                {
+                    key_transmittance = avboit_front_transmittance(
+                        full_res_pixel, key_depth, key_depth, 0.0, 0.0, 0.0);
+                }
+                else
+                {
+                    float key_slice = avboit_warped_slice_global(key_depth);
+                    vec2 key_sample_xy =
+                        (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
+                    key_transmittance = texture(
+                        avboitTransmittanceSampler,
+                        vec3(key_sample_xy,
+                             (max(key_slice - avboitSamplingBias, 0.0) + 0.5) /
+                                 float(AVBOIT_DIRECT_SLICES))).r;
+                }
+                key_transmittance = max(key_transmittance, 1.0 / 16384.0);
+                float relative = clamp(
+                    front_transmittance / key_transmittance, 0.0, 1.0);
+                front_factor = bound * relative;
+            }
         }
         else
         {
