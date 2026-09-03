@@ -34,6 +34,11 @@ uniform float avboitSamplingBias;
 // frame, so a distant surface anywhere on screen coarsens the slice spacing for
 // every pixel; per-tile ranging gives each tile the slices its own content needs.
 uniform int avboitTileRange;
+// Round 3: pass 1 samples this many points per axis per 8x8 cell instead of
+// one, so a cell's stored extinction averages the block instead of showing
+// whichever single strand or garment layer happened to land on one sample --
+// see FSAVBOIT::AVBOIT_PASS1_SUBSAMPLE.
+uniform int avboitPass1Subsample;
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_NARROW = 5.54126355;  // -log(1 / 255)
 const float AVBOIT_DIRECT_ZERO_EXTINCTION_WIDE = 11.09035489;   // -log(1 / 65536)
 
@@ -71,12 +76,46 @@ float avboit_global_normalized_depth(float window_depth)
                  log2(far_depth / avboitLinearization + 1.0), 0.0, 1.0);
 }
 
-float avboit_virtual_depth(float window_depth);
+// Pass 1 rasterizes at avboitPass1Subsample fragments per axis per 8x8
+// cell (round 3), so gl_FragCoord there is a sub-cell index at that scale,
+// not a screen pixel; every other pass is full resolution. The per-tile
+// range grid is always addressed in full-resolution pixels, so any lookup
+// from pass 1 must scale a sub-cell index back up first.
+ivec2 avboit_full_res_pixel()
+{
+    ivec2 pixel = ivec2(gl_FragCoord.xy);
+    return avboitRasterPass == 1 ?
+        pixel * (8 / avboitPass1Subsample) : pixel;
+}
 
-float avboit_warped_slice(float depth)
+// Round 8: window depth of this fragment's surface, extrapolated with
+// screen-space derivatives to the centre of the volume cell `pixel`
+// belongs to. A cell-resolution volume stores one depth profile per cell;
+// under per-tile ranging (slices sub-millimetre) a tilted surface's own
+// sub-samples/pixels within one cell span many slices, so a pixel can read
+// transmittance already polluted by nearer parts of its own surface within
+// the same cell (round 8's finding; rounds 4 and 5's bias-only fixes
+// couldn't cover this, since it's a spread of many slices, not one or a
+// clamped few). Projecting every sample of a cell to the same canonical
+// depth means a surface can never occlude itself, at any tilt, while two
+// different surfaces keep their real separation (both project to the same
+// point). `dz`/`limit` must be computed in uniform control flow (before any
+// data-dependent branch) since derivatives are undefined otherwise; garbage
+// at a silhouette/primitive edge is bounded by clamping the extrapolation
+// to one cell's worth of this fragment's own gradient.
+float avboit_cell_centre_depth(vec2 cell_centre_fragcoord, float z,
+                               float dz_dx, float dz_dy, float slope_limit)
+{
+    vec2 d = cell_centre_fragcoord - gl_FragCoord.xy;
+    float dz = dz_dx * d.x + dz_dy * d.y;
+    return clamp(z + clamp(dz, -slope_limit, slope_limit), 0.0, 1.0);
+}
+
+float avboit_warped_slice_global(float depth)
 {
     float virtual_coordinate =
-        min(avboit_virtual_depth(depth) * float(AVBOIT_VIRTUAL_SLICES),
+        min(avboit_global_normalized_depth(depth) *
+                float(AVBOIT_VIRTUAL_SLICES),
             float(AVBOIT_VIRTUAL_SLICES - 1u));
     uint lower_virtual = uint(floor(virtual_coordinate));
     uint upper_virtual =
@@ -157,42 +196,66 @@ uint avboit_range_index(ivec2 full_res_pixel)
         (uint(tile.y) * uint(tile_count.x) + uint(tile.x)) * 2u;
 }
 
-// Rescales the global normalized depth into the tile's own occupied range, so
-// the 128 physical slices span only the depth actually present in that tile
-// rather than the whole frame. This is the resolution fix: a tile containing two
-// close clothing layers spends all of its slices between them.
-float avboit_virtual_depth(float window_depth)
+// Round 9: never spread the 127 physical slices over less normalized-log
+// depth than the two rasterizers that read/write them can agree on. A
+// near-camera-facing tile's real content span collapses the padded range
+// below fp32 window-depth precision (~2 um at two metres); pass 1 (half
+// resolution) and pass 2 (full resolution) then interpolate the same plane
+// with different rounding and disagree by many of those hyper-fine slices,
+// so a fragment's own splat lands in front of its 2-slice-biased read at
+// random -- grey speckle, heaviest exactly where the surface is flattest
+// (least real depth range to lose). 6e-4 in normalized log depth is about
+// 1 cm at two metres and about 7 cm at twenty (tolerable: distant tiles
+// need proportionally less precision), giving at least ~80 um per slice
+// against that ~2 um baseline. Must match the pass-6 copy of this same
+// math in avboitVolumeC.glsl exactly.
+const float AVBOIT_TILE_MIN_SPAN = 6.0e-4;
+
+// True, with the padded [minimum_depth, minimum_depth + span] global-
+// normalized range, when ranging is on and pass 0 wrote the tile containing
+// full-resolution `pixel`. False (outputs unset) when the tile is unwritten
+// or ranging is off, meaning the caller must fall back to the global curve.
+// The padding must stay identical to avboitVolumeC.glsl's pass-6 copy of
+// this same math, which precomputes the equivalent of this tile's
+// saturating-slice window depth ahead of the raster passes.
+bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
 {
-    float global_depth = avboit_global_normalized_depth(window_depth);
     if (avboitTileRange == 0)
     {
-        return global_depth;
+        return false;
     }
-    uint range = avboit_range_index(ivec2(gl_FragCoord.xy));
+    uint range = avboit_range_index(pixel);
     uint stored_minimum = avboitWork[range];
     uint stored_maximum = avboitWork[range + 1u];
     // An unwritten tile keeps the global curve: pass 0 found no transparency
     // there, so nothing reads the rescaled coordinate anyway.
     if (stored_minimum > stored_maximum)
     {
-        return global_depth;
+        return false;
     }
-    float minimum_depth = float(stored_minimum) / 16777215.0;
+    minimum_depth = float(stored_minimum) / 16777215.0;
     float maximum_depth = float(stored_maximum) / 16777215.0;
     // Pad the range so the frontmost and rearmost surfaces do not sit exactly on
     // the domain boundaries, where clamping would merge them with a neighbour.
     // The pad is relative, costing a fixed fraction of the resolution however
     // narrow the range is.
-    float span = maximum_depth - minimum_depth;
-    float pad = max(span * 0.0625, 1.0 / 16777215.0);
+    float pad = max((maximum_depth - minimum_depth) * 0.0625,
+                    1.0 / 16777215.0);
     minimum_depth -= pad;
     maximum_depth += pad;
     span = max(maximum_depth - minimum_depth, 1.0 / 16777215.0);
-    return clamp((global_depth - minimum_depth) / span, 0.0, 1.0);
+    // Widen symmetrically so the tile's real content stays centred in the
+    // widened range instead of shifting toward one edge.
+    if (span < AVBOIT_TILE_MIN_SPAN)
+    {
+        minimum_depth -= (AVBOIT_TILE_MIN_SPAN - span) * 0.5;
+        span = AVBOIT_TILE_MIN_SPAN;
+    }
+    return true;
 }
 
 // Reduces one transparent fragment into its tile's depth range. Raster pass 0
-// only, which visits every transparent fragment.
+// only, which visits every transparent fragment, always at full resolution.
 void avboit_reduce_tile_range(float window_depth)
 {
     if (avboitTileRange == 0)
@@ -270,8 +333,16 @@ void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
     // on rasterization order, that also made transmittance camera-dependent.
     // Compare-and-swap clamps at the maximum instead and records overflow from
     // whichever thread actually reaches it.
+    //
+    // Round 3 raised this cap from 64 to 256: pass 1 now writes
+    // avboitPass1Subsample^2 fragments per cell instead of one, so real
+    // per-word contention is higher. Still bounded, not unconditional --
+    // A8's unbounded version of this loop was the actual cause of that
+    // attempt's ~1 FPS regression (avboitExtinction is a genuinely
+    // globally-coherent atomic, not a fast local op that resolves in a
+    // bounded number of rounds on real GPU hardware).
     uint expected = imageLoad(avboitExtinction, coordinate).r;
-    for (int attempt = 0; attempt < 64; ++attempt)
+    for (int attempt = 0; attempt < 256; ++attempt)
     {
         uint lane_value = (expected >> shift) & lane_mask;
         if (lane_value == lane_mask)
@@ -298,13 +369,92 @@ void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
     imageAtomicMin(avboitExtinctionOverflowDepth, cell, slice_index);
 }
 
+// Transmittance of one cell at a physical slice coordinate, linearly
+// filtered along z only -- the xy hardware trilinear read
+// (avboitTransmittanceSampler) is deliberately not used here because in tile
+// mode each of the four cells straddled by a fragment's bilinear footprint
+// can belong to a different range tile, and those tiles map window depth to
+// physical slice differently: blending across cells in xy before applying
+// each one's own z mapping would mix unrelated depths.
+float avboit_cell_transmittance(ivec2 cell, float sample_slice)
+{
+    sample_slice = clamp(sample_slice, 0.0, float(AVBOIT_DIRECT_SLICES - 1u));
+    int lower = int(floor(sample_slice));
+    int upper = min(lower + 1, int(AVBOIT_DIRECT_SLICES) - 1);
+    float a = texelFetch(avboitTransmittanceSampler, ivec3(cell, lower), 0).r;
+    float b = texelFetch(avboitTransmittanceSampler, ivec3(cell, upper), 0).r;
+    return mix(a, b, fract(sample_slice));
+}
+
+// Physical slices to back off in tile mode. Round 8: every sample of a
+// cell is now projected to that cell's own centre depth (see
+// avboit_cell_centre_depth()), so a surface can no longer occlude itself
+// across its own spread within one cell -- the only remaining thing 2
+// physical slices of margin excludes is the fragment's own pass-1 splat
+// (see round 4's mechanism section), which is exactly what the PDF's
+// original, non-backed-off bias value covers for a thin (sub-millimetre)
+// tile slice.
+const float AVBOIT_TILE_BIAS_SLICES = 2.0;
+
+// Bilinear front transmittance over the 2x2 cells around `pixel`, each cell
+// read in the mapping its own tile used in pass 1 and at that cell's own
+// centre depth (round 8), since cells belonging to different tiles give
+// this fragment's depth different physical slices -- the hardware's
+// xy-trilinear read (which shares one z coordinate across all four cells)
+// is wrong across a tile edge. A neighbour cell whose tile does not cover
+// this depth clamps to slice 0 or AVBOIT_DIRECT_SLICES - 1 -- exactly "in
+// front of everything" or "behind everything" in that cell. `z`/`dz_dx`/
+// `dz_dy`/`slope_limit` are this fragment's own gradient, computed once by
+// the caller in uniform control flow -- never call derivative functions
+// inside this loop, since the per-cell branches below are data-dependent.
+float avboit_front_transmittance(ivec2 pixel, float biased_window_depth,
+                                 float z, float dz_dx, float dz_dy,
+                                 float slope_limit)
+{
+    vec2 cell_coordinate = (vec2(pixel) + 0.5) / 8.0 - 0.5;
+    ivec2 base = ivec2(floor(cell_coordinate));
+    vec2 f = fract(cell_coordinate);
+    float result = 0.0;
+    for (int y = 0; y < 2; ++y)
+    for (int x = 0; x < 2; ++x)
+    {
+        ivec2 cell = clamp(base + ivec2(x, y), ivec2(0),
+                           avboitVolumeSize - ivec2(1));
+        float minimum_depth, span, slice;
+        if (avboit_tile_range(cell * 8, minimum_depth, span))
+        {
+            vec2 cell_centre_fragcoord = vec2(cell) * 8.0 + 4.0;
+            float cell_depth = avboit_cell_centre_depth(
+                cell_centre_fragcoord, z, dz_dx, dz_dy, slope_limit);
+            float global_depth = avboit_global_normalized_depth(cell_depth);
+            slice = clamp((global_depth - minimum_depth) / span, 0.0, 1.0) *
+                float(AVBOIT_DIRECT_SLICES - 1u) - AVBOIT_TILE_BIAS_SLICES;
+        }
+        else
+        {
+            slice = avboit_warped_slice_global(biased_window_depth);
+        }
+        float w = (x == 0 ? 1.0 - f.x : f.x) * (y == 0 ? 1.0 - f.y : f.y);
+        result += w * avboit_cell_transmittance(cell, slice);
+    }
+    return result;
+}
+
 void avboit_direct_store(vec4 color)
 {
     float alpha = clamp(color.a, 0.0, 1.0);
     ivec2 pixel = ivec2(gl_FragCoord.xy);
+    // Pass 0 is full-res (8x8 pixels per cell); pass 1 rasterizes at
+    // avboitPass1Subsample sub-cell fragments per axis per cell (round 3),
+    // so gl_FragCoord there needs its own, coarser scale-down; every other
+    // pass (2) is already at cell-index-equals-clamped-pixel granularity in
+    // the sense this variable is used (see the per-pass branches below).
     ivec2 cell = avboitRasterPass == 0 ?
         clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1)) :
-        clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
+        avboitRasterPass == 1 ?
+            clamp(pixel / avboitPass1Subsample, ivec2(0),
+                 avboitVolumeSize - ivec2(1)) :
+            clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
     // A2: pass 1's hardware early_fragment_tests now rejects against the
     // correct per-cell farthest opaque depth (see avboitCellDepthF.glsl and
     // FSAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
@@ -342,7 +492,53 @@ void avboit_direct_store(vec4 color)
         return;
     }
 
-    float slice_coordinate = avboit_warped_slice(gl_FragCoord.z);
+    // Pass 1's gl_FragCoord is a sub-cell index at avboitPass1Subsample
+    // resolution (volume resolution when that factor is 8, i.e. full-res);
+    // the tile lookup always needs the full-resolution pixel it corresponds
+    // to.
+    ivec2 full_res_pixel = avboit_full_res_pixel();
+    // Round 8: this fragment's own depth gradient, computed once in uniform
+    // control flow (before the pass-1/pass-2 branch and any tile-range
+    // branch) so every cell-centre projection below reuses it instead of
+    // calling a derivative function under data-dependent control flow.
+    // `cell_centre_fragcoord` is in gl_FragCoord units for the CURRENT
+    // pass: pass 1 rasterizes at avboitPass1Subsample fragments per 8x8
+    // cell, so its own cell centre is expressed in that same sub-cell grid;
+    // pass 2 is full resolution, so its cell centre is a full-res pixel.
+    float fragment_z = gl_FragCoord.z;
+    float dz_dx = dFdx(fragment_z);
+    float dz_dy = dFdy(fragment_z);
+    // At most one cell's worth of this fragment's own slope -- keeps a
+    // silhouette-edge fragment (where derivatives are garbage, spanning two
+    // unrelated primitives) near its true depth instead of extrapolating it
+    // arbitrarily far.
+    float slope_limit = fwidth(fragment_z) * 8.0;
+    vec2 cell_centre_fragcoord = avboitRasterPass == 1 ?
+        (vec2(ivec2(gl_FragCoord.xy) / avboitPass1Subsample) + 0.5) *
+            float(avboitPass1Subsample) :
+        vec2(pixel / 8) * 8.0 + 4.0;
+    // Own-cell slice coordinate. Reads the tile range once (rather than
+    // through avboit_slice_for_pixel(), which would read it again) and uses
+    // the cell-centre projection only when this fragment's own tile is
+    // actually ranged -- an unwritten tile falls back to the unmodified
+    // global curve/warp untouched by round 8, exactly as with ranging off.
+    float own_tile_minimum_depth, own_tile_span;
+    float slice_coordinate;
+    if (avboit_tile_range(
+            full_res_pixel, own_tile_minimum_depth, own_tile_span))
+    {
+        float cell_centre_depth = avboit_cell_centre_depth(
+            cell_centre_fragcoord, fragment_z, dz_dx, dz_dy, slope_limit);
+        float global_depth =
+            avboit_global_normalized_depth(cell_centre_depth);
+        slice_coordinate = clamp(
+            (global_depth - own_tile_minimum_depth) / own_tile_span,
+            0.0, 1.0) * float(AVBOIT_DIRECT_SLICES - 1u);
+    }
+    else
+    {
+        slice_coordinate = avboit_warped_slice_global(fragment_z);
+    }
     if (avboitRasterPass == 1)
     {
         if (alpha > 0.0)
@@ -353,6 +549,12 @@ void avboit_direct_store(vec4 color)
             float optical_depth = avboitWideExtinction != 0 ?
                 -log(max(1.0 - alpha, 1.0 / 65536.0)) :
                 -log(max(1.0 - alpha, 1.0 / 255.0));
+            // Round 3: this fragment is one of avboitPass1Subsample^2 samples
+            // covering the cell, not the cell's sole sample, so its share of
+            // the cell's extinction is its own contribution divided by the
+            // sample count -- the sum of all of a cell's samples then equals
+            // the block's mean optical depth instead of one sample's value.
+            optical_depth /= float(avboitPass1Subsample * avboitPass1Subsample);
             uint lower_slice = uint(floor(slice_coordinate));
             uint upper_slice = min(lower_slice + 1u, AVBOIT_DIRECT_SLICES - 1u);
             float upper_extinction = optical_depth * fract(slice_coordinate);
@@ -372,7 +574,11 @@ void avboit_direct_store(vec4 color)
 
     if (avboitRasterPass == 2)
     {
-        vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
+        // The virtual-domain sampling bias is specified against the global
+        // curve's warped slices; the tile path below re-expresses it as a
+        // direct physical-slice offset instead, but the global fallback
+        // used for any cell outside this fragment's own tile (or when
+        // ranging is off entirely) still needs this depth.
         uint curve_shift = min(avboitWork[7], AVBOIT_MAX_DIVIDER);
         float curve_scale = exp2(float(curve_shift));
         float reduced_count =
@@ -398,6 +604,25 @@ void avboit_direct_store(vec4 color)
                   max(biased_depth, near_depth)) /
              (far_depth - near_depth)) * 0.5 + 0.5,
             0.0, 1.0);
+        float front_transmittance;
+        float sample_slice;
+        if (avboitTileRange != 0)
+        {
+            // Tile mode already has this fragment's own slice coordinate
+            // (computed against its own tile's linear range, cell-centre-
+            // projected above per round 8), so its own bias is a direct
+            // offset in physical slices; each of the four cells read below
+            // applies the same bias within its own tile mapping and its own
+            // cell-centre projection instead (see
+            // avboit_front_transmittance()).
+            sample_slice = max(slice_coordinate - AVBOIT_TILE_BIAS_SLICES, 0.0);
+            front_transmittance = avboit_front_transmittance(
+                full_res_pixel, biased_window_depth, fragment_z, dz_dx, dz_dy,
+                slope_limit);
+        }
+        else
+        {
+        vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         // Integration stores, for each physical slice, the transmittance after
         // that slice's extinction has been added (the post-slice phase the PDF
         // specifies), and the virtual-domain bias applied above is the offset
@@ -410,11 +635,12 @@ void avboit_direct_store(vec4 color)
         // fract() within a single slice. Backing off a whole slice then samples
         // from before the foreground layer rather than between the two, which
         // is the same empty-space violation v119 removed.
-        float sample_slice = avboit_warped_slice(biased_window_depth);
-        float front_transmittance = texture(
+        sample_slice = avboit_warped_slice_global(biased_window_depth);
+        front_transmittance = texture(
             avboitTransmittanceSampler,
             vec3(sample_xy, (sample_slice + 0.5) /
                 float(AVBOIT_DIRECT_SLICES))).r;
+        }
 
         // Remove this surface's own contribution from the transmittance it
         // reads. Pass 1 splatted optical_depth linearly across the slice pair
@@ -450,6 +676,27 @@ void avboit_direct_store(vec4 color)
             (1.0 - fract(slice_coordinate)) * read_overlap;
         front_transmittance = clamp(
             front_transmittance * exp(own_share), 0.0, 1.0);
+        if (avboitTileRange != 0)
+        {
+            // Pass 1 samples extinction once per 8x8 cell, so an opaque
+            // core sampled anywhere in the cell saturates every later
+            // physical slice for the whole cell (see avboit_add_extinction()
+            // / compute pass 5), even for pixels whose own strands never
+            // touched that core. On the coarse global curve that saturated
+            // slice was shared by nearly the whole cell's hair mass, so
+            // nothing read an exact 0; per-tile linear slices spread the
+            // same hair across ~100 slices, so every fragment behind the
+            // sampled core now reads exactly 0 -- weight collapses to 0
+            // while the exact per-pixel opacity (from pass 2's own
+            // accumulated extinction) still darkens the pixel: a cell-sized
+            // black dash. Floor keeps such fragments averaging into the
+            // colour instead of vanishing; 1/16384 is the smallest normal
+            // fp16 value, so the R16F weight sum stays exact for the
+            // genuinely-front case (~alpha) while occluded fragments still
+            // contribute ~alpha/16384. Global mode is unaffected -- it never
+            // saturates a slice a real fragment can read as exactly 0.
+            front_transmittance = max(front_transmittance, 1.0 / 16384.0);
+        }
 
         float weight = alpha * front_transmittance;
         // Glow accumulates separately through avboit_store_glow() in the

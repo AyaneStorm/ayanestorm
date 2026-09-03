@@ -350,10 +350,22 @@ void main()
     }
 
     // Resets the per-tile depth range to an empty interval. atomicMin and
-    // atomicMax in raster pass 0 close it around the transparency actually
-    // present, and an untouched tile keeps minimum > maximum so the capture
-    // shader falls back to the global curve.
-    if (avboitPass == 12)
+    // atomicMax in the material-tested occupancy pass (raster pass 0) close
+    // it around the transparency actually present, and an untouched tile
+    // keeps minimum > maximum so the capture shader falls back to the
+    // global curve.
+    //
+    // Pass number 13, not 12: pass 12 above (the transmittance-validity
+    // diagnostic) already claims that value on the same program
+    // (gAVBOITVolumeProgram dispatches both from fsavboit.cpp), so the two
+    // blocks collided -- this reset was unreachable dead code, since the
+    // pass-12 block above always matches first and returns. That left the
+    // tile-range buffer never reset, so stale/accumulated atomicMin/atomicMax
+    // values from previous frames persisted and only ever narrowed further,
+    // corrupting the per-tile depth range once anything actually read or
+    // wrote it (A5 fix, see doc/ayanestorm-oit-avboit-hair-flicker-
+    // regression-todo.md).
+    if (avboitPass == 13)
     {
         ivec2 tile_count = avboit_range_tile_count();
         if (all(lessThan(pixel, tile_count)))
@@ -803,10 +815,34 @@ void main()
                     zero_depth,
                     imageLoad(avboitZeroTransmittanceDepth, cell).r);
             }
-            if (zero_depth < AVBOIT_SLICES)
+            // Pass 1 samples extinction once per 8x8 cell, so a saturated
+            // slice only means "hidden" for the exact pixels the sampled
+            // opaque core covered, not for the whole cell -- the front-
+            // transmittance floor in avboitCaptureF.glsl/the glow shaders
+            // handles that for colour. This early-depth quad instead
+            // physically culls pass-2 fragments past the saturation depth,
+            // which for a ranged tile (whose slices span the same hair mass
+            // ~100 slices wide instead of the global curve's one or two)
+            // would cull real fragments the pixel-level floor never gets a
+            // chance to run on: holes instead of dashes. So this pass simply
+            // does not emit a quad for a tile with its own per-tile range --
+            // ranged tiles lose pass 2's early-Z rejection, correctness
+            // first. `pixel` is this same 16px range-tile grid (tile_count
+            // above), so it doubles as the tile index; grid indexed
+            // identically to avboit_range_index()/avboit_tile_range_offset()
+            // in avboitCaptureF.glsl and avboitBoundsF.glsl.
+            ivec2 range_tile_count = avboit_range_tile_count();
+            bool tile_ranged = false;
+            if (all(lessThan(pixel, range_tile_count)))
             {
-                uint depth_bits =
-                    avboitWork[8u + zero_depth];
+                uint range = avboit_tile_range_offset() +
+                    (uint(pixel.y) * uint(range_tile_count.x) +
+                     uint(pixel.x)) * 2u;
+                tile_ranged = avboitWork[range] <= avboitWork[range + 1u];
+            }
+            if (!tile_ranged && zero_depth < AVBOIT_SLICES)
+            {
+                uint depth_bits = avboitWork[8u + zero_depth];
                 if (depth_bits != 0u)
                 {
                     uint tile_index =

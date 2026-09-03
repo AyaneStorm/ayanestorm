@@ -99,6 +99,15 @@ extern bool gCubeSnapshot;
 namespace
 {
 constexpr U32 AVBOIT_SCALE = 8;
+// Pass 1 (extinction accumulation) samples this many points per axis per
+// 8x8 cell instead of one, so a cell's stored extinction is the block's
+// average rather than whichever single strand or garment layer happened to
+// land on one sample point -- the single-sample choice is otherwise what a
+// fine per-tile depth range turns into a visible 8px block/moire pattern
+// (round 3, see doc/ayanestorm-oit-avboit-hair-flicker-regression-todo.md).
+// 8 is full resolution (one sample per pixel, equivalent to the reverted A8);
+// 4 is a quarter of that cost (16 samples/cell vs 64) as a starting point.
+constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4;
 constexpr U32 AVBOIT_SLICES = 128;
 // The scratch extinction volume is always allocated for the widest supported
 // layout (two 16-bit lanes per word). The presentation's four-8-bit-lane layout
@@ -162,10 +171,11 @@ bool wideExtinction()
 // is, which is what separates layers a fraction of a millimetre apart.
 bool tileRange()
 {
-    // Off by default (A5): pass 0 only feeds this in debug mode 6 or for
-    // GLTF alpha geometry, so it is currently inert for ordinary content.
+    // A5 revised (Option A): fed by rasterizeConservativeBounds()'s
+    // exact-proxy pass, which runs full-resolution over all static and
+    // rigged alpha geometry every frame -- back on by default.
     static LLCachedControl<bool> tile_range(
-        gSavedSettings, "RenderAVBOITTileRange", false);
+        gSavedSettings, "RenderAVBOITTileRange", true);
     return tile_range;
 }
 
@@ -788,6 +798,17 @@ bool FSAVBOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
+        // Per-tile depth ranging is fed by rasterizeConservativeBounds()'s
+        // exact-proxy pass (avboitBoundsF.glsl's avboit_reduce_tile_range()
+        // call), which already runs full-resolution over all alpha
+        // geometry every frame -- no extra pass needed. Two attempts to
+        // feed it from a material-tested occupancy pass instead (this
+        // block, briefly) both left tile-shaped corruption, root-caused to
+        // two unrelated bugs in the per-tile range's consumers, not the
+        // feed pass; see doc/ayanestorm-oit-avboit-hair-flicker-regression-
+        // todo.md. Debug mode 6 still runs this pass, purely as a
+        // proxy-vs-material occupancy comparison (avboit_compare_proxy_
+        // coverage()), unrelated to feeding the range.
         const bool compare_static_proxy = debugMode() == 6;
         if (compare_static_proxy)
         {
@@ -1055,10 +1076,13 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
         gAVBOITOpaqueTarget.allocate(width, height, GL_R8, true) &&
         gAVBOITPrepassTarget.allocate(
             sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8) &&
-        // A2: depth-only, volume resolution. Color is never read; only
-        // gl_FragDepth from avboitCellDepthF.glsl matters.
+        // A2: depth-only, scaled by the pass-1 subsample factor (round 3) so
+        // pass 1's early_fragment_tests culls at that finer granularity
+        // instead of one farthest-depth sample per whole 8x8 cell. Color is
+        // never read; only gl_FragDepth from avboitCellDepthF.glsl matters.
         gAVBOITCellDepthTarget.allocate(
-            sResources.volumeWidth, sResources.volumeHeight, GL_R8, true);
+            sResources.volumeWidth * AVBOIT_PASS1_SUBSAMPLE,
+            sResources.volumeHeight * AVBOIT_PASS1_SUBSAMPLE, GL_R8, true);
 }
 
 void FSAVBOIT::allocateResources(U32 width, U32 height)
@@ -1236,7 +1260,12 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     }
     else if (pass == 1)
     {
-        glViewport(0, 0, sResources.volumeWidth, sResources.volumeHeight);
+        // Round 3: pass 1 supersamples each 8x8 cell at
+        // AVBOIT_PASS1_SUBSAMPLE points per axis instead of one, so its
+        // viewport (and gAVBOITCellDepthTarget, bound as this pass's render
+        // target ahead of this call) is scaled up by that factor.
+        glViewport(0, 0, sResources.volumeWidth * AVBOIT_PASS1_SUBSAMPLE,
+                   sResources.volumeHeight * AVBOIT_PASS1_SUBSAMPLE);
     }
     if (pass == 2)
     {
@@ -1285,6 +1314,7 @@ void FSAVBOIT::rasterizeConservativeBounds()
     static LLStaticHashedString proxy_depth_interval(
         "avboitProxyDepthInterval");
     static LLStaticHashedString exact_proxy("avboitExactProxy");
+    static LLStaticHashedString tile_range_uniform("avboitTileRange");
     const U32 groups_x = (sResources.volumeWidth + 15u) / 16u;
     const U32 groups_y = (sResources.volumeHeight + 15u) / 16u;
 
@@ -1297,12 +1327,17 @@ void FSAVBOIT::rasterizeConservativeBounds()
                                    sResources.volumeHeight);
     gAVBOITVolumeProgram.uniform1i(pass, 9);
     glDispatchCompute(groups_x, groups_y, 1u);
-    // Reset the per-tile depth range before any capture pass reduces into it.
+    // Reset the per-tile depth range before any capture pass reduces into
+    // it. Pass 13, not 12: pass 12 is a different, unrelated compute step
+    // (transmittance-validity diagnostic) dispatched later in
+    // finishDirectExtinction() on this same program -- the two collided
+    // under the shared value 12 (see avboitVolumeC.glsl's pass-13 comment),
+    // which meant this reset never actually ran.
     const U32 range_groups_x =
         ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
     const U32 range_groups_y =
         ((sResources.viewportHeight + 15u) / 16u + 15u) / 16u;
-    gAVBOITVolumeProgram.uniform1i(pass, 12);
+    gAVBOITVolumeProgram.uniform1i(pass, 13);
     glDispatchCompute(range_groups_x, range_groups_y, 1u);
     gAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
@@ -1319,6 +1354,7 @@ void FSAVBOIT::rasterizeConservativeBounds()
         linearization, fittedLinearization(camera->getFar()));
     gAVBOITBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
+    gAVBOITBoundsProgram.uniform1i(tile_range_uniform, tileRange() ? 1 : 0);
     gAVBOITBoundsProgram.uniform1i(exact_proxy, 0);
     // AABB centers are in agent space. Clear any model matrix left by the
     // preceding scene draw so their projection matches CPU camera depths.
@@ -1498,6 +1534,8 @@ void FSAVBOIT::rasterizeConservativeBounds()
         linearization, fittedLinearization(camera->getFar()));
     gAVBOITSkinnedBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
+    gAVBOITSkinnedBoundsProgram.uniform1i(
+        tile_range_uniform, tileRange() ? 1 : 0);
     gAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
     for (LLCullResult::sg_iterator iter =
              gPipeline.beginRiggedAlphaGroups();
@@ -1617,6 +1655,7 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     static LLStaticHashedString sampling_bias("avboitSamplingBias");
     static LLStaticHashedString tile_range("avboitTileRange");
     static LLStaticHashedString capture_debug_mode("avboitDebugMode");
+    static LLStaticHashedString pass1_subsample("avboitPass1Subsample");
     GLint location = shader->getUniformLocation(raster_pass);
     if (location >= 0)
     {
@@ -1660,6 +1699,12 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     {
         glProgramUniform1i(shader->mProgramObject, location,
                            tileRange() ? 1 : 0);
+    }
+    location = shader->getUniformLocation(pass1_subsample);
+    if (location >= 0)
+    {
+        glProgramUniform1i(shader->mProgramObject, location,
+                           static_cast<GLint>(AVBOIT_PASS1_SUBSAMPLE));
     }
     location = shader->getUniformLocation(capture_debug_mode);
     if (location >= 0)
@@ -1759,6 +1804,8 @@ void FSAVBOIT::finishDirectOccupancy()
     {
         static LLStaticHashedString cell_depth_sampler(
             "avboitOpaqueDepthSampler");
+        static LLStaticHashedString cell_depth_subsample(
+            "avboitPass1Subsample");
         gAVBOITCellDepthTarget.bindTarget();
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
         gAVBOITCellDepthTarget.clear(GL_DEPTH_BUFFER_BIT);
@@ -1767,6 +1814,8 @@ void FSAVBOIT::finishDirectOccupancy()
             viewport, sResources.viewportWidth, sResources.viewportHeight);
         gAVBOITCellDepthProgram.uniform1i(
             cell_depth_sampler, directOpaqueDepthTextureUnit());
+        gAVBOITCellDepthProgram.uniform1i(
+            cell_depth_subsample, static_cast<GLint>(AVBOIT_PASS1_SUBSAMPLE));
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         gAVBOITCellDepthProgram.unbind();

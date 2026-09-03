@@ -38,6 +38,12 @@ layout(location = 3) out float avboitAccumulatedExtinction;
 // land in the same slices as the colour it belongs to.
 uniform int avboitTileRange;
 const int AVBOIT_RANGE_TILE = 16;
+// Round 3: pass 1's sub-cell sample count (see FSAVBOIT::
+// AVBOIT_PASS1_SUBSAMPLE). This shader's pass-1 branch returns immediately
+// without using it -- declared for uniform-set consistency with
+// avboitCaptureF.glsl, which every raster program shares uniform uploads
+// with (FSAVBOIT::configureDirectRasterShader()).
+uniform int avboitPass1Subsample;
 
 uint avboit_glow_proxy_bounds_offset()
 {
@@ -72,28 +78,76 @@ float avboit_global_normalized_depth(float window_depth)
                  log2(far_depth / avboitLinearization + 1.0), 0.0, 1.0);
 }
 
-float avboit_virtual_depth(float window_depth)
+// Round 9: never spread the 127 physical slices over less depth than the
+// pass-1/pass-2 rasterizers can agree on -- see avboitCaptureF.glsl's
+// identical constant for the full rationale.
+const float AVBOIT_TILE_MIN_SPAN = 6.0e-4;
+
+// True, with the padded [minimum_depth, minimum_depth + span] global-
+// normalized range, when ranging is on and pass 0 wrote the tile containing
+// full-resolution `pixel`. Must match avboitCaptureF.glsl's function of the
+// same name exactly, including the padding.
+bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
 {
-    float global_depth = avboit_global_normalized_depth(window_depth);
     if (avboitTileRange == 0)
     {
-        return global_depth;
+        return false;
     }
-    uint range = avboit_range_index(ivec2(gl_FragCoord.xy));
+    uint range = avboit_range_index(pixel);
     uint stored_minimum = avboitWork[range];
     uint stored_maximum = avboitWork[range + 1u];
     if (stored_minimum > stored_maximum)
     {
-        return global_depth;
+        return false;
     }
-    float minimum_depth = float(stored_minimum) / 16777215.0;
+    minimum_depth = float(stored_minimum) / 16777215.0;
     float maximum_depth = float(stored_maximum) / 16777215.0;
-    float span = maximum_depth - minimum_depth;
-    float pad = max(span * 0.0625, 1.0 / 16777215.0);
+    float pad = max((maximum_depth - minimum_depth) * 0.0625,
+                    1.0 / 16777215.0);
     minimum_depth -= pad;
     maximum_depth += pad;
     span = max(maximum_depth - minimum_depth, 1.0 / 16777215.0);
-    return clamp((global_depth - minimum_depth) / span, 0.0, 1.0);
+    if (span < AVBOIT_TILE_MIN_SPAN)
+    {
+        minimum_depth -= (AVBOIT_TILE_MIN_SPAN - span) * 0.5;
+        span = AVBOIT_TILE_MIN_SPAN;
+    }
+    return true;
+}
+
+// Round 8: window depth of this fragment's surface extrapolated to the
+// centre of its own 8x8 volume cell, so a tilted surface cannot occlude
+// itself within one cell once slices are thin (per-tile ranging). Must
+// match avboitCaptureF.glsl's function of the same name. This pass is
+// always full resolution (pass 1 returns immediately below without
+// reaching pass 2), so `pixel` needs no cell-to-pixel scaling here.
+float avboit_cell_centre_depth(vec2 cell_centre_fragcoord, float z,
+                               float dz_dx, float dz_dy, float slope_limit)
+{
+    vec2 d = cell_centre_fragcoord - gl_FragCoord.xy;
+    float dz = dz_dx * d.x + dz_dy * d.y;
+    return clamp(z + clamp(dz, -slope_limit, slope_limit), 0.0, 1.0);
+}
+
+// Physical slices to back off in tile mode -- see avboitCaptureF.glsl's
+// AVBOIT_TILE_BIAS_SLICES for the rationale (round 8).
+const float AVBOIT_TILE_BIAS_SLICES = 2.0;
+
+// Physical slice coordinate of a window depth for the tile containing
+// `pixel`. This pass is always full resolution (pass 1 returns immediately
+// below without reaching pass 2), so `pixel` needs no cell-to-pixel scaling.
+// `window_depth` should already be the caller's cell-centre-projected depth
+// when the tile is ranged.
+float avboit_slice_for_pixel(ivec2 pixel, float window_depth)
+{
+    float minimum_depth, span;
+    if (avboit_tile_range(pixel, minimum_depth, span))
+    {
+        float global_depth = avboit_global_normalized_depth(window_depth);
+        return clamp((global_depth - minimum_depth) / span, 0.0, 1.0) *
+            float(AVBOIT_DIRECT_SLICES - 1u);
+    }
+    return -1.0;
 }
 float avboit_biased_depth(float window_depth)
 {
@@ -143,8 +197,45 @@ void avboit_store_glow(float glow)
     if (avboitRasterPass == 1) return;
     if (avboitRasterPass == 2)
     {
+        // Pass 2 is full resolution; `cell` above is unscaled (`clamp(pixel,
+        // ...)`) since this shader's pass-1 branch below returns without
+        // using it, so a texel fetch into the volume-resolution
+        // transmittance texture needs its own /8 scale down to cell space.
+        ivec2 transmittance_cell = clamp(pixel / 8, ivec2(0),
+                                         avboitVolumeSize - ivec2(1));
+        // Round 8: project to this cell's own centre depth before biasing,
+        // so a tilted surface's own sub-samples elsewhere in the cell
+        // cannot occlude this fragment; derivatives computed once in
+        // uniform control flow.
+        float fragment_z = gl_FragCoord.z;
+        float dz_dx = dFdx(fragment_z);
+        float dz_dy = dFdy(fragment_z);
+        float slope_limit = fwidth(fragment_z) * 8.0;
+        vec2 cell_centre_fragcoord = vec2(pixel / 8) * 8.0 + 4.0;
+        float cell_centre_depth = avboit_cell_centre_depth(
+            cell_centre_fragcoord, fragment_z, dz_dx, dz_dy, slope_limit);
+        float front;
+        float tile_slice = avboit_slice_for_pixel(pixel, cell_centre_depth);
+        if (tile_slice >= 0.0)
+        {
+            tile_slice = max(tile_slice - AVBOIT_TILE_BIAS_SLICES, 0.0);
+            uint lower = uint(floor(tile_slice));
+            uint upper = min(lower + 1u, AVBOIT_DIRECT_SLICES - 1u);
+            float a = texelFetch(avboitTransmittanceSampler,
+                                 ivec3(transmittance_cell, int(lower)), 0).r;
+            float b = texelFetch(avboitTransmittanceSampler,
+                                 ivec3(transmittance_cell, int(upper)), 0).r;
+            front = mix(a, b, fract(tile_slice));
+            // See avboitCaptureF.glsl's identical floor: pass 1's one-sample-
+            // per-cell extinction can saturate a fine per-tile slice range
+            // exactly, reading 0 for glow that is not actually behind
+            // anything the sampled core covered.
+            front = max(front, 1.0 / 16384.0);
+        }
+        else
+        {
         float virtual_coordinate = min(
-            avboit_virtual_depth(avboit_biased_depth(gl_FragCoord.z)) *
+            avboit_global_normalized_depth(avboit_biased_depth(gl_FragCoord.z)) *
                 float(AVBOIT_VIRTUAL_SLICES),
             float(AVBOIT_VIRTUAL_SLICES - 1u));
         uint lower_virtual = uint(floor(virtual_coordinate));
@@ -186,9 +277,10 @@ void avboit_store_glow(float glow)
         float slice_coordinate = encoded_slice / 65536.0;
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         float sample_slice = slice_coordinate;
-        float front = texture(avboitTransmittanceSampler,
-                              vec3(sample_xy, (sample_slice + 0.5) /
-                                  float(AVBOIT_DIRECT_SLICES))).r;
+        front = texture(avboitTransmittanceSampler,
+                        vec3(sample_xy, (sample_slice + 0.5) /
+                            float(AVBOIT_DIRECT_SLICES))).r;
+        }
         avboitAccumulatedColorGlow =
             vec4(0.0, 0.0, 0.0, max(glow, 0.0) * front);
         avboitAccumulatedWeight = 0.0;
