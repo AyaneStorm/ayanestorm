@@ -890,13 +890,28 @@ void FSExactOIT::prepareCaptureBuffers()
         return;
     }
 
-    const GLint previous_fbo = LLRenderTarget::sCurFBO;
-    const GLuint empty[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
-    const GLuint zero[4] = { 0u, 0u, 0u, 0u };
-    glBindFramebuffer(GL_FRAMEBUFFER, sResources.headFBO);
-    glClearBufferuiv(GL_COLOR, 0, empty);
-    glClearBufferuiv(GL_COLOR, 1, zero);
-    glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+    // E11: glClearTexImage (GL 4.4) clears both images directly, without the
+    // FBO bind/unbind pair the GL_COLOR path below needs. Both textures are
+    // single-level GL_R32UI, so GL_RED_INTEGER/GL_UNSIGNED_INT matches their
+    // storage format exactly (same pairing the buffer clears elsewhere in
+    // this file already use for R32UI data).
+    if (glClearTexImage)
+    {
+        const U32 empty_texel = 0xffffffffu;
+        const U32 zero_texel = 0u;
+        glClearTexImage(sResources.heads, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &empty_texel);
+        glClearTexImage(sResources.counts, 0, GL_RED_INTEGER, GL_UNSIGNED_INT, &zero_texel);
+    }
+    else
+    {
+        const GLint previous_fbo = LLRenderTarget::sCurFBO;
+        const GLuint empty[4] = { 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu };
+        const GLuint zero[4] = { 0u, 0u, 0u, 0u };
+        glBindFramebuffer(GL_FRAMEBUFFER, sResources.headFBO);
+        glClearBufferuiv(GL_COLOR, 0, empty);
+        glClearBufferuiv(GL_COLOR, 1, zero);
+        glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+    }
 
     const U32 control[4] = { 0, sResources.capacity, 0, 0 };
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control);
