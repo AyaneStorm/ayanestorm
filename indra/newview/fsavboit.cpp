@@ -862,7 +862,10 @@ bool FSAVBOIT::handleCapturedEmissives(
     {
         return false;
     }
-    if (!depth_only)
+    // Pass 1 (extinction raster) never stores glow: avboit_store_glow()
+    // returns immediately for it. Skip the draws entirely instead of paying
+    // for vertex transform + texture fetch just to hit that return.
+    if (!depth_only && sDirectRasterPass != 1)
     {
         if (sDirectRasterPass == 2)
         {

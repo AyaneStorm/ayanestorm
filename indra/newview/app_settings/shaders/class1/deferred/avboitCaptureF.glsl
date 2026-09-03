@@ -240,14 +240,6 @@ void avboit_mark_tile(ivec2 cell)
     }
 }
 
-bool avboit_cull_fragment()
-{
-    // The PDF rejects fully extinguished work by drawing conservative depth
-    // tiles. A second coarse fragment decision can discard visible geometry
-    // and expose the 16x16 tile grid, so hardware depth is the sole culler.
-    return false;
-}
-
 void avboit_add_extinction(ivec2 cell, uint slice_index, float optical_depth)
 {
     bool wide = avboitWideExtinction != 0;
@@ -340,7 +332,11 @@ void avboit_direct_store(vec4 color)
                                      uint(AVBOIT_VIRTUAL_SLICES) - 1u);
             // Retain the material path while measuring whether conservative
             // proxy intervals cover every alpha-tested occupancy sample.
-            avboit_compare_proxy_coverage(cell, virtual_slice);
+            // Diagnostic-only (feeds debug mode 6); skip the atomics otherwise.
+            if (avboitDebugMode == 6)
+            {
+                avboit_compare_proxy_coverage(cell, virtual_slice);
+            }
             atomicOr(avboitOccupancy[virtual_slice], 1u);
         }
         return;
@@ -376,11 +372,6 @@ void avboit_direct_store(vec4 color)
 
     if (avboitRasterPass == 2)
     {
-        if (avboit_cull_fragment())
-        {
-            return;
-        }
-
         vec2 sample_xy = (vec2(pixel) + vec2(0.5)) / vec2(avboitViewport);
         uint curve_shift = min(avboitWork[7], AVBOIT_MAX_DIVIDER);
         float curve_scale = exp2(float(curve_shift));

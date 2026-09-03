@@ -749,7 +749,11 @@ void main()
                     extinction >= avboit_zero_extinction())
                 {
                     zero_depth = slice_index;
-                    atomicAdd(avboitDiagnostic[2], 1u);
+                    // Diagnostic-only counter (unread outside debug mode 5).
+                    if (avboitDebugMode == 5)
+                    {
+                        atomicAdd(avboitDiagnostic[2], 1u);
+                    }
                     break;
                 }
             }

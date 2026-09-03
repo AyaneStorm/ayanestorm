@@ -58,9 +58,15 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 | 2026-09-03 | AVBOIT A2 | committed. Fixed the wrong-resolution pass-1 depth test bug: added `gAVBOITCellDepthTarget` (new, volume-resolution, depth-only render target — NOT a reuse of `gAVBOITPrepassTarget`, which turned out to already have an unrelated existing role as a disposable pass-0 color sink, a collision the plan's literal "reuse this name" instruction didn't anticipate) and `gAVBOITCellDepthProgram`/`avboitCellDepthF.glsl` (new fullscreen-triangle shader, `postDeferredNoTCV.glsl` + plain fragment shader following the `gAVBOITIsolateDepthProgram` pattern) that bakes each volume cell's farthest opaque depth once per frame in `finishDirectOccupancy()`, before pass 1 binds it. Pass 1's hardware `early_fragment_tests` now rejects against the correct 8x8 block instead of a single full-res pixel at the wrong location, so the manual 64-texel `avboit_behind_opaque_bounds()` re-test (and its two inline duplicates in `avboitEmissiveF.glsl`/`avboitPbrGlowF.glsl` — the plan assumed one shared function, it's actually three separate copies under three different names) was deleted from all three capture-family shaders. **Found and fixed two pre-existing, silent `LLRenderTarget` bind/flush stack bugs while restructuring this code** (both predate this session, masked because `llassert` compiles out unless `SHOW_ASSERT` is defined): `finishDirectOccupancy()`'s and `finishDirectColorRaster()`'s `.flush()` calls were each targeting a render target that was not actually the currently-bound one, which — per `LLRenderTarget::flush()`'s pop-two-and-rebind logic — would eventually have left a private AVBOIT render target bound instead of the screen at the end of a capture. Corrected by flushing `gAVBOITPrepassTarget` explicitly before `finishDirectOccupancy()`'s own target work, and by having `finishDirectColorRaster()` flush `gAVBOITOpaqueTarget` (the target actually left bound by pass 2) instead of `gAVBOITPrepassTarget`. Shader cache revision NOT bumped yet (still v135, A1's) — per updated guidance, hold the bump until the whole work session's plan items are done, one bump at the very end covering everything, not per-item. Debug mode 6 (proxy coverage, uses a different code path) and `avboitBoundsF.glsl` (pass 0, untouched) confirmed unaffected. **Confirmed working in testing:** tree foliage that previously rendered with wrongly-dropped extinction (opaque-looking leaf clusters appearing transparent) now renders correctly, visibly closer to Exact OIT's reference output — exactly the class of bug (near, alpha-tested geometry near the affected screen region) the fix targets. Debug mode 13 (volume vs. exact transmittance) shows clean green on solid character geometry (main body/hair/dress silhouette), confirming the volume's recorded extinction now agrees with the exact reference; red/blue noise at thin wind-blown hair/cloth wisps is expected sub-cell-resolution sampling noise, not a regression. Debug mode 6 (proxy coverage) shows all-green on every transparent surface tested, confirming no regression in the unrelated pass-0 proxy-vs-exact occupancy check |
 | 2026-09-03 | AVBOIT A3 | committed. Cached `RenderAVBOITWideExtinction`/`RenderAVBOITTileRange`/`RenderAVBOITSamplingBias`/`RenderAVBOITDebugMode` via `LLCachedControl` (new `debugMode()` helper added, used at all 3 of its raw-read call sites for consistency). Moved `configureDirectRasterShader()` from per-draw to per-pass: `render_pass()` now configures all AVBOIT programs once per pass (alpha/PBR-alpha/fullbright base+rigged pairs, the full `gAVBOITMaterialAlphaProgram[]` array, the full `gAVBOITGLTFProgram.mGLTFVariants` vector, emissive/glow base+rigged pairs — confirmed via `lldrawpoolalpha.cpp`'s `target_shader = target_shader->mRiggedVariant` sites that rigged draws bind the rigged variant object directly, so both halves of every pair needed their own call, not just the base). `oitGlow` uniform replaced with a shader-side literal 0.0 in `avboitCaptureF.glsl` (this path never carries glow; glow accumulates separately via `avboit_store_glow()`), collapsing a now-redundant duplicate `alpha > 0.0` condition along the way. `configureCapturedDrawIfActive()`/`configureGLTFCapturedDraw()` now do only the per-draw accumulation-blend re-apply for pass 2 (kept per-draw per the plan's own "fragile" caveat — `LLGLDisable(GL_BLEND)`'s scope is per `forwardRender()` call, not per draw, but capture drawing disables blend globally between draws in ways that need re-establishing). Verified: no regression in testing. Shader cache revision NOT bumped (still v135) |
 
-Two plan defects were found by implementation so far, both mine: E4 mapped
-the atomically written buffer, and E1 reallocated mid-frame. Both corrected
-in place. When a later item contradicts a correction here, the correction
+| 2026-09-03 | AVBOIT A4 | implemented, not yet built/tested. `FSAVBOIT::handleCapturedEmissives()` now skips the emissive/PBR-glow draw calls entirely for pass 1 (`sDirectRasterPass != 1` guard added; pass 0 and pass 2 unaffected) instead of submitting them only to hit `avboit_store_glow()`'s existing `if (avboitRasterPass == 1) return;` early-out — confirmed via `beginDirectRasterPass()` that pass 1 is the volume-resolution extinction raster and via both glow shaders that pass 1 does no other work before that return, so this is a pure submission-skip, not a behavior change. `materialF.glsl`'s pass-0-only exit (`avboitRasterPass == 0`) widened to `avboitRasterPass < 2` to match the other four shared shaders (`alphaF`, `pbralphaF`, `pbrmetallicroughnessF`, `fullbrightF`, all already `< 2`) — confirmed exact: the early-return path computes the identical `diffcol.a * vertex_color.a` expression already used by the pass-1 fallthrough path at the shader's later `#elif defined(AVBOIT)` output block (both read `diffcol.a` after the same `alphaMask()` call), so this removes a full material/lighting evaluation (specular, normal mapping, shadows, probes) for pass-1 fragments on legacy materials without changing what gets stored. Gated the two dead diagnostic counters behind their owning debug modes: `avboit_compare_proxy_coverage()`'s `avboitDiagnostic[4]`/`[5]` atomics (per alpha>0 fragment in pass 0) behind `avboitDebugMode == 6`, and `avboitVolumeC.glsl` pass 5's `avboitDiagnostic[2]` atomic (per cell) behind `avboitDebugMode == 5` — confirmed via full-tree grep that neither counter is read anywhere (dead even before gating; debug mode 6 actually reads the separately-written `failure` bits in `avboitWork[miss_map]`, not the counter). Deleted `avboit_cull_fragment()` (defined in `avboitCaptureF.glsl`, unconditionally `return false;`) and every declaration + call site across the 5 shared shaders (`alphaF`, `pbralphaF`, `materialF` class3, `pbrmetallicroughnessF`, `fullbrightF`) — each call site was a complete, self-contained tagged block with no other content, so the whole block was removed rather than left empty. Net effect across all 8 touched files: 15 insertions, 67 deletions. Shader cache revision NOT bumped (still v135) |
+
+| 2026-09-03 | **E2-B regression: prim glow lost** | found, not yet fixed. Lamp glass dark in Exact OIT only. Cause: `LLDrawInfo::mHasGlow` is written only by `LLParticlePartition::getGeometry()`; `registerFace()` (llvovolume.cpp) never sets it, so every prim emissive draw has `mHasGlow == false` and E2-B's `drop_no_glow` filter in `FSExactOIT::handleCapturedEmissives()` discards it. The E2 trap claim "prims keep mHasGlow true" was wrong (plan defect #3). Fix instructions in `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md` (option A: one tagged `draw_info->mHasGlow = true;` in `registerFace()`) |
+| 2026-09-03 | **AVBOIT head/hair colour mismatch** | found, not a separate bug. Hair looks lighter/washed and eye makeup/lashes fainter in AVBOIT than in vanilla and Exact OIT (which match). Verified the fragment colour path is identical in all three modes (`alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl` all pass the same `color` to `frag_color` / `exact_oit_store` / `avboit_store`; shadow sampling identical). The difference is the resolve: per-pixel weighted average with a 1/8-resolution volume transmittance, so back strands/layers that the front strand hides in vanilla still contribute their (differently lit, usually brighter) colour. Same representational cause as the sheer-over-sheer bug; A9 fixes both. Details in A9 |
+
+Three plan defects were found by implementation so far, all mine: E4 mapped
+the atomically written buffer, E1 reallocated mid-frame, and E2's trap text
+asserted prims keep `mHasGlow == true` (they never set it; E2-B then dropped
+every prim glow). All corrected in place. When a later item contradicts a correction here, the correction
 wins. A third finding (the fence-wait residual cost above) is not a defect
 in any item as implemented; it is a real architectural cost of the fence
 design that the plan did not budget for, recorded for later prioritization.
@@ -234,10 +240,13 @@ accurate for particles so the draw call itself can be skipped.
 **Traps:**
 - Change B: `mHasGlow` is also compared in `llvopartgroup.cpp:876` to decide
   whether an existing `LLDrawInfo` can be reused; changing its meaning is fine
-  because it is still a per-group boolean. Verify prims (`LLVOVolume`) are
-  unaffected: they only have `TYPE_EMISSIVE` when glow > 0, so `mHasGlow`
-  stays true for them. Do NOT filter in `lldrawpoolalpha.cpp`; the vanilla path
-  must be untouched.
+  because it is still a per-group boolean. **CORRECTION (2026-09-03):** the
+  original text here claimed prims keep `mHasGlow` true. False: `registerFace()`
+  in `llvovolume.cpp` never sets it, so it is `false` for every prim and the
+  filter dropped all prim glow (lamp regression). Prim draws must be marked
+  `mHasGlow = true` in `registerFace()`; see
+  `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md`. Do NOT filter in
+  `lldrawpoolalpha.cpp`; the vanilla path must be untouched.
 - Change B changes nothing in vanilla mode only if the filter lives inside
   `FSExactOIT::handleCapturedEmissives()`.
 
@@ -1326,6 +1335,30 @@ the copy.
 another sheer layer, the under layer is far too visible. Moving the layers
 apart (e.g. between the legs) hides it correctly.
 
+**Second symptom (user report, screenshots 2026-09-03):** on two different
+mesh heads, AVBOIT renders the hair lighter and lower-contrast than vanilla,
+and eye makeup / lashes fainter; Exact OIT matches vanilla exactly. This is
+the same bug, not a material or double-application issue. Checked: the
+lighting/colour code in `alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl`,
+`materialF.glsl` and the GLTF shader is shared and the final `color` handed
+to `avboit_store()` is the value vanilla writes to `frag_color`; the AVBOIT
+early-exit for passes < 2 happens before lighting and pass 2 runs the full
+path including the shadow sample. So the per-fragment colours are right;
+what differs is how they are combined. Hair is many strands per pixel: in
+vanilla (and Exact OIT) the front strand with alpha near 1 hides everything
+behind it at that pixel. In AVBOIT every strand at the pixel gets weight
+`alpha * T_vol`, and `T_vol` is a per-8x8-cell summed extinction, not the
+per-pixel truth: a thin strand's extinction is diluted across the cell, so
+the back strands (back-facing, lit differently, no strand-on-strand
+occlusion) keep a large weight and the weighted average is pulled toward
+them. Lashes over a makeup/skin layer and makeup mesh layers under hair are
+the same collision. The front-key design below gives the front fragment
+weight `alpha_F` with transmittance exactly 1 and bounds everything behind by
+`(1 - alpha_F)(1 - alpha_S)`, which is 0 for an opaque front strand: the
+hair then composites as source-over for its two front layers and matches
+vanilla. Verify with the head screenshots (hair colour, lash and eyeshadow
+density) in addition to the garment case.
+
 **Established cause** (special-repo plan, sections "Decisive observation",
 "v129", "Warp saturation", "v133"): the transmittance volume stores one
 summed extinction per physical slice. Two surfaces in the same slice both
@@ -1426,10 +1459,16 @@ corrected value):
         front_factor = front_transmittance;                   // A/B: old behaviour
     float weight = alpha * front_factor;
 ```
-Use `front_factor` also for the glow term (`max(oitGlow,0) * front_factor`)
-and in the two glow shaders' pass-2 branch (glow-only fragments of the front
-surface share its depth, so they match `key0` and stay unattenuated, as
-vanilla does).
+There is no glow term left in `avboit_direct_store` (A3 removed `oitGlow`).
+Apply the same `front_factor` logic in the two glow shaders' pass-2 branch
+(`avboitEmissiveF.glsl` and `avboitPbrGlowF.glsl`, `avboit_store_glow()`):
+replace `max(glow, 0.0) * front` with `max(glow, 0.0) * front_factor`, where
+`front_factor` is computed exactly as above from `front` (their name for the
+sampled transmittance) and the two key images (glow-only fragments of the
+front surface share its depth, so they match `key0` and stay unattenuated,
+as vanilla does). Both glow shaders need the two `uimage2D` declarations and
+the `avboitFrontLayers` uniform too; keep the three copies textually
+identical.
 
 **Why `min()` and not a multiplicative ratio (V108's concern):** `min` never
 raises a weight. Where the volume already contains the front layers'
@@ -1463,14 +1502,18 @@ fragment (same vertex program, same matrices); the quantised-depth match is
 therefore reliable. The shared shaders exit right after computing alpha for
 every pass other than 2, so the fragment cost is vertex work + rasterisation +
 one texture fetch + two image atomics. `handleCapturedEmissives()` must skip
-emissive draws in pass 3 (extend A4's pass-1 skip to `sDirectRasterPass != 2`).
+emissive draws in pass 3: A4's guard in `FSAVBOIT::handleCapturedEmissives()`
+is currently `sDirectRasterPass != 1`; make it
+`sDirectRasterPass != 1 && sDirectRasterPass != 3` (pass 0 must keep running
+emissives for `avboit_mark_tile`, pass 2 for glow accumulation).
 Memory: 8 bytes per pixel (two R32UI images, 16 MB at 1080p).
 
 **Tagged edits in shared shaders** (one token each, inside the existing
-`<AS:Chanayane>` blocks): `alphaF.glsl:331`, `fullbrightF.glsl:135`,
-`pbralphaF.glsl:203`, `pbrmetallicroughnessF.glsl:~217` change
-`avboitRasterPass < 2` to `avboitRasterPass != 2`; `materialF.glsl:365`
-changes `== 0` to `!= 2`. The early store then also runs in pass 3 and
+`<AS:Chanayane>` blocks; line numbers as of the A4 working tree):
+`alphaF.glsl:330`, `fullbrightF.glsl:134`, `pbralphaF.glsl:202`,
+`materialF.glsl:364` (A4 already changed it to `< 2`),
+`pbrmetallicroughnessF.glsl:213` change `avboitRasterPass < 2` to
+`avboitRasterPass != 2`. The early store then also runs in pass 3 and
 `avboit_direct_store` dispatches on the pass value:
 ```glsl
     if (avboitRasterPass == 3) { avboit_store_front_key(alpha); return; }
