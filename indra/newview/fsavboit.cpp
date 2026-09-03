@@ -1047,7 +1047,12 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
     glBindTexture(GL_TEXTURE_2D, 0);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
     return glGetError() == GL_NO_ERROR &&
-        gAVBOITOpaqueTarget.allocate(width, height, GL_RGBA16F, true) &&
+        // A7: color is never sampled (the resolve reads screen's own texel
+        // directly now) and no AVBOIT raster pass writes fragment color to
+        // this target's attachment 0 either (the shared shaders' AVBOIT path
+        // never declares frag_color), so a single 8-bit channel is enough to
+        // keep the FBO complete for the depth test the raster passes need.
+        gAVBOITOpaqueTarget.allocate(width, height, GL_R8, true) &&
         gAVBOITPrepassTarget.allocate(
             sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8) &&
         // A2: depth-only, volume resolution. Color is never read; only
@@ -1160,9 +1165,17 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
                             << LL_ENDL;
     }
 
-    glCopyImageSubData(screen.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                       gAVBOITOpaqueTarget.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0,
-                       width, height, 1);
+    // The resolve compute shader (pass 7) used to read the opaque colour back
+    // from a copy in gAVBOITOpaqueTarget purely so it could composite it
+    // under the accumulated transparency. It writes the same pixel of the
+    // screen it would have copied from, and a compute invocation may
+    // imageLoad then imageStore its own texel of one image with no barrier
+    // (no other invocation touches that texel), so the copy is unnecessary:
+    // the resolve now reads screen's own current colour directly. Depth
+    // still needs its own copy: gAVBOITOpaqueTarget's private depth is the
+    // early-Z target the raster passes test against, and it must stay frozen
+    // at the opaque depth for the whole capture while screen's shared depth
+    // moves on.
     glCopyImageSubData(opaque_depth, GL_TEXTURE_2D, 0, 0, 0, 0,
                        gAVBOITOpaqueTarget.getDepth(), GL_TEXTURE_2D,
                        0, 0, 0, 0, width, height, 1);
@@ -1873,8 +1886,11 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     const U32 groups_x = (sResources.viewportWidth + 15u) / 16u;
     const U32 groups_y = (sResources.viewportHeight + 15u) / 16u;
 
+    // Read-write: pass 7 imageLoads its own texel's current (opaque) colour
+    // before imageStoring the composited result over it. See the comment on
+    // beginDirectFrame()'s removed colour copy.
     glBindImageTexture(2, screen.getTexture(), 0, GL_FALSE, 0,
-                       GL_WRITE_ONLY, GL_RGBA16F);
+                       GL_READ_WRITE, GL_RGBA16F);
     glBindImageTexture(0, sResources.accumulatedColorGlow, 0, GL_FALSE, 0,
                        GL_READ_ONLY, GL_RGBA16F);
     glBindImageTexture(1, sResources.accumulatedWeight, 0, GL_FALSE, 0,
@@ -1893,11 +1909,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
         gAVBOITResolveProgram.uniform1i(transmittance_sampler,
                                         directTransmittanceTextureUnit());
     }
-    gAVBOITResolveProgram.bindTexture(
-        LLShaderMgr::DEFERRED_DIFFUSE, &gAVBOITOpaqueTarget,
-        false, LLTexUnit::TFO_POINT, 0);
     glDispatchCompute(groups_x, groups_y, 1u);
-    gAVBOITResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
     gAVBOITResolveProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 

@@ -4,7 +4,10 @@
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
-layout(binding = 2, rgba16f) uniform writeonly image2D avboitOutput;
+// Read-write: pass 7 loads the screen's own current (opaque) colour from its
+// own texel before storing the composited result over it -- no copy needed,
+// see FSAVBOIT::beginDirectFrame()'s comment on the removed colour copy.
+layout(binding = 2, rgba16f) uniform image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 // R16F rather than the presentation's R8. This volume is the entire ordering
 // weight for blended geometry, so its precision bounds how closely the
@@ -58,7 +61,6 @@ layout(std430, binding = 3) buffer AVBOITWork
     uint avboitWork[];
 };
 
-uniform sampler2D diffuseRect;
 uniform sampler3D avboitTransmittanceSampler;
 uniform int avboitPass;
 uniform int avboitDebugMode;
@@ -846,7 +848,7 @@ void main()
                            avboitVolumeSize - ivec2(1));
         vec3 transparent = weight > 0.0 ?
             weighted_color * (aggregate_alpha / weight) : vec3(0.0);
-        vec4 opaque = texelFetch(diffuseRect, pixel, 0);
+        vec4 opaque = imageLoad(avboitOutput, pixel);
         if (avboitDebugMode == 2 &&
             (weight > 0.0 || accumulated_glow > 0.0))
         {
