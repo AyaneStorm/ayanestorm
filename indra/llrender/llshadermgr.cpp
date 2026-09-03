@@ -586,10 +586,15 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
     {
         if (major_version >= 4)
         {
-// <AS:Chanayane> Exact OIT requires GLSL 4.30.
+// <AS:Chanayane> Exact OIT requires GLSL 4.30. Wave-level node allocation
+            // (gl_HelperInvocation, GL_KHR_shader_subgroup) needs 4.50.
             // //set version to 400 or 420
             // if (minor_version >= 20)
-            if ((oit_storage_shader || compute_shader) && minor_version >= 30)
+            if (oit_storage_shader && gGLManager.mHasShaderSubgroup && minor_version >= 50)
+            {
+                shader_code_text[shader_code_count++] = strdup("#version 450\n");
+            }
+            else if ((oit_storage_shader || compute_shader) && minor_version >= 30)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 430\n");
             }

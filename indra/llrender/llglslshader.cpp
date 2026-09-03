@@ -459,6 +459,8 @@ bool LLGLSLShader::createShader()
             // GLuint shaderhandle = LLShaderMgr::instance()->loadShaderFile((*fileIter).first, mShaderLevel, (*fileIter).second, &mDefines, mFeatures.mIndexedTextureChannels);
             const bool oit_capture_library =
                 (*fileIter).first == "deferred/exactOITCaptureF.glsl" ||
+                (*fileIter).first == "deferred/exactOITCaptureSubgroupF.glsl" ||
+                (*fileIter).first == "deferred/exactOITReserveSubgroupF.glsl" ||
                 (*fileIter).first == "deferred/avboitCaptureF.glsl";
             const S32 texture_index_channels =
                 oit_capture_library ? -1 : mFeatures.mIndexedTextureChannels;

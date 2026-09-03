@@ -130,10 +130,32 @@ void addCommonPermutations(LLGLSLShader& shader)
     }
 }
 
+// Links exactOITReserveSubgroupF.glsl (the shared wave-level exact_oit_reserve()
+// / exact_oit_wave_max_pad() / OITControl implementation) into a shader program.
+// Call once per subgroup-variant capture-family program alongside its own
+// capture fragment file. Kept as a separate object rather than folded into
+// each caller: #extension directives are required ahead of any declaration in
+// the compiled source (the GLSL spec, enforced by NVIDIA even past the shader
+// manager's own injected GBufferInfo struct), a #ifdef-gated #extension can't
+// satisfy that and see the CPU-side #define at the same time, and OITControl
+// can only be declared once across a program's linked objects.
+void addReserveSubgroupFragment(LLGLSLShader& shader)
+{
+    shader.mShaderFiles.emplace_back("deferred/exactOITReserveSubgroupF.glsl", GL_FRAGMENT_SHADER);
+}
+
 // Links the shared node-capture fragment implementation into a shader program.
 void addCaptureFragment(LLGLSLShader& shader)
 {
-    shader.mShaderFiles.emplace_back("deferred/exactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
+    if (gGLManager.mHasShaderSubgroup)
+    {
+        addReserveSubgroupFragment(shader);
+        shader.mShaderFiles.emplace_back("deferred/exactOITCaptureSubgroupF.glsl", GL_FRAGMENT_SHADER);
+    }
+    else
+    {
+        shader.mShaderFiles.emplace_back("deferred/exactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
+    }
 }
 
 // Adds the EXACT_OIT permutation and, when the setting requests it, the
@@ -340,6 +362,20 @@ bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
         return success;
     }
 
+    // E7 kill switch: mHasShaderSubgroup is a driver capability fact set once
+    // in LLGLManager::initExtensions(); AND the user setting into it here,
+    // before any shader file is chosen, so both this file's file-selection
+    // checks and llshadermgr.cpp's #version 450 check (which cannot see
+    // gSavedSettings) agree from a single flag. Needed for A/B testing and as
+    // an escape hatch for driver-specific subgroup bugs; requires a shader
+    // reload to take effect, same as RenderExactOITNoOpCapture.
+    static LLCachedControl<bool> subgroup_enabled(gSavedSettings, "RenderExactOITSubgroup", true);
+    gGLManager.mHasShaderSubgroup = gGLManager.mHasShaderSubgroup && subgroup_enabled;
+
+    LL_INFOS("ExactOIT") << "Exact OIT wave-level node allocation (EXACT_OIT_SUBGROUP): "
+                         << (gGLManager.mHasShaderSubgroup ? "active" : "unavailable, using per-fragment atomics")
+                         << LL_ENDL;
+
     if (gltf_enabled) success = loadGLTFShaders(shader_level, use_sun_shadow);
     if (success) success = loadPBRGlowShaders(shader_level);
     if (success) success = loadAlphaShaders(shader_level, use_sun_shadow);
@@ -423,7 +459,16 @@ bool FSExactOIT::loadPBRGlowShaders(S32 shader_level)
     gExactOITPBRGlowProgram.mFeatures.hasSrgb = true;
     gExactOITPBRGlowProgram.mShaderFiles.clear();
     gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/pbrglowV.glsl", GL_VERTEX_SHADER);
-    gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/exactOITPbrGlowF.glsl", GL_FRAGMENT_SHADER);
+    // E7: separate physical file for the subgroup path; see addCaptureFragment().
+    if (gGLManager.mHasShaderSubgroup)
+    {
+        addReserveSubgroupFragment(gExactOITPBRGlowProgram);
+        gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/exactOITPbrGlowSubgroupF.glsl", GL_FRAGMENT_SHADER);
+    }
+    else
+    {
+        gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/exactOITPbrGlowF.glsl", GL_FRAGMENT_SHADER);
+    }
     gExactOITPBRGlowProgram.mShaderLevel = shader_level;
     addCommonPermutations(gExactOITPBRGlowProgram);
 
@@ -443,7 +488,16 @@ bool FSExactOIT::loadEmissiveShaders(S32 shader_level)
     gExactOITEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
     gExactOITEmissiveProgram.mShaderFiles.clear();
     gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/emissiveV.glsl", GL_VERTEX_SHADER);
-    gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/exactOITEmissiveF.glsl", GL_FRAGMENT_SHADER);
+    // E7: separate physical file for the subgroup path; see addCaptureFragment().
+    if (gGLManager.mHasShaderSubgroup)
+    {
+        addReserveSubgroupFragment(gExactOITEmissiveProgram);
+        gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/exactOITEmissiveSubgroupF.glsl", GL_FRAGMENT_SHADER);
+    }
+    else
+    {
+        gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/exactOITEmissiveF.glsl", GL_FRAGMENT_SHADER);
+    }
     gExactOITEmissiveProgram.mShaderLevel = shader_level;
     addCommonPermutations(gExactOITEmissiveProgram);
 
