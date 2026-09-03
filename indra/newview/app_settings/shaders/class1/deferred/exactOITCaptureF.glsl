@@ -29,21 +29,20 @@ layout(std430, binding = 1) buffer OITControl
 };
 
 uniform uint oitBlendFactors;
-uniform float oitGlow;
-uniform int oitDiscardNoOp;
 
 void exact_oit_store(vec4 color)
 {
-    // Standard alpha with exact zero source alpha and glow is a complete no-op.
-    // Reject it before allocation so invisible card texels create no list work.
+#ifdef EXACT_OIT_DISCARD_NOOP
+    // Standard alpha with exact zero source alpha is a complete no-op (glow
+    // is always 0 on this path; the glow shaders use their own store
+    // function and never reach here). Reject it before allocation so
+    // invisible card texels create no list work.
     const uint standard_alpha_blend = 7u | (9u << 8u) | (1u << 16u) | (9u << 24u);
-    if (oitDiscardNoOp != 0 &&
-        oitBlendFactors == standard_alpha_blend &&
-        color.a == 0.0 &&
-        oitGlow == 0.0)
+    if (oitBlendFactors == standard_alpha_blend && color.a == 0.0)
     {
         return;
     }
+#endif
 
     uint index = atomicAdd(oitNodeCount, 1u);
     if (index >= oitNodeCapacity)
@@ -53,7 +52,7 @@ void exact_oit_store(vec4 color)
     }
 
     oitNodes[index].color = color;
-    oitNodes[index].glow = oitGlow;
+    oitNodes[index].glow = 0.0;
     oitNodes[index].depth = gl_FragCoord.z;
     oitNodes[index].blend = oitBlendFactors;
     oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);

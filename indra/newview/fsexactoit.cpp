@@ -100,6 +100,7 @@ void FSExactOIT::allocateResources(U32 width, U32 height) {}
 #else // !LL_DARWIN
 
 #include <string>
+#include <unordered_map>
 #include <utility>
 
 #include "asbackgroundisolate.h"
@@ -132,6 +133,45 @@ void addCommonPermutations(LLGLSLShader& shader)
 void addCaptureFragment(LLGLSLShader& shader)
 {
     shader.mShaderFiles.emplace_back("deferred/exactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
+}
+
+// Adds the EXACT_OIT permutation and, when the setting requests it, the
+// no-op discard permutation. Call once per capture shader alongside its
+// other EXACT_OIT-family permutations.
+void addExactOITPermutations(LLGLSLShader& shader)
+{
+    static LLCachedControl<bool> discard_no_op(gSavedSettings, "RenderExactOITNoOpCapture", true);
+    shader.addPermutation("EXACT_OIT", "1");
+    if (discard_no_op)
+    {
+        shader.addPermutation("EXACT_OIT_DISCARD_NOOP", "1");
+    }
+}
+
+// Per-program cache of the packed-blend-factor uniform: avoids a hashed
+// lookup and a redundant re-upload on every capture draw. Keyed by program
+// pointer (GL uniform state is per program object and survives rebinding);
+// cleared whenever programs are relinked.
+struct BlendUniformCache { GLint location = -2; U32 value = 0xffffffffu; };
+std::unordered_map<const LLGLSLShader*, BlendUniformCache> sBlendCache;
+
+void uploadBlendFactors(LLGLSLShader& shader, U32 packed)
+{
+    BlendUniformCache& cache = sBlendCache[&shader];
+    if (cache.location == -2)
+    {
+        static LLStaticHashedString name("oitBlendFactors");
+        cache.location = shader.getUniformLocation(name);
+    }
+    // NOTE: do not route this through LLGLSLShader::uniform1i(); its value
+    // cache stores the value as F32, and packed blend tuples exceed the
+    // 24-bit exact integer range, so two different tuples can compare equal
+    // and the upload gets silently skipped.
+    if (cache.location >= 0 && cache.value != packed)
+    {
+        glUniform1ui(cache.location, packed);
+        cache.value = packed;
+    }
 }
 
 // Creates the skinned counterpart of a shader and returns whether compilation succeeded.
@@ -353,6 +393,7 @@ void FSExactOIT::unloadShaders()
     gExactOITSkinnedEmissiveProgram.unload();
     gExactOITPBRGlowProgram.unload();
     gExactOITSkinnedPBRGlowProgram.unload();
+    sBlendCache.clear();
 }
 
 // Creates the Exact OIT GLTF base program and all required feature variants.
@@ -366,7 +407,7 @@ bool FSExactOIT::loadGLTFShaders(S32 shader_level, bool use_sun_shadow)
     addCaptureFragment(gExactOITGLTFProgram);
     gExactOITGLTFProgram.mShaderLevel = shader_level;
     gExactOITGLTFProgram.clearPermutations();
-    gExactOITGLTFProgram.addPermutation("EXACT_OIT", "1");
+    addExactOITPermutations(gExactOITGLTFProgram);
     addCommonPermutations(gExactOITGLTFProgram);
 
     const bool success = makeGLTFVariants(gExactOITGLTFProgram, use_sun_shadow);
@@ -495,7 +536,7 @@ bool FSExactOIT::loadAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.addPermutation("USE_VERTEX_COLOR", "1");
         shader.addPermutation("HAS_ALPHA_MASK", "1");
         shader.addPermutation("USE_INDEXED_TEX", "1");
-        shader.addPermutation("EXACT_OIT", "1");
+        addExactOITPermutations(shader);
         if (use_sun_shadow)
         {
             shader.addPermutation("HAS_SUN_SHADOW", "1");
@@ -551,7 +592,7 @@ bool FSExactOIT::loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.addPermutation("HAS_SPECULAR_MAP", "1");
         shader.addPermutation("HAS_EMISSIVE_MAP", "1");
         shader.addPermutation("USE_VERTEX_COLOR", "1");
-        shader.addPermutation("EXACT_OIT", "1");
+        addExactOITPermutations(shader);
         if (use_sun_shadow)
         {
             shader.addPermutation("HAS_SUN_SHADOW", "1");
@@ -600,7 +641,7 @@ bool FSExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
         shader.clearPermutations();
         shader.addPermutation("HAS_ALPHA_MASK", "1");
         shader.addPermutation("IS_ALPHA", "1");
-        shader.addPermutation("EXACT_OIT", "1");
+        addExactOITPermutations(shader);
         if (rigged)
         {
             shader.addPermutation("HAS_SKIN", "1");
@@ -664,7 +705,7 @@ bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
         }
         shader.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
         shader.addPermutation("HAS_ALPHA_MASK", "1");
-        shader.addPermutation("EXACT_OIT", "1");
+        addExactOITPermutations(shader);
         if (use_sun_shadow)
         {
             shader.addPermutation("HAS_SUN_SHADOW", "1");
@@ -725,6 +766,23 @@ void FSExactOIT::beginFrame()
     sCaptureCompleted = false;
     sCaptureClearNeeded = true;
     sVanillaFallbackActive = false;
+
+    // Decremented once per frame here (captureEligible() runs for both alpha
+    // pools and must not double-decrement). The debug overlay wants to see
+    // every frame's diagnostics, so the predictive skip never engages while
+    // it is on; only log.
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    if (sResources.skipFramesRemaining > 0)
+    {
+        if (debug_mode != 0)
+        {
+            sResources.skipFramesRemaining = 0;
+        }
+        else
+        {
+            --sResources.skipFramesRemaining;
+        }
+    }
 }
 
 // Reports whether this frame produced a complete Exact OIT capture.
@@ -854,7 +912,8 @@ bool FSExactOIT::shadersReady()
             missing = llformat("material alpha %u", i);
         }
     }
-    if (missing.empty() && gSavedSettings.getBOOL("GLTFEnabled"))
+    static LLCachedControl<bool> gltf_enabled(gSavedSettings, "GLTFEnabled", false);
+    if (missing.empty() && gltf_enabled)
     {
         if (gExactOITGLTFProgram.mGLTFVariants.empty()) missing = "GLTF variants";
         for (const LLGLSLShader& shader : gExactOITGLTFProgram.mGLTFVariants)
@@ -903,6 +962,11 @@ bool FSExactOIT::captureEligible(bool rendering_huds, bool impostor_render, bool
         const GLint previous_fbo = LLRenderTarget::sCurFBO;
         allocateResources(width, height);
         glBindFramebuffer(GL_FRAMEBUFFER, previous_fbo);
+    }
+
+    if (sResources.skipFramesRemaining > 0)
+    {
+        return false;
     }
 
     return shadersReady() && sResources.available &&
@@ -969,20 +1033,9 @@ bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_s
         return true;
     }
 
-    static LLStaticHashedString blend_factors("oitBlendFactors");
-    static LLStaticHashedString glow("oitGlow");
-    static LLStaticHashedString discard_no_op("oitDiscardNoOp");
-    static LLCachedControl<bool> discard_no_op_enabled(
-        gSavedSettings, "RenderExactOITNoOpCapture", true);
     const U32 packed_blend = color_source | (color_destination << 8) |
         (alpha_source << 16) | (alpha_destination << 24);
-    const GLint location = shader->getUniformLocation(blend_factors);
-    if (location >= 0)
-    {
-        glUniform1ui(location, packed_blend);
-    }
-    shader->uniform1f(glow, 0.f);
-    shader->uniform1i(discard_no_op, discard_no_op_enabled);
+    uploadBlendFactors(*shader, packed_blend);
     return true;
 }
 
@@ -1012,22 +1065,11 @@ bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
 // Uploads the standard alpha blend tuple and zero glow for a captured GLTF draw.
 void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
-    static LLStaticHashedString blend_factors("oitBlendFactors");
-    static LLStaticHashedString glow("oitGlow");
-    static LLStaticHashedString discard_no_op("oitDiscardNoOp");
-    static LLCachedControl<bool> discard_no_op_enabled(
-        gSavedSettings, "RenderExactOITNoOpCapture", true);
     const U32 packed_blend = U32(LLRender::BF_SOURCE_ALPHA) |
         (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 8) |
         (U32(LLRender::BF_ZERO) << 16) |
         (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 24);
-    const GLint location = shader.getUniformLocation(blend_factors);
-    if (location >= 0)
-    {
-        glUniform1ui(location, packed_blend);
-    }
-    shader.uniform1f(glow, 0.f);
-    shader.uniform1i(discard_no_op, discard_no_op_enabled);
+    uploadBlendFactors(shader, packed_blend);
 }
 
 // Returns the Exact OIT GLTF program during capture, otherwise the supplied vanilla program.
@@ -1073,23 +1115,20 @@ LLGLSLShader* FSExactOIT::pbrGlowShader()
     return &gExactOITPBRGlowProgram;
 }
 
-// Handles overflow failure and buffer-growth policy; returns true when vanilla fallback is required.
-bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
+// Returns the node capacity this session may safely allocate (VRAM-bounded).
+static U64 safeNodeCapacity()
 {
-    if (overflow_flag == 0 && required_nodes <= sResources.capacity)
-    {
-        return false;
-    }
-
-    ++sResources.overflowCount;
-    LL_WARNS_ONCE("ExactOIT") << "Exact OIT node capacity exceeded (required "
-        << required_nodes << ", capacity " << sResources.capacity
-        << "); rendering complete vanilla transparency for this frame." << LL_ENDL;
-    discardCapture();
-
     constexpr U64 node_bytes = 32;
     const U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
-    const U64 safe_nodes = llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull) / node_bytes;
+    return llmin<U64>(vram_bytes / 4u, 2ull * 1024ull * 1024ull * 1024ull) / node_bytes;
+}
+
+// Grows the node pool toward `required_nodes` (with headroom) when capacity allows it.
+// Returns true if capacity now covers `required_nodes`.
+bool FSExactOIT::growNodePool(U32 required_nodes)
+{
+    constexpr U64 node_bytes = 32;
+    const U64 safe_nodes = safeNodeCapacity();
     const U64 demand_with_headroom = (static_cast<U64>(required_nodes) * 5ull + 3ull) / 4ull;
     const U64 geometric_growth = static_cast<U64>(sResources.capacity) * 2ull;
     const U64 requested = llmax(demand_with_headroom, geometric_growth);
@@ -1112,6 +1151,39 @@ bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
             sResources.available = false;
             LL_WARNS("ExactOIT") << "Unable to grow exact OIT node buffer; exact OIT disabled for this session."
                 << LL_ENDL;
+        }
+    }
+    return sResources.capacity >= required_nodes;
+}
+
+// Handles overflow failure and buffer-growth policy; returns true when vanilla fallback is required.
+bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
+{
+    if (overflow_flag == 0 && required_nodes <= sResources.capacity)
+    {
+        return false;
+    }
+
+    ++sResources.overflowCount;
+    LL_WARNS_ONCE("ExactOIT") << "Exact OIT node capacity exceeded (required "
+        << required_nodes << ", capacity " << sResources.capacity
+        << "); rendering complete vanilla transparency for this frame." << LL_ENDL;
+    discardCapture();
+
+    const U32 capacity_before = sResources.capacity;
+    const bool grown = growNodePool(required_nodes);
+    if (!grown && sResources.capacity == capacity_before)
+    {
+        // Demand already exceeds the safe VRAM cap: growth is impossible this
+        // session. Skip capture for a growing number of frames instead of
+        // re-attempting (and re-discarding) every frame.
+        sResources.skipFramesRemaining = llmin(2u << sResources.consecutiveOverflowsAtCap, 60u);
+        ++sResources.consecutiveOverflowsAtCap;
+        static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+        if (debug_mode == 0)
+        {
+            LL_INFOS("ExactOIT") << "Exact OIT demand exceeds safe capacity; skipping capture for "
+                << sResources.skipFramesRemaining << " frames." << LL_ENDL;
         }
     }
     return true;
@@ -1166,8 +1238,9 @@ FSExactOIT::ValidationResult FSExactOIT::validateCapture(bool cube_snapshot, boo
         return ValidationResult::INACTIVE;
     }
 
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
-                    GL_ATOMIC_COUNTER_BARRIER_BIT);
+    // No atomic counter buffers are used by Exact OIT (only SSBO/image
+    // atomics), so GL_ATOMIC_COUNTER_BARRIER_BIT is unnecessary here.
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     U32 control[4] = {};
     {
         LL_PROFILE_ZONE_NAMED("Exact OIT validation readback");
@@ -1177,8 +1250,21 @@ FSExactOIT::ValidationResult FSExactOIT::validateCapture(bool cube_snapshot, boo
     }
     maximum_list = control[3];
     recordCaptureStats(control[0], control[3], mouselook);
-    return captureOverflowed(control[0], control[2]) ?
-        ValidationResult::FALLBACK_REQUIRED : ValidationResult::COMPLETE;
+    sResources.lastRequiredNodes = control[0];
+    if (captureOverflowed(control[0], control[2]))
+    {
+        return ValidationResult::FALLBACK_REQUIRED;
+    }
+
+    // Not overflowed this frame: reset the escalating skip policy and, if
+    // demand is approaching capacity, grow now rather than waiting for an
+    // overflow (and a double-render) frame later.
+    sResources.consecutiveOverflowsAtCap = 0;
+    if (control[0] > sResources.capacity * 3 / 4 && sResources.capacity < U32(safeNodeCapacity()))
+    {
+        growNodePool(control[0] * 2u);
+    }
+    return ValidationResult::COMPLETE;
 }
 
 // Binds the captured images and shader-storage buffers required by composite passes.
@@ -1289,6 +1375,7 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     // </AS:Chanayane>
 
     bool used_compute_sort = false;
+    U32 sort_passes = 0;
     {
         LLGLDepthTest depth(GL_FALSE);
         gGL.setColorMask(false, false);
@@ -1310,9 +1397,26 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
                                                         opaque_cutoff && width == 1);
                     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
                     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+                    ++sort_passes;
                 }
             }
             gExactOITCompositeProgram.unbind();
+        }
+    }
+
+    // Phase-0 measurement: objective, bounded periodic snapshot of demand vs.
+    // capacity and sort cost, for comparing RenderOITMode settings and scenes.
+    if (debug_mode != 0)
+    {
+        static U32 frame_counter = 0;
+        if (++frame_counter >= 300)
+        {
+            frame_counter = 0;
+            LL_INFOS("ExactOIT") << "Nodes used " << sResources.lastRequiredNodes
+                << " / capacity " << sResources.capacity
+                << ", max pixel list " << maximum_list
+                << ", sort passes " << (used_compute_sort ? 0 : sort_passes)
+                << (used_compute_sort ? " (compute sort)" : "") << LL_ENDL;
         }
     }
 
@@ -1362,7 +1466,8 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     static bool previous_requested = false;
     static bool previous_available = false;
     static bool previous_used = false;
-    const bool requested = gSavedSettings.getBOOL("RenderExactOITComputeSort");
+    static LLCachedControl<bool> requested_control(gSavedSettings, "RenderExactOITComputeSort", false);
+    const bool requested = requested_control;
     if (requested != previous_requested ||
         sResources.computeSortAvailable != previous_available ||
         used_compute_sort != previous_used)

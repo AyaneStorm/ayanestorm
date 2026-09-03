@@ -29,6 +29,10 @@ in vec2 vary_texcoord0;
 
 void main()
 {
-    exact_oit_store_glow(diffuseLookup(vary_texcoord0.xy).a * vertex_color.a);
+    float glow = diffuseLookup(vary_texcoord0.xy).a * vertex_color.a;
+    // A zero glow node adds exactly 0 in the composite (glow += node.glow):
+    // skip allocating it. Exact; matches vanilla's additive (ONE, ONE) blend of 0.0.
+    if (glow == 0.0) return;
+    exact_oit_store_glow(glow);
 }
 // </AS:Chanayane>

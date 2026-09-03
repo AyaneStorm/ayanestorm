@@ -141,10 +141,14 @@ private:
         U32 sortQueueCapacity = 0;
         U32 peakNodes = 0;
         U32 overflowCount = 0;
+        U32 lastRequiredNodes = 0;
+        U32 skipFramesRemaining = 0;
+        U32 consecutiveOverflowsAtCap = 0;
         bool computeSortAvailable = false;
         bool available = false;
     };
     static bool captureOverflowed(U32 required_nodes, U32 overflow_flag);
+    static bool growNodePool(U32 required_nodes);
     static void recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook);
     static void bindCompositeResources();
     static void copyOpaqueScene(LLRenderTarget& screen);

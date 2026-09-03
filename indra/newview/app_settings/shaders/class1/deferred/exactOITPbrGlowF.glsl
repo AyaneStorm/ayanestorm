@@ -38,6 +38,9 @@ void main()
     vec4 basecolor = texture(diffuseMap, base_color_texcoord);
     if (basecolor.a < minimum_alpha) discard;
     vec3 emissive = emissiveColor * srgb_to_linear(texture(emissiveMap, emissive_texcoord).rgb);
-    exact_oit_store_glow(max(max(emissive.r, emissive.g), emissive.b) * vertex_emissive.a);
+    float glow = max(max(emissive.r, emissive.g), emissive.b) * vertex_emissive.a;
+    // A zero glow node adds exactly 0 in the composite: allocate nothing. Exact.
+    if (glow == 0.0) return;
+    exact_oit_store_glow(glow);
 }
 // </AS:Chanayane>
