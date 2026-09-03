@@ -99,6 +99,7 @@ void FSExactOIT::allocateResources(U32 width, U32 height) {}
 
 #else // !LL_DARWIN
 
+#include <cstring>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -1016,6 +1017,30 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
         pool.forwardRender(false);
     }
     markCaptureCompleted();
+
+    if (sResources.readbackMapped)
+    {
+        // Make the fragments' SSBO atomics visible to the copy below, then
+        // copy the four control words into the host-visible readback buffer
+        // on the GPU. The control buffer itself is never mapped (see
+        // allocateNodePool()); this copy is the only host-visible path.
+        glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);
+        glBindBuffer(GL_COPY_READ_BUFFER, sResources.control);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+        glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, 4 * sizeof(U32));
+        glBindBuffer(GL_COPY_READ_BUFFER, 0);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+    }
+
+    // Fence marks "capture (and, if any, the readback copy) is done" on the
+    // GPU timeline. The CPU only waits on this fence (in waitValidation(),
+    // after sort pass 1 has already been issued), not on the full pipeline,
+    // so the GPU can keep working while validation is pending.
+    if (sResources.captureFence)
+    {
+        glDeleteSync(sResources.captureFence);
+    }
+    sResources.captureFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
     return true;
 }
 
@@ -1227,21 +1252,56 @@ void FSExactOIT::recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook)
     }
 }
 
-// Synchronizes and validates captured metadata, returning inactive, complete, or fallback-required.
-FSExactOIT::ValidationResult FSExactOIT::validateCapture(bool cube_snapshot, bool impostor_render,
-                                                         bool mouselook, U32& maximum_list)
+// Reports whether Exact OIT has nothing to composite this frame (mode off,
+// no capture ran, or the shader/resource set is unavailable). When this
+// returns false, waitValidation() must still be called to consume the fence.
+bool FSExactOIT::captureInactive(bool cube_snapshot, bool impostor_render)
 {
-    maximum_list = 0;
-    if (!isEnabled() || cube_snapshot || impostor_render || !sResources.available ||
-        !gExactOITCompositeProgram.mProgramObject || !sCaptureCompleted)
-    {
-        return ValidationResult::INACTIVE;
-    }
+    return !isEnabled() || cube_snapshot || impostor_render || !sResources.available ||
+        !gExactOITCompositeProgram.mProgramObject || !sCaptureCompleted;
+}
 
+// Issues the memory barrier that makes captured SSBO/image writes visible to
+// subsequent draws. Must run before sort pass 1 is issued, and before the
+// fence wait in waitValidation().
+void FSExactOIT::beginValidation()
+{
     // No atomic counter buffers are used by Exact OIT (only SSBO/image
     // atomics), so GL_ATOMIC_COUNTER_BARRIER_BIT is unnecessary here.
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+}
+
+// Waits only until the capture draws finish (not the whole pipeline), reads
+// back the control words, and applies overflow/growth policy. Sort pass 1
+// (which does not depend on this readback) should already be in flight.
+FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& maximum_list)
+{
+    maximum_list = 0;
+    if (sResources.captureFence)
+    {
+        LL_PROFILE_ZONE_NAMED("Exact OIT fence wait");
+        GLenum result;
+        bool first_call = true;
+        do
+        {
+            result = glClientWaitSync(sResources.captureFence,
+                first_call ? GL_SYNC_FLUSH_COMMANDS_BIT : 0, 1000000000ull);
+            first_call = false;
+        }
+        while (result == GL_TIMEOUT_EXPIRED);
+        glDeleteSync(sResources.captureFence);
+        sResources.captureFence = 0;
+    }
+
     U32 control[4] = {};
+    if (sResources.readbackMapped)
+    {
+        // One slot suffices: the CPU reads it here before the next frame's
+        // GPU-side copy is issued, so there is no write-after-read hazard.
+        LL_PROFILE_ZONE_NAMED("Exact OIT mapped readback read");
+        memcpy(control, sResources.readbackMapped, sizeof(control));
+    }
+    else
     {
         LL_PROFILE_ZONE_NAMED("Exact OIT validation readback");
         glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control);
@@ -1355,7 +1415,11 @@ void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
 }
 
 // Sorts every captured pixel list and blends the exact result over the opaque scene.
-void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list)
+// `sort_pass_1_issued` is true when finishFrame() already ran the fragment
+// sorter's first pass speculatively (overlapped with the capture fence wait);
+// this then resumes from the second pass instead of redoing the first.
+void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
+                           bool sort_pass_1_issued)
 {
     copyOpaqueScene(screen);
     LLGLDisable blend(GL_BLEND);
@@ -1379,7 +1443,7 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     {
         LLGLDepthTest depth(GL_FALSE);
         gGL.setColorMask(false, false);
-        used_compute_sort =
+        used_compute_sort = !sort_pass_1_issued &&
             sortWithCompute(screen.getWidth(), screen.getHeight(), maximum_list);
         if (!used_compute_sort)
         {
@@ -1389,7 +1453,12 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
             {
                 LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
                 gExactOITCompositeProgram.uniform1i(oit_pass, 1);
-                for (U32 width = 1; width < maximum_list; width <<= 1)
+                // Pass 1 (oitPass == 1) never reads oitDebugMode, only
+                // oitFirstSortPass, so the speculative pass in finishFrame()
+                // is a bit-identical stand-in for width == 1 here regardless
+                // of debug mode; skip straight to width == 2 when it ran.
+                const U32 start_width = sort_pass_1_issued ? 2u : 1u;
+                for (U32 width = start_width; width < maximum_list; width <<= 1)
                 {
                     LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
                     // Prune fully hidden nodes before the first merge pass.
@@ -1412,10 +1481,11 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         if (++frame_counter >= 300)
         {
             frame_counter = 0;
+            const U32 total_sort_passes = sort_passes + (used_compute_sort ? 0 : (sort_pass_1_issued ? 1 : 0));
             LL_INFOS("ExactOIT") << "Nodes used " << sResources.lastRequiredNodes
                 << " / capacity " << sResources.capacity
                 << ", max pixel list " << maximum_list
-                << ", sort passes " << (used_compute_sort ? 0 : sort_passes)
+                << ", sort passes " << (used_compute_sort ? 0 : total_sort_passes)
                 << (used_compute_sort ? " (compute sort)" : "") << LL_ENDL;
         }
     }
@@ -1482,22 +1552,74 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     }
 }
 
+// Issues the first fragment natural-merge sort pass speculatively, before the
+// overflow/capacity decision is known. Safe even for an eventually-discarded
+// (overflowed) capture: allocation failure returns before a node is linked,
+// so this pass never follows a pointer to an unwritten node. Its GPU work
+// then overlaps the fence wait in waitValidation() instead of running after.
+// Only used for the fragment sorter; the compute-sort path still needs
+// maximum_list up front for its dispatch counts and is issued after the wait.
+static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle)
+{
+    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
+    static LLStaticHashedString oit_pass("oitPass");
+    static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
+
+    LL_PROFILE_GPU_ZONE("Exact OIT speculative sort pass");
+    LLGLDepthTest depth(GL_FALSE);
+    gGL.setColorMask(false, false);
+    gExactOITCompositeProgram.bind();
+    // oitPass == 1 never reads oitDebugMode (see exactOITCompositeF.glsl),
+    // so it is left at whatever value the program object last had bound.
+    gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+    // Equivalent to composite()'s (opaque_cutoff && width == 1) test: this
+    // speculative pass always is width == 1.
+    gExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
+    screen_triangle.setBuffer();
+    screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+    gExactOITCompositeProgram.unbind();
+    gGL.setColorMask(true, true);
+}
+
 // Validates the frame, performs complete fallback or composite, and dispatches debug alpha.
 void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
                              LLVertexBuffer& screen_triangle, bool cube_snapshot,
                              bool impostor_render, bool mouselook)
 {
-    U32 maximum_list = 0;
-    const ValidationResult validation = validateCapture(
-        cube_snapshot, impostor_render, mouselook, maximum_list);
-    if (validation == ValidationResult::INACTIVE)
+    if (captureInactive(cube_snapshot, impostor_render))
     {
         return;
     }
 
-    LL_PROFILE_GPU_ZONE("Exact OIT composite");
+    beginValidation();
+
+    // The compute sorter needs maximum_list up front for its dispatch counts,
+    // so it cannot be issued speculatively; only the fragment path overlaps
+    // the fence wait below with GPU work. This mirrors sortWithCompute()'s own
+    // gating (setting on AND resources available), computed early so both
+    // this speculative issue and the later composite() agree on which sorter
+    // will actually run this frame.
+    static LLCachedControl<bool> compute_sort_requested(gSavedSettings, "RenderExactOITComputeSort", false);
+    const bool will_use_compute_sort = compute_sort_requested && sResources.computeSortAvailable;
+    const bool sort_pass_1_issued = !will_use_compute_sort;
+    if (sort_pass_1_issued)
+    {
+        // Explicit bind: do not rely on prepareCaptureBuffers() having left
+        // the same image/SSBO units bound from capture; composite()'s own
+        // bindCompositeResources() call below is then a harmless repeat.
+        bindCompositeResources();
+        issueSpeculativeFirstSortPass(screen_triangle);
+    }
+
+    U32 maximum_list = 0;
+    const ValidationResult validation = waitValidation(mouselook, maximum_list);
     if (validation == ValidationResult::FALLBACK_REQUIRED)
     {
+        // Sort pass 1, if issued, mutated list heads/counts for a capture
+        // that is now discarded; the vanilla fallback below never reads
+        // those images, so no cleanup is required.
+        LL_PROFILE_GPU_ZONE("Exact OIT composite");
         VanillaFallbackScope fallback_scope;
         for (LLDrawPool* pool : pipeline.mPools)
         {
@@ -1512,7 +1634,8 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
         return;
     }
 
-    composite(screen, screen_triangle, maximum_list);
+    LL_PROFILE_GPU_ZONE("Exact OIT composite");
+    composite(screen, screen_triangle, maximum_list, sort_pass_1_issued);
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
     // The viewer's Highlight Transparent overlay is drawn after compositing and
     // would obscure Exact OIT diagnostic colors.
@@ -1549,9 +1672,25 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
     {
         glDeleteBuffers(1, &sResources.nodes);
     }
+    if (sResources.captureFence)
+    {
+        glDeleteSync(sResources.captureFence);
+        sResources.captureFence = 0;
+    }
     if (sResources.control)
     {
         glDeleteBuffers(1, &sResources.control);
+    }
+    if (sResources.readback)
+    {
+        if (sResources.readbackMapped)
+        {
+            glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+            glUnmapBuffer(GL_COPY_WRITE_BUFFER);
+            glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+            sResources.readbackMapped = nullptr;
+        }
+        glDeleteBuffers(1, &sResources.readback);
     }
     glDeleteBuffers(2, sResources.sortQueues);
 
@@ -1559,6 +1698,7 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
     sResources.counts = 0;
     sResources.headFBO = 0;
     sResources.control = 0;
+    sResources.readback = 0;
     sResources.sortQueues[0] = 0;
     sResources.sortQueues[1] = 0;
     sResources.sortQueueCapacity = 0;
@@ -1665,8 +1805,35 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
     glGenBuffers(1, &sResources.control);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control);
     const U32 control[4] = { 0, sResources.capacity, 0, 0 };
+    // Device-local: every captured fragment hits this buffer with atomics
+    // (atomicAdd/atomicMax/atomicOr). It must never be host-mapped — a
+    // MAP_READ | PERSISTENT | COHERENT buffer is allocated in system memory,
+    // which would put every capture fragment's atomics on the PCIe bus
+    // (measured ~200ms stall in a 1.5M-node sprite scene; see
+    // doc/ayanestorm-oit-e4-fence-stall-question.md).
     glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(control), control, GL_DYNAMIC_DRAW);
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+
+    // Separate 16-byte host-visible copy of the control words, filled by a
+    // GPU-side glCopyBufferSubData after capture. Only this buffer is
+    // persistently mapped; the CPU never touches the control buffer above.
+    sResources.readback = 0;
+    sResources.readbackMapped = nullptr;
+    if (gGLManager.mGLVersion >= 4.39f && glBufferStorage && glMapBufferRange)
+    {
+        const GLbitfield flags = GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+        glGenBuffers(1, &sResources.readback);
+        glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+        glBufferStorage(GL_COPY_WRITE_BUFFER, sizeof(control), nullptr, flags);
+        sResources.readbackMapped = static_cast<U32*>(
+            glMapBufferRange(GL_COPY_WRITE_BUFFER, 0, sizeof(control), flags));
+        glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+        if (!sResources.readbackMapped)
+        {
+            glDeleteBuffers(1, &sResources.readback);
+            sResources.readback = 0;
+        }
+    }
     sResources.available = glGetError() == GL_NO_ERROR;
 }
 

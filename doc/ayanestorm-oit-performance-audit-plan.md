@@ -310,33 +310,51 @@ if overflow: vanilla fallback (sort results are simply ignored)
 else: issue remaining passes (count from control[3]) + composite
 ```
 
+**CORRECTION (2026-09-03, after the first implementation regressed to ~1 FPS
+in sprite scenes):** the first version of this item mapped the control SSBO
+itself persistently. That is wrong: a `MAP_READ | PERSISTENT | COHERENT`
+buffer is allocated in system memory, and the capture shaders hit the control
+buffer with atomics from every fragment, so every atomic crossed PCIe.
+The control SSBO must stay device-local; only a separate 16-byte readback
+buffer is host-mapped, filled by a GPU-side `glCopyBufferSubData`. Full
+diagnosis and code in `ayanestorm-oit-e4-fence-stall-question.md` (Answer
+section). The steps below are the corrected version.
+
 **Change (`fsexactoit.cpp`):**
-1. In `allocateNodePool()` replace the control buffer creation with:
+1. In `allocateNodePool()` keep the control buffer exactly as before
+   (`glBufferData(..., GL_DYNAMIC_DRAW)`, device-local, never mapped) and add
+   a separate readback buffer:
    ```cpp
-   glGenBuffers(1, &sResources.control);
-   glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control);
-   const U32 control[4] = { 0, sResources.capacity, 0, 0 };
-   sResources.controlMapped = nullptr;
+   sResources.readback = 0;
+   sResources.readbackMapped = nullptr;
    if (gGLManager.mGLVersion >= 4.39f && glBufferStorage && glMapBufferRange)
    {
-       const GLbitfield flags = GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
-                                GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
-       glBufferStorage(GL_SHADER_STORAGE_BUFFER, sizeof(control), control, flags);
-       sResources.controlMapped = static_cast<U32*>(glMapBufferRange(
-           GL_SHADER_STORAGE_BUFFER, 0, sizeof(control),
-           GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT));
-   }
-   if (!sResources.controlMapped)   // fallback: old mutable buffer + glGetBufferSubData
-   {
-       glBufferData(GL_SHADER_STORAGE_BUFFER, sizeof(control), control, GL_DYNAMIC_DRAW);
+       const GLbitfield flags = GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+       glGenBuffers(1, &sResources.readback);
+       glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+       glBufferStorage(GL_COPY_WRITE_BUFFER, 4 * sizeof(U32), nullptr, flags);
+       sResources.readbackMapped = static_cast<U32*>(
+           glMapBufferRange(GL_COPY_WRITE_BUFFER, 0, 4 * sizeof(U32), flags));
+       glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+       if (!sResources.readbackMapped) { glDeleteBuffers(1, &sResources.readback); sResources.readback = 0; }
    }
    ```
-   Add `U32* controlMapped = nullptr;` and `GLsync captureFence = 0;` to
-   `Resources`. Unmap (`glUnmapBuffer`) before deleting in `releaseResources()`.
-   `prepareCaptureBuffers()` keeps using `glBufferSubData` to reset the control
-   words (allowed by `GL_DYNAMIC_STORAGE_BIT`).
+   Add `GLuint readback = 0; U32* readbackMapped = nullptr; GLsync captureFence = 0;`
+   to `Resources`. Unmap and delete `readback` in `releaseResources()`.
+   **Never** create the control SSBO with any `GL_MAP_*` flag.
 2. In `renderPostDeferredCapture()` after `markCaptureCompleted()`:
-   `sResources.captureFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);`
+   ```cpp
+   if (sResources.readbackMapped)
+   {
+       glMemoryBarrier(GL_BUFFER_UPDATE_BARRIER_BIT);   // shader atomics -> copy visibility
+       glBindBuffer(GL_COPY_READ_BUFFER, sResources.control);
+       glBindBuffer(GL_COPY_WRITE_BUFFER, sResources.readback);
+       glCopyBufferSubData(GL_COPY_READ_BUFFER, GL_COPY_WRITE_BUFFER, 0, 0, 4 * sizeof(U32));
+       glBindBuffer(GL_COPY_READ_BUFFER, 0);
+       glBindBuffer(GL_COPY_WRITE_BUFFER, 0);
+   }
+   sResources.captureFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+   ```
 3. Split `validateCapture()` into two: `beginValidation()` (memory barrier +
    fence exists) and `waitValidation(U32& maximum_list)` doing:
    ```cpp
@@ -349,8 +367,8 @@ else: issue remaining passes (count from control[3]) + composite
        glDeleteSync(sResources.captureFence); sResources.captureFence = 0;
    }
    U32 control[4];
-   if (sResources.controlMapped) memcpy(control, sResources.controlMapped, sizeof(control));
-   else { glBindBuffer(...); glGetBufferSubData(...); glBindBuffer(..., 0); }
+   if (sResources.readbackMapped) memcpy(control, sResources.readbackMapped, sizeof(control));
+   else { glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control); glGetBufferSubData(...); glBindBuffer(..., 0); }
    ```
 4. Restructure `finishFrame()` / `composite()`:
    ```
@@ -367,6 +385,13 @@ else: issue remaining passes (count from control[3]) + composite
 - The fence must be created *after* the capture draws and *before* pass 1.
 - `GL_MAP_COHERENT_BIT` without `GL_MAP_PERSISTENT_BIT` is an error; both are
   required together, plus `GL_MAP_READ_BIT`.
+- Any buffer that shaders write with atomics (control, nodes, queues) must
+  never be host-mapped: mapped read buffers live in system memory and GPU
+  atomics to system memory run at PCIe latency. This was the cause of the
+  first E4 attempt's 20x regression in sprite scenes.
+- A `static LLCachedControl` read only at allocation time is not a live
+  toggle; changing such a setting does nothing until the resource is
+  reallocated. Do not use that pattern for A/B diagnostics.
 - Reading the mapped pointer without waiting on the fence gives stale data.
   Never read it anywhere else.
 - Pass 1 runs before the overflow decision. An overflowed capture has `next`
@@ -516,6 +541,16 @@ U32 passes = 0; if (maximum_list > llmax(K, 1u)) { for (U32 w = 1; w < maximum_l
 ```
 With E4 the first pass is issued before the fence wait regardless (it
 early-outs per pixel); the remaining `passes - 1` after.
+
+**E4 interaction, do not miss:** `issueSpeculativeFirstSortPass()` currently
+sets only `oitPass` and `oitFirstSortPass`. Once E5 makes pass 1 read
+`oitShallowLimit` (and `oitOpaqueCutoff` if you add that uniform), the
+speculative pass must set them too, with the same values `composite()` uses
+(`K` when `RenderExactOITDebugMode == 0`, else `0`). Compute `K` once in
+`finishFrame()` and pass it to both functions. A speculative pass that runs
+with a stale `oitShallowLimit` from a previous frame would sort pixels the
+composite then treats as unsorted, or skip pixels it treats as sorted; debug
+mode 4 would show red, and mode 0 would show wrong ordering.
 
 **Traps:**
 - `count` written by capture is a raw count and can exceed K; only pass 1

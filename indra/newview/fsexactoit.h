@@ -124,9 +124,11 @@ private:
     static void prepareCaptureShaders(PrepareShader prepare, F32 water_sign);
     static LLGLSLShader* emissiveShader();
     static LLGLSLShader* pbrGlowShader();
-    static ValidationResult validateCapture(bool cube_snapshot, bool impostor_render,
-                                            bool mouselook, U32& maximum_list);
-    static void composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list);
+    static bool captureInactive(bool cube_snapshot, bool impostor_render);
+    static void beginValidation();
+    static ValidationResult waitValidation(bool mouselook, U32& maximum_list);
+    static void composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
+                          bool sort_pass_1_issued);
     static bool sortWithCompute(U32 width, U32 height, U32 maximum_list);
     static void releaseResources(bool preserve_node_pool);
     struct Resources
@@ -136,6 +138,9 @@ private:
         GLuint headFBO = 0;
         GLuint nodes = 0;
         GLuint control = 0;
+        GLuint readback = 0;          // 16-byte host-visible copy of the control words
+        U32* readbackMapped = nullptr;
+        GLsync captureFence = 0;
         GLuint sortQueues[2] = {};
         U32 capacity = 0;
         U32 sortQueueCapacity = 0;
