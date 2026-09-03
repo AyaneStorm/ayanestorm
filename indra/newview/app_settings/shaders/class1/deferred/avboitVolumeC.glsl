@@ -19,13 +19,19 @@ layout(binding = 1, r16f) uniform readonly image2D avboitAccumulatedWeight;
 layout(binding = 5, r16f) uniform readonly image2D avboitAccumulatedExtinction;
 
 // Transient prefix-scan working array. At the reference 8192-slice domain this
-// fitted in shared memory, but a high-resolution domain exceeds
-// GL_MAX_COMPUTE_SHARED_MEMORY_SIZE, so it lives in shader storage. Image and
-// buffer binding points are separate namespaces, so SSBO binding 2 is free.
+// fits in the GL 4.3 minimum-guaranteed 32 KB of shared memory (8192 * 4 B),
+// which is faster than shader storage and needs no memoryBarrierBuffer(). A
+// high-resolution domain (65536 slices, 256 KB) exceeds that guarantee, so it
+// still lives in shader storage. Image and buffer binding points are separate
+// namespaces, so SSBO binding 2 stays free for the high-domain path.
+#if AVBOIT_VIRTUAL_SLICES <= 8192
+shared uint avboitWarpScan[AVBOIT_VIRTUAL_SLICES];
+#else
 layout(std430, binding = 2) buffer AVBOITWarpScan
 {
     uint avboitWarpScan[AVBOIT_VIRTUAL_SLICES];
 };
+#endif
 
 layout(std430, binding = 4) buffer AVBOITOccupancy
 {
@@ -145,14 +151,21 @@ float avboit_zero_extinction()
         AVBOIT_ZERO_EXTINCTION_WIDE : AVBOIT_ZERO_EXTINCTION_NARROW;
 }
 
-// avboitWarpScan is a shader-storage buffer (declared above) rather than shared
-// memory, so every barrier() guarding it must be paired with
-// memoryBarrierBuffer() to make the writes visible across the workgroup.
+// Shared memory only needs barrier(); the shader-storage fallback (declared
+// above) needs memoryBarrierBuffer() first to make writes visible across the
+// workgroup.
+#if AVBOIT_VIRTUAL_SLICES <= 8192
+void avboit_scan_barrier()
+{
+    barrier();
+}
+#else
 void avboit_scan_barrier()
 {
     memoryBarrierBuffer();
     barrier();
 }
+#endif
 
 float avboit_curve_coordinate(float linear_depth, uint divider)
 {
@@ -495,14 +508,24 @@ void main()
                 }
                 avboit_scan_barrier();
             }
-            if (thread_index == 0u &&
-                avboitDiagnostic[1] > AVBOIT_SLICES)
+            bool still_searching = avboitDiagnostic[1] > AVBOIT_SLICES;
+            if (thread_index == 0u && still_searching)
             {
                 avboitDiagnostic[3] = candidate;
                 avboitDiagnostic[1] = avboitWarpScan[0];
             }
             memoryBarrierBuffer();
             avboit_scan_barrier();
+            // Once a fitting candidate is recorded, every later candidate in
+            // this loop only halves it further without changing the search
+            // result (the "> AVBOIT_SLICES" guard above already freezes
+            // avboitDiagnostic[3]/[1]), so stop the clear+scatter+reduce work
+            // for the remaining candidates. All lanes read the same
+            // just-synchronized flag, so the break is workgroup-uniform.
+            if (!still_searching)
+            {
+                break;
+            }
         }
 
         uint group_shift = avboitDiagnostic[3];
