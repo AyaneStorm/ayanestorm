@@ -90,6 +90,13 @@ public:
                                 LLStrider<LLColor4U>& emissivep,
                                 LLStrider<U16>& indicesp);
 
+    // <AS:Chanayane> Exact OIT E2-B: true if the glow just written by the
+    // getGeometry(S32, ...) call above was non-zero. Lets callers tell a
+    // real emissive particle from one that writes glow bytes but is
+    // entirely dark, without re-reading the vertex buffer.
+    bool mLastGlowNonZero = false;
+    // </AS:Chanayane>
+
     void updateFaceSize(S32 idx) { }
     F32 getPartSize(S32 idx);
     void getBlendFunc(S32 idx, LLRender::eBlendFactor& src, LLRender::eBlendFactor& dst);
