@@ -2113,13 +2113,10 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     gAVBOITResolveProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
-    // <AS:Chanayane> All AVBOIT raster passes above target the private opaque
-    // copy. Restore the caller's screen target now: the compute resolve wrote
-    // screen color through imageStore and did not need an FBO, while the
-    // isolate coverage pass below must update screen's shared scene depth.
-    // Leaving gAVBOITOpaqueTarget bound made that pass write the private depth
-    // copy instead, so the late isolate pass painted over AVBOIT transparency.
-    gAVBOITOpaqueTarget.flush();
+    // <AS:Chanayane> finishDirectColorRaster() already flushed the private
+    // target and restored screen. A second flush here corrupts the target
+    // stack before the isolate coverage pass below.
+    // gAVBOITOpaqueTarget.flush();
     // </AS:Chanayane>
 
     // <AS:Chanayane> Self-lighting floater isolate-background mode: the
