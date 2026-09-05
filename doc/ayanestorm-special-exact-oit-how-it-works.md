@@ -67,7 +67,7 @@ regular and rigged alpha, PBR alpha, fullbright alpha, legacy materials, GLTF,
 emissive surfaces, and PBR glow.
 
 The common node allocation and storage implementation is compiled once as the
-owned `exactOITCaptureF.glsl` fragment object and linked into the Exact OIT
+owned `asExactOITCaptureF.glsl` fragment object and linked into the Exact OIT
 programs. Shared viewer shaders contain only small `#ifdef EXACT_OIT` hooks
 that declare and call this function. Ordinary shader permutations do not define
 `EXACT_OIT`; preprocessing therefore retains their original framebuffer output
@@ -177,7 +177,7 @@ allocation totals, capacity checks, overflow detection, and same-frame complete
 vanilla fallback therefore remain based on the full captured list, not the
 retained list.
 
-`RenderExactOITOpaqueCutoff` enables the optimization by default. Disabling it
+`ASRenderExactOITOpaqueCutoff` enables the optimization by default. Disabling it
 skips cutoff discovery and pruning while leaving Exact OIT capture, sorting,
 blending, and fallback behavior active, providing a direct runtime A/B
 comparison with the pre-optimization path.
@@ -225,8 +225,17 @@ image and shader-storage facilities required by this PPLL design. The platform
 limitation, translation layers, and possible OpenGL/Metal hybrid path are
 covered in [Exact OIT on macOS](ayanestorm-special-exact-oit-macos.md).
 
-The feature is controlled by `RenderExactOIT`. Disabling it leaves the standard
+The feature is controlled by `ASRenderExactOIT`. Disabling it leaves the standard
 transparency path active and avoids Exact OIT allocation and capture work. The
 shader family is loaded on supported hardware so the setting can be changed
 without restarting. Enabling allocates resources at the next eligible alpha
 pass; disabling releases them, and enabling again recreates them.
+
+## AyaneStorm OIT ownership rename (2026-09-06)
+
+- Modules: asexactoit, asavboit, asoitdispatcher; classes: ASExactOIT, ASAVBOIT, ASOITDispatcher.
+- Dedicated shaders: asExactOIT*.glsl and asAVBOIT*.glsl; shader globals use gASExactOIT / gASAVBOIT.
+- Settings: ASRenderOITMode, ASRenderExactOIT*, ASRenderAVBOIT*. Previous unprefixed saved keys are not migrated; OIT preferences return to defaults.
+- CMake, includes, renderer call sites, shader loader filename checks, preference bindings and documentation use the new names.
+- Renderer algorithms, GLSL interfaces and shader revision strings are unchanged. Author: chanayane@firestorm.
+- Validation: static reference/path checks and XML parsing only; no build or runtime test.

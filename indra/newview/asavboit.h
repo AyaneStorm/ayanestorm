@@ -1,11 +1,11 @@
 /**
- * @file fsavboit.h
- * @brief Approximate adaptive voxel-based order-independent transparency.
+ * @file asavboit.h
+ * @brief AyaneStorm approximate adaptive voxel-based order-independent transparency.
  * @author chanayane@firestorm
  */
 
-#ifndef FS_AVBOIT_H
-#define FS_AVBOIT_H
+#ifndef AS_AVBOIT_H
+#define AS_AVBOIT_H
 
 #include "llgl.h"
 #include "llmaterial.h"
@@ -19,7 +19,7 @@ class LLDrawPoolAlpha;
 class LLDrawInfo;
 class LLPipeline;
 
-class FSAVBOIT
+class ASAVBOIT
 {
 public:
     static const char* shaderCacheRevision();
@@ -63,7 +63,7 @@ public:
     // finishDirectOccupancy()'s last two lines, split out so
     // renderPostDeferredCapture() can insert pass 3 (front key) between
     // finishDirectOccupancy()'s compute/cell-depth-bake work and pass 1's
-    // own target bind, while gAVBOITOpaqueTarget is the current target.
+    // own target bind, while gASAVBOITOpaqueTarget is the current target.
     static void beginPass1();
     static void finishDirectExtinction();
     static void finishDirectColorRaster();
@@ -97,7 +97,7 @@ private:
         GLuint accumulatedWeight = 0;
         GLuint accumulatedExtinction = 0;
         // A9: per-pixel front key (nearest, second-nearest distinct depth),
-        // full resolution. See FSAVBOIT::renderPostDeferredCapture()'s pass 3.
+        // full resolution. See ASAVBOIT::renderPostDeferredCapture()'s pass 3.
         GLuint frontKey0 = 0;
         GLuint frontKey1 = 0;
         // Third- and fourth-nearest distinct depth. See doc/ayanestorm-oit-

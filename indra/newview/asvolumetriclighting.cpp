@@ -323,7 +323,7 @@ F32  ASVolumetricLighting::sFrameScatterDensity = 0.f;
 F32  ASVolumetricLighting::sFrameSceneDensity = 0.f;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
-// FSExactOIT's revision. During active development the shader cache is cleared
+// ASExactOIT's revision. During active development the shader cache is cleared
 // manually, so do not bump this for every edit and trigger an avoidable LTO
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
@@ -331,7 +331,7 @@ const char* ASVolumetricLighting::shaderCacheRevision()
     return "as-volumetric-lighting-v20";
 }
 
-// GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
+// GLSL 4.00 is the floor here (not ASAVBOIT's 4.30): this feature is
 // designed to also run on macOS, which caps at OpenGL 4.1 / GLSL 4.10.
 bool ASVolumetricLighting::isSupported()
 {

@@ -1,7 +1,8 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 // Shared Exact OIT fragment capture implementation: wave-level node allocation
 // variant (E7). All direct subgroup calls, OITControl, and oitPad live in the
-// linked exactOITReserveSubgroupF.glsl object instead of here (see
-// fsexactoit.cpp), so this file needs no #extension of its own.
+// linked asExactOITReserveSubgroupF.glsl object instead of here (see
+// asexactoit.cpp), so this file needs no #extension of its own.
 /*[EXTRA_CODE_HERE]*/
 
 layout(early_fragment_tests) in;
@@ -24,7 +25,7 @@ layout(std430, binding = 0) buffer OITNodes
 
 uniform uint oitBlendFactors;
 
-// Both declared in the linked exactOITReserveSubgroupF.glsl object, which
+// Both declared in the linked asExactOITReserveSubgroupF.glsl object, which
 // owns the only OITControl declaration (a binding declared in two linked
 // objects is a link error). exact_oit_wave_max_pad() lets this file update
 // oitPad without redeclaring the block itself.

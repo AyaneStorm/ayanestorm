@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Conservative transparent-group AABB proxy for AVBOIT occupancy.
  */

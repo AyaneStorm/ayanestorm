@@ -1,12 +1,12 @@
 /**
- * @file fsavboit.cpp
- * @brief Approximate adaptive voxel-based OIT resolve.
+ * @file asavboit.cpp
+ * @brief AyaneStorm approximate adaptive voxel-based OIT resolve.
  * @author chanayane@firestorm
  */
 
 #include "llviewerprecompiledheaders.h"
 
-#include "fsavboit.h"
+#include "asavboit.h"
 
 // AVBOIT depends on compute shaders and SSBO/image-load-store bindings that
 // macOS's capped OpenGL 4.1 does not provide. Compile it out entirely on
@@ -14,32 +14,32 @@
 // llviewershadermgr.cpp, etc.) keeps linking without platform-specific edits.
 #if LL_DARWIN
 
-FSAVBOIT::Resources FSAVBOIT::sResources;
-S32 FSAVBOIT::sDirectRasterPass = -1;
-bool FSAVBOIT::sDirectFrameReady = false;
-bool FSAVBOIT::sCaptureActive = false;
-bool FSAVBOIT::sCaptureCompleted = false;
+ASAVBOIT::Resources ASAVBOIT::sResources;
+S32 ASAVBOIT::sDirectRasterPass = -1;
+bool ASAVBOIT::sDirectFrameReady = false;
+bool ASAVBOIT::sCaptureActive = false;
+bool ASAVBOIT::sCaptureCompleted = false;
 
-const char* FSAVBOIT::shaderCacheRevision() { return "avboit-unsupported"; }
-bool FSAVBOIT::supported() { return false; }
-bool FSAVBOIT::requested() { return false; }
-bool FSAVBOIT::available() { return false; }
-void FSAVBOIT::selectVirtualDomain() {}
-void FSAVBOIT::loadShaders(S32 shader_level) {}
-void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
-void FSAVBOIT::unloadShaders() {}
-bool FSAVBOIT::shadersReady() { return false; }
-void FSAVBOIT::beginFrame() {}
-bool FSAVBOIT::captureActive() { return false; }
-bool FSAVBOIT::captureCompleted() { return false; }
-bool FSAVBOIT::renderPostDeferredCapture(
+const char* ASAVBOIT::shaderCacheRevision() { return "avboit-unsupported"; }
+bool ASAVBOIT::supported() { return false; }
+bool ASAVBOIT::requested() { return false; }
+bool ASAVBOIT::available() { return false; }
+void ASAVBOIT::selectVirtualDomain() {}
+void ASAVBOIT::loadShaders(S32 shader_level) {}
+void ASAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
+void ASAVBOIT::unloadShaders() {}
+bool ASAVBOIT::shadersReady() { return false; }
+void ASAVBOIT::beginFrame() {}
+bool ASAVBOIT::captureActive() { return false; }
+bool ASAVBOIT::captureCompleted() { return false; }
+bool ASAVBOIT::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
     return false;
 }
-bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader) { return false; }
-bool FSAVBOIT::handleCapturedEmissives(
+bool ASAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader) { return false; }
+bool ASAVBOIT::handleCapturedEmissives(
     LLDrawPoolAlpha& pool, bool depth_only,
     std::vector<LLDrawInfo*>& emissives,
     std::vector<LLDrawInfo*>& pbr_emissives,
@@ -48,29 +48,29 @@ bool FSAVBOIT::handleCapturedEmissives(
 {
     return false;
 }
-void FSAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
-bool FSAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen) { return false; }
-LLGLSLShader& FSAVBOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
-LLGLSLShader* FSAVBOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSAVBOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSAVBOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSAVBOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSAVBOIT::emissiveShader() { return nullptr; }
-LLGLSLShader* FSAVBOIT::pbrGlowShader() { return nullptr; }
-bool FSAVBOIT::allocateVolume(U32 width, U32 height) { return false; }
-void FSAVBOIT::allocateResources(U32 width, U32 height) {}
-void FSAVBOIT::releaseResources() {}
-void FSAVBOIT::appendDiagnostics(LLSD& info) {}
-bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen) { return false; }
-void FSAVBOIT::beginDirectRasterPass(S32 pass) {}
-void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader) {}
-void FSAVBOIT::rasterizeConservativeBounds() {}
-void FSAVBOIT::finishDirectOccupancy() {}
-void FSAVBOIT::beginPass1() {}
-void FSAVBOIT::finishDirectExtinction() {}
-void FSAVBOIT::finishDirectColorRaster() {}
-bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen) { return false; }
-bool FSAVBOIT::directFrameReady() { return false; }
+void ASAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
+bool ASAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen) { return false; }
+LLGLSLShader& ASAVBOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
+LLGLSLShader* ASAVBOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASAVBOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASAVBOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASAVBOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASAVBOIT::emissiveShader() { return nullptr; }
+LLGLSLShader* ASAVBOIT::pbrGlowShader() { return nullptr; }
+bool ASAVBOIT::allocateVolume(U32 width, U32 height) { return false; }
+void ASAVBOIT::allocateResources(U32 width, U32 height) {}
+void ASAVBOIT::releaseResources() {}
+void ASAVBOIT::appendDiagnostics(LLSD& info) {}
+bool ASAVBOIT::beginDirectFrame(LLRenderTarget& screen) { return false; }
+void ASAVBOIT::beginDirectRasterPass(S32 pass) {}
+void ASAVBOIT::configureDirectRasterShader(LLGLSLShader* shader) {}
+void ASAVBOIT::rasterizeConservativeBounds() {}
+void ASAVBOIT::finishDirectOccupancy() {}
+void ASAVBOIT::beginPass1() {}
+void ASAVBOIT::finishDirectExtinction() {}
+void ASAVBOIT::finishDirectColorRaster() {}
+bool ASAVBOIT::finishDirectFrame(LLRenderTarget& screen) { return false; }
+bool ASAVBOIT::directFrameReady() { return false; }
 
 #else // !LL_DARWIN
 
@@ -112,7 +112,7 @@ constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4;
 constexpr U32 AVBOIT_SLICES = 128;
 // The scratch extinction volume is always allocated for the widest supported
 // layout (two 16-bit lanes per word). The presentation's four-8-bit-lane layout
-// needs only half of those slices, so RenderAVBOITWideExtinction can be
+// needs only half of those slices, so ASRenderAVBOITWideExtinction can be
 // switched at runtime without reallocating the volume.
 constexpr U32 AVBOIT_PACKED_SLICES = AVBOIT_SLICES / 2;
 // Virtual depth-slice domain. The presentation's reference configuration is
@@ -160,7 +160,7 @@ U32 avboitMaxDivider()
 bool wideExtinction()
 {
     static LLCachedControl<bool> wide_extinction(
-        gSavedSettings, "RenderAVBOITWideExtinction", true);
+        gSavedSettings, "ASRenderAVBOITWideExtinction", true);
     return wide_extinction;
 }
 
@@ -176,14 +176,14 @@ bool tileRange()
     // exact-proxy pass, which runs full-resolution over all static and
     // rigged alpha geometry every frame -- back on by default.
     static LLCachedControl<bool> tile_range(
-        gSavedSettings, "RenderAVBOITTileRange", true);
+        gSavedSettings, "ASRenderAVBOITTileRange", true);
     return tile_range;
 }
 
 S32 debugMode()
 {
     static LLCachedControl<S32> debug_mode(
-        gSavedSettings, "RenderAVBOITDebugMode", 0);
+        gSavedSettings, "ASRenderAVBOITDebugMode", 0);
     // A9 names debug modes 16/17 (front-key diagnostics) but they are not
     // implemented -- the resolve compute shader is already at GL's 8-image-
     // unit limit and both spare slots (6/7) are format-mismatched or
@@ -205,7 +205,7 @@ S32 debugMode()
 bool frontLayers()
 {
     static LLCachedControl<bool> front_layers(
-        gSavedSettings, "RenderAVBOITFrontLayers", true);
+        gSavedSettings, "ASRenderAVBOITFrontLayers", true);
     return front_layers;
 }
 
@@ -214,7 +214,7 @@ bool frontLayers()
 F32 samplingBias()
 {
     static LLCachedControl<F32> sampling_bias(
-        gSavedSettings, "RenderAVBOITSamplingBias", 1.f);
+        gSavedSettings, "ASRenderAVBOITSamplingBias", 1.f);
     return llclamp(F32(sampling_bias), 0.f, 8.f);
 }
 
@@ -241,7 +241,7 @@ F32 samplingBias()
 // setting traded the close layers against distant transparency instead of
 // improving both.
 //
-// This restores the specified proportionality. RenderAVBOITMinimumSliceThickness
+// This restores the specified proportionality. ASRenderAVBOITMinimumSliceThickness
 // is retained as a bounded adjustment of the reference ratio rather than an
 // unbounded solve, so the curve cannot leave the family the presentation uses.
 F32 fittedLinearization(F32 far_depth)
@@ -251,7 +251,7 @@ F32 fittedLinearization(F32 far_depth)
     const F64 far_value = llmax(static_cast<F64>(far_depth), 0.0001);
     const F64 requested = llmax(
         static_cast<F64>(
-            gSavedSettings.getF32("RenderAVBOITMinimumSliceThickness")),
+            gSavedSettings.getF32("ASRenderAVBOITMinimumSliceThickness")),
         0.00001);
     static F64 cached_far = -1.0;
     static F64 cached_requested = -1.0;
@@ -310,40 +310,40 @@ S32 directOpaqueDepthTextureUnit()
     return llmax(0, gGLManager.mNumTextureImageUnits - 2);
 }
 
-LLGLSLShader gAVBOITVolumeProgram;
-LLGLSLShader gAVBOITResolveProgram;
-LLGLSLShader gAVBOITEarlyDepthProgram;
+LLGLSLShader gASAVBOITVolumeProgram;
+LLGLSLShader gASAVBOITResolveProgram;
+LLGLSLShader gASAVBOITEarlyDepthProgram;
 // <AS:Chanayane> Self-lighting floater isolate-background mode: writes
 // depth for AVBOIT-resolved pixels only when isolate mode is active. See
-// avboitIsolateDepthF.glsl and FSAVBOIT::finishDirectFrame().
-LLGLSLShader gAVBOITIsolateDepthProgram;
+// asAVBOITIsolateDepthF.glsl and ASAVBOIT::finishDirectFrame().
+LLGLSLShader gASAVBOITIsolateDepthProgram;
 // </AS:Chanayane>
 // A2: per-cell farthest opaque depth, baked once before pass 1 so its
 // hardware early-depth test rejects against the correct 8x8 block instead
-// of a single full-res pixel. See avboitCellDepthF.glsl and
-// FSAVBOIT::finishDirectOccupancy().
-LLGLSLShader gAVBOITCellDepthProgram;
-LLGLSLShader gAVBOITBoundsProgram;
-LLGLSLShader gAVBOITSkinnedBoundsProgram;
-LLGLSLShader gAVBOITGLTFProgram;
-LLGLSLShader gAVBOITAlphaProgram;
-LLGLSLShader gAVBOITSkinnedAlphaProgram;
-LLGLSLShader gAVBOITPBRAlphaProgram;
-LLGLSLShader gAVBOITSkinnedPBRAlphaProgram;
-LLGLSLShader gAVBOITFullbrightAlphaProgram;
-LLGLSLShader gAVBOITSkinnedFullbrightAlphaProgram;
-LLGLSLShader gAVBOITEmissiveProgram;
-LLGLSLShader gAVBOITSkinnedEmissiveProgram;
-LLGLSLShader gAVBOITPBRGlowProgram;
-LLGLSLShader gAVBOITSkinnedPBRGlowProgram;
-LLGLSLShader gAVBOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
-LLRenderTarget gAVBOITOpaqueTarget;
-LLRenderTarget gAVBOITPrepassTarget;
+// of a single full-res pixel. See asAVBOITCellDepthF.glsl and
+// ASAVBOIT::finishDirectOccupancy().
+LLGLSLShader gASAVBOITCellDepthProgram;
+LLGLSLShader gASAVBOITBoundsProgram;
+LLGLSLShader gASAVBOITSkinnedBoundsProgram;
+LLGLSLShader gASAVBOITGLTFProgram;
+LLGLSLShader gASAVBOITAlphaProgram;
+LLGLSLShader gASAVBOITSkinnedAlphaProgram;
+LLGLSLShader gASAVBOITPBRAlphaProgram;
+LLGLSLShader gASAVBOITSkinnedPBRAlphaProgram;
+LLGLSLShader gASAVBOITFullbrightAlphaProgram;
+LLGLSLShader gASAVBOITSkinnedFullbrightAlphaProgram;
+LLGLSLShader gASAVBOITEmissiveProgram;
+LLGLSLShader gASAVBOITSkinnedEmissiveProgram;
+LLGLSLShader gASAVBOITPBRGlowProgram;
+LLGLSLShader gASAVBOITSkinnedPBRGlowProgram;
+LLGLSLShader gASAVBOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
+LLRenderTarget gASAVBOITOpaqueTarget;
+LLRenderTarget gASAVBOITPrepassTarget;
 // A2: volume-resolution depth-only target holding each cell's baked
 // farthest opaque depth, bound during pass 1 so early_fragment_tests tests
-// against the correct per-cell value. Distinct from gAVBOITPrepassTarget,
+// against the correct per-cell value. Distinct from gASAVBOITPrepassTarget,
 // which is an unrelated pass-0 null color sink.
-LLRenderTarget gAVBOITCellDepthTarget;
+LLRenderTarget gASAVBOITCellDepthTarget;
 
 bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
                         const std::string& name, const char* terminal)
@@ -356,8 +356,8 @@ bool cloneCaptureShader(LLGLSLShader& destination, const LLGLSLShader& source,
     destination.mFeatures.hasLighting = false;
     destination.mDefines = source.mDefines;
     destination.mShaderFiles = source.mShaderFiles;
-    if (std::strcmp(terminal, "deferred/avboitEmissiveF.glsl") == 0 ||
-        std::strcmp(terminal, "deferred/avboitPbrGlowF.glsl") == 0)
+    if (std::strcmp(terminal, "deferred/asAVBOITEmissiveF.glsl") == 0 ||
+        std::strcmp(terminal, "deferred/asAVBOITPbrGlowF.glsl") == 0)
     {
         destination.mShaderFiles.erase(
             std::remove_if(
@@ -395,36 +395,36 @@ bool cloneCapturePair(LLGLSLShader& destination, LLGLSLShader& rigged_destinatio
 
 void unloadMaterialShaders()
 {
-    gAVBOITGLTFProgram.unload();
-    gAVBOITAlphaProgram.unload();
-    gAVBOITSkinnedAlphaProgram.unload();
-    gAVBOITPBRAlphaProgram.unload();
-    gAVBOITSkinnedPBRAlphaProgram.unload();
-    gAVBOITFullbrightAlphaProgram.unload();
-    gAVBOITSkinnedFullbrightAlphaProgram.unload();
-    gAVBOITEmissiveProgram.unload();
-    gAVBOITSkinnedEmissiveProgram.unload();
-    gAVBOITPBRGlowProgram.unload();
-    gAVBOITSkinnedPBRGlowProgram.unload();
-    for (LLGLSLShader& shader : gAVBOITMaterialAlphaProgram)
+    gASAVBOITGLTFProgram.unload();
+    gASAVBOITAlphaProgram.unload();
+    gASAVBOITSkinnedAlphaProgram.unload();
+    gASAVBOITPBRAlphaProgram.unload();
+    gASAVBOITSkinnedPBRAlphaProgram.unload();
+    gASAVBOITFullbrightAlphaProgram.unload();
+    gASAVBOITSkinnedFullbrightAlphaProgram.unload();
+    gASAVBOITEmissiveProgram.unload();
+    gASAVBOITSkinnedEmissiveProgram.unload();
+    gASAVBOITPBRGlowProgram.unload();
+    gASAVBOITSkinnedPBRGlowProgram.unload();
+    for (LLGLSLShader& shader : gASAVBOITMaterialAlphaProgram)
     {
         shader.unload();
     }
 }
 }
 
-FSAVBOIT::Resources FSAVBOIT::sResources;
-S32 FSAVBOIT::sDirectRasterPass = -1;
-bool FSAVBOIT::sDirectFrameReady = false;
-bool FSAVBOIT::sCaptureActive = false;
-bool FSAVBOIT::sCaptureCompleted = false;
+ASAVBOIT::Resources ASAVBOIT::sResources;
+S32 ASAVBOIT::sDirectRasterPass = -1;
+bool ASAVBOIT::sDirectFrameReady = false;
+bool ASAVBOIT::sCaptureActive = false;
+bool ASAVBOIT::sCaptureCompleted = false;
 
-const char* FSAVBOIT::shaderCacheRevision()
+const char* ASAVBOIT::shaderCacheRevision()
 {
     return "AVBOIT shader revision v135";
 }
 
-bool FSAVBOIT::supported()
+bool ASAVBOIT::supported()
 {
     return gGLManager.mGLVersion >= 4.29f &&
         (gGLManager.mGLSLVersionMajor > 4 ||
@@ -442,10 +442,10 @@ bool FSAVBOIT::supported()
 // reporting OpenGL 4.6 and on sufficient reported video memory purely as a
 // conservative measure, because the deep scan issues more dispatches and the
 // domain costs two buffers of four bytes per slice.
-void FSAVBOIT::selectVirtualDomain()
+void ASAVBOIT::selectVirtualDomain()
 {
     const bool requested_high =
-        gSavedSettings.getBOOL("RenderAVBOITHighDepthResolution");
+        gSavedSettings.getBOOL("ASRenderAVBOITHighDepthResolution");
     const bool driver_capable = gGLManager.mGLVersion >= 4.59f;
     // Two U32 domain buffers plus the Z-bin table; require headroom well beyond
     // that before opting in.
@@ -466,18 +466,18 @@ void FSAVBOIT::selectVirtualDomain()
     }
 }
 
-bool FSAVBOIT::requested()
+bool ASAVBOIT::requested()
 {
-    return gSavedSettings.getBOOL("RenderAVBOIT") && supported();
+    return gSavedSettings.getBOOL("ASRenderAVBOIT") && supported();
 }
 
-bool FSAVBOIT::available()
+bool ASAVBOIT::available()
 {
     return requested() && sResources.available &&
-        gAVBOITVolumeProgram.mProgramObject && gAVBOITResolveProgram.mProgramObject;
+        gASAVBOITVolumeProgram.mProgramObject && gASAVBOITResolveProgram.mProgramObject;
 }
 
-void FSAVBOIT::loadShaders(S32 shader_level)
+void ASAVBOIT::loadShaders(S32 shader_level)
 {
     if (!supported())
     {
@@ -489,130 +489,130 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     // curve, the Z-bin table, and the prefix scan cannot disagree.
     selectVirtualDomain();
 
-    gAVBOITVolumeProgram.mName = "AVBOIT Volume Compute";
-    gAVBOITVolumeProgram.mFeatures.attachNothing = true;
-    gAVBOITVolumeProgram.mShaderFiles.clear();
-    gAVBOITVolumeProgram.mShaderFiles.emplace_back("deferred/avboitVolumeC.glsl", GL_COMPUTE_SHADER);
-    gAVBOITVolumeProgram.mShaderLevel = shader_level;
-    gAVBOITVolumeProgram.clearPermutations();
-    gAVBOITVolumeProgram.addPermutation(
+    gASAVBOITVolumeProgram.mName = "AVBOIT Volume Compute";
+    gASAVBOITVolumeProgram.mFeatures.attachNothing = true;
+    gASAVBOITVolumeProgram.mShaderFiles.clear();
+    gASAVBOITVolumeProgram.mShaderFiles.emplace_back("deferred/asAVBOITVolumeC.glsl", GL_COMPUTE_SHADER);
+    gASAVBOITVolumeProgram.mShaderLevel = shader_level;
+    gASAVBOITVolumeProgram.clearPermutations();
+    gASAVBOITVolumeProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITVolumeProgram.addPermutation(
+    gASAVBOITVolumeProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
-    gAVBOITVolumeProgram.addPermutation("AVBOIT_BUILD", "1");
+    gASAVBOITVolumeProgram.addPermutation("AVBOIT_BUILD", "1");
 
-    gAVBOITResolveProgram.mName = "AVBOIT Resolve Compute";
-    gAVBOITResolveProgram.mFeatures.attachNothing = true;
-    gAVBOITResolveProgram.mShaderFiles.clear();
-    gAVBOITResolveProgram.mShaderFiles.emplace_back("deferred/avboitVolumeC.glsl", GL_COMPUTE_SHADER);
-    gAVBOITResolveProgram.mShaderLevel = shader_level;
-    gAVBOITResolveProgram.clearPermutations();
-    gAVBOITResolveProgram.addPermutation(
+    gASAVBOITResolveProgram.mName = "AVBOIT Resolve Compute";
+    gASAVBOITResolveProgram.mFeatures.attachNothing = true;
+    gASAVBOITResolveProgram.mShaderFiles.clear();
+    gASAVBOITResolveProgram.mShaderFiles.emplace_back("deferred/asAVBOITVolumeC.glsl", GL_COMPUTE_SHADER);
+    gASAVBOITResolveProgram.mShaderLevel = shader_level;
+    gASAVBOITResolveProgram.clearPermutations();
+    gASAVBOITResolveProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITResolveProgram.addPermutation(
+    gASAVBOITResolveProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
-    gAVBOITResolveProgram.addPermutation("AVBOIT_RESOLVE", "1");
+    gASAVBOITResolveProgram.addPermutation("AVBOIT_RESOLVE", "1");
 
-    gAVBOITEarlyDepthProgram.mName = "AVBOIT Early Depth";
-    gAVBOITEarlyDepthProgram.mFeatures.attachNothing = true;
-    gAVBOITEarlyDepthProgram.mShaderFiles.clear();
-    gAVBOITEarlyDepthProgram.mShaderFiles.emplace_back(
-        "deferred/avboitEarlyDepthV.glsl", GL_VERTEX_SHADER);
-    gAVBOITEarlyDepthProgram.mShaderFiles.emplace_back(
-        "deferred/avboitEarlyDepthF.glsl", GL_FRAGMENT_SHADER);
-    gAVBOITEarlyDepthProgram.mShaderLevel = shader_level;
-    gAVBOITEarlyDepthProgram.clearPermutations();
-    gAVBOITEarlyDepthProgram.addPermutation(
+    gASAVBOITEarlyDepthProgram.mName = "AVBOIT Early Depth";
+    gASAVBOITEarlyDepthProgram.mFeatures.attachNothing = true;
+    gASAVBOITEarlyDepthProgram.mShaderFiles.clear();
+    gASAVBOITEarlyDepthProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITEarlyDepthV.glsl", GL_VERTEX_SHADER);
+    gASAVBOITEarlyDepthProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITEarlyDepthF.glsl", GL_FRAGMENT_SHADER);
+    gASAVBOITEarlyDepthProgram.mShaderLevel = shader_level;
+    gASAVBOITEarlyDepthProgram.clearPermutations();
+    gASAVBOITEarlyDepthProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITEarlyDepthProgram.addPermutation(
+    gASAVBOITEarlyDepthProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
 
     // <AS:Chanayane> Self-lighting floater isolate-background mode: see
-    // gAVBOITIsolateDepthProgram's declaration above and finishDirectFrame()
+    // gASAVBOITIsolateDepthProgram's declaration above and finishDirectFrame()
     // below. No AVBOIT-specific permutations needed -- it just samples the
     // plain 2D coverage textures via ordinary texelFetch.
-    gAVBOITIsolateDepthProgram.mName = "AVBOIT Isolate Depth";
-    gAVBOITIsolateDepthProgram.mFeatures.attachNothing = true;
-    gAVBOITIsolateDepthProgram.mShaderFiles.clear();
-    gAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
+    gASAVBOITIsolateDepthProgram.mName = "AVBOIT Isolate Depth";
+    gASAVBOITIsolateDepthProgram.mFeatures.attachNothing = true;
+    gASAVBOITIsolateDepthProgram.mShaderFiles.clear();
+    gASAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
         "deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
-    gAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
-        "deferred/avboitIsolateDepthF.glsl", GL_FRAGMENT_SHADER);
-    gAVBOITIsolateDepthProgram.mShaderLevel = shader_level;
-    gAVBOITIsolateDepthProgram.clearPermutations();
+    gASAVBOITIsolateDepthProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITIsolateDepthF.glsl", GL_FRAGMENT_SHADER);
+    gASAVBOITIsolateDepthProgram.mShaderLevel = shader_level;
+    gASAVBOITIsolateDepthProgram.clearPermutations();
     // </AS:Chanayane>
 
     // A2: bakes each volume cell's farthest opaque depth once, ahead of
     // pass 1, so pass 1's hardware depth test rejects against the correct
-    // 8x8 block. See avboitCellDepthF.glsl.
-    gAVBOITCellDepthProgram.mName = "AVBOIT Cell Depth";
-    gAVBOITCellDepthProgram.mFeatures.attachNothing = true;
-    gAVBOITCellDepthProgram.mShaderFiles.clear();
-    gAVBOITCellDepthProgram.mShaderFiles.emplace_back(
+    // 8x8 block. See asAVBOITCellDepthF.glsl.
+    gASAVBOITCellDepthProgram.mName = "AVBOIT Cell Depth";
+    gASAVBOITCellDepthProgram.mFeatures.attachNothing = true;
+    gASAVBOITCellDepthProgram.mShaderFiles.clear();
+    gASAVBOITCellDepthProgram.mShaderFiles.emplace_back(
         "deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
-    gAVBOITCellDepthProgram.mShaderFiles.emplace_back(
-        "deferred/avboitCellDepthF.glsl", GL_FRAGMENT_SHADER);
-    gAVBOITCellDepthProgram.mShaderLevel = shader_level;
-    gAVBOITCellDepthProgram.clearPermutations();
+    gASAVBOITCellDepthProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITCellDepthF.glsl", GL_FRAGMENT_SHADER);
+    gASAVBOITCellDepthProgram.mShaderLevel = shader_level;
+    gASAVBOITCellDepthProgram.clearPermutations();
 
-    gAVBOITBoundsProgram.mName = "AVBOIT Conservative Bounds";
-    gAVBOITBoundsProgram.mFeatures.attachNothing = true;
-    gAVBOITBoundsProgram.mShaderFiles.clear();
-    gAVBOITBoundsProgram.mShaderFiles.emplace_back(
-        "deferred/avboitBoundsV.glsl", GL_VERTEX_SHADER);
-    gAVBOITBoundsProgram.mShaderFiles.emplace_back(
-        "deferred/avboitBoundsF.glsl", GL_FRAGMENT_SHADER);
-    gAVBOITBoundsProgram.mShaderLevel = shader_level;
-    gAVBOITBoundsProgram.clearPermutations();
-    gAVBOITBoundsProgram.addPermutation(
+    gASAVBOITBoundsProgram.mName = "AVBOIT Conservative Bounds";
+    gASAVBOITBoundsProgram.mFeatures.attachNothing = true;
+    gASAVBOITBoundsProgram.mShaderFiles.clear();
+    gASAVBOITBoundsProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITBoundsV.glsl", GL_VERTEX_SHADER);
+    gASAVBOITBoundsProgram.mShaderFiles.emplace_back(
+        "deferred/asAVBOITBoundsF.glsl", GL_FRAGMENT_SHADER);
+    gASAVBOITBoundsProgram.mShaderLevel = shader_level;
+    gASAVBOITBoundsProgram.clearPermutations();
+    gASAVBOITBoundsProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITBoundsProgram.addPermutation(
+    gASAVBOITBoundsProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
-    gAVBOITBoundsProgram.addPermutation("AVBOIT", "1");
+    gASAVBOITBoundsProgram.addPermutation("AVBOIT", "1");
 
-    gAVBOITSkinnedBoundsProgram.mName =
+    gASAVBOITSkinnedBoundsProgram.mName =
         "AVBOIT Skinned Conservative Bounds";
-    gAVBOITSkinnedBoundsProgram.mFeatures.attachNothing = false;
-    gAVBOITSkinnedBoundsProgram.mFeatures.hasObjectSkinning = true;
-    gAVBOITSkinnedBoundsProgram.mShaderFiles =
-        gAVBOITBoundsProgram.mShaderFiles;
-    gAVBOITSkinnedBoundsProgram.mShaderLevel = shader_level;
-    gAVBOITSkinnedBoundsProgram.clearPermutations();
-    gAVBOITSkinnedBoundsProgram.addPermutation(
+    gASAVBOITSkinnedBoundsProgram.mFeatures.attachNothing = false;
+    gASAVBOITSkinnedBoundsProgram.mFeatures.hasObjectSkinning = true;
+    gASAVBOITSkinnedBoundsProgram.mShaderFiles =
+        gASAVBOITBoundsProgram.mShaderFiles;
+    gASAVBOITSkinnedBoundsProgram.mShaderLevel = shader_level;
+    gASAVBOITSkinnedBoundsProgram.clearPermutations();
+    gASAVBOITSkinnedBoundsProgram.addPermutation(
         "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITSkinnedBoundsProgram.addPermutation(
+    gASAVBOITSkinnedBoundsProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
-    gAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
-    gAVBOITSkinnedBoundsProgram.addPermutation("HAS_SKIN", "1");
+    gASAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
+    gASAVBOITSkinnedBoundsProgram.addPermutation("HAS_SKIN", "1");
 
-    bool success = gAVBOITVolumeProgram.createShader() &&
-        gAVBOITResolveProgram.createShader() &&
-        gAVBOITEarlyDepthProgram.createShader() &&
-        gAVBOITIsolateDepthProgram.createShader() &&
-        gAVBOITCellDepthProgram.createShader() &&
-        gAVBOITBoundsProgram.createShader() &&
-        gAVBOITSkinnedBoundsProgram.createShader();
+    bool success = gASAVBOITVolumeProgram.createShader() &&
+        gASAVBOITResolveProgram.createShader() &&
+        gASAVBOITEarlyDepthProgram.createShader() &&
+        gASAVBOITIsolateDepthProgram.createShader() &&
+        gASAVBOITCellDepthProgram.createShader() &&
+        gASAVBOITBoundsProgram.createShader() &&
+        gASAVBOITSkinnedBoundsProgram.createShader();
     success = success && cloneCapturePair(
-        gAVBOITAlphaProgram, gAVBOITSkinnedAlphaProgram,
+        gASAVBOITAlphaProgram, gASAVBOITSkinnedAlphaProgram,
         gDeferredAlphaProgram, "Deferred Alpha AVBOIT Shader",
-        "deferred/avboitCaptureF.glsl");
+        "deferred/asAVBOITCaptureF.glsl");
     success = success && cloneCapturePair(
-        gAVBOITPBRAlphaProgram, gAVBOITSkinnedPBRAlphaProgram,
+        gASAVBOITPBRAlphaProgram, gASAVBOITSkinnedPBRAlphaProgram,
         gDeferredPBRAlphaProgram, "Deferred PBR Alpha AVBOIT Shader",
-        "deferred/avboitCaptureF.glsl");
+        "deferred/asAVBOITCaptureF.glsl");
     success = success && cloneCapturePair(
-        gAVBOITFullbrightAlphaProgram, gAVBOITSkinnedFullbrightAlphaProgram,
+        gASAVBOITFullbrightAlphaProgram, gASAVBOITSkinnedFullbrightAlphaProgram,
         gDeferredFullbrightAlphaMaskAlphaProgram,
         "Deferred Fullbright Alpha AVBOIT Shader",
-        "deferred/avboitCaptureF.glsl");
+        "deferred/asAVBOITCaptureF.glsl");
     success = success && cloneCapturePair(
-        gAVBOITEmissiveProgram, gAVBOITSkinnedEmissiveProgram,
+        gASAVBOITEmissiveProgram, gASAVBOITSkinnedEmissiveProgram,
         gDeferredEmissiveProgram, "Deferred Emissive AVBOIT Shader",
-        "deferred/avboitEmissiveF.glsl");
+        "deferred/asAVBOITEmissiveF.glsl");
     success = success && cloneCapturePair(
-        gAVBOITPBRGlowProgram, gAVBOITSkinnedPBRGlowProgram,
+        gASAVBOITPBRGlowProgram, gASAVBOITSkinnedPBRGlowProgram,
         gPBRGlowProgram, "PBR Glow AVBOIT Shader",
-        "deferred/avboitPbrGlowF.glsl");
+        "deferred/asAVBOITPbrGlowF.glsl");
 
     for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
     {
@@ -621,45 +621,45 @@ void FSAVBOIT::loadShaders(S32 shader_level)
             continue;
         }
         success = cloneCaptureShader(
-            gAVBOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
+            gASAVBOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
             llformat("Material AVBOIT Shader %u", i),
-            "deferred/avboitCaptureF.glsl");
+            "deferred/asAVBOITCaptureF.glsl");
         if (i < LLMaterial::SHADER_COUNT)
         {
-            gAVBOITMaterialAlphaProgram[i].mRiggedVariant =
-                &gAVBOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
+            gASAVBOITMaterialAlphaProgram[i].mRiggedVariant =
+                &gASAVBOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
         }
     }
 
     if (success)
     {
-        gAVBOITGLTFProgram.mName = "AVBOIT GLTF PBR Metallic Roughness Shader";
-        gAVBOITGLTFProgram.mFeatures = gGLTFPBRMetallicRoughnessProgram.mFeatures;
-        gAVBOITGLTFProgram.mDefines = gGLTFPBRMetallicRoughnessProgram.mDefines;
-        gAVBOITGLTFProgram.mShaderFiles =
+        gASAVBOITGLTFProgram.mName = "AVBOIT GLTF PBR Metallic Roughness Shader";
+        gASAVBOITGLTFProgram.mFeatures = gGLTFPBRMetallicRoughnessProgram.mFeatures;
+        gASAVBOITGLTFProgram.mDefines = gGLTFPBRMetallicRoughnessProgram.mDefines;
+        gASAVBOITGLTFProgram.mShaderFiles =
             gGLTFPBRMetallicRoughnessProgram.mShaderFiles;
-        gAVBOITGLTFProgram.mShaderFiles.emplace_back(
-            "deferred/avboitCaptureF.glsl", GL_FRAGMENT_SHADER);
-        gAVBOITGLTFProgram.mShaderLevel =
+        gASAVBOITGLTFProgram.mShaderFiles.emplace_back(
+            "deferred/asAVBOITCaptureF.glsl", GL_FRAGMENT_SHADER);
+        gASAVBOITGLTFProgram.mShaderLevel =
             gGLTFPBRMetallicRoughnessProgram.mShaderLevel;
-        gAVBOITGLTFProgram.mShaderGroup =
+        gASAVBOITGLTFProgram.mShaderGroup =
             gGLTFPBRMetallicRoughnessProgram.mShaderGroup;
-        gAVBOITGLTFProgram.addPermutation("AVBOIT", "1");
-        gAVBOITGLTFProgram.addPermutation(
+        gASAVBOITGLTFProgram.addPermutation("AVBOIT", "1");
+        gASAVBOITGLTFProgram.addPermutation(
             "AVBOIT_VIRTUAL_SLICES", llformat("%u", avboitVirtualSlices()));
-    gAVBOITGLTFProgram.addPermutation(
+    gASAVBOITGLTFProgram.addPermutation(
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
-        gAVBOITGLTFProgram.mGLTFVariants.resize(
+        gASAVBOITGLTFProgram.mGLTFVariants.resize(
             gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size());
         for (U32 i = 0;
              i < gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() && success;
              ++i)
         {
             success = cloneCaptureShader(
-                gAVBOITGLTFProgram.mGLTFVariants[i],
+                gASAVBOITGLTFProgram.mGLTFVariants[i],
                 gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[i],
                 "AVBOIT GLTF PBR Metallic Roughness Variant",
-                "deferred/avboitCaptureF.glsl");
+                "deferred/asAVBOITCaptureF.glsl");
         }
     }
 
@@ -671,62 +671,62 @@ void FSAVBOIT::loadShaders(S32 shader_level)
     }
 }
 
-void FSAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
+void ASAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
 {
-    shader_list.push_back(&gAVBOITVolumeProgram);
-    shader_list.push_back(&gAVBOITResolveProgram);
-    shader_list.push_back(&gAVBOITEarlyDepthProgram);
-    shader_list.push_back(&gAVBOITIsolateDepthProgram);
-    shader_list.push_back(&gAVBOITCellDepthProgram);
-    shader_list.push_back(&gAVBOITBoundsProgram);
-    shader_list.push_back(&gAVBOITSkinnedBoundsProgram);
-    shader_list.push_back(&gAVBOITGLTFProgram);
-    shader_list.push_back(&gAVBOITAlphaProgram);
-    shader_list.push_back(&gAVBOITSkinnedAlphaProgram);
-    shader_list.push_back(&gAVBOITPBRAlphaProgram);
-    shader_list.push_back(&gAVBOITSkinnedPBRAlphaProgram);
-    shader_list.push_back(&gAVBOITFullbrightAlphaProgram);
-    shader_list.push_back(&gAVBOITSkinnedFullbrightAlphaProgram);
-    shader_list.push_back(&gAVBOITEmissiveProgram);
-    shader_list.push_back(&gAVBOITSkinnedEmissiveProgram);
-    shader_list.push_back(&gAVBOITPBRGlowProgram);
-    shader_list.push_back(&gAVBOITSkinnedPBRGlowProgram);
+    shader_list.push_back(&gASAVBOITVolumeProgram);
+    shader_list.push_back(&gASAVBOITResolveProgram);
+    shader_list.push_back(&gASAVBOITEarlyDepthProgram);
+    shader_list.push_back(&gASAVBOITIsolateDepthProgram);
+    shader_list.push_back(&gASAVBOITCellDepthProgram);
+    shader_list.push_back(&gASAVBOITBoundsProgram);
+    shader_list.push_back(&gASAVBOITSkinnedBoundsProgram);
+    shader_list.push_back(&gASAVBOITGLTFProgram);
+    shader_list.push_back(&gASAVBOITAlphaProgram);
+    shader_list.push_back(&gASAVBOITSkinnedAlphaProgram);
+    shader_list.push_back(&gASAVBOITPBRAlphaProgram);
+    shader_list.push_back(&gASAVBOITSkinnedPBRAlphaProgram);
+    shader_list.push_back(&gASAVBOITFullbrightAlphaProgram);
+    shader_list.push_back(&gASAVBOITSkinnedFullbrightAlphaProgram);
+    shader_list.push_back(&gASAVBOITEmissiveProgram);
+    shader_list.push_back(&gASAVBOITSkinnedEmissiveProgram);
+    shader_list.push_back(&gASAVBOITPBRGlowProgram);
+    shader_list.push_back(&gASAVBOITSkinnedPBRGlowProgram);
     for (U32 i = 0; i < LLMaterial::SHADER_COUNT; ++i)
     {
         if ((i & 0x3u) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
         {
-            shader_list.push_back(&gAVBOITMaterialAlphaProgram[i]);
+            shader_list.push_back(&gASAVBOITMaterialAlphaProgram[i]);
         }
     }
 }
 
-void FSAVBOIT::unloadShaders()
+void ASAVBOIT::unloadShaders()
 {
-    gAVBOITVolumeProgram.unload();
-    gAVBOITResolveProgram.unload();
-    gAVBOITEarlyDepthProgram.unload();
-    gAVBOITIsolateDepthProgram.unload();
-    gAVBOITCellDepthProgram.unload();
-    gAVBOITBoundsProgram.unload();
-    gAVBOITSkinnedBoundsProgram.unload();
+    gASAVBOITVolumeProgram.unload();
+    gASAVBOITResolveProgram.unload();
+    gASAVBOITEarlyDepthProgram.unload();
+    gASAVBOITIsolateDepthProgram.unload();
+    gASAVBOITCellDepthProgram.unload();
+    gASAVBOITBoundsProgram.unload();
+    gASAVBOITSkinnedBoundsProgram.unload();
     unloadMaterialShaders();
 }
 
-bool FSAVBOIT::shadersReady()
+bool ASAVBOIT::shadersReady()
 {
-    return gAVBOITVolumeProgram.mProgramObject &&
-        gAVBOITResolveProgram.mProgramObject &&
-        gAVBOITEarlyDepthProgram.mProgramObject &&
-        gAVBOITBoundsProgram.mProgramObject &&
-        gAVBOITSkinnedBoundsProgram.mProgramObject &&
-        gAVBOITAlphaProgram.mProgramObject &&
-        gAVBOITPBRAlphaProgram.mProgramObject &&
-        gAVBOITFullbrightAlphaProgram.mProgramObject &&
-        gAVBOITEmissiveProgram.mProgramObject &&
-        gAVBOITPBRGlowProgram.mProgramObject;
+    return gASAVBOITVolumeProgram.mProgramObject &&
+        gASAVBOITResolveProgram.mProgramObject &&
+        gASAVBOITEarlyDepthProgram.mProgramObject &&
+        gASAVBOITBoundsProgram.mProgramObject &&
+        gASAVBOITSkinnedBoundsProgram.mProgramObject &&
+        gASAVBOITAlphaProgram.mProgramObject &&
+        gASAVBOITPBRAlphaProgram.mProgramObject &&
+        gASAVBOITFullbrightAlphaProgram.mProgramObject &&
+        gASAVBOITEmissiveProgram.mProgramObject &&
+        gASAVBOITPBRGlowProgram.mProgramObject;
 }
 
-void FSAVBOIT::beginFrame()
+void ASAVBOIT::beginFrame()
 {
     // Mode-transition invalidation is centralized in the neutral dispatcher.
     sCaptureActive = false;
@@ -735,17 +735,17 @@ void FSAVBOIT::beginFrame()
     sDirectFrameReady = false;
 }
 
-bool FSAVBOIT::captureActive()
+bool ASAVBOIT::captureActive()
 {
     return sCaptureActive;
 }
 
-bool FSAVBOIT::captureCompleted()
+bool ASAVBOIT::captureCompleted()
 {
     return sCaptureCompleted;
 }
 
-bool FSAVBOIT::renderPostDeferredCapture(
+bool ASAVBOIT::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
@@ -757,18 +757,18 @@ bool FSAVBOIT::renderPostDeferredCapture(
         return false;
     }
 
-    prepare(&gAVBOITAlphaProgram, true, water_sign);
-    prepare(&gAVBOITPBRAlphaProgram, true, water_sign);
-    prepare(&gAVBOITFullbrightAlphaProgram, true, water_sign);
-    for (LLGLSLShader& shader : gAVBOITMaterialAlphaProgram)
+    prepare(&gASAVBOITAlphaProgram, true, water_sign);
+    prepare(&gASAVBOITPBRAlphaProgram, true, water_sign);
+    prepare(&gASAVBOITFullbrightAlphaProgram, true, water_sign);
+    for (LLGLSLShader& shader : gASAVBOITMaterialAlphaProgram)
     {
         if (shader.mProgramObject)
         {
             prepare(&shader, true, water_sign);
         }
     }
-    prepare(&gAVBOITEmissiveProgram, false, water_sign);
-    prepare(&gAVBOITPBRGlowProgram, false, water_sign);
+    prepare(&gASAVBOITEmissiveProgram, false, water_sign);
+    prepare(&gASAVBOITPBRGlowProgram, false, water_sign);
     emissive_shader = emissiveShader();
     pbr_emissive_shader = pbrGlowShader();
     LLGLSLShader::unbind();
@@ -784,30 +784,30 @@ bool FSAVBOIT::renderPostDeferredCapture(
         // need their own call -- configuring only the base object would
         // leave every rigged draw silently falling back to whatever stale
         // uniforms that program object last had.
-        configureDirectRasterShader(&gAVBOITAlphaProgram);
-        configureDirectRasterShader(&gAVBOITSkinnedAlphaProgram);
-        configureDirectRasterShader(&gAVBOITPBRAlphaProgram);
-        configureDirectRasterShader(&gAVBOITSkinnedPBRAlphaProgram);
-        configureDirectRasterShader(&gAVBOITFullbrightAlphaProgram);
-        configureDirectRasterShader(&gAVBOITSkinnedFullbrightAlphaProgram);
-        for (LLGLSLShader& shader : gAVBOITMaterialAlphaProgram)
+        configureDirectRasterShader(&gASAVBOITAlphaProgram);
+        configureDirectRasterShader(&gASAVBOITSkinnedAlphaProgram);
+        configureDirectRasterShader(&gASAVBOITPBRAlphaProgram);
+        configureDirectRasterShader(&gASAVBOITSkinnedPBRAlphaProgram);
+        configureDirectRasterShader(&gASAVBOITFullbrightAlphaProgram);
+        configureDirectRasterShader(&gASAVBOITSkinnedFullbrightAlphaProgram);
+        for (LLGLSLShader& shader : gASAVBOITMaterialAlphaProgram)
         {
             if (shader.mProgramObject)
             {
                 configureDirectRasterShader(&shader);
             }
         }
-        for (LLGLSLShader& variant : gAVBOITGLTFProgram.mGLTFVariants)
+        for (LLGLSLShader& variant : gASAVBOITGLTFProgram.mGLTFVariants)
         {
             if (variant.mProgramObject)
             {
                 configureDirectRasterShader(&variant);
             }
         }
-        configureDirectRasterShader(&gAVBOITEmissiveProgram);
-        configureDirectRasterShader(&gAVBOITSkinnedEmissiveProgram);
-        configureDirectRasterShader(&gAVBOITPBRGlowProgram);
-        configureDirectRasterShader(&gAVBOITSkinnedPBRGlowProgram);
+        configureDirectRasterShader(&gASAVBOITEmissiveProgram);
+        configureDirectRasterShader(&gASAVBOITSkinnedEmissiveProgram);
+        configureDirectRasterShader(&gASAVBOITPBRGlowProgram);
+        configureDirectRasterShader(&gASAVBOITSkinnedPBRGlowProgram);
         sCaptureActive = true;
         pool.forwardRender(true);
         if (include_static)
@@ -822,7 +822,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
         LL_PROFILE_GPU_ZONE("AVBOIT occupancy raster");
         rasterizeConservativeBounds();
         // Per-tile depth ranging is fed by rasterizeConservativeBounds()'s
-        // exact-proxy pass (avboitBoundsF.glsl's avboit_reduce_tile_range()
+        // exact-proxy pass (asAVBOITBoundsF.glsl's avboit_reduce_tile_range()
         // call), which already runs full-resolution over all alpha
         // geometry every frame -- no extra pass needed. Two attempts to
         // feed it from a material-tested occupancy pass instead (this
@@ -861,7 +861,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
         // finishDirectExtinction()'s conservative early-depth-tile raster
         // (dispatched from inside the following extinction-integration
         // block below), otherwise a tile could reject a fragment that is a
-        // legitimate second layer. gAVBOITOpaqueTarget is already the
+        // legitimate second layer. gASAVBOITOpaqueTarget is already the
         // current target here (finishDirectOccupancy() leaves it bound,
         // see its trailing comment); pass 3 draws into it directly, same as
         // pass 0's occupancy raster does.
@@ -901,7 +901,7 @@ bool FSAVBOIT::renderPostDeferredCapture(
     return true;
 }
 
-bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
+bool ASAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
 {
     if (!sCaptureActive)
     {
@@ -910,7 +910,7 @@ bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
     // A3: per-pass uniforms (avboitViewport, avboitDepthRange, etc.) are
     // configured once per pass in renderPostDeferredCapture()'s render_pass
     // lambda instead of on every draw; oitGlow is now a shader-side literal
-    // (see avboitCaptureF.glsl). LLDrawPoolAlpha disables ordinary
+    // (see asAVBOITCaptureF.glsl). LLDrawPoolAlpha disables ordinary
     // framebuffer blending for capture, and that LLGLDisable scope is per
     // forwardRender() call (i.e. per pass) rather than per draw, so the
     // independent additive accumulation blend state must still be
@@ -924,7 +924,7 @@ bool FSAVBOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
     return true;
 }
 
-bool FSAVBOIT::handleCapturedEmissives(
+bool ASAVBOIT::handleCapturedEmissives(
     LLDrawPoolAlpha& pool, bool depth_only,
     std::vector<LLDrawInfo*>& emissives,
     std::vector<LLDrawInfo*>& pbr_emissives,
@@ -956,17 +956,17 @@ bool FSAVBOIT::handleCapturedEmissives(
     return true;
 }
 
-void FSAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
+void ASAVBOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
     // A3: per-pass uniforms are now configured once per pass in
     // renderPostDeferredCapture()'s render_pass lambda (which loops
-    // gAVBOITGLTFProgram.mGLTFVariants), and oitGlow is a shader-side
-    // literal (see avboitCaptureF.glsl). Nothing left to do per draw here;
+    // gASAVBOITGLTFProgram.mGLTFVariants), and oitGlow is a shader-side
+    // literal (see asAVBOITCaptureF.glsl). Nothing left to do per draw here;
     // this function is kept (rather than removed) as the dispatcher's
     // established per-GLTF-draw hook, matching configureCapturedDrawIfActive().
 }
 
-bool FSAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen)
+bool ASAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen)
 {
     if (!directFrameReady() || !finishDirectFrame(screen))
     {
@@ -983,43 +983,43 @@ bool FSAVBOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen)
     return true;
 }
 
-LLGLSLShader& FSAVBOIT::gltfProgram(LLGLSLShader& ordinary_program)
+LLGLSLShader& ASAVBOIT::gltfProgram(LLGLSLShader& ordinary_program)
 {
-    return sCaptureActive ? gAVBOITGLTFProgram : ordinary_program;
+    return sCaptureActive ? gASAVBOITGLTFProgram : ordinary_program;
 }
 
-LLGLSLShader* FSAVBOIT::alphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASAVBOIT::alphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gAVBOITAlphaProgram : ordinary;
+    return sCaptureActive ? &gASAVBOITAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSAVBOIT::pbrAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASAVBOIT::pbrAlphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gAVBOITPBRAlphaProgram : ordinary;
+    return sCaptureActive ? &gASAVBOITPBRAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSAVBOIT::fullbrightAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASAVBOIT::fullbrightAlphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gAVBOITFullbrightAlphaProgram : ordinary;
+    return sCaptureActive ? &gASAVBOITFullbrightAlphaProgram : ordinary;
 }
 
-LLGLSLShader* FSAVBOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary)
+LLGLSLShader* ASAVBOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary)
 {
-    LLGLSLShader& shader = gAVBOITMaterialAlphaProgram[mask];
+    LLGLSLShader& shader = gASAVBOITMaterialAlphaProgram[mask];
     return sCaptureActive && shader.mProgramObject ? &shader : ordinary;
 }
 
-LLGLSLShader* FSAVBOIT::emissiveShader()
+LLGLSLShader* ASAVBOIT::emissiveShader()
 {
-    return &gAVBOITEmissiveProgram;
+    return &gASAVBOITEmissiveProgram;
 }
 
-LLGLSLShader* FSAVBOIT::pbrGlowShader()
+LLGLSLShader* ASAVBOIT::pbrGlowShader()
 {
-    return &gAVBOITPBRGlowProgram;
+    return &gASAVBOITPBRGlowProgram;
 }
 
-bool FSAVBOIT::allocateVolume(U32 width, U32 height)
+bool ASAVBOIT::allocateVolume(U32 width, U32 height)
 {
     // Judge this allocation independently of stale errors from earlier GL
     // work; failures below are still observed by the final error check.
@@ -1150,19 +1150,19 @@ bool FSAVBOIT::allocateVolume(U32 width, U32 height)
         // this target's attachment 0 either (the shared shaders' AVBOIT path
         // never declares frag_color), so a single 8-bit channel is enough to
         // keep the FBO complete for the depth test the raster passes need.
-        gAVBOITOpaqueTarget.allocate(width, height, GL_R8, true) &&
-        gAVBOITPrepassTarget.allocate(
+        gASAVBOITOpaqueTarget.allocate(width, height, GL_R8, true) &&
+        gASAVBOITPrepassTarget.allocate(
             sResources.volumeWidth, sResources.volumeHeight, GL_RGBA8) &&
         // A2: depth-only, scaled by the pass-1 subsample factor (round 3) so
         // pass 1's early_fragment_tests culls at that finer granularity
         // instead of one farthest-depth sample per whole 8x8 cell. Color is
-        // never read; only gl_FragDepth from avboitCellDepthF.glsl matters.
-        gAVBOITCellDepthTarget.allocate(
+        // never read; only gl_FragDepth from asAVBOITCellDepthF.glsl matters.
+        gASAVBOITCellDepthTarget.allocate(
             sResources.volumeWidth * AVBOIT_PASS1_SUBSAMPLE,
             sResources.volumeHeight * AVBOIT_PASS1_SUBSAMPLE, GL_R8, true);
 }
 
-void FSAVBOIT::allocateResources(U32 width, U32 height)
+void ASAVBOIT::allocateResources(U32 width, U32 height)
 {
     releaseResources();
     if (requested())
@@ -1175,7 +1175,7 @@ void FSAVBOIT::allocateResources(U32 width, U32 height)
     }
 }
 
-void FSAVBOIT::releaseResources()
+void ASAVBOIT::releaseResources()
 {
     if (sResources.extinction) glDeleteTextures(1, &sResources.extinction);
     if (sResources.transmittance) glDeleteTextures(1, &sResources.transmittance);
@@ -1201,15 +1201,15 @@ void FSAVBOIT::releaseResources()
     if (sResources.frontKey3) glDeleteTextures(1, &sResources.frontKey3);
     if (sResources.frontKeyFBO)
         glDeleteFramebuffers(1, &sResources.frontKeyFBO);
-    gAVBOITOpaqueTarget.release();
-    gAVBOITPrepassTarget.release();
-    gAVBOITCellDepthTarget.release();
+    gASAVBOITOpaqueTarget.release();
+    gASAVBOITPrepassTarget.release();
+    gASAVBOITCellDepthTarget.release();
     sDirectRasterPass = -1;
     sDirectFrameReady = false;
     sResources = Resources();
 }
 
-void FSAVBOIT::appendDiagnostics(LLSD& info)
+void ASAVBOIT::appendDiagnostics(LLSD& info)
 {
     info["AVBOIT_AVAILABLE"] = available();
     info["AVBOIT_VOLUME_WIDTH"] = LLSD::Integer(sResources.volumeWidth);
@@ -1234,7 +1234,7 @@ void FSAVBOIT::appendDiagnostics(LLSD& info)
         "Available";
 }
 
-bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
+bool ASAVBOIT::beginDirectFrame(LLRenderTarget& screen)
 {
     const U32 width = screen.getWidth();
     const U32 height = screen.getHeight();
@@ -1259,9 +1259,9 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
         !sResources.frontKey2 || !sResources.frontKey3 ||
         !sResources.work ||
         !opaque_depth ||
-        !gAVBOITOpaqueTarget.isComplete() ||
-        !gAVBOITPrepassTarget.isComplete() ||
-        !gAVBOITCellDepthTarget.isComplete())
+        !gASAVBOITOpaqueTarget.isComplete() ||
+        !gASAVBOITPrepassTarget.isComplete() ||
+        !gASAVBOITCellDepthTarget.isComplete())
     {
         return false;
     }
@@ -1275,18 +1275,18 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     }
 
     // The resolve compute shader (pass 7) used to read the opaque colour back
-    // from a copy in gAVBOITOpaqueTarget purely so it could composite it
+    // from a copy in gASAVBOITOpaqueTarget purely so it could composite it
     // under the accumulated transparency. It writes the same pixel of the
     // screen it would have copied from, and a compute invocation may
     // imageLoad then imageStore its own texel of one image with no barrier
     // (no other invocation touches that texel), so the copy is unnecessary:
     // the resolve now reads screen's own current colour directly. Depth
-    // still needs its own copy: gAVBOITOpaqueTarget's private depth is the
+    // still needs its own copy: gASAVBOITOpaqueTarget's private depth is the
     // early-Z target the raster passes test against, and it must stay frozen
     // at the opaque depth for the whole capture while screen's shared depth
     // moves on.
     glCopyImageSubData(opaque_depth, GL_TEXTURE_2D, 0, 0, 0, 0,
-                       gAVBOITOpaqueTarget.getDepth(), GL_TEXTURE_2D,
+                       gASAVBOITOpaqueTarget.getDepth(), GL_TEXTURE_2D,
                        0, 0, 0, 0, width, height, 1);
 
     const U32 zero = 0u;
@@ -1329,13 +1329,13 @@ bool FSAVBOIT::beginDirectFrame(LLRenderTarget& screen)
     // Full-resolution occupancy is conservatively folded into 8x8 cells.
     // Use the private opaque-depth target so thin final-raster coverage cannot
     // disappear merely because it missed a low-resolution sample center.
-    gAVBOITOpaqueTarget.bindTarget();
+    gASAVBOITOpaqueTarget.bindTarget();
     sDirectFrameReady = false;
     beginDirectRasterPass(0);
     return true;
 }
 
-void FSAVBOIT::beginDirectRasterPass(S32 pass)
+void ASAVBOIT::beginDirectRasterPass(S32 pass)
 {
     sDirectRasterPass = pass;
     if (pass == 0 || pass == 3)
@@ -1347,7 +1347,7 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     {
         // Round 3: pass 1 supersamples each 8x8 cell at
         // AVBOIT_PASS1_SUBSAMPLE points per axis instead of one, so its
-        // viewport (and gAVBOITCellDepthTarget, bound as this pass's render
+        // viewport (and gASAVBOITCellDepthTarget, bound as this pass's render
         // target ahead of this call) is scaled up by that factor.
         glViewport(0, 0, sResources.volumeWidth * AVBOIT_PASS1_SUBSAMPLE,
                    sResources.volumeHeight * AVBOIT_PASS1_SUBSAMPLE);
@@ -1356,14 +1356,14 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     {
         // A9: full-resolution front-key pass. Two smallest-distinct-depth
         // keys per pixel, atomically inserted by every alpha fragment
-        // (avboit_store_front_key() in avboitCaptureF.glsl); pass 2 reads
+        // (avboit_store_front_key() in asAVBOITCaptureF.glsl); pass 2 reads
         // them back to give the front two layers an exact source-over
         // weight instead of the volume's per-cell approximation. Cleared to
         // the "no key" sentinel every frame, including the first frame
         // after allocation -- avboit_front_key()'s match in pass 2 must
         // never see stale data from a previous frame.
         //
-        // E11 in fsexactoit.cpp uses the identical glClearTexImage-with-
+        // E11 in asexactoit.cpp uses the identical glClearTexImage-with-
         // fallback pattern for its own R32UI head/count images; mirrored
         // here rather than assuming the GL 4.4 function is always present
         // on an AVBOIT-capable (GL 4.3 baseline) driver.
@@ -1439,7 +1439,7 @@ void FSAVBOIT::beginDirectRasterPass(S32 pass)
     }
 }
 
-void FSAVBOIT::rasterizeConservativeBounds()
+void ASAVBOIT::rasterizeConservativeBounds()
 {
     static LLStaticHashedString pass("avboitPass");
     static LLStaticHashedString viewport("avboitViewport");
@@ -1457,42 +1457,42 @@ void FSAVBOIT::rasterizeConservativeBounds()
 
     // Initialize the interval words with compute so the portable GL 4.3
     // baseline retains an explicit empty sentinel.
-    gAVBOITVolumeProgram.bind();
-    gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITVolumeProgram.bind();
+    gASAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
-    gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
-    gAVBOITVolumeProgram.uniform1i(pass, 9);
+    gASAVBOITVolumeProgram.uniform1i(pass, 9);
     glDispatchCompute(groups_x, groups_y, 1u);
     // Reset the per-tile depth range before any capture pass reduces into
     // it. Pass 13, not 12: pass 12 is a different, unrelated compute step
     // (transmittance-validity diagnostic) dispatched later in
     // finishDirectExtinction() on this same program -- the two collided
-    // under the shared value 12 (see avboitVolumeC.glsl's pass-13 comment),
+    // under the shared value 12 (see asAVBOITVolumeC.glsl's pass-13 comment),
     // which meant this reset never actually ran.
     const U32 range_groups_x =
         ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
     const U32 range_groups_y =
         ((sResources.viewportHeight + 15u) / 16u + 15u) / 16u;
-    gAVBOITVolumeProgram.uniform1i(pass, 13);
+    gASAVBOITVolumeProgram.uniform1i(pass, 13);
     glDispatchCompute(range_groups_x, range_groups_y, 1u);
-    gAVBOITVolumeProgram.unbind();
+    gASAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
-    gAVBOITBoundsProgram.bind();
-    gAVBOITBoundsProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITBoundsProgram.bind();
+    gASAVBOITBoundsProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
-    gAVBOITBoundsProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITBoundsProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
     LLCamera* camera = LLViewerCamera::getInstance();
-    gAVBOITBoundsProgram.uniform2f(depth_range, camera->getNear(),
+    gASAVBOITBoundsProgram.uniform2f(depth_range, camera->getNear(),
                                    camera->getFar());
-    gAVBOITBoundsProgram.uniform1f(
+    gASAVBOITBoundsProgram.uniform1f(
         linearization, fittedLinearization(camera->getFar()));
-    gAVBOITBoundsProgram.uniform1i(
+    gASAVBOITBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
-    gAVBOITBoundsProgram.uniform1i(tile_range_uniform, tileRange() ? 1 : 0);
-    gAVBOITBoundsProgram.uniform1i(exact_proxy, 0);
+    gASAVBOITBoundsProgram.uniform1i(tile_range_uniform, tileRange() ? 1 : 0);
+    gASAVBOITBoundsProgram.uniform1i(exact_proxy, 0);
     // AABB centers are in agent space. Clear any model matrix left by the
     // preceding scene draw so their projection matches CPU camera depths.
     LLRenderPass::applyModelMatrix(nullptr);
@@ -1591,13 +1591,13 @@ void FSAVBOIT::rasterizeConservativeBounds()
     for (U32 index = 0; index < bounds.size(); ++index)
     {
         const BoundRecord& record = bounds[index];
-        gAVBOITBoundsProgram.uniform2f(
+        gASAVBOITBoundsProgram.uniform2f(
             proxy_depth_interval,
             llmax(record.minimumDepth, near_depth),
             llmin(record.maximumDepth, far_depth));
-        gAVBOITBoundsProgram.uniform3fv(
+        gASAVBOITBoundsProgram.uniform3fv(
             LLShaderMgr::BOX_CENTER, 1, record.center.mV);
-        gAVBOITBoundsProgram.uniform3fv(
+        gASAVBOITBoundsProgram.uniform3fv(
             LLShaderMgr::BOX_SIZE, 1, record.size.mV);
         LLVector4a center;
         center.load3(record.center.mV);
@@ -1613,10 +1613,10 @@ void FSAVBOIT::rasterizeConservativeBounds()
     // It intentionally ignores texture alpha, materials, and lighting, so
     // every actual alpha-tested fragment remains covered. Group AABBs stay
     // active for rigged geometry and as a coarse spatial fallback.
-    gAVBOITBoundsProgram.uniform1i(exact_proxy, 1);
-    gAVBOITBoundsProgram.uniform3f(
+    gASAVBOITBoundsProgram.uniform1i(exact_proxy, 1);
+    gASAVBOITBoundsProgram.uniform3f(
         LLShaderMgr::BOX_CENTER, 0.f, 0.f, 0.f);
-    gAVBOITBoundsProgram.uniform3f(
+    gASAVBOITBoundsProgram.uniform3f(
         LLShaderMgr::BOX_SIZE, 1.f, 1.f, 1.f);
     for (LLCullResult::sg_iterator iter = gPipeline.beginAlphaGroups();
          iter != gPipeline.endAlphaGroups(); ++iter)
@@ -1656,24 +1656,24 @@ void FSAVBOIT::rasterizeConservativeBounds()
                 draw->mCount, draw->mOffset);
         }
     }
-    gAVBOITBoundsProgram.unbind();
+    gASAVBOITBoundsProgram.unbind();
 
     // Rigged draw geometry uses the viewer's object-skinning feature and
     // palette uploader, producing the same skinned positions as alpha.
-    gAVBOITSkinnedBoundsProgram.bind();
-    gAVBOITSkinnedBoundsProgram.uniform2i(
+    gASAVBOITSkinnedBoundsProgram.bind();
+    gASAVBOITSkinnedBoundsProgram.uniform2i(
         viewport, sResources.viewportWidth, sResources.viewportHeight);
-    gAVBOITSkinnedBoundsProgram.uniform2i(
+    gASAVBOITSkinnedBoundsProgram.uniform2i(
         volume_size, sResources.volumeWidth, sResources.volumeHeight);
-    gAVBOITSkinnedBoundsProgram.uniform2f(
+    gASAVBOITSkinnedBoundsProgram.uniform2f(
         depth_range, camera->getNear(), camera->getFar());
-    gAVBOITSkinnedBoundsProgram.uniform1f(
+    gASAVBOITSkinnedBoundsProgram.uniform1f(
         linearization, fittedLinearization(camera->getFar()));
-    gAVBOITSkinnedBoundsProgram.uniform1i(
+    gASAVBOITSkinnedBoundsProgram.uniform1i(
         opaque_depth_sampler, directOpaqueDepthTextureUnit());
-    gAVBOITSkinnedBoundsProgram.uniform1i(
+    gASAVBOITSkinnedBoundsProgram.uniform1i(
         tile_range_uniform, tileRange() ? 1 : 0);
-    gAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
+    gASAVBOITSkinnedBoundsProgram.uniform1i(exact_proxy, 1);
     for (LLCullResult::sg_iterator iter =
              gPipeline.beginRiggedAlphaGroups();
          iter != gPipeline.endRiggedAlphaGroups(); ++iter)
@@ -1705,20 +1705,20 @@ void FSAVBOIT::rasterizeConservativeBounds()
                 draw->mCount, draw->mOffset);
         }
     }
-    gAVBOITSkinnedBoundsProgram.unbind();
+    gASAVBOITSkinnedBoundsProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // A box crossing the near plane is not guaranteed to leave a closed
     // fixed-function proxy footprint. Conservatively seed every cell for
     // those rare camera-intersecting bounds before spatial dilation.
-    gAVBOITVolumeProgram.bind();
-    gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITVolumeProgram.bind();
+    gASAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
-    gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
-    gAVBOITVolumeProgram.uniform2f(depth_range, camera->getNear(),
+    gASAVBOITVolumeProgram.uniform2f(depth_range, camera->getNear(),
                                    camera->getFar());
-    gAVBOITVolumeProgram.uniform1f(
+    gASAVBOITVolumeProgram.uniform1f(
         linearization, fittedLinearization(camera->getFar()));
     for (U32 index = 0; index < bounds.size(); ++index)
     {
@@ -1726,19 +1726,19 @@ void FSAVBOIT::rasterizeConservativeBounds()
         if (record.minimumDepth <= near_depth &&
             record.maximumDepth >= near_depth)
         {
-            gAVBOITVolumeProgram.uniform2f(
+            gASAVBOITVolumeProgram.uniform2f(
                 proxy_depth_interval, near_depth,
                 llmin(record.maximumDepth, far_depth));
-            gAVBOITVolumeProgram.uniform1i(pass, 10);
+            gASAVBOITVolumeProgram.uniform1i(pass, 10);
             glDispatchCompute(groups_x, groups_y, 1u);
             glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
         }
     }
     // Dilate raw proxy intervals before material occupancy compares against
     // them. This pass depends only on the completed bounds raster.
-    gAVBOITVolumeProgram.uniform1i(pass, 8);
+    gASAVBOITVolumeProgram.uniform1i(pass, 8);
     glDispatchCompute(groups_x, groups_y, 1u);
-    gAVBOITVolumeProgram.unbind();
+    gASAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
 
     // Bind a disposable target sized far smaller than the viewport for pass
@@ -1746,13 +1746,13 @@ void FSAVBOIT::rasterizeConservativeBounds()
     // (occupancy is tracked via SSBO/image atomics instead), so any
     // fragment landing outside this target's bounds simply has its color
     // write discarded by GL -- a cheap sink, not a real render target for
-    // this pass. Distinct from gAVBOITCellDepthTarget (A2), which holds
+    // this pass. Distinct from gASAVBOITCellDepthTarget (A2), which holds
     // real per-cell depth data consumed by pass 1's hardware depth test.
-    gAVBOITPrepassTarget.bindTarget();
+    gASAVBOITPrepassTarget.bindTarget();
     glViewport(0, 0, sResources.viewportWidth, sResources.viewportHeight);
 }
 
-void FSAVBOIT::finishDirectColorRaster()
+void ASAVBOIT::finishDirectColorRaster()
 {
     for (GLuint attachment = 1; attachment <= 3; ++attachment)
     {
@@ -1767,14 +1767,14 @@ void FSAVBOIT::finishDirectColorRaster()
     glMemoryBarrier(GL_FRAMEBUFFER_BARRIER_BIT |
                     GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
     // Pass 2's color raster (between finishDirectExtinction() and here) drew
-    // into gAVBOITOpaqueTarget, not gAVBOITPrepassTarget -- flush whatever
-    // is actually bound. gAVBOITPrepassTarget was bound only transiently for
+    // into gASAVBOITOpaqueTarget, not gASAVBOITPrepassTarget -- flush whatever
+    // is actually bound. gASAVBOITPrepassTarget was bound only transiently for
     // pass 0's occupancy draws and left unflushed once pass 1 rebinds a
     // different target (see finishDirectOccupancy()).
-    gAVBOITOpaqueTarget.flush();
+    gASAVBOITOpaqueTarget.flush();
 }
 
-void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
+void ASAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
 {
     if (!shader)
     {
@@ -1883,16 +1883,16 @@ void FSAVBOIT::configureDirectRasterShader(LLGLSLShader* shader)
     }
 }
 
-void FSAVBOIT::finishDirectOccupancy()
+void ASAVBOIT::finishDirectOccupancy()
 {
-    // Pop back off gAVBOITPrepassTarget (pass 0's disposable occupancy
+    // Pop back off gASAVBOITPrepassTarget (pass 0's disposable occupancy
     // sink, bound by rasterizeConservativeBounds()) to the target it was
-    // pushed on top of (gAVBOITOpaqueTarget, from beginDirectFrame()).
+    // pushed on top of (gASAVBOITOpaqueTarget, from beginDirectFrame()).
     // LLRenderTarget's bind stack must be flushed in the same order it was
-    // pushed -- skipping this flush would leave gAVBOITPrepassTarget
+    // pushed -- skipping this flush would leave gASAVBOITPrepassTarget
     // buried under every target bound below, and its eventual flush() call
     // would then rebind the wrong target.
-    gAVBOITPrepassTarget.flush();
+    gASAVBOITPrepassTarget.flush();
 
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
@@ -1905,79 +1905,79 @@ void FSAVBOIT::finishDirectOccupancy()
     const U32 groups_x = (sResources.volumeWidth + 15u) / 16u;
     const U32 groups_y = (sResources.volumeHeight + 15u) / 16u;
 
-    gAVBOITVolumeProgram.bind();
-    gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITVolumeProgram.bind();
+    gASAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
-    gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
-    gAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
+    gASAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
     const LLCamera& camera = *LLViewerCamera::getInstance();
-    gAVBOITVolumeProgram.uniform2f(depth_range, camera.getNear(),
+    gASAVBOITVolumeProgram.uniform2f(depth_range, camera.getNear(),
                                    camera.getFar());
-    gAVBOITVolumeProgram.uniform1f(
+    gASAVBOITVolumeProgram.uniform1f(
         linearization, fittedLinearization(camera.getFar()));
-    gAVBOITVolumeProgram.uniform1i(pass, 1);
+    gASAVBOITVolumeProgram.uniform1i(pass, 1);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 11);
+    gASAVBOITVolumeProgram.uniform1i(pass, 11);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 2);
+    gASAVBOITVolumeProgram.uniform1i(pass, 2);
     glDispatchCompute(groups_x, groups_y, 1u);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 4);
+    gASAVBOITVolumeProgram.uniform1i(pass, 4);
     glDispatchCompute(1u, 1u, 1u);
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 3);
+    gASAVBOITVolumeProgram.uniform1i(pass, 3);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.work);
     glDispatchComputeIndirect(0);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
-    gAVBOITVolumeProgram.unbind();
+    gASAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    // gAVBOITOpaqueTarget is already the current target here (restored by
-    // the gAVBOITPrepassTarget.flush() at the top of this function) -- no
+    // gASAVBOITOpaqueTarget is already the current target here (restored by
+    // the gASAVBOITPrepassTarget.flush() at the top of this function) -- no
     // flush/rebind needed before pushing the new depth-prepass target below.
 
     // A2: bake each cell's farthest opaque depth into a small volume-
     // resolution target before pass 1 binds it, so pass 1's hardware
     // early_fragment_tests rejects against the correct 8x8 block instead of
     // a single full-res pixel sampled at the wrong location. See
-    // avboitCellDepthF.glsl and doc/ayanestorm-oit-performance-audit-plan.md
+    // asAVBOITCellDepthF.glsl and doc/ayanestorm-oit-performance-audit-plan.md
     // A2.
     {
         static LLStaticHashedString cell_depth_sampler(
             "avboitOpaqueDepthSampler");
         static LLStaticHashedString cell_depth_subsample(
             "avboitPass1Subsample");
-        gAVBOITCellDepthTarget.bindTarget();
+        gASAVBOITCellDepthTarget.bindTarget();
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_ALWAYS);
-        gAVBOITCellDepthTarget.clear(GL_DEPTH_BUFFER_BIT);
-        gAVBOITCellDepthProgram.bind();
-        gAVBOITCellDepthProgram.uniform2i(
+        gASAVBOITCellDepthTarget.clear(GL_DEPTH_BUFFER_BIT);
+        gASAVBOITCellDepthProgram.bind();
+        gASAVBOITCellDepthProgram.uniform2i(
             viewport, sResources.viewportWidth, sResources.viewportHeight);
-        gAVBOITCellDepthProgram.uniform1i(
+        gASAVBOITCellDepthProgram.uniform1i(
             cell_depth_sampler, directOpaqueDepthTextureUnit());
-        gAVBOITCellDepthProgram.uniform1i(
+        gASAVBOITCellDepthProgram.uniform1i(
             cell_depth_subsample, static_cast<GLint>(AVBOIT_PASS1_SUBSAMPLE));
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-        gAVBOITCellDepthProgram.unbind();
-        gAVBOITCellDepthTarget.flush();
+        gASAVBOITCellDepthProgram.unbind();
+        gASAVBOITCellDepthTarget.flush();
     }
-    // gAVBOITOpaqueTarget is the current target here (the cell-depth bake
-    // above pushed and flushed gAVBOITCellDepthTarget in a balanced pair) --
+    // gASAVBOITOpaqueTarget is the current target here (the cell-depth bake
+    // above pushed and flushed gASAVBOITCellDepthTarget in a balanced pair) --
     // A9's pass 3 (front key), inserted by the caller between this function
     // and beginPass1(), reads/writes it directly rather than rebinding it.
 }
 
-void FSAVBOIT::beginPass1()
+void ASAVBOIT::beginPass1()
 {
-    gAVBOITCellDepthTarget.bindTarget();
+    gASAVBOITCellDepthTarget.bindTarget();
     beginDirectRasterPass(1);
 }
 
-void FSAVBOIT::finishDirectExtinction()
+void ASAVBOIT::finishDirectExtinction()
 {
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
 
@@ -1993,47 +1993,47 @@ void FSAVBOIT::finishDirectExtinction()
         (sResources.volumeWidth + 15u) / 16u;
     const U32 volume_groups_y =
         (sResources.volumeHeight + 15u) / 16u;
-    gAVBOITVolumeProgram.bind();
-    gAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITVolumeProgram.bind();
+    gASAVBOITVolumeProgram.uniform2i(viewport, sResources.viewportWidth,
                                    sResources.viewportHeight);
-    gAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITVolumeProgram.uniform2i(volume_size, sResources.volumeWidth,
                                    sResources.volumeHeight);
-    gAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
-    gAVBOITVolumeProgram.uniform1i(pass, 5);
+    gASAVBOITVolumeProgram.uniform1i(wide_extinction, wideExtinction() ? 1 : 0);
+    gASAVBOITVolumeProgram.uniform1i(pass, 5);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, sResources.work);
     glDispatchComputeIndirect(0);
     glBindBuffer(GL_DISPATCH_INDIRECT_BUFFER, 0);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 12);
+    gASAVBOITVolumeProgram.uniform1i(pass, 12);
     glDispatchCompute(volume_groups_x, volume_groups_y, 1u);
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT);
-    gAVBOITVolumeProgram.uniform1i(pass, 6);
+    gASAVBOITVolumeProgram.uniform1i(pass, 6);
     glDispatchCompute(tile_groups_x, tile_groups_y, 1u);
-    gAVBOITVolumeProgram.unbind();
+    gASAVBOITVolumeProgram.unbind();
     glMemoryBarrier(GL_COMMAND_BARRIER_BIT |
                     GL_SHADER_STORAGE_BARRIER_BIT |
                     GL_TEXTURE_FETCH_BARRIER_BIT);
     // A2: pass 1's material raster (between finishDirectOccupancy() and
-    // here) drew into gAVBOITCellDepthTarget, not gAVBOITOpaqueTarget.
-    // Flushing it pops the bind stack back to gAVBOITOpaqueTarget (its
+    // here) drew into gASAVBOITCellDepthTarget, not gASAVBOITOpaqueTarget.
+    // Flushing it pops the bind stack back to gASAVBOITOpaqueTarget (its
     // mPreviousRT, set when finishDirectOccupancy() bound it for pass 1),
     // which is therefore already the current target afterward -- do not
     // bindTarget() it again, that would push a second, self-referential
-    // entry onto the stack (gAVBOITOpaqueTarget is already its own
+    // entry onto the stack (gASAVBOITOpaqueTarget is already its own
     // ancestor here) and corrupt the eventual unbind-to-screen.
-    gAVBOITCellDepthTarget.flush();
+    gASAVBOITCellDepthTarget.flush();
 
     // Rasterize conservative zero-transmittance quads into a private copy of
     // opaque depth. The final color pass then receives ordinary early-Z/Hi-Z
     // rejection without modifying the viewer's shared scene depth texture.
     {
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LEQUAL);
-        gAVBOITEarlyDepthProgram.bind();
-        gAVBOITEarlyDepthProgram.uniform2i(
+        gASAVBOITEarlyDepthProgram.bind();
+        gASAVBOITEarlyDepthProgram.uniform2i(
             viewport, sResources.viewportWidth, sResources.viewportHeight);
-        gAVBOITEarlyDepthProgram.uniform2i(
+        gASAVBOITEarlyDepthProgram.uniform2i(
             volume_size, sResources.volumeWidth, sResources.volumeHeight);
         gPipeline.mScreenTriangleVB->setBuffer();
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, sResources.work);
@@ -2041,17 +2041,17 @@ void FSAVBOIT::finishDirectExtinction()
             GL_TRIANGLES,
             reinterpret_cast<const void*>(4u * sizeof(U32)));
         glBindBuffer(GL_DRAW_INDIRECT_BUFFER, 0);
-        gAVBOITEarlyDepthProgram.unbind();
+        gASAVBOITEarlyDepthProgram.unbind();
     }
     beginDirectRasterPass(2);
 }
 
-bool FSAVBOIT::directFrameReady()
+bool ASAVBOIT::directFrameReady()
 {
     return sDirectFrameReady;
 }
 
-bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
+bool ASAVBOIT::finishDirectFrame(LLRenderTarget& screen)
 {
     if (!sDirectFrameReady)
     {
@@ -2097,26 +2097,26 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
                        GL_READ_ONLY, GL_R16F);
     glBindImageTexture(5, sResources.accumulatedExtinction, 0, GL_FALSE, 0,
                        GL_READ_ONLY, GL_R16F);
-    gAVBOITResolveProgram.bind();
-    gAVBOITResolveProgram.uniform2i(viewport, sResources.viewportWidth,
+    gASAVBOITResolveProgram.bind();
+    gASAVBOITResolveProgram.uniform2i(viewport, sResources.viewportWidth,
                                     sResources.viewportHeight);
-    gAVBOITResolveProgram.uniform2i(volume_size, sResources.volumeWidth,
+    gASAVBOITResolveProgram.uniform2i(volume_size, sResources.volumeWidth,
                                     sResources.volumeHeight);
-    gAVBOITResolveProgram.uniform1i(pass, 7);
-    gAVBOITResolveProgram.uniform1i(debug_mode_uniform, debug_mode);
+    gASAVBOITResolveProgram.uniform1i(pass, 7);
+    gASAVBOITResolveProgram.uniform1i(debug_mode_uniform, debug_mode);
     if (debug_mode == 13)
     {
-        gAVBOITResolveProgram.uniform1i(transmittance_sampler,
+        gASAVBOITResolveProgram.uniform1i(transmittance_sampler,
                                         directTransmittanceTextureUnit());
     }
     glDispatchCompute(groups_x, groups_y, 1u);
-    gAVBOITResolveProgram.unbind();
+    gASAVBOITResolveProgram.unbind();
     glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT);
 
     // <AS:Chanayane> finishDirectColorRaster() already flushed the private
     // target and restored screen. A second flush here corrupts the target
     // stack before the isolate coverage pass below.
-    // gAVBOITOpaqueTarget.flush();
+    // gASAVBOITOpaqueTarget.flush();
     // </AS:Chanayane>
 
     // <AS:Chanayane> Self-lighting floater isolate-background mode: the
@@ -2130,7 +2130,7 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
     // this point) and writes a near-plane depth wherever coverage is
     // non-zero. No-op with zero cost when isolate mode is inactive, and has
     // no effect whatsoever on AVBOIT's own color output either way.
-    if (ASBackgroundIsolate::isActive() && gAVBOITIsolateDepthProgram.mProgramObject)
+    if (ASBackgroundIsolate::isActive() && gASAVBOITIsolateDepthProgram.mProgramObject)
     {
         LL_PROFILE_GPU_ZONE("AVBOIT isolate depth");
         static LLStaticHashedString isolate_weight("avboitIsolateWeight");
@@ -2139,20 +2139,20 @@ bool FSAVBOIT::finishDirectFrame(LLRenderTarget& screen)
         const S32 color_glow_unit = directTransmittanceTextureUnit();
 
         LLGLDepthTest depth_test(GL_TRUE, GL_TRUE, GL_LEQUAL);
-        gAVBOITIsolateDepthProgram.bind();
+        gASAVBOITIsolateDepthProgram.bind();
         gGL.getTexUnit(weight_unit)->bindManual(
             LLTexUnit::TT_TEXTURE, sResources.accumulatedWeight);
-        gAVBOITIsolateDepthProgram.uniform1i(isolate_weight, weight_unit);
+        gASAVBOITIsolateDepthProgram.uniform1i(isolate_weight, weight_unit);
         gGL.getTexUnit(color_glow_unit)->bindManual(
             LLTexUnit::TT_TEXTURE, sResources.accumulatedColorGlow);
-        gAVBOITIsolateDepthProgram.uniform1i(isolate_color_glow, color_glow_unit);
+        gASAVBOITIsolateDepthProgram.uniform1i(isolate_color_glow, color_glow_unit);
 
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
         gGL.getTexUnit(weight_unit)->unbind(LLTexUnit::TT_TEXTURE);
         gGL.getTexUnit(color_glow_unit)->unbind(LLTexUnit::TT_TEXTURE);
-        gAVBOITIsolateDepthProgram.unbind();
+        gASAVBOITIsolateDepthProgram.unbind();
     }
     // </AS:Chanayane>
 

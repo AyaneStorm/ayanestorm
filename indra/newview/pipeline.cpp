@@ -27,9 +27,9 @@
 #include "llviewerprecompiledheaders.h"
 
 // <AS:Chanayane> Exact OIT and AVBOIT
-#include "fsexactoit.h"
-#include "fsavboit.h"
-#include "fsoitdispatcher.h"
+#include "asexactoit.h"
+#include "asavboit.h"
+#include "asoitdispatcher.h"
 // </AS:Chanayane>
 
 // <AS:Chanayane> Optional volumetric lighting
@@ -879,7 +879,7 @@ void LLPipeline::resizeScreenTexture()
 // [/SL:KB]
         {
             // <AS:Chanayane> Retain the large Exact OIT node pool across viewport-only resizing.
-            FSExactOIT::retainNodePoolOnNextRelease();
+            ASExactOIT::retainNodePoolOnNextRelease();
             // </AS:Chanayane>
             releaseScreenBuffers();
             releaseSunShadowTargets();
@@ -1039,8 +1039,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
 
         // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
-        FSExactOIT::allocateResources(resX, resY);
-        FSAVBOIT::allocateResources(resX, resY);
+        ASExactOIT::allocateResources(resX, resY);
+        ASAVBOIT::allocateResources(resX, resY);
         // </AS:Chanayane>
 
         // <AS:Chanayane> Allocate volumetric lighting resources alongside Exact OIT.
@@ -1452,8 +1452,8 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
     // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
-    FSAVBOIT::releaseResources();
-    FSExactOIT::releaseResources();
+    ASAVBOIT::releaseResources();
+    ASExactOIT::releaseResources();
     // </AS:Chanayane>
     // <AS:Chanayane> Release volumetric lighting resources.
     ASVolumetricLighting::releaseResources();
@@ -10065,7 +10065,7 @@ void LLPipeline::renderDeferredLighting()
         LLGLDisable blend(GL_BLEND);
 
         // <AS:Chanayane> Reset independent OIT renderer state before transparency.
-        FSOITDispatcher::beginFrame();
+        ASOITDispatcher::beginFrame();
         // </AS:Chanayane>
 
         pushRenderTypeMask();
@@ -10108,7 +10108,7 @@ void LLPipeline::renderDeferredLighting()
 // fallback only when its forward-rendering input was produced above.
     if (ASVolumetricLighting::getDebugMode() == 0)
     {
-        FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
+        ASOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
                                      gCubeSnapshot, sImpostorRender,
                                      gAgentCamera.cameraMouselook());
         // <AS:Chanayane> Prepare and render Weather only after every ordinary

@@ -1,5 +1,6 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
- * @file avboitCellDepthF.glsl
+ * @file asAVBOITCellDepthF.glsl
  * @author chanayane@firestorm
  * @brief AVBOIT pass 1's occupancy raster runs at avboitPass1Subsample
  *        fragments per axis per 8x8-pixel volume cell (round 3; one

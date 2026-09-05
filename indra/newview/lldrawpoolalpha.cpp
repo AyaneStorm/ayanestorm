@@ -31,7 +31,7 @@
 // </AS:Chanayane>
 
 // <AS:Chanayane> Independent OIT renderer selection
-#include "fsoitdispatcher.h"
+#include "asoitdispatcher.h"
 // </AS:Chanayane>
 
 #include "lldrawpoolalpha.h"
@@ -217,7 +217,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     //
     // // second pass, regular forward alpha rendering
     // forwardRender();
-    if (!FSOITDispatcher::renderPostDeferredCapture(
+    if (!ASOITDispatcher::renderPostDeferredCapture(
             *this, prepare_alpha_shader, water_sign,
             emissive_shader, pbr_emissive_shader))
     {
@@ -239,7 +239,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     // final pass, render to depth for depth of field effects
 // <AS:Chanayane> E12: restored to vanilla. This runs after
 // renderGeomPostDeferred() returns, which is strictly before
-// FSOITDispatcher::finishFrame()/composite() (see pipeline.cpp) even starts,
+// ASOITDispatcher::finishFrame()/composite() (see pipeline.cpp) even starts,
 // so Exact OIT's composite never observes these depth writes either way;
 // skipping this pass while capturing only cost DoF focus on transparent
 // surfaces for no benefit. See doc/ayanestorm-oit-performance-audit-plan.md E12.
@@ -280,7 +280,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     //     // contribute to the alpha mask used for impostors
     //     || LLPipeline::sImpostorRenderAlphaDepthPass
     //     || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
-    bool write_depth = !FSOITDispatcher::captureActive() &&
+    bool write_depth = !ASOITDispatcher::captureActive() &&
         (rigged ||
             LLDrawPoolWater::sSkipScreenCopy
             // we want depth written so that rendered alpha will
@@ -291,7 +291,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
     LLGLDepthTest depth(GL_TRUE, write_depth ? GL_TRUE : GL_FALSE);
 // <AS:Chanayane> OIT capture does not write depth or use framebuffer blending.
-    LLGLDisable oit_capture_blend(FSOITDispatcher::captureActive() ? GL_BLEND : 0);
+    LLGLDisable oit_capture_blend(ASOITDispatcher::captureActive() ? GL_BLEND : 0);
 // </AS:Chanayane>
 
     mColorSFactor = LLRender::BF_SOURCE_ALPHA;           // } regular alpha blend
@@ -301,7 +301,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
 // <AS:Chanayane> Disable framebuffer blending only for OIT capture.
     // gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
-    if (!FSOITDispatcher::captureActive())
+    if (!ASOITDispatcher::captureActive())
     {
         gGL.blendFunc(mColorSFactor, mColorDFactor, mAlphaSFactor, mAlphaDFactor);
     }
@@ -323,7 +323,7 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
 
 // <AS:Chanayane> Do not render debug alpha into OIT capture.
     // if (!rigged && (LLPipeline::sRenderingHUDs || getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER))
-    if (!rigged && !FSOITDispatcher::captureActive() && (LLPipeline::sRenderingHUDs || getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER))
+    if (!rigged && !ASOITDispatcher::captureActive() && (LLPipeline::sRenderingHUDs || getType() == LLDrawPoolAlpha::POOL_ALPHA_POST_WATER))
 // </AS:Chanayane>
     { //render "highlight alpha" on final non-rigged pass for non-HUDs (HUDs only run pre-water alpha pass)
         // NOTE -- hacky call here protected by !rigged instead of alongside "forwardRender"
@@ -751,7 +751,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
 // <AS:Chanayane> Route captured PBR alpha through the Exact OIT shader.
                     // target_shader = pbr_shader;
-                    target_shader = FSOITDispatcher::pbrAlphaShader(pbr_shader);
+                    target_shader = ASOITDispatcher::pbrAlphaShader(pbr_shader);
 // </AS:Chanayane>
                     if (params.mAvatar != nullptr)
                     {
@@ -782,7 +782,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                             initialized_lighting = true;
 // <AS:Chanayane> Exact OIT variant
                             // target_shader = fullbright_shader;
-                            target_shader = FSOITDispatcher::fullbrightAlphaShader(fullbright_shader);
+                            target_shader = ASOITDispatcher::fullbrightAlphaShader(fullbright_shader);
 // </AS:Chanayane>
                             light_enabled = false;
                         }
@@ -793,7 +793,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         initialized_lighting = true;
 // <AS:Chanayane> Exact OIT variant
                         // target_shader = simple_shader;
-                        target_shader = FSOITDispatcher::alphaShader(simple_shader);
+                        target_shader = ASOITDispatcher::alphaShader(simple_shader);
 // </AS:Chanayane>
                         light_enabled = true;
                     }
@@ -809,21 +809,21 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                         llassert(mask < LLMaterial::SHADER_COUNT);
 // <AS:Chanayane> Exact OIT variant
                         // target_shader = &(gDeferredMaterialProgram[mask]);
-                        target_shader = FSOITDispatcher::materialAlphaShader(mask, &gDeferredMaterialProgram[mask]);
+                        target_shader = ASOITDispatcher::materialAlphaShader(mask, &gDeferredMaterialProgram[mask]);
 // </AS:Chanayane>
                     }
                     else if (!params.mFullbright)
                     {
 // <AS:Chanayane> Exact OIT variant
                         // target_shader = simple_shader;
-                        target_shader = FSOITDispatcher::alphaShader(simple_shader);
+                        target_shader = ASOITDispatcher::alphaShader(simple_shader);
 // </AS:Chanayane>
                     }
                     else
                     {
 // <AS:Chanayane> Exact OIT variant
                         // target_shader = fullbright_shader;
-                        target_shader = FSOITDispatcher::fullbrightAlphaShader(fullbright_shader);
+                        target_shader = ASOITDispatcher::fullbrightAlphaShader(fullbright_shader);
 // </AS:Chanayane>
                     }
 
@@ -882,7 +882,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
 // <AS:Chanayane> Route per-draw blend state through the active OIT renderer.
                     // gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
-                    if (!FSOITDispatcher::configureCapturedDrawIfActive(current_shader, U32(params.mBlendFuncSrc), U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor)))
+                    if (!ASOITDispatcher::configureCapturedDrawIfActive(current_shader, U32(params.mBlendFuncSrc), U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor)))
                     {
                         gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
                     }
@@ -949,7 +949,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 // submit glow redraws.
             // // render emissive faces into alpha channel for bloom effects
             // if (!depth_only)
-            if (!depth_only && !FSOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
+            if (!depth_only && !ASOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
 // </AS:Chanayane>
             {
                 gPipeline.enableLightsDynamic();

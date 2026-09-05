@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Shared Exact OIT fragment capture implementation.
  */

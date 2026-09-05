@@ -29,7 +29,7 @@ and `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` round 10).
 
 A9 gives exact per-pixel source-over weights to the two nearest distinct
 transparent depths (`avboitFrontKey0/1`, `avboit_store_front_key()` in
-`avboitCaptureF.glsl`) and leaves every deeper layer on the per-cell
+`asAVBOITCaptureF.glsl`) and leaves every deeper layer on the per-cell
 volume weight, bounded by `(1 - a0)(1 - a1)`.
 
 Hair looks right with A9 because at each pixel both exact slots are hair:
@@ -70,7 +70,7 @@ step, one more `else if`, one more `(1 - key_alpha3)` factor in the
 bound). Image units 2 and 5 are free during the raster passes; the
 resolve rebinds them after pass 2 has finished reading the keys.
 
-### fsavboit.cpp
+### asavboit.cpp
 
 - `sResources.frontKey2` allocated like `frontKey0/1`
   (`allocateAccumulationTexture(..., GL_R32UI, width, height)`), attached
@@ -84,8 +84,8 @@ resolve rebinds them after pass 2 has finished reading the keys.
   passes (the resolve rebinds it to the screen later in the frame, after
   pass 2 has finished reading the keys).
 
-### avboitCaptureF.glsl (and the same declarations/reads in
-`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`)
+### asAVBOITCaptureF.glsl (and the same declarations/reads in
+`asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`)
 
 Declaration next to the other two:
 
@@ -165,7 +165,7 @@ cell average of that, but it must at least be *relative to the last key*
 rather than to the camera, otherwise the keyed layers' cell average is
 applied a second time on top of their exact product.
 
-Implementation (`avboitCaptureF.glsl`, pass 2, tile-mode branch and
+Implementation (`asAVBOITCaptureF.glsl`, pass 2, tile-mode branch and
 global branch alike; the glow shaders keep the plain bound, glow is not
 worth the extra reads):
 
@@ -222,7 +222,7 @@ Notes for the implementer:
   fragment (after the floor). Do not recompute it.
 - `bound * relative` replaces `min(front_transmittance, bound)`; with no
   keys the branch falls back to the old value, so
-  `RenderAVBOITFrontLayers = 0` behaviour is unchanged.
+  `ASRenderAVBOITFrontLayers = 0` behaviour is unchanged.
 - Cost: one extra 4-cell read for fragments that matched no key only.
 
 ### Fourth key (required, same build)
@@ -238,7 +238,7 @@ Pattern is exactly the one used for `frontKey2`:
   used only by the resolve (`accumulatedExtinction`, bound in
   `finishDirectFrame()` after pass 2); no conflict, same situation as
   unit 2.
-- Shaders (`avboitCaptureF.glsl`, both glow shaders): `layout(binding = 5,
+- Shaders (`asAVBOITCaptureF.glsl`, both glow shaders): `layout(binding = 5,
   r32ui) uniform coherent uimage2D avboitFrontKey3;`. In
   `avboit_store_front_key()`, replace the final unconditional
   `imageAtomicMin(avboitFrontKey2, ...)` with the same three-line step used
@@ -255,23 +255,23 @@ skipped, user decision -- not confirmed necessary, add later using the
 same one-more-cascade-level pattern this implementation used to extend
 frontKey0/1 to frontKey2, if a thick two-face pane case is ever reported).
 
-- `fsavboit.h`: `Resources::frontKey2` added next to `frontKey0`/`frontKey1`.
-- `fsavboit.cpp`: `frontKey2` allocated (`GL_R32UI`) in `allocateVolume()`,
+- `asavboit.h`: `Resources::frontKey2` added next to `frontKey0`/`frontKey1`.
+- `asavboit.cpp`: `frontKey2` allocated (`GL_R32UI`) in `allocateVolume()`,
   attached to `frontKeyFBO` as `GL_COLOR_ATTACHMENT2`, deleted in
   `releaseResources()`, checked in `beginDirectFrame()`'s completeness
   gate, cleared to `0xffffffffu` in `beginDirectRasterPass(3)` (both the
   `glClearTexImage` and `glClearBufferuiv` fallback paths), bound to image
   unit 2 (`GL_READ_WRITE`) alongside units 0/1. Confirmed image unit 2 is
   free until `finishDirectFrame()`'s resolve rebinds it to `screen`
-  (fsavboit.cpp:2081, well after pass 2 has read the key) -- no conflict.
-- `avboitCaptureF.glsl`: `avboitFrontKey2` declared (binding 2).
+  (asavboit.cpp:2081, well after pass 2 has read the key) -- no conflict.
+- `asAVBOITCaptureF.glsl`: `avboitFrontKey2` declared (binding 2).
   `avboit_store_front_key()` extended one more cascade level exactly per
   the doc's listing (displaced value from Key1's atomicMin, if any and
   distinct, goes to Key2). Pass-2 weighting gets the third `else if`
   (`front_factor = (1 - key_alpha0) * (1 - key_alpha1)` when this
   fragment's depth matches key2) and the fallback bound gains the
   `(1 - key_alpha2)` factor.
-- `avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`: identical declaration and
+- `asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`: identical declaration and
   cascade addition in their own `front_factor` computations.
 - Optional relative-volume-weight refinement (doc's "Optional, same
   build" section): not implemented -- doc calls it secondary, the third
@@ -285,7 +285,7 @@ original spec.
 1. Hair through the test pane matches Exact OIT (side by side).
 2. Hair without a pane unchanged from the A9 result.
 3. Dress over under-garment unchanged (keys 0/1 already covered it).
-4. `RenderAVBOITFrontLayers = 0` still gives the old behaviour.
+4. `ASRenderAVBOITFrontLayers = 0` still gives the old behaviour.
 5. Cost: pass 3 time before/after in the GPU profiler zone; expect
    negligible.
 
@@ -309,14 +309,14 @@ volume weight above, both now specified as code.
 
 Both implemented exactly as specified above.
 
-- `fsavboit.h`: `Resources::frontKey3` added next to `frontKey2`.
-- `fsavboit.cpp`: `frontKey3` allocated (`GL_R32UI`), attached to
+- `asavboit.h`: `Resources::frontKey3` added next to `frontKey2`.
+- `asavboit.cpp`: `frontKey3` allocated (`GL_R32UI`), attached to
   `frontKeyFBO` as `GL_COLOR_ATTACHMENT3`, deleted, gated, cleared on both
   paths, bound to image unit 5 in `beginDirectRasterPass(3)`. Confirmed
   unit 5 is otherwise touched only by `finishDirectFrame()`'s resolve
-  (`accumulatedExtinction`, fsavboit.cpp:2087), after pass 2 -- no
+  (`accumulatedExtinction`, asavboit.cpp:2087), after pass 2 -- no
   conflict, same situation as unit 2 with `screen`.
-- `avboitCaptureF.glsl`: `avboitFrontKey3` declared (binding 5).
+- `asAVBOITCaptureF.glsl`: `avboitFrontKey3` declared (binding 5).
   `avboit_store_front_key()` extended one more cascade level (displaced
   value from Key2's atomicMin goes to Key3, same equal-depth/sentinel
   short-circuits as every other level). Pass-2 weighting gets the fourth
@@ -332,7 +332,7 @@ Both implemented exactly as specified above.
   branch is recomputed locally (`key_sample_xy`) rather than reusing the
   outer one, which is scoped to the transmittance-sampling `else` block
   above and not visible at the front_factor site.
-- `avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`: same declaration and
+- `asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`: same declaration and
   fourth-key case; the fallback keeps the plain four-factor `bound`
   without the relative-volume-weight read, per the doc's "glow is not
   worth the extra reads" note.

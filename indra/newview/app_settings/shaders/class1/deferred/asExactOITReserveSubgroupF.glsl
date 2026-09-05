@@ -1,7 +1,8 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 // <AS:Chanayane> Exact OIT wave-level node reservation (E7), shared by the
 // three EXACT_OIT_SUBGROUP capture-family fragment shaders (capture, emissive,
 // PBR glow). Linked as an extra object alongside each caller's own file, the
-// same way exactOITCaptureF.glsl is shared today; see fsexactoit.cpp.
+// same way asExactOITCaptureF.glsl is shared today; see asexactoit.cpp.
 //
 // Declares only OITControl: OITNodes and the head/count images are declared
 // by the caller, since a binding declared in two linked objects is a link

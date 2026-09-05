@@ -36,7 +36,7 @@ This is a new C++/XUI feature in the Firestorm/AyaneStorm SL viewer
   // </AS:Chanayane>
   ```
 - Prefer keeping substantial logic inside the new AS-owned module rather than growing
-  an existing upstream file — mirrors how `fsexactoit` offloads logic to avoid
+  an existing upstream file — mirrors how `asexactoit` offloads logic to avoid
   enlarging `llpoolalpha`/`llpipeline`. All light-rig data, per-frame idle logic,
   joint math, beacon drawing, background-override state, and preset serialization
   live in the new AS-owned files; edits to `llviewerdisplay.cpp` are minimal
@@ -699,8 +699,8 @@ this section and the text above as this section winning.
    `#if !LL_DARWIN`-gated with stub fallbacks for macOS, both AS-owned despite
    their `fs` prefix — write a near-plane depth for whatever alpha content
    they actually composited, but *only* while isolate mode is active:
-   - **ExactOIT** (`fsexactoit.cpp`, `exactOITCompositeF.glsl`): added a third
-     draw pass (`oitPass == 3`) in `FSExactOIT::composite()`, run strictly
+   - **ExactOIT** (`asexactoit.cpp`, `asExactOITCompositeF.glsl`): added a third
+     draw pass (`oitPass == 3`) in `ASExactOIT::composite()`, run strictly
      after the normal two-pass sort+blend completes, with
      `gGL.setColorMask(false, false)` so it can never affect color. Per pixel,
      it reads the same `oitHeadPointers` linked-list head already used by the
@@ -720,13 +720,13 @@ this section and the text above as this section winning.
      Confirmed working: user screenshots showed standard rendering and
      ExactOIT both producing exact background colors with correct hair
      transparency (mostly — see the star-leak paragraph below).
-   - **AVBOIT** (`fsavboit.cpp`, new `avboitIsolateDepthF.glsl`): AVBOIT's
-     resolve step is a compute shader (`gAVBOITResolveProgram`, dispatched
-     from `FSAVBOIT::finishDirectFrame()`) that writes color via
+   - **AVBOIT** (`asavboit.cpp`, new `asAVBOITIsolateDepthF.glsl`): AVBOIT's
+     resolve step is a compute shader (`gASAVBOITResolveProgram`, dispatched
+     from `ASAVBOIT::finishDirectFrame()`) that writes color via
      `glBindImageTexture`+`imageStore` — compute shaders cannot `imageStore`
      into a depth-format texture, so the ExactOIT technique (an extra pass of
      the *same* shader) doesn't transfer directly. Instead, added a small
-     ordinary fragment-shader pass (`gAVBOITIsolateDepthProgram`) run right
+     ordinary fragment-shader pass (`gASAVBOITIsolateDepthProgram`) run right
      after the compute resolve dispatch (still inside `finishDirectFrame()`,
      while `mRT->screen` — which shares its depth attachment with
      `mRT->deferredScreen` via `shareDepthBuffer()`, confirmed in
@@ -838,7 +838,7 @@ this section and the text above as this section winning.
    glow accumulator, so white/custom backgrounds became full-screen bloom emitters
    and produced severe overexposure/colored halos. The base layer now masks alpha
    writes and seeds RGB only. Second, AVBOIT's isolate-depth pass ran while
-   `gAVBOITOpaqueTarget` was still bound, updating its private depth copy rather than
+   `gASAVBOITOpaqueTarget` was still bound, updating its private depth copy rather than
    the screen target's shared scene depth. `finishDirectFrame()` now flushes the
    private target after compute resolve and restores the caller's screen target
    before drawing isolate coverage.

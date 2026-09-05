@@ -3,9 +3,9 @@
 Audit date: 2026-09-03. Branch `ayanestorm-dev` at commit `b1e15e0882`.
 Audited files (all read in full):
 
-- `indra/newview/fsexactoit.{h,cpp}`, `fsoitdispatcher.{h,cpp}`, `fsavboit.{h,cpp}`
+- `indra/newview/asexactoit.{h,cpp}`, `asoitdispatcher.{h,cpp}`, `asavboit.{h,cpp}`
 - `app_settings/shaders/class1/deferred/exactOIT{Capture,Composite,Emissive,PbrGlow}F.glsl`, `exactOITSortC.glsl`
-- `app_settings/shaders/class1/deferred/avboit*.glsl`
+- `app_settings/shaders/class1/deferred/asAVBOIT*.glsl`
 - OIT hooks in `lldrawpoolalpha.cpp`, `llspatialpartition.cpp`, `pipeline.cpp`, `llvopartgroup.cpp`, shared alpha shaders
 
 Nothing was built or run for this audit. Every gain below is an engineering
@@ -18,15 +18,15 @@ estimate, not a measurement. The plan therefore starts with a measurement step.
 Rules the implementer must follow (from `AGENTS.md`):
 
 - Do not build. The user builds. Tell the user which items need a build.
-- `fsexactoit.*`, `fsavboit.*`, `fsoitdispatcher.*` and every `exactOIT*.glsl` /
-  `avboit*.glsl` file were created by AyaneStorm (author `chanayane@firestorm`).
+- `asexactoit.*`, `asavboit.*`, `asoitdispatcher.*` and every `asExactOIT*.glsl` /
+  `asAVBOIT*.glsl` file were created by AyaneStorm (author `chanayane@firestorm`).
   Edit them freely with ordinary comments. No ownership tags there.
 - Any edit to `ll*.cpp/.h`, `llvopartgroup.cpp`, `lldrawpoolalpha.cpp`,
   `alphaV.glsl`, `fullbrightV.glsl` etc. must be minimal and wrapped in
   `// <AS:Chanayane>` ... `// </AS:Chanayane>` with the original line kept
   commented.
 - Never use mutating git commands.
-- Do not bump `FSExactOIT::shaderCacheRevision()` / `FSAVBOIT::shaderCacheRevision()`
+- Do not bump `ASExactOIT::shaderCacheRevision()` / `ASAVBOIT::shaderCacheRevision()`
   per change. Bump each once at the end of a phase that changed shader source or
   buffer layouts, and tell the user, because a stale program-binary cache will
   otherwise load old shaders against new C++ buffer layouts.
@@ -53,34 +53,34 @@ linked list of nodes. "K" = shallow-list threshold introduced in item E5.
 | 2026-09-03 | Fence wait residual cost | found: ~8.5ms/frame CPU stall in `waitValidation()` even with zero transparent geometry on screen (35 vs 45 FPS), surviving E4/E7/E9/E11. Root cause is architectural (the fence forces a synchronous CPU/GPU rendezvous every frame, absorbing whatever GPU backlog already existed from the rest of the pipeline), not a bug in any implemented item. Not fixed; details and why in `ayanestorm-oit-fence-wait-residual-cost.md`. GPU-side `Exact OIT capture` zone broken into sub-zones and confirmed to be the same mechanism (98% of it lands on the `glFenceSync`/copy call) — one cost, not two; doc updated |
 | 2026-09-03 | E2-B | committed. `mHasGlow` now means "actually non-zero glow" (was "wrote any glow data", always true for particles); Exact OIT drops zero-glow emissive draws before dispatch. Vanilla unaffected (selects by `TYPE_EMISSIVE`, never reads `mHasGlow`) |
 | 2026-09-03 | E10a + E10b | committed. Initial pool 4x -> 2x w*h, floored at both retained capacity and peakNodes*5/4 (survives resize after a shrink). New rolling 600-frame demand window in `waitValidation()`; shrinks to `max(initialCapacity, windowPeak*2)` when peak stays under capacity/4 for a full window, deferred to `beginFrame()` (same race-avoidance pattern as E1 growth). Mutually exclusive with a same-frame growth request by construction. Verified in the log: grew 19M -> 38M -> 67M nodes under sprite load, correctly shrank to ~9.7M once demand dropped and a full window elapsed. E10c (opaque copy via texture barrier) skipped — confirmed low-value by `ayanestorm-oit-fence-wait-residual-cost.md` (55.69µs mean, <0.5% of the real fixed cost) |
-| 2026-09-03 | E12 | committed. Item 1 fixed: removed the `!FSOITDispatcher::captureCompleted()` clause added to the DoF depth-only alpha pass in `lldrawpoolalpha.cpp`, restoring vanilla behaviour. Confirmed safe by call-ordering (`renderGeomPostDeferred()` completes before composite() is even called) and visually: with focus locked on a sand wall, a foreground palm frond now correctly blurs instead of staying artificially sharp. Item 2 (rigged alpha depth) needs no change per the plan's own "document only" call |
-| 2026-09-03 | AVBOIT A1 | committed. Removed the per-frame CPU Z-bin/RMQ table build+upload in `rasterizeConservativeBounds()`, the GPU entity-mask machinery (writes in `avboitBoundsF.glsl` and pass 10, clear in pass 9, RMQ query in pass 8) in `avboitVolumeC.glsl`, and the now-dead `bounds` sort that only served the deleted sweep-line algorithm. Pass 8's gating condition simplified from `minimum_bin != 0xffffffffu && merged_mask != 0u` to `minimum_bin != 0xffffffffu` alone — verified strictly conservative (can only mark the same or more cells occupied, never fewer; see updated shader comment) rather than exactly equivalent as originally phrased, because the mask is read from `linear_cell` while the interval is dilated. Updated all 8 hand-computed buffer-layout offset chains across `fsavboit.cpp` (`work_words`) and 5 shader files (`avboitVolumeC.glsl`, `avboitBoundsF.glsl`, `avboitCaptureF.glsl`'s `avboit_proxy_bounds_offset`, `avboitEmissiveF.glsl`'s `avboit_emissive_proxy_bounds_offset`, `avboitPbrGlowF.glsl`'s `avboit_glow_proxy_bounds_offset` — one more site than the plan's stated "5 places"). `AVBOIT` shader cache revision bumped v134 -> v135 (shader source and buffer layout both changed). Verified in testing: avatar with hair, debug modes render correctly (mode 5's red/blue zero-transmittance-depth patches are expected coloring from a buffer A1 never touches, not a regression), no crashes. AVBOIT is not expected to be pixel-identical to Exact OIT (approximate by design) |
-| 2026-09-03 | AVBOIT A2 | committed. Fixed the wrong-resolution pass-1 depth test bug: added `gAVBOITCellDepthTarget` (new, volume-resolution, depth-only render target — NOT a reuse of `gAVBOITPrepassTarget`, which turned out to already have an unrelated existing role as a disposable pass-0 color sink, a collision the plan's literal "reuse this name" instruction didn't anticipate) and `gAVBOITCellDepthProgram`/`avboitCellDepthF.glsl` (new fullscreen-triangle shader, `postDeferredNoTCV.glsl` + plain fragment shader following the `gAVBOITIsolateDepthProgram` pattern) that bakes each volume cell's farthest opaque depth once per frame in `finishDirectOccupancy()`, before pass 1 binds it. Pass 1's hardware `early_fragment_tests` now rejects against the correct 8x8 block instead of a single full-res pixel at the wrong location, so the manual 64-texel `avboit_behind_opaque_bounds()` re-test (and its two inline duplicates in `avboitEmissiveF.glsl`/`avboitPbrGlowF.glsl` — the plan assumed one shared function, it's actually three separate copies under three different names) was deleted from all three capture-family shaders. **Found and fixed two pre-existing, silent `LLRenderTarget` bind/flush stack bugs while restructuring this code** (both predate this session, masked because `llassert` compiles out unless `SHOW_ASSERT` is defined): `finishDirectOccupancy()`'s and `finishDirectColorRaster()`'s `.flush()` calls were each targeting a render target that was not actually the currently-bound one, which — per `LLRenderTarget::flush()`'s pop-two-and-rebind logic — would eventually have left a private AVBOIT render target bound instead of the screen at the end of a capture. Corrected by flushing `gAVBOITPrepassTarget` explicitly before `finishDirectOccupancy()`'s own target work, and by having `finishDirectColorRaster()` flush `gAVBOITOpaqueTarget` (the target actually left bound by pass 2) instead of `gAVBOITPrepassTarget`. Shader cache revision NOT bumped yet (still v135, A1's) — per updated guidance, hold the bump until the whole work session's plan items are done, one bump at the very end covering everything, not per-item. Debug mode 6 (proxy coverage, uses a different code path) and `avboitBoundsF.glsl` (pass 0, untouched) confirmed unaffected. **Confirmed working in testing:** tree foliage that previously rendered with wrongly-dropped extinction (opaque-looking leaf clusters appearing transparent) now renders correctly, visibly closer to Exact OIT's reference output — exactly the class of bug (near, alpha-tested geometry near the affected screen region) the fix targets. Debug mode 13 (volume vs. exact transmittance) shows clean green on solid character geometry (main body/hair/dress silhouette), confirming the volume's recorded extinction now agrees with the exact reference; red/blue noise at thin wind-blown hair/cloth wisps is expected sub-cell-resolution sampling noise, not a regression. Debug mode 6 (proxy coverage) shows all-green on every transparent surface tested, confirming no regression in the unrelated pass-0 proxy-vs-exact occupancy check |
-| 2026-09-03 | AVBOIT A3 | committed. Cached `RenderAVBOITWideExtinction`/`RenderAVBOITTileRange`/`RenderAVBOITSamplingBias`/`RenderAVBOITDebugMode` via `LLCachedControl` (new `debugMode()` helper added, used at all 3 of its raw-read call sites for consistency). Moved `configureDirectRasterShader()` from per-draw to per-pass: `render_pass()` now configures all AVBOIT programs once per pass (alpha/PBR-alpha/fullbright base+rigged pairs, the full `gAVBOITMaterialAlphaProgram[]` array, the full `gAVBOITGLTFProgram.mGLTFVariants` vector, emissive/glow base+rigged pairs — confirmed via `lldrawpoolalpha.cpp`'s `target_shader = target_shader->mRiggedVariant` sites that rigged draws bind the rigged variant object directly, so both halves of every pair needed their own call, not just the base). `oitGlow` uniform replaced with a shader-side literal 0.0 in `avboitCaptureF.glsl` (this path never carries glow; glow accumulates separately via `avboit_store_glow()`), collapsing a now-redundant duplicate `alpha > 0.0` condition along the way. `configureCapturedDrawIfActive()`/`configureGLTFCapturedDraw()` now do only the per-draw accumulation-blend re-apply for pass 2 (kept per-draw per the plan's own "fragile" caveat — `LLGLDisable(GL_BLEND)`'s scope is per `forwardRender()` call, not per draw, but capture drawing disables blend globally between draws in ways that need re-establishing). Verified: no regression in testing. Shader cache revision NOT bumped (still v135) |
+| 2026-09-03 | E12 | committed. Item 1 fixed: removed the `!ASOITDispatcher::captureCompleted()` clause added to the DoF depth-only alpha pass in `lldrawpoolalpha.cpp`, restoring vanilla behaviour. Confirmed safe by call-ordering (`renderGeomPostDeferred()` completes before composite() is even called) and visually: with focus locked on a sand wall, a foreground palm frond now correctly blurs instead of staying artificially sharp. Item 2 (rigged alpha depth) needs no change per the plan's own "document only" call |
+| 2026-09-03 | AVBOIT A1 | committed. Removed the per-frame CPU Z-bin/RMQ table build+upload in `rasterizeConservativeBounds()`, the GPU entity-mask machinery (writes in `asAVBOITBoundsF.glsl` and pass 10, clear in pass 9, RMQ query in pass 8) in `asAVBOITVolumeC.glsl`, and the now-dead `bounds` sort that only served the deleted sweep-line algorithm. Pass 8's gating condition simplified from `minimum_bin != 0xffffffffu && merged_mask != 0u` to `minimum_bin != 0xffffffffu` alone — verified strictly conservative (can only mark the same or more cells occupied, never fewer; see updated shader comment) rather than exactly equivalent as originally phrased, because the mask is read from `linear_cell` while the interval is dilated. Updated all 8 hand-computed buffer-layout offset chains across `asavboit.cpp` (`work_words`) and 5 shader files (`asAVBOITVolumeC.glsl`, `asAVBOITBoundsF.glsl`, `asAVBOITCaptureF.glsl`'s `avboit_proxy_bounds_offset`, `asAVBOITEmissiveF.glsl`'s `avboit_emissive_proxy_bounds_offset`, `asAVBOITPbrGlowF.glsl`'s `avboit_glow_proxy_bounds_offset` — one more site than the plan's stated "5 places"). `AVBOIT` shader cache revision bumped v134 -> v135 (shader source and buffer layout both changed). Verified in testing: avatar with hair, debug modes render correctly (mode 5's red/blue zero-transmittance-depth patches are expected coloring from a buffer A1 never touches, not a regression), no crashes. AVBOIT is not expected to be pixel-identical to Exact OIT (approximate by design) |
+| 2026-09-03 | AVBOIT A2 | committed. Fixed the wrong-resolution pass-1 depth test bug: added `gASAVBOITCellDepthTarget` (new, volume-resolution, depth-only render target — NOT a reuse of `gASAVBOITPrepassTarget`, which turned out to already have an unrelated existing role as a disposable pass-0 color sink, a collision the plan's literal "reuse this name" instruction didn't anticipate) and `gASAVBOITCellDepthProgram`/`asAVBOITCellDepthF.glsl` (new fullscreen-triangle shader, `postDeferredNoTCV.glsl` + plain fragment shader following the `gASAVBOITIsolateDepthProgram` pattern) that bakes each volume cell's farthest opaque depth once per frame in `finishDirectOccupancy()`, before pass 1 binds it. Pass 1's hardware `early_fragment_tests` now rejects against the correct 8x8 block instead of a single full-res pixel at the wrong location, so the manual 64-texel `avboit_behind_opaque_bounds()` re-test (and its two inline duplicates in `asAVBOITEmissiveF.glsl`/`asAVBOITPbrGlowF.glsl` — the plan assumed one shared function, it's actually three separate copies under three different names) was deleted from all three capture-family shaders. **Found and fixed two pre-existing, silent `LLRenderTarget` bind/flush stack bugs while restructuring this code** (both predate this session, masked because `llassert` compiles out unless `SHOW_ASSERT` is defined): `finishDirectOccupancy()`'s and `finishDirectColorRaster()`'s `.flush()` calls were each targeting a render target that was not actually the currently-bound one, which — per `LLRenderTarget::flush()`'s pop-two-and-rebind logic — would eventually have left a private AVBOIT render target bound instead of the screen at the end of a capture. Corrected by flushing `gASAVBOITPrepassTarget` explicitly before `finishDirectOccupancy()`'s own target work, and by having `finishDirectColorRaster()` flush `gASAVBOITOpaqueTarget` (the target actually left bound by pass 2) instead of `gASAVBOITPrepassTarget`. Shader cache revision NOT bumped yet (still v135, A1's) — per updated guidance, hold the bump until the whole work session's plan items are done, one bump at the very end covering everything, not per-item. Debug mode 6 (proxy coverage, uses a different code path) and `asAVBOITBoundsF.glsl` (pass 0, untouched) confirmed unaffected. **Confirmed working in testing:** tree foliage that previously rendered with wrongly-dropped extinction (opaque-looking leaf clusters appearing transparent) now renders correctly, visibly closer to Exact OIT's reference output — exactly the class of bug (near, alpha-tested geometry near the affected screen region) the fix targets. Debug mode 13 (volume vs. exact transmittance) shows clean green on solid character geometry (main body/hair/dress silhouette), confirming the volume's recorded extinction now agrees with the exact reference; red/blue noise at thin wind-blown hair/cloth wisps is expected sub-cell-resolution sampling noise, not a regression. Debug mode 6 (proxy coverage) shows all-green on every transparent surface tested, confirming no regression in the unrelated pass-0 proxy-vs-exact occupancy check |
+| 2026-09-03 | AVBOIT A3 | committed. Cached `ASRenderAVBOITWideExtinction`/`ASRenderAVBOITTileRange`/`ASRenderAVBOITSamplingBias`/`ASRenderAVBOITDebugMode` via `LLCachedControl` (new `debugMode()` helper added, used at all 3 of its raw-read call sites for consistency). Moved `configureDirectRasterShader()` from per-draw to per-pass: `render_pass()` now configures all AVBOIT programs once per pass (alpha/PBR-alpha/fullbright base+rigged pairs, the full `gASAVBOITMaterialAlphaProgram[]` array, the full `gASAVBOITGLTFProgram.mGLTFVariants` vector, emissive/glow base+rigged pairs — confirmed via `lldrawpoolalpha.cpp`'s `target_shader = target_shader->mRiggedVariant` sites that rigged draws bind the rigged variant object directly, so both halves of every pair needed their own call, not just the base). `oitGlow` uniform replaced with a shader-side literal 0.0 in `asAVBOITCaptureF.glsl` (this path never carries glow; glow accumulates separately via `avboit_store_glow()`), collapsing a now-redundant duplicate `alpha > 0.0` condition along the way. `configureCapturedDrawIfActive()`/`configureGLTFCapturedDraw()` now do only the per-draw accumulation-blend re-apply for pass 2 (kept per-draw per the plan's own "fragile" caveat — `LLGLDisable(GL_BLEND)`'s scope is per `forwardRender()` call, not per draw, but capture drawing disables blend globally between draws in ways that need re-establishing). Verified: no regression in testing. Shader cache revision NOT bumped (still v135) |
 
-| 2026-09-03 | AVBOIT A4 | committed. `FSAVBOIT::handleCapturedEmissives()` now skips the emissive/PBR-glow draw calls entirely for pass 1 (`sDirectRasterPass != 1` guard added; pass 0 and pass 2 unaffected) instead of submitting them only to hit `avboit_store_glow()`'s existing `if (avboitRasterPass == 1) return;` early-out — confirmed via `beginDirectRasterPass()` that pass 1 is the volume-resolution extinction raster and via both glow shaders that pass 1 does no other work before that return, so this is a pure submission-skip, not a behavior change. `materialF.glsl`'s pass-0-only exit (`avboitRasterPass == 0`) widened to `avboitRasterPass < 2` to match the other four shared shaders (`alphaF`, `pbralphaF`, `pbrmetallicroughnessF`, `fullbrightF`, all already `< 2`) — confirmed exact: the early-return path computes the identical `diffcol.a * vertex_color.a` expression already used by the pass-1 fallthrough path at the shader's later `#elif defined(AVBOIT)` output block (both read `diffcol.a` after the same `alphaMask()` call), so this removes a full material/lighting evaluation (specular, normal mapping, shadows, probes) for pass-1 fragments on legacy materials without changing what gets stored. Gated the two dead diagnostic counters behind their owning debug modes: `avboit_compare_proxy_coverage()`'s `avboitDiagnostic[4]`/`[5]` atomics (per alpha>0 fragment in pass 0) behind `avboitDebugMode == 6`, and `avboitVolumeC.glsl` pass 5's `avboitDiagnostic[2]` atomic (per cell) behind `avboitDebugMode == 5` — confirmed via full-tree grep that neither counter is read anywhere (dead even before gating; debug mode 6 actually reads the separately-written `failure` bits in `avboitWork[miss_map]`, not the counter). Deleted `avboit_cull_fragment()` (defined in `avboitCaptureF.glsl`, unconditionally `return false;`) and every declaration + call site across the 5 shared shaders (`alphaF`, `pbralphaF`, `materialF` class3, `pbrmetallicroughnessF`, `fullbrightF`) — each call site was a complete, self-contained tagged block with no other content, so the whole block was removed rather than left empty. Net effect across all 8 touched files: 15 insertions, 67 deletions. Verified: no visual regression in testing. Shader cache revision NOT bumped (still v135) |
+| 2026-09-03 | AVBOIT A4 | committed. `ASAVBOIT::handleCapturedEmissives()` now skips the emissive/PBR-glow draw calls entirely for pass 1 (`sDirectRasterPass != 1` guard added; pass 0 and pass 2 unaffected) instead of submitting them only to hit `avboit_store_glow()`'s existing `if (avboitRasterPass == 1) return;` early-out — confirmed via `beginDirectRasterPass()` that pass 1 is the volume-resolution extinction raster and via both glow shaders that pass 1 does no other work before that return, so this is a pure submission-skip, not a behavior change. `materialF.glsl`'s pass-0-only exit (`avboitRasterPass == 0`) widened to `avboitRasterPass < 2` to match the other four shared shaders (`alphaF`, `pbralphaF`, `pbrmetallicroughnessF`, `fullbrightF`, all already `< 2`) — confirmed exact: the early-return path computes the identical `diffcol.a * vertex_color.a` expression already used by the pass-1 fallthrough path at the shader's later `#elif defined(AVBOIT)` output block (both read `diffcol.a` after the same `alphaMask()` call), so this removes a full material/lighting evaluation (specular, normal mapping, shadows, probes) for pass-1 fragments on legacy materials without changing what gets stored. Gated the two dead diagnostic counters behind their owning debug modes: `avboit_compare_proxy_coverage()`'s `avboitDiagnostic[4]`/`[5]` atomics (per alpha>0 fragment in pass 0) behind `avboitDebugMode == 6`, and `asAVBOITVolumeC.glsl` pass 5's `avboitDiagnostic[2]` atomic (per cell) behind `avboitDebugMode == 5` — confirmed via full-tree grep that neither counter is read anywhere (dead even before gating; debug mode 6 actually reads the separately-written `failure` bits in `avboitWork[miss_map]`, not the counter). Deleted `avboit_cull_fragment()` (defined in `asAVBOITCaptureF.glsl`, unconditionally `return false;`) and every declaration + call site across the 5 shared shaders (`alphaF`, `pbralphaF`, `materialF` class3, `pbrmetallicroughnessF`, `fullbrightF`) — each call site was a complete, self-contained tagged block with no other content, so the whole block was removed rather than left empty. Net effect across all 8 touched files: 15 insertions, 67 deletions. Verified: no visual regression in testing. Shader cache revision NOT bumped (still v135) |
 
-| 2026-09-03 | **E2-B regression: prim glow lost** | fixed, committed. Lamp glass dark in Exact OIT only. Cause: `LLDrawInfo::mHasGlow` is written only by `LLParticlePartition::getGeometry()`; `registerFace()` (llvovolume.cpp) never sets it, so every prim emissive draw had `mHasGlow == false` and E2-B's `drop_no_glow` filter in `FSExactOIT::handleCapturedEmissives()` discarded it. The E2 trap claim "prims keep mHasGlow true" was wrong (plan defect #3). Fix A applied: one tagged `draw_info->mHasGlow = true;` in `registerFace()`'s new-`LLDrawInfo` branch, plus the corrected comment above `drop_no_glow`. Verified: lamp glows again in Exact OIT, matching vanilla/AVBOIT. Details in `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md` |
+| 2026-09-03 | **E2-B regression: prim glow lost** | fixed, committed. Lamp glass dark in Exact OIT only. Cause: `LLDrawInfo::mHasGlow` is written only by `LLParticlePartition::getGeometry()`; `registerFace()` (llvovolume.cpp) never sets it, so every prim emissive draw had `mHasGlow == false` and E2-B's `drop_no_glow` filter in `ASExactOIT::handleCapturedEmissives()` discarded it. The E2 trap claim "prims keep mHasGlow true" was wrong (plan defect #3). Fix A applied: one tagged `draw_info->mHasGlow = true;` in `registerFace()`'s new-`LLDrawInfo` branch, plus the corrected comment above `drop_no_glow`. Verified: lamp glows again in Exact OIT, matching vanilla/AVBOIT. Details in `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md` |
 | 2026-09-03 | **AVBOIT head/hair colour mismatch** | found, not a separate bug. Hair looks lighter/washed and eye makeup/lashes fainter in AVBOIT than in vanilla and Exact OIT (which match). Verified the fragment colour path is identical in all three modes (`alphaF.glsl`, `pbralphaF.glsl`, `fullbrightF.glsl` all pass the same `color` to `frag_color` / `exact_oit_store` / `avboit_store`; shadow sampling identical). The difference is the resolve: per-pixel weighted average with a 1/8-resolution volume transmittance, so back strands/layers that the front strand hides in vanilla still contribute their (differently lit, usually brighter) colour. Same representational cause as the sheer-over-sheer bug; A9 fixes both. Details in A9 |
-| 2026-09-03 | AVBOIT A5 | committed (option B). `RenderAVBOITTileRange` default flipped `1` -> `0` in `settings.xml`, `FSAVBOIT::tileRange()`'s fallback default matched (`true` -> `false`). Confirmed via `renderPostDeferredCapture()` that pass 0 still only runs the ordinary alpha pools in `debugMode() == 6`, otherwise GLTF-only, so the feature remains genuinely inert for non-GLTF content and this is a zero-visual-change default flip that removes the GLTF-tile inconsistency for everyone not explicitly opting in. Both comments corrected to state the inertness rather than describe the feature as working. Option A (wire it to a pass that covers all alpha geometry) deferred to after A9, which is the actual fix for the bug this feature was meant to address |
-| 2026-09-03 | **AVBOIT hair flicker regression** | root cause confirmed, not yet fixed. Cell-sized flicker at the hair crown (modes 0/12/14; mode 15 steady); absent pre-session and pre-A7, so A6/A7 cleared. Triggered by camera motion alone or avatar animation alone; static input is stable, so no non-determinism. Key fact: A2 made pass 1 strictly *more* permissive (the old manual 64-texel `max()` re-test is unchanged, only the bogus hardware test against an unrelated full-res pixel was removed), so the flicker is in cells A2 now correctly admits that the old bogus test culled consistently. Discriminating experiment run: temporarily forced `gl_FragDepth = 1.0;` in `avboitCellDepthF.glsl` (accept every pass-1 cell, bypassing the opaque-depth cull) — flicker persisted unchanged, excluding the per-cell `max()` depth-flip candidate and confirming the cause is pass 1's single-sample-per-8x8-cell rasterization of thin hair strands giving unstable per-cell extinction under sub-pixel motion (also explains the separately-logged washed-out-hair finding). Diagnostic edit reverted immediately after (`git diff` confirmed clean). Fix chosen and specified as **A8** in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md`: pass 1 rasterizes at full resolution against the full-res private opaque depth, each fragment adds `optical_depth / 64` to `pixel / 8`, A2's cell-depth bake/target/shader removed, `avboit_add_extinction()` CAS loop made unbounded (no false saturation under 64-way contention), narrow extinction layout documented as unusable |
-| 2026-09-03 | AVBOIT A8 | implemented, not yet built/tested. Implements the fix spec above exactly. `beginDirectRasterPass()`: pass 1 now shares pass 0's full-viewport branch (was volume resolution). `finishDirectOccupancy()`: A2's cell-depth bake block removed entirely; pass 1 now draws directly into `gAVBOITOpaqueTarget` (already current, no extra bind-stack push/pop). `finishDirectExtinction()`: the now-unneeded `gAVBOITCellDepthTarget.flush()` and its bind-stack-corruption-avoidance comment removed (nothing to flush -- pass 1 never left `gAVBOITOpaqueTarget`). `gAVBOITCellDepthTarget`/`gAVBOITCellDepthProgram` fully removed (global decl, `loadShaders()`, `registerShaders()`, `unloadShaders()`, `createShader()` chain, `allocateVolume()`, `releaseResources()`, `beginDirectFrame()` completeness gate) and `avboitCellDepthF.glsl` deleted -- confirmed zero remaining code references by full-tree grep (only historical doc mentions remain). `avboitCaptureF.glsl`'s `avboit_direct_store()`: cell mapping widened from `avboitRasterPass == 0` to `avboitRasterPass != 2` (pass 1 now needs the same `pixel/8` reduction as pass 0); pass-1 branch scales `optical_depth *= 1.0/64.0` before the two-slice split, so each of a cell's up to 64 pixel-fragments contributes its pixel-area share of the mean optical depth instead of one fragment representing the whole cell -- this is the actual flicker fix, verified by construction against the confirmed root cause (single-sample-per-cell rasterization). Same mapping updated (comment-only, since both glow shaders return immediately for pass 1) in `avboitEmissiveF.glsl`/`avboitPbrGlowF.glsl` for consistency. `avboit_add_extinction()`'s CAS retry loop initially changed from a 64-attempt cap with a "give up and mark saturated" fallback to an unconditional `while (true)`, on the (incorrect) reasoning that every failed `imageAtomicCompSwap` implies a different lane's write won that round and so the loop is inherently bounded. `settings.xml`'s `RenderAVBOITWideExtinction` comment updated to warn the narrow layout's quantum is now under more pressure from 1/64-scaled contributions (left as documentation, not forced -- the setting already defaults to wide/on). Both of the spec's self-check items done: confirmed via grep that all five pass-1 shaders (`alphaF`, `pbralphaF`, `materialF`, GLTF `pbrmetallicroughnessF`, `fullbrightF`) share the identical `avboitRasterPass < 2` early-return-after-`avboit_store` gate; confirmed via grep zero remaining `gAVBOITCellDepthTarget`/`gAVBOITCellDepthProgram` code references. The GLTF unconditional depth-prepass side finding (flagged in the TODO doc) was re-examined given pass 1's target-lifetime change (now the persistent `gAVBOITOpaqueTarget` instead of the old disposable per-pass bake) but left out of scope as originally flagged -- still unconfirmed, now higher-stakes if it is ever hit. Net diff: 5 files modified, 1 shader deleted. Shader source and buffer/binding semantics changed: needs a cache bump, held per standing guidance. **Performance regression found on first build: ~1 FPS in AVBOIT.** The unconditional CAS loop was the likely cause -- `avboitExtinction` is a genuinely globally-coherent atomic (`coherent uimage3D`, not a fast local op), and the "bounded by contending lanes" reasoning doesn't hold on real GPU hardware (no per-round serialization guarantee across warps), while A8's own fragment-count increase means true per-word contention is not capped at 64 (a dense hair mass concentrates into a narrow depth range, so many of a cell's per-pixel fragments across overlapping strand layers can collide on the same one or two of a cell's ~64 words). Corrected to a bounded 256-attempt loop with the give-up-as-saturated fallback restored -- a band-aid, not a real fix; a real fix (subgroup/wave-level reduction before the atomic, same family as Exact OIT's E7) is not yet designed. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT A8 superseded; actual flicker cause found** | A8 (row above) is NOT the fix for the hair flicker regression. The user bisected by rebuilding the viewer at specific historical commits (not code analysis) and found the flicker's actual introduction point is **A5** (`55928e97da`, the `RenderAVBOITTileRange` default `1` -> `0` flip): hair looked correct immediately before that commit, flickered starting at it. A2/A8's territory (pass-1 depth test / sampling resolution) is not implicated. **A8's code was fully reverted; HEAD is back at A7 (`89352c424c`), clean working tree.** Real mechanism: A5's own analysis (only GLTF alpha feeds the per-tile depth range via the material-occupancy pass, so the flip looked inert) was factually correct but its "zero visual change for non-GLTF scenes" conclusion did not hold for a mixed scene containing GLTF/PBR content, which the user's test scene does — some tiles near that content were genuinely rescaled to a fine per-tile curve pre-A5, and nearby hair benefited from it even without writing to it; post-A5 every tile falls back to one coarse frame-wide curve, plausibly (not yet independently measured) making fragments more likely to cross slice boundaries under ordinary sub-pixel motion. Fix: **Option A**, per A5's own deferred plan entry (now approved) — wire `avboit_reduce_tile_range()` into `avboitBoundsF.glsl`'s exact-proxy path (`avboitExactProxy != 0`), which already runs full-resolution over all alpha geometry, static and rigged, every frame — instead of the GLTF-only material-occupancy pass. Implemented: `avboitBoundsF.glsl` gained `avboitTileRange` uniform plus ported `avboit_global_normalized_depth()`/`avboit_tile_range_offset()`/`avboit_range_index()`/`avboit_reduce_tile_range()` (byte-identical to the capture shaders' versions, buffer layout and curve must match exactly), called from the exact-proxy branch using the already-computed `bounded_window_depth`; `fsavboit.cpp` uploads the uniform to both `gAVBOITBoundsProgram` and `gAVBOITSkinnedBoundsProgram` (separate program object, needed for rigged/hair geometry); `tileRange()`'s default and `settings.xml`'s default both flipped back to `true`/`1`. CPU-side buffer sizing for the tile-range region was already present (unchanged since before A5). Not yet built/tested; shader source changed, needs a cache bump held per standing guidance. Full history and detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT Option A: pre-existing dead-code bug found and fixed** | First Option-A build showed severe visual corruption on hair (blocky black region, tile-grid-shaped). Root cause: `avboitVolumeC.glsl` had two unrelated compute passes both literally using `avboitPass == 12` on the same program (`gAVBOITVolumeProgram`) -- a transmittance-validity diagnostic (dispatched from `finishDirectExtinction()`) and the per-tile depth-range reset (dispatched from `rasterizeConservativeBounds()`). The diagnostic block matches first and unconditionally returns, so the reset was unreachable dead code -- confirmed present, identically broken, at pre-A5/pre-A8/current-HEAD(A7), i.e. this bug predates the whole session and was harmless only because nothing exercised tile-ranging meaningfully before. Consequence once tile-ranging is genuinely fed (Option A): the tile-range buffer's sentinel entries were never reset per frame, and `atomicMin`/`atomicMax` only ever narrow a stored range, never widen it, so stale/accumulated/uninitialized data persisted indefinitely and clamped hair into an increasingly wrong depth-slice mapping -- matching the screenshot exactly. Fixed by renumbering the reset block to `avboitPass == 13` (first unused number) and updating its CPU dispatch site to match; confirmed via grep every pass literal 1-13 is now unique. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range fix, attempt 2: wrong feed pass** | After the pass-12/13 dead-code fix (row above), rebuild still showed reduced-but-present tile-grid corruption. Cause: attempt 1 fed the per-tile range from `avboitBoundsF.glsl`'s exact-proxy pass (raw untextured geometry, no alpha test), architecturally different from the original design, which feeds it from `avboitCaptureF.glsl`'s pass-0 material-tested occupancy branch (`avboit_reduce_tile_range()`, already present and correct, but that pass only ran in debug mode 6). Reverted attempt 1's `avboitBoundsF.glsl`/`fsavboit.cpp` changes entirely (confirmed `avboitBoundsF.glsl` now diffs clean against A7). Fixed properly: `render_pass(true)` (the material-tested occupancy pass in `renderPostDeferredCapture()`) now runs unconditionally instead of only in debug mode 6; the GLTF-specific occupancy pass now runs unconditionally alongside it (was previously skipped whenever debug mode 6's branch ran, an orthogonal pre-existing quirk incidentally fixed too). The pass-12/13 reset fix is retained and still required. Known, unmeasured cost: a full alpha-material-shader pass over all alpha geometry now runs every frame instead of only in debug mode 6. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | AVBOIT A5 | committed (option B). `ASRenderAVBOITTileRange` default flipped `1` -> `0` in `settings.xml`, `ASAVBOIT::tileRange()`'s fallback default matched (`true` -> `false`). Confirmed via `renderPostDeferredCapture()` that pass 0 still only runs the ordinary alpha pools in `debugMode() == 6`, otherwise GLTF-only, so the feature remains genuinely inert for non-GLTF content and this is a zero-visual-change default flip that removes the GLTF-tile inconsistency for everyone not explicitly opting in. Both comments corrected to state the inertness rather than describe the feature as working. Option A (wire it to a pass that covers all alpha geometry) deferred to after A9, which is the actual fix for the bug this feature was meant to address |
+| 2026-09-03 | **AVBOIT hair flicker regression** | root cause confirmed, not yet fixed. Cell-sized flicker at the hair crown (modes 0/12/14; mode 15 steady); absent pre-session and pre-A7, so A6/A7 cleared. Triggered by camera motion alone or avatar animation alone; static input is stable, so no non-determinism. Key fact: A2 made pass 1 strictly *more* permissive (the old manual 64-texel `max()` re-test is unchanged, only the bogus hardware test against an unrelated full-res pixel was removed), so the flicker is in cells A2 now correctly admits that the old bogus test culled consistently. Discriminating experiment run: temporarily forced `gl_FragDepth = 1.0;` in `asAVBOITCellDepthF.glsl` (accept every pass-1 cell, bypassing the opaque-depth cull) — flicker persisted unchanged, excluding the per-cell `max()` depth-flip candidate and confirming the cause is pass 1's single-sample-per-8x8-cell rasterization of thin hair strands giving unstable per-cell extinction under sub-pixel motion (also explains the separately-logged washed-out-hair finding). Diagnostic edit reverted immediately after (`git diff` confirmed clean). Fix chosen and specified as **A8** in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md`: pass 1 rasterizes at full resolution against the full-res private opaque depth, each fragment adds `optical_depth / 64` to `pixel / 8`, A2's cell-depth bake/target/shader removed, `avboit_add_extinction()` CAS loop made unbounded (no false saturation under 64-way contention), narrow extinction layout documented as unusable |
+| 2026-09-03 | AVBOIT A8 | implemented, not yet built/tested. Implements the fix spec above exactly. `beginDirectRasterPass()`: pass 1 now shares pass 0's full-viewport branch (was volume resolution). `finishDirectOccupancy()`: A2's cell-depth bake block removed entirely; pass 1 now draws directly into `gASAVBOITOpaqueTarget` (already current, no extra bind-stack push/pop). `finishDirectExtinction()`: the now-unneeded `gASAVBOITCellDepthTarget.flush()` and its bind-stack-corruption-avoidance comment removed (nothing to flush -- pass 1 never left `gASAVBOITOpaqueTarget`). `gASAVBOITCellDepthTarget`/`gASAVBOITCellDepthProgram` fully removed (global decl, `loadShaders()`, `registerShaders()`, `unloadShaders()`, `createShader()` chain, `allocateVolume()`, `releaseResources()`, `beginDirectFrame()` completeness gate) and `asAVBOITCellDepthF.glsl` deleted -- confirmed zero remaining code references by full-tree grep (only historical doc mentions remain). `asAVBOITCaptureF.glsl`'s `avboit_direct_store()`: cell mapping widened from `avboitRasterPass == 0` to `avboitRasterPass != 2` (pass 1 now needs the same `pixel/8` reduction as pass 0); pass-1 branch scales `optical_depth *= 1.0/64.0` before the two-slice split, so each of a cell's up to 64 pixel-fragments contributes its pixel-area share of the mean optical depth instead of one fragment representing the whole cell -- this is the actual flicker fix, verified by construction against the confirmed root cause (single-sample-per-cell rasterization). Same mapping updated (comment-only, since both glow shaders return immediately for pass 1) in `asAVBOITEmissiveF.glsl`/`asAVBOITPbrGlowF.glsl` for consistency. `avboit_add_extinction()`'s CAS retry loop initially changed from a 64-attempt cap with a "give up and mark saturated" fallback to an unconditional `while (true)`, on the (incorrect) reasoning that every failed `imageAtomicCompSwap` implies a different lane's write won that round and so the loop is inherently bounded. `settings.xml`'s `ASRenderAVBOITWideExtinction` comment updated to warn the narrow layout's quantum is now under more pressure from 1/64-scaled contributions (left as documentation, not forced -- the setting already defaults to wide/on). Both of the spec's self-check items done: confirmed via grep that all five pass-1 shaders (`alphaF`, `pbralphaF`, `materialF`, GLTF `pbrmetallicroughnessF`, `fullbrightF`) share the identical `avboitRasterPass < 2` early-return-after-`avboit_store` gate; confirmed via grep zero remaining `gASAVBOITCellDepthTarget`/`gASAVBOITCellDepthProgram` code references. The GLTF unconditional depth-prepass side finding (flagged in the TODO doc) was re-examined given pass 1's target-lifetime change (now the persistent `gASAVBOITOpaqueTarget` instead of the old disposable per-pass bake) but left out of scope as originally flagged -- still unconfirmed, now higher-stakes if it is ever hit. Net diff: 5 files modified, 1 shader deleted. Shader source and buffer/binding semantics changed: needs a cache bump, held per standing guidance. **Performance regression found on first build: ~1 FPS in AVBOIT.** The unconditional CAS loop was the likely cause -- `avboitExtinction` is a genuinely globally-coherent atomic (`coherent uimage3D`, not a fast local op), and the "bounded by contending lanes" reasoning doesn't hold on real GPU hardware (no per-round serialization guarantee across warps), while A8's own fragment-count increase means true per-word contention is not capped at 64 (a dense hair mass concentrates into a narrow depth range, so many of a cell's per-pixel fragments across overlapping strand layers can collide on the same one or two of a cell's ~64 words). Corrected to a bounded 256-attempt loop with the give-up-as-saturated fallback restored -- a band-aid, not a real fix; a real fix (subgroup/wave-level reduction before the atomic, same family as Exact OIT's E7) is not yet designed. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT A8 superseded; actual flicker cause found** | A8 (row above) is NOT the fix for the hair flicker regression. The user bisected by rebuilding the viewer at specific historical commits (not code analysis) and found the flicker's actual introduction point is **A5** (`55928e97da`, the `ASRenderAVBOITTileRange` default `1` -> `0` flip): hair looked correct immediately before that commit, flickered starting at it. A2/A8's territory (pass-1 depth test / sampling resolution) is not implicated. **A8's code was fully reverted; HEAD is back at A7 (`89352c424c`), clean working tree.** Real mechanism: A5's own analysis (only GLTF alpha feeds the per-tile depth range via the material-occupancy pass, so the flip looked inert) was factually correct but its "zero visual change for non-GLTF scenes" conclusion did not hold for a mixed scene containing GLTF/PBR content, which the user's test scene does — some tiles near that content were genuinely rescaled to a fine per-tile curve pre-A5, and nearby hair benefited from it even without writing to it; post-A5 every tile falls back to one coarse frame-wide curve, plausibly (not yet independently measured) making fragments more likely to cross slice boundaries under ordinary sub-pixel motion. Fix: **Option A**, per A5's own deferred plan entry (now approved) — wire `avboit_reduce_tile_range()` into `asAVBOITBoundsF.glsl`'s exact-proxy path (`avboitExactProxy != 0`), which already runs full-resolution over all alpha geometry, static and rigged, every frame — instead of the GLTF-only material-occupancy pass. Implemented: `asAVBOITBoundsF.glsl` gained `avboitTileRange` uniform plus ported `avboit_global_normalized_depth()`/`avboit_tile_range_offset()`/`avboit_range_index()`/`avboit_reduce_tile_range()` (byte-identical to the capture shaders' versions, buffer layout and curve must match exactly), called from the exact-proxy branch using the already-computed `bounded_window_depth`; `asavboit.cpp` uploads the uniform to both `gASAVBOITBoundsProgram` and `gASAVBOITSkinnedBoundsProgram` (separate program object, needed for rigged/hair geometry); `tileRange()`'s default and `settings.xml`'s default both flipped back to `true`/`1`. CPU-side buffer sizing for the tile-range region was already present (unchanged since before A5). Not yet built/tested; shader source changed, needs a cache bump held per standing guidance. Full history and detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT Option A: pre-existing dead-code bug found and fixed** | First Option-A build showed severe visual corruption on hair (blocky black region, tile-grid-shaped). Root cause: `asAVBOITVolumeC.glsl` had two unrelated compute passes both literally using `avboitPass == 12` on the same program (`gASAVBOITVolumeProgram`) -- a transmittance-validity diagnostic (dispatched from `finishDirectExtinction()`) and the per-tile depth-range reset (dispatched from `rasterizeConservativeBounds()`). The diagnostic block matches first and unconditionally returns, so the reset was unreachable dead code -- confirmed present, identically broken, at pre-A5/pre-A8/current-HEAD(A7), i.e. this bug predates the whole session and was harmless only because nothing exercised tile-ranging meaningfully before. Consequence once tile-ranging is genuinely fed (Option A): the tile-range buffer's sentinel entries were never reset per frame, and `atomicMin`/`atomicMax` only ever narrow a stored range, never widen it, so stale/accumulated/uninitialized data persisted indefinitely and clamped hair into an increasingly wrong depth-slice mapping -- matching the screenshot exactly. Fixed by renumbering the reset block to `avboitPass == 13` (first unused number) and updating its CPU dispatch site to match; confirmed via grep every pass literal 1-13 is now unique. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range fix, attempt 2: wrong feed pass** | After the pass-12/13 dead-code fix (row above), rebuild still showed reduced-but-present tile-grid corruption. Cause: attempt 1 fed the per-tile range from `asAVBOITBoundsF.glsl`'s exact-proxy pass (raw untextured geometry, no alpha test), architecturally different from the original design, which feeds it from `asAVBOITCaptureF.glsl`'s pass-0 material-tested occupancy branch (`avboit_reduce_tile_range()`, already present and correct, but that pass only ran in debug mode 6). Reverted attempt 1's `asAVBOITBoundsF.glsl`/`asavboit.cpp` changes entirely (confirmed `asAVBOITBoundsF.glsl` now diffs clean against A7). Fixed properly: `render_pass(true)` (the material-tested occupancy pass in `renderPostDeferredCapture()`) now runs unconditionally instead of only in debug mode 6; the GLTF-specific occupancy pass now runs unconditionally alongside it (was previously skipped whenever debug mode 6's branch ran, an orthogonal pre-existing quirk incidentally fixed too). The pass-12/13 reset fix is retained and still required. Known, unmeasured cost: a full alpha-material-shader pass over all alpha geometry now runs every frame instead of only in debug mode 6. Not yet rebuilt/retested. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
 | 2026-09-03 | **AVBOIT tile-range: attempt 2 still broken, investigation handed off** | Rebuilt and tested. Still corrupted -- now asymmetric (right side of avatar's hair only, left side clean) -- and the flicker, which had seemed traceable to A5 alone, is back too. A further code-level re-check (tile-count/offset formulas across both shader files, reset dispatch sizing, barrier ordering, SSBO binding persistence, the write path itself, and a resize/reallocation race) found the mechanism internally consistent everywhere checked -- no new bug located by reasoning alone. Per the user's explicit direction, stopped attempting further blind fixes and wrote a full handoff (root-cause history, current diffs, everything checked and ruled out, and concrete open questions e.g. why right-side-only, whether the flicker and the corruption are one bug or two, and using debug mode 6's existing proxy-vs-material diagnostic counters to quantify coverage mismatch instead of reasoning about it) into `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` for a fresh, higher-effort pass. Current tree state (pass-12/13 fix + attempt-2's unconditional material-occupancy feed) left in place, uncommitted, not reverted -- it is closer to correct than A7's baseline (the dead-code bug is real and fixed) even though the top-level symptom persists |
 | 2026-09-03 | **AVBOIT tile-range: diagnosis (Fable)** | Three defects found by code reading. (1) Pass 1 rasterizes at volume resolution, so `gl_FragCoord.xy` is a cell index there, yet `avboit_virtual_depth()` divides it by 16 as if full-res: pass 1 reads the range of the wrong tile (top-left 1/8 of the screen), pass 2 the right one, so extinction is written and read under different mappings -- blocky/black, side-dependent. (2) The tile-rescaled 0..1 coordinate is pushed through `avboitWarp[]`, built from global occupancy, so most of a tile's range collapses onto the warp's empty ranges; pass 6 early-depth quads also use the global slice->depth table. (3) Linear xy filtering of the transmittance volume blends cells of different tiles. Pre-A5 every tile was `(0,0)` (work buffer cleared to 0 each frame, reset dead) -> all fragments in one slice -> unordered blend; pre-A2 the bogus pass-1 depth test hid it, A2 exposed it (weird hair), A5 restored real ordering (flicker = ordering engaging, not a new bug). Fix spec (feed from exact-proxy bounds pass, full-res tile lookup, linear per-tile slices bypassing the warp, manual 4-cell filtering, per-tile pass-6 depth) at the end of `ayanestorm-oit-avboit-hair-flicker-regression-todo.md`. Not yet implemented |
-| 2026-09-03 | **AVBOIT tile-range: round 5, tilted-sheet theory ruled out; stripes tied to geometry not raster grid** | Round 5 proposed a second raster-grid mechanism after round 4's own-splat theory was ruled out: a tilted hair sheet's own sub-samples (round 3's supersampling) fill an 8px cell's slice range densely, so a pixel reads transmittance already polluted by nearer parts of its own sheet within the same cell -- a sawtooth with one-cell (8px) period along the depth gradient. Proposed live test: step `RenderAVBOITSamplingBias` through 4/8/16/32 (no rebuild, ranging on); prediction was progressive fading, gone by 32. **Test run: stripes' visible pattern shifts at each step but never fades or improves -- unchanged in severity through bias 32.** This rules out round 5's mechanism too. Per the round-5 spec's own fallback instructions, checked zoom/pan behavior next: **stripes scale with screen zoom (thinner zoomed in, wider zoomed out) and specific stripes appear/disappear when panning.** This is decisive against BOTH round 4 and round 5's entire category of theory -- any fixed-pixel-count raster-grid cause (cell, tile, or slice boundaries, all allocated in screen pixels) would stay a constant pixel size regardless of zoom; a pattern that scales with magnification and is tied to specific surface locations under panning is a world/geometry-space phenomenon, not a screen-space one. Setting restored to 1.0. Striping still not root-caused, but the search space is now much narrower: next round should look at world/surface-geometry-tied causes (e.g. hair strand texture/geometry detail AVBOIT's approximate ordering doesn't resolve as cleanly as Exact OIT's exact ordering) rather than any more of AVBOIT's own screen-aligned grids. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 6/7 diagnosis, round 8 fix implemented (cell-centre depth projection)** | Round 6 correctly identified the zoom/pan-scaling artifact as the pre-existing **A9** limitation already named in this plan: AVBOIT's per-cell average extinction has no per-pixel front-layer knowledge, so overlapping near-coplanar strand/garment cards blend their textures into a beat pattern rather than compositing per pixel -- confirmed by mode 9 (exact aggregate alpha, stripe-free) vs mode 10 (normalized colour, striped) and by the block artefacts lining up with mode 5's per-cell zero-transmittance cutoff. This is a real, structural finding but not a bug in rounds 1-5; A9 (per-pixel front key, already specified in this plan) is the eventual fix and stays a separate, larger follow-up. Round 7 found a second, distinct 2px-period artifact on top of it -- screen-row-locked, orientation-independent, present with ranging on regardless of sampling bias, absent with ranging off -- which round 8 root-caused: pass 1's per-cell sub-samples (round 3's supersampling) sit at different depths across a tilted surface under per-tile ranging's thin slices, so a pass-2 pixel can read transmittance already polluted by nearer parts of its own surface within the same cell. General statement: a cell-resolution volume cannot resolve ordering finer than one surface's own depth spread across the filter footprint. **Round 8's fix, implemented in `avboitCaptureF.glsl` and both glow shaders:** every pass-1 and pass-2 sample of a cell is now projected, via screen-space derivatives clamped to one cell's worth of slope, to that cell's own centre depth before mapping to a physical slice -- a surface can then never occlude itself at any tilt, while two different surfaces keep their real depth separation (both project to the same point). Tile-mode sampling bias changed from the runtime `avboitSamplingBias` uniform to a fixed `AVBOIT_TILE_BIAS_SLICES = 2.0` (the PDF's original, non-backed-off value, now safe again since the projection removes the multi-slice self-occlusion that made rounds 4/5's larger biases necessary and still insufficient). Global mode (`RenderAVBOITTileRange = 0`) is unchanged -- every projection is computed but only read inside a tile-ranged branch. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT: round 9 built/tested (flat-fabric speckle fixed); A9 implemented (round 10)** | Round 9's minimum tile span was rebuilt and tested: flat fabric clean in mode 12. Remaining, confirmed to be the same underlying mechanism as round 6's beat-pattern finding rather than a new bug: dark 8px squares of an under-garment popping through a dress under camera motion, and faint squarish patches in dense hair vs. Exact OIT -- both are cells where the per-pixel front layer's read lands behind its own splat, so the layer behind it wins the cell's normalized average. Decision (round 10): stop tuning tile ranging (keep rounds 1, 2, 3, 8, 9 as-is) and implement **A9** as specified above -- a full-resolution front-key pass giving the front two per-pixel layers an exact source-over weight, independent of cells/tiles/slices/projections, which directly targets both remaining symptoms (dress-under-garment popping and hair patches are both "front layer, wrong weight" cases A9's design covers by construction). **A9 implemented in full**, one structural deviation and one deliberate omission from the plan's original design, both because of how the codebase has changed since A9 was drafted (rounds 1-9's restructuring) or a hard resource constraint, not a disagreement with the design: (1) the plan's literal pass-3 insertion point (`gAVBOITOpaqueTarget.bindTarget()` right after `finishDirectOccupancy()`) would double-push the render-target bind stack given how `finishDirectOccupancy()` is now structured -- fixed by splitting its last two lines into a new `FSAVBOIT::beginPass1()`, called after the new pass-3 block instead of at the end of `finishDirectOccupancy()`, so pass 3 runs while `gAVBOITOpaqueTarget` is already the current target rather than rebinding it. (2) Debug modes 16/17 (front-key visualization) were not implemented -- the resolve compute shader is already at GL's 8-image-unit limit and the two spare slots are either format-mismatched (`r8ui` vs. the front-key images' `r32ui`) or would need unverified duplicate-binding aliasing; skipped on the user's explicit direction rather than risk unspecified GPU behavior in a debug-only feature. Everything else matches the plan exactly: `avboit_store_front_key()`'s two-key atomic insertion, pass 2's `front_factor` weighting (front=1, second=`1-alpha0`, deeper=`min(volume, (1-alpha0)(1-alpha1))`), the `RenderAVBOITFrontLayers` A/B setting, the five shared-shader `avboitRasterPass < 2` -> `!= 2` tagged edits (all five already read `< 2`, not the mixed `< 1`/`< 2` state the plan's stale note described), and both glow shaders' identical front-key read. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 8 built/tested (periodic lines fixed); round 9 fix for residual speckle** | Round 8's cell-centre projection was rebuilt and tested: the 2px periodic lines from round 7 are gone. Remaining: grey speckle in mode 12, heaviest on flat/camera-facing surfaces (e.g. a front-view skirt) and much lighter where the same surface is tilted (side view). **Round 9 root cause:** a near-flat tile's real depth content spans almost nothing, so the padded tile span collapses toward the 24-bit depth key's own quantum; spreading 127 physical slices over that few-nanometre span means pass 1 (half-resolution rasterizer) and pass 2 (full-resolution rasterizer) interpolating the same plane at slightly different sample points disagree by many slices from ordinary fp32 window-depth precision (~2 um at two metres) alone, so a fragment's own splat lands in front of or behind its biased read at random -- speckle. Tilted tiles have real spans (~0.1 mm/slice) where that same 2 um is negligible, hence smooth. An earlier draft blaming surface curvature was investigated and withdrawn once the flat-vs-tilted correlation was confirmed as the actual driver. **Fix, implemented in all three fragment shaders that compute a tile span** (`avboitCaptureF.glsl`, `avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`): `AVBOIT_TILE_MIN_SPAN = 6.0e-4` (about 1 cm of depth at two metres, ~80 um/slice against the ~2 um precision baseline) floors the padded span, widened symmetrically so the tile's real content stays centred. `avboitVolumeC.glsl`'s pass-6 code was checked and needs no change -- its tile-ranged check was simplified back in round 2/3 to a plain sentinel comparison with no span computation of its own, so round 9's "keep it consistent" instruction doesn't apply to the code as it currently exists. An optional slope-proportional margin from the same round-9 spec was deliberately not implemented: it calls for `fwidth()` on a value only computed inside a data-dependent branch (whether a fragment's own tile is ranged varies per-fragment), which is not safely computable as specified without further restructuring; left for a future round if the minimum-span fix alone doesn't fully clear folds. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 4, own-splat theory ruled out by live test** | Round 4 proposed a specific mechanism for the fine striping (row below): pass 2's read at sampling bias 1.0 mixes in `T[floor(c)]`, which contains part of the fragment's own pass-1 splat, producing a darkening that cycles once per physical slice -- with ranging on, a slice is sub-millimetre, so the cycle repeats every few pixels along a curved hair sheet as fine stripes; with ranging off, a slice is centimetres thick, so the same cycle reads as smooth shading (explaining the earlier toggle-test result without implicating round 3). Proposed a zero-cost falsification test before any code change: raise `RenderAVBOITSamplingBias` from 1.0 to 2.0 live (no rebuild, `RenderAVBOITTileRange` still on) on the striped shot -- both sampled texels then move strictly in front of the fragment's own splat, so the mechanism predicts the stripes vanish. **Test run, stripes did not vanish.** This cleanly rules out the own-splat-pollution theory as the cause of the visible striping (not merely unconfirmed -- actively falsified by the one test proposed as sufficient to confirm it). Setting restored to 1.0 after the test. Striping's actual cause is still open; rounds 1-3's fixes are unaffected and kept. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 3 rebuilt -- moire fixed, new fine banding found** | Rebuilt at S=4. Confirmed: round 3 fixed the coarse 8px-block moire from round 2 (mode 0 and mode 5 both smoother). But a new, different artifact appeared: fine, very regular periodic stripes across the hair mass, finer-grained than the 8px cell/16px tile grid, visible in a direct Exact-OIT-vs-AVBOIT screenshot comparison (Exact OIT smooth, AVBOIT tightly banded). Discriminating test: toggled `RenderAVBOITTileRange` off live (no rebuild) on the same shot -- stripes disappear, but the pre-round-1 bug this whole effort exists to fix returns (underlying clothing shows through the dress again). This conclusively ties the stripes to per-tile ranging itself, not to round 3's supersampling specifically (on/off is the only variable that changes the outcome). Leading candidate (unconfirmed): depth-axis slice quantization/banding, since per-tile ranging spreads a narrow depth band across most of the 128 physical slices and each slice's stored `exp(-extinction)` value is not linear in depth -- a smooth real depth gradient could still read back as discrete steps under linear xy/z filtering if adjacent pixels land in different physical slices. Not yet root-caused; handed off again (same pattern as the round-1 handoff) rather than attempting a blind fix. Full detail ("Round 4 candidate diagnosis") in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 3, pass-1 supersampling for hair/fabric moire** | Rebuild of round 2: black dashes gone, but a fine 8px-cell grid/moire remained on dense hair and faint blocky shading on fabric, vs. Exact OIT. Same root mechanism as round 2 without the black: pass 1 samples each 8x8 cell at one point, so which strand/garment layer is "front" for the whole cell is decided by one pixel's geometry; the coarse global curve hid this (whole cell shared a slice), fine per-tile slices expose it as a visible per-cell block. Fix: supersample pass 1 -- a bounded, tunable redo of A8's idea (A8's ~1 FPS regression was an unconditional CAS loop, not the supersampling itself). New `constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4` (`fsavboit.cpp`, next to `AVBOIT_SCALE`; not a runtime setting): pass 1's viewport and `gAVBOITCellDepthTarget`'s allocation scale by that factor per axis (16 samples/cell at 4, vs. A8's 64 at full-res 8); `avboitCellDepthF.glsl`'s conservative-max block shrinks to match; `avboitCaptureF.glsl` maps pass-1 fragments to cells by the factor (`avboit_full_res_pixel()`, the `cell` ternary in `avboit_direct_store()`) and scales each fragment's `optical_depth` by `1/(S*S)` so a cell's S² sub-samples sum to the block mean instead of one sample's value; `avboit_add_extinction()`'s CAS cap raised 64 -> 256 (still bounded) for the higher real per-word contention. Round 2's transmittance floor kept, unchanged. Both glow shaders gained the uniform for uniform-set consistency only (their pass-1 branch returns immediately, no mapping logic needed there). Self-check: S=8 is algebraically equivalent to A8's full-resolution mapping (`pixel/8`, `optical_depth/64`), confirmed by substitution. Not yet built/tested; report FPS at S=4, try S=8 if acceptable -- if moire remains at S=8 the residual difference to Exact OIT is the volume's 8px xy resolution, a design limit (A9 territory) rather than a bug. Full detail (Round 3) in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: round 2, cell-sized dashes fixed** | Rebuild of the row above: flicker gone, hair colour exact, clothing no longer shows through -- but small dark dashes/holes appeared in a regular 8px-cell grid on dense hair. Cause: pass 1 samples extinction once per 8x8 cell; an opaque hair-card core landing on that one sample saturates the cell's slice, and compute pass 5 then treats every later slice as fully extinct for the whole cell. The coarse global curve put nearly a whole cell's hair mass in one or two shared slices, so nothing read an exact 0; per-tile linear slices spread the same hair across ~100 slices, so fragments behind the sampled core now read exactly 0 -- weight collapses while the exact per-pixel opacity still darkens the pixel (black dash), and the new pass-6 early-depth quad culls those same fragments in pass 2 too (holes). Fix (tile mode only, global path untouched): (A) `avboitCaptureF.glsl` and both glow shaders floor `front_transmittance`/`front` to `1/16384` after the own-share correction, so occluded fragments still average into the colour instead of vanishing. (B) `avboitVolumeC.glsl` pass 6's per-tile depth computation (added implementing the row above) is deleted; a tile with its own written range simply gets no early-depth quad at all, so pass 2 never culls fragments behind a single-sample saturation point that per-pixel opacity may still need. (C) nit: `avboit_front_transmittance()`'s cell-space coordinate was off by half a pixel, corrected. Not yet built/tested. Full detail (Round 2) in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | **AVBOIT tile-range: fix spec implemented** | Implemented the diagnosis row above exactly. Feed reverted to the exact-proxy bounds pass (`avboitBoundsF.glsl` gained `avboitTileRange`/`avboit_reduce_tile_range()`, ported and called from the `avboitExactProxy != 0` branch on `bounded_window_depth`; both `gAVBOITBoundsProgram` and `gAVBOITSkinnedBoundsProgram` get the uniform); `renderPostDeferredCapture()`'s occupancy block reverted to `debugMode() == 6`-gated `render_pass(true)` vs. GLTF-only. Bug 1 fixed: new `avboit_full_res_pixel()` scales pass 1's cell `gl_FragCoord` back to a full-res pixel before any tile lookup (`avboitCaptureF.glsl`). Bug 2 fixed: `avboit_virtual_depth()` replaced everywhere by `avboit_tile_range()` (padded range lookup) + `avboit_slice_for_pixel()` (linear across the tile's own range, bypassing `avboitWarp[]` entirely in tile mode; falls back to the renamed `avboit_warped_slice_global()` when a tile is unwritten or ranging is off); ported into both glow shaders, which read only their own cell, unbiased, in tile mode. Bug 3 fixed: pass 2's transmittance read branches on `avboitTileRange` -- global mode keeps the original hardware-trilinear `texture()` read byte-identical; tile mode uses a new manual 2x2-cell bilinear (`avboit_front_transmittance()`/`avboit_cell_transmittance()`), each cell computing its slice from its *own* tile's range (falling back to the global warp per-cell if that cell's own tile is unwritten) since neighbouring cells can belong to different tiles with different depth mappings. Sampling bias in tile mode is now a direct physical-slice subtraction instead of a second trip through the global curve. `avboitVolumeC.glsl` pass 6 (early-depth quads) now computes each tile's saturating-slice depth from its own per-tile range when written, instead of the global `avboitWork[8+zero_depth]` table, using the same padding formula as the capture shaders. Self-checks passed: no remaining `avboit_range_index(ivec2(gl_FragCoord.xy))` outside the two always-full-res writer sites (pass 0 in `avboitCaptureF.glsl`, the exact-proxy pass in `avboitBoundsF.glsl`); `avboit_virtual_depth` grepped to zero remaining references anywhere; with `RenderAVBOITTileRange=0` every new branch's condition (`avboitTileRange != 0`, `avboit_tile_range()`'s early return, pass 6's `stored_minimum <= stored_maximum`, which is always false when the pass-13 reset runs but nothing ever writes) falls through to the pre-existing global-curve code path unchanged. `settings.xml` comment updated to describe the exact-proxy feed and warp-bypass. Not yet built/tested by the user -- shader source and buffer-layout semantics changed, needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
-| 2026-09-03 | AVBOIT A7 | committed. Dropped the per-frame full-resolution colour copy from `beginDirectFrame()` (`glCopyImageSubData(screen.getTexture(), ..., gAVBOITOpaqueTarget.getTexture(), ...)`): confirmed the resolve compute shader (pass 7, `local_size_x/y = 16`, one invocation per pixel) only ever read that copy back once, at `texelFetch(diffuseRect, pixel, 0)`, to composite it under the accumulated transparency at the *same* pixel it then writes via `imageStore(avboitOutput, pixel, ...)` — a same-texel load-then-store within one invocation needs no barrier since no other invocation touches that texel, so the copy was pure overhead. `avboitOutput` (image binding 2) changed from `writeonly` to read-write in both `avboitVolumeC.glsl` and its CPU-side `glBindImageTexture` call (`GL_WRITE_ONLY` -> `GL_READ_WRITE`); the `texelFetch(diffuseRect, ...)` call replaced with `imageLoad(avboitOutput, pixel)`; the now-unused `uniform sampler2D diffuseRect;` declaration and the CPU's `bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gAVBOITOpaqueTarget, ...)` / `unbindTexture` pair removed. Kept the depth copy (the private early-Z target raster passes test against, which must stay frozen at the opaque depth for the whole capture). Also shrank `gAVBOITOpaqueTarget`'s color attachment from `GL_RGBA16F` to `GL_R8` — confirmed via full-tree grep that `.getTexture()` had no remaining callers and that the AVBOIT branch of the shared shaders never declares `out vec4 frag_color`, so no raster pass ever wrote fragment color there; the attachment's sole remaining purpose is FBO completeness for the depth test the raster passes need. Confirmed the plan's traps: debug mode 13 uses a separate `avboitTransmittanceSampler` uniform (untouched) and the self-lighting isolate-backdrop pass after resolve reads `accumulatedWeight`/`accumulatedColorGlow`, not `gAVBOITOpaqueTarget`'s color — both unaffected. **Verified: the hair flicker regression (see status-log row above) was confirmed present on a pre-A7 build, clearing A7 as a cause** — consistent with A7 only touching the final opaque-colour read in the resolve shader, strictly downstream of what the flickering debug modes 12/14 sample. Shader source and buffer/image-binding semantics changed: needs a cache bump, held per standing guidance |
-| 2026-09-03 | AVBOIT A6 | committed. `avboitWarpScan` (compute pass 1's compaction-search scratch array) now declares as `shared uint[AVBOIT_VIRTUAL_SLICES]` when `AVBOIT_VIRTUAL_SLICES <= 8192` (the baseline/reference domain, exactly the GL 4.3 minimum-guaranteed 32 KB, no other `shared` variable competes for that budget) and keeps the existing SSBO declaration otherwise (the high domain, 65536 slices / 256 KB, default on with >=4 GB VRAM and GL 4.6). `avboit_scan_barrier()` correspondingly drops `memoryBarrierBuffer()` for the shared-memory path (`barrier()` alone suffices) and keeps it for the SSBO path. Confirmed via `addPermutation("AVBOIT_VIRTUAL_SLICES", ...)` in `fsavboit.cpp` that this is a compile-time `#define` baked in at program load (`selectVirtualDomain()` runs once per session, not per frame), so the `#if` genuinely compiles two different programs rather than branching at runtime. Also added the early-out from the plan: the candidate-divider search loop (0..`AVBOIT_MAX_DIVIDER`, both domains) now breaks once a fitting candidate is recorded, via a `still_searching` local read from `avboitDiagnostic[1]` before that iteration's conditional write and re-checked after the following barrier — confirmed workgroup-uniform (all lanes read the same post-barrier value) and confirmed the freeze semantics are unchanged (the original `> AVBOIT_SLICES` guard already stopped updating `avboitDiagnostic[3]`/`[1]` once a fit was found; the break just stops the now-pointless remaining clear+scatter+reduce passes one iteration later). **Verified in testing:** a pre-session baseline build (commit `d5d32e3a0c`, before any audit-plan work) showed mode 15 as magenta (`avboitDiagnostic[8] == 8`, maximum divider needed but found) at a fixed avatar position; the post-A6 build showed the same magenta at the same position, confirmed with `RenderAVBOITHighDepthResolution` both true and false (exercising both the shared-memory and SSBO storage paths). Mode 7 (warp validity) green in both. This is a shader source change; needs a shader cache revision bump, held per standing guidance until the whole session's work is done |
+| 2026-09-03 | **AVBOIT tile-range: round 5, tilted-sheet theory ruled out; stripes tied to geometry not raster grid** | Round 5 proposed a second raster-grid mechanism after round 4's own-splat theory was ruled out: a tilted hair sheet's own sub-samples (round 3's supersampling) fill an 8px cell's slice range densely, so a pixel reads transmittance already polluted by nearer parts of its own sheet within the same cell -- a sawtooth with one-cell (8px) period along the depth gradient. Proposed live test: step `ASRenderAVBOITSamplingBias` through 4/8/16/32 (no rebuild, ranging on); prediction was progressive fading, gone by 32. **Test run: stripes' visible pattern shifts at each step but never fades or improves -- unchanged in severity through bias 32.** This rules out round 5's mechanism too. Per the round-5 spec's own fallback instructions, checked zoom/pan behavior next: **stripes scale with screen zoom (thinner zoomed in, wider zoomed out) and specific stripes appear/disappear when panning.** This is decisive against BOTH round 4 and round 5's entire category of theory -- any fixed-pixel-count raster-grid cause (cell, tile, or slice boundaries, all allocated in screen pixels) would stay a constant pixel size regardless of zoom; a pattern that scales with magnification and is tied to specific surface locations under panning is a world/geometry-space phenomenon, not a screen-space one. Setting restored to 1.0. Striping still not root-caused, but the search space is now much narrower: next round should look at world/surface-geometry-tied causes (e.g. hair strand texture/geometry detail AVBOIT's approximate ordering doesn't resolve as cleanly as Exact OIT's exact ordering) rather than any more of AVBOIT's own screen-aligned grids. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 6/7 diagnosis, round 8 fix implemented (cell-centre depth projection)** | Round 6 correctly identified the zoom/pan-scaling artifact as the pre-existing **A9** limitation already named in this plan: AVBOIT's per-cell average extinction has no per-pixel front-layer knowledge, so overlapping near-coplanar strand/garment cards blend their textures into a beat pattern rather than compositing per pixel -- confirmed by mode 9 (exact aggregate alpha, stripe-free) vs mode 10 (normalized colour, striped) and by the block artefacts lining up with mode 5's per-cell zero-transmittance cutoff. This is a real, structural finding but not a bug in rounds 1-5; A9 (per-pixel front key, already specified in this plan) is the eventual fix and stays a separate, larger follow-up. Round 7 found a second, distinct 2px-period artifact on top of it -- screen-row-locked, orientation-independent, present with ranging on regardless of sampling bias, absent with ranging off -- which round 8 root-caused: pass 1's per-cell sub-samples (round 3's supersampling) sit at different depths across a tilted surface under per-tile ranging's thin slices, so a pass-2 pixel can read transmittance already polluted by nearer parts of its own surface within the same cell. General statement: a cell-resolution volume cannot resolve ordering finer than one surface's own depth spread across the filter footprint. **Round 8's fix, implemented in `asAVBOITCaptureF.glsl` and both glow shaders:** every pass-1 and pass-2 sample of a cell is now projected, via screen-space derivatives clamped to one cell's worth of slope, to that cell's own centre depth before mapping to a physical slice -- a surface can then never occlude itself at any tilt, while two different surfaces keep their real depth separation (both project to the same point). Tile-mode sampling bias changed from the runtime `avboitSamplingBias` uniform to a fixed `AVBOIT_TILE_BIAS_SLICES = 2.0` (the PDF's original, non-backed-off value, now safe again since the projection removes the multi-slice self-occlusion that made rounds 4/5's larger biases necessary and still insufficient). Global mode (`ASRenderAVBOITTileRange = 0`) is unchanged -- every projection is computed but only read inside a tile-ranged branch. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT: round 9 built/tested (flat-fabric speckle fixed); A9 implemented (round 10)** | Round 9's minimum tile span was rebuilt and tested: flat fabric clean in mode 12. Remaining, confirmed to be the same underlying mechanism as round 6's beat-pattern finding rather than a new bug: dark 8px squares of an under-garment popping through a dress under camera motion, and faint squarish patches in dense hair vs. Exact OIT -- both are cells where the per-pixel front layer's read lands behind its own splat, so the layer behind it wins the cell's normalized average. Decision (round 10): stop tuning tile ranging (keep rounds 1, 2, 3, 8, 9 as-is) and implement **A9** as specified above -- a full-resolution front-key pass giving the front two per-pixel layers an exact source-over weight, independent of cells/tiles/slices/projections, which directly targets both remaining symptoms (dress-under-garment popping and hair patches are both "front layer, wrong weight" cases A9's design covers by construction). **A9 implemented in full**, one structural deviation and one deliberate omission from the plan's original design, both because of how the codebase has changed since A9 was drafted (rounds 1-9's restructuring) or a hard resource constraint, not a disagreement with the design: (1) the plan's literal pass-3 insertion point (`gASAVBOITOpaqueTarget.bindTarget()` right after `finishDirectOccupancy()`) would double-push the render-target bind stack given how `finishDirectOccupancy()` is now structured -- fixed by splitting its last two lines into a new `ASAVBOIT::beginPass1()`, called after the new pass-3 block instead of at the end of `finishDirectOccupancy()`, so pass 3 runs while `gASAVBOITOpaqueTarget` is already the current target rather than rebinding it. (2) Debug modes 16/17 (front-key visualization) were not implemented -- the resolve compute shader is already at GL's 8-image-unit limit and the two spare slots are either format-mismatched (`r8ui` vs. the front-key images' `r32ui`) or would need unverified duplicate-binding aliasing; skipped on the user's explicit direction rather than risk unspecified GPU behavior in a debug-only feature. Everything else matches the plan exactly: `avboit_store_front_key()`'s two-key atomic insertion, pass 2's `front_factor` weighting (front=1, second=`1-alpha0`, deeper=`min(volume, (1-alpha0)(1-alpha1))`), the `ASRenderAVBOITFrontLayers` A/B setting, the five shared-shader `avboitRasterPass < 2` -> `!= 2` tagged edits (all five already read `< 2`, not the mixed `< 1`/`< 2` state the plan's stale note described), and both glow shaders' identical front-key read. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 8 built/tested (periodic lines fixed); round 9 fix for residual speckle** | Round 8's cell-centre projection was rebuilt and tested: the 2px periodic lines from round 7 are gone. Remaining: grey speckle in mode 12, heaviest on flat/camera-facing surfaces (e.g. a front-view skirt) and much lighter where the same surface is tilted (side view). **Round 9 root cause:** a near-flat tile's real depth content spans almost nothing, so the padded tile span collapses toward the 24-bit depth key's own quantum; spreading 127 physical slices over that few-nanometre span means pass 1 (half-resolution rasterizer) and pass 2 (full-resolution rasterizer) interpolating the same plane at slightly different sample points disagree by many slices from ordinary fp32 window-depth precision (~2 um at two metres) alone, so a fragment's own splat lands in front of or behind its biased read at random -- speckle. Tilted tiles have real spans (~0.1 mm/slice) where that same 2 um is negligible, hence smooth. An earlier draft blaming surface curvature was investigated and withdrawn once the flat-vs-tilted correlation was confirmed as the actual driver. **Fix, implemented in all three fragment shaders that compute a tile span** (`asAVBOITCaptureF.glsl`, `asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`): `AVBOIT_TILE_MIN_SPAN = 6.0e-4` (about 1 cm of depth at two metres, ~80 um/slice against the ~2 um precision baseline) floors the padded span, widened symmetrically so the tile's real content stays centred. `asAVBOITVolumeC.glsl`'s pass-6 code was checked and needs no change -- its tile-ranged check was simplified back in round 2/3 to a plain sentinel comparison with no span computation of its own, so round 9's "keep it consistent" instruction doesn't apply to the code as it currently exists. An optional slope-proportional margin from the same round-9 spec was deliberately not implemented: it calls for `fwidth()` on a value only computed inside a data-dependent branch (whether a fragment's own tile is ranged varies per-fragment), which is not safely computable as specified without further restructuring; left for a future round if the minimum-span fix alone doesn't fully clear folds. Not yet built/tested; needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 4, own-splat theory ruled out by live test** | Round 4 proposed a specific mechanism for the fine striping (row below): pass 2's read at sampling bias 1.0 mixes in `T[floor(c)]`, which contains part of the fragment's own pass-1 splat, producing a darkening that cycles once per physical slice -- with ranging on, a slice is sub-millimetre, so the cycle repeats every few pixels along a curved hair sheet as fine stripes; with ranging off, a slice is centimetres thick, so the same cycle reads as smooth shading (explaining the earlier toggle-test result without implicating round 3). Proposed a zero-cost falsification test before any code change: raise `ASRenderAVBOITSamplingBias` from 1.0 to 2.0 live (no rebuild, `ASRenderAVBOITTileRange` still on) on the striped shot -- both sampled texels then move strictly in front of the fragment's own splat, so the mechanism predicts the stripes vanish. **Test run, stripes did not vanish.** This cleanly rules out the own-splat-pollution theory as the cause of the visible striping (not merely unconfirmed -- actively falsified by the one test proposed as sufficient to confirm it). Setting restored to 1.0 after the test. Striping's actual cause is still open; rounds 1-3's fixes are unaffected and kept. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 3 rebuilt -- moire fixed, new fine banding found** | Rebuilt at S=4. Confirmed: round 3 fixed the coarse 8px-block moire from round 2 (mode 0 and mode 5 both smoother). But a new, different artifact appeared: fine, very regular periodic stripes across the hair mass, finer-grained than the 8px cell/16px tile grid, visible in a direct Exact-OIT-vs-AVBOIT screenshot comparison (Exact OIT smooth, AVBOIT tightly banded). Discriminating test: toggled `ASRenderAVBOITTileRange` off live (no rebuild) on the same shot -- stripes disappear, but the pre-round-1 bug this whole effort exists to fix returns (underlying clothing shows through the dress again). This conclusively ties the stripes to per-tile ranging itself, not to round 3's supersampling specifically (on/off is the only variable that changes the outcome). Leading candidate (unconfirmed): depth-axis slice quantization/banding, since per-tile ranging spreads a narrow depth band across most of the 128 physical slices and each slice's stored `exp(-extinction)` value is not linear in depth -- a smooth real depth gradient could still read back as discrete steps under linear xy/z filtering if adjacent pixels land in different physical slices. Not yet root-caused; handed off again (same pattern as the round-1 handoff) rather than attempting a blind fix. Full detail ("Round 4 candidate diagnosis") in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 3, pass-1 supersampling for hair/fabric moire** | Rebuild of round 2: black dashes gone, but a fine 8px-cell grid/moire remained on dense hair and faint blocky shading on fabric, vs. Exact OIT. Same root mechanism as round 2 without the black: pass 1 samples each 8x8 cell at one point, so which strand/garment layer is "front" for the whole cell is decided by one pixel's geometry; the coarse global curve hid this (whole cell shared a slice), fine per-tile slices expose it as a visible per-cell block. Fix: supersample pass 1 -- a bounded, tunable redo of A8's idea (A8's ~1 FPS regression was an unconditional CAS loop, not the supersampling itself). New `constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4` (`asavboit.cpp`, next to `AVBOIT_SCALE`; not a runtime setting): pass 1's viewport and `gASAVBOITCellDepthTarget`'s allocation scale by that factor per axis (16 samples/cell at 4, vs. A8's 64 at full-res 8); `asAVBOITCellDepthF.glsl`'s conservative-max block shrinks to match; `asAVBOITCaptureF.glsl` maps pass-1 fragments to cells by the factor (`avboit_full_res_pixel()`, the `cell` ternary in `avboit_direct_store()`) and scales each fragment's `optical_depth` by `1/(S*S)` so a cell's S² sub-samples sum to the block mean instead of one sample's value; `avboit_add_extinction()`'s CAS cap raised 64 -> 256 (still bounded) for the higher real per-word contention. Round 2's transmittance floor kept, unchanged. Both glow shaders gained the uniform for uniform-set consistency only (their pass-1 branch returns immediately, no mapping logic needed there). Self-check: S=8 is algebraically equivalent to A8's full-resolution mapping (`pixel/8`, `optical_depth/64`), confirmed by substitution. Not yet built/tested; report FPS at S=4, try S=8 if acceptable -- if moire remains at S=8 the residual difference to Exact OIT is the volume's 8px xy resolution, a design limit (A9 territory) rather than a bug. Full detail (Round 3) in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: round 2, cell-sized dashes fixed** | Rebuild of the row above: flicker gone, hair colour exact, clothing no longer shows through -- but small dark dashes/holes appeared in a regular 8px-cell grid on dense hair. Cause: pass 1 samples extinction once per 8x8 cell; an opaque hair-card core landing on that one sample saturates the cell's slice, and compute pass 5 then treats every later slice as fully extinct for the whole cell. The coarse global curve put nearly a whole cell's hair mass in one or two shared slices, so nothing read an exact 0; per-tile linear slices spread the same hair across ~100 slices, so fragments behind the sampled core now read exactly 0 -- weight collapses while the exact per-pixel opacity still darkens the pixel (black dash), and the new pass-6 early-depth quad culls those same fragments in pass 2 too (holes). Fix (tile mode only, global path untouched): (A) `asAVBOITCaptureF.glsl` and both glow shaders floor `front_transmittance`/`front` to `1/16384` after the own-share correction, so occluded fragments still average into the colour instead of vanishing. (B) `asAVBOITVolumeC.glsl` pass 6's per-tile depth computation (added implementing the row above) is deleted; a tile with its own written range simply gets no early-depth quad at all, so pass 2 never culls fragments behind a single-sample saturation point that per-pixel opacity may still need. (C) nit: `avboit_front_transmittance()`'s cell-space coordinate was off by half a pixel, corrected. Not yet built/tested. Full detail (Round 2) in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | **AVBOIT tile-range: fix spec implemented** | Implemented the diagnosis row above exactly. Feed reverted to the exact-proxy bounds pass (`asAVBOITBoundsF.glsl` gained `avboitTileRange`/`avboit_reduce_tile_range()`, ported and called from the `avboitExactProxy != 0` branch on `bounded_window_depth`; both `gASAVBOITBoundsProgram` and `gASAVBOITSkinnedBoundsProgram` get the uniform); `renderPostDeferredCapture()`'s occupancy block reverted to `debugMode() == 6`-gated `render_pass(true)` vs. GLTF-only. Bug 1 fixed: new `avboit_full_res_pixel()` scales pass 1's cell `gl_FragCoord` back to a full-res pixel before any tile lookup (`asAVBOITCaptureF.glsl`). Bug 2 fixed: `avboit_virtual_depth()` replaced everywhere by `avboit_tile_range()` (padded range lookup) + `avboit_slice_for_pixel()` (linear across the tile's own range, bypassing `avboitWarp[]` entirely in tile mode; falls back to the renamed `avboit_warped_slice_global()` when a tile is unwritten or ranging is off); ported into both glow shaders, which read only their own cell, unbiased, in tile mode. Bug 3 fixed: pass 2's transmittance read branches on `avboitTileRange` -- global mode keeps the original hardware-trilinear `texture()` read byte-identical; tile mode uses a new manual 2x2-cell bilinear (`avboit_front_transmittance()`/`avboit_cell_transmittance()`), each cell computing its slice from its *own* tile's range (falling back to the global warp per-cell if that cell's own tile is unwritten) since neighbouring cells can belong to different tiles with different depth mappings. Sampling bias in tile mode is now a direct physical-slice subtraction instead of a second trip through the global curve. `asAVBOITVolumeC.glsl` pass 6 (early-depth quads) now computes each tile's saturating-slice depth from its own per-tile range when written, instead of the global `avboitWork[8+zero_depth]` table, using the same padding formula as the capture shaders. Self-checks passed: no remaining `avboit_range_index(ivec2(gl_FragCoord.xy))` outside the two always-full-res writer sites (pass 0 in `asAVBOITCaptureF.glsl`, the exact-proxy pass in `asAVBOITBoundsF.glsl`); `avboit_virtual_depth` grepped to zero remaining references anywhere; with `ASRenderAVBOITTileRange=0` every new branch's condition (`avboitTileRange != 0`, `avboit_tile_range()`'s early return, pass 6's `stored_minimum <= stored_maximum`, which is always false when the pass-13 reset runs but nothing ever writes) falls through to the pre-existing global-curve code path unchanged. `settings.xml` comment updated to describe the exact-proxy feed and warp-bypass. Not yet built/tested by the user -- shader source and buffer-layout semantics changed, needs a cache bump, held per standing guidance. Full detail in `ayanestorm-oit-avboit-hair-flicker-regression-todo.md` |
+| 2026-09-03 | AVBOIT A7 | committed. Dropped the per-frame full-resolution colour copy from `beginDirectFrame()` (`glCopyImageSubData(screen.getTexture(), ..., gASAVBOITOpaqueTarget.getTexture(), ...)`): confirmed the resolve compute shader (pass 7, `local_size_x/y = 16`, one invocation per pixel) only ever read that copy back once, at `texelFetch(diffuseRect, pixel, 0)`, to composite it under the accumulated transparency at the *same* pixel it then writes via `imageStore(avboitOutput, pixel, ...)` — a same-texel load-then-store within one invocation needs no barrier since no other invocation touches that texel, so the copy was pure overhead. `avboitOutput` (image binding 2) changed from `writeonly` to read-write in both `asAVBOITVolumeC.glsl` and its CPU-side `glBindImageTexture` call (`GL_WRITE_ONLY` -> `GL_READ_WRITE`); the `texelFetch(diffuseRect, ...)` call replaced with `imageLoad(avboitOutput, pixel)`; the now-unused `uniform sampler2D diffuseRect;` declaration and the CPU's `bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gASAVBOITOpaqueTarget, ...)` / `unbindTexture` pair removed. Kept the depth copy (the private early-Z target raster passes test against, which must stay frozen at the opaque depth for the whole capture). Also shrank `gASAVBOITOpaqueTarget`'s color attachment from `GL_RGBA16F` to `GL_R8` — confirmed via full-tree grep that `.getTexture()` had no remaining callers and that the AVBOIT branch of the shared shaders never declares `out vec4 frag_color`, so no raster pass ever wrote fragment color there; the attachment's sole remaining purpose is FBO completeness for the depth test the raster passes need. Confirmed the plan's traps: debug mode 13 uses a separate `avboitTransmittanceSampler` uniform (untouched) and the self-lighting isolate-backdrop pass after resolve reads `accumulatedWeight`/`accumulatedColorGlow`, not `gASAVBOITOpaqueTarget`'s color — both unaffected. **Verified: the hair flicker regression (see status-log row above) was confirmed present on a pre-A7 build, clearing A7 as a cause** — consistent with A7 only touching the final opaque-colour read in the resolve shader, strictly downstream of what the flickering debug modes 12/14 sample. Shader source and buffer/image-binding semantics changed: needs a cache bump, held per standing guidance |
+| 2026-09-03 | AVBOIT A6 | committed. `avboitWarpScan` (compute pass 1's compaction-search scratch array) now declares as `shared uint[AVBOIT_VIRTUAL_SLICES]` when `AVBOIT_VIRTUAL_SLICES <= 8192` (the baseline/reference domain, exactly the GL 4.3 minimum-guaranteed 32 KB, no other `shared` variable competes for that budget) and keeps the existing SSBO declaration otherwise (the high domain, 65536 slices / 256 KB, default on with >=4 GB VRAM and GL 4.6). `avboit_scan_barrier()` correspondingly drops `memoryBarrierBuffer()` for the shared-memory path (`barrier()` alone suffices) and keeps it for the SSBO path. Confirmed via `addPermutation("AVBOIT_VIRTUAL_SLICES", ...)` in `asavboit.cpp` that this is a compile-time `#define` baked in at program load (`selectVirtualDomain()` runs once per session, not per frame), so the `#if` genuinely compiles two different programs rather than branching at runtime. Also added the early-out from the plan: the candidate-divider search loop (0..`AVBOIT_MAX_DIVIDER`, both domains) now breaks once a fitting candidate is recorded, via a `still_searching` local read from `avboitDiagnostic[1]` before that iteration's conditional write and re-checked after the following barrier — confirmed workgroup-uniform (all lanes read the same post-barrier value) and confirmed the freeze semantics are unchanged (the original `> AVBOIT_SLICES` guard already stopped updating `avboitDiagnostic[3]`/`[1]` once a fit was found; the break just stops the now-pointless remaining clear+scatter+reduce passes one iteration later). **Verified in testing:** a pre-session baseline build (commit `d5d32e3a0c`, before any audit-plan work) showed mode 15 as magenta (`avboitDiagnostic[8] == 8`, maximum divider needed but found) at a fixed avatar position; the post-A6 build showed the same magenta at the same position, confirmed with `ASRenderAVBOITHighDepthResolution` both true and false (exercising both the shared-memory and SSBO storage paths). Mode 7 (warp validity) green in both. This is a shader source change; needs a shader cache revision bump, held per standing guidance until the whole session's work is done |
 
 Three plan defects were found by implementation so far, all mine: E4 mapped
 the atomically written buffer, E1 reallocated mid-frame, and E2's trap text
@@ -114,15 +114,15 @@ design that the plan did not budget for, recorded for later prioritization.
 
 | # | Finding | Severity | Item |
 |---|---------|----------|------|
-| 1 | CPU builds a Z-bin table + sparse RMQ table every frame (65536 × 17 words = 4.4 MB upload in the default high domain) and the GPU builds entity masks. Their only consumer (`avboitVolumeC.glsl` pass 8) reduces to "cell has a proxy interval", which is already known. Provably dead work. | High (CPU) | A1 |
+| 1 | CPU builds a Z-bin table + sparse RMQ table every frame (65536 × 17 words = 4.4 MB upload in the default high domain) and the GPU builds entity masks. Their only consumer (`asAVBOITVolumeC.glsl` pass 8) reduces to "cell has a proxy interval", which is already known. Provably dead work. | High (CPU) | A1 |
 | 2 | Extinction raster (pass 1) runs at 1/8 resolution but with the hardware depth test against the **full-resolution** opaque depth of the private target: cell (x,y) is tested against pixel (x,y). Wrong rejection whenever near opaque geometry covers the top-left 1/8 of the screen. A 64-texel manual loop per fragment then re-tests. | High (bug + GPU) | A2 |
 | 3 | `configureDirectRasterShader` sets ~10 uniforms per draw with hashed lookups and calls `gSavedSettings.getS32/getBOOL/getF32` (string map lookups) per draw, in each of the passes. | Med (CPU) | A3 |
 | 4 | Emissive draws are submitted in pass 1 where their shader does the 64-texel loop and then returns. Diagnostic atomics (`avboitDiagnostic[4]`, `[5]`) run per fragment in pass 0 regardless of debug mode. | Med | A4 |
-| 5 | `RenderAVBOITTileRange` (default on) is fed only by raster pass 0, which in normal mode runs only for GLTF geometry. The feature is inert for ordinary content and, where GLTF exists, rescales a tile inconsistently with its neighbours. | Design issue | A5 |
+| 5 | `ASRenderAVBOITTileRange` (default on) is fed only by raster pass 0, which in normal mode runs only for GLTF geometry. The feature is inert for ordinary content and, where GLTF exists, rescales a tile inconsistently with its neighbours. | Design issue | A5 |
 | 6 | Compaction search: single 256-thread workgroup, shader-storage scan with `memoryBarrierBuffer` per step, 10 candidate dividers over 65536 entries. | Med (GPU, serial) | A6 |
-| 7 | Full-resolution color + depth copies into `gAVBOITOpaqueTarget` every frame; color copy only feeds the resolve, which could read/write the screen image in place. | Low-Med | A7 |
+| 7 | Full-resolution color + depth copies into `gASAVBOITOpaqueTarget` every frame; color copy only feeds the resolve, which could read/write the screen image in place. | Low-Med | A7 |
 | 8 | Dead code: `avboit_cull_fragment()` always false; helper code duplicated three times across `avboitCaptureF/EmissiveF/PbrGlowF`. `materialF.glsl` exits early only for pass 0 (`== 0`) while every other shader exits for `< 2`, so material fragments run full lighting in the extinction pass. | Low | A4, A8 |
-| 9 | **Sheer-over-sheer bug** (rear layer a few mm behind a 0.95-alpha garment stays visible). Root cause is representational: both layers share one physical slice and read the same front transmittance. The per-tile ranging that was written to fix it (`RenderAVBOITTileRange`) never runs for ordinary geometry (finding 5), and could not fix a same-slice collision anyway. | High (quality) | A9 |
+| 9 | **Sheer-over-sheer bug** (rear layer a few mm behind a 0.95-alpha garment stays visible). Root cause is representational: both layers share one physical slice and read the same front transmittance. The per-tile ranging that was written to fix it (`ASRenderAVBOITTileRange`) never runs for ordinary geometry (finding 5), and could not fix a same-slice collision anyway. | High (quality) | A9 |
 
 ---
 
@@ -132,8 +132,8 @@ Goal: know which of the Exact OIT costs dominates on the user's machine so the
 user can prioritise. Tracy zones already exist (`LL_PROFILE_GPU_ZONE`).
 
 Add one CPU zone name check: `"Exact OIT validation readback"` already wraps
-the `glGetBufferSubData` in `FSExactOIT::validateCapture()` (fsexactoit.cpp:1173).
-Its duration is the stall. Compare frame time with `RenderOITMode` = Standard
+the `glGetBufferSubData` in `ASExactOIT::validateCapture()` (asexactoit.cpp:1173).
+Its duration is the stall. Compare frame time with `ASRenderOITMode` = Standard
 vs Exact OIT in:
 
 1. A scene with almost no transparency (isolates the readback stall + fullscreen
@@ -144,7 +144,7 @@ vs Exact OIT in:
 3. An avatar-heavy scene (hair, layered clothing; lists of 2–20).
 
 Also add a one-line periodic log (every 300 frames, behind
-`RenderExactOITDebugMode != 0`) printing `control[0]` (nodes used),
+`ASRenderExactOITDebugMode != 0`) printing `control[0]` (nodes used),
 `control[3]` (max list), capacity and the number of sort passes issued. This
 makes later verification objective.
 
@@ -157,12 +157,12 @@ makes later verification objective.
 **Goal:** never pay "capture + full vanilla re-render" more than once per
 demand increase; never pay it every frame when the cap is hit.
 
-**Why:** `captureOverflowed()` (fsexactoit.cpp:1077) grows the buffer only
+**Why:** `captureOverflowed()` (asexactoit.cpp:1077) grows the buffer only
 after an overflow frame. If demand exceeds `safe_nodes`, capacity cannot grow,
 so every frame captures, overflows, discards and re-renders vanilla. Sprites are
 the usual trigger (huge overdraw, few nodes reclaimable).
 
-**Change** (all in `fsexactoit.cpp`, own file):
+**Change** (all in `asexactoit.cpp`, own file):
 
 1. Keep per-frame state in `Resources`: `U32 lastRequiredNodes`,
    `U32 skipFramesRemaining`, `U32 consecutiveOverflowsAtCap`.
@@ -194,7 +194,7 @@ the usual trigger (huge overdraw, few nodes reclaimable).
 - `captureEligible()` runs for both alpha pools; the skip counter must only be
   decremented once per frame. Decrement in `beginFrame()` instead and only test
   `> 0` in `captureEligible()`.
-- Do not skip while `RenderExactOITDebugMode != 0` (the user wants to see the
+- Do not skip while `ASRenderExactOITDebugMode != 0` (the user wants to see the
   diagnostics), just log.
 
 **Verify:** sprite scene that overflows the cap: log shows one overflow then
@@ -221,7 +221,7 @@ node has `glow == 0` for most effects and contributes nothing in the composite
 (`glow += node.glow`).
 
 **Change A (shader, trivial, exact):**
-In `exactOITEmissiveF.glsl` `main()`:
+In `asExactOITEmissiveF.glsl` `main()`:
 ```glsl
 void main()
 {
@@ -231,7 +231,7 @@ void main()
     exact_oit_store_glow(glow);
 }
 ```
-Same in `exactOITPbrGlowF.glsl`:
+Same in `asExactOITPbrGlowF.glsl`:
 ```glsl
     float glow = max(max(emissive.r, emissive.g), emissive.b) * vertex_emissive.a;
     if (glow == 0.0) return;
@@ -248,7 +248,7 @@ accurate for particles so the draw call itself can be skipped.
   how `has_glow` is computed at line 849-853 in `LLParticlePartition::getGeometry`
   (`cur_glow.get() != start_glow` = "wrote any glow data"). Replace that with
   "wrote any non-zero glow" behind a tag.
-- Then in `FSExactOIT::handleCapturedEmissives()` (own file) filter the vectors:
+- Then in `ASExactOIT::handleCapturedEmissives()` (own file) filter the vectors:
   ```cpp
   auto drop_no_glow = [](std::vector<LLDrawInfo*>& v) {
       v.erase(std::remove_if(v.begin(), v.end(),
@@ -267,7 +267,7 @@ accurate for particles so the draw call itself can be skipped.
   `ayanestorm-oit-exact-oit-lamp-glow-regression-todo.md`. Do NOT filter in
   `lldrawpoolalpha.cpp`; the vanilla path must be untouched.
 - Change B changes nothing in vanilla mode only if the filter lives inside
-  `FSExactOIT::handleCapturedEmissives()`.
+  `ASExactOIT::handleCapturedEmissives()`.
 
 **Verify:** Exact OIT debug mode 1 (list depth heat map) over a glow-less
 particle emitter: list depth halves. Glowing particles look identical
@@ -285,25 +285,25 @@ lengths from particles. Second-largest sprite win after E7.
 
 **Goal:** remove three uniform uploads + three hash lookups per alpha draw.
 
-**Why:** `configureCapturedDrawIfActive()` (fsexactoit.cpp:959) runs per draw:
+**Why:** `configureCapturedDrawIfActive()` (asexactoit.cpp:959) runs per draw:
 uncached `glUniform1ui` (always re-uploaded), `uniform1f(oitGlow, 0)`
 (always 0; only emissive shaders carry glow and they use their own function),
 `uniform1i(oitDiscardNoOp)` (constant for the frame). Same in
 `configureGLTFCapturedDraw()`.
 
 **Change:**
-1. `exactOITCaptureF.glsl`: delete `uniform float oitGlow;`, write
+1. `asExactOITCaptureF.glsl`: delete `uniform float oitGlow;`, write
    `oitNodes[index].glow = 0.0;`, and drop `oitGlow == 0.0` from the no-op test.
    Delete `uniform int oitDiscardNoOp;` and make it a permutation:
-   in `fsexactoit.cpp` where `addPermutation("EXACT_OIT", "1")` is called for
+   in `asexactoit.cpp` where `addPermutation("EXACT_OIT", "1")` is called for
    each capture program (and in `makeGLTFVariant` via `shader.mDefines` copy),
-   add `if (gSavedSettings.getBOOL("RenderExactOITNoOpCapture")) shader.addPermutation("EXACT_OIT_DISCARD_NOOP", "1");`
+   add `if (gSavedSettings.getBOOL("ASRenderExactOITNoOpCapture")) shader.addPermutation("EXACT_OIT_DISCARD_NOOP", "1");`
    and wrap the no-op test in `#ifdef EXACT_OIT_DISCARD_NOOP`. Changing the
    setting then requires a shader reload (the viewer reloads shaders on many
-   Render* settings; if `RenderExactOITNoOpCapture` is not in that list,
+   Render* settings; if `ASRenderExactOITNoOpCapture` is not in that list,
    document "restart or toggle a graphics preset to apply". It is an A/B debug
    switch, so this is acceptable).
-2. Cache the packed blend value per program. In `fsexactoit.cpp` add:
+2. Cache the packed blend value per program. In `asexactoit.cpp` add:
    ```cpp
    namespace {
    struct BlendUniformCache { GLint location = -2; U32 value = 0xffffffffu; };
@@ -337,7 +337,7 @@ uncached `glUniform1ui` (always re-uploaded), `uniform1f(oitGlow, 0)`
 - GL uniform values are per program object and survive rebinding, so the cache
   keyed by program pointer is valid. It must be cleared whenever programs are
   relinked (`unloadShaders()` + shader reload path).
-- `exactOITEmissiveF.glsl` / `exactOITPbrGlowF.glsl` keep their own
+- `asExactOITEmissiveF.glsl` / `asExactOITPbrGlowF.glsl` keep their own
   `exact_oit_store_glow`; they never had `oitGlow`.
 
 **Verify:** materials with custom blend (e.g. additive particles
@@ -380,7 +380,7 @@ buffer is host-mapped, filled by a GPU-side `glCopyBufferSubData`. Full
 diagnosis and code in `ayanestorm-oit-e4-fence-stall-question.md` (Answer
 section). The steps below are the corrected version.
 
-**Change (`fsexactoit.cpp`):**
+**Change (`asexactoit.cpp`):**
 1. In `allocateNodePool()` keep the control buffer exactly as before
    (`glBufferData(..., GL_DYNAMIC_DRAW)`, device-local, never mapped) and add
    a separate readback buffer:
@@ -508,7 +508,7 @@ number of fullscreen passes is set by the deepest pixel on screen.
 
 CPU issues sort passes only when `maximum_list > K`.
 
-**Change, shader (`exactOITCompositeF.glsl`):**
+**Change, shader (`asExactOITCompositeF.glsl`):**
 ```glsl
 const uint OIT_SORTED = 0x80000000u;
 const uint OIT_SHALLOW = 16u;          // K. Try 32 later; measure.
@@ -609,10 +609,10 @@ work because the list is intact (unsorted) for shallow pixels. Debug mode 4
 debug modes, which forces the old behaviour and keeps every diagnostic valid.
 Recommended: `oitShallowLimit = (debug_mode == 0) ? K : 0`.
 
-**Change, CPU (`FSExactOIT::composite`):**
+**Change, CPU (`ASExactOIT::composite`):**
 ```cpp
 const U32 K = debug_mode == 0 ? 16u : 0u;   // must equal OIT_SHALLOW in the shader when non-zero
-gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)K);
+gASExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)K);
 // pass count: see E6 for the chunked formula; without E6:
 U32 passes = 0; if (maximum_list > llmax(K, 1u)) { for (U32 w = 1; w < maximum_list; w <<= 1) ++passes; }
 ```
@@ -623,7 +623,7 @@ early-outs per pixel); the remaining `passes - 1` after.
 sets only `oitPass` and `oitFirstSortPass`. Once E5 makes pass 1 read
 `oitShallowLimit` (and `oitOpaqueCutoff` if you add that uniform), the
 speculative pass must set them too, with the same values `composite()` uses
-(`K` when `RenderExactOITDebugMode == 0`, else `0`). Compute `K` once in
+(`K` when `ASRenderExactOITDebugMode == 0`, else `0`). Compute `K` once in
 `finishFrame()` and pass it to both functions. A speculative pass that runs
 with a stale `oitShallowLimit` from a previous frame would sort pixels the
 composite then treats as unsorted, or skip pixels it treats as sorted; debug
@@ -664,7 +664,7 @@ reversed lists (particle groups arrive sorted per group).
 **Why:** pass 1 today detects natural runs. A random list of 128 nodes has ~64
 runs → 7 passes. With 16-node chunks it has ≤ 8 runs after chunking → 3 passes.
 
-**Change (`exactOITCompositeF.glsl`):** replace `take_natural_run` by
+**Change (`asExactOITCompositeF.glsl`):** replace `take_natural_run` by
 `take_run` and call it from `natural_merge_pass` (all passes; in later passes
 runs are already ≥ K so the natural path is taken):
 ```glsl
@@ -764,12 +764,12 @@ deep pixels. Depends on E5 (shares `before()`, `OIT_SORTED` gating).
 
 **Goal:** replace two global atomics per fragment with two per wave.
 
-**Why:** `exactOITCaptureF.glsl:48` (`atomicAdd(oitNodeCount)`) and `:62`
+**Why:** `asExactOITCaptureF.glsl:48` (`atomicAdd(oitNodeCount)`) and `:62`
 (`atomicMax(oitPad)`) serialize every transparent fragment on the GPU through
 one L2 atomic unit. With particle overdraw this is millions of atomics per
 frame on one address.
 
-**Change (`exactOITCaptureF.glsl`, and the two glow shaders' copy of the
+**Change (`asExactOITCaptureF.glsl`, and the two glow shaders' copy of the
 function):**
 ```glsl
 #ifdef EXACT_OIT_SUBGROUP
@@ -848,13 +848,13 @@ because helper invocations returned before the ballot. Never move the
 `gl_HelperInvocation` check below `exact_oit_reserve()`.
 
 **Trap on placement of `#extension`:** these directives must precede every
-declaration in the compiled shader string. `exactOITCaptureF.glsl` is linked as
+declaration in the compiled shader string. `asExactOITCaptureF.glsl` is linked as
 a separate fragment object, so its own top is fine. In
-`exactOITEmissiveF.glsl` / `exactOITPbrGlowF.glsl` put them above
+`asExactOITEmissiveF.glsl` / `asExactOITPbrGlowF.glsl` put them above
 `/*[EXTRA_CODE_HERE]*/`. The permutation `#define`s the shader manager
 prepends are preprocessor lines and do not conflict.
 
-**CPU (`fsexactoit.cpp`):** decide the permutation once at shader load:
+**CPU (`asexactoit.cpp`):** decide the permutation once at shader load:
 ```cpp
 static bool subgroupSupported()
 {
@@ -865,7 +865,7 @@ static bool subgroupSupported()
 }
 ```
 (`ExtensionExists` is a macro in `llgl.cpp`; if it is not visible from
-`fsexactoit.cpp`, add a tagged one-line accessor in `llgl.h/.cpp`, e.g.
+`asexactoit.cpp`, add a tagged one-line accessor in `llgl.h/.cpp`, e.g.
 `bool LLGLManager::hasShaderSubgroup() const` computed in `initExtensions()`,
 tagged.) Add `shader.addPermutation("EXACT_OIT_SUBGROUP", "1")` to every
 capture program and glow program when supported. Log which path is active.
@@ -879,7 +879,7 @@ tagged block already special-cases `oit_storage_shader`: extend it to emit
 shader manager inserts its own preamble — check where `/*[EXTRA_CODE_HERE]*/`
 and the defines land relative to the capture file: the extension directives
 must be the first non-comment lines of the *first* file that uses them, i.e.
-put them at the very top of `exactOITCaptureF.glsl` and the two glow files,
+put them at the very top of `asExactOITCaptureF.glsl` and the two glow files,
 and make sure the shared shaders that link with the capture object do not
 break (they don't use the extension).
 
@@ -947,7 +947,7 @@ condition the plan names for skipping E8. Not implemented.
 
 ### E9. Compute sort path: remove it (recommended) or make it lazy
 
-**Why:** `RenderExactOITComputeSort` defaults to off. The implementation is
+**Why:** `ASRenderExactOITComputeSort` defaults to off. The implementation is
 structurally slow: `OIT_MERGE` uses `local_size_x = 1` (one thread per
 workgroup), `OIT_BLOCK_SORT` walks the list with lane 0 while 63 lanes wait,
 then bitonic-sorts 64 entries with 12 barriers per block. Its two queue buffers
@@ -958,7 +958,7 @@ whenever the programs compiled, even with the setting off.
 `sortQueues`, `sortQueueCapacity`, `computeSortAvailable`,
 `allocateComputeSortQueues`, `sortWithCompute`, `clearSortQueueCount`, the
 `used_compute_sort` logging, `oitComputeSortActive` uniform and debug mode 9
-in the composite shader, the `RenderExactOITComputeSort` setting (settings.xml
+in the composite shader, the `ASRenderExactOITComputeSort` setting (settings.xml
 entry and any UI in `panel_preferences_ayanestorm.xml` / `floater_phototools.xml`
 — grep for it), and the diagnostics keys `EXACT_OIT_COMPUTE_*`. Update the
 how-it-works doc's sort section.
@@ -1017,7 +1017,7 @@ not apply.
 
 ### E11. Small CPU cleanups
 
-- `composite()` line 1365: `gSavedSettings.getBOOL("RenderExactOITComputeSort")`
+- `composite()` line 1365: `gSavedSettings.getBOOL("ASRenderExactOITComputeSort")`
   per frame → `LLCachedControl` (or delete with E9).
 - `shadersReady()` calls `gSavedSettings.getBOOL("GLTFEnabled")` per pool per
   frame and builds a `std::string` → cache the result in a static that is reset
@@ -1032,7 +1032,7 @@ not apply.
 ### E12. Fidelity deviations found (user decision)
 
 1. **DoF depth pass skipped.** `lldrawpoolalpha.cpp:242` adds
-   `&& !FSOITDispatcher::captureCompleted()` to the vanilla condition that
+   `&& !ASOITDispatcher::captureCompleted()` to the vanilla condition that
    renders alpha surfaces with alpha > 0.33 into the depth buffer for
    Depth of Field. With Exact OIT on and DoF on, transparent surfaces do not
    participate in DoF focus. This pass uses vanilla shaders and depth-only
@@ -1056,11 +1056,11 @@ are marked. Items marked "identical" do not change any pixel.
 
 ### A1. Remove the per-frame Z-bin / RMQ / entity-mask machinery (identical)
 
-**Why:** `rasterizeConservativeBounds()` (fsavboit.cpp:1352-1463) builds
+**Why:** `rasterizeConservativeBounds()` (asavboit.cpp:1352-1463) builds
 `zbin_min/max` over `avboitVirtualSlices()` bins with a `std::multiset`, then
 a sparse table of `slices × levels` words and uploads it every frame
 (65536 × 17 × 4 = 4.4 MB with the default high domain). The GPU side
-(`avboitBoundsF.glsl`, `avboitVolumeC.glsl` pass 8/9/10) maintains 8-word
+(`asAVBOITBoundsF.glsl`, `asAVBOITVolumeC.glsl` pass 8/9/10) maintains 8-word
 entity masks per cell and queries the table. The only consumer is pass 8:
 ```
 if (minimum_bin != 0xffffffffu && merged_mask != 0u) mark 3x3 tile occupancy
@@ -1074,21 +1074,21 @@ shader says the interval is "retained for the future per-entity Z-bin
 candidate stage"; that stage does not exist.
 
 **Change:**
-- `fsavboit.cpp`: delete lines 1352-1463 (Z-bin build + upload) and the
+- `asavboit.cpp`: delete lines 1352-1463 (Z-bin build + upload) and the
   `entity_id_uniform` uploads; keep the `bounds` gather, sort, and the proxy
   cube draws (they still feed the proxy intervals). Delete
   `avboitZBinRMQLevels()`, `AVBOIT_ENTITY_MASK_WORDS`, the `AVBOIT_ZBIN_LEVELS`
   permutations, and the corresponding terms in `work_words`
   (`slices * levels` and `cells * 8`). Keep `avboitMaxDivider()`.
 - Shaders: remove `avboit_entity_mask_offset`, `avboit_zbin_*`,
-  `avboit_mask_for_id_range`, the mask writes in `avboitBoundsF.glsl`
+  `avboit_mask_for_id_range`, the mask writes in `asAVBOITBoundsF.glsl`
   (`atomicOr(avboitWork[mask_address], ...)`), pass 10's mask write, pass 9's
   mask clear, and in pass 8 replace the `merged_mask` block by
   `if (minimum_bin != 0xffffffffu) { mark 3x3 }`. **Every offset function**
   (`avboit_bounds_offset`, `avboit_proxy_bounds_offset` in the capture, emissive
   and PBR-glow shaders, `avboit_tile_range_offset`, `avboit_dilated_*`,
   `avboit_proxy_miss_offset`) must be updated consistently in all four shader
-  files and in `fsavboit.cpp` (`work_words`, `zbin_offset_words`). Grep for
+  files and in `asavboit.cpp` (`work_words`, `zbin_offset_words`). Grep for
   `AVBOIT_ZBIN_LEVELS` and `* 8u` to find them all.
 
 **Traps:** the work-buffer layout is hand-computed in 5 places; change them in
@@ -1104,7 +1104,7 @@ unaffected.
 
 ### A2. Pass 1 depth test: use a per-cell max-depth target (bug fix + GPU)
 
-**Why:** `finishDirectOccupancy()` binds `gAVBOITOpaqueTarget` (full-res,
+**Why:** `finishDirectOccupancy()` binds `gASAVBOITOpaqueTarget` (full-res,
 private depth copy) and `beginDirectRasterPass(1)` sets a volume-sized
 viewport. `forwardRender` keeps `LLGLDepthTest(GL_TRUE, GL_FALSE)`, so
 fragments for cell (x, y) are hardware-tested against opaque depth at
@@ -1115,10 +1115,10 @@ screen (a wall, the avatar's shoulder in some camera angles), silently removing
 extinction and mis-ordering layers in the affected cells.
 
 **Change:**
-1. `allocateVolume()`: allocate `gAVBOITPrepassTarget` with a depth buffer:
-   `gAVBOITPrepassTarget.allocate(volumeWidth, volumeHeight, GL_R8, true)`
+1. `allocateVolume()`: allocate `gASAVBOITPrepassTarget` with a depth buffer:
+   `gASAVBOITPrepassTarget.allocate(volumeWidth, volumeHeight, GL_R8, true)`
    (R8 is enough; color is masked off in that pass).
-2. New tiny shader `avboitCellDepthF.glsl` (fullscreen triangle, own file):
+2. New tiny shader `asAVBOITCellDepthF.glsl` (fullscreen triangle, own file):
    ```glsl
    uniform sampler2D avboitOpaqueDepthSampler;
    uniform ivec2 avboitViewport;
@@ -1134,18 +1134,18 @@ extinction and mis-ordering layers in the affected cells.
    }
    ```
    Program with `postDeferredNoTCV.glsl` as vertex stage, depth test off,
-   depth write on, drawn into `gAVBOITPrepassTarget` once per frame in
+   depth write on, drawn into `gASAVBOITPrepassTarget` once per frame in
    `finishDirectOccupancy()` before `beginDirectRasterPass(1)`.
-3. `finishDirectOccupancy()`: bind `gAVBOITPrepassTarget` (not the opaque
+3. `finishDirectOccupancy()`: bind `gASAVBOITPrepassTarget` (not the opaque
    target) for pass 1; `beginDirectRasterPass(1)` viewport stays volume-sized
    (now equal to the target size).
-4. `avboitCaptureF.glsl`: delete `avboit_behind_opaque_bounds()` and its call;
+4. `asAVBOITCaptureF.glsl`: delete `avboit_behind_opaque_bounds()` and its call;
    the hardware depth test (LEQUAL against the cell's farthest opaque depth) is
    the same predicate (`gl_FragCoord.z > farthest → reject`). Same deletion in
-   `avboitEmissiveF.glsl` and `avboitPbrGlowF.glsl` (their pass-1 branch then
+   `asAVBOITEmissiveF.glsl` and `asAVBOITPbrGlowF.glsl` (their pass-1 branch then
    becomes `if (avboitRasterPass == 1) return;` first thing — see A4).
-5. `finishDirectExtinction()` currently calls `gAVBOITOpaqueTarget.flush()`
-   then binds it for the early-depth quads; add `gAVBOITPrepassTarget.flush()`
+5. `finishDirectExtinction()` currently calls `gASAVBOITOpaqueTarget.flush()`
+   then binds it for the early-depth quads; add `gASAVBOITPrepassTarget.flush()`
    before that so the target switch is clean.
 
 **Traps:** `early_fragment_tests` is declared in the capture shader; that is
@@ -1166,20 +1166,20 @@ better). Unaffected cells identical.
 
 ### A3. Per-pass uniform setup instead of per-draw (identical)
 
-**Why:** `configureDirectRasterShader()` (fsavboit.cpp:1644) is called per
+**Why:** `configureDirectRasterShader()` (asavboit.cpp:1644) is called per
 draw from `configureCapturedDrawIfActive()` and `configureGLTFCapturedDraw()`:
 10 hashed lookups, 10 `glProgramUniform*`, three `gSavedSettings` string
-lookups (`RenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
+lookups (`ASRenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
 `samplingBias()`, `fittedLinearization()`), and `configureAccumulationBlend()`
 (3 × 3 GL calls) per draw in pass 2.
 
 **Change:**
 - Replace the four settings reads with `static LLCachedControl<...>`.
-- In the `render_pass` lambda (fsavboit.cpp:730), before setting
+- In the `render_pass` lambda (asavboit.cpp:730), before setting
   `sCaptureActive = true`, call `configureDirectRasterShader()` once for every
   AVBOIT program: alpha, PBR alpha, fullbright (+ rigged variants), all
-  `gAVBOITMaterialAlphaProgram[i]` with a program object, all
-  `gAVBOITGLTFProgram.mGLTFVariants[i]`, the two emissive and two glow
+  `gASAVBOITMaterialAlphaProgram[i]` with a program object, all
+  `gASAVBOITGLTFProgram.mGLTFVariants[i]`, the two emissive and two glow
   programs. `glProgramUniform*` does not need the program bound, so this is
   legal without binding. Cache the uniform locations per program in a small
   struct (map keyed by program pointer, cleared in `unloadShaders()`).
@@ -1201,7 +1201,7 @@ lookups (`RenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
   calls), drop everything else from the per-draw path.
 - `oitGlow` uniform: AVBOIT capture uses it in `avboit_direct_store`
   (`alpha > 0.0 || oitGlow > 0.0`, glow accumulation); it is always 0 from
-  the color path. Replace with literal 0 in `avboitCaptureF.glsl` (the
+  the color path. Replace with literal 0 in `asAVBOITCaptureF.glsl` (the
   emissive/glow shaders have their own `avboit_store_glow(float)`), delete the
   per-draw `uniform1f(glow, 0)`.
 
@@ -1211,10 +1211,10 @@ lookups (`RenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
 
 ### A4. Skip wasted emissive work (identical)
 
-- `FSAVBOIT::handleCapturedEmissives()`: `if (sDirectRasterPass == 1) return true;`
+- `ASAVBOIT::handleCapturedEmissives()`: `if (sDirectRasterPass == 1) return true;`
   before issuing any emissive draw. Pass 1 emissive fragments contribute
   nothing (the shader returns after the depth loop).
-- `avboitEmissiveF.glsl` / `avboitPbrGlowF.glsl`: move
+- `asAVBOITEmissiveF.glsl` / `asAVBOITPbrGlowF.glsl`: move
   `if (avboitRasterPass == 1) return;` to the top of `avboit_store_glow` (only
   relevant if the CPU skip above is not done; do both).
 - `materialF.glsl:365` (tagged block): the early alpha-only exit tests
@@ -1223,7 +1223,7 @@ lookups (`RenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
   stores the same alpha (`diffcol.a * vertex_color.a`) at the end. Change the
   condition to match the others (`!= 2` once A9 exists, `< 2` otherwise).
   Identical output.
-- `avboitCaptureF.glsl`: `avboit_compare_proxy_coverage()` performs
+- `asAVBOITCaptureF.glsl`: `avboit_compare_proxy_coverage()` performs
   `atomicAdd(avboitDiagnostic[4])` per pass-0 fragment and a second atomic on
   miss. Wrap the call in `if (avboitDebugMode == 6)`. Same for the
   `atomicAdd(avboitDiagnostic[2])` in compute pass 5 (one per cell; cheap,
@@ -1237,11 +1237,11 @@ lookups (`RenderAVBOITDebugMode`, `wideExtinction()`, `tileRange()`,
 
 ---
 
-### A5. `RenderAVBOITTileRange`: inert and inconsistent — user decision
+### A5. `ASRenderAVBOITTileRange`: inert and inconsistent — user decision
 
 **Facts:** `avboit_reduce_tile_range()` runs only in raster pass 0.
 `renderPostDeferredCapture()` runs pass 0 for the alpha pools only when
-`RenderAVBOITDebugMode == 6`; otherwise pass 0 renders only the GLTF scene.
+`ASRenderAVBOITDebugMode == 6`; otherwise pass 0 renders only the GLTF scene.
 So with the default settings the per-tile range is empty
 (`stored_minimum > stored_maximum`) for every tile without GLTF alpha
 geometry and the global curve is used, i.e. the setting does nothing for
@@ -1252,7 +1252,7 @@ so neighbouring tiles with different depth mappings blend incompatible slices.
 
 **Options:**
 - A. Make it work: call `avboit_reduce_tile_range(bounded_window_depth)` from
-  `avboitBoundsF.glsl` for exact proxies (`avboitExactProxy != 0`), which run
+  `asAVBOITBoundsF.glsl` for exact proxies (`avboitExactProxy != 0`), which run
   full-resolution over all alpha geometry including rigged. Cost: 2 atomics per
   proxy fragment. Then evaluate the tile-boundary seams; if visible, the
   feature needs a cross-tile blend it does not have today.
@@ -1264,8 +1264,8 @@ Recommendation: B now (zero visual change for non-GLTF scenes, removes the
 GLTF-tile inconsistency), and decide A vs C after E-phase profiling. Do not
 implement A without the user's approval: it changes AVBOIT's output everywhere.
 
-**Done (2026-09-03):** B applied. `settings.xml`'s `RenderAVBOITTileRange`
-default changed `1` -> `0`; `FSAVBOIT::tileRange()`'s `LLCachedControl`
+**Done (2026-09-03):** B applied. `settings.xml`'s `ASRenderAVBOITTileRange`
+default changed `1` -> `0`; `ASAVBOIT::tileRange()`'s `LLCachedControl`
 fallback default changed `true` -> `false` to match. Comments in both places
 updated to state the current inertness plainly rather than describe the
 feature as if it worked. No shader change (the pass-0 gating this relies on
@@ -1292,7 +1292,7 @@ tile-rescaled coordinate. A9 is the direct fix.
 each step, ten times (candidate dividers), then a Blelloch scan. For 8192
 entries this fits in 32 KB of shared memory.
 
-**Change (`avboitVolumeC.glsl`):**
+**Change (`asAVBOITVolumeC.glsl`):**
 ```glsl
 #if AVBOIT_VIRTUAL_SLICES <= 8192
 shared uint avboitWarpScan[AVBOIT_VIRTUAL_SLICES];
@@ -1319,7 +1319,7 @@ green.
 ### A7. Drop the per-frame opaque color copy (identical)
 
 **Why:** `beginDirectFrame()` copies screen color and depth into
-`gAVBOITOpaqueTarget`. The color copy only feeds `diffuseRect` in the compute
+`gASAVBOITOpaqueTarget`. The color copy only feeds `diffuseRect` in the compute
 resolve (pass 7), which writes `avboitOutput` = the screen. In a compute
 shader, one invocation may `imageLoad` and then `imageStore` the same texel
 of the same image without any barrier; no other invocation touches that texel.
@@ -1328,8 +1328,8 @@ of the same image without any barrier; no other invocation touches that texel.
 declare `layout(binding = 2, rgba16f) uniform image2D avboitOutput;` (drop
 `writeonly`), replace `texelFetch(diffuseRect, pixel, 0)` with
 `imageLoad(avboitOutput, pixel)`, delete the color `glCopyImageSubData` and
-the `bindTexture(DEFERRED_DIFFUSE, &gAVBOITOpaqueTarget)` calls. The color
-attachment of `gAVBOITOpaqueTarget` is still needed as an FBO attachment for
+the `bindTexture(DEFERRED_DIFFUSE, &gASAVBOITOpaqueTarget)` calls. The color
+attachment of `gASAVBOITOpaqueTarget` is still needed as an FBO attachment for
 the raster passes (color masked): allocate it as `GL_R8` instead of
 `GL_RGBA16F` (saves 7 B/px). Keep the depth copy (private early-Z target).
 
@@ -1343,16 +1343,16 @@ the copy.
 
 - Delete `avboit_cull_fragment()` (A4).
 - The warp lookup, tile-range and depth helpers are copied verbatim in
-  `avboitCaptureF.glsl`, `avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`. The
+  `asAVBOITCaptureF.glsl`, `asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`. The
   two glow shaders are terminal fragment files (the emissive/glow programs
   replace the fragment stage), so they can link an additional shared fragment
-  object the same way `cloneCaptureShader` appends `avboitCaptureF.glsl`:
+  object the same way `cloneCaptureShader` appends `asAVBOITCaptureF.glsl`:
   factor the shared functions into `avboitCommonF.glsl`, append it to every
   AVBOIT program's `mShaderFiles`, and keep only `main()`/`avboit_store_glow`
   bodies in the terminal files. Optional; reduces drift risk (A1/A2 must edit
   the same offsets three times otherwise).
 - `LLGLSLShader::mFeatures.attachNothing = false` on
-  `gAVBOITSkinnedBoundsProgram` vs `true` on the non-skinned one: intentional
+  `gASAVBOITSkinnedBoundsProgram` vs `true` on the non-skinned one: intentional
   (skinning needs the attached skinning object). Leave.
 
 ---
@@ -1441,7 +1441,7 @@ uses the *quantised depth only* (`key >> 8`), never the alpha bits.
 32-bit atomics; duplicates of the front value, e.g. double-sided geometry,
 do not consume the second slot):
 ```glsl
-// avboitCaptureF.glsl, pass 3
+// asAVBOITCaptureF.glsl, pass 3
 layout(binding = 0, r32ui) uniform coherent uimage2D avboitFrontKey0;   // nearest
 layout(binding = 1, r32ui) uniform coherent uimage2D avboitFrontKey1;   // second nearest, distinct depth
 uint avboit_front_key(float alpha)
@@ -1489,7 +1489,7 @@ corrected value):
 ```
 There is no glow term left in `avboit_direct_store` (A3 removed `oitGlow`).
 Apply the same `front_factor` logic in the two glow shaders' pass-2 branch
-(`avboitEmissiveF.glsl` and `avboitPbrGlowF.glsl`, `avboit_store_glow()`):
+(`asAVBOITEmissiveF.glsl` and `asAVBOITPbrGlowF.glsl`, `avboit_store_glow()`):
 replace `max(glow, 0.0) * front` with `max(glow, 0.0) * front_factor`, where
 `front_factor` is computed exactly as above from `front` (their name for the
 sampled transmittance) and the two key images (glow-only fragments of the
@@ -1514,7 +1514,7 @@ right after `finishDirectOccupancy()` and before the extinction raster:
 ```cpp
 {
     LL_PROFILE_GPU_ZONE("AVBOIT front key raster");
-    gAVBOITOpaqueTarget.bindTarget();          // full resolution, private opaque depth
+    gASAVBOITOpaqueTarget.bindTarget();          // full resolution, private opaque depth
     beginDirectRasterPass(3);                  // viewport full; binds key images 0 and 1
     render_pass(true);
 }
@@ -1530,7 +1530,7 @@ fragment (same vertex program, same matrices); the quantised-depth match is
 therefore reliable. The shared shaders exit right after computing alpha for
 every pass other than 2, so the fragment cost is vertex work + rasterisation +
 one texture fetch + two image atomics. `handleCapturedEmissives()` must skip
-emissive draws in pass 3: A4's guard in `FSAVBOIT::handleCapturedEmissives()`
+emissive draws in pass 3: A4's guard in `ASAVBOIT::handleCapturedEmissives()`
 is currently `sDirectRasterPass != 1`; make it
 `sDirectRasterPass != 1 && sDirectRasterPass != 3` (pass 0 must keep running
 emissives for `avboit_mark_tile`, pass 2 for glow accumulation).
@@ -1553,9 +1553,9 @@ and GLTF; the key match uses depth, so a small alpha discrepancy only shifts
 the bound slightly, never the layer identity).
 
 **Uniform/setting:** `uniform int avboitFrontLayers;` fed from a new
-`RenderAVBOITFrontLayers` boolean (default on) so the fix can be A/B compared
+`ASRenderAVBOITFrontLayers` boolean (default on) so the fix can be A/B compared
 live; add it to `configureDirectRasterShader()` (A3: once per pass).
-`FSAVBOIT::beginDirectRasterPass()` and `configureDirectRasterShader()` need
+`ASAVBOIT::beginDirectRasterPass()` and `configureDirectRasterShader()` need
 no changes for pass 3 beyond what A3 already centralises.
 
 **Diagnostics:** debug mode 16: pixel colour = (has key0, has key1, 0);
@@ -1586,7 +1586,7 @@ declares 3,4,6,7).
 
 **Verify:** the reported outfit (sheer over sheer, mm apart): mode 0 must
 show the under layer at about 5 percent visibility, matching Exact OIT
-(`RenderOITMode` = Exact) side by side. Mode 14 (front transmittance) is no
+(`ASRenderOITMode` = Exact) side by side. Mode 14 (front transmittance) is no
 longer meaningful for F/S pixels; use mode 16/17. Then the regression set from
 the special-repo plan: avatar behind a window, hair through glass, smoke,
 lace edges (mode 13 blue areas), glow objects behind glass.
@@ -1607,7 +1607,7 @@ Run this list after each phase.
   `prepareCaptureShaders`) and again in `lldrawpoolalpha.cpp` at shader switch.
   None of the items above touch program binding order. `materialF.glsl` adds
   `asVolumetricForeground()` into the captured color: untouched.
-  `ASVolumetricLighting::renderPass()` runs before `FSOITDispatcher::beginFrame()`
+  `ASVolumetricLighting::renderPass()` runs before `ASOITDispatcher::beginFrame()`
   and its debug mode skips the whole forward pass: untouched.
 - **Self-light isolate (pass 3):** E5 changes the composite; pass 3 only reads
   `head != OIT_NULL`, which no item changes. E10c (texture barrier) does not
@@ -1618,10 +1618,10 @@ Run this list after each phase.
 - **HUD, impostor, cube snapshot, mouselook:** `captureEligible()` guards are
   not modified by any item; E1's skip counter must sit after those guards or
   be independent of them (it is per frame, decremented in `beginFrame()`).
-- **Standard mode:** every CPU change lives in `fsexactoit.cpp`/`fsavboit.cpp`
+- **Standard mode:** every CPU change lives in `asexactoit.cpp`/`asavboit.cpp`
   behind `sCaptureActive`/`captureCompleted()`; the tagged edits in E2-B and
   E12 must keep the vanilla code path byte-for-byte when no OIT mode is active.
-- **macOS stubs:** `fsexactoit.cpp` and `fsavboit.cpp` have `#if LL_DARWIN`
+- **macOS stubs:** `asexactoit.cpp` and `asavboit.cpp` have `#if LL_DARWIN`
   stub sections with every public function. Any new public function must get a
   stub there or the Mac build breaks.
 - **Shader cache:** bump `shaderCacheRevision()` once per phase that changed
@@ -1651,7 +1651,7 @@ Verification protocol for every Exact OIT phase (static camera, same
 window size, same time of day):
 
 1. Debug mode 0 screenshot before/after: expected pixel-identical
-   (`RenderExactOITDebugMode 0`). Any difference = bug, except E7 in scenes
+   (`ASRenderExactOITDebugMode 0`). Any difference = bug, except E7 in scenes
    with exactly coplanar transparent surfaces (tie-break order is already
    arbitrary there).
 2. Debug mode 4: all green (sorted order valid).

@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Shared AVBOIT direct-raster fragment output implementation.
  */
@@ -10,7 +11,7 @@ uniform vec2 avboitDepthRange;
 uniform float avboitLinearization;
 uniform sampler3D avboitTransmittanceSampler;
 const uint AVBOIT_DIRECT_SLICES = 128u;
-// Must match the compaction search range in avboitVolumeC.glsl.
+// Must match the compaction search range in asAVBOITVolumeC.glsl.
 const uint AVBOIT_MAX_DIVIDER = uint(AVBOIT_MAX_DIVIDER_VALUE);
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
@@ -37,7 +38,7 @@ uniform int avboitTileRange;
 // Round 3: pass 1 samples this many points per axis per 8x8 cell instead of
 // one, so a cell's stored extinction averages the block instead of showing
 // whichever single strand or garment layer happened to land on one sample --
-// see FSAVBOIT::AVBOIT_PASS1_SUBSAMPLE.
+// see ASAVBOIT::AVBOIT_PASS1_SUBSAMPLE.
 uniform int avboitPass1Subsample;
 // A9: per-pixel exact front-two-layer key. See doc/ayanestorm-oit-
 // performance-audit-plan.md's A9 section for the full design and proof.
@@ -180,7 +181,7 @@ uint avboit_dilated_proxy_bounds_offset()
 }
 
 // Screen-space tile grid used for per-tile depth ranging. Must match the grid
-// in avboitVolumeC.glsl and the tile count allocated in fsavboit.cpp.
+// in asAVBOITVolumeC.glsl and the tile count allocated in asavboit.cpp.
 const int AVBOIT_RANGE_TILE = 16;
 
 // Per-tile depth range, two uint depth keys per tile, appended after the
@@ -219,14 +220,14 @@ uint avboit_range_index(ivec2 full_res_pixel)
 // 1 cm at two metres and about 7 cm at twenty (tolerable: distant tiles
 // need proportionally less precision), giving at least ~80 um per slice
 // against that ~2 um baseline. Must match the pass-6 copy of this same
-// math in avboitVolumeC.glsl exactly.
+// math in asAVBOITVolumeC.glsl exactly.
 const float AVBOIT_TILE_MIN_SPAN = 6.0e-4;
 
 // True, with the padded [minimum_depth, minimum_depth + span] global-
 // normalized range, when ranging is on and pass 0 wrote the tile containing
 // full-resolution `pixel`. False (outputs unset) when the tile is unwritten
 // or ranging is off, meaning the caller must fall back to the global curve.
-// The padding must stay identical to avboitVolumeC.glsl's pass-6 copy of
+// The padding must stay identical to asAVBOITVolumeC.glsl's pass-6 copy of
 // this same math, which precomputes the equivalent of this tile's
 // saturating-slice window depth ahead of the raster passes.
 bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
@@ -531,8 +532,8 @@ void avboit_direct_store(vec4 color)
                  avboitVolumeSize - ivec2(1)) :
             clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
     // A2: pass 1's hardware early_fragment_tests now rejects against the
-    // correct per-cell farthest opaque depth (see avboitCellDepthF.glsl and
-    // FSAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
+    // correct per-cell farthest opaque depth (see asAVBOITCellDepthF.glsl and
+    // ASAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
     // point in pass 1 has already survived that test -- no manual re-test
     // needed.
     if (avboitRasterPass == 0)

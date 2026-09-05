@@ -1,11 +1,11 @@
 /**
- * @file fsexactoit.h
- * @brief Firestorm Exact OIT integration.
+ * @file asexactoit.h
+ * @brief AyaneStorm Exact OIT integration.
  * @author chanayane@firestorm
  *
- * $LicenseInfo:firstyear=2026&license=fsviewerlgpl$
- * Phoenix Firestorm Viewer Source Code
- * Copyright (C) 2026, The Phoenix Firestorm Project, Inc.
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (c) 2026 Chanayane @ Second Life
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -21,13 +21,11 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
- * The Phoenix Firestorm Project, Inc., 1831 Oakwood Drive, Fairmont, Minnesota 56031-3225 USA
- * http://www.firestormviewer.org
  * $/LicenseInfo$
  */
 
-#ifndef FS_EXACT_OIT_H
-#define FS_EXACT_OIT_H
+#ifndef AS_EXACT_OIT_H
+#define AS_EXACT_OIT_H
 
 #include <vector>
 
@@ -41,7 +39,7 @@ class LLPipeline;
 class LLRenderTarget;
 class LLVertexBuffer;
 
-class FSExactOIT
+class ASExactOIT
 {
 public:
     static const char* shaderCacheRevision();
@@ -78,7 +76,7 @@ public:
     static void retainNodePoolOnNextRelease();
     static void releaseResources();
     static void allocateResources(U32 width, U32 height);
-    // User intent AND hardware support, mirroring FSAVBOIT::requested(). Public
+    // User intent AND hardware support, mirroring ASAVBOIT::requested(). Public
     // so the neutral dispatcher can publish the selected transparency mode
     // without reaching into either renderer's internals.
     static bool isEnabled();
@@ -186,4 +184,4 @@ private:
     static Resources sResources;
 };
 
-#endif // FS_EXACT_OIT_H
+#endif // AS_EXACT_OIT_H

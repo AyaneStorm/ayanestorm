@@ -1,5 +1,6 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
- * @file avboitIsolateDepthF.glsl
+ * @file asAVBOITIsolateDepthF.glsl
  * @author chanayane@firestorm
  * @brief Self-lighting floater isolate-background mode: writes a near-plane
  *        depth wherever AVBOIT actually accumulated captured alpha content,

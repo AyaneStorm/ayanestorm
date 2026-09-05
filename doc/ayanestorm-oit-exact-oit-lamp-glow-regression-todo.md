@@ -11,7 +11,7 @@ exist before the E-series work.
 ## Root cause (confirmed)
 
 E2-B (commit `3b6985edcc`) added this filter to
-`FSExactOIT::handleCapturedEmissives()` (`indra/newview/fsexactoit.cpp`,
+`ASExactOIT::handleCapturedEmissives()` (`indra/newview/asexactoit.cpp`,
 around line 1150):
 
 ```cpp
@@ -41,7 +41,7 @@ it, the composite adds zero glow, the lamp is dark.
 
 Why the other modes are fine: vanilla and AVBOIT select emissive draws by
 `mVertexBuffer->hasDataType(TYPE_EMISSIVE)` (`lldrawpoolalpha.cpp:460, 912`)
-and never read `mHasGlow`. `FSAVBOIT::handleCapturedEmissives()` has no such
+and never read `mHasGlow`. `ASAVBOIT::handleCapturedEmissives()` has no such
 filter.
 
 Why particles still glow: E2-B's tagged block in `llvopartgroup.cpp:854-868`
@@ -70,10 +70,10 @@ Only new-info creation needs it: the batched branch above reuses an existing
 `info` that already carries the flag. Vanilla never reads `mHasGlow`, so this
 changes nothing outside Exact OIT. Prim faces with glow == 0 inside a glowing
 group still get drawn, and E2-A's `if (glow == 0.0) return;` in
-`exactOITEmissiveF.glsl` / `exactOITPbrGlowF.glsl` keeps them from allocating
+`asExactOITEmissiveF.glsl` / `asExactOITPbrGlowF.glsl` keeps them from allocating
 a node; that was already the pre-E2-B behaviour.
 
-Also fix the wrong comment above `drop_no_glow` in `fsexactoit.cpp`:
+Also fix the wrong comment above `drop_no_glow` in `asexactoit.cpp`:
 replace the sentence "Non-particle emissive draws (LLVOVolume) only ever get
 TYPE_EMISSIVE when glow > 0, so mHasGlow is already true for them and this
 filter is a no-op there." with "Prim draws set mHasGlow = true in
@@ -83,7 +83,7 @@ with known-zero glow are dropped."
 ### B. Fallback if touching `llvovolume.cpp` is refused
 
 Remove the `drop_no_glow` lambda and its four calls from
-`FSExactOIT::handleCapturedEmissives()`. That restores pre-E2-B behaviour
+`ASExactOIT::handleCapturedEmissives()`. That restores pre-E2-B behaviour
 (E2-A alone). Cost: glow-less particle draws are submitted again (vertex
 work only; they still allocate nothing). Leave the `llvopartgroup.cpp`
 tagged block in place; it is harmless.
@@ -93,7 +93,7 @@ tagged block in place; it is harmless.
 Fix A applied 2026-09-03: `draw_info->mHasGlow = true;` added in
 `LLVolumeGeometryManager::registerFace()` (`llvovolume.cpp`, new-info `else`
 branch, right after `draw_info->mModelMatrix = model_mat;`), tagged. Comment
-above `drop_no_glow` in `fsexactoit.cpp` corrected to match. No shader
+above `drop_no_glow` in `asexactoit.cpp` corrected to match. No shader
 source changed; no shader cache revision bump needed. Verified in testing:
 lamp glows again in Exact OIT, matching vanilla and AVBOIT.
 

@@ -87,7 +87,7 @@
         follows="left|top"
         layout="topleft"
         height="23"
-        control_name="RenderOITMode"
+        control_name="ASRenderOITMode"
         tool_tip="Select Standard transparency, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
         left="15"
         name="render_oit_mode"
@@ -121,8 +121,8 @@
         Exact OIT debug mode (0 = off):
       </text>
       <spinner
-        control_name="RenderExactOITDebugMode"
-        enabled_control="RenderExactOIT"
+        control_name="ASRenderExactOITDebugMode"
+        enabled_control="ASRenderExactOIT"
         decimal_digits="0"
         follows="left|top"
         increment="1"
@@ -148,8 +148,8 @@
         AVBOIT debug mode (0 = off):
       </text>
       <spinner
-        control_name="RenderAVBOITDebugMode"
-        enabled_control="RenderAVBOIT"
+        control_name="ASRenderAVBOITDebugMode"
+        enabled_control="ASRenderAVBOIT"
         decimal_digits="0"
         follows="left|top"
         increment="1"

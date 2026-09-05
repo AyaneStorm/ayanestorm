@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 // <AS:Chanayane> Exact per-pixel transparency composite
 /**
  * Exact per-pixel linked-list transparency composite.
@@ -46,10 +47,10 @@ uniform int oitFirstSortPass;
 uniform int oitShallowLimit;
 uniform int oitOpaqueCutoff;
 const uint OIT_SORTED = 0x80000000u;
-const uint OIT_SHALLOW = 16u;   // K. Must match FSExactOIT::composite()'s K.
+const uint OIT_SHALLOW = 16u;   // K. Must match ASExactOIT::composite()'s K.
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater isolate-background mode: pass 3 is a
-// depth-only re-pass (see FSExactOIT::composite()), drawn AFTER the normal
+// depth-only re-pass (see ASExactOIT::composite()), drawn AFTER the normal
 // color blend (pass 2) completes, with color writes masked off and depth
 // writes on. It discards on every pixel this shader has no real captured
 // coverage for (head == OIT_NULL) and writes a near-plane depth everywhere
@@ -202,7 +203,7 @@ uint prune_behind_opaque_cutoff(uint head, out uint retained_count)
 // into registers (up to OIT_CHUNK nodes) and insertion-sorted there, cutting
 // the natural-run count (and so the merge pass count) for random-order deep
 // lists such as overlapping sprites.
-const uint OIT_CHUNK = 16u;   // may equal OIT_SHALLOW. Must match FSExactOIT's OIT_CHUNK.
+const uint OIT_CHUNK = 16u;   // may equal OIT_SHALLOW. Must match ASExactOIT's OIT_CHUNK.
 
 uint take_run(inout uint current, out uint tail)
 {

@@ -14,12 +14,12 @@ crash rather than a caught C++ exception. The log's last lines before the
 gap:
 
 ```
-WARNING #ExactOIT# ... FSExactOIT::captureOverflowed : ONCE: Exact OIT node
+WARNING #ExactOIT# ... ASExactOIT::captureOverflowed : ONCE: Exact OIT node
     capacity exceeded (required 28715435, capacity 19337136); rendering
     complete vanilla transparency for this frame.
-INFO  #ExactOIT# ... FSExactOIT::growNodePool : Grew exact OIT node capacity
+INFO  #ExactOIT# ... ASExactOIT::growNodePool : Grew exact OIT node capacity
     to 38674272
-INFO  #ExactOIT# ... FSExactOIT::growNodePool : Grew exact OIT node capacity
+INFO  #ExactOIT# ... ASExactOIT::growNodePool : Grew exact OIT node capacity
     to 67108864
 ```
 
@@ -30,7 +30,7 @@ GL 4.6 (same machine as the earlier fence-stall investigation).
 
 ## Root cause: growNodePool() reallocated a buffer with GPU work still queued against it
 
-`FSExactOIT::growNodePool()` calls `glBufferData()` on `sResources.nodes`
+`ASExactOIT::growNodePool()` calls `glBufferData()` on `sResources.nodes`
 (the SSBO every capture fragment writes to via atomics, and every sort pass
 reads/rewrites). Before this fix, it was called from two places, both
 **mid-frame, after this frame's own capture had already written data into
@@ -100,18 +100,18 @@ reallocation, and this frame hasn't touched the buffer yet, so there is no
 window where in-flight GPU work references the buffer across a
 reallocation.
 
-`fsexactoit.h`, `Resources`: added
+`asexactoit.h`, `Resources`: added
 ```cpp
 U32 pendingGrowthNodes = 0;   // 0 = no growth pending
 ```
 
-`fsexactoit.cpp`:
+`asexactoit.cpp`:
 - Extracted the target-capacity math out of `growNodePool()` into a pure,
   file-scope free function `computeGrownCapacity(required_nodes,
   current_capacity)` (no GL calls, no access to `sResources`, so it is safe
   to call from anywhere including the skip-frame prediction below).
   `growNodePool()` itself keeps doing the actual `glBufferData` reallocation
-  and remains a private `FSExactOIT` member function (an earlier draft tried
+  and remains a private `ASExactOIT` member function (an earlier draft tried
   to split the reallocation itself into a second free function too, but that
   needs `sResources`, a private static member — MSVC rejected it with
   C2065/C2198; reverted, the reallocation stays inside `growNodePool()`).
@@ -155,12 +155,12 @@ correct once growth lands.
 **Confirmed 2026-09-03 (bokt):** same repro (zoom into the water-splash
 scene) that crashed before the fix. Log:
 ```
-WARNING #ExactOIT# ... FSExactOIT::captureOverflowed : ONCE: Exact OIT node
+WARNING #ExactOIT# ... ASExactOIT::captureOverflowed : ONCE: Exact OIT node
     capacity exceeded (required 27643825, capacity 19337136); rendering
     complete vanilla transparency for this frame.
-INFO  #ExactOIT# ... FSExactOIT::growNodePool : Grew exact OIT node capacity
+INFO  #ExactOIT# ... ASExactOIT::growNodePool : Grew exact OIT node capacity
     to 38674272
-INFO  #ExactOIT# ... FSExactOIT::growNodePool : Grew exact OIT node capacity
+INFO  #ExactOIT# ... ASExactOIT::growNodePool : Grew exact OIT node capacity
     to 67108864
 ```
 No crash. FPS did not collapse during the demand spike (unlike the pre-fix

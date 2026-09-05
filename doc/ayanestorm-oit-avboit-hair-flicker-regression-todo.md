@@ -66,21 +66,21 @@ this file's previous revision; git history has it if needed)
 2. **User's own commit bisection** (rebuilding the viewer at specific
    historical commits and visually comparing -- not code analysis) found
    the actual introduction point: commit `55928e97da` (A5), which flipped
-   `RenderAVBOITTileRange`'s default from `1` to `0`. The commit
+   `ASRenderAVBOITTileRange`'s default from `1` to `0`. The commit
    immediately before it looked *better* than anything since ("beautiful"
    hair) but is where the flicker starts.
 3. A5's own plan entry had already named the deferred fix ("Option A": wire
    per-tile ranging to all alpha geometry, not just GLTF). User approved
    implementing it.
 4. **Fix attempt 1**: fed the per-tile range from
-   `FSAVBOIT::rasterizeConservativeBounds()`'s exact-proxy pass
-   (`avboitBoundsF.glsl`, raw untextured geometry, no alpha test). First
+   `ASAVBOIT::rasterizeConservativeBounds()`'s exact-proxy pass
+   (`asAVBOITBoundsF.glsl`, raw untextured geometry, no alpha test). First
    build showed severe static (non-flickering) corruption -- a jagged,
    blocky black region carved out of the hair.
 5. **Bug found and fixed (confirmed real, kept in all later attempts):**
-   `avboitVolumeC.glsl` had two unrelated compute passes both gated on
+   `asAVBOITVolumeC.glsl` had two unrelated compute passes both gated on
    `if (avboitPass == 12)`, dispatched from the same program
-   (`gAVBOITVolumeProgram`). The first (a transmittance-validity
+   (`gASAVBOITVolumeProgram`). The first (a transmittance-validity
    diagnostic, dispatched from `finishDirectExtinction()`) always matched
    first and `return`s, making the second (the per-tile range's reset-to-
    empty-interval pass, dispatched from `rasterizeConservativeBounds()`)
@@ -99,13 +99,13 @@ this file's previous revision; git history has it if needed)
    architecturally the wrong pass -- the exact-proxy pass draws raw,
    untextured geometry with no alpha test, which does not cover the same
    pixels as the alpha-tested hair fragments the later capture pass
-   actually draws. Reverted attempt 1's `avboitBoundsF.glsl` changes
+   actually draws. Reverted attempt 1's `asAVBOITBoundsF.glsl` changes
    entirely, and instead made the **material-tested occupancy pass**
    (`render_pass(true)` in `renderPostDeferredCapture()`, which runs the
    real alpha/PBR/fullbright shaders with real textures and alpha testing)
    run unconditionally every frame instead of only in debug mode 6. This
    pass already contained a correct, unmodified call to
-   `avboit_reduce_tile_range()` (in `avboitCaptureF.glsl`'s pass-0 branch)
+   `avboit_reduce_tile_range()` (in `asAVBOITCaptureF.glsl`'s pass-0 branch)
    that simply never used to execute for ordinary content.
    **Rebuilt and tested: still broken, now asymmetric (right side only),
    and the flicker -- which seemed to be a separate axis from the blocky
@@ -117,18 +117,18 @@ doc to be written instead of a third blind attempt.
 ## Current code state (uncommitted, on top of A7)
 
 Four files carry uncommitted changes implementing fix attempt 2 (attempt
-1's `avboitBoundsF.glsl` changes are fully reverted -- confirmed via
+1's `asAVBOITBoundsF.glsl` changes are fully reverted -- confirmed via
 `git diff` showing zero delta there):
 
-- `indra/newview/app_settings/shaders/class1/deferred/avboitVolumeC.glsl`
+- `indra/newview/app_settings/shaders/class1/deferred/asAVBOITVolumeC.glsl`
   -- the pass-12/13 renumbering (kept from attempt 1, still believed
   correct) plus its comment.
-- `indra/newview/fsavboit.cpp` -- `tileRange()`'s default flipped back to
+- `indra/newview/asavboit.cpp` -- `tileRange()`'s default flipped back to
   `true`; `renderPostDeferredCapture()`'s occupancy block restructured so
   `render_pass(true)` (material-tested occupancy) and the GLTF occupancy
   block both run unconditionally instead of being gated behind
   `debugMode() == 6`; the pass-12/13 CPU dispatch site updated to match.
-- `indra/newview/app_settings/settings.xml` -- `RenderAVBOITTileRange`
+- `indra/newview/app_settings/settings.xml` -- `ASRenderAVBOITTileRange`
   default `1`, comment rewritten to describe the corrected feed.
 - `doc/ayanestorm-oit-performance-audit-plan.md` -- status log rows
   documenting both fix attempts (see that file directly for exact wording).
@@ -137,7 +137,7 @@ Full diff of the code changes (doc/settings.xml diffs omitted, prose above
 covers them):
 
 ```diff
-diff --git a/indra/newview/app_settings/shaders/class1/deferred/avboitVolumeC.glsl b/indra/newview/app_settings/shaders/class1/deferred/avboitVolumeC.glsl
+diff --git a/indra/newview/app_settings/shaders/class1/deferred/asAVBOITVolumeC.glsl b/indra/newview/app_settings/shaders/class1/deferred/asAVBOITVolumeC.glsl
 @@ (inside main(), after the avboitPass == 12 diagnostic block, before it used to be avboitPass == 12 again)
      // Resets the per-tile depth range to an empty interval. atomicMin and
 -    // atomicMax in raster pass 0 close it around the transparency actually
@@ -151,7 +151,7 @@ diff --git a/indra/newview/app_settings/shaders/class1/deferred/avboitVolumeC.gl
 +    //
 +    // Pass number 13, not 12: pass 12 above (the transmittance-validity
 +    // diagnostic) already claims that value on the same program
-+    // (gAVBOITVolumeProgram dispatches both from fsavboit.cpp), so the two
++    // (gASAVBOITVolumeProgram dispatches both from asavboit.cpp), so the two
 +    // blocks collided -- this reset was unreachable dead code ...
 +    if (avboitPass == 13)
      {
@@ -166,7 +166,7 @@ diff --git a/indra/newview/app_settings/shaders/class1/deferred/avboitVolumeC.gl
          return;
      }
 
-diff --git a/indra/newview/fsavboit.cpp b/indra/newview/fsavboit.cpp
+diff --git a/indra/newview/asavboit.cpp b/indra/newview/asavboit.cpp
 @@ bool tileRange()
 -    // Off by default (A5): pass 0 only feeds this in debug mode 6 or for
 -    // GLTF alpha geometry, so it is currently inert for ordinary content.
@@ -175,10 +175,10 @@ diff --git a/indra/newview/fsavboit.cpp b/indra/newview/fsavboit.cpp
 +    // 6 only), feeding this from real alpha-tested fragments every frame
 +    // instead of only for GLTF content. Back on by default.
      static LLCachedControl<bool> tile_range(
--        gSavedSettings, "RenderAVBOITTileRange", false);
-+        gSavedSettings, "RenderAVBOITTileRange", true);
+-        gSavedSettings, "ASRenderAVBOITTileRange", false);
++        gSavedSettings, "ASRenderAVBOITTileRange", true);
 
-@@ FSAVBOIT::renderPostDeferredCapture(), occupancy-raster block
+@@ ASAVBOIT::renderPostDeferredCapture(), occupancy-raster block
          rasterizeConservativeBounds();
 -        const bool compare_static_proxy = debugMode() == 6;
 -        if (compare_static_proxy)
@@ -204,8 +204,8 @@ diff --git a/indra/newview/fsavboit.cpp b/indra/newview/fsavboit.cpp
              sCaptureActive = false;
          }
 
-@@ FSAVBOIT::rasterizeConservativeBounds()
-     gAVBOITVolumeProgram.uniform1i(pass, 9);
+@@ ASAVBOIT::rasterizeConservativeBounds()
+     gASAVBOITVolumeProgram.uniform1i(pass, 9);
      glDispatchCompute(groups_x, groups_y, 1u);
 -    // Reset the per-tile depth range before any capture pass reduces into it.
 +    // Reset the per-tile depth range before any capture pass reduces into
@@ -216,8 +216,8 @@ diff --git a/indra/newview/fsavboit.cpp b/indra/newview/fsavboit.cpp
          ((sResources.viewportWidth + 15u) / 16u + 15u) / 16u;
      const U32 range_groups_y =
          ((sResources.viewportHeight + 15u) / 16u + 15u) / 16u;
--    gAVBOITVolumeProgram.uniform1i(pass, 12);
-+    gAVBOITVolumeProgram.uniform1i(pass, 13);
+-    gASAVBOITVolumeProgram.uniform1i(pass, 12);
++    gASAVBOITVolumeProgram.uniform1i(pass, 13);
      glDispatchCompute(range_groups_x, range_groups_y, 1u);
 ```
 
@@ -226,11 +226,11 @@ diff --git a/indra/newview/fsavboit.cpp b/indra/newview/fsavboit.cpp
 1. Pass 12/13 dead-code collision (item 5 above). Confirmed by direct code
    reading of pre-A5/pre-A8/A7 shader source: the collision predates this
    session's work entirely. Grepped after the fix: every `avboitPass ==`
-   literal in `avboitVolumeC.glsl` (1 through 13) is now unique.
+   literal in `asAVBOITVolumeC.glsl` (1 through 13) is now unique.
 2. Feeding the range from the material-tested occupancy pass instead of the
    exact-proxy pass (item 6 above). This is the architecturally correct
    design -- it matches the pre-existing, unmodified call site in
-   `avboitCaptureF.glsl`'s pass-0 branch, which the original (pre-A5)
+   `asAVBOITCaptureF.glsl`'s pass-0 branch, which the original (pre-A5)
    authors clearly intended this to be fed from, given it was already
    there and simply gated to a debug-only code path.
 
@@ -246,7 +246,7 @@ found internally consistent (i.e., NOT independently corroborated by a
 build/test, but no logic bug found on inspection):
 
 - **Tile-count and buffer-offset formulas.** `avboit_range_tile_count()` in
-  both `avboitVolumeC.glsl` (compute) and `avboitCaptureF.glsl` (fragment)
+  both `asAVBOITVolumeC.glsl` (compute) and `asAVBOITCaptureF.glsl` (fragment)
   use the identical formula `max((avboitViewport + 15) / 16, 1)`, driven by
   the same `avboitViewport` uniform. `avboit_tile_range_offset()` in both
   files reduces to the same numeric byte offset (`avboit_bounds_offset()` /
@@ -327,13 +327,13 @@ been wrong twice on reasoning-only conclusions (see "Lessons" below).
    crossings" mechanism theorized in the previous revision of this doc,
    never independently confirmed by a controlled experiment) and the
    corruption is a second, independent, still-unfound bug. Recommend
-   designing a discriminating experiment: force `RenderAVBOITTileRange` on
+   designing a discriminating experiment: force `ASRenderAVBOITTileRange` on
    but somehow bypass just the corruption-causing mechanism (if it can be
    isolated) to see if flicker alone remains.
 3. **Debug mode 6 comparison, revisited.** Debug mode 6 used to run
    `render_pass(true)` as a proxy-vs-material *comparison* -- implying
    there's already a diagnostic path (`avboit_compare_proxy_coverage()` in
-   `avboitCaptureF.glsl`, writes to `avboitDiagnostic[4..]`) that measures
+   `asAVBOITCaptureF.glsl`, writes to `avboitDiagnostic[4..]`) that measures
    divergence between the exact-proxy bounds and the material-tested
    occupancy. This diagnostic counter was not read/reported this round.
    Reading `avboitDiagnostic[4]` (total comparisons) and whatever failure
@@ -368,13 +368,13 @@ been wrong twice on reasoning-only conclusions (see "Lessons" below).
 - Standing repo rules apply: read `AGENTS.md` before any work here; only
   read-only git commands are permitted (no `checkout`, `reset`, `stash`,
   etc., even for investigation); never bump
-  `FSAVBOIT::shaderCacheRevision()` mid-session; the user builds and tests,
+  `ASAVBOIT::shaderCacheRevision()` mid-session; the user builds and tests,
   the assistant does not.
 
 ## Repro
 
 Avatar with alpha hair, scene containing GLTF/PBR content, camera zoomed on
-the crown, `RenderAVBOITTileRange` at its current default (`1`, i.e. fix
+the crown, `ASRenderAVBOITTileRange` at its current default (`1`, i.e. fix
 attempt 2's code as currently uncommitted in the tree). Right side of the
 avatar's hair shows blocky dark corruption; left side does not. Flicker
 present at the crown under camera motion or avatar animation with the
@@ -397,9 +397,9 @@ User timeline: hair looked fine before A2, looked weird from A2 to A4, A5
 fixed the weird look but introduced the crown flicker. One mechanism
 explains all three:
 
-Pre-A5: `RenderAVBOITTileRange=1`, the pass-13 reset was dead (pass-12
+Pre-A5: `ASRenderAVBOITTileRange=1`, the pass-13 reset was dead (pass-12
 collision) and `beginDirectFrame()` clears the whole `work` buffer to 0
-every frame (`glClearBufferData`, `fsavboit.cpp` ~line 1205). So every
+every frame (`glClearBufferData`, `asavboit.cpp` ~line 1205). So every
 tile's range words were `(min=0, max=0)`. `avboit_virtual_depth()` treats
 that as a *written* tile (the unwritten test is `min > max`), span 0, pad
 `1/16777215`, so every fragment's rescaled depth clamped to `1.0`. Every
@@ -453,7 +453,7 @@ rescaled to 0..1; then 0..0.30 of that lands on the warp's leading empty
 range (one slice), 0.30..0.31 spreads across the slices, 0.31..1 collapses
 onto the trailing range. So per-tile ranging as written is an arbitrary
 monotonic map with heavy collapses: worse than the global curve, never
-finer. Same code in `avboitEmissiveF.glsl` and `avboitPbrGlowF.glsl`.
+finer. Same code in `asAVBOITEmissiveF.glsl` and `asAVBOITPbrGlowF.glsl`.
 Also compute pass 6: the early-depth quads take
 `avboitWork[8 + zero_depth]`, a *global* slice->depth table, meaningless
 for a tile with its own mapping (can cull visible fragments -> holes).
@@ -468,14 +468,14 @@ the black blocks, but it will show as seams after bugs 1 and 2 are fixed.
 ## Fix specification
 
 Keep: pass 12/13 renumbering (correct and necessary). Keep
-`RenderAVBOITTileRange` default `1` and `tileRange()` default `true`.
+`ASRenderAVBOITTileRange` default `1` and `tileRange()` default `true`.
 
 ### Step 0. Feed: revert attempt 2's occupancy change, use attempt 1's feed
 
 In `renderPostDeferredCapture()` restore the original structure:
 `render_pass(true)` only when `debugMode() == 6`, else the GLTF-only
 block. Attempt 2 adds a full extra alpha-material pass every frame for
-nothing. Attempt 1's feed from `avboitBoundsF.glsl`'s exact-proxy path is
+nothing. Attempt 1's feed from `asAVBOITBoundsF.glsl`'s exact-proxy path is
 fine: it draws the same geometry (static and rigged, full resolution;
 `gl_FragCoord.xy` is a pixel there, see `cell = gl_FragCoord.xy / 8`) with
 the same opaque-depth clamp, only without alpha test, so its range is a
@@ -486,23 +486,23 @@ not because of the feed.
 Re-implement attempt 1 exactly as row `AVBOIT A8 superseded` of
 `ayanestorm-oit-performance-audit-plan.md` describes:
 
-- `avboitBoundsF.glsl`: add `uniform int avboitTileRange;`, port
+- `asAVBOITBoundsF.glsl`: add `uniform int avboitTileRange;`, port
   `avboit_global_normalized_depth()` (byte-identical to
-  `avboitCaptureF.glsl`), `AVBOIT_RANGE_TILE`, `avboit_tile_range_offset()`
+  `asAVBOITCaptureF.glsl`), `AVBOIT_RANGE_TILE`, `avboit_tile_range_offset()`
   (= `avboit_bounds_offset() + volumeSize.x*volumeSize.y*5u`),
   `avboit_range_index()`, `avboit_reduce_tile_range()`. Call
   `avboit_reduce_tile_range(bounded_window_depth)` inside the
   `if (avboitExactProxy != 0)` branch, next to the existing
   `atomicOr(avboitOccupancy[exact_bin], 1u)`.
-- `fsavboit.cpp` `rasterizeConservativeBounds()`: upload `avboitTileRange`
-  (`tileRange() ? 1 : 0`) to both `gAVBOITBoundsProgram` and
-  `gAVBOITSkinnedBoundsProgram` after each bind.
-- Leave the `avboit_reduce_tile_range()` call in `avboitCaptureF.glsl`'s
+- `asavboit.cpp` `rasterizeConservativeBounds()`: upload `avboitTileRange`
+  (`tileRange() ? 1 : 0`) to both `gASAVBOITBoundsProgram` and
+  `gASAVBOITSkinnedBoundsProgram` after each bind.
+- Leave the `avboit_reduce_tile_range()` call in `asAVBOITCaptureF.glsl`'s
   pass-0 branch (harmless; keeps GLTF alpha and mode 6 fed).
 
 ### Step 1. Fix bug 1: tile lookup by full-res pixel
 
-`avboitCaptureF.glsl` (and the two glow shaders for symmetry):
+`asAVBOITCaptureF.glsl` (and the two glow shaders for symmetry):
 
 ```glsl
 // Pass 1 rasterizes at volume (8x8-cell) resolution, so gl_FragCoord is a
@@ -520,14 +520,14 @@ already a uniform in all three files.
 
 ### Step 2. Fix bug 2: tile mode bypasses the warp, linear slices
 
-`avboitCaptureF.glsl`:
+`asAVBOITCaptureF.glsl`:
 
 - Factor the range read into one helper used everywhere:
 
 ```glsl
 // True, with the padded [minimum, minimum+span] global-normalized range,
 // when ranging is on and pass 0 wrote the tile containing full-res `pixel`.
-// Padding must stay identical to avboitVolumeC.glsl pass 6.
+// Padding must stay identical to asAVBOITVolumeC.glsl pass 6.
 bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
 {
     if (avboitTileRange == 0) return false;
@@ -629,13 +629,13 @@ byte-for-byte unchanged. A neighbour tile that does not cover this depth
 clamps to slice 0 or 127, which is exactly "in front of all" or "behind
 all" of that cell's content: correct.
 
-Glow shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`): in tile mode
+Glow shaders (`asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`): in tile mode
 read own cell only, `avboit_cell_transmittance(pixel / 8, slice)` with
 `slice = avboit_slice_for_pixel(pixel, gl_FragCoord.z)` (no bias, as now).
 Port the helpers; these files already duplicate the capture helpers.
 Global path unchanged.
 
-### Step 4. Pass 6 early-depth quads: per-tile depth (`avboitVolumeC.glsl`)
+### Step 4. Pass 6 early-depth quads: per-tile depth (`asAVBOITVolumeC.glsl`)
 
 Pass 6 already iterates the same 16 px tile grid (`pixel` is the tile
 index). After computing `zero_depth`, when the tile's range is written,
@@ -650,7 +650,7 @@ uint stored_maximum = avboitWork[range + 1u];
 uint depth_bits;
 if (stored_minimum <= stored_maximum)
 {
-    // Same padding as avboit_tile_range() in avboitCaptureF.glsl.
+    // Same padding as avboit_tile_range() in asAVBOITCaptureF.glsl.
     float minimum_depth = float(stored_minimum) / 16777215.0;
     float maximum_depth = float(stored_maximum) / 16777215.0;
     float pad = max((maximum_depth - minimum_depth) * 0.0625, 1.0 / 16777215.0);
@@ -670,12 +670,12 @@ else
 
 No new uniform: with ranging off no tile is ever written, so the global
 branch is taken. `avboitDepthRange`/`avboitLinearization` are program
-uniforms already set on `gAVBOITVolumeProgram` earlier in the frame by
+uniforms already set on `gASAVBOITVolumeProgram` earlier in the frame by
 `finishDirectOccupancy()` and persist.
 
 ### Step 5. Docs/comments
 
-- `settings.xml` `RenderAVBOITTileRange` comment: fed by the exact-proxy
+- `settings.xml` `ASRenderAVBOITTileRange` comment: fed by the exact-proxy
   bounds pass; slices are linear across the tile's range and bypass the
   frame-wide warp.
 - One short status-log row in `ayanestorm-oit-performance-audit-plan.md`
@@ -686,16 +686,16 @@ uniforms already set on `gAVBOITVolumeProgram` earlier in the frame by
 
 - grep: no remaining `avboit_range_index(ivec2(gl_FragCoord.xy))` in any
   shader; `avboit_virtual_depth` gone from all three raster shaders.
-- Both `gAVBOITBoundsProgram` and `gAVBOITSkinnedBoundsProgram` get
+- Both `gASAVBOITBoundsProgram` and `gASAVBOITSkinnedBoundsProgram` get
   `avboitTileRange`.
-- With `RenderAVBOITTileRange=0` the behaviour is unchanged (renames and
+- With `ASRenderAVBOITTileRange=0` the behaviour is unchanged (renames and
   comments only on that path).
 
 ### Expected result and next step if flicker remains
 
 Corruption and asymmetry gone in one build; tile edges seam-free (Step 3).
 If crown flicker persists with ranging on (compare by toggling
-`RenderAVBOITTileRange` live), the remaining candidate is the one A8
+`ASRenderAVBOITTileRange` live), the remaining candidate is the one A8
 targeted: one fragment per 8x8 cell in pass 1 sampling thin strands
 unstably. Revisit A8 with the bounded CAS only after that comparison.
 
@@ -745,7 +745,7 @@ pass 1 with 1/64 contributions) stays a later option.
 
 ## Fix
 
-### A. Floor the front transmittance in tile mode (`avboitCaptureF.glsl`)
+### A. Floor the front transmittance in tile mode (`asAVBOITCaptureF.glsl`)
 
 In pass 2, tile path only (`avboitTileRange != 0`), after the own-share
 correction:
@@ -765,7 +765,7 @@ occluded ones get ~alpha/16384. Global path unchanged.
 
 Same floor in the two glow shaders' tile branch (`front = max(front, 1.0 / 16384.0)`).
 
-### B. No early-depth quads for ranged tiles (`avboitVolumeC.glsl` pass 6)
+### B. No early-depth quads for ranged tiles (`asAVBOITVolumeC.glsl` pass 6)
 
 The quad culls pass-2 fragments beyond the cell's saturation slice, and a
 culled fragment adds neither weight nor extinction, so the pixel goes
@@ -788,7 +788,7 @@ early-Z rejection for pass 2; measure later, correctness first.
 
 ### Self-check
 
-- `RenderAVBOITTileRange=0`: no behavioural diff (floor and quad skip are
+- `ASRenderAVBOITTileRange=0`: no behavioural diff (floor and quad skip are
   inside tile-mode branches / written-tile branches only).
 - grep pass 6: no remaining use of the tile-mapped `depth_bits` path.
 
@@ -803,12 +803,12 @@ pattern before changing anything else.
 
 A, B, and the C nit all implemented exactly as specified:
 
-- **A**: `avboitCaptureF.glsl` floors `front_transmittance` to `1/16384`
+- **A**: `asAVBOITCaptureF.glsl` floors `front_transmittance` to `1/16384`
   right after the own-share correction, inside a new `avboitTileRange != 0`
   guard (global path untouched). Same floor added in both
-  `avboitEmissiveF.glsl` and `avboitPbrGlowF.glsl`'s tile branch (`front =
+  `asAVBOITEmissiveF.glsl` and `asAVBOITPbrGlowF.glsl`'s tile branch (`front =
   max(front, 1.0 / 16384.0)`, right after the manual bilinear read).
-- **B**: `avboitVolumeC.glsl` pass 6's per-tile depth computation (the block
+- **B**: `asAVBOITVolumeC.glsl` pass 6's per-tile depth computation (the block
   this doc's Round 1 spec added) is deleted entirely. A written (ranged)
   tile is now detected with a plain `avboitWork[range] <=
   avboitWork[range + 1u]` check and, when true, no early-depth quad is
@@ -821,7 +821,7 @@ A, B, and the C nit all implemented exactly as specified:
 Self-checks: grepped pass 6 for the deleted tile-mapped `depth_bits` path --
 zero remaining references (the one remaining `floatBitsToUint(` hit in the
 file is an unrelated, pre-existing site elsewhere). With
-`RenderAVBOITTileRange=0` the floor's guard and the `tile_ranged` check both
+`ASRenderAVBOITTileRange=0` the floor's guard and the `tile_ranged` check both
 evaluate to the pre-Round-2 behaviour (`tile_ranged` is always false, since
 the write path that could set `avboitWork[range] <= avboitWork[range+1]`
 never fires when ranging is off).
@@ -851,23 +851,23 @@ and going straight to 64 samples per cell).
 
 ## Spec
 
-Add `constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4;` in `fsavboit.cpp` next to
+Add `constexpr U32 AVBOIT_PASS1_SUBSAMPLE = 4;` in `asavboit.cpp` next to
 `AVBOIT_SCALE` (S = samples per axis per cell: 4 -> 16 samples/cell,
 16x more pass-1 fragments than now, 4x fewer than A8's full-res; 8 is
 full-res and equals A8). Start at 4; the user can try 8 after measuring.
 
-1. `fsavboit.cpp`
-   - `allocateVolume()`: `gAVBOITCellDepthTarget.allocate(volumeWidth * S, volumeHeight * S, GL_R8, true)`.
+1. `asavboit.cpp`
+   - `allocateVolume()`: `gASAVBOITCellDepthTarget.allocate(volumeWidth * S, volumeHeight * S, GL_R8, true)`.
    - `beginDirectRasterPass(1)`: `glViewport(0, 0, volumeWidth * S, volumeHeight * S)`.
    - `configureDirectRasterShader()`: upload new int uniform
      `avboitPass1Subsample` = S to every raster program (same pattern as
-     `avboitTileRange`). Also upload it to `gAVBOITCellDepthProgram` in
+     `avboitTileRange`). Also upload it to `gASAVBOITCellDepthProgram` in
      `finishDirectOccupancy()` before its draw.
    - `finishDirectOccupancy()` cell-depth bake: unchanged otherwise (the
      target is now S times larger per axis, the full-screen triangle
      covers it).
 
-2. `avboitCellDepthF.glsl`: each output texel now covers an
+2. `asAVBOITCellDepthF.glsl`: each output texel now covers an
    `(8/S) x (8/S)` pixel block:
    ```glsl
    uniform int avboitPass1Subsample;
@@ -879,7 +879,7 @@ full-res and equals A8). Start at 4; the user can try 8 after measuring.
    ```
    Still the farthest depth of the block (conservative, as A2 requires).
 
-3. `avboitCaptureF.glsl`
+3. `asAVBOITCaptureF.glsl`
    - `uniform int avboitPass1Subsample;`
    - Cell mapping in `avboit_direct_store()`:
      ```glsl
@@ -893,7 +893,7 @@ full-res and equals A8). Start at 4; the user can try 8 after measuring.
      before the lower/upper split, so the S*S sub-samples of a cell sum to
      the block's mean optical depth. Wide layout quantum is 11.09/65535 =
      1.7e-4; alpha 0.5 at S=4 gives 0.043 -> 254 quanta, fine. Narrow
-     layout is not viable with this; leave `RenderAVBOITWideExtinction`
+     layout is not viable with this; leave `ASRenderAVBOITWideExtinction`
      default on and say so in its settings comment.
    - `avboit_add_extinction()` CAS loop: raise the cap from 64 to 256
      attempts, keep the give-up-as-saturated fallback. Do NOT make it
@@ -901,7 +901,7 @@ full-res and equals A8). Start at 4; the user can try 8 after measuring.
    - Keep round 2's transmittance floor; it is still needed for cells
      where an opaque core dominates, just far less often.
 
-4. Glow shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`): same
+4. Glow shaders (`asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`): same
    cell mapping change and uniform for consistency (they return early in
    pass 1, so this is bookkeeping only). `avboit_full_res_pixel()` there
    likewise.
@@ -917,7 +917,7 @@ full-res and equals A8). Start at 4; the user can try 8 after measuring.
 - `gl_FragCoord` in pass 1 is now in S-per-cell units everywhere it is
   used: `cell`, `avboit_full_res_pixel()`; grep `avboitRasterPass == 1`
   to confirm no other consumer.
-- Global mode (`RenderAVBOITTileRange=0`) also gets the smoother
+- Global mode (`ASRenderAVBOITTileRange=0`) also gets the smoother
   extinction; that is intended.
 
 ## Expected
@@ -931,22 +931,22 @@ design limit (A9 territory), not a bug.
 ## Round 3 implementation status (2026-09-03)
 
 Implemented exactly as specified, S = `AVBOIT_PASS1_SUBSAMPLE = 4` (constant
-next to `AVBOIT_SCALE` in `fsavboit.cpp`, not a runtime setting):
+next to `AVBOIT_SCALE` in `asavboit.cpp`, not a runtime setting):
 
-- `fsavboit.cpp`: `allocateVolume()` sizes `gAVBOITCellDepthTarget` to
+- `asavboit.cpp`: `allocateVolume()` sizes `gASAVBOITCellDepthTarget` to
   `volumeWidth/Height * AVBOIT_PASS1_SUBSAMPLE`; `beginDirectRasterPass(1)`'s
   `glViewport` scaled to match. `avboitPass1Subsample` uploaded through
   `configureDirectRasterShader()`'s existing `getUniformLocation`-guarded
   pattern (every raster program that declares the uniform gets it; the ones
   that don't -- none currently -- are silently skipped, same as
-  `avboitTileRange`) and separately to `gAVBOITCellDepthProgram` in
+  `avboitTileRange`) and separately to `gASAVBOITCellDepthProgram` in
   `finishDirectOccupancy()`'s cell-depth bake block. CAS loop cap in
   `avboit_add_extinction()` raised from 64 to 256 attempts, fallback kept,
   still bounded (not unconditional -- that was A8's actual perf regression).
-- `avboitCellDepthF.glsl`: block size is now `8 / avboitPass1Subsample`
+- `asAVBOITCellDepthF.glsl`: block size is now `8 / avboitPass1Subsample`
   pixels per axis instead of a fixed 8; still takes the block's farthest
   (conservative) opaque depth.
-- `avboitCaptureF.glsl`: new `avboitPass1Subsample` uniform.
+- `asAVBOITCaptureF.glsl`: new `avboitPass1Subsample` uniform.
   `avboit_full_res_pixel()` and the `cell` mapping in `avboit_direct_store()`
   both gained a third branch for `avboitRasterPass == 1` that scales by
   `avboitPass1Subsample` instead of the old fixed `* 8` / implicit `pixel`
@@ -959,7 +959,7 @@ next to `AVBOIT_SCALE` in `fsavboit.cpp`, not a runtime setting):
   only (bookkeeping/uniform-set consistency) -- their pass-1 branch returns
   immediately without using `cell` or `pixel`, so no mapping logic changes
   there, matching the spec's expectation.
-- `settings.xml`: `RenderAVBOITWideExtinction`'s comment now also notes that
+- `settings.xml`: `ASRenderAVBOITWideExtinction`'s comment now also notes that
   pass 1's per-sample scaling shrinks the narrow layout's already-marginal
   quantum further, reinforcing why it should stay on.
 
@@ -986,7 +986,7 @@ shows tight, evenly-spaced horizontal-ish stripes across the whole visible
 hair mass). Not the same symptom as round 2/3's cell-block moire -- this
 looks like true periodic banding, not per-cell sampling noise.
 
-**Discriminating test performed:** toggled `RenderAVBOITTileRange` to `0`
+**Discriminating test performed:** toggled `ASRenderAVBOITTileRange` to `0`
 live (no rebuild) on the same camera position/hair area. Result: the fine
 stripes disappear entirely, but doing so reintroduces the original A5-era
 bug this whole per-tile-ranging effort exists to fix (underlying clothing
@@ -1008,7 +1008,7 @@ whole point (it is what fixed the exact-hair-colour and clothing-showing-
 through bugs in round 1). The stored transmittance volume
 (`sResources.transmittance`, `avboitTransmittanceSampler`) is linearly
 filtered along all three axes (`GL_LINEAR` on the 3D texture, confirmed via
-`fsavboit.cpp`'s `glTexParameteri` calls), so a smoothly-varying real depth
+`asavboit.cpp`'s `glTexParameteri` calls), so a smoothly-varying real depth
 should read back smoothly in principle. Two things not yet checked that
 could still produce fine, regular banding under that setup:
 
@@ -1103,13 +1103,13 @@ there. Global path stays at `avboitSamplingBias` (unchanged).
 
 ### Zero-cost confirmation first (no rebuild)
 
-The tile path already uses the live `RenderAVBOITSamplingBias` uniform.
+The tile path already uses the live `ASRenderAVBOITSamplingBias` uniform.
 Set it to `2.0` in the debug settings on the striped shot. Stripes should
 vanish immediately. Then set it back to `1.0` (the global path also reads
 it) and implement the code change below so tile mode does not depend on
 the setting.
 
-### Code (`avboitCaptureF.glsl`)
+### Code (`asAVBOITCaptureF.glsl`)
 
 ```glsl
 // Tile mode reads two whole slices in front so neither sampled texel can
@@ -1148,8 +1148,8 @@ so it is unlikely.
 
 ## Round 4 result: live test failed, own-splat theory ruled out
 
-**Live test performed exactly as specified** (`RenderAVBOITTileRange = 1`,
-`RenderAVBOITSamplingBias` raised from `1.0` to `2.0`, no rebuild, same
+**Live test performed exactly as specified** (`ASRenderAVBOITTileRange = 1`,
+`ASRenderAVBOITSamplingBias` raised from `1.0` to `2.0`, no rebuild, same
 striped shot): **the stripes did not vanish.** This is a clean, falsifiable
 negative result against round 4's specific mechanism -- own-splat
 pollution at `T[floor(c)]` from a bias-1.0 read predicts the stripes go
@@ -1159,7 +1159,7 @@ not, on the same live, no-rebuild code path the mechanism itself is
 described against. This rules out the own-splat-pollution theory as *the*
 cause of the visible stripes -- not merely "unconfirmed" but actively
 falsified by the one test the round-4 spec proposed as sufficient to
-confirm it. `RenderAVBOITSamplingBias` was restored to `1.0` after the
+confirm it. `ASRenderAVBOITSamplingBias` was restored to `1.0` after the
 test, per the round-4 instructions.
 
 This does not by itself rule out that the described mechanism exists at
@@ -1209,14 +1209,14 @@ satisfied this by accident (thick slices); tile mode must enforce it.
 
 ## Live test first (no rebuild)
 
-`RenderAVBOITTileRange = 1`. Raise `RenderAVBOITSamplingBias` in steps:
+`ASRenderAVBOITTileRange = 1`. Raise `ASRenderAVBOITSamplingBias` in steps:
 `4`, `8`, `16`, `32`. Prediction: stripes fade progressively and are gone
 once the bias exceeds the sheet's per-footprint spread in slices; the
 spacing of the stripes, measured on a 100 % screenshot along the
 direction they repeat, is 8 px (one cell). If stripes are unchanged even
 at 32, this theory is wrong too: stop and report. Restore `1.0` after.
 
-## Fix: derivative-based bias in tile mode (`avboitCaptureF.glsl`)
+## Fix: derivative-based bias in tile mode (`asAVBOITCaptureF.glsl`)
 
 Bias by the surface's own depth spread across the bilinear footprint
 (own cell plus one neighbour each side, 16 px), measured with screen-space
@@ -1269,7 +1269,7 @@ is what Exact OIT shows as smooth anyway.
 
 - With `fwidth == 0` (surface facing the camera) the bias is exactly
   `1.0`: same as the code before round 4.
-- `RenderAVBOITTileRange = 0`: no diff.
+- `ASRenderAVBOITTileRange = 0`: no diff.
 - No `discard` between the fwidth and the shader's start within
   `avboit_direct_store()` (the caller's alpha discard happens before the
   call, which is fine: helper invocations still supply derivatives).
@@ -1284,8 +1284,8 @@ depth-domain source. Do not change code before that.
 
 ## Round 5 result: live test failed, tilted-sheet theory ruled out; new constraint found
 
-**Live test performed exactly as specified** (`RenderAVBOITTileRange = 1`,
-`RenderAVBOITSamplingBias` stepped through `4`, `8`, `16`, `32`, no
+**Live test performed exactly as specified** (`ASRenderAVBOITTileRange = 1`,
+`ASRenderAVBOITSamplingBias` stepped through `4`, `8`, `16`, `32`, no
 rebuild): the visual pattern of the stripes *changes* at each step (which
 specific stripes are visible/where shifts), but they never fade, thin out,
 or improve/worsen in overall severity -- present and equally strong at
@@ -1326,7 +1326,7 @@ not a screen-locked overlay.
 self-pollution, one cell's worth of tilt spread -- as the periodic driver).
 Neither survives this test: a raster-grid-locked cause cannot explain
 zoom-dependent stripe width or content-dependent appear/disappear under
-panning. `RenderAVBOITSamplingBias` restored to `1.0` after the test.
+panning. `ASRenderAVBOITSamplingBias` restored to `1.0` after the test.
 
 **Open again, more constrained this round:** whatever is producing the
 striping scales with the scene/geometry, not with AVBOIT's fixed pixel
@@ -1472,9 +1472,9 @@ that would change pass 2's weight per *row* only is not established by
 reading; do these live tests on the dress sleeve in mode 12 and report
 each result before any code change:
 
-1. `RenderAVBOITTileRange = 0`. Lines still there? (yes -> not tile
+1. `ASRenderAVBOITTileRange = 0`. Lines still there? (yes -> not tile
    related at all; no -> tile path.)
-2. `RenderAVBOITTileRange = 1`, `RenderAVBOITSamplingBias = 32`. Lines on
+2. `ASRenderAVBOITTileRange = 1`, `ASRenderAVBOITSamplingBias = 32`. Lines on
    the sleeve still there? (yes -> not a read-position effect.)
 3. Take a 100 % screenshot of the sleeve in mode 12 and measure the line
    period in pixels exactly (2 px? 4 px?), and whether it is locked to the
@@ -1526,7 +1526,7 @@ pass-2 pixel of that surface in that cell reads the same canonical depth,
 so a surface can never occlude itself, at any tilt. Two different
 surfaces keep their separation (both projected to the same point).
 
-`avboitCaptureF.glsl` (tile mode only; global path unchanged):
+`asAVBOITCaptureF.glsl` (tile mode only; global path unchanged):
 
 ```glsl
 // Window depth of this fragment's surface extrapolated to the centre of
@@ -1591,8 +1591,8 @@ remain in dense hair; that is the A9 item and is next if visible.
 
 ## Round 8 implementation status (2026-09-03)
 
-Implemented exactly as specified in `avboitCaptureF.glsl` and both glow
-shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
+Implemented exactly as specified in `asAVBOITCaptureF.glsl` and both glow
+shaders (`asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`):
 
 - `avboit_cell_centre_depth(cell_centre_fragcoord, z, dz_dx, dz_dy,
   slope_limit)`: new helper, one copy per file (the two glow shaders
@@ -1605,7 +1605,7 @@ shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
   taken once in uniform control flow, satisfying the spec's "never call
   derivative functions inside the loop" instruction structurally rather
   than by convention.
-- `avboitCaptureF.glsl`: derivatives (`fragment_z`, `dz_dx`, `dz_dy`,
+- `asAVBOITCaptureF.glsl`: derivatives (`fragment_z`, `dz_dx`, `dz_dy`,
   `slope_limit`) and `cell_centre_fragcoord` (branched on
   `avboitRasterPass == 1` per the spec's two formulas) computed once right
   after `avboit_full_res_pixel()`, before the pass-1/pass-2 branch. The
@@ -1638,7 +1638,7 @@ shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
   `AVBOIT_TILE_BIAS_SLICES` from the result before the two-tap read, where
   previously this pass used the raw, un-biased own-cell slice.
 
-Self-checks: grepped `avboitSamplingBias` in `avboitCaptureF.glsl` -- its
+Self-checks: grepped `avboitSamplingBias` in `asAVBOITCaptureF.glsl` -- its
 only remaining use is inside the global-mode branch, confirming the tile
 path is fully switched to the new constant. Grepped `dFdx`/`dFdy`/`fwidth`
 in all three files -- every call site is in each function's uniform-control-
@@ -1647,7 +1647,7 @@ flow prologue (before any pass or tile-range branch), never inside
 and the derivative calls in any of the three files (the capture shader's
 only early `return` is the uniform-branch pass-0 block, which precedes the
 derivative calls entirely; the glow shaders call `avboit_store_glow()`
-unconditionally with no alpha test before it). `RenderAVBOITTileRange = 0`:
+unconditionally with no alpha test before it). `ASRenderAVBOITTileRange = 0`:
 every projection is computed unconditionally but only ever read inside an
 `avboit_tile_range()`-true branch, so global mode's output is unchanged
 (some now-wasted ALU work computing an unused projection, not a behaviour
@@ -1679,8 +1679,8 @@ driver; that draft is withdrawn.
 
 ## Fix: minimum tile span (all shader copies must match)
 
-In `avboit_tile_range()` (`avboitCaptureF.glsl`, both glow shaders) and
-the pass-6 copy in `avboitVolumeC.glsl` (kept consistent even though
+In `avboit_tile_range()` (`asAVBOITCaptureF.glsl`, both glow shaders) and
+the pass-6 copy in `asAVBOITVolumeC.glsl` (kept consistent even though
 ranged tiles emit no quads), after the existing pad:
 
 ```glsl
@@ -1724,14 +1724,14 @@ step before anything else.
 ## Round 9 implementation status (2026-09-03)
 
 Required fix implemented in all three fragment shaders that compute a tile
-span (`avboitCaptureF.glsl`, `avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
+span (`asAVBOITCaptureF.glsl`, `asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`):
 `AVBOIT_TILE_MIN_SPAN = 6.0e-4` added next to each file's `avboit_tile_range()`
 (or, in the capture shader, right before it, since round 8's edits moved
 some code around); the span-widen check placed exactly where specified,
 right after `span = max(maximum_depth - minimum_depth, 1.0 / 16777215.0)`,
 symmetric around the tile's real content.
 
-**`avboitVolumeC.glsl`'s pass-6 copy was not touched -- there is nothing
+**`asAVBOITVolumeC.glsl`'s pass-6 copy was not touched -- there is nothing
 there to change.** Checked directly: pass 6's tile-ranged check (added in
 round 2's Fix B, further simplified in round 3) is now just
 `tile_ranged = avboitWork[range] <= avboitWork[range + 1u]` -- a raw
@@ -1806,7 +1806,7 @@ bind-stack conflict, described below) and one deliberately skipped part
 (debug modes 16/17, an image-unit conflict), both flagged clearly rather
 than silently worked around.
 
-**CPU side (`fsavboit.h`/`fsavboit.cpp`):**
+**CPU side (`asavboit.h`/`asavboit.cpp`):**
 - `Resources` gained `frontKey0`/`frontKey1` (full-resolution `GL_R32UI`
   images, allocated via the existing `allocateAccumulationTexture()`
   helper -- it is format-agnostic and integer images are always nearest-
@@ -1814,27 +1814,27 @@ than silently worked around.
   wrapping both as color attachments 0/1, used only by the
   `glClearTexImage` fallback below).
 - `frontLayers()` accessor added next to `tileRange()`/`debugMode()`,
-  reading a new `RenderAVBOITFrontLayers` boolean setting (default on).
+  reading a new `ASRenderAVBOITFrontLayers` boolean setting (default on).
 - **Bind-stack conflict with the plan's literal pass-3 placement:** the
-  plan's snippet calls `gAVBOITOpaqueTarget.bindTarget()` before pass 3,
+  plan's snippet calls `gASAVBOITOpaqueTarget.bindTarget()` before pass 3,
   but by the time `finishDirectOccupancy()` returns (as currently
-  structured, after rounds 1-9's changes), `gAVBOITOpaqueTarget` is
+  structured, after rounds 1-9's changes), `gASAVBOITOpaqueTarget` is
   already the current bound target -- `finishDirectOccupancy()`'s own
-  trailing code left `gAVBOITCellDepthTarget` bound instead, unflushed,
+  trailing code left `gASAVBOITCellDepthTarget` bound instead, unflushed,
   as pass 1's render target. Calling `bindTarget()` on an already-current
   target a second time would push a self-referential stack entry, exactly
   the corruption several existing comments in this file warn against.
   Fixed by splitting `finishDirectOccupancy()`: its last two lines
-  (`gAVBOITCellDepthTarget.bindTarget(); beginDirectRasterPass(1);`) moved
-  into a new `FSAVBOIT::beginPass1()` (declared in the header, stubbed for
+  (`gASAVBOITCellDepthTarget.bindTarget(); beginDirectRasterPass(1);`) moved
+  into a new `ASAVBOIT::beginPass1()` (declared in the header, stubbed for
   `LL_DARWIN` alongside every other public function), called explicitly
   by `renderPostDeferredCapture()` after the new pass-3 block. Pass 3 now
-  runs while `gAVBOITOpaqueTarget` is already current, matching how pass
+  runs while `gASAVBOITOpaqueTarget` is already current, matching how pass
   0's occupancy raster works, and does not rebind it.
 - `beginDirectRasterPass()` gained a `pass == 3` branch: full viewport,
   clears both front-key images to the `0xffffffffu` sentinel, binds them
   read-write at image units 0/1. The clear uses the same
-  `glClearTexImage`-with-fallback pattern `fsexactoit.cpp`'s E11 already
+  `glClearTexImage`-with-fallback pattern `asexactoit.cpp`'s E11 already
   established for its own R32UI head/count images (`if (glClearTexImage)`
   direct clear, else bind `frontKeyFBO` and `glClearBufferuiv` per
   attachment) rather than assuming GL 4.4's function is always present on
@@ -1858,7 +1858,7 @@ than silently worked around.
   `frontKey0`/`frontKey1` alongside the existing accumulation textures.
 
 **Shader side:**
-- `avboitCaptureF.glsl`: `avboitFrontLayers` uniform, `avboitFrontKey0`/
+- `asAVBOITCaptureF.glsl`: `avboitFrontLayers` uniform, `avboitFrontKey0`/
   `avboitFrontKey1` image declarations (bindings 0/1, `coherent
   uimage2D`), `avboit_front_key()`, `avboit_store_front_key()` (the exact
   two-key atomic insertion from the plan, with its correctness argument
@@ -1871,7 +1871,7 @@ than silently worked around.
   for the live A/B comparison. Debug mode 14 left untouched (per the
   plan: it becomes less meaningful for exact F/S pixels now, but its code
   doesn't need to change since it never reads `front_factor`).
-- Both glow shaders (`avboitEmissiveF.glsl`, `avboitPbrGlowF.glsl`):
+- Both glow shaders (`asAVBOITEmissiveF.glsl`, `asAVBOITPbrGlowF.glsl`):
   identical `avboitFrontLayers`/image declarations and `front_factor`
   computation in their pass-2 branch, replacing `max(glow, 0.0) * front`
   with `max(glow, 0.0) * front_factor`. A front-surface glow texel shares
@@ -1890,7 +1890,7 @@ than silently worked around.
 
 **Deliberately not implemented: debug modes 16/17.** The plan's own
 diagnostics section already flags the resolve compute shader
-(`avboitVolumeC.glsl`) is at GL's 8-image-unit limit during resolve
+(`asAVBOITVolumeC.glsl`) is at GL's 8-image-unit limit during resolve
 (units 0,1,2,5 actively rebound by `finishDirectFrame()`; 3,4,6,7
 declared but left holding whatever the raster passes bound). Unit 7
 happens to already be `r32ui` (`avboitExtinctionOverflowDepth`) and could

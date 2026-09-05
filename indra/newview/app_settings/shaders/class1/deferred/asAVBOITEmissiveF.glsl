@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 // AVBOIT emissive capture
 /*[EXTRA_CODE_HERE]*/
 
@@ -10,7 +11,7 @@ uniform float avboitLinearization;
 uniform float avboitSamplingBias;
 uniform sampler3D avboitTransmittanceSampler;
 const uint AVBOIT_DIRECT_SLICES = 128u;
-// Must match the compaction search range in avboitVolumeC.glsl.
+// Must match the compaction search range in asAVBOITVolumeC.glsl.
 const uint AVBOIT_MAX_DIVIDER = uint(AVBOIT_MAX_DIVIDER_VALUE);
 const uint AVBOIT_DIRECT_OCCUPANCY_WORDS = AVBOIT_DIRECT_SLICES / 32u;
 const uint AVBOIT_WARP_FILTERABLE = 0x80000000u;
@@ -25,17 +26,17 @@ layout(std430, binding = 3) readonly buffer AVBOITWork { uint avboitWork[]; };
 layout(location = 1) out vec4 avboitAccumulatedColorGlow;
 layout(location = 2) out float avboitAccumulatedWeight;
 layout(location = 3) out float avboitAccumulatedExtinction;
-// Per-tile depth ranging. Must match avboitCaptureF.glsl exactly: emissive glow
+// Per-tile depth ranging. Must match asAVBOITCaptureF.glsl exactly: emissive glow
 // has to land in the same slices as the colour it belongs to.
 uniform int avboitTileRange;
 const int AVBOIT_RANGE_TILE = 16;
-// Round 3: pass 1's sub-cell sample count (see FSAVBOIT::
+// Round 3: pass 1's sub-cell sample count (see ASAVBOIT::
 // AVBOIT_PASS1_SUBSAMPLE). This shader's pass-1 branch returns immediately
 // without using it -- declared for uniform-set consistency with
-// avboitCaptureF.glsl, which every raster program shares uniform uploads
-// with (FSAVBOIT::configureDirectRasterShader()).
+// asAVBOITCaptureF.glsl, which every raster program shares uniform uploads
+// with (ASAVBOIT::configureDirectRasterShader()).
 uniform int avboitPass1Subsample;
-// A9: per-pixel exact front-two-layer key. Must match avboitCaptureF.glsl's
+// A9: per-pixel exact front-two-layer key. Must match asAVBOITCaptureF.glsl's
 // declarations exactly -- see doc/ayanestorm-oit-performance-audit-plan.md's
 // A9 section for the full design.
 uniform int avboitFrontLayers;
@@ -80,13 +81,13 @@ float avboit_global_normalized_depth(float window_depth)
 }
 
 // Round 9: never spread the 127 physical slices over less depth than the
-// pass-1/pass-2 rasterizers can agree on -- see avboitCaptureF.glsl's
+// pass-1/pass-2 rasterizers can agree on -- see asAVBOITCaptureF.glsl's
 // identical constant for the full rationale.
 const float AVBOIT_TILE_MIN_SPAN = 6.0e-4;
 
 // True, with the padded [minimum_depth, minimum_depth + span] global-
 // normalized range, when ranging is on and pass 0 wrote the tile containing
-// full-resolution `pixel`. Must match avboitCaptureF.glsl's function of the
+// full-resolution `pixel`. Must match asAVBOITCaptureF.glsl's function of the
 // same name exactly, including the padding.
 bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
 {
@@ -119,7 +120,7 @@ bool avboit_tile_range(ivec2 pixel, out float minimum_depth, out float span)
 // Round 8: window depth of this fragment's surface extrapolated to the
 // centre of its own 8x8 volume cell, so a tilted surface cannot occlude
 // itself within one cell once slices are thin (per-tile ranging). Must
-// match avboitCaptureF.glsl's function of the same name. This pass is
+// match asAVBOITCaptureF.glsl's function of the same name. This pass is
 // always full resolution (pass 1 returns immediately below without
 // reaching pass 2), so `pixel` needs no cell-to-pixel scaling here.
 float avboit_cell_centre_depth(vec2 cell_centre_fragcoord, float z,
@@ -130,7 +131,7 @@ float avboit_cell_centre_depth(vec2 cell_centre_fragcoord, float z,
     return clamp(z + clamp(dz, -slope_limit, slope_limit), 0.0, 1.0);
 }
 
-// Physical slices to back off in tile mode -- see avboitCaptureF.glsl's
+// Physical slices to back off in tile mode -- see asAVBOITCaptureF.glsl's
 // AVBOIT_TILE_BIAS_SLICES for the rationale (round 8).
 const float AVBOIT_TILE_BIAS_SLICES = 2.0;
 
@@ -178,8 +179,8 @@ void avboit_store_glow(float glow)
         clamp(pixel / 8, ivec2(0), avboitVolumeSize - ivec2(1)) :
         clamp(pixel, ivec2(0), avboitVolumeSize - ivec2(1));
     // A2: pass 1's hardware early_fragment_tests now rejects against the
-    // correct per-cell farthest opaque depth (see avboitCellDepthF.glsl and
-    // FSAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
+    // correct per-cell farthest opaque depth (see asAVBOITCellDepthF.glsl and
+    // ASAVBOIT::finishDirectOccupancy()), so a fragment that reaches this
     // point in pass 1 has already survived that test -- no manual re-test
     // needed.
     if (avboitRasterPass == 0)
@@ -227,7 +228,7 @@ void avboit_store_glow(float glow)
             float b = texelFetch(avboitTransmittanceSampler,
                                  ivec3(transmittance_cell, int(upper)), 0).r;
             front = mix(a, b, fract(tile_slice));
-            // See avboitCaptureF.glsl's identical floor: pass 1's one-sample-
+            // See asAVBOITCaptureF.glsl's identical floor: pass 1's one-sample-
             // per-cell extinction can saturate a fine per-tile slice range
             // exactly, reading 0 for glow that is not actually behind
             // anything the sampled core covered.
@@ -282,7 +283,7 @@ void avboit_store_glow(float glow)
                         vec3(sample_xy, (sample_slice + 0.5) /
                             float(AVBOIT_DIRECT_SLICES))).r;
         }
-        // A9: same front-key bound as avboitCaptureF.glsl's colour path.
+        // A9: same front-key bound as asAVBOITCaptureF.glsl's colour path.
         // Glow-only fragments (this shader) share their surface's depth
         // with its colour fragment, so a front-surface glow texel's
         // gl_FragCoord.z matches key0 exactly and gets front_factor = 1,

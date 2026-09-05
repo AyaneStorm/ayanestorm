@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Reduce proxy-covered logarithmic depth intervals per 8x8 AVBOIT cell.
  */
@@ -18,7 +19,7 @@ uniform float avboitLinearization;
 uniform sampler2D avboitOpaqueDepthSampler;
 uniform vec2 avboitProxyDepthInterval;
 uniform int avboitExactProxy;
-// Per-tile depth ranging. Must match avboitCaptureF.glsl exactly: this pass's
+// Per-tile depth ranging. Must match asAVBOITCaptureF.glsl exactly: this pass's
 // atomicMin/atomicMax and the capture shaders' read of the same words have to
 // agree on both the offset formula and the depth encoding.
 uniform int avboitTileRange;
@@ -32,7 +33,7 @@ uint avboit_bounds_offset()
         uint(tile_count.x * tile_count.y) * 4u;
 }
 
-// Unwarped normalized depth, identical to avboitCaptureF.glsl's function of
+// Unwarped normalized depth, identical to asAVBOITCaptureF.glsl's function of
 // the same name -- the per-tile reduction stores this curve's coordinate, not
 // the linear or virtual-bin one this file otherwise uses.
 float avboit_global_normalized_depth(float window_depth)
@@ -48,8 +49,8 @@ float avboit_global_normalized_depth(float window_depth)
 }
 
 // Per-tile depth range, two uint depth keys per tile, appended after the
-// proxy-bounds region of the work buffer. Must match avboitCaptureF.glsl and
-// avboitVolumeC.glsl's own copies of this offset formula exactly.
+// proxy-bounds region of the work buffer. Must match asAVBOITCaptureF.glsl and
+// asAVBOITVolumeC.glsl's own copies of this offset formula exactly.
 uint avboit_tile_range_offset()
 {
     return avboit_bounds_offset() +
@@ -73,7 +74,7 @@ uint avboit_range_index(ivec2 full_res_pixel)
 }
 
 // Reduces one covered fragment into its tile's depth range. gl_FragCoord.xy
-// is always a full-resolution pixel in this pass (unlike avboitCaptureF.glsl's
+// is always a full-resolution pixel in this pass (unlike asAVBOITCaptureF.glsl's
 // pass 1, which rasterizes at volume/cell resolution).
 void avboit_reduce_tile_range(float window_depth)
 {

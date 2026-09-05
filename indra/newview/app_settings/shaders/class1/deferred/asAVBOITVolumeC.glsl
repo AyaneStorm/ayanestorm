@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Direct approximate adaptive voxel-based OIT volume construction and resolve.
  */
@@ -6,7 +7,7 @@ layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 
 // Read-write: pass 7 loads the screen's own current (opaque) colour from its
 // own texel before storing the composited result over it -- no copy needed,
-// see FSAVBOIT::beginDirectFrame()'s comment on the removed colour copy.
+// see ASAVBOIT::beginDirectFrame()'s comment on the removed colour copy.
 layout(binding = 2, rgba16f) uniform image2D avboitOutput;
 layout(binding = 3, r32ui) uniform coherent uimage3D avboitExtinction;
 // R16F rather than the presentation's R8. This volume is the entire ordering
@@ -101,7 +102,7 @@ uint avboit_dilated_bounds_offset()
 }
 
 // Screen-space tile grid for per-tile depth ranging. Must match
-// AVBOIT_RANGE_TILE in avboitCaptureF.glsl and the tile count in fsavboit.cpp.
+// AVBOIT_RANGE_TILE in asAVBOITCaptureF.glsl and the tile count in asavboit.cpp.
 const int AVBOIT_RANGE_TILE = 16;
 
 // Per-tile depth range, two depth keys per tile, after the proxy-bounds region.
@@ -357,7 +358,7 @@ void main()
     //
     // Pass number 13, not 12: pass 12 above (the transmittance-validity
     // diagnostic) already claims that value on the same program
-    // (gAVBOITVolumeProgram dispatches both from fsavboit.cpp), so the two
+    // (gASAVBOITVolumeProgram dispatches both from asavboit.cpp), so the two
     // blocks collided -- this reset was unreachable dead code, since the
     // pass-12 block above always matches first and returns. That left the
     // tile-range buffer never reset, so stale/accumulated atomicMin/atomicMax
@@ -818,7 +819,7 @@ void main()
             // Pass 1 samples extinction once per 8x8 cell, so a saturated
             // slice only means "hidden" for the exact pixels the sampled
             // opaque core covered, not for the whole cell -- the front-
-            // transmittance floor in avboitCaptureF.glsl/the glow shaders
+            // transmittance floor in asAVBOITCaptureF.glsl/the glow shaders
             // handles that for colour. This early-depth quad instead
             // physically culls pass-2 fragments past the saturation depth,
             // which for a ranged tile (whose slices span the same hair mass
@@ -830,7 +831,7 @@ void main()
             // first. `pixel` is this same 16px range-tile grid (tile_count
             // above), so it doubles as the tile index; grid indexed
             // identically to avboit_range_index()/avboit_tile_range_offset()
-            // in avboitCaptureF.glsl and avboitBoundsF.glsl.
+            // in asAVBOITCaptureF.glsl and asAVBOITBoundsF.glsl.
             ivec2 range_tile_count = avboit_range_tile_count();
             bool tile_ranged = false;
             if (all(lessThan(pixel, range_tile_count)))

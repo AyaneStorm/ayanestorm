@@ -1,11 +1,11 @@
 /**
- * @file fsoitdispatcher.h
- * @brief Neutral selection between AVBOIT, Exact OIT, and vanilla transparency.
+ * @file asoitdispatcher.h
+ * @brief AyaneStorm selection between AVBOIT, Exact OIT, and vanilla transparency.
  * @author chanayane@firestorm
  */
 
-#ifndef FS_OIT_DISPATCHER_H
-#define FS_OIT_DISPATCHER_H
+#ifndef AS_OIT_DISPATCHER_H
+#define AS_OIT_DISPATCHER_H
 
 #include <vector>
 
@@ -17,7 +17,7 @@ class LLPipeline;
 class LLRenderTarget;
 class LLVertexBuffer;
 
-class FSOITDispatcher
+class ASOITDispatcher
 {
 public:
     using PrepareShader = void (*)(LLGLSLShader*, bool, F32);

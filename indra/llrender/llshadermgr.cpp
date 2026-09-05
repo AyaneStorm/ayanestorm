@@ -571,8 +571,8 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
 
     // <AS:Chanayane> OIT and compute shaders use features that are core in GLSL 4.30.
     const bool oit_storage_shader =
-        filename.find("exactOIT") != std::string::npos ||
-        filename.find("avboit") != std::string::npos ||
+        filename.find("asExactOIT") != std::string::npos ||
+        filename.find("asAVBOIT") != std::string::npos ||
         (defines && (defines->find("EXACT_OIT") != defines->end() ||
                      defines->find("AVBOIT") != defines->end()));
     const bool compute_shader = type == GL_COMPUTE_SHADER;

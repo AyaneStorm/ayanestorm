@@ -27,7 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 // <AS:Chanayane> Independent OIT renderer selection
-#include "fsoitdispatcher.h"
+#include "asoitdispatcher.h"
 // </AS:Chanayane>
 
 #include "gltfscenemanager.h"
@@ -652,7 +652,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 
 // <AS:Chanayane> Use the active OIT capture variants only while an opt-in path is active.
     // if (gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() <= variant)
-    LLGLSLShader& gltf_program = FSOITDispatcher::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
+    LLGLSLShader& gltf_program = ASOITDispatcher::gltfProgram(gGLTFPBRMetallicRoughnessProgram);
     if (gltf_program.mGLTFVariants.size() <= variant)
 // </AS:Chanayane>
     {
@@ -668,7 +668,7 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
         if (batches.empty())
         {
 // <AS:Chanayane> Continue through the second cull mode during OIT capture.
-            if (FSOITDispatcher::captureActive())
+            if (ASOITDispatcher::captureActive())
             {
                 continue;
             }
@@ -704,10 +704,10 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 // <AS:Chanayane> Select through gltf_program for OIT capture.
                     // gPipeline.bindDeferredShader(gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[variant]);
                     gPipeline.bindDeferredShader(gltf_program.mGLTFVariants[variant]);
-                    if (FSOITDispatcher::captureActive())
+                    if (ASOITDispatcher::captureActive())
                     {
                         LLGLSLShader& shader = gltf_program.mGLTFVariants[variant];
-                        FSOITDispatcher::configureGLTFCapturedDraw(shader);
+                        ASOITDispatcher::configureGLTFCapturedDraw(shader);
                     }
 // </AS:Chanayane>
                 }

@@ -1,15 +1,15 @@
 /**
- * @file fsoitdispatcher.cpp
- * @brief Neutral selection between independent OIT renderers.
+ * @file asoitdispatcher.cpp
+ * @brief AyaneStorm selection between independent OIT renderers.
  * @author chanayane@firestorm
  */
 
 #include "llviewerprecompiledheaders.h"
 
-#include "fsoitdispatcher.h"
+#include "asoitdispatcher.h"
 
-#include "fsavboit.h"
-#include "fsexactoit.h"
+#include "asavboit.h"
+#include "asexactoit.h"
 #include "llspatialpartition.h"
 #include "llviewercontrol.h"
 #include "pipeline.h"
@@ -25,28 +25,28 @@ enum class TransparencyMode : S32
 
 TransparencyMode synchronizeModeSettings()
 {
-    S32 mode = gSavedSettings.getS32("RenderOITMode");
+    S32 mode = gSavedSettings.getS32("ASRenderOITMode");
     if (mode < static_cast<S32>(TransparencyMode::STANDARD) ||
         mode > static_cast<S32>(TransparencyMode::AVBOIT))
     {
         // Migrate existing installations before making the selector authoritative.
-        mode = gSavedSettings.getBOOL("RenderAVBOIT") ?
+        mode = gSavedSettings.getBOOL("ASRenderAVBOIT") ?
             static_cast<S32>(TransparencyMode::AVBOIT) :
-            (gSavedSettings.getBOOL("RenderExactOIT") ?
+            (gSavedSettings.getBOOL("ASRenderExactOIT") ?
                 static_cast<S32>(TransparencyMode::EXACT_OIT) :
                 static_cast<S32>(TransparencyMode::STANDARD));
-        gSavedSettings.setS32("RenderOITMode", mode);
+        gSavedSettings.setS32("ASRenderOITMode", mode);
     }
 
     const bool exact = mode == static_cast<S32>(TransparencyMode::EXACT_OIT);
     const bool avboit = mode == static_cast<S32>(TransparencyMode::AVBOIT);
-    if (gSavedSettings.getBOOL("RenderExactOIT") != exact)
+    if (gSavedSettings.getBOOL("ASRenderExactOIT") != exact)
     {
-        gSavedSettings.setBOOL("RenderExactOIT", exact);
+        gSavedSettings.setBOOL("ASRenderExactOIT", exact);
     }
-    if (gSavedSettings.getBOOL("RenderAVBOIT") != avboit)
+    if (gSavedSettings.getBOOL("ASRenderAVBOIT") != avboit)
     {
-        gSavedSettings.setBOOL("RenderAVBOIT", avboit);
+        gSavedSettings.setBOOL("ASRenderAVBOIT", avboit);
     }
     return static_cast<TransparencyMode>(mode);
 }
@@ -84,21 +84,21 @@ void invalidateVanillaAlphaOrdering()
 // culling, so it must stay a plain load with no settings lookup behind it.
 static bool sOrderIndependentAlpha = false;
 
-void FSOITDispatcher::refreshOrderIndependentAlphaState()
+void ASOITDispatcher::refreshOrderIndependentAlphaState()
 {
     // Both accessors are user intent AND hardware support. Deliberately not
-    // FSAVBOIT::available(), which additionally requires allocated resources:
+    // ASAVBOIT::available(), which additionally requires allocated resources:
     // those are created lazily at the first alpha pass, after culling, so it
     // would read false on the frame the mode is enabled.
-    sOrderIndependentAlpha = FSExactOIT::isEnabled() || FSAVBOIT::requested();
+    sOrderIndependentAlpha = ASExactOIT::isEnabled() || ASAVBOIT::requested();
 }
 
-bool FSOITDispatcher::orderIndependentAlphaActive()
+bool ASOITDispatcher::orderIndependentAlphaActive()
 {
     return sOrderIndependentAlpha;
 }
 
-void FSOITDispatcher::beginFrame()
+void ASOITDispatcher::beginFrame()
 {
     // Translate the single live UI choice without coupling either renderer module
     // to the other renderer or to preferences.
@@ -121,117 +121,117 @@ void FSOITDispatcher::beginFrame()
         --vanilla_rebuild_frames;
     }
     previous_mode = mode;
-    FSAVBOIT::beginFrame();
-    FSExactOIT::beginFrame();
+    ASAVBOIT::beginFrame();
+    ASExactOIT::beginFrame();
 }
 
-bool FSOITDispatcher::captureActive()
+bool ASOITDispatcher::captureActive()
 {
-    return FSAVBOIT::captureActive() || FSExactOIT::captureActive();
+    return ASAVBOIT::captureActive() || ASExactOIT::captureActive();
 }
 
-bool FSOITDispatcher::captureCompleted()
+bool ASOITDispatcher::captureCompleted()
 {
-    return FSAVBOIT::captureCompleted() || FSExactOIT::captureCompleted();
+    return ASAVBOIT::captureCompleted() || ASExactOIT::captureCompleted();
 }
 
-bool FSOITDispatcher::renderPostDeferredCapture(
+bool ASOITDispatcher::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
-    if (FSAVBOIT::renderPostDeferredCapture(
+    if (ASAVBOIT::renderPostDeferredCapture(
             pool, prepare, water_sign, emissive_shader, pbr_emissive_shader))
     {
         return true;
     }
-    return FSExactOIT::renderPostDeferredCapture(
+    return ASExactOIT::renderPostDeferredCapture(
         pool, prepare, water_sign, emissive_shader, pbr_emissive_shader);
 }
 
-bool FSOITDispatcher::configureCapturedDrawIfActive(
+bool ASOITDispatcher::configureCapturedDrawIfActive(
     LLGLSLShader* shader, U32 color_source, U32 color_destination,
     U32 alpha_source, U32 alpha_destination)
 {
-    if (FSAVBOIT::captureActive())
+    if (ASAVBOIT::captureActive())
     {
-        return FSAVBOIT::configureCapturedDrawIfActive(shader);
+        return ASAVBOIT::configureCapturedDrawIfActive(shader);
     }
-    return FSExactOIT::configureCapturedDrawIfActive(
+    return ASExactOIT::configureCapturedDrawIfActive(
         shader, color_source, color_destination, alpha_source,
         alpha_destination);
 }
 
-bool FSOITDispatcher::handleCapturedEmissives(
+bool ASOITDispatcher::handleCapturedEmissives(
     LLDrawPoolAlpha& pool, bool depth_only,
     std::vector<LLDrawInfo*>& emissives,
     std::vector<LLDrawInfo*>& pbr_emissives,
     std::vector<LLDrawInfo*>& rigged_emissives,
     std::vector<LLDrawInfo*>& pbr_rigged_emissives)
 {
-    if (FSAVBOIT::captureActive())
+    if (ASAVBOIT::captureActive())
     {
-        return FSAVBOIT::handleCapturedEmissives(
+        return ASAVBOIT::handleCapturedEmissives(
             pool, depth_only, emissives, pbr_emissives, rigged_emissives,
             pbr_rigged_emissives);
     }
-    return FSExactOIT::handleCapturedEmissives(
+    return ASExactOIT::handleCapturedEmissives(
         pool, depth_only, emissives, pbr_emissives, rigged_emissives,
         pbr_rigged_emissives);
 }
 
-void FSOITDispatcher::configureGLTFCapturedDraw(LLGLSLShader& shader)
+void ASOITDispatcher::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
-    if (FSAVBOIT::captureActive())
+    if (ASAVBOIT::captureActive())
     {
-        FSAVBOIT::configureGLTFCapturedDraw(shader);
+        ASAVBOIT::configureGLTFCapturedDraw(shader);
     }
     else
     {
-        FSExactOIT::configureGLTFCapturedDraw(shader);
+        ASExactOIT::configureGLTFCapturedDraw(shader);
     }
 }
 
-LLGLSLShader& FSOITDispatcher::gltfProgram(LLGLSLShader& ordinary)
+LLGLSLShader& ASOITDispatcher::gltfProgram(LLGLSLShader& ordinary)
 {
-    return FSAVBOIT::captureActive() ? FSAVBOIT::gltfProgram(ordinary) :
-        FSExactOIT::gltfProgram(ordinary);
+    return ASAVBOIT::captureActive() ? ASAVBOIT::gltfProgram(ordinary) :
+        ASExactOIT::gltfProgram(ordinary);
 }
 
-LLGLSLShader* FSOITDispatcher::alphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASOITDispatcher::alphaShader(LLGLSLShader* ordinary)
 {
-    return FSAVBOIT::captureActive() ? FSAVBOIT::alphaShader(ordinary) :
-        FSExactOIT::alphaShader(ordinary);
+    return ASAVBOIT::captureActive() ? ASAVBOIT::alphaShader(ordinary) :
+        ASExactOIT::alphaShader(ordinary);
 }
 
-LLGLSLShader* FSOITDispatcher::pbrAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASOITDispatcher::pbrAlphaShader(LLGLSLShader* ordinary)
 {
-    return FSAVBOIT::captureActive() ? FSAVBOIT::pbrAlphaShader(ordinary) :
-        FSExactOIT::pbrAlphaShader(ordinary);
+    return ASAVBOIT::captureActive() ? ASAVBOIT::pbrAlphaShader(ordinary) :
+        ASExactOIT::pbrAlphaShader(ordinary);
 }
 
-LLGLSLShader* FSOITDispatcher::fullbrightAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASOITDispatcher::fullbrightAlphaShader(LLGLSLShader* ordinary)
 {
-    return FSAVBOIT::captureActive() ?
-        FSAVBOIT::fullbrightAlphaShader(ordinary) :
-        FSExactOIT::fullbrightAlphaShader(ordinary);
+    return ASAVBOIT::captureActive() ?
+        ASAVBOIT::fullbrightAlphaShader(ordinary) :
+        ASExactOIT::fullbrightAlphaShader(ordinary);
 }
 
-LLGLSLShader* FSOITDispatcher::materialAlphaShader(
+LLGLSLShader* ASOITDispatcher::materialAlphaShader(
     U32 mask, LLGLSLShader* ordinary)
 {
-    return FSAVBOIT::captureActive() ?
-        FSAVBOIT::materialAlphaShader(mask, ordinary) :
-        FSExactOIT::materialAlphaShader(mask, ordinary);
+    return ASAVBOIT::captureActive() ?
+        ASAVBOIT::materialAlphaShader(mask, ordinary) :
+        ASExactOIT::materialAlphaShader(mask, ordinary);
 }
 
-void FSOITDispatcher::finishFrame(
+void ASOITDispatcher::finishFrame(
     LLPipeline& pipeline, LLRenderTarget& screen,
     LLVertexBuffer& screen_triangle, bool cube_snapshot,
     bool impostor_render, bool mouselook)
 {
-    if (!FSAVBOIT::finishFrame(pipeline, screen))
+    if (!ASAVBOIT::finishFrame(pipeline, screen))
     {
-        FSExactOIT::finishFrame(
+        ASExactOIT::finishFrame(
             pipeline, screen, screen_triangle, cube_snapshot,
             impostor_render, mouselook);
     }

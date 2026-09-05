@@ -37,7 +37,7 @@ class LLGLSLShader;
 //
 // Firestorm/LL files only ever call the statics below; all state and shader
 // objects live here so the feature can be extracted cleanly, matching the
-// shape of FSExactOIT/FSAVBOIT (see fsexactoit.h).
+// shape of ASExactOIT/ASAVBOIT (see asexactoit.h).
 class ASVolumetricLighting
 {
 public:
@@ -49,7 +49,7 @@ public:
     static const char* shaderCacheRevision();
 
     // GL/GLSL floor check only (no settings read). GLSL 4.00 is the floor,
-    // deliberately lower than FSAVBOIT's GLSL 4.30 floor: this feature is
+    // deliberately lower than ASAVBOIT's GLSL 4.30 floor: this feature is
     // designed to also run on macOS, which caps at OpenGL 4.1 / GLSL 4.10.
     static bool isSupported();
 

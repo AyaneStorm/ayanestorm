@@ -1,3 +1,4 @@
+// AyaneStorm OIT shader. Author: chanayane@firestorm.
 /**
  * Rasterizes conservative zero-transmittance tiles into private AVBOIT depth.
  */

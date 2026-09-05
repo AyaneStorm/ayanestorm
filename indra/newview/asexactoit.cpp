@@ -1,11 +1,11 @@
 /**
- * @file fsexactoit.cpp
- * @brief Firestorm Exact OIT implementation.
+ * @file asexactoit.cpp
+ * @brief AyaneStorm Exact OIT implementation.
  * @author chanayane@firestorm
  *
- * $LicenseInfo:firstyear=2026&license=fsviewerlgpl$
- * Phoenix Firestorm Viewer Source Code
- * Copyright (C) 2026, The Phoenix Firestorm Project, Inc.
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (c) 2026 Chanayane @ Second Life
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -21,14 +21,12 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
  *
- * The Phoenix Firestorm Project, Inc., 1831 Oakwood Drive, Fairmont, Minnesota 56031-3225 USA
- * http://www.firestormviewer.org
  * $/LicenseInfo$
  */
 
 #include "llviewerprecompiledheaders.h"
 
-#include "fsexactoit.h"
+#include "asexactoit.h"
 
 // Exact OIT depends on GLSL 4.30 compute shaders and SSBOs that macOS's
 // capped OpenGL 4.1 does not provide. isSupported() already refuses at
@@ -39,47 +37,47 @@
 
 #include "llrendertarget.h"
 
-bool FSExactOIT::sCaptureCompleted = false;
-bool FSExactOIT::sCaptureClearNeeded = false;
-bool FSExactOIT::sVanillaFallbackActive = false;
-bool FSExactOIT::sCaptureActive = false;
-bool FSExactOIT::sRuntimeAllocationAttempted = false;
-bool FSExactOIT::sRetainNodePoolOnRelease = false;
-LLRenderTarget FSExactOIT::sOpaqueTarget;
-FSExactOIT::Resources FSExactOIT::sResources;
+bool ASExactOIT::sCaptureCompleted = false;
+bool ASExactOIT::sCaptureClearNeeded = false;
+bool ASExactOIT::sVanillaFallbackActive = false;
+bool ASExactOIT::sCaptureActive = false;
+bool ASExactOIT::sRuntimeAllocationAttempted = false;
+bool ASExactOIT::sRetainNodePoolOnRelease = false;
+LLRenderTarget ASExactOIT::sOpaqueTarget;
+ASExactOIT::Resources ASExactOIT::sResources;
 
-const char* FSExactOIT::shaderCacheRevision() { return "exact-oit-unsupported"; }
-bool FSExactOIT::isSupported() { return false; }
-bool FSExactOIT::isEnabled() { return false; }
-bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
+const char* ASExactOIT::shaderCacheRevision() { return "exact-oit-unsupported"; }
+bool ASExactOIT::isSupported() { return false; }
+bool ASExactOIT::isEnabled() { return false; }
+bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
                              bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list)
 {
     return success;
 }
-void FSExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
-void FSExactOIT::unloadShaders() {}
-void FSExactOIT::appendDiagnostics(LLSD& info) {}
-void FSExactOIT::beginFrame() {}
-bool FSExactOIT::captureCompleted() { return false; }
-bool FSExactOIT::captureActive() { return false; }
-bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
+void ASExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
+void ASExactOIT::unloadShaders() {}
+void ASExactOIT::appendDiagnostics(LLSD& info) {}
+void ASExactOIT::beginFrame() {}
+bool ASExactOIT::captureCompleted() { return false; }
+bool ASExactOIT::captureActive() { return false; }
+bool ASExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
                                            F32 water_sign, LLGLSLShader*& emissive_shader,
                                            LLGLSLShader*& pbr_emissive_shader)
 {
     return false;
 }
-void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
+void ASExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
                              LLVertexBuffer& screen_triangle, bool cube_snapshot,
                              bool impostor_render, bool mouselook)
 {
 }
-bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
+bool ASExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
                                                U32 color_destination, U32 alpha_source,
                                                U32 alpha_destination)
 {
     return false;
 }
-bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
+bool ASExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
                                          std::vector<LLDrawInfo*>& emissives,
                                          std::vector<LLDrawInfo*>& pbr_emissives,
                                          std::vector<LLDrawInfo*>& rigged_emissives,
@@ -87,15 +85,15 @@ bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
 {
     return false;
 }
-void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
-LLGLSLShader& FSExactOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
-LLGLSLShader* FSExactOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSExactOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
-LLGLSLShader* FSExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
-void FSExactOIT::retainNodePoolOnNextRelease() {}
-void FSExactOIT::releaseResources() {}
-void FSExactOIT::allocateResources(U32 width, U32 height) {}
+void ASExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader) {}
+LLGLSLShader& ASExactOIT::gltfProgram(LLGLSLShader& ordinary_program) { return ordinary_program; }
+LLGLSLShader* ASExactOIT::alphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASExactOIT::pbrAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary) { return ordinary; }
+LLGLSLShader* ASExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary) { return ordinary; }
+void ASExactOIT::retainNodePoolOnNextRelease() {}
+void ASExactOIT::releaseResources() {}
+void ASExactOIT::allocateResources(U32 width, U32 height) {}
 
 #else // !LL_DARWIN
 
@@ -130,7 +128,7 @@ void addCommonPermutations(LLGLSLShader& shader)
     }
 }
 
-// Links exactOITReserveSubgroupF.glsl (the shared wave-level exact_oit_reserve()
+// Links asExactOITReserveSubgroupF.glsl (the shared wave-level exact_oit_reserve()
 // / exact_oit_wave_max_pad() / OITControl implementation) into a shader program.
 // Call once per subgroup-variant capture-family program alongside its own
 // capture fragment file. Kept as a separate object rather than folded into
@@ -141,7 +139,7 @@ void addCommonPermutations(LLGLSLShader& shader)
 // can only be declared once across a program's linked objects.
 void addReserveSubgroupFragment(LLGLSLShader& shader)
 {
-    shader.mShaderFiles.emplace_back("deferred/exactOITReserveSubgroupF.glsl", GL_FRAGMENT_SHADER);
+    shader.mShaderFiles.emplace_back("deferred/asExactOITReserveSubgroupF.glsl", GL_FRAGMENT_SHADER);
 }
 
 // Links the shared node-capture fragment implementation into a shader program.
@@ -150,11 +148,11 @@ void addCaptureFragment(LLGLSLShader& shader)
     if (gGLManager.mHasShaderSubgroup)
     {
         addReserveSubgroupFragment(shader);
-        shader.mShaderFiles.emplace_back("deferred/exactOITCaptureSubgroupF.glsl", GL_FRAGMENT_SHADER);
+        shader.mShaderFiles.emplace_back("deferred/asExactOITCaptureSubgroupF.glsl", GL_FRAGMENT_SHADER);
     }
     else
     {
-        shader.mShaderFiles.emplace_back("deferred/exactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
+        shader.mShaderFiles.emplace_back("deferred/asExactOITCaptureF.glsl", GL_FRAGMENT_SHADER);
     }
 }
 
@@ -163,7 +161,7 @@ void addCaptureFragment(LLGLSLShader& shader)
 // other EXACT_OIT-family permutations.
 void addExactOITPermutations(LLGLSLShader& shader)
 {
-    static LLCachedControl<bool> discard_no_op(gSavedSettings, "RenderExactOITNoOpCapture", true);
+    static LLCachedControl<bool> discard_no_op(gSavedSettings, "ASRenderExactOITNoOpCapture", true);
     shader.addPermutation("EXACT_OIT", "1");
     if (discard_no_op)
     {
@@ -304,31 +302,31 @@ bool makeGLTFVariants(LLGLSLShader& shader, bool use_sun_shadow)
 }
 
 // Exact OIT-owned shader objects.
-LLGLSLShader gExactOITGLTFProgram;
-LLGLSLShader gExactOITEmissiveProgram;
-LLGLSLShader gExactOITSkinnedEmissiveProgram;
-LLGLSLShader gExactOITPBRGlowProgram;
-LLGLSLShader gExactOITSkinnedPBRGlowProgram;
-LLGLSLShader gExactOITCompositeProgram;
-LLGLSLShader gExactOITAlphaProgram;
-LLGLSLShader gExactOITSkinnedAlphaProgram;
-LLGLSLShader gExactOITPBRAlphaProgram;
-LLGLSLShader gExactOITSkinnedPBRAlphaProgram;
-LLGLSLShader gExactOITFullbrightAlphaProgram;
-LLGLSLShader gExactOITSkinnedFullbrightAlphaProgram;
-LLGLSLShader gExactOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
+LLGLSLShader gASExactOITGLTFProgram;
+LLGLSLShader gASExactOITEmissiveProgram;
+LLGLSLShader gASExactOITSkinnedEmissiveProgram;
+LLGLSLShader gASExactOITPBRGlowProgram;
+LLGLSLShader gASExactOITSkinnedPBRGlowProgram;
+LLGLSLShader gASExactOITCompositeProgram;
+LLGLSLShader gASExactOITAlphaProgram;
+LLGLSLShader gASExactOITSkinnedAlphaProgram;
+LLGLSLShader gASExactOITPBRAlphaProgram;
+LLGLSLShader gASExactOITSkinnedPBRAlphaProgram;
+LLGLSLShader gASExactOITFullbrightAlphaProgram;
+LLGLSLShader gASExactOITSkinnedFullbrightAlphaProgram;
+LLGLSLShader gASExactOITMaterialAlphaProgram[LLMaterial::SHADER_COUNT * 2];
 
-bool FSExactOIT::sCaptureCompleted = false;
-bool FSExactOIT::sCaptureClearNeeded = false;
-bool FSExactOIT::sVanillaFallbackActive = false;
-bool FSExactOIT::sCaptureActive = false;
-bool FSExactOIT::sRuntimeAllocationAttempted = false;
-bool FSExactOIT::sRetainNodePoolOnRelease = false;
-LLRenderTarget FSExactOIT::sOpaqueTarget;
-FSExactOIT::Resources FSExactOIT::sResources;
+bool ASExactOIT::sCaptureCompleted = false;
+bool ASExactOIT::sCaptureClearNeeded = false;
+bool ASExactOIT::sVanillaFallbackActive = false;
+bool ASExactOIT::sCaptureActive = false;
+bool ASExactOIT::sRuntimeAllocationAttempted = false;
+bool ASExactOIT::sRetainNodePoolOnRelease = false;
+LLRenderTarget ASExactOIT::sOpaqueTarget;
+ASExactOIT::Resources ASExactOIT::sResources;
 
 // Returns the explicit cache salt for the current Exact OIT shader composition.
-const char* FSExactOIT::shaderCacheRevision()
+const char* ASExactOIT::shaderCacheRevision()
 {
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
@@ -337,7 +335,7 @@ const char* FSExactOIT::shaderCacheRevision()
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
-bool FSExactOIT::isSupported()
+bool ASExactOIT::isSupported()
 {
     return gGLManager.mGLVersion >= 4.29f &&
         (gGLManager.mGLSLVersionMajor > 4 ||
@@ -345,13 +343,13 @@ bool FSExactOIT::isSupported()
 }
 
 // Reports whether Exact OIT is both requested by the user and supported by the GPU.
-bool FSExactOIT::isEnabled()
+bool ASExactOIT::isEnabled()
 {
-    return gSavedSettings.getBOOL("RenderExactOIT") && isSupported();
+    return gSavedSettings.getBOOL("ASRenderExactOIT") && isSupported();
 }
 
 // Loads the complete Exact OIT shader family and propagates the aggregate success state.
-bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
+bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
                              bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list)
 {
     if (!isSupported() || !success)
@@ -365,8 +363,8 @@ bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
     // checks and llshadermgr.cpp's #version 450 check (which cannot see
     // gSavedSettings) agree from a single flag. Needed for A/B testing and as
     // an escape hatch for driver-specific subgroup bugs; requires a shader
-    // reload to take effect, same as RenderExactOITNoOpCapture.
-    static LLCachedControl<bool> subgroup_enabled(gSavedSettings, "RenderExactOITSubgroup", true);
+    // reload to take effect, same as ASRenderExactOITNoOpCapture.
+    static LLCachedControl<bool> subgroup_enabled(gSavedSettings, "ASRenderExactOITSubgroup", true);
     gGLManager.mHasShaderSubgroup = gGLManager.mHasShaderSubgroup && subgroup_enabled;
 
     LL_INFOS("ExactOIT") << "Exact OIT wave-level node allocation (EXACT_OIT_SUBGROUP): "
@@ -385,137 +383,137 @@ bool FSExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
 }
 
 // Adds all persistent Exact OIT program objects to the viewer shader registry.
-void FSExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
+void ASExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
 {
-    shader_list.push_back(&gExactOITCompositeProgram);
-    shader_list.push_back(&gExactOITAlphaProgram);
-    shader_list.push_back(&gExactOITSkinnedAlphaProgram);
-    shader_list.push_back(&gExactOITPBRAlphaProgram);
-    shader_list.push_back(&gExactOITSkinnedPBRAlphaProgram);
-    shader_list.push_back(&gExactOITFullbrightAlphaProgram);
-    shader_list.push_back(&gExactOITSkinnedFullbrightAlphaProgram);
-    shader_list.push_back(&gExactOITGLTFProgram);
-    shader_list.push_back(&gExactOITEmissiveProgram);
-    shader_list.push_back(&gExactOITSkinnedEmissiveProgram);
-    shader_list.push_back(&gExactOITPBRGlowProgram);
-    shader_list.push_back(&gExactOITSkinnedPBRGlowProgram);
+    shader_list.push_back(&gASExactOITCompositeProgram);
+    shader_list.push_back(&gASExactOITAlphaProgram);
+    shader_list.push_back(&gASExactOITSkinnedAlphaProgram);
+    shader_list.push_back(&gASExactOITPBRAlphaProgram);
+    shader_list.push_back(&gASExactOITSkinnedPBRAlphaProgram);
+    shader_list.push_back(&gASExactOITFullbrightAlphaProgram);
+    shader_list.push_back(&gASExactOITSkinnedFullbrightAlphaProgram);
+    shader_list.push_back(&gASExactOITGLTFProgram);
+    shader_list.push_back(&gASExactOITEmissiveProgram);
+    shader_list.push_back(&gASExactOITSkinnedEmissiveProgram);
+    shader_list.push_back(&gASExactOITPBRGlowProgram);
+    shader_list.push_back(&gASExactOITSkinnedPBRGlowProgram);
 }
 
 // Unloads every Exact OIT shader and rigged or material variant.
-void FSExactOIT::unloadShaders()
+void ASExactOIT::unloadShaders()
 {
-    gExactOITCompositeProgram.unload();
-    gExactOITAlphaProgram.unload();
-    gExactOITSkinnedAlphaProgram.unload();
-    gExactOITPBRAlphaProgram.unload();
-    gExactOITSkinnedPBRAlphaProgram.unload();
-    gExactOITFullbrightAlphaProgram.unload();
-    gExactOITSkinnedFullbrightAlphaProgram.unload();
-    for (LLGLSLShader& shader : gExactOITMaterialAlphaProgram)
+    gASExactOITCompositeProgram.unload();
+    gASExactOITAlphaProgram.unload();
+    gASExactOITSkinnedAlphaProgram.unload();
+    gASExactOITPBRAlphaProgram.unload();
+    gASExactOITSkinnedPBRAlphaProgram.unload();
+    gASExactOITFullbrightAlphaProgram.unload();
+    gASExactOITSkinnedFullbrightAlphaProgram.unload();
+    for (LLGLSLShader& shader : gASExactOITMaterialAlphaProgram)
     {
         shader.unload();
     }
-    gExactOITGLTFProgram.unload();
-    gExactOITEmissiveProgram.unload();
-    gExactOITSkinnedEmissiveProgram.unload();
-    gExactOITPBRGlowProgram.unload();
-    gExactOITSkinnedPBRGlowProgram.unload();
+    gASExactOITGLTFProgram.unload();
+    gASExactOITEmissiveProgram.unload();
+    gASExactOITSkinnedEmissiveProgram.unload();
+    gASExactOITPBRGlowProgram.unload();
+    gASExactOITSkinnedPBRGlowProgram.unload();
     sBlendCache.clear();
 }
 
 // Creates the Exact OIT GLTF base program and all required feature variants.
-bool FSExactOIT::loadGLTFShaders(S32 shader_level, bool use_sun_shadow)
+bool ASExactOIT::loadGLTFShaders(S32 shader_level, bool use_sun_shadow)
 {
-    gExactOITGLTFProgram.mName = "Exact OIT GLTF PBR Metallic Roughness Shader";
-    gExactOITGLTFProgram.mFeatures.hasSrgb = true;
-    gExactOITGLTFProgram.mShaderFiles.clear();
-    gExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessV.glsl", GL_VERTEX_SHADER);
-    gExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessF.glsl", GL_FRAGMENT_SHADER);
-    addCaptureFragment(gExactOITGLTFProgram);
-    gExactOITGLTFProgram.mShaderLevel = shader_level;
-    gExactOITGLTFProgram.clearPermutations();
-    addExactOITPermutations(gExactOITGLTFProgram);
-    addCommonPermutations(gExactOITGLTFProgram);
+    gASExactOITGLTFProgram.mName = "Exact OIT GLTF PBR Metallic Roughness Shader";
+    gASExactOITGLTFProgram.mFeatures.hasSrgb = true;
+    gASExactOITGLTFProgram.mShaderFiles.clear();
+    gASExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessV.glsl", GL_VERTEX_SHADER);
+    gASExactOITGLTFProgram.mShaderFiles.emplace_back("gltf/pbrmetallicroughnessF.glsl", GL_FRAGMENT_SHADER);
+    addCaptureFragment(gASExactOITGLTFProgram);
+    gASExactOITGLTFProgram.mShaderLevel = shader_level;
+    gASExactOITGLTFProgram.clearPermutations();
+    addExactOITPermutations(gASExactOITGLTFProgram);
+    addCommonPermutations(gASExactOITGLTFProgram);
 
-    const bool success = makeGLTFVariants(gExactOITGLTFProgram, use_sun_shadow);
+    const bool success = makeGLTFVariants(gASExactOITGLTFProgram, use_sun_shadow);
     llassert(success);
     return success;
 }
 
 // Creates the PBR glow capture shader and its rigged variant.
-bool FSExactOIT::loadPBRGlowShaders(S32 shader_level)
+bool ASExactOIT::loadPBRGlowShaders(S32 shader_level)
 {
-    gExactOITPBRGlowProgram.mName = "Exact OIT PBR Glow Shader";
-    gExactOITPBRGlowProgram.mFeatures.hasSrgb = true;
-    gExactOITPBRGlowProgram.mShaderFiles.clear();
-    gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/pbrglowV.glsl", GL_VERTEX_SHADER);
+    gASExactOITPBRGlowProgram.mName = "Exact OIT PBR Glow Shader";
+    gASExactOITPBRGlowProgram.mFeatures.hasSrgb = true;
+    gASExactOITPBRGlowProgram.mShaderFiles.clear();
+    gASExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/pbrglowV.glsl", GL_VERTEX_SHADER);
     // E7: separate physical file for the subgroup path; see addCaptureFragment().
     if (gGLManager.mHasShaderSubgroup)
     {
-        addReserveSubgroupFragment(gExactOITPBRGlowProgram);
-        gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/exactOITPbrGlowSubgroupF.glsl", GL_FRAGMENT_SHADER);
+        addReserveSubgroupFragment(gASExactOITPBRGlowProgram);
+        gASExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/asExactOITPbrGlowSubgroupF.glsl", GL_FRAGMENT_SHADER);
     }
     else
     {
-        gExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/exactOITPbrGlowF.glsl", GL_FRAGMENT_SHADER);
+        gASExactOITPBRGlowProgram.mShaderFiles.emplace_back("deferred/asExactOITPbrGlowF.glsl", GL_FRAGMENT_SHADER);
     }
-    gExactOITPBRGlowProgram.mShaderLevel = shader_level;
-    addCommonPermutations(gExactOITPBRGlowProgram);
+    gASExactOITPBRGlowProgram.mShaderLevel = shader_level;
+    addCommonPermutations(gASExactOITPBRGlowProgram);
 
-    bool success = makeRiggedVariant(gExactOITPBRGlowProgram, gExactOITSkinnedPBRGlowProgram);
-    success = success && gExactOITPBRGlowProgram.createShader();
+    bool success = makeRiggedVariant(gASExactOITPBRGlowProgram, gASExactOITSkinnedPBRGlowProgram);
+    success = success && gASExactOITPBRGlowProgram.createShader();
     llassert(success);
     return success;
 }
 
 // Creates the legacy emissive capture shader and its rigged variant.
-bool FSExactOIT::loadEmissiveShaders(S32 shader_level)
+bool ASExactOIT::loadEmissiveShaders(S32 shader_level)
 {
-    gExactOITEmissiveProgram.mName = "Exact OIT Emissive Shader";
-    gExactOITEmissiveProgram.mFeatures.calculatesAtmospherics = true;
-    gExactOITEmissiveProgram.mFeatures.hasGamma = true;
-    gExactOITEmissiveProgram.mFeatures.hasAtmospherics = true;
-    gExactOITEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
-    gExactOITEmissiveProgram.mShaderFiles.clear();
-    gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/emissiveV.glsl", GL_VERTEX_SHADER);
+    gASExactOITEmissiveProgram.mName = "Exact OIT Emissive Shader";
+    gASExactOITEmissiveProgram.mFeatures.calculatesAtmospherics = true;
+    gASExactOITEmissiveProgram.mFeatures.hasGamma = true;
+    gASExactOITEmissiveProgram.mFeatures.hasAtmospherics = true;
+    gASExactOITEmissiveProgram.mFeatures.mIndexedTextureChannels = LLGLSLShader::sIndexedTextureChannels;
+    gASExactOITEmissiveProgram.mShaderFiles.clear();
+    gASExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/emissiveV.glsl", GL_VERTEX_SHADER);
     // E7: separate physical file for the subgroup path; see addCaptureFragment().
     if (gGLManager.mHasShaderSubgroup)
     {
-        addReserveSubgroupFragment(gExactOITEmissiveProgram);
-        gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/exactOITEmissiveSubgroupF.glsl", GL_FRAGMENT_SHADER);
+        addReserveSubgroupFragment(gASExactOITEmissiveProgram);
+        gASExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/asExactOITEmissiveSubgroupF.glsl", GL_FRAGMENT_SHADER);
     }
     else
     {
-        gExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/exactOITEmissiveF.glsl", GL_FRAGMENT_SHADER);
+        gASExactOITEmissiveProgram.mShaderFiles.emplace_back("deferred/asExactOITEmissiveF.glsl", GL_FRAGMENT_SHADER);
     }
-    gExactOITEmissiveProgram.mShaderLevel = shader_level;
-    addCommonPermutations(gExactOITEmissiveProgram);
+    gASExactOITEmissiveProgram.mShaderLevel = shader_level;
+    addCommonPermutations(gASExactOITEmissiveProgram);
 
-    bool success = makeRiggedVariant(gExactOITEmissiveProgram, gExactOITSkinnedEmissiveProgram);
-    success = success && gExactOITEmissiveProgram.createShader();
+    bool success = makeRiggedVariant(gASExactOITEmissiveProgram, gASExactOITSkinnedEmissiveProgram);
+    success = success && gASExactOITEmissiveProgram.createShader();
     llassert(success);
     return success;
 }
 
 // Creates the fullscreen sorting and final-composite shader.
-bool FSExactOIT::loadCompositeShader(S32 shader_level)
+bool ASExactOIT::loadCompositeShader(S32 shader_level)
 {
-    gExactOITCompositeProgram.mName = "Exact OIT Composite Shader";
-    gExactOITCompositeProgram.mFeatures.isDeferred = true;
-    gExactOITCompositeProgram.mShaderFiles.clear();
-    gExactOITCompositeProgram.mShaderFiles.emplace_back("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
-    gExactOITCompositeProgram.mShaderFiles.emplace_back("deferred/exactOITCompositeF.glsl", GL_FRAGMENT_SHADER);
-    gExactOITCompositeProgram.mShaderLevel = shader_level;
+    gASExactOITCompositeProgram.mName = "Exact OIT Composite Shader";
+    gASExactOITCompositeProgram.mFeatures.isDeferred = true;
+    gASExactOITCompositeProgram.mShaderFiles.clear();
+    gASExactOITCompositeProgram.mShaderFiles.emplace_back("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
+    gASExactOITCompositeProgram.mShaderFiles.emplace_back("deferred/asExactOITCompositeF.glsl", GL_FRAGMENT_SHADER);
+    gASExactOITCompositeProgram.mShaderLevel = shader_level;
 
-    const bool success = gExactOITCompositeProgram.createShader();
+    const bool success = gASExactOITCompositeProgram.createShader();
     llassert(success);
     return success;
 }
 
 // Creates ordinary and skinned deferred-alpha capture programs.
-bool FSExactOIT::loadAlphaShaders(S32 shader_level, bool use_sun_shadow)
+bool ASExactOIT::loadAlphaShaders(S32 shader_level, bool use_sun_shadow)
 {
-    LLGLSLShader* shaders[] = { &gExactOITAlphaProgram, &gExactOITSkinnedAlphaProgram };
+    LLGLSLShader* shaders[] = { &gASExactOITAlphaProgram, &gASExactOITSkinnedAlphaProgram };
     bool success = true;
 
     for (U32 i = 0; i < 2 && success; ++i)
@@ -562,14 +560,14 @@ bool FSExactOIT::loadAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.mFeatures.hasLighting = true;
     }
 
-    gExactOITAlphaProgram.mRiggedVariant = &gExactOITSkinnedAlphaProgram;
+    gASExactOITAlphaProgram.mRiggedVariant = &gASExactOITSkinnedAlphaProgram;
     return success;
 }
 
 // Creates ordinary and skinned PBR-alpha capture programs.
-bool FSExactOIT::loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow)
+bool ASExactOIT::loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow)
 {
-    LLGLSLShader* shaders[] = { &gExactOITPBRAlphaProgram, &gExactOITSkinnedPBRAlphaProgram };
+    LLGLSLShader* shaders[] = { &gASExactOITPBRAlphaProgram, &gASExactOITSkinnedPBRAlphaProgram };
     bool success = true;
 
     for (U32 i = 0; i < 2 && success; ++i)
@@ -618,14 +616,14 @@ bool FSExactOIT::loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow)
         shader.mFeatures.hasLighting = true;
     }
 
-    gExactOITPBRAlphaProgram.mRiggedVariant = &gExactOITSkinnedPBRAlphaProgram;
+    gASExactOITPBRAlphaProgram.mRiggedVariant = &gASExactOITSkinnedPBRAlphaProgram;
     return success;
 }
 
 // Creates ordinary and skinned fullbright-alpha capture programs.
-bool FSExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
+bool ASExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
 {
-    LLGLSLShader* shaders[] = { &gExactOITFullbrightAlphaProgram, &gExactOITSkinnedFullbrightAlphaProgram };
+    LLGLSLShader* shaders[] = { &gASExactOITFullbrightAlphaProgram, &gASExactOITSkinnedFullbrightAlphaProgram };
     bool success = true;
 
     for (U32 i = 0; i < 2 && success; ++i)
@@ -661,12 +659,12 @@ bool FSExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
         llassert(success);
     }
 
-    gExactOITFullbrightAlphaProgram.mRiggedVariant = &gExactOITSkinnedFullbrightAlphaProgram;
+    gASExactOITFullbrightAlphaProgram.mRiggedVariant = &gASExactOITSkinnedFullbrightAlphaProgram;
     return success;
 }
 
 // Creates every supported material capture permutation and returns aggregate success.
-bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
+bool ASExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
                                           std::vector<LLGLSLShader*>& shader_list)
 {
     bool success = true;
@@ -681,7 +679,7 @@ bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
 
         const bool has_skin = i >= LLMaterial::SHADER_COUNT;
         const U32 idx = i & 0xf;
-        LLGLSLShader& shader = gExactOITMaterialAlphaProgram[i];
+        LLGLSLShader& shader = gASExactOITMaterialAlphaProgram[i];
 
         if (!has_skin)
         {
@@ -726,7 +724,7 @@ bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
         }
         else
         {
-            shader.mRiggedVariant = &gExactOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
+            shader.mRiggedVariant = &gASExactOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
         }
         success = shader.createShader();
         llassert(success);
@@ -737,7 +735,7 @@ bool FSExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
 }
 
 // Appends current availability, capacity, demand, overflow, and status data to the viewer report.
-void FSExactOIT::appendDiagnostics(LLSD& info)
+void ASExactOIT::appendDiagnostics(LLSD& info)
 {
     info["EXACT_OIT_AVAILABLE"] = sResources.available;
     info["EXACT_OIT_NODE_CAPACITY"] = LLSD::Integer(sResources.capacity);
@@ -754,7 +752,7 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
     {
         info["EXACT_OIT_STATUS"] = "Unavailable: GPU resource allocation failed or safe VRAM limit reached";
     }
-    else if (!gExactOITCompositeProgram.mProgramObject)
+    else if (!gASExactOITCompositeProgram.mProgramObject)
     {
         info["EXACT_OIT_STATUS"] = "Unavailable: exact OIT shader creation failed";
     }
@@ -765,7 +763,7 @@ void FSExactOIT::appendDiagnostics(LLSD& info)
 }
 
 // Resets transient capture and fallback state at the start of a transparency frame.
-void FSExactOIT::beginFrame()
+void ASExactOIT::beginFrame()
 {
     // Mode-transition invalidation is centralized in the neutral dispatcher.
     sCaptureActive = false;
@@ -810,7 +808,7 @@ void FSExactOIT::beginFrame()
     // pools and must not double-decrement). The debug overlay wants to see
     // every frame's diagnostics, so the predictive skip never engages while
     // it is on; only log.
-    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "ASRenderExactOITDebugMode", 0);
     if (sResources.skipFramesRemaining > 0)
     {
         if (debug_mode != 0)
@@ -825,73 +823,73 @@ void FSExactOIT::beginFrame()
 }
 
 // Reports whether this frame produced a complete Exact OIT capture.
-bool FSExactOIT::captureCompleted()
+bool ASExactOIT::captureCompleted()
 {
     return sCaptureCompleted;
 }
 
 // Reports whether draw submission is currently writing Exact OIT nodes.
-bool FSExactOIT::captureActive()
+bool ASExactOIT::captureActive()
 {
     return sCaptureActive;
 }
 
 // Marks the current frame as having completed its Exact OIT capture traversal.
-void FSExactOIT::markCaptureCompleted()
+void ASExactOIT::markCaptureCompleted()
 {
     sCaptureCompleted = true;
 }
 
 // Invalidates the current capture so it cannot be composited.
-void FSExactOIT::discardCapture()
+void ASExactOIT::discardCapture()
 {
     sCaptureCompleted = false;
 }
 
 // Enables or disables the guarded same-frame vanilla fallback state.
-void FSExactOIT::setVanillaFallback(bool active)
+void ASExactOIT::setVanillaFallback(bool active)
 {
     sVanillaFallbackActive = active;
 }
 
 // Enters vanilla fallback mode for the lifetime of this scope.
-FSExactOIT::VanillaFallbackScope::VanillaFallbackScope()
+ASExactOIT::VanillaFallbackScope::VanillaFallbackScope()
 {
-    FSExactOIT::setVanillaFallback(true);
+    ASExactOIT::setVanillaFallback(true);
 }
 
 // Leaves vanilla fallback mode when fallback traversal finishes.
-FSExactOIT::VanillaFallbackScope::~VanillaFallbackScope()
+ASExactOIT::VanillaFallbackScope::~VanillaFallbackScope()
 {
-    FSExactOIT::setVanillaFallback(false);
+    ASExactOIT::setVanillaFallback(false);
 }
 
 // Marks subsequent alpha and GLTF draws as Exact OIT capture draws.
-void FSExactOIT::beginCapture()
+void ASExactOIT::beginCapture()
 {
     sCaptureActive = true;
 }
 
 // Restores ordinary draw routing after Exact OIT capture traversal.
-void FSExactOIT::endCapture()
+void ASExactOIT::endCapture()
 {
     sCaptureActive = false;
 }
 
 // Enters Exact OIT capture mode for this traversal scope.
-FSExactOIT::CaptureScope::CaptureScope()
+ASExactOIT::CaptureScope::CaptureScope()
 {
     beginCapture();
 }
 
 // Leaves Exact OIT capture mode when traversal exits, including early unwinding.
-FSExactOIT::CaptureScope::~CaptureScope()
+ASExactOIT::CaptureScope::~CaptureScope()
 {
     endCapture();
 }
 
 // Clears per-frame images and counters once, then binds capture images and buffers.
-void FSExactOIT::prepareCaptureBuffers()
+void ASExactOIT::prepareCaptureBuffers()
 {
     if (!sCaptureClearNeeded)
     {
@@ -933,7 +931,7 @@ void FSExactOIT::prepareCaptureBuffers()
 }
 
 // Validates the complete shader family and returns false when any required program is missing.
-bool FSExactOIT::shadersReady()
+bool ASExactOIT::shadersReady()
 {
     std::string missing;
     auto require = [&missing](const LLGLSLShader& shader, const char* name)
@@ -944,24 +942,24 @@ bool FSExactOIT::shadersReady()
         }
     };
 
-    require(gExactOITAlphaProgram, "deferred alpha");
-    require(gExactOITSkinnedAlphaProgram, "skinned deferred alpha");
-    require(gExactOITPBRAlphaProgram, "PBR alpha");
-    require(gExactOITSkinnedPBRAlphaProgram, "skinned PBR alpha");
-    require(gExactOITFullbrightAlphaProgram, "fullbright alpha");
-    require(gExactOITSkinnedFullbrightAlphaProgram, "skinned fullbright alpha");
-    require(gExactOITEmissiveProgram, "emissive");
-    if (missing.empty() && (!gExactOITEmissiveProgram.mRiggedVariant ||
-        !gExactOITEmissiveProgram.mRiggedVariant->mProgramObject)) missing = "skinned emissive";
-    require(gExactOITPBRGlowProgram, "PBR glow");
-    if (missing.empty() && (!gExactOITPBRGlowProgram.mRiggedVariant ||
-        !gExactOITPBRGlowProgram.mRiggedVariant->mProgramObject)) missing = "skinned PBR glow";
-    require(gExactOITCompositeProgram, "composite");
+    require(gASExactOITAlphaProgram, "deferred alpha");
+    require(gASExactOITSkinnedAlphaProgram, "skinned deferred alpha");
+    require(gASExactOITPBRAlphaProgram, "PBR alpha");
+    require(gASExactOITSkinnedPBRAlphaProgram, "skinned PBR alpha");
+    require(gASExactOITFullbrightAlphaProgram, "fullbright alpha");
+    require(gASExactOITSkinnedFullbrightAlphaProgram, "skinned fullbright alpha");
+    require(gASExactOITEmissiveProgram, "emissive");
+    if (missing.empty() && (!gASExactOITEmissiveProgram.mRiggedVariant ||
+        !gASExactOITEmissiveProgram.mRiggedVariant->mProgramObject)) missing = "skinned emissive";
+    require(gASExactOITPBRGlowProgram, "PBR glow");
+    if (missing.empty() && (!gASExactOITPBRGlowProgram.mRiggedVariant ||
+        !gASExactOITPBRGlowProgram.mRiggedVariant->mProgramObject)) missing = "skinned PBR glow";
+    require(gASExactOITCompositeProgram, "composite");
 
     for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && missing.empty(); ++i)
     {
         if ((i & 0x3) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND &&
-            !gExactOITMaterialAlphaProgram[i].mProgramObject)
+            !gASExactOITMaterialAlphaProgram[i].mProgramObject)
         {
             missing = llformat("material alpha %u", i);
         }
@@ -969,8 +967,8 @@ bool FSExactOIT::shadersReady()
     static LLCachedControl<bool> gltf_enabled(gSavedSettings, "GLTFEnabled", false);
     if (missing.empty() && gltf_enabled)
     {
-        if (gExactOITGLTFProgram.mGLTFVariants.empty()) missing = "GLTF variants";
-        for (const LLGLSLShader& shader : gExactOITGLTFProgram.mGLTFVariants)
+        if (gASExactOITGLTFProgram.mGLTFVariants.empty()) missing = "GLTF variants";
+        for (const LLGLSLShader& shader : gASExactOITGLTFProgram.mGLTFVariants)
         {
             if (!shader.mProgramObject)
             {
@@ -994,7 +992,7 @@ bool FSExactOIT::shadersReady()
 }
 
 // Decides whether capture may run, handling runtime allocation and disable transitions.
-bool FSExactOIT::captureEligible(bool rendering_huds, bool impostor_render, bool cube_snapshot,
+bool ASExactOIT::captureEligible(bool rendering_huds, bool impostor_render, bool cube_snapshot,
                                  U32 width, U32 height)
 {
     if (!isEnabled())
@@ -1028,24 +1026,24 @@ bool FSExactOIT::captureEligible(bool rendering_huds, bool impostor_render, bool
 }
 
 // Uploads the normal alpha-pass environment state to every Exact OIT capture shader.
-void FSExactOIT::prepareCaptureShaders(PrepareShader prepare, F32 water_sign)
+void ASExactOIT::prepareCaptureShaders(PrepareShader prepare, F32 water_sign)
 {
-    prepare(&gExactOITAlphaProgram, true, water_sign);
-    prepare(&gExactOITPBRAlphaProgram, true, water_sign);
-    prepare(&gExactOITFullbrightAlphaProgram, true, water_sign);
-    for (LLGLSLShader& shader : gExactOITMaterialAlphaProgram)
+    prepare(&gASExactOITAlphaProgram, true, water_sign);
+    prepare(&gASExactOITPBRAlphaProgram, true, water_sign);
+    prepare(&gASExactOITFullbrightAlphaProgram, true, water_sign);
+    for (LLGLSLShader& shader : gASExactOITMaterialAlphaProgram)
     {
         if (shader.mProgramObject)
         {
             prepare(&shader, true, water_sign);
         }
     }
-    prepare(&gExactOITEmissiveProgram, false, water_sign);
-    prepare(&gExactOITPBRGlowProgram, false, water_sign);
+    prepare(&gASExactOITEmissiveProgram, false, water_sign);
+    prepare(&gASExactOITPBRGlowProgram, false, water_sign);
 }
 
 // Executes eligible post-water capture traversal and returns whether it replaced vanilla traversal.
-bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
+bool ASExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader prepare,
                                            F32 water_sign, LLGLSLShader*& emissive_shader,
                                            LLGLSLShader*& pbr_emissive_shader)
 {
@@ -1111,7 +1109,7 @@ bool FSExactOIT::renderPostDeferredCapture(LLDrawPoolAlpha& pool, PrepareShader 
 }
 
 // Uploads per-draw blend and glow data when capturing; returns true when vanilla blending is suppressed.
-bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
+bool ASExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_source,
                                                U32 color_destination, U32 alpha_source,
                                                U32 alpha_destination)
 {
@@ -1131,7 +1129,7 @@ bool FSExactOIT::configureCapturedDrawIfActive(LLGLSLShader* shader, U32 color_s
 }
 
 // Dispatches captured emissive lists and returns true when the vanilla emissive block must be skipped.
-bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
+bool ASExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
                                          std::vector<LLDrawInfo*>& emissives,
                                          std::vector<LLDrawInfo*>& pbr_emissives,
                                          std::vector<LLDrawInfo*>& rigged_emissives,
@@ -1172,7 +1170,7 @@ bool FSExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
 }
 
 // Uploads the standard alpha blend tuple and zero glow for a captured GLTF draw.
-void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
+void ASExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
     const U32 packed_blend = U32(LLRender::BF_SOURCE_ALPHA) |
         (U32(LLRender::BF_ONE_MINUS_SOURCE_ALPHA) << 8) |
@@ -1182,46 +1180,46 @@ void FSExactOIT::configureGLTFCapturedDraw(LLGLSLShader& shader)
 }
 
 // Returns the Exact OIT GLTF program during capture, otherwise the supplied vanilla program.
-LLGLSLShader& FSExactOIT::gltfProgram(LLGLSLShader& ordinary_program)
+LLGLSLShader& ASExactOIT::gltfProgram(LLGLSLShader& ordinary_program)
 {
-    return sCaptureActive ? gExactOITGLTFProgram : ordinary_program;
+    return sCaptureActive ? gASExactOITGLTFProgram : ordinary_program;
 }
 
 // Returns the capture alpha shader while active, otherwise the supplied ordinary shader.
-LLGLSLShader* FSExactOIT::alphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASExactOIT::alphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gExactOITAlphaProgram : ordinary;
+    return sCaptureActive ? &gASExactOITAlphaProgram : ordinary;
 }
 
 // Returns the capture PBR-alpha shader while active, otherwise the supplied ordinary shader.
-LLGLSLShader* FSExactOIT::pbrAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASExactOIT::pbrAlphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gExactOITPBRAlphaProgram : ordinary;
+    return sCaptureActive ? &gASExactOITPBRAlphaProgram : ordinary;
 }
 
 // Returns the capture fullbright shader while active, otherwise the supplied ordinary shader.
-LLGLSLShader* FSExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary)
+LLGLSLShader* ASExactOIT::fullbrightAlphaShader(LLGLSLShader* ordinary)
 {
-    return sCaptureActive ? &gExactOITFullbrightAlphaProgram : ordinary;
+    return sCaptureActive ? &gASExactOITFullbrightAlphaProgram : ordinary;
 }
 
 // Returns the requested capture material variant when valid, otherwise the ordinary shader.
-LLGLSLShader* FSExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary)
+LLGLSLShader* ASExactOIT::materialAlphaShader(U32 mask, LLGLSLShader* ordinary)
 {
-    LLGLSLShader& shader = gExactOITMaterialAlphaProgram[mask];
+    LLGLSLShader& shader = gASExactOITMaterialAlphaProgram[mask];
     return sCaptureActive && shader.mProgramObject ? &shader : ordinary;
 }
 
 // Returns the Exact OIT emissive capture shader selected for alpha traversal.
-LLGLSLShader* FSExactOIT::emissiveShader()
+LLGLSLShader* ASExactOIT::emissiveShader()
 {
-    return &gExactOITEmissiveProgram;
+    return &gASExactOITEmissiveProgram;
 }
 
 // Returns the Exact OIT PBR glow capture shader selected for alpha traversal.
-LLGLSLShader* FSExactOIT::pbrGlowShader()
+LLGLSLShader* ASExactOIT::pbrGlowShader()
 {
-    return &gExactOITPBRGlowProgram;
+    return &gASExactOITPBRGlowProgram;
 }
 
 // Returns the node capacity this session may safely allocate (VRAM-bounded).
@@ -1250,7 +1248,7 @@ static U32 computeGrownCapacity(U32 required_nodes, U32 current_capacity)
 // speculative sort pass, or an abandoned overflow frame's sort work is still
 // in flight races that GPU work against the new (garbage) storage.
 // Returns true if capacity now covers `required_nodes`.
-bool FSExactOIT::growNodePool(U32 required_nodes)
+bool ASExactOIT::growNodePool(U32 required_nodes)
 {
     constexpr U64 node_bytes = 32;
     const U32 grown_capacity = computeGrownCapacity(required_nodes, sResources.capacity);
@@ -1282,7 +1280,7 @@ bool FSExactOIT::growNodePool(U32 required_nodes)
 // this or an earlier frame is still queued against sResources.nodes -- same
 // requirement as growNodePool(), so this is only ever called from
 // beginFrame() via pendingShrinkCapacity, never mid-frame.
-void FSExactOIT::shrinkNodePool(U32 target_capacity)
+void ASExactOIT::shrinkNodePool(U32 target_capacity)
 {
     constexpr U64 node_bytes = 32;
     if (target_capacity >= sResources.capacity)
@@ -1307,7 +1305,7 @@ void FSExactOIT::shrinkNodePool(U32 target_capacity)
 }
 
 // Handles overflow failure and buffer-growth policy; returns true when vanilla fallback is required.
-bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
+bool ASExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
 {
     if (overflow_flag == 0 && required_nodes <= sResources.capacity)
     {
@@ -1337,7 +1335,7 @@ bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
         // re-attempting (and re-discarding) every frame.
         sResources.skipFramesRemaining = llmin(2u << sResources.consecutiveOverflowsAtCap, 60u);
         ++sResources.consecutiveOverflowsAtCap;
-        static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+        static LLCachedControl<S32> debug_mode(gSavedSettings, "ASRenderExactOITDebugMode", 0);
         if (debug_mode == 0)
         {
             LL_INFOS("ExactOIT") << "Exact OIT demand exceeds safe capacity; skipping capture for "
@@ -1348,7 +1346,7 @@ bool FSExactOIT::captureOverflowed(U32 required_nodes, U32 overflow_flag)
 }
 
 // Updates peak statistics and emits bounded camera-transition diagnostics.
-void FSExactOIT::recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook)
+void ASExactOIT::recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook)
 {
     sResources.peakNodes = llmax(sResources.peakNodes, nodes);
     static bool initialized = false;
@@ -1388,16 +1386,16 @@ void FSExactOIT::recordCaptureStats(U32 nodes, U32 maximum_list, bool mouselook)
 // Reports whether Exact OIT has nothing to composite this frame (mode off,
 // no capture ran, or the shader/resource set is unavailable). When this
 // returns false, waitValidation() must still be called to consume the fence.
-bool FSExactOIT::captureInactive(bool cube_snapshot, bool impostor_render)
+bool ASExactOIT::captureInactive(bool cube_snapshot, bool impostor_render)
 {
     return !isEnabled() || cube_snapshot || impostor_render || !sResources.available ||
-        !gExactOITCompositeProgram.mProgramObject || !sCaptureCompleted;
+        !gASExactOITCompositeProgram.mProgramObject || !sCaptureCompleted;
 }
 
 // Issues the memory barrier that makes captured SSBO/image writes visible to
 // subsequent draws. Must run before sort pass 1 is issued, and before the
 // fence wait in waitValidation().
-void FSExactOIT::beginValidation()
+void ASExactOIT::beginValidation()
 {
     // No atomic counter buffers are used by Exact OIT (only SSBO/image
     // atomics), so GL_ATOMIC_COUNTER_BARRIER_BIT is unnecessary here.
@@ -1407,7 +1405,7 @@ void FSExactOIT::beginValidation()
 // Waits only until the capture draws finish (not the whole pipeline), reads
 // back the control words, and applies overflow/growth policy. Sort pass 1
 // (which does not depend on this readback) should already be in flight.
-FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& maximum_list)
+ASExactOIT::ValidationResult ASExactOIT::waitValidation(bool mouselook, U32& maximum_list)
 {
     maximum_list = 0;
     if (sResources.captureFence)
@@ -1502,7 +1500,7 @@ FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& max
 }
 
 // Binds the captured images and shader-storage buffers required by composite passes.
-void FSExactOIT::bindCompositeResources()
+void ASExactOIT::bindCompositeResources()
 {
     glBindImageTexture(0, sResources.heads, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
     glBindImageTexture(1, sResources.counts, 0, GL_FALSE, 0, GL_READ_WRITE, GL_R32UI);
@@ -1511,7 +1509,7 @@ void FSExactOIT::bindCompositeResources()
 }
 
 // Copies the untouched opaque screen color into the composite background texture.
-void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
+void ASExactOIT::copyOpaqueScene(LLRenderTarget& screen)
 {
     LL_PROFILE_GPU_ZONE("Exact OIT opaque copy");
     glCopyImageSubData(screen.getTexture(), GL_TEXTURE_2D, 0, 0, 0, 0,
@@ -1520,7 +1518,7 @@ void FSExactOIT::copyOpaqueScene(LLRenderTarget& screen)
 }
 
 // E6: chunk size take_run() sorts in registers before falling back to
-// natural-run detection. Must match OIT_CHUNK in exactOITCompositeF.glsl.
+// natural-run detection. Must match OIT_CHUNK in asExactOITCompositeF.glsl.
 constexpr U32 OIT_CHUNK = 16u;
 
 // Sorts every captured pixel list and blends the exact result over the opaque scene.
@@ -1529,15 +1527,15 @@ constexpr U32 OIT_CHUNK = 16u;
 // this then resumes from the second pass instead of redoing the first.
 // `shallow_limit` is E5's K, computed once in finishFrame() and shared with
 // the speculative pass issued there; it must not be recomputed here.
-void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
+void ASExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triangle, U32 maximum_list,
                            bool sort_pass_1_issued, U32 shallow_limit)
 {
     copyOpaqueScene(screen);
     LLGLDisable blend(GL_BLEND);
     bindCompositeResources();
 
-    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
-    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "ASRenderExactOITDebugMode", 0);
+    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "ASRenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_debug_mode("oitDebugMode");
     static LLStaticHashedString oit_pass("oitPass");
     // Limit opaque-cutoff discovery to the first natural-sort invocation.
@@ -1554,10 +1552,10 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     {
         LLGLDepthTest depth(GL_FALSE);
         gGL.setColorMask(false, false);
-        gExactOITCompositeProgram.bind();
-        gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
-        gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
-        gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
+        gASExactOITCompositeProgram.bind();
+        gASExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+        gASExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+        gASExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
         screen_triangle.setBuffer();
         // E5: pass 1 (and thus any further merge rounds) is skipped
         // entirely when every pixel's raw count could be at most
@@ -1569,7 +1567,7 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         if (maximum_list > llmax(shallow_limit, 1u))
         {
             LL_PROFILE_GPU_ZONE("Exact OIT natural sort");
-            gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+            gASExactOITCompositeProgram.uniform1i(oit_pass, 1);
             // E6: take_run() chunks natural runs shorter than OIT_CHUNK,
             // so after the first round every run has >= OIT_CHUNK nodes
             // except the last: runs <= ceil(maximum_list / OIT_CHUNK),
@@ -1587,18 +1585,18 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
             {
                 LL_PROFILE_GPU_ZONE("Exact OIT natural sort pass");
                 // Prune fully hidden nodes before the first merge pass.
-                gExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
+                gASExactOITCompositeProgram.uniform1i(oit_first_sort_pass,
                                                     opaque_cutoff && round == 1u);
                 screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
                 glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
                 ++sort_passes;
             }
         }
-        gExactOITCompositeProgram.unbind();
+        gASExactOITCompositeProgram.unbind();
     }
 
     // Phase-0 measurement: objective, bounded periodic snapshot of demand vs.
-    // capacity and sort cost, for comparing RenderOITMode settings and scenes.
+    // capacity and sort cost, for comparing ASRenderOITMode settings and scenes.
     if (debug_mode != 0)
     {
         static U32 frame_counter = 0;
@@ -1617,23 +1615,23 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         LL_PROFILE_GPU_ZONE("Exact OIT final blend");
         LLGLDepthTest depth(GL_FALSE);
         gGL.setColorMask(true, true);
-        gExactOITCompositeProgram.bind();
-        gExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
-        gExactOITCompositeProgram.uniform1i(oit_pass, 2);
+        gASExactOITCompositeProgram.bind();
+        gASExactOITCompositeProgram.uniform1i(oit_debug_mode, debug_mode);
+        gASExactOITCompositeProgram.uniform1i(oit_pass, 2);
         // Pass 2 reads oitShallowLimit/oitOpaqueCutoff unconditionally
         // (blend_shallow() dispatch); set them here too, since the fragment
         // sort loop above -- the only other place that sets them this frame
         // -- is skipped whenever every pixel was shallow. A stale value from
         // a previous bind of this program object would silently desync pass
         // 1's OIT_SORTED flag from pass 2's dispatch.
-        gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
-        gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
-        gExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
+        gASExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+        gASExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
+        gASExactOITCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                               &sOpaqueTarget, false, LLTexUnit::TFO_POINT, 0);
         screen_triangle.setBuffer();
         screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
-        gExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
-        gExactOITCompositeProgram.unbind();
+        gASExactOITCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE);
+        gASExactOITCompositeProgram.unbind();
     }
 
     // <AS:Chanayane> Self-lighting floater isolate-background mode: a
@@ -1641,7 +1639,7 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
     // AFTER the color blend above has fully completed. It discards on every
     // pixel with no real captured OIT coverage and writes a near-plane
     // depth everywhere else (see the oitPass == 3 branch in
-    // exactOITCompositeF.glsl), so a later depth-tested isolate backdrop
+    // asExactOITCompositeF.glsl), so a later depth-tested isolate backdrop
     // pass correctly treats OIT-composited content as occupied instead of
     // painting over it. Color writes are masked off for this pass -- it
     // only ever touches depth. Doing this as a fully separate pass (rather
@@ -1654,11 +1652,11 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
         LL_PROFILE_GPU_ZONE("Exact OIT isolate depth");
         LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
         gGL.setColorMask(false, false);
-        gExactOITCompositeProgram.bind();
-        gExactOITCompositeProgram.uniform1i(oit_pass, 3);
+        gASExactOITCompositeProgram.bind();
+        gASExactOITCompositeProgram.uniform1i(oit_pass, 3);
         screen_triangle.setBuffer();
         screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
-        gExactOITCompositeProgram.unbind();
+        gASExactOITCompositeProgram.unbind();
         gGL.setColorMask(true, true);
     }
     // </AS:Chanayane>
@@ -1675,7 +1673,7 @@ void FSExactOIT::composite(LLRenderTarget& screen, LLVertexBuffer& screen_triang
 // composite() treats as sorted.
 static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle, U32 shallow_limit)
 {
-    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
+    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "ASRenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_pass("oitPass");
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
     static LLStaticHashedString oit_shallow_limit("oitShallowLimit");
@@ -1684,24 +1682,24 @@ static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle, U32 s
     LL_PROFILE_GPU_ZONE("Exact OIT speculative sort pass");
     LLGLDepthTest depth(GL_FALSE);
     gGL.setColorMask(false, false);
-    gExactOITCompositeProgram.bind();
-    // oitPass == 1 never reads oitDebugMode (see exactOITCompositeF.glsl),
+    gASExactOITCompositeProgram.bind();
+    // oitPass == 1 never reads oitDebugMode (see asExactOITCompositeF.glsl),
     // so it is left at whatever value the program object last had bound.
-    gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+    gASExactOITCompositeProgram.uniform1i(oit_pass, 1);
     // Equivalent to composite()'s (opaque_cutoff && width == 1) test: this
     // speculative pass always is width == 1.
-    gExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
-    gExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
-    gExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
+    gASExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
+    gASExactOITCompositeProgram.uniform1i(oit_shallow_limit, (S32)shallow_limit);
+    gASExactOITCompositeProgram.uniform1i(oit_opaque_cutoff, opaque_cutoff);
     screen_triangle.setBuffer();
     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gExactOITCompositeProgram.unbind();
+    gASExactOITCompositeProgram.unbind();
     gGL.setColorMask(true, true);
 }
 
 // Validates the frame, performs complete fallback or composite, and dispatches debug alpha.
-void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
+void ASExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
                              LLVertexBuffer& screen_triangle, bool cube_snapshot,
                              bool impostor_render, bool mouselook)
 {
@@ -1718,7 +1716,7 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
     // composite(): they must agree, or the speculative pass would sort
     // pixels composite() then treats as unsorted, or skip pixels composite()
     // treats as sorted.
-    static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderExactOITDebugMode", 0);
+    static LLCachedControl<S32> debug_mode(gSavedSettings, "ASRenderExactOITDebugMode", 0);
     const U32 shallow_limit = debug_mode == 0 ? 16u : 0u;
 
     // Explicit bind: do not rely on prepareCaptureBuffers() having left the
@@ -1768,7 +1766,7 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
 }
 
 // Releases viewport resources and optionally preserves the large reusable node pool.
-void FSExactOIT::releaseResources(bool preserve_node_pool)
+void ASExactOIT::releaseResources(bool preserve_node_pool)
 {
     sOpaqueTarget.release();
     if (sResources.heads)
@@ -1827,13 +1825,13 @@ void FSExactOIT::releaseResources(bool preserve_node_pool)
 }
 
 // Requests that the next screen-buffer release retain the node pool across resizing.
-void FSExactOIT::retainNodePoolOnNextRelease()
+void ASExactOIT::retainNodePoolOnNextRelease()
 {
     sRetainNodePoolOnRelease = true;
 }
 
 // Releases resources using and then clearing the pending node-pool retention request.
-void FSExactOIT::releaseResources()
+void ASExactOIT::releaseResources()
 {
     const bool preserve_node_pool = sRetainNodePoolOnRelease;
     sRetainNodePoolOnRelease = false;
@@ -1841,7 +1839,7 @@ void FSExactOIT::releaseResources()
 }
 
 // Resets availability and failure state before attempting a fresh allocation.
-void FSExactOIT::prepareResourceAllocation()
+void ASExactOIT::prepareResourceAllocation()
 {
     const bool enabled = isEnabled();
     releaseResources(enabled);
@@ -1853,14 +1851,14 @@ void FSExactOIT::prepareResourceAllocation()
 }
 
 // Validates allocation prerequisites and returns whether viewport allocation may proceed.
-bool FSExactOIT::beginResourceAllocation(U32 width, U32 height)
+bool ASExactOIT::beginResourceAllocation(U32 width, U32 height)
 {
     prepareResourceAllocation();
     return isEnabled() && sOpaqueTarget.allocate(width, height, GL_RGBA16F);
 }
 
 // Allocates the head/count images and their framebuffer, returning completeness status.
-bool FSExactOIT::allocateCaptureImages(U32 width, U32 height)
+bool ASExactOIT::allocateCaptureImages(U32 width, U32 height)
 {
     glGenTextures(1, &sResources.heads);
     glBindTexture(GL_TEXTURE_2D, sResources.heads);
@@ -1887,7 +1885,7 @@ bool FSExactOIT::allocateCaptureImages(U32 width, U32 height)
 }
 
 // Allocates or reuses the bounded node pool and creates its control buffer.
-void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_ready)
+void ASExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_ready)
 {
     constexpr U64 node_bytes = 32;
     const U64 vram_bytes = static_cast<U64>(gGLManager.mVRAM) * 1024u * 1024u;
@@ -1970,7 +1968,7 @@ void FSExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
 }
 
 // Allocates all setting-dependent Exact OIT resources for the current viewport.
-void FSExactOIT::allocateResources(U32 width, U32 height)
+void ASExactOIT::allocateResources(U32 width, U32 height)
 {
     if (isEnabled())
     {

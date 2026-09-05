@@ -15,7 +15,7 @@ last known-good state (measured ~29 FPS in the reference scene below).
 Third-person camera, avatar wearing a sheer outfit with a long ponytail
 (detailed alpha hair), standing near water with active splash particle
 sprites in view (heavy overdraw, many small alpha-blended sprites, some
-additive/glow). `RenderOITMode` = Exact OIT throughout.
+additive/glow). `ASRenderOITMode` = Exact OIT throughout.
 
 GPU: NVIDIA GeForce RTX 3080 Ti. Driver: NVIDIA 596.49. `GL_VERSION`:
 4.6.0. (From `AyaneStorm.log`, `LLGLManager::printGLInfoString`.)
@@ -30,7 +30,7 @@ Two test spots used throughout:
 - Sprite spot: **~29 FPS** (this was the user's original complaint — "laggy"
   — but still an order of magnitude faster than what E4 produced).
 - Empty spot, Exact OIT enabled: **31 FPS**. Same spot, Exact OIT disabled
-  (`RenderOITMode` = Standard): **40 FPS**. This ~9 FPS / ~29% gap with
+  (`ASRenderOITMode` = Standard): **40 FPS**. This ~9 FPS / ~29% gap with
   *zero* transparent geometry in view was the motivating measurement for
   implementing E4: `Nodes used 0`, so it isolated a fixed per-frame cost
   (not sorting, not overdraw) — pointing at the plan's finding #1, the
@@ -65,13 +65,13 @@ needed; the implementation below follows it closely.
 
 ## What was implemented
 
-`fsexactoit.h`: added to `Resources`: `U32* controlMapped = nullptr;` and
+`asexactoit.h`: added to `Resources`: `U32* controlMapped = nullptr;` and
 `GLsync captureFence = 0;`. Split the old `validateCapture()` into
 `captureInactive()` (cheap early-out check), `beginValidation()` (memory
 barrier only), and `waitValidation()` (fence wait + control readback +
 overflow policy). `composite()` gained a `bool sort_pass_1_issued` parameter.
 
-`fsexactoit.cpp`, control buffer allocation (`allocateNodePool()`):
+`asexactoit.cpp`, control buffer allocation (`allocateNodePool()`):
 
 ```cpp
 glGenBuffers(1, &sResources.control);
@@ -79,7 +79,7 @@ glBindBuffer(GL_SHADER_STORAGE_BUFFER, sResources.control);
 const U32 control[4] = { 0, sResources.capacity, 0, 0 };
 sResources.controlMapped = nullptr;
 static LLCachedControl<bool> force_fallback(
-    gSavedSettings, "RenderExactOITForceReadbackFallback", false);
+    gSavedSettings, "ASRenderExactOITForceReadbackFallback", false);
 if (!force_fallback && gGLManager.mGLVersion >= 4.39f && glBufferStorage && glMapBufferRange)
 {
     const GLbitfield storage_flags = GL_DYNAMIC_STORAGE_BIT | GL_MAP_READ_BIT |
@@ -117,10 +117,10 @@ return true;
 is new diagnostic code, not part of the original E4 patch):
 
 ```cpp
-FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& maximum_list)
+ASExactOIT::ValidationResult ASExactOIT::waitValidation(bool mouselook, U32& maximum_list)
 {
     maximum_list = 0;
-    static LLCachedControl<S32> debug_mode_wait(gSavedSettings, "RenderExactOITDebugMode", 0);
+    static LLCachedControl<S32> debug_mode_wait(gSavedSettings, "ASRenderExactOITDebugMode", 0);
     if (sResources.captureFence)
     {
         LL_PROFILE_ZONE_NAMED("Exact OIT fence wait");
@@ -184,7 +184,7 @@ FSExactOIT::ValidationResult FSExactOIT::waitValidation(bool mouselook, U32& max
 `finishFrame()`, the new speculative-issue ordering:
 
 ```cpp
-void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
+void ASExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
                              LLVertexBuffer& screen_triangle, bool cube_snapshot,
                              bool impostor_render, bool mouselook)
 {
@@ -195,9 +195,9 @@ void FSExactOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen,
 
     beginValidation();   // glMemoryBarrier(SHADER_STORAGE | SHADER_IMAGE_ACCESS)
 
-    static LLCachedControl<bool> compute_sort_requested(gSavedSettings, "RenderExactOITComputeSort", false);
+    static LLCachedControl<bool> compute_sort_requested(gSavedSettings, "ASRenderExactOITComputeSort", false);
     const bool will_use_compute_sort = compute_sort_requested && sResources.computeSortAvailable;
-    static LLCachedControl<bool> no_speculative(gSavedSettings, "RenderExactOITNoSpeculativeSort", false);
+    static LLCachedControl<bool> no_speculative(gSavedSettings, "ASRenderExactOITNoSpeculativeSort", false);
     const bool sort_pass_1_issued = !will_use_compute_sort && !no_speculative;
     if (sort_pass_1_issued)
     {
@@ -225,20 +225,20 @@ old loop's `width == 1` iteration):
 ```cpp
 static void issueSpeculativeFirstSortPass(LLVertexBuffer& screen_triangle)
 {
-    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "RenderExactOITOpaqueCutoff", true);
+    static LLCachedControl<bool> opaque_cutoff(gSavedSettings, "ASRenderExactOITOpaqueCutoff", true);
     static LLStaticHashedString oit_pass("oitPass");
     static LLStaticHashedString oit_first_sort_pass("oitFirstSortPass");
 
     LL_PROFILE_GPU_ZONE("Exact OIT speculative sort pass");
     LLGLDepthTest depth(GL_FALSE);
     gGL.setColorMask(false, false);
-    gExactOITCompositeProgram.bind();
-    gExactOITCompositeProgram.uniform1i(oit_pass, 1);
-    gExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
+    gASExactOITCompositeProgram.bind();
+    gASExactOITCompositeProgram.uniform1i(oit_pass, 1);
+    gASExactOITCompositeProgram.uniform1i(oit_first_sort_pass, opaque_cutoff);
     screen_triangle.setBuffer();
     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
     glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
-    gExactOITCompositeProgram.unbind();
+    gASExactOITCompositeProgram.unbind();
     gGL.setColorMask(true, true);
 }
 ```
@@ -256,7 +256,7 @@ used_compute_sort = !sort_pass_1_issued &&
 if (!used_compute_sort)
 {
     ...
-    gExactOITCompositeProgram.uniform1i(oit_pass, 1);
+    gASExactOITCompositeProgram.uniform1i(oit_pass, 1);
     const U32 start_width = sort_pass_1_issued ? 2u : 1u;
     for (U32 width = start_width; width < maximum_list; width <<= 1)
     {
@@ -268,7 +268,7 @@ if (!used_compute_sort)
 }
 ```
 
-The composite (pass 1) shader itself (`exactOITCompositeF.glsl`) was **not**
+The composite (pass 1) shader itself (`asExactOITCompositeF.glsl`) was **not**
 modified by E4 — `oitPass == 1` branch, unchanged:
 
 ```glsl
@@ -300,12 +300,12 @@ uncontroversial.
 
 ## Test results
 
-All at the "sprite" spot unless noted, static camera, `RenderExactOITDebugMode`
+All at the "sprite" spot unless noted, static camera, `ASRenderExactOITDebugMode`
 nonzero (required for the instrumentation to log) unless noted.
 
 1. **Empty spot**, Exact OIT on, E4 build: **32-33 FPS** (up from 31 FPS
    pre-E4 baseline; modest, expected gain, `Nodes used 0`).
-2. **Sprite spot**, E4 build, default settings (`RenderExactOITForceReadbackFallback`
+2. **Sprite spot**, E4 build, default settings (`ASRenderExactOITForceReadbackFallback`
    = FALSE, i.e. persistent-coherent mapping active): **~1.3 FPS**.
    `debug mode 4` (sort-order validity) reports all green (no invalid
    order detected). Image looks visually correct. Log:
@@ -315,7 +315,7 @@ nonzero (required for the instrumentation to log) unless noted.
    (`sort_passes` here already accounts for the speculative pass, i.e. total
    real pass count for `ceil(log2(78)) = 7` is correct, matching the
    pre-speculative-issue formula — no double-counting bug found.)
-3. **Sprite spot**, same build, `RenderExactOITForceReadbackFallback` = TRUE
+3. **Sprite spot**, same build, `ASRenderExactOITForceReadbackFallback` = TRUE
    (forces the plain `glGetBufferSubData` path instead of the persistent
    map, toggled live via Debug Settings, no rebuild): **still ~1-3 FPS**
    (user reported both "3 FPS" and, moments earlier at the same spot with
@@ -341,7 +341,7 @@ nonzero (required for the instrumentation to log) unless noted.
    changes specifically, not a pre-existing cost newly exposed by more
    accurate measurement.
 
-A third diagnostic (`RenderExactOITNoSpeculativeSort`, which would make
+A third diagnostic (`ASRenderExactOITNoSpeculativeSort`, which would make
 `sort_pass_1_issued` false so pass 1 runs entirely inside `composite()`
 *after* `waitValidation()` returns, i.e. architecturally identical to
 pre-E4 ordering except the readback mechanism itself, fence vs. blocking
@@ -366,7 +366,7 @@ another build cycle guessing.
   driver fully retire/coalesce that contended write traffic before any
   read-heavy pass touched the same memory — something the fence-based
   wait, being more "precise," no longer provides. This is plausible but
-  unconfirmed; the `RenderExactOITNoSpeculativeSort` toggle (untested)
+  unconfirmed; the `ASRenderExactOITNoSpeculativeSort` toggle (untested)
   would confirm or refute it directly: if forcing pass 1 to run strictly
   after the wait (same ordering as pre-E4, only the readback mechanism
   differs) restores ~29 FPS, this is confirmed.
@@ -424,7 +424,7 @@ tells us what to try next without writing another doc like this one.
 
 ## Questions
 
-1. Given the ruled-out hypothesis and the untested `RenderExactOITNoSpeculativeSort`
+1. Given the ruled-out hypothesis and the untested `ASRenderExactOITNoSpeculativeSort`
    diagnostic, what is the most likely root cause of the ~200ms fence wait
    under heavy atomic contention, and is the speculative-pass-1 reordering
    itself the right thing to suspect, or is there a more fundamental problem
@@ -506,7 +506,7 @@ This explains every observation:
   by PCIe atomics;
 - debug mode 4 green: the data is right, only its location is wrong.
 
-**Test 3 did not rule this out.** `RenderExactOITForceReadbackFallback` is a
+**Test 3 did not rule this out.** `ASRenderExactOITForceReadbackFallback` is a
 `static LLCachedControl` read only inside `allocateNodePool()`. Toggling it
 live changes nothing until the control buffer is reallocated, which needs a
 `releaseResources()` + `allocateResources()` cycle (mode switch or resize).
@@ -514,7 +514,7 @@ The buffer stayed host-mapped during test 3, so both readings measured the
 same configuration.
 
 **Zero-build confirmation, do this first:** set
-`RenderExactOITForceReadbackFallback` = TRUE, then switch `RenderOITMode` to
+`ASRenderExactOITForceReadbackFallback` = TRUE, then switch `ASRenderOITMode` to
 Standard and back to Exact OIT (this releases and reallocates the control
 buffer through `captureEligible()`). Expected at the sprite spot: about
 29 FPS or better and a fence wait of a few ms. If that holds, the diagnosis
@@ -528,7 +528,7 @@ buffer. Copy the four control words on the GPU with `glCopyBufferSubData`
 from the device-local control buffer into a tiny persistently mapped readback
 buffer, then fence.
 
-`fsexactoit.h`, `Resources`: replace `U32* controlMapped` with
+`asexactoit.h`, `Resources`: replace `U32* controlMapped` with
 ```cpp
 GLuint readback = 0;          // 16-byte host-visible copy of the control words
 U32*   readbackMapped = nullptr;
@@ -563,7 +563,7 @@ if (gGLManager.mGLVersion >= 4.39f && glBufferStorage && glMapBufferRange)
 }
 sResources.available = glGetError() == GL_NO_ERROR;
 ```
-Remove `RenderExactOITForceReadbackFallback` (it cannot work as a live toggle
+Remove `ASRenderExactOITForceReadbackFallback` (it cannot work as a live toggle
 and is no longer needed). The `glGetBufferSubData` path on `control` stays as
 the fallback when `readbackMapped == nullptr`.
 
@@ -596,7 +596,7 @@ next frame's copy is issued, so there is no write-after-read hazard.
 `GL_COPY_WRITE_BUFFER`, `glUnmapBuffer`, `glDeleteBuffers`). The control
 buffer needs no unmapping any more.
 
-Keep the speculative pass 1 and the `RenderExactOITNoSpeculativeSort`
+Keep the speculative pass 1 and the `ASRenderExactOITNoSpeculativeSort`
 diagnostic for one build, then delete that setting.
 
 ## Expected results and how to read them
@@ -605,7 +605,7 @@ diagnostic for one build, then delete that setting.
 |---|---|---|
 | Sprite spot FPS | at least the pre-E4 29 FPS, probably slightly more | see next rows |
 | `Fence wait took` at sprite spot | a few ms at most (capture GPU time minus the CPU time spent issuing pass 1) | wait still near the frame time: the GPU is still slow before the fence; run the next row |
-| Same scene with `RenderExactOITNoSpeculativeSort` = TRUE | no FPS change (the speculative pass is not the problem) | if FPS improves only with it TRUE, keep pass 1 after the wait (option b) and report that result |
+| Same scene with `ASRenderExactOITNoSpeculativeSort` = TRUE | no FPS change (the speculative pass is not the problem) | if FPS improves only with it TRUE, keep pass 1 after the wait (option b) and report that result |
 | Empty spot | 32–33 FPS as already measured | — |
 
 The 1–2 FPS gain at the empty spot is real but small. E4's value was never
@@ -630,7 +630,7 @@ only for the capture while the GPU already runs pass 1.
    speculative pass.
 5. No missing data is needed. The zero-build confirmation decides the
    branch: if the mode-switch trick restores FPS, the fix applies; if it
-   does not, test `RenderExactOITNoSpeculativeSort` = TRUE next (already in
+   does not, test `ASRenderExactOITNoSpeculativeSort` = TRUE next (already in
    the code).
 
 ## E5 and E6 still apply unmodified

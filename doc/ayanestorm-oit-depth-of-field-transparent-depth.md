@@ -41,12 +41,12 @@ depth pass. Do not retain isolated pieces of that integration.
 
 ### Non-DoF fix to reapply after rollback
 
-Reapply only the removal of the late `gAVBOITOpaqueTarget.flush()` from
-`FSAVBOIT::finishDirectFrame()`.
+Reapply only the removal of the late `gASAVBOITOpaqueTarget.flush()` from
+`ASAVBOIT::finishDirectFrame()`.
 
-`finishDirectColorRaster()` already flushes `gAVBOITOpaqueTarget` and restores
+`finishDirectColorRaster()` already flushes `gASAVBOITOpaqueTarget` and restores
 the caller's screen target after AVBOIT color capture. Calling
-`gAVBOITOpaqueTarget.flush()` again after compute resolve pops the render-target
+`gASAVBOITOpaqueTarget.flush()` again after compute resolve pops the render-target
 stack a second time. This can leave the wrong target active for the following
 isolate-background depth pass. The correct code at that location performs no
 flush; the existing `finishDirectColorRaster()` call remains the single restore.
@@ -90,7 +90,7 @@ longer being bound.
   setup. Reset the uniform after each draw. Legacy BLEND materials bypass
   minimum_alpha, so use the existing diffuse alpha-mask shader for their
   depth-only draws (including its rigged variant).
-- fsavboit.cpp: remove the redundant private-target flush at resolve time.
+- asavboit.cpp: remove the redundant private-target flush at resolve time.
   finishDirectColorRaster() remains the single restore after color capture.
 
 Capture, sorting, four AVBOIT front keys, relative volume weights, and shader
@@ -271,7 +271,7 @@ The first attempted correction captured depth after `renderGeomPostDeferred()`.
 Runtime rejected it: Exact stopped flickering but consistently blurred major
 opaque facial/body contributions. Forward pools do not preserve the deferred
 opaque depth needed by DoF. Depth capture therefore occurs once in
-`FSOITDispatcher::beginFrame()`, after deferred rendering and immediately
+`ASOITDispatcher::beginFrame()`, after deferred rendering and immediately
 before forward transparency. This point is independent of draw-pool membership
 and precedes all forward depth replacement. The alpha depth-only pass remains
 skipped based on completed OIT capture.
