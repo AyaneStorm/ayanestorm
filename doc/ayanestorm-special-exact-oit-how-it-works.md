@@ -239,3 +239,29 @@ pass; disabling releases them, and enabling again recreates them.
 - CMake, includes, renderer call sites, shader loader filename checks, preference bindings and documentation use the new names.
 - Renderer algorithms, GLSL interfaces and shader revision strings are unchanged. Author: chanayane@firestorm.
 - Validation: static reference/path checks and XML parsing only; no build or runtime test.
+
+## HDR/emissive toggle: blend uniform state after shader reload (2026-09-07)
+
+Author: chanayane@firestorm.
+
+The reported symptom is corrupted Exact OIT transparency after toggling
+Phototools' "Enable HDR and Emissive", persisting after re-enabling it.
+Vanilla and AVBOIT remain visually correct.
+
+Code inspection found that `LLViewerShaderMgr::setShaders()` calls the global
+`unloadShaders()`, which invokes `LLGLSLShader::unload()` on individual programs.
+It bypasses `ASExactOIT::unloadShaders()`, where `sBlendCache` was cleared.
+The Exact OIT shader wrappers retain their addresses across reloads, so the
+pointer-keyed blend cache retains obsolete uniform locations and uploaded
+values. A subsequent draw can skip the required `oitBlendFactors` upload or
+write to the wrong location. Re-enabling HDR repeats the same reload path.
+
+`ASExactOIT::loadShaders()` now clears `sBlendCache` before recreating any
+programs, forcing fresh location lookup and upload on their first capture draw.
+This is in-memory uniform state, unrelated to disk shader binaries.
+
+Validation: inspected the setting callbacks, global unload path, shader load
+order and capture upload path. No build or runtime test performed. Runtime
+confirmation remains required: toggle HDR/emissive off/on repeatedly in Exact
+OIT with rigged and ordinary transparent surfaces and glow visible; compare
+with vanilla and AVBOIT.

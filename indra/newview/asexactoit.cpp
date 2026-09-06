@@ -357,6 +357,10 @@ bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
         return success;
     }
 
+    // Viewer-wide reloads unload individual programs directly, bypassing our
+    // unloadShaders(). Relinking invalidates cached uniform locations and values.
+    sBlendCache.clear();
+
     // E7 kill switch: mHasShaderSubgroup is a driver capability fact set once
     // in LLGLManager::initExtensions(); AND the user setting into it here,
     // before any shader file is chosen, so both this file's file-selection
