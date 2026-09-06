@@ -41,7 +41,7 @@ namespace
         { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta" };
     const char* const COMPONENTS[3] = { "Hue", "Saturation", "Luminance" };
     const char* const BUILTIN_PRESETS[] =
-        { "Neutral", "Sepia", "Cyanotype", "Black & White", "Warm Vintage", "Cool Cinematic", "Bleach Bypass", "Vivid" };
+        { "Neutral", "Sepia", "Cyanotype", "Selenium", "Black & White", "Warm Vintage", "Cool Cinematic", "Bleach Bypass", "Vivid" };
 
     const LLStaticHashedString sLinearEnabled("as_color_grade_linear_enabled");
     const LLStaticHashedString sExposure("as_color_grade_exposure");
@@ -92,6 +92,14 @@ namespace
                 {"ASColorGradeHighlights",-10.f}, {"ASColorGradeShadows",-8.f}, {"ASColorGradeBlacks",-12.f},
                 {"ASColorGradeGrainAmount",12.f}, {"ASColorGradeGrainSize",38.f},
                 {"ASColorGradeGrainRoughness",58.f}, {"ASColorGradeGrainColor",0.f} };
+        else if (name == "Selenium")
+            values = { {"ASColorGradeContrast",21.f}, {"ASColorGradeHighlights",12.f},
+                {"ASColorGradeShadows",11.f}, {"ASColorGradeWhites",9.f}, {"ASColorGradeBlacks",2.f},
+                {"ASColorGradeTemperature",54.f}, {"ASColorGradeTint",8.f}, {"ASColorGradeVibrance",12.f},
+                {"ASColorGradeColorizeHue",218.f}, {"ASColorGradeColorizeSaturation",10.f},
+                {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeGrainAmount",52.f},
+                {"ASColorGradeGrainSize",18.f}, {"ASColorGradeGrainRoughness",56.f},
+                {"ASColorGradeGrainColor",10.f} };
         else if (name == "Black & White")
             values = { {"ASColorGradeSaturation",-100.f}, {"ASColorGradeContrast",12.f}, {"ASColorGradeShadows",8.f},
                 {"ASColorGradeBlacks",-10.f}, {"ASColorGradeGrainAmount",10.f}, {"ASColorGradeGrainColor",0.f} };
@@ -114,7 +122,8 @@ namespace
             values = { {"ASColorGradeContrast",10.f}, {"ASColorGradeSaturation",8.f},
                 {"ASColorGradeVibrance",35.f}, {"ASColorGradeHighlights",-8.f}, {"ASColorGradeShadows",8.f} };
         for (const auto& value : values) gSavedSettings.setF32(value.first, value.second);
-        if (name == "Sepia" || name == "Cyanotype") gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", true);
+        if (name == "Sepia" || name == "Cyanotype" || name == "Selenium")
+            gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", true);
     }
 
     bool validatedPresetValue(const std::string& name, const LLSD& input, F32& output)
