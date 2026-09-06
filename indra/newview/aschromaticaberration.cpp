@@ -111,13 +111,15 @@ void ASChromaticAberration::renderCenterBeacon()
     }
 
     static const S32 ARM_LENGTH = 12;
-    const S32 width = gViewerWindow->getWorldViewWidthScaled();
-    const S32 height = gViewerWindow->getWorldViewHeightScaled();
+    // Matches setup2DRender()'s ortho projection, which spans the raw window, not the 3D world viewport.
+    const S32 width = gViewerWindow->getWindowWidthRaw();
+    const S32 height = gViewerWindow->getWindowHeightRaw();
     const F32 center_x = llclamp(gSavedSettings.getF32("ASChromaticAberrationCenterX"), 0.f, 1.f) * (F32)width;
     const F32 center_y = llclamp(gSavedSettings.getF32("ASChromaticAberrationCenterY"), 0.f, 1.f) * (F32)height;
 
     gUIProgram.bind();
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+    gViewerWindow->setup2DRender();
     gGL.setLineWidth(2.f);
     gGL.color4f(1.f, 1.f, 1.f, 0.8f);
     gGL.begin(LLRender::LINES);
@@ -127,5 +129,6 @@ void ASChromaticAberration::renderCenterBeacon()
     gGL.vertex2f(center_x, center_y + ARM_LENGTH);
     gGL.end();
     gGL.setLineWidth(1.f);
+    gViewerWindow->setup3DRender();
     gUIProgram.unbind();
 }
