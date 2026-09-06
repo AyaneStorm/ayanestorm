@@ -25604,13 +25604,13 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Per-channel corner displacement in pixels at a 1080-pixel short edge</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>3.0</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASChromaticAberrationFalloff</key>
     <map>
       <key>Comment</key><string>Radial exponent; larger values concentrate chromatic aberration near corners</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>1.25</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASChromaticAberrationCenterX</key>
     <map>

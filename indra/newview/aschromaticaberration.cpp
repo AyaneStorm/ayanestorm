@@ -77,7 +77,7 @@ bool ASChromaticAberration::render(LLRenderTarget& source, LLRenderTarget& desti
         return false;
     }
 
-    const F32 strength = llclamp(gSavedSettings.getF32("ASChromaticAberrationStrength"), 0.f, 20.f);
+    const F32 strength = llclamp(gSavedSettings.getF32("ASChromaticAberrationStrength"), 0.f, 100.f);
     if (strength <= 0.f)
     {
         return false;

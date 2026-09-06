@@ -31,8 +31,8 @@ Runtime validation should cover disabled equivalence, edge clamping, aspect rati
 
 - Dedicated `aschromaticaberration.cpp/.h` and `deferred/aschromaticaberrationF.glsl` implement the effect, shader lifecycle, and reset callbacks.
 - `ASChromaticAberrationEnabled`: Boolean, default false.
-- `ASChromaticAberrationStrength`: 0–20, default 2. Each red/blue channel moves this many pixels at a corner when the shorter viewport dimension is 1080 pixels. Displacement scales with resolution.
-- `ASChromaticAberrationFalloff`: 0.001–4 in 0.001 increments, default 2. Higher values concentrate separation near corners; near-zero values make separation nearly uniform across the image (artistic minimum, avoids the divergence at an exact zero exponent).
+- `ASChromaticAberrationStrength`: 0–100, default 3. Each red/blue channel moves this many pixels at a corner when the shorter viewport dimension is 1080 pixels. Displacement scales with resolution.
+- `ASChromaticAberrationFalloff`: 0.001–4 in 0.001 increments, default 1.25. Higher values concentrate separation near corners; near-zero values make separation nearly uniform across the image (artistic minimum, avoids the divergence at an exact zero exponent).
 - Camera Effects contains enable, strength, falloff, center X/Y, beacon toggle, and reset controls. The shared panel is 530 pixels tall and the standalone floater is 560 pixels tall; the existing Environment Effects container already fits it.
 - The pass uses the existing spare post-processing target after DoF and antialiasing. When it renders, the previous source becomes the spare for subsequent RLVa/vignette/frame processing. Disabled execution leaves existing routing unchanged.
 - Three bilinear scene samples preserve green and alpha, shifting red outward and blue inward. Coordinates clamp to texel centers at the texture boundaries.
