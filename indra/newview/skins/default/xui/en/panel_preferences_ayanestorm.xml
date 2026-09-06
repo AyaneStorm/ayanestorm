@@ -283,6 +283,13 @@
               top="295" width="220">
         <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_horizon_settings" />
       </button>
+      <!-- <AS:Chanayane> Viewer-local photographic color grading. -->
+      <button follows="left|top" height="23" label="Color grading"
+              layout="topleft" left="250" name="open_color_grading"
+              top="295" width="220">
+        <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_color_grading" />
+      </button>
+      <!-- </AS:Chanayane> -->
     </panel>
 
     <panel

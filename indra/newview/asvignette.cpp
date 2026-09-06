@@ -12,6 +12,7 @@
 #include "llcontrol.h"
 #include "llgl.h"
 #include "llrender.h"
+#include "llrendertarget.h"
 #include "llshadermgr.h"
 #include "lluictrl.h"
 #include "llvertexbuffer.h"
@@ -71,7 +72,7 @@ void ASVignette::unloadShader()
     sVignetteProgram.unload();
 }
 
-void ASVignette::render(S32 width, S32 height, LLVertexBuffer& screen_triangle)
+static void renderVignette(LLRenderTarget* color_target, S32 width, S32 height, LLVertexBuffer& screen_triangle)
 {
     if (!gSavedSettings.getBOOL("ASVignetteEnabled") ||
         !sVignetteProgram.isComplete() || gCubeSnapshot || width <= 0 || height <= 0 ||
@@ -89,6 +90,7 @@ void ASVignette::render(S32 width, S32 height, LLVertexBuffer& screen_triangle)
     LLGLDepthTest depth(GL_FALSE, GL_FALSE);
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_MULT);
+    if (color_target) color_target->bindTarget();
 
     sVignetteProgram.bind();
     sVignetteProgram.uniform2f(sScreenResolution, (F32)width, (F32)height);
@@ -101,5 +103,16 @@ void ASVignette::render(S32 width, S32 height, LLVertexBuffer& screen_triangle)
     screen_triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
 
     sVignetteProgram.unbind();
+    if (color_target) color_target->flush();
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
+}
+
+void ASVignette::render(S32 width, S32 height, LLVertexBuffer& screen_triangle)
+{
+    renderVignette(nullptr, width, height, screen_triangle);
+}
+
+void ASVignette::render(LLRenderTarget& color_target, LLVertexBuffer& screen_triangle)
+{
+    renderVignette(&color_target, color_target.getWidth(), color_target.getHeight(), screen_triangle);
 }

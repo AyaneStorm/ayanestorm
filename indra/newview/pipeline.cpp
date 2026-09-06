@@ -88,6 +88,9 @@
 // newview includes
 #include "llagent.h"
 #include "llagentcamera.h"
+// <AS:Chanayane> Viewer-local photographic color grading.
+#include "ascolorgrading.h"
+// </AS:Chanayane>
 #include "llappviewer.h"
 #include "lltexturecache.h"
 #include "lltexturefetch.h"
@@ -8070,6 +8073,10 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
         shader->uniform1i(tonemap_type, tonemap_type_setting);
         shader->uniform1f(tonemap_mix, psky->getTonemapMix(should_auto_adjust()));
 
+        // <AS:Chanayane> Bind scene-linear exposure and white balance.
+        ASColorGrading::bindLinearUniforms(*shader, gSnapshotNoPost);
+        // </AS:Chanayane>
+
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
@@ -8098,6 +8105,9 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
         shader.bind();
         shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
         shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
+        // <AS:Chanayane> Bind scene-linear grading on the non-HDR path.
+        ASColorGrading::bindLinearUniforms(shader, gSnapshotNoPost);
+        // </AS:Chanayane>
 
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -9191,6 +9201,16 @@ void LLPipeline::renderFinalize()
 
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
+    // <AS:Chanayane> Move optical effects into the graded source only while
+    // grading is active. Disabled and Before-preview rendering retain the
+    // original direct-framebuffer order below.
+    const bool color_grading_active = ASColorGrading::isActive();
+    if (color_grading_active)
+    {
+        ASLensFlare::render(*sourceBuffer, mRT->deferredScreen, *mScreenTriangleVB);
+        ASVignette::render(*sourceBuffer, *mScreenTriangleVB);
+    }
+    // </AS:Chanayane>
     if (RenderBufferVisualization > -1)
     {
         switch (RenderBufferVisualization)
@@ -9227,6 +9247,12 @@ void LLPipeline::renderFinalize()
 
     // Present the screen target.
 
+    // <AS:Chanayane> Present through the grading shader when active; the
+    // original presentation remains the exact fallback and neutral path.
+    const bool color_graded = color_grading_active &&
+        ASColorGrading::present(*sourceBuffer, mRT->deferredScreen, *mScreenTriangleVB);
+    if (!color_graded)
+    {
     gDeferredPostNoDoFNoiseProgram.bind(); // Add noise as part of final render to screen pass to avoid damaging other post effects
 
     // Whatever is last in the above post processing chain should _always_ be rendered directly here.  If not, expect problems.
@@ -9242,10 +9268,15 @@ void LLPipeline::renderFinalize()
     }
 
     gDeferredPostNoDoFNoiseProgram.unbind();
+    }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> Composite depth-occluded sun/moon lens flares over the
     // completed 3D image, before snapshot guides and other UI overlays.
-    ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    if (!color_grading_active)
+    {
+        ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    }
     // </AS:Chanayane>
 
     // <AS:Chanayane> Self-lighting floater: paint the isolate-mode solid
@@ -9261,7 +9292,10 @@ void LLPipeline::renderFinalize()
 
     // <AS:Chanayane> Darken the completed 3D image with the optional vignette,
     // after additive lens flares and before snapshot guides and UI overlays.
-    ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
+    if (!color_grading_active)
+    {
+        ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
+    }
     // </AS:Chanayane>
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);

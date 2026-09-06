@@ -94,6 +94,11 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Viewer-local photographic color grading.
+    ascolorslider.cpp
+    ascolorgrading.cpp
+    asfloatercolorgrading.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
@@ -998,6 +1003,11 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Viewer-local photographic color grading.
+    ascolorslider.h
+    ascolorgrading.h
+    asfloatercolorgrading.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
     # </AS:Chanayane>

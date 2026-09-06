@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 18 18">
+  <!-- Eight mixer bands form a compact grading wheel around tonal controls. -->
+  <g fill="none" stroke-width="2.4">
+    <path d="M9 2.2 A6.8 6.8 0 0 1 13.81 4.19" stroke="#f04c54"/>
+    <path d="M13.81 4.19 A6.8 6.8 0 0 1 15.8 9" stroke="#f49a38"/>
+    <path d="M15.8 9 A6.8 6.8 0 0 1 13.81 13.81" stroke="#e8d34a"/>
+    <path d="M13.81 13.81 A6.8 6.8 0 0 1 9 15.8" stroke="#54c76a"/>
+    <path d="M9 15.8 A6.8 6.8 0 0 1 4.19 13.81" stroke="#48c9cb"/>
+    <path d="M4.19 13.81 A6.8 6.8 0 0 1 2.2 9" stroke="#4d83dc"/>
+    <path d="M2.2 9 A6.8 6.8 0 0 1 4.19 4.19" stroke="#8865cf"/>
+    <path d="M4.19 4.19 A6.8 6.8 0 0 1 9 2.2" stroke="#d653b0"/>
+  </g>
+  <g fill="none" stroke="#eeeeee" stroke-linecap="round" stroke-width="1">
+    <path d="M5.8 7 H12.2 M5.8 9 H12.2 M5.8 11 H12.2"/>
+  </g>
+  <g fill="#eeeeee">
+    <circle cx="7.4" cy="7" r="0.9"/><circle cx="10.7" cy="9" r="0.9"/><circle cx="8.7" cy="11" r="0.9"/>
+  </g>
+</svg>

@@ -28,6 +28,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Viewer-local color grading floater.
+#include "asfloatercolorgrading.h"
+// </AS:Chanayane>
+
 // <AS:Chanayane> Register viewer-local aurora settings callbacks.
 #include "asaurora.h"
 #include "ashorizonscattering.h"
@@ -659,6 +663,7 @@ void LLViewerFloaterReg::registerFloaters()
     ASVignette::registerUICallbacks();
     ASChromaticAberration::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    LLFloaterReg::add("as_color_grading", "floater_as_color_grading.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterColorGrading>);
     // </AS:Chanayane>
     // <AS:Chanayane> Combined tabbed environment effects controls.
     LLFloaterReg::add("as_environment_effects", "floater_as_environment_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);

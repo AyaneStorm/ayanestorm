@@ -30,6 +30,9 @@
 #include <boost/lexical_cast.hpp>
 
 #include "llfeaturemanager.h"
+// <AS:Chanayane> Viewer-local photographic color grading shader lifecycle.
+#include "ascolorgrading.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
@@ -486,6 +489,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     // <AS:Chanayane> Register the independent optional vignette shader.
     ASVignette::registerShader(mShaderList);
     ASChromaticAberration::registerShader(mShaderList);
+    ASColorGrading::registerShaders(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
     ASBackgroundIsolate::registerShader(mShaderList);
@@ -1221,6 +1225,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <AS:Chanayane> Unload the optional vignette shader.
         ASVignette::unloadShader();
         ASChromaticAberration::unloadShader();
+        ASColorGrading::unloadShaders();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
         ASBackgroundIsolate::unloadShader();
@@ -2571,6 +2576,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostGammaCorrectProgram.clearPermutations();
         gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gDeferredPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gDeferredPostGammaCorrectProgram);
+        // </AS:Chanayane>
         gDeferredPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -2586,6 +2594,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gLegacyPostGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
         gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gLegacyPostGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredGammaCorrect.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gLegacyPostGammaCorrectProgram);
+        // </AS:Chanayane>
         gLegacyPostGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gLegacyPostGammaCorrectProgram.createShader();
         llassert(success);
@@ -2601,6 +2612,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapProgram.clearPermutations();
         gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gDeferredPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gDeferredPostTonemapProgram);
+        // </AS:Chanayane>
         gDeferredPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapProgram.createShader();
         llassert(success);
@@ -2617,6 +2631,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapProgram.addPermutation("NO_POST", "1");
         gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gNoPostTonemapProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gNoPostTonemapProgram);
+        // </AS:Chanayane>
         gNoPostTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapProgram.createShader();
         llassert(success);
@@ -2633,6 +2650,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapGammaCorrectProgram.addPermutation("GAMMA_CORRECT", "1");
         gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gDeferredPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gDeferredPostTonemapGammaCorrectProgram);
+        // </AS:Chanayane>
         gDeferredPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2650,6 +2670,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapGammaCorrectProgram.addPermutation("NO_POST", "1");
         gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gNoPostTonemapGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gNoPostTonemapGammaCorrectProgram);
+        // </AS:Chanayane>
         gNoPostTonemapGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapGammaCorrectProgram.createShader();
         llassert(success);
@@ -2667,6 +2690,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gDeferredPostTonemapLegacyGammaCorrectProgram);
+        // </AS:Chanayane>
         gDeferredPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -2685,6 +2711,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gNoPostTonemapLegacyGammaCorrectProgram.addPermutation("LEGACY_GAMMA", "1");
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredTonemap.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local scene-linear color grading.
+        ASColorGrading::appendLinearShader(gNoPostTonemapLegacyGammaCorrectProgram);
+        // </AS:Chanayane>
         gNoPostTonemapLegacyGammaCorrectProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gNoPostTonemapLegacyGammaCorrectProgram.createShader();
         llassert(success);
@@ -3050,6 +3079,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASChromaticAberration::createShader(mShaderLevel[SHADER_DEFERRED]);
+        ASColorGrading::createShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
