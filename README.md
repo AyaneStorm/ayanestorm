@@ -7,16 +7,18 @@
 ## Features (so far ; some features might get merged in official Firestorm)
 - My Lights floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
 - Environment Effects panel gathering viewer-local photographic effects in one place
+- Viewer-local color grading with exposure, white balance, tonal controls, vibrance, an eight-band color mixer, Colorize mode, grain and reusable presets
+- Selectable transparency rendering with standard alpha blending, lossless Exact OIT and experimental AVBOIT
 - Volumetric sun and moon god rays, with optional volumetric local lights
 - Procedural sunrise and sunset horizon lighting, including colored clouds, sky haze and water-horizon fog
 - Procedural sunset sun with configurable color, edge feathering, shimmer and halo
 - Advanced moon rendering with phases, earthshine, terminator relief, horizon tint and halo
 - Procedural animated auroras with configurable appearance and quality
 - Viewer-local snow with adjustable flakes, fall speed and distance; flakes react to EEP lighting and briefly settle on solid surfaces
-- Camera effects including sun and moon lens flares and a configurable vignette
-- Avatar thumbnails in the Conversations panel
-- Favorite Streams panel
-- Continues playing the previous stream after teleporting
+- Camera effects including sun and moon lens flares, a configurable vignette and chromatic aberration
+- Avatar thumbnails in the Conversations panel, with typing indicators on thumbnails and tab names
+- Favorite Streams panel, including a configurable default stream
+- Can keep the previous stream after teleporting or ask before changing streams
 - Nearby and recent people in the Conversations panel
 - Snapshots up to 11500x11500 resolution
 - AVX2 optimized build (now also in Firestorm)
