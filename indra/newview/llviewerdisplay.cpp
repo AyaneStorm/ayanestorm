@@ -35,6 +35,7 @@
 #include "hexdump.h"
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
 #include "asfloatermylights.h"
+#include "aschromaticaberration.h"
 // </AS:Chanayane>
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -1905,6 +1906,10 @@ void render_ui_3d()
         // Make sure particle effects disappear
         LLHUDObject::renderAllForTimer();
     }
+
+    // <AS:Chanayane> screen-space marker for the chromatic aberration center, own toggle so it is visible regardless of the debug-UI beacon setting
+    ASChromaticAberration::renderCenterBeacon();
+    // </AS:Chanayane>
 
     stop_glerror();
 }

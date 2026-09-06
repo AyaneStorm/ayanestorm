@@ -108,6 +108,7 @@ set(viewer_SOURCE_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.cpp
+    aschromaticaberration.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.cpp
@@ -1011,6 +1012,7 @@ set(viewer_HEADER_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.h
+    aschromaticaberration.h
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.h

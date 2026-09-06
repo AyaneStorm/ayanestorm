@@ -43,6 +43,9 @@
 // <AS:Chanayane> Register viewer-local vignette callbacks.
 #include "asvignette.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera chromatic aberration.
+#include "aschromaticaberration.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llviewerfloaterreg.h"
 
@@ -654,6 +657,7 @@ void LLViewerFloaterReg::registerFloaters()
     // <AS:Chanayane> Viewer-local camera effects controls.
     ASLensFlare::registerUICallbacks();
     ASVignette::registerUICallbacks();
+    ASChromaticAberration::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     // </AS:Chanayane>
     // <AS:Chanayane> Combined tabbed environment effects controls.

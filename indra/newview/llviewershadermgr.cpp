@@ -45,6 +45,9 @@
 // <AS:Chanayane> Viewer-local vignette shader lifecycle.
 #include "asvignette.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera chromatic aberration.
+#include "aschromaticaberration.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater background isolate shader lifecycle.
 #include "asbackgroundisolate.h"
 // </AS:Chanayane>
@@ -482,6 +485,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional vignette shader.
     ASVignette::registerShader(mShaderList);
+    ASChromaticAberration::registerShader(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
     ASBackgroundIsolate::registerShader(mShaderList);
@@ -1216,6 +1220,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional vignette shader.
         ASVignette::unloadShader();
+        ASChromaticAberration::unloadShader();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
         ASBackgroundIsolate::unloadShader();
@@ -3044,6 +3049,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     if (success)
     {
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
+        ASChromaticAberration::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 

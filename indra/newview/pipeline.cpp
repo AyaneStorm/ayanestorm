@@ -43,6 +43,9 @@
 // <AS:Chanayane> Optional screen-space vignette.
 #include "asvignette.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera chromatic aberration.
+#include "aschromaticaberration.h"
+// </AS:Chanayane>
 
 // <AS:Chanayane> Self-lighting floater background isolate pass.
 #include "asbackgroundisolate.h"
@@ -9156,6 +9159,14 @@ void LLPipeline::renderFinalize()
     // <FS:Beq> Restore shader post proc for Vignette
     LLRenderTarget* auxActiveBuffer = sourceBuffer;
     LLRenderTarget* auxTargetBuffer = RenderFSAAType ? &mRT->screen : &mPostPingMap;
+    // <AS:Chanayane> Apply camera RGB separation before RLVa and snapshot frames.
+    // The post-process spare remains distinct regardless of DoF/AA parity.
+    if (ASChromaticAberration::render(*auxActiveBuffer, *targetBuffer, *mScreenTriangleVB))
+    {
+        std::swap(auxActiveBuffer, targetBuffer);
+        auxTargetBuffer = targetBuffer;
+    }
+    // </AS:Chanayane>
 // [RLVa:KB] - @setsphere
     if (RlvActions::hasBehaviour(RLV_BHVR_SETSPHERE))
     {

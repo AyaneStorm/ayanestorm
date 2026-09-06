@@ -25593,6 +25593,44 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key><real>0.60</real><key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Optional radial camera chromatic aberration. -->
+    <key>ASChromaticAberrationEnabled</key>
+    <map>
+      <key>Comment</key><string>Enable radial camera chromatic aberration</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASChromaticAberrationStrength</key>
+    <map>
+      <key>Comment</key><string>Per-channel corner displacement in pixels at a 1080-pixel short edge</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASChromaticAberrationFalloff</key>
+    <map>
+      <key>Comment</key><string>Radial exponent; larger values concentrate chromatic aberration near corners</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASChromaticAberrationCenterX</key>
+    <map>
+      <key>Comment</key><string>Chromatic aberration center, normalized screen X (0=left, 1=right)</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASChromaticAberrationCenterY</key>
+    <map>
+      <key>Comment</key><string>Chromatic aberration center, normalized screen Y (0=bottom, 1=top)</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASChromaticAberrationShowBeacon</key>
+    <map>
+      <key>Comment</key><string>Show a screen-space marker at the chromatic aberration center</string>
+      <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local configurable vignette. -->
     <key>ASVignetteEnabled</key>
     <map>
