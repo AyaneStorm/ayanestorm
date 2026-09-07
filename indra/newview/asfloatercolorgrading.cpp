@@ -104,6 +104,8 @@ bool ASPanelColorGrading::postBuild()
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled"))
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled"))
+        mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     refreshPresets();
     selectBand(ASColorGrading::RED);
     return true;

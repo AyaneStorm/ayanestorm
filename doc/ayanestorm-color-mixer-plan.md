@@ -361,3 +361,23 @@ User runtime acceptance:
 - Background-isolate color remains immune.
 - Verify HDR enabled/disabled, ACES/Khronos tone mapping, CAS enabled/disabled, glow, DoF, FXAA/SMAA, resized windows, and high-resolution tiled snapshots.
 - Record `bok` after a successful user build and `bokt` after runtime validation.
+
+## Negative Effect
+
+- Effects tab: `Negative`, bound to persistent Boolean `ASColorGradeNegativeEnabled`, disabled by default.
+- The final presentation shader applies `1 - clamp(RGB, 0, 1)` after grading, grain, and dither; alpha and depth remain unchanged. UI is drawn afterward. Existing grading bypasses (including Before) still apply.
+- Presets save and validate the Boolean; older presets without it disable Negative. Reset All and built-in presets restore the disabled default. Changes mark the preset Custom.
+- Validation: XML parsing and source wiring checked; build and runtime verification remain with the developer.
+
+## Existing LLImageFilter LUTs
+
+- `indra/llimage/llimagefilter.cpp:312`: `colorCorrect()` processes raw image pixels on the CPU using independent red, green, and blue lookup tables, blended through a stencil.
+- Gamma, brightness, contrast, colorize, linearize, and equalize generate 256-entry byte tables internally. These are per-channel 1D mappings.
+- Filter descriptions are LLSD XML, loaded by the constructor; this code does not implement imported `.cube` 3D LUTs.
+- `indra/newview/llsnapshotlivepreview.cpp` calls `executeFilter()` for snapshot images and previews. This is separate from the live ASColorGrading presentation shader.
+
+## GPU 3D LUT Performance
+
+A hardware-trilinear 3D LUT can evaluate a color transform with one filtered 3D texture lookup per pixel plus coordinate mapping. Adding it to the existing grading presentation shader avoids an additional fullscreen pass. Load and upload the LUT when selected, not every frame. Expected incremental cost is small, but FPS impact requires measurement on target GPUs and resolutions; no viewer benchmark has been performed. Larger LUTs increase memory/cache pressure.
+
+Source: [NVIDIA GPU Gems 2, Chapter 24](https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-24-using-lookup-tables-accelerate-color).

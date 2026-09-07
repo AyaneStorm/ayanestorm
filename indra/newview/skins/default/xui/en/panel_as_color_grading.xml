@@ -82,6 +82,7 @@
     <button height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeGrainRoughness" top="100" width="20" />
     <as_color_slider color_1="0.48 0.48 0.48 1" color_2="0.28 0.66 0.70 1" color_3="0.86 0.18 0.66 1" can_edit_text="true" control_name="ASColorGradeGrainColor" decimal_digits="0" height="24" increment="1" label="Grain color" label_width="140" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeGrainColor" show_text="true" text_width="52" top="138" track_thickness="7" width="415"><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank"/></as_color_slider>
     <button height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeGrainColor" top="140" width="20" />
+    <check_box control_name="ASColorGradeNegativeEnabled" follows="left|top" height="20" label="Negative" layout="topleft" left="15" name="negative" top="180" width="180" tool_tip="Invert the final scene colors without affecting the UI." />
    </panel>
   </tab_container>
 </panel>

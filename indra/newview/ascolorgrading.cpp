@@ -54,6 +54,7 @@ namespace
     const LLStaticHashedString sColorize("as_color_grade_colorize");
     const LLStaticHashedString sSplitToning1("as_color_grade_split_toning1");
     const LLStaticHashedString sSplitToning2("as_color_grade_split_toning2");
+    const LLStaticHashedString sNegative("as_color_grade_negative");
     const LLStaticHashedString sGrain("as_color_grade_grain");
     const LLStaticHashedString sGrainSeed("as_color_grade_grain_seed");
     const LLStaticHashedString sSnapshotTile("as_color_grade_snapshot_tile");
@@ -292,6 +293,7 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
         normalized("ASColorGradeHighlights"), normalized("ASColorGradeShadows"));
     sFinalProgram.uniform4f(sBasic2, normalized("ASColorGradeWhites"), normalized("ASColorGradeBlacks"),
         normalized("ASColorGradeSaturation"), normalized("ASColorGradeVibrance"));
+    sFinalProgram.uniform1i(sNegative, gSavedSettings.getBOOL("ASColorGradeNegativeEnabled") ? 1 : 0);
     sFinalProgram.uniform1f(sBasic3, gSavedSettings.getF32("ASColorGradeHue") * DEG_TO_RAD);
     F32 bands[BAND_COUNT * 3];
     for (S32 band = 0; band < BAND_COUNT; ++band)
@@ -336,6 +338,7 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
 
 void ASColorGrading::resetAll()
 {
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled")) control->resetToDefault(true);
     for (const std::string& name : settingNames())
@@ -371,6 +374,7 @@ bool ASColorGrading::savePreset(const std::string& name)
 {
     if (!validPresetName(name)) return false;
     LLSD data; data["version"] = 1; data["name"] = name;
+    data["values"]["ASColorGradeNegativeEnabled"] = gSavedSettings.getBOOL("ASColorGradeNegativeEnabled");
     for (const std::string& setting : settingNames()) data["values"][setting] = gSavedSettings.getLLSD(setting);
     data["values"]["ASColorGradeColorizeEnabled"] = gSavedSettings.getBOOL("ASColorGradeColorizeEnabled");
     data["values"]["ASColorGradeSplitToningEnabled"] = gSavedSettings.getBOOL("ASColorGradeSplitToningEnabled");
@@ -393,6 +397,9 @@ bool ASColorGrading::loadPreset(const std::string& name)
     if (!file.is_open() || LLSDSerialize::fromXML(data, file) == LLSDParser::PARSE_FAILURE ||
         !data.isMap() || data["version"].asInteger() != 1 || !data["values"].isMap()) return false;
     LLSD values = data["values"];
+    // Older presets omit Negative and retain the default non-inverted image.
+    if (values.has("ASColorGradeNegativeEnabled") && !values["ASColorGradeNegativeEnabled"].isBoolean()) return false;
+    const bool negative = values.has("ASColorGradeNegativeEnabled") && values["ASColorGradeNegativeEnabled"].asBoolean();
     if (values.has("ASColorGradeColorizeEnabled") && !values["ASColorGradeColorizeEnabled"].isBoolean()) return false;
     const bool colorize = values.has("ASColorGradeColorizeEnabled") && values["ASColorGradeColorizeEnabled"].asBoolean();
     if (values.has("ASColorGradeSplitToningEnabled") && !values["ASColorGradeSplitToningEnabled"].isBoolean()) return false;
@@ -407,6 +414,7 @@ bool ASColorGrading::loadPreset(const std::string& name)
     }
     resetAll();
     for (const auto& entry : validated) gSavedSettings.setF32(entry.first, entry.second);
+    gSavedSettings.setBOOL("ASColorGradeNegativeEnabled", negative);
     gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", colorize);
     gSavedSettings.setBOOL("ASColorGradeSplitToningEnabled", split_toning);
     return true;

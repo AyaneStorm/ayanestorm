@@ -15,6 +15,7 @@ uniform vec3 as_color_grade_bands[8]; // hue radians, saturation, luminance
 uniform vec4 as_color_grade_colorize; // enabled, hue radians, saturation, luminance
 uniform vec4 as_color_grade_split_toning1; // highlight hue/saturation, shadow hue/saturation
 uniform vec2 as_color_grade_split_toning2; // enabled, balance
+uniform int as_color_grade_negative; // invert the final display-referred scene RGB
 uniform vec4 as_color_grade_grain; // amount, size, roughness, color
 uniform float as_color_grade_grain_seed;
 uniform vec3 as_color_grade_snapshot_tile; // zoom, tile x, tile y
@@ -220,6 +221,9 @@ void main()
     vec3 nz = vec3(presentationNoise(seed.rg), presentationNoise(seed.gb), presentationNoise(seed.rb));
     graded += nz * 0.003;
 #endif
+    // Invert after grading, grain, and dither; UI is composited after this pass.
+    if (as_color_grade_negative != 0)
+        graded = vec3(1.0) - clamp(graded, 0.0, 1.0);
     frag_color = vec4(clampHDRRange(graded), source.a);
     gl_FragDepth = texture(depthMap, vary_fragcoord).r;
 }
