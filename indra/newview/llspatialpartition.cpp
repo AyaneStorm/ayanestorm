@@ -28,7 +28,9 @@
 
 #include "llspatialpartition.h"
 
-#include "fsoitdispatcher.h"
+// <AS:Chanayane> AyaneStorm OIT ownership names.
+#include "asoitdispatcher.h"
+// </AS:Chanayane>
 #include "llappviewer.h"
 #include "lltexturecache.h"
 #include "lltexturefetch.h"
@@ -668,10 +670,10 @@ F32 LLSpatialPartition::calcDistance(LLSpatialGroup* group, LLCamera& camera)
         // the full rebuildGeom that ALPHA_DIRTY triggers on every camera move --
         // cannot change the image. Skip it only for frames an OIT mode actually
         // captures: HUD, impostor and cube-snapshot renders are excluded from
-        // capture (see FSAVBOIT::renderPostDeferredCapture) and still blend in
+        // capture (see ASAVBOIT::renderPostDeferredCapture) and still blend in
         // submission order, so they keep the vanilla sort.
         const bool order_independent_alpha =
-            FSOITDispatcher::orderIndependentAlphaActive() &&
+            ASOITDispatcher::orderIndependentAlphaActive() &&
             !LLPipeline::sRenderingHUDs &&
             !LLPipeline::sImpostorRender &&
             !gCubeSnapshot;

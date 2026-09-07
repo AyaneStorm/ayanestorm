@@ -33,6 +33,13 @@
       filename="panel_as_camera_effects.xml"
       label="Camera Effects"
       name="camera_effects_tab" />
+    <!-- <AS:Chanayane> AyaneStorm viewer-local photographic grading. -->
+    <panel
+      class="as_color_grading_panel"
+      filename="panel_as_color_grading.xml"
+      label="Color Grading"
+      name="color_grading_tab" />
+    <!-- </AS:Chanayane> -->
     <panel
       class="as_celestial_position_panel"
       filename="panel_as_sun_settings.xml"

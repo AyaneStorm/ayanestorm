@@ -28,11 +28,14 @@
 
 #include "llviewerdisplay.h"
 
-#include "fsoitdispatcher.h"
+// <AS:Chanayane> AyaneStorm OIT ownership names.
+#include "asoitdispatcher.h"
+// </AS:Chanayane>
 #include "fsyspath.h"
 #include "hexdump.h"
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
 #include "asfloatermylights.h"
+#include "aschromaticaberration.h"
 // </AS:Chanayane>
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -916,9 +919,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         LLViewerCamera::sCurCameraID = LLViewerCamera::CAMERA_WORLD;
         LLPipeline::sUnderWaterRender = LLViewerCamera::getInstance()->cameraUnderWater();
         // <AS:Chanayane> Publish the transparency mode before culling reads it
-        // per spatial group. FSOITDispatcher::beginFrame() runs inside renderGeom,
+        // per spatial group. ASOITDispatcher::beginFrame() runs inside renderGeom,
         // after culling, so it cannot serve this.
-        FSOITDispatcher::refreshOrderIndependentAlphaState();
+        ASOITDispatcher::refreshOrderIndependentAlphaState();
         // </AS:Chanayane>
         gPipeline.updateCull(*LLViewerCamera::getInstance(), result);
         stop_glerror();
@@ -1903,6 +1906,10 @@ void render_ui_3d()
         // Make sure particle effects disappear
         LLHUDObject::renderAllForTimer();
     }
+
+    // <AS:Chanayane> screen-space marker for the chromatic aberration center, own toggle so it is visible regardless of the debug-UI beacon setting
+    ASChromaticAberration::renderCenterBeacon();
+    // </AS:Chanayane>
 
     stop_glerror();
 }

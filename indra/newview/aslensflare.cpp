@@ -122,7 +122,7 @@ void ASLensFlare::unloadShader()
     sLensFlareProgram.unload();
 }
 
-void ASLensFlare::render(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
+static void renderLensFlare(LLRenderTarget* color_target, LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
 {
     if (!gSavedSettings.getBOOL("ASLensFlareEnabled") ||
         !sLensFlareProgram.isComplete() || gCubeSnapshot ||
@@ -170,6 +170,7 @@ void ASLensFlare::render(LLRenderTarget& depth_target, LLVertexBuffer& screen_tr
     LLGLDepthTest depth(GL_FALSE, GL_FALSE);
     LLGLEnable blend(GL_BLEND);
     gGL.setSceneBlendType(LLRender::BT_ADD);
+    if (color_target) color_target->bindTarget();
 
     sLensFlareProgram.bind();
     sLensFlareProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &depth_target, true, LLTexUnit::TFO_POINT);
@@ -191,5 +192,16 @@ void ASLensFlare::render(LLRenderTarget& depth_target, LLVertexBuffer& screen_tr
 
     sLensFlareProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     sLensFlareProgram.unbind();
+    if (color_target) color_target->flush();
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
+}
+
+void ASLensFlare::render(LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
+{
+    renderLensFlare(nullptr, depth_target, screen_triangle);
+}
+
+void ASLensFlare::render(LLRenderTarget& color_target, LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
+{
+    renderLensFlare(&color_target, depth_target, screen_triangle);
 }

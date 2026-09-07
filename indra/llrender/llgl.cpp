@@ -1475,6 +1475,16 @@ void LLGLManager::initExtensions()
     {
         mHasAnisotropic = ExtensionExists("GL_EXT_texture_filter_anisotropic", gGLHExts.mSysExts);
     }
+    // <AS:Chanayane> Exact OIT wave-level node allocation needs gl_HelperInvocation
+    // (core GLSL 4.50) plus GL_KHR_shader_subgroup. The latter is core in GL
+    // 4.60; some drivers don't list core functionality in the extension
+    // string, so accept the version alone too (same pattern as mHasAnisotropic
+    // above).
+    mHasShaderSubgroup =
+        (mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
+        (mGLVersion >= 4.59f ||
+         (gGLHExts.mSysExts && ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts)));
+    // </AS:Chanayane>
 
     // Misc
     glGetIntegerv(GL_MAX_ELEMENTS_VERTICES, (GLint*) &mGLMaxVertexRange);

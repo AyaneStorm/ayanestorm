@@ -37,7 +37,7 @@ ASPanelPrefsAyaneStorm::ASPanelPrefsAyaneStorm() : LLPanelPreference()
 bool ASPanelPrefsAyaneStorm::postBuild()
 {
 #if LL_DARWIN
-    // Only RenderOITMode (Exact OIT / AVBOIT) requires GL 4.3, which macOS's
+    // Only ASRenderOITMode (Exact OIT / AVBOIT) requires GL 4.3, which macOS's
     // capped OpenGL 4.1 does not provide - hide just that control. The
     // volumetric lighting checkbox in the same tab works down to GL 4.0, so
     // the tab itself stays visible on Mac (see ASVolumetricLighting::isSupported()).

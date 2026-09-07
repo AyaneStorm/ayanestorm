@@ -98,6 +98,9 @@ public:
     bool mHasDebugOutput = false;
     bool mHasTransformFeedback = false;
     bool mHasAnisotropic = false;
+    // <AS:Chanayane> Exact OIT wave-level node allocation (GL_KHR_shader_subgroup).
+    bool mHasShaderSubgroup = false;
+    // </AS:Chanayane>
 
     // Vendor-specific extensions
     bool mHasAMDAssociations = false;

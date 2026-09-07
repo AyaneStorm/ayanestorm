@@ -31,7 +31,6 @@
 void exact_oit_store(vec4 color);
 #elif defined(AVBOIT)
 void avboit_store(vec4 color);
-bool avboit_cull_fragment();
 uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
@@ -131,19 +130,12 @@ void main()
 #endif
 
 // <AS:Chanayane> AVBOIT prepasses stop after texture alpha and masking.
+// Also covers A9's pass 3 (front key), which needs only alpha.
+// if (avboitRasterPass < 2)
 #if defined(AVBOIT)
-    if (avboitRasterPass < 2)
+    if (avboitRasterPass != 2)
     {
         avboit_store(vec4(0.0, 0.0, 0.0, final_alpha));
-        return;
-    }
-#endif
-// </AS:Chanayane>
-
-// <AS:Chanayane> Cull saturated AVBOIT pixels before color conversion and fog.
-#if defined(AVBOIT)
-    if (avboit_cull_fragment())
-    {
         return;
     }
 #endif

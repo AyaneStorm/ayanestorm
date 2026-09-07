@@ -1560,6 +1560,12 @@
                  function="Floater.Visible"
                  parameter="as_camera_effects" />
             </menu_item_check>
+            <!-- <AS:Chanayane> Viewer-local photographic color grading. -->
+            <menu_item_check label="Color Grading..." name="as_color_grading">
+                <menu_item_check.on_click function="Floater.Toggle" parameter="as_color_grading" />
+                <menu_item_check.on_check function="Floater.Visible" parameter="as_color_grading" />
+            </menu_item_check>
+            <!-- </AS:Chanayane> -->
             <menu_item_check
              label="Aurora Settings..."
              name="as_aurora_settings">

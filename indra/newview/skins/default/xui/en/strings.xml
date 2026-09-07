@@ -2800,6 +2800,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Camera effects toolbar command. -->
   <string name="Command_ASCameraEffects_Label">Camera Effects</string>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Color grading toolbar command. -->
+  <string name="Command_ASColorGrading_Label">Color Grading</string>
+  <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Label">Environment Effects</string>
   <string name="Command_ASWeather_Label">Weather</string>
@@ -2900,6 +2903,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Camera effects toolbar command. -->
   <string name="Command_ASCameraEffects_Tooltip">Show or hide camera effects settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Color grading toolbar command. -->
+  <string name="Command_ASColorGrading_Tooltip">Show or hide color grading settings</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Environment effects toolbar command. -->
   <string name="Command_ASEnvironmentEffects_Tooltip">Show or hide environment effects settings</string>

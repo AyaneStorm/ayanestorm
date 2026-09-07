@@ -122,20 +122,47 @@
     top="146"
     width="315" />
 
-  <check_box
+  <text
+    type="string"
+    length="1"
     follows="left|top"
-    layout="topleft"
     height="16"
-    control_name="RenderVolumetricLightingHighQuality"
-    enabled_control="RenderVolumetricLighting"
-    label="High quality rays (full resolution)"
-    tool_tip="Uses full-resolution raymarching with 32 samples instead of half resolution with 16 samples. Significantly increases GPU cost. Changes are applied live."
+    layout="topleft"
     left="15"
+    name="render_volumetric_lighting_quality_label"
+    top="174"
+    width="150">
+    Ray quality:
+  </text>
+  <combo_box
+    control_name="RenderVolumetricLightingQuality"
+    enabled_control="RenderVolumetricLighting"
+    follows="left|top"
+    height="23"
+    layout="topleft"
+    left="170"
     mouse_opaque="true"
-    name="render_volumetric_lighting_high_quality"
-    radio_style="false"
-    width="400"
-    top="174" />
+    name="render_volumetric_lighting_quality"
+    tool_tip="Normal and High trade target resolution for the same edge-adaptive sample count (16, up to 32 near silhouettes). Very High and Ultra use full resolution with a flat sample count everywhere (32 / 64), at a large GPU cost. Changes are applied live."
+    top="171"
+    width="215">
+    <combo_box.item
+      label="Normal (half resolution)"
+      name="0"
+      value="0" />
+    <combo_box.item
+      label="High (full resolution)"
+      name="1"
+      value="1" />
+    <combo_box.item
+      label="Very High (flat 32 samples)"
+      name="2"
+      value="2" />
+    <combo_box.item
+      label="Ultra (flat 64 samples)"
+      name="3"
+      value="3" />
+  </combo_box>
 
   <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
   <text
@@ -235,7 +262,7 @@
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_density" top="88" tool_tip="Reset scatter density to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingDensity" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_sun_asymmetry" top="116" tool_tip="Reset sun sky gradient to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingSunAsymmetry" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_moon_asymmetry" top="144" tool_tip="Reset moon sky gradient to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingAsymmetry" /></button>
-  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_high_quality" top="172" tool_tip="Reset high quality rays to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingHighQuality" /></button>
+  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_quality" top="172" tool_tip="Reset ray quality to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingQuality" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_debug" top="202" tool_tip="Reset debug mode to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingDebug" /></button>
   <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_intensity" top="263" tool_tip="Reset local intensity to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsIntensity" /></button>
   <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_max_count" top="293" tool_tip="Reset maximum local lights to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsMaxCount" /></button>

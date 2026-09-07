@@ -53,10 +53,10 @@ class LLVOPartGroup;
 class LLGLSLShader;
 class LLDrawPoolAlpha;
 // <AS:Chanayane> Exact OIT
-class FSExactOIT;
+class ASExactOIT;
 // </AS:Chanayane>
 // <AS:Chanayane> Independent AVBOIT renderer.
-class FSAVBOIT;
+class ASAVBOIT;
 // </AS:Chanayane>
 // <AS:Chanayane> Viewer-object-free My Lights renderer.
 class ASLightRigRenderer;
@@ -102,10 +102,10 @@ extern LLTrace::BlockTimerStatHandle FTM_RENDER_UI_2D;
 class LLPipeline
 {
     // <AS:Chanayane> Exact OIT keeps fallback/composite traversal in the owned module.
-    friend class FSExactOIT;
+    friend class ASExactOIT;
     // </AS:Chanayane>
     // <AS:Chanayane> AVBOIT performs its own post-transparency debug traversal.
-    friend class FSAVBOIT;
+    friend class ASAVBOIT;
     // </AS:Chanayane>
     // <AS:Chanayane> Allow the isolated AS module to populate protected
     // hardware-light bookkeeping without moving its logic into LLPipeline.

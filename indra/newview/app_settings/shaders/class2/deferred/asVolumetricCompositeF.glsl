@@ -29,9 +29,9 @@ out vec4 frag_color;
 
 in vec2 vary_fragcoord;
 
-uniform sampler2D emissiveRect; // half-res volumetric scatter target
-uniform vec2 emissiveRectDelta;
-uniform int depthAwareUpsample;
+uniform sampler2D emissiveRect; // volumetric scatter target: half-res (Normal) or full-res (High)
+uniform vec2 emissiveRectDelta; // 1 / sourceSize (source-texel units, NOT screen-texel units)
+uniform int depthAwareUpsample; // debug-only: raw unfiltered sample, no gather
 // Debug-only: show emissiveRect's alpha channel (e.g. the transparency
 // atlas's raw transmittance) as grayscale RGB instead of its normal RGB
 // content. Never set outside a diagnostic debug mode.
@@ -56,36 +56,66 @@ uniform int attenuateScene;
 // cancels it out so the displayed value approximates the raw stored scalar.
 uniform sampler2D exposureMap;
 uniform float debugExposure;
+// Not standard deferred uniforms; uploaded by draw_composite() from
+// LLViewerCamera::getInstance()->getNear()/getFar(), same pattern as
+// screenSpaceReflPostF.glsl.
+uniform float zNear;
+uniform float zFar;
 
 vec4 getPosition(vec2 pos_screen);
-vec4 getNorm(vec2 pos_screen);
+float getDepth(vec2 pos_screen);
+float linearDepth(float d, float znear, float zfar);
 
-float depthSimilarity(vec2 uv, float center_depth)
+// Same sky-ray cap the raymarch shaders use (MAX_MARCH_DISTANCE in
+// asVolumetricLightF.glsl/asVolumetricAtlasF.glsl). Depths beyond this are
+// indistinguishable for scatter purposes; without the clamp below, sky vs.
+// a hill at 200m would be wrongly depth-rejected in the gather.
+const float MAX_MARCH_DISTANCE = 128.0;
+
+float linearViewDepth(vec2 uv)
 {
-    float tap_depth = abs(getPosition(uv).z);
-    float relative_difference = abs(tap_depth - center_depth) /
-                                max(max(tap_depth, center_depth), 1.0);
-    return exp(-relative_difference * 64.0);
+    return linearDepth(getDepth(uv), zNear, zFar);
 }
 
-float normalSimilarity(vec2 uv, vec3 center_normal)
+float depthWeight(float tap_depth, float center_depth)
 {
-    vec3 tap_normal = getNorm(uv).xyz;
-    // Invalid/background normals should not suppress sky taps; opaque depth
-    // remains the complete guide in that case. For real surfaces, smoothly
-    // reject differently oriented geometry even when its depth is similar.
-    float center_length_squared = dot(center_normal, center_normal);
-    float tap_length_squared = dot(tap_normal, tap_normal);
-    // Express validity positively and negate the whole predicate: comparisons
-    // against NaN are false, so this also catches the NaN produced when the
-    // packed-normal decoder sees an empty background texel.
-    if (!(center_length_squared > 0.25 && center_length_squared < 1.5) ||
-        !(tap_length_squared > 0.25 && tap_length_squared < 1.5))
+    tap_depth    = min(tap_depth, MAX_MARCH_DISTANCE);
+    center_depth = min(center_depth, MAX_MARCH_DISTANCE);
+    float rel = abs(tap_depth - center_depth) / max(max(tap_depth, center_depth), 1.0);
+    return exp(-rel * 8.0);
+}
+
+// Single depth-aware gather over the 4x4 source-texel window around this
+// display pixel. Box weight: Bayer is 4-periodic, so any 4x4 window holds
+// each of the 16 phases once and a sliding box is the exact
+// reconstruction. Edge-class texels (alpha 1, diagnostic only) march a
+// phase-refined multiple of the flat count, so mixing them here keeps the
+// phase weights balanced; no class split is needed (see
+// doc/volumetric_lighting_sample_count_question.md, round 4).
+vec3 gatherScatter(vec2 uv, float center_depth)
+{
+    vec2 src = uv / emissiveRectDelta - 0.5;
+    vec2 base = floor(src + 0.5);
+    vec2 min_uv = emissiveRectDelta * 0.5;
+    vec2 max_uv = vec2(1.0) - min_uv;
+    vec3 sum = vec3(0.0);
+    float wsum = 0.0;
+    for (int y = -2; y <= 1; ++y)
     {
-        return 1.0;
+        for (int x = -2; x <= 1; ++x)
+        {
+            vec2 tap_uv = clamp((base + vec2(float(x), float(y)) + 0.5) * emissiveRectDelta,
+                                min_uv, max_uv);
+            float w = depthWeight(linearViewDepth(tap_uv), center_depth);
+            sum += texture(emissiveRect, tap_uv).rgb * w;
+            wsum += w;
+        }
     }
-    return smoothstep(0.5, 0.9,
-                      dot(normalize(center_normal), normalize(tap_normal)));
+    if (wsum < 1e-6)
+    {
+        return texture(emissiveRect, uv).rgb; // subpixel surface fallback
+    }
+    return sum / wsum;
 }
 
 // Same sky/horizon boundary the raymarch shader uses (MAX_MARCH_DISTANCE in
@@ -147,8 +177,9 @@ float compositeTransmittance(float dist)
 
 void main()
 {
-    if (depthAwareUpsample == 0)
+    if (depthAwareUpsample != 0)
     {
+        // Debug modes only: plain unfiltered sample, no gather.
         vec4 sampled = texture(emissiveRect, vary_fragcoord);
         if (showAlphaChannel != 0)
         {
@@ -162,46 +193,7 @@ void main()
         return;
     }
 
-    // Reconstruct the four hardware-bilinear taps explicitly and reject taps
-    // across opaque depth discontinuities. Transparency is rendered after this
-    // composite and receives its own depth-resolved atlas contribution, so the
-    // deferred depth buffer is now the correct guide for this opaque stage.
-    vec2 source_position = vary_fragcoord / emissiveRectDelta - 0.5;
-    vec2 source_base = floor(source_position);
-    vec2 fraction = fract(source_position);
-    vec2 min_uv = emissiveRectDelta * 0.5;
-    vec2 max_uv = vec2(1.0) - min_uv;
-
-    vec2 uv00 = clamp((source_base + vec2(0.5, 0.5)) * emissiveRectDelta, min_uv, max_uv);
-    vec2 uv10 = clamp((source_base + vec2(1.5, 0.5)) * emissiveRectDelta, min_uv, max_uv);
-    vec2 uv01 = clamp((source_base + vec2(0.5, 1.5)) * emissiveRectDelta, min_uv, max_uv);
-    vec2 uv11 = clamp((source_base + vec2(1.5, 1.5)) * emissiveRectDelta, min_uv, max_uv);
-
-    vec4 spatial = vec4((1.0 - fraction.x) * (1.0 - fraction.y),
-                        fraction.x * (1.0 - fraction.y),
-                        (1.0 - fraction.x) * fraction.y,
-                        fraction.x * fraction.y);
-    float center_depth = abs(getPosition(vary_fragcoord).z);
-    vec3 center_normal = getNorm(vary_fragcoord).xyz;
-    vec4 weights = spatial *
-        vec4(depthSimilarity(uv00, center_depth) * normalSimilarity(uv00, center_normal),
-             depthSimilarity(uv10, center_depth) * normalSimilarity(uv10, center_normal),
-             depthSimilarity(uv01, center_depth) * normalSimilarity(uv01, center_normal),
-             depthSimilarity(uv11, center_depth) * normalSimilarity(uv11, center_normal));
-    float weight_sum = dot(weights, vec4(1.0));
-    if (weight_sum < 1e-6)
-    {
-        // A subpixel surface may have no representative half-resolution tap.
-        // Preserve the former bilinear behavior instead of creating a hole.
-        vec3 scatter = texture(emissiveRect, vary_fragcoord).rgb;
-        frag_color = vec4(scatter, compositeTransmittance(center_depth));
-        return;
-    }
-
-    vec3 scatter = texture(emissiveRect, uv00).rgb * weights.x +
-                   texture(emissiveRect, uv10).rgb * weights.y +
-                   texture(emissiveRect, uv01).rgb * weights.z +
-                   texture(emissiveRect, uv11).rgb * weights.w;
-    scatter /= weight_sum;
-    frag_color = vec4(scatter, compositeTransmittance(center_depth));
+    float d = linearViewDepth(vary_fragcoord);
+    vec3 s = gatherScatter(vary_fragcoord, d);
+    frag_color = vec4(s, compositeTransmittance(d));
 }

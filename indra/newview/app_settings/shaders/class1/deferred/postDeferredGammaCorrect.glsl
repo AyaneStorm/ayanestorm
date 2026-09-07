@@ -34,6 +34,9 @@ uniform vec2 screen_res;
 in vec2 vary_fragcoord;
 
 vec3 linear_to_srgb(vec3 cl);
+// <AS:Chanayane> Apply viewer-local scene-linear color grading before display conversion.
+vec3 asApplyLinearColorGrade(vec3 color);
+// </AS:Chanayane>
 
 vec3 legacyGamma(vec3 color)
 {
@@ -47,6 +50,9 @@ void main()
 {
     //this is the one of the rare spots where diffuseRect contains linear color values (not sRGB)
     vec4 diff = texture(diffuseRect, vary_fragcoord);
+    // <AS:Chanayane> Preserve the same grading behavior on the non-HDR path.
+    diff.rgb = asApplyLinearColorGrade(diff.rgb);
+    // </AS:Chanayane>
     diff.rgb = linear_to_srgb(diff.rgb);
 
 #ifdef LEGACY_GAMMA
@@ -56,4 +62,3 @@ void main()
     diff.rgb = clamp(diff.rgb, vec3(0.0), vec3(1.0));
     frag_color = diff;
 }
-

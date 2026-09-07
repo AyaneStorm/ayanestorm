@@ -154,8 +154,8 @@ The volumetric debug spinner is intentionally retained. The same Rendering
 panel now also exposes the existing Exact OIT diagnostic modes `0..9` and
 AVBOIT diagnostic modes `0..15`. Each spinner is enabled only while its
 corresponding transparency mode is active and includes an exhaustive mode list
-in its tooltip. These controls bind directly to `RenderExactOITDebugMode` and
-`RenderAVBOITDebugMode`; no rendering implementation was changed.
+in its tooltip. These controls bind directly to `ASRenderExactOITDebugMode` and
+`ASRenderAVBOITDebugMode`; no rendering implementation was changed.
 
 On macOS, the transparency selector, both OIT diagnostic labels, and both OIT
 diagnostic spinners are hidden together. The Rendering tab itself remains
@@ -378,7 +378,7 @@ If resuming: rebuild (this round changed only `asVolumetricLightF.glsl` - no `.c
 - Round 10 (round 9's fix retested): **"Unsurprisingly nothing changed"** - mode 3 still solid black, mode 2 still all white, mode 0/1 still flooded white, even though the shadow-sampling call is now byte-for-byte identical to every proven-working caller. Confirmed via `diff` and log-check (no link errors) that this was a genuine, current, correctly-linked build - ruling out staleness/compile failure yet again. Added debug modes **4** (`abs(ray_end)/64` as RGB - reconstructed view-space position, computed *before* any shadow logic runs) and **5** (`ray_len/128` grayscale) to isolate `getPosition()`/depth reconstruction from shadow sampling entirely. User confirmed the test camera was pointed at **close-up geometry** (avatar, a few meters away), not sky, ruling out "far geometry legitimately reads as white" as an explanation.
   - **Result:** mode 5 read as **uniformly white** (`ray_len` pegged at the 128m cap everywhere, including a few meters from the camera - definitively wrong). Mode 4 showed a **cross pattern**: a vertical cyan band and horizontal magenta band crossing at screen center, avatar visible as a darker silhouette. Decoded as RGB=`abs(ray_end)/64`: low R (cyan has no red) along the vertical centerline, low G (magenta has no green) along the horizontal centerline, high B almost everywhere. That is the signature of `ray_end.x`/`ray_end.y` behaving like raw **NDC/screen coordinates** (zero at screen center, growing toward the edges) rather than real view-space world positions, and `ray_end.z` sitting near a constant - i.e. **`pos.xyz` from `getPosition()` looks like `inv_proj` acted as identity/near-identity** on the `(sc.x, sc.y, 2*depth-1, 1)` NDC input, passing `sc.xy` through mostly unchanged instead of unprojecting it. This directly explains both symptoms: mode 4's "structured but wrong" cross, and mode 5's "always-128" (since `length(ndc.xyz)` for on-screen NDC saturates the `min(..., MAX_MARCH_DISTANCE)` clamp almost everywhere once you're off the near-zero center point).
   - **Investigation into whether `inv_proj` is actually being set for this shader at all** (traced rather than guessed): `inv_proj` is pushed to a shader inside `LLRender::syncMatrices()` (`llrender.cpp:1004`, guarded by a per-shader `mMatHash[MM_PROJECTION]` comparison at `:1094` so it only re-uploads when the projection actually changed since that shader's last sync) - and `syncMatrices()` is called unconditionally from `LLVertexBuffer::drawArrays()` (`llvertexbuffer.cpp:805/922/948`) on every draw, **not** gated by any shader-specific opt-in list. `mMatHash` is initialized to `0xFFFFFFFF` in the `LLGLSLShader` constructor (`llglslshader.cpp:418`), guaranteed to differ from any real hash on first use. So **`inv_proj` should sync correctly for `gASVolumetricLightProgram` even though it's a standalone shader outside `LLViewerShaderMgr::mShaderList`** - this theory, while plausible from the symptom, is not yet confirmed and needs a direct runtime read of `inv_proj`'s actual value for this specific shader, not another round of transitively-reasoned static tracing.
-  - **A second, definitely-real, but likely-unrelated bug found along the way:** `LLViewerShaderMgr::finalizeShaderList()` (`llviewershadermgr.cpp:422-`) explicitly enumerates which global `LLGLSLShader*` instances get `mUniformsDirty = true` set every environment update (`llenvironment.cpp:1788`, iterating `LLViewerShaderMgr::beginShaders()/endShaders()` = `mShaderList`). `mUniformsDirty` gates `LLEnvironment::updateShaderUniforms()` (sky/water WindLight uniforms - `sun_dir`, `moon_dir`, `sunlight_color`, etc.), called from `LLGLSLShader::bind()` (`llglslshader.cpp:1086-1090`) only `if (mUniformsDirty)`. **`gASVolumetricLightProgram`/`gASVolumetricCompositeProgram` are never added to `mShaderList`** (deliberately, matching `FSExactOIT`/`FSAVBOIT`'s pattern of owning their shader objects outside the manager's tracked globals) - so `mUniformsDirty` stays at its constructed default of `false` forever, and `sun_dir`/`moon_dir`/`sunlight_color` are **never populated for this shader, not even once**. This is real and needs fixing regardless of the position bug (either register both shaders in `mShaderList`, or have `renderPass()` push these uniforms manually every frame the way it already does for `sample_count`/`scatter_intensity`/etc.) - but it does **not** explain the mode 4/5 symptom, since those debug branches return before `sun_dir`/`sunlight_color` are ever read.
+  - **A second, definitely-real, but likely-unrelated bug found along the way:** `LLViewerShaderMgr::finalizeShaderList()` (`llviewershadermgr.cpp:422-`) explicitly enumerates which global `LLGLSLShader*` instances get `mUniformsDirty = true` set every environment update (`llenvironment.cpp:1788`, iterating `LLViewerShaderMgr::beginShaders()/endShaders()` = `mShaderList`). `mUniformsDirty` gates `LLEnvironment::updateShaderUniforms()` (sky/water WindLight uniforms - `sun_dir`, `moon_dir`, `sunlight_color`, etc.), called from `LLGLSLShader::bind()` (`llglslshader.cpp:1086-1090`) only `if (mUniformsDirty)`. **`gASVolumetricLightProgram`/`gASVolumetricCompositeProgram` are never added to `mShaderList`** (deliberately, matching `ASExactOIT`/`ASAVBOIT`'s pattern of owning their shader objects outside the manager's tracked globals) - so `mUniformsDirty` stays at its constructed default of `false` forever, and `sun_dir`/`moon_dir`/`sunlight_color` are **never populated for this shader, not even once**. This is real and needs fixing regardless of the position bug (either register both shaders in `mShaderList`, or have `renderPass()` push these uniforms manually every frame the way it already does for `sample_count`/`scatter_intensity`/etc.) - but it does **not** explain the mode 4/5 symptom, since those debug branches return before `sun_dir`/`sunlight_color` are ever read.
   - **Added debug modes 6 and 7** (not yet tested) specifically to settle the `inv_proj` question with a runtime data point instead of more static tracing: mode 6 outputs `getDepth(pos_screen)` directly (the raw depth-buffer read, before any `inv_proj` involvement at all - isolates whether the *depth buffer sample itself* is sane, independent of unprojection). Mode 7 outputs `getPositionWithNDC(vec3(0,0,0))` (a **fixed** NDC test point, independent of `pos_screen`/depth entirely) as RGB - if `inv_proj` were identity/zero for this shader, mode 7 would read as a **flat, uniform color across the entire screen** (since its input doesn't vary per-pixel), which would prove the `inv_proj`-not-synced theory conclusively; if mode 7 instead shows a plausible fixed view-space point (matching where screen-center/mid-depth should be), `inv_proj` is fine and the bug is specifically in `getDepth(pos_screen)`/`getScreenCoordinate(pos_screen)`'s handling of the real per-pixel `pos_screen`, which mode 6 would then confirm by showing a flat/wrong depth value across the screen despite real geometry being present.
 
 **If resuming:** rebuild (`asVolumetricLightF.glsl` and `panel_preferences_ayanestorm.xml` changed - spinner `max_val` now 7). Test **mode 7 first** - flat color = `inv_proj` not synced for this shader (fix: register `gASVolumetricLightProgram`/`gASVolumetricCompositeProgram` in `LLViewerShaderMgr::mShaderList`, or manually push `INVERSE_PROJECTION_MATRIX` in `renderPass()`); varying-but-plausible color = `inv_proj` is fine, move to mode 6 (flat/wrong depth = `depthMap` binding or `pos_screen`/`getScreenCoordinate` is the real bug; varying/plausible depth = the bug is somewhere between a correct depth read and `getPosition()`'s final `pos /= pos.w` divide, worth re-checking `pos.w` specifically e.g. via a mode 8 that dumps `pos.w` before the divide). Also worth fixing regardless of the outcome: register both volumetric shaders in `mShaderList` (or push WindLight uniforms manually) so `sun_dir`/`moon_dir`/`sunlight_color` stop being silently zero - this doesn't explain modes 4/5 but is a real, separate bug in the normal (mode 0) rendering path once position reconstruction is fixed.
@@ -398,7 +398,7 @@ If resuming: rebuild (this round changed only `asVolumetricLightF.glsl` - no `.c
 
 ### Preferences tab decision (user-directed deviation from the original plan)
 
-The user flagged that `ASPanelPrefsAyaneStorm::postBuild()` was hiding the entire `tab-as-rendering` sub-tab on `LL_DARWIN`, because until now it only held GL 4.3-only Exact OIT/AVBOIT settings (`RenderOITMode`). Since volumetric lighting is designed to also run on macOS (GL 4.0/4.1 floor), putting its checkbox in that tab as originally planned would have made it invisible on Mac. Resolved by user choice: **stop hiding the whole tab on Darwin; instead hide only the `render_oit_mode`/`render_oit_mode_label` controls that are actually GL-4.3-specific**, leaving the tab (and the new volumetric checkbox) visible on Mac. See `aspanelprefsayanestorm.cpp` `postBuild()`.
+The user flagged that `ASPanelPrefsAyaneStorm::postBuild()` was hiding the entire `tab-as-rendering` sub-tab on `LL_DARWIN`, because until now it only held GL 4.3-only Exact OIT/AVBOIT settings (`ASRenderOITMode`). Since volumetric lighting is designed to also run on macOS (GL 4.0/4.1 floor), putting its checkbox in that tab as originally planned would have made it invisible on Mac. Resolved by user choice: **stop hiding the whole tab on Darwin; instead hide only the `render_oit_mode`/`render_oit_mode_label` controls that are actually GL-4.3-specific**, leaving the tab (and the new volumetric checkbox) visible on Mac. See `aspanelprefsayanestorm.cpp` `postBuild()`.
 
 ### Refinements discovered during implementation (post-planning; corrections to the plan below)
 
@@ -406,7 +406,7 @@ The user flagged that `ASPanelPrefsAyaneStorm::postBuild()` was hiding the entir
 - **`norm` for a raymarch sample.** `sampleDirectionalShadow(pos, norm, pos_screen)` uses `norm` only to bias the shadow lookup away from surface peter-panning — irrelevant for a mid-air volumetric sample. Passing a fixed `vec3(0,0,1)` (or the light direction itself) as `norm` at each raymarch step is fine; it only affects the bias offset, not correctness.
 - **Composite binding is simpler than raw `bindDeferredShader`.** `LLGLSLShader::bindTexture(channel, target)` (used by `combineGlow`, `pipeline.cpp:8454-8473`) is the right API for the composite pass — bind `mRT->screen` and `sVolumetricTarget` as two textures and additive-blend, no need for `enableTexture`/`getTexUnit` plumbing (that's what `bindDeferredShader` does internally for the *raymarch* pass, which does need the full G-buffer + shadow maps).
 - **`mScreenTriangleVB` is public** on `LLPipeline` (`pipeline.h:801`, between the `public:` at `:514` and `protected:` at `:864`) — `renderPass(LLPipeline&, ...)` can use `pipeline.mScreenTriangleVB` directly, as planned.
-- **Do NOT compile out on `LL_DARWIN`.** `FSExactOIT`/`FSAVBOIT` both `#if LL_DARWIN` stub themselves out entirely (`fsexactoit.cpp:38-99`) because they hard-require GL ≥4.3. `ASVolumetricLighting` is designed to work at GL 4.0/4.1, i.e. specifically to run on Mac — it must NOT get the same `#if LL_DARWIN` treatment, or the whole point of the GL-4.1-compatible design is lost.
+- **Do NOT compile out on `LL_DARWIN`.** `ASExactOIT`/`ASAVBOIT` both `#if LL_DARWIN` stub themselves out entirely (`asexactoit.cpp:38-99`) because they hard-require GL ≥4.3. `ASVolumetricLighting` is designed to work at GL 4.0/4.1, i.e. specifically to run on Mac — it must NOT get the same `#if LL_DARWIN` treatment, or the whole point of the GL-4.1-compatible design is lost.
 - **`bindDeferredShader()` does NOT set `sun_up_factor`.** Unlike `sun_dir`/`moon_dir`/`sunlight_color`/`moonlight_color` (all set unconditionally inside `bindDeferredShader`, `pipeline.cpp:9389-9418`), `SUN_UP_FACTOR` is set by *callers* of the deferred lighting shaders (e.g. `renderDeferredLighting()`'s `soften_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, ...)` at `:9604`), not by `bindDeferredShader` itself. Since `ASVolumetricLighting::renderPass()` calls `bindDeferredShader()` directly rather than going through `renderDeferredLighting()`, it must set `sun_up_factor` itself via `LLEnvironment::instance().getIsSunUp()` — done in `asvolumetriclighting.cpp`.
 - **Unbounded ray length for sky pixels.** `getPosition()` returns the far-clip distance (effectively huge) for pixels with no geometry (sky/horizon). The raymarch fragment shader clamps `ray_len` to a constant `MAX_MARCH_DISTANCE = 128.0` to avoid pathologically long marches and scatter intensity blowing out on sky pixels (`asVolumetricLightF.glsl`).
 - **Composite must not read `screen` while writing to it.** The composite pass renders into `mRT->screen` using additive GL blending (`BT_ADD`); it must only sample the low-res volumetric target (`emissiveRect`/`DEFERRED_EMISSIVE`), not also bind `screen` itself as a source texture (which would be simultaneous read/write of the same attachment — undefined behavior). `asvolumetriclighting.cpp`'s `renderPass()` was corrected to drop the `DEFERRED_DIFFUSE` bind of `screen` that an earlier draft had.
@@ -416,10 +416,10 @@ The user flagged that `ASPanelPrefsAyaneStorm::postBuild()` was hiding the entir
 AyaneStorm (Firestorm/SL viewer fork) has no volumetric/god-ray lighting today. This document plans adding it as an *optional* feature, following `AGENTS.md`'s conventions:
 - New files are `as`-prefixed and need no upstream ownership tags, but do need file-header comments.
 - Any edit to an `ll*`/`fs*` file must be wrapped in `// <AS:Chanayane> ... // </AS:Chanayane>` tags, with original code kept commented inside the tags when replacing it.
-- "Substantial functionality must be placed in a new module instead of enlarging an existing upstream or shared module" — `AGENTS.md` names `fsexactoit` as the model. That module **exists** in this tree (`indra/newview/fsexactoit.h/.cpp`, see also `doc/ayanestorm-special-exact-oit-how-it-works.md`) and is the closest real precedent: it offloads an entire rendering feature out of `pipeline.cpp`/`llviewershadermgr.cpp` behind a static-method API (`isEnabled()`, `loadShaders()`, `allocateResources()`, `releaseResources()`, `finishFrame()`), and `pipeline.cpp` only contains small tagged call-outs, e.g.:
+- "Substantial functionality must be placed in a new module instead of enlarging an existing upstream or shared module" — `AGENTS.md` names `asexactoit` as the model. That module **exists** in this tree (`indra/newview/asexactoit.h/.cpp`, see also `doc/ayanestorm-special-exact-oit-how-it-works.md`) and is the closest real precedent: it offloads an entire rendering feature out of `pipeline.cpp`/`llviewershadermgr.cpp` behind a static-method API (`isEnabled()`, `loadShaders()`, `allocateResources()`, `releaseResources()`, `finishFrame()`), and `pipeline.cpp` only contains small tagged call-outs, e.g.:
   ```cpp
   // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
-  FSExactOIT::allocateResources(resX, resY);
+  ASExactOIT::allocateResources(resX, resY);
   // </AS:Chanayane>
   ```
 
@@ -437,7 +437,7 @@ This plan follows that exact shape, with the offload module named `ASVolumetricL
   - Note: `llviewerdisplay.cpp:1395` is *not* a second main-frame site — it's the reflection/cube-snapshot path, where `renderFinalize()` is explicitly commented out (`:1400`). `renderFinalize()` also asserts `!gCubeSnapshot` (`:8943`), so the volumetric pass is excluded from cube snapshots/reflection probes.
 - Existing glow/bloom pass (`generateGlow`, `pipeline.cpp:8002`; `combineGlow`, `:8454-8473`) is the template for a full-screen accumulate-then-composite pass.
 - Settings pattern: `RenderShadowDetail` (`settings.xml:13179-13189`) and quality-preset lines in `featuretable*.txt`.
-- Offload precedent: `FSExactOIT` (`fsexactoit.h/.cpp`) and `FSAVBOIT` (`fsavboit.h/.cpp`), both driven from tagged call-outs in `pipeline.cpp`/`llviewershadermgr.cpp`, both already registered in `indra/newview/CMakeLists.txt` alongside `asstreamkeeper.cpp` (`:98`, `:122`).
+- Offload precedent: `ASExactOIT` (`asexactoit.h/.cpp`) and `ASAVBOIT` (`asavboit.h/.cpp`), both driven from tagged call-outs in `pipeline.cpp`/`llviewershadermgr.cpp`, both already registered in `indra/newview/CMakeLists.txt` alongside `asstreamkeeper.cpp` (`:98`, `:122`).
 
 ## macOS / OpenGL 4.1 compatibility (researched)
 
@@ -446,12 +446,12 @@ This plan follows that exact shape, with the offload module named `ASVolumetricL
 - GLSL `#version` is injected at compile time by `LLShaderMgr::loadShaderFile` (`indra/llrender/llshadermgr.cpp:569-604`) from the runtime-detected driver version — no `.glsl` file hardcodes a `#version` line, so no macOS-specific shader fork is needed. **On a Mac at GL 4.1 / GLSL 4.10**, `major_version >= 4` but `minor_version < 20`, so the shader compiles as `#version 400` (`:603`). Everything the raymarch needs (`sampler2DShadow`, `texture()`, dynamic `for` loops) is core in GLSL 4.00 — but the pass must not use any 4.2+/4.3+ syntax.
 - The existing `<AS:Chanayane>` block at `llshadermgr.cpp:572-597` special-cases OIT/compute shaders to receive `#version 430`, matched by filename (`exactOIT`, `avboit`) or defines. **The volumetric shaders must NOT be added to that special case** — staying out of it is what keeps them compiling at 400 on Mac.
 - Existing class2/class3 deferred shaders already use `for` loops with dependent shadow-map `texture()` fetches (`reflectionProbeF.glsl`, `multiPointLightF.glsl`, `blurLightF.glsl`) — a ~16-24 step raymarch is well within what already ships; no unrolling/branching restriction.
-- **Trap to avoid**: `FSAVBOIT` hard-requires GL ≥4.3 (compute + SSBOs), gated by `FSAVBOIT::supported()` (`fsavboit.cpp:379-384`). That path silently disables on Mac's 4.1 ceiling. The volumetric pass must **not** follow it — keep it a plain fragment-shader raymarch.
+- **Trap to avoid**: `ASAVBOIT` hard-requires GL ≥4.3 (compute + SSBOs), gated by `ASAVBOIT::supported()` (`asavboit.cpp:379-384`). That path silently disables on Mac's 4.1 ceiling. The volumetric pass must **not** follow it — keep it a plain fragment-shader raymarch.
 - Caveat: this codebase has **no live `__APPLE__`/Mac-specific gating anywhere in `indra/newview`** — Mac support appears untested in this fork generally, so "compatible per GL 4.1 spec" is unverified in practice until built and run on macOS hardware.
 
 ## Architecture: `ASVolumetricLighting`
 
-New module modeled directly on `FSExactOIT`'s shape:
+New module modeled directly on `ASExactOIT`'s shape:
 
 **`indra/newview/asvolumetriclighting.h`**
 ```cpp
@@ -459,7 +459,7 @@ class ASVolumetricLighting
 {
 public:
     static const char* shaderCacheRevision();  // bump on any .glsl edit; see note below
-    static bool isSupported();      // GL/GLSL floor check, mirrors FSAVBOIT::supported()
+    static bool isSupported();      // GL/GLSL floor check, mirrors ASAVBOIT::supported()
     static bool isEnabled();        // settings + isSupported() + RenderShadowDetail > 0
     static bool loadShaders(S32 shader_level);
     static void unloadShaders();
@@ -478,17 +478,17 @@ private:
 };
 ```
 
-The `.cpp` owns: settings reads, the GL-version support check, quality-based sample-count scaling, shader load/unload, resource alloc/release, and the draw calls. `LLPipeline`/`LLViewerShaderMgr` never contain the "why," only tagged one-line call-outs — same division of responsibility as `FSExactOIT`.
+The `.cpp` owns: settings reads, the GL-version support check, quality-based sample-count scaling, shader load/unload, resource alloc/release, and the draw calls. `LLPipeline`/`LLViewerShaderMgr` never contain the "why," only tagged one-line call-outs — same division of responsibility as `ASExactOIT`.
 
 Two details from the existing OIT modules that are easy to miss:
 
-- **`isSupported()`**: mirror `FSAVBOIT::supported()`'s shape (`fsavboit.cpp:379-384`) but with a **GL 4.0 / GLSL 4.00 floor**, not AVBOIT's 4.3 — the point is that this feature stays available where AVBOIT is not (macOS at 4.1). Cache in `sSupported`/`sSupportChecked`.
-- **`shaderCacheRevision()`**: both OIT modules expose one, and `llviewershadermgr.cpp:563-564` folds them into the shader-cache hash (`hash_obj.update(FSExactOIT::shaderCacheRevision())`). Without an equivalent, edited `.glsl` files can be served stale from cache during development. Add a matching tagged `hash_obj.update(ASVolumetricLighting::shaderCacheRevision())` there, and bump the string on every shader edit. Both modules also ship an "unsupported" stub of this function (`fsavboit.cpp:23`, `fsexactoit.cpp:51`).
+- **`isSupported()`**: mirror `ASAVBOIT::supported()`'s shape (`asavboit.cpp:379-384`) but with a **GL 4.0 / GLSL 4.00 floor**, not AVBOIT's 4.3 — the point is that this feature stays available where AVBOIT is not (macOS at 4.1). Cache in `sSupported`/`sSupportChecked`.
+- **`shaderCacheRevision()`**: both OIT modules expose one, and `llviewershadermgr.cpp:563-564` folds them into the shader-cache hash (`hash_obj.update(ASExactOIT::shaderCacheRevision())`). Without an equivalent, edited `.glsl` files can be served stale from cache during development. Add a matching tagged `hash_obj.update(ASVolumetricLighting::shaderCacheRevision())` there, and bump the string on every shader edit. Both modules also ship an "unsupported" stub of this function (`asavboit.cpp:23`, `asexactoit.cpp:51`).
 
 ## Implementation steps
 
 ### 1. `ASVolumetricLighting` module (new, no ownership tags needed)
-Create `asvolumetriclighting.h/.cpp` with the shape above. File header modeled on `fsexactoit.h`'s but attributed as an AyaneStorm-original module (`@author chanayane@firestorm`, `$LicenseInfo:...AyaneStorm...$` block matching `asstreamkeeper.h`).
+Create `asvolumetriclighting.h/.cpp` with the shape above. File header modeled on `asexactoit.h`'s but attributed as an AyaneStorm-original module (`@author chanayane@firestorm`, `$LicenseInfo:...AyaneStorm...$` block matching `asstreamkeeper.h`).
 
 ### 2. Settings
 Add `RenderVolumetricLighting` (Boolean, default `0`) to `app_settings/settings.xml`, copying the `RenderShadowDetail` map structure (`settings.xml:13179-13189`).
@@ -496,9 +496,9 @@ Add `RenderVolumetricLighting` (Boolean, default `0`) to `app_settings/settings.
 Wrap it in **XML-comment-form** ownership tags, matching the existing Exact OIT setting blocks at `settings.xml:11811-11825` / `:11826-11840` — i.e. `<!-- <AS:Chanayane> Volumetric lighting. -->` … `<!-- </AS:Chanayane> -->`, *not* C++ `//` comments.
 
 ### 3. Render target + resource lifecycle
-`allocateResources(width, height)`/`releaseResources()` own `sVolumetricTarget` entirely. The module halves the passed dimensions internally (raymarching at full res is the main perf risk; half-res is the usual starting point, with the bilateral upsample hiding it), so the call site passes the same `resX, resY` that `FSExactOIT::allocateResources` receives without knowing the divisor.
+`allocateResources(width, height)`/`releaseResources()` own `sVolumetricTarget` entirely. The module halves the passed dimensions internally (raymarching at full res is the main perf risk; half-res is the usual starting point, with the bilateral upsample hiding it), so the call site passes the same `resX, resY` that `ASExactOIT::allocateResources` receives without knowing the divisor.
 
-`pipeline.cpp` gets two tagged call-outs mirroring the `FSExactOIT` alloc/release call sites (near `pipeline.cpp:1013-1015` and `:1422-1425`):
+`pipeline.cpp` gets two tagged call-outs mirroring the `ASExactOIT` alloc/release call sites (near `pipeline.cpp:1013-1015` and `:1422-1425`):
 ```cpp
 // <AS:Chanayane> Allocate volumetric lighting resources alongside Exact OIT.
 ASVolumetricLighting::allocateResources(resX, resY);
@@ -512,16 +512,16 @@ Plain fragment-shader raymarch — **no compute shaders, no SSBOs**. Under `app_
 - `asVolumetricCompositeF.glsl` — bilateral-upsample + additive composite, modeled on `combineGlow` and `glowcombineF.glsl`'s sampler-naming convention (`diffuseRect`/`depthMap`-style names).
 
 ### 5. Shader registration (`llviewershadermgr.cpp` — tagged call-outs only)
-`loadShaders(shader_level)` does the actual `LLGLSLShader` construction/`createShader()` call, mirroring `gGlowProgram`'s load block (`llviewershadermgr.cpp:1034-1048`) and `gGlowCombineProgram`'s post-load uniform binding (`:3279-3290`) — but the `LLGLSLShader` instance and its load logic live inside `asvolumetriclighting.cpp`, exactly as `FSExactOIT` owns its own shader objects rather than adding them to the global shader arrays.
+`loadShaders(shader_level)` does the actual `LLGLSLShader` construction/`createShader()` call, mirroring `gGlowProgram`'s load block (`llviewershadermgr.cpp:1034-1048`) and `gGlowCombineProgram`'s post-load uniform binding (`:3279-3290`) — but the `LLGLSLShader` instance and its load logic live inside `asvolumetriclighting.cpp`, exactly as `ASExactOIT` owns its own shader objects rather than adding them to the global shader arrays.
 
 Call site: the end of `loadShadersDeferred()`, in the existing `<AS:Chanayane>` block at `llviewershadermgr.cpp:3068-3074`:
 ```cpp
 // <AS:Chanayane> Load AVBOIT from vanilla shaders, then load Exact OIT independently.
-    if (success) { FSAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]); }
-    success = FSExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, ...);
+    if (success) { ASAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]); }
+    success = ASExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, ...);
 // </AS:Chanayane>
 ```
-Add the volumetric load inside/adjacent to that block. Follow **`FSAVBOIT`'s** shape rather than `FSExactOIT`'s: it does *not* fold its result into `success`, so a volumetric shader-compile failure disables only this optional feature instead of failing the whole deferred shader load. Add the matching `unloadShaders()` call-out wherever `FSExactOIT::unloadShaders()` is called.
+Add the volumetric load inside/adjacent to that block. Follow **`ASAVBOIT`'s** shape rather than `ASExactOIT`'s: it does *not* fold its result into `success`, so a volumetric shader-compile failure disables only this optional feature instead of failing the whole deferred shader load. Add the matching `unloadShaders()` call-out wherever `ASExactOIT::unloadShaders()` is called.
 
 ### 6. Pipeline integration (`pipeline.cpp` only — one tagged call-out)
 `renderPass(pipeline, screen)` contains the entire bind/raymarch/composite sequence, early-returning internally via `isEnabled()`.
@@ -530,7 +530,7 @@ Add the volumetric load inside/adjacent to that block. Follow **`FSAVBOIT`'s** s
 - It composites into `mRT->screen` right before `renderFinalize()` consumes that same target as its tonemap source (`:8975`/`:8985`), so god-ray scatter goes through the same HDR exposure/tonemap as the rest of the scene — unlike glow, which composites *post*-tonemap.
 - `renderFinalize()` already asserts `!gCubeSnapshot` (`:8943`), so the cube-snapshot/reflection-probe path is excluded for free, and `llviewerdisplay.cpp` is left untouched (one fewer upstream file to tag and re-merge).
 
-`renderPass()` should still guard internally on `gCubeSnapshot`/`sRenderingHUDs` defensively, matching how `FSExactOIT::finishFrame()` takes `cube_snapshot`/`impostor_render`/`mouselook` flags.
+`renderPass()` should still guard internally on `gCubeSnapshot`/`sRenderingHUDs` defensively, matching how `ASExactOIT::finishFrame()` takes `cube_snapshot`/`impostor_render`/`mouselook` flags.
 
 **Texture binding — reuse `LLPipeline::bindDeferredShader()` (`pipeline.cpp:9188`) rather than hand-binding.** This is the biggest implementation shortcut and it validates the design:
 - It binds the full G-buffer (`DEFERRED_DIFFUSE`/`SPECULAR`/`NORMAL_MAP`/`EMISSIVE`/`DEFERRED_DEPTH`, `:9196-9236`), the exposure map, viewport uniforms, **and the sun shadow maps via `bindShadowMaps(shader)`** (see `bindDeferredShaderFast`, `:9178`).
@@ -559,7 +559,7 @@ Per `AGENTS.md`, fold the GL 4.1/macOS findings above into `/doc` (this file, or
 - `indra/newview/llviewershadermgr.cpp` — load call-out in the existing AS block at `:3068-3074`, unload call-out, and the shader-cache-hash line at `:563-564`.
 - `indra/newview/app_settings/settings.xml` — one new tagged setting entry (XML-comment tags).
 - `indra/newview/app_settings/featuretable*.txt` — one tagged line per quality list.
-- `indra/newview/CMakeLists.txt` — register the new `.cpp`/`.h` (it already lists `asstreamkeeper.cpp` at `:98` and `fsexactoit.cpp` at `:122`).
+- `indra/newview/CMakeLists.txt` — register the new `.cpp`/`.h` (it already lists `asstreamkeeper.cpp` at `:98` and `asexactoit.cpp` at `:122`).
 
 **Not touched:** `indra/newview/llviewerdisplay.cpp` — hooking `renderFinalize()` instead of the `display()` call site avoids it entirely.
 

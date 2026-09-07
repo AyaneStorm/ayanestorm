@@ -41,16 +41,6 @@ out vec4 frag_color;
 layout(location = 1) out float integral_out;
 in vec2 vary_fragcoord;
 
-uniform vec3 sun_dir;
-uniform vec3 moon_dir;
-uniform int sun_up_factor;
-uniform vec3 sunlight_color;
-uniform vec3 moonlight_color;
-uniform vec3 moon_horizon_tint;
-uniform float moon_horizon_tint_strength;
-uniform float moon_horizon_elevation;
-uniform float moon_horizon_tint_height;
-uniform float moon_phase_illumination;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
@@ -63,6 +53,9 @@ uniform float scatter_density;
 // altitude fade before being set here.
 uniform float transmittance_density;
 uniform int atlas_debug;
+uniform vec3 as_active_light_dir;
+uniform vec3 as_active_light_color;
+uniform vec4 shadow_clip;
 
 // Raw cumulative integral (R channel, unbounded, pre-color, pre-clamp)
 // carried forward from the previous slice's draw. Unused/unbound when
@@ -71,7 +64,7 @@ uniform sampler2D previous_slice_integral;
 uniform int slice_index;
 
 vec3 getPositionWithNDC(vec3 ndc);
-float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
+float asVolumetricDirectionalShadow(vec3 sample_pos, vec2 pos_screen);
 
 const float MAX_MARCH_DISTANCE = 128.0;
 const float ATLAS_SLICES = 16.0;
@@ -90,10 +83,19 @@ float phaseHG(float cos_theta, float g)
     return (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
 }
 
-float interleavedGradientNoise(vec2 p)
+// Same 4x4 Bayer pattern as asVolumetricLightF.glsl's volumetricJitter(),
+// for consistency between the directional raymarch and the atlas (see
+// doc/volumetric_lighting_bugfix_and_speedup_plan.md item 2.6). Slice index
+// offsets the pattern so the 16 slices do not all dither identically.
+float volumetricJitter(vec2 screen_pos, int slice)
 {
-    const vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
-    return fract(magic.z * fract(dot(p, magic.xy)));
+    const float bayer[16] = float[16](
+         0.0,  8.0,  2.0, 10.0,
+        12.0,  4.0, 14.0,  6.0,
+         3.0, 11.0,  1.0,  9.0,
+        15.0,  7.0, 13.0,  5.0);
+    ivec2 p = (ivec2(screen_pos) + ivec2(slice * 7, slice * 5)) & 3;
+    return (bayer[p.y * 4 + p.x] + 0.5) / 16.0;
 }
 
 void main()
@@ -112,7 +114,7 @@ void main()
 
     vec3 far_position = getPositionWithNDC(vec3(screen_uv * 2.0 - 1.0, 1.0));
     vec3 ray_dir = normalize(far_position);
-    vec3 light_dir = normalize(sun_up_factor == 1 ? sun_dir : moon_dir);
+    vec3 light_dir = as_active_light_dir;
     float phase = phaseHG(dot(ray_dir, light_dir), scatter_asymmetry);
 
     // This slice's own new segment only.
@@ -121,11 +123,11 @@ void main()
     float segment_near = near_fraction * near_fraction * MAX_MARCH_DISTANCE;
     float segment_far = far_fraction * far_fraction * MAX_MARCH_DISTANCE;
     float segment_length = segment_far - segment_near;
-    float jitter = interleavedGradientNoise(
-        screen_uv * vec2(4096.0, 2160.0) + vec2(float(slice_index) * 17.0));
+    float jitter = volumetricJitter(gl_FragCoord.xy, slice_index);
     float sample_distance = mix(segment_near, segment_far, jitter);
     vec3 sample_pos = ray_dir * sample_distance;
-    float visibility = sampleDirectionalShadow(sample_pos, light_dir, screen_uv);
+    float visibility = sample_pos.z <= -shadow_clip.w
+        ? 1.0 : asVolumetricDirectionalShadow(sample_pos, screen_uv);
 
     float new_segment_integral = 0.0;
     if (visibility == visibility)
@@ -204,14 +206,5 @@ void main()
         frag_color = vec4(diagnostic, 1.0);
         return;
     }
-    vec3 light_color = sun_up_factor == 1 ? sunlight_color : moonlight_color;
-    // Match the moon disc and opaque god-ray pass at moonrise/moonset.
-    if (sun_up_factor != 1)
-    {
-        float horizon_tint_amount = (1.0 - smoothstep(0.0, moon_horizon_tint_height, max(moon_horizon_elevation, 0.0)))
-                                  * clamp(moon_horizon_tint_strength, 0.0, 1.0);
-        light_color *= mix(vec3(1.0), clamp(moon_horizon_tint, 0.0, 1.0), horizon_tint_amount);
-        light_color *= clamp(moon_phase_illumination, 0.0, 1.0);
-    }
-    frag_color = vec4(light_color * scatter, transmittance);
+    frag_color = vec4(as_active_light_color * scatter, transmittance);
 }

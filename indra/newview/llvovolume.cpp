@@ -5813,6 +5813,14 @@ void LLVolumeGeometryManager::registerFace(LLSpatialGroup* group, LLFace* facep,
         draw_info->mTextureMatrix = tex_mat;
         draw_info->mModelMatrix = model_mat;
 
+        // <AS:Chanayane> Exact OIT E2-B reads mHasGlow to drop emissive
+        // draws whose glow is known to be zero. Only LLVOPartGroup computes
+        // that; a prim draw only carries TYPE_EMISSIVE when its spatial group
+        // has a glowing face (llvovolume.cpp ~6215), so treat it as "may
+        // glow" rather than the default false, which dropped every prim glow.
+        draw_info->mHasGlow = true;
+        // </AS:Chanayane>
+
         draw_info->mBump  = bump;
         draw_info->mShiny = shiny;
 

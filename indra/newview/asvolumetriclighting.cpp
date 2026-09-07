@@ -39,17 +39,24 @@
 #include "lllightconstants.h"
 #include "llrender.h"
 #include "llshadermgr.h"
+#include "lluiimage.h"
 #include "lldrawable.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
+#include "llviewertexture.h"
+#include "llviewertexturelist.h"
 #include "llvovolume.h"
 #include "llworld.h"
 #include "pipeline.h"
 
 #include <algorithm>
+#include <cmath>
 #include <vector>
 
+#define AS_VOLUMETRIC_PERFORMANCE_LOGGING 0
+
 extern bool gCubeSnapshot;
+extern U32 gFrameCount;
 
 namespace
 {
@@ -60,6 +67,141 @@ LLGLSLShader gASVolumetricAtlasProgram;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
+
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+class ASVolumetricGpuTimer
+{
+public:
+    void begin()
+    {
+        // The viewer's optional one-frame shader profiler also owns the
+        // GL_TIME_ELAPSED target. Skip that diagnostic frame rather than
+        // nesting queries, which OpenGL forbids for the same target.
+        if (LLGLSLShader::sProfileEnabled)
+        {
+            mActive = false;
+            return;
+        }
+
+        if (mQueries[0] == 0)
+        {
+            glGenQueries(QUERY_RING_SIZE, mQueries);
+        }
+
+        if (mPending[mWriteIndex])
+        {
+            GLuint available = GL_FALSE;
+            glGetQueryObjectuiv(mQueries[mWriteIndex], GL_QUERY_RESULT_AVAILABLE,
+                                &available);
+            if (available == GL_FALSE)
+            {
+                mActive = false;
+                return;
+            }
+
+            GLuint64 elapsed_ns = 0;
+            glGetQueryObjectui64v(mQueries[mWriteIndex], GL_QUERY_RESULT,
+                                  &elapsed_ns);
+            mTotalMs += (F64)elapsed_ns / 1000000.0;
+            ++mSamples;
+            mPending[mWriteIndex] = false;
+        }
+
+        glBeginQuery(GL_TIME_ELAPSED, mQueries[mWriteIndex]);
+        mActive = true;
+    }
+
+    void end()
+    {
+        if (!mActive)
+        {
+            return;
+        }
+        glEndQuery(GL_TIME_ELAPSED);
+        mPending[mWriteIndex] = true;
+        mWriteIndex = (mWriteIndex + 1) % QUERY_RING_SIZE;
+        mActive = false;
+    }
+
+    F64 averageMs() const
+    {
+        return mSamples > 0 ? mTotalMs / (F64)mSamples : 0.0;
+    }
+
+    U32 samples() const { return mSamples; }
+
+    void resetTotals()
+    {
+        mTotalMs = 0.0;
+        mSamples = 0;
+    }
+
+    void release()
+    {
+        if (mQueries[0] != 0)
+        {
+            glDeleteQueries(QUERY_RING_SIZE, mQueries);
+        }
+        for (U32 i = 0; i < QUERY_RING_SIZE; ++i)
+        {
+            mQueries[i] = 0;
+            mPending[i] = false;
+        }
+        mWriteIndex = 0;
+        mActive = false;
+        resetTotals();
+    }
+
+private:
+    static constexpr U32 QUERY_RING_SIZE = 4;
+    GLuint mQueries[QUERY_RING_SIZE] = { 0, 0, 0, 0 };
+    bool mPending[QUERY_RING_SIZE] = { false, false, false, false };
+    U32 mWriteIndex = 0;
+    bool mActive = false;
+    F64 mTotalMs = 0.0;
+    U32 mSamples = 0;
+};
+
+ASVolumetricGpuTimer sDirectionalGpuTimer;
+ASVolumetricGpuTimer sAtlasGpuTimer;
+ASVolumetricGpuTimer sLocalLightGpuTimer;
+ASVolumetricGpuTimer sCompositeGpuTimer;
+
+void resetVolumetricGpuTiming()
+{
+    sDirectionalGpuTimer.release();
+    sAtlasGpuTimer.release();
+    sLocalLightGpuTimer.release();
+    sCompositeGpuTimer.release();
+}
+
+void logVolumetricGpuTiming()
+{
+    if (sCompositeGpuTimer.samples() < 120)
+    {
+        return;
+    }
+
+    static const char* tier_names[4] = { "normal", "high", "very_high", "ultra" };
+    LL_INFOS("Volumetric") << "Volumetric GPU timing average: quality="
+                            << tier_names[ASVolumetricLighting::getQualityTier()]
+                            << " samples=" << ASVolumetricLighting::getSampleCount()
+                            << " directional="
+                            << sDirectionalGpuTimer.averageMs() << "ms/"
+                            << sDirectionalGpuTimer.samples()
+                            << " atlas=" << sAtlasGpuTimer.averageMs() << "ms/"
+                            << sAtlasGpuTimer.samples()
+                            << " local=" << sLocalLightGpuTimer.averageMs() << "ms/"
+                            << sLocalLightGpuTimer.samples()
+                            << " composite=" << sCompositeGpuTimer.averageMs() << "ms/"
+                            << sCompositeGpuTimer.samples() << LL_ENDL;
+
+    sDirectionalGpuTimer.resetTotals();
+    sAtlasGpuTimer.resetTotals();
+    sLocalLightGpuTimer.resetTotals();
+    sCompositeGpuTimer.resetTotals();
+}
+#endif
 
 // Match the single-source priority used by atmospheric twilight. This keeps
 // moon-only phase/tint controls off while the solar twilight tail is active.
@@ -122,27 +264,6 @@ F32 calculateMoonPhaseIlluminatedFraction(F32 phase, F32 curvature, F32 softness
     return cached_fraction;
 }
 
-// Keep god-ray horizon tint and phase energy visually consistent with the
-// separately rendered moon disc without altering general moonlight color.
-void applyMoonAppearance(LLGLSLShader& shader)
-{
-    const LLColor4 tint = gSavedSettings.getColor4("ASMoonHorizonTint");
-    const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
-    const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
-    const F32 phase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
-    const F32 curvature = llclamp(gSavedSettings.getF32("ASMoonPhaseCurvature"), 0.25f, 5.f);
-    const F32 softness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f);
-    const F32 illuminated_fraction =
-        calculateMoonPhaseIlluminatedFraction(phase, curvature, softness);
-    shader.uniform3fv(LLStaticHashedString("moon_horizon_tint"), 1, tint.mV);
-    shader.uniform1f(LLStaticHashedString("moon_horizon_tint_strength"),
-                     gSavedSettings.getF32("ASMoonHorizonTintStrength"));
-    shader.uniform1f(LLStaticHashedString("moon_horizon_elevation"), elevation);
-    shader.uniform1f(LLStaticHashedString("moon_horizon_tint_height"),
-                     sinf(llclamp(gSavedSettings.getF32("ASMoonHorizonTintAngle"), 0.5f, 90.f) * DEG_TO_RAD));
-    shader.uniform1f(LLStaticHashedString("moon_phase_illumination"), illuminated_fraction);
-}
-
 struct LocalLight
 {
     LLVector4 center_radius;
@@ -160,7 +281,7 @@ void ASVolumetricLighting::registerUICallbacks()
             static const std::vector<std::string> volumetric_controls = {
                 "RenderVolumetricLightingAlbedo", "RenderVolumetricLightingDensity",
                 "RenderVolumetricLightingSunAsymmetry", "RenderVolumetricLightingAsymmetry",
-                "RenderVolumetricLightingHighQuality", "RenderVolumetricLightingDebug",
+                "RenderVolumetricLightingQuality", "RenderVolumetricLightingDebug",
                 "RenderVolumetricLocalLightsIntensity", "RenderVolumetricLocalLightsMaxCount"
             };
             const std::string control_name = data.asString();
@@ -195,9 +316,14 @@ U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
 bool ASVolumetricLighting::sAtlasConsumerSeen = true;
 bool ASVolumetricLighting::sAtlasProducedThisFrame = false;
 U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
+bool ASVolumetricLighting::sFrameAtlasConsumer = false;
+F32  ASVolumetricLighting::sFrameScatterAlbedo = 0.f;
+F32  ASVolumetricLighting::sFrameScatterAsymmetry = 0.f;
+F32  ASVolumetricLighting::sFrameScatterDensity = 0.f;
+F32  ASVolumetricLighting::sFrameSceneDensity = 0.f;
 
 // Folded into the shader cache hash in llviewershadermgr.cpp alongside
-// FSExactOIT's revision. During active development the shader cache is cleared
+// ASExactOIT's revision. During active development the shader cache is cleared
 // manually, so do not bump this for every edit and trigger an avoidable LTO
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
@@ -205,7 +331,7 @@ const char* ASVolumetricLighting::shaderCacheRevision()
     return "as-volumetric-lighting-v20";
 }
 
-// GLSL 4.00 is the floor here (not FSAVBOIT's 4.30): this feature is
+// GLSL 4.00 is the floor here (not ASAVBOIT's 4.30): this feature is
 // designed to also run on macOS, which caps at OpenGL 4.1 / GLSL 4.10.
 bool ASVolumetricLighting::isSupported()
 {
@@ -221,10 +347,16 @@ bool ASVolumetricLighting::isSupported()
 
 bool ASVolumetricLighting::isEnabled()
 {
+    // Called several times per frame from pipeline.cpp and from
+    // bindTransparencyAtlas() (itself called per-draw from the alpha/
+    // simple/water pools) - LLCachedControl avoids a string-keyed
+    // gSavedSettings lookup on every call (plan section 2.3).
+    static LLCachedControl<bool> volumetric_enabled(gSavedSettings,
+        "RenderVolumetricLighting", false);
     return isSupported()
         && LLPipeline::sRenderDeferred
         && LLPipeline::RenderShadowDetail > 0
-        && gSavedSettings.getBOOL("RenderVolumetricLighting")
+        && volumetric_enabled
         && !ASBackgroundIsolate::isActive();
 }
 
@@ -244,6 +376,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
     gASVolumetricLightProgram.clearPermutations();
     gASVolumetricLightProgram.mShaderFiles.clear();
     gASVolumetricLightProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+    gASVolumetricLightProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricShadowUtil.glsl", GL_FRAGMENT_SHADER));
     gASVolumetricLightProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightF.glsl", GL_FRAGMENT_SHADER));
     gASVolumetricLightProgram.mShaderLevel = shader_level;
 
@@ -272,6 +405,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
         gASVolumetricAtlasProgram.clearPermutations();
         gASVolumetricAtlasProgram.mShaderFiles.clear();
         gASVolumetricAtlasProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+        gASVolumetricAtlasProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricShadowUtil.glsl", GL_FRAGMENT_SHADER));
         gASVolumetricAtlasProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricAtlasF.glsl", GL_FRAGMENT_SHADER));
         gASVolumetricAtlasProgram.mShaderLevel = shader_level;
         success = gASVolumetricAtlasProgram.createShader();
@@ -319,9 +453,10 @@ void ASVolumetricLighting::allocateResources(U32 width, U32 height)
         return;
     }
 
-    // High quality is explicit because full-resolution raymarching is a large
-    // GPU cost increase; the persisted default remains half resolution.
-    const bool full_resolution = gSavedSettings.getBOOL("RenderVolumetricLightingHighQuality");
+    // Full resolution (High tier and above) is explicit because it is a
+    // large GPU cost increase; the persisted default remains half
+    // resolution (Normal).
+    const bool full_resolution = isFullResolution();
     U32 target_width  = llmax((U32)1, full_resolution ? width : width / 2);
     U32 target_height = llmax((U32)1, full_resolution ? height : height / 2);
 
@@ -399,16 +534,49 @@ void ASVolumetricLighting::releaseResources()
     sAtlasConsumerSeen = true;
     sAtlasProducedThisFrame = false;
     sAtlasUnusedFrames = 0;
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+    resetVolumetricGpuTiming();
+#endif
 }
 
 void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
 {
+    // Called per-draw from the alpha/simple/water pools, several times per
+    // frame (plan section 2.3). isEnabled()/getDebugMode() (string-keyed
+    // gSavedSettings lookups), the scatter/density getters, and
+    // resolveLandHeightAgent()'s altitude fade are refreshed once per frame
+    // here (guarded by gFrameCount, since this - not renderPass(), which
+    // early-returns whenever the feature is disabled - is the only call
+    // site guaranteed to run every frame a consumer exists) rather than
+    // recomputed on every draw call.
     static LLStaticHashedString atlas_sampler("asVolumetricAtlas");
     static LLStaticHashedString atlas_enabled("asVolumetricEnabled");
-    const bool atlas_consumer = isEnabled() && getDebugMode() == 0 &&
-        !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
-    sAtlasConsumerSeen = sAtlasConsumerSeen || atlas_consumer;
-    const bool enabled = atlas_consumer && sAtlasProducedThisFrame &&
+    static U32 last_frame = (U32)-1;
+    if (gFrameCount != last_frame)
+    {
+        last_frame = gFrameCount;
+        sFrameAtlasConsumer = isEnabled() && getDebugMode() == 0 &&
+            !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+        if (sFrameAtlasConsumer)
+        {
+            sFrameScatterAlbedo = getScatterAlbedo();
+            sFrameScatterAsymmetry = getScatterAsymmetry(isVolumetricSunSource());
+            sFrameScatterDensity = getScatterDensity();
+
+            // Water is a real surface beyond the atlas's 128 m sky cutoff, so
+            // it evaluates bounded scene extinction itself instead of
+            // consuming the atlas alpha's sky fade. Other consumers optimize
+            // this uniform out.
+            const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
+            const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
+            const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
+            const F32 altitude_fade = 1.f - llclamp((camera_altitude - 10.f) / 90.f,
+                                                    0.f, 1.f);
+            sFrameSceneDensity = sFrameScatterDensity * altitude_fade;
+        }
+    }
+    sAtlasConsumerSeen = sAtlasConsumerSeen || sFrameAtlasConsumer;
+    const bool enabled = sFrameAtlasConsumer && sAtlasProducedThisFrame &&
         sShadersLoaded && sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
     if (enabled)
@@ -427,31 +595,84 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
 
-        shader.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
-        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                          getScatterAsymmetry(isVolumetricSunSource()));
-        shader.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+        shader.uniform1f(LLStaticHashedString("scatter_albedo"), sFrameScatterAlbedo);
+        shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), sFrameScatterAsymmetry);
+        shader.uniform1f(LLStaticHashedString("scatter_density"), sFrameScatterDensity);
 
         // Water is a real surface beyond the atlas's 128 m sky cutoff, so it
         // evaluates bounded scene extinction itself instead of consuming the
         // atlas alpha's sky fade. Other consumers optimize this uniform out.
-        const LLVector3 camera_pos = LLViewerCamera::getInstance()->getOrigin();
-        const F32 ground_height = LLWorld::instance().resolveLandHeightAgent(camera_pos);
-        const F32 camera_altitude = camera_pos.mV[VZ] - ground_height;
-        const F32 altitude_fade = 1.f - llclamp((camera_altitude - 10.f) / 90.f,
-                                                0.f, 1.f);
-        shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"),
-                         getScatterDensity() * altitude_fade);
+        shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"), sFrameSceneDensity);
     }
+}
+
+S32 ASVolumetricLighting::getQualityTier()
+{
+    // 0 Normal, 1 High, 2 Very High, 3 Ultra. See RenderVolumetricLightingQuality
+    // in settings.xml and getSampleCount()/getEdgeSampleMultiplier()/
+    // isFullResolution() below for what each tier actually changes.
+    static LLCachedControl<S32> quality(gSavedSettings,
+        "RenderVolumetricLightingQuality", 0);
+    return llclamp((S32)quality, 0, 3);
+}
+
+bool ASVolumetricLighting::isFullResolution()
+{
+    // Normal is the only tier that halves the target resolution; High,
+    // Very High and Ultra all raymarch at full resolution and differ only
+    // in sample count.
+    return getQualityTier() != 0;
 }
 
 S32 ASVolumetricLighting::getSampleCount()
 {
-    // The explicit quality control keeps the default affordable while letting
-    // users opt into a denser march independently of shadow-map quality.
-    static LLCachedControl<bool> high_quality(gSavedSettings,
-        "RenderVolumetricLightingHighQuality", false);
-    return high_quality ? 32 : 16;
+    // Flat-region step count (plan 4.3). Silhouette texels use
+    // getEdgeSampleMultiplier() via asVolumetricLightF.glsl's
+    // volumetricNearSilhouette(); the composite mixes flat and edge taps
+    // freely since edge steps are a phase-refined exact multiple of flat
+    // steps (round 4 fix for the shell ghost round 3's class-exclusive
+    // gather caused). Normal and High are both flat 16 (edge 32, mult 2),
+    // not the original 8/12: round 5 found flat 8/mult 4 left a faint
+    // outline at Normal's half-res gather, and High flat 8/mult 4 both
+    // brought the outline back AND still showed camera-motion ghosts vs
+    // override 32 - flat 16/mult 2 is the cheapest config that passed T1
+    // and T4 at both qualities. Very High and Ultra are flat 32/64 with no
+    // edge class (see getEdgeSampleMultiplier()) - a simple, predictable
+    // maximum-quality option for users who want it regardless of cost,
+    // added on top of the plan's own 4.3 scope. History:
+    // doc/volumetric_lighting_sample_count_question.md (rounds 1-5).
+    static LLCachedControl<S32> sample_override(gSavedSettings,
+        "RenderVolumetricLightingSampleCountOverride", 0);
+    if (sample_override != 0)
+    {
+        return llclamp((S32)sample_override, 4, 64);
+    }
+    switch (getQualityTier())
+    {
+        case 2: return 32; // Very High
+        case 3: return 64; // Ultra
+        default: return 16; // Normal, High
+    }
+}
+
+S32 ASVolumetricLighting::getEdgeSampleMultiplier()
+{
+    // Edge-class texels march getSampleCount() * this. Must be 1, 2 or 4
+    // (phase refinement of the Bayer 4x4 pattern). Normal/High are flat
+    // 16 -> edge 32 (round 5: lower flat/higher-multiplier combinations at
+    // either quality left an outline and/or camera-motion ghosts against
+    // the override-32 reference). Very High/Ultra (flat 32/64) and any
+    // override above 16 get multiplier 1 - no edge class, flat everywhere.
+    const S32 flat = getSampleCount();
+    if (flat <= 8)
+    {
+        return 4;
+    }
+    if (flat <= 16)
+    {
+        return 2;
+    }
+    return 1;
 }
 
 F32 ASVolumetricLighting::getScatterAlbedo()
@@ -496,6 +717,59 @@ S32 ASVolumetricLighting::getDebugMode()
 {
     static LLCachedControl<S32> debug_mode(gSavedSettings, "RenderVolumetricLightingDebug", 0);
     return debug_mode;
+}
+
+void ASVolumetricLighting::applyDirectionalInvariants(LLGLSLShader& shader,
+                                                       LLPipeline& pipeline,
+                                                       bool sun_source)
+{
+    LLVector3 active_direction(sun_source ? pipeline.mTransformedSunDir
+                                          : pipeline.mTransformedMoonDir);
+    active_direction.normVec();
+
+    LLColor3 active_color = sun_source ? LLColor3(pipeline.mSunDiffuse.mV)
+                                       : LLColor3(pipeline.mMoonDiffuse.mV);
+    if (sun_source)
+    {
+        static LLCachedControl<bool> auto_adjust(gSavedSettings,
+                                                  "RenderSkyAutoAdjustLegacy", false);
+        static LLCachedControl<F32> color_scale(gSavedSettings,
+                                                 "RenderSkyAutoAdjustSunColorScale", 1.f);
+        const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+        if (auto_adjust && sky && sky->canAutoAdjust())
+        {
+            active_color *= (F32)color_scale;
+        }
+    }
+    else
+    {
+        static LLCachedControl<LLColor4> tint(gSavedSettings, "ASMoonHorizonTint");
+        static LLCachedControl<F32> tint_angle(gSavedSettings, "ASMoonHorizonTintAngle", 10.f);
+        static LLCachedControl<F32> tint_strength(gSavedSettings, "ASMoonHorizonTintStrength", 0.f);
+        const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+        const F32 elevation = sky ? sky->getMoonDirection().mV[VZ] : 1.f;
+        const F32 tint_height = sinf(llclamp((F32)tint_angle, 0.5f, 90.f) * DEG_TO_RAD);
+        const F32 height_t = llclamp(llmax(elevation, 0.f) / tint_height, 0.f, 1.f);
+        const F32 smooth_height = height_t * height_t * (3.f - 2.f * height_t);
+        const F32 tint_amount = (1.f - smooth_height) * llclamp((F32)tint_strength, 0.f, 1.f);
+        const LLColor4 tint_value = tint;
+        for (S32 component = 0; component < 3; ++component)
+        {
+            const F32 tint_component = llclamp(tint_value.mV[component], 0.f, 1.f);
+            active_color.mV[component] *= 1.f +
+                (tint_component - 1.f) * tint_amount;
+        }
+        active_color *= getMoonPhaseIlluminatedFraction();
+    }
+
+    constexpr F32 CELESTIAL_ANGULAR_RADIUS = 0.0372f;
+    shader.uniform3fv(LLStaticHashedString("as_active_light_dir"), 1,
+                      active_direction.mV);
+    shader.uniform3fv(LLStaticHashedString("as_active_light_color"), 1,
+                      active_color.mV);
+    shader.uniform2f(LLStaticHashedString("as_disc_sin_cos"),
+                     sinf(CELESTIAL_ANGULAR_RADIUS),
+                     cosf(CELESTIAL_ANGULAR_RADIUS));
 }
 
 void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
@@ -578,6 +852,10 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     // happen - every early return above (disabled, no candidates, debug mode
     // excluded) skips this FBO bind/flush pair entirely, which matters since
     // RenderVolumetricLocalLights defaults off.
+    LL_PROFILE_GPU_ZONE("AS volumetric local lights");
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+    sLocalLightGpuTimer.begin();
+#endif
     sVolumetricTarget.bindTarget();
 
     LLGLEnable blend(GL_BLEND);
@@ -598,6 +876,9 @@ void ASVolumetricLighting::renderLocalLights(LLPipeline& pipeline)
     pipeline.unbindDeferredShader(gASVolumetricLocalLightProgram);
 
     sVolumetricTarget.flush();
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+    sLocalLightGpuTimer.end();
+#endif
 }
 
 // Builds the transparency atlas one tile (slice) at a time instead of all 16
@@ -657,9 +938,10 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     S32 write_buffer = 0;
 
     pipeline.bindDeferredShader(gASVolumetricAtlasProgram);
+    const bool sun_source = isVolumetricSunSource();
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                                         getScatterAsymmetry(isVolumetricSunSource()));
+                                         getScatterAsymmetry(sun_source));
     gASVolumetricAtlasProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
     // Scaled by the altitude fade so the atlas's baked-in scene transmittance
     // (sampled by foliage/glass/water) fades out at altitude in step with
@@ -672,8 +954,7 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     // diagnostic encoding - transmittance is already a naturally-visible
     // [0,1] grayscale value, unlike the dim raw scatter mode 10 amplifies.
     gASVolumetricAtlasProgram.uniform1i(LLStaticHashedString("atlas_debug"), debug_mode == 10 ? 1 : 0);
-    gASVolumetricAtlasProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, isVolumetricSunSource() ? 1 : 0);
-    applyMoonAppearance(gASVolumetricAtlasProgram);
+    applyDirectionalInvariants(gASVolumetricAtlasProgram, pipeline, sun_source);
 
     // This shader-specific sampler has no predefined mTexture[] slot. Keep
     // it on the appended channel proven by the working atlas implementation
@@ -753,24 +1034,69 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
 
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
 {
-    if (!isEnabled() || !sShadersLoaded || gCubeSnapshot || LLPipeline::sRenderingHUDs)
+    const bool enabled = isEnabled();
+    if (!enabled)
+    {
+        // Release the VRAM (29-59 MB, see plan 4b) instead of leaving it
+        // allocated until the next resolution change - isEnabled() already
+        // covers the user setting, shader/deferred/shadow support, and
+        // background isolation, so this only fires while the feature is
+        // genuinely off, not on the transient per-frame conditions below
+        // (cube snapshot, HUD-only render) which do not warrant a release.
+        if (sVolumetricTarget.isComplete() || sTransparencyAtlas.isComplete())
+        {
+            releaseResources();
+        }
+        return;
+    }
+    if (!sShadersLoaded || gCubeSnapshot || LLPipeline::sRenderingHUDs)
     {
         return;
     }
 
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+    // Never label an average with a configuration different from the frames
+    // it contains. Dropping pending diagnostic queries on a live quality or
+    // sample-count change is safe and avoids a mixed transition interval.
+    static bool timing_initialized = false;
+    static S32 timing_quality_tier = 0;
+    static S32 timing_sample_count = 0;
+    const S32 current_quality_tier = getQualityTier();
+    const S32 current_sample_count = getSampleCount();
+    if (timing_initialized &&
+        (current_quality_tier != timing_quality_tier ||
+         current_sample_count != timing_sample_count))
+    {
+        resetVolumetricGpuTiming();
+    }
+    timing_initialized = true;
+    timing_quality_tier = current_quality_tier;
+    timing_sample_count = current_sample_count;
+#endif
+
     // Apply quality changes live. The caller flushes screen before entering
     // this pass, so resizing the AS-owned source target here is safe.
-    static LLCachedControl<bool> high_quality(gSavedSettings,
-        "RenderVolumetricLightingHighQuality", false);
+    const bool full_resolution = isFullResolution();
     const U32 desired_width = llmax((U32)1,
-        high_quality ? screen.getWidth() : screen.getWidth() / 2);
+        full_resolution ? screen.getWidth() : screen.getWidth() / 2);
     const U32 desired_height = llmax((U32)1,
-        high_quality ? screen.getHeight() : screen.getHeight() / 2);
+        full_resolution ? screen.getHeight() : screen.getHeight() / 2);
     if (sVolumetricTarget.getWidth() != desired_width ||
         sVolumetricTarget.getHeight() != desired_height)
     {
         sVolumetricTarget.release();
         sVolumetricTarget.allocate(desired_width, desired_height, GL_RGBA16F);
+    }
+
+    // Lazily re-create the atlas/integral textures if a prior frame
+    // released them because the feature was disabled (plan 4b item 5,
+    // below): allocateResources() derives every target's size from the
+    // screen dimensions the same way this block derives
+    // sVolumetricTarget's, so re-running it here is equivalent to what the
+    // window-resize call site does, just triggered by re-enabling instead.
+    if (!sTransparencyAtlas.isComplete())
+    {
+        allocateResources(screen.getWidth(), screen.getHeight());
     }
 
     if (!sVolumetricTarget.isComplete() || !sTransparencyAtlas.isComplete())
@@ -793,6 +1119,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     LLGLDisable   cull(GL_CULL_FACE);
 
     S32 debug_mode = getDebugMode();
+    const bool sun_source = isVolumetricSunSource();
 
     // Atlas consumers are submitted later in the frame, so this flag records
     // demand observed during the previous frame. Preserve two full unused
@@ -840,6 +1167,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
     // ---- Raymarch pass: sample shadow occlusion along the view ray -------
     {
+        LL_PROFILE_GPU_ZONE("AS volumetric directional");
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sDirectionalGpuTimer.begin();
+#endif
         LLGLDisable blend(GL_BLEND);
 
         sVolumetricTarget.bindTarget();
@@ -855,17 +1186,19 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             gASVolumetricLightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
                                                    &pipeline.mRT->deferredScreen,
                                                    true);
-
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_count"), getSampleCount());
+            gASVolumetricLightProgram.uniform1i(LLStaticHashedString("sample_edge_mult"), getEdgeSampleMultiplier());
+            gASVolumetricLightProgram.uniform2f(LLStaticHashedString("as_target_delta"),
+                1.f / (F32)sVolumetricTarget.getWidth(),
+                1.f / (F32)sVolumetricTarget.getHeight());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("zNear"), LLViewerCamera::getInstance()->getNear());
+            gASVolumetricLightProgram.uniform1f(LLStaticHashedString("zFar"), LLViewerCamera::getInstance()->getFar());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_asymmetry"),
-                                                 getScatterAsymmetry(isVolumetricSunSource()));
+                                                 getScatterAsymmetry(sun_source));
             gASVolumetricLightProgram.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
             gASVolumetricLightProgram.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
-            // bindDeferredShader() does not set this; renderDeferredLighting()'s
-            // callers normally do it per-shader (see softenLightF's soften_shader).
-            gASVolumetricLightProgram.uniform1i(LLShaderMgr::SUN_UP_FACTOR, isVolumetricSunSource() ? 1 : 0);
-            applyMoonAppearance(gASVolumetricLightProgram);
+            applyDirectionalInvariants(gASVolumetricLightProgram, pipeline, sun_source);
 
             pipeline.mScreenTriangleVB->setBuffer();
             pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -874,14 +1207,24 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         }
 
         sVolumetricTarget.flush();
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sDirectionalGpuTimer.end();
+#endif
     }
 
     // Build 16 cumulative camera-to-depth integrals in a 4x4 atlas only while
     // late transparent/fullbright/water submission has recently consumed it.
     if (produce_atlas)
     {
+        LL_PROFILE_GPU_ZONE("AS volumetric atlas");
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sAtlasGpuTimer.begin();
+#endif
         sAtlasProducedThisFrame = renderTransparencyAtlas(
             pipeline, attenuate_scene_strength);
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sAtlasGpuTimer.end();
+#endif
     }
 
     // Add the optional, explicitly unshadowed local-light fog contribution.
@@ -910,17 +1253,25 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // occlusion onto an already bright tonemapped frame).
     auto draw_composite = [&](LLRenderTarget& destination,
                               LLRenderTarget& composite_source,
-                              bool depth_aware,
+                              bool debug_raw,
                               bool replace,
                               bool show_alpha_channel = false,
                               F32 attenuate_scene_strength = 0.f)
     {
+        LL_PROFILE_GPU_ZONE("AS volumetric composite");
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sCompositeGpuTimer.begin();
+#endif
         const bool attenuate_scene = attenuate_scene_strength > 0.f;
 
         destination.bindTarget();
         gASVolumetricCompositeProgram.bind();
         gASVolumetricCompositeProgram.uniform1i(
             LLStaticHashedString("showAlphaChannel"), show_alpha_channel ? 1 : 0);
+        gASVolumetricCompositeProgram.uniform1f(
+            LLStaticHashedString("zNear"), LLViewerCamera::getInstance()->getNear());
+        gASVolumetricCompositeProgram.uniform1f(
+            LLStaticHashedString("zFar"), LLViewerCamera::getInstance()->getFar());
         if (show_alpha_channel)
         {
             // Cancel out postDeferredTonemap.glsl's later exposure multiply
@@ -956,33 +1307,21 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
             gGL.getTexUnit(emissive_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
 
-        // The normal half-resolution composite uses full-resolution opaque
-        // depth to avoid enlarging its silhouette edges into visible stairs.
-        // Diagnostic modes remain plain samples so their output is unchanged.
+        // Full-resolution opaque depth guides the gather at both Normal
+        // (half-res source) and High (full-res source) quality.
         gASVolumetricCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH,
                                                    &pipeline.mRT->deferredScreen,
                                                    true);
-        S32 normal_channel = -1;
-        if (depth_aware)
-        {
-            // The normal guide is only useful for the half-resolution
-            // upsample. Bind deferredScreen attachment 2 explicitly; the
-            // generic LLRenderTarget overload would bind attachment 0.
-            normal_channel = gASVolumetricCompositeProgram.enableTexture(
-                LLShaderMgr::NORMAL_MAP, pipeline.mRT->deferredScreen.getUsage());
-            if (normal_channel > -1)
-            {
-                pipeline.mRT->deferredScreen.bindTexture(
-                    2, normal_channel, LLTexUnit::TFO_POINT);
-                gGL.getTexUnit(normal_channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
-            }
-        }
         gASVolumetricCompositeProgram.uniform2f(
             LLStaticHashedString("emissiveRectDelta"),
             1.f / (F32)composite_source.getWidth(),
             1.f / (F32)composite_source.getHeight());
+        // Debug modes only: plain unfiltered sample, no gather (see the
+        // shader's main()). The real (mode 0) composite always uses the
+        // depth-aware gather now; depthAwareUpsample no longer means
+        // "needs upsample".
         gASVolumetricCompositeProgram.uniform1i(
-            LLStaticHashedString("depthAwareUpsample"), depth_aware ? 1 : 0);
+            LLStaticHashedString("depthAwareUpsample"), debug_raw ? 1 : 0);
 
         LLGLEnable blend(GL_BLEND);
         if (attenuate_scene)
@@ -1006,31 +1345,33 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         // Do not leak temporary scatter/depth bindings into later rendering.
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE);
         gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
-        if (normal_channel > -1)
-        {
-            gASVolumetricCompositeProgram.disableTexture(
-                LLShaderMgr::NORMAL_MAP, pipeline.mRT->deferredScreen.getUsage());
-        }
         if (show_alpha_channel)
         {
             gASVolumetricCompositeProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP);
         }
         gASVolumetricCompositeProgram.unbind();
         destination.flush();
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sCompositeGpuTimer.end();
+#endif
     };
 
-    if (debug_mode == 0)
+    if (debug_mode == 0 || debug_mode == 1)
     {
-        const bool needs_depth_upsample =
-            sVolumetricTarget.getWidth() != screen.getWidth() ||
-            sVolumetricTarget.getHeight() != screen.getHeight();
-        draw_composite(screen, sVolumetricTarget, needs_depth_upsample, false, false,
-                        attenuate_scene_strength);
+        // Mode 0 (real composite) and mode 1 (scatter debug view) both go
+        // through the depth-aware gather; Normal's half-res source and
+        // High's full-res source are both served by it (section 3). Modes
+        // 2/3/10/11 below must stay unfiltered raw values.
+        draw_composite(screen, sVolumetricTarget, false, debug_mode == 1, false,
+                        debug_mode == 0 ? attenuate_scene_strength : 0.f);
     }
     else
     {
         LLRenderTarget& debug_source = (debug_mode == 10 || debug_mode == 11) ?
             sTransparencyAtlas : sVolumetricTarget;
-        draw_composite(screen, debug_source, false, true, debug_mode == 11);
+        draw_composite(screen, debug_source, true, true, debug_mode == 11);
     }
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+    logVolumetricGpuTiming();
+#endif
 }
