@@ -25616,6 +25616,18 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Colorize tint saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>25.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeColorizeLuminance</key>
     <map><key>Comment</key><string>Colorize tint luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitToningEnabled</key>
+    <map><key>Comment</key><string>Enable split toning</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitHighlightsHue</key>
+    <map><key>Comment</key><string>Split-toning highlight hue in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitHighlightsSaturation</key>
+    <map><key>Comment</key><string>Split-toning highlight saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitBalance</key>
+    <map><key>Comment</key><string>Split-toning balance between shadows and highlights</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitShadowsHue</key>
+    <map><key>Comment</key><string>Split-toning shadow hue in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSplitShadowsSaturation</key>
+    <map><key>Comment</key><string>Split-toning shadow saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedHue</key>
     <map><key>Comment</key><string>Red mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSaturation</key>

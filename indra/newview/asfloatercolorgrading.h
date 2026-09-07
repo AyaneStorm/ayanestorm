@@ -35,6 +35,7 @@ private:
     void commitMixer(const std::string& component, LLSliderCtrl* control);
     void resetMixer(const std::string& component);
     void toggleColorize();
+    void refreshSplitToning();
     void refreshPresets(const std::string& select = "Custom");
     void loadPreset();
     void savePreset();
@@ -57,6 +58,10 @@ private:
     ASColorSliderCtrl* mMixerHue;
     ASColorSliderCtrl* mMixerSaturation;
     ASColorSliderCtrl* mMixerLuminance;
+    ASColorSliderCtrl* mSplitHighlightsSaturation;
+    ASColorSliderCtrl* mSplitShadowsSaturation;
+    LLButton* mSplitHighlightsSwatch;
+    LLButton* mSplitShadowsSwatch;
     std::vector<boost::signals2::connection> mSettingConnections;
 };
 

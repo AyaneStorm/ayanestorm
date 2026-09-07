@@ -13,6 +13,8 @@ uniform vec4 as_color_grade_basic2; // whites, blacks, saturation, vibrance
 uniform float as_color_grade_basic3; // global hue radians
 uniform vec3 as_color_grade_bands[8]; // hue radians, saturation, luminance
 uniform vec4 as_color_grade_colorize; // enabled, hue radians, saturation, luminance
+uniform vec4 as_color_grade_split_toning1; // highlight hue/saturation, shadow hue/saturation
+uniform vec2 as_color_grade_split_toning2; // enabled, balance
 uniform vec4 as_color_grade_grain; // amount, size, roughness, color
 uniform float as_color_grade_grain_seed;
 uniform vec3 as_color_grade_snapshot_tile; // zoom, tile x, tile y
@@ -182,6 +184,18 @@ void main()
     }
 
     lab = vec3(L, C * cos(hue), C * sin(hue));
+
+    // Split toning follows Basic and Mixer/Colorize and precedes grain.
+    if (as_color_grade_split_toning2.x > 0.5)
+    {
+        float split_pivot = 0.5 - as_color_grade_split_toning2.y * 0.30;
+        float highlight_tone = smoothstep(split_pivot - 0.25, split_pivot + 0.25, L);
+        float shadow_tone = 1.0 - highlight_tone;
+        vec2 highlight_color = vec2(cos(as_color_grade_split_toning1.x), sin(as_color_grade_split_toning1.x));
+        vec2 shadow_color = vec2(cos(as_color_grade_split_toning1.z), sin(as_color_grade_split_toning1.z));
+        lab.yz += highlight_color * as_color_grade_split_toning1.y * highlight_tone * 0.12;
+        lab.yz += shadow_color * as_color_grade_split_toning1.w * shadow_tone * 0.12;
+    }
     vec3 graded = linearToSrgb(gamutCompress(oklabToLinear(lab)));
 
     float zoom = max(as_color_grade_snapshot_tile.x, 1.0);

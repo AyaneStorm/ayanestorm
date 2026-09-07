@@ -41,7 +41,8 @@ namespace
         { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta" };
     const char* const COMPONENTS[3] = { "Hue", "Saturation", "Luminance" };
     const char* const BUILTIN_PRESETS[] =
-        { "Neutral", "Sepia", "Cyanotype", "Selenium", "Black & White", "Warm Vintage", "Cool Cinematic", "Bleach Bypass", "Vivid" };
+        { "[AS] Neutral", "[AS] Sepia", "[AS] Cyanotype", "[AS] Selenium", "[AS] Black & White",
+          "[AS] Warm Vintage", "[AS] Cool Cinematic", "[AS] Bleach Bypass", "[AS] Vivid" };
 
     const LLStaticHashedString sLinearEnabled("as_color_grade_linear_enabled");
     const LLStaticHashedString sExposure("as_color_grade_exposure");
@@ -51,6 +52,8 @@ namespace
     const LLStaticHashedString sBasic3("as_color_grade_basic3");
     const LLStaticHashedString sBands("as_color_grade_bands");
     const LLStaticHashedString sColorize("as_color_grade_colorize");
+    const LLStaticHashedString sSplitToning1("as_color_grade_split_toning1");
+    const LLStaticHashedString sSplitToning2("as_color_grade_split_toning2");
     const LLStaticHashedString sGrain("as_color_grade_grain");
     const LLStaticHashedString sGrainSeed("as_color_grade_grain_seed");
     const LLStaticHashedString sSnapshotTile("as_color_grade_snapshot_tile");
@@ -79,20 +82,21 @@ namespace
     void applyBuiltinPreset(const std::string& name)
     {
         ASColorGrading::resetAll();
+        const std::string preset = name.compare(0, 5, "[AS] ") == 0 ? name.substr(5) : name;
         std::map<std::string, F32> values;
-        if (name == "Sepia")
+        if (preset == "Sepia")
             values = { {"ASColorGradeColorizeHue",35.f}, {"ASColorGradeColorizeSaturation",25.f},
                 {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeExposure",.1f},
                 {"ASColorGradeBrightness",4.f}, {"ASColorGradeContrast",12.f}, {"ASColorGradeHighlights",-15.f},
                 {"ASColorGradeShadows",12.f}, {"ASColorGradeBlacks",-8.f}, {"ASColorGradeGrainAmount",18.f}, {"ASColorGradeGrainSize",45.f},
                 {"ASColorGradeGrainRoughness",65.f}, {"ASColorGradeGrainColor",0.f} };
-        else if (name == "Cyanotype")
+        else if (preset == "Cyanotype")
             values = { {"ASColorGradeColorizeHue",215.f}, {"ASColorGradeColorizeSaturation",25.f},
                 {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeContrast",18.f},
                 {"ASColorGradeHighlights",-10.f}, {"ASColorGradeShadows",-8.f}, {"ASColorGradeBlacks",-12.f},
                 {"ASColorGradeGrainAmount",12.f}, {"ASColorGradeGrainSize",38.f},
                 {"ASColorGradeGrainRoughness",58.f}, {"ASColorGradeGrainColor",0.f} };
-        else if (name == "Selenium")
+        else if (preset == "Selenium")
             values = { {"ASColorGradeContrast",21.f}, {"ASColorGradeHighlights",12.f},
                 {"ASColorGradeShadows",11.f}, {"ASColorGradeWhites",9.f}, {"ASColorGradeBlacks",2.f},
                 {"ASColorGradeTemperature",54.f}, {"ASColorGradeTint",8.f}, {"ASColorGradeVibrance",12.f},
@@ -100,29 +104,29 @@ namespace
                 {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeGrainAmount",52.f},
                 {"ASColorGradeGrainSize",18.f}, {"ASColorGradeGrainRoughness",56.f},
                 {"ASColorGradeGrainColor",10.f} };
-        else if (name == "Black & White")
+        else if (preset == "Black & White")
             values = { {"ASColorGradeSaturation",-100.f}, {"ASColorGradeContrast",12.f}, {"ASColorGradeShadows",8.f},
                 {"ASColorGradeBlacks",-10.f}, {"ASColorGradeGrainAmount",10.f}, {"ASColorGradeGrainColor",0.f} };
-        else if (name == "Warm Vintage")
+        else if (preset == "Warm Vintage")
             values = { {"ASColorGradeTemperature",55.f}, {"ASColorGradeTint",8.f}, {"ASColorGradeContrast",-8.f},
                 {"ASColorGradeHighlights",-25.f}, {"ASColorGradeShadows",18.f}, {"ASColorGradeBlacks",8.f},
                 {"ASColorGradeSaturation",-18.f}, {"ASColorGradeVibrance",12.f}, {"ASColorGradeGrainAmount",20.f},
                 {"ASColorGradeGrainSize",55.f}, {"ASColorGradeGrainRoughness",70.f}, {"ASColorGradeGrainColor",10.f} };
-        else if (name == "Cool Cinematic")
+        else if (preset == "Cool Cinematic")
             values = { {"ASColorGradeTemperature",-35.f}, {"ASColorGradeTint",-8.f}, {"ASColorGradeContrast",18.f},
                 {"ASColorGradeHighlights",-18.f}, {"ASColorGradeShadows",-12.f}, {"ASColorGradeBlacks",-12.f},
                 {"ASColorGradeSaturation",-8.f}, {"ASColorGradeVibrance",20.f}, {"ASColorGradeOrangeSaturation",10.f},
                 {"ASColorGradeOrangeLuminance",5.f}, {"ASColorGradeAquaSaturation",15.f},
                 {"ASColorGradeBlueSaturation",20.f}, {"ASColorGradeBlueLuminance",-8.f} };
-        else if (name == "Bleach Bypass")
+        else if (preset == "Bleach Bypass")
             values = { {"ASColorGradeSaturation",-65.f}, {"ASColorGradeContrast",35.f}, {"ASColorGradeHighlights",-10.f},
                 {"ASColorGradeShadows",-20.f}, {"ASColorGradeBlacks",-25.f}, {"ASColorGradeGrainAmount",16.f},
                 {"ASColorGradeGrainRoughness",60.f}, {"ASColorGradeGrainColor",0.f} };
-        else if (name == "Vivid")
+        else if (preset == "Vivid")
             values = { {"ASColorGradeContrast",10.f}, {"ASColorGradeSaturation",8.f},
                 {"ASColorGradeVibrance",35.f}, {"ASColorGradeHighlights",-8.f}, {"ASColorGradeShadows",8.f} };
         for (const auto& value : values) gSavedSettings.setF32(value.first, value.second);
-        if (name == "Sepia" || name == "Cyanotype" || name == "Selenium")
+        if (preset == "Sepia" || preset == "Cyanotype" || preset == "Selenium")
             gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", true);
     }
 
@@ -137,6 +141,10 @@ namespace
         else if (name == "ASColorGradeHue") { minimum = -180.f; maximum = 180.f; }
         else if (name == "ASColorGradeColorizeHue") { minimum = 0.f; maximum = 360.f; }
         else if (name == "ASColorGradeColorizeSaturation") { minimum = 0.f; maximum = 100.f; }
+        else if (name == "ASColorGradeSplitHighlightsHue" || name == "ASColorGradeSplitShadowsHue")
+            { minimum = 0.f; maximum = 360.f; }
+        else if (name == "ASColorGradeSplitHighlightsSaturation" || name == "ASColorGradeSplitShadowsSaturation")
+            { minimum = 0.f; maximum = 100.f; }
         else if (name == "ASColorGradeTemperature") { minimum = -200.f; maximum = 200.f; }
         else if (name == "ASColorGradeTint") { minimum = -200.f; maximum = 200.f; }
         else if (name.find("ASColorGradeGrain") == 0) { minimum = 0.f; maximum = 100.f; }
@@ -210,7 +218,9 @@ const std::vector<std::string>& ASColorGrading::settingNames()
             "ASColorGradeBlacks", "ASColorGradeWhites", "ASColorGradeSaturation", "ASColorGradeVibrance",
             "ASColorGradeHue", "ASColorGradeGrainAmount", "ASColorGradeGrainSize",
             "ASColorGradeGrainRoughness", "ASColorGradeGrainColor", "ASColorGradeColorizeHue",
-            "ASColorGradeColorizeSaturation", "ASColorGradeColorizeLuminance" };
+            "ASColorGradeColorizeSaturation", "ASColorGradeColorizeLuminance",
+            "ASColorGradeSplitHighlightsHue", "ASColorGradeSplitHighlightsSaturation",
+            "ASColorGradeSplitBalance", "ASColorGradeSplitShadowsHue", "ASColorGradeSplitShadowsSaturation" };
         names.assign(std::begin(basic), std::end(basic));
         for (S32 band = 0; band < BAND_COUNT; ++band)
             for (const char* component : COMPONENTS)
@@ -295,6 +305,14 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
         llclamp(gSavedSettings.getF32("ASColorGradeColorizeHue"), 0.f, 360.f) * DEG_TO_RAD,
         llclamp(gSavedSettings.getF32("ASColorGradeColorizeSaturation") * .01f, 0.f, 1.f),
         normalized("ASColorGradeColorizeLuminance"));
+    sFinalProgram.uniform4f(sSplitToning1,
+        llclamp(gSavedSettings.getF32("ASColorGradeSplitHighlightsHue"), 0.f, 360.f) * DEG_TO_RAD,
+        llclamp(gSavedSettings.getF32("ASColorGradeSplitHighlightsSaturation") * .01f, 0.f, 1.f),
+        llclamp(gSavedSettings.getF32("ASColorGradeSplitShadowsHue"), 0.f, 360.f) * DEG_TO_RAD,
+        llclamp(gSavedSettings.getF32("ASColorGradeSplitShadowsSaturation") * .01f, 0.f, 1.f));
+    sFinalProgram.uniform2f(sSplitToning2,
+        gSavedSettings.getBOOL("ASColorGradeSplitToningEnabled") ? 1.f : 0.f,
+        normalized("ASColorGradeSplitBalance"));
     sFinalProgram.uniform4f(sGrain, llclamp(gSavedSettings.getF32("ASColorGradeGrainAmount") * .01f, 0.f, 1.f),
         llclamp(gSavedSettings.getF32("ASColorGradeGrainSize") * .01f, 0.f, 1.f),
         llclamp(gSavedSettings.getF32("ASColorGradeGrainRoughness") * .01f, 0.f, 1.f),
@@ -319,6 +337,7 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
 void ASColorGrading::resetAll()
 {
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeEnabled")) control->resetToDefault(true);
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled")) control->resetToDefault(true);
     for (const std::string& name : settingNames())
         if (LLControlVariable* control = gSavedSettings.getControl(name)) control->resetToDefault(true);
 }
@@ -342,7 +361,10 @@ std::vector<std::string> ASColorGrading::listPresets()
 
 bool ASColorGrading::isReadOnlyPreset(const std::string& name)
 {
-    return std::find(std::begin(BUILTIN_PRESETS), std::end(BUILTIN_PRESETS), name) != std::end(BUILTIN_PRESETS);
+    return std::any_of(std::begin(BUILTIN_PRESETS), std::end(BUILTIN_PRESETS), [&name](const char* builtin)
+    {
+        return LLStringUtil::compareInsensitive(name, builtin) == 0;
+    });
 }
 
 bool ASColorGrading::savePreset(const std::string& name)
@@ -351,13 +373,21 @@ bool ASColorGrading::savePreset(const std::string& name)
     LLSD data; data["version"] = 1; data["name"] = name;
     for (const std::string& setting : settingNames()) data["values"][setting] = gSavedSettings.getLLSD(setting);
     data["values"]["ASColorGradeColorizeEnabled"] = gSavedSettings.getBOOL("ASColorGradeColorizeEnabled");
+    data["values"]["ASColorGradeSplitToningEnabled"] = gSavedSettings.getBOOL("ASColorGradeSplitToningEnabled");
     llofstream file(presetDir() + gDirUtilp->getDirDelimiter() + LLURI::escape(name) + ".xml");
     return file.is_open() && LLSDSerialize::toPrettyXML(data, file);
 }
 
 bool ASColorGrading::loadPreset(const std::string& name)
 {
-    if (isReadOnlyPreset(name)) { applyBuiltinPreset(name); return true; }
+    for (const char* builtin : BUILTIN_PRESETS)
+    {
+        if (LLStringUtil::compareInsensitive(name, builtin) == 0)
+        {
+            applyBuiltinPreset(builtin);
+            return true;
+        }
+    }
     llifstream file(presetDir() + gDirUtilp->getDirDelimiter() + LLURI::escape(name) + ".xml");
     LLSD data;
     if (!file.is_open() || LLSDSerialize::fromXML(data, file) == LLSDParser::PARSE_FAILURE ||
@@ -365,6 +395,8 @@ bool ASColorGrading::loadPreset(const std::string& name)
     LLSD values = data["values"];
     if (values.has("ASColorGradeColorizeEnabled") && !values["ASColorGradeColorizeEnabled"].isBoolean()) return false;
     const bool colorize = values.has("ASColorGradeColorizeEnabled") && values["ASColorGradeColorizeEnabled"].asBoolean();
+    if (values.has("ASColorGradeSplitToningEnabled") && !values["ASColorGradeSplitToningEnabled"].isBoolean()) return false;
+    const bool split_toning = values.has("ASColorGradeSplitToningEnabled") && values["ASColorGradeSplitToningEnabled"].asBoolean();
     std::map<std::string, F32> validated;
     for (const std::string& setting : settingNames())
     {
@@ -376,6 +408,7 @@ bool ASColorGrading::loadPreset(const std::string& name)
     resetAll();
     for (const auto& entry : validated) gSavedSettings.setF32(entry.first, entry.second);
     gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", colorize);
+    gSavedSettings.setBOOL("ASColorGradeSplitToningEnabled", split_toning);
     return true;
 }
 
