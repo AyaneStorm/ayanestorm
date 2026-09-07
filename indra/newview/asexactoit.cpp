@@ -905,7 +905,13 @@ void ASExactOIT::prepareCaptureBuffers()
     // single-level GL_R32UI, so GL_RED_INTEGER/GL_UNSIGNED_INT matches their
     // storage format exactly (same pairing the buffer clears elsewhere in
     // this file already use for R32UI data).
+    // Linux GL headers expose glClearTexImage as a function symbol, while
+    // Windows uses the nullable entry point loaded by LLGLManager.
+#if LL_LINUX
+    if (gGLManager.mGLVersion >= 4.39f)
+#else
     if (glClearTexImage)
+#endif
     {
         const U32 empty_texel = 0xffffffffu;
         const U32 zero_texel = 0u;
@@ -1953,7 +1959,13 @@ void ASExactOIT::allocateNodePool(U32 width, U32 height, bool capture_images_rea
     // persistently mapped; the CPU never touches the control buffer above.
     sResources.readback = 0;
     sResources.readbackMapped = nullptr;
-    if (gGLManager.mGLVersion >= 4.39f && glBufferStorage && glMapBufferRange)
+    // Linux GL headers expose these as function symbols; Windows resolves
+    // nullable entry points at runtime.
+    if (gGLManager.mGLVersion >= 4.39f
+#if !LL_LINUX
+        && glBufferStorage && glMapBufferRange
+#endif
+       )
     {
         const GLbitfield flags = GL_MAP_READ_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
         glGenBuffers(1, &sResources.readback);
