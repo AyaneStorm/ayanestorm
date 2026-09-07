@@ -37,7 +37,7 @@ class LLGLSLShader;
 //
 // Firestorm/LL files only ever call the statics below; all state and shader
 // objects live here so the feature can be extracted cleanly, matching the
-// shape of FSExactOIT/FSAVBOIT (see fsexactoit.h).
+// shape of ASExactOIT/ASAVBOIT (see asexactoit.h).
 class ASVolumetricLighting
 {
 public:
@@ -49,7 +49,7 @@ public:
     static const char* shaderCacheRevision();
 
     // GL/GLSL floor check only (no settings read). GLSL 4.00 is the floor,
-    // deliberately lower than FSAVBOIT's GLSL 4.30 floor: this feature is
+    // deliberately lower than ASAVBOIT's GLSL 4.30 floor: this feature is
     // designed to also run on macOS, which caps at OpenGL 4.1 / GLSL 4.10.
     static bool isSupported();
 
@@ -76,7 +76,12 @@ public:
     // Bind the cumulative depth atlas used by transparent material shaders.
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
+    // 0 Normal, 1 High, 2 Very High, 3 Ultra (RenderVolumetricLightingQuality).
+    static S32 getQualityTier();
+    // True for High/Very High/Ultra (full-resolution target); false for Normal.
+    static bool isFullResolution();
     static S32 getSampleCount();
+    static S32 getEdgeSampleMultiplier();
     static F32 getScatterAlbedo();
     static F32 getScatterAsymmetry(bool sun_up);
     static F32 getScatterDensity();
@@ -93,6 +98,8 @@ public:
     static S32 getDebugMode();
 
 private:
+    static void applyDirectionalInvariants(LLGLSLShader& shader, LLPipeline& pipeline,
+                                           bool sun_source);
     static void renderLocalLights(LLPipeline& pipeline);
     static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
@@ -131,6 +138,19 @@ private:
     static bool sAtlasConsumerSeen;
     static bool sAtlasProducedThisFrame;
     static U32 sAtlasUnusedFrames;
+
+    // Per-frame cache for bindTransparencyAtlas(), refreshed once per frame
+    // (gFrameCount-guarded) inside bindTransparencyAtlas() itself instead of
+    // per-draw (plan section 2.3): isEnabled()/getDebugMode() (string-keyed
+    // gSavedSettings lookups), getScatterAlbedo/Asymmetry/Density(), and
+    // resolveLandHeightAgent()'s altitude fade, which together are
+    // otherwise recomputed on every alpha/simple/water pool draw call that
+    // consumes the atlas.
+    static bool sFrameAtlasConsumer;
+    static F32  sFrameScatterAlbedo;
+    static F32  sFrameScatterAsymmetry;
+    static F32  sFrameScatterDensity;
+    static F32  sFrameSceneDensity;
 };
 
 #endif // AS_VOLUMETRICLIGHTING_H

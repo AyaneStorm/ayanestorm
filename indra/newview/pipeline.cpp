@@ -27,9 +27,9 @@
 #include "llviewerprecompiledheaders.h"
 
 // <AS:Chanayane> Exact OIT and AVBOIT
-#include "fsexactoit.h"
-#include "fsavboit.h"
-#include "fsoitdispatcher.h"
+#include "asexactoit.h"
+#include "asavboit.h"
+#include "asoitdispatcher.h"
 // </AS:Chanayane>
 
 // <AS:Chanayane> Optional volumetric lighting
@@ -42,6 +42,9 @@
 
 // <AS:Chanayane> Optional screen-space vignette.
 #include "asvignette.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Optional camera chromatic aberration.
+#include "aschromaticaberration.h"
 // </AS:Chanayane>
 
 // <AS:Chanayane> Self-lighting floater background isolate pass.
@@ -85,6 +88,9 @@
 // newview includes
 #include "llagent.h"
 #include "llagentcamera.h"
+// <AS:Chanayane> Viewer-local photographic color grading.
+#include "ascolorgrading.h"
+// </AS:Chanayane>
 #include "llappviewer.h"
 #include "lltexturecache.h"
 #include "lltexturefetch.h"
@@ -879,7 +885,7 @@ void LLPipeline::resizeScreenTexture()
 // [/SL:KB]
         {
             // <AS:Chanayane> Retain the large Exact OIT node pool across viewport-only resizing.
-            FSExactOIT::retainNodePoolOnNextRelease();
+            ASExactOIT::retainNodePoolOnNextRelease();
             // </AS:Chanayane>
             releaseScreenBuffers();
             releaseSunShadowTargets();
@@ -1039,8 +1045,8 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("non-cube allocations"); // <FS:Beq/> improve Tracy scoping 
 
         // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
-        FSExactOIT::allocateResources(resX, resY);
-        FSAVBOIT::allocateResources(resX, resY);
+        ASExactOIT::allocateResources(resX, resY);
+        ASAVBOIT::allocateResources(resX, resY);
         // </AS:Chanayane>
 
         // <AS:Chanayane> Allocate volumetric lighting resources alongside Exact OIT.
@@ -1452,8 +1458,8 @@ void LLPipeline::releaseScreenBuffers()
     mRT->deferredScreen.release();
     mRT->deferredLight.release();
     // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
-    FSAVBOIT::releaseResources();
-    FSExactOIT::releaseResources();
+    ASAVBOIT::releaseResources();
+    ASExactOIT::releaseResources();
     // </AS:Chanayane>
     // <AS:Chanayane> Release volumetric lighting resources.
     ASVolumetricLighting::releaseResources();
@@ -8067,6 +8073,10 @@ void LLPipeline::tonemap(LLRenderTarget* src, LLRenderTarget* dst, bool gamma_co
         shader->uniform1i(tonemap_type, tonemap_type_setting);
         shader->uniform1f(tonemap_mix, psky->getTonemapMix(should_auto_adjust()));
 
+        // <AS:Chanayane> Bind scene-linear exposure and white balance.
+        ASColorGrading::bindLinearUniforms(*shader, gSnapshotNoPost);
+        // </AS:Chanayane>
+
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
@@ -8095,6 +8105,9 @@ void LLPipeline::gammaCorrect(LLRenderTarget* src, LLRenderTarget* dst)
         shader.bind();
         shader.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, src, false, LLTexUnit::TFO_POINT);
         shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (GLfloat)src->getWidth(), (GLfloat)src->getHeight());
+        // <AS:Chanayane> Bind scene-linear grading on the non-HDR path.
+        ASColorGrading::bindLinearUniforms(shader, gSnapshotNoPost);
+        // </AS:Chanayane>
 
         mScreenTriangleVB->setBuffer();
         mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -9156,6 +9169,14 @@ void LLPipeline::renderFinalize()
     // <FS:Beq> Restore shader post proc for Vignette
     LLRenderTarget* auxActiveBuffer = sourceBuffer;
     LLRenderTarget* auxTargetBuffer = RenderFSAAType ? &mRT->screen : &mPostPingMap;
+    // <AS:Chanayane> Apply camera RGB separation before RLVa and snapshot frames.
+    // The post-process spare remains distinct regardless of DoF/AA parity.
+    if (ASChromaticAberration::render(*auxActiveBuffer, *targetBuffer, *mScreenTriangleVB))
+    {
+        std::swap(auxActiveBuffer, targetBuffer);
+        auxTargetBuffer = targetBuffer;
+    }
+    // </AS:Chanayane>
 // [RLVa:KB] - @setsphere
     if (RlvActions::hasBehaviour(RLV_BHVR_SETSPHERE))
     {
@@ -9180,6 +9201,16 @@ void LLPipeline::renderFinalize()
 
     sourceBuffer = auxActiveBuffer;
     // </FS:Beq>
+    // <AS:Chanayane> Move optical effects into the graded source only while
+    // grading is active. Disabled and Before-preview rendering retain the
+    // original direct-framebuffer order below.
+    const bool color_grading_active = ASColorGrading::isActive();
+    if (color_grading_active)
+    {
+        ASLensFlare::render(*sourceBuffer, mRT->deferredScreen, *mScreenTriangleVB);
+        ASVignette::render(*sourceBuffer, *mScreenTriangleVB);
+    }
+    // </AS:Chanayane>
     if (RenderBufferVisualization > -1)
     {
         switch (RenderBufferVisualization)
@@ -9216,6 +9247,12 @@ void LLPipeline::renderFinalize()
 
     // Present the screen target.
 
+    // <AS:Chanayane> Present through the grading shader when active; the
+    // original presentation remains the exact fallback and neutral path.
+    const bool color_graded = color_grading_active &&
+        ASColorGrading::present(*sourceBuffer, mRT->deferredScreen, *mScreenTriangleVB);
+    if (!color_graded)
+    {
     gDeferredPostNoDoFNoiseProgram.bind(); // Add noise as part of final render to screen pass to avoid damaging other post effects
 
     // Whatever is last in the above post processing chain should _always_ be rendered directly here.  If not, expect problems.
@@ -9231,10 +9268,15 @@ void LLPipeline::renderFinalize()
     }
 
     gDeferredPostNoDoFNoiseProgram.unbind();
+    }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> Composite depth-occluded sun/moon lens flares over the
     // completed 3D image, before snapshot guides and other UI overlays.
-    ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    if (!color_grading_active)
+    {
+        ASLensFlare::render(mRT->deferredScreen, *mScreenTriangleVB);
+    }
     // </AS:Chanayane>
 
     // <AS:Chanayane> Self-lighting floater: paint the isolate-mode solid
@@ -9250,7 +9292,10 @@ void LLPipeline::renderFinalize()
 
     // <AS:Chanayane> Darken the completed 3D image with the optional vignette,
     // after additive lens flares and before snapshot guides and UI overlays.
-    ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
+    if (!color_grading_active)
+    {
+        ASVignette::render(sourceBuffer->getWidth(), sourceBuffer->getHeight(), *mScreenTriangleVB);
+    }
     // </AS:Chanayane>
 
     gGL.setSceneBlendType(LLRender::BT_ALPHA);
@@ -10065,7 +10110,7 @@ void LLPipeline::renderDeferredLighting()
         LLGLDisable blend(GL_BLEND);
 
         // <AS:Chanayane> Reset independent OIT renderer state before transparency.
-        FSOITDispatcher::beginFrame();
+        ASOITDispatcher::beginFrame();
         // </AS:Chanayane>
 
         pushRenderTypeMask();
@@ -10108,7 +10153,7 @@ void LLPipeline::renderDeferredLighting()
 // fallback only when its forward-rendering input was produced above.
     if (ASVolumetricLighting::getDebugMode() == 0)
     {
-        FSOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
+        ASOITDispatcher::finishFrame(*this, mRT->screen, *mScreenTriangleVB,
                                      gCubeSnapshot, sImpostorRender,
                                      gAgentCamera.cameraMouselook());
         // <AS:Chanayane> Prepare and render Weather only after every ordinary
@@ -12019,6 +12064,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
     LL_DEBUGS_ONCE("AvatarRenderPipeline") << "Avatar " << avatar->getID()
                               << " is " << ( too_complex ? "" : "not ") << "too complex"
                               << LL_ENDL;
+    // <FS> FIRE-34340-2 RLV silhouettes need full avatar geometry, not jelly-doll-only
+    bool rlv_silhouette = !for_profile && !preview_avatar && avatar->isRlvSilhouette();
+    // </FS>
 
     pushRenderTypeMask();
 
@@ -12283,7 +12331,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         LLGLDisable blend(GL_BLEND);
 
-        if (visually_muted || too_complex)
+        // <FS> FIRE-34340-2 RLV silhouettes need a solid color baked into the impostor too
+        if (visually_muted || too_complex || rlv_silhouette)
+        // </FS>
         {
             gGL.setColorMask(true, true);
         }
@@ -12308,7 +12358,9 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
 
         gDebugProgram.bind();
 
-        if (visually_muted)
+        // <FS> FIRE-34340-2 Use getMutedAVColor() for all muted/silhouette avatars
+        if (visually_muted || rlv_silhouette)
+        // </FS>
         {   // Visually muted avatar
             LLColor4 muted_color(avatar->getMutedAVColor());
             LL_DEBUGS_ONCE("AvatarRenderPipeline") << "Avatar " << avatar->getID() << " MUTED set solid color " << muted_color << LL_ENDL;

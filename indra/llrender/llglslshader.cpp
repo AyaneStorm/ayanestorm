@@ -458,8 +458,10 @@ bool LLGLSLShader::createShader()
 // <AS:Chanayane> OIT capture libraries must not receive a second indexed-texture helper.
             // GLuint shaderhandle = LLShaderMgr::instance()->loadShaderFile((*fileIter).first, mShaderLevel, (*fileIter).second, &mDefines, mFeatures.mIndexedTextureChannels);
             const bool oit_capture_library =
-                (*fileIter).first == "deferred/exactOITCaptureF.glsl" ||
-                (*fileIter).first == "deferred/avboitCaptureF.glsl";
+                (*fileIter).first == "deferred/asExactOITCaptureF.glsl" ||
+                (*fileIter).first == "deferred/asExactOITCaptureSubgroupF.glsl" ||
+                (*fileIter).first == "deferred/asExactOITReserveSubgroupF.glsl" ||
+                (*fileIter).first == "deferred/asAVBOITCaptureF.glsl";
             const S32 texture_index_channels =
                 oit_capture_library ? -1 : mFeatures.mIndexedTextureChannels;
             GLuint shaderhandle = LLShaderMgr::instance()->loadShaderFile((*fileIter).first, mShaderLevel, (*fileIter).second, &mDefines, texture_index_channels);

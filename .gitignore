@@ -135,4 +135,5 @@ checks.json
 /*.shader
 
 .phoenix-firestorm-master
-
+.MSMBeyondHardShadowsCode
+lut/

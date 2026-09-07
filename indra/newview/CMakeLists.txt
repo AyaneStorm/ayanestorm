@@ -94,6 +94,12 @@ set(viewer_SOURCE_FILES
     aoset.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Viewer-local photographic color grading.
+    ascolorslider.cpp
+    ascolorgrading.cpp
+    ascolorlut.cpp
+    asfloatercolorgrading.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
@@ -108,6 +114,7 @@ set(viewer_SOURCE_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.cpp
+    aschromaticaberration.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.cpp
@@ -153,9 +160,9 @@ set(viewer_SOURCE_FILES
     fscontactsfriendsmenu.cpp
     fsdata.cpp
     fsdroptarget.cpp
-    fsavboit.cpp
-    fsoitdispatcher.cpp
-    fsexactoit.cpp
+    asavboit.cpp
+    asoitdispatcher.cpp
+    asexactoit.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
     fsfavoritegroups.cpp
@@ -997,6 +1004,12 @@ set(viewer_HEADER_FILES
     aoset.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Viewer-local photographic color grading.
+    ascolorslider.h
+    ascolorgrading.h
+    ascolorlut.h
+    asfloatercolorgrading.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
     # </AS:Chanayane>
@@ -1011,6 +1024,7 @@ set(viewer_HEADER_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local vignette module.
     asvignette.h
+    aschromaticaberration.h
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.h
@@ -1058,9 +1072,9 @@ set(viewer_HEADER_FILES
     fscontactsfriendsmenu.h
     fsdata.h
     fsdroptarget.h
-    fsavboit.h
-    fsoitdispatcher.h
-    fsexactoit.h
+    asavboit.h
+    asoitdispatcher.h
+    asexactoit.h
     fsexportperms.h
     fsfloateraddtocontactset.h
     fsfavoritegroups.h

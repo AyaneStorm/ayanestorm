@@ -28,6 +28,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Viewer-local color grading floater.
+#include "asfloatercolorgrading.h"
+// </AS:Chanayane>
+
 // <AS:Chanayane> Register viewer-local aurora settings callbacks.
 #include "asaurora.h"
 #include "ashorizonscattering.h"
@@ -42,6 +46,9 @@
 // </AS:Chanayane>
 // <AS:Chanayane> Register viewer-local vignette callbacks.
 #include "asvignette.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Optional camera chromatic aberration.
+#include "aschromaticaberration.h"
 // </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llviewerfloaterreg.h"
@@ -469,12 +476,12 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("emoji_picker", "floater_emoji_picker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterEmojiPicker>);
     LLFloaterReg::add("emoji_complete", "floater_emoji_complete.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterEmojiComplete>);
 	
-	// <FS:William_W:EnvFileReplace> [PhotoTools] Use FS specific XML for Fixed Environment Floater
-    //LLFloaterReg::add("env_fixed_environmentent_water", "floater_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>);   // Commenting out original LL line
-    LLFloaterReg::add("env_fixed_environmentent_water", "floater_fs_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentWater>);  // Using FS specific floater XML
+    LLFloaterReg::add("env_fixed_environmentent_water", "floater_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>);
+    LLFloaterReg::add("env_fixed_environmentent_sky", "floater_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>);
     // <FS:William_W:EnvFileReplace> [PhotoTools] Use FS specific XML for Fixed Environment Floater
-    //LLFloaterReg::add("env_fixed_environmentent_sky", "floater_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>);   // Commenting out original LL line	
-    LLFloaterReg::add("env_fixed_environmentent_sky", "floater_fs_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>); // Using FS specific floater XML
+    LLFloaterReg::add("fs_env_fixed_environmentent_water", "floater_fs_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentWater>);  // Using FS specific floater XML
+    LLFloaterReg::add("fs_env_fixed_environmentent_sky", "floater_fs_fixedenvironment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterFixedEnvironmentSky>); // Using FS specific floater XML
+    // <FS:William_W:EnvFileReplace> [PhotoTools] Use FS specific XML for Fixed Environment Floater
 
     LLFloaterReg::add("env_adjust_snapshot", "floater_adjust_environment.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterEnvironmentAdjust>);
     LLFloaterReg::add("env_adjust_snapshot_advanced", "floater_advanced_lighting.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterEnvironmentAdjustAdvanced>);
@@ -654,7 +661,9 @@ void LLViewerFloaterReg::registerFloaters()
     // <AS:Chanayane> Viewer-local camera effects controls.
     ASLensFlare::registerUICallbacks();
     ASVignette::registerUICallbacks();
+    ASChromaticAberration::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    LLFloaterReg::add("as_color_grading", "floater_as_color_grading.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterColorGrading>);
     // </AS:Chanayane>
     // <AS:Chanayane> Combined tabbed environment effects controls.
     LLFloaterReg::add("as_environment_effects", "floater_as_environment_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);

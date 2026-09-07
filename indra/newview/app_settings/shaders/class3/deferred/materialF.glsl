@@ -62,7 +62,6 @@ vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 void exact_oit_store(vec4 color);
 #elif defined(AVBOIT)
 void avboit_store(vec4 color);
-bool avboit_cull_fragment();
 uniform int avboitRasterPass;
 #else
 out vec4 frag_color;
@@ -360,21 +359,14 @@ void main()
 // for extinction and weighting at the end of this shader. Specular glare is
 // deliberately excluded from all three: it is a single-blend presentation trick
 // rather than a physical opacity, and integrating it saturates AVBOIT's
-// aggregate extinction. See the AVBOIT output block below.
+// aggregate extinction. See the AVBOIT output block below. Also covers A9's
+// pass 3 (front key), which needs only alpha.
+// if (avboitRasterPass < 2)
 #if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
-    if (avboitRasterPass == 0)
+    if (avboitRasterPass != 2)
     {
         avboit_store(vec4(0.0, 0.0, 0.0,
                           diffcol.a * vertex_color.a));
-        return;
-    }
-#endif
-// </AS:Chanayane>
-
-// <AS:Chanayane> Cull saturated AVBOIT pixels before material and lighting evaluation.
-#if defined(AVBOIT) && (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
-    if (avboit_cull_fragment())
-    {
         return;
     }
 #endif

@@ -642,6 +642,11 @@ void LLVOPartGroup::getGeometry(S32 idx,
         *emissivep++ = part.mGlow;
     }
 
+    // <AS:Chanayane> Exact OIT E2-B: record whether this particle's glow
+    // is actually non-zero (glow is always written above regardless).
+    mLastGlowNonZero = (pglow.mV[3] != 0) || (part.mGlow.mV[3] != 0);
+    // </AS:Chanayane>
+
 
     if (!(part.mFlags & LLPartData::LL_PART_EMISSIVE_MASK))
     { //not fullbright, needs normal
@@ -851,6 +856,15 @@ void LLParticlePartition::getGeometry(LLSpatialGroup* group)
         if (cur_glow.get() != start_glow)
         {
             has_glow = true;
+
+            // <AS:Chanayane> Exact OIT E2-B: "wrote glow bytes" is
+            // unconditional for particles (see getGeometry(S32, ...)
+            // above), so it does not mean the particle actually glows.
+            // Every LLAlphaObject reaching this loop from mFaceList is a
+            // particle face (LLParticlePartition is particle-only), so the
+            // static_cast is always valid here.
+            has_glow = static_cast<LLVOPartGroup*>(object)->mLastGlowNonZero;
+            // </AS:Chanayane>
         }
 
         llassert(facep->getGeomCount() == 4);

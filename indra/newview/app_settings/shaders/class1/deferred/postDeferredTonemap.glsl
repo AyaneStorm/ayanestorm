@@ -39,6 +39,9 @@ vec3 linear_to_srgb(vec3 cl);
 vec3 toneMap(vec3 color);
 
 vec3 clampHDRRange(vec3 color);
+// <AS:Chanayane> Apply viewer-local scene-linear color grading before tone mapping.
+vec3 asApplyLinearColorGrade(vec3 color);
+// </AS:Chanayane>
 
 #ifdef GAMMA_CORRECT
 vec3 legacyGamma(vec3 color)
@@ -54,6 +57,10 @@ void main()
 {
     //this is the one of the rare spots where diffuseRect contains linear color values (not sRGB)
     vec4 diff = texture(diffuseRect, vary_fragcoord);
+
+    // <AS:Chanayane> Apply exposure and white balance while the scene remains linear.
+    diff.rgb = asApplyLinearColorGrade(diff.rgb);
+    // </AS:Chanayane>
 
 #ifndef NO_POST
     diff.rgb = toneMap(diff.rgb);
@@ -75,4 +82,3 @@ void main()
     //debugExposure(diff.rgb);
     frag_color = diff;
 }
-
