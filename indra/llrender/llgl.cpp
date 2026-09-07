@@ -1480,10 +1480,21 @@ void LLGLManager::initExtensions()
     // 4.60; some drivers don't list core functionality in the extension
     // string, so accept the version alone too (same pattern as mHasAnisotropic
     // above).
+    // ExtensionExists includes a trailing semicolon on LL_SDL, so evaluate it
+    // as its own statement before using the result in the compound check.
+    // mHasShaderSubgroup =
+    //     (mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
+    //     (mGLVersion >= 4.59f ||
+    //      (gGLHExts.mSysExts && ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts)));
+    bool has_shader_subgroup_extension = false;
+    if (mGLVersion < 4.59f && gGLHExts.mSysExts)
+    {
+        has_shader_subgroup_extension =
+            ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts);
+    }
     mHasShaderSubgroup =
         (mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
-        (mGLVersion >= 4.59f ||
-         (gGLHExts.mSysExts && ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts)));
+        (mGLVersion >= 4.59f || has_shader_subgroup_extension);
     // </AS:Chanayane>
 
     // Misc
@@ -3033,5 +3044,3 @@ extern "C"
     __declspec(dllexport) int AmdPowerXpressRequestHighPerformance = 1;
 }
 #endif
-
-
