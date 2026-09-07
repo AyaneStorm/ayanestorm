@@ -35,7 +35,9 @@ namespace
 ASPanelColorGrading::ASPanelColorGrading()
     : mBand(ASColorGrading::RED), mRefreshing(false), mPreset(nullptr), mBefore(nullptr), mBandName(nullptr),
       mColorize(nullptr), mColorizeSwatch(nullptr),
-      mMixerHue(nullptr), mMixerSaturation(nullptr), mMixerLuminance(nullptr)
+      mMixerHue(nullptr), mMixerSaturation(nullptr), mMixerLuminance(nullptr),
+      mSplitHighlightsSaturation(nullptr), mSplitShadowsSaturation(nullptr),
+      mSplitHighlightsSwatch(nullptr), mSplitShadowsSwatch(nullptr)
 {
 }
 
@@ -54,6 +56,10 @@ bool ASPanelColorGrading::postBuild()
     mMixerHue = getChild<ASColorSliderCtrl>("mixer_hue");
     mMixerSaturation = getChild<ASColorSliderCtrl>("mixer_saturation");
     mMixerLuminance = getChild<ASColorSliderCtrl>("mixer_luminance");
+    mSplitHighlightsSaturation = getChild<ASColorSliderCtrl>("ASColorGradeSplitHighlightsSaturation");
+    mSplitShadowsSaturation = getChild<ASColorSliderCtrl>("ASColorGradeSplitShadowsSaturation");
+    mSplitHighlightsSwatch = getChild<LLButton>("split_highlights_swatch");
+    mSplitShadowsSwatch = getChild<LLButton>("split_shadows_swatch");
 
     mPreset->setCommitCallback(boost::bind(&ASPanelColorGrading::loadPreset, this));
     getChild<LLButton>("save_preset")->setCommitCallback(boost::bind(&ASPanelColorGrading::savePreset, this));
@@ -96,6 +102,8 @@ bool ASPanelColorGrading::postBuild()
     }
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeEnabled"))
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled"))
+        mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     refreshPresets();
     selectBand(ASColorGrading::RED);
     return true;
@@ -103,6 +111,7 @@ bool ASPanelColorGrading::postBuild()
 
 void ASPanelColorGrading::draw()
 {
+    refreshSplitToning();
     const bool grain_enabled = gSavedSettings.getF32("ASColorGradeGrainAmount") > 0.f;
     getChild<LLUICtrl>("ASColorGradeGrainSize")->setEnabled(grain_enabled);
     getChild<LLUICtrl>("ASColorGradeGrainRoughness")->setEnabled(grain_enabled);
@@ -113,6 +122,19 @@ void ASPanelColorGrading::draw()
     getChild<LLButton>("delete_preset")->setEnabled(
         !ASColorGrading::isReadOnlyPreset(presetName()) && presetName() != "Custom" && !presetName().empty());
     LLPanel::draw();
+}
+
+void ASPanelColorGrading::refreshSplitToning()
+{
+    LLColor3 highlights, shadows;
+    highlights.setHSL(gSavedSettings.getF32("ASColorGradeSplitHighlightsHue") / 360.f, .85f, .5f);
+    shadows.setHSL(gSavedSettings.getF32("ASColorGradeSplitShadowsHue") / 360.f, .85f, .5f);
+    const LLColor4 highlight_color(highlights, 1.f);
+    const LLColor4 shadow_color(shadows, 1.f);
+    mSplitHighlightsSwatch->setImageColor(LLUIColor(highlight_color));
+    mSplitShadowsSwatch->setImageColor(LLUIColor(shadow_color));
+    mSplitHighlightsSaturation->setTrackColors({ LLColor4(.5f,.5f,.5f,1.f), highlight_color });
+    mSplitShadowsSaturation->setTrackColors({ LLColor4(.5f,.5f,.5f,1.f), shadow_color });
 }
 
 void ASPanelColorGrading::onOpen(const LLSD&) { refreshPresets(mPreset ? presetName() : "Custom"); }
@@ -273,7 +295,7 @@ bool ASPanelColorGrading::confirmReset(const LLSD& notification, const LLSD& res
     {
         ASColorGrading::resetAll();
         refreshMixer();
-        refreshPresets("Neutral");
+        refreshPresets("[AS] Neutral");
     }
     return false;
 }
