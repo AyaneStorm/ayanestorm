@@ -265,3 +265,17 @@ order and capture upload path. No build or runtime test performed. Runtime
 confirmation remains required: toggle HDR/emissive off/on repeatedly in Exact
 OIT with rigged and ordinary transparent surfaces and glow visible; compare
 with vanilla and AVBOIT.
+
+## Linux SDL subgroup-extension compile fix (2026-09-07)
+
+Author: chanayane@firestorm.
+
+On LL_SDL, `ExtensionExists` expands to `SDL_GL_ExtensionSupported(exten);`
+with a trailing semicolon. Using that macro inside the compound subgroup
+capability expression caused a syntax error in `llgl.cpp`. The extension query
+is now evaluated in a standalone assignment only when OpenGL is below 4.60,
+then its Boolean result is used in the capability expression. This preserves
+the original version/extension logic and leaves the upstream macro unchanged.
+
+Validation: source and preprocessor-expansion reasoning plus Git whitespace
+checks. The developer performs the Linux build.
