@@ -1368,7 +1368,13 @@ void ASAVBOIT::beginDirectRasterPass(S32 pass)
         // here rather than assuming the GL 4.4 function is always present
         // on an AVBOIT-capable (GL 4.3 baseline) driver.
         const GLuint no_key = 0xffffffffu;
+        // Linux GL headers expose glClearTexImage as a function symbol, while
+        // Windows uses the nullable entry point loaded by LLGLManager.
+#if LL_LINUX
+        if (gGLManager.mGLVersion >= 4.39f)
+#else
         if (glClearTexImage)
+#endif
         {
             glClearTexImage(sResources.frontKey0, 0, GL_RED_INTEGER,
                             GL_UNSIGNED_INT, &no_key);
