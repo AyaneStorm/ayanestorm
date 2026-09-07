@@ -97,6 +97,7 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.cpp
     ascolorgrading.cpp
+    ascolorlut.cpp
     asfloatercolorgrading.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
@@ -1006,6 +1007,7 @@ set(viewer_HEADER_FILES
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.h
     ascolorgrading.h
+    ascolorlut.h
     asfloatercolorgrading.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.

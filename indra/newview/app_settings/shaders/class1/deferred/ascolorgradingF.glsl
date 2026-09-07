@@ -7,6 +7,13 @@ out vec4 frag_color;
 
 uniform sampler2D diffuseRect;
 uniform sampler2D depthMap;
+uniform sampler3D as_color_grade_lut;
+uniform sampler2D as_color_grade_lut_1d;
+uniform float as_color_grade_lut_strength;
+uniform int as_color_grade_lut_type; // 0 disabled, 1 one-dimensional, 3 three-dimensional
+uniform vec3 as_color_grade_lut_min;
+uniform vec3 as_color_grade_lut_domain_scale;
+uniform vec2 as_color_grade_lut_texel; // (size - 1) / size, 0.5 / size
 uniform vec2 screen_res;
 uniform vec4 as_color_grade_basic1; // brightness, contrast, highlights, shadows
 uniform vec4 as_color_grade_basic2; // whites, blacks, saturation, vibrance
@@ -198,6 +205,23 @@ void main()
         lab.yz += shadow_color * as_color_grade_split_toning1.w * shadow_tone * 0.12;
     }
     vec3 graded = linearToSrgb(gamutCompress(oklabToLinear(lab)));
+
+    // Display-referred LUT follows tonal/color adjustments and precedes grain/Negative.
+    if (as_color_grade_lut_strength > 0.0)
+    {
+        vec3 coordinate = clamp((graded - as_color_grade_lut_min) * as_color_grade_lut_domain_scale, 0.0, 1.0);
+        // Map domain endpoints to texel centers for correct hardware trilinear interpolation.
+        coordinate = coordinate * as_color_grade_lut_texel.x + as_color_grade_lut_texel.y;
+        vec3 lut_color;
+        if (as_color_grade_lut_type == 1)
+        {
+            lut_color.r = texture(as_color_grade_lut_1d, vec2(coordinate.r, 0.5)).r;
+            lut_color.g = texture(as_color_grade_lut_1d, vec2(coordinate.g, 0.5)).g;
+            lut_color.b = texture(as_color_grade_lut_1d, vec2(coordinate.b, 0.5)).b;
+        }
+        else lut_color = texture(as_color_grade_lut, coordinate).rgb;
+        graded = mix(graded, lut_color, as_color_grade_lut_strength);
+    }
 
     float zoom = max(as_color_grade_snapshot_tile.x, 1.0);
     vec2 full_uv = (vary_fragcoord + as_color_grade_snapshot_tile.yz) / zoom;

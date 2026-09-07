@@ -15650,4 +15650,11 @@ Built-in presets cannot be deleted, or the color grading preset could not be rem
     <usetemplate name="okbutton" yestext="OK" />
   </notification>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Optional LUT import and loading errors. -->
+  <notification icon="alertmodal.tga" name="ASColorGradeLUTFailed" type="alertmodal">
+Could not load LUT "[FILE]".
+[REASON]
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <!-- </AS:Chanayane> -->
 </notifications>

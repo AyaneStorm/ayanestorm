@@ -6,6 +6,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "ascolorgrading.h"
+#include "ascolorlut.h"
 
 #include "lldir.h"
 #include "lldiriterator.h"
@@ -148,6 +149,7 @@ namespace
             { minimum = 0.f; maximum = 100.f; }
         else if (name == "ASColorGradeTemperature") { minimum = -200.f; maximum = 200.f; }
         else if (name == "ASColorGradeTint") { minimum = -200.f; maximum = 200.f; }
+        else if (name == "ASColorGradeLUTStrength") { minimum = 0.f; maximum = 100.f; }
         else if (name.find("ASColorGradeGrain") == 0) { minimum = 0.f; maximum = 100.f; }
         output = llclamp(output, minimum, maximum);
         return true;
@@ -217,7 +219,7 @@ const std::vector<std::string>& ASColorGrading::settingNames()
         const char* basic[] = { "ASColorGradeExposure", "ASColorGradeBrightness", "ASColorGradeContrast",
             "ASColorGradeTemperature", "ASColorGradeTint", "ASColorGradeShadows", "ASColorGradeHighlights",
             "ASColorGradeBlacks", "ASColorGradeWhites", "ASColorGradeSaturation", "ASColorGradeVibrance",
-            "ASColorGradeHue", "ASColorGradeGrainAmount", "ASColorGradeGrainSize",
+            "ASColorGradeHue", "ASColorGradeLUTStrength", "ASColorGradeGrainAmount", "ASColorGradeGrainSize",
             "ASColorGradeGrainRoughness", "ASColorGradeGrainColor", "ASColorGradeColorizeHue",
             "ASColorGradeColorizeSaturation", "ASColorGradeColorizeLuminance",
             "ASColorGradeSplitHighlightsHue", "ASColorGradeSplitHighlightsSaturation",
@@ -252,10 +254,20 @@ bool ASColorGrading::createShaders(S32 shader_level)
     sFinalProgram.mShaderFiles.emplace_back("deferred/ascolorgradingF.glsl", GL_FRAGMENT_SHADER);
     sFinalProgram.addPermutation("HAS_NOISE", "1");
     sFinalProgram.mShaderLevel = shader_level;
-    return sFinalProgram.createShader();
+    const bool created = sFinalProgram.createShader();
+    if (created && !ASColorLUT::configureShader(sFinalProgram))
+    {
+        sFinalProgram.unload();
+        return false;
+    }
+    return created;
 }
 
-void ASColorGrading::unloadShaders() { sFinalProgram.unload(); }
+void ASColorGrading::unloadShaders()
+{
+    ASColorLUT::unload();
+    sFinalProgram.unload();
+}
 
 bool ASColorGrading::isActive()
 {
@@ -328,8 +340,10 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
     const S32 tile = LLViewerCamera::getInstance()->getZoomSubRegion();
     const S32 row = llceil(zoom);
     sFinalProgram.uniform3f(sSnapshotTile, zoom, zoom > 1.f ? (F32)(tile % row) : 0.f, zoom > 1.f ? (F32)(tile / row) : 0.f);
+    ASColorLUT::bind(sFinalProgram);
     triangle.setBuffer();
     triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+    ASColorLUT::unbind();
     sFinalProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, color.getUsage());
     sFinalProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     sFinalProgram.unbind();
@@ -338,6 +352,8 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
 
 void ASColorGrading::resetAll()
 {
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeLUTEnabled")) control->resetToDefault(true);
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeLUTFile")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled")) control->resetToDefault(true);
@@ -374,6 +390,8 @@ bool ASColorGrading::savePreset(const std::string& name)
 {
     if (!validPresetName(name)) return false;
     LLSD data; data["version"] = 1; data["name"] = name;
+    data["values"]["ASColorGradeLUTEnabled"] = gSavedSettings.getBOOL("ASColorGradeLUTEnabled");
+    data["values"]["ASColorGradeLUTFile"] = gSavedSettings.getString("ASColorGradeLUTFile");
     data["values"]["ASColorGradeNegativeEnabled"] = gSavedSettings.getBOOL("ASColorGradeNegativeEnabled");
     for (const std::string& setting : settingNames()) data["values"][setting] = gSavedSettings.getLLSD(setting);
     data["values"]["ASColorGradeColorizeEnabled"] = gSavedSettings.getBOOL("ASColorGradeColorizeEnabled");
@@ -397,6 +415,12 @@ bool ASColorGrading::loadPreset(const std::string& name)
     if (!file.is_open() || LLSDSerialize::fromXML(data, file) == LLSDParser::PARSE_FAILURE ||
         !data.isMap() || data["version"].asInteger() != 1 || !data["values"].isMap()) return false;
     LLSD values = data["values"];
+    // Missing LUT fields in older presets restore the disabled default.
+    if (values.has("ASColorGradeLUTEnabled") && !values["ASColorGradeLUTEnabled"].isBoolean()) return false;
+    const bool lut_enabled = values.has("ASColorGradeLUTEnabled") && values["ASColorGradeLUTEnabled"].asBoolean();
+    if (values.has("ASColorGradeLUTFile") && !values["ASColorGradeLUTFile"].isString()) return false;
+    const std::string lut_file = values.has("ASColorGradeLUTFile") ? values["ASColorGradeLUTFile"].asString() : "";
+    if (!lut_file.empty() && !ASColorLUT::validName(lut_file)) return false;
     // Older presets omit Negative and retain the default non-inverted image.
     if (values.has("ASColorGradeNegativeEnabled") && !values["ASColorGradeNegativeEnabled"].isBoolean()) return false;
     const bool negative = values.has("ASColorGradeNegativeEnabled") && values["ASColorGradeNegativeEnabled"].asBoolean();
@@ -414,6 +438,8 @@ bool ASColorGrading::loadPreset(const std::string& name)
     }
     resetAll();
     for (const auto& entry : validated) gSavedSettings.setF32(entry.first, entry.second);
+    gSavedSettings.setString("ASColorGradeLUTFile", lut_file);
+    gSavedSettings.setBOOL("ASColorGradeLUTEnabled", lut_enabled);
     gSavedSettings.setBOOL("ASColorGradeNegativeEnabled", negative);
     gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", colorize);
     gSavedSettings.setBOOL("ASColorGradeSplitToningEnabled", split_toning);

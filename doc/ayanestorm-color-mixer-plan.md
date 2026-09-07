@@ -381,3 +381,45 @@ User runtime acceptance:
 A hardware-trilinear 3D LUT can evaluate a color transform with one filtered 3D texture lookup per pixel plus coordinate mapping. Adding it to the existing grading presentation shader avoids an additional fullscreen pass. Load and upload the LUT when selected, not every frame. Expected incremental cost is small, but FPS impact requires measurement on target GPUs and resolutions; no viewer benchmark has been performed. Larger LUTs increase memory/cache pressure.
 
 Source: [NVIDIA GPU Gems 2, Chapter 24](https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-24-using-lookup-tables-accelerate-color).
+
+## Cube LUT Implementation
+
+Author: chanayane@firestorm
+
+### Controls and File Locations
+
+The reusable color-grading panel has a LUT tab: Enable LUT (off by default), Previous and Next buttons around the file selector, strength (0–100%, default 100%), Import, Open folder, and Refresh. Previous and Next follow the displayed alphabetical order and are disabled at the first and last entries. The master color-grading switch and Before preview still apply.
+
+Discovery scans the runtime application directory's app_settings/lut and LL_PATH_USER_SETTINGS/luts. The latter resolves to %APPDATA%\AyaneStorm_x64\user_settings\luts on Windows. User files with the same basename take precedence. The dropdown displays the first nonempty name in this order: quoted TITLE, Preset: header comment, filename. Entries are sorted case-insensitively by that displayed name, with filename as the tie-breaker. Discovery reads headers only; only the selected table is parsed and uploaded. Filenames remain the item values and preset references, including when titles repeat. Refresh rescans and reloads the selection.
+
+Import validates a single .cube file before copying it into the user folder, selects it, and enables LUT processing. Existing filenames receive a numeric suffix rather than being overwritten. Open folder opens the user directory. Source-tree examples are not added to viewer_manifest.py or bundled; use Import if running an installed viewer whose application settings are elsewhere.
+
+### Format and Rendering
+
+ascolorlut.h/.cpp owns parsing, discovery, import, UI callbacks, errors, and the selected texture. Supported files contain one LUT_3D_SIZE from 2 through 128 or one LUT_1D_SIZE from 2 through 65,536, optional quoted or unquoted TITLE, optional DOMAIN_MIN/DOMAIN_MAX (default 0–1), and the exact number of RGB rows. Red varies fastest in 3D tables. Blank lines, comments, CRLF, scientific notation, and a UTF-8 BOM are accepted. Finite half-float-representable output values are required. Invalid domains, incomplete/extra rows, duplicate headers, combined shapers, unsupported directives, lines over 4096 bytes, and files over 128 MiB are rejected.
+
+The shader samples RGB16F textures with hardware linear filtering, mapping input-domain endpoints to texel centers. A 3D LUT uses one 3D sample; a 1D LUT uses independent samples for red, green, and blue. The LUT follows Basic, Mixer/Colorize, and Split Toning, before Grain and Negative. Strength blends the original graded RGB with the LUT result. No additional fullscreen pass is added; alpha, depth, UI exclusion, and existing rendering bypasses are unchanged.
+
+LLGLSLShader only assigns texture channels to reserved samplers. The private LUT sampler is explicitly assigned mActiveTextureChannels after shader creation to avoid aliasing the scene/depth samplers, including when the LUT is disabled. Upload preserves pixel-unpack state. Only the selected GPU texture is retained; changing the file releases it, and shader unload releases GPU resources for recreation.
+
+These are creative display-referred sRGB looks, without camera-log or ICC conversion. The 20 supplied 32-cubed examples reference AdobeRGB1998.icc in comments; their tables are structurally compatible, but this implementation does not reproduce that profile's color management.
+
+### Presets and Failure Handling
+
+ASColorGradeLUTEnabled, ASColorGradeLUTFile, and ASColorGradeLUTStrength persist with viewer settings and grading presets. Presets store a basename, not a path or embedded table. Older presets and Reset All restore LUT disabled, empty filename, and 100% strength. Changes mark the preset Custom.
+
+A missing or invalid selection is bypassed with a notification and status text, without retaining the previous LUT effect. Parsing and header discovery contain allocation, standard-library, and unknown exceptions so a malformed file cannot unwind into the viewer. Failed imports preserve the current selection. Refresh retries failed files. File-picker callbacks use a weak panel handle.
+
+### Validation and Runtime Checks
+
+Independent Python checks verified all 20 supplied files have 32,768 finite RGB rows and usable domains. Edited XML parses; settings defaults, control bindings, callback names, shader uniform names/order, and CMake entries were checked. Coordinate checks cover domain endpoints and red-fastest indexing for sizes 2, 17, 32, 33, 65, and 128. Git diff whitespace checks passed.
+
+No project build, C++ execution, GPU runtime test, or FPS measurement was performed. Runtime checks for the developer: import BW3.cube; toggle LUT and vary strength; confirm Before/UI exclusion; save/load a grading preset and Reset All; import an invalid file; remove a selected LUT and Refresh; verify normal snapshots and shader reload.
+
+### Format Reference
+
+[Colour's Iridas .cube reader](https://github.com/colour-science/colour/blob/develop/colour/io/luts/iridas_cube.py) documents the red-fastest ordering and optional domains, with a reference to Adobe's Cube specification.
+
+### Additional Sample: Presetpro Kodachrome 64
+
+`Presetpro  - Kodacrome 64.cube` was read without copying or modifying it. It declares `LUT_3D_SIZE 32`, a quoted TITLE, and DOMAIN_MIN/MAX of 0/1. Independent data checks found exactly 32,768 finite RGB rows, all within 0–1. Its format fits the current loader; the filename’s 64 is part of the film name, not the LUT dimension. No code change or runtime test was needed/performed.

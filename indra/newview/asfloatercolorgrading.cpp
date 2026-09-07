@@ -7,6 +7,7 @@
 
 #include "asfloatercolorgrading.h"
 #include "ascolorslider.h"
+#include "ascolorlut.h"
 
 #include "llbutton.h"
 #include "llcombobox.h"
@@ -106,6 +107,10 @@ bool ASPanelColorGrading::postBuild()
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled"))
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
+    for (const char* setting : {"ASColorGradeLUTEnabled", "ASColorGradeLUTFile"})
+        if (LLControlVariable* control = gSavedSettings.getControl(setting))
+            mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
+    ASColorLUT::initPanel(*this);
     refreshPresets();
     selectBand(ASColorGrading::RED);
     return true;
@@ -113,6 +118,7 @@ bool ASPanelColorGrading::postBuild()
 
 void ASPanelColorGrading::draw()
 {
+    ASColorLUT::updatePanel(*this);
     refreshSplitToning();
     const bool grain_enabled = gSavedSettings.getF32("ASColorGradeGrainAmount") > 0.f;
     getChild<LLUICtrl>("ASColorGradeGrainSize")->setEnabled(grain_enabled);
@@ -139,7 +145,11 @@ void ASPanelColorGrading::refreshSplitToning()
     mSplitShadowsSaturation->setTrackColors({ LLColor4(.5f,.5f,.5f,1.f), shadow_color });
 }
 
-void ASPanelColorGrading::onOpen(const LLSD&) { refreshPresets(mPreset ? presetName() : "Custom"); }
+void ASPanelColorGrading::onOpen(const LLSD&)
+{
+    refreshPresets(mPreset ? presetName() : "Custom");
+    ASColorLUT::refreshPanel(*this);
+}
 
 void ASPanelColorGrading::onVisibilityChange(bool visible)
 {

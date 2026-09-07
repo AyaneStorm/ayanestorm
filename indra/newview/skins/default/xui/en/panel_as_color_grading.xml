@@ -73,6 +73,20 @@
     <as_color_slider enabled_control="ASColorGradeSplitToningEnabled" color_1="0.5 0.5 0.5 1" color_2="1 0 0 1" can_edit_text="true" control_name="ASColorGradeSplitShadowsSaturation" decimal_digits="0" height="24" increment="1" label="Saturation" label_width="120" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeSplitShadowsSaturation" show_text="true" text_width="52" top="300" track_thickness="7" width="415" tool_tip="Strength of the shadow tint."><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank" /></as_color_slider>
     <button enabled_control="ASColorGradeSplitToningEnabled" height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeSplitShadowsSaturation" top="302" width="20" />
    </panel>
+   <panel border="false" height="530" label="LUT" layout="topleft" name="lut" width="468">
+    <check_box control_name="ASColorGradeLUTEnabled" follows="left|top" height="20" label="Enable LUT" layout="topleft" left="15" name="lut_enabled" top="18" width="180" />
+    <button follows="left|top" height="23" label="&lt;" layout="topleft" left="15" name="lut_previous" top="55" tool_tip="Select the previous LUT." width="26" />
+    <combo_box follows="left|top" height="23" layout="topleft" left="46" name="lut_file" top="55" width="369" tool_tip="Select a .cube file from the user LUT folder or app_settings/lut." />
+    <button follows="left|top" height="23" label="&gt;" layout="topleft" left="420" name="lut_next" top="55" tool_tip="Select the next LUT." width="26" />
+    <slider can_edit_text="true" control_name="ASColorGradeLUTStrength" enabled_control="ASColorGradeLUTEnabled" decimal_digits="0" height="24" increment="1" label="Strength (%)" label_width="120" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeLUTStrength" show_text="true" text_width="52" top="95" width="415" />
+    <button enabled_control="ASColorGradeLUTEnabled" height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeLUTStrength" top="97" width="20" />
+    <button follows="left|top" height="23" label="Import..." layout="topleft" left="15" name="lut_import" top="140" width="100" />
+    <button follows="left|top" height="23" label="Open folder" layout="topleft" left="125" name="lut_open_folder" top="140" width="120" />
+    <button follows="left|top" height="23" label="Refresh" layout="topleft" left="255" name="lut_refresh" top="140" width="100" />
+    <text follows="left|top" height="65" layout="topleft" left="15" name="lut_status" top="180" width="430" wrap="true" />
+    <text follows="left|top" height="85" layout="topleft" left="15" name="lut_help" top="255" width="430" wrap="true">Use 3D .cube LUTs intended for sRGB images. Camera-log LUTs need conversion before use.
+Import copies a file into your user LUT folder. LUT files are not included with color grading presets.</text>
+   </panel>
    <panel border="false" height="530" label="Effects" layout="topleft" name="effects" width="468">
     <as_color_slider color_1="0.28 0.28 0.28 1" color_2="0.56 0.56 0.56 1" color_3="0.92 0.92 0.92 1" can_edit_text="true" control_name="ASColorGradeGrainAmount" decimal_digits="0" height="24" increment="1" label="Grain amount" label_width="140" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeGrainAmount" show_text="true" text_width="52" top="18" track_thickness="7" width="415"><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank"/></as_color_slider>
     <button height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeGrainAmount" top="20" width="20" />
