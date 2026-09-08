@@ -26,6 +26,7 @@
 
 #include "aspanelprefsayanestorm.h"
 
+#include "llcombobox.h"
 #include "llview.h"
 
 static LLPanelInjector<ASPanelPrefsAyaneStorm> t_pref_ayanestorm("panel_preference_ayanestorm");
@@ -37,14 +38,16 @@ ASPanelPrefsAyaneStorm::ASPanelPrefsAyaneStorm() : LLPanelPreference()
 bool ASPanelPrefsAyaneStorm::postBuild()
 {
 #if LL_DARWIN
-    // Only ASRenderOITMode (Exact OIT / AVBOIT) requires GL 4.3, which macOS's
-    // capped OpenGL 4.1 does not provide - hide just that control. The
-    // volumetric lighting checkbox in the same tab works down to GL 4.0, so
-    // the tab itself stays visible on Mac (see ASVolumetricLighting::isSupported()).
+    // macOS can use Standard and AYAstorm ordering, but not the GL 4.3 OIT
+    // renderers. Keep the selector visible and disable only unsupported modes.
+    if (LLComboBox* mode = findChild<LLComboBox>("render_oit_mode"))
+    {
+        mode->setEnabledByValue(LLSD(1), false);
+        mode->setEnabledByValue(LLSD(2), false);
+    }
+
     const char* oit_controls[] =
     {
-        "render_oit_mode",
-        "render_oit_mode_label",
         "render_exact_oit_debug",
         "render_exact_oit_debug_label",
         "render_avboit_debug",

@@ -112,9 +112,10 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.cpp
     # </AS:Chanayane>
-    # <AS:Chanayane> Viewer-local vignette module.
+    # <AS:Chanayane> Viewer-local camera post-effect modules.
     asvignette.cpp
     aschromaticaberration.cpp
+    asdiffuseglow.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.cpp
@@ -1022,9 +1023,10 @@ set(viewer_HEADER_FILES
     # <AS:Chanayane> Viewer-local celestial lens flare module.
     aslensflare.h
     # </AS:Chanayane>
-    # <AS:Chanayane> Viewer-local vignette module.
+    # <AS:Chanayane> Viewer-local camera post-effect modules.
     asvignette.h
     aschromaticaberration.h
+    asdiffuseglow.h
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.h

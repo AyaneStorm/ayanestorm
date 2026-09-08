@@ -606,6 +606,16 @@ bool FloaterQuickPrefs::postBuild()
         mSliderRenderSSAOEffectX = getChild<LLSlider>("SB_Effect");
         mSpinnerRenderSSAOEffectX = getChild<LLSpinCtrl>("S_Effect");
 
+        // <AS:Chanayane> macOS supports Standard and AYAstorm ordering only.
+#if LL_DARWIN
+        if (LLComboBox* mode = findChild<LLComboBox>("render_oit_mode"))
+        {
+            mode->setEnabledByValue(LLSD(1), false);
+            mode->setEnabledByValue(LLSD(2), false);
+        }
+#endif
+        // </AS:Chanayane>
+
         refreshSettings();
     }
     else

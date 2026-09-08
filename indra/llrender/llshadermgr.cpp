@@ -575,6 +575,11 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         filename.find("asAVBOIT") != std::string::npos ||
         (defines && (defines->find("EXACT_OIT") != defines->end() ||
                      defines->find("AVBOIT") != defines->end()));
+    // Every object of an Exact OIT program gets the same #version: the
+    // subgroup reserve object (#version 450, GL_KHR_shader_subgroup) is linked
+    // into the same program as alphaF.glsl & co., and mixing 430/450 objects
+    // in one program is untested on the drivers in the field, whereas the
+    // all-450 composition is the one their logs show compiling and linking.
     const bool compute_shader = type == GL_COMPUTE_SHADER;
     // </AS:Chanayane>
 

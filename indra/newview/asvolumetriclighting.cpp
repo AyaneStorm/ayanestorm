@@ -328,7 +328,7 @@ F32  ASVolumetricLighting::sFrameSceneDensity = 0.f;
 // relink. Bump it before distributing a build whose users will retain caches.
 const char* ASVolumetricLighting::shaderCacheRevision()
 {
-    return "as-volumetric-lighting-v20";
+    return "as-volumetric-lighting-v21";
 }
 
 // GLSL 4.00 is the floor here (not ASAVBOIT's 4.30): this feature is
