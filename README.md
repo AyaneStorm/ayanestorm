@@ -2,7 +2,16 @@
 
 **[Firestorm](https://www.firestormviewer.org) is a free client for 3D virtual worlds such as Second Life and various OpenSim worlds where users can create, connect and chat with others from around the world.**
 
-# AyaneStorm - A fork of Firestorm for photographers
+# AyaneStorm - A viewer for photographers
+
+AyaneStorm is a fork of Firestorm viewer with a focus on photography and visual quality. Its code base is usually on par with Firestorm latest beta.
+
+[![Download the latest release](https://img.shields.io/github/v/release/AyaneStorm/ayanestorm?style=for-the-badge&logo=github&label=Download%20latest%20release&color=7B68EE)](https://github.com/AyaneStorm/ayanestorm/releases/latest)
+
+Available for the following platforms:
+- Windows (a setup and a .zip version are provided; either install it using the setup, or just extract the .zip and run the AyaneStorm executable inside it)
+- Linux (a .tar.gz version is provided; extract it and run the executable)
+- MacOS (a .dmg version is provided)
 
 ## Features (so far ; some features might get merged in official Firestorm)
 - Poser works for all avatars and animeshes, not only oneself
