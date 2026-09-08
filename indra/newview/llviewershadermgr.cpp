@@ -51,6 +51,9 @@
 // <AS:Chanayane> Optional camera chromatic aberration.
 #include "aschromaticaberration.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera bright-surface bloom shader utility.
+#include "asdiffuseglow.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater background isolate shader lifecycle.
 #include "asbackgroundisolate.h"
 // </AS:Chanayane>
@@ -1111,6 +1114,9 @@ bool LLViewerShaderMgr::loadShadersEffects()
         gGlowExtractProgram.mShaderFiles.clear();
         gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
         gGlowExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractF.glsl", GL_FRAGMENT_SHADER));
+        // <AS:Chanayane> Link viewer-local bloom selection outside the upstream shader.
+        ASDiffuseGlow::appendShader(gGlowExtractProgram);
+        // </AS:Chanayane>
         gGlowExtractProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
 
         if (use_glow_noise)
