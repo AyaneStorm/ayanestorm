@@ -575,6 +575,16 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
         filename.find("asAVBOIT") != std::string::npos ||
         (defines && (defines->find("EXACT_OIT") != defines->end() ||
                      defines->find("AVBOIT") != defines->end()));
+    // Only the wave-level subgroup files actually call subgroup*() functions
+    // or use gl_HelperInvocation and need GLSL 450 (see E7). oit_storage_shader
+    // above matches every Exact OIT/AVBOIT file by a broad filename/define
+    // check; without this narrower check, that broad match alone bumped every
+    // Exact OIT shader -- including plain-atomics capture and the composite
+    // shader, neither of which uses any 4.50-only feature -- to #version 450
+    // whenever the driver merely reported subgroup support, recompiling
+    // shaders that were authored and validated at 4.30 under a GLSL version
+    // they never needed and were never tested against.
+    const bool oit_subgroup_shader = filename.find("Subgroup") != std::string::npos;
     const bool compute_shader = type == GL_COMPUTE_SHADER;
     // </AS:Chanayane>
 
@@ -590,7 +600,7 @@ GLuint LLShaderMgr::loadShaderFile(const std::string& filename, S32 & shader_lev
             // (gl_HelperInvocation, GL_KHR_shader_subgroup) needs 4.50.
             // //set version to 400 or 420
             // if (minor_version >= 20)
-            if (oit_storage_shader && gGLManager.mHasShaderSubgroup && minor_version >= 50)
+            if (oit_subgroup_shader && gGLManager.mHasShaderSubgroup && minor_version >= 50)
             {
                 shader_code_text[shader_code_count++] = strdup("#version 450\n");
             }

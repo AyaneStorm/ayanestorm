@@ -1,4 +1,4 @@
-# Diffuse Glow / Bright-Surface Bloom Feasibility
+yes# Diffuse Glow / Bright-Surface Bloom Feasibility
 
 ## Decision
 

@@ -331,7 +331,7 @@ const char* ASExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v20";
+    return "Exact OIT shader revision v24";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
