@@ -331,7 +331,7 @@ const char* ASExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v24";
+    return "Exact OIT shader revision v25";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -907,6 +907,22 @@ void ASExactOIT::prepareCaptureBuffers()
     // this file already use for R32UI data).
     // Linux GL headers expose glClearTexImage as a function symbol, while
     // Windows uses the nullable entry point loaded by LLGLManager.
+    //
+    // Both images were last written by shader image stores: the previous
+    // frame's sort pass 1 imageStore()s new heads/counts, and nothing waits
+    // for that pass on the CPU (only the capture fence is waited on). Clears
+    // are NOT ordered after shader image writes unless the application says
+    // so (OpenGL 4.6 §7.12.2: glClearTexImage needs
+    // GL_TEXTURE_UPDATE_BARRIER_BIT, framebuffer clears need
+    // GL_FRAMEBUFFER_BARRIER_BIT). The pre-E11 FBO clear was implicitly
+    // synchronised by its FBO bind; E11's glClearTexImage was not, so on
+    // drivers that run the clear on a path that does not wait for in-flight
+    // shader stores, a pixel could keep last frame's head pointer into a
+    // frame whose node pool has been reset and overwritten -- its list is
+    // then spliced into other pixels' nodes (garbage links / cycles), which
+    // renders as corrupted transparency and, once a traversal cycles, hangs
+    // the composite draw until the driver's TDR kills the context.
+    glMemoryBarrier(GL_TEXTURE_UPDATE_BARRIER_BIT | GL_FRAMEBUFFER_BARRIER_BIT);
 #if LL_LINUX
     if (gGLManager.mGLVersion >= 4.39f)
 #else
@@ -1172,10 +1188,28 @@ bool ASExactOIT::handleCapturedEmissives(LLDrawPoolAlpha& pool, bool depth_only,
     drop_no_glow(rigged_emissives);
     drop_no_glow(pbr_rigged_emissives);
 
-    if (!emissives.empty()) pool.renderEmissives(emissives);
-    if (!pbr_emissives.empty()) pool.renderPbrEmissives(pbr_emissives);
-    if (!rigged_emissives.empty()) pool.renderRiggedEmissives(rigged_emissives);
-    if (!pbr_rigged_emissives.empty()) pool.renderRiggedPbrEmissives(pbr_rigged_emissives);
+    // The pool's render*Emissives() helpers bind the emissive capture
+    // program (or its skinned variant) and leave it bound. Returning true
+    // makes LLDrawPoolAlpha::renderAlpha() skip its vanilla emissive block,
+    // including that block's `lastShader->bind()` restore, while its local
+    // `current_shader` still names the alpha program. The next group whose
+    // target is that same alpha program is then drawn WITHOUT a rebind, i.e.
+    // through the emissive capture shader: its fragments are stored as
+    // glow-only nodes (hair after any glowing attachment turns white and
+    // blooms), texture/uniform setup done through `current_shader` lands on
+    // the wrong program, and skinned draws run with whatever matrix palette
+    // the skinned emissive program last received. Restore the previously
+    // bound program exactly as the vanilla block does.
+    LLGLSLShader* const previous = LLGLSLShader::sCurBoundShaderPtr;
+    bool drawn = false;
+    if (!emissives.empty()) { pool.renderEmissives(emissives); drawn = true; }
+    if (!pbr_emissives.empty()) { pool.renderPbrEmissives(pbr_emissives); drawn = true; }
+    if (!rigged_emissives.empty()) { pool.renderRiggedEmissives(rigged_emissives); drawn = true; }
+    if (!pbr_rigged_emissives.empty()) { pool.renderRiggedPbrEmissives(pbr_rigged_emissives); drawn = true; }
+    if (drawn && previous && LLGLSLShader::sCurBoundShaderPtr != previous)
+    {
+        previous->bind();
+    }
     return true;
 }
 
@@ -1446,6 +1480,11 @@ ASExactOIT::ValidationResult ASExactOIT::waitValidation(bool mouselook, U32& max
                 << MAX_WAIT_ATTEMPTS << "s; disabling Exact OIT for this session."
                 << LL_ENDL;
             discardCapture();
+            // ASRenderOITMode is the authoritative selector: the dispatcher's
+            // synchronizeModeSettings() re-derives ASRenderExactOIT from it
+            // every frame, so clearing only the boolean is undone one frame
+            // later. Switch the mode itself to Standard (0).
+            gSavedSettings.setS32("ASRenderOITMode", 0);
             gSavedSettings.setBOOL("ASRenderExactOIT", false);
             return ValidationResult::FALLBACK_REQUIRED;
         }
