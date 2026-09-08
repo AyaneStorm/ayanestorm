@@ -331,7 +331,7 @@ const char* ASExactOIT::shaderCacheRevision()
     // Shader paths alone do not invalidate cached program binaries after
     // source or layout changes in same-version development builds.
     // Keep development builds from reusing incompatible Exact OIT shader binaries.
-    return "Exact OIT shader revision v17";
+    return "Exact OIT shader revision v20";
 }
 
 // Reports whether the active OpenGL and GLSL versions provide required Exact OIT features.
@@ -1422,16 +1422,33 @@ ASExactOIT::ValidationResult ASExactOIT::waitValidation(bool mouselook, U32& max
     {
         LL_PROFILE_ZONE_NAMED("Exact OIT fence wait");
         GLenum result;
-        bool first_call = true;
+        // Bounded retry: a fence that never signals means the capture (or an
+        // earlier queued GPU command) is stuck, not merely slow -- normal
+        // frames signal within one timeout, if not the first call. Looping
+        // forever here stalls the render thread until the OS TDR kills the
+        // GL context (Display:RenderFlush watchdog hang), so give up after a
+        // bounded wait and fall back to vanilla transparency instead.
+        constexpr int MAX_WAIT_ATTEMPTS = 5; // ~5s total at 1s/attempt
+        int attempts = 0;
         do
         {
             result = glClientWaitSync(sResources.captureFence,
-                first_call ? GL_SYNC_FLUSH_COMMANDS_BIT : 0, 1000000000ull);
-            first_call = false;
+                attempts == 0 ? GL_SYNC_FLUSH_COMMANDS_BIT : 0, 1000000000ull);
+            ++attempts;
         }
-        while (result == GL_TIMEOUT_EXPIRED);
+        while (result == GL_TIMEOUT_EXPIRED && attempts < MAX_WAIT_ATTEMPTS);
         glDeleteSync(sResources.captureFence);
         sResources.captureFence = 0;
+
+        if (result == GL_TIMEOUT_EXPIRED || result == GL_WAIT_FAILED)
+        {
+            LL_WARNS("ExactOIT") << "Exact OIT capture fence did not signal after "
+                << MAX_WAIT_ATTEMPTS << "s; disabling Exact OIT for this session."
+                << LL_ENDL;
+            discardCapture();
+            gSavedSettings.setBOOL("ASRenderExactOIT", false);
+            return ValidationResult::FALLBACK_REQUIRED;
+        }
     }
 
     U32 control[4] = {};

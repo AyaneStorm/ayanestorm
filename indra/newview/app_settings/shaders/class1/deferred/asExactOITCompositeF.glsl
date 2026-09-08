@@ -524,11 +524,15 @@ void main()
     }
     else
     {
-        // Impossible if pass 1 issues a merge round whenever
-        // maximum_list > K (composite()'s own gate). Made visible instead of
-        // silently truncating count to OIT_SHALLOW nodes in link order.
-        frag_color = vec4(1.0, 0.0, 1.0, 0.0);
-        return;
+        // Should be unreachable if pass 1 issues a merge round whenever
+        // maximum_list > K (composite()'s own gate). Reported to have fired
+        // in the field (magenta screen corruption), so treat it as reachable
+        // in practice rather than trusting the invariant: fall back to the
+        // shallow path with the list truncated to OIT_SHALLOW nodes in link
+        // order (unsorted tail dropped) instead of visibly corrupting the
+        // frame. oitOverflow (debug mode 6) remains the way to see this
+        // happening; it no longer paints the live scene.
+        blend_shallow(head, OIT_SHALLOW, dst, glow);
     }
     dst.a = max(dst.a, glow);
     frag_color = max(dst, vec4(0.0));
