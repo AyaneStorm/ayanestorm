@@ -8,6 +8,11 @@ AyaneStorm is a fork of Firestorm viewer with a focus on photography and visual 
 
 [![Download the latest release](https://img.shields.io/github/v/release/AyaneStorm/ayanestorm?style=for-the-badge&logo=github&label=Download%20latest%20release&color=7B68EE)](https://github.com/AyaneStorm/ayanestorm/releases/latest)
 
+Available for the following platforms:
+- Windows (a setup and a .zip version are provided; either install it using the setup, or just extract the .zip and run the AyaneStorm executable inside it)
+- Linux (a .tar.gz version is provided; extract it and run the executable)
+- MacOS (a .dmg version is provided)
+
 ## Features (so far ; some features might get merged in official Firestorm)
 - **My Lights** floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
 - **Environment Effects panel** gathering viewer-local photographic effects in one place
