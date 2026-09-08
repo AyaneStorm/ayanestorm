@@ -201,7 +201,17 @@ void LLDrawPoolTerrain::renderShadow(S32 pass)
     }
     //LLGLEnable offset(GL_POLYGON_OFFSET);
     //glCullFace(GL_FRONT);
+    // <AS:Chanayane> A heightfield has only one layer of triangles, but it
+    // must occlude directional light from either side. At low light angles,
+    // steep slopes facing away from the light become back-facing to the
+    // shadow camera and vanish when culled; below the horizon the entire
+    // upward-facing heightfield vanishes. Closed meshes retain other faces,
+    // which is why this light leak is terrain-specific. Render terrain
+    // two-sided in the shadow pass at every elevation.
+    // drawLoop();
+    LLGLDisable cull_terrain_shadow(GL_CULL_FACE);
     drawLoop();
+    // </AS:Chanayane>
     //glCullFace(GL_BACK);
 }
 
