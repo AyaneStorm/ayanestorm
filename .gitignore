@@ -135,5 +135,7 @@ checks.json
 /*.shader
 
 .phoenix-firestorm-master
+.aperture-viewer-master
+.aya-storm-release
 .MSMBeyondHardShadowsCode
 lut/

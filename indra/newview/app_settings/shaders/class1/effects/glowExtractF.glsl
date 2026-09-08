@@ -37,6 +37,9 @@ uniform float maxExtractAlpha;
 uniform vec3 lumWeights;
 uniform vec3 warmthWeights;
 uniform float warmthAmount;
+// <AS:Chanayane> Viewer-local implementation is linked from asDiffuseGlowF.glsl.
+float asDiffuseGlowMask(vec3 color);
+// </AS:Chanayane>
 
 in vec2 vary_texcoord0;
 
@@ -59,5 +62,8 @@ void main()
 #endif
     frag_color.rgb = col.rgb;
     frag_color.a = max(col.a, mix(lum, warmth, warmthAmount) * maxExtractAlpha);
+    // <AS:Chanayane> Preserve normal material glow and call the linked-local selection utility.
+    frag_color.a = max(frag_color.a, asDiffuseGlowMask(col.rgb));
+    // </AS:Chanayane>
 
 }

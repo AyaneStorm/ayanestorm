@@ -421,7 +421,7 @@ bool ASAVBOIT::sCaptureCompleted = false;
 
 const char* ASAVBOIT::shaderCacheRevision()
 {
-    return "AVBOIT shader revision v135";
+    return "AVBOIT shader revision v136";
 }
 
 bool ASAVBOIT::supported()

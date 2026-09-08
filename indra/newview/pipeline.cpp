@@ -46,6 +46,9 @@
 // <AS:Chanayane> Optional camera chromatic aberration.
 #include "aschromaticaberration.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera bright-surface bloom.
+#include "asdiffuseglow.h"
+// </AS:Chanayane>
 
 // <AS:Chanayane> Self-lighting floater background isolate pass.
 #include "asbackgroundisolate.h"
@@ -8165,6 +8168,9 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
         gGlowExtractProgram.uniform3f(LLShaderMgr::GLOW_WARMTH_WEIGHTS, warmthWeights.mV[0], warmthWeights.mV[1],
             warmthWeights.mV[2]);
         gGlowExtractProgram.uniform1f(LLShaderMgr::GLOW_WARMTH_AMOUNT, warmthAmount);
+        // <AS:Chanayane> Add viewer-local bright-surface bloom to the existing extraction pass.
+        ASDiffuseGlow::bindExtractionUniforms(gGlowExtractProgram);
+        // </AS:Chanayane>
 
         if (RenderGlowNoise)
         {

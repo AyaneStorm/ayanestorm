@@ -50,6 +50,9 @@
 // <AS:Chanayane> Optional camera chromatic aberration.
 #include "aschromaticaberration.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional camera bright-surface bloom controls.
+#include "asdiffuseglow.h"
+// </AS:Chanayane>
 #include "llfloaterreg.h"
 #include "llviewerfloaterreg.h"
 
@@ -662,6 +665,7 @@ void LLViewerFloaterReg::registerFloaters()
     ASLensFlare::registerUICallbacks();
     ASVignette::registerUICallbacks();
     ASChromaticAberration::registerUICallbacks();
+    ASDiffuseGlow::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     LLFloaterReg::add("as_color_grading", "floater_as_color_grading.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterColorGrading>);
     // </AS:Chanayane>

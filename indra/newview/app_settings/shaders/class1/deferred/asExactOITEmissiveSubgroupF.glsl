@@ -17,19 +17,28 @@ layout(std430, binding = 0) buffer OITNodes { OITNode oitNodes[]; };
 uint exact_oit_reserve(bool need);
 void exact_oit_wave_max_pad(uint pixel_count);
 // <AS:Chanayane> The caller (main(), below) already filters glow==0 before
-// reaching here, so every lane that calls this function needs a node.
+// reaching here, so every lane that calls this function needs a node -- but
+// exact_oit_reserve() can still fail that lane alone on overflow. Same
+// uniform-control-flow requirement as asExactOITCaptureSubgroupF.glsl's
+// exact_oit_store(): exact_oit_wave_max_pad() is a subgroupMax() collective,
+// so every non-helper lane must call it unconditionally, with 0 standing in
+// for a lane that got no node, instead of returning early and leaving it out
+// of the wave.
 void exact_oit_store_glow(float glow)
 {
     if (gl_HelperInvocation) return;
     uint index = exact_oit_reserve(true);
-    if (index == 0xffffffffu) return;
-    oitNodes[index].color = vec4(0.0);
-    oitNodes[index].glow = glow;
-    oitNodes[index].depth = gl_FragCoord.z;
-    oitNodes[index].blend = 0xffffffffu;
-    oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
-    // Glow nodes participate in the same exact ordered list count.
-    uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
+    uint pixel_count = 0u;
+    if (index != 0xffffffffu)
+    {
+        oitNodes[index].color = vec4(0.0);
+        oitNodes[index].glow = glow;
+        oitNodes[index].depth = gl_FragCoord.z;
+        oitNodes[index].blend = 0xffffffffu;
+        oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
+        // Glow nodes participate in the same exact ordered list count.
+        pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
+    }
     exact_oit_wave_max_pad(pixel_count);
 }
 // </AS:Chanayane>

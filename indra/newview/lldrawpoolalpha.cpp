@@ -207,6 +207,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
 // <AS:Chanayane> Capture replaces the two vanilla calls only while an OIT renderer is active.
+    // // explicitly unbind here so render loop doesn't make assumptions about the last shader
+    // // already being setup for rendering
     // LLGLSLShader::unbind();
     //
     // if (!LLPipeline::sRenderingHUDs)
@@ -221,18 +223,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             *this, prepare_alpha_shader, water_sign,
             emissive_shader, pbr_emissive_shader))
     {
-        // explicitly unbind here so render loop doesn't make assumptions about the last shader
-        // already being setup for rendering
-        LLGLSLShader::unbind();
-
-        if (!LLPipeline::sRenderingHUDs)
-        {
-            // first pass, render rigged objects only and render to depth buffer
-            forwardRender(true);
-        }
-
-        // second pass, regular forward alpha rendering
-        forwardRender();
+        ASOITDispatcher::renderNonOITPostDeferred(*this);
     }
 // </AS:Chanayane>
 
@@ -307,8 +298,16 @@ void LLDrawPoolAlpha::forwardRender(bool rigged)
     }
 // </AS:Chanayane>
 
-    if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
+// <AS:Chanayane> The merged traversal contains rigged groups in one call.
+    // if (rigged && mType == LLDrawPool::POOL_ALPHA_POST_WATER)
+    if ((rigged || ASOITDispatcher::mergedAlphaActive()) &&
+        mType == LLDrawPool::POOL_ALPHA_POST_WATER)
+// </AS:Chanayane>
     { // draw GLTF scene to depth buffer before rigged alpha
+// <AS:Chanayane> The merged call otherwise inherits non-rigged depth writes.
+        ASAlphaGroupDepthScope merged_gltf_depth(
+            ASOITDispatcher::mergedAlphaActive(), true, mType);
+// </AS:Chanayane>
         LL::GLTFSceneManager::instance().render(false, false);
         LL::GLTFSceneManager::instance().render(false, true);
         LL::GLTFSceneManager::instance().render(false, false, true);
@@ -671,10 +670,19 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
     }
 
 
-    for (LLCullResult::sg_iterator i = begin; i != end; ++i)
+// <AS:Chanayane> Mode 3 delegates traversal and depth policy to its module.
+    // for (LLCullResult::sg_iterator i = begin; i != end; ++i)
+    // {
+    ASAlphaGroupTraversal alpha_groups(begin, end, rigged);
+    // LLSpatialGroup* group = *i;
+    LLSpatialGroup* group = nullptr;
+    bool group_rigged = rigged;
+    while (alpha_groups.next(group, group_rigged))
     {
+        ASAlphaGroupDepthScope merged_depth(
+            alpha_groups.merged(), group_rigged, getType());
+// </AS:Chanayane>
         LL_PROFILE_ZONE_NAMED_CATEGORY_DRAWPOOL("renderAlpha - group");
-        LLSpatialGroup* group = *i;
         llassert(group);
         llassert(group->getSpatialPartition());
 
@@ -728,12 +736,18 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
             bool disable_cull = is_particle_or_hud_particle;
             LLGLDisable cull(disable_cull ? GL_CULL_FACE : 0);
 
-            LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
+// <AS:Chanayane> A merged traversal selects the map per group.
+            // LLSpatialGroup::drawmap_elem_t& draw_info = rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
+            LLSpatialGroup::drawmap_elem_t& draw_info = group_rigged ? group->mDrawMap[LLRenderPass::PASS_ALPHA_RIGGED] : group->mDrawMap[LLRenderPass::PASS_ALPHA];
+// </AS:Chanayane>
 
             for (LLSpatialGroup::drawmap_elem_t::iterator k = draw_info.begin(); k != draw_info.end(); ++k)
             {
                 LLDrawInfo& params = **k;
-                if ((bool)params.mAvatar != rigged)
+// <AS:Chanayane> Match the current merged entry rather than the outer call.
+                // if ((bool)params.mAvatar != rigged)
+                if ((bool)params.mAvatar != group_rigged)
+// </AS:Chanayane>
                 {
                     continue;
                 }

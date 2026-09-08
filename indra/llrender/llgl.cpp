@@ -1492,9 +1492,25 @@ void LLGLManager::initExtensions()
         has_shader_subgroup_extension =
             ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts);
     }
+    // The extension string (or GL 4.6 core) only promises the API exists
+    // somewhere; GL_KHR_shader_subgroup explicitly allows a driver to support
+    // it in some stages but not others (e.g. compute only). Our capture
+    // shaders call subgroupBallot()/subgroupElect()/subgroupBroadcastFirst()/
+    // subgroupMax() from the FRAGMENT stage, so require GL_FRAGMENT_SHADER_BIT
+    // in GL_SUBGROUP_SUPPORTED_STAGES_KHR before trusting that path -- without
+    // this check a driver with fragment-stage subgroup gaps or bugs (seen on
+    // at least one current-generation NVIDIA GPU/driver) silently ran the
+    // wave-level allocator anyway.
+    GLbitfield subgroup_supported_stages = 0;
+    if ((mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
+        (mGLVersion >= 4.59f || has_shader_subgroup_extension))
+    {
+        glGetIntegerv(GL_SUBGROUP_SUPPORTED_STAGES_KHR, (GLint*)&subgroup_supported_stages);
+    }
     mHasShaderSubgroup =
         (mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
-        (mGLVersion >= 4.59f || has_shader_subgroup_extension);
+        (mGLVersion >= 4.59f || has_shader_subgroup_extension) &&
+        (subgroup_supported_stages & GL_FRAGMENT_SHADER_BIT) != 0;
     // </AS:Chanayane>
 
     // Misc

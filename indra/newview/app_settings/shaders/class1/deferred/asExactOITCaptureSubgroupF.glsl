@@ -51,14 +51,26 @@ void exact_oit_store(vec4 color)
 #endif
 
     uint index = exact_oit_reserve(need);   // every non-helper lane must reach this call (no early return before it)
-    if (index == 0xffffffffu) return;
 
-    oitNodes[index].color = color;
-    oitNodes[index].glow = 0.0;
-    oitNodes[index].depth = gl_FragCoord.z;
-    oitNodes[index].blend = oitBlendFactors;
-    oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
-
-    uint pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
-    exact_oit_wave_max_pad(pixel_count);   // some lanes may have exited above; that's fine
+    // exact_oit_wave_max_pad() is itself a subgroup collective (subgroupMax)
+    // and has the same "every non-helper lane must call it, no early return
+    // before it" precondition as exact_oit_reserve() above. A lane whose
+    // reservation was rejected or unneeded must still call it -- with 0,
+    // which cannot raise the wave's max -- instead of returning early: an
+    // early return here left some non-helper lanes out of the subgroupMax()
+    // call inside it, which is divergent control flow into a subgroup op and
+    // produced a wrong (undercounted) oitPad on at least one GPU/driver,
+    // letting composite() under-provision sort passes for a pixel whose true
+    // list length exceeded the shallow-path limit.
+    uint pixel_count = 0u;
+    if (index != 0xffffffffu)
+    {
+        oitNodes[index].color = color;
+        oitNodes[index].glow = 0.0;
+        oitNodes[index].depth = gl_FragCoord.z;
+        oitNodes[index].blend = oitBlendFactors;
+        oitNodes[index].next = imageAtomicExchange(oitHeadPointers, ivec2(gl_FragCoord.xy), index);
+        pixel_count = imageAtomicAdd(oitListCounts, ivec2(gl_FragCoord.xy), 1u) + 1u;
+    }
+    exact_oit_wave_max_pad(pixel_count);
 }

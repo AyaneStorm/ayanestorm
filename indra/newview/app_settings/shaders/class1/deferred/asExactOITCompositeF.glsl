@@ -68,6 +68,20 @@ in vec2 vary_fragcoord;
 out vec4 frag_color;
 
 const uint OIT_NULL = 0xffffffffu;
+// <AS:Chanayane> Hard ceiling on every linked-list traversal below. The list
+// is built lock-free by concurrent fragment shaders (imageAtomicExchange);
+// it is expected to be an acyclic chain of at most oitNodeCapacity nodes,
+// but nothing here can prove that at GPU-compile time. If any bug --
+// current or future, in this file or the capture shaders -- ever lets a
+// node's `next` form a cycle or otherwise violates that assumption, an
+// unbounded `for (node = head; node != OIT_NULL; node = oitNodes[node].next)`
+// becomes a true GPU-side infinite loop: unlike a CPU hang this cannot be
+// timed out or recovered from the host side, and is exactly what a
+// Display:RenderFlush watchdog / driver TDR hang looks like. Every traversal
+// below is capped at oitNodeCapacity (not a compile-time constant, so used
+// directly at each guard rather than aliased) -- a correct upper bound on
+// any real list's length regardless of how it was built.
+// </AS:Chanayane>
 
 vec4 blend_factor(uint factor, vec4 src, vec4 dst)
 {
@@ -164,7 +178,11 @@ uint prune_behind_opaque_cutoff(uint head, out uint retained_count)
 {
     uint cutoff = OIT_NULL;
     retained_count = 0u;
-    for (uint node = head; node != OIT_NULL; node = oitNodes[node].next)
+    // <AS:Chanayane> Iteration-capped traversal: see the OIT_NULL-adjacent
+    // comment above. A cyclic or otherwise corrupted list must terminate
+    // this loop by cap, never spin the GPU.
+    for (uint node = head, guard = 0u; node != OIT_NULL && guard < oitNodeCapacity; node = oitNodes[node].next, ++guard)
+    // </AS:Chanayane>
     {
         ++retained_count;
         if (is_opaque_cutoff(node) &&
@@ -182,7 +200,9 @@ uint prune_behind_opaque_cutoff(uint head, out uint retained_count)
     retained_count = 0u;
     uint retained_head = OIT_NULL;
     uint retained_tail = OIT_NULL;
-    for (uint node = head; node != OIT_NULL;)
+    // <AS:Chanayane> Same iteration cap as above.
+    for (uint node = head, guard = 0u; node != OIT_NULL && guard < oitNodeCapacity; ++guard)
+    // </AS:Chanayane>
     {
         uint following = oitNodes[node].next;
         if (node == cutoff || comes_first(cutoff, node))
@@ -194,7 +214,7 @@ uint prune_behind_opaque_cutoff(uint head, out uint retained_count)
         }
         node = following;
     }
-    oitNodes[retained_tail].next = OIT_NULL;
+    if (retained_tail != OIT_NULL) oitNodes[retained_tail].next = OIT_NULL;
     return retained_head;
 }
 // <AS:Chanayane> E6: chunked register sort. Detaches one run starting at
@@ -213,16 +233,21 @@ uint take_run(inout uint current, out uint tail)
     uint next = oitNodes[head].next;
     uint length = 1u;
     bool reverse = false;
+    // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment in
+    // this file. length already caps this loop's useful work at OIT_CHUNK,
+    // but comes_first() ordering alone does not guarantee termination on a
+    // corrupted/cyclic list, so guard it explicitly too.
     if (next != OIT_NULL)
     {
         reverse = comes_first(next, prev);
-        while (next != OIT_NULL)
+        for (uint guard = 0u; next != OIT_NULL && guard < oitNodeCapacity; ++guard)
         {
             bool continues = reverse ? comes_first(next, prev) : comes_first(prev, next);
             if (!continues) break;
             prev = next; next = oitNodes[prev].next; ++length;
         }
     }
+    // </AS:Chanayane>
     if (length >= OIT_CHUNK || next == OIT_NULL)
     {
         // Long (or final) natural run: detach, reverse in place if needed. Same as today.
@@ -231,8 +256,11 @@ uint take_run(inout uint current, out uint tail)
         tail = prev;
         if (reverse)
         {
+            // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
             uint p = OIT_NULL, node = head; tail = head;
-            while (node != OIT_NULL) { uint f = oitNodes[node].next; oitNodes[node].next = p; p = node; node = f; }
+            for (uint guard = 0u; node != OIT_NULL && guard < oitNodeCapacity; ++guard)
+            { uint f = oitNodes[node].next; oitNodes[node].next = p; p = node; node = f; }
+            // </AS:Chanayane>
             head = p;
         }
         return head;
@@ -265,7 +293,9 @@ uint merge_runs(uint a, uint b, out uint tail)
 {
     uint head = OIT_NULL;
     tail = OIT_NULL;
-    while (a != OIT_NULL || b != OIT_NULL)
+    // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+    for (uint guard = 0u; (a != OIT_NULL || b != OIT_NULL) && guard < oitNodeCapacity; ++guard)
+    // </AS:Chanayane>
     {
         uint selected;
         if (b == OIT_NULL || (a != OIT_NULL && comes_first(a, b)))
@@ -293,7 +323,12 @@ uint natural_merge_pass(uint head, out uint output_run_count)
     uint new_head = OIT_NULL;
     uint new_tail = OIT_NULL;
     output_run_count = 0u;
-    while (current != OIT_NULL)
+    // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+    // Each iteration consumes at least one node via take_run(), so this
+    // terminates naturally well under oitNodeCapacity rounds on a correct
+    // list; the cap only matters if that assumption is ever violated.
+    for (uint guard = 0u; current != OIT_NULL && guard < oitNodeCapacity; ++guard)
+    // </AS:Chanayane>
     {
         uint left_tail;
         uint left = take_run(current, left_tail);
@@ -419,7 +454,9 @@ void main()
         uint count_before_node = 0u;
         uint hidden_behind_cutoff = 0u;
         bool cutoff_found = false;
-        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+        for (uint n = head, guard = 0u; n != OIT_NULL && guard < oitNodeCapacity; n = oitNodes[n].next, ++guard)
+        // </AS:Chanayane>
         {
             if (is_opaque_cutoff(n))
             {
@@ -452,7 +489,9 @@ void main()
         uint count = 0u;
         float nearest = 1.0;
         float farthest = 0.0;
-        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+        for (uint n = head, guard = 0u; n != OIT_NULL && guard < oitNodeCapacity; n = oitNodes[n].next, ++guard)
+        // </AS:Chanayane>
         {
             ++count;
             nearest = min(nearest, oitNodes[n].depth);
@@ -482,7 +521,9 @@ void main()
     {
         bool invalid = false;
         float previous = 1.0;
-        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+        for (uint n = head, guard = 0u; n != OIT_NULL && guard < oitNodeCapacity; n = oitNodes[n].next, ++guard)
+        // </AS:Chanayane>
         {
             invalid = invalid || oitNodes[n].depth > previous;
             previous = oitNodes[n].depth;
@@ -513,7 +554,9 @@ void main()
     float glow = dst.a;
     if ((count & OIT_SORTED) != 0u)
     {
-        for (uint n = head; n != OIT_NULL; n = oitNodes[n].next)
+        // <AS:Chanayane> Iteration-capped: see the OIT_NULL-adjacent comment.
+        for (uint n = head, guard = 0u; n != OIT_NULL && guard < oitNodeCapacity; n = oitNodes[n].next, ++guard)
+        // </AS:Chanayane>
         {
             blend_node(n, dst, glow);
         }
@@ -524,11 +567,15 @@ void main()
     }
     else
     {
-        // Impossible if pass 1 issues a merge round whenever
-        // maximum_list > K (composite()'s own gate). Made visible instead of
-        // silently truncating count to OIT_SHALLOW nodes in link order.
-        frag_color = vec4(1.0, 0.0, 1.0, 0.0);
-        return;
+        // Should be unreachable if pass 1 issues a merge round whenever
+        // maximum_list > K (composite()'s own gate). Reported to have fired
+        // in the field (magenta screen corruption), so treat it as reachable
+        // in practice rather than trusting the invariant: fall back to the
+        // shallow path with the list truncated to OIT_SHALLOW nodes in link
+        // order (unsorted tail dropped) instead of visibly corrupting the
+        // frame. oitOverflow (debug mode 6) remains the way to see this
+        // happening; it no longer paints the live scene.
+        blend_shallow(head, OIT_SHALLOW, dst, glow);
     }
     dst.a = max(dst.a, glow);
     frag_color = max(dst, vec4(0.0));
