@@ -6,7 +6,7 @@
 
 AyaneStorm is a fork of Firestorm viewer with a focus on photography and visual quality. Its code base is usually on par with Firestorm latest beta.
 
-[![Download the latest release](https://img.shields.io/github/v/release/AyaneStorm/ayanestorm?style=for-the-badge&logo=github&label=Download%20latest%20release&color=7B68EE)](https://github.com/AyaneStorm/ayanestorm/releases/latest)
+[![Download the latest release](https://img.shields.io/github/v/release/AyaneStorm/ayanestorm?style=for-the-badge&logo=github&label=Download%20latest%20release&color=7B68EE)](https://github.com/AyaneStorm/special-ayanestorm/releases/latest)
 
 Available for the following platforms:
 - Windows (a setup and a .zip version are provided; either install it using the setup, or just extract the .zip and run the AyaneStorm executable inside it)
