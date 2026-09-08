@@ -11827,7 +11827,8 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASRenderOITMode</key>
   <map>
     <key>Comment</key>
-    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string>
+    <!-- <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string> -->
+    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT, 3 AYAstorm unified alpha ordering.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

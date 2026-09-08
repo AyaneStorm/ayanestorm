@@ -88,7 +88,7 @@
         layout="topleft"
         height="23"
         control_name="ASRenderOITMode"
-        tool_tip="Select Standard transparency, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
+        tool_tip="Select Standard, AYAstorm unified alpha ordering, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
         left="15"
         name="render_oit_mode"
         width="220"
@@ -105,6 +105,10 @@
           label="AVBOIT (experimental)"
           name="avboit"
           value="2" />
+        <combo_box.item
+          label="AYAstorm (mayatonton)"
+          name="ayastorm"
+          value="3" />
       </combo_box>
 
       <!-- OIT diagnostic views. -->
