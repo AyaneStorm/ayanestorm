@@ -45,7 +45,7 @@ and one call that merges the returned mask with normal material glow.
 Implemented viewer-local persisted settings. Defaults were selected from the
 runtime-tuned values shown in the 2026-09-08 UI capture:
 
-1. `ASDiffuseGlowEnabled` (Boolean, default true): enables bright-surface
+1. `ASDiffuseGlowEnabled` (Boolean, default false): enables bright-surface
    extraction without changing normal material glow.
 2. `ASDiffuseGlowThreshold` (F32, default `0.67`): visible-brightness cutoff.
 3. `ASDiffuseGlowSoftness` (F32, default `0.80`): width of the threshold knee.
