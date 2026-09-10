@@ -18,7 +18,8 @@ uniform vec2 screen_res;
 uniform vec4 as_color_grade_basic1; // brightness, contrast, highlights, shadows
 uniform vec4 as_color_grade_basic2; // whites, blacks, saturation, vibrance
 uniform float as_color_grade_basic3; // global hue radians
-uniform vec3 as_color_grade_bands[8]; // hue radians, saturation, luminance
+uniform vec3 as_color_grade_bands[24]; // hue radians, saturation, luminance
+uniform vec4 as_color_grade_band_parameters[24]; // strength, tolerance, softness, target lightness
 uniform vec4 as_color_grade_colorize; // enabled, hue radians, saturation, luminance
 uniform vec4 as_color_grade_split_toning1; // highlight hue/saturation, shadow hue/saturation
 uniform vec2 as_color_grade_split_toning2; // enabled, balance
@@ -31,7 +32,20 @@ in vec2 vary_fragcoord;
 
 const float PI = 3.14159265358979323846;
 const float TAU = 6.28318530717958647692;
-const float BAND_CENTERS[8] = float[8](0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 280.0, 320.0);
+// Spectrum, perceptually even gray, and consolidated skin targets in OKLab.
+const vec3 BAND_TARGETS[24] = vec3[24](
+    vec3(0.60673089, 0.20238949, 0.10022463), vec3(0.70564504, 0.10933738, 0.13497306),
+    vec3(0.82598838, -0.00898265, 0.16595148), vec3(0.68833417, -0.15716629, 0.10859013),
+    vec3(0.71344296, -0.11030278, -0.04429950), vec3(0.55953251, -0.03591295, -0.20464646),
+    vec3(0.54717855, 0.12050861, -0.19200448), vec3(0.61683619, 0.23910924, -0.07560953),
+    vec3(0.96115136, 0.0, 0.0), vec3(0.85451365, 0.0, 0.0),
+    vec3(0.74762810, 0.0, 0.0), vec3(0.64008678, 0.0, 0.0),
+    vec3(0.53128180, 0.0, 0.0), vec3(0.42392648, 0.0, 0.0),
+    vec3(0.31713601, 0.0, 0.0), vec3(0.20903609, 0.0, 0.0),
+    vec3(0.75065143, 0.11280632, 0.04973374), vec3(0.80392932, 0.08354422, 0.04898851),
+    vec3(0.85693958, 0.05381465, 0.05120640), vec3(0.91125287, 0.02658527, 0.05378820),
+    vec3(0.87209830, 0.02233420, 0.05541131), vec3(0.70161731, 0.03985448, 0.07409316),
+    vec3(0.52833924, 0.03879224, 0.07301111), vec3(0.35482758, 0.03524390, 0.07142338));
 
 vec3 srgbToLinear(vec3 c)
 {
@@ -78,16 +92,61 @@ float hueDistance(float a, float b)
     return min(d, 360.0 - d);
 }
 
-float bandWeight(float hue, int index)
+float distanceWeight(float distance_from_center, float radius, float softness)
 {
-    float center = BAND_CENTERS[index];
-    float previous = BAND_CENTERS[(index + 7) % 8];
-    float next = BAND_CENTERS[(index + 1) % 8];
-    float left_span = mod(center - previous + 360.0, 360.0);
-    float right_span = mod(next - center + 360.0, 360.0);
-    float signed_delta = mod(hue - center + 540.0, 360.0) - 180.0;
-    float span = signed_delta < 0.0 ? left_span : right_span;
-    return 1.0 - smoothstep(span * 0.42, span * 0.72, abs(signed_delta));
+    if (radius <= 0.0001) return 1.0 - step(0.0001, distance_from_center);
+    if (softness <= 0.0001) return 1.0 - step(radius, distance_from_center);
+    // This curve makes UI softness 50 reproduce the former 0.42/0.72 feather.
+    float feather = softness * (softness + 2.0) / 3.0;
+    float weight = 1.0 - smoothstep(radius * (1.0 - feather), radius, distance_from_center);
+    // Above the compatible midpoint, increasingly suppress colors farther
+    // from the target; softness 100 uses a strong fourth-power falloff.
+    float high_softness = smoothstep(0.5, 1.0, softness);
+    return pow(weight, mix(1.0, 4.0, high_softness));
+}
+
+float colorBandWeight(vec3 lab, int index, float tolerance, float softness,
+                      float target_lightness)
+{
+    vec3 target = BAND_TARGETS[index];
+    target = target_lightness < 0.0 ?
+        mix(target, vec3(1.0, 0.0, 0.0), -target_lightness) :
+        mix(target, vec3(0.0), target_lightness);
+    float target_chroma = length(target.yz);
+    float pixel_chroma = length(lab.yz);
+
+    // Gray selection remains defined as a chromatic target approaches white or
+    // black, allowing a continuous transition instead of a threshold jump.
+    float gray_lightness_weight = distanceWeight(abs(lab.x - target.x),
+                                                  tolerance * 0.60, softness);
+    float gray_chroma_weight = distanceWeight(abs(pixel_chroma - target_chroma),
+                                              tolerance * 0.15, softness);
+    float gray_weight = gray_lightness_weight * gray_chroma_weight;
+    if (index >= 8 && index < 16) return gray_weight;
+
+    // Chromatic bands always require a hue match. Tolerance 100 is capped at
+    // +/-60 degrees, so even its broad legacy-like mask cannot reach other hues.
+    float hue_separation = PI;
+    if (pixel_chroma > 0.000001)
+    {
+        float delta = abs(atan(lab.z, lab.y) - atan(target.z, target.y));
+        hue_separation = min(delta, TAU - delta);
+    }
+    float hue_weight = distanceWeight(hue_separation,
+                                      tolerance * PI / 3.0, softness);
+
+    // Quadratic scaling remains selective at ordinary tolerances, but makes
+    // lightness/chroma effectively unrestricted at tolerance 100.
+    float tone_distance = length(vec2(lab.x - target.x,
+                                      pixel_chroma - target_chroma));
+    float tone_weight = distanceWeight(tone_distance,
+                                       1.10 * tolerance * tolerance, softness);
+    float chromatic_weight = hue_weight * tone_weight;
+
+    // Hue becomes perceptually undefined close to neutral. Blend smoothly to
+    // the gray selector over that range instead of switching at one value.
+    float hue_definition = smoothstep(0.0, 0.03, target_chroma);
+    return mix(gray_weight, chromatic_weight, hue_definition);
 }
 
 float hash12(vec2 p)
@@ -158,22 +217,37 @@ void main()
         C *= 1.0 + vibrance;
     }
 
-    float weights[8];
+    float weights[24];
     float weight_sum = 0.0;
-    float neutral_guard = smoothstep(0.01, 0.05, C);
-    for (int i = 0; i < 8; ++i)
+    vec3 mixer_lab = vec3(L, C * cos(hue), C * sin(hue));
+    for (int i = 0; i < 24; ++i)
     {
-        weights[i] = bandWeight(hue_degrees, i) * neutral_guard;
+        float selection = colorBandWeight(mixer_lab, i,
+            as_color_grade_band_parameters[i].y, as_color_grade_band_parameters[i].z,
+            as_color_grade_band_parameters[i].w);
+        // Neutral auxiliary bands must not dilute the first-row adjustments.
+        float active = i < 8 ? 1.0 :
+            step(0.000001, dot(abs(as_color_grade_bands[i]), vec3(1.0))) *
+            step(0.000001, as_color_grade_band_parameters[i].x);
+        weights[i] = selection * active;
         weight_sum += weights[i];
     }
     float normalization = max(1.0, weight_sum);
-    float hue_shift = 0.0;
+    vec2 source_chroma = vec2(C * cos(hue), C * sin(hue));
+    vec2 chroma_shift = vec2(0.0);
     float saturation_shift = 0.0;
     float luminance_shift = 0.0;
-    for (int i = 0; i < 8; ++i)
+    for (int i = 0; i < 24; ++i)
     {
-        float weight = weights[i] / normalization;
-        hue_shift += as_color_grade_bands[i].x * weight;
+        // Apply strength after overlap normalization so 50 is exactly half of 100.
+        float weight = weights[i] / normalization * as_color_grade_band_parameters[i].x;
+        float shift_cos = cos(as_color_grade_bands[i].x);
+        float shift_sin = sin(as_color_grade_bands[i].x);
+        vec2 rotated_chroma = vec2(source_chroma.x * shift_cos - source_chroma.y * shift_sin,
+                                   source_chroma.x * shift_sin + source_chroma.y * shift_cos);
+        // Blend chroma vectors rather than signed angles so -180 and +180
+        // remain identical even when selection weight is fractional.
+        chroma_shift += (rotated_chroma - source_chroma) * weight;
         saturation_shift += as_color_grade_bands[i].y * weight;
         luminance_shift += as_color_grade_bands[i].z * weight;
     }
@@ -186,7 +260,10 @@ void main()
     }
     else
     {
-        hue = mod(hue + hue_shift + TAU, TAU);
+        vec2 mixed_chroma = source_chroma + chroma_shift;
+        C = length(mixed_chroma);
+        hue = C > 0.000001 ? atan(mixed_chroma.y, mixed_chroma.x) : hue;
+        hue = mod(hue + TAU, TAU);
         C *= max(0.0, 1.0 + saturation_shift);
         L = clamp(L + luminance_shift * 0.25 * 4.0 * L * (1.0 - L), 0.0, 1.0);
     }

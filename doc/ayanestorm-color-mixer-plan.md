@@ -57,9 +57,11 @@ Add persistent settings with identity defaults:
 | Saturation, Vibrance | `-100…+100`, `0` |
 | Global Hue | `-180…+180°`, `0` |
 | Grain Amount, Size, Roughness, Color | `0…100`; Amount default `0`, remaining neutral defaults `50` |
-| 8 bands × Hue/Saturation/Luminance | `-100…+100`, `0` |
+| 24 bands × Hue/Saturation/Luminance | `-100…+100`, `0` |
+| 24 bands × Target Lightness | `-100…+100`, `0`; white at `-100`, base target at `0`, black at `100` |
+| 24 bands × Strength/Tolerance/Softness | `0…100`; Strength `100`, Tolerance `50`, Softness `50` |
 
-Use explicit settings for the 24 band values, such as `ASColorGradeRedHue`, rather than storing an opaque array. This keeps debug settings and preset files readable.
+Use explicit settings for the 168 band values, such as `ASColorGradeRedHue`, rather than storing an opaque array. This keeps debug settings and preset files readable.
 
 Keep these values transient and out of settings/presets:
 
@@ -174,41 +176,58 @@ Convert adjusted OKLab to OKLCh:
 
 After all color operations, convert back through OKLab to linear RGB and apply a hue-preserving gamut compressor before sRGB encoding. Avoid independent RGB clipping until the final safety clamp.
 
-## Eight-Band Color Mixer
+## 24-Band Color Mixer
 
-Use these band centers in hue degrees:
+Use three rows of eight fixed OKLab targets:
 
-| Band | Center |
-|---|---:|
-| Red | 0 |
-| Orange | 30 |
-| Yellow | 60 |
-| Green | 120 |
-| Aqua | 180 |
-| Blue | 240 |
-| Purple | 280 |
-| Magenta | 320 |
+1. Red, Orange, Yellow, Green, Aqua, Blue, Purple, and Magenta.
+2. Eight equal-OKLab-lightness grays from `#f2f2f2` to `#181818`.
+3. `RedSkin2`, `RedSkin4`, `RedSkin6`, `RedSkin8`, `Skin2`, `Skin4`,
+   `Skin6`, and `Skin8` from the generated skin palettes.
 
 For each pixel:
 
-1. Compute circular distance from its OKLCh hue to every center.
-2. Generate smooth weights extending to the midpoints between neighboring centers, with a small overlap feather.
-3. Multiply weights by `smoothstep(0.01, 0.05, C)` so neutral pixels are protected.
-4. Normalize the weights when their sum exceeds one.
+1. Move each band's base target toward OKLab white or black according to Target Lightness.
+2. For chromatic bands, multiply a circular hue gate by a separate OKLab
+   lightness/chroma gate. Tolerance `100` broadens lightness/chroma enough to
+   approximate the former hue-only selection, but hue remains capped at `±60°`.
+3. For gray bands, multiply a lightness gate by a low-chroma gate.
+4. Apply Softness independently to each gate, then multiply their weights.
+5. Normalize active weights when their sum exceeds one.
 
 Map per-band controls as follows:
 
-- Hue `-100…+100` → `-30…+30°`.
+- Hue `-180…+180°` in `0.1°` increments, covering the complete hue circle without scaling.
 - Saturation → chroma multiplier `max(0, 1 + value/100)`.
 - Luminance → `L += value/100 * 0.25 * 4L(1-L)`.
+- Target Lightness moves the selection target perceptually toward white or black.
+- Strength scales the band's full contribution; zero disables it.
+- Tolerance widens both selection gates. The chromatic hue radius runs from an
+  exact match at zero through `±30°` at 50 to `±60°` at 100; nearly neutral
+  pixels are treated as maximally hue-separated.
+- The chromatic lightness/chroma radius grows quadratically, keeping ordinary
+  tolerances selective while becoming effectively unrestricted at 100.
+- Gray targets use separate lightness and low-chroma ranges because hue is
+  undefined near neutral colors.
+- As Target Lightness moves a chromatic band close to white or black, blend
+  continuously from its chromatic selector to the gray selector. Never switch
+  selector models at a fixed chroma threshold.
+- Softness progressively attenuates farther selected colors. At zero the
+  tolerance boundary is hard; values above 50 increasingly suppress distant
+  colors, reaching a fourth-power falloff at 100.
 
-Blend all eight contributions from the original pixel state using normalized weights. Do not apply bands sequentially, which would make results order-dependent.
+Blend all 24 contributions from the original pixel state using normalized weights. Do not apply bands sequentially, which would make results order-dependent.
+Apply Hue by blending the original and fully rotated OKLab chroma vectors, not
+by multiplying a signed angle by selection weight. This keeps the `-180°` and
+`+180°` endpoints identical under soft or overlapping selections.
 
 Upload band values as packed uniform arrays:
 
 ```glsl
-uniform vec3 color_grade_bands[8];
+uniform vec3 color_grade_bands[24];
 // x = hue shift radians, y = saturation scale, z = luminance offset
+uniform vec4 color_grade_band_parameters[24];
+// x = strength, y = tolerance, z = softness, w = target lightness
 ```
 
 ## Grain
@@ -258,10 +277,10 @@ Temperature is explicitly a creative `-100…+100` cool-to-warm adjustment, not 
 
 Match the compact Photoshop reference:
 
-- One horizontal row of eight circular color selectors.
+- Three horizontal rows of eight circular color selectors: spectrum, gray, and consolidated skin.
 - No rainbow/global selector.
 - Selected band indicated by an outer ring and its name displayed as text.
-- Three full-width Hue, Saturation, and Luminance sliders below.
+- Seven full-width Target Lightness, Hue, Saturation, Luminance, Strength, Tolerance, and Softness sliders below.
 - Values and slider positions refresh immediately when selecting another band.
 - Individual resets affect the selected band and dimension only.
 - Keyboard focus and tooltips identify every band so selection does not depend only on color.
@@ -276,7 +295,7 @@ Expose Grain Amount, Size, Roughness, and Color. Disable the subordinate control
 
 Implement the floater as a custom class:
 
-- On band selection, disconnect or guard mixer callbacks, populate the three controls from that band’s settings, then reconnect.
+- On band selection, disconnect or guard mixer callbacks, populate the seven controls from that band’s settings, then reconnect.
 - Slider commits write directly to the appropriate persistent setting for live rendering.
 - Mouse-down on Before sets transient bypass.
 - Mouse-up, mouse capture loss, floater close, app focus loss, and floater destruction clear bypass.

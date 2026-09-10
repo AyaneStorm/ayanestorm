@@ -55,9 +55,13 @@ private:
     LLTextBox* mBandName;
     LLCheckBoxCtrl* mColorize;
     LLButton* mColorizeSwatch;
+    ASColorSliderCtrl* mMixerTargetLightness;
     ASColorSliderCtrl* mMixerHue;
     ASColorSliderCtrl* mMixerSaturation;
     ASColorSliderCtrl* mMixerLuminance;
+    ASColorSliderCtrl* mMixerStrength;
+    ASColorSliderCtrl* mMixerTolerance;
+    ASColorSliderCtrl* mMixerSoftness;
     ASColorSliderCtrl* mSplitHighlightsSaturation;
     ASColorSliderCtrl* mSplitShadowsSaturation;
     LLButton* mSplitHighlightsSwatch;

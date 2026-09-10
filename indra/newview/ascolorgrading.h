@@ -16,7 +16,15 @@ class LLVertexBuffer;
 
 namespace ASColorGrading
 {
-    enum Band : S32 { RED, ORANGE, YELLOW, GREEN, AQUA, BLUE, PURPLE, MAGENTA, BAND_COUNT };
+    // All three rows use perceptual OKLab targets.
+    enum Band : S32
+    {
+        RED, ORANGE, YELLOW, GREEN, AQUA, BLUE, PURPLE, MAGENTA,
+        GRAY_1, GRAY_2, GRAY_3, GRAY_4, GRAY_5, GRAY_6, GRAY_7, GRAY_8,
+        RED_SKIN_2, RED_SKIN_4, RED_SKIN_6, RED_SKIN_8,
+        SKIN_2, SKIN_4, SKIN_6, SKIN_8,
+        BAND_COUNT
+    };
 
     void registerShaders(std::vector<LLGLSLShader*>& shaders);
     bool createShaders(S32 shader_level);
