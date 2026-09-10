@@ -6632,6 +6632,19 @@
       </menu_item_check>
       <!-- </AS:Chanayane> -->
 
+      <!-- <AS:Chanayane> Viewer-local photographic color grading floater -->
+      <menu_item_check
+         label="Color Grading..."
+         name="AS Color Grading">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_color_grading" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_color_grading" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <!-- <AS:Chanayane> Aurora settings floater -->
       <menu_item_check
          label="Aurora Settings..."
