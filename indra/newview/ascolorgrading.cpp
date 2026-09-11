@@ -21,6 +21,7 @@
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "pipeline.h"
+#include "v4color.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,11 +43,13 @@ namespace
         { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
           "Gray1", "Gray2", "Gray3", "Gray4", "Gray5", "Gray6", "Gray7", "Gray8",
           "RedSkin2", "RedSkin4", "RedSkin6", "RedSkin8", "Skin2", "Skin4", "Skin6", "Skin8" };
-    const char* const COMPONENTS[7] =
-        { "Hue", "Saturation", "Luminance", "TargetLightness", "Strength", "Tolerance", "Softness" };
+    const char* const COMPONENTS[8] =
+        { "Hue", "Saturation", "Lightness", "Strength", "HueRange",
+          "ChromaRange", "LightnessRange", "Softness" };
     const char* const BUILTIN_PRESETS[] =
         { "[AS] Neutral", "[AS] Sepia", "[AS] Cyanotype", "[AS] Selenium", "[AS] Black & White",
           "[AS] Warm Vintage", "[AS] Cool Cinematic", "[AS] Bleach Bypass", "[AS] Vivid" };
+    constexpr S32 CURRENT_PRESET_VERSION = 2;
 
     const LLStaticHashedString sLinearEnabled("as_color_grade_linear_enabled");
     const LLStaticHashedString sExposure("as_color_grade_exposure");
@@ -55,7 +58,9 @@ namespace
     const LLStaticHashedString sBasic2("as_color_grade_basic2");
     const LLStaticHashedString sBasic3("as_color_grade_basic3");
     const LLStaticHashedString sBands("as_color_grade_bands");
+    const LLStaticHashedString sBandSelectionColors("as_color_grade_band_selection_colors");
     const LLStaticHashedString sBandParameters("as_color_grade_band_parameters");
+    const LLStaticHashedString sBandRanges("as_color_grade_band_ranges");
     const LLStaticHashedString sColorize("as_color_grade_colorize");
     const LLStaticHashedString sSplitToning1("as_color_grade_split_toning1");
     const LLStaticHashedString sSplitToning2("as_color_grade_split_toning2");
@@ -69,18 +74,48 @@ namespace
         return llclamp(gSavedSettings.getF32(name) * 0.01f, -1.f, 1.f);
     }
 
-    // Remove discarded palette values from the next saved user-settings file.
-    void retireObsoleteSkinSettings()
+    // Convert persisted sRGB selection colors once per presentation, not per pixel.
+    void srgbToOklab(const LLColor4& color, F32* output)
+    {
+        F32 rgb[3];
+        for (S32 i = 0; i < 3; ++i)
+        {
+            const F32 value = llclamp(color.mV[i], 0.f, 1.f);
+            rgb[i] = value <= 0.04045f ? value / 12.92f :
+                std::pow((value + 0.055f) / 1.055f, 2.4f);
+        }
+        const F32 l = std::cbrt(0.4122214708f * rgb[0] + 0.5363325363f * rgb[1] + 0.0514459929f * rgb[2]);
+        const F32 m = std::cbrt(0.2119034982f * rgb[0] + 0.6806995451f * rgb[1] + 0.1073969566f * rgb[2]);
+        const F32 s = std::cbrt(0.0883024619f * rgb[0] + 0.2817188376f * rgb[1] + 0.6299787005f * rgb[2]);
+        output[0] = 0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s;
+        output[1] = 1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s;
+        output[2] = 0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s;
+    }
+
+    // Remove discarded mixer values from the next saved user-settings file.
+    void retireObsoleteMixerSettings()
     {
         const char* const bands[] =
             { "Skin1", "Skin3", "Skin5", "Skin7", "RedSkin1", "RedSkin3", "RedSkin5", "RedSkin7" };
         const char* const components[] =
-            { "Hue", "Saturation", "Luminance", "Strength", "Tolerance", "Softness" };
+            { "Hue", "Saturation", "Luminance", "Lightness", "Strength",
+              "Tolerance", "HueRange", "ChromaRange", "ShadeRange", "LightnessRange",
+              "Softness", "TargetLightness", "TargetColor", "SelectionColor" };
         for (const char* band : bands)
             for (const char* component : components)
                 if (LLControlVariable* control = gSavedSettings.getControl(
                     "ASColorGrade" + std::string(band) + component))
                     control->setPersist(LLControlVariable::PERSIST_NO);
+        // Retire names superseded by the current selection and adjustment terminology.
+        const char* const obsolete_components[] =
+            { "TargetLightness", "ShadeRange", "Luminance", "Tolerance", "TargetColor" };
+        for (S32 band = 0; band < ASColorGrading::BAND_COUNT; ++band)
+            for (const char* component : obsolete_components)
+                if (LLControlVariable* control = gSavedSettings.getControl(
+                    "ASColorGrade" + std::string(BAND_NAMES[band]) + component))
+                    control->setPersist(LLControlVariable::PERSIST_NO);
+        if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeLuminance"))
+            control->setPersist(LLControlVariable::PERSIST_NO);
     }
 
     std::string presetDir()
@@ -106,13 +141,13 @@ namespace
         std::map<std::string, F32> values;
         if (preset == "Sepia")
             values = { {"ASColorGradeColorizeHue",35.f}, {"ASColorGradeColorizeSaturation",25.f},
-                {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeExposure",.1f},
+                {"ASColorGradeColorizeLightness",0.f}, {"ASColorGradeExposure",.1f},
                 {"ASColorGradeBrightness",4.f}, {"ASColorGradeContrast",12.f}, {"ASColorGradeHighlights",-15.f},
                 {"ASColorGradeShadows",12.f}, {"ASColorGradeBlacks",-8.f}, {"ASColorGradeGrainAmount",18.f}, {"ASColorGradeGrainSize",45.f},
                 {"ASColorGradeGrainRoughness",65.f}, {"ASColorGradeGrainColor",0.f} };
         else if (preset == "Cyanotype")
             values = { {"ASColorGradeColorizeHue",215.f}, {"ASColorGradeColorizeSaturation",25.f},
-                {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeContrast",18.f},
+                {"ASColorGradeColorizeLightness",0.f}, {"ASColorGradeContrast",18.f},
                 {"ASColorGradeHighlights",-10.f}, {"ASColorGradeShadows",-8.f}, {"ASColorGradeBlacks",-12.f},
                 {"ASColorGradeGrainAmount",12.f}, {"ASColorGradeGrainSize",38.f},
                 {"ASColorGradeGrainRoughness",58.f}, {"ASColorGradeGrainColor",0.f} };
@@ -121,7 +156,7 @@ namespace
                 {"ASColorGradeShadows",11.f}, {"ASColorGradeWhites",9.f}, {"ASColorGradeBlacks",2.f},
                 {"ASColorGradeTemperature",54.f}, {"ASColorGradeTint",8.f}, {"ASColorGradeVibrance",12.f},
                 {"ASColorGradeColorizeHue",218.f}, {"ASColorGradeColorizeSaturation",10.f},
-                {"ASColorGradeColorizeLuminance",0.f}, {"ASColorGradeGrainAmount",52.f},
+                {"ASColorGradeColorizeLightness",0.f}, {"ASColorGradeGrainAmount",52.f},
                 {"ASColorGradeGrainSize",18.f}, {"ASColorGradeGrainRoughness",56.f},
                 {"ASColorGradeGrainColor",10.f} };
         else if (preset == "Black & White")
@@ -136,8 +171,8 @@ namespace
             values = { {"ASColorGradeTemperature",-35.f}, {"ASColorGradeTint",-8.f}, {"ASColorGradeContrast",18.f},
                 {"ASColorGradeHighlights",-18.f}, {"ASColorGradeShadows",-12.f}, {"ASColorGradeBlacks",-12.f},
                 {"ASColorGradeSaturation",-8.f}, {"ASColorGradeVibrance",20.f}, {"ASColorGradeOrangeSaturation",10.f},
-                {"ASColorGradeOrangeLuminance",5.f}, {"ASColorGradeAquaSaturation",15.f},
-                {"ASColorGradeBlueSaturation",20.f}, {"ASColorGradeBlueLuminance",-8.f} };
+                {"ASColorGradeOrangeLightness",5.f}, {"ASColorGradeAquaSaturation",15.f},
+                {"ASColorGradeBlueSaturation",20.f}, {"ASColorGradeBlueLightness",-8.f} };
         else if (preset == "Bleach Bypass")
             values = { {"ASColorGradeSaturation",-65.f}, {"ASColorGradeContrast",35.f}, {"ASColorGradeHighlights",-10.f},
                 {"ASColorGradeShadows",-20.f}, {"ASColorGradeBlacks",-25.f}, {"ASColorGradeGrainAmount",16.f},
@@ -172,11 +207,45 @@ namespace
         else if (name == "ASColorGradeLUTStrength") { minimum = 0.f; maximum = 100.f; }
         else if (name.find("ASColorGradeGrain") == 0) { minimum = 0.f; maximum = 100.f; }
         else if (name.find("Strength") != std::string::npos ||
-                 name.find("Tolerance") != std::string::npos ||
+                 name.find("Range") != std::string::npos ||
                  name.find("Softness") != std::string::npos)
             { minimum = 0.f; maximum = 100.f; }
         output = llclamp(output, minimum, maximum);
         return true;
+    }
+
+    bool validatedPresetColor(const LLSD& input, LLColor4& output)
+    {
+        if (!input.isArray() || input.size() != 4) return false;
+        for (S32 i = 0; i < 4; ++i)
+        {
+            if (!input[i].isReal() && !input[i].isInteger()) return false;
+            const F32 value = (F32)input[i].asReal();
+            if (!std::isfinite(value) || value < 0.f || value > 1.f) return false;
+            output.mV[i] = value;
+        }
+        output.mV[VALPHA] = 1.f;
+        return true;
+    }
+
+    // Version 1 used earlier mixer terminology. Migrate only the imported LLSD;
+    // runtime settings and newly saved presets use the current names exclusively.
+    void migratePresetValues(S32 version, LLSD& values)
+    {
+        if (version != 1) return;
+        const auto migrate = [&values](const std::string& old_name, const std::string& new_name)
+        {
+            if (!values.has(new_name) && values.has(old_name)) values[new_name] = values[old_name];
+        };
+        migrate("ASColorGradeColorizeLuminance", "ASColorGradeColorizeLightness");
+        for (S32 band = 0; band < ASColorGrading::BAND_COUNT; ++band)
+        {
+            const std::string prefix = "ASColorGrade" + std::string(BAND_NAMES[band]);
+            migrate(prefix + "Luminance", prefix + "Lightness");
+            migrate(prefix + "Tolerance", prefix + "HueRange");
+            migrate(prefix + "ShadeRange", prefix + "LightnessRange");
+            migrate(prefix + "TargetColor", prefix + "SelectionColor");
+        }
     }
 
     // Bradford adaptation from D65 to a bounded creative cool/warm and tint white point.
@@ -245,7 +314,7 @@ const std::vector<std::string>& ASColorGrading::settingNames()
             "ASColorGradeBlacks", "ASColorGradeWhites", "ASColorGradeSaturation", "ASColorGradeVibrance",
             "ASColorGradeHue", "ASColorGradeLUTStrength", "ASColorGradeGrainAmount", "ASColorGradeGrainSize",
             "ASColorGradeGrainRoughness", "ASColorGradeGrainColor", "ASColorGradeColorizeHue",
-            "ASColorGradeColorizeSaturation", "ASColorGradeColorizeLuminance",
+            "ASColorGradeColorizeSaturation", "ASColorGradeColorizeLightness",
             "ASColorGradeSplitHighlightsHue", "ASColorGradeSplitHighlightsSaturation",
             "ASColorGradeSplitBalance", "ASColorGradeSplitShadowsHue", "ASColorGradeSplitShadowsSaturation" };
         names.assign(std::begin(basic), std::end(basic));
@@ -261,6 +330,11 @@ std::string ASColorGrading::bandSettingName(Band band, const std::string& compon
     return "ASColorGrade" + std::string(BAND_NAMES[band]) + component;
 }
 
+std::string ASColorGrading::selectionColorSettingName(Band band)
+{
+    return bandSettingName(band, "SelectionColor");
+}
+
 void ASColorGrading::registerShaders(std::vector<LLGLSLShader*>& shaders) { shaders.push_back(&sFinalProgram); }
 
 void ASColorGrading::appendLinearShader(LLGLSLShader& shader)
@@ -270,7 +344,7 @@ void ASColorGrading::appendLinearShader(LLGLSLShader& shader)
 
 bool ASColorGrading::createShaders(S32 shader_level)
 {
-    retireObsoleteSkinSettings();
+    retireObsoleteMixerSettings();
     sFinalProgram.mName = "AyaneStorm Color Grading Presentation Shader";
     sFinalProgram.mShaderFiles.clear();
     sFinalProgram.clearPermutations();
@@ -333,27 +407,35 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
     sFinalProgram.uniform1i(sNegative, gSavedSettings.getBOOL("ASColorGradeNegativeEnabled") ? 1 : 0);
     sFinalProgram.uniform1f(sBasic3, gSavedSettings.getF32("ASColorGradeHue") * DEG_TO_RAD);
     F32 bands[BAND_COUNT * 3];
-    F32 band_parameters[BAND_COUNT * 4];
+    F32 band_selection_colors[BAND_COUNT * 3];
+    F32 band_parameters[BAND_COUNT * 3];
+    F32 band_ranges[BAND_COUNT * 2];
     for (S32 band = 0; band < BAND_COUNT; ++band)
     {
         bands[band * 3] = gSavedSettings.getF32(bandSettingName((Band)band, "Hue")) * DEG_TO_RAD;
         bands[band * 3 + 1] = normalized(bandSettingName((Band)band, "Saturation").c_str());
-        bands[band * 3 + 2] = normalized(bandSettingName((Band)band, "Luminance").c_str());
-        band_parameters[band * 4] = llclamp(gSavedSettings.getF32(
+        bands[band * 3 + 2] = normalized(bandSettingName((Band)band, "Lightness").c_str());
+        srgbToOklab(gSavedSettings.getColor4(selectionColorSettingName((Band)band)),
+                    &band_selection_colors[band * 3]);
+        band_parameters[band * 3] = llclamp(gSavedSettings.getF32(
             bandSettingName((Band)band, "Strength")) * .01f, 0.f, 1.f);
-        band_parameters[band * 4 + 1] = llclamp(gSavedSettings.getF32(
-            bandSettingName((Band)band, "Tolerance")) * .01f, 0.f, 1.f);
-        band_parameters[band * 4 + 2] = llclamp(gSavedSettings.getF32(
+        band_parameters[band * 3 + 1] = llclamp(gSavedSettings.getF32(
+            bandSettingName((Band)band, "HueRange")) * .01f, 0.f, 1.f);
+        band_parameters[band * 3 + 2] = llclamp(gSavedSettings.getF32(
             bandSettingName((Band)band, "Softness")) * .01f, 0.f, 1.f);
-        band_parameters[band * 4 + 3] = normalized(
-            bandSettingName((Band)band, "TargetLightness").c_str());
+        band_ranges[band * 2] = llclamp(gSavedSettings.getF32(
+            bandSettingName((Band)band, "ChromaRange")) * .01f, 0.f, 1.f);
+        band_ranges[band * 2 + 1] = llclamp(gSavedSettings.getF32(
+            bandSettingName((Band)band, "LightnessRange")) * .01f, 0.f, 1.f);
     }
     sFinalProgram.uniform3fv(sBands, BAND_COUNT, bands);
-    sFinalProgram.uniform4fv(sBandParameters, BAND_COUNT, band_parameters);
+    sFinalProgram.uniform3fv(sBandSelectionColors, BAND_COUNT, band_selection_colors);
+    sFinalProgram.uniform3fv(sBandParameters, BAND_COUNT, band_parameters);
+    sFinalProgram.uniform2fv(sBandRanges, BAND_COUNT, band_ranges);
     sFinalProgram.uniform4f(sColorize, gSavedSettings.getBOOL("ASColorGradeColorizeEnabled") ? 1.f : 0.f,
         llclamp(gSavedSettings.getF32("ASColorGradeColorizeHue"), 0.f, 360.f) * DEG_TO_RAD,
         llclamp(gSavedSettings.getF32("ASColorGradeColorizeSaturation") * .01f, 0.f, 1.f),
-        normalized("ASColorGradeColorizeLuminance"));
+        normalized("ASColorGradeColorizeLightness"));
     sFinalProgram.uniform4f(sSplitToning1,
         llclamp(gSavedSettings.getF32("ASColorGradeSplitHighlightsHue"), 0.f, 360.f) * DEG_TO_RAD,
         llclamp(gSavedSettings.getF32("ASColorGradeSplitHighlightsSaturation") * .01f, 0.f, 1.f),
@@ -394,6 +476,30 @@ void ASColorGrading::resetAll()
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled")) control->resetToDefault(true);
     for (const std::string& name : settingNames())
         if (LLControlVariable* control = gSavedSettings.getControl(name)) control->resetToDefault(true);
+    for (S32 band = 0; band < BAND_COUNT; ++band)
+        if (LLControlVariable* control = gSavedSettings.getControl(selectionColorSettingName((Band)band)))
+            control->resetToDefault(true);
+}
+
+void ASColorGrading::resetBand(Band band)
+{
+    for (const char* component : COMPONENTS)
+        if (LLControlVariable* control = gSavedSettings.getControl(bandSettingName(band, component)))
+            control->resetToDefault(true);
+    if (LLControlVariable* control = gSavedSettings.getControl(selectionColorSettingName(band)))
+        control->resetToDefault(true);
+}
+
+bool ASColorGrading::bandModified(Band band)
+{
+    for (const char* component : COMPONENTS)
+    {
+        if (LLControlVariable* control = gSavedSettings.getControl(bandSettingName(band, component)))
+            if (control->getValue().asReal() != control->getDefault().asReal()) return true;
+    }
+    if (LLControlVariable* control = gSavedSettings.getControl(selectionColorSettingName(band)))
+        return LLColor4(control->getValue()) != LLColor4(control->getDefault());
+    return false;
 }
 
 std::vector<std::string> ASColorGrading::listPresets()
@@ -424,11 +530,16 @@ bool ASColorGrading::isReadOnlyPreset(const std::string& name)
 bool ASColorGrading::savePreset(const std::string& name)
 {
     if (!validPresetName(name)) return false;
-    LLSD data; data["version"] = 1; data["name"] = name;
+    LLSD data; data["version"] = CURRENT_PRESET_VERSION; data["name"] = name;
     data["values"]["ASColorGradeLUTEnabled"] = gSavedSettings.getBOOL("ASColorGradeLUTEnabled");
     data["values"]["ASColorGradeLUTFile"] = gSavedSettings.getString("ASColorGradeLUTFile");
     data["values"]["ASColorGradeNegativeEnabled"] = gSavedSettings.getBOOL("ASColorGradeNegativeEnabled");
     for (const std::string& setting : settingNames()) data["values"][setting] = gSavedSettings.getLLSD(setting);
+    for (S32 band = 0; band < BAND_COUNT; ++band)
+    {
+        const std::string setting = selectionColorSettingName((Band)band);
+        data["values"][setting] = gSavedSettings.getLLSD(setting);
+    }
     data["values"]["ASColorGradeColorizeEnabled"] = gSavedSettings.getBOOL("ASColorGradeColorizeEnabled");
     data["values"]["ASColorGradeSplitToningEnabled"] = gSavedSettings.getBOOL("ASColorGradeSplitToningEnabled");
     llofstream file(presetDir() + gDirUtilp->getDirDelimiter() + LLURI::escape(name) + ".xml");
@@ -448,8 +559,11 @@ bool ASColorGrading::loadPreset(const std::string& name)
     llifstream file(presetDir() + gDirUtilp->getDirDelimiter() + LLURI::escape(name) + ".xml");
     LLSD data;
     if (!file.is_open() || LLSDSerialize::fromXML(data, file) == LLSDParser::PARSE_FAILURE ||
-        !data.isMap() || data["version"].asInteger() != 1 || !data["values"].isMap()) return false;
+        !data.isMap() || !data["version"].isInteger() || !data["values"].isMap()) return false;
+    const S32 version = data["version"].asInteger();
+    if (version < 1 || version > CURRENT_PRESET_VERSION) return false;
     LLSD values = data["values"];
+    migratePresetValues(version, values);
     // Missing LUT fields in older presets restore the disabled default.
     if (values.has("ASColorGradeLUTEnabled") && !values["ASColorGradeLUTEnabled"].isBoolean()) return false;
     const bool lut_enabled = values.has("ASColorGradeLUTEnabled") && values["ASColorGradeLUTEnabled"].asBoolean();
@@ -471,8 +585,18 @@ bool ASColorGrading::loadPreset(const std::string& name)
         if (!validatedPresetValue(setting, values[setting], value)) return false;
         validated[setting] = value;
     }
+    std::map<std::string, LLColor4> validated_colors;
+    for (S32 band = 0; band < BAND_COUNT; ++band)
+    {
+        const std::string setting = selectionColorSettingName((Band)band);
+        if (!values.has(setting)) continue;
+        LLColor4 color;
+        if (!validatedPresetColor(values[setting], color)) return false;
+        validated_colors[setting] = color;
+    }
     resetAll();
     for (const auto& entry : validated) gSavedSettings.setF32(entry.first, entry.second);
+    for (const auto& entry : validated_colors) gSavedSettings.setColor4(entry.first, entry.second);
     gSavedSettings.setString("ASColorGradeLUTFile", lut_file);
     gSavedSettings.setBOOL("ASColorGradeLUTEnabled", lut_enabled);
     gSavedSettings.setBOOL("ASColorGradeNegativeEnabled", negative);

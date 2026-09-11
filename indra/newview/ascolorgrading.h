@@ -16,7 +16,7 @@ class LLVertexBuffer;
 
 namespace ASColorGrading
 {
-    // All three rows use perceptual OKLab targets.
+    // All three rows use perceptual OKLab selection colors.
     enum Band : S32
     {
         RED, ORANGE, YELLOW, GREEN, AQUA, BLUE, PURPLE, MAGENTA,
@@ -37,9 +37,12 @@ namespace ASColorGrading
     void setPreviewBypass(bool bypass);
     bool getPreviewBypass();
     void resetAll();
+    void resetBand(Band band);
+    bool bandModified(Band band);
 
     const std::vector<std::string>& settingNames();
     std::string bandSettingName(Band band, const std::string& component);
+    std::string selectionColorSettingName(Band band);
     std::vector<std::string> listPresets();
     bool isReadOnlyPreset(const std::string& name);
     bool savePreset(const std::string& name);

@@ -12,6 +12,7 @@
 #include "llbutton.h"
 #include "llcombobox.h"
 #include "llcheckboxctrl.h"
+#include "llcolorswatch.h"
 #include "llnotificationsutil.h"
 #include "llsliderctrl.h"
 #include "lltextbox.h"
@@ -32,6 +33,13 @@ namespace
           "band_gray_1", "band_gray_2", "band_gray_3", "band_gray_4", "band_gray_5", "band_gray_6", "band_gray_7", "band_gray_8",
           "band_red_skin_2", "band_red_skin_4", "band_red_skin_6", "band_red_skin_8",
           "band_skin_2", "band_skin_4", "band_skin_6", "band_skin_8" };
+    const char* const BAND_DOTS[ASColorGrading::BAND_COUNT] =
+        { "band_red_modified", "band_orange_modified", "band_yellow_modified", "band_green_modified",
+          "band_aqua_modified", "band_blue_modified", "band_purple_modified", "band_magenta_modified",
+          "band_gray_1_modified", "band_gray_2_modified", "band_gray_3_modified", "band_gray_4_modified",
+          "band_gray_5_modified", "band_gray_6_modified", "band_gray_7_modified", "band_gray_8_modified",
+          "band_red_skin_2_modified", "band_red_skin_4_modified", "band_red_skin_6_modified", "band_red_skin_8_modified",
+          "band_skin_2_modified", "band_skin_4_modified", "band_skin_6_modified", "band_skin_8_modified" };
     const LLColor4 BAND_COLORS[ASColorGrading::BAND_COUNT] =
         { LLColor4(.92f,.16f,.18f,1.f), LLColor4(.95f,.48f,.12f,1.f),
           LLColor4(.92f,.76f,.08f,1.f), LLColor4(.20f,.72f,.28f,1.f),
@@ -50,9 +58,10 @@ namespace
 
 ASPanelColorGrading::ASPanelColorGrading()
     : mBand(ASColorGrading::RED), mRefreshing(false), mPreset(nullptr), mBefore(nullptr), mBandName(nullptr),
-      mColorize(nullptr), mColorizeSwatch(nullptr),
-      mMixerTargetLightness(nullptr), mMixerHue(nullptr), mMixerSaturation(nullptr), mMixerLuminance(nullptr),
-      mMixerStrength(nullptr), mMixerTolerance(nullptr), mMixerSoftness(nullptr),
+      mColorize(nullptr), mColorizeSwatch(nullptr), mSelectionColor(nullptr),
+      mMixerHue(nullptr), mMixerSaturation(nullptr), mMixerLightness(nullptr),
+      mMixerStrength(nullptr), mMixerHueRange(nullptr), mMixerChromaRange(nullptr),
+      mMixerLightnessRange(nullptr), mMixerSoftness(nullptr),
       mSplitHighlightsSaturation(nullptr), mSplitShadowsSaturation(nullptr),
       mSplitHighlightsSwatch(nullptr), mSplitShadowsSwatch(nullptr)
 {
@@ -70,12 +79,14 @@ bool ASPanelColorGrading::postBuild()
     mBandName = getChild<LLTextBox>("selected_band");
     mColorize = getChild<LLCheckBoxCtrl>("colorize");
     mColorizeSwatch = getChild<LLButton>("colorize_swatch");
-    mMixerTargetLightness = getChild<ASColorSliderCtrl>("mixer_target_lightness");
+    mSelectionColor = getChild<LLColorSwatchCtrl>("mixer_selection_color");
     mMixerHue = getChild<ASColorSliderCtrl>("mixer_hue");
     mMixerSaturation = getChild<ASColorSliderCtrl>("mixer_saturation");
-    mMixerLuminance = getChild<ASColorSliderCtrl>("mixer_luminance");
+    mMixerLightness = getChild<ASColorSliderCtrl>("mixer_lightness");
     mMixerStrength = getChild<ASColorSliderCtrl>("mixer_strength");
-    mMixerTolerance = getChild<ASColorSliderCtrl>("mixer_tolerance");
+    mMixerHueRange = getChild<ASColorSliderCtrl>("mixer_hue_range");
+    mMixerChromaRange = getChild<ASColorSliderCtrl>("mixer_chroma_range");
+    mMixerLightnessRange = getChild<ASColorSliderCtrl>("mixer_lightness_range");
     mMixerSoftness = getChild<ASColorSliderCtrl>("mixer_softness");
     mSplitHighlightsSaturation = getChild<ASColorSliderCtrl>("ASColorGradeSplitHighlightsSaturation");
     mSplitShadowsSaturation = getChild<ASColorSliderCtrl>("ASColorGradeSplitShadowsSaturation");
@@ -99,20 +110,30 @@ bool ASPanelColorGrading::postBuild()
         button->setImageColor(LLUIColor(BAND_COLORS[i]));
         button->setCommitCallback(boost::bind(
             &ASPanelColorGrading::selectBand, this, (ASColorGrading::Band)i));
+        if (LLControlVariable* control = gSavedSettings.getControl(
+            ASColorGrading::selectionColorSettingName((ASColorGrading::Band)i)))
+            mSettingConnections.push_back(control->getSignal()->connect(
+                boost::bind(&ASPanelColorGrading::markCustom, this)));
     }
-    mMixerTargetLightness->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "TargetLightness", mMixerTargetLightness));
+    mSelectionColor->setCommitCallback(boost::bind(&ASPanelColorGrading::commitSelectionColor, this));
+    mSelectionColor->setOnSelectCallback(boost::bind(&ASPanelColorGrading::commitSelectionColor, this));
+    mSelectionColor->setOnCancelCallback(boost::bind(&ASPanelColorGrading::commitSelectionColor, this));
+    getChild<LLButton>("reset_mixer_band")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetBand, this));
     mMixerHue->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Hue", mMixerHue));
     mMixerSaturation->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Saturation", mMixerSaturation));
-    mMixerLuminance->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Luminance", mMixerLuminance));
+    mMixerLightness->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Lightness", mMixerLightness));
     mMixerStrength->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Strength", mMixerStrength));
-    mMixerTolerance->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Tolerance", mMixerTolerance));
+    mMixerHueRange->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "HueRange", mMixerHueRange));
+    mMixerChromaRange->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "ChromaRange", mMixerChromaRange));
+    mMixerLightnessRange->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "LightnessRange", mMixerLightnessRange));
     mMixerSoftness->setCommitCallback(boost::bind(&ASPanelColorGrading::commitMixer, this, "Softness", mMixerSoftness));
-    getChild<LLButton>("reset_mixer_target_lightness")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "TargetLightness"));
     getChild<LLButton>("reset_mixer_hue")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Hue"));
     getChild<LLButton>("reset_mixer_saturation")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Saturation"));
-    getChild<LLButton>("reset_mixer_luminance")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Luminance"));
+    getChild<LLButton>("reset_mixer_lightness")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Lightness"));
     getChild<LLButton>("reset_mixer_strength")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Strength"));
-    getChild<LLButton>("reset_mixer_tolerance")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Tolerance"));
+    getChild<LLButton>("reset_mixer_hue_range")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "HueRange"));
+    getChild<LLButton>("reset_mixer_chroma_range")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "ChromaRange"));
+    getChild<LLButton>("reset_mixer_lightness_range")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "LightnessRange"));
     getChild<LLButton>("reset_mixer_softness")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetMixer, this, "Softness"));
     mColorize->setCommitCallback(boost::bind(&ASPanelColorGrading::toggleColorize, this));
 
@@ -187,6 +208,7 @@ void ASPanelColorGrading::onVisibilityChange(bool visible)
 
 void ASPanelColorGrading::selectBand(ASColorGrading::Band band)
 {
+    if (mSelectionColor && band != mBand) mSelectionColor->closeFloaterColorPicker();
     mBand = band;
     for (S32 i = 0; i < ASColorGrading::BAND_COUNT; ++i)
         getChild<LLButton>(BAND_BUTTONS[i])->setToggleState(i == band);
@@ -201,6 +223,9 @@ void ASPanelColorGrading::refreshMixer()
     mColorize->setValue(colorize);
     for (S32 i = 0; i < ASColorGrading::BAND_COUNT; ++i) getChild<LLButton>(BAND_BUTTONS[i])->setVisible(!colorize);
     mColorizeSwatch->setVisible(colorize);
+    mSelectionColor->setVisible(!colorize);
+    getChild<LLUICtrl>("mixer_selection_color_label")->setVisible(!colorize);
+    getChild<LLButton>("reset_mixer_band")->setVisible(!colorize);
     mBandName->setText(LLStringExplicit(colorize ? "Colorize" : BAND_LABELS[mBand]));
     mMixerHue->setMinValue(colorize ? 0.f : -180.f); mMixerHue->setMaxValue(colorize ? 360.f : 180.f);
     mMixerHue->setToolTip(LLStringExplicit(colorize ?
@@ -210,34 +235,30 @@ void ASPanelColorGrading::refreshMixer()
     const std::string prefix = colorize ? "ASColorGradeColorize" : "";
     mMixerHue->setValue(gSavedSettings.getF32(colorize ? prefix + "Hue" : ASColorGrading::bandSettingName(mBand, "Hue")));
     mMixerSaturation->setValue(gSavedSettings.getF32(colorize ? prefix + "Saturation" : ASColorGrading::bandSettingName(mBand, "Saturation")));
-    mMixerLuminance->setValue(gSavedSettings.getF32(colorize ? prefix + "Luminance" : ASColorGrading::bandSettingName(mBand, "Luminance")));
-    mMixerTargetLightness->setVisible(!colorize);
-    getChild<LLButton>("reset_mixer_target_lightness")->setVisible(!colorize);
+    mMixerLightness->setValue(gSavedSettings.getF32(colorize ? prefix + "Lightness" : ASColorGrading::bandSettingName(mBand, "Lightness")));
     mMixerStrength->setVisible(!colorize); getChild<LLButton>("reset_mixer_strength")->setVisible(!colorize);
-    mMixerTolerance->setVisible(!colorize); getChild<LLButton>("reset_mixer_tolerance")->setVisible(!colorize);
+    mMixerHueRange->setVisible(!colorize); getChild<LLButton>("reset_mixer_hue_range")->setVisible(!colorize);
+    mMixerChromaRange->setVisible(!colorize); getChild<LLButton>("reset_mixer_chroma_range")->setVisible(!colorize);
+    mMixerLightnessRange->setVisible(!colorize); getChild<LLButton>("reset_mixer_lightness_range")->setVisible(!colorize);
     mMixerSoftness->setVisible(!colorize); getChild<LLButton>("reset_mixer_softness")->setVisible(!colorize);
     if (!colorize)
     {
-        mMixerTargetLightness->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "TargetLightness")));
         mMixerStrength->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "Strength")));
-        mMixerTolerance->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "Tolerance")));
+        mMixerHueRange->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "HueRange")));
+        mMixerChromaRange->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "ChromaRange")));
+        mMixerLightnessRange->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "LightnessRange")));
         mMixerSoftness->setValue(gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "Softness")));
     }
-    const LLColor4 base_band = BAND_COLORS[mBand];
-    const F32 target_lightness = colorize ? 0.f : llclamp(
-        gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "TargetLightness")) * .01f,
-        -1.f, 1.f);
-    const LLColor4 band = target_lightness < 0.f ?
-        lerp(base_band, LLColor4::white, -target_lightness) :
-        lerp(base_band, LLColor4::black, target_lightness);
-    LLColor3 base(band);
-    F32 center_hue, center_saturation, center_luminance;
-    base.calcHSL(&center_hue, &center_saturation, &center_luminance);
+    const LLColor4 base_band = gSavedSettings.getColor4(ASColorGrading::selectionColorSettingName(mBand));
+    mSelectionColor->set(base_band, true);
+    LLColor3 base(base_band);
+    F32 center_hue, center_saturation, center_lightness;
+    base.calcHSL(&center_hue, &center_saturation, &center_lightness);
     const F32 hue_shift = colorize ? 0.f :
         gSavedSettings.getF32(ASColorGrading::bandSettingName(mBand, "Hue")) / 360.f;
     LLColor3 hue_adjusted;
     hue_adjusted.setHSL(fmodf(center_hue + hue_shift + 1.f, 1.f),
-                       center_saturation, center_luminance);
+                       center_saturation, center_lightness);
     const LLColor4 hue_adjusted_band(hue_adjusted, 1.f);
     if (colorize)
     {
@@ -248,7 +269,7 @@ void ASPanelColorGrading::refreshMixer()
         const LLColor4 selected4(selected, 1.f);
         mMixerHue->setTrackColors(wheel);
         mMixerSaturation->setTrackColors({ LLColor4(.5f,.5f,.5f,1.f), selected4 });
-        mMixerLuminance->setTrackColors({ LLColor4::black, selected4, LLColor4::white });
+        mMixerLightness->setTrackColors({ LLColor4::black, selected4, LLColor4::white });
         mColorizeSwatch->setImageColor(LLUIColor(selected4));
     }
     else
@@ -258,18 +279,20 @@ void ASPanelColorGrading::refreshMixer()
         {
             LLColor3 color;
             color.setHSL(fmodf(center_hue + (F32)i / 12.f + .5f, 1.f),
-                         center_saturation, center_luminance);
+                         center_saturation, center_lightness);
             wheel.emplace_back(color, 1.f);
         }
         mMixerHue->setTrackColors(wheel);
         mMixerSaturation->setTrackColors({ LLColor4(.42f,.42f,.42f,1.f), hue_adjusted_band,
                                            LLColor4(hue_adjusted * 1.25f, 1.f) });
-        mMixerLuminance->setTrackColors({ LLColor4::black, hue_adjusted_band, LLColor4::white });
-        mMixerTargetLightness->setTrackColors({ LLColor4::white, base_band, LLColor4::black });
+        mMixerLightness->setTrackColors({ LLColor4::black, hue_adjusted_band, LLColor4::white });
         mMixerStrength->setTrackColors({ LLColor4(.3f,.3f,.3f,1.f), hue_adjusted_band });
-        mMixerTolerance->setTrackColors({ hue_adjusted_band, LLColor4(.7f,.7f,.7f,1.f) });
+        mMixerHueRange->setTrackColors({ hue_adjusted_band, LLColor4(.7f,.7f,.7f,1.f) });
+        mMixerChromaRange->setTrackColors({ hue_adjusted_band, LLColor4(.7f,.7f,.7f,1.f) });
+        mMixerLightnessRange->setTrackColors({ hue_adjusted_band, LLColor4::white });
         mMixerSoftness->setTrackColors({ hue_adjusted_band, LLColor4(.7f,.7f,.7f,1.f) });
     }
+    refreshBandIndicators();
     mRefreshing = false;
 }
 
@@ -281,10 +304,18 @@ void ASPanelColorGrading::commitMixer(const std::string& component, LLSliderCtrl
             "ASColorGradeColorize" + component : ASColorGrading::bandSettingName(mBand, component);
         gSavedSettings.setF32(setting, control->getValueF32());
         mPreset->setValue("Custom");
-        if (component == "TargetLightness" || component == "Hue" ||
-            gSavedSettings.getBOOL("ASColorGradeColorizeEnabled"))
-            refreshMixer();
+        refreshMixer();
     }
+}
+
+void ASPanelColorGrading::commitSelectionColor()
+{
+    if (mRefreshing) return;
+    LLColor4 color = mSelectionColor->get();
+    color.mV[VALPHA] = 1.f;
+    gSavedSettings.setColor4(ASColorGrading::selectionColorSettingName(mBand), color);
+    mPreset->setValue("Custom");
+    refreshMixer();
 }
 
 void ASPanelColorGrading::resetMixer(const std::string& component)
@@ -294,6 +325,21 @@ void ASPanelColorGrading::resetMixer(const std::string& component)
     if (LLControlVariable* control = gSavedSettings.getControl(setting))
         control->resetToDefault(true);
     refreshMixer();
+}
+
+void ASPanelColorGrading::resetBand()
+{
+    ASColorGrading::resetBand(mBand);
+    mPreset->setValue("Custom");
+    refreshMixer();
+}
+
+void ASPanelColorGrading::refreshBandIndicators()
+{
+    for (S32 i = 0; i < ASColorGrading::BAND_COUNT; ++i)
+        getChild<LLUICtrl>(BAND_DOTS[i])->setVisible(
+            !gSavedSettings.getBOOL("ASColorGradeColorizeEnabled") &&
+            ASColorGrading::bandModified((ASColorGrading::Band)i));
 }
 
 void ASPanelColorGrading::toggleColorize()

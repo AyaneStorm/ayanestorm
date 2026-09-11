@@ -57,11 +57,13 @@ Add persistent settings with identity defaults:
 | Saturation, Vibrance | `-100…+100`, `0` |
 | Global Hue | `-180…+180°`, `0` |
 | Grain Amount, Size, Roughness, Color | `0…100`; Amount default `0`, remaining neutral defaults `50` |
-| 24 bands × Hue/Saturation/Luminance | `-100…+100`, `0` |
-| 24 bands × Target Lightness | `-100…+100`, `0`; white at `-100`, base target at `0`, black at `100` |
-| 24 bands × Strength/Tolerance/Softness | `0…100`; Strength `100`, Tolerance `50`, Softness `50` |
+| 24 bands × Hue/Saturation/Lightness | `-100…+100`, `0` |
+| 24 bands × Selection Color | Per-band palette color; independently customizable |
+| 24 bands × Strength/Hue Range/Chroma Range/Lightness Range/Softness | `0…100`; Strength `100`, Hue and Lightness Range `50`, Chroma Range `100`, Softness `50` |
 
-Use explicit settings for the 168 band values, such as `ASColorGradeRedHue`, rather than storing an opaque array. This keeps debug settings and preset files readable.
+Use explicit settings for the 192 numeric band values and 24 selection colors,
+such as `ASColorGradeRedHue` and `ASColorGradeRedSelectionColor`, rather than
+storing opaque arrays. This keeps debug settings and preset files readable.
 
 Keep these values transient and out of settings/presets:
 
@@ -178,42 +180,42 @@ After all color operations, convert back through OKLab to linear RGB and apply a
 
 ## 24-Band Color Mixer
 
-Use three rows of eight fixed OKLab targets:
+Use three rows of eight default selection colors:
 
 1. Red, Orange, Yellow, Green, Aqua, Blue, Purple, and Magenta.
 2. Eight equal-OKLab-lightness grays from `#f2f2f2` to `#181818`.
 3. `RedSkin2`, `RedSkin4`, `RedSkin6`, `RedSkin8`, `Skin2`, `Skin4`,
    `Skin6`, and `Skin8` from the generated skin palettes.
 
-For each pixel:
+Each default can be replaced with an exact per-band selection color through the color
+picker. For each pixel:
 
-1. Move each band's base target toward OKLab white or black according to Target Lightness.
-2. For chromatic bands, multiply a circular hue gate by a separate OKLab
-   lightness/chroma gate. Tolerance `100` broadens lightness/chroma enough to
-   approximate the former hue-only selection, but hue remains capped at `±60°`.
-3. For gray bands, multiply a lightness gate by a low-chroma gate.
-4. Apply Softness independently to each gate, then multiply their weights.
-5. Normalize active weights when their sum exceeds one.
+1. Use each band's customizable Selection Color as its exact selection center.
+2. For chromatic bands, multiply a circular hue gate, a relative-chroma gate,
+   and an independent OKLab-lightness gate.
+3. Compare relative chroma as `C/L`, clamped near black. This remains
+   approximately stable when illumination changes a surface's lightness.
+4. For gray bands, omit hue and compare relative chroma and lightness.
+5. Apply Softness independently to each non-maximum gate, then multiply their weights.
+6. Exclude bands whose Hue, Saturation, and Lightness adjustments are all zero,
+   then normalize active weights when their sum exceeds one. Neutral overlapping
+   bands must not weaken the selected band's effect.
 
 Map per-band controls as follows:
 
 - Hue `-180…+180°` in `0.1°` increments, covering the complete hue circle without scaling.
 - Saturation → chroma multiplier `max(0, 1 + value/100)`.
-- Luminance → `L += value/100 * 0.25 * 4L(1-L)`.
-- Target Lightness moves the selection target perceptually toward white or black.
+- Lightness → `L += value/100 * 0.25 * 4L(1-L)`.
 - Strength scales the band's full contribution; zero disables it.
-- Tolerance widens both selection gates. The chromatic hue radius runs from an
-  exact match at zero through `±30°` at 50 to `±60°` at 100; nearly neutral
-  pixels are treated as maximally hue-separated.
-- The chromatic lightness/chroma radius grows quadratically, keeping ordinary
-  tolerances selective while becoming effectively unrestricted at 100.
-- Gray targets use separate lightness and low-chroma ranges because hue is
-  undefined near neutral colors.
-- As Target Lightness moves a chromatic band close to white or black, blend
-  continuously from its chromatic selector to the gray selector. Never switch
-  selector models at a fixed chroma threshold.
+- Hue Range radius runs from exact at zero through `±30°` at 50 to
+  `±60°` at 100; nearly neutral pixels are maximally hue-separated.
+- Chroma Range controls relative-chroma difference independently. Its cubic
+  response gives radius `0.125` at 50; 100 ignores relative chroma.
+- Lightness Range controls OKLab-lightness difference independently. Its quadratic
+  response gives radius `0.25` at 50; 100 ignores lightness and accepts all shades.
+- Neutral selection colors omit the undefined hue gate, including default gray bands.
 - Softness progressively attenuates farther selected colors. At zero the
-  tolerance boundary is hard; values above 50 increasingly suppress distant
+  selection boundary is hard; values above 50 increasingly suppress distant
   colors, reaching a fourth-power falloff at 100.
 
 Blend all 24 contributions from the original pixel state using normalized weights. Do not apply bands sequentially, which would make results order-dependent.
@@ -225,9 +227,13 @@ Upload band values as packed uniform arrays:
 
 ```glsl
 uniform vec3 color_grade_bands[24];
-// x = hue shift radians, y = saturation scale, z = luminance offset
-uniform vec4 color_grade_band_parameters[24];
-// x = strength, y = tolerance, z = softness, w = target lightness
+// x = hue shift radians, y = saturation scale, z = lightness offset
+uniform vec3 color_grade_band_selection_colors[24];
+// customized sRGB selection colors converted to OKLab by the viewer
+uniform vec3 color_grade_band_parameters[24];
+// x = strength, y = hue range, z = softness
+uniform vec2 color_grade_band_ranges[24];
+// x = relative-chroma range, y = lightness range
 ```
 
 ## Grain
@@ -280,9 +286,15 @@ Match the compact Photoshop reference:
 - Three horizontal rows of eight circular color selectors: spectrum, gray, and consolidated skin.
 - No rainbow/global selector.
 - Selected band indicated by an outer ring and its name displayed as text.
-- Seven full-width Target Lightness, Hue, Saturation, Luminance, Strength, Tolerance, and Softness sliders below.
+- A compact selection-color swatch beside the band name opens the color picker.
+- A white top-right dot marks every band whose selection color or numeric values differ
+  from defaults.
+- Eight full-width Hue, Saturation, Lightness, Strength, Hue Range, Chroma Range,
+  Lightness Range, and Softness sliders below, using compact spacing.
 - Values and slider positions refresh immediately when selecting another band.
 - Individual resets affect the selected band and dimension only.
+- The bottom Reset button restores the selected band's selection color and every
+  numeric setting.
 - Keyboard focus and tooltips identify every band so selection does not depend only on color.
 
 Use one white circular mask texture tinted through button `image_color`; provide selected and unselected states without eight duplicate assets.
@@ -315,7 +327,7 @@ Store each preset at:
 Use versioned LLSD:
 
 ```text
-version: 1
+version: 2
 name: display name
 values:
   ASColorGradeExposure: 0.0
@@ -326,6 +338,10 @@ Rules:
 
 - **Neutral** is virtual, immutable, always first, and applies all documented defaults.
 - A user preset contains all Basic, Mixer, and Grain values.
+- Version 1 presets migrate `Luminance` to `Lightness`, `Tolerance` to
+  `HueRange`, `ShadeRange` to `LightnessRange`, and `TargetColor` to
+  `SelectionColor` while loading. Missing newer bands retain neutral defaults.
+- Loading never overwrites the source preset; newly saved presets use version 2.
 - Exclude master enable and transient UI state.
 - Loading first parses into temporary storage, verifies scalar types and finite values, fills missing known fields from neutral defaults, clamps ranges, ignores unknown fields, and then applies all settings together.
 - Parse or validation failure leaves current settings unchanged and displays a notification.

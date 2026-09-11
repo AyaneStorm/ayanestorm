@@ -15,6 +15,7 @@
 class LLButton;
 class LLComboBox;
 class LLCheckBoxCtrl;
+class LLColorSwatchCtrl;
 class LLSliderCtrl;
 class LLTextBox;
 class ASColorSliderCtrl;
@@ -33,7 +34,10 @@ private:
     void selectBand(ASColorGrading::Band band);
     void refreshMixer();
     void commitMixer(const std::string& component, LLSliderCtrl* control);
+    void commitSelectionColor();
     void resetMixer(const std::string& component);
+    void resetBand();
+    void refreshBandIndicators();
     void toggleColorize();
     void refreshSplitToning();
     void refreshPresets(const std::string& select = "Custom");
@@ -55,12 +59,14 @@ private:
     LLTextBox* mBandName;
     LLCheckBoxCtrl* mColorize;
     LLButton* mColorizeSwatch;
-    ASColorSliderCtrl* mMixerTargetLightness;
+    LLColorSwatchCtrl* mSelectionColor;
     ASColorSliderCtrl* mMixerHue;
     ASColorSliderCtrl* mMixerSaturation;
-    ASColorSliderCtrl* mMixerLuminance;
+    ASColorSliderCtrl* mMixerLightness;
     ASColorSliderCtrl* mMixerStrength;
-    ASColorSliderCtrl* mMixerTolerance;
+    ASColorSliderCtrl* mMixerHueRange;
+    ASColorSliderCtrl* mMixerChromaRange;
+    ASColorSliderCtrl* mMixerLightnessRange;
     ASColorSliderCtrl* mMixerSoftness;
     ASColorSliderCtrl* mSplitHighlightsSaturation;
     ASColorSliderCtrl* mSplitShadowsSaturation;

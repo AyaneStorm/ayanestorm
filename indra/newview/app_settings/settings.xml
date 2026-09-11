@@ -25626,8 +25626,8 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Colorize hue in degrees</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeColorizeSaturation</key>
     <map><key>Comment</key><string>Colorize tint saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>25.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeColorizeLuminance</key>
-    <map><key>Comment</key><string>Colorize tint luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeColorizeLightness</key>
+    <map><key>Comment</key><string>Colorize tint lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSplitToningEnabled</key>
     <map><key>Comment</key><string>Enable split toning</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSplitHighlightsHue</key>
@@ -25644,338 +25644,434 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Red mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSaturation</key>
     <map><key>Comment</key><string>Red mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedLuminance</key>
-    <map><key>Comment</key><string>Red mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedLightness</key>
+    <map><key>Comment</key><string>Red mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeOrangeHue</key>
     <map><key>Comment</key><string>Orange mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeOrangeSaturation</key>
     <map><key>Comment</key><string>Orange mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeOrangeLuminance</key>
-    <map><key>Comment</key><string>Orange mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeOrangeLightness</key>
+    <map><key>Comment</key><string>Orange mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeYellowHue</key>
     <map><key>Comment</key><string>Yellow mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeYellowSaturation</key>
     <map><key>Comment</key><string>Yellow mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeYellowLuminance</key>
-    <map><key>Comment</key><string>Yellow mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeYellowLightness</key>
+    <map><key>Comment</key><string>Yellow mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGreenHue</key>
     <map><key>Comment</key><string>Green mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGreenSaturation</key>
     <map><key>Comment</key><string>Green mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGreenLuminance</key>
-    <map><key>Comment</key><string>Green mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGreenLightness</key>
+    <map><key>Comment</key><string>Green mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeAquaHue</key>
     <map><key>Comment</key><string>Aqua mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeAquaSaturation</key>
     <map><key>Comment</key><string>Aqua mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeAquaLuminance</key>
-    <map><key>Comment</key><string>Aqua mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeAquaLightness</key>
+    <map><key>Comment</key><string>Aqua mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeBlueHue</key>
     <map><key>Comment</key><string>Blue mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeBlueSaturation</key>
     <map><key>Comment</key><string>Blue mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeBlueLuminance</key>
-    <map><key>Comment</key><string>Blue mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeBlueLightness</key>
+    <map><key>Comment</key><string>Blue mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradePurpleHue</key>
     <map><key>Comment</key><string>Purple mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradePurpleSaturation</key>
     <map><key>Comment</key><string>Purple mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradePurpleLuminance</key>
-    <map><key>Comment</key><string>Purple mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradePurpleLightness</key>
+    <map><key>Comment</key><string>Purple mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeMagentaHue</key>
     <map><key>Comment</key><string>Magenta mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeMagentaSaturation</key>
     <map><key>Comment</key><string>Magenta mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeMagentaLuminance</key>
-    <map><key>Comment</key><string>Magenta mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeMagentaLightness</key>
+    <map><key>Comment</key><string>Magenta mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedStrength</key>
     <map><key>Comment</key><string>Red mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedTolerance</key>
-    <map><key>Comment</key><string>Red mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedHueRange</key>
+    <map><key>Comment</key><string>Red mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSoftness</key>
-    <map><key>Comment</key><string>Red mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Red mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeOrangeStrength</key>
     <map><key>Comment</key><string>Orange mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeOrangeTolerance</key>
-    <map><key>Comment</key><string>Orange mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeOrangeHueRange</key>
+    <map><key>Comment</key><string>Orange mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeOrangeSoftness</key>
-    <map><key>Comment</key><string>Orange mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Orange mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeYellowStrength</key>
     <map><key>Comment</key><string>Yellow mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeYellowTolerance</key>
-    <map><key>Comment</key><string>Yellow mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeYellowHueRange</key>
+    <map><key>Comment</key><string>Yellow mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeYellowSoftness</key>
-    <map><key>Comment</key><string>Yellow mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Yellow mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGreenStrength</key>
     <map><key>Comment</key><string>Green mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGreenTolerance</key>
-    <map><key>Comment</key><string>Green mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGreenHueRange</key>
+    <map><key>Comment</key><string>Green mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGreenSoftness</key>
-    <map><key>Comment</key><string>Green mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Green mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeAquaStrength</key>
     <map><key>Comment</key><string>Aqua mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeAquaTolerance</key>
-    <map><key>Comment</key><string>Aqua mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeAquaHueRange</key>
+    <map><key>Comment</key><string>Aqua mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeAquaSoftness</key>
-    <map><key>Comment</key><string>Aqua mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Aqua mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeBlueStrength</key>
     <map><key>Comment</key><string>Blue mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeBlueTolerance</key>
-    <map><key>Comment</key><string>Blue mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeBlueHueRange</key>
+    <map><key>Comment</key><string>Blue mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeBlueSoftness</key>
-    <map><key>Comment</key><string>Blue mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Blue mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradePurpleStrength</key>
     <map><key>Comment</key><string>Purple mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradePurpleTolerance</key>
-    <map><key>Comment</key><string>Purple mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradePurpleHueRange</key>
+    <map><key>Comment</key><string>Purple mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradePurpleSoftness</key>
-    <map><key>Comment</key><string>Purple mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Purple mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeMagentaStrength</key>
     <map><key>Comment</key><string>Magenta mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeMagentaTolerance</key>
-    <map><key>Comment</key><string>Magenta mixer color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeMagentaHueRange</key>
+    <map><key>Comment</key><string>Magenta mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeMagentaSoftness</key>
-    <map><key>Comment</key><string>Magenta mixer color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Magenta mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin2Hue</key>
     <map><key>Comment</key><string>Skin2 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin2Saturation</key>
     <map><key>Comment</key><string>Skin2 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin2Luminance</key>
-    <map><key>Comment</key><string>Skin2 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin2Lightness</key>
+    <map><key>Comment</key><string>Skin2 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin2Strength</key>
     <map><key>Comment</key><string>Skin2 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin2Tolerance</key>
-    <map><key>Comment</key><string>Skin2 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin2HueRange</key>
+    <map><key>Comment</key><string>Skin2 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin2Softness</key>
-    <map><key>Comment</key><string>Skin2 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Skin2 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin4Hue</key>
     <map><key>Comment</key><string>Skin4 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin4Saturation</key>
     <map><key>Comment</key><string>Skin4 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin4Luminance</key>
-    <map><key>Comment</key><string>Skin4 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin4Lightness</key>
+    <map><key>Comment</key><string>Skin4 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin4Strength</key>
     <map><key>Comment</key><string>Skin4 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin4Tolerance</key>
-    <map><key>Comment</key><string>Skin4 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin4HueRange</key>
+    <map><key>Comment</key><string>Skin4 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin4Softness</key>
-    <map><key>Comment</key><string>Skin4 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Skin4 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin6Hue</key>
     <map><key>Comment</key><string>Skin6 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin6Saturation</key>
     <map><key>Comment</key><string>Skin6 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin6Luminance</key>
-    <map><key>Comment</key><string>Skin6 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin6Lightness</key>
+    <map><key>Comment</key><string>Skin6 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin6Strength</key>
     <map><key>Comment</key><string>Skin6 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin6Tolerance</key>
-    <map><key>Comment</key><string>Skin6 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin6HueRange</key>
+    <map><key>Comment</key><string>Skin6 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin6Softness</key>
-    <map><key>Comment</key><string>Skin6 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Skin6 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin8Hue</key>
     <map><key>Comment</key><string>Skin8 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin8Saturation</key>
     <map><key>Comment</key><string>Skin8 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin8Luminance</key>
-    <map><key>Comment</key><string>Skin8 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin8Lightness</key>
+    <map><key>Comment</key><string>Skin8 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin8Strength</key>
     <map><key>Comment</key><string>Skin8 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin8Tolerance</key>
-    <map><key>Comment</key><string>Skin8 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin8HueRange</key>
+    <map><key>Comment</key><string>Skin8 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeSkin8Softness</key>
-    <map><key>Comment</key><string>Skin8 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Skin8 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin2Hue</key>
     <map><key>Comment</key><string>RedSkin2 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin2Saturation</key>
     <map><key>Comment</key><string>RedSkin2 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin2Luminance</key>
-    <map><key>Comment</key><string>RedSkin2 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin2Lightness</key>
+    <map><key>Comment</key><string>RedSkin2 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin2Strength</key>
     <map><key>Comment</key><string>RedSkin2 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin2Tolerance</key>
-    <map><key>Comment</key><string>RedSkin2 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin2HueRange</key>
+    <map><key>Comment</key><string>RedSkin2 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin2Softness</key>
-    <map><key>Comment</key><string>RedSkin2 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>RedSkin2 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin4Hue</key>
     <map><key>Comment</key><string>RedSkin4 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin4Saturation</key>
     <map><key>Comment</key><string>RedSkin4 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin4Luminance</key>
-    <map><key>Comment</key><string>RedSkin4 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin4Lightness</key>
+    <map><key>Comment</key><string>RedSkin4 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin4Strength</key>
     <map><key>Comment</key><string>RedSkin4 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin4Tolerance</key>
-    <map><key>Comment</key><string>RedSkin4 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin4HueRange</key>
+    <map><key>Comment</key><string>RedSkin4 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin4Softness</key>
-    <map><key>Comment</key><string>RedSkin4 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>RedSkin4 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin6Hue</key>
     <map><key>Comment</key><string>RedSkin6 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin6Saturation</key>
     <map><key>Comment</key><string>RedSkin6 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin6Luminance</key>
-    <map><key>Comment</key><string>RedSkin6 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin6Lightness</key>
+    <map><key>Comment</key><string>RedSkin6 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin6Strength</key>
     <map><key>Comment</key><string>RedSkin6 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin6Tolerance</key>
-    <map><key>Comment</key><string>RedSkin6 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin6HueRange</key>
+    <map><key>Comment</key><string>RedSkin6 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin6Softness</key>
-    <map><key>Comment</key><string>RedSkin6 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>RedSkin6 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin8Hue</key>
     <map><key>Comment</key><string>RedSkin8 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin8Saturation</key>
     <map><key>Comment</key><string>RedSkin8 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin8Luminance</key>
-    <map><key>Comment</key><string>RedSkin8 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin8Lightness</key>
+    <map><key>Comment</key><string>RedSkin8 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin8Strength</key>
     <map><key>Comment</key><string>RedSkin8 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin8Tolerance</key>
-    <map><key>Comment</key><string>RedSkin8 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin8HueRange</key>
+    <map><key>Comment</key><string>RedSkin8 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeRedSkin8Softness</key>
-    <map><key>Comment</key><string>RedSkin8 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedTargetLightness</key>
-    <map><key>Comment</key><string>Red mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeOrangeTargetLightness</key>
-    <map><key>Comment</key><string>Orange mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeYellowTargetLightness</key>
-    <map><key>Comment</key><string>Yellow mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGreenTargetLightness</key>
-    <map><key>Comment</key><string>Green mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeAquaTargetLightness</key>
-    <map><key>Comment</key><string>Aqua mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeBlueTargetLightness</key>
-    <map><key>Comment</key><string>Blue mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradePurpleTargetLightness</key>
-    <map><key>Comment</key><string>Purple mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeMagentaTargetLightness</key>
-    <map><key>Comment</key><string>Magenta mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin2TargetLightness</key>
-    <map><key>Comment</key><string>RedSkin2 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin4TargetLightness</key>
-    <map><key>Comment</key><string>RedSkin4 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin6TargetLightness</key>
-    <map><key>Comment</key><string>RedSkin6 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeRedSkin8TargetLightness</key>
-    <map><key>Comment</key><string>RedSkin8 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin2TargetLightness</key>
-    <map><key>Comment</key><string>Skin2 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin4TargetLightness</key>
-    <map><key>Comment</key><string>Skin4 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin6TargetLightness</key>
-    <map><key>Comment</key><string>Skin6 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeSkin8TargetLightness</key>
-    <map><key>Comment</key><string>Skin8 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>RedSkin8 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray1Hue</key>
     <map><key>Comment</key><string>Gray1 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray1Saturation</key>
     <map><key>Comment</key><string>Gray1 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray1Luminance</key>
-    <map><key>Comment</key><string>Gray1 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray1TargetLightness</key>
-    <map><key>Comment</key><string>Gray1 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray1Lightness</key>
+    <map><key>Comment</key><string>Gray1 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray1Strength</key>
     <map><key>Comment</key><string>Gray1 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray1Tolerance</key>
-    <map><key>Comment</key><string>Gray1 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray1HueRange</key>
+    <map><key>Comment</key><string>Gray1 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray1Softness</key>
-    <map><key>Comment</key><string>Gray1 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray1 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray2Hue</key>
     <map><key>Comment</key><string>Gray2 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray2Saturation</key>
     <map><key>Comment</key><string>Gray2 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray2Luminance</key>
-    <map><key>Comment</key><string>Gray2 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray2TargetLightness</key>
-    <map><key>Comment</key><string>Gray2 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray2Lightness</key>
+    <map><key>Comment</key><string>Gray2 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray2Strength</key>
     <map><key>Comment</key><string>Gray2 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray2Tolerance</key>
-    <map><key>Comment</key><string>Gray2 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray2HueRange</key>
+    <map><key>Comment</key><string>Gray2 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray2Softness</key>
-    <map><key>Comment</key><string>Gray2 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray2 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray3Hue</key>
     <map><key>Comment</key><string>Gray3 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray3Saturation</key>
     <map><key>Comment</key><string>Gray3 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray3Luminance</key>
-    <map><key>Comment</key><string>Gray3 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray3TargetLightness</key>
-    <map><key>Comment</key><string>Gray3 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray3Lightness</key>
+    <map><key>Comment</key><string>Gray3 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray3Strength</key>
     <map><key>Comment</key><string>Gray3 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray3Tolerance</key>
-    <map><key>Comment</key><string>Gray3 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray3HueRange</key>
+    <map><key>Comment</key><string>Gray3 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray3Softness</key>
-    <map><key>Comment</key><string>Gray3 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray3 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray4Hue</key>
     <map><key>Comment</key><string>Gray4 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray4Saturation</key>
     <map><key>Comment</key><string>Gray4 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray4Luminance</key>
-    <map><key>Comment</key><string>Gray4 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray4TargetLightness</key>
-    <map><key>Comment</key><string>Gray4 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray4Lightness</key>
+    <map><key>Comment</key><string>Gray4 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray4Strength</key>
     <map><key>Comment</key><string>Gray4 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray4Tolerance</key>
-    <map><key>Comment</key><string>Gray4 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray4HueRange</key>
+    <map><key>Comment</key><string>Gray4 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray4Softness</key>
-    <map><key>Comment</key><string>Gray4 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray4 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray5Hue</key>
     <map><key>Comment</key><string>Gray5 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray5Saturation</key>
     <map><key>Comment</key><string>Gray5 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray5Luminance</key>
-    <map><key>Comment</key><string>Gray5 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray5TargetLightness</key>
-    <map><key>Comment</key><string>Gray5 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray5Lightness</key>
+    <map><key>Comment</key><string>Gray5 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray5Strength</key>
     <map><key>Comment</key><string>Gray5 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray5Tolerance</key>
-    <map><key>Comment</key><string>Gray5 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray5HueRange</key>
+    <map><key>Comment</key><string>Gray5 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray5Softness</key>
-    <map><key>Comment</key><string>Gray5 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray5 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray6Hue</key>
     <map><key>Comment</key><string>Gray6 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray6Saturation</key>
     <map><key>Comment</key><string>Gray6 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray6Luminance</key>
-    <map><key>Comment</key><string>Gray6 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray6TargetLightness</key>
-    <map><key>Comment</key><string>Gray6 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray6Lightness</key>
+    <map><key>Comment</key><string>Gray6 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray6Strength</key>
     <map><key>Comment</key><string>Gray6 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray6Tolerance</key>
-    <map><key>Comment</key><string>Gray6 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray6HueRange</key>
+    <map><key>Comment</key><string>Gray6 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray6Softness</key>
-    <map><key>Comment</key><string>Gray6 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray6 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray7Hue</key>
     <map><key>Comment</key><string>Gray7 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray7Saturation</key>
     <map><key>Comment</key><string>Gray7 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray7Luminance</key>
-    <map><key>Comment</key><string>Gray7 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray7TargetLightness</key>
-    <map><key>Comment</key><string>Gray7 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray7Lightness</key>
+    <map><key>Comment</key><string>Gray7 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray7Strength</key>
     <map><key>Comment</key><string>Gray7 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray7Tolerance</key>
-    <map><key>Comment</key><string>Gray7 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray7HueRange</key>
+    <map><key>Comment</key><string>Gray7 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray7Softness</key>
-    <map><key>Comment</key><string>Gray7 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray7 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray8Hue</key>
     <map><key>Comment</key><string>Gray8 mixer hue adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray8Saturation</key>
     <map><key>Comment</key><string>Gray8 mixer saturation adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray8Luminance</key>
-    <map><key>Comment</key><string>Gray8 mixer luminance adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray8TargetLightness</key>
-    <map><key>Comment</key><string>Gray8 mixer target lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray8Lightness</key>
+    <map><key>Comment</key><string>Gray8 mixer lightness adjustment</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray8Strength</key>
     <map><key>Comment</key><string>Gray8 mixer overall strength</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
-    <key>ASColorGradeGray8Tolerance</key>
-    <map><key>Comment</key><string>Gray8 mixer perceptual color-distance tolerance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray8HueRange</key>
+    <map><key>Comment</key><string>Gray8 mixer hue selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGray8Softness</key>
-    <map><key>Comment</key><string>Gray8 mixer perceptual color-distance falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Gray8 mixer selection-boundary falloff softness</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedChromaRange</key>
+    <map><key>Comment</key><string>Red mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedLightnessRange</key>
+    <map><key>Comment</key><string>Red mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeOrangeChromaRange</key>
+    <map><key>Comment</key><string>Orange mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeOrangeLightnessRange</key>
+    <map><key>Comment</key><string>Orange mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeYellowChromaRange</key>
+    <map><key>Comment</key><string>Yellow mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeYellowLightnessRange</key>
+    <map><key>Comment</key><string>Yellow mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGreenChromaRange</key>
+    <map><key>Comment</key><string>Green mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGreenLightnessRange</key>
+    <map><key>Comment</key><string>Green mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeAquaChromaRange</key>
+    <map><key>Comment</key><string>Aqua mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeAquaLightnessRange</key>
+    <map><key>Comment</key><string>Aqua mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeBlueChromaRange</key>
+    <map><key>Comment</key><string>Blue mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeBlueLightnessRange</key>
+    <map><key>Comment</key><string>Blue mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradePurpleChromaRange</key>
+    <map><key>Comment</key><string>Purple mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradePurpleLightnessRange</key>
+    <map><key>Comment</key><string>Purple mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeMagentaChromaRange</key>
+    <map><key>Comment</key><string>Magenta mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeMagentaLightnessRange</key>
+    <map><key>Comment</key><string>Magenta mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray1ChromaRange</key>
+    <map><key>Comment</key><string>Gray1 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray1LightnessRange</key>
+    <map><key>Comment</key><string>Gray1 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray2ChromaRange</key>
+    <map><key>Comment</key><string>Gray2 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray2LightnessRange</key>
+    <map><key>Comment</key><string>Gray2 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray3ChromaRange</key>
+    <map><key>Comment</key><string>Gray3 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray3LightnessRange</key>
+    <map><key>Comment</key><string>Gray3 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray4ChromaRange</key>
+    <map><key>Comment</key><string>Gray4 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray4LightnessRange</key>
+    <map><key>Comment</key><string>Gray4 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray5ChromaRange</key>
+    <map><key>Comment</key><string>Gray5 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray5LightnessRange</key>
+    <map><key>Comment</key><string>Gray5 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray6ChromaRange</key>
+    <map><key>Comment</key><string>Gray6 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray6LightnessRange</key>
+    <map><key>Comment</key><string>Gray6 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray7ChromaRange</key>
+    <map><key>Comment</key><string>Gray7 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray7LightnessRange</key>
+    <map><key>Comment</key><string>Gray7 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray8ChromaRange</key>
+    <map><key>Comment</key><string>Gray8 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray8LightnessRange</key>
+    <map><key>Comment</key><string>Gray8 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin2ChromaRange</key>
+    <map><key>Comment</key><string>RedSkin2 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin2LightnessRange</key>
+    <map><key>Comment</key><string>RedSkin2 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin4ChromaRange</key>
+    <map><key>Comment</key><string>RedSkin4 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin4LightnessRange</key>
+    <map><key>Comment</key><string>RedSkin4 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin6ChromaRange</key>
+    <map><key>Comment</key><string>RedSkin6 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin6LightnessRange</key>
+    <map><key>Comment</key><string>RedSkin6 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin8ChromaRange</key>
+    <map><key>Comment</key><string>RedSkin8 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin8LightnessRange</key>
+    <map><key>Comment</key><string>RedSkin8 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin2ChromaRange</key>
+    <map><key>Comment</key><string>Skin2 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin2LightnessRange</key>
+    <map><key>Comment</key><string>Skin2 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin4ChromaRange</key>
+    <map><key>Comment</key><string>Skin4 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin4LightnessRange</key>
+    <map><key>Comment</key><string>Skin4 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin6ChromaRange</key>
+    <map><key>Comment</key><string>Skin6 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin6LightnessRange</key>
+    <map><key>Comment</key><string>Skin6 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin8ChromaRange</key>
+    <map><key>Comment</key><string>Skin8 mixer relative-chroma selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin8LightnessRange</key>
+    <map><key>Comment</key><string>Skin8 mixer lightness selection range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>50.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSelectionColor</key>
+    <map><key>Comment</key><string>Red mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.92</real><real>0.16</real><real>0.18</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeOrangeSelectionColor</key>
+    <map><key>Comment</key><string>Orange mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.95</real><real>0.48</real><real>0.12</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeYellowSelectionColor</key>
+    <map><key>Comment</key><string>Yellow mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.92</real><real>0.76</real><real>0.08</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGreenSelectionColor</key>
+    <map><key>Comment</key><string>Green mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.2</real><real>0.72</real><real>0.28</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeAquaSelectionColor</key>
+    <map><key>Comment</key><string>Aqua mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.08</real><real>0.72</real><real>0.76</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeBlueSelectionColor</key>
+    <map><key>Comment</key><string>Blue mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.1</real><real>0.42</real><real>0.92</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradePurpleSelectionColor</key>
+    <map><key>Comment</key><string>Purple mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.55</real><real>0.24</real><real>0.86</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeMagentaSelectionColor</key>
+    <map><key>Comment</key><string>Magenta mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.88</real><real>0.12</real><real>0.68</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray1SelectionColor</key>
+    <map><key>Comment</key><string>Gray1 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.949</real><real>0.949</real><real>0.949</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray2SelectionColor</key>
+    <map><key>Comment</key><string>Gray2 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.812</real><real>0.812</real><real>0.812</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray3SelectionColor</key>
+    <map><key>Comment</key><string>Gray3 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.678</real><real>0.678</real><real>0.678</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray4SelectionColor</key>
+    <map><key>Comment</key><string>Gray4 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.549</real><real>0.549</real><real>0.549</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray5SelectionColor</key>
+    <map><key>Comment</key><string>Gray5 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.424</real><real>0.424</real><real>0.424</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray6SelectionColor</key>
+    <map><key>Comment</key><string>Gray6 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.306</real><real>0.306</real><real>0.306</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray7SelectionColor</key>
+    <map><key>Comment</key><string>Gray7 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.196</real><real>0.196</real><real>0.196</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGray8SelectionColor</key>
+    <map><key>Comment</key><string>Gray8 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.094</real><real>0.094</real><real>0.094</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin2SelectionColor</key>
+    <map><key>Comment</key><string>RedSkin2 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.949</real><real>0.557</real><real>0.533</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin4SelectionColor</key>
+    <map><key>Comment</key><string>RedSkin4 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.969</real><real>0.659</real><real>0.604</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin6SelectionColor</key>
+    <map><key>Comment</key><string>RedSkin6 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.984</real><real>0.757</real><real>0.663</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeRedSkin8SelectionColor</key>
+    <map><key>Comment</key><string>RedSkin8 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>1</real><real>0.855</real><real>0.725</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin2SelectionColor</key>
+    <map><key>Comment</key><string>Skin2 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.941</real><real>0.808</real><real>0.671</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin4SelectionColor</key>
+    <map><key>Comment</key><string>Skin4 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.773</real><real>0.576</real><real>0.408</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin6SelectionColor</key>
+    <map><key>Comment</key><string>Skin6 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.553</real><real>0.376</real><real>0.212</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeSkin8SelectionColor</key>
+    <map><key>Comment</key><string>Skin8 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.345</real><real>0.192</real><real>0.004</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local celestial lens flares. -->
     <key>ASLensFlareEnabled</key>
