@@ -2,7 +2,7 @@
 
 ## Behavior
 
-AyaneStorm identifies an ad-hoc conference by its session UUID. The conference toolbar's **Block conference** button stores that UUID and display name in the per-account `ASBlockedConferences` setting, opens the block-list floater, and leaves the session.
+AyaneStorm identifies an ad-hoc conference by its session UUID. The conference toolbar's **Block conference** button asks for confirmation. Confirming stores that UUID and display name in the per-account `ASBlockedConferences` setting, opens the block-list floater, and leaves the session. Cancelling makes no change.
 
 Later text, immediate, and voice invitations for a stored UUID are declined before a local conversation session or invitation UI is created. The list remains available at **Comm > Blocked Conferences...**. Selecting an entry and clicking **Unblock** removes it.
 

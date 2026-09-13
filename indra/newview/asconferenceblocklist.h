@@ -21,6 +21,7 @@ class ASConferenceBlockList
 public:
     static bool isBlocked(const LLUUID& session_id);
     static void block(const LLUUID& session_id, const std::string& name);
+    static void confirmBlockAndLeave(const LLUUID& session_id, const std::string& name);
     static void unblock(const LLUUID& session_id);
     static LLSD getEntries();
 

@@ -737,9 +737,7 @@ void FSFloaterIM::doToSelected(const LLSD& userdata)
         LLIMModel::LLIMSession* session = LLIMModel::instance().findIMSession(mSessionID);
         if (session && session->isAdHocSessionType())
         {
-            ASConferenceBlockList::block(mSessionID, session->mName);
-            LLFloaterReg::showInstance("as_conference_block_list");
-            gIMMgr->leaveSession(mSessionID);
+            ASConferenceBlockList::confirmBlockAndLeave(mSessionID, session->mName);
         }
     }
     // </AS:Chanayane>

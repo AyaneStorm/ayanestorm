@@ -12,7 +12,9 @@
 #include "llagent.h"
 #include "llbutton.h"
 #include "llcorehttputil.h"
+#include "llfloaterreg.h"
 #include "llimview.h"
+#include "llnotificationsutil.h"
 #include "llscrolllistctrl.h"
 #include "llscrolllistitem.h"
 #include "llviewercontrol.h"
@@ -21,6 +23,21 @@
 namespace
 {
 constexpr const char* SETTING_BLOCKED_CONFERENCES = "ASBlockedConferences";
+
+bool onConfirmBlockConference(const LLSD& notification, const LLSD& response,
+                              const LLUUID& session_id, const std::string& name)
+{
+    if (LLNotificationsUtil::getSelectedOption(notification, response) == 0)
+    {
+        ASConferenceBlockList::block(session_id, name);
+        LLFloaterReg::showInstance("as_conference_block_list");
+        if (gIMMgr)
+        {
+            gIMMgr->leaveSession(session_id);
+        }
+    }
+    return false;
+}
 }
 
 LLSD ASConferenceBlockList::getEntries()
@@ -60,6 +77,15 @@ void ASConferenceBlockList::block(const LLUUID& session_id, const std::string& n
     entry["name"] = name;
     entries.append(entry);
     gSavedPerAccountSettings.setLLSD(SETTING_BLOCKED_CONFERENCES, entries);
+}
+
+void ASConferenceBlockList::confirmBlockAndLeave(const LLUUID& session_id, const std::string& name)
+{
+    LLSD args;
+    args["CONFERENCE"] = name;
+    LLNotificationsUtil::add(
+        "ASConfirmBlockConference", args, LLSD(),
+        boost::bind(&onConfirmBlockConference, _1, _2, session_id, name));
 }
 
 void ASConferenceBlockList::unblock(const LLUUID& session_id)

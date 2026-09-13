@@ -10542,6 +10542,22 @@ Are you sure you want to leave this conference chat?
     </usetemplate>
   </notification>
 
+  <!-- <AS:Chanayane> Confirm persistent conference blocking. -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASConfirmBlockConference"
+   type="alertmodal">
+Block "[CONFERENCE]" and leave it?
+
+Future invitations to this conference will be declined automatically. You can unblock it from Comm &gt; Blocked Conferences.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Block and Leave"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
+
   <notification
    icon="alertmodal.tga"
    name="ConfirmMuteAll"
