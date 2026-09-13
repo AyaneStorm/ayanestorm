@@ -475,6 +475,7 @@
            execute_parameters="as_volumetric_lighting"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_volumetric_lighting"
+           checkbox_control="RenderVolumetricLighting"
            />
   <!-- </AS:Chanayane> -->
 
@@ -501,6 +502,7 @@
            execute_parameters="as_sun_settings"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_sun_settings"
+           checkbox_control="ASProceduralSunEnabled"
            />
   <!-- </AS:Chanayane> -->
 
@@ -514,6 +516,7 @@
            execute_parameters="as_aurora_settings"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_aurora_settings"
+           checkbox_control="ASAuroraEnabled"
            />
   <!-- </AS:Chanayane> -->
 
@@ -527,6 +530,7 @@
            execute_parameters="as_horizon_settings"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_horizon_settings"
+           checkbox_control="ASHorizonScatteringEnabled"
            />
   <!-- </AS:Chanayane> -->
 
@@ -553,6 +557,7 @@
            execute_parameters="as_color_grading"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_color_grading"
+           checkbox_control="ASColorGradingEnabled"
            />
   <!-- </AS:Chanayane> -->
 
