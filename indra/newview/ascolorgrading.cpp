@@ -38,6 +38,7 @@ namespace
 {
     LLGLSLShader sFinalProgram;
     bool sPreviewBypass = false;
+    U32 sStaticGrainSeed = 0;
 
     const char* const BAND_NAMES[ASColorGrading::BAND_COUNT] =
         { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
@@ -450,9 +451,12 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
         llclamp(gSavedSettings.getF32("ASColorGradeGrainColor") * .01f, 0.f, 1.f));
     static U32 snapshot_seed = 0;
     static bool was_snapshot = false;
-    if (gSnapshot && !was_snapshot) snapshot_seed = gFrameCount;
+    if (gSnapshot && !was_snapshot)
+        snapshot_seed = gSavedSettings.getBOOL("ASColorGradeGrainStatic") ? sStaticGrainSeed : gFrameCount;
     was_snapshot = gSnapshot;
-    sFinalProgram.uniform1f(sGrainSeed, (F32)(gSnapshot ? snapshot_seed : gFrameCount));
+    // Static grain holds one spatial pattern until the user requests another.
+    const U32 live_seed = gSavedSettings.getBOOL("ASColorGradeGrainStatic") ? sStaticGrainSeed : gFrameCount;
+    sFinalProgram.uniform1f(sGrainSeed, (F32)(gSnapshot ? snapshot_seed : live_seed));
     const F32 zoom = llmax(LLViewerCamera::getInstance()->getZoomFactor(), 1.f);
     const S32 tile = LLViewerCamera::getInstance()->getZoomSubRegion();
     const S32 row = llceil(zoom);
@@ -467,11 +471,17 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
     return true;
 }
 
+void ASColorGrading::refreshStaticGrain()
+{
+    ++sStaticGrainSeed;
+}
+
 void ASColorGrading::resetAll()
 {
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeLUTEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeLUTFile")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled")) control->resetToDefault(true);
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeGrainStatic")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeColorizeEnabled")) control->resetToDefault(true);
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeSplitToningEnabled")) control->resetToDefault(true);
     for (const std::string& name : settingNames())
@@ -534,6 +544,7 @@ bool ASColorGrading::savePreset(const std::string& name)
     data["values"]["ASColorGradeLUTEnabled"] = gSavedSettings.getBOOL("ASColorGradeLUTEnabled");
     data["values"]["ASColorGradeLUTFile"] = gSavedSettings.getString("ASColorGradeLUTFile");
     data["values"]["ASColorGradeNegativeEnabled"] = gSavedSettings.getBOOL("ASColorGradeNegativeEnabled");
+    data["values"]["ASColorGradeGrainStatic"] = gSavedSettings.getBOOL("ASColorGradeGrainStatic");
     for (const std::string& setting : settingNames()) data["values"][setting] = gSavedSettings.getLLSD(setting);
     for (S32 band = 0; band < BAND_COUNT; ++band)
     {
@@ -573,6 +584,9 @@ bool ASColorGrading::loadPreset(const std::string& name)
     // Older presets omit Negative and retain the default non-inverted image.
     if (values.has("ASColorGradeNegativeEnabled") && !values["ASColorGradeNegativeEnabled"].isBoolean()) return false;
     const bool negative = values.has("ASColorGradeNegativeEnabled") && values["ASColorGradeNegativeEnabled"].asBoolean();
+    // Older presets omit static grain and retain the animated default.
+    if (values.has("ASColorGradeGrainStatic") && !values["ASColorGradeGrainStatic"].isBoolean()) return false;
+    const bool grain_static = values.has("ASColorGradeGrainStatic") && values["ASColorGradeGrainStatic"].asBoolean();
     if (values.has("ASColorGradeColorizeEnabled") && !values["ASColorGradeColorizeEnabled"].isBoolean()) return false;
     const bool colorize = values.has("ASColorGradeColorizeEnabled") && values["ASColorGradeColorizeEnabled"].asBoolean();
     if (values.has("ASColorGradeSplitToningEnabled") && !values["ASColorGradeSplitToningEnabled"].isBoolean()) return false;
@@ -600,6 +614,7 @@ bool ASColorGrading::loadPreset(const std::string& name)
     gSavedSettings.setString("ASColorGradeLUTFile", lut_file);
     gSavedSettings.setBOOL("ASColorGradeLUTEnabled", lut_enabled);
     gSavedSettings.setBOOL("ASColorGradeNegativeEnabled", negative);
+    gSavedSettings.setBOOL("ASColorGradeGrainStatic", grain_static);
     gSavedSettings.setBOOL("ASColorGradeColorizeEnabled", colorize);
     gSavedSettings.setBOOL("ASColorGradeSplitToningEnabled", split_toning);
     return true;

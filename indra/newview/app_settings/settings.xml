@@ -25612,6 +25612,8 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map><key>Comment</key><string>Color grading LUT strength in percent</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>100.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeNegativeEnabled</key>
     <map><key>Comment</key><string>Invert the final color-graded scene without affecting the UI</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASColorGradeGrainStatic</key>
+    <map><key>Comment</key><string>Freeze artistic film grain until manually refreshed</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGrainAmount</key>
     <map><key>Comment</key><string>Artistic film grain amount</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASColorGradeGrainSize</key>

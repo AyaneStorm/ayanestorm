@@ -97,6 +97,10 @@ bool ASPanelColorGrading::postBuild()
     getChild<LLButton>("save_preset")->setCommitCallback(boost::bind(&ASPanelColorGrading::savePreset, this));
     getChild<LLButton>("delete_preset")->setCommitCallback(boost::bind(&ASPanelColorGrading::deletePreset, this));
     getChild<LLButton>("reset_all")->setCommitCallback(boost::bind(&ASPanelColorGrading::resetAll, this));
+    getChild<LLButton>("refresh_grain")->setCommitCallback([](LLUICtrl*, const LLSD&)
+    {
+        ASColorGrading::refreshStaticGrain();
+    });
 
     mBefore = getChild<LLButton>("before");
     mBefore->setMouseDownCallback(boost::bind(&ASPanelColorGrading::setBefore, this, true));
@@ -156,6 +160,8 @@ bool ASPanelColorGrading::postBuild()
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeNegativeEnabled"))
         mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
+    if (LLControlVariable* control = gSavedSettings.getControl("ASColorGradeGrainStatic"))
+        mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
     for (const char* setting : {"ASColorGradeLUTEnabled", "ASColorGradeLUTFile"})
         if (LLControlVariable* control = gSavedSettings.getControl(setting))
             mSettingConnections.push_back(control->getSignal()->connect(boost::bind(&ASPanelColorGrading::markCustom, this)));
@@ -173,6 +179,9 @@ void ASPanelColorGrading::draw()
     getChild<LLUICtrl>("ASColorGradeGrainSize")->setEnabled(grain_enabled);
     getChild<LLUICtrl>("ASColorGradeGrainRoughness")->setEnabled(grain_enabled);
     getChild<LLUICtrl>("ASColorGradeGrainColor")->setEnabled(grain_enabled);
+    getChild<LLUICtrl>("grain_static")->setEnabled(grain_enabled);
+    getChild<LLButton>("refresh_grain")->setEnabled(
+        grain_enabled && gSavedSettings.getBOOL("ASColorGradeGrainStatic"));
     getChild<LLButton>("reset_ASColorGradeGrainSize")->setEnabled(grain_enabled);
     getChild<LLButton>("reset_ASColorGradeGrainRoughness")->setEnabled(grain_enabled);
     getChild<LLButton>("reset_ASColorGradeGrainColor")->setEnabled(grain_enabled);

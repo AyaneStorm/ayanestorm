@@ -139,10 +139,12 @@ float colorBandWeight(vec3 lab, int index, float hue_range, float chroma_range,
     return mix(gray_weight, chromatic_weight, hue_definition);
 }
 
-float hash12(vec2 p)
+// Keep time in a separate hash dimension so refreshing grain randomizes each
+// cell instead of translating the pattern diagonally across the image.
+float grainHash(vec2 cell, float seed)
 {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
+    vec3 p3 = fract(vec3(cell, seed) * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
     return fract((p3.x + p3.y) * p3.z);
 }
 
@@ -294,12 +296,12 @@ void main()
     vec2 pixel = full_uv * screen_res * zoom;
     float grain_size = mix(1.0, 8.0, as_color_grade_grain.y);
     vec2 grain_pixel = floor(pixel / grain_size);
-    float fine = hash12(grain_pixel + as_color_grade_grain_seed);
-    float coarse = hash12(floor(grain_pixel * 0.35) + as_color_grade_grain_seed * 1.37);
+    float fine = grainHash(grain_pixel, as_color_grade_grain_seed);
+    float coarse = grainHash(floor(grain_pixel * 0.35), as_color_grade_grain_seed + 11.0);
     float mono = mix(fine, coarse, as_color_grade_grain.z) - 0.5;
-    vec3 colored = vec3(hash12(grain_pixel + as_color_grade_grain_seed + 17.0),
-                        hash12(grain_pixel + as_color_grade_grain_seed + 43.0),
-                        hash12(grain_pixel + as_color_grade_grain_seed + 79.0)) - 0.5;
+    vec3 colored = vec3(grainHash(grain_pixel, as_color_grade_grain_seed + 17.0),
+                        grainHash(grain_pixel, as_color_grade_grain_seed + 43.0),
+                        grainHash(grain_pixel, as_color_grade_grain_seed + 79.0)) - 0.5;
     vec3 grain_noise = mix(vec3(mono), colored, as_color_grade_grain.w);
     float grain_envelope = 0.35 + 0.65 * 4.0 * L * (1.0 - L);
     graded += grain_noise * as_color_grade_grain.x * 0.08 * grain_envelope;

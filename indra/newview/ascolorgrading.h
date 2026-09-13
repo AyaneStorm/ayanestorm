@@ -32,6 +32,7 @@ namespace ASColorGrading
     void appendLinearShader(LLGLSLShader& shader);
     void bindLinearUniforms(LLGLSLShader& shader, bool bypass);
     bool present(LLRenderTarget& color, LLRenderTarget& depth, LLVertexBuffer& screen_triangle);
+    void refreshStaticGrain();
 
     bool isActive();
     void setPreviewBypass(bool bypass);
