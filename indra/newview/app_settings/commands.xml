@@ -544,6 +544,7 @@
            execute_parameters="as_camera_effects"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_camera_effects"
+           checkbox_control="ASCameraEffectsEnabled"
            />
   <!-- </AS:Chanayane> -->
 
@@ -597,6 +598,7 @@
            execute_parameters="as_my_lights"
            is_running_function="Floater.IsOpen"
            is_running_parameters="as_my_lights"
+           checkbox_control="ASLightRigMasterEnabled"
            />
   <!-- </AS:Chanayane> -->
 

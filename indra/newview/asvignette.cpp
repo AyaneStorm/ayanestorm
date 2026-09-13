@@ -74,7 +74,8 @@ void ASVignette::unloadShader()
 
 static void renderVignette(LLRenderTarget* color_target, S32 width, S32 height, LLVertexBuffer& screen_triangle)
 {
-    if (!gSavedSettings.getBOOL("ASVignetteEnabled") ||
+    if (!gSavedSettings.getBOOL("ASCameraEffectsEnabled") ||
+        !gSavedSettings.getBOOL("ASVignetteEnabled") ||
         !sVignetteProgram.isComplete() || gCubeSnapshot || width <= 0 || height <= 0 ||
         ASBackgroundIsolate::isActive())
     {

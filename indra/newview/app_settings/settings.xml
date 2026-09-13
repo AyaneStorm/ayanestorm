@@ -26086,6 +26086,14 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASColorGradeSkin8SelectionColor</key>
     <map><key>Comment</key><string>Skin8 mixer custom selection color</string><key>Persist</key><integer>1</integer><key>Type</key><string>Color4</string><key>Value</key><array><real>0.345</real><real>0.192</real><real>0.004</real><real>1.0</real></array><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Master switch for viewer-local camera effects. -->
+    <key>ASCameraEffectsEnabled</key>
+    <map>
+      <key>Comment</key><string>Master switch for all effects on the Camera Effects panel</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local celestial lens flares. -->
     <key>ASLensFlareEnabled</key>
     <map>

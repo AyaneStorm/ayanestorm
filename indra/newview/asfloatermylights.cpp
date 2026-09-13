@@ -226,6 +226,19 @@ void ASFloaterMyLights::onIdle(void* userdata)
 
 void ASFloaterMyLights::updateLights()
 {
+    // The toolbar checkbox writes the shared master setting directly, so
+    // mirror external changes into the live rig without altering its setup.
+    const bool master_enabled = gSavedSettings.getBOOL("ASLightRigMasterEnabled");
+    if (master_enabled != mMasterEnabled)
+    {
+        mMasterEnabled = master_enabled;
+        mMasterEnabledCheck->setValue(mMasterEnabled);
+        for (auto& rig : mLights)
+        {
+            rig->setEnabled(mMasterEnabled);
+        }
+    }
+
     std::vector<ASLightRigRenderer::Light> shader_lights;
     for (auto& rig : mLights)
     {
