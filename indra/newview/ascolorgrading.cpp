@@ -39,6 +39,8 @@ namespace
     LLGLSLShader sFinalProgram;
     bool sPreviewBypass = false;
     U32 sStaticGrainSeed = 0;
+    U32 sLivePresentationWidth = 0;
+    U32 sLivePresentationHeight = 0;
 
     const char* const BAND_NAMES[ASColorGrading::BAND_COUNT] =
         { "Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta",
@@ -458,9 +460,21 @@ bool ASColorGrading::present(LLRenderTarget& color, LLRenderTarget& depth, LLVer
     const U32 live_seed = gSavedSettings.getBOOL("ASColorGradeGrainStatic") ? sStaticGrainSeed : gFrameCount;
     sFinalProgram.uniform1f(sGrainSeed, (F32)(gSnapshot ? snapshot_seed : live_seed));
     const F32 zoom = llmax(LLViewerCamera::getInstance()->getZoomFactor(), 1.f);
+    // Keep artistic grain the same apparent size as the live view when a
+    // snapshot renders directly to a larger target or through tiled zoom.
+    if (!gSnapshot)
+    {
+        sLivePresentationWidth = color.getWidth();
+        sLivePresentationHeight = color.getHeight();
+    }
+    const F32 resolution_scale = gSnapshot && sLivePresentationWidth > 0 && sLivePresentationHeight > 0
+        ? llmax(zoom, llmax((F32)color.getWidth() / (F32)sLivePresentationWidth,
+                            (F32)color.getHeight() / (F32)sLivePresentationHeight))
+        : 1.f;
     const S32 tile = LLViewerCamera::getInstance()->getZoomSubRegion();
     const S32 row = llceil(zoom);
-    sFinalProgram.uniform3f(sSnapshotTile, zoom, zoom > 1.f ? (F32)(tile % row) : 0.f, zoom > 1.f ? (F32)(tile / row) : 0.f);
+    sFinalProgram.uniform4f(sSnapshotTile, zoom, zoom > 1.f ? (F32)(tile % row) : 0.f,
+        zoom > 1.f ? (F32)(tile / row) : 0.f, resolution_scale);
     ASColorLUT::bind(sFinalProgram);
     triangle.setBuffer();
     triangle.drawArrays(LLRender::TRIANGLES, 0, 3);

@@ -28,7 +28,7 @@ uniform vec2 as_color_grade_split_toning2; // enabled, balance
 uniform int as_color_grade_negative; // invert the final display-referred scene RGB
 uniform vec4 as_color_grade_grain; // amount, size, roughness, color
 uniform float as_color_grade_grain_seed;
-uniform vec3 as_color_grade_snapshot_tile; // zoom, tile x, tile y
+uniform vec4 as_color_grade_snapshot_tile; // zoom, tile x, tile y, live-view pixel scale
 
 in vec2 vary_fragcoord;
 
@@ -294,7 +294,10 @@ void main()
     float zoom = max(as_color_grade_snapshot_tile.x, 1.0);
     vec2 full_uv = (vary_fragcoord + as_color_grade_snapshot_tile.yz) / zoom;
     vec2 pixel = full_uv * screen_res * zoom;
-    float grain_size = mix(1.0, 8.0, as_color_grade_grain.y);
+    // Snapshot pixels become smaller when the image is reduced for display;
+    // scale each grain cell so its apparent size matches the live view.
+    float grain_size = mix(1.0, 8.0, as_color_grade_grain.y) *
+                       max(as_color_grade_snapshot_tile.w, 1.0);
     vec2 grain_pixel = floor(pixel / grain_size);
     float fine = grainHash(grain_pixel, as_color_grade_grain_seed);
     float coarse = grainHash(floor(grain_pixel * 0.35), as_color_grade_grain_seed + 11.0);
