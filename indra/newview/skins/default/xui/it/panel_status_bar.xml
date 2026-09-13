@@ -16,10 +16,16 @@
 	<panel.string name="buycurrencylabel">
 		[AMT] L$
 	</panel.string>
-	<panel name="menu_search_panel" width="125">
+	<!-- <AS:Chanayane> Match the widened localized menu-search field.
+	     Original: <panel name="menu_search_panel" width="125"> -->
+	<panel name="menu_search_panel" width="160">
+	<!-- </AS:Chanayane> -->
 		<search_editor label="Cerca nei menu" name="search_menu_edit" tool_tip="Scrivi qui i termini di ricerca. Verranno visualizzate anche corrispondenze parziali con le voci di menu." />
 	</panel>
-	<panel name="balance_bg" left="-380" width="100">
+	<!-- <AS:Chanayane> Preserve the localized layout while keeping the expanded media panel left of the network graphs.
+	     Original: <panel name="balance_bg" left="-380" width="100"> -->
+	<panel name="balance_bg" left="-550" width="100">
+	<!-- </AS:Chanayane> -->
 		<text name="balance" tool_tip="Clicca per aggiornare il saldo dei tuoi L$"/>
 		<button label="Acquista L$" name="buyL" tool_tip="Clicca per acquistare L$"/>
 	</panel>

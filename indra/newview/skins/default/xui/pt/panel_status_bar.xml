@@ -27,11 +27,17 @@
 		<button name="buy_land_btn" tool_tip="Esta parcela está à venda."/>
 		<text name="parcel_info_text" value="(carregando...)" tool_tip="Nome da parcela em que você está. Clique para abrir as informações do terreno."/>
 	</panel>
-	<panel name="balance_bg" left="-461" width="199">
+	<!-- <AS:Chanayane> Preserve the localized layout while keeping the expanded media panel left of the network graphs.
+	     Original: <panel name="balance_bg" left="-461" width="199"> -->
+	<panel name="balance_bg" left="-631" width="199">
+	<!-- </AS:Chanayane> -->
 		<text name="balance" tool_tip="Clique para atualizar seu saldo em L$" value="?? L$" width="105" left="0" right="110"/>
 		<button label="COMPRAR L$" name="buyL" tool_tip="Clique para comprar mais L$" auto_resize="true" follows="right|top|bottom" width="90"/>
 	</panel>
-	<panel name="time_and_media_bg" width="249">
+	<!-- <AS:Chanayane> Keep the localized panel width while including the draw-distance controls and favorite-stream button.
+	     Original: <panel name="time_and_media_bg" width="249"> -->
+	<panel name="time_and_media_bg" width="419">
+	<!-- </AS:Chanayane> -->
 		<text name="TimeText" tool_tip="Hora atual (Pacífico)" width="78">
 			24:00:00 PST
 		</text>

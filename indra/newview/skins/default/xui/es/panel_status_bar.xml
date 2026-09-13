@@ -22,11 +22,17 @@
 		<button name="buy_land_btn" tool_tip="La parcela está en venta"/>
 		<text name="parcel_info_text" tool_tip="Nombre de la parcela en la que te encuentras. Haz clic para obtener información sobre la misma." value="(cargando...)"/>
 	</panel>
-	<panel name="balance_bg" left="-331">
+	<!-- <AS:Chanayane> Preserve the localized layout while keeping the expanded media panel left of the network graphs.
+	     Original: <panel name="balance_bg" left="-331"> -->
+	<panel name="balance_bg" left="-501">
+	<!-- </AS:Chanayane> -->
 		<text name="balance" tool_tip="Haz clic para actualizar tu saldo en L$" value="?? L$"/>
 		<button name="buyL" label="COMPRAR L$" halign="left" tool_tip="Pulsa para comprar más L$" left_pad="-15"/>
 	</panel>
-	<panel name="time_and_media_bg" width="229">
+	<!-- <AS:Chanayane> Keep the localized panel width while including the draw-distance controls and favorite-stream button.
+	     Original: <panel name="time_and_media_bg" width="229"> -->
+	<panel name="time_and_media_bg" width="399">
+	<!-- </AS:Chanayane> -->
 		<icon name="dd_icon" tool_tip="Distancia de dibujo"/>
 		<slider tool_tip="Distancia máxima desde la cámara, en metros a la que se dibujarán objetos" name="drawdistance"/>
 		<text name="TimeText" tool_tip="Hora actual (costa del Pacífico de EEUU)" width="78">
