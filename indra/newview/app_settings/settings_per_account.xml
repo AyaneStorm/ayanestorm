@@ -13,6 +13,19 @@
         <string></string>
     </map>
     <!-- </AS:chanayane> -->
+    <!-- <AS:Chanayane> Persistent conference session block list. -->
+    <key>ASBlockedConferences</key>
+    <map>
+      <key>Comment</key>
+      <string>Ad-hoc conference session UUIDs whose invitations are automatically declined.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>LLSD</string>
+      <key>Value</key>
+      <array/>
+    </map>
+    <!-- </AS:Chanayane> -->
     <key>AvatarHoverOffsetZ</key>
     <map>
       <key>Comment</key>

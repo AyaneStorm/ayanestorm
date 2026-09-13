@@ -26,6 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Persistent ad-hoc conference block list.
+#include "asconferenceblocklist.h"
+// </AS:Chanayane>
+
 #include "llimview.h"
 
 #include "llavatarnamecache.h"  // IDEVO
@@ -3563,6 +3567,14 @@ void LLIMMgr::addMessage(
 
     if (new_session)
     {
+        // <AS:Chanayane> Reject a known conference before creating its local session.
+        if (dialog != IM_NOTHING_SPECIAL && dialog != IM_SESSION_P2P_INVITE &&
+            !is_group_chat && ASConferenceBlockList::leaveSessionIfBlocked(new_session_id, other_participant_id))
+        {
+            return;
+        }
+        // </AS:Chanayane>
+
         // Group chat session was initiated by muted resident, do not start this session viewerside
         // do not send leave msg either, so we are able to get group messages from other participants
         if ((IM_SESSION_INVITE == dialog) && gAgent.isInGroup(new_session_id) &&
@@ -4130,6 +4142,14 @@ void LLIMMgr::inviteToSession(
         // ignore invites from ourself.
         return;
     }
+
+    // <AS:Chanayane> Decline blocked ad-hoc invitations before any prompt is created.
+    if (type != IM_SESSION_P2P_INVITE && !gAgent.isInGroup(session_id, true) &&
+        ASConferenceBlockList::declineInvitationIfBlocked(session_id))
+    {
+        return;
+    }
+    // </AS:Chanayane>
 
     std::string notify_box_type;
     // voice invite question is different from default only for group call (EXT-7118)
@@ -5064,6 +5084,14 @@ public:
             {
                 return;
             }
+
+            // <AS:Chanayane> Decline a blocked conference before addMessage creates its UI.
+            if (!gAgent.isInGroup(session_id, true) &&
+                ASConferenceBlockList::declineInvitationIfBlocked(session_id))
+            {
+                return;
+            }
+            // </AS:Chanayane>
 // [RLVa:KB] - Checked: 2010-11-30 (RLVa-1.3.0)
             if ( (RlvActions::hasBehaviour(RLV_BHVR_RECVIM)) || (RlvActions::hasBehaviour(RLV_BHVR_RECVIMFROM)) )
             {
@@ -5240,4 +5268,3 @@ LLHTTPRegistration<LLViewerChatterBoxSessionUpdate>
 LLHTTPRegistration<LLViewerChatterBoxInvitation>
     gHTTPRegistrationMessageChatterBoxInvitation(
         "/message/ChatterBoxInvitation");
-

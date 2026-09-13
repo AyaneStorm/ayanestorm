@@ -822,6 +822,19 @@
             </menu>
         
         </menu>
+
+        <!-- <AS:Chanayane> Keep conference unblocking reachable without an open session. -->
+        <menu_item_check
+         label="Blocked Conferences..."
+         name="Blocked Conferences">
+            <menu_item_check.on_check
+             function="Floater.Visible"
+             parameter="as_conference_block_list" />
+            <menu_item_check.on_click
+             function="Floater.Toggle"
+             parameter="as_conference_block_list" />
+        </menu_item_check>
+        <!-- </AS:Chanayane> -->
         
         <menu_item_separator/>
              

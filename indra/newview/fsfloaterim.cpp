@@ -31,6 +31,9 @@
 
 #include "fsfloaterim.h"
 
+// <AS:Chanayane> Conference session block list toolbar action.
+#include "asconferenceblocklist.h"
+// </AS:Chanayane>
 #include "fschathistory.h"
 #include "fschatoptionsmenu.h"
 #include "fscommon.h"
@@ -728,6 +731,18 @@ void FSFloaterIM::doToSelected(const LLSD& userdata)
             gViewerWindow->getWindow()->openFile(LLLogChat::makeLogFileName(LLIMModel::instance().getHistoryFileName(mSessionID)));
         }
     }
+    // <AS:Chanayane> Block this conference and expose the list for undo.
+    else if (command == "block_conference")
+    {
+        LLIMModel::LLIMSession* session = LLIMModel::instance().findIMSession(mSessionID);
+        if (session && session->isAdHocSessionType())
+        {
+            ASConferenceBlockList::block(mSessionID, session->mName);
+            LLFloaterReg::showInstance("as_conference_block_list");
+            gIMMgr->leaveSession(mSessionID);
+        }
+    }
+    // </AS:Chanayane>
     else
     {
         LL_WARNS("FSFloaterIM") << "Unhandled command '" << command << "'. Ignoring." << LL_ENDL;
@@ -964,6 +979,9 @@ bool FSFloaterIM::postBuild()
                 getChild<LLLayoutPanel>("pay_panel")->setVisible(false);
                 getChild<LLLayoutPanel>("end_call_btn_panel")->setVisible(false);
                 getChild<LLLayoutPanel>("voice_ctrls_btn_panel")->setVisible(false);
+                // <AS:Chanayane> Expose session-specific blocking only for conferences.
+                getChild<LLLayoutPanel>("block_conference_panel")->setVisible(true);
+                // </AS:Chanayane>
                 LL_DEBUGS("FSFloaterIM") << "LLIMModel::LLIMSession::ADHOC_SESSION end" << LL_ENDL;
                 break;
             }

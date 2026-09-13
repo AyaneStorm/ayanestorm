@@ -28,7 +28,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Viewer-local color grading floater.
+// <AS:Chanayane> Viewer-local conference block list and color grading floaters.
+#include "asconferenceblocklist.h"
 #include "asfloatercolorgrading.h"
 // </AS:Chanayane>
 
@@ -719,6 +720,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("fs_poser", "floater_fs_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPoser>); // <FS:AR> [FIRE-30873]: Poser
     LLFloaterReg::add("fs_protectedfolders", "floater_fs_protectedfolders.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterProtectedFolders>);
 // <AS:chanayane> Stream keeper
+    LLFloaterReg::add("as_conference_block_list", "floater_as_conference_block_list.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterConferenceBlockList>);
     LLFloaterReg::add("as_favoritestreams", "floater_as_favoritestreams.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterFavoriteStreams>);
 // </AS:chanayane>
 // <AS:Chanayane> Optional Recent people tab in Conversations

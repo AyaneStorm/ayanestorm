@@ -92,6 +92,7 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
+    asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
     # <AS:Chanayane> Viewer-local photographic color grading.
@@ -1003,6 +1004,7 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
+    asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
     # <AS:Chanayane> Viewer-local photographic color grading.

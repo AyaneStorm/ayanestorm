@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm per-account conference block list. -->
+<floater
+ can_close="true"
+ can_resize="true"
+ height="300"
+ layout="topleft"
+ min_height="180"
+ min_width="430"
+ name="floater_as_conference_block_list"
+ positioning="cascading"
+ reuse_instance="true"
+ save_rect="true"
+ single_instance="true"
+ title="Blocked Conferences"
+ width="540">
+  <text
+   follows="left|right|top"
+   height="36"
+   layout="topleft"
+   left="10"
+   name="explanation"
+   right="-10"
+   top="8"
+   word_wrap="true">
+    Invitations to these conference sessions are automatically declined.
+  </text>
+  <scroll_list
+   draw_heading="true"
+   draw_stripes="true"
+   follows="all"
+   layout="topleft"
+   left="10"
+   multi_select="false"
+   name="conference_list"
+   right="-10"
+   bottom="-45"
+   top="48">
+    <scroll_list.columns label="Conference" name="name" dynamic_width="true" />
+    <scroll_list.columns label="Session ID" name="session_id" width="250" />
+  </scroll_list>
+  <button
+   bottom="-10"
+   follows="left|bottom"
+   height="23"
+   label="Unblock"
+   layout="topleft"
+   left="10"
+   name="unblock_btn"
+   tool_tip="Allow invitations from the selected conference again"
+   width="90" />
+</floater>
