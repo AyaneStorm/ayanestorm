@@ -9,6 +9,7 @@
 
 #include "asconferenceblocklist.h"
 
+#include "fscommon.h"
 #include "llagent.h"
 #include "llbutton.h"
 #include "llcorehttputil.h"
@@ -17,6 +18,8 @@
 #include "llnotificationsutil.h"
 #include "llscrolllistctrl.h"
 #include "llscrolllistitem.h"
+#include "llslurl.h"
+#include "lltrans.h"
 #include "llviewercontrol.h"
 #include "llviewerregion.h"
 
@@ -37,6 +40,30 @@ bool onConfirmBlockConference(const LLSD& notification, const LLSD& response,
         }
     }
     return false;
+}
+
+void reportBlockedConference(const LLUUID& session_id, const LLUUID& inviter_id)
+{
+    if (!gSavedSettings.getBOOL("ASReportBlockedConference"))
+    {
+        return;
+    }
+
+    std::string conference_name = session_id.asString();
+    const LLSD entries = ASConferenceBlockList::getEntries();
+    for (LLSD::array_const_iterator it = entries.beginArray(); it != entries.endArray(); ++it)
+    {
+        if ((*it)["id"].asUUID() == session_id && !(*it)["name"].asString().empty())
+        {
+            conference_name = (*it)["name"].asString();
+            break;
+        }
+    }
+
+    LLSD args;
+    args["CONFERENCE"] = conference_name;
+    args["AVATAR_NAME"] = LLSLURL("agent", inviter_id, "about").getSLURLString();
+    FSCommon::report_to_nearby_chat(LLTrans::getString("ASBlockedConferenceReported", args));
 }
 }
 
@@ -102,7 +129,7 @@ void ASConferenceBlockList::unblock(const LLUUID& session_id)
     gSavedPerAccountSettings.setLLSD(SETTING_BLOCKED_CONFERENCES, filtered);
 }
 
-bool ASConferenceBlockList::declineInvitationIfBlocked(const LLUUID& session_id)
+bool ASConferenceBlockList::declineInvitationIfBlocked(const LLUUID& session_id, const LLUUID& inviter_id)
 {
     if (!isBlocked(session_id))
     {
@@ -126,6 +153,7 @@ bool ASConferenceBlockList::declineInvitationIfBlocked(const LLUUID& session_id)
         gIMMgr->clearPendingAgentListUpdates(session_id);
         gIMMgr->clearPendingInvitation(session_id);
     }
+    reportBlockedConference(session_id, inviter_id);
     return true;
 }
 
@@ -143,6 +171,7 @@ bool ASConferenceBlockList::leaveSessionIfBlocked(const LLUUID& session_id, cons
         gIMMgr->clearPendingAgentListUpdates(session_id);
     }
     LLIMModel::getInstance()->sendLeaveSession(session_id, other_participant_id);
+    reportBlockedConference(session_id, other_participant_id);
     return true;
 }
 

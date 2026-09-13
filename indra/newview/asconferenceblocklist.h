@@ -26,7 +26,7 @@ public:
     static LLSD getEntries();
 
     // Hooks for the two server paths used by incoming conferences.
-    static bool declineInvitationIfBlocked(const LLUUID& session_id);
+    static bool declineInvitationIfBlocked(const LLUUID& session_id, const LLUUID& inviter_id);
     static bool leaveSessionIfBlocked(const LLUUID& session_id, const LLUUID& other_participant_id);
 };
 

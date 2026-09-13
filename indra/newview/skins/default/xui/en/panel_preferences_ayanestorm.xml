@@ -518,6 +518,20 @@
         radio_style="false"
         width="480"
         top_pad="4" />
+      <!-- Optional report for the AyaneStorm conference block list. -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASReportBlockedConference"
+        label="Report rejected blocked conferences in nearby chat"
+        tool_tip="If checked, the viewer reports when an invitation to a conference on your Blocked Conferences list is automatically rejected."
+        left="15"
+        mouse_opaque="true"
+        name="as_report_blocked_conference"
+        radio_style="false"
+        width="480"
+        top_pad="10" />
     </panel>
 
   </tab_container>

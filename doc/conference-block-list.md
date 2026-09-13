@@ -6,6 +6,8 @@ AyaneStorm identifies an ad-hoc conference by its session UUID. The conference t
 
 Later text, immediate, and voice invitations for a stored UUID are declined before a local conversation session or invitation UI is created. The list remains available at **Comm > Blocked Conferences...**. Selecting an entry and clicking **Unblock** removes it.
 
+The **AyaneStorm > Conversations > Report rejected blocked conferences in nearby chat** preference optionally reports each automatic rejection with the saved conference name and the inviter's profile link. It is disabled by default and is independent of Firestorm's report option for globally ignored conferences.
+
 ## Limitation
 
 The viewer cannot know a new conference UUID before receiving its first invitation. Blocking therefore prevents later invitations or re-adds to the same conference; it cannot predict a conference that has never been seen.

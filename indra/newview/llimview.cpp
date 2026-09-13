@@ -4145,7 +4145,7 @@ void LLIMMgr::inviteToSession(
 
     // <AS:Chanayane> Decline blocked ad-hoc invitations before any prompt is created.
     if (type != IM_SESSION_P2P_INVITE && !gAgent.isInGroup(session_id, true) &&
-        ASConferenceBlockList::declineInvitationIfBlocked(session_id))
+        ASConferenceBlockList::declineInvitationIfBlocked(session_id, caller_id))
     {
         return;
     }
@@ -5087,7 +5087,7 @@ public:
 
             // <AS:Chanayane> Decline a blocked conference before addMessage creates its UI.
             if (!gAgent.isInGroup(session_id, true) &&
-                ASConferenceBlockList::declineInvitationIfBlocked(session_id))
+                ASConferenceBlockList::declineInvitationIfBlocked(session_id, from_id))
             {
                 return;
             }
