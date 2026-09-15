@@ -138,7 +138,10 @@ void ASNearbyChatRangeCounter::updateCounter()
 
     if (LLLayoutPanel* panel = dynamic_cast<LLLayoutPanel*>(getParent()))
     {
-        panel->setTargetDim(llclamp(getTextPixelWidth() + 12, 38, 96));
+        const S32 old_width = panel->getRect().getWidth();
+        const S32 new_width = llclamp(getTextPixelWidth() + 12, 38, 96);
+        panel->setTargetDim(new_width);
+        panel->translate(old_width - new_width, 0);
     }
 }
 
