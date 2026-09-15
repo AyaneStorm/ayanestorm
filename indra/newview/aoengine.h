@@ -110,6 +110,9 @@ public:
     };
 
     void   enable(bool enable);
+    // <AS:Chanayane> Strong self-avatar recovery must preserve live AO state.
+    bool   isEnabled() const { return mEnabled; }
+    // </AS:Chanayane>
     void   enableStands(bool enable_stands);
     LLUUID override(const LLUUID& motion, bool start);
     void   tick();

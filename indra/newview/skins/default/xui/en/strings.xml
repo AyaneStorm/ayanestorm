@@ -2947,7 +2947,11 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <string name="Command_Fly_Tooltip">Toggle flying mode on/off (HOME)</string>
   <string name="Command_Stop_Animations_Label">Stop Animations</string>
   <string name="Command_Stop_Animations_Tooltip">Stop Animating my Avatar</string>
-  
+  <!-- <AS:Chanayane> Strong self-avatar recovery toolbar text. -->
+  <string name="Command_ASStrongAvatarReset_Label">Strong Avatar Reset</string>
+  <string name="Command_ASStrongAvatarReset_Tooltip">Stop animation control and rebuild your avatar skeleton</string>
+  <!-- </AS:Chanayane> -->
+
   <string name="Command_Discord_Label">Discord</string>
   <string name="Command_Discord_Tooltip">Discord</string>
 

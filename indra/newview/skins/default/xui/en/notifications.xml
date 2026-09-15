@@ -15673,4 +15673,34 @@ Could not load LUT "[FILE]".
     <usetemplate name="okbutton" yestext="OK" />
   </notification>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Strong self-avatar recovery feedback. -->
+  <notification icon="alertmodal.tga" name="ASStrongAvatarResetConfirm" type="alertmodal">
+Stop all avatar animations, stand up if seated, and rebuild your skeleton?
+
+Animation permissions are preserved so healthy scripted attachments can resume. This interrupts poses, furniture, and your AO temporarily.
+    <usetemplate
+     ignoretext="Do not show this confirmation again"
+     name="okcancelignore"
+     notext="Cancel"
+     yestext="Reset" />
+  </notification>
+  <notification icon="alertmodal.tga" name="ASStrongAvatarResetUnavailable" type="alertmodal">
+Strong avatar reset is unavailable until your avatar and region are fully loaded.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="notifytip.tga" name="ASStrongAvatarResetComplete" type="notifytip">
+Strong avatar reset completed. Remove any attachment that starts deforming you again.
+  </notification>
+  <notification icon="alertmodal.tga" name="ASAvatarPhysicsRestartUnavailable" type="alertmodal">
+Avatar physics restart is unavailable until your avatar and region are fully loaded.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="alertmodal.tga" name="ASAvatarPhysicsRestartFailed" type="alertmodal">
+Avatar physics could not be restarted.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="notifytip.tga" name="ASAvatarPhysicsRestartComplete" type="notifytip">
+Avatar physics restarted.
+  </notification>
+  <!-- </AS:Chanayane> -->
 </notifications>

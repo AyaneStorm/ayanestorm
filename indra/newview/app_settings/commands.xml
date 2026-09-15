@@ -794,6 +794,16 @@
            execute_function="Tools.StopAllAnimations"
            execute_parameters="stop"
            />
+  <!-- <AS:Chanayane> Strong self-avatar recovery toolbar command. -->
+  <command name="as_strong_avatar_reset"
+           available_in_toybox="true"
+           icon="Command_ASStrongAvatarReset_Icon"
+           label_ref="Command_ASStrongAvatarReset_Label"
+           tooltip_ref="Command_ASStrongAvatarReset_Tooltip"
+           execute_function="ASAvatar.StrongReset"
+           is_enabled_function="ASAvatar.StrongResetEnabled"
+           />
+  <!-- </AS:Chanayane> -->
   <command name="discord"
            available_in_toybox="true"
            icon="Command_Discord_Icon"

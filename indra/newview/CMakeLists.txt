@@ -92,6 +92,9 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
+    # <AS:Chanayane> Strong self-avatar recovery.
+    asavatarrecovery.cpp
+    # </AS:Chanayane>
     asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
@@ -1004,6 +1007,9 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
+    # <AS:Chanayane> Strong self-avatar recovery.
+    asavatarrecovery.h
+    # </AS:Chanayane>
     asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h

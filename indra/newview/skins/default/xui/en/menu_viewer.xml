@@ -527,6 +527,26 @@
                 <menu_item_call.on_click
                  function="Avatar.ResetSelfSkeletonAndAnimations" />
             </menu_item_call>
+            <!-- <AS:Chanayane> Strong self-avatar recovery. -->
+            <menu_item_call
+                label="Strong avatar reset..."
+                name="Strong Avatar Reset">
+                <menu_item_call.on_click
+                 function="ASAvatar.StrongReset" />
+                <menu_item_call.on_enable
+                 function="ASAvatar.StrongResetEnabled" />
+            </menu_item_call>
+            <!-- </AS:Chanayane> -->
+            <!-- <AS:Chanayane> Dedicated frozen avatar-physics recovery. -->
+            <menu_item_call
+                label="Restart avatar physics"
+                name="Restart Avatar Physics">
+                <menu_item_call.on_click
+                 function="ASAvatar.RestartPhysics" />
+                <menu_item_call.on_enable
+                 function="ASAvatar.StrongResetEnabled" />
+            </menu_item_call>
+            <!-- </AS:Chanayane> -->
 	        <menu_item_call
 	         label="Force Appearance Update (Rebake)"
 	         name="Rebake Texture"
