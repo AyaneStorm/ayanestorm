@@ -98,6 +98,9 @@ set(viewer_SOURCE_FILES
     asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Optional nearby-chat range population counter.
+    asnearbychatrangecounter.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.cpp
     ascolorgrading.cpp
@@ -1013,6 +1016,9 @@ set(viewer_HEADER_FILES
     asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Optional nearby-chat range population counter.
+    asnearbychatrangecounter.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.h
     ascolorgrading.h
