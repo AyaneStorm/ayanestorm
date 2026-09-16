@@ -22,7 +22,8 @@
       </accordion_tab>
     </accordion>
   </panel>
-  <button bottom="-10" follows="left|bottom" height="24" label="Toggle T-Pose" layout="topleft" left="12" name="toggle_tpose" tool_tip="Toggle Firestorm Pose Stand's T-pose." width="120" />
-  <button bottom="-10" follows="right|bottom" height="24" label="Undo" layout="topleft" name="undo" right="-120" width="100" />
+  <button bottom="-10" follows="left|bottom" height="24" label="Toggle Edit Pose" layout="topleft" left="12" name="toggle_edit_pose" tool_tip="Toggle Firestorm Pose Stand's Arms downward, Legs together pose." width="130" />
+  <button bottom="-10" follows="right|bottom" height="24" label="Undo" layout="topleft" name="undo" right="-228" width="100" />
+  <button bottom="-10" follows="right|bottom" height="24" label="Redo" layout="topleft" name="redo" right="-120" width="100" />
   <button bottom="-10" follows="right|bottom" height="24" label="Reset All" layout="topleft" name="reset_all" right="-12" width="100" />
 </floater>

@@ -26,13 +26,12 @@ public:
     void reshape(S32 width, S32 height, bool called_from_parent = true) override;
 
 private:
-    void onPositionChanged();
-    void onScaleChanged();
+    void onPositionChanged(S32 axis);
+    void onScaleChanged(S32 axis);
     void onResetPositionAxis(S32 axis);
     void onResetScaleAxis(S32 axis);
     void onReset();
     void layoutControls();
-    LLVector3 readVector(const char* x_name, const char* y_name, const char* z_name) const;
     void writeVector(const char* x_name, const char* y_name, const char* z_name,
                      const LLVector3& value);
 

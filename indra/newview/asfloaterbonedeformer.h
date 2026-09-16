@@ -64,10 +64,12 @@ private:
     void refreshAvatarAfterPositionChange(LLJoint* joint, bool active_override_changed);
     void recordUndoState();
     void onUndo();
+    void onRedo();
     void applyOverrideState(const override_map_t& state);
+    void trimHistory(std::vector<override_map_t>& history);
     void clearOverrides(bool update_panels);
     void updateButtons();
-    void onToggleTPose();
+    void onToggleEditPose();
 
     LLUUID mSessionFakeMeshId;
     override_map_t mOverrides;
@@ -75,11 +77,13 @@ private:
     LLVOAvatarSelf* mAvatar{ nullptr };
     std::map<S32, LLScrollingPanelList*> mCategoryLists;
     std::vector<override_map_t> mUndoHistory;
+    std::vector<override_map_t> mRedoHistory;
     LLButton* mUndoButton{ nullptr };
+    LLButton* mRedoButton{ nullptr };
     bool mUndoTransactionOpen{ false };
     bool mUndoTransactionRecorded{ false };
     bool mApplyingHistory{ false };
-    bool mTPoseManaged{ false };
+    bool mEditPoseManaged{ false };
     bool mPoseStandWasVisible{ false };
     std::string mPreviousPoseStandSelection;
 };

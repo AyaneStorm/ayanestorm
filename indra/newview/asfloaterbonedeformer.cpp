@@ -20,7 +20,7 @@
 
 namespace
 {
-    const LLUUID T_POSE_ID("3481ccd5-cc6c-65ca-c466-dc9df1bf3944");
+    const LLUUID EDIT_POSE_ID("2029d88f-4efc-d72d-18d1-274caf9e9bc0");
 }
 
 ASFloaterBoneDeformer::ASFloaterBoneDeformer(const LLSD& key)
@@ -45,10 +45,12 @@ bool ASFloaterBoneDeformer::postBuild()
 
     mUndoButton = getChild<LLButton>("undo");
     mUndoButton->setCommitCallback([this](LLUICtrl*, const LLSD&) { onUndo(); });
+    mRedoButton = getChild<LLButton>("redo");
+    mRedoButton->setCommitCallback([this](LLUICtrl*, const LLSD&) { onRedo(); });
     getChild<LLButton>("reset_all")->setCommitCallback(
         [this](LLUICtrl*, const LLSD&) { resetAll(); });
-    getChild<LLButton>("toggle_tpose")->setCommitCallback(
-        [this](LLUICtrl*, const LLSD&) { onToggleTPose(); });
+    getChild<LLButton>("toggle_edit_pose")->setCommitCallback(
+        [this](LLUICtrl*, const LLSD&) { onToggleEditPose(); });
 
     buildJointRows();
     updateButtons();
@@ -63,6 +65,7 @@ void ASFloaterBoneDeformer::onOpen(const LLSD& key)
         // A replaced self-avatar invalidates every cached LLJoint pointer.
         mOverrides.clear();
         mUndoHistory.clear();
+        mRedoHistory.clear();
         mSessionFakeMeshId.generate();
         buildJointRows();
     }
@@ -73,6 +76,7 @@ void ASFloaterBoneDeformer::onOpen(const LLSD& key)
             entry.second->updatePanels(true);
         }
     }
+    updateButtons();
 }
 
 void ASFloaterBoneDeformer::onClose(bool app_quitting)
@@ -80,10 +84,11 @@ void ASFloaterBoneDeformer::onClose(bool app_quitting)
     // The preview is intentionally scoped to the open floater session.
     clearOverrides(true);
     mUndoHistory.clear();
+    mRedoHistory.clear();
     updateButtons();
-    if (mTPoseManaged)
+    if (mEditPoseManaged)
     {
-        onToggleTPose();
+        onToggleEditPose();
     }
     LLFloater::onClose(app_quitting);
 }
@@ -360,11 +365,8 @@ void ASFloaterBoneDeformer::recordUndoState()
     }
 
     mUndoHistory.push_back(mOverrides);
-    const S32 limit = llclamp(gSavedSettings.getS32("ASBoneDeformerUndoLevels"), 1, 99);
-    if (mUndoHistory.size() > static_cast<size_t>(limit))
-    {
-        mUndoHistory.erase(mUndoHistory.begin(), mUndoHistory.begin() + (mUndoHistory.size() - limit));
-    }
+    trimHistory(mUndoHistory);
+    mRedoHistory.clear();
     mUndoTransactionRecorded = mUndoTransactionOpen;
 }
 
@@ -377,7 +379,32 @@ void ASFloaterBoneDeformer::onUndo()
 
     const override_map_t previous = mUndoHistory.back();
     mUndoHistory.pop_back();
+    mRedoHistory.push_back(mOverrides);
+    trimHistory(mRedoHistory);
     applyOverrideState(previous);
+}
+
+void ASFloaterBoneDeformer::onRedo()
+{
+    if (mRedoHistory.empty() || mAvatar != gAgentAvatarp)
+    {
+        return;
+    }
+
+    const override_map_t next = mRedoHistory.back();
+    mRedoHistory.pop_back();
+    mUndoHistory.push_back(mOverrides);
+    trimHistory(mUndoHistory);
+    applyOverrideState(next);
+}
+
+void ASFloaterBoneDeformer::trimHistory(std::vector<override_map_t>& history)
+{
+    const S32 limit = llclamp(gSavedSettings.getS32("ASBoneDeformerUndoLevels"), 1, 99);
+    if (history.size() > static_cast<size_t>(limit))
+    {
+        history.erase(history.begin(), history.begin() + (history.size() - limit));
+    }
 }
 
 void ASFloaterBoneDeformer::applyOverrideState(const override_map_t& state)
@@ -418,15 +445,19 @@ void ASFloaterBoneDeformer::updateButtons()
     {
         mUndoButton->setEnabled(!mUndoHistory.empty());
     }
+    if (mRedoButton)
+    {
+        mRedoButton->setEnabled(!mRedoHistory.empty());
+    }
     if (LLButton* reset = findChild<LLButton>("reset_all"))
     {
         reset->setEnabled(!mOverrides.empty());
     }
 }
 
-void ASFloaterBoneDeformer::onToggleTPose()
+void ASFloaterBoneDeformer::onToggleEditPose()
 {
-    if (mTPoseManaged)
+    if (mEditPoseManaged)
     {
         if (LLFloaterReg::instanceVisible("fs_posestand"))
         {
@@ -437,16 +468,16 @@ void ASFloaterBoneDeformer::onToggleTPose()
         {
             LLFloaterReg::showInstance("fs_posestand");
         }
-        mTPoseManaged = false;
+        mEditPoseManaged = false;
         mPoseStandWasVisible = false;
         return;
     }
 
     mPoseStandWasVisible = LLFloaterReg::instanceVisible("fs_posestand");
     mPreviousPoseStandSelection = gSavedSettings.getString("FSPoseStandLastSelectedPose");
-    gSavedSettings.setString("FSPoseStandLastSelectedPose", T_POSE_ID.asString());
+    gSavedSettings.setString("FSPoseStandLastSelectedPose", EDIT_POSE_ID.asString());
     LLFloaterReg::showInstance("fs_posestand");
-    mTPoseManaged = true;
+    mEditPoseManaged = true;
 }
 
 void ASFloaterBoneDeformer::refreshAvatarAfterPositionChange(LLJoint* joint,

@@ -15,6 +15,18 @@
 #include "lltextbox.h"
 #include "lluictrl.h"
 
+#include <cmath>
+
+namespace
+{
+    constexpr F32 RESET_COMPARE_EPSILON = 0.0000005f;
+
+    bool axisChanged(F32 value, F32 baseline)
+    {
+        return std::fabs(value - baseline) > RESET_COMPARE_EPSILON;
+    }
+}
+
 ASScrollingPanelJointDeformer::ASScrollingPanelJointDeformer(const LLPanel::Params& params,
                                                              ASFloaterBoneDeformer* owner,
                                                              LLJoint* joint)
@@ -25,17 +37,19 @@ ASScrollingPanelJointDeformer::ASScrollingPanelJointDeformer(const LLPanel::Para
     buildFromFile("panel_as_joint_deformer.xml");
     getChild<LLTextBox>("joint_name")->setText(joint->getName());
 
-    for (const char* name : { "pos_x", "pos_y", "pos_z" })
+    const char* position_controls[] = { "pos_x", "pos_y", "pos_z" };
+    const char* scale_controls[] = { "scale_x", "scale_y", "scale_z" };
+    for (S32 axis = VX; axis <= VZ; ++axis)
     {
-        LLUICtrl* control = getChild<LLUICtrl>(name);
+        LLUICtrl* control = getChild<LLUICtrl>(position_controls[axis]);
         control->setCommitCallback(
-            [this](LLUICtrl*, const LLSD&) { onPositionChanged(); });
+            [this, axis](LLUICtrl*, const LLSD&) { onPositionChanged(axis); });
     }
-    for (const char* name : { "scale_x", "scale_y", "scale_z" })
+    for (S32 axis = VX; axis <= VZ; ++axis)
     {
-        LLUICtrl* control = getChild<LLUICtrl>(name);
+        LLUICtrl* control = getChild<LLUICtrl>(scale_controls[axis]);
         control->setCommitCallback(
-            [this](LLUICtrl*, const LLSD&) { onScaleChanged(); });
+            [this, axis](LLUICtrl*, const LLSD&) { onScaleChanged(axis); });
     }
     getChild<LLButton>("reset_pos_x")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onResetPositionAxis(VX); });
     getChild<LLButton>("reset_pos_y")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onResetPositionAxis(VY); });
@@ -60,12 +74,12 @@ void ASScrollingPanelJointDeformer::updatePanel(bool allow_modify)
     writeVector("pos_x", "pos_y", "pos_z", state.mPositionOffset);
     writeVector("scale_x", "scale_y", "scale_z", state.mScale);
     getChild<LLButton>("reset_joint")->setEnabled(state.mHasPosition || state.mHasScale);
-    getChild<LLButton>("reset_pos_x")->setEnabled(state.mHasPosition && state.mPositionOffset.mV[VX] != state.mBasePositionOffset.mV[VX]);
-    getChild<LLButton>("reset_pos_y")->setEnabled(state.mHasPosition && state.mPositionOffset.mV[VY] != state.mBasePositionOffset.mV[VY]);
-    getChild<LLButton>("reset_pos_z")->setEnabled(state.mHasPosition && state.mPositionOffset.mV[VZ] != state.mBasePositionOffset.mV[VZ]);
-    getChild<LLButton>("reset_scale_x")->setEnabled(state.mHasScale && state.mScale.mV[VX] != state.mBaseScale.mV[VX]);
-    getChild<LLButton>("reset_scale_y")->setEnabled(state.mHasScale && state.mScale.mV[VY] != state.mBaseScale.mV[VY]);
-    getChild<LLButton>("reset_scale_z")->setEnabled(state.mHasScale && state.mScale.mV[VZ] != state.mBaseScale.mV[VZ]);
+    getChild<LLButton>("reset_pos_x")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VX], state.mBasePositionOffset.mV[VX]));
+    getChild<LLButton>("reset_pos_y")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VY], state.mBasePositionOffset.mV[VY]));
+    getChild<LLButton>("reset_pos_z")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VZ], state.mBasePositionOffset.mV[VZ]));
+    getChild<LLButton>("reset_scale_x")->setEnabled(state.mHasScale && axisChanged(state.mScale.mV[VX], state.mBaseScale.mV[VX]));
+    getChild<LLButton>("reset_scale_y")->setEnabled(state.mHasScale && axisChanged(state.mScale.mV[VY], state.mBaseScale.mV[VY]));
+    getChild<LLButton>("reset_scale_z")->setEnabled(state.mHasScale && axisChanged(state.mScale.mV[VZ], state.mBaseScale.mV[VZ]));
     mUpdating = false;
 }
 
@@ -102,7 +116,7 @@ void ASScrollingPanelJointDeformer::reshape(S32 width, S32 height, bool called_f
     }
 }
 
-void ASScrollingPanelJointDeformer::onPositionChanged()
+void ASScrollingPanelJointDeformer::onPositionChanged(S32 axis)
 {
     if (!mUpdating)
     {
@@ -114,12 +128,15 @@ void ASScrollingPanelJointDeformer::onPositionChanged()
             mOwner->beginUndoTransaction();
             mUndoDragOpen = true;
         }
-        mOwner->setPositionOffset(mJoint, readVector("pos_x", "pos_y", "pos_z"));
+        ASJointOverrideState state = mOwner->getOverrideState(mJoint);
+        const char* controls[] = { "pos_x", "pos_y", "pos_z" };
+        state.mPositionOffset.mV[axis] = static_cast<F32>(getChild<LLUICtrl>(controls[axis])->getValue().asReal());
+        mOwner->setPositionOffset(mJoint, state.mPositionOffset);
         updatePanel(true);
     }
 }
 
-void ASScrollingPanelJointDeformer::onScaleChanged()
+void ASScrollingPanelJointDeformer::onScaleChanged(S32 axis)
 {
     if (!mUpdating)
     {
@@ -131,7 +148,10 @@ void ASScrollingPanelJointDeformer::onScaleChanged()
             mOwner->beginUndoTransaction();
             mUndoDragOpen = true;
         }
-        mOwner->setScale(mJoint, readVector("scale_x", "scale_y", "scale_z"));
+        ASJointOverrideState state = mOwner->getOverrideState(mJoint);
+        const char* controls[] = { "scale_x", "scale_y", "scale_z" };
+        state.mScale.mV[axis] = static_cast<F32>(getChild<LLUICtrl>(controls[axis])->getValue().asReal());
+        mOwner->setScale(mJoint, state.mScale);
         updatePanel(true);
     }
 }
@@ -197,14 +217,6 @@ void ASScrollingPanelJointDeformer::layoutControls()
     reset_joint_rect.mRight = width - margin;
     reset_joint_rect.mLeft = reset_joint_rect.mRight - 70;
     getChild<LLButton>("reset_joint")->setRect(reset_joint_rect);
-}
-
-LLVector3 ASScrollingPanelJointDeformer::readVector(const char* x_name, const char* y_name,
-                                                    const char* z_name) const
-{
-    return LLVector3(static_cast<F32>(getChild<LLUICtrl>(x_name)->getValue().asReal()),
-                     static_cast<F32>(getChild<LLUICtrl>(y_name)->getValue().asReal()),
-                     static_cast<F32>(getChild<LLUICtrl>(z_name)->getValue().asReal()));
 }
 
 void ASScrollingPanelJointDeformer::writeVector(const char* x_name, const char* y_name,
