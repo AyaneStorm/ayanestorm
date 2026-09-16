@@ -26680,6 +26680,16 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <!-- <AS:Chanayane> Advanced Shape Deformer undo history depth. -->
+    <key>ASBoneDeformerUndoLevels</key>
+    <map>
+      <key>Comment</key><string>Maximum number of Advanced Shape Deformer undo snapshots</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>S32</string>
+      <key>Value</key><integer>99</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Self-lighting floater (viewer-local photography lights) -->
     <key>ASRenderLightBeacon</key>
     <map>

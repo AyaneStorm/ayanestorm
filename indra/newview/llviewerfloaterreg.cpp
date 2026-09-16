@@ -244,6 +244,9 @@
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
 #include "asfloatermylights.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+#include "asfloaterbonedeformer.h"
+// </AS:Chanayane>
 #include "fsfloaterpartialinventory.h"
 #include "fsfloaterplacedetails.h"
 #include "fsfloaterposestand.h"
@@ -728,6 +731,9 @@ void LLViewerFloaterReg::registerFloaters()
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
     LLFloaterReg::add("as_my_lights", "floater_as_my_lights.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLights>);
+// </AS:Chanayane>
+// <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    LLFloaterReg::add("as_bone_deformer", "floater_as_bone_deformer.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterBoneDeformer>);
 // </AS:Chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);

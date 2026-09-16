@@ -6525,6 +6525,20 @@
       </menu_item_check>
       <!-- </AS:Chanayane> -->
 
+      <!-- <AS:Chanayane> Viewer-local per-joint shape deformer preview. -->
+      <menu_item_check
+         label="Advanced Shape Deformer"
+         name="Advanced Shape Deformer"
+         use_mac_ctrl="true">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_bone_deformer" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_bone_deformer" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <menu_item_separator />
 
       <menu

@@ -147,6 +147,10 @@ set(viewer_SOURCE_FILES
     aslightrigrenderer.cpp
     asfloatermylights.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asfloaterbonedeformer.cpp
+    asscrollingpaneljointdeformer.cpp
+    # </AS:Chanayane>
     chatbar_as_cmdline.cpp
     daeexport.cpp
     dialogstack.cpp
@@ -1064,6 +1068,10 @@ set(viewer_HEADER_FILES
     aslightrig.h
     aslightrigrenderer.h
     asfloatermylights.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asfloaterbonedeformer.h
+    asscrollingpaneljointdeformer.h
     # </AS:Chanayane>
     chatbar_as_cmdline.h
     daeexport.h

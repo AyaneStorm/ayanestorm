@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<panel border="false" follows="left|right|top" height="112" layout="topleft" name="panel_as_joint_deformer" width="750">
+  <text follows="left|top" font="SansSerifSmallBold" height="16" layout="topleft" left="8" name="joint_name" top="4" width="570">Joint</text>
+  <button follows="right|top" height="20" label="Reset" layout="topleft" name="reset_joint" right="-8" top="2" width="70" />
+
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" label="Pos X" label_width="42" layout="topleft" left="8" max_val="0.25" min_val="-0.25" name="pos_x" show_text="true" text_width="65" top="27" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="338" name="reset_pos_x" top="27" tool_tip="Reset only Position X" width="18" />
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" initial_value="1.0" label="Scale X" label_width="52" layout="topleft" left="379" max_val="10.0" min_val="0.000001" name="scale_x" show_text="true" text_width="65" top="27" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="709" name="reset_scale_x" top="27" tool_tip="Reset only Scale X" width="18" />
+
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" label="Pos Y" label_width="42" layout="topleft" left="8" max_val="0.25" min_val="-0.25" name="pos_y" show_text="true" text_width="65" top="57" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="338" name="reset_pos_y" top="57" tool_tip="Reset only Position Y" width="18" />
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" initial_value="1.0" label="Scale Y" label_width="52" layout="topleft" left="379" max_val="10.0" min_val="0.000001" name="scale_y" show_text="true" text_width="65" top="57" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="709" name="reset_scale_y" top="57" tool_tip="Reset only Scale Y" width="18" />
+
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" label="Pos Z" label_width="42" layout="topleft" left="8" max_val="0.25" min_val="-0.25" name="pos_z" show_text="true" text_width="65" top="87" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="338" name="reset_pos_z" top="87" tool_tip="Reset only Position Z" width="18" />
+  <slider can_edit_text="true" decimal_digits="6" follows="left|right|top" height="18" increment="0.000001" initial_value="1.0" label="Scale Z" label_width="52" layout="topleft" left="379" max_val="10.0" min_val="0.000001" name="scale_z" show_text="true" text_width="65" top="87" width="326" />
+  <button follows="right|top" height="18" label="R" layout="topleft" left="709" name="reset_scale_z" top="87" tool_tip="Reset only Scale Z" width="18" />
+</panel>

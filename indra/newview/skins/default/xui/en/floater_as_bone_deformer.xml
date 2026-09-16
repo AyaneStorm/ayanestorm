@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+<floater can_close="true" can_resize="true" height="680" layout="topleft" min_height="450" min_width="790" name="floater_as_bone_deformer" positioning="cascading" reuse_instance="true" save_rect="true" single_instance="true" title="Advanced Shape Deformer — Local Preview" width="790">
+  <text follows="left|right|top" height="30" layout="topleft" left="12" name="conflict_warning" text_color="Red" top="8" width="766" wrap="true">WARNING: Remove all other worn deformers before editing. Competing rigged-mesh overrides can hide or replace this preview.</text>
+  <text follows="left|right|top" height="30" layout="topleft" left="12" name="preview_notice" top="38" width="766" wrap="true">Local preview only. Position values are offsets from bind position in metres; scale values are absolute.</text>
+  <panel background_visible="true" follows="all" height="555" layout="topleft" left="10" name="accordion_panel" top="70" width="770">
+    <accordion fit_parent="true" follows="all" height="555" layout="topleft" left="0" name="joint_accordion" single_expansion="true" top="0" width="770">
+      <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="body_tab" title="Body">
+        <scrolling_panel_list follows="all" layout="topleft" left="0" name="body_joint_list" top="0" width="760" />
+      </accordion_tab>
+      <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="face_tab" title="Face">
+        <scrolling_panel_list follows="all" layout="topleft" left="0" name="face_joint_list" top="0" width="760" />
+      </accordion_tab>
+      <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="hands_tab" title="Hands">
+        <scrolling_panel_list follows="all" layout="topleft" left="0" name="hands_joint_list" top="0" width="760" />
+      </accordion_tab>
+      <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="misc_tab" title="Misc">
+        <scrolling_panel_list follows="all" layout="topleft" left="0" name="misc_joint_list" top="0" width="760" />
+      </accordion_tab>
+      <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="collision_tab" title="Collision Volumes">
+        <scrolling_panel_list follows="all" layout="topleft" left="0" name="collision_joint_list" top="0" width="760" />
+      </accordion_tab>
+    </accordion>
+  </panel>
+  <button bottom="-10" follows="left|bottom" height="24" label="Toggle T-Pose" layout="topleft" left="12" name="toggle_tpose" tool_tip="Toggle Firestorm Pose Stand's T-pose." width="120" />
+  <button bottom="-10" follows="right|bottom" height="24" label="Undo" layout="topleft" name="undo" right="-120" width="100" />
+  <button bottom="-10" follows="right|bottom" height="24" label="Reset All" layout="topleft" name="reset_all" right="-12" width="100" />
+</floater>
