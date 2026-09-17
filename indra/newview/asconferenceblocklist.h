@@ -40,7 +40,7 @@ public:
     void draw() override;
 
 private:
-    void refresh();
+    void refresh() override;
     void onUnblock();
 
     LLScrollListCtrl* mConferenceList;
