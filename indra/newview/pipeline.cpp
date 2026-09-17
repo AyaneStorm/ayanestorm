@@ -222,6 +222,9 @@ LLColor4 LLPipeline::PreviewSpecular2;
 LLVector3 LLPipeline::PreviewDirection0;
 LLVector3 LLPipeline::PreviewDirection1;
 LLVector3 LLPipeline::PreviewDirection2;
+// <AS:Chanayane> Wire up RenderGlowMinLuminance, which was declared but never defined/read, fixing the dead 9999-hardcoded luminance threshold.
+F32 LLPipeline::RenderGlowMinLuminance;
+// </AS:Chanayane>
 F32 LLPipeline::RenderGlowMaxExtractAlpha;
 F32 LLPipeline::RenderGlowWarmthAmount;
 LLVector3 LLPipeline::RenderGlowLumWeights;
@@ -650,6 +653,9 @@ void LLPipeline::init()
     connectRefreshCachedSettingsSafe("PreviewDirection0");
     connectRefreshCachedSettingsSafe("PreviewDirection1");
     connectRefreshCachedSettingsSafe("PreviewDirection2");
+    // <AS:Chanayane> Wire up RenderGlowMinLuminance, which was declared but never defined/read, fixing the dead 9999-hardcoded luminance threshold.
+    connectRefreshCachedSettingsSafe("RenderGlowMinLuminance");
+    // </AS:Chanayane>
     connectRefreshCachedSettingsSafe("RenderGlowMaxExtractAlpha");
     connectRefreshCachedSettingsSafe("RenderGlowWarmthAmount");
     connectRefreshCachedSettingsSafe("RenderGlowLumWeights");
@@ -1296,6 +1302,9 @@ void LLPipeline::refreshCachedSettings()
     PreviewDirection0 = gSavedSettings.getVector3("PreviewDirection0");
     PreviewDirection1 = gSavedSettings.getVector3("PreviewDirection1");
     PreviewDirection2 = gSavedSettings.getVector3("PreviewDirection2");
+    // <AS:Chanayane> Wire up RenderGlowMinLuminance, which was declared but never defined/read, fixing the dead 9999-hardcoded luminance threshold.
+    RenderGlowMinLuminance = gSavedSettings.getF32("RenderGlowMinLuminance");
+    // </AS:Chanayane>
     RenderGlowMaxExtractAlpha = gSavedSettings.getF32("RenderGlowMaxExtractAlpha");
     RenderGlowWarmthAmount = gSavedSettings.getF32("RenderGlowWarmthAmount");
     RenderGlowLumWeights = gSavedSettings.getVector3("RenderGlowLumWeights");
@@ -1516,12 +1525,18 @@ void LLPipeline::createGLBuffers()
     GLuint resY = gViewerWindow->getWorldViewHeightRaw();
 
     // allocate screen space glow buffers
-    const U32 glow_res = llmax(1, llmin(512, 1 << gSavedSettings.getS32("RenderGlowResolutionPow")));
+    // <AS:Chanayane> Raise the buffer allocation clamp to 1024 to match the iteration pass's existing 1024 ceiling; the 512 clamp was the actual bottleneck for RenderGlowResolutionPow.
+    // const U32 glow_res = llmax(1, llmin(512, 1 << gSavedSettings.getS32("RenderGlowResolutionPow")));
+    const U32 glow_res = llmax(1, llmin(1024, 1 << gSavedSettings.getS32("RenderGlowResolutionPow")));
+    // </AS:Chanayane>
     const bool glow_hdr = gSavedSettings.getBOOL("RenderGlowHDR");
     const U32 glow_color_fmt = glow_hdr ? GL_RGBA16F : GL_RGBA;
     for (U32 i = 0; i < 3; i++)
     {
-        mGlow[i].allocate(512, glow_res, glow_color_fmt);
+        // <AS:Chanayane> Match the raised 1024 glow buffer clamp above.
+        // mGlow[i].allocate(512, glow_res, glow_color_fmt);
+        mGlow[i].allocate(1024, glow_res, glow_color_fmt);
+        // </AS:Chanayane>
     }
 
     allocateScreenBuffer(resX, resY);
@@ -8161,7 +8176,10 @@ void LLPipeline::generateGlow(LLRenderTarget* src)
         LLVector3 lumWeights = RenderGlowLumWeights;
         LLVector3 warmthWeights = RenderGlowWarmthWeights;
 
-        gGlowExtractProgram.uniform1f(LLShaderMgr::GLOW_MIN_LUMINANCE, 9999);
+        // <AS:Chanayane> Use the live RenderGlowMinLuminance setting instead of a hardcoded 9999, which made the luminance threshold permanently unreachable.
+        // gGlowExtractProgram.uniform1f(LLShaderMgr::GLOW_MIN_LUMINANCE, 9999);
+        gGlowExtractProgram.uniform1f(LLShaderMgr::GLOW_MIN_LUMINANCE, RenderGlowMinLuminance);
+        // </AS:Chanayane>
         gGlowExtractProgram.uniform1f(LLShaderMgr::GLOW_MAX_EXTRACT_ALPHA, maxAlpha);
         gGlowExtractProgram.uniform3f(LLShaderMgr::GLOW_LUM_WEIGHTS, lumWeights.mV[0], lumWeights.mV[1],
             lumWeights.mV[2]);
