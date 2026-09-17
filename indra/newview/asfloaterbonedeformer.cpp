@@ -109,6 +109,15 @@ bool ASFloaterBoneDeformer::postBuild()
     return true;
 }
 
+void ASFloaterBoneDeformer::draw()
+{
+    LLFloater::draw();
+    if (!mPreviewReloadPromptPending && previewOverridesNeedReload())
+    {
+        showPreviewReloadPrompt();
+    }
+}
+
 void ASFloaterBoneDeformer::onOpen(const LLSD& key)
 {
     LLFloater::onOpen(key);
@@ -138,6 +147,7 @@ void ASFloaterBoneDeformer::onClose(bool app_quitting)
     // The preview is intentionally scoped to the open floater session.
     clearOverrides(true);
     mBypassedJoints.clear();
+    mPreviewReloadPromptPending = false;
     mUndoHistory.clear();
     mRedoHistory.clear();
     updateButtons();
@@ -393,6 +403,60 @@ void ASFloaterBoneDeformer::refreshPreviewOverrides()
     {
         applyPreviewOverride(entry.first, entry.second);
     }
+}
+
+bool ASFloaterBoneDeformer::previewOverridesNeedReload() const
+{
+    if (mAvatar != gAgentAvatarp || mBypassAll)
+    {
+        return false;
+    }
+    for (const auto& entry : mOverrides)
+    {
+        LLJoint* joint = entry.first;
+        if (isJointBypassed(joint))
+        {
+            continue;
+        }
+        if (entry.second.mHasPosition &&
+            joint->m_attachmentPosOverrides.getMap().find(mSessionFakeMeshId) ==
+                joint->m_attachmentPosOverrides.getMap().end())
+        {
+            return true;
+        }
+        if (entry.second.mHasScale && !mBypassScales &&
+            joint->m_attachmentScaleOverrides.getMap().find(mSessionFakeMeshId) ==
+                joint->m_attachmentScaleOverrides.getMap().end())
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ASFloaterBoneDeformer::showPreviewReloadPrompt()
+{
+    mPreviewReloadPromptPending = true;
+    refreshShapeInfo();
+    const LLHandle<LLFloater> handle = getHandle();
+    LLNotificationsUtil::add("ASBoneDeformerShapeChanged", LLSD(), LLSD(),
+        [handle](const LLSD& notification, const LLSD& response)
+        {
+            ASFloaterBoneDeformer* floater =
+                dynamic_cast<ASFloaterBoneDeformer*>(handle.get());
+            if (!floater)
+            {
+                return false;
+            }
+            floater->mPreviewReloadPromptPending = false;
+            if (floater->getVisible() &&
+                LLNotificationsUtil::getSelectedOption(notification, response) == 0)
+            {
+                floater->refreshShapeInfo();
+                floater->refreshPreviewOverrides();
+            }
+            return false;
+        });
 }
 
 void ASFloaterBoneDeformer::resetJoint(LLJoint* joint)
@@ -872,15 +936,18 @@ void ASFloaterBoneDeformer::onLoadWornDeformer()
     recordUndoState();
     applyOverrideState(loaded);
     args["COUNT"] = static_cast<S32>(loaded.size());
+    mPreviewReloadPromptPending = true;
     const LLHandle<LLFloater> handle = getHandle();
     LLNotificationsUtil::add("ASBoneDeformerLoadWornSucceeded", args, LLSD(),
         [handle](const LLSD& notification, const LLSD& response)
         {
-            if (LLNotificationsUtil::getSelectedOption(notification, response) == 0)
+            ASFloaterBoneDeformer* floater =
+                dynamic_cast<ASFloaterBoneDeformer*>(handle.get());
+            if (floater)
             {
-                ASFloaterBoneDeformer* floater =
-                    dynamic_cast<ASFloaterBoneDeformer*>(handle.get());
-                if (floater)
+                floater->mPreviewReloadPromptPending = false;
+                if (floater->getVisible() &&
+                    LLNotificationsUtil::getSelectedOption(notification, response) == 0)
                 {
                     floater->refreshPreviewOverrides();
                 }

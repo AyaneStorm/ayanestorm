@@ -10167,6 +10167,18 @@ Detach the source deformer now. After it has disappeared, click OK to reapply th
      name="okbutton"
      yestext="OK"/>
   </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerShapeChanged"
+   type="alert">
+Shape change detected. The local deformer preview was cleared by the avatar update.
+
+Click OK to reload the retained deformation.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
   <!-- </AS:Chanayane> -->
 
   <notification

@@ -43,6 +43,7 @@ public:
     ~ASFloaterBoneDeformer() override;
 
     bool postBuild() override;
+    void draw() override;
     void onOpen(const LLSD& key) override;
     void onClose(bool app_quitting) override;
 
@@ -70,6 +71,8 @@ private:
     void removeScaleOverride(LLJoint* joint);
     void applyPreviewOverride(LLJoint* joint, const ASJointOverrideState& state);
     void refreshPreviewOverrides();
+    bool previewOverridesNeedReload() const;
+    void showPreviewReloadPrompt();
     void refreshAvatarAfterPositionChange(LLJoint* joint, bool active_override_changed);
     void recordUndoState();
     void onUndo();
@@ -115,6 +118,7 @@ private:
     bool mShowScales{ false };
     bool mBypassAll{ false };
     bool mBypassScales{ false };
+    bool mPreviewReloadPromptPending{ false };
     bool mEditPoseManaged{ false };
     bool mPoseStandWasVisible{ false };
     std::string mPreviousPoseStandSelection;

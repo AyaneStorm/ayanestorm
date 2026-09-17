@@ -175,6 +175,7 @@ Triggered by one explicit "Bake & Upload…" button, gated by a confirmation dia
 - Each joint header now has Reset and Bypass controls. The floater minimum width is 590 pixels (200 pixels narrower), its warning wraps deliberately, the shape label receives a full-width row, and bottom actions use two rows.
 - Export creates a versioned, human-editable inventory notecard whose first line is `AYANESTORM_SHAPE_DEFORMER 1`. Import reads the single selected inventory notecard, validates every line before changing state, reports line-specific syntax/range/unknown-joint/duplicate-joint errors, and applies a successful import as one undoable replacement.
 - `Load Worn` reads position data and the versioned AyaneStorm scale extension directly from the single worn attachment whose inventory name starts with `AS Deformer -`. It rejects zero or multiple matches and unloaded/invalid skin data. Its completion message asks the user to detach the source and click OK; that response reapplies the retained editor overrides after the viewer's attachment rebuild has cleared them.
+- While the floater is open, it verifies that every non-bypassed edited joint still contains the editor's preview UUID. Wearing or updating a shape rebuilds the avatar and removes that UUID; the editor detects this, refreshes the displayed shape name, and offers one OK action to reapply the retained deformation. The detector is suspended during global/joint bypass and the Load Worn detach prompt.
 
 ### Files
 
