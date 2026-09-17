@@ -4,7 +4,9 @@ Author: chanayane@firestorm
 Date: 2026-09-17
 Status: implemented and confirmed working at runtime (bokt). Temporary debug
 visualization modes (`RenderMotionBlurDebug` 1-3) intentionally kept in place
-for now per user request — not yet cleaned up.
+for now per user request — not yet cleaned up. Self/other avatar exclusion
+(backlog's "Note on future motion blur design") investigated 2026-09-17 and
+deferred — see "Future work" below for why.
 
 ## Context
 
@@ -493,5 +495,40 @@ from adjacent frames.
   skinning-state tracking across draw pools — substantially more invasive,
   as the feasibility doc notes).
 - Per-subject exclusion toggles (self/other avatars) mentioned in the
-  backlog's "Note on future motion blur design" — deferred until an object
-  ID/velocity buffer exists to make such a mask possible at all.
+  backlog's "Note on future motion blur design" — **investigated
+  2026-09-17, deferred.** Findings:
+  - The current implementation has zero per-object identity (pure
+    depth+matrix reprojection), so any exclusion needs a new per-pixel
+    avatar-identity signal.
+  - `frag_data[1]` (ORM/specular) is unsafe to repurpose: `materialF.glsl`
+    (class1+class3, rigged/skinned via `HAS_SKIN`), `pbropaqueF.glsl`,
+    `pbralphaF.glsl`, and `impostorF.glsl` all write real data there for
+    avatar-attachment paths. `frag_data[2].w` (`gbuffer_flag`) is also
+    unsafe — fully occupied at 2 bits by `GBUFFER_FLAG_SKIP_ATMOS/
+    HAS_ATMOS/HAS_PBR/HAS_HDRI` (`llshadermgr.cpp:669-672`).
+  - A brand-new G-buffer attachment on `mRT->deferredScreen` is blocked by
+    a hard cap: `LLRenderTarget::addColorAttachment` refuses more than 4
+    color attachments (`llrendertarget.cpp:217-222`), and
+    `addDeferredAttachments` already uses all 4 when
+    `RenderEnableEmissiveBuffer` is on (diffuse=0, orm=1, norm=2,
+    emissive=3). Every deferred fragment shader also hardcodes
+    `out vec4 frag_data[4];`. A 5th slot is possible (raise the cap in
+    `llrendertarget.cpp` + widen `frag_data[4]` to `[5]` in every deferred
+    *F.glsl) but is a wide, mechanical, multi-file change.
+  - The alternative — a standalone avatar-only render target populated by
+    a duplicate geometry pass — was rejected as too invasive: `LLDrawPool
+    Avatar::renderAvatars()` (`lldrawpoolavatar.cpp:674`) branches across
+    rigid/rigged-skinned/PBR/impostor draw paths with real skinning state;
+    faithfully replicating it for a second tag-only pass is a large,
+    high-risk undertaking for a "nice to have" toggle.
+  - `.aya-storm-release`'s equivalent feature
+    (`RenderMotionBlurSelfAvatar`/`RenderMotionBlurOtherAvatars`) isn't
+    reusable as a technique here: theirs is cheap because their motion
+    blur is already a full per-object velocity-buffer architecture with
+    its own avatar geometry pass to early-return from — a mechanism we
+    deliberately don't have.
+  - **Conclusion:** revisit only if/when a true per-object velocity buffer
+    is ever added (see the point above), since that would need an
+    avatar-tagging mechanism anyway and could absorb this at low
+    incremental cost. Not worth the standalone complexity today.
+
