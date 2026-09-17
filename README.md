@@ -15,6 +15,7 @@ Available for the following platforms:
 
 ## Features (so far ; some features might get merged in official Firestorm)
 - **My Lights** floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
+- **Advanced Shape Deformer**: edit avatar-joint positions and scales with live previews, comparison bypasses, undo/redo, notecard import/export, worn-deformer loading and optional persistent mesh baking
 - **Environment Effects panel** gathering viewer-local photographic effects in one place
 - **Viewer-local color grading** with exposure, white balance, tonal controls, vibrance, an eight-band color mixer, Colorize, split toning, grain, Negative color inversion and reusable presets
 - **Importable 1D and 3D `.cube` LUTs** with automatic naming, alphabetical selection, Previous/Next navigation and adjustable strength
@@ -27,6 +28,8 @@ Available for the following platforms:
 - **Viewer-local snow** with adjustable flakes, fall speed and distance; flakes react to EEP lighting and briefly settle on solid surfaces
 - **Camera effects** including sun and moon lens flares, a configurable vignette and chromatic aberration
 - **Avatar thumbnails** in the Conversations panel, with typing indicators on thumbnails and tab names
+- **Conference blocker**: leave and persistently block an ad-hoc conference so later text, immediate and voice invitations to it are declined automatically; manage blocked conferences from Comm > Blocked Conferences
+- **Nearby Chat range counter**: optionally show how many other avatars are inside the currently selected Whisper, Say or Shout range, with an optional friends count
 - **Favorite Streams panel**, including a configurable default stream
 - Can keep the previous stream after teleporting or ask before changing streams
 - Nearby and recent people in the Conversations panel
@@ -54,6 +57,20 @@ Available for the following platforms:
 - Includes latest updates from Firestorm
 - Windows, macOS and Linux builds
 - All builds with FMOD for audio and Kakadu for JPG2000 encoder/decoder
+
+### Advanced Shape Deformer
+
+Open **AyaneStorm > Advanced Shape Deformer** to edit the position and scale of all 159 avatar skeleton targets beyond the limits of normal appearance sliders.
+
+- Preview changes live, enter exact values, or hold **Ctrl** while dragging a slider for finer control.
+- Reset individual axes or joints, use undo/redo, and bypass a joint, all scale changes, or the complete deformation for quick A/B comparisons.
+- Use **Load Worn** to continue editing one worn attachment whose inventory name begins with `AS Deformer -`. Detach it when prompted, then confirm to restore the preview without resetting the shape visually.
+- Export an editable, versioned configuration to a notecard and import it later. Import errors identify the invalid line so hand-edited configurations are easier to correct.
+- If the worn shape changes or is updated, the editor detects the cleared preview and offers to reload the deformation.
+- **Bake & Upload** creates a persistent rigged-mesh deformer and warns when any bypass is active.
+
+> [!IMPORTANT]
+> The live preview is temporary. Baking uploads a new mesh asset and incurs the region's normal L$ upload fee. Position overrides use standard rigged-mesh behavior; scale overrides are visible only in compatible AyaneStorm viewers. The deformer is calibrated for the displayed worn shape, so remove unrelated worn deformers before baking unless their combined effect is intentional.
 
 ## Quick build instructions (for Windows):
 
