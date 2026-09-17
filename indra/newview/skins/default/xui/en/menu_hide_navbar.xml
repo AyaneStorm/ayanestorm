@@ -120,6 +120,18 @@
              function="CheckControl"
              parameter="FSEnableVolumeControls" />
     </menu_item_check>
+    <!-- <AS:Chanayane> Expose the existing favorite-stream button visibility setting in the status-bar context menu. -->
+    <menu_item_check
+         label="Show Add Stream to Favorites Button"
+         name="ASShowAddFavoriteStreamButton">
+        <on_click
+             function="ToggleControl"
+             parameter="ASShowAddFavoriteStreamButton" />
+        <on_check
+             function="CheckControl"
+             parameter="ASShowAddFavoriteStreamButton" />
+    </menu_item_check>
+    <!-- </AS:Chanayane> -->
     <menu_item_check
          label="Show Frames per Second"
          name="FSStatusBarShowFPS">

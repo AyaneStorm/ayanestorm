@@ -261,16 +261,19 @@
     </panel>
     <!-- </FS:MJR> [FIRE-36776] -->
 
+	<!-- <AS:Chanayane> Widen menu search for localized labels while preserving its right edge.
+	     Original: left="-633", width="110" -->
 	<panel
 	 height="18"
-	 left="-633"
+	 left="-683"
 	 top="0"
-	 width="110"
+	 width="160"
 	 follows="right|top"
 	 name="menu_search_panel"
 	 background_opaque="true"
 	 background_visible="true"
 	 bg_opaque_color="MouseGray">
+	<!-- </AS:Chanayane> -->
 		<search_editor
 		 clear_button_visible="true"
 		 follows="left|top"
@@ -302,9 +305,11 @@
 		</search_editor>
 	</panel>
 
+  <!-- <AS:Chanayane> Keep the expanded media panel clear of the right-anchored network graphs.
+       Original: left="-502" -->
   <panel
     height="18"
-    left="-502"
+    left="-520"
     width="77"
     top="0"
     follows="right|top"
@@ -313,6 +318,7 @@
     background_opaque="true"
     background_visible="true"
     bg_opaque_color="MouseGray">
+  <!-- </AS:Chanayane> -->
     <text
      halign="center"
      font="SansSerifSmall"
@@ -348,16 +354,19 @@
      width="40" />
   </panel>
   
+  <!-- <AS:Chanayane> Include the 16 px favorite-stream button and its 2 px padding in this panel.
+       Original: width="399" -->
   <panel
     height="18"
     left_pad="4"
-    width="399"
+    width="417"
     top="0"
     follows="right|top"
     name="time_and_media_bg"
     background_opaque="true"
     background_visible="true"
     bg_opaque_color="MouseGray">
+  <!-- </AS:Chanayane> -->
 
 <!-- [AS:Chanayane] Adds draw distance widget -->
     <icon

@@ -492,7 +492,18 @@ bool LLPhysicsMotion::onUpdate(F32 time)
 
         if (!mLastTime || mLastTime >= time)
         {
+                // <AS:Chanayane> Rebase all private integration state after activation.
+                // mLastTime = time;
                 mLastTime = time;
+                mVelocityJoint_local = mAccelerationJoint_local = mVelocity_local = 0.f;
+                LLJoint* joint = mJointState->getJoint();
+                mPosition_world = joint ? joint->getWorldPosition() : LLVector3::zero;
+                const F32 range = mParamDriver->getMaxWeight() - mParamDriver->getMinWeight();
+                mPosition_local = range != 0.f
+                        ? llclamp((mParamDriver->getWeight() - mParamDriver->getMinWeight()) / range, 0.f, 1.f)
+                        : 0.f;
+                mPositionLastUpdate_local = mPosition_local;
+                // </AS:Chanayane>
                 return false;
         }
 

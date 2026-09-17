@@ -160,6 +160,9 @@
 // [/RLVa:KB]
 
 // Firestorm includes
+// <AS:Chanayane> Self-avatar recovery actions.
+#include "asavatarrecovery.h"
+// </AS:Chanayane>
 #include "fsfloateravataralign.h" // <FS:Chanayane> Compass floater
 #include "fsassetblacklist.h"
 #include "fsdata.h"
@@ -13462,6 +13465,17 @@ void initialize_menus()
     view_listener_t::addMenu(new LLAvatarResetSkeletonAndAnimations(), "Avatar.ResetSkeletonAndAnimations");
     view_listener_t::addMenu(new LLAvatarResetSelfSkeleton(), "Avatar.ResetSelfSkeleton");
     view_listener_t::addMenu(new LLAvatarResetSelfSkeletonAndAnimations(), "Avatar.ResetSelfSkeletonAndAnimations");
+// <AS:Chanayane> Self-avatar recovery actions.
+    commit.add("ASAvatar.StrongReset", [](LLUICtrl*, const LLSD&) {
+        ASAvatarRecovery::requestStrongReset();
+    });
+    commit.add("ASAvatar.RestartPhysics", [](LLUICtrl*, const LLSD&) {
+        ASAvatarRecovery::restartAvatarPhysics();
+    });
+    enable.add("ASAvatar.StrongResetEnabled", [](LLUICtrl*, const LLSD&) -> bool {
+        return ASAvatarRecovery::isStrongResetAvailable();
+    });
+// </AS:Chanayane>
     enable.add("Avatar.IsMyProfileOpen", boost::bind(&my_profile_visible));
     enable.add("Avatar.IsPicksTabOpen", boost::bind(&picks_tab_visible));
 

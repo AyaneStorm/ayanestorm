@@ -376,6 +376,36 @@
       </button>
     </layout_panel>
 
+    <!-- <AS:Chanayane> Conference-only persistent block action. -->
+    <layout_panel
+      name="block_conference_panel"
+      auto_resize="false"
+      user_resize="false"
+      top="0"
+      layout="topleft"
+      height="20"
+      width="26"
+      visible="false"
+      follows="left|top">
+      <button
+       follows="left|top"
+       top="0"
+       height="20"
+       left_delta="2"
+       image_overlay="Muted_Chat"
+       image_hover_unselected="Toolbar_Middle_Over"
+       image_selected="Toolbar_Middle_Selected"
+       image_unselected="Toolbar_Middle_Off"
+       tool_tip="Block this conference and leave it"
+       name="block_conference_btn"
+       width="24">
+        <button.commit_callback
+         function="IMSession.Menu.Action"
+         parameter="block_conference"/>
+      </button>
+    </layout_panel>
+    <!-- </AS:Chanayane> -->
+
     <layout_panel
      name="send_sysinfo_btn_panel"
      auto_resize="false"

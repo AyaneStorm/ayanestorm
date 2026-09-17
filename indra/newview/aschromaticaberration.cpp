@@ -69,7 +69,8 @@ void ASChromaticAberration::unloadShader()
 bool ASChromaticAberration::render(LLRenderTarget& source, LLRenderTarget& destination,
                                    LLVertexBuffer& screen_triangle)
 {
-    if (!gSavedSettings.getBOOL("ASChromaticAberrationEnabled") || !sProgram.isComplete() ||
+    if (!gSavedSettings.getBOOL("ASCameraEffectsEnabled") ||
+        !gSavedSettings.getBOOL("ASChromaticAberrationEnabled") || !sProgram.isComplete() ||
         gCubeSnapshot || ASBackgroundIsolate::isActive() || &source == &destination ||
         source.getWidth() <= 0 || source.getHeight() <= 0 ||
         source.getWidth() != destination.getWidth() || source.getHeight() != destination.getHeight())
@@ -104,7 +105,8 @@ bool ASChromaticAberration::render(LLRenderTarget& source, LLRenderTarget& desti
 
 void ASChromaticAberration::renderCenterBeacon()
 {
-    if (!gSavedSettings.getBOOL("ASChromaticAberrationShowBeacon") ||
+    if (!gSavedSettings.getBOOL("ASCameraEffectsEnabled") ||
+        !gSavedSettings.getBOOL("ASChromaticAberrationShowBeacon") ||
         !gSavedSettings.getBOOL("ASChromaticAberrationEnabled"))
     {
         return;

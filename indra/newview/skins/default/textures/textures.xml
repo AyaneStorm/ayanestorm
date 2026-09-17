@@ -932,6 +932,9 @@ with the same filename but different name
   <texture name="Wearable_Favorites_Icon" file_name="toolbar_icons/wearable_favorites.png" preload="true" />
   <texture name="beacons" file_name="toolbar_icons/beacons.png" preload="true" />
   <texture name="Stop_Animations_Icon" file_name="toolbar_icons/stop_animations.png" preload="true" />
+  <!-- <AS:Chanayane> Strong self-avatar recovery toolbar icon. -->
+  <texture name="Command_ASStrongAvatarReset_Icon" file_name="toolbar_icons/as_strong_avatar_reset.png" preload="true" />
+  <!-- </AS:Chanayane> -->
   <texture name="omnifilter" file_name="toolbar_icons/omnifilter.png" preload="true" />
 
   <texture name="skin ansastorm blood" file_name="skinspreview/ansa_blood.jpg" preload="true" />

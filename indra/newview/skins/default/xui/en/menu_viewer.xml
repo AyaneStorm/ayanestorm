@@ -527,6 +527,26 @@
                 <menu_item_call.on_click
                  function="Avatar.ResetSelfSkeletonAndAnimations" />
             </menu_item_call>
+            <!-- <AS:Chanayane> Strong self-avatar recovery. -->
+            <menu_item_call
+                label="Strong avatar reset..."
+                name="Strong Avatar Reset">
+                <menu_item_call.on_click
+                 function="ASAvatar.StrongReset" />
+                <menu_item_call.on_enable
+                 function="ASAvatar.StrongResetEnabled" />
+            </menu_item_call>
+            <!-- </AS:Chanayane> -->
+            <!-- <AS:Chanayane> Dedicated frozen avatar-physics recovery. -->
+            <menu_item_call
+                label="Restart avatar physics"
+                name="Restart Avatar Physics">
+                <menu_item_call.on_click
+                 function="ASAvatar.RestartPhysics" />
+                <menu_item_call.on_enable
+                 function="ASAvatar.StrongResetEnabled" />
+            </menu_item_call>
+            <!-- </AS:Chanayane> -->
 	        <menu_item_call
 	         label="Force Appearance Update (Rebake)"
 	         name="Rebake Texture"
@@ -822,6 +842,19 @@
             </menu>
         
         </menu>
+
+        <!-- <AS:Chanayane> Keep conference unblocking reachable without an open session. -->
+        <menu_item_check
+         label="Blocked Conferences..."
+         name="Blocked Conferences">
+            <menu_item_check.on_check
+             function="Floater.Visible"
+             parameter="as_conference_block_list" />
+            <menu_item_check.on_click
+             function="Floater.Toggle"
+             parameter="as_conference_block_list" />
+        </menu_item_check>
+        <!-- </AS:Chanayane> -->
         
         <menu_item_separator/>
              
@@ -1585,6 +1618,16 @@
                 <menu_item_check.on_check
                  function="Floater.Visible"
                  parameter="as_horizon_settings" />
+            </menu_item_check>
+            <menu_item_check
+             label="Weather..."
+             name="as_weather">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_weather" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_weather" />
             </menu_item_check>
             </menu>
             <!-- </AS:Chanayane> -->
@@ -6482,6 +6525,20 @@
       </menu_item_check>
       <!-- </AS:Chanayane> -->
 
+      <!-- <AS:Chanayane> Viewer-local per-joint shape deformer preview. -->
+      <menu_item_check
+         label="Advanced Shape Deformer"
+         name="Advanced Shape Deformer"
+         use_mac_ctrl="true">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_bone_deformer" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_bone_deformer" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <menu_item_separator />
 
       <menu
@@ -6632,6 +6689,19 @@
       </menu_item_check>
       <!-- </AS:Chanayane> -->
 
+      <!-- <AS:Chanayane> Viewer-local photographic color grading floater -->
+      <menu_item_check
+         label="Color Grading..."
+         name="AS Color Grading">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_color_grading" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_color_grading" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <!-- <AS:Chanayane> Aurora settings floater -->
       <menu_item_check
          label="Aurora Settings..."
@@ -6654,6 +6724,18 @@
          <menu_item_check.on_click
             function="Floater.Toggle"
             parameter="as_horizon_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+      <!-- <AS:Chanayane> Viewer-local Weather settings floater -->
+      <menu_item_check
+         label="Weather..."
+         name="AS Weather">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_weather" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_weather" />
       </menu_item_check>
       <!-- </AS:Chanayane> -->
    </menu>

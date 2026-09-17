@@ -9116,9 +9116,17 @@ void LLPipeline::renderFinalize()
     {
         copyScreenSpaceReflections(&mRT->screen, &mSceneMap);
 
-        generateLuminance(&mRT->screen, &mLuminanceMap);
+        // <AS:Chanayane> Preserve live-view exposure in snapshots so target
+        // resolution/aspect changes cannot alter lighting or tiled exposure.
+        // generateLuminance(&mRT->screen, &mLuminanceMap);
+        // generateExposure(&mLuminanceMap, &mExposureMap);
+        if (!gSnapshot)
+        {
+            generateLuminance(&mRT->screen, &mLuminanceMap);
 
-        generateExposure(&mLuminanceMap, &mExposureMap);
+            generateExposure(&mLuminanceMap, &mExposureMap);
+        }
+        // </AS:Chanayane>
 
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
