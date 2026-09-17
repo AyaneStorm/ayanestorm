@@ -31,6 +31,7 @@ private:
     void onResetPositionAxis(S32 axis);
     void onResetScaleAxis(S32 axis);
     void onReset();
+    void onBypass();
     void layoutControls();
     void writeVector(const char* x_name, const char* y_name, const char* z_name,
                      const LLVector3& value);

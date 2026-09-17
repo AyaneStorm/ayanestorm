@@ -168,6 +168,14 @@ Triggered by one explicit "Bake & Upload…" button, gated by a confirmation dia
 - The floater shows the currently worn shape name and opens that item in inventory. The baked object name also includes the shape name plus a short unique bake identifier.
 - Static XML validation passed. The user must perform the first build and runtime upload test; upload acceptance, simulator fee calculation, auto-attachment, relog persistence, and final visual transparency remain unverified at runtime.
 
+#### Editor comparison and interchange update (2026-09-17)
+
+- Ctrl-drag now provides Firestorm Poser-style precision movement at one-sixteenth normal slider speed. Opt-in sliders use mouse deltas rather than a clamped absolute track position, so precision dragging continues outside the slider bounds. Existing viewer sliders retain their standard Ctrl-reset behavior.
+- Preview application is independently bypassable for the complete editor, AyaneStorm-only scales, and each joint block. Bypasses retain the edit map and do not affect bake data. Baking while any bypass is active shows a Continue/Cancel warning because the uploaded result contains every retained edit.
+- Each joint header now has Reset and Bypass controls. The floater minimum width is 590 pixels (200 pixels narrower), its warning wraps deliberately, the shape label receives a full-width row, and bottom actions use two rows.
+- Export creates a versioned, human-editable inventory notecard whose first line is `AYANESTORM_SHAPE_DEFORMER 1`. Import reads the single selected inventory notecard, validates every line before changing state, reports line-specific syntax/range/unknown-joint/duplicate-joint errors, and applies a successful import as one undoable replacement.
+- `Load Worn` reads position data and the versioned AyaneStorm scale extension directly from the single worn attachment whose inventory name starts with `AS Deformer -`. It rejects zero or multiple matches and unloaded/invalid skin data. Its completion message asks the user to detach the source and click OK; that response reapplies the retained editor overrides after the viewer's attachment rebuild has cleared them.
+
 ### Files
 
 - `indra/newview/asfloaterbonedeformer.h/.cpp` — `ASFloaterBoneDeformer : public LLFloater`.

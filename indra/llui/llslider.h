@@ -38,6 +38,10 @@ public:
     {
         Optional<std::string> orientation;
 
+        // <AS:Chanayane> Allow opt-in controls to use Ctrl as a drag modifier instead of reset.
+        Optional<bool> ctrl_drag_enabled;
+        // </AS:Chanayane>
+
         Optional<LLUIColor> thumb_outline_color,
                             thumb_center_color;
 
@@ -86,6 +90,10 @@ private:
     bool            mVolumeSlider;
     S32             mMouseOffset;
     LLRect          mDragStartThumbRect;
+    // <AS:Chanayane> Per-control Ctrl-drag behavior; the viewer default remains Ctrl-reset.
+    bool            mCtrlDragEnabled;
+    S32             mLastDragMousePos;
+    // </AS:Chanayane>
 
     LLPointer<LLUIImage>    mThumbImage;
     LLPointer<LLUIImage>    mThumbImagePressed;

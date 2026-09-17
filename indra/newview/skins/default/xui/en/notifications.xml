@@ -10074,7 +10074,7 @@ This upload will cost L$[PRICE], do you wish to continue with the upload?
      yestext="Upload"/>
   </notification>
 
-  <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+  <!-- <AS:Chanayane> Advanced Shape Deformer notifications. -->
   <notification
    icon="alertmodal.tga"
    name="ASBoneDeformerUploadConfirmation"
@@ -10110,6 +10110,64 @@ The deformer could not be uploaded: [REASON]
    type="alert">
 The deformer cannot be baked. Confirm that a shape is worn, at least one position or scale is edited, and mesh upload is available in this region.
   </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="ASBoneDeformerBypassBakeWarning"
+   type="alertmodal">
+One or more preview bypasses are active. The uploaded deformer will still contain all saved edits, so its final appearance may differ from the current preview.
+
+Continue with Bake &amp; Upload?
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Continue"/>
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerSelectNotecard"
+   type="alert">
+Select exactly one saved Advanced Shape Deformer notecard in inventory, then click Import notecard again.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerConfigError"
+   type="alert">
+The transformer configuration could not be used:
+
+[REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerConfigImported"
+   type="alert">
+The transformer configuration was imported successfully.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerLoadWornError"
+   type="alert">
+The worn deformer could not be loaded:
+
+[REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerLoadWornSucceeded"
+   type="alert">
+Loaded [COUNT] edited joint(s) from the worn deformer.
+
+Detach the source deformer now. After it has disappeared, click OK to reapply the loaded deformation as the local preview.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
 
   <notification
    icon="alertmodal.tga"

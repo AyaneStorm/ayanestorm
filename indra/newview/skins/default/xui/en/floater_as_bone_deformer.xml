@@ -1,33 +1,39 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<floater can_close="true" can_resize="true" height="680" layout="topleft" min_height="450" min_width="790" name="floater_as_bone_deformer" positioning="cascading" reuse_instance="true" save_rect="true" single_instance="true" title="Advanced Shape Deformer — Local Preview" width="790">
-  <text follows="left|right|top" height="30" layout="topleft" left="12" name="conflict_warning" text_color="Red" top="8" width="766" wrap="true">WARNING: Remove all other worn deformers before editing. Competing rigged-mesh overrides can hide or replace this preview.</text>
+<floater can_close="true" can_resize="true" height="680" layout="topleft" min_height="450" min_width="590" name="floater_as_bone_deformer" positioning="cascading" reuse_instance="true" save_rect="true" single_instance="true" title="Advanced Shape Deformer — Local Preview" width="790">
+  <text follows="left|right|top" height="42" layout="topleft" left="12" name="conflict_warning" text_color="Red" top="8" width="766" wrap="true">WARNING: Other worn deformers can combine with unedited joints.
+Remove them before baking unless that combination is intentional.</text>
   <string name="unknown_shape">unknown</string>
-  <text follows="left|top" height="20" layout="topleft" left="12" name="preview_notice" top="38" width="125">Local preview only</text>
-  <check_box follows="left|right|top" height="20" initial_value="false" label="Show scales (beware: scale changes will only be seen by AyaneStorm users)" layout="topleft" left="145" name="show_scales" top="36" width="630" />
-  <text follows="left|right|top" height="20" layout="topleft" left="12" name="shape_notice" top="58" width="610">This deformer is for shape [SHAPE_NAME].</text>
-  <button follows="right|top" height="20" label="Show in inventory" layout="topleft" name="show_shape_in_inventory" right="-12" top="55" width="145" />
-  <panel background_visible="true" follows="all" height="535" layout="topleft" left="10" name="accordion_panel" top="90" width="770">
-    <accordion fit_parent="true" follows="all" height="535" layout="topleft" left="0" name="joint_accordion" single_expansion="true" top="0" width="770">
+  <text follows="left|top" height="20" layout="topleft" left="12" name="preview_notice" top="50" width="125">Local preview only</text>
+  <check_box follows="left|top" height="20" initial_value="false" label="Show AyaneStorm-only scales" layout="topleft" left="145" name="show_scales" top="48" width="230" />
+  <button follows="right|top" height="20" label="Show in inventory" layout="topleft" name="show_shape_in_inventory" right="-12" top="47" width="145" />
+  <text follows="left|right|top" height="20" layout="topleft" left="12" name="shape_notice" top="72" width="766">This deformer is for shape [SHAPE_NAME].</text>
+  <panel background_visible="true" follows="all" height="510" layout="topleft" left="10" name="accordion_panel" top="96" width="770">
+    <accordion fit_parent="true" follows="all" height="510" layout="topleft" left="0" name="joint_accordion" single_expansion="true" top="0" width="770">
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="body_tab" title="Body">
-        <scrolling_panel_list follows="all" layout="topleft" left="0" name="body_joint_list" top="0" width="760" />
+        <scrolling_panel_list follows="all" height="300" layout="topleft" left="0" name="body_joint_list" top="0" width="760" />
       </accordion_tab>
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="face_tab" title="Face">
-        <scrolling_panel_list follows="all" layout="topleft" left="0" name="face_joint_list" top="0" width="760" />
+        <scrolling_panel_list follows="all" height="300" layout="topleft" left="0" name="face_joint_list" top="0" width="760" />
       </accordion_tab>
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="hands_tab" title="Hands">
-        <scrolling_panel_list follows="all" layout="topleft" left="0" name="hands_joint_list" top="0" width="760" />
+        <scrolling_panel_list follows="all" height="300" layout="topleft" left="0" name="hands_joint_list" top="0" width="760" />
       </accordion_tab>
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="misc_tab" title="Misc">
-        <scrolling_panel_list follows="all" layout="topleft" left="0" name="misc_joint_list" top="0" width="760" />
+        <scrolling_panel_list follows="all" height="300" layout="topleft" left="0" name="misc_joint_list" top="0" width="760" />
       </accordion_tab>
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="collision_tab" title="Collision Volumes">
-        <scrolling_panel_list follows="all" layout="topleft" left="0" name="collision_joint_list" top="0" width="760" />
+        <scrolling_panel_list follows="all" height="300" layout="topleft" left="0" name="collision_joint_list" top="0" width="760" />
       </accordion_tab>
     </accordion>
   </panel>
-  <button bottom="-10" follows="left|bottom" height="24" label="Toggle Edit Pose" layout="topleft" left="12" name="toggle_edit_pose" tool_tip="Toggle Firestorm Pose Stand's Arms downward, Legs together pose." width="130" />
-  <button bottom="-10" follows="left|bottom" height="24" label="Bake &amp; Upload…" layout="topleft" left="150" name="bake_upload" tool_tip="Upload position edits for all viewers and scale edits for compatible AyaneStorm viewers." width="130" />
+  <button bottom="-38" follows="left|bottom" height="24" label="Import…" layout="topleft" left="12" name="import_notecard" tool_tip="Import the selected Advanced Shape Deformer notecard." width="88" />
+  <button bottom="-38" follows="left|bottom" height="24" label="Export" layout="topleft" left="106" name="export_notecard" tool_tip="Create an editable notecard containing this transformer." width="88" />
+  <button bottom="-38" follows="left|bottom" height="24" label="Load Worn" layout="topleft" left="200" name="load_worn" tool_tip="Load the single worn attachment whose inventory name begins with 'AS Deformer -'." width="119" />
+  <button bottom="-38" follows="right|bottom" height="24" is_toggle="true" label="Bypass scales" label_selected="Scales bypassed" layout="topleft" name="bypass_scales" right="-130" tool_tip="Preview how the transformer looks in viewers without AyaneStorm scale support." width="125" />
+  <button bottom="-38" follows="right|bottom" height="24" is_toggle="true" label="Bypass all" label_selected="All bypassed" layout="topleft" name="bypass_all" right="-12" tool_tip="Temporarily disable the complete local preview without discarding edits." width="110" />
+  <button bottom="-10" follows="left|bottom" height="24" label="Toggle Edit Pose" layout="topleft" left="12" name="toggle_edit_pose" tool_tip="Toggle Firestorm Pose Stand's Arms downward, Legs together pose." width="110" />
+  <button bottom="-10" follows="left|bottom" height="24" label="Bake &amp; Upload…" layout="topleft" left="130" name="bake_upload" tool_tip="Upload position edits for all viewers and scale edits for compatible AyaneStorm viewers." width="120" />
   <button bottom="-10" follows="right|bottom" height="24" label="Undo" layout="topleft" name="undo" right="-228" width="100" />
   <button bottom="-10" follows="right|bottom" height="24" label="Redo" layout="topleft" name="redo" right="-120" width="100" />
   <button bottom="-10" follows="right|bottom" height="24" label="Reset All" layout="topleft" name="reset_all" right="-12" width="100" />

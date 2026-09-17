@@ -59,6 +59,8 @@ ASScrollingPanelJointDeformer::ASScrollingPanelJointDeformer(const LLPanel::Para
     getChild<LLButton>("reset_scale_z")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onResetScaleAxis(VZ); });
     getChild<LLButton>("reset_joint")->setCommitCallback(
         [this](LLUICtrl*, const LLSD&) { onReset(); });
+    getChild<LLButton>("bypass_joint")->setCommitCallback(
+        [this](LLUICtrl*, const LLSD&) { onBypass(); });
 
     mBuilt = true;
     layoutControls();
@@ -74,6 +76,8 @@ void ASScrollingPanelJointDeformer::updatePanel(bool allow_modify)
     writeVector("pos_x", "pos_y", "pos_z", state.mPositionOffset);
     writeVector("scale_x", "scale_y", "scale_z", state.mScale);
     getChild<LLButton>("reset_joint")->setEnabled(state.mHasPosition || state.mHasScale);
+    getChild<LLButton>("bypass_joint")->setEnabled(state.mHasPosition || state.mHasScale);
+    getChild<LLButton>("bypass_joint")->setToggleState(mOwner->isJointExplicitlyBypassed(mJoint));
     getChild<LLButton>("reset_pos_x")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VX], state.mBasePositionOffset.mV[VX]));
     getChild<LLButton>("reset_pos_y")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VY], state.mBasePositionOffset.mV[VY]));
     getChild<LLButton>("reset_pos_z")->setEnabled(state.mHasPosition && axisChanged(state.mPositionOffset.mV[VZ], state.mBasePositionOffset.mV[VZ]));
@@ -175,6 +179,11 @@ void ASScrollingPanelJointDeformer::onReset()
     updatePanel(true);
 }
 
+void ASScrollingPanelJointDeformer::onBypass()
+{
+    mOwner->setJointBypassed(mJoint, getChild<LLButton>("bypass_joint")->getToggleState());
+}
+
 void ASScrollingPanelJointDeformer::layoutControls()
 {
     const S32 width = getRect().getWidth();
@@ -214,13 +223,17 @@ void ASScrollingPanelJointDeformer::layoutControls()
         getChild<LLUICtrl>(scale_controls[axis])->setRect(control_rect);
     }
 
-    LLRect name_rect = getChild<LLTextBox>("joint_name")->getRect();
-    name_rect.mRight = width - 90;
-    getChild<LLTextBox>("joint_name")->setRect(name_rect);
     LLRect reset_joint_rect = getChild<LLButton>("reset_joint")->getRect();
     reset_joint_rect.mRight = width - margin;
     reset_joint_rect.mLeft = reset_joint_rect.mRight - 70;
     getChild<LLButton>("reset_joint")->setRect(reset_joint_rect);
+    LLRect bypass_joint_rect = getChild<LLButton>("bypass_joint")->getRect();
+    bypass_joint_rect.mRight = reset_joint_rect.mLeft - gap;
+    bypass_joint_rect.mLeft = bypass_joint_rect.mRight - 88;
+    getChild<LLButton>("bypass_joint")->setRect(bypass_joint_rect);
+    LLRect name_rect = getChild<LLTextBox>("joint_name")->getRect();
+    name_rect.mRight = bypass_joint_rect.mLeft - gap;
+    getChild<LLTextBox>("joint_name")->setRect(name_rect);
 }
 
 void ASScrollingPanelJointDeformer::writeVector(const char* x_name, const char* y_name,

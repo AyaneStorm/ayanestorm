@@ -117,6 +117,9 @@ LLSliderCtrl::LLSliderCtrl(const LLSliderCtrl::Params& p)
 
     S32 slider_left = label_width ? label_width + sliderctrl_spacing : 0;
     LLSlider::Params slider_p(p.slider_bar);
+    // <AS:Chanayane> Enable Ctrl-modified dragging only for controls that request it.
+    slider_p.ctrl_drag_enabled(p.ctrl_drag_enabled);
+    // </AS:Chanayane>
     slider_p.name("slider_bar");
     if (!slider_p.rect.isProvided())
     {

@@ -46,6 +46,9 @@ public:
         Optional<bool>          show_text;
         Optional<bool>          can_edit_text;
         Optional<bool>          is_volume_slider;
+        // <AS:Chanayane> Forward opt-in Ctrl-drag behavior to the internal slider bar.
+        Optional<bool>          ctrl_drag_enabled;
+        // </AS:Chanayane>
         Optional<S32>           decimal_digits;
 
         Optional<LLUIColor>     text_color,
@@ -65,6 +68,9 @@ public:
             show_text("show_text"),
             can_edit_text("can_edit_text"),
             is_volume_slider("volume"),
+            // <AS:Chanayane> Standard controls retain Ctrl-reset by default.
+            ctrl_drag_enabled("ctrl_drag_enabled", false),
+            // </AS:Chanayane>
             decimal_digits("decimal_digits", 3),
             text_color("text_color"),
             text_disabled_color("text_disabled_color"),
