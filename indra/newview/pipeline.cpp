@@ -46,6 +46,9 @@
 // <AS:Chanayane> Optional camera chromatic aberration.
 #include "aschromaticaberration.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Screen-space camera motion blur.
+#include "asmotionblur.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -9186,6 +9189,14 @@ void LLPipeline::renderFinalize()
         std::swap(sourceBuffer, targetBuffer);
     }
 
+    // <AS:Chanayane> Apply camera motion blur before AA, matching the existing
+    // ping-pong post-process chain (see ASChromaticAberration below).
+    if (ASMotionBlur::render(*sourceBuffer, *targetBuffer, mRT->deferredScreen, *mScreenTriangleVB))
+    {
+        std::swap(sourceBuffer, targetBuffer);
+    }
+    // </AS:Chanayane>
+
      if (RenderFSAAType == 1)
     {
         applyFXAA(sourceBuffer, targetBuffer);
@@ -10209,6 +10220,10 @@ void LLPipeline::renderDeferredLighting()
             gGLLastModelView[i] = gGLModelView[i];
             gGLLastProjection[i] = gGLProjection[i];
         }
+        // <AS:Chanayane> Advance the motion-blur module's own previous/current
+        // matrix history before render_ui() substitutes its HUD modelview.
+        ASMotionBlur::captureFrameMatrices();
+        // </AS:Chanayane>
     }
     gGL.setColorMask(true, true);
 }

@@ -51,6 +51,9 @@
 // <AS:Chanayane> Optional camera chromatic aberration.
 #include "aschromaticaberration.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Screen-space camera motion blur.
+#include "asmotionblur.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom shader utility.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -492,6 +495,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     // <AS:Chanayane> Register the independent optional vignette shader.
     ASVignette::registerShader(mShaderList);
     ASChromaticAberration::registerShader(mShaderList);
+    ASMotionBlur::registerShader(mShaderList);
     ASColorGrading::registerShaders(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
@@ -1231,6 +1235,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // <AS:Chanayane> Unload the optional vignette shader.
         ASVignette::unloadShader();
         ASChromaticAberration::unloadShader();
+        ASMotionBlur::unloadShader();
         ASColorGrading::unloadShaders();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
@@ -3085,6 +3090,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     {
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASChromaticAberration::createShader(mShaderLevel[SHADER_DEFERRED]);
+        ASMotionBlur::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASColorGrading::createShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
