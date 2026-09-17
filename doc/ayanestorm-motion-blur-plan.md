@@ -2,7 +2,9 @@
 
 Author: chanayane@firestorm
 Date: 2026-09-17
-Status: implemented; matrix-history fix awaiting build/runtime verification
+Status: implemented and confirmed working at runtime (bokt). Temporary debug
+visualization modes (`RenderMotionBlurDebug` 1-3) intentionally kept in place
+for now per user request — not yet cleaned up.
 
 ## Context
 
@@ -421,25 +423,50 @@ velocity by an assumed shutter-angle/exposure-time factor rather than by a
 flat, small-range Strength multiplier) to produce a "1 frame of camera
 motion, blown up to look like a plausible exposure duration" result.
 
-**Status: paused for second-opinion review** (user is consulting another
-model on this specific question) rather than continuing to iterate blind.
-Open questions for that review:
-1. Is single-frame delta (no historical accumulation across multiple prior
-   frames) fundamentally sufficient for a convincing motion blur effect, or
-   does a real per-pixel history buffer / longer effective "shutter" become
-   necessary regardless of amplification?
-2. What Strength/amplification range or formula (e.g. relative to frame
-   time, or a fixed "shutter angle" constant like 180°/360° convention used
-   in film) would compensate for a single-frame delta being sub-pixel at
-   high FPS, without the blur becoming unstable or excessive at low FPS?
-3. Are there other viewers/engines' camera-only (no G-buffer velocity)
-   motion blur implementations worth checking for their amplification
-   formula specifically (not their overall architecture, which we've
-   already decided not to copy)?
+**Paused for a second opinion** on the "is single-frame delta sufficient, or
+is amplification needed" question above — that review identified the actual
+remaining bug (see next entry), rather than the sub-pixel-delta theory being
+the final explanation.
 
-Debug modes 1-3, `RenderMotionBlurDebug`, and all "TEMPORARY development
-aid" markers remain in place until the effect is confirmed visually working
-end-to-end; do not remove them yet.
+**Root cause found and fixed:** `ASMotionBlur::captureFrameMatrices()`'s
+first version snapshotted only a single current-frame matrix pair and relied
+on `get_last_modelview()`/`get_last_projection()` for "previous." But the
+upstream `gGLLastModelView[i] = gGLModelView[i]` copy
+(`pipeline.cpp:10218-10222`) runs *immediately before* the
+`captureFrameMatrices()` call in the same `!gCubeSnapshot` block — so by the
+time `captureFrameMatrices()` (and later `render()`) read
+`get_last_modelview()`, that global had *already* been overwritten with the
+**current** frame's matrix, not the true previous one. `render()` was
+therefore reprojecting the current frame against itself (via two
+independently-derived but numerically near-identical matrices), producing
+only tiny floating-point-noise-level "velocity" — not zero, but not real
+one-frame motion either. This exactly explains every earlier symptom: debug
+modes showed faint, never-strongly-saturated signal that scaled *slightly*
+with camera speed (residual floating-point/timing noise, not the real
+delta) but never enough for the sample loop to produce a visible blur.
+
+**Fix:** the module now keeps its own two-slot history —
+`sCurrModelview`/`sCurrProjection` (this frame) and
+`sPrevModelview`/`sPrevProjection` (the actual previous frame) — entirely
+independent of the upstream `gGLLastModelView`/`gGLLastProjection` globals.
+Each `captureFrameMatrices()` call shifts the current snapshot into the
+previous slot *before* reading the new current one via
+`get_current_modelview()`/`get_current_projection()` (still valid at that
+call site, ahead of `render_ui()`'s HUD-modelview substitution).
+`sHaveFrameMatrices` now gates on having completed two full capture cycles,
+so the first frame after enabling doesn't reproject against a meaningless
+default-identity "previous." `render()` no longer calls `get_last_modelview()`/
+`get_last_projection()` at all.
+
+**Confirmed working at runtime (bokt)** after this fix: real, visible motion
+blur during camera movement, camera-only as designed (no blur from
+avatar-only animation while the camera is still).
+
+**Remaining cleanup (deliberately deferred):** debug modes 1-3,
+`RenderMotionBlurDebug`, and all "TEMPORARY development aid" markers in the
+shader/XUI are being kept in place for now at the user's request, rather
+than stripped immediately after confirmation. Remove them in a follow-up
+pass when convenient.
 
 **Second-opinion root cause (code inspection):** the apparent sub-pixel
 motion was not real camera velocity. `captureFrameMatrices()` was called

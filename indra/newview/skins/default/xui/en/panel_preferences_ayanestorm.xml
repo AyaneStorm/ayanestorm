@@ -460,7 +460,7 @@
         max_val="3"
         min_val="0"
         name="render_motion_blur_debug"
-        tool_tip="0: final. 1: velocity magnitude heatmap (black=0px, red=max blur length). 2: raw UV delta as signed red/green. 3: matrix-sanity probe, bypasses depth reconstruction; blue tint means the previous-frame reprojection landed behind the camera."
+        tool_tip="0: final. 1: velocity magnitude heatmap (black=0px, red=4px). 2: raw UV delta as signed red/green. 3: matrix-sanity probe, bypasses depth reconstruction; blue tint means the previous-frame reprojection landed behind the camera."
         top="137"
         width="60" />
     </panel>
