@@ -81,6 +81,7 @@ void ASScrollingPanelJointDeformer::updatePanel(bool allow_modify)
     getChild<LLButton>("reset_scale_y")->setEnabled(state.mHasScale && axisChanged(state.mScale.mV[VY], state.mBaseScale.mV[VY]));
     getChild<LLButton>("reset_scale_z")->setEnabled(state.mHasScale && axisChanged(state.mScale.mV[VZ], state.mBaseScale.mV[VZ]));
     mUpdating = false;
+    layoutControls();
 }
 
 void ASScrollingPanelJointDeformer::draw()
@@ -186,11 +187,12 @@ void ASScrollingPanelJointDeformer::layoutControls()
     const char* position_resets[] = { "reset_pos_x", "reset_pos_y", "reset_pos_z" };
     const char* scale_controls[] = { "scale_x", "scale_y", "scale_z" };
     const char* scale_resets[] = { "reset_scale_x", "reset_scale_y", "reset_scale_z" };
+    const bool show_scales = mOwner->getShowScales();
 
     for (S32 axis = VX; axis <= VZ; ++axis)
     {
         LLRect reset_rect = getChild<LLButton>(position_resets[axis])->getRect();
-        reset_rect.mRight = midpoint - gap;
+        reset_rect.mRight = show_scales ? midpoint - gap : width - margin;
         reset_rect.mLeft = reset_rect.mRight - reset_width;
         getChild<LLButton>(position_resets[axis])->setRect(reset_rect);
 
@@ -199,6 +201,8 @@ void ASScrollingPanelJointDeformer::layoutControls()
         control_rect.mRight = reset_rect.mLeft - gap;
         getChild<LLUICtrl>(position_controls[axis])->setRect(control_rect);
 
+        getChild<LLUICtrl>(scale_controls[axis])->setVisible(show_scales);
+        getChild<LLButton>(scale_resets[axis])->setVisible(show_scales);
         reset_rect = getChild<LLButton>(scale_resets[axis])->getRect();
         reset_rect.mRight = width - margin;
         reset_rect.mLeft = reset_rect.mRight - reset_width;

@@ -116,7 +116,7 @@ This floater must operate on the currently-worn or explicitly-selected shape wea
 
 ### Open Design Risks (flag before/while implementing)
 
-1. **Scale-override encoding into `mAlternateBindMatrix` is undesigned.** The only precedent (DAE loader) only overwrites translation, never scale. Two candidates: (a) fold scale into the matrix's 3x3 linear part — needs verification the skinning code actually consumes that part at runtime; (b) don't encode scale into the mesh at all, re-apply `addAttachmentScaleOverride` at runtime with the real mesh_id once the attachment registers, piggybacking on proven machinery. **Recommend prototyping (b) first**; only pursue (a) if the relog test (verification step 12) shows scale doesn't persist, since a relog re-derives everything from the mesh asset alone with no runtime call involved. Position overrides are low-risk (mirror the DAE precedent exactly); scale is the genuinely novel half.
+1. **Arbitrary scale persistence is not supported by the standard rigged-mesh runtime.** Verified in `LLVOAvatar::addAttachmentOverridesForObject()` (`indra/newview/llvoavatar.cpp`): standard attachment loading reads only `mAlternateBindMatrix[i].getTranslation()` for a joint-position override. `mLockScaleIfJointPosition` can only add `getDefaultScale()`, not an authored scale. Product decision: position remains standards-compatible; scale uses a versioned AyaneStorm extension. The mesh stores absolute scale both as explicit `as_joint_scale_*` skin data and in the alternate matrix's 3x3 component for possible future interoperability. AyaneStorm applies the explicit data; unmodified viewers ignore it and display only the standard position portion. This difference is intentional and disclosed before payment.
 2. **Default bind-pose sourcing** — resolved, low risk: `LLJoint::getDefaultPosition()`/`getDefaultScale()` give per-joint bind defaults directly; build `mInvBindMatrix[i]` as the inverse of the joint's default-pose world transform composed up the parent chain (check for an existing composition helper near `LLJoint::updateWorldMatrix` before hand-rolling it).
 3. **Placeholder mesh minimums** — a single small, non-degenerate (real area, not fully coincident points) triangle satisfies geometry requirements; `mSkinWeights` needs at least one `JointWeight` entry to pass the `upload_skin && !mSkinWeights.empty()` gate (`llmodel.cpp:856`). Needs an in-viewer smoke test to confirm the simulator doesn't reject near-zero-area geometry.
 4. **LOD population** — unconfirmed whether missing medium/low/lowest LODs auto-derive or must be explicitly populated. Safe default: populate all four `mLOD[]` slots with the same placeholder model.
@@ -142,6 +142,7 @@ This floater must operate on the currently-worn or explicitly-selected shape wea
 - Exhaustive comparison found that `FSPoserAnimator::PoserJoints` contains 155 targets while this repository's `avatar_skeleton.xml` contains 159 (133 bones + 26 collision volumes). The four omissions are `mFaceEyeAltLeft`, `mFaceEyeAltRight`, `mFaceJawShaper`, and `LOWER_BACK`; the floater adds those explicitly, so all 159 targets are shown without modifying Firestorm's poser table.
 - Phase B is not present. No upload, inventory creation, L$ quote, or persistence path is wired into this Phase A floater.
 - Rotation is intentionally absent: `LLJoint` has attachment override APIs only for position and scale. Firestorm Poser rotations use a motion-based mechanism and cannot be persisted through Phase B's planned rigged-mesh joint-override path.
+- The floater identifies the currently worn shape inventory item and can reveal it in inventory. This is the intended calibration reference: initial slider values are read from the live skeleton, which reflects that shape plus any active attachment overrides. With the required removal of other deformers, the live baseline is effectively the worn shape's result.
 
 ### Phase B — Bake & Upload
 
@@ -157,6 +158,15 @@ Triggered by one explicit "Bake & Upload…" button, gated by a confirmation dia
 8. Call `gMeshRepo.uploadModel(...)` with `upload_skin=true, upload_joints=true`, a dedicated destination folder, and fee/upload observer callbacks (`ASBoneDeformerUploadObserver`) sequenced quote-then-confirm-then-commit.
 9. On success, auto-wear the new item via the same call path the inventory "Attach" context-menu action uses, at an unused/invisible attach point.
 10. Once the real attachment's overrides are confirmed active (wait for an explicit signal, not a fixed delay, to avoid a visible "pop"), clear the session's fake-mesh-id overrides for every joint touched.
+
+#### Phase B implementation status (2026-09-17)
+
+- Implemented the first testable bake path in the standalone `ASBoneDeformerBaker` module: standard positions plus versioned AyaneStorm scales. It builds the skinned placeholder triangle in memory, requests the simulator's real fee quote, presents an explicit paid-upload confirmation, uploads into Objects, finds the uniquely named inventory item, and attaches it at Avatar Center.
+- The baker waits until the self-avatar reports a newly active attachment-override mesh before removing Phase A's fake position overrides. This avoids transitioning on a fixed delay. The uploaded face uses zero material alpha and minimal geometry.
+- Scale is stored through the versioned AyaneStorm mesh extension and applied when any compatible AyaneStorm viewer renders the attachment. The fee confirmation reports the position and scale counts and explicitly warns that other viewers ignore scale. Alternate-matrix 3x3 scale data is also retained as dormant forward-compatibility data.
+- Scale controls are opt-in visually through an unchecked `Show scales` checkbox that warns they are AyaneStorm-only. When hidden, each position slider expands across the full row; hiding controls does not discard existing scale edits.
+- The floater shows the currently worn shape name and opens that item in inventory. The baked object name also includes the shape name plus a short unique bake identifier.
+- Static XML validation passed. The user must perform the first build and runtime upload test; upload acceptance, simulator fee calculation, auto-attachment, relog persistence, and final visual transparency remain unverified at runtime.
 
 ### Files
 
@@ -182,7 +192,7 @@ Bake & Upload path:
 9. Confirm no visible "pop" across the fake-override-clear transition.
 10. Detach the baked item; confirm avatar reverts to default.
 11. Re-attach from inventory directly; confirm deformation re-applies with no floater interaction.
-12. **Full relog test (critical — validates Risk 1's chosen approach)**: log out/in with the item worn. Confirm position persists. Confirm scale persists — if it reverts, path (b) has failed and path (a) must be implemented instead.
+12. **Full relog test (critical)**: log out/in with the item worn. Confirm position persists in AyaneStorm and an unmodified viewer. Confirm scale persists in AyaneStorm, and confirm an unmodified viewer intentionally shows the same position without the AyaneStorm-only scale.
 
 ---
 

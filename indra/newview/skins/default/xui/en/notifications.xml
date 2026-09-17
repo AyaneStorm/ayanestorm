@@ -10063,15 +10063,52 @@ Some of the selected files can not be bulk-uploaded.
      yestext="OK"/>
   </notification>
 
-   <notification
-    icon="alertmodal.tga"
-    name="UploadCostConfirmation"
+  <notification
+   icon="alertmodal.tga"
+   name="UploadCostConfirmation"
     type="alertmodal">
 This upload will cost L$[PRICE], do you wish to continue with the upload?
     <usetemplate
      name="okcancelbuttons"
      notext="Cancel"
      yestext="Upload"/>
+  </notification>
+
+  <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASBoneDeformerUploadConfirmation"
+   type="alertmodal">
+Upload a persistent deformer for shape "[SHAPE]"?
+
+This creates a new mesh inventory item and costs L$[PRICE]. It contains [POSITION_COUNT] standard joint position edit(s).
+
+[SCALE_COUNT] scale edit(s) use the AyaneStorm extension. They are stored in the mesh but visible only in compatible AyaneStorm viewers. Other viewers will show the position edits without these scales.
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Upload"/>
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerUploadSucceeded"
+   type="alert">
+The deformer was uploaded. It will attach automatically when its inventory item is available.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerUploadFailed"
+   type="alert">
+The deformer could not be uploaded: [REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerBakeUnavailable"
+   type="alert">
+The deformer cannot be baked. Confirm that a shape is worn, at least one position or scale is edited, and mesh upload is available in this region.
   </notification>
 
   <notification

@@ -16,6 +16,7 @@
 #include <vector>
 
 class FSPoserAnimator;
+class ASBoneDeformerBaker;
 class LLButton;
 class LLJoint;
 class LLScrollingPanelList;
@@ -52,6 +53,7 @@ public:
     void resetAll();
     void beginUndoTransaction();
     void endUndoTransaction();
+    bool getShowScales() const { return mShowScales; }
 
     const override_map_t& getOverrides() const { return mOverrides; }
     const LLUUID& getSessionFakeMeshId() const { return mSessionFakeMeshId; }
@@ -69,11 +71,18 @@ private:
     void trimHistory(std::vector<override_map_t>& history);
     void clearOverrides(bool update_panels);
     void updateButtons();
+    void refreshShapeInfo();
+    void onShowShapeInInventory();
+    void onBakeAndUpload();
+    void onBakedOverridesApplied();
+    void onToggleShowScales();
     void onToggleEditPose();
 
     LLUUID mSessionFakeMeshId;
+    LLUUID mShapeItemId;
     override_map_t mOverrides;
     std::unique_ptr<FSPoserAnimator> mJointTable;
+    std::shared_ptr<ASBoneDeformerBaker> mBaker;
     LLVOAvatarSelf* mAvatar{ nullptr };
     std::map<S32, LLScrollingPanelList*> mCategoryLists;
     std::vector<override_map_t> mUndoHistory;
@@ -83,6 +92,7 @@ private:
     bool mUndoTransactionOpen{ false };
     bool mUndoTransactionRecorded{ false };
     bool mApplyingHistory{ false };
+    bool mShowScales{ false };
     bool mEditPoseManaged{ false };
     bool mPoseStandWasVisible{ false };
     std::string mPreviousPoseStandSelection;

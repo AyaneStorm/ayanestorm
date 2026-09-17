@@ -2,9 +2,13 @@
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
 <floater can_close="true" can_resize="true" height="680" layout="topleft" min_height="450" min_width="790" name="floater_as_bone_deformer" positioning="cascading" reuse_instance="true" save_rect="true" single_instance="true" title="Advanced Shape Deformer — Local Preview" width="790">
   <text follows="left|right|top" height="30" layout="topleft" left="12" name="conflict_warning" text_color="Red" top="8" width="766" wrap="true">WARNING: Remove all other worn deformers before editing. Competing rigged-mesh overrides can hide or replace this preview.</text>
-  <text follows="left|right|top" height="30" layout="topleft" left="12" name="preview_notice" top="38" width="766" wrap="true">Local preview only. Position values are offsets from bind position in metres; scale values are absolute.</text>
-  <panel background_visible="true" follows="all" height="555" layout="topleft" left="10" name="accordion_panel" top="70" width="770">
-    <accordion fit_parent="true" follows="all" height="555" layout="topleft" left="0" name="joint_accordion" single_expansion="true" top="0" width="770">
+  <string name="unknown_shape">unknown</string>
+  <text follows="left|top" height="20" layout="topleft" left="12" name="preview_notice" top="38" width="125">Local preview only</text>
+  <check_box follows="left|right|top" height="20" initial_value="false" label="Show scales (beware: scale changes will only be seen by AyaneStorm users)" layout="topleft" left="145" name="show_scales" top="36" width="630" />
+  <text follows="left|right|top" height="20" layout="topleft" left="12" name="shape_notice" top="58" width="610">This deformer is for shape [SHAPE_NAME].</text>
+  <button follows="right|top" height="20" label="Show in inventory" layout="topleft" name="show_shape_in_inventory" right="-12" top="55" width="145" />
+  <panel background_visible="true" follows="all" height="535" layout="topleft" left="10" name="accordion_panel" top="90" width="770">
+    <accordion fit_parent="true" follows="all" height="535" layout="topleft" left="0" name="joint_accordion" single_expansion="true" top="0" width="770">
       <accordion_tab fit_panel="false" layout="topleft" min_height="180" name="body_tab" title="Body">
         <scrolling_panel_list follows="all" layout="topleft" left="0" name="body_joint_list" top="0" width="760" />
       </accordion_tab>
@@ -23,6 +27,7 @@
     </accordion>
   </panel>
   <button bottom="-10" follows="left|bottom" height="24" label="Toggle Edit Pose" layout="topleft" left="12" name="toggle_edit_pose" tool_tip="Toggle Firestorm Pose Stand's Arms downward, Legs together pose." width="130" />
+  <button bottom="-10" follows="left|bottom" height="24" label="Bake &amp; Upload…" layout="topleft" left="150" name="bake_upload" tool_tip="Upload position edits for all viewers and scale edits for compatible AyaneStorm viewers." width="130" />
   <button bottom="-10" follows="right|bottom" height="24" label="Undo" layout="topleft" name="undo" right="-228" width="100" />
   <button bottom="-10" follows="right|bottom" height="24" label="Redo" layout="topleft" name="redo" right="-120" width="100" />
   <button bottom="-10" follows="right|bottom" height="24" label="Reset All" layout="topleft" name="reset_all" right="-12" width="100" />

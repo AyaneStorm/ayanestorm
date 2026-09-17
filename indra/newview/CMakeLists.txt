@@ -148,6 +148,7 @@ set(viewer_SOURCE_FILES
     asfloatermylights.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asbonedeformerbaker.cpp
     asfloaterbonedeformer.cpp
     asscrollingpaneljointdeformer.cpp
     # </AS:Chanayane>
@@ -1070,6 +1071,7 @@ set(viewer_HEADER_FILES
     asfloatermylights.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asbonedeformerbaker.h
     asfloaterbonedeformer.h
     asscrollingpaneljointdeformer.h
     # </AS:Chanayane>

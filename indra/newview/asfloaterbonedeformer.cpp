@@ -8,15 +8,24 @@
 
 #include "asfloaterbonedeformer.h"
 
+#include "asbonedeformerbaker.h"
 #include "asscrollingpaneljointdeformer.h"
 #include "fsposeranimator.h"
 #include "llagent.h"
+#include "llagentwearables.h"
 #include "llbutton.h"
+#include "llcheckboxctrl.h"
 #include "llfloaterreg.h"
+#include "llinventorymodel.h"
+#include "llinventorypanel.h"
 #include "lljoint.h"
+#include "llnotificationsutil.h"
 #include "llscrollingpanellist.h"
+#include "lltextbox.h"
 #include "llvoavatarself.h"
 #include "llviewercontrol.h"
+
+#include <algorithm>
 
 namespace
 {
@@ -51,8 +60,18 @@ bool ASFloaterBoneDeformer::postBuild()
         [this](LLUICtrl*, const LLSD&) { resetAll(); });
     getChild<LLButton>("toggle_edit_pose")->setCommitCallback(
         [this](LLUICtrl*, const LLSD&) { onToggleEditPose(); });
+    getChild<LLButton>("show_shape_in_inventory")->setCommitCallback(
+        [this](LLUICtrl*, const LLSD&) { onShowShapeInInventory(); });
+    getChild<LLButton>("bake_upload")->setCommitCallback(
+        [this](LLUICtrl*, const LLSD&) { onBakeAndUpload(); });
+    getChild<LLCheckBoxCtrl>("show_scales")->setCommitCallback(
+        [this](LLUICtrl*, const LLSD&) { onToggleShowScales(); });
+
+    mBaker = std::make_shared<ASBoneDeformerBaker>(
+        [this]() { onBakedOverridesApplied(); }, [this]() { updateButtons(); });
 
     buildJointRows();
+    refreshShapeInfo();
     updateButtons();
     return true;
 }
@@ -76,6 +95,7 @@ void ASFloaterBoneDeformer::onOpen(const LLSD& key)
             entry.second->updatePanels(true);
         }
     }
+    refreshShapeInfo();
     updateButtons();
 }
 
@@ -452,6 +472,107 @@ void ASFloaterBoneDeformer::updateButtons()
     if (LLButton* reset = findChild<LLButton>("reset_all"))
     {
         reset->setEnabled(!mOverrides.empty());
+    }
+    if (LLButton* bake = findChild<LLButton>("bake_upload"))
+    {
+        const bool has_edits = std::any_of(
+            mOverrides.begin(), mOverrides.end(),
+            [](const auto& entry)
+            {
+                return entry.second.mHasPosition || entry.second.mHasScale;
+            });
+        bake->setEnabled(has_edits && (!mBaker || !mBaker->isBusy()));
+    }
+}
+
+void ASFloaterBoneDeformer::refreshShapeInfo()
+{
+    mShapeItemId = gAgentWearables.getWearableItemID(LLWearableType::WT_SHAPE, 0);
+    const LLViewerInventoryItem* shape_item = gInventory.getItem(mShapeItemId);
+    getChild<LLTextBox>("shape_notice")->setTextArg(
+        "[SHAPE_NAME]", shape_item ? shape_item->getName() : getString("unknown_shape"));
+    getChild<LLButton>("show_shape_in_inventory")->setEnabled(shape_item != nullptr);
+}
+
+void ASFloaterBoneDeformer::onShowShapeInInventory()
+{
+    if (mShapeItemId.notNull() && gInventory.getItem(mShapeItemId))
+    {
+        LLInventoryPanel::openInventoryPanelAndSetSelection(true, mShapeItemId, true);
+    }
+}
+
+void ASFloaterBoneDeformer::onBakeAndUpload()
+{
+    if (!mBaker || mBaker->isBusy() || mAvatar != gAgentAvatarp)
+    {
+        return;
+    }
+
+    std::vector<ASBoneDeformerBakeJoint> joints;
+    for (const auto& entry : mOverrides)
+    {
+        if (entry.second.mHasPosition || entry.second.mHasScale)
+        {
+            joints.push_back({
+                entry.first,
+                entry.first->getDefaultPosition() + entry.second.mPositionOffset,
+                entry.second.mScale,
+                entry.second.mHasPosition,
+                entry.second.mHasScale
+            });
+        }
+    }
+
+    const LLViewerInventoryItem* shape_item = gInventory.getItem(mShapeItemId);
+    if (joints.empty() || !shape_item ||
+        !mBaker->start(joints, shape_item->getName()))
+    {
+        LLNotificationsUtil::add("ASBoneDeformerBakeUnavailable");
+    }
+}
+
+void ASFloaterBoneDeformer::onBakedOverridesApplied()
+{
+    if (mAvatar != gAgentAvatarp)
+    {
+        return;
+    }
+    for (auto it = mOverrides.begin(); it != mOverrides.end();)
+    {
+        if (it->second.mHasPosition)
+        {
+            removePositionOverride(it->first);
+            it->second.mHasPosition = false;
+        }
+        if (it->second.mHasScale)
+        {
+            removeScaleOverride(it->first);
+            it->second.mHasScale = false;
+        }
+        it = mOverrides.erase(it);
+    }
+    mUndoHistory.clear();
+    mRedoHistory.clear();
+    for (auto& entry : mCategoryLists)
+    {
+        if (entry.second)
+        {
+            entry.second->updatePanels(true);
+        }
+    }
+    updateButtons();
+}
+
+void ASFloaterBoneDeformer::onToggleShowScales()
+{
+    mShowScales = getChild<LLCheckBoxCtrl>("show_scales")->getValue().asBoolean();
+    for (auto& entry : mCategoryLists)
+    {
+        if (entry.second)
+        {
+            entry.second->updatePanels(true);
+        }
     }
 }
 

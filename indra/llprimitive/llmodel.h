@@ -64,6 +64,11 @@ public:
     // bones/joints position overrides
     matrix_list_t mAlternateBindMatrix;
 
+    // <AS:Chanayane> Versioned AyaneStorm joint-scale extension; zero means no scale override.
+    std::vector<LLVector3> mASJointScaleOverrides;
+    S32 mASJointScaleVersion{ 0 };
+    // </AS:Chanayane>
+
     // cached multiply of mBindShapeMatrix and mInvBindMatrix
     matrix_list_t mBindPoseMatrix;
 
