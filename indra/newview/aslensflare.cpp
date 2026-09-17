@@ -124,7 +124,8 @@ void ASLensFlare::unloadShader()
 
 static void renderLensFlare(LLRenderTarget* color_target, LLRenderTarget& depth_target, LLVertexBuffer& screen_triangle)
 {
-    if (!gSavedSettings.getBOOL("ASLensFlareEnabled") ||
+    if (!gSavedSettings.getBOOL("ASCameraEffectsEnabled") ||
+        !gSavedSettings.getBOOL("ASLensFlareEnabled") ||
         !sLensFlareProgram.isComplete() || gCubeSnapshot ||
         ASBackgroundIsolate::isActive())
     {

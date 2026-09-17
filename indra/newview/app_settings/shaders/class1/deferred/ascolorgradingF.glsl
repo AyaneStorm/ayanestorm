@@ -18,21 +18,22 @@ uniform vec2 screen_res;
 uniform vec4 as_color_grade_basic1; // brightness, contrast, highlights, shadows
 uniform vec4 as_color_grade_basic2; // whites, blacks, saturation, vibrance
 uniform float as_color_grade_basic3; // global hue radians
-uniform vec3 as_color_grade_bands[8]; // hue radians, saturation, luminance
-uniform vec4 as_color_grade_colorize; // enabled, hue radians, saturation, luminance
+uniform vec3 as_color_grade_bands[24]; // hue radians, saturation, lightness
+uniform vec3 as_color_grade_band_selection_colors[24]; // selection colors in OKLab
+uniform vec3 as_color_grade_band_parameters[24]; // strength, hue range, softness
+uniform vec2 as_color_grade_band_ranges[24]; // relative-chroma range, lightness range
+uniform vec4 as_color_grade_colorize; // enabled, hue radians, saturation, lightness
 uniform vec4 as_color_grade_split_toning1; // highlight hue/saturation, shadow hue/saturation
 uniform vec2 as_color_grade_split_toning2; // enabled, balance
 uniform int as_color_grade_negative; // invert the final display-referred scene RGB
 uniform vec4 as_color_grade_grain; // amount, size, roughness, color
 uniform float as_color_grade_grain_seed;
-uniform vec3 as_color_grade_snapshot_tile; // zoom, tile x, tile y
+uniform vec4 as_color_grade_snapshot_tile; // zoom, tile x, tile y, live-view pixel scale
 
 in vec2 vary_fragcoord;
 
 const float PI = 3.14159265358979323846;
 const float TAU = 6.28318530717958647692;
-const float BAND_CENTERS[8] = float[8](0.0, 30.0, 60.0, 120.0, 180.0, 240.0, 280.0, 320.0);
-
 vec3 srgbToLinear(vec3 c)
 {
     bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
@@ -78,22 +79,72 @@ float hueDistance(float a, float b)
     return min(d, 360.0 - d);
 }
 
-float bandWeight(float hue, int index)
+float distanceWeight(float distance_from_center, float radius, float softness)
 {
-    float center = BAND_CENTERS[index];
-    float previous = BAND_CENTERS[(index + 7) % 8];
-    float next = BAND_CENTERS[(index + 1) % 8];
-    float left_span = mod(center - previous + 360.0, 360.0);
-    float right_span = mod(next - center + 360.0, 360.0);
-    float signed_delta = mod(hue - center + 540.0, 360.0) - 180.0;
-    float span = signed_delta < 0.0 ? left_span : right_span;
-    return 1.0 - smoothstep(span * 0.42, span * 0.72, abs(signed_delta));
+    if (radius <= 0.0001) return 1.0 - step(0.0001, distance_from_center);
+    if (softness <= 0.0001) return 1.0 - step(radius, distance_from_center);
+    // This curve makes UI softness 50 reproduce the former 0.42/0.72 feather.
+    float feather = softness * (softness + 2.0) / 3.0;
+    float weight = 1.0 - smoothstep(radius * (1.0 - feather), radius, distance_from_center);
+    // Above the compatible midpoint, increasingly suppress colors farther
+    // from the selection center; softness 100 uses a strong fourth-power falloff.
+    float high_softness = smoothstep(0.5, 1.0, softness);
+    return pow(weight, mix(1.0, 4.0, high_softness));
 }
 
-float hash12(vec2 p)
+float independentRangeWeight(float distance_from_center, float range,
+                             float softness, float curve)
 {
-    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-    p3 += dot(p3, p3.yzx + 33.33);
+    // Maximum range deliberately ignores this dimension, including softness.
+    if (range >= 0.9999) return 1.0;
+    return distanceWeight(distance_from_center, pow(range, curve), softness);
+}
+
+float colorBandWeight(vec3 lab, int index, float hue_range, float chroma_range,
+                      float lightness_range, float softness)
+{
+    vec3 selection_color = as_color_grade_band_selection_colors[index];
+    float selection_chroma = length(selection_color.yz);
+    float pixel_chroma = length(lab.yz);
+    float selection_relative_chroma = clamp(selection_chroma / max(selection_color.x, 0.02), 0.0, 1.0);
+    float pixel_relative_chroma = clamp(pixel_chroma / max(lab.x, 0.02), 0.0, 1.0);
+
+    // Lightness Range 100 ignores lightness. Relative chroma stays approximately
+    // constant when illumination makes the same surface lighter or darker.
+    float lightness_weight = independentRangeWeight(abs(lab.x - selection_color.x),
+                                                    lightness_range, softness, 2.0);
+    float gray_chroma_weight = independentRangeWeight(pixel_relative_chroma,
+                                                      chroma_range, softness, 3.0);
+    float gray_weight = lightness_weight * gray_chroma_weight;
+
+    // Chromatic bands always require a hue match. Hue Range 100 is capped at
+    // +/-60 degrees, so even its broad legacy-like mask cannot reach other hues.
+    float hue_separation = PI;
+    if (pixel_chroma > 0.000001 && selection_chroma > 0.000001)
+    {
+        float delta = abs(atan(lab.z, lab.y) - atan(selection_color.z, selection_color.y));
+        hue_separation = min(delta, TAU - delta);
+    }
+    float hue_weight = distanceWeight(hue_separation,
+                                      hue_range * PI / 3.0, softness);
+
+    float chroma_weight = independentRangeWeight(
+        abs(pixel_relative_chroma - selection_relative_chroma),
+        chroma_range, softness, 3.0);
+    float chromatic_weight = hue_weight * chroma_weight * lightness_weight;
+
+    // Hue becomes perceptually undefined close to neutral. Blend smoothly to
+    // the gray selector over that range instead of switching at one value.
+    float hue_definition = smoothstep(0.0, 0.03, selection_chroma);
+    return mix(gray_weight, chromatic_weight, hue_definition);
+}
+
+// Keep time in a separate hash dimension so refreshing grain randomizes each
+// cell instead of translating the pattern diagonally across the image.
+float grainHash(vec2 cell, float seed)
+{
+    vec3 p3 = fract(vec3(cell, seed) * 0.1031);
+    p3 += dot(p3, p3.zyx + 31.32);
     return fract((p3.x + p3.y) * p3.z);
 }
 
@@ -158,24 +209,38 @@ void main()
         C *= 1.0 + vibrance;
     }
 
-    float weights[8];
+    float weights[24];
     float weight_sum = 0.0;
-    float neutral_guard = smoothstep(0.01, 0.05, C);
-    for (int i = 0; i < 8; ++i)
+    vec3 mixer_lab = vec3(L, C * cos(hue), C * sin(hue));
+    for (int i = 0; i < 24; ++i)
     {
-        weights[i] = bandWeight(hue_degrees, i) * neutral_guard;
+        float selection = colorBandWeight(mixer_lab, i,
+            as_color_grade_band_parameters[i].y, as_color_grade_band_ranges[i].x,
+            as_color_grade_band_ranges[i].y, as_color_grade_band_parameters[i].z);
+        // Bands with no actual adjustment must not dilute an overlapping band.
+        float active = step(0.000001, dot(abs(as_color_grade_bands[i]), vec3(1.0))) *
+            step(0.000001, as_color_grade_band_parameters[i].x);
+        weights[i] = selection * active;
         weight_sum += weights[i];
     }
     float normalization = max(1.0, weight_sum);
-    float hue_shift = 0.0;
+    vec2 source_chroma = vec2(C * cos(hue), C * sin(hue));
+    vec2 chroma_shift = vec2(0.0);
     float saturation_shift = 0.0;
-    float luminance_shift = 0.0;
-    for (int i = 0; i < 8; ++i)
+    float lightness_shift = 0.0;
+    for (int i = 0; i < 24; ++i)
     {
-        float weight = weights[i] / normalization;
-        hue_shift += as_color_grade_bands[i].x * weight;
+        // Apply strength after overlap normalization so 50 is exactly half of 100.
+        float weight = weights[i] / normalization * as_color_grade_band_parameters[i].x;
+        float shift_cos = cos(as_color_grade_bands[i].x);
+        float shift_sin = sin(as_color_grade_bands[i].x);
+        vec2 rotated_chroma = vec2(source_chroma.x * shift_cos - source_chroma.y * shift_sin,
+                                   source_chroma.x * shift_sin + source_chroma.y * shift_cos);
+        // Blend chroma vectors rather than signed angles so -180 and +180
+        // remain identical even when selection weight is fractional.
+        chroma_shift += (rotated_chroma - source_chroma) * weight;
         saturation_shift += as_color_grade_bands[i].y * weight;
-        luminance_shift += as_color_grade_bands[i].z * weight;
+        lightness_shift += as_color_grade_bands[i].z * weight;
     }
     if (as_color_grade_colorize.x > 0.5)
     {
@@ -186,9 +251,12 @@ void main()
     }
     else
     {
-        hue = mod(hue + hue_shift + TAU, TAU);
+        vec2 mixed_chroma = source_chroma + chroma_shift;
+        C = length(mixed_chroma);
+        hue = C > 0.000001 ? atan(mixed_chroma.y, mixed_chroma.x) : hue;
+        hue = mod(hue + TAU, TAU);
         C *= max(0.0, 1.0 + saturation_shift);
-        L = clamp(L + luminance_shift * 0.25 * 4.0 * L * (1.0 - L), 0.0, 1.0);
+        L = clamp(L + lightness_shift * 0.25 * 4.0 * L * (1.0 - L), 0.0, 1.0);
     }
 
     lab = vec3(L, C * cos(hue), C * sin(hue));
@@ -226,14 +294,17 @@ void main()
     float zoom = max(as_color_grade_snapshot_tile.x, 1.0);
     vec2 full_uv = (vary_fragcoord + as_color_grade_snapshot_tile.yz) / zoom;
     vec2 pixel = full_uv * screen_res * zoom;
-    float grain_size = mix(1.0, 8.0, as_color_grade_grain.y);
+    // Snapshot pixels become smaller when the image is reduced for display;
+    // scale each grain cell so its apparent size matches the live view.
+    float grain_size = mix(1.0, 8.0, as_color_grade_grain.y) *
+                       max(as_color_grade_snapshot_tile.w, 1.0);
     vec2 grain_pixel = floor(pixel / grain_size);
-    float fine = hash12(grain_pixel + as_color_grade_grain_seed);
-    float coarse = hash12(floor(grain_pixel * 0.35) + as_color_grade_grain_seed * 1.37);
+    float fine = grainHash(grain_pixel, as_color_grade_grain_seed);
+    float coarse = grainHash(floor(grain_pixel * 0.35), as_color_grade_grain_seed + 11.0);
     float mono = mix(fine, coarse, as_color_grade_grain.z) - 0.5;
-    vec3 colored = vec3(hash12(grain_pixel + as_color_grade_grain_seed + 17.0),
-                        hash12(grain_pixel + as_color_grade_grain_seed + 43.0),
-                        hash12(grain_pixel + as_color_grade_grain_seed + 79.0)) - 0.5;
+    vec3 colored = vec3(grainHash(grain_pixel, as_color_grade_grain_seed + 17.0),
+                        grainHash(grain_pixel, as_color_grade_grain_seed + 43.0),
+                        grainHash(grain_pixel, as_color_grade_grain_seed + 79.0)) - 0.5;
     vec3 grain_noise = mix(vec3(mono), colored, as_color_grade_grain.w);
     float grain_envelope = 0.35 + 0.65 * 4.0 * L * (1.0 - L);
     graded += grain_noise * as_color_grade_grain.x * 0.08 * grain_envelope;

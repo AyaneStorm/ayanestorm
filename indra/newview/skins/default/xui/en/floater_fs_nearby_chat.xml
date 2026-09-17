@@ -143,6 +143,55 @@
         height="20"
         right="-1"/>
     </layout_panel>
+    <!-- <AS:Chanayane> Optional counter for other avatars inside the selected chat range. -->
+    <layout_panel
+      visibility_control="ASShowNearbyChatRangeCounter"
+      name="as_chat_range_counter_panel"
+      auto_resize="false"
+      user_resize="false"
+      layout="topleft"
+      height="20"
+      width="38"
+      follows="right|top">
+      <icon
+        name="as_chat_range_counter_background"
+        follows="all"
+        image_name="Toolbar_Middle_Off"
+        left="0"
+        right="-2"
+        top="0"
+        height="20" />
+      <as_nearby_chat_range_counter
+        name="as_chat_range_counter"
+        follows="all"
+        font="SansSerifBold"
+        halign="center"
+        valign="center"
+        tool_tip="Other avatars inside the selected chat range; optional friends count in parentheses"
+        left="0"
+        right="-2"
+        top="0"
+        height="20" />
+    </layout_panel>
+    <layout_panel
+      visibility_control="ASShowNearbyChatRangeCounter"
+      name="as_chat_range_counter_header_spacer"
+      auto_resize="false"
+      user_resize="false"
+      layout="topleft"
+      height="20"
+      width="44"
+      follows="right|top">
+      <icon
+        name="as_chat_range_counter_header_spacer_background"
+        follows="all"
+        image_name="Toolbar_Middle_Off"
+        left="0"
+        right="-1"
+        top="0"
+        height="20" />
+    </layout_panel>
+    <!-- </AS:Chanayane> -->
 
   </layout_stack>
   <layout_stack

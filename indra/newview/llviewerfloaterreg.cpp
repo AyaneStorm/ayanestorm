@@ -28,7 +28,8 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Viewer-local color grading floater.
+// <AS:Chanayane> Viewer-local conference block list and color grading floaters.
+#include "asconferenceblocklist.h"
 #include "asfloatercolorgrading.h"
 // </AS:Chanayane>
 
@@ -242,6 +243,9 @@
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
 #include "asfloatermylights.h"
+// </AS:Chanayane>
+// <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+#include "asfloaterbonedeformer.h"
 // </AS:Chanayane>
 #include "fsfloaterpartialinventory.h"
 #include "fsfloaterplacedetails.h"
@@ -719,6 +723,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("fs_poser", "floater_fs_poser.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterPoser>); // <FS:AR> [FIRE-30873]: Poser
     LLFloaterReg::add("fs_protectedfolders", "floater_fs_protectedfolders.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterProtectedFolders>);
 // <AS:chanayane> Stream keeper
+    LLFloaterReg::add("as_conference_block_list", "floater_as_conference_block_list.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterConferenceBlockList>);
     LLFloaterReg::add("as_favoritestreams", "floater_as_favoritestreams.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterFavoriteStreams>);
 // </AS:chanayane>
 // <AS:Chanayane> Optional Recent people tab in Conversations
@@ -726,6 +731,9 @@ void LLViewerFloaterReg::registerFloaters()
 // </AS:Chanayane>
 // <AS:Chanayane> Self-lighting floater (viewer-local photography lights)
     LLFloaterReg::add("as_my_lights", "floater_as_my_lights.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterMyLights>);
+// </AS:Chanayane>
+// <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    LLFloaterReg::add("as_bone_deformer", "floater_as_bone_deformer.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterBoneDeformer>);
 // </AS:Chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);

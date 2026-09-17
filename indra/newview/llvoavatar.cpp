@@ -7775,6 +7775,15 @@ void LLVOAvatar::addAttachmentOverridesForObject(LLViewerObject *vo, std::set<LL
                                 pJoint->addAttachmentScaleOverride(pJoint->getDefaultScale(), mesh_id, avString());
                             }
                         }
+                        // <AS:Chanayane> Apply explicitly versioned AyaneStorm scale overrides.
+                        if (pSkinData->mASJointScaleVersion == 1 &&
+                            pSkinData->mASJointScaleOverrides.size() == jointCnt &&
+                            pSkinData->mASJointScaleOverrides[i] != LLVector3::zero)
+                        {
+                            pJoint->addAttachmentScaleOverride(
+                                pSkinData->mASJointScaleOverrides[i], mesh_id, avString());
+                        }
+                        // </AS:Chanayane>
                     }
                 }
 

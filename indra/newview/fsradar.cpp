@@ -532,6 +532,9 @@ void FSRadar::updateRadarList()
         entry["flags"] = avFlag;
         entry["seen"] = avSeenStr;
         entry["range"] = (avRange > AVATAR_UNKNOWN_RANGE ? llformat("%3.2f", avRange) : llformat(">%3.2f", drawRadius));
+// <AS:Chanayane> Preserve Nearby People's computed range for the Nearby Chat counter.
+        entry["as_range_value"] = avRange;
+// </AS:Chanayane>
         entry["typing"] = (avVo && avVo->isTyping());
         entry["sitting"] = (avVo && (avVo->getParent() || avVo->isMotionActive(ANIM_AGENT_SIT_GROUND) || avVo->isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED)));
 

@@ -10063,9 +10063,9 @@ Some of the selected files can not be bulk-uploaded.
      yestext="OK"/>
   </notification>
 
-   <notification
-    icon="alertmodal.tga"
-    name="UploadCostConfirmation"
+  <notification
+   icon="alertmodal.tga"
+   name="UploadCostConfirmation"
     type="alertmodal">
 This upload will cost L$[PRICE], do you wish to continue with the upload?
     <usetemplate
@@ -10073,6 +10073,113 @@ This upload will cost L$[PRICE], do you wish to continue with the upload?
      notext="Cancel"
      yestext="Upload"/>
   </notification>
+
+  <!-- <AS:Chanayane> Advanced Shape Deformer notifications. -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASBoneDeformerUploadConfirmation"
+   type="alertmodal">
+Upload a persistent deformer for shape "[SHAPE]"?
+
+This creates a new mesh inventory item and costs L$[PRICE]. It contains [POSITION_COUNT] standard joint position edit(s).
+
+[SCALE_COUNT] scale edit(s) use the AyaneStorm extension. They are stored in the mesh but visible only in compatible AyaneStorm viewers. Other viewers will show the position edits without these scales.
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Upload"/>
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerUploadSucceeded"
+   type="alert">
+The deformer was uploaded. It will attach automatically when its inventory item is available.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerUploadFailed"
+   type="alert">
+The deformer could not be uploaded: [REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerBakeUnavailable"
+   type="alert">
+The deformer cannot be baked. Confirm that a shape is worn, at least one position or scale is edited, and mesh upload is available in this region.
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="ASBoneDeformerBypassBakeWarning"
+   type="alertmodal">
+One or more preview bypasses are active. The uploaded deformer will still contain all saved edits, so its final appearance may differ from the current preview.
+
+Continue with Bake &amp; Upload?
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Continue"/>
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerSelectNotecard"
+   type="alert">
+Select exactly one saved Advanced Shape Deformer notecard in inventory, then click Import notecard again.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerConfigError"
+   type="alert">
+The transformer configuration could not be used:
+
+[REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerConfigImported"
+   type="alert">
+The transformer configuration was imported successfully.
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerLoadWornError"
+   type="alert">
+The worn deformer could not be loaded:
+
+[REASON]
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerLoadWornSucceeded"
+   type="alert">
+Loaded [COUNT] edited joint(s) from the worn deformer.
+
+Detach the source deformer now. After it has disappeared, click OK to reapply the loaded deformation as the local preview.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+
+  <notification
+   icon="alert.tga"
+   name="ASBoneDeformerShapeChanged"
+   type="alert">
+Shape change detected. The local deformer preview was cleared by the avatar update.
+
+Click OK to reload the retained deformation.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
 
   <notification
    icon="alertmodal.tga"
@@ -10541,6 +10648,22 @@ Are you sure you want to leave this conference chat?
       <unique/>
     </usetemplate>
   </notification>
+
+  <!-- <AS:Chanayane> Confirm persistent conference blocking. -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASConfirmBlockConference"
+   type="alertmodal">
+Block "[CONFERENCE]" and leave it?
+
+Future invitations to this conference will be declined automatically. You can unblock it from Comm &gt; Blocked Conferences.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Block and Leave"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
 
   <notification
    icon="alertmodal.tga"
@@ -15655,6 +15778,36 @@ Built-in presets cannot be deleted, or the color grading preset could not be rem
 Could not load LUT "[FILE]".
 [REASON]
     <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Strong self-avatar recovery feedback. -->
+  <notification icon="alertmodal.tga" name="ASStrongAvatarResetConfirm" type="alertmodal">
+Stop all avatar animations, stand up if seated, and rebuild your skeleton?
+
+Animation permissions are preserved so healthy scripted attachments can resume. This interrupts poses, furniture, and your AO temporarily.
+    <usetemplate
+     ignoretext="Do not show this confirmation again"
+     name="okcancelignore"
+     notext="Cancel"
+     yestext="Reset" />
+  </notification>
+  <notification icon="alertmodal.tga" name="ASStrongAvatarResetUnavailable" type="alertmodal">
+Strong avatar reset is unavailable until your avatar and region are fully loaded.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="notifytip.tga" name="ASStrongAvatarResetComplete" type="notifytip">
+Strong avatar reset completed. Remove any attachment that starts deforming you again.
+  </notification>
+  <notification icon="alertmodal.tga" name="ASAvatarPhysicsRestartUnavailable" type="alertmodal">
+Avatar physics restart is unavailable until your avatar and region are fully loaded.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="alertmodal.tga" name="ASAvatarPhysicsRestartFailed" type="alertmodal">
+Avatar physics could not be restarted.
+    <usetemplate name="okbutton" yestext="OK" />
+  </notification>
+  <notification icon="notifytip.tga" name="ASAvatarPhysicsRestartComplete" type="notifytip">
+Avatar physics restarted.
   </notification>
   <!-- </AS:Chanayane> -->
 </notifications>

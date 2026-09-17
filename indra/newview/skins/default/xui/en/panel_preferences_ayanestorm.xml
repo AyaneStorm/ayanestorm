@@ -59,6 +59,24 @@
         radio_style="false"
         width="400"
         top_pad="20" />
+
+      <!-- Advanced Shape Deformer history preference. -->
+      <spinner
+        control_name="ASBoneDeformerUndoLevels"
+        decimal_digits="0"
+        follows="left|top"
+        height="20"
+        increment="1"
+        label="Shape Deformer undo levels"
+        label_width="220"
+        layout="topleft"
+        left="15"
+        max_val="99"
+        min_val="1"
+        name="as_bone_deformer_undo_levels"
+        top_pad="20"
+        width="290"
+        tool_tip="Maximum number of Advanced Shape Deformer changes retained for Undo." />
     </panel>
 
     <panel
@@ -492,6 +510,35 @@
         radio_style="false"
         width="480"
         top_pad="4" />
+      <!-- Optional Nearby Chat range population counter. -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowNearbyChatRangeCounter"
+        label="Show the nearby avatar count on the Nearby Chat toolbar"
+        tool_tip="Shows the number of other avatars inside the selected whisper, say, or shout range."
+        left="15"
+        mouse_opaque="true"
+        name="as_show_nearby_chat_range_counter"
+        radio_style="false"
+        width="480"
+        top_pad="10" />
+      <!-- Optional friend suffix for the Nearby Chat range counter. -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASShowNearbyChatRangeFriendCount"
+        enabled_control="ASShowNearbyChatRangeCounter"
+        label="Append the number of friends in range"
+        tool_tip="Displays the friend count in parentheses after the nearby avatar count. Disabled by default."
+        left="30"
+        mouse_opaque="true"
+        name="as_show_nearby_chat_range_friend_count"
+        radio_style="false"
+        width="465"
+        top_pad="4" />
       <check_box
         follows="left|top"
         layout="topleft"
@@ -518,6 +565,20 @@
         radio_style="false"
         width="480"
         top_pad="4" />
+      <!-- Optional report for the AyaneStorm conference block list. -->
+      <check_box
+        follows="left|top"
+        layout="topleft"
+        height="16"
+        control_name="ASReportBlockedConference"
+        label="Report rejected blocked conferences in nearby chat"
+        tool_tip="If checked, the viewer reports when an invitation to a conference on your Blocked Conferences list is automatically rejected."
+        left="15"
+        mouse_opaque="true"
+        name="as_report_blocked_conference"
+        radio_style="false"
+        width="480"
+        top_pad="10" />
     </panel>
 
   </tab_container>

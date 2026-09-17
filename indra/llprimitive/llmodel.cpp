@@ -1748,6 +1748,22 @@ void LLMeshSkinInfo::fromLLSD(LLSD& skin)
         mLockScaleIfJointPosition = false;
     }
 
+    // <AS:Chanayane> Read only explicitly versioned scale data so legacy meshes remain unchanged.
+    if (skin.has("as_joint_scale_version") &&
+        skin["as_joint_scale_version"].asInteger() == 1 &&
+        skin.has("as_joint_scale_overrides") &&
+        skin["as_joint_scale_overrides"].size() == mJointNames.size())
+    {
+        mASJointScaleVersion = 1;
+        for (U32 i = 0; i < skin["as_joint_scale_overrides"].size(); ++i)
+        {
+            const LLSD& value = skin["as_joint_scale_overrides"][i];
+            mASJointScaleOverrides.emplace_back(
+                (F32)value[0].asReal(), (F32)value[1].asReal(), (F32)value[2].asReal());
+        }
+    }
+    // </AS:Chanayane>
+
     // combine mBindShapeMatrix and mInvBindMatrix into mBindPoseMatrix
     mBindPoseMatrix.resize(mInvBindMatrix.size());
     for (U32 i = 0; i < mInvBindMatrix.size(); ++i)
@@ -1821,6 +1837,19 @@ LLSD LLMeshSkinInfo::asLLSD(bool include_joints, bool lock_scale_if_joint_positi
             ret["lock_scale_if_joint_position"] = lock_scale_if_joint_position;
         }
 
+        // <AS:Chanayane> Persist dormant scale data; unmodified viewers ignore unknown skin keys.
+        if (mASJointScaleVersion == 1 && mASJointScaleOverrides.size() == mJointNames.size())
+        {
+            ret["as_joint_scale_version"] = 1;
+            for (U32 i = 0; i < mASJointScaleOverrides.size(); ++i)
+            {
+                ret["as_joint_scale_overrides"][i][0] = mASJointScaleOverrides[i].mV[VX];
+                ret["as_joint_scale_overrides"][i][1] = mASJointScaleOverrides[i].mV[VY];
+                ret["as_joint_scale_overrides"][i][2] = mASJointScaleOverrides[i].mV[VZ];
+            }
+        }
+        // </AS:Chanayane>
+
         ret["pelvis_offset"] = mPelvisOffset;
     }
 
@@ -1867,6 +1896,10 @@ U32 LLMeshSkinInfo::sizeBytes() const
     res += sizeof(std::vector<S32>) + sizeof(S32) * static_cast<U32>(mJointNums.size());
     res += sizeof(std::vector<LLMatrix4>) + 16 * sizeof(float) * static_cast<U32>(mInvBindMatrix.size());
     res += sizeof(std::vector<LLMatrix4>) + 16 * sizeof(float) * static_cast<U32>(mAlternateBindMatrix.size());
+    // <AS:Chanayane> Account for the optional joint-scale extension.
+    res += sizeof(std::vector<LLVector3>) + sizeof(LLVector3) * static_cast<U32>(mASJointScaleOverrides.size());
+    res += sizeof(S32);
+    // </AS:Chanayane>
     res += 16 * sizeof(float); //mBindShapeMatrix
     res += sizeof(float) + 3 * sizeof(bool);
 

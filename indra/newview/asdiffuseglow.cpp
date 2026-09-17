@@ -45,7 +45,8 @@ void ASDiffuseGlow::appendShader(LLGLSLShader& shader)
 
 void ASDiffuseGlow::bindExtractionUniforms(LLGLSLShader& shader)
 {
-    const bool enabled = gSavedSettings.getBOOL("ASDiffuseGlowEnabled");
+    const bool enabled = gSavedSettings.getBOOL("ASCameraEffectsEnabled") &&
+                         gSavedSettings.getBOOL("ASDiffuseGlowEnabled");
     shader.uniform1f(sThreshold, llclamp(gSavedSettings.getF32("ASDiffuseGlowThreshold"), 0.f, 1.f));
     shader.uniform1f(sSoftness, llclamp(gSavedSettings.getF32("ASDiffuseGlowSoftness"), 0.f, 1.f));
     shader.uniform1f(sStrength,

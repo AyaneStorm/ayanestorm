@@ -92,8 +92,15 @@ set(viewer_SOURCE_FILES
     ao.cpp
     aoengine.cpp
     aoset.cpp
+    # <AS:Chanayane> Strong self-avatar recovery.
+    asavatarrecovery.cpp
+    # </AS:Chanayane>
+    asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> Optional nearby-chat range population counter.
+    asnearbychatrangecounter.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.cpp
     ascolorgrading.cpp
@@ -139,6 +146,11 @@ set(viewer_SOURCE_FILES
     aslightrig.cpp
     aslightrigrenderer.cpp
     asfloatermylights.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asbonedeformerbaker.cpp
+    asfloaterbonedeformer.cpp
+    asscrollingpaneljointdeformer.cpp
     # </AS:Chanayane>
     chatbar_as_cmdline.cpp
     daeexport.cpp
@@ -1003,8 +1015,15 @@ set(viewer_HEADER_FILES
     ao.h
     aoengine.h
     aoset.h
+    # <AS:Chanayane> Strong self-avatar recovery.
+    asavatarrecovery.h
+    # </AS:Chanayane>
+    asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> Optional nearby-chat range population counter.
+    asnearbychatrangecounter.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.h
     ascolorgrading.h
@@ -1050,6 +1069,11 @@ set(viewer_HEADER_FILES
     aslightrig.h
     aslightrigrenderer.h
     asfloatermylights.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
+    asbonedeformerbaker.h
+    asfloaterbonedeformer.h
+    asscrollingpaneljointdeformer.h
     # </AS:Chanayane>
     chatbar_as_cmdline.h
     daeexport.h
