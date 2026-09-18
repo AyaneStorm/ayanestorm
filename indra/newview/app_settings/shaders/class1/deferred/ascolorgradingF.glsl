@@ -218,9 +218,9 @@ void main()
             as_color_grade_band_parameters[i].y, as_color_grade_band_ranges[i].x,
             as_color_grade_band_ranges[i].y, as_color_grade_band_parameters[i].z);
         // Bands with no actual adjustment must not dilute an overlapping band.
-        float active = step(0.000001, dot(abs(as_color_grade_bands[i]), vec3(1.0))) *
+        float band_active = step(0.000001, dot(abs(as_color_grade_bands[i]), vec3(1.0))) *
             step(0.000001, as_color_grade_band_parameters[i].x);
-        weights[i] = selection * active;
+        weights[i] = selection * band_active;
         weight_sum += weights[i];
     }
     float normalization = max(1.0, weight_sum);
