@@ -12765,13 +12765,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>RenderGlowMinLuminance</key>
     <map>
       <key>Comment</key>
-      <string>Min luminance intensity necessary to consider an object bright enough to automatically glow. (Gets clamped at 1.0)</string>
+      <!-- <AS:Chanayane> Threshold now applies to post-tonemapping luminance (mostly 0.0-1.0 range), since extraction was moved after tonemapping upstream; the old 1.0 default is unreachable at that stage. -->
+      <!-- <string>Min luminance intensity necessary to consider an object bright enough to automatically glow. (Gets clamped at 1.0)</string> -->
+      <string>Min luminance intensity necessary to consider an object bright enough to automatically glow. Post-tonemapping value, typically 0.7-0.9.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.0</real>
+      <!-- <real>1.0</real> -->
+      <real>0.8</real>
+      <!-- </AS:Chanayane> -->
     </map>
     <key>RenderGlowResolutionPow</key>
     <map>
@@ -26173,6 +26177,38 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Show a screen-space marker at the chromatic aberration center</string>
       <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Screen-space camera motion blur (reprojection-based). -->
+    <key>RenderMotionBlur</key>
+    <map>
+      <key>Comment</key><string>Enable screen-space camera motion blur</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <key>RenderMotionBlurStrength</key>
+    <map>
+      <key>Comment</key><string>Camera motion blur intensity multiplier</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>RenderMotionBlurMaxLength</key>
+    <map>
+      <key>Comment</key><string>Maximum camera motion blur radius, in pixels at a 1080-pixel short edge</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+      <key>Value</key><real>32.0</real><key>Backup</key><integer>0</integer>
+    </map>
+    <key>RenderMotionBlurQuality</key>
+    <map>
+      <key>Comment</key><string>Camera motion blur sample count tier: 0 low, 1 medium, 2 high</string>
+      <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+      <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+    </map>
+    <key>RenderMotionBlurDebug</key>
+    <map>
+      <key>Comment</key><string>Camera motion blur debug mode: 0 off, 1 velocity heatmap, 2 raw UV delta, 3 matrix-sanity probe</string>
+      <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
       <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
