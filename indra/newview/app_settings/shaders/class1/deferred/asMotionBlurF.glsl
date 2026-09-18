@@ -150,7 +150,7 @@ void main()
     // active quality tier are masked to zero weight instead of skipped.
     for (int i = 0; i < AS_MOTION_BLUR_MAX_SAMPLES; ++i)
     {
-        float active = (i < motion_blur_samples) ? 1.0 : 0.0;
+        float sample_active = (i < motion_blur_samples) ? 1.0 : 0.0;
 
         vec2 sample_uv = uv + step_uv * (float(i) - half_samples);
         sample_uv = clamp(sample_uv, 0.5 / screen_res, vec2(1.0) - 0.5 / screen_res);
@@ -161,7 +161,7 @@ void main()
         float depth_delta = abs(sample_linear_depth - center_linear_depth);
         float weight = (1.0 - abs(float(i) - half_samples) / max(half_samples, 0.0001));
         weight *= 1.0 - smoothstep(depth_reject_scale, depth_reject_scale * 4.0, depth_delta);
-        weight *= active;
+        weight *= sample_active;
 
         accum += texture(diffuseRect, sample_uv).rgb * weight;
         total_weight += weight;
