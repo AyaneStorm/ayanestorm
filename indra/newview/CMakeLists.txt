@@ -122,6 +122,7 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local camera post-effect modules.
     asvignette.cpp
     aschromaticaberration.cpp
+    asmotionblur.cpp
     asdiffuseglow.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
@@ -1045,6 +1046,7 @@ set(viewer_HEADER_FILES
     # <AS:Chanayane> Viewer-local camera post-effect modules.
     asvignette.h
     aschromaticaberration.h
+    asmotionblur.h
     asdiffuseglow.h
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.

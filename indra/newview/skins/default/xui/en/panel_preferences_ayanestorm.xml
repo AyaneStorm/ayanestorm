@@ -394,6 +394,158 @@
       <!-- </AS:Chanayane> -->
     </panel>
 
+    <!-- <AS:Chanayane> Second rendering tab: room for newer rendering features
+         without further crowding the original Rendering tab. -->
+    <panel
+      top_pad="5"
+      bottom="-1"
+      left="1"
+      right="-1"
+      follows="all"
+      label="Rendering 2"
+      name="tab-as-rendering2">
+
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        font="SansSerifSmallBold"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="motion_blur_section_label"
+        width="150"
+        top="10">
+        Motion blur
+      </text>
+
+      <check_box
+        control_name="RenderMotionBlur"
+        follows="left|top"
+        height="16"
+        label="Enable camera motion blur"
+        layout="topleft"
+        left="15"
+        mouse_opaque="true"
+        name="render_motion_blur"
+        radio_style="false"
+        tool_tip="Blurs the scene along the camera's motion, reconstructed from scene depth and the previous frame's view. Does not blur independently moving avatars or objects. Changes are applied live."
+        top="30"
+        width="400" />
+
+      <slider
+        can_edit_text="true"
+        control_name="RenderMotionBlurStrength"
+        enabled_control="RenderMotionBlur"
+        decimal_digits="2"
+        follows="left|top"
+        height="16"
+        increment="0.05"
+        label="Strength"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="8.0"
+        min_val="0.0"
+        name="render_motion_blur_strength"
+        show_text="true"
+        text_width="50"
+        tool_tip="Blur intensity multiplier. Zero disables the pass."
+        top="57"
+        width="390" />
+      <button enabled_control="RenderMotionBlur" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_motion_blur_strength" top="55" tool_tip="Reset strength to its default value" width="20"><button.commit_callback function="ASMotionBlur.ResetDefault" parameter="RenderMotionBlurStrength" /></button>
+
+      <slider
+        can_edit_text="true"
+        control_name="RenderMotionBlurMaxLength"
+        enabled_control="RenderMotionBlur"
+        decimal_digits="0"
+        follows="left|top"
+        height="16"
+        increment="1"
+        label="Max blur length"
+        label_width="180"
+        layout="topleft"
+        left="15"
+        max_val="256.0"
+        min_val="1.0"
+        name="render_motion_blur_max_length"
+        show_text="true"
+        text_width="50"
+        tool_tip="Maximum blur radius in pixels at a 1080-pixel short edge, bounding worst-case streaking during fast camera motion or teleports."
+        top="84"
+        width="390" />
+      <button enabled_control="RenderMotionBlur" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_motion_blur_max_length" top="82" tool_tip="Reset max blur length to its default value" width="20"><button.commit_callback function="ASMotionBlur.ResetDefault" parameter="RenderMotionBlurMaxLength" /></button>
+
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="16"
+        layout="topleft"
+        left="15"
+        name="render_motion_blur_quality_label"
+        top="111"
+        width="150">
+        Quality:
+      </text>
+      <combo_box
+        control_name="RenderMotionBlurQuality"
+        enabled_control="RenderMotionBlur"
+        follows="left|top"
+        height="23"
+        layout="topleft"
+        left="170"
+        mouse_opaque="true"
+        name="render_motion_blur_quality"
+        tool_tip="Sample count along the blur direction. Higher settings look smoother at a higher GPU cost. Changes are applied live."
+        top="108"
+        width="215">
+        <combo_box.item
+          label="Low (8 samples)"
+          name="0"
+          value="0" />
+        <combo_box.item
+          label="Medium (16 samples)"
+          name="1"
+          value="1" />
+        <combo_box.item
+          label="High (24 samples)"
+          name="2"
+          value="2" />
+      </combo_box>
+      <button enabled_control="RenderMotionBlur" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_motion_blur_quality" top="109" tool_tip="Reset quality to its default value" width="20"><button.commit_callback function="ASMotionBlur.ResetDefault" parameter="RenderMotionBlurQuality" /></button>
+
+      <!-- TEMPORARY development aid - remove once the effect is confirmed working end-to-end. -->
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_motion_blur_debug_label"
+        width="150"
+        top="140">
+        Debug mode:
+      </text>
+      <spinner
+        control_name="RenderMotionBlurDebug"
+        enabled_control="RenderMotionBlur"
+        decimal_digits="0"
+        follows="left|top"
+        increment="1"
+        label_width="0"
+        left="170"
+        max_val="3"
+        min_val="0"
+        name="render_motion_blur_debug"
+        tool_tip="0: final. 1: velocity magnitude heatmap (black=0px, red=4px). 2: raw UV delta as signed red/green. 3: matrix-sanity probe, bypasses depth reconstruction; blue tint means the previous-frame reprojection landed behind the camera."
+        top="137"
+        width="60" />
+    </panel>
+    <!-- </AS:Chanayane> -->
+
     <panel
       top_pad="5"
       bottom="-1"
