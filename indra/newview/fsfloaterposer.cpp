@@ -196,6 +196,9 @@ bool FSFloaterPoser::postBuild()
     mBrowserFolderBtn = getChild<LLButton>("open_poseDir_button");
     mLoadPosesBtn = getChild<LLButton>("load_poses_button");
     mSavePosesBtn = getChild<LLButton>("save_poses_button");
+// <AS:Chanayane> AyaneStorm Special never saves native pose diffs.
+    mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
+// </AS:Chanayane>
     mSavePosesBtn->setMouseLeaveCallback([this](LLUICtrl*, const LLSD&) { onMouseLeaveSavePoseBtn(); });
 
     mFlipPoseBtn = getChild<LLButton>("FlipPose_avatar");
@@ -483,13 +486,11 @@ void FSFloaterPoser::onPoseFileSelect()
     mPoseSaveNameEditor->setEnabled(enableButtons);
     mPoseSaveNameEditor->setText(name);
 
-// <AS:chanayane> Save full poses!
-    // bool isDeltaSave = !poseFileStartsFromTeePose(name);
-    // if (isDeltaSave)
-    //     mLoadPosesBtn->setLabel(tryGetString("LoadDiffLabel"));
-    // else
-    //     mLoadPosesBtn->setLabel(tryGetString("LoadPoseLabel"));
-// </AS:chanayane>
+    bool isDeltaSave = !poseFileStartsFromTeePose(name);
+    if (isDeltaSave)
+        mLoadPosesBtn->setLabel(tryGetString("LoadDiffLabel"));
+    else
+        mLoadPosesBtn->setLabel(tryGetString("LoadPoseLabel"));
 }
 
 void FSFloaterPoser::doPoseSave(LLVOAvatar* avatar, const std::string& filename)
@@ -645,10 +646,10 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
 
     try
     {
-// <AS:chanayane> Save full poses!
-        //bool savingDiff = !mPoserAnimator.allBaseRotationsAreZero(avatar);
+// <AS:Chanayane> Native poser files, like BVH files, always contain a complete pose.
+        // bool savingDiff = !mPoserAnimator.allBaseRotationsAreZero(avatar);
         bool savingDiff = false;
-// </AS:chanayane>
+// </AS:Chanayane>
         LLSD record;
         record["version"]["value"] = (S32)8;
         record["startFromTeePose"]["value"] = !savingDiff;
@@ -679,10 +680,8 @@ bool FSFloaterPoser::savePoseToXml(LLVOAvatar* avatar, const std::string& poseFi
 
             bool jointRotPosScaleAllZero = rotation == zeroVector && position == zeroVector && scale == zeroVector;
 
-// <AS:chanayane> Save full poses!
-            //if (savingDiff && jointRotPosScaleAllZero)
-            //    continue;
-// </AS:chanayane>
+            if (savingDiff && jointRotPosScaleAllZero)
+                continue;
 
             record[bone_name]["jointBaseRotationIsZero"]   = baseRotationIsZero;
             record[bone_name]["userSetBaseRotationToZero"] = userSetBaseRotationToZero;
@@ -1479,8 +1478,11 @@ bool FSFloaterPoser::couldAnimateAvatar(LLVOAvatar* avatar) const
 {
     if (!avatar || avatar->isDead())
         return false;
-    if (avatar->getRegion() != gAgent.getRegion())
-        return false;
+
+// <AS:Chanayane> Allow local posing of every live avatar or animesh loaded by the viewer.
+    // if (avatar->getRegion() != gAgent.getRegion())
+    //     return false;
+// </AS:Chanayane>
 
     return true;
 }
@@ -1494,7 +1496,7 @@ bool FSFloaterPoser::havePermissionToAnimateAvatar(LLVOAvatar* avatar) const
 
     if (avatar->isControlAvatar())
     {
-//<AS:chanayane> Allow posing all avatars
+// <AS:Chanayane> Allow posing all avatars
         // LLControlAvatar*      control_av     = dynamic_cast<LLControlAvatar*>(avatar);
         // const LLVOVolume*     rootVolume     = control_av->mRootVolp;
         // const LLViewerObject* rootEditObject = (rootVolume) ? rootVolume->getRootEdit() : NULL;
@@ -1503,13 +1505,13 @@ bool FSFloaterPoser::havePermissionToAnimateAvatar(LLVOAvatar* avatar) const
 
         // return rootEditObject->permYouOwner();
         return true;
-//</AS:chanayane>
+// </AS:Chanayane>
     }
 
-//<AS:chanayane> Allow posing all avatars
+// <AS:Chanayane> Allow posing all avatars
     //return false;
     return true;
-//</AS:chanayane>
+// </AS:Chanayane>
 }
 
 bool FSFloaterPoser::havePermissionToAnimateOtherAvatar(LLVOAvatar* avatar) const
@@ -1517,10 +1519,10 @@ bool FSFloaterPoser::havePermissionToAnimateOtherAvatar(LLVOAvatar* avatar) cons
     if (!avatar || avatar->isDead())
         return false;
 
-//<AS:chanayane> Allow posing all avatars
+// <AS:Chanayane> Allow posing all avatars
     //return false;
     return true;
-//</AS:chanayane>
+// </AS:Chanayane>
 }
 
 void FSFloaterPoser::poseControlsEnable(bool enable)
@@ -2348,7 +2350,7 @@ void FSFloaterPoser::setSelectedJointsRotation(const LLVector3& absoluteRot, con
         //                                 savingToExternal, style);
         mPoserAnimator.setJointRotation(avatar, item, absoluteRot, deltaRot, deflection, frame, translation, jointNegation,
                                         false, style);
-// <AS:Chanayane>
+// </AS:Chanayane>
     }
 
     if (savingToExternal)
@@ -2585,7 +2587,7 @@ uuid_vec_t FSFloaterPoser::getNearbyAvatarsAndAnimeshes() const
         if (!isSelfOrCtrl)
             continue;
 */
-// <//AS:Chanayane>
+// </AS:Chanayane>
 
         avatar_ids.emplace_back(character->getID());
     }
@@ -2598,12 +2600,12 @@ bool FSFloaterPoser::avatarIsNearbyMe(LLCharacter* character) const
     if (!gAgentAvatarp || gAgentAvatarp.isNull() || !character)
         return false;
 
-    LLVector3 separationVector = character->getCharacterPosition() - gAgentAvatarp->getCharacterPosition();
-
-// <AS:Chanayane> increase distance for near avatars
-    //return separationVector.magVec() < 50.f;
-    return separationVector.magVec() < 256.f;
-// <//AS:Chanayane>
+// <AS:Chanayane> Include every live avatar and animesh loaded by the viewer.
+    // LLVector3 separationVector = character->getCharacterPosition() - gAgentAvatarp->getCharacterPosition();
+    // return separationVector.magVec() < 50.f;
+    LLVOAvatar* avatar = dynamic_cast<LLVOAvatar*>(character);
+    return couldAnimateAvatar(avatar);
+// </AS:Chanayane>
 }
 
 uuid_vec_t FSFloaterPoser::getCurrentlyListedAvatarsAndAnimeshes() const
@@ -2686,7 +2688,7 @@ void FSFloaterPoser::onAvatarsRefresh()
         if (!avatar->isSelf())
             continue;
         */
-// <//AS:Chanayane>
+// </AS:Chanayane>
 
         LLSD row;
         row["columns"][COL_ICON]["column"] = "icon";
@@ -2807,10 +2809,10 @@ void FSFloaterPoser::refreshTextHighlightingOnJointScrollLists()
 
 void FSFloaterPoser::setSavePosesButtonText(bool setAsSaveDiff)
 {
-// <AS:chanayane> Save full poses!
-    //setAsSaveDiff ? mSavePosesBtn->setLabel(tryGetString("SaveDiffLabel")) : mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
+// <AS:Chanayane> AyaneStorm Special always saves complete native poses.
+    // setAsSaveDiff ? mSavePosesBtn->setLabel(tryGetString("SaveDiffLabel")) : mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
     mSavePosesBtn->setLabel(tryGetString("SavePoseLabel"));
-// </AS:chanayane>
+// </AS:Chanayane>
 }
 
 void FSFloaterPoser::addBoldToScrollList(LLScrollListCtrl* list, LLVOAvatar* avatar)
@@ -2949,7 +2951,10 @@ void FSFloaterPoser::writeBvhFragment(llofstream* fileStream, LLVOAvatar* avatar
     if (!joint)
         return;
 
-    auto saveAxis = getBvhJointTranslation(joint->jointName());
+// <AS:Chanayane> Full rotations use the fixed BVH order required by the loader's joint frame conversion.
+    // auto saveAxis = getBvhJointTranslation(joint->jointName());
+    auto saveAxis = SWAP_X2Y_Y2Z_Z2X;
+// </AS:Chanayane>
 
     switch (joint->boneType())
     {
@@ -2957,9 +2962,9 @@ void FSFloaterPoser::writeBvhFragment(llofstream* fileStream, LLVOAvatar* avatar
             *fileStream << "ROOT " + joint->jointName() << std::endl;
             *fileStream << "{" << std::endl;
             *fileStream << getTabs(tabStops + 1) + "OFFSET " + joint->bvhOffset() << std::endl;
-// <AS:chanayane> BVH fixes
+// <AS:Chanayane> BVH fixes
             *fileStream << getTabs(tabStops + 1) + "CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation" << std::endl;
-// </AS:chanayane>
+// </AS:Chanayane>
             break;
 
         default:
@@ -3049,12 +3054,13 @@ void FSFloaterPoser::writeBvhMotion(llofstream* fileStream, LLVOAvatar* avatar, 
 
     bool lockPelvisJoint = gSavedSettings.getBOOL(POSER_UNLOCKPELVISINBVH_SAVE_KEY);
 
-// <AS:chanayane> BVH fixes
-    //auto rotation = mPoserAnimator.getJointExportRotation(avatar, *joint, !lockPelvisJoint);
-    //auto position = mPoserAnimator.getJointPosition(avatar, *joint);
-    auto rotation = mPoserAnimator.getFullJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
-    auto position = mPoserAnimator.getFullJointPosition(avatar, *joint);
-// </AS:chanayane>
+// <AS:Chanayane> Export full animation-joint rotations, but do not bake collision-volume base rotations twice.
+    // auto rotation = mPoserAnimator.getJointExportRotation(avatar, *joint, !lockPelvisJoint);
+    auto position = mPoserAnimator.getJointPosition(avatar, *joint);
+    auto rotation = joint->boneType() == COL_VOLUMES
+                        ? mPoserAnimator.getJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING)
+                        : mPoserAnimator.getFullJointRotation(avatar, *joint, SWAP_NOTHING, NEGATE_NOTHING);
+// </AS:Chanayane>
 
     switch (joint->boneType())
     {

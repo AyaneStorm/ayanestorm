@@ -251,25 +251,6 @@ LLVector3 FSPoserAnimator::getJointPosition(LLVOAvatar* avatar, const FSPoserJoi
     return jointPose->getPublicPosition();
 }
 
-// <AS:chanayane> BVH fixes
-LLVector3 FSPoserAnimator::getFullJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const
-{
-    LLVector3 pos;
-    if (!isAvatarSafeToUse(avatar))
-        return pos;
-
-    FSPosingMotion* posingMotion = getPosingMotion(avatar);
-    if (!posingMotion)
-        return pos;
-
-    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
-    if (!jointPose)
-        return pos;
-
-    return jointPose->getTargetPosition();
-}
-// </AS:chanayane>
-
 void FSPoserAnimator::setJointPosition(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& position, E_PoserReferenceFrame frame,
                                        E_BoneDeflectionStyles style)
 {
@@ -893,7 +874,7 @@ LLVector3 FSPoserAnimator::getJointRotation(LLVOAvatar* avatar, const FSPoserJoi
     return translateRotationFromQuaternion(jointPose, translation, negation, jointPose->getPublicRotation());
 }
 
-// <AS:chanayane> BVH fixes
+// <AS:Chanayane> BVH fixes
 LLVector3 FSPoserAnimator::getFullJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const
 {
     LLVector3 vec3;
@@ -910,7 +891,7 @@ LLVector3 FSPoserAnimator::getFullJointRotation(LLVOAvatar* avatar, const FSPose
  
     return translateRotationFromQuaternion(jointPose, translation, negation, jointPose->getTargetRotation());
 }
-// </AS:chanayane>
+// </AS:Chanayane>
 
 void FSPoserAnimator::setJointRotation(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& absRotation,
                                        const LLVector3& deltaRotation, E_BoneDeflectionStyles style, E_PoserReferenceFrame frame,
@@ -1275,25 +1256,6 @@ LLVector3 FSPoserAnimator::getJointScale(LLVOAvatar* avatar, const FSPoserJoint&
     return jointPose->getPublicScale();
 }
 
-// <AS:chanayane> BVH fixes
-LLVector3 FSPoserAnimator::getFullJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const
-{
-    LLVector3 scale;
-    if (!isAvatarSafeToUse(avatar))
-        return scale;
-
-    FSPosingMotion* posingMotion = getPosingMotion(avatar);
-    if (!posingMotion)
-        return scale;
-
-    FSJointPose* jointPose = posingMotion->getJointPoseByJointName(joint.jointName());
-    if (!jointPose)
-        return scale;
-
-    return jointPose->getTargetScale();
-}
-// </AS:chanayane>
-
 void FSPoserAnimator::setJointScale(LLVOAvatar* avatar, const FSPoserJoint* joint, const LLVector3& scale, E_PoserReferenceFrame frame,
                                     E_BoneDeflectionStyles style)
 {
@@ -1373,18 +1335,23 @@ bool FSPoserAnimator::tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJo
     if (!jointPose)
         return false;
 
+// <AS:Chanayane> Save full animation-joint rotations without applying collision-volume bases twice.
+/*
     LLQuaternion rotationDelta = jointPose->getPublicRotation();
     rotationDelta.getEulerAngles(&rot->mV[VX], &rot->mV[VY], &rot->mV[VZ]);
     pos->set(jointPose->getPublicPosition());
     scale->set(jointPose->getPublicScale());
     *baseRotationIsZero = jointPose->isBaseRotationZero();
-    *userSetBaseRotZero = jointPose->userHasSetBaseRotationToZero();
-
-// <AS:chanayane> Save full poses!
-    rotationDelta = jointPose->getTargetRotation();
-    rotationDelta.getEulerAngles(&rot->mV[VX], &rot->mV[VY], &rot->mV[VZ]);
+*/
+    LLQuaternion savedRotation = joint.boneType() == COL_VOLUMES
+                                     ? jointPose->getPublicRotation()
+                                     : jointPose->getTargetRotation();
+    savedRotation.getEulerAngles(&rot->mV[VX], &rot->mV[VY], &rot->mV[VZ]);
+    pos->set(jointPose->getPublicPosition());
+    scale->set(jointPose->getPublicScale());
     *baseRotationIsZero = true;
-// </AS:chanayane>
+// </AS:Chanayane>
+    *userSetBaseRotZero = jointPose->userHasSetBaseRotationToZero();
 
     return true;
 }
@@ -1658,8 +1625,11 @@ bool FSPoserAnimator::isAvatarSafeToUse(LLVOAvatar* avatar) const
         return false;
     if (avatar->isDead())
         return false;
-    if (avatar->getRegion() != gAgent.getRegion())
-        return false;
+
+// <AS:Chanayane> Other-avatar posing is local and may target live avatars loaded from neighboring regions.
+    // if (avatar->getRegion() != gAgent.getRegion())
+    //     return false;
+// </AS:Chanayane>
 
     return true;
 }

@@ -1096,12 +1096,13 @@
 						 tool_tip="Not stopping your pose can be helpful if you do a lot of work, and don't want to accidentally lose it."
 						 top_pad="10"
 						 width="134" />
-<!-- [AS:chanayane] BVH fixes (enabled="true" and changed tool_tip) -->
+						<!-- <AS:Chanayane> Full BVH export no longer requires destructive base zeroing.
+						Original: tool_tip="When you save your pose, also write a BVH file. BVH can be uploaded via the 'Build > Upload > Animation' to pose yourself or others in-world. This needs joints to reset their 'base' to zero, because BVH requires original work."
+						</AS:Chanayane> -->
 						<check_box
 						 control_name="FSPoserSaveExternalFileAlso"
 						 name="also_save_bvh_checkbox"
 						 height="16"
-						 enabled="true"
 						 label="Write BVH when saving"
 						 follows="left|top"
 						 left="5"
@@ -2068,21 +2069,19 @@
 				 image_selected="Toolbar_Middle_Selected"
 				 image_unselected="Toolbar_Middle_Off"
 				 menu_filename="menu_fs_poser_poses_btn.xml"
-				 menu_position="topright"
-				 name="load_poses_button"
-				 left_pad="5"
-				 top_delta="0"
-				 width="105"/>
-<!-- [AS:chanayane] Save full poses! -->
-<!-- 
+					 menu_position="topright"
+					 name="load_poses_button"
+					 left_pad="5"
+					 top_delta="0"
+					 width="105"/>
 				<button
-				 height="21"
-				 follows="top|left"
-				 layout="topleft"
-				 label="Save Diff"
-				 enabled="false"
-				 visible="false"
-				 tool_tip="A Diff is just your changes to an existing Pose. Start from a T-Pose to save a new work."
+					 height="21"
+					 follows="top|left"
+					 layout="topleft"
+					 label="Save Diff"
+					 enabled="false"
+					 visible="false"
+					 tool_tip="A Diff is just your changes to an existing Pose. Start from a T-Pose to save a new work."
 				 image_overlay="Icon_Dock_Foreground"
 				 image_overlay_alignment="left"
 				 image_hover_unselected="Toolbar_Middle_Over"
@@ -2090,27 +2089,6 @@
 				 image_unselected="Toolbar_Middle_Off"
 				 name="save_poses_button"
 				 width="105"
-				 top_delta="0"
-				 left_pad="1">
-					<button.commit_callback
-					 function="Poser.Save"/>
-				</button>
--->
-				<button
-				 height="21"
-				 follows="top|left"
-				 layout="topleft"
-				 label="Save Pose"
-				 enabled="false"
-				 visible="false"
-				 tool_tip="Save the current pose"
-				 image_overlay="Icon_Dock_Foreground"
-				 image_overlay_alignment="left"
-				 image_hover_unselected="Toolbar_Middle_Over"
-				 image_selected="Toolbar_Middle_Selected"
-				 image_unselected="Toolbar_Middle_Off"
-				 name="save_poses_button"
-				 width="85"
 				 top_delta="0"
 				 left_pad="1">
 					<button.commit_callback

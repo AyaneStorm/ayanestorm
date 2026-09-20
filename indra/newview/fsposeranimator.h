@@ -496,11 +496,6 @@ public:
     /// <returns>The position of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
 
-// <AS:chanayane> BVH fixes
-    // Get the full join rotation, not only the delta
-    LLVector3 getFullJointPosition(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
-// </AS:chanayane>
-
     /// <summary>
     /// Sets the position of a joint for the supplied avatar.
     /// </summary>
@@ -523,10 +518,10 @@ public:
     /// <returns>The rotation of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const;
 
-// <AS:chanayane> BVH fixes
-    // Get the full join rotation, not only the delta
+// <AS:Chanayane> BVH fixes
+    // Gets the full target rotation, not only the poser delta.
     LLVector3 getFullJointRotation(LLVOAvatar* avatar, const FSPoserJoint& joint, E_BoneAxisTranslation translation, S32 negation) const;
-// </AS:chanayane>
+// </AS:Chanayane>
 
     /// <summary>
     /// Gets the rotation of a joint for the supplied avatar for export.
@@ -573,11 +568,6 @@ public:
     /// <param name="joint">The joint to determine the scale for.</param>
     /// <returns>The scale of the requested joint, if determinable, otherwise a default vector.</returns>
     LLVector3 getJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
-
-// <AS:chanayane> BVH fixes
-    // Get the full join scale, not only the delta
-    LLVector3 getFullJointScale(LLVOAvatar* avatar, const FSPoserJoint& joint) const;
-// </AS:chanayane>
 
     /// <summary>
     /// Sets the scale of a joint for the supplied avatar.
@@ -715,9 +705,13 @@ public:
     /// <param name="userSetBaseRotZero">The bool indicating rotation was set to zero by user action.</param>
     /// <returns>True if the joint should be saved, otherwise false.</returns>
     /// <remarks>
+// <AS:Chanayane> AyaneStorm Special writes complete native poses.
+    /// Original behavior:
     /// Our objective is to protect peoples novel work: the poses created with this, and poses from other sources, such as in-world.
     /// In all scenarios, this yeilds 'deltas' of rotation/position/scale.
     /// The deltas represent the user's novel work, and may be relative to some initial values (as from a pose), or to 'nothing' (such as all rotations == 0, or, the 'T-Pose').
+    /// AyaneStorm Special instead returns the target rotation plus poser-authored position and scale deltas.
+// </AS:Chanayane>
     /// </remarks>
     bool tryGetJointSaveVectors(LLVOAvatar* avatar, const FSPoserJoint& joint, LLVector3* rot, LLVector3* pos, LLVector3* scale,
                                 bool* baseRotationIsZero, bool* userSetBaseRotZero);
