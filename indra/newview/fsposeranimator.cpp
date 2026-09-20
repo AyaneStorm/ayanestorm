@@ -543,7 +543,11 @@ void FSPoserAnimator::updateJointRotationFromManip(LLVOAvatar* avatar, const FSP
         return;
 
     LLQuaternion framedRotation = changeToRotationFrame(avatar, rotation, frame, jointPose);
-    jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION, framedRotation * jointPose->getPublicRotation());
+    // <AS:Chanayane> Preserve the captured pose when BVH export zeroes the joint's base rotation.
+    // jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION, framedRotation * jointPose->getPublicRotation());
+    const LLQuaternion currentRotation = resetBaseRotationToZero ? jointPose->getTargetRotation() : jointPose->getPublicRotation();
+    jointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION, framedRotation * currentRotation);
+    // </AS:Chanayane>
 
     deRotateWorldLockedDescendants(joint, posingMotion, framedRotation);
 
@@ -555,21 +559,32 @@ void FSPoserAnimator::updateJointRotationFromManip(LLVOAvatar* avatar, const FSP
     if (!oppositeJointPose)
         return;
 
+    // <AS:Chanayane> Preserve the opposite joint's captured pose when BVH export zeroes its base rotation.
+    const LLQuaternion oppositeCurrentRotation = resetBaseRotationToZero ? oppositeJointPose->getTargetRotation() : oppositeJointPose->getPublicRotation();
+    // </AS:Chanayane>
     LLQuaternion mirroredRotation = LLQuaternion(-framedRotation.mQ[VX], framedRotation.mQ[VY], -framedRotation.mQ[VZ], framedRotation.mQ[VW]);
     switch (style)
     {
         case SYMPATHETIC:
         case SYMPATHETIC_DELTA:
+            // <AS:Chanayane> Apply the sympathetic delta to the preserved full rotation.
+            // oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
+            //                                      framedRotation * oppositeJointPose->getPublicRotation());
             oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
-                                                 framedRotation * oppositeJointPose->getPublicRotation());
+                                                 framedRotation * oppositeCurrentRotation);
+            // </AS:Chanayane>
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, framedRotation);
             break;
 
         case MIRROR:
         case MIRROR_DELTA:
+            // <AS:Chanayane> Apply the mirrored delta to the preserved full rotation.
+            // oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
+            //                                      mirroredRotation * oppositeJointPose->getPublicRotation());
             oppositeJointPose->setPublicRotation(resetBaseRotationToZero, true, POSER_CHANGE_ROTATION,
-                                                 mirroredRotation * oppositeJointPose->getPublicRotation());
+                                                 mirroredRotation * oppositeCurrentRotation);
+            // </AS:Chanayane>
             if (oppositePoserJoint)
                 deRotateWorldLockedDescendants(oppositePoserJoint, posingMotion, mirroredRotation);
             break;
