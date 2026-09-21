@@ -62,4 +62,4 @@ new code here;
 Logs can be checked at %APPDATA%\AyaneStorm_x64\logs and in particular AyaneStorm.log
 
 ## Plan mode
-When asked to make a plan, as soon as plan is approved, the agent should copy the plan to the /doc folder with a meaningful name that mimic the other AyaneStorm documents. I say copy: the agent should not generate again the same plan in a new file. This is a waste of token. Use copy commands!
+When asked to make a plan, as soon as plan is approved, the agent should copy the raw plan file to the /doc folder with a meaningful name that mimic the other AyaneStorm documents. I said copy: the agent should not generate again the same plan in a new file for any reason. Generating the plan again is a waste of token. Use copy commands! DO NOT USE apply_patch! Use copy or cp whichever is available!

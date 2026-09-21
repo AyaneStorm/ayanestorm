@@ -156,18 +156,146 @@ existing volumetric result for shots directly facing the sun/moon.
 **Why ranked #5:** would be a genuine visual addition, not a duplicate of the
 existing system, but it is a supplementary flourish on an already-strong
 feature rather than filling a gap — lower priority than fixing/adding
-capabilities that are currently fully absent (motion blur, HBAO) or broken
+capabilities that are currently fully absent (motion blur, GTAO) or broken
 (glow threshold).
 
-## 6. HBAO (horizon-based ambient occlusion)
+## 6. GTAO ambient-occlusion mode (retain existing SSAO as the inexpensive fallback)
 
-AyaneStorm only has standard SSAO. Add an AyaneStorm-original HBAO option: a
-multi-direction horizon raymarch for more directionally-accurate contact
-occlusion than SSAO provides, selectable as an alternative AO mode.
+**Recommendation after comparing the practical AO families:** implement GTAO,
+not HBAO, as AyaneStorm's one new high-quality AO technique. Expose `Off`,
+`Legacy SSAO`, and `GTAO`, with quality levels inside GTAO rather than adding a
+long list of substantially overlapping algorithms. GTAO is the strongest fit
+because it retains the depth/normal-only integration advantages of screen-space
+AO while using a radiometrically derived horizon integral intended to approach
+ray-traced ground truth. HBAO is its older conceptual ancestor, so implementing
+both would buy little useful choice for the maintenance and UI cost.
 
-**Why ranked #6:** substantial and visually meaningful, but lower urgency than
-motion blur since SSAO already exists and is functional — this is a quality
-upgrade/option rather than filling a total absence.
+This conclusion is also specific to AyaneStorm's renderer. The current AO is an
+eight-tap fragment-shader estimate in `class1/deferred/aoUtil.glsl`; it is packed
+into the green channel of `deferredLight` beside three shadow terms by
+`class2/deferred/sunLightSSAOF.glsl`, then all four channels receive the same
+two-pass plane-aware blur before AO modulates ambient/reflection-probe
+irradiance in `class3/deferred/softenLightF.glsl`. A modern AO implementation
+should be an AyaneStorm-owned `asambientocclusion` module with a dedicated
+single-channel AO target and its own depth/normal-aware denoiser. Only small,
+tagged selection/composite hooks should enter the shared pipeline and soften
+shader. Do not force GTAO through the existing shared shadow blur.
+
+The initial implementation should adapt the MIT-licensed Intel XeGTAO source
+vendored under `.XeGTAO`, retaining its view-space depth preparation, horizon
+evaluation, and edge-aware spatial denoise. AyaneStorm presently has no general
+TAA history, so temporal reprojection should not be a prerequisite; XeGTAO
+explicitly supports operation without TAA, with a fixed spatial noise pattern
+and its spatial denoiser. GTAO itself does not require compute shaders: Intel's
+implementation uses them as an optimization. Implement two interchangeable
+backends: a GLSL 4.00 fragment/FBO path so GTAO works on macOS, Windows, and
+Linux, plus an OpenGL 4.3 compute path closely adapted from XeGTAO for supported
+hardware. Both must use the same settings, constants, resource formats, and
+final visibility convention. Select compute automatically when supported and
+otherwise select fragment; expose a developer-only backend override for visual
+equivalence and performance testing, not two user-facing AO techniques.
+Suggested user controls are AO radius, strength, and quality/denoise presets;
+keep the auto-tuned heuristic constants compiled at Intel's defaults initially,
+and keep the current SSAO controls active only in legacy mode.
+
+### Concrete adaptation of the vendored XeGTAO source
+
+Treat `XeGTAO.h` and `XeGTAO.hlsli` as the algorithm/reference source;
+`vaGTAO.{h,cpp}` and `vaGTAO.hlsl` describe host orchestration and engine-facing
+bindings but must not be copied as a rendering framework. Preserve the MIT
+notice in derived shader/source files and use AyaneStorm-native naming and
+resource management.
+
+- Add a new `asambientocclusion.{h,cpp}` module and AyaneStorm-owned fragment
+  and compute shaders behind one backend-neutral interface. Port only scalar
+  visibility initially. Exclude the sample's ImGui, DXIL/DirectX abstractions,
+  debug render target, generated-normal path, bent-normal path, auto-tuner, and
+  reference ray tracer.
+- Target OpenGL 4.0 / GLSL 4.00 for the baseline GTAO path (and therefore
+  support macOS's OpenGL 4.1 ceiling). Express each stage
+  as fullscreen fragment passes over FBO attachments; this needs no image
+  load/store, SSBO, or compute support. The OpenGL 4.3 backend should use the
+  existing compute-shader infrastructure and explicit
+  `GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL_TEXTURE_FETCH_BARRIER_BIT` barriers
+  between producer and consumer dispatches. Keep legacy SSAO for lower OpenGL
+  levels and as the inexpensive mode, not merely as a macOS substitute.
+- Reproduce the three logical stages: (1) linearize raw depth at full
+  resolution, then render four weighted downsample passes into the remaining
+  mip levels; (2) evaluate GTAO in a fullscreen fragment pass with MRT outputs
+  for visibility and packed four-neighbour edges; and (3) run one or more
+  fullscreen edge-aware denoise passes with ping-pong targets. Intel's compute
+  shader creates all five depth levels in one dispatch and denoises two
+  horizontal pixels per invocation, but these are optimizations rather than
+  algorithmic requirements. The source presets are Low = 1 slice x 2 steps,
+  Medium = 2x2, High = 3x3, and Ultra = 9x3; each step samples both directions.
+  Start with High plus one denoise pass as the default, then tune from measured
+  AyaneStorm GPU timings.
+- Keep algorithm code and constants aligned between backends. Backend-specific
+  code should be limited to texture access, output, group-shared depth-mip
+  construction, two-pixels-per-invocation denoising, and host dispatch/draw
+  orchestration. Add debug comparison modes that can render either backend and
+  report GPU time; an optional absolute-difference view is preferable to judging
+  screenshots by eye. The fragment backend is the correctness baseline because
+  it is available on every target platform supporting GTAO.
+- Allocate a five-level `GL_R16F` view-depth texture, `GL_R8` visibility
+  working/output textures, and a `GL_R8` edge texture. Use regular GLSL `float`
+  arithmetic first: HLSL `min16float` is a performance hint with no equally
+  portable GLSL 4.00 spelling, while R16F storage retains the intended bandwidth
+  saving. Add explicit 16-bit arithmetic only after cross-vendor profiling.
+- Supply AyaneStorm's existing deferred normal attachment instead of generating
+  normals from depth. Its `decodeNormal()` result is already a view-space
+  normal. Adapt coordinate conventions deliberately: XeGTAO operates with
+  positive view depth and top-left texture Y, while this OpenGL renderer uses
+  negative view Z and bottom-left texture Y. Convert both reconstructed
+  positions and normals consistently (equivalently, map viewer view space by
+  `(x, y, z) -> (x, -y, -z)`) before applying the XeGTAO math. Derive and test
+  OpenGL depth linearization rather than copying the DirectX projection-index
+  formula from `GTAOUpdateConstants()`.
+- Preserve the 64x64 `R16UI` Hilbert/R2 noise scheme, with temporal index zero
+  until a true temporal consumer exists. GLSL 4.00 provides `texelFetch`,
+  `textureLod`, integer texture sampling, and multiple render targets needed by
+  this path. Prefer explicit `texelFetch` for centre/neighbour and denoiser
+  reads where HLSL `GatherRed` lane ordering would be ambiguous; optimize to
+  `textureGather` only after image-equivalence tests.
+- Keep the final GTAO texture separate from `deferredLight`. In GTAO mode the
+  sun pass must omit legacy `calcAmbientOcclusion()`, the existing shared
+  shadow blur may continue processing the shadow channels, and
+  `softenLightF.glsl` should sample the dedicated GTAO visibility when adjusting
+  irradiance. This prevents AO from inheriting the shadow blur and allows its
+  edge-aware denoiser to remain authoritative.
+- Defer bent normals. They are valuable only after the reflection-probe ambient
+  lookup is explicitly changed to consume them; merely computing and then
+  discarding them adds about 25% to XeGTAO's documented cost.
+
+### Why not add every named alternative
+
+| Technique | Decision | Reason relative to GTAO in this viewer |
+|---|---|---|
+| HBAO | Do not add | Older horizon formulation; GTAO is the more accurate successor and serves the same role. |
+| HBAO+ | Do not add | Good historical optimization, but NVIDIA's published package exposes DX11/DX12 binary-library integration, not a portable OpenGL implementation; its quality/performance niche is already covered by GTAO. |
+| HDAO | Do not add | Legacy AMD/DirectCompute-era kernel; its later AOFX form is GCN/DX11-oriented and offers no compelling advantage over GTAO or CACAO. |
+| VXAO | Reject | Voxelizes scene geometry and depends on the old VXGI/GameWorks approach. It is not a screen-space drop-in and would impose a major scene/pipeline and memory cost. |
+| NNAO | Research only | The 2016 method bakes a trained 31x31 depth/normal model into shader filters. It is interesting but brings training-data/generalization and weight-asset maintenance risk without a demonstrated benefit over current GTAO implementations. |
+| SSDO | Separate future GI feature | Directional occlusion plus a screen-space diffuse bounce is closer to limited SSGI than a scalar AO replacement. It needs radiance/color handling and should not compete in the AO selector. |
+| GTAO | **Implement** | Best balance of physically grounded output, cross-vendor operation, tunable cost, and compatibility with existing depth/normal inputs. |
+| LSAO | Do not add | Clever linear-complexity line sweeps, but awkward multi-direction whole-image passes and a 2013 obscurance model make it a poor trade beside GTAO. |
+| DeepAO | Research only | Learned compute-shader pipeline and project-specific model/data burden; sparse reference implementation and no clear production advantage here. |
+| CACAO | Benchmark later, at most | The only strong second candidate: MIT-licensed, optimized, adaptive, and offers five quality levels. However it is a many-pass compute implementation officially targeting DX12/Vulkan; an OpenGL port would require 4.3-class compute and would exclude macOS. Add it only if an instrumented GTAO prototype misses a defined frame-time target. |
+| MXAO | Do not integrate | Primarily a ReShade/post-process implementation with its own compositing and indirect-light features; the public qUINT shader is marked all-rights-reserved. Native GTAO can use AyaneStorm's real G-buffer and cleaner lighting integration. |
+| RTAO | Defer until renderer/API work exists | True scene-space quality, but requires ray-query/pipeline support plus maintained GPU acceleration structures. The OpenGL renderer has neither, so this is a renderer-backend project rather than an AO option. |
+| AAO / ABAO | Do not add | Alchemy AO (AAO) is a fast older obscurance approximation; angle-based AO (ABAO) is likewise superseded for this use. If `AAO` meant adaptive AO/ASSAO, CACAO is its optimized descendant and is the relevant candidate instead. |
+
+**Why ranked #6:** this is a substantial visual upgrade but SSAO already works.
+GTAO replaces the former HBAO proposal because it offers a larger accuracy gain
+for similar architectural effort and avoids maintaining two horizon-based modes.
+
+**Primary references:** [original GTAO technical report](https://research.activision.com/publications/archives/atvi-tr-16-01practical-realtime-strategies-for-accurate-indirect-occlusion),
+[MIT-licensed XeGTAO implementation and integration notes](https://github.com/GameTechDev/XeGTAO),
+[AMD CACAO documentation](https://gpuopen.com/manuals/fidelityfx_sdk/techniques/combined-adaptive-compute-ambient-occlusion/),
+[NVIDIA HBAO+ package/API description](https://github.com/NVIDIAGameWorks/HBAOPlus),
+[NNAO paper](https://www.pure.ed.ac.uk/ws/portalfiles/portal/28369946/nnao_5_.pdf),
+[LSAO paper](https://diglib.eg.org/server/api/core/bitstreams/786e1ab5-c669-48ac-9e99-56a1564edcad/content),
+and [Alchemy AO](https://casual-effects.com/research/McGuire2011AlchemyAO/index.html).
 
 ## 7. SSAO sample count is hardcoded (existing SSAO is untunable)
 
@@ -178,9 +306,8 @@ rebuild.
 
 **Why ranked #7:** small, low-risk, high value-for-effort — a single new
 uniform plumbed through the existing SSAO shader, no new algorithm. Distinct
-from item #6 (HBAO): this is about tunability of the *current* SSAO, not a new
-AO technique. Natural quick win, possibly worth doing alongside #6 since it
-touches the same shader file.
+from item #6 (GTAO): this is about tunability of the *legacy* SSAO fallback,
+not the new high-quality mode. It remains a useful independent quick win.
 
 ## 8. Physically-derived time-of-day color temperature shift
 
