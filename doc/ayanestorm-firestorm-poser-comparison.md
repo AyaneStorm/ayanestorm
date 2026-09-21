@@ -14,13 +14,15 @@ AyaneStorm was compared with the local Firestorm reference tree at
 
 This is a source-tree comparison, not a Git-history attribution analysis.
 
-## Result
+## Baseline comparison result
 
-AyaneStorm does **not currently diverge from the reference Firestorm poser**.
-Both trees have the same 51 `pose`/`poser`-named files under `indra`, and all
-51 files are byte-identical.
+The initial comparison found that AyaneStorm did not diverge from the reference
+Firestorm poser. Both trees had the same 51 `pose`/`poser`-named files under
+`indra`, and all 51 files were byte-identical. The fixes documented below now
+make `fsposeranimator.cpp` and `fsfloaterposer.cpp` intentional AyaneStorm
+divergences.
 
-The identical core implementation includes:
+The baseline's identical core implementation included:
 
 - `fsfloaterposer.{cpp,h}`;
 - `fsposeranimator.{cpp,h}`;
@@ -88,13 +90,16 @@ Firestorm poser.
 
 ## Conclusion
 
-Relative to `./.phoenix-firestorm-master`, the answer is:
+The baseline answer relative to `./.phoenix-firestorm-master` was:
 
-- **No AyaneStorm-only change to the Firestorm poser itself.**
+- **There was no AyaneStorm-only change to the Firestorm poser itself.**
 - **Yes, one Chanayane-tagged BVH export fix exists in the poser, but the
   reference Firestorm tree already contains it.**
 - **Yes, AyaneStorm-only features reuse or open the poser from separate
   modules.**
+
+AyaneStorm now also contains the two ownership-tagged poser corrections
+documented below.
 
 ## In-world manipulator first-click rotation reset
 
@@ -143,3 +148,22 @@ is applied to mirrored and sympathetic manipulation.
 The experimental focus change was reverted. Runtime testing still needs to
 verify the first axis drag with **Save as BVH** enabled and disabled, plus
 mirrored or sympathetic manipulation.
+
+## BVH write failure reported as save success
+
+### Cause
+
+`FSFloaterPoser::doPoseSave()` used only the result of `savePoseToXml()` to
+decide whether saving succeeded. When **Write BVH when saving** was enabled,
+it called `savePoseToBvh()` but discarded its boolean result. Consequently, a
+successful XML write followed by a failed BVH write still displayed the save
+success overlay. The same defect is present in the Firestorm reference tree.
+
+### Fix
+
+`doPoseSave()` now checks `savePoseToBvh()` when BVH output is requested. A
+BVH failure displays the save-failed overlay and returns before the success
+overlay is applied. XML-only saves retain their existing behavior.
+
+Runtime testing should verify successful XML-only and XML-plus-BVH saves, then
+force the BVH write to fail and confirm that the save button displays failure.
