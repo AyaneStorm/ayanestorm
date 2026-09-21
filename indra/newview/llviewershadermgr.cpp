@@ -496,6 +496,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     ASVignette::registerShader(mShaderList);
     ASChromaticAberration::registerShader(mShaderList);
     ASMotionBlur::registerShader(mShaderList);
+    ASDiffuseGlow::registerShaders(mShaderList);
     ASColorGrading::registerShaders(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
@@ -1236,6 +1237,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         ASVignette::unloadShader();
         ASChromaticAberration::unloadShader();
         ASMotionBlur::unloadShader();
+        ASDiffuseGlow::unloadHDRShaders();
         ASColorGrading::unloadShaders();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the self-lighting floater's background isolate shader.
@@ -3091,6 +3093,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASChromaticAberration::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASMotionBlur::createShader(mShaderLevel[SHADER_DEFERRED]);
+        ASDiffuseGlow::createHDRShaders(mShaderLevel[SHADER_DEFERRED]);
         ASColorGrading::createShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>

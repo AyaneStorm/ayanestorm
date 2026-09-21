@@ -1437,6 +1437,10 @@ void LLPipeline::releaseGLBuffers()
         mGlow[i].release();
     }
 
+    // <AS:Chanayane> Release lazy scene-linear bright-surface bloom targets.
+    ASDiffuseGlow::releaseHDRResources();
+    // </AS:Chanayane>
+
     mHeroProbeManager.cleanup(); // release hero probes
 
     releaseScreenBuffers();
@@ -9152,7 +9156,19 @@ void LLPipeline::renderFinalize()
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+        // <AS:Chanayane> Composite optional bright-surface bloom while the
+        // scene is still linear HDR. Authored material glow remains in the
+        // unchanged post-tonemap compatibility pass below.
+        LLRenderTarget* tonemap_source = &mRT->screen;
+        if (LLRenderTarget* bloom_source = ASDiffuseGlow::renderHDR(
+                *tonemap_source, mExposureMap, *mScreenTriangleVB))
+        {
+            tonemap_source = bloom_source;
+        }
+        // </AS:Chanayane>
+
+        // tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+        tonemap(tonemap_source, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
 
         if (apply_cas)
         {

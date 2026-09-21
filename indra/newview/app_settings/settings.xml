@@ -26221,9 +26221,9 @@ Change of this parameter will affect the layout of buttons in notification toast
     </map>
     <key>ASDiffuseGlowThreshold</key>
     <map>
-      <key>Comment</key><string>Display luminance at which bright-surface bloom is centered</string>
+      <key>Comment</key><string>Exposure-adjusted luminance at which bright-surface bloom is centered</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>0.67</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>0.15</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASDiffuseGlowSoftness</key>
     <map>
@@ -26235,7 +26235,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Contribution of bright surfaces to the existing glow blur</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>0.11</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>0.15</real><key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local configurable vignette. -->
