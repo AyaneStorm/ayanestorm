@@ -502,7 +502,16 @@ void FSFloaterPoser::doPoseSave(LLVOAvatar* avatar, const std::string& filename)
         setUiSelectedAvatarSaveFileName(filename);
 
         if (getSavingToBvh())
-            savePoseToBvh(avatar, filename);
+        {
+            // <AS:Chanayane> Do not report success when the requested BVH output failed.
+            // savePoseToBvh(avatar, filename);
+            if (!savePoseToBvh(avatar, filename))
+            {
+                mSavePosesBtn->setImageOverlay(tryGetString(ICON_SAVE_FAILED), mSavePosesBtn->getImageOverlayHAlign());
+                return;
+            }
+            // </AS:Chanayane>
+        }
 
         mSavePosesBtn->setImageOverlay(tryGetString(ICON_SAVE_OK), mSavePosesBtn->getImageOverlayHAlign());
         setSavePosesButtonText(!mPoserAnimator.allBaseRotationsAreZero(avatar));
