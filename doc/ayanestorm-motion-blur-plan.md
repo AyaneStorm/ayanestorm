@@ -2,7 +2,8 @@
 
 Author: chanayane@firestorm
 Date: 2026-09-17
-Status: implemented and confirmed working at runtime (bokt). Temporary debug
+Status: implemented and confirmed working at runtime (bokt). Snapshot-history
+contamination fix added 2026-09-21; awaiting build/runtime verification. Temporary debug
 visualization modes (`RenderMotionBlurDebug` 1-3) intentionally kept in place
 for now per user request — not yet cleaned up. Self/other avatar exclusion
 (backlog's "Note on future motion blur design") investigated 2026-09-17 and
@@ -83,13 +84,11 @@ Both snapshots must be module-local: the upstream `gGLLast*` arrays have
 already been overwritten with the current frame when the capture call runs,
 so reading `get_last_*()` later would compare the current frame to itself.
 
-Because the upstream `gGLLastModelView`/`gGLLastProjection` capture (and our
-own `captureFrameMatrices()` alongside it) only run for the main scene camera
-on non-cubemap-snapshot frames, reflection probes/snapshots/HUD sub-renders
-never perturb them — no extra `gCubeSnapshot` guarding is needed in
-`render()` beyond what `ASChromaticAberration::render()` already does
-(early-out when `gCubeSnapshot`). `render()` also checks a `sHaveFrameMatrices`
-flag and bails out until two captures provide a valid adjacent-frame pair.
+The upstream capture excludes cubemap snapshots but not ordinary `gSnapshot`
+renders. `captureFrameMatrices()` therefore stores ordinary-snapshot matrices
+separately so their capture projection cannot advance the live-view history;
+see "Snapshot projection/history fix" below. `render()` also checks the
+appropriate matrix-validity flag before using either matrix pair.
 
 Per-pixel algorithm:
 
@@ -214,10 +213,9 @@ separate, earlier capture is required rather than reading
 `get_current_modelview()` directly inside `render()`.
 
 `render()` early-outs on `gCubeSnapshot` exactly like
-`ASChromaticAberration::render()` already does — no separate discontinuity
-handling is needed since `gGLLastModelView`/`gGLLastProjection` (and our own
-`captureFrameMatrices()` snapshot alongside them) are only ever updated for
-the main scene camera on non-snapshot frames (`pipeline.cpp:10214-10223`).
+`ASChromaticAberration::render()` already does. Ordinary snapshots instead use
+the separately captured snapshot matrices and the special projection handling
+described in "Snapshot projection/history fix" below.
 
 Shader registration/unload goes in `llviewershadermgr.cpp`, alongside the
 existing `ASChromaticAberration`/`ASVolumetricLighting` registration calls
@@ -489,6 +487,28 @@ needed to make ordinary camera motion visible; adjacent-frame camera
 reprojection is the standard input, provided the matrices genuinely come
 from adjacent frames.
 
+## Snapshot projection/history fix (2026-09-21)
+
+**Symptom:** with motion blur enabled and the live camera stationary, a newly
+taken snapshot contained a small amount of motion blur.
+
+**Root cause:** `gCubeSnapshot` excludes reflection/cubemap captures, but an
+ordinary snapshot uses `gSnapshot` instead. `display(..., for_snapshot=true)`
+sets `gSnapshot` before rendering. Snapshot rendering may change resolution,
+aspect ratio, zoom, or tile/subfield projection, yet the existing
+`!gCubeSnapshot` capture path still advanced the motion-blur matrix history.
+The snapshot was consequently reprojected against the preceding live-view
+projection and interpreted that projection change as camera motion. It also
+left the snapshot projection in history for the next live frame.
+
+**Fix:** snapshot matrices are captured into a separate pair without advancing
+the live-view temporal history. During snapshot rendering, reprojection uses
+the snapshot projection for both current and previous positions while comparing
+the snapshot view against the latest live-view modelview. A changed capture
+layout therefore produces no velocity when the camera is still, while genuine
+camera movement can remain visible. The next displayed frame also retains the
+correct preceding live-view history.
+
 ## Future work (explicitly out of scope now)
 
 - True per-object/avatar motion vectors (would need previous-transform +
@@ -531,4 +551,3 @@ from adjacent frames.
     is ever added (see the point above), since that would need an
     avatar-tagging mechanism anyway and could absorb this at low
     incremental cost. Not worth the standalone complexity today.
-
