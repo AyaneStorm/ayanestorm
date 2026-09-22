@@ -38,8 +38,10 @@
 #include "llrender.h"
 #include "gltfscenemanager.h"
 
-// <AS:Chanayane> Bind cumulative volumetric scatter for late fullbright geometry.
+// <AS:Chanayane> AS diagnostics and cumulative volumetric scatter for late fullbright geometry.
+#include "asambientocclusion.h"
 #include "asvolumetriclighting.h"
+extern bool gCubeSnapshot;
 // </AS:Chanayane>
 
 static LLTrace::BlockTimerStatHandle FTM_RENDER_SIMPLE_DEFERRED("Deferred Simple");
@@ -177,6 +179,9 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
     shader->bind();
     // <AS:Chanayane> Fullbright is drawn after the volumetric composite.
     ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    shader->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                      ASAmbientOcclusion::debugWhiteEnabled() &&
+                      !LLPipeline::sRenderingHUDs && !gCubeSnapshot ? 1 : 0);
     // </AS:Chanayane>
     pushBatches(LLRenderPass::PASS_FULLBRIGHT, true, true);
 
@@ -186,6 +191,9 @@ void LLDrawPoolFullbright::renderPostDeferred(S32 pass)
         shader->bind(true);
         // <AS:Chanayane> bind(true) selects the rigged shader variant.
         ASVolumetricLighting::bindTransparencyAtlas(*shader->mRiggedVariant);
+        shader->mRiggedVariant->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                                         ASAmbientOcclusion::debugWhiteEnabled() &&
+                                         !gCubeSnapshot ? 1 : 0);
         // </AS:Chanayane>
         pushRiggedBatches(LLRenderPass::PASS_FULLBRIGHT_RIGGED, true, true);
     }
@@ -215,6 +223,9 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
     shader->bind();
     // <AS:Chanayane> Alpha-masked fullbright also follows the composite.
     ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    shader->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                      ASAmbientOcclusion::debugWhiteEnabled() &&
+                      !LLPipeline::sRenderingHUDs && !gCubeSnapshot ? 1 : 0);
     // </AS:Chanayane>
     pushMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK, true, true);
 
@@ -224,6 +235,9 @@ void LLDrawPoolFullbrightAlphaMask::renderPostDeferred(S32 pass)
         shader->bind(true);
         // <AS:Chanayane> bind(true) selects the rigged shader variant.
         ASVolumetricLighting::bindTransparencyAtlas(*shader->mRiggedVariant);
+        shader->mRiggedVariant->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                                         ASAmbientOcclusion::debugWhiteEnabled() &&
+                                         !gCubeSnapshot ? 1 : 0);
         // </AS:Chanayane>
         pushRiggedMaskBatches(LLRenderPass::PASS_FULLBRIGHT_ALPHA_MASK_RIGGED, true, true);
     }

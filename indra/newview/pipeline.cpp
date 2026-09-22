@@ -35,6 +35,9 @@
 // <AS:Chanayane> Optional volumetric lighting
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional XeGTAO ambient occlusion.
+#include "asambientocclusion.h"
+// </AS:Chanayane>
 
 // <AS:Chanayane> Optional screen-space celestial lens flares.
 #include "aslensflare.h"
@@ -1063,6 +1066,9 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
 
         // <AS:Chanayane> Allocate volumetric lighting resources alongside Exact OIT.
         ASVolumetricLighting::allocateResources(resX, resY);
+// </AS:Chanayane>
+        // <AS:Chanayane> Lazily allocate GTAO resources only when selected.
+        ASAmbientOcclusion::allocateResources(resX, resY);
         // </AS:Chanayane>
 
         if (RenderUIBuffer)
@@ -1437,6 +1443,10 @@ void LLPipeline::releaseGLBuffers()
         mGlow[i].release();
     }
 
+    // <AS:Chanayane> Release lazy scene-linear bright-surface bloom targets.
+    ASDiffuseGlow::releaseHDRResources();
+    // </AS:Chanayane>
+
     mHeroProbeManager.cleanup(); // release hero probes
 
     releaseScreenBuffers();
@@ -1478,6 +1488,9 @@ void LLPipeline::releaseScreenBuffers()
     // </AS:Chanayane>
     // <AS:Chanayane> Release volumetric lighting resources.
     ASVolumetricLighting::releaseResources();
+    // </AS:Chanayane>
+    // <AS:Chanayane> Release GTAO resources with the screen buffers.
+    ASAmbientOcclusion::releaseResources();
     // </AS:Chanayane>
 
     mAuxillaryRT.screen.release();
@@ -9152,7 +9165,19 @@ void LLPipeline::renderFinalize()
         static LLCachedControl<F32> cas_sharpness(gSavedSettings, "RenderCASSharpness", 0.4f);
         bool apply_cas = cas_sharpness != 0.0f && gCASProgram.isComplete() && gCASLegacyGammaProgram.isComplete();
 
-        tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+        // <AS:Chanayane> Composite optional bright-surface bloom while the
+        // scene is still linear HDR. Authored material glow remains in the
+        // unchanged post-tonemap compatibility pass below.
+        LLRenderTarget* tonemap_source = &mRT->screen;
+        if (LLRenderTarget* bloom_source = ASDiffuseGlow::renderHDR(
+                *tonemap_source, mExposureMap, *mScreenTriangleVB))
+        {
+            tonemap_source = bloom_source;
+        }
+        // </AS:Chanayane>
+
+        // tonemap(&mRT->screen, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
+        tonemap(tonemap_source, apply_cas ? &mRT->deferredLight : &mPostPingMap, !apply_cas);
 
         if (apply_cas)
         {
@@ -9712,6 +9737,11 @@ void LLPipeline::renderDeferredLighting()
         tc_moon = mat * tc_moon;
         mTransformedMoonDir.set(tc_moon);
 
+        // <AS:Chanayane> Produce dedicated GTAO visibility before the sun/light-map pass.
+        const bool gtao_valid = RenderDeferredSSAO && !gCubeSnapshot &&
+            ASAmbientOcclusion::render(mRT->deferredScreen, *mScreenTriangleVB);
+        // </AS:Chanayane>
+
         if ((RenderDeferredSSAO && !gCubeSnapshot) || RenderShadowDetail > 0)
         {
             LL_PROFILE_GPU_ZONE("sun program");
@@ -9721,6 +9751,9 @@ void LLPipeline::renderDeferredLighting()
 
                 LLGLSLShader& sun_shader = gCubeSnapshot ? gDeferredSunProbeProgram : gDeferredSunProgram;
                 bindDeferredShader(sun_shader, deferred_light_target);
+                // <AS:Chanayane> Preserve shadow channels while bypassing legacy SSAO for valid GTAO.
+                sun_shader.uniform1i(LLStaticHashedString("as_gtao_effective"), gtao_valid ? 1 : 0);
+                // </AS:Chanayane>
                 mScreenTriangleVB->setBuffer();
                 glClearColor(1, 1, 1, 1);
                 deferred_light_target->clear(GL_COLOR_BUFFER_BIT);
@@ -9816,6 +9849,20 @@ void LLPipeline::renderDeferredLighting()
             LL_PROFILE_GPU_ZONE("atmospherics");
             bindDeferredShader(soften_shader);
 
+            // <AS:Chanayane> Select the dedicated GTAO visibility and neutral-material AO diagnostic.
+            const bool bound_gtao = gtao_valid && ASAmbientOcclusion::bindResult(soften_shader);
+            soften_shader.uniform1i(LLStaticHashedString("as_gtao_effective"), bound_gtao ? 1 : 0);
+            const bool bent_normals = bound_gtao && ASAmbientOcclusion::bentNormalsEffective();
+            static LLCachedControl<F32> bent_normal_influence(
+                gSavedSettings, "RenderGTAOBentNormalInfluence", 1.f);
+            soften_shader.uniform1i(LLStaticHashedString("as_gtao_bent_normals"),
+                                    bent_normals ? 1 : 0);
+            soften_shader.uniform1f(LLStaticHashedString("as_gtao_bent_normal_influence"),
+                                    llclamp((F32)bent_normal_influence, 0.f, 1.f));
+            soften_shader.uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                                    ASAmbientOcclusion::debugWhiteEnabled() && !gCubeSnapshot ? 1 : 0);
+            // </AS:Chanayane>
+
             static LLCachedControl<F32> ssao_scale(gSavedSettings, "RenderSSAOIrradianceScale", 0.5f);
             static LLCachedControl<F32> ssao_max(gSavedSettings, "RenderSSAOIrradianceMax", 0.25f);
             static LLStaticHashedString ssao_scale_str("ssao_irradiance_scale");
@@ -9850,6 +9897,9 @@ void LLPipeline::renderDeferredLighting()
                 mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
 
+            // <AS:Chanayane> Release the dedicated GTAO sampler before the deferred shader.
+            ASAmbientOcclusion::unbindResult(soften_shader);
+            // </AS:Chanayane>
             unbindDeferredShader(gDeferredSoftenProgram);
         }
 
@@ -9864,7 +9914,12 @@ void LLPipeline::renderDeferredLighting()
         static LLCachedControl<S32> local_light_count(gSavedSettings, "RenderLocalLightCount", 256);
         static LLCachedControl<S32> probe_level(gSavedSettings, "RenderReflectionProbeLevel", 0);
 
-        if (local_light_count > 0 && (!gCubeSnapshot || probe_level > 0))
+        // <AS:Chanayane> Keep the AO comparison view neutral; local lights would
+        // reintroduce the original G-buffer material colors after the white composite.
+        // if (local_light_count > 0 && (!gCubeSnapshot || probe_level > 0))
+        if (local_light_count > 0 && (!gCubeSnapshot || probe_level > 0) &&
+            (!ASAmbientOcclusion::debugWhiteEnabled() || gCubeSnapshot))
+        // </AS:Chanayane>
         {
             gGL.setSceneBlendType(LLRender::BT_ADD);
             std::list<LLVector4>        fullscreen_lights;

@@ -48,6 +48,10 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int classic_mode;
 
+// <AS:Chanayane> Neutral-material AO comparison for late alpha surfaces.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 #ifdef USE_DIFFUSE_TEX
 uniform sampler2D diffuseMap;
 #endif
@@ -427,6 +431,13 @@ void main()
 // color.rgb = color.rgb * asVolumetricTransmittance(vary_position) +
 //             asVolumetricForeground(vary_position);
     color.rgb += asVolumetricForeground(vary_position);
+// </AS:Chanayane>
+// <AS:Chanayane> Keep alpha cutouts and directional shadows, but remove
+// material, environment, fog, and local-light color from the diagnostic.
+if (as_ao_debug_white != 0)
+{
+    color.rgb = vec3(shadow);
+}
 // </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(color, vec4(0));

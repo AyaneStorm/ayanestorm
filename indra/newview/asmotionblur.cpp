@@ -34,11 +34,15 @@ namespace
     glm::mat4 sCurrProjection(1.f);
     glm::mat4 sPrevModelview(1.f);
     glm::mat4 sPrevProjection(1.f);
+    glm::mat4 sSnapshotModelview(1.f);
+    glm::mat4 sSnapshotProjection(1.f);
     bool sHaveCurrentFrameMatrices = false;
     bool sHaveFrameMatrices = false;
+    bool sHaveSnapshotMatrices = false;
 }
 
 extern bool gCubeSnapshot;
+extern bool gSnapshot;
 
 void ASMotionBlur::registerUICallbacks()
 {
@@ -82,6 +86,17 @@ void ASMotionBlur::unloadShader()
 
 void ASMotionBlur::captureFrameMatrices()
 {
+    // Snapshot renders can change the projection, aspect, resolution, or tile while
+    // reusing the live camera. Keep their current matrices separate so they do not
+    // advance the live-view history.
+    if (gSnapshot)
+    {
+        sSnapshotModelview = get_current_modelview();
+        sSnapshotProjection = get_current_projection();
+        sHaveSnapshotMatrices = true;
+        return;
+    }
+
     // Preserve our preceding capture before taking the current one. This call occurs
     // after the pipeline has overwritten its get_last_*() globals with the current frame.
     sPrevModelview = sCurrModelview;
@@ -97,7 +112,10 @@ bool ASMotionBlur::render(LLRenderTarget& source, LLRenderTarget& destination, L
                            LLVertexBuffer& screen_triangle)
 {
     static LLCachedControl<bool> motion_blur_enabled(gSavedSettings, "RenderMotionBlur", false);
-    if (!motion_blur_enabled || !sProgram.isComplete() || !sHaveFrameMatrices || gCubeSnapshot ||
+    const bool have_matrices = gSnapshot
+        ? sHaveCurrentFrameMatrices && sHaveSnapshotMatrices
+        : sHaveFrameMatrices;
+    if (!motion_blur_enabled || !sProgram.isComplete() || !have_matrices || gCubeSnapshot ||
         ASBackgroundIsolate::isActive() || &source == &destination ||
         source.getWidth() <= 0 || source.getHeight() <= 0 ||
         source.getWidth() != destination.getWidth() || source.getHeight() != destination.getHeight())
@@ -120,9 +138,15 @@ bool ASMotionBlur::render(LLRenderTarget& source, LLRenderTarget& destination, L
     static const S32 sample_counts[3] = { 8, 16, AS_MOTION_BLUR_MAX_SAMPLES };
     const S32 tier = llclamp((S32)quality, 0, 2);
 
-    const glm::mat4 inv_curr_projection = glm::inverse(sCurrProjection);
-    const glm::mat4 inv_curr_modelview = glm::inverse(sCurrModelview);
-    const glm::mat4 prev_modelview_proj = sPrevProjection * sPrevModelview;
+    const glm::mat4& curr_modelview = gSnapshot ? sSnapshotModelview : sCurrModelview;
+    const glm::mat4& curr_projection = gSnapshot ? sSnapshotProjection : sCurrProjection;
+    const glm::mat4& prev_modelview = gSnapshot ? sCurrModelview : sPrevModelview;
+    // A snapshot's projection is a capture layout, not camera motion. Reuse it for
+    // the previous view so only an actual view-matrix change contributes velocity.
+    const glm::mat4& prev_projection = gSnapshot ? sSnapshotProjection : sPrevProjection;
+    const glm::mat4 inv_curr_projection = glm::inverse(curr_projection);
+    const glm::mat4 inv_curr_modelview = glm::inverse(curr_modelview);
+    const glm::mat4 prev_modelview_proj = prev_projection * prev_modelview;
 
     LL_PROFILE_GPU_ZONE("Motion Blur");
     LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);

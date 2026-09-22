@@ -18,10 +18,9 @@ namespace ASMotionBlur
     void registerShader(std::vector<LLGLSLShader*>& shaders);
     bool createShader(S32 shader_level);
     void unloadShader();
-    // Advances the module's previous/current main-view matrix snapshots. Must be called
-    // once per frame at the end of the 3D scene render, before render_ui() substitutes its
-    // HUD modelview. The module retains its own previous snapshot because the pipeline's
-    // get_last_*() globals have already advanced to the current frame at this call site.
+    // Captures matrices at the end of the 3D scene render, before render_ui() can
+    // substitute its HUD modelview. Ordinary snapshots are kept separate and do not
+    // advance the module's previous/current live-view history.
     void captureFrameMatrices();
     // Returns true only when a distinct destination received the processed image.
     // depth is the shared deferred depth buffer (e.g. mRT->deferredScreen), read for

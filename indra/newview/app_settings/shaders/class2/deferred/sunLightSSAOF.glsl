@@ -38,6 +38,10 @@ float sampleDirectionalShadow(vec3 shadow_pos, vec3 norm, vec2 pos_screen);
 float sampleSpotShadow(vec3 shadow_pos, vec3 norm, int index, vec2 pos_screen);
 float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen);
 
+// <AS:Chanayane> A valid dedicated GTAO result bypasses legacy SSAO only.
+uniform int as_gtao_effective;
+// </AS:Chanayane>
+
 void main()
 {
     vec2 pos_screen = vary_fragcoord.xy;
@@ -46,7 +50,10 @@ void main()
 
     vec4 col;
     col.r = sampleDirectionalShadow(pos.xyz, norm.xyz, pos_screen);
-    col.g = calcAmbientOcclusion(pos, norm.xyz, pos_screen);
+    // <AS:Chanayane> Keep the original legacy calculation as the fallback.
+    // col.g = calcAmbientOcclusion(pos, norm.xyz, pos_screen);
+    col.g = as_gtao_effective != 0 ? 1.0 : calcAmbientOcclusion(pos, norm.xyz, pos_screen);
+    // </AS:Chanayane>
     col.b = sampleSpotShadow(pos.xyz, norm.xyz, 0, pos_screen);
     col.a = sampleSpotShadow(pos.xyz, norm.xyz, 1, pos_screen);
 

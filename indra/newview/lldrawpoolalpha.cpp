@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 // <AS:Chanayane> Depth-resolved volumetric input for transparency shaders.
+#include "asambientocclusion.h"
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 
@@ -74,6 +75,11 @@ static const F32 MINIMUM_ALPHA = 0.004f; // ~ 1/255
 // minimum alpha before discarding a fragment when rendering impostors
 static const F32 MINIMUM_IMPOSTOR_ALPHA = 0.1f;
 
+// <AS:Chanayane> Declare before shader preparation so the AO diagnostic can
+// remain disabled for reflection-probe cube captures.
+extern bool gCubeSnapshot;
+// </AS:Chanayane>
+
 LLDrawPoolAlpha::LLDrawPoolAlpha(U32 type) :
         LLRenderPass(type), target_shader(NULL),
         mColorSFactor(LLRender::BF_UNDEF), mColorDFactor(LLRender::BF_UNDEF),
@@ -117,6 +123,9 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     shader->bind();
 // <AS:Chanayane> Bind the AS-owned cumulative scatter atlas when available.
     ASVolumetricLighting::bindTransparencyAtlas(*shader);
+    shader->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                      ASAmbientOcclusion::debugWhiteEnabled() &&
+                      !LLPipeline::sRenderingHUDs && !gCubeSnapshot ? 1 : 0);
 // </AS:Chanayane>
     shader->uniform1f(LLShaderMgr::DISPLAY_GAMMA, (gamma > 0.1f) ? 1.0f / gamma : (1.0f / 2.2f));
 
@@ -148,7 +157,9 @@ static void prepare_alpha_shader(LLGLSLShader* shader, bool deferredEnvironment,
     }
 }
 
-extern bool gCubeSnapshot;
+// <AS:Chanayane> Declaration moved above shader preparation.
+// extern bool gCubeSnapshot;
+// </AS:Chanayane>
 
 void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 {
