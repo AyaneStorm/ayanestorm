@@ -249,9 +249,14 @@ namespace
 
     bool supportedCompute()
     {
+#if LL_DARWIN
+        // Apple OpenGL stops at 4.1 and exports no compute/image entry points.
+        return false;
+#else
         return gGLManager.mGLVersion >= 4.29f &&
             (gGLManager.mGLSLVersionMajor > 4 ||
              (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30));
+#endif
     }
 
     void configureFragmentShader(LLGLSLShader& shader, const std::string& name,
@@ -481,6 +486,7 @@ namespace
         return glGetError() == GL_NO_ERROR;
     }
 
+#if !LL_DARWIN
     void saveImageBindings(std::array<ImageBinding, GTAO_MIP_COUNT>& bindings)
     {
         for (GLuint binding = 0; binding < GTAO_MIP_COUNT; ++binding)
@@ -610,6 +616,14 @@ namespace
         sFinalVisibility = sResources.visibility[read_index];
         return glGetError() == GL_NO_ERROR;
     }
+#else
+    // Keep Darwin on the GLSL 4.00 fragment/FBO backend without referencing
+    // compute symbols that are absent from Apple's OpenGL framework.
+    bool renderCompute(LLRenderTarget&)
+    {
+        return false;
+    }
+#endif
 }
 
 const char* ASAmbientOcclusion::shaderCacheRevision()
