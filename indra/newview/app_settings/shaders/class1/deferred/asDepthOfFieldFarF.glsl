@@ -58,8 +58,8 @@ float highlightWeight(vec3 color)
 void main()
 {
     vec2 uv = vary_fragcoord;
-    vec4 center_color = texture(diffuseRect, uv);
-    float center_coc = texture(noiseMap, uv).r;
+    vec3 center_color = texture(diffuseRect, uv).rgb;
+    float center_coc = texture(noiseMap, uv).g;
     float phase = samplePhase();
 
     // Build a background plate beneath defocused foreground edges. The near
@@ -79,7 +79,7 @@ void main()
             vec2 disk = apertureSample(i, sample_count, phase, aperture_weight);
             vec2 sample_uv = clamp(uv + disk * foreground_radius / screen_res,
                                    0.5 / screen_res, vec2(1.0) - 0.5 / screen_res);
-            float sample_coc = texture(noiseMap, sample_uv).r;
+            float sample_coc = texture(noiseMap, sample_uv).g;
             if (sample_coc >= -0.0001)
             {
                 fill_sum += texture(diffuseRect, sample_uv).rgb * aperture_weight;
@@ -99,8 +99,8 @@ void main()
     }
 
     float center_radius = center_coc * max_radius;
-    vec3 sum = center_color.rgb * highlightWeight(center_color.rgb);
-    float weight_sum = highlightWeight(center_color.rgb);
+    vec3 sum = center_color * highlightWeight(center_color);
+    float weight_sum = highlightWeight(center_color);
 
     for (int i = 0; i < AS_DOF_MAX_SAMPLES; ++i)
     {
@@ -113,7 +113,7 @@ void main()
         vec2 offset_pixels = disk * center_radius;
         vec2 sample_uv = clamp(uv + offset_pixels / screen_res,
                                0.5 / screen_res, vec2(1.0) - 0.5 / screen_res);
-        float sample_coc = texture(noiseMap, sample_uv).r;
+        float sample_coc = texture(noiseMap, sample_uv).g;
         float sample_radius = max(sample_coc, 0.0) * max_radius;
         // Compare radii in aperture space so anamorphic and polygonal kernels
         // retain their intended coverage instead of being clipped as circles.

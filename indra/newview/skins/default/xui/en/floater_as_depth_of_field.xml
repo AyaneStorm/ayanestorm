@@ -118,6 +118,11 @@
     <combo_box.item label="Foreground coverage" name="near_coverage" value="2" />
     <combo_box.item label="Far blur" name="far" value="3" />
     <combo_box.item label="Near blur" name="near" value="4" />
+    <combo_box.item label="Transparent coverage" name="transparent_coverage" value="5" />
+    <combo_box.item label="Transparent signed CoC" name="transparent_coc" value="6" />
+    <combo_box.item label="Opaque signed CoC" name="opaque_coc" value="7" />
+    <combo_box.item label="Transparent far blur" name="transparent_far" value="8" />
+    <combo_box.item label="Transparent near blur" name="transparent_near" value="9" />
   </combo_box>
   <button name="reset_dof_debug" label="D" layout="topleft"
           left="385" top="343" width="20" height="22" tool_tip="Reset to default.">

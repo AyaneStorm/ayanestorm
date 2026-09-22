@@ -8903,7 +8903,12 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 }
 // </FS:Beq>
 
-void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
+// <AS:Chanayane> The advanced-only call is made before tone mapping; the
+// original late call still owns the legacy fallback.
+// void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
+bool LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst,
+                           bool advanced_only)
+// </AS:Chanayane>
 {
     LL_PROFILE_GPU_ZONE("dof");
     {
@@ -9034,17 +9039,26 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             F32 screen_to_target_scale_factor = (F32)gViewerWindow->getWindowHeightRaw()/dst->getHeight();
             F32 adj_COF = CameraMaxCoF / screen_to_target_scale_factor;
             // </FS:Beq>
-            // <AS:Chanayane> Keep Firestorm's focus and physical-lens frontend,
-            // but let the independent advanced backend replace only the image
-            // synthesis. Failure falls through to the untouched legacy passes.
-            if (ASDepthOfField::render(*src, *dst, mRT->deferredScreen,
+            // <AS:Chanayane> Keep Firestorm's focus and physical-lens frontend.
+            // The early call runs the owned image synthesis in linear HDR;
+            // failure leaves the untouched late legacy passes available.
+            if (advanced_only && ASDepthOfField::render(*src, *dst, mRT->deferredScreen,
                     *mScreenTriangleVB, -subject_distance / 1000.f,
                     blur_constant,
                     tanf(1.f / LLDrawable::sCurPixelAngle) * screen_to_target_scale_factor,
                     magnification, adj_COF))
             {
-                return;
+// <AS:Chanayane> A successful early pass supplies the HDR tonemap source.
+                // return;
+                return true;
+// </AS:Chanayane>
             }
+// <AS:Chanayane> Never run the legacy, post-tonemap shader on the HDR target.
+            if (advanced_only)
+            {
+                return false;
+            }
+// </AS:Chanayane>
             // </AS:Chanayane>
             { // build diffuse+bloom+CoF
                 mRT->deferredLight.bindTarget();
@@ -9136,6 +9150,10 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             copyRenderTarget(src, dst);
         }
     }
+// <AS:Chanayane> The late caller ignores this result; early callers use it to
+// select the color-space-consistent HDR source.
+    return true;
+// </AS:Chanayane>
 }
 
 void LLPipeline::renderFinalize()
@@ -9158,6 +9176,27 @@ void LLPipeline::renderFinalize()
 
     gGL.setColorMask(true, true);
     glClearColor(0, 0, 0, 0);
+
+// <AS:Chanayane> The owned DoF's opaque and transparent captures are linear
+// HDR. Resolve them against the linear scene before any non-linear display
+// transform; the legacy post-tonemap DoF remains below as a fallback.
+    LLRenderTarget* linear_source = &mRT->screen;
+    bool advanced_dof_applied = false;
+    if ((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
+        RenderDepthOfField && !gCubeSnapshot &&
+        gSavedSettings.getS32("ASDepthOfFieldMode") == 1)
+    {
+        if (LLRenderTarget* hdr_output = ASDepthOfField::hdrOutput(
+                mRT->screen.getWidth(), mRT->screen.getHeight()))
+        {
+            if (renderDoF(&mRT->screen, hdr_output, true))
+            {
+                linear_source = hdr_output;
+                advanced_dof_applied = true;
+            }
+        }
+    }
+// </AS:Chanayane>
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
@@ -9183,7 +9222,10 @@ void LLPipeline::renderFinalize()
         // <AS:Chanayane> Composite optional bright-surface bloom while the
         // scene is still linear HDR. Authored material glow remains in the
         // unchanged post-tonemap compatibility pass below.
-        LLRenderTarget* tonemap_source = &mRT->screen;
+// <AS:Chanayane> Feed the HDR DoF result into the same bloom/tonemap chain.
+        // LLRenderTarget* tonemap_source = &mRT->screen;
+        LLRenderTarget* tonemap_source = linear_source;
+// </AS:Chanayane>
         if (LLRenderTarget* bloom_source = ASDiffuseGlow::renderHDR(
                 *tonemap_source, mExposureMap, *mScreenTriangleVB))
         {
@@ -9202,7 +9244,10 @@ void LLPipeline::renderFinalize()
     }
     else
     {
-        gammaCorrect(&mRT->screen, &mPostPingMap);
+// <AS:Chanayane> The non-HDR display path also needs the linear DoF result.
+        // gammaCorrect(&mRT->screen, &mPostPingMap);
+        gammaCorrect(linear_source, &mPostPingMap);
+// </AS:Chanayane>
     }
 
     LLVertexBuffer::unbind();
@@ -9221,13 +9266,16 @@ void LLPipeline::renderFinalize()
     gGLViewport[3] = gViewerWindow->getWorldViewRectRaw().getHeight();
     glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
 
-    if((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
+// <AS:Chanayane> Do not defocus the same frame a second time after tone mapping.
+    if(!advanced_dof_applied &&
+       (RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
         RenderDepthOfField &&
         !gCubeSnapshot)
     {
         renderDoF(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
     }
+// </AS:Chanayane>
 
     // <AS:Chanayane> Apply camera motion blur before AA, matching the existing
     // ping-pong post-process chain (see ASChromaticAberration below).

@@ -632,10 +632,9 @@ reuse) while producing equivalent near/far masks and resolve output. Merely
 moving the same tap loops into compute would add another platform path without
 a demonstrated performance gain.
 
-#### `.iep depth of field shader` review (2026-09-22)
+#### Advanced AyaneStorm depth-of-field design review (2026-09-22)
 
-The vendored shader is a substantially newer and more ambitious
-reference than qt ADoF. It combines tile-reduced and dilated CoC bounds,
+The quality review identified tile-reduced and dilated CoC bounds,
 adaptive ring counts, a modified background ring accumulator, a three-depth-
 layer foreground accumulator, content-aware foreground hole filling, a
 CoC-moment-guided postfilter, software variable shading rates and a hybrid
@@ -644,9 +643,8 @@ corrects the non-uniform area density created when circular samples are radially
 deformed into a polygon, and can vary tangential/sagittal shape across the
 screen.
 
-Do not port or translate this file. The useful items below are general
-rendering concepts which require independent design, different code and
-validation against AyaneStorm's own renderer.
+These are general rendering concepts which require independent AyaneStorm
+design and validation against its own renderer.
 
 One low-risk improvement has been independently derived for the portable
 backend: AyaneStorm's uniform-angle polygon samples now receive the radial
@@ -704,10 +702,27 @@ AyaneStorm transparent-DoF representation (coverage plus depth/layer data), not
 another threshold tweak; Exact OIT/AVBOIT can source it from their retained
 layers, while Standard/AYAstorm will require a bounded auxiliary capture.
 
-The next highest-value quality work is foreground-edge reconstruction. The
-ie design demonstrates why coverage alone is insufficient when an
-out-of-focus foreground silhouette reveals background that was never sampled:
-it classifies contributions relative to the center into multiple CoC layers,
+The transparent-layer foundation uses AyaneStorm-owned auxiliary targets shared
+by all four alpha modes. Opaque HDR color and depth are preserved before alpha
+using OpenGL 4.1 framebuffer blits. A color replay accumulates visible rigged
+and ordinary transparency into a premultiplied RGB/coverage target, while a
+separate pass records nearest transparent depth without altering opaque depth.
+The owned resolve now runs on the linear HDR scene before bloom and tone mapping;
+the auxiliary captures cannot be composited correctly after the display transform.
+CoC preparation retains effective, opaque and transparent CoC plus coverage as
+separate channels. Opaque blur now follows opaque CoC even beneath in-focus
+hair; transparent blur follows transparent CoC. The prior signed
+final-minus-opaque color residual was not a real source layer and spread
+red/gold errors during camera or avatar motion. The gather now reads captured
+premultiplied radiance directly. The resolve preserves the selected compositor's
+final color where captured surfaces need no blur. The auxiliary replay uses
+source-over, so nonstandard blends and OIT layer stacks remain approximations
+once blurred; this change still needs runtime validation in every alpha mode.
+
+The next highest-value quality work is foreground-edge reconstruction.
+Coverage alone is insufficient when an out-of-focus foreground silhouette
+reveals background that was never sampled. A robust solution classifies
+contributions relative to the center into multiple CoC layers,
 estimates missing background coverage, and obtains a depth-valid replacement
 before blurring it. AyaneStorm should pursue a smaller independent variant: a
 near-coverage/occlusion prepass plus conservative background hole-fill input,
@@ -732,6 +747,58 @@ conservation, bounded sprite counts and careful HDR/post-tonemap placement.
 Screen-position-dependent radial/tangential aperture deformation is a cheaper
 artistic feature and can be added later as a physically motivated cat-eye or
 Petzval control.
+
+#### Remaining AyaneStorm DoF implementation roadmap
+
+The current blade, roundness and rotation controls affect procedural gather
+positions, but bounded independently phased gathers do not preserve a coherent
+aperture outline around isolated highlights. Visible polygonal bokeh is
+therefore not complete: a selected hexagonal aperture currently tends to look
+like ordinary blur. Treat this as a missing image-synthesis capability, not a
+control-tuning problem.
+
+Complete the renderer in the following order:
+
+1. Finish and validate the transparent-layer contract. Accumulated coverage
+   must represent every contributing transparent fragment, while nearest
+   transparent depth is used only for CoC. An in-focus resolve must reproduce
+   the selected alpha compositor exactly. Exact OIT and AVBOIT should
+   eventually export already-computed coverage/transmittance through a common
+   interface; Standard and AYAstorm retain the OpenGL 4.1 auxiliary fallback.
+2. Add coherent aperture-shaped highlight scattering. Select exceptional HDR
+   highlights, subtract the same energy from the gather input, render a bounded
+   number of analytic aperture sprites, and add that energy back during
+   resolve. Blade count, roundness, rotation and anamorphic scaling must be
+   plainly visible on suitable defocused lights without changing scene
+   exposure.
+3. Replace the simple foreground model with a compact multi-CoC-layer
+   accumulator and depth-valid background hole fill. This is the main path to
+   stable hair, foliage and avatar silhouettes without hard cutouts or leaked
+   background plates.
+4. Add adaptive work selection. Portable OpenGL 4.1 uses fragment/FBO tile
+   classification and bounded quality tiers; the newer backend uses compute
+   tile reduction/dilation, plane skipping and adaptive sample density.
+5. Store first and second CoC moments and apply a radius-aware postfilter. It
+   should close sparse sampling gaps while preserving aperture boundaries and
+   mixed near/far edges.
+6. Add optional spatially varying aperture deformation for cat-eye,
+   astigmatism and Petzval-style bokeh after the central aperture response is
+   correct.
+7. Add optional DoF-linked longitudinal chromatic aberration and optical
+   vignetting only after color/coverage conservation is proven.
+
+The common path must remain OpenGL 4.1 and use fragment shaders, framebuffer
+targets and ordinary blending. Compute shaders, image load/store, group-shared
+reductions and compact dispatch require the newer backend; they are
+optimizations, not dependencies of the effect. Software variable shading rate
+belongs only in that backend unless a portable tile-resolution scheme proves
+both visually equivalent and measurably faster.
+
+No screen-space DoF can reconstruct arbitrary fully occluded background or an
+unbounded stack of transparent surfaces from one resolved frame. AyaneStorm can
+improve those cases by exporting renderer-owned layers and transmittance, but
+must keep memory and layer counts bounded. The goal is stable, energy-conserving
+real-time synthesis rather than an unbounded physical simulation.
 
 The whole reference is unsuitable as AyaneStorm's common implementation. It is
 compute-centric, uses many full-resolution RGBA16F images plus moment, tile,

@@ -56,8 +56,8 @@ float highlightWeight(vec3 color)
 void main()
 {
     vec2 uv = vary_fragcoord;
-    vec4 center_color = texture(diffuseRect, uv);
-    float center_coc = texture(noiseMap, uv).r;
+    vec3 center_color = texture(diffuseRect, uv).rgb;
+    float center_coc = texture(noiseMap, uv).g;
     vec3 sum = vec3(0.0);
     float weight_sum = 0.0;
     float foreground_coverage = 0.0;
@@ -68,8 +68,8 @@ void main()
     if (center_coc < 0.0)
     {
         float center_radius = -center_coc * max_radius;
-        float weight = highlightWeight(center_color.rgb) / max(center_radius * center_radius, 1.0);
-        sum += center_color.rgb * weight;
+        float weight = highlightWeight(center_color) / max(center_radius * center_radius, 1.0);
+        sum += center_color * weight;
         weight_sum += weight;
     }
 
@@ -89,7 +89,7 @@ void main()
             // destination pixel. The sign preserves asymmetric odd-blade PSFs.
             vec2 sample_uv = clamp(uv - offset_pixels / screen_res,
                                    0.5 / screen_res, vec2(1.0) - 0.5 / screen_res);
-            float sample_coc = texture(noiseMap, sample_uv).r;
+            float sample_coc = texture(noiseMap, sample_uv).g;
             float sample_radius = max(-sample_coc, 0.0) * max_radius;
             // Compare radii in aperture space so anamorphic and polygonal
             // kernels retain their intended foreground coverage.
@@ -123,7 +123,7 @@ void main()
         }
     }
 
-    vec3 near_color = weight_sum > 0.0001 ? sum / weight_sum : center_color.rgb;
+    vec3 near_color = weight_sum > 0.0001 ? sum / weight_sum : center_color;
     foreground_coverage = clamp(foreground_coverage, 0.0, 1.0);
     frag_color = vec4(near_color * foreground_coverage, foreground_coverage);
 }

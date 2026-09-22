@@ -28,6 +28,7 @@
 
 // <AS:Chanayane> Depth-resolved volumetric input for transparency shaders.
 #include "asambientocclusion.h"
+#include "asdepthoffield.h"
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 
@@ -217,6 +218,19 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
+// <AS:Chanayane> Preserve opaque depth before any transparency renderer can
+// write or resolve alpha. The later owned-DoF capture reuses this private depth
+// attachment for consistent visibility in all four alpha modes.
+    if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField &&
+        !gCubeSnapshot && !LLPipeline::sRenderingHUDs &&
+        getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
+    {
+        ASDepthOfField::prepareTransparentDepthCapture(
+            gPipeline.mRT->deferredScreen.getWidth(),
+            gPipeline.mRT->deferredScreen.getHeight());
+    }
+// </AS:Chanayane>
+
 // <AS:Chanayane> Capture replaces the two vanilla calls only while an OIT renderer is active.
     // // explicitly unbind here so render loop doesn't make assumptions about the last shader
     // // already being setup for rendering
@@ -249,20 +263,75 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 // </AS:Chanayane>
     {
         //update depth buffer sampler
-        simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
 
-        simple_shader->bind();
-        simple_shader->setMinimumAlpha(0.33f);
+// <AS:Chanayane> Capture premultiplied transparent radiance and nearest depth
+// without overwriting opaque scene depth. The color replay uses the ordinary
+// material shaders in every alpha mode; a coverage-only pass loses the color
+// needed for stable transparent bokeh.
+        // Original shader selection occurred here, before the coverage pass:
+        // simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
+        // Original shared-depth pass:
+        // simple_shader->bind();
+        // simple_shader->setMinimumAlpha(0.33f);
+        // gGL.setColorMask(false, false);
+        // renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX |
+        //     LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 |
+        //     LLVertexBuffer::MAP_TEXCOORD2, true);
+        // gGL.setColorMask(true, false);
+        const U32 capture_width = gPipeline.mRT->deferredScreen.getWidth();
+        const U32 capture_height = gPipeline.mRT->deferredScreen.getHeight();
+        const U32 mask = getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX |
+            LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 |
+            LLVertexBuffer::MAP_TEXCOORD2;
+        bool coverage_captured = false;
+        if (ASDepthOfField::beginTransparentCoverageCapture(capture_width,
+                                                            capture_height))
+        {
+            LLGLSLShader::unbind();
+            // The target starts black with the opaque scene's depth. Replay
+            // source-over color and alpha without writing transparent depth.
+            LLGLDepthTest coverage_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
+            LLGLEnable coverage_blend(GL_BLEND);
+            gGL.setColorMask(true, true);
+            renderAlpha(mask, false, true, true);
+            renderAlpha(mask, false, false, true);
+            gGL.setColorMask(true, false);
+            ASDepthOfField::endTransparentCoverageCapture();
+            coverage_captured = true;
+        }
+
+        simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
+        if (coverage_captured &&
+            ASDepthOfField::beginTransparentDepthCapture(capture_width,
+                                                         capture_height))
+        {
+            simple_shader->bind();
+            simple_shader->setMinimumAlpha(MINIMUM_ALPHA);
+            LLGLDepthTest nearest_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
+            LLGLDisable capture_blend(GL_BLEND);
+            gGL.setColorMask(true, true);
+            renderAlpha(mask, true, true);
+            renderAlpha(mask, true, false);
+            gGL.setColorMask(true, false);
+            ASDepthOfField::endTransparentDepthCapture();
+        }
+        else
+        {
+            // original code kept as the transactional fallback
+            simple_shader->bind();
+            simple_shader->setMinimumAlpha(0.33f);
 
         // mask off color buffer writes as we're only writing to depth buffer
-        gGL.setColorMask(false, false);
+            gGL.setColorMask(false, false);
 
         // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
         // We don't want the nearly invisible objects to cause of DoF effects
         renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2,
             true); // <--- discard mostly transparent faces
 
-        gGL.setColorMask(true, false);
+            gGL.setColorMask(true, false);
+        }
+// </AS:Chanayane>
     }
 }
 
@@ -646,7 +715,11 @@ void LLDrawPoolAlpha::renderRiggedPbrEmissives(std::vector<LLDrawInfo*>& emissiv
     }
 }
 
-void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
+// <AS:Chanayane> Optional source-over replay is private to the DoF color layer.
+// void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
+void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged,
+                                  bool dof_layer)
+// </AS:Chanayane>
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DRAWPOOL;
     bool initialized_lighting = false;
@@ -907,7 +980,16 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
                 {
 // <AS:Chanayane> Route per-draw blend state through the active OIT renderer.
                     // gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
-                    if (!ASOITDispatcher::configureCapturedDrawIfActive(current_shader, U32(params.mBlendFuncSrc), U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor)))
+                    if (dof_layer)
+                    {
+                        // RGB becomes premultiplied in the target; alpha is
+                        // accumulated separately as source-over coverage.
+                        gGL.blendFunc(LLRender::BF_SOURCE_ALPHA,
+                                      LLRender::BF_ONE_MINUS_SOURCE_ALPHA,
+                                      LLRender::BF_ONE,
+                                      LLRender::BF_ONE_MINUS_SOURCE_ALPHA);
+                    }
+                    else if (!ASOITDispatcher::configureCapturedDrawIfActive(current_shader, U32(params.mBlendFuncSrc), U32(params.mBlendFuncDst), U32(mAlphaSFactor), U32(mAlphaDFactor)))
                     {
                         gGL.blendFunc((LLRender::eBlendFactor) params.mBlendFuncSrc, (LLRender::eBlendFactor) params.mBlendFuncDst, mAlphaSFactor, mAlphaDFactor);
                     }
@@ -974,7 +1056,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, bool rigged)
 // submit glow redraws.
             // // render emissive faces into alpha channel for bloom effects
             // if (!depth_only)
-            if (!depth_only && !ASOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
+            if (!depth_only && !dof_layer && !ASOITDispatcher::handleCapturedEmissives(*this, depth_only, emissives, pbr_emissives, rigged_emissives, pbr_rigged_emissives))
 // </AS:Chanayane>
             {
                 gPipeline.enableLightsDynamic();

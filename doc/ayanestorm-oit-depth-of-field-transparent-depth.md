@@ -137,6 +137,12 @@ alone does not establish the alpha/depth values of individual pixels.
 ### Verified pipeline limitation
 
 - OIT resolves transparent and opaque colors before pipeline.renderDoF().
+- The normal DoF call occurs after tone mapping and glow composition. Auxiliary
+  opaque and transparent DoF captures are linear HDR; feeding them into that
+  late display-referred pass makes both layers appear much too dark. The owned
+  DoF must resolve against the linear scene before tone mapping, then feed its
+  result through the normal bloom/tonemap chain exactly once. Legacy DoF stays
+  in its original post-tonemap position.
 - cofF.glsl samples one depth and copies the already-composited RGB into
   its output, storing one circle of confusion in alpha.
 - postDeferredF.glsl blurs that mixed RGB using the circle of confusion.

@@ -182,7 +182,11 @@ public:
     void applyFXAA(LLRenderTarget* src, LLRenderTarget* dst);
     void generateSMAABuffers(LLRenderTarget* src);
     void applySMAA(LLRenderTarget* src, LLRenderTarget* dst);
-    void renderDoF(LLRenderTarget* src, LLRenderTarget* dst);
+// <AS:Chanayane> Permit the owned DoF to run in linear HDR before tone mapping.
+    // void renderDoF(LLRenderTarget* src, LLRenderTarget* dst);
+    bool renderDoF(LLRenderTarget* src, LLRenderTarget* dst,
+                   bool advanced_only = false);
+// </AS:Chanayane>
     void copyRenderTarget(LLRenderTarget* src, LLRenderTarget* dst);
     void combineGlow(LLRenderTarget* src, LLRenderTarget* dst);
     void visualizeBuffers(LLRenderTarget* src, LLRenderTarget* dst, U32 bufferIndex);

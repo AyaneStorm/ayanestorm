@@ -21,6 +21,17 @@ namespace ASDepthOfField
     void unloadShaders();
     void releaseResources();
 
+    // Dedicated linear-HDR output; never alias the final scene or its depth.
+    LLRenderTarget* hdrOutput(U32 width, U32 height);
+
+    // Captures transparent visibility independently from opaque scene depth.
+    // Coverage accumulates every contributing fragment; depth remains nearest.
+    bool prepareTransparentDepthCapture(U32 width, U32 height);
+    bool beginTransparentCoverageCapture(U32 width, U32 height);
+    void endTransparentCoverageCapture();
+    bool beginTransparentDepthCapture(U32 width, U32 height);
+    void endTransparentDepthCapture();
+
     // Returns true only after the advanced renderer has written destination.
     // The caller must continue through the legacy path when this returns false.
     bool render(LLRenderTarget& source, LLRenderTarget& destination,
