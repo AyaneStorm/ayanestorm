@@ -47,6 +47,7 @@ namespace ASAmbientOcclusion
     Technique effectiveTechnique();
     Backend requestedBackend();
     Backend effectiveBackend();
+    bool bentNormalsEffective();
     bool debugWhiteEnabled();
 }
 

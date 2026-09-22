@@ -228,7 +228,9 @@ resource management.
   horizontal pixels per invocation, but these are optimizations rather than
   algorithmic requirements. The source presets are Low = 1 slice x 2 steps,
   Medium = 2x2, High = 3x3, and Ultra = 9x3; each step samples both directions.
-  Start with High plus one denoise pass as the default, then tune from measured
+  AyaneStorm additionally provides Cinematic = 18x4 for low-grain still
+  photography at roughly 2.7 times Ultra's GTAO main-pass sampling cost. Start
+  with High plus one denoise pass as the default, then tune from measured
   AyaneStorm GPU timings.
 - Keep algorithm code and constants aligned between backends. Backend-specific
   code should be limited to texture access, output, group-shared depth-mip
@@ -345,3 +347,112 @@ blurring the user's own avatar versus other avatars (independent of the
 general scene motion blur), so a photographer can keep themselves sharp while
 background motion blurs, or vice versa. A worthwhile design detail to build
 in from the start rather than retrofit.
+
+## XeGTAO repository follow-on audit (2026-09-22)
+
+The vendored `.XeGTAO` tree contains more than the core AO implementation.
+AyaneStorm has already ported the important scalar XeGTAO pieces into
+`asambientocclusion`: five-level weighted view-depth mips, Hilbert/R2 spatial
+sampling, the radiometric horizon integral, packed depth edges, edge-aware
+spatial denoising, and both fragment and compute backends. The remaining
+interesting pieces are therefore follow-ons, not another GTAO rewrite.
+
+### Best candidate: GTAO bent normals for directional probe lighting
+
+XeGTAO can integrate a bent normal alongside scalar visibility. This records
+the average unoccluded direction rather than only how much of the hemisphere is
+visible. AyaneStorm's reflection-probe irradiance is already sampled by a
+direction in `class3/deferred/softenLightF.glsl`, so using the denoised bent
+normal for diffuse probe/sky irradiance could stop ambient light appearing to
+come through the occluded side of corners and openings. Keep the geometric
+normal for direct sun/moon lighting, BRDF terms, and shadowing.
+
+This is the strongest unported XeGTAO feature, but it is not free: the source
+documents roughly 25% extra GTAO cost, the working/final AO target must carry a
+direction plus visibility instead of one `R8` scalar, and the denoiser must
+filter and renormalize that direction. A portable representation should be
+chosen for both fragment and compute backends (for example octahedral `RG` plus
+visibility, rather than blindly copying HLSL's packed `R32_UINT` path). Add it
+as a higher quality option after scalar GTAO is runtime-proven, not as the
+default.
+
+#### Implementation status (2026-09-22)
+
+Implemented as the opt-in `RenderGTAOBentNormals` GTAO mode for both fragment
+and compute backends. The AO working targets switch from `R8` visibility to
+`RGBA8` encoded bent direction plus visibility, and the edge-aware denoiser
+filters and renormalizes both. Deferred sky ambient plus PBR and legacy diffuse
+probe irradiance use the result; direct, shadow, SSR, hero-probe, and glossy
+directions retain the geometric normal. `RenderGTAOBentNormalInfluence`
+provides a 0–1 blend for tuning, exposed beside the checkbox in the enlarged
+Photo Tools GTAO panel.
+The feature defaults off pending runtime performance and image validation.
+
+### High-value foundation: Intel TAA, but only after real motion vectors
+
+`IntelTAA.hlsli` contains a serious temporal resolve: projection jitter,
+depth-based history rejection, velocity confidence, YCoCg variance clipping,
+five-tap bicubic history sampling, neighbourhood recovery, and longest-velocity
+selection. A correct TAA foundation would improve geometric aliasing and let
+GTAO animate its Hilbert/R2 sequence across frames for temporal supersampling;
+SSR and volumetrics could eventually use the same history infrastructure.
+
+Do not port it on top of camera reprojection alone. The current
+`asmotionblur` reconstructs camera velocity from depth and explicitly has no
+per-object velocity buffer. Second Life has moving avatars, rigged meshes,
+texture animation, and alpha surfaces, so camera-only TAA would ghost them.
+The prerequisite is a maintained velocity attachment covering static,
+skinned, and otherwise moving geometry, plus previous transforms and robust
+history invalidation. Until then, GTAO's fixed frame index is correct; merely
+animating its noise would replace stable spatial noise with visible shimmer.
+
+### Concrete source for backlog item 3: split-plane depth of field
+
+`vaDepthOfField.hlsl` is a more complete design reference than a single larger
+blur shader. It computes near and far circles of confusion separately,
+performs CoC-weighted downsampling, blurs near and far planes independently
+(including a Poisson/bokeh kernel), and resolves them in depth order. That
+architecture directly addresses background color bleeding across focused
+foreground silhouettes and should inform item 3 above.
+
+Reuse the architecture, not the DirectX compute wrapper verbatim. A portable
+AyaneStorm implementation needs a fragment/FBO path for macOS and should start
+with separate half-resolution near/far targets and a CoC target. This is a
+larger but cleaner upgrade than the previously suggested one alternate
+fragment shader.
+
+### Small optional addition: Lottes and Uchimura tonemappers
+
+`vaTonemappers.hlsli` includes compact MIT-licensed Lottes and Uchimura curves.
+AyaneStorm currently exposes Khronos Neutral and ACES Hill, so these would add
+genuinely different highlight/contrast responses at little shader cost. They
+are photography choices rather than quality fixes and would require updating
+the tonemap selector and translated UI labels, so rank them below bent normals
+and DoF.
+
+### Useful methods, not immediate features
+
+- XeGTAO's ray-traced reference plus parameter auto-tuning is a good validation
+  methodology. Rebuilding its scene ray tracer inside the viewer is not worth
+  the integration cost, but representative AyaneStorm captures should be used
+  when tuning radius, falloff, power, and quality instead of tuning one scene by
+  eye.
+- The depth-aware weighted mip filter is a useful pattern for bandwidth-bound
+  screen-space effects. AyaneStorm already uses it for GTAO. Do not reuse that
+  exact AO mip chain as SSR Hi-Z data: SSR needs conservative hit-testing
+  semantics, while XeGTAO deliberately computes a radius-dependent weighted
+  average.
+- Half-precision arithmetic gives XeGTAO a documented 5-20% gain on some
+  hardware, but portable GLSL 4.00 has no equivalent to HLSL `min16float`.
+  Retain `R16F` storage and only add explicit 16-bit math after extension and
+  cross-vendor profiling.
+
+### Not worth importing now
+
+| Source component | Decision | Reason |
+|---|---|---|
+| `vaCMAA2.hlsl` | Skip | AyaneStorm already has FXAA and SMAA. CMAA2 needs a compute-only multi-buffer/indirect-dispatch integration for another spatial AA option, while TAA would provide the missing capability. |
+| Filament cloth/subsurface shaders | Defer | The formulas are interesting, but Second Life materials do not provide the required cloth/subsurface model, thickness, power, and color semantics. Applying them heuristically would mis-shade existing content. |
+| `vaIBL.hlsl` SH pipeline | Skip for now | AyaneStorm already generates and samples irradiance/radiance probe arrays. Replacing that system with spherical harmonics is a renderer project with no demonstrated benefit; bent normals can consume the current directional probe lookup directly. |
+| XeGTAO normal-from-depth pass | Skip | AyaneStorm already has a deferred view-space normal attachment, which is more faithful than reconstructed depth normals. |
+| Thin-occluder compensation | Leave disabled | XeGTAO itself disables it by default after auto-tuning found only a small, scene-dependent improvement; extra slices provide the preferred mitigation already used by AyaneStorm's quality presets. |

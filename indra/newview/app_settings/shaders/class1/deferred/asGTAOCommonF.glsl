@@ -1,5 +1,5 @@
 /**
- * AyaneStorm XeGTAO scalar-visibility adaptation.
+ * AyaneStorm XeGTAO visibility and optional bent-normal adaptation.
  * Author: chanayane@firestorm
  *
  * Derived from the Intel XeGTAO implementation:
@@ -70,7 +70,21 @@ vec2 gtao_noise(ivec2 pixel)
                                                 0.56984029099805326591));
 }
 
-vec2 gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice)
+vec3 gtao_rotate_from_minus_z(vec3 value, vec3 target)
+{
+    const vec3 source = vec3(0.0, 0.0, -1.0);
+    float cosine = dot(source, target);
+    if (cosine > 0.9997)
+    {
+        return value;
+    }
+    vec3 axis = cross(source, target);
+    return value * cosine + cross(axis, value) +
+        axis * (dot(axis, value) / max(1.0 + cosine, 1e-6));
+}
+
+void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
+                    out vec4 ao_term, out float packed_edges)
 {
     ivec2 size = textureSize(gtao_depth, 0);
     ivec2 lo = ivec2(0);
@@ -81,10 +95,17 @@ vec2 gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice)
     float top = texelFetch(gtao_depth, clamp(pixel + ivec2(0, 1), lo, hi), 0).r;
     float bottom = texelFetch(gtao_depth, clamp(pixel + ivec2(0, -1), lo, hi), 0).r;
     vec4 edges = gtao_edges(center, left, right, top, bottom);
+    packed_edges = gtao_pack_edges(edges);
 
     if (center >= 65500.0)
     {
-        return vec2(1.0 / GTAO_TERM_SCALE, gtao_pack_edges(vec4(1.0)));
+#ifdef GTAO_BENT_NORMALS
+        ao_term = vec4(0.5, 0.5, 0.0, 1.0 / GTAO_TERM_SCALE);
+#else
+        ao_term = vec4(1.0 / GTAO_TERM_SCALE);
+#endif
+        packed_edges = gtao_pack_edges(vec4(1.0));
+        return;
     }
 
     vec2 uv = (vec2(pixel) + 0.5) * gtao_pixel_size;
@@ -108,9 +129,12 @@ vec2 gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice)
         (gtao_orthographic_view != 0 ? 1.0 : center);
     float screen_radius = effect_radius / max(abs(pixel_view_size.x), 1e-6);
     float visibility = clamp((10.0 - screen_radius) / 100.0, 0.0, 1.0) * 0.5;
+#ifdef GTAO_BENT_NORMALS
+    vec3 bent_normal = vec3(0.0);
+#endif
     float min_s = 1.3 / max(screen_radius, 1e-6);
 
-    for (int slice = 0; slice < 9; ++slice)
+    for (int slice = 0; slice < 18; ++slice)
     {
         if (slice >= slice_count) break;
         float phi = (float(slice) + noise.x) * GTAO_PI / float(slice_count);
@@ -131,7 +155,7 @@ vec2 gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice)
         float horizon_0 = low_horizon_0;
         float horizon_1 = low_horizon_1;
 
-        for (int step_index = 0; step_index < 3; ++step_index)
+        for (int step_index = 0; step_index < 4; ++step_index)
         {
             if (step_index >= steps_per_slice) break;
             float step_noise = fract(noise.y +
@@ -167,11 +191,27 @@ vec2 gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice)
         float arc0 = (cos_normal + 2.0 * h0 * sin(n) - cos(2.0 * h0 - n)) * 0.25;
         float arc1 = (cos_normal + 2.0 * h1 * sin(n) - cos(2.0 * h1 - n)) * 0.25;
         visibility += projected_length * (arc0 + arc1);
+
+#ifdef GTAO_BENT_NORMALS
+        float t0 = (6.0 * sin(h0 - n) - sin(3.0 * h0 - n) +
+                    6.0 * sin(h1 - n) - sin(3.0 * h1 - n) + 16.0 * sin(n) -
+                    3.0 * (sin(h0 + n) + sin(h1 + n))) / 12.0;
+        float t1 = (-cos(3.0 * h0 - n) - cos(3.0 * h1 - n) + 8.0 * cos(n) -
+                    3.0 * (cos(h0 + n) + cos(h1 + n))) / 12.0;
+        vec3 local_bent_normal = vec3(direction.x * t0, direction.y * t0, -t1);
+        bent_normal += gtao_rotate_from_minus_z(local_bent_normal, view_vec) * projected_length;
+#endif
     }
 
     visibility = pow(max(visibility / float(slice_count), 0.0), gtao_power);
     visibility = max(0.03, visibility);
-    return vec2(clamp(visibility / GTAO_TERM_SCALE, 0.0, 1.0), gtao_pack_edges(edges));
+#ifdef GTAO_BENT_NORMALS
+    bent_normal = normalize(bent_normal);
+    ao_term = vec4(bent_normal * 0.5 + 0.5,
+                   clamp(visibility / GTAO_TERM_SCALE, 0.0, 1.0));
+#else
+    ao_term = vec4(clamp(visibility / GTAO_TERM_SCALE, 0.0, 1.0));
+#endif
 }
 
 float gtao_depth_mip_filter(vec4 depth, float radius)
@@ -200,19 +240,24 @@ vec4 gtao_unpack_edges(ivec2 pixel, ivec2 hi)
                  0.0, 1.0);
 }
 
-float gtao_visibility_at(ivec2 pixel, ivec2 hi)
+vec4 gtao_term_at(ivec2 pixel, ivec2 hi)
 {
-    return texelFetch(gtao_visibility_source, clamp(pixel, ivec2(0), hi), 0).r;
+    vec4 encoded = texelFetch(gtao_visibility_source, clamp(pixel, ivec2(0), hi), 0);
+#ifdef GTAO_BENT_NORMALS
+    return vec4(encoded.rgb * 2.0 - 1.0, encoded.a);
+#else
+    return vec4(encoded.r);
+#endif
 }
 
 void gtao_add_denoise_sample(ivec2 pixel, float weight, ivec2 hi,
-                             inout float sum, inout float sum_weight)
+                             inout vec4 sum, inout float sum_weight)
 {
-    sum += gtao_visibility_at(pixel, hi) * weight;
+    sum += gtao_term_at(pixel, hi) * weight;
     sum_weight += weight;
 }
 
-float gtao_denoise_pixel(ivec2 pixel)
+vec4 gtao_denoise_pixel(ivec2 pixel)
 {
     ivec2 hi = textureSize(gtao_visibility_source, 0) - 1;
     vec4 center = gtao_unpack_edges(pixel, hi);
@@ -230,7 +275,7 @@ float gtao_denoise_pixel(ivec2 pixel)
     float weight_br = 0.425 * (center.y * right.w + center.w * bottom.y);
 
     float beta = gtao_final_pass != 0 ? gtao_blur_beta : gtao_blur_beta / 5.0;
-    float sum = gtao_visibility_at(pixel, hi) * beta;
+    vec4 sum = gtao_term_at(pixel, hi) * beta;
     float sum_weight = beta;
     gtao_add_denoise_sample(pixel + ivec2(-1, 0), center.x, hi, sum, sum_weight);
     gtao_add_denoise_sample(pixel + ivec2(1, 0), center.y, hi, sum, sum_weight);
@@ -240,6 +285,15 @@ float gtao_denoise_pixel(ivec2 pixel)
     gtao_add_denoise_sample(pixel + ivec2(1, 1), weight_tr, hi, sum, sum_weight);
     gtao_add_denoise_sample(pixel + ivec2(-1, -1), weight_bl, hi, sum, sum_weight);
     gtao_add_denoise_sample(pixel + ivec2(1, -1), weight_br, hi, sum, sum_weight);
-    float result = sum / max(sum_weight, 1e-6);
-    return clamp(result * (gtao_final_pass != 0 ? GTAO_TERM_SCALE : 1.0), 0.0, 1.0);
+    vec4 result = sum / max(sum_weight, 1e-6);
+#ifdef GTAO_BENT_NORMALS
+    vec3 filtered_normal = normalize(result.xyz);
+    float visibility = clamp(result.a * (gtao_final_pass != 0 ? GTAO_TERM_SCALE : 1.0),
+                             0.0, 1.0);
+    return vec4(filtered_normal * 0.5 + 0.5, visibility);
+#else
+    float visibility = clamp(result.r * (gtao_final_pass != 0 ? GTAO_TERM_SCALE : 1.0),
+                             0.0, 1.0);
+    return vec4(visibility);
+#endif
 }

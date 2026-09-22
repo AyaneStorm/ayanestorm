@@ -12442,7 +12442,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>RenderGTAOQuality</key>
   <map>
-    <key>Comment</key><string>GTAO quality: 1 Medium, 2 High, 3 Ultra.</string>
+    <key>Comment</key><string>GTAO quality: 1 Medium, 2 High, 3 Ultra, 4 Cinematic.</string>
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>S32</string>
     <key>Value</key><integer>3</integer>
@@ -12467,6 +12467,20 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>S32</string>
     <key>Value</key><integer>3</integer>
+  </map>
+  <key>RenderGTAOBentNormals</key>
+  <map>
+    <key>Comment</key><string>Compute GTAO bent normals and use them for diffuse environment irradiance.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer>
+  </map>
+  <key>RenderGTAOBentNormalInfluence</key>
+  <map>
+    <key>Comment</key><string>Blend from the geometric normal to the GTAO bent normal for diffuse irradiance.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real>
   </map>
   <key>RenderGTAOBackend</key>
   <map>

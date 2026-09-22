@@ -33,6 +33,7 @@ namespace
         GLuint fbo = 0;
         U32 width = 0;
         U32 height = 0;
+        bool bent_normals = false;
         bool valid = false;
     };
 
@@ -52,15 +53,28 @@ namespace
     LLGLSLShader sMainMediumProgram;
     LLGLSLShader sMainHighProgram;
     LLGLSLShader sMainUltraProgram;
+    LLGLSLShader sMainCinematicProgram;
     LLGLSLShader sDenoiseProgram;
+    LLGLSLShader sBentMainMediumProgram;
+    LLGLSLShader sBentMainHighProgram;
+    LLGLSLShader sBentMainUltraProgram;
+    LLGLSLShader sBentMainCinematicProgram;
+    LLGLSLShader sBentDenoiseProgram;
     LLGLSLShader sComputeDepthProgram;
     LLGLSLShader sComputeMainMediumProgram;
     LLGLSLShader sComputeMainHighProgram;
     LLGLSLShader sComputeMainUltraProgram;
+    LLGLSLShader sComputeMainCinematicProgram;
     LLGLSLShader sComputeDenoiseProgram;
+    LLGLSLShader sComputeBentMainMediumProgram;
+    LLGLSLShader sComputeBentMainHighProgram;
+    LLGLSLShader sComputeBentMainUltraProgram;
+    LLGLSLShader sComputeBentMainCinematicProgram;
+    LLGLSLShader sComputeBentDenoiseProgram;
     bool sFragmentShadersLoaded = false;
     bool sComputeShadersLoaded = false;
     bool sFrameValid = false;
+    bool sFrameHasBentNormals = false;
     U32 sFinalVisibility = 0;
     ASAmbientOcclusion::Technique sEffectiveTechnique = ASAmbientOcclusion::LEGACY_SSAO;
     ASAmbientOcclusion::Backend sEffectiveBackend = ASAmbientOcclusion::AUTO;
@@ -151,7 +165,7 @@ namespace
         return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
     }
 
-    bool allocateNewResources(Resources& next, U32 width, U32 height)
+    bool allocateNewResources(Resources& next, U32 width, U32 height, bool bent_normals)
     {
         clearGLErrors();
         GLint saved_texture = 0;
@@ -160,6 +174,7 @@ namespace
 
         next.width = width;
         next.height = height;
+        next.bent_normals = bent_normals;
         glGenTextures(1, &next.depth);
         configureTexture(next.depth, GL_NEAREST_MIPMAP_NEAREST, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
@@ -173,10 +188,12 @@ namespace
         }
 
         bool success = glGetError() == GL_NO_ERROR;
-        success = allocateTexture2D(next.visibility[0], GL_R8, width, height,
-                                    GL_RED, GL_UNSIGNED_BYTE) && success;
-        success = allocateTexture2D(next.visibility[1], GL_R8, width, height,
-                                    GL_RED, GL_UNSIGNED_BYTE) && success;
+        const GLenum ao_internal_format = bent_normals ? GL_RGBA8 : GL_R8;
+        const GLenum ao_format = bent_normals ? GL_RGBA : GL_RED;
+        success = allocateTexture2D(next.visibility[0], ao_internal_format, width, height,
+                                    ao_format, GL_UNSIGNED_BYTE) && success;
+        success = allocateTexture2D(next.visibility[1], ao_internal_format, width, height,
+                                    ao_format, GL_UNSIGNED_BYTE) && success;
         success = allocateTexture2D(next.edges, GL_R8, width, height,
                                     GL_RED, GL_UNSIGNED_BYTE) && success;
 
@@ -303,6 +320,11 @@ namespace
         return 1.2f;
     }
 
+    bool bentNormalsRequested()
+    {
+        return gSavedSettings.getBOOL("RenderGTAOBentNormals");
+    }
+
     void applyMainUniforms(LLGLSLShader& shader, const glm::mat4& projection,
                            U32 width, U32 height, F32 radius, F32 power, bool orthographic)
     {
@@ -400,9 +422,14 @@ namespace
             glViewport(0, 0, width, height);
             gGL.setColorMask(true, true);
 
-            const S32 quality = llclamp(gSavedSettings.getS32("RenderGTAOQuality"), 1, 3);
-            LLGLSLShader& shader = quality == 1 ? sMainMediumProgram :
-                quality == 2 ? sMainHighProgram : sMainUltraProgram;
+            const S32 quality = llclamp(gSavedSettings.getS32("RenderGTAOQuality"), 1, 4);
+            LLGLSLShader& shader = sResources.bent_normals
+                ? (quality == 1 ? sBentMainMediumProgram :
+                   quality == 2 ? sBentMainHighProgram :
+                   quality == 3 ? sBentMainUltraProgram : sBentMainCinematicProgram)
+                : (quality == 1 ? sMainMediumProgram :
+                   quality == 2 ? sMainHighProgram :
+                   quality == 3 ? sMainUltraProgram : sMainCinematicProgram);
             shader.bind();
             bindRawSampler(shader, LLStaticHashedString("gtao_depth"), 0,
                            sResources.depth, true);
@@ -423,24 +450,26 @@ namespace
         const S32 pass_count = llmax(1, configured_passes);
         {
             LL_PROFILE_GPU_ZONE("GTAO denoise");
-            sDenoiseProgram.bind();
-            sDenoiseProgram.uniform1f(U_BLUR_BETA, configured_passes == 0
+            LLGLSLShader& denoise_shader = sResources.bent_normals
+                ? sBentDenoiseProgram : sDenoiseProgram;
+            denoise_shader.bind();
+            denoise_shader.uniform1f(U_BLUR_BETA, configured_passes == 0
                 ? 10000.f : denoiseBlurBeta(configured_passes));
-            bindRawSampler(sDenoiseProgram, LLStaticHashedString("gtao_edges_source"),
+            bindRawSampler(denoise_shader, LLStaticHashedString("gtao_edges_source"),
                            1, sResources.edges);
             for (S32 pass = 0; pass < pass_count; ++pass)
             {
                 attachSingle(sResources.visibility[write_index], 0, width, height);
-                bindRawSampler(sDenoiseProgram,
+                bindRawSampler(denoise_shader,
                                LLStaticHashedString("gtao_visibility_source"),
                                0, sResources.visibility[read_index]);
-                sDenoiseProgram.uniform1i(U_FINAL_PASS, pass == pass_count - 1 ? 1 : 0);
+                denoise_shader.uniform1i(U_FINAL_PASS, pass == pass_count - 1 ? 1 : 0);
                 drawTriangle(triangle);
                 unbindRawSampler(0);
                 std::swap(read_index, write_index);
             }
             unbindRawSampler(1);
-            sDenoiseProgram.unbind();
+            denoise_shader.unbind();
         }
 
         sFinalVisibility = sResources.visibility[read_index];
@@ -512,9 +541,16 @@ namespace
 
         {
             LL_PROFILE_GPU_ZONE("GTAO compute main");
-            const S32 quality = llclamp(gSavedSettings.getS32("RenderGTAOQuality"), 1, 3);
-            LLGLSLShader& shader = quality == 1 ? sComputeMainMediumProgram :
-                quality == 2 ? sComputeMainHighProgram : sComputeMainUltraProgram;
+            const S32 quality = llclamp(gSavedSettings.getS32("RenderGTAOQuality"), 1, 4);
+            LLGLSLShader& shader = sResources.bent_normals
+                ? (quality == 1 ? sComputeBentMainMediumProgram :
+                   quality == 2 ? sComputeBentMainHighProgram :
+                   quality == 3 ? sComputeBentMainUltraProgram :
+                                  sComputeBentMainCinematicProgram)
+                : (quality == 1 ? sComputeMainMediumProgram :
+                   quality == 2 ? sComputeMainHighProgram :
+                   quality == 3 ? sComputeMainUltraProgram :
+                                  sComputeMainCinematicProgram);
             shader.bind();
             bindRawSampler(shader, LLStaticHashedString("gtao_depth"), 0,
                            sResources.depth, true);
@@ -524,7 +560,7 @@ namespace
             applyMainUniforms(shader, projection, width, height, radius, power, orthographic);
             shader.uniform2i(U_VIEWPORT, width, height);
             glBindImageTexture(0, sResources.visibility[0], 0, GL_FALSE, 0,
-                               GL_WRITE_ONLY, GL_R8);
+                               GL_WRITE_ONLY, sResources.bent_normals ? GL_RGBA8 : GL_R8);
             glBindImageTexture(1, sResources.edges, 0, GL_FALSE, 0,
                                GL_WRITE_ONLY, GL_R8);
             glDispatchCompute((width + 7) / 8, (height + 7) / 8, 1);
@@ -543,21 +579,24 @@ namespace
         const S32 pass_count = llmax(1, configured_passes);
         {
             LL_PROFILE_GPU_ZONE("GTAO compute denoise");
-            sComputeDenoiseProgram.bind();
-            sComputeDenoiseProgram.uniform1f(U_BLUR_BETA,
+            LLGLSLShader& denoise_shader = sResources.bent_normals
+                ? sComputeBentDenoiseProgram : sComputeDenoiseProgram;
+            denoise_shader.bind();
+            denoise_shader.uniform1f(U_BLUR_BETA,
                 configured_passes == 0 ? 10000.f : denoiseBlurBeta(configured_passes));
-            sComputeDenoiseProgram.uniform2i(U_VIEWPORT, width, height);
-            bindRawSampler(sComputeDenoiseProgram,
+            denoise_shader.uniform2i(U_VIEWPORT, width, height);
+            bindRawSampler(denoise_shader,
                            LLStaticHashedString("gtao_edges_source"), 1, sResources.edges);
             for (S32 pass = 0; pass < pass_count; ++pass)
             {
-                bindRawSampler(sComputeDenoiseProgram,
+                bindRawSampler(denoise_shader,
                                LLStaticHashedString("gtao_visibility_source"),
                                0, sResources.visibility[read_index]);
-                sComputeDenoiseProgram.uniform1i(U_FINAL_PASS,
-                                                 pass == pass_count - 1 ? 1 : 0);
+                denoise_shader.uniform1i(U_FINAL_PASS,
+                                         pass == pass_count - 1 ? 1 : 0);
                 glBindImageTexture(0, sResources.visibility[write_index], 0,
-                                   GL_FALSE, 0, GL_WRITE_ONLY, GL_R8);
+                                   GL_FALSE, 0, GL_WRITE_ONLY,
+                                   sResources.bent_normals ? GL_RGBA8 : GL_R8);
                 glDispatchCompute((width + 15) / 16, (height + 7) / 8, 1);
                 glMemoryBarrier(GL_SHADER_IMAGE_ACCESS_BARRIER_BIT |
                                 GL_TEXTURE_FETCH_BARRIER_BIT);
@@ -565,7 +604,7 @@ namespace
                 std::swap(read_index, write_index);
             }
             unbindRawSampler(1);
-            sComputeDenoiseProgram.unbind();
+            denoise_shader.unbind();
         }
 
         restoreImageBindings(saved_images);
@@ -576,7 +615,7 @@ namespace
 
 const char* ASAmbientOcclusion::shaderCacheRevision()
 {
-    return "as-ambient-occlusion-v1";
+    return "as-ambient-occlusion-v3-cinematic";
 }
 
 ASAmbientOcclusion::Technique ASAmbientOcclusion::requestedTechnique()
@@ -612,12 +651,24 @@ void ASAmbientOcclusion::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sMainMediumProgram);
     shaders.push_back(&sMainHighProgram);
     shaders.push_back(&sMainUltraProgram);
+    shaders.push_back(&sMainCinematicProgram);
     shaders.push_back(&sDenoiseProgram);
+    shaders.push_back(&sBentMainMediumProgram);
+    shaders.push_back(&sBentMainHighProgram);
+    shaders.push_back(&sBentMainUltraProgram);
+    shaders.push_back(&sBentMainCinematicProgram);
+    shaders.push_back(&sBentDenoiseProgram);
     shaders.push_back(&sComputeDepthProgram);
     shaders.push_back(&sComputeMainMediumProgram);
     shaders.push_back(&sComputeMainHighProgram);
     shaders.push_back(&sComputeMainUltraProgram);
+    shaders.push_back(&sComputeMainCinematicProgram);
     shaders.push_back(&sComputeDenoiseProgram);
+    shaders.push_back(&sComputeBentMainMediumProgram);
+    shaders.push_back(&sComputeBentMainHighProgram);
+    shaders.push_back(&sComputeBentMainUltraProgram);
+    shaders.push_back(&sComputeBentMainCinematicProgram);
+    shaders.push_back(&sComputeBentDenoiseProgram);
 }
 
 bool ASAmbientOcclusion::loadShaders(S32 shader_level)
@@ -652,15 +703,59 @@ bool ASAmbientOcclusion::loadShaders(S32 shader_level)
         std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
     sMainUltraProgram.addPermutation("GTAO_SLICES", "9");
     sMainUltraProgram.addPermutation("GTAO_STEPS", "3");
+    configureFragmentShader(sMainCinematicProgram, "AS GTAO Main Cinematic",
+                            "deferred/asGTAOMainF.glsl", shader_level);
+    sMainCinematicProgram.mShaderFiles.insert(sMainCinematicProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sMainCinematicProgram.addPermutation("GTAO_SLICES", "18");
+    sMainCinematicProgram.addPermutation("GTAO_STEPS", "4");
     configureFragmentShader(sDenoiseProgram, "AS GTAO Denoise",
                             "deferred/asGTAODenoiseF.glsl", shader_level);
     sDenoiseProgram.mShaderFiles.insert(sDenoiseProgram.mShaderFiles.end() - 1,
         std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
 
+    configureFragmentShader(sBentMainMediumProgram, "AS GTAO Bent Main Medium",
+                            "deferred/asGTAOMainF.glsl", shader_level);
+    sBentMainMediumProgram.mShaderFiles.insert(sBentMainMediumProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sBentMainMediumProgram.addPermutation("GTAO_SLICES", "2");
+    sBentMainMediumProgram.addPermutation("GTAO_STEPS", "2");
+    sBentMainMediumProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+    configureFragmentShader(sBentMainHighProgram, "AS GTAO Bent Main High",
+                            "deferred/asGTAOMainF.glsl", shader_level);
+    sBentMainHighProgram.mShaderFiles.insert(sBentMainHighProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sBentMainHighProgram.addPermutation("GTAO_SLICES", "3");
+    sBentMainHighProgram.addPermutation("GTAO_STEPS", "3");
+    sBentMainHighProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+    configureFragmentShader(sBentMainUltraProgram, "AS GTAO Bent Main Ultra",
+                            "deferred/asGTAOMainF.glsl", shader_level);
+    sBentMainUltraProgram.mShaderFiles.insert(sBentMainUltraProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sBentMainUltraProgram.addPermutation("GTAO_SLICES", "9");
+    sBentMainUltraProgram.addPermutation("GTAO_STEPS", "3");
+    sBentMainUltraProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+    configureFragmentShader(sBentMainCinematicProgram, "AS GTAO Bent Main Cinematic",
+                            "deferred/asGTAOMainF.glsl", shader_level);
+    sBentMainCinematicProgram.mShaderFiles.insert(
+        sBentMainCinematicProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sBentMainCinematicProgram.addPermutation("GTAO_SLICES", "18");
+    sBentMainCinematicProgram.addPermutation("GTAO_STEPS", "4");
+    sBentMainCinematicProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+    configureFragmentShader(sBentDenoiseProgram, "AS GTAO Bent Denoise",
+                            "deferred/asGTAODenoiseF.glsl", shader_level);
+    sBentDenoiseProgram.mShaderFiles.insert(sBentDenoiseProgram.mShaderFiles.end() - 1,
+        std::make_pair("deferred/asGTAOCommonF.glsl", GL_FRAGMENT_SHADER));
+    sBentDenoiseProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+
     sFragmentShadersLoaded = sDepthProgram.createShader() &&
         sDownsampleProgram.createShader() && sMainMediumProgram.createShader() &&
         sMainHighProgram.createShader() && sMainUltraProgram.createShader() &&
-        sDenoiseProgram.createShader();
+        sMainCinematicProgram.createShader() && sDenoiseProgram.createShader() &&
+        sBentMainMediumProgram.createShader() &&
+        sBentMainHighProgram.createShader() && sBentMainUltraProgram.createShader() &&
+        sBentMainCinematicProgram.createShader() && sBentDenoiseProgram.createShader();
     if (!sFragmentShadersLoaded)
     {
         unloadShaders();
@@ -684,19 +779,65 @@ bool ASAmbientOcclusion::loadShaders(S32 shader_level)
                                "deferred/asGTAOMainC.glsl", shader_level);
         sComputeMainUltraProgram.addPermutation("GTAO_SLICES", "9");
         sComputeMainUltraProgram.addPermutation("GTAO_STEPS", "3");
+        configureComputeShader(sComputeMainCinematicProgram,
+                               "AS GTAO Compute Main Cinematic",
+                               "deferred/asGTAOMainC.glsl", shader_level);
+        sComputeMainCinematicProgram.addPermutation("GTAO_SLICES", "18");
+        sComputeMainCinematicProgram.addPermutation("GTAO_STEPS", "4");
         configureComputeShader(sComputeDenoiseProgram, "AS GTAO Compute Denoise",
                                "deferred/asGTAODenoiseC.glsl", shader_level);
+
+        configureComputeShader(sComputeBentMainMediumProgram,
+                               "AS GTAO Compute Bent Main Medium",
+                               "deferred/asGTAOMainC.glsl", shader_level);
+        sComputeBentMainMediumProgram.addPermutation("GTAO_SLICES", "2");
+        sComputeBentMainMediumProgram.addPermutation("GTAO_STEPS", "2");
+        sComputeBentMainMediumProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+        configureComputeShader(sComputeBentMainHighProgram,
+                               "AS GTAO Compute Bent Main High",
+                               "deferred/asGTAOMainC.glsl", shader_level);
+        sComputeBentMainHighProgram.addPermutation("GTAO_SLICES", "3");
+        sComputeBentMainHighProgram.addPermutation("GTAO_STEPS", "3");
+        sComputeBentMainHighProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+        configureComputeShader(sComputeBentMainUltraProgram,
+                               "AS GTAO Compute Bent Main Ultra",
+                               "deferred/asGTAOMainC.glsl", shader_level);
+        sComputeBentMainUltraProgram.addPermutation("GTAO_SLICES", "9");
+        sComputeBentMainUltraProgram.addPermutation("GTAO_STEPS", "3");
+        sComputeBentMainUltraProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+        configureComputeShader(sComputeBentMainCinematicProgram,
+                               "AS GTAO Compute Bent Main Cinematic",
+                               "deferred/asGTAOMainC.glsl", shader_level);
+        sComputeBentMainCinematicProgram.addPermutation("GTAO_SLICES", "18");
+        sComputeBentMainCinematicProgram.addPermutation("GTAO_STEPS", "4");
+        sComputeBentMainCinematicProgram.addPermutation("GTAO_BENT_NORMALS", "1");
+        configureComputeShader(sComputeBentDenoiseProgram,
+                               "AS GTAO Compute Bent Denoise",
+                               "deferred/asGTAODenoiseC.glsl", shader_level);
+        sComputeBentDenoiseProgram.addPermutation("GTAO_BENT_NORMALS", "1");
         sComputeShadersLoaded = sComputeDepthProgram.createShader() &&
             sComputeMainMediumProgram.createShader() && sComputeMainHighProgram.createShader() &&
             sComputeMainUltraProgram.createShader() &&
-            sComputeDenoiseProgram.createShader();
+            sComputeMainCinematicProgram.createShader() &&
+            sComputeDenoiseProgram.createShader() &&
+            sComputeBentMainMediumProgram.createShader() &&
+            sComputeBentMainHighProgram.createShader() &&
+            sComputeBentMainUltraProgram.createShader() &&
+            sComputeBentMainCinematicProgram.createShader() &&
+            sComputeBentDenoiseProgram.createShader();
         if (!sComputeShadersLoaded)
         {
             sComputeDepthProgram.unload();
             sComputeMainMediumProgram.unload();
             sComputeMainHighProgram.unload();
             sComputeMainUltraProgram.unload();
+            sComputeMainCinematicProgram.unload();
             sComputeDenoiseProgram.unload();
+            sComputeBentMainMediumProgram.unload();
+            sComputeBentMainHighProgram.unload();
+            sComputeBentMainUltraProgram.unload();
+            sComputeBentMainCinematicProgram.unload();
+            sComputeBentDenoiseProgram.unload();
             LL_WARNS("GTAO") << "Optional GTAO compute shaders failed; using fragment backend."
                               << LL_ENDL;
         }
@@ -711,15 +852,28 @@ void ASAmbientOcclusion::unloadShaders()
     sMainMediumProgram.unload();
     sMainHighProgram.unload();
     sMainUltraProgram.unload();
+    sMainCinematicProgram.unload();
     sDenoiseProgram.unload();
+    sBentMainMediumProgram.unload();
+    sBentMainHighProgram.unload();
+    sBentMainUltraProgram.unload();
+    sBentMainCinematicProgram.unload();
+    sBentDenoiseProgram.unload();
     sComputeDepthProgram.unload();
     sComputeMainMediumProgram.unload();
     sComputeMainHighProgram.unload();
     sComputeMainUltraProgram.unload();
+    sComputeMainCinematicProgram.unload();
     sComputeDenoiseProgram.unload();
+    sComputeBentMainMediumProgram.unload();
+    sComputeBentMainHighProgram.unload();
+    sComputeBentMainUltraProgram.unload();
+    sComputeBentMainCinematicProgram.unload();
+    sComputeBentDenoiseProgram.unload();
     sFragmentShadersLoaded = false;
     sComputeShadersLoaded = false;
     sFrameValid = false;
+    sFrameHasBentNormals = false;
 }
 
 void ASAmbientOcclusion::allocateResources(U32 width, U32 height)
@@ -729,13 +883,15 @@ void ASAmbientOcclusion::allocateResources(U32 width, U32 height)
     {
         return;
     }
-    if (sResources.valid && sResources.width == width && sResources.height == height)
+    const bool bent_normals = bentNormalsRequested();
+    if (sResources.valid && sResources.width == width && sResources.height == height &&
+        sResources.bent_normals == bent_normals)
     {
         return;
     }
 
     Resources next;
-    if (!allocateNewResources(next, width, height))
+    if (!allocateNewResources(next, width, height, bent_normals))
     {
         destroyResources(next);
         if (!sWarnedAllocation)
@@ -749,13 +905,20 @@ void ASAmbientOcclusion::allocateResources(U32 width, U32 height)
 
     destroyResources(sResources);
     sResources = next;
+    sFrameValid = false;
+    sFrameHasBentNormals = false;
+    sFinalVisibility = 0;
     sWarnedAllocation = false;
+    LL_INFOS("GTAO") << "Allocated " << width << "x" << height << " GTAO targets in "
+                       << (bent_normals ? "bent-normal RGBA8" : "scalar R8")
+                       << " mode." << LL_ENDL;
 }
 
 void ASAmbientOcclusion::releaseResources()
 {
     destroyResources(sResources);
     sFrameValid = false;
+    sFrameHasBentNormals = false;
     sFinalVisibility = 0;
 }
 
@@ -764,6 +927,7 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
 {
     LL_PROFILE_GPU_ZONE("GTAO total");
     sFrameValid = false;
+    sFrameHasBentNormals = false;
     sEffectiveTechnique = LEGACY_SSAO;
     sEffectiveBackend = AUTO;
 
@@ -774,8 +938,12 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
 
     allocateResources(deferred_screen.getWidth(), deferred_screen.getHeight());
     if (!sResources.valid || sResources.width != deferred_screen.getWidth() ||
-        sResources.height != deferred_screen.getHeight())
+        sResources.height != deferred_screen.getHeight() ||
+        sResources.bent_normals != bentNormalsRequested())
     {
+        // Never retain a result from the opposite mode if replacement target
+        // allocation failed during a live checkbox transition.
+        sFinalVisibility = 0;
         return false;
     }
 
@@ -830,6 +998,7 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
     {
         sEffectiveTechnique = GTAO;
         sEffectiveBackend = rendered_with_compute ? COMPUTE : FRAGMENT;
+        sFrameHasBentNormals = sResources.bent_normals;
         sWarnedRender = false;
         return true;
     }
@@ -870,4 +1039,9 @@ void ASAmbientOcclusion::unbindResult(LLGLSLShader&)
         gGL.getTexUnit(sBoundResultChannel)->unbind(LLTexUnit::TT_TEXTURE);
         sBoundResultChannel = -1;
     }
+}
+
+bool ASAmbientOcclusion::bentNormalsEffective()
+{
+    return sFrameValid && sFrameHasBentNormals && effectiveTechnique() == GTAO;
 }

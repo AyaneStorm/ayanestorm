@@ -46,6 +46,8 @@ uniform float ssao_irradiance_max;
 // <AS:Chanayane> Dedicated GTAO visibility and comparison diagnostic.
 uniform sampler2D gtao_visibility_map;
 uniform int as_gtao_effective;
+uniform int as_gtao_bent_normals;
+uniform float as_gtao_bent_normal_influence;
 uniform int as_ao_debug_white;
 // </AS:Chanayane>
 #endif
@@ -74,8 +76,14 @@ vec3  scaleSoftClipFragLinear(vec3 l);
 // reflection probe interface
 void sampleReflectionProbes(inout vec3 ambenv, inout vec3 glossenv,
     vec2 tc, vec3 pos, vec3 norm, float glossiness, bool transparent, vec3 amblit_linear);
+void sampleReflectionProbesBent(inout vec3 ambenv, inout vec3 glossenv,
+    vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm, float glossiness,
+    bool transparent, vec3 amblit_linear);
 void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit_linear);
+void sampleReflectionProbesLegacyBent(inout vec3 ambenv, inout vec3 glossenv,
+        inout vec3 legacyenv, vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, float envIntensity, bool transparent, vec3 amblit_linear);
 void applyGlossEnv(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 norm);
 void applyLegacyEnv(inout vec3 color, vec3 legacyenv, vec4 spec, vec3 pos, vec3 norm, float envIntensity);
 float getDepth(vec2 pos_screen);
@@ -148,12 +156,36 @@ void main()
 #if defined(HAS_SSAO)
     // <AS:Chanayane> Preserve the original light-map AO as the fallback.
     // float ambocc     = scol_ambocc.g;
+    vec4 as_gtao_term = vec4(1.0);
+    if (as_gtao_effective != 0)
+    {
+        as_gtao_term = texture(gtao_visibility_map, vary_fragcoord.xy);
+    }
     float ambocc = as_gtao_effective != 0
-        ? texture(gtao_visibility_map, vary_fragcoord.xy).r : scol_ambocc.g;
+        ? (as_gtao_bent_normals != 0 ? as_gtao_term.a : as_gtao_term.r)
+        : scol_ambocc.g;
     // </AS:Chanayane>
 #else
     float ambocc = 1.0;
 #endif
+
+    // <AS:Chanayane> Convert XeGTAO's coordinate convention back to viewer
+    // view space and bend diffuse irradiance only. Reject any quantized result
+    // outside the geometric surface hemisphere.
+    vec3 as_ambient_normal = gb.normal;
+#if defined(HAS_SSAO)
+    if (as_gtao_effective != 0 && as_gtao_bent_normals != 0)
+    {
+        vec3 xe_bent = normalize(as_gtao_term.rgb * 2.0 - 1.0);
+        vec3 viewer_bent = normalize(vec3(xe_bent.x, -xe_bent.y, -xe_bent.z));
+        if (dot(viewer_bent, gb.normal) > 0.0)
+        {
+            as_ambient_normal = normalize(mix(gb.normal, viewer_bent,
+                clamp(as_gtao_bent_normal_influence, 0.0, 1.0)));
+        }
+    }
+#endif
+    // </AS:Chanayane>
 
 #if defined(HAS_SSAO)
     // <AS:Chanayane> Neutral matte material view for direct SSAO/GTAO comparison.
@@ -182,7 +214,13 @@ void main()
     vec3 additive;
     vec3 atten;
 
-    calcAtmosphericVarsLinear(pos.xyz, gb.normal, light_dir, sunlit, amblit, additive, atten);
+    // <AS:Chanayane> Bent normals also steer the directional sky-ambient
+    // term. Classic skies bypass probe irradiance, so limiting the feature to
+    // sampleProbeAmbient made its influence control ineffective there.
+    // calcAtmosphericVarsLinear(pos.xyz, gb.normal, light_dir, sunlit, amblit, additive, atten);
+    calcAtmosphericVarsLinear(pos.xyz, as_ambient_normal, light_dir,
+                              sunlit, amblit, additive, atten);
+    // </AS:Chanayane>
 
     if (classic_mode > 0)
         sunlit *= 1.35;
@@ -204,7 +242,8 @@ void main()
         // PBR IBL
         float gloss      = 1.0 - perceptualRoughness;
 
-        sampleReflectionProbes(irradiance, radiance, tc, pos.xyz, gb.normal, gloss, false, amblit_linear);
+        sampleReflectionProbesBent(irradiance, radiance, tc, pos.xyz,
+            as_ambient_normal, gb.normal, gloss, false, amblit_linear);
 
         adjustIrradiance(irradiance, ambocc);
 
@@ -244,7 +283,8 @@ void main()
         vec3 glossenv = vec3(0);
         vec3 legacyenv = vec3(0);
 
-        sampleReflectionProbesLegacy(irradiance, glossenv, legacyenv, tc, pos.xyz, gb.normal, spec.a, envIntensity, false, amblit_linear);
+        sampleReflectionProbesLegacyBent(irradiance, glossenv, legacyenv, tc, pos.xyz,
+            as_ambient_normal, gb.normal, spec.a, envIntensity, false, amblit_linear);
 
         adjustIrradiance(irradiance, ambocc);
 

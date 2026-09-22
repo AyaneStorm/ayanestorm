@@ -9852,6 +9852,13 @@ void LLPipeline::renderDeferredLighting()
             // <AS:Chanayane> Select the dedicated GTAO visibility and neutral-material AO diagnostic.
             const bool bound_gtao = gtao_valid && ASAmbientOcclusion::bindResult(soften_shader);
             soften_shader.uniform1i(LLStaticHashedString("as_gtao_effective"), bound_gtao ? 1 : 0);
+            const bool bent_normals = bound_gtao && ASAmbientOcclusion::bentNormalsEffective();
+            static LLCachedControl<F32> bent_normal_influence(
+                gSavedSettings, "RenderGTAOBentNormalInfluence", 1.f);
+            soften_shader.uniform1i(LLStaticHashedString("as_gtao_bent_normals"),
+                                    bent_normals ? 1 : 0);
+            soften_shader.uniform1f(LLStaticHashedString("as_gtao_bent_normal_influence"),
+                                    llclamp((F32)bent_normal_influence, 0.f, 1.f));
             soften_shader.uniform1i(LLStaticHashedString("as_ao_debug_white"),
                                     ASAmbientOcclusion::debugWhiteEnabled() && !gCubeSnapshot ? 1 : 0);
             // </AS:Chanayane>

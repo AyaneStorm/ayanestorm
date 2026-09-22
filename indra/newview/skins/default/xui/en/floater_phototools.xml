@@ -4,7 +4,7 @@
  can_resize="false"
  can_close="true"
  can_minimize="true"
- height="560"
+ height="620"
  help_topic="phototools_menu_floater"
  layout="topleft"
  name="phototools"
@@ -18,7 +18,7 @@
 	<tab_container
 	 follows="all"
 	 halign="center"
-	 height="560"
+	 height="620"
 	 hide_scroll_arrows="true"
 	 layout="topleft"
 	 left="0"
@@ -1833,7 +1833,7 @@
 
 			<!-- <AS:Chanayane> GTAO controls overlap the seven-row legacy panel. -->
 			<panel name="P_AO_GTAO" follows="top|left" layout="topleft"
-			 top_delta="0" left="3" right="-3" height="161"
+			 top_delta="0" left="3" right="-3" height="216"
 			 border_visible="true" background_visible="true" visible="false">
 				<text name="T_GTAO_Quality" type="string" length="1" follows="top|left" layout="topleft" left="5" top="10" height="16" width="70"
 				 tool_tip="Higher quality evaluates more horizon slices and samples per pixel.">Quality</text>
@@ -1842,6 +1842,7 @@
 					<combo_box.item label="Medium" name="medium" value="1"/>
 					<combo_box.item label="High" name="high" value="2"/>
 					<combo_box.item label="Ultra" name="ultra" value="3"/>
+					<combo_box.item label="Cinematic" name="cinematic" value="4"/>
 				</combo_box>
 				<button name="GTAO_Reset_Quality" follows="left|top" layout="topleft" left="255" top="6"
 				 height="22" width="20" label="D" tool_tip="Reset to the default value.">
@@ -1915,6 +1916,28 @@
 				 left="202" top="143" width="53" min_val="-10000" max_val="100000" increment="0.001" decimal_digits="3"/>
 				<button name="GTAO_Reset_Effect" follows="left|top" layout="topleft" left="255" top="143"
 				 height="22" width="20" label="D" tool_tip="Reset to the default value."/>
+
+				<check_box name="GTAO_Bent_Normals" control_name="RenderGTAOBentNormals"
+				 enabled_control="RenderDeferredSSAO" follows="top|left" layout="topleft"
+				 left="5" top="170" height="18" width="250" label="Directional ambient light (bent normals)"
+				 tool_tip="Use GTAO's unoccluded direction for diffuse sky and reflection-probe lighting. Direct and glossy lighting keep the geometric normal."/>
+
+				<text name="T_GTAO_Bent_Influence" type="string" length="1" follows="top|left"
+				 layout="topleft" left="5" top="197" height="16" width="70"
+				 tool_tip="Blend between geometric and bent normals for diffuse ambient lighting.">Influence</text>
+				<slider_bar name="GTAO_SB_Bent_Influence" control_name="RenderGTAOBentNormalInfluence"
+				 enabled_control="RenderGTAOBentNormals" follows="top|left" layout="topleft"
+				 left="75" top="195" height="16" width="127" min_val="0" max_val="1"
+				 increment="0.01"/>
+				<spinner name="GTAO_S_Bent_Influence" control_name="RenderGTAOBentNormalInfluence"
+				 enabled_control="RenderGTAOBentNormals" follows="top|left" layout="topleft"
+				 left="202" top="192" width="53" min_val="0" max_val="1" increment="0.01"
+				 decimal_digits="2"/>
+				<button name="GTAO_Reset_Bent_Influence" follows="left|top" layout="topleft"
+				 left="255" top="192" height="22" width="20" label="D"
+				 tool_tip="Reset to the default value.">
+					<button.commit_callback function="ResetControl" parameter="RenderGTAOBentNormalInfluence"/>
+				</button>
 			</panel>
 			<!-- </AS:Chanayane> -->
 		</panel>

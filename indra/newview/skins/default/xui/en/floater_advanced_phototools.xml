@@ -153,6 +153,7 @@
                         <combo_box.item label="Medium" name="medium" value="1" />
                         <combo_box.item label="High" name="high" value="2" />
                         <combo_box.item label="Ultra" name="ultra" value="3" />
+                        <combo_box.item label="Cinematic" name="cinematic" value="4" />
                   </combo_box>
                   <button name="GTAO_Reset_Quality" follows="left|top" layout="topleft" left="248" top="0"
                           height="22" width="20" label="D" tool_tip="Reset to the default value.">

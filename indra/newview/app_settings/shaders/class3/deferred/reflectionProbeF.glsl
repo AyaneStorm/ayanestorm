@@ -734,7 +734,8 @@ void tapHeroProbe(inout vec3 glossenv, vec3 pos, vec3 norm, float glossiness)
 
 
 void doProbeSample(inout vec3 ambenv, inout vec3 glossenv,
-        vec2 tc, vec3 pos, vec3 norm, float glossiness, bool transparent, vec3 amblit)
+        vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, bool transparent, vec3 amblit)
 {
     // TODO - don't hard code lods
     float reflection_lods = max_probe_lod;
@@ -744,7 +745,7 @@ void doProbeSample(inout vec3 ambenv, inout vec3 glossenv,
     ambenv = amblit;
 
     if (classic_mode == 0)
-        ambenv = sampleProbeAmbient(pos, norm, amblit);
+        ambenv = sampleProbeAmbient(pos, ambient_norm, amblit);
 
     float lod = (1.0-glossiness)*reflection_lods;
     glossenv = sampleProbes(pos, normalize(refnormpersp), lod);
@@ -775,7 +776,18 @@ void sampleReflectionProbes(inout vec3 ambenv, inout vec3 glossenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, bool transparent, vec3 amblit)
 {
     preProbeSample(pos);
-    doProbeSample(ambenv, glossenv, tc, pos, norm, glossiness, transparent, amblit);
+    doProbeSample(ambenv, glossenv, tc, pos, norm, norm, glossiness, transparent, amblit);
+}
+
+// AyaneStorm GTAO bent normals steer diffuse irradiance only. Specular probe,
+// SSR, and hero-probe directions continue to use the geometric normal.
+void sampleReflectionProbesBent(inout vec3 ambenv, inout vec3 glossenv,
+        vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, bool transparent, vec3 amblit)
+{
+    preProbeSample(pos);
+    doProbeSample(ambenv, glossenv, tc, pos, ambient_norm, norm,
+                  glossiness, transparent, amblit);
 }
 
 void sampleReflectionProbesWater(inout vec3 ambenv, inout vec3 glossenv,
@@ -788,7 +800,7 @@ void sampleReflectionProbesWater(inout vec3 ambenv, inout vec3 glossenv,
     // always include void probe on water
     probeIndex[probeInfluences++] = 0;
 
-    doProbeSample(ambenv, glossenv, tc, pos, norm, glossiness, false, amblit);
+    doProbeSample(ambenv, glossenv, tc, pos, norm, norm, glossiness, false, amblit);
 }
 
 void debugTapRefMap(vec3 pos, vec3 dir, float depth, int i, inout vec4 col)
@@ -839,18 +851,18 @@ vec4 sampleReflectionProbesDebug(vec3 pos)
     return col;
 }
 
-void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
-        vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit)
+void doProbeSampleLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
+        vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm, float glossiness,
+        float envIntensity, bool transparent, vec3 amblit)
 {
     float reflection_lods = max_probe_lod;
-    preProbeSample(pos);
 
     vec3 refnormpersp = reflect(pos.xyz, norm.xyz);
 
     ambenv = amblit;
 
     if (classic_mode == 0)
-        ambenv = sampleProbeAmbient(pos, norm, amblit);
+        ambenv = sampleProbeAmbient(pos, ambient_norm, amblit);
 
     if (glossiness > 0.0)
     {
@@ -890,6 +902,23 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
     glossenv = clamp(glossenv, vec3(0), vec3(10));
 }
 
+void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout vec3 legacyenv,
+        vec2 tc, vec3 pos, vec3 norm, float glossiness, float envIntensity, bool transparent, vec3 amblit)
+{
+    preProbeSample(pos);
+    doProbeSampleLegacy(ambenv, glossenv, legacyenv, tc, pos, norm, norm,
+                        glossiness, envIntensity, transparent, amblit);
+}
+
+void sampleReflectionProbesLegacyBent(inout vec3 ambenv, inout vec3 glossenv,
+        inout vec3 legacyenv, vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, float envIntensity, bool transparent, vec3 amblit)
+{
+    preProbeSample(pos);
+    doProbeSampleLegacy(ambenv, glossenv, legacyenv, tc, pos, ambient_norm, norm,
+                        glossiness, envIntensity, transparent, amblit);
+}
+
 void applyGlossEnv(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 norm)
 {
     glossenv *= 0.5; // fudge darker
@@ -911,4 +940,3 @@ void applyGlossEnv(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 no
     reflected_color *= (envIntensity*fresnel);
     color = mix(color.rgb, reflected_color*0.5, envIntensity);
  }
-
