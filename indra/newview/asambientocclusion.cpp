@@ -251,8 +251,7 @@ namespace
     {
         return gGLManager.mGLVersion >= 4.29f &&
             (gGLManager.mGLSLVersionMajor > 4 ||
-             (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30)) &&
-            glDispatchCompute && glBindImageTexture && glMemoryBarrier;
+             (gGLManager.mGLSLVersionMajor == 4 && gGLManager.mGLSLVersionMinor >= 30));
     }
 
     void configureFragmentShader(LLGLSLShader& shader, const std::string& name,
