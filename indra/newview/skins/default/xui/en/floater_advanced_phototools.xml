@@ -294,13 +294,20 @@
       <panel name="PT_DoF_Glow" follows="top|left" layout="topleft" top_pad="8" left="0" width="285" height="22" bg_alpha_color="Phototools_Header" border_visible="true" border_thickness="1" background_visible="true">
             <text name="T_DoF" follows="left|top" layout="topleft" left="10" font="SansSerif" height="17" width="230">Depth of Field (DOF)</text>
       </panel>
-      <panel name="P_DOF" follows="top|left" layout="topleft" top_pad="0" left="4" width="275" height="136" border_visible="true" background_visible="true">
+      <panel name="P_DOF" follows="top|left" layout="topleft" top_pad="0" left="4" width="275" height="160" border_visible="true" background_visible="true">
             <check_box control_name="RenderDepthOfField" enabled_control="RenderDeferred" height="16" label="Enable" layout="topleft" left="7" name="UseDepthofField" top_pad="10" width="230" 
                        tool_tip="This 'determines distance between the nearest and farthest objects in a scene that appear acceptably sharp in an image' (Wikipedia). Shallow DOF can substantially reduce your frame rate - if you are not using it turn it off."/>
             <check_box control_name="FSFocusPointFollowsPointer" enabled_control="RenderDepthOfField" left="27" height="16" label="Focus follows pointer" layout="topleft" name="FSFocusPointFollowsPointer" 
                        tool_tip="Depth of Field (DoF) focus will follow your mouse, this behaviour matches that seen when using flycam. Use in conjunction with Focus locked." top_pad="4" width="256" />
             <check_box control_name="FSFocusPointLocked" enabled_control="FSFocusPointFollowsPointer" left="47" height="16" label="Focus locked (Alt-Shift-X)" layout="topleft" name="FSFocusPointLocked" 
                        tool_tip="Depth of Field (DoF) focus is locked, allowing you to move the pointer. Use in conjunction with Focus follows pointer." top_pad="4" width="256" />
+
+            <!-- <AS:Chanayane> Select and configure the independent AyaneStorm DoF renderer. -->
+            <combo_box control_name="ASDepthOfFieldMode" enabled_control="RenderDepthOfField" height="20" layout="topleft" left="7" name="ASDepthOfFieldMode" top_pad="4" width="198">
+                  <combo_box.item label="Standard / Firestorm" name="standard" value="0" /> <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1" /> </combo_box>
+            <button enabled_control="RenderDepthOfField" follows="left|top" name="ASDepthOfFieldSettings" height="20" label="Settings" layout="topleft" left_pad="3" top_delta="0" width="62">
+                  <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_depth_of_field" /></button>
+            <!-- </AS:Chanayane> -->
 
             <text name="f_stop_label" follows="top|left" layout="topleft" left="7" top_pad="5" width="80">Aperture</text>
             <slider_bar name="SB_F_Number" control_name="CameraFNumber" enabled_control="RenderDepthOfField" follows="top|left" height="16" increment="0.1" layout="topleft" left_pad="-20" min_val="1" max_val="64" top_delta="-2" width="127" 

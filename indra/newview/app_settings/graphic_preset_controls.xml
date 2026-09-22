@@ -1,6 +1,17 @@
 <llsd>
 	<array>
 		<string>AgentPause</string>
+		<!-- AyaneStorm-owned cinematic depth-of-field controls. -->
+		<string>ASDepthOfFieldMode</string>
+		<string>ASDepthOfFieldBackend</string>
+		<string>ASDepthOfFieldQuality</string>
+		<string>ASDepthOfFieldNearRadius</string>
+		<string>ASDepthOfFieldFarRadius</string>
+		<string>ASDepthOfFieldApertureBlades</string>
+		<string>ASDepthOfFieldApertureRoundness</string>
+		<string>ASDepthOfFieldApertureRotation</string>
+		<string>ASDepthOfFieldAnamorphicRatio</string>
+		<string>ASDepthOfFieldHighlightBoost</string>
 		<string>CameraDoFResScale</string>
 		<string>CameraFieldOfView</string>
 		<string>CameraFocalLength</string>

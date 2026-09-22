@@ -54,6 +54,9 @@
 // <AS:Chanayane> Screen-space camera motion blur.
 #include "asmotionblur.h"
 // </AS:Chanayane>
+// <AS:Chanayane> AyaneStorm cinematic depth-of-field shader family.
+#include "asdepthoffield.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom shader utility.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -499,6 +502,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     ASVignette::registerShader(mShaderList);
     ASChromaticAberration::registerShader(mShaderList);
     ASMotionBlur::registerShader(mShaderList);
+    ASDepthOfField::registerShaders(mShaderList);
     ASDiffuseGlow::registerShaders(mShaderList);
     ASColorGrading::registerShaders(mShaderList);
     ASAmbientOcclusion::registerShaders(mShaderList);
@@ -1247,6 +1251,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         ASVignette::unloadShader();
         ASChromaticAberration::unloadShader();
         ASMotionBlur::unloadShader();
+        ASDepthOfField::unloadShaders();
         ASDiffuseGlow::unloadHDRShaders();
         ASColorGrading::unloadShaders();
         // </AS:Chanayane>
@@ -3103,6 +3108,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         ASVignette::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASChromaticAberration::createShader(mShaderLevel[SHADER_DEFERRED]);
         ASMotionBlur::createShader(mShaderLevel[SHADER_DEFERRED]);
+        ASDepthOfField::createShaders(mShaderLevel[SHADER_DEFERRED]);
         ASDiffuseGlow::createHDRShaders(mShaderLevel[SHADER_DEFERRED]);
         ASColorGrading::createShaders(mShaderLevel[SHADER_DEFERRED]);
     }

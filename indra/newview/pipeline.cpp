@@ -52,6 +52,9 @@
 // <AS:Chanayane> Screen-space camera motion blur.
 #include "asmotionblur.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional AyaneStorm-owned cinematic depth of field.
+#include "asdepthoffield.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -9031,6 +9034,18 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             F32 screen_to_target_scale_factor = (F32)gViewerWindow->getWindowHeightRaw()/dst->getHeight();
             F32 adj_COF = CameraMaxCoF / screen_to_target_scale_factor;
             // </FS:Beq>
+            // <AS:Chanayane> Keep Firestorm's focus and physical-lens frontend,
+            // but let the independent advanced backend replace only the image
+            // synthesis. Failure falls through to the untouched legacy passes.
+            if (ASDepthOfField::render(*src, *dst, mRT->deferredScreen,
+                    *mScreenTriangleVB, -subject_distance / 1000.f,
+                    blur_constant,
+                    tanf(1.f / LLDrawable::sCurPixelAngle) * screen_to_target_scale_factor,
+                    magnification, adj_COF))
+            {
+                return;
+            }
+            // </AS:Chanayane>
             { // build diffuse+bloom+CoF
                 mRT->deferredLight.bindTarget();
 

@@ -1765,6 +1765,21 @@ If you do not understand the distinction then leave this control alone."
          <check_box.commit_callback
         function="Pref.RenderOptionUpdate" />
        </check_box>
+       <!-- <AS:Chanayane> Select and configure the independent AyaneStorm DoF renderer. -->
+       <text name="ASDepthOfFieldModeLabel" follows="left|top" height="20" layout="topleft"
+             left_delta="0" top_pad="7" width="160">Depth of Field renderer:</text>
+       <combo_box name="ASDepthOfFieldMode" control_name="ASDepthOfFieldMode"
+                  enabled_control="RenderDepthOfField" follows="left|top" height="22"
+                  layout="topleft" left_pad="0" top_delta="-3" width="210">
+         <combo_box.item label="Standard / Firestorm" name="standard" value="0"/>
+         <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1"/>
+       </combo_box>
+       <button name="ASDepthOfFieldSettings" enabled_control="RenderDepthOfField"
+               follows="left|top" height="22" label="Settings" layout="topleft"
+               left_pad="5" top_delta="0" width="75">
+         <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_depth_of_field"/>
+       </button>
+       <!-- </AS:Chanayane> -->
         <check_box
          control_name="RenderDepthOfFieldInEditMode"
          enabled_control="RenderDepthOfField"

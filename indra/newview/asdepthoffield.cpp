@@ -1,0 +1,315 @@
+/**
+ * @file asdepthoffield.cpp
+ * @author chanayane@firestorm
+ * @brief AyaneStorm-owned cinematic depth-of-field renderer.
+ *
+ * The signed near/far split and foreground coverage are an AyaneStorm design
+ * informed by OtisFX CinematicDOF, Intel's Vanilla DoF sample, and qUINT ADoF.
+ * This is not a line-for-line translation of any of those implementations.
+ */
+#include "llviewerprecompiledheaders.h"
+
+#include <algorithm>
+
+#include "asdepthoffield.h"
+
+#include "asbackgroundisolate.h"
+#include "llcontrol.h"
+#include "llgl.h"
+#include "llrender.h"
+#include "llrendertarget.h"
+#include "llshadermgr.h"
+#include "lluictrl.h"
+#include "llvertexbuffer.h"
+#include "llviewercontrol.h"
+
+namespace
+{
+    LLGLSLShader sCoCProgram;
+    LLGLSLShader sFarProgram;
+    LLGLSLShader sNearProgram;
+    LLGLSLShader sResolveProgram;
+
+    LLRenderTarget sCoCTarget;
+    LLRenderTarget sFarTarget;
+    LLRenderTarget sNearTarget;
+    U32 sWidth = 0;
+    U32 sHeight = 0;
+    U32 sBlurWidth = 0;
+    U32 sBlurHeight = 0;
+
+    const LLStaticHashedString U_FOCAL_DISTANCE("focal_distance");
+    const LLStaticHashedString U_BLUR_CONSTANT("blur_constant");
+    const LLStaticHashedString U_TAN_PIXEL_ANGLE("tan_pixel_angle");
+    const LLStaticHashedString U_MAGNIFICATION("magnification");
+    const LLStaticHashedString U_MAX_COC("max_coc");
+    const LLStaticHashedString U_SAMPLE_COUNT("sample_count");
+    const LLStaticHashedString U_MAX_RADIUS("max_radius");
+    const LLStaticHashedString U_FOREGROUND_RADIUS("foreground_radius");
+    const LLStaticHashedString U_NEAR_MAX_RADIUS("near_max_radius");
+    const LLStaticHashedString U_APERTURE_BLADES("aperture_blades");
+    const LLStaticHashedString U_APERTURE_ROUNDNESS("aperture_roundness");
+    const LLStaticHashedString U_APERTURE_ROTATION("aperture_rotation");
+    const LLStaticHashedString U_ANAMORPHIC_RATIO("anamorphic_ratio");
+    const LLStaticHashedString U_HIGHLIGHT_BOOST("highlight_boost");
+    const LLStaticHashedString U_DEBUG_MODE("debug_mode");
+
+    bool ensureResources(U32 width, U32 height, F32 scale)
+    {
+        const U32 blur_width = llmax(1U, (U32)ll_round((F32)width * scale));
+        const U32 blur_height = llmax(1U, (U32)ll_round((F32)height * scale));
+        if (sCoCTarget.isComplete() && sFarTarget.isComplete() && sNearTarget.isComplete() &&
+            sWidth == width && sHeight == height &&
+            sBlurWidth == blur_width && sBlurHeight == blur_height)
+        {
+            return true;
+        }
+
+        ASDepthOfField::releaseResources();
+        if (!sCoCTarget.allocate(width, height, GL_R16F) ||
+            !sFarTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sNearTarget.allocate(blur_width, blur_height, GL_RGBA16F))
+        {
+            ASDepthOfField::releaseResources();
+            return false;
+        }
+
+        sWidth = width;
+        sHeight = height;
+        sBlurWidth = blur_width;
+        sBlurHeight = blur_height;
+        return true;
+    }
+
+    void configureGather(LLGLSLShader& shader, S32 samples, F32 radius,
+                         S32 blades, F32 roundness, F32 rotation,
+                         F32 anamorphic, F32 highlight_boost)
+    {
+        shader.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)sWidth, (F32)sHeight);
+        shader.uniform1i(U_SAMPLE_COUNT, samples);
+        shader.uniform1f(U_MAX_RADIUS, radius);
+        shader.uniform1i(U_APERTURE_BLADES, blades);
+        shader.uniform1f(U_APERTURE_ROUNDNESS, roundness);
+        shader.uniform1f(U_APERTURE_ROTATION, rotation);
+        shader.uniform1f(U_ANAMORPHIC_RATIO, anamorphic);
+        shader.uniform1f(U_HIGHLIGHT_BOOST, highlight_boost);
+    }
+
+    void draw(LLVertexBuffer& triangle)
+    {
+        triangle.setBuffer();
+        triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+}
+
+extern bool gCubeSnapshot;
+
+void ASDepthOfField::registerUICallbacks()
+{
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASDepthOfField.ResetDefault",
+        [](LLUICtrl*, const LLSD& data)
+        {
+            static const std::vector<std::string> controls = {
+                "ASDepthOfFieldMode", "ASDepthOfFieldBackend",
+                "ASDepthOfFieldQuality", "ASDepthOfFieldNearRadius",
+                "ASDepthOfFieldFarRadius", "ASDepthOfFieldApertureBlades",
+                "ASDepthOfFieldApertureRoundness", "ASDepthOfFieldApertureRotation",
+                "ASDepthOfFieldAnamorphicRatio", "ASDepthOfFieldHighlightBoost",
+                "ASDepthOfFieldDebug"
+            };
+            const std::string name = data.asString();
+            if (name == "All")
+            {
+                // Renderer and backend are mode choices, not tuning values.
+                for (auto it = controls.begin() + 2; it != controls.end(); ++it)
+                {
+                    if (LLControlVariable* control = gSavedSettings.getControl(*it))
+                    {
+                        control->resetToDefault(true);
+                    }
+                }
+                return;
+            }
+            if (std::find(controls.begin(), controls.end(), name) != controls.end())
+            {
+                if (LLControlVariable* control = gSavedSettings.getControl(name))
+                {
+                    control->resetToDefault(true);
+                }
+            }
+        });
+}
+
+void ASDepthOfField::registerShaders(std::vector<LLGLSLShader*>& shaders)
+{
+    shaders.push_back(&sCoCProgram);
+    shaders.push_back(&sFarProgram);
+    shaders.push_back(&sNearProgram);
+    shaders.push_back(&sResolveProgram);
+}
+
+bool ASDepthOfField::createShaders(S32 shader_level)
+{
+    struct ShaderSpec
+    {
+        LLGLSLShader* shader;
+        const char* name;
+        const char* fragment;
+    };
+    const ShaderSpec specs[] = {
+        { &sCoCProgram, "AyaneStorm Depth of Field CoC Shader", "deferred/asDepthOfFieldCoCF.glsl" },
+        { &sFarProgram, "AyaneStorm Depth of Field Far Bokeh Shader", "deferred/asDepthOfFieldFarF.glsl" },
+        { &sNearProgram, "AyaneStorm Depth of Field Near Bokeh Shader", "deferred/asDepthOfFieldNearF.glsl" },
+        { &sResolveProgram, "AyaneStorm Depth of Field Resolve Shader", "deferred/asDepthOfFieldResolveF.glsl" }
+    };
+
+    bool success = true;
+    for (const ShaderSpec& spec : specs)
+    {
+        spec.shader->mName = spec.name;
+        spec.shader->mShaderFiles.clear();
+        spec.shader->clearPermutations();
+        spec.shader->mFeatures.isDeferred = true;
+        spec.shader->mShaderFiles.emplace_back("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
+        spec.shader->mShaderFiles.emplace_back(spec.fragment, GL_FRAGMENT_SHADER);
+        spec.shader->mShaderLevel = shader_level;
+        success = spec.shader->createShader() && success;
+    }
+    return success;
+}
+
+void ASDepthOfField::unloadShaders()
+{
+    sCoCProgram.unload();
+    sFarProgram.unload();
+    sNearProgram.unload();
+    sResolveProgram.unload();
+    releaseResources();
+}
+
+void ASDepthOfField::releaseResources()
+{
+    sCoCTarget.release();
+    sFarTarget.release();
+    sNearTarget.release();
+    sWidth = 0;
+    sHeight = 0;
+    sBlurWidth = 0;
+    sBlurHeight = 0;
+}
+
+bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
+                             LLRenderTarget& depth, LLVertexBuffer& screen_triangle,
+                             F32 focal_distance, F32 blur_constant, F32 tan_pixel_angle,
+                             F32 magnification, F32 max_coc)
+{
+    if (gSavedSettings.getS32("ASDepthOfFieldMode") != 1)
+    {
+        if (sCoCTarget.isComplete() || sFarTarget.isComplete() || sNearTarget.isComplete())
+        {
+            releaseResources();
+        }
+        return false;
+    }
+
+    if (!sCoCProgram.isComplete() || !sFarProgram.isComplete() ||
+        !sNearProgram.isComplete() || !sResolveProgram.isComplete() ||
+        gCubeSnapshot || ASBackgroundIsolate::isActive() || &source == &destination ||
+        source.getWidth() <= 0 || source.getHeight() <= 0 ||
+        source.getWidth() != destination.getWidth() || source.getHeight() != destination.getHeight())
+    {
+        if (!sCoCProgram.isComplete() || !sFarProgram.isComplete() ||
+            !sNearProgram.isComplete() || !sResolveProgram.isComplete())
+        {
+            LL_WARNS_ONCE("ASDepthOfField") << "Advanced DoF shaders are incomplete; using Firestorm DoF." << LL_ENDL;
+        }
+        return false;
+    }
+
+    const F32 abs_max_coc = llclamp(fabsf(max_coc), 0.f, 150.f);
+    const F32 scale = llclamp(gSavedSettings.getF32("CameraDoFResScale"), 0.25f, 1.f);
+    if (!ensureResources(source.getWidth(), source.getHeight(), scale))
+    {
+        LL_WARNS_ONCE("ASDepthOfField") << "Advanced DoF target allocation failed; using Firestorm DoF." << LL_ENDL;
+        return false;
+    }
+
+    LL_INFOS_ONCE("ASDepthOfField") << "Advanced DoF active at "
+        << source.getWidth() << "x" << source.getHeight()
+        << ", gather scale " << scale << LL_ENDL;
+
+    static const S32 sample_counts[] = { 16, 32, 48 };
+    const S32 quality = llclamp(gSavedSettings.getS32("ASDepthOfFieldQuality"), 0, 2);
+    const S32 samples = sample_counts[quality];
+    const F32 near_radius = abs_max_coc * llclamp(gSavedSettings.getF32("ASDepthOfFieldNearRadius"), 0.f, 4.f);
+    const F32 far_radius = abs_max_coc * llclamp(gSavedSettings.getF32("ASDepthOfFieldFarRadius"), 0.f, 4.f);
+    const S32 blades = llclamp(gSavedSettings.getS32("ASDepthOfFieldApertureBlades"), 0, 12);
+    const F32 roundness = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureRoundness"), 0.f, 1.f);
+    const F32 rotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
+    const F32 anamorphic = llclamp(gSavedSettings.getF32("ASDepthOfFieldAnamorphicRatio"), 0.1f, 2.f);
+    const F32 highlight_boost = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightBoost"), 0.f, 2.f);
+    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 4);
+
+    LL_PROFILE_GPU_ZONE("AyaneStorm Depth of Field");
+    LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);
+    LLGLDisable blend(GL_BLEND);
+
+    sCoCTarget.bindTarget();
+    sCoCProgram.bind();
+    sCoCProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &depth, true, LLTexUnit::TFO_POINT);
+    sCoCProgram.uniform1f(U_FOCAL_DISTANCE, focal_distance);
+    sCoCProgram.uniform1f(U_BLUR_CONSTANT, blur_constant);
+    sCoCProgram.uniform1f(U_TAN_PIXEL_ANGLE, tan_pixel_angle);
+    sCoCProgram.uniform1f(U_MAGNIFICATION, magnification);
+    sCoCProgram.uniform1f(U_MAX_COC, abs_max_coc);
+    draw(screen_triangle);
+    sCoCProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, depth.getUsage());
+    sCoCProgram.unbind();
+    sCoCTarget.flush();
+
+    sFarTarget.bindTarget();
+    sFarProgram.bind();
+    sFarProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &source, false, LLTexUnit::TFO_BILINEAR);
+    sFarProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sCoCTarget, false, LLTexUnit::TFO_BILINEAR);
+    configureGather(sFarProgram, samples, far_radius, blades, roundness,
+                    rotation, anamorphic, highlight_boost);
+    sFarProgram.uniform1f(U_FOREGROUND_RADIUS, near_radius);
+    draw(screen_triangle);
+    sFarProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
+    sFarProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, source.getUsage());
+    sFarProgram.unbind();
+    sFarTarget.flush();
+
+    sNearTarget.bindTarget();
+    sNearProgram.bind();
+    sNearProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &source, false, LLTexUnit::TFO_BILINEAR);
+    sNearProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sCoCTarget, false, LLTexUnit::TFO_BILINEAR);
+    configureGather(sNearProgram, samples, near_radius, blades, roundness,
+                    rotation, anamorphic, highlight_boost);
+    draw(screen_triangle);
+    sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
+    sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, source.getUsage());
+    sNearProgram.unbind();
+    sNearTarget.flush();
+
+    destination.bindTarget();
+    sResolveProgram.bind();
+    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &source, false, LLTexUnit::TFO_BILINEAR);
+    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sCoCTarget, false, LLTexUnit::TFO_BILINEAR);
+    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sFarTarget, false, LLTexUnit::TFO_BILINEAR);
+    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sNearTarget, false, LLTexUnit::TFO_BILINEAR);
+    // The near layer carries its own coverage; this radius controls only the
+    // signed far-layer transition at the focal plane.
+    sResolveProgram.uniform1f(U_MAX_RADIUS, far_radius);
+    sResolveProgram.uniform1f(U_NEAR_MAX_RADIUS, near_radius);
+    sResolveProgram.uniform1i(U_DEBUG_MODE, debug_mode);
+    draw(screen_triangle);
+    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sNearTarget.getUsage());
+    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sFarTarget.getUsage());
+    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
+    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, source.getUsage());
+    sResolveProgram.unbind();
+    destination.flush();
+    return true;
+}

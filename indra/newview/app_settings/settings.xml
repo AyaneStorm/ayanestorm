@@ -12177,6 +12177,75 @@ Change of this parameter will affect the layout of buttons in notification toast
     <real>0.7</real>
   </map>
 
+  <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
+  <key>ASDepthOfFieldMode</key>
+  <map>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldBackend</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF backend: 0 Auto, 1 portable OpenGL 4.1 fragment; 2 is reserved for a future OpenGL 4.3 compute backend</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldQuality</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF bounded sample tier: 0 16-tap, 1 32-tap, 2 48-tap</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldNearRadius</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF foreground blur-radius multiplier</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFarRadius</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF background blur-radius multiplier</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureBlades</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture blade count; values below 3 use a circular aperture</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureRoundness</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture roundness from polygonal 0 to circular 1</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.35</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureRotation</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture rotation in degrees</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAnamorphicRatio</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF horizontal aperture aspect ratio</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldHighlightBoost</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF bokeh highlight weighting</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.25</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldDebug</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 signed CoC, 2 near coverage, 3 far blur, 4 near blur</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
+
   <key>RenderSpotLightsInNondeferred</key>
   <map>
     <key>Comment</key>

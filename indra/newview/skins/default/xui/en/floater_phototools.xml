@@ -1977,8 +1977,8 @@
 			 layout="topleft"
 			 top_pad="1"
 			 left="3"
-			 right="-3"
-			 height="55"
+				 right="-3"
+				 height="80"
 			 border_visible="true"
 			 background_visible="true">
 				<check_box
@@ -2031,6 +2031,33 @@
 					 function="Advanced.ToggleHUDInfo"
 					 parameter="fov"/>
 				</check_box>
+				<!-- <AS:Chanayane> Select and configure the independent AyaneStorm DoF renderer. -->
+				<combo_box
+				 control_name="ASDepthOfFieldMode"
+				 enabled_control="RenderDepthOfField"
+				 follows="top|left"
+				 height="20"
+				 layout="topleft"
+				 left="3"
+				 name="ASDepthOfFieldMode"
+				 top_pad="3"
+				 width="220">
+					<combo_box.item label="Standard / Firestorm DoF" name="standard" value="0"/>
+					<combo_box.item label="Advanced / AyaneStorm DoF" name="advanced" value="1"/>
+				</combo_box>
+				<button
+				 enabled_control="RenderDepthOfField"
+				 follows="top|left"
+				 height="20"
+				 label="Settings"
+				 layout="topleft"
+				 left_pad="3"
+				 name="ASDepthOfFieldSettings"
+				 top_delta="0"
+				 width="55">
+					<button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_depth_of_field"/>
+				</button>
+				<!-- </AS:Chanayane> -->
 			</panel>
 
 			<panel
