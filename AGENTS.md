@@ -41,6 +41,10 @@ new code here;
 - Destructive or mutating Git commands are absolutely FORBIDDEN. Eg: git reset, git rebase, git merge, git mv, git checkout, git commit, git stash, git push, git pull... Just use read-only Git commands.
 - Only read-only Git commands are allowed.
 
+## Git usage guidelines
+
+- Do not run routine Git validation commands such as `git status`, `git diff`, `git diff --check`, or `git log` unless their output is directly needed for the task or explicitly requested. Do not print large diffs for self-review. Use targeted file checks instead. If appropriate, run `git diff --check` only once at final handoff and only report failures.
+
 ## Building and Testing
 
 - Do not attempt to build the project. The user performs all builds.
@@ -63,3 +67,4 @@ Logs can be checked at %APPDATA%\AyaneStorm_x64\logs and in particular AyaneStor
 
 ## Plan mode
 When asked to make a plan, as soon as plan is approved, the agent should copy the raw plan file to the /doc folder with a meaningful name that mimic the other AyaneStorm documents. I said copy: the agent should not generate again the same plan in a new file for any reason. Generating the plan again is a waste of token. Use copy commands! DO NOT USE apply_patch! Use copy or cp whichever is available!
+

@@ -57,7 +57,7 @@
       <panel name="Shadows" follows="top|left" layout="topleft" top_pad="8" left="0" width="285" height="22" bg_alpha_color="Phototools_Header" border_visible="true" border_thickness="1" background_visible="true">
             <text name="T_Shadows" follows="left|top" layout="topleft" left="10" font="SansSerif" height="17" width="230">Shadows</text>
       </panel>
-      <panel name="P_Shadows" follows="top|left" layout="topleft" top_pad="0" left="5" width="275" height="240" border_visible="true" background_visible="true">
+      <panel name="P_Shadows" follows="top|left" layout="topleft" top_pad="0" left="5" width="275" height="265" border_visible="true" background_visible="true">
             <text name="T_Shadow_Types" follows="left|top" height="16" left="8" top_pad="10" width="40" layout="topleft">Types</text>
             <combo_box control_name="RenderShadowDetail" enabled_control="RenderDeferred" follows="left|right" height="20" layout="topleft" left_pad="20" name="ShadowDetail" width="200" 
                         tool_tip="Regardless of the setting you choose here, textures projected from projection lights will still be enabled.">
@@ -81,6 +81,18 @@
 
             <check_box control_name="RenderDeferredSSAO" enabled_control="RenderDeferred" height="16" label="Enable Ambient Occlusion (AO)" layout="topleft" left="5" name="UseSSAO" 
                         tool_tip="Softens shadows and simulates overall shading - it can add a high level of realism to the image." top_pad="12" width="230" />
+
+            <!-- <AS:Chanayane> Live AO technique and neutral comparison view. -->
+            <text name="T_AO_Technique" follows="top|left" layout="topleft" left="8" top_pad="5" width="62">AO mode</text>
+            <combo_box name="AO_Technique" control_name="RenderAOTechnique" enabled_control="RenderDeferredSSAO"
+                       follows="top|left" layout="topleft" left_pad="0" top_delta="-3" height="20" width="100">
+                  <combo_box.item label="Legacy SSAO" name="legacy" value="0" />
+                  <combo_box.item label="GTAO" name="gtao" value="1" />
+            </combo_box>
+            <check_box name="AO_Debug_White" control_name="RenderAODebugWhite" enabled_control="RenderDeferredSSAO"
+                       follows="top|left" layout="topleft" left_pad="4" top_delta="1" height="18" width="95"
+                       label="White debug" tool_tip="Replace materials with neutral white while retaining AO and shadows." />
+            <!-- </AS:Chanayane> -->
 
             <text name="T_Blur_Size" follows="top|left" layout="topleft" left="8" top_pad="5" width="80">Shdw blur</text>
             <slider_bar name="SB_Blur_Size" control_name="RenderShadowBlurSize" enabled_control="RenderDeferredSSAO" follows="left|right" height="16" increment="0.1" layout="topleft" left_pad="-20" min_val="1" max_val="10" top_delta="-2" width="127" 
@@ -131,6 +143,58 @@
                         tool_tip="Scaling factor for the effect (larger is wider)." />
             <button follows="left|top" name="Reset_Scaling_Factor" height="22" label="D" layout="topleft" left_pad="0" top_delta="0" width="20" 
                         tool_tip="Reset to the default value."> <button.commit_callback function="ResetControl" parameter="RenderSSAOFactor"/> </button>
+
+            <!-- <AS:Chanayane> Compact GTAO controls replace the four legacy-only rows above. -->
+            <panel name="P_AO_GTAO" follows="top|left" layout="topleft" left="0" top_delta="-92"
+                   width="275" height="92" visible="false">
+                  <text name="T_GTAO_Quality" type="string" length="1" follows="top|left" layout="topleft" left="8" top="4" height="16" width="80">Quality</text>
+                  <combo_box name="GTAO_Quality" control_name="RenderGTAOQuality" enabled_control="RenderDeferredSSAO"
+                             follows="top|left" layout="topleft" left="68" top="1" height="20" width="180">
+                        <combo_box.item label="Medium" name="medium" value="1" />
+                        <combo_box.item label="High" name="high" value="2" />
+                        <combo_box.item label="Ultra" name="ultra" value="3" />
+                  </combo_box>
+                  <button name="GTAO_Reset_Quality" follows="left|top" layout="topleft" left="248" top="0"
+                          height="22" width="20" label="D" tool_tip="Reset to the default value.">
+                        <button.commit_callback function="ResetControl" parameter="RenderGTAOQuality" />
+                  </button>
+                  <text name="T_GTAO_Radius" type="string" length="1" follows="top|left" layout="topleft" left="8" top="27" height="16" width="80"
+                        tool_tip="World-space occlusion radius in metres.">Radius</text>
+                  <slider_bar name="GTAO_SB_Radius" control_name="RenderGTAORadius" enabled_control="RenderDeferredSSAO"
+                              follows="top|left" layout="topleft" left="68" top="25" height="16" width="127"
+                              min_val="0.05" max_val="5.0" increment="0.05" />
+                  <spinner name="GTAO_S_Radius" control_name="RenderGTAORadius" enabled_control="RenderDeferredSSAO"
+                           follows="top|left" layout="topleft" left="195" top="22" width="53" min_val="0.05" max_val="5.0"
+                           increment="0.05" decimal_digits="2" />
+                  <button name="GTAO_Reset_Radius" follows="left|top" layout="topleft" left="248" top="22"
+                          height="22" width="20" label="D" tool_tip="Reset to the default value.">
+                        <button.commit_callback function="ResetControl" parameter="RenderGTAORadius" />
+                  </button>
+                  <text name="T_GTAO_Power" type="string" length="1" follows="top|left" layout="topleft" left="8" top="50" height="16" width="80">Power</text>
+                  <slider_bar name="GTAO_SB_Power" control_name="RenderGTAOFinalValuePower" enabled_control="RenderDeferredSSAO"
+                              follows="top|left" layout="topleft" left="68" top="48" height="16" width="127"
+                              min_val="0.5" max_val="5.0" increment="0.05" />
+                  <spinner name="GTAO_S_Power" control_name="RenderGTAOFinalValuePower" enabled_control="RenderDeferredSSAO"
+                           follows="top|left" layout="topleft" left="195" top="45" width="53" min_val="0.5" max_val="5.0"
+                           increment="0.05" decimal_digits="2" />
+                  <button name="GTAO_Reset_Power" follows="left|top" layout="topleft" left="248" top="45"
+                          height="22" width="20" label="D" tool_tip="Reset to the default value.">
+                        <button.commit_callback function="ResetControl" parameter="RenderGTAOFinalValuePower" />
+                  </button>
+                  <text name="T_GTAO_Denoise" type="string" length="1" follows="top|left" layout="topleft" left="8" top="73" height="16" width="80">Denoise</text>
+                  <combo_box name="GTAO_Denoise" control_name="RenderGTAODenoisePasses" enabled_control="RenderDeferredSSAO"
+                             follows="top|left" layout="topleft" left="68" top="70" height="20" width="180">
+                        <combo_box.item label="Disabled" name="disabled" value="0" />
+                        <combo_box.item label="Sharp" name="sharp" value="1" />
+                        <combo_box.item label="Medium" name="medium" value="2" />
+                        <combo_box.item label="Soft" name="soft" value="3" />
+                  </combo_box>
+                  <button name="GTAO_Reset_Denoise" follows="left|top" layout="topleft" left="248" top="69"
+                          height="22" width="20" label="D" tool_tip="Reset to the default value.">
+                        <button.commit_callback function="ResetControl" parameter="RenderGTAODenoisePasses" />
+                  </button>
+            </panel>
+            <!-- </AS:Chanayane> -->
       </panel>
 
       <panel name="T_Glow_Settings" follows="top|left" layout="topleft" top_pad="8" left="0" width="285" height="22" bg_alpha_color="Phototools_Header" border_visible="true" border_thickness="1" background_visible="true">

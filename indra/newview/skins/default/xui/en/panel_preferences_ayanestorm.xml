@@ -463,6 +463,103 @@
         tool_tip="0: final. 1: velocity magnitude heatmap (black=0px, red=4px). 2: raw UV delta as signed red/green. 3: matrix-sanity probe, bypasses depth reconstruction; blue tint means the previous-frame reprojection landed behind the camera."
         top="137"
         width="60" />
+
+      <!-- <AS:Chanayane> Ambient-occlusion selection and diagnostic access. -->
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        font="SansSerifSmallBold"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="ambient_occlusion_section_label"
+        top="180"
+        width="200">
+        Ambient occlusion
+      </text>
+
+      <check_box
+        control_name="RenderDeferredSSAO"
+        follows="left|top"
+        height="16"
+        label="Enable ambient occlusion"
+        layout="topleft"
+        left="15"
+        mouse_opaque="true"
+        name="render_ambient_occlusion"
+        radio_style="false"
+        top="201"
+        width="250" />
+
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="16"
+        layout="topleft"
+        left="15"
+        name="ambient_occlusion_technique_label"
+        top="228"
+        width="150">
+        Technique:
+      </text>
+      <combo_box
+        control_name="RenderAOTechnique"
+        enabled_control="RenderDeferredSSAO"
+        follows="left|top"
+        height="23"
+        layout="topleft"
+        left="170"
+        mouse_opaque="true"
+        name="render_ambient_occlusion_technique"
+        tool_tip="Choose the existing SSAO renderer or the new ground-truth ambient occlusion renderer."
+        top="225"
+        width="215">
+        <combo_box.item label="Legacy SSAO" name="legacy_ssao" value="0" />
+        <combo_box.item label="GTAO" name="gtao" value="1" />
+      </combo_box>
+
+      <check_box
+        control_name="RenderAODebugWhite"
+        enabled_control="RenderDeferredSSAO"
+        follows="left|top"
+        height="16"
+        label="White-material AO comparison"
+        layout="topleft"
+        left="15"
+        mouse_opaque="true"
+        name="render_ambient_occlusion_debug_white"
+        radio_style="false"
+        tool_tip="Shows neutral white materials while retaining ambient occlusion and shadows for direct SSAO/GTAO comparison."
+        top="259"
+        width="300" />
+
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="32"
+        layout="topleft"
+        left="15"
+        name="ambient_occlusion_tuning_help"
+        top="286"
+        width="370"
+        word_wrap="true">
+        AO quality and effect tuning are available in the Phototools panel.
+      </text>
+      <button
+        follows="left|top"
+        height="23"
+        label="Open Phototools"
+        layout="topleft"
+        left="395"
+        name="open_phototools"
+        top="282"
+        width="140">
+        <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="phototools" />
+      </button>
+      <!-- </AS:Chanayane> -->
     </panel>
     <!-- </AS:Chanayane> -->
 

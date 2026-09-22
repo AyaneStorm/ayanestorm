@@ -38,6 +38,10 @@ uniform float emissive_brightness;  // fullbright flag, 1.0 == fullbright, 0.0 o
 uniform int sun_up_factor;
 uniform int classic_mode;
 
+// <AS:Chanayane> Neutral-material AO comparison for blended legacy materials.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 vec4 applySkyAndWaterFog(vec3 pos, vec3 additive, vec3 atten, vec4 color);
 vec3 scaleSoftClipFragLinear(vec3 l);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
@@ -498,6 +502,14 @@ void main()
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color * final_scale, al), vec4(0));
     vec3 volumetric_foreground = asVolumetricForeground(pos.xyz);
+    // <AS:Chanayane> Preserve material opacity and directional shadows while
+    // removing late forward material, emissive, fog, and local-light color.
+    if (as_ao_debug_white != 0)
+    {
+        color = vec3(shadow);
+        volumetric_foreground = vec3(0.0);
+    }
+    // </AS:Chanayane>
 #ifdef EXACT_OIT
     // exact_oit_store(max(vec4(color * final_scale * asVolumetricTransmittance(pos.xyz) + volumetric_foreground, al), vec4(0)));
     exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));

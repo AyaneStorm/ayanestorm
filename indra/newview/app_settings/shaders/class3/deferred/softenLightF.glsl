@@ -43,6 +43,11 @@ uniform float blur_fidelity;
 #if defined(HAS_SSAO)
 uniform float ssao_irradiance_scale;
 uniform float ssao_irradiance_max;
+// <AS:Chanayane> Dedicated GTAO visibility and comparison diagnostic.
+uniform sampler2D gtao_visibility_map;
+uniform int as_gtao_effective;
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
 #endif
 
 // Inputs
@@ -141,9 +146,32 @@ void main()
     float scol = 1.0;
 #endif
 #if defined(HAS_SSAO)
-    float ambocc     = scol_ambocc.g;
+    // <AS:Chanayane> Preserve the original light-map AO as the fallback.
+    // float ambocc     = scol_ambocc.g;
+    float ambocc = as_gtao_effective != 0
+        ? texture(gtao_visibility_map, vary_fragcoord.xy).r : scol_ambocc.g;
+    // </AS:Chanayane>
 #else
     float ambocc = 1.0;
+#endif
+
+#if defined(HAS_SSAO)
+    // <AS:Chanayane> Neutral matte material view for direct SSAO/GTAO comparison.
+    // Depth distinguishes scene surfaces from HDRI/WindLight background pixels;
+    // material flags cannot, because fullbright geometry uses SKIP_ATMOS.
+    bool as_ao_debug_surface = as_ao_debug_white != 0 && depth < 1.0;
+    bool as_ao_debug_unlit = as_ao_debug_surface &&
+        (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_SKIP_ATMOS) ||
+         GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_HDRI));
+    if (as_ao_debug_surface)
+    {
+        baseColor.rgb = vec3(1.0);
+        colorEmissive = as_ao_debug_unlit ? vec3(1.0) : vec3(0.0);
+        envIntensity = 0.0;
+        spec = GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_PBR)
+            ? vec4(1.0, 1.0, 0.0, 0.0) : vec4(0.0);
+    }
+    // </AS:Chanayane>
 #endif
 
     vec3  color = vec3(0);
@@ -274,6 +302,20 @@ void main()
             applyLegacyEnv(color, legacyenv, spec, pos.xyz, gb.normal, envIntensity);
         }
    }
+
+#if defined(HAS_SSAO)
+    // <AS:Chanayane> Fullbright/emissive deferred surfaces normally bypass
+    // lighting. In the diagnostic, show them as white with AO and sun shadow.
+    if (as_ao_debug_unlit)
+    {
+#if defined(HAS_SUN_SHADOW)
+        color = vec3(ambocc * scol_ambocc.r);
+#else
+        color = vec3(ambocc);
+#endif
+    }
+    // </AS:Chanayane>
+#endif
 
     //color.r = classic_mode > 0 ? 1.0 : 0.0;
     float final_scale = 1;

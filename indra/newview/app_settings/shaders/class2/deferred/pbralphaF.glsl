@@ -45,6 +45,10 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int classic_mode;
 
+// <AS:Chanayane> Neutral-material AO comparison for late PBR alpha surfaces.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 // <AS:Chanayane> Independent OIT output declarations
 // out vec4 frag_color;
 #ifdef EXACT_OIT
@@ -291,6 +295,13 @@ void main()
 // color.rgb = color.rgb * final_scale * asVolumetricTransmittance(pos.xyz) +
 //             asVolumetricForeground(pos.xyz);
     color.rgb = color.rgb * final_scale + asVolumetricForeground(pos.xyz);
+// </AS:Chanayane>
+// <AS:Chanayane> Preserve PBR opacity and directional shadows while removing
+// material, emissive, reflection, fog, and local-light color.
+if (as_ao_debug_white != 0)
+{
+    color.rgb = vec3(scol);
+}
 // </AS:Chanayane>
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.
 // frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));

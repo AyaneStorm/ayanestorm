@@ -5,7 +5,7 @@
 Implement XeGTAO-derived scalar ambient occlusion as an optional alternative to existing SSAO:
 
 - `Legacy SSAO` remains the default.
-- `GTAO` offers Medium and High quality; High is the GTAO default.
+- `GTAO` offers Medium, High, and Ultra quality; High is the GTAO default.
 - OpenGL 4.0 fragment/FBO backend supports macOS OpenGL 4.1.
 - OpenGL 4.3 compute backend is automatically preferred when available.
 - Both backends share the algorithm, settings, formats, and output convention.
@@ -105,18 +105,23 @@ Use optional `findChild` access where necessary during XUI construction, connect
 
 Adapt the vendored `.XeGTAO` algorithm, not its rendering framework:
 
-- Preserve Intel’s MIT attribution in every substantially derived source or shader.
+- Mark substantially derived sources and shaders as derived from Intel XeGTAO and refer to the vendored full MIT notice at `.XeGTAO/LICENSE`; do not reproduce Intel copyright headers in AyaneStorm-owned files.
 - Port scalar visibility only.
 - Exclude ImGui, DirectX abstractions, reference RTAO, auto-tuning, bent normals, and normal reconstruction.
 - Use the existing decoded view-space G-buffer normal.
 - Use GLSL `float`; retain bandwidth savings through R16F/R8 storage. Do not introduce vendor-specific 16-bit arithmetic initially.
 
+`vaGTAO_RT.hlsl` was reviewed. It is the DirectX ray-traced reference/ground-truth path used by XeGTAO diagnostics and auto-tuning, so it supplies no raster/compute pass required by this scoped port and remains excluded with RTAO.
+
 Put the horizon integration, edge packing, denoise weighting, Hilbert/R2 noise, fast trigonometric helpers, and tuned constants in one AS-owned GLSL common-function source attached to both fragment and compute programs. Backend entry shaders contain only resource access and dispatch/draw-specific code.
 
-Compile separate Medium and High main-pass permutations so slice/step loops are constant and unrolled:
+Treat GLSL 4.00/4.10 keywords and future-reserved words as forbidden identifiers in all shared and fragment-backend sources for macOS compatibility. Compute-only GLSL 4.30 keywords must remain confined to compute entry shaders.
+
+Compile separate Medium, High, and Ultra main-pass permutations so slice/step counts are constant at each entry point:
 
 - Medium: 2 slices × 2 steps in both directions.
 - High: 3 slices × 3 steps in both directions.
+- Ultra: 9 slices × 3 steps in both directions, matching XeGTAO's Ultra preset.
 
 ### Shared resources
 
@@ -244,7 +249,7 @@ The repository agent must not build the viewer. After implementation, provide th
 
 Capture identical static-camera frames for:
 
-- Off, legacy SSAO, GTAO Medium, and GTAO High.
+- Off, legacy SSAO, GTAO Medium, GTAO High, and GTAO Ultra.
 - Forced fragment and forced compute.
 - Indoor corners, outdoor terrain, avatars, thin geometry, distant geometry, silhouettes, sky/background pixels, PBR and legacy materials.
 - Near/far-plane extremes, several FOVs, resized windows, render-resolution scaling, and ordinary/high-resolution snapshots.
@@ -262,7 +267,7 @@ Legacy mode must show no intentional visual change from the current renderer.
 
 Use existing GPU profiling zones around depth preparation, main GTAO, each denoise pass, and the total module.
 
-For each backend, measure after 60 warm-up frames over at least 200 frames at 1080p, 1440p, and 4K for Medium and High using the same fixed scene/camera:
+For each backend, measure after 60 warm-up frames over at least 200 frames at 1080p, 1440p, and 4K for Medium, High, and Ultra using the same fixed scene/camera:
 
 - Record median and 95th-percentile GPU time per stage and total.
 - Compute must have a lower median total time than fragment at each tested resolution/quality on representative GL 4.3 hardware.
@@ -272,10 +277,26 @@ For each backend, measure after 60 warm-up frames over at least 200 frames at 10
 
 ## Assumptions
 
-- Medium and High are the supported GTAO quality choices; Low and Ultra are intentionally omitted.
-- High with one sharp denoise pass is GTAO’s default.
+- Medium, High, and Ultra are the supported GTAO quality choices; Low is intentionally omitted.
+- Ultra with a 1.70 m radius, 2.20 power, and three-pass Soft denoise is GTAO's default.
 - Legacy SSAO remains the overall default technique for existing and new installations.
 - GTAO requires GL 4.0; lower-capability configurations retain legacy SSAO.
 - Temporal index remains zero until the renderer gains a suitable temporal-reprojection consumer.
 - The existing deferred normal attachment is authoritative; GTAO does not reconstruct normals from depth.
 - GTAO affects ambient/reflection-probe irradiance through the existing AO composite and does not replace per-material PBR AO.
+
+## Approved Scope Addition
+
+- Add live `RenderAODebugWhite` comparison mode in both Phototools views. It renders neutral white materials while retaining the selected AO and existing shadows, making Legacy SSAO/GTAO differences directly visible.
+- Add the AO enable control, Legacy SSAO/GTAO selector, white comparison toggle, and a link to Phototools under AyaneStorm Preferences → Rendering 2. Detailed AO tuning remains in Phototools.
+
+## Implementation Status
+
+- 2026-09-22: Added persistent settings, the AS-owned module, transactional fragment and compute backends, XeGTAO-derived shared depth/main/denoise shaders, pipeline composite hooks, the neutral-white AO diagnostic, both Phototools layouts, and AyaneStorm Preferences → Rendering 2 controls. XML validation, ownership-tag checks, and `git diff --check` pass. Build and runtime validation remain for the user.
+- 2026-09-22: First runtime shader load exposed NVIDIA GLSL rejection of `packed` as a reserved keyword in `gtao_unpack_edges`. Renamed it to `packed_value`; the reported fragment and compute-depth errors were cascades from that shared-source failure. Rebuild validation pending.
+- 2026-09-22: Audited all GTAO shader identifiers against the GLSL 4.10 keyword and future-reserved-word lists; no remaining collisions or double-underscore identifiers were found.
+- 2026-09-22: Second runtime shader load showed that this viewer compiles attached helper and entry files as separate GLSL objects. Added explicit shared-function prototypes to every fragment/compute entry shader and redeclared `gtao_radius` in the two depth-mip entry objects; the logged undefined-symbol errors were all instances of this compilation-unit issue. Rebuild validation pending.
+- 2026-09-22: Extended neutral-white debug handling to the late legacy alpha, PBR alpha, blended material, fullbright/fullbright-shiny, and GLTF alpha/unlit passes. These paths now retain opacity and directional-shadow silhouettes without restoring texture, emissive, environment, fog, reflection, or local-light color; HUDs and reflection-probe cube captures remain excluded.
+- 2026-09-22: Runtime comparison exposed visible screen-fixed Hilbert sampling grain at High quality with a 1.5 m radius even under the three-pass Soft denoiser. Kept Sharp at XeGTAO's reference beta and strengthened only Medium/Soft center weights (0.7/0.35) in both fragment and compute paths; filtering remains depth-edge-aware and spatially stable.
+- 2026-09-22: Added Ultra quality using XeGTAO's 9-slice × 3-step preset for both fragment and compute backends. Medium 2×2 and High 3×3 remain available.
+- 2026-09-22: Adopted the runtime-tuned GTAO defaults: Ultra, 1.70 m radius, 2.20 power, Soft denoise, irradiance maximum 0.180, irradiance scale 0.60, and effect 0.800. The last three already matched the shared AO defaults. Corrected both Phototools irradiance slider/spinner ranges from effectively integral on/off controls to fractional ranges appropriate to those values.

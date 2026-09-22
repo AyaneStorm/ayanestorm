@@ -104,6 +104,8 @@ FloaterQuickPrefs::QuickPrefsXMLEntry::QuickPrefsXMLEntry()
 
 FloaterQuickPrefs::FloaterQuickPrefs(const LLSD& key)
 :   LLTransientDockableFloater(nullptr, false, key),
+    mSliderGTAOEffectX(nullptr),
+    mSpinnerGTAOEffectX(nullptr),
     mAvatarZOffsetSlider(nullptr),
     mRlvBehaviorCallbackConnection(),
     mEnvChangedConnection(),
@@ -220,6 +222,10 @@ void FloaterQuickPrefs::initCallbacks()
         gSavedSettings.getControl("RenderShadowSplitExponent")->getSignal()->connect(boost::bind(&FloaterQuickPrefs::refreshSettings, this));
         gSavedSettings.getControl("RenderShadowGaussian")->getSignal()->connect(boost::bind(&FloaterQuickPrefs::refreshSettings, this));
         gSavedSettings.getControl("RenderSSAOEffect")->getSignal()->connect(boost::bind(&FloaterQuickPrefs::refreshSettings, this));
+        // <AS:Chanayane> Switch the overlapping AO control panels live.
+        gSavedSettings.getControl("RenderAOTechnique")->getSignal()->connect(
+            boost::bind(&FloaterQuickPrefs::refreshSettings, this));
+        // </AS:Chanayane>
 
         // Vignette UI controls
         getChild<LLSpinCtrl>("VignetteSpinnerX")->setCommitCallback(boost::bind(&FloaterQuickPrefs::onChangeVignetteSpinnerX, this));
@@ -246,6 +252,20 @@ void FloaterQuickPrefs::initCallbacks()
         getChild<LLSlider>("SB_Effect")->setCommitCallback(boost::bind(&FloaterQuickPrefs::onChangeRenderSSAOEffectSlider, this));
         getChild<LLSpinCtrl>("S_Effect")->setCommitCallback(boost::bind(&FloaterQuickPrefs::onChangeRenderSSAOEffectSpinner, this));
         getChild<LLButton>("Reset_Effect")->setCommitCallback(boost::bind(&FloaterQuickPrefs::onClickResetRenderSSAOEffectX, this));
+        // <AS:Chanayane> Optional because non-English inherited XUI may omit new controls.
+        if (LLSlider* slider = findChild<LLSlider>("GTAO_SB_Effect"))
+        {
+            slider->setCommitCallback(boost::bind(&FloaterQuickPrefs::onChangeGTAOEffectSlider, this));
+        }
+        if (LLSpinCtrl* spinner = findChild<LLSpinCtrl>("GTAO_S_Effect"))
+        {
+            spinner->setCommitCallback(boost::bind(&FloaterQuickPrefs::onChangeGTAOEffectSpinner, this));
+        }
+        if (LLButton* reset = findChild<LLButton>("GTAO_Reset_Effect"))
+        {
+            reset->setCommitCallback(boost::bind(&FloaterQuickPrefs::onClickResetRenderSSAOEffectX, this));
+        }
+        // </AS:Chanayane>
     }
     else
     {
@@ -605,6 +625,10 @@ bool FloaterQuickPrefs::postBuild()
 
         mSliderRenderSSAOEffectX = getChild<LLSlider>("SB_Effect");
         mSpinnerRenderSSAOEffectX = getChild<LLSpinCtrl>("S_Effect");
+        // <AS:Chanayane> The English GTAO panel mirrors the shared effect control.
+        mSliderGTAOEffectX = findChild<LLSlider>("GTAO_SB_Effect");
+        mSpinnerGTAOEffectX = findChild<LLSpinCtrl>("GTAO_S_Effect");
+        // </AS:Chanayane>
 
         // <AS:Chanayane> macOS supports Standard and AYAstorm ordering only.
 #if LL_DARWIN
@@ -1102,6 +1126,33 @@ void FloaterQuickPrefs::refreshSettings()
         LLVector3 renderSSAOEffect = gSavedSettings.getVector3("RenderSSAOEffect");
         mSpinnerRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
         mSliderRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+        // <AS:Chanayane> Keep the overlapping GTAO controls synchronized.
+        if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+        if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+
+        const bool gtao = gSavedSettings.getS32("RenderAOTechnique") == 1;
+        if (LLView* legacy_panel = findChild<LLView>("P_AO_Legacy"))
+        {
+            legacy_panel->setVisible(!gtao);
+        }
+        if (LLView* gtao_panel = findChild<LLView>("P_AO_GTAO"))
+        {
+            gtao_panel->setVisible(gtao);
+        }
+        if (getIsPhototoolsAdvanced())
+        {
+            static const char* legacy_ao_controls[] = {
+                "T_Scale", "SB_Scale", "S_Scale", "Reset_Scale",
+                "T_Max_Scale", "SB_Max_Scale", "S_Max_Scale", "Reset_Max_Scale",
+                "T_Effect", "SB_Effect", "S_Effect", "Reset_Effect",
+                "T_Scaling_Factor", "SB_Scaling_Factor", "S_Scaling_Factor", "Reset_Scaling_Factor"
+            };
+            for (const char* name : legacy_ao_controls)
+            {
+                if (LLView* control = findChild<LLView>(name)) control->setVisible(!gtao);
+            }
+        }
+        // </AS:Chanayane>
     }
     // </FS:CR>
 }
@@ -2045,6 +2096,8 @@ void FloaterQuickPrefs::onChangeRenderSSAOEffectSlider()
     LLVector3 renderSSAOEffect = gSavedSettings.getVector3("RenderSSAOEffect");
     renderSSAOEffect.mV[VX] = mSliderRenderSSAOEffectX->getValueF32();
     mSpinnerRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
     gSavedSettings.setVector3("RenderSSAOEffect", renderSSAOEffect);
 }
 
@@ -2053,6 +2106,8 @@ void FloaterQuickPrefs::onChangeRenderSSAOEffectSpinner()
     LLVector3 renderSSAOEffect = gSavedSettings.getVector3("RenderSSAOEffect");
     renderSSAOEffect.mV[VX] = mSpinnerRenderSSAOEffectX->getValueF32();
     mSliderRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
     gSavedSettings.setVector3("RenderSSAOEffect", renderSSAOEffect);
 }
 
@@ -2063,8 +2118,34 @@ void FloaterQuickPrefs::onClickResetRenderSSAOEffectX()
     renderSSAOEffect.mV[VX] = renderSSAOEffectDefault.mV[VX];
     mSpinnerRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
     mSliderRenderSSAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
+    if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
     gSavedSettings.setVector3("RenderSSAOEffect", renderSSAOEffect);
 }
+
+// <AS:Chanayane> GTAO shares the existing post-visibility AO effect strength.
+void FloaterQuickPrefs::onChangeGTAOEffectSlider()
+{
+    if (!mSliderGTAOEffectX) return;
+    LLVector3 effect = gSavedSettings.getVector3("RenderSSAOEffect");
+    effect.mV[VX] = mSliderGTAOEffectX->getValueF32();
+    if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(effect.mV[VX]);
+    mSliderRenderSSAOEffectX->setValue(effect.mV[VX]);
+    mSpinnerRenderSSAOEffectX->setValue(effect.mV[VX]);
+    gSavedSettings.setVector3("RenderSSAOEffect", effect);
+}
+
+void FloaterQuickPrefs::onChangeGTAOEffectSpinner()
+{
+    if (!mSpinnerGTAOEffectX) return;
+    LLVector3 effect = gSavedSettings.getVector3("RenderSSAOEffect");
+    effect.mV[VX] = mSpinnerGTAOEffectX->getValueF32();
+    if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(effect.mV[VX]);
+    mSliderRenderSSAOEffectX->setValue(effect.mV[VX]);
+    mSpinnerRenderSSAOEffectX->setValue(effect.mV[VX]);
+    gSavedSettings.setVector3("RenderSSAOEffect", effect);
+}
+// </AS:Chanayane>
 
 void FloaterQuickPrefs::callbackRestoreDefaults(const LLSD& notification, const LLSD& response)
 {

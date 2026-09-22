@@ -12431,6 +12431,59 @@ Change of this parameter will affect the layout of buttons in notification toast
     <integer>0</integer>
   </map>
 
+  <!-- <AS:Chanayane> Optional XeGTAO backend and live comparison controls. -->
+  <key>RenderAOTechnique</key>
+  <map>
+    <key>Comment</key>
+    <string>Ambient occlusion technique: 0 legacy SSAO, 1 GTAO.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer>
+  </map>
+  <key>RenderGTAOQuality</key>
+  <map>
+    <key>Comment</key><string>GTAO quality: 1 Medium, 2 High, 3 Ultra.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>S32</string>
+    <key>Value</key><integer>3</integer>
+  </map>
+  <key>RenderGTAORadius</key>
+  <map>
+    <key>Comment</key><string>GTAO view-space radius in metres.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>F32</string>
+    <key>Value</key><real>1.70</real>
+  </map>
+  <key>RenderGTAOFinalValuePower</key>
+  <map>
+    <key>Comment</key><string>GTAO final visibility power.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>F32</string>
+    <key>Value</key><real>2.2</real>
+  </map>
+  <key>RenderGTAODenoisePasses</key>
+  <map>
+    <key>Comment</key><string>GTAO denoise: 0 Disabled, 1 Sharp, 2 Medium, 3 Soft.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>S32</string>
+    <key>Value</key><integer>3</integer>
+  </map>
+  <key>RenderGTAOBackend</key>
+  <map>
+    <key>Comment</key><string>GTAO backend: 0 Auto, 1 Fragment, 2 Compute.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer>
+  </map>
+  <key>RenderAODebugWhite</key>
+  <map>
+    <key>Comment</key><string>Render neutral white materials while preserving AO and shadows for comparison.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
+
   <key>RenderDeferredBlurLight</key>
   <map>
     <key>Comment</key>

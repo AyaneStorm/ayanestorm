@@ -143,6 +143,10 @@ private:
 
     LLSlider*           mSliderRenderSSAOEffectX;
     LLSpinCtrl*         mSpinnerRenderSSAOEffectX;
+    // <AS:Chanayane> Mirrored GTAO-panel controls for RenderSSAOEffect.x.
+    LLSlider*           mSliderGTAOEffectX;
+    LLSpinCtrl*         mSpinnerGTAOEffectX;
+    // </AS:Chanayane>
 
     LLSliderCtrl*       mAvatarZOffsetSlider;
 
@@ -179,6 +183,10 @@ private:
     void onChangeRenderSSAOEffectSlider();
     void onChangeRenderSSAOEffectSpinner();
     void onClickResetRenderSSAOEffectX();
+    // <AS:Chanayane> GTAO panel uses the same post-visibility AO effect setting.
+    void onChangeGTAOEffectSlider();
+    void onChangeGTAOEffectSpinner();
+    // </AS:Chanayane>
 
     // Restore Quickprefs Defaults
     void onClickRestoreDefaults();

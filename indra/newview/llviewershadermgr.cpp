@@ -67,6 +67,9 @@
 // <AS:Chanayane> Optional volumetric lighting
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional XeGTAO ambient-occlusion backend.
+#include "asambientocclusion.h"
+// </AS:Chanayane>
 #include "llviewershadermgr.h"
 #include "llviewercontrol.h"
 #include "llversioninfo.h"
@@ -498,6 +501,7 @@ void LLViewerShaderMgr::finalizeShaderList()
     ASMotionBlur::registerShader(mShaderList);
     ASDiffuseGlow::registerShaders(mShaderList);
     ASColorGrading::registerShaders(mShaderList);
+    ASAmbientOcclusion::registerShaders(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the self-lighting floater's background isolate shader.
     ASBackgroundIsolate::registerShader(mShaderList);
@@ -620,6 +624,9 @@ void LLViewerShaderMgr::setShaders()
 // </AS:Chanayane>
 // <AS:Chanayane> Include volumetric lighting shader revision in the cache key.
             hash_obj.update(ASVolumetricLighting::shaderCacheRevision());
+// </AS:Chanayane>
+// <AS:Chanayane> Include the GTAO module revision without changing the global shader version.
+            hash_obj.update(ASAmbientOcclusion::shaderCacheRevision());
 // </AS:Chanayane>
             current_cache_version = hash_obj.digest();
 
@@ -1223,6 +1230,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // </AS:Chanayane>
 // <AS:Chanayane> Unload optional volumetric lighting shaders.
         ASVolumetricLighting::unloadShaders();
+// </AS:Chanayane>
+// <AS:Chanayane> Unload optional GTAO shaders independently.
+        ASAmbientOcclusion::unloadShaders();
 // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional aurora shader.
         ASAurora::unloadShader();
@@ -3235,6 +3245,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // <AS:Chanayane> Load optional volumetric lighting independently; a compile
 // failure here must not fail the whole deferred shader load.
     ASVolumetricLighting::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+// </AS:Chanayane>
+// <AS:Chanayane> GTAO failure must not fail the core deferred shader family.
+    ASAmbientOcclusion::loadShaders(mShaderLevel[SHADER_DEFERRED]);
 // </AS:Chanayane>
     return success;
 }

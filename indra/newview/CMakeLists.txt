@@ -124,6 +124,7 @@ set(viewer_SOURCE_FILES
     aschromaticaberration.cpp
     asmotionblur.cpp
     asdiffuseglow.cpp
+    asambientocclusion.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.cpp
@@ -1048,6 +1049,7 @@ set(viewer_HEADER_FILES
     aschromaticaberration.h
     asmotionblur.h
     asdiffuseglow.h
+    asambientocclusion.h
     # </AS:Chanayane>
     # <AS:Chanayane> Extensible viewer-local weather and snow modules.
     asweather.h

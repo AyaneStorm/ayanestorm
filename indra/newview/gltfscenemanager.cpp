@@ -26,8 +26,10 @@
 
 #include "llviewerprecompiledheaders.h"
 
-// <AS:Chanayane> Independent OIT renderer selection
+// <AS:Chanayane> Independent OIT selection and neutral-material AO diagnostic.
+#include "asambientocclusion.h"
 #include "asoitdispatcher.h"
+extern bool gCubeSnapshot;
 // </AS:Chanayane>
 
 #include "gltfscenemanager.h"
@@ -711,6 +713,14 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
                     }
 // </AS:Chanayane>
                 }
+
+// <AS:Chanayane> Late GLTF alpha and unlit variants bypass the deferred
+// composite, so pass the white diagnostic directly to their bound variant.
+                LLGLSLShader::sCurBoundShaderPtr->uniform1i(
+                    LLStaticHashedString("as_ao_debug_white"),
+                    ASAmbientOcclusion::debugWhiteEnabled() &&
+                    !LLPipeline::sRenderingHUDs && !gCubeSnapshot ? 1 : 0);
+// </AS:Chanayane>
 
 
                 if (!rigged)

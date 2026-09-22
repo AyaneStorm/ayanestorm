@@ -41,6 +41,10 @@ out vec4 frag_color;
 uniform sampler2D diffuseMap;
 #endif
 
+// <AS:Chanayane> Neutral-material AO comparison for late fullbright surfaces.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 in vec3 vary_position;
 in vec4 vertex_color;
 in vec2 vary_texcoord0;
@@ -182,6 +186,13 @@ void main()
     // color.rgb = color.rgb * asVolumetricTransmittance(pos) + asVolumetricForeground(pos);
     color.rgb += asVolumetricForeground(pos);
 #endif
+// </AS:Chanayane>
+
+// <AS:Chanayane> Preserve texture opacity but remove late fullbright color.
+if (as_ao_debug_white != 0)
+{
+    color.rgb = vec3(1.0);
+}
 // </AS:Chanayane>
 
 // <AS:Chanayane> Replace the original framebuffer output only during OIT capture.

@@ -25,6 +25,10 @@
 
 /*[EXTRA_CODE_HERE]*/
 
+// <AS:Chanayane> Neutral-material AO comparison for late GLTF surfaces.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 
 // GLTF pbrMetallicRoughness implementation
 
@@ -265,6 +269,12 @@ void main()
 #ifdef UNLIT
     vec4 color = basecolor;
     color.rgb += emissive.rgb;
+    // <AS:Chanayane> Preserve GLTF opacity while removing unlit material color.
+    if (as_ao_debug_white != 0)
+    {
+        color.rgb = vec3(1.0);
+    }
+    // </AS:Chanayane>
     frag_color = color;
 #else
     frag_data[0] = max(vec4(basecolor.rgb, 0.0), vec4(0));
@@ -345,6 +355,14 @@ void main()
 
     float a = basecolor.a*vertex_color.a;
 
+    // <AS:Chanayane> Preserve opacity and directional shadows while removing
+    // late GLTF material, emissive, reflection, fog, and local-light color.
+    if (as_ao_debug_white != 0)
+    {
+        color = vec3(scol);
+    }
+    // </AS:Chanayane>
+
     // <AS:Chanayane> OIT capture replaces only the original alpha framebuffer write.
     // frag_color = max(vec4(color.rgb,a), vec4(0));
     #ifdef EXACT_OIT
@@ -358,6 +376,12 @@ void main()
 #else // UNLIT
     vec4 color = basecolor;
     color.rgb += emissive.rgb;
+    // <AS:Chanayane> Preserve GLTF opacity while removing unlit material color.
+    if (as_ao_debug_white != 0)
+    {
+        color.rgb = vec3(1.0);
+    }
+    // </AS:Chanayane>
     // <AS:Chanayane> OIT capture replaces only the original unlit alpha framebuffer write.
     // frag_color = color;
     #ifdef EXACT_OIT

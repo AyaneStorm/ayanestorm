@@ -39,6 +39,10 @@ in vec3 vary_position;
 
 uniform samplerCube environmentMap;
 
+// <AS:Chanayane> Neutral-material AO comparison for late fullbright-shiny surfaces.
+uniform int as_ao_debug_white;
+// </AS:Chanayane>
+
 vec3 atmosFragLighting(vec3 light, vec3 additive, vec3 atten);
 vec4 applyWaterFogViewLinear(vec3 pos, vec4 color);
 
@@ -92,6 +96,12 @@ void main()
 
     color.a = 1.0;
 
+    // <AS:Chanayane> Remove texture and reflection color from the diagnostic.
+    if (as_ao_debug_white != 0)
+    {
+        color.rgb = vec3(1.0);
+    }
+    // </AS:Chanayane>
+
     frag_color = max(color, vec4(0));
 }
-

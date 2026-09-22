@@ -26,6 +26,11 @@
 
 #include "llviewerprecompiledheaders.h"
 
+// <AS:Chanayane> Neutral-material AO diagnostic for late fullbright-shiny surfaces.
+#include "asambientocclusion.h"
+extern bool gCubeSnapshot;
+// </AS:Chanayane>
+
 #include "lldrawpoolbump.h"
 
 #include "llstl.h"
@@ -330,6 +335,12 @@ void LLDrawPoolBump::beginFullbrightShiny()
                      LLVector4(gGLModelView+8),
                      LLVector4(gGLModelView+12));
         shader->bind();
+
+        // <AS:Chanayane> This shiny pass follows the deferred composite.
+        shader->uniform1i(LLStaticHashedString("as_ao_debug_white"),
+                          ASAmbientOcclusion::debugWhiteEnabled() &&
+                          !LLPipeline::sRenderingHUDs && !gCubeSnapshot ? 1 : 0);
+        // </AS:Chanayane>
 
         LLVector3 vec = LLVector3(gShinyOrigin) * mat;
         LLVector4 vec4(vec, gShinyOrigin.mV[3]);
@@ -1086,4 +1097,3 @@ void LLRenderPass::pushBumpBatch(LLDrawInfo& params, bool texture, bool batch_te
         gGL.matrixMode(LLRender::MM_MODELVIEW);
     }
 }
-
