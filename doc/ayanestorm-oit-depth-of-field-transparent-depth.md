@@ -1,5 +1,35 @@
 # OIT and depth of field: transparent avatar depth
 
+## Square cheek artifacts investigation (2026-09-23)
+
+Reference: `AyaneStormOS-Normal_NxwcjfS3CD.jpg`. Green marking surrounds
+dark, axis-aligned stair-step patches where hair crosses the cheek.
+Current source inspection contradicts the paused-removal notes below:
+`asdepthoffield.cpp` still allocates, registers, renders and binds the
+16-pixel occupancy target and enables `use_occupancy` for layered gathers.
+`asDepthOfFieldTransparentF.glsl` still returns zero when `nearbyLayer()`
+rejects the tile neighborhood. Automatic mip generation is present through
+`LLRenderTarget::flush()`; missing mip generation is not established.
+
+The occupancy early-out is the leading candidate for the square boundaries,
+not a confirmed cause. A false empty result would suppress transparent blur
+contributions across tile/mip-cell regions. First isolate it by disabling only
+`use_occupancy` and comparing the same camera/settings. If unchanged, inspect
+rigged coverage/CoC and gather diagnostics for reduced-resolution sampling or
+the existing overlapping-rigged-layer representation limitation. Screenshot
+alone cannot establish which path produced these pixels. No renderer changes,
+build or runtime validation performed during this investigation.
+
+Follow-up: temporarily force `U_USE_OCCUPANCY` to zero in the transparent
+gather. Occupancy generation, resources and shader code remain intact for
+re-enabling after comparison.
+
+Runtime result: the user reports "no more squares" after this change. This
+isolates the occupancy early-out as the cause of the reported square artifacts;
+the precise defect in its occupancy/rejection logic remains undiagnosed. Keep
+the early-out disabled and retain the implementation for investigation. This
+result does not establish that other transparent-layer DoF limitations are fixed.
+
 Author: chanayane@firestorm. Updated: 2026-09-06.
 Status: experimental implementation rejected by runtime testing; code rollback
 approved. Keep this document as research for a future redesign.

@@ -732,6 +732,15 @@ transparent depths. Check Standard, Exact-OIT, AVBOIT and AYAstorm separately.
 
 ### DoF regression and paused implementation state (2026-09-23)
 
+**Runtime-confirmed update:** For `AyaneStormOS-Normal_NxwcjfS3CD.jpg`,
+forcing `U_USE_OCCUPANCY` to zero in the transparent gather eliminated the
+square artifacts (user: "no more squares"). The occupancy early-out caused
+the reported squares; its precise logic defect remains undiagnosed. Keep it
+temporarily disabled. Occupancy generation, resources, bindings and shader
+code remain intact. This supersedes the partial-removal state and removal
+instructions below, which do not describe the current source. Other DoF
+limitations remain separate; this comparison does not establish their resolution.
+
 - A trial that used the final HDR residual as rigged hair color where world
   coverage was absent introduced skin-colored holes in overlapping hair
   (`AyaneStormOS-Normal_xLRnRr0ZfI.png`). The replay's coverage does not

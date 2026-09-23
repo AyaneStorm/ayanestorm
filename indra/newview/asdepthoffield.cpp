@@ -765,8 +765,8 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
                             roundness, rotation, anamorphic, highlight_boost);
             sTransparentProgram.uniform1i(U_PLANE, plane);
             sTransparentProgram.uniform1i(U_LAYER_MODE, layer_mode);
-            sTransparentProgram.uniform1i(U_USE_OCCUPANCY,
-                                           layered_transparency ? 1 : 0);
+            // Temporarily bypass occupancy rejection to isolate square DoF artifacts.
+            sTransparentProgram.uniform1i(U_USE_OCCUPANCY, 0);
             draw(screen_triangle);
             if (layered_transparency)
             {
