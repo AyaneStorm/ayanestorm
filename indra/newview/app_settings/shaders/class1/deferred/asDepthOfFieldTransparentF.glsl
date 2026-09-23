@@ -5,8 +5,14 @@
  */
 out vec4 frag_color;
 
+uniform sampler2D diffuseRect;
 uniform sampler2D noiseMap;
 uniform sampler2D lightMap;
+uniform sampler2D bloomMap;
+uniform sampler2D specularRect;
+uniform sampler2D positionMap;
+uniform sampler2D emissiveRect;
+uniform sampler2D shadowMap0;
 uniform vec2 screen_res;
 uniform int sample_count;
 uniform float max_radius;
@@ -16,10 +22,12 @@ uniform float aperture_rotation;
 uniform float anamorphic_ratio;
 uniform float highlight_boost;
 uniform int plane;
+uniform int layer_mode;
+uniform int use_occupancy;
 
 in vec2 vary_fragcoord;
 
-#define AS_DOF_MAX_SAMPLES 48
+#define AS_DOF_MAX_SAMPLES 96
 #define AS_DOF_PI 3.14159265358979323846
 
 float samplePhase()
@@ -55,10 +63,79 @@ float highlightWeight(vec3 color)
 
 vec4 premultipliedSurface(vec2 uv)
 {
-    // The private replay already contains source-over premultiplied radiance.
-    // A final-minus-opaque residual is not a physical layer and spreads
-    // negative color into bright bokeh around moving transparent edges.
-    return texture(lightMap, uv);
+    // Both scene and opaque snapshot are now linear HDR. Recover the visible
+    // premultiplied transparent contribution from the selected compositor's
+    // result. The rigged/world strata below retain their own focal depths.
+    // Keep signed RGB: custom darkening blends can legitimately contribute a
+    // negative residual relative to the opaque snapshot.
+    float coverage = clamp(texture(lightMap, uv).a, 0.0, 1.0);
+    if (coverage <= 0.0001)
+    {
+        return vec4(0.0);
+    }
+    vec3 scene = texture(diffuseRect, uv).rgb;
+    vec3 opaque = texture(bloomMap, uv).rgb;
+    vec4 combined = vec4(scene - opaque * (1.0 - coverage), coverage);
+    if (layer_mode == 0)
+    {
+        return combined;
+    }
+    vec4 rigged = texture(specularRect, uv);
+    vec4 layers = texture(noiseMap, uv);
+    if (layer_mode == 2)
+    {
+        return vec4(rigged.rgb, layers.b);
+    }
+    if (texture(positionMap, uv).r > texture(emissiveRect, uv).r)
+    {
+        // The non-rigged layer is in front: subtract the transmitted rigged
+        // contribution without dividing by the rigged transmittance.
+        return vec4(combined.rgb - rigged.rgb * (1.0 - layers.a),
+                    layers.a);
+    }
+    float transmission = 1.0 - layers.b;
+    // Back-layer color is unavailable under fully opaque front fragments;
+    // near foreground coverage conceals these pixels until neighboring
+    // background samples fill the exposed silhouette.
+    if (layers.a <= 0.0001 || transmission <= 0.05)
+    {
+        return vec4(0.0);
+    }
+    return vec4((combined.rgb - rigged.rgb) / transmission, layers.a);
+}
+
+float surfaceCoC(vec2 uv)
+{
+    vec4 data = texture(noiseMap, uv);
+    return layer_mode == 2 ? data.r :
+           layer_mode == 1 ? data.g : data.b;
+}
+
+bool nearbyLayer(vec2 uv)
+{
+    // One mip cell covers at least the full aperture radius. Its 3x3
+    // neighborhood conservatively includes every possible source sample.
+    ivec2 base_size = textureSize(shadowMap0, 0);
+    int max_level = int(floor(log2(float(max(base_size.x, base_size.y)))));
+    float reach = max_radius * max(anamorphic_ratio, 1.0);
+    int level = clamp(int(ceil(log2(max(reach / 16.0, 1.0)))),
+                      0, max_level);
+    ivec2 size = textureSize(shadowMap0, level);
+    ivec2 cell = clamp(ivec2(uv * vec2(size)), ivec2(0), size - ivec2(1));
+    for (int y = -1; y <= 1; ++y)
+    {
+        for (int x = -1; x <= 1; ++x)
+        {
+            ivec2 neighbor = clamp(cell + ivec2(x, y), ivec2(0),
+                                   size - ivec2(1));
+            vec2 occupancy = texelFetch(shadowMap0, neighbor, level).rg;
+            if ((layer_mode == 2 ? occupancy.r : occupancy.g) > 0.0)
+            {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 void main()
@@ -74,9 +151,15 @@ void main()
         return;
     }
 
+    if (use_occupancy != 0 && layer_mode != 0 && !nearbyLayer(uv))
+    {
+        frag_color = vec4(0.0);
+        return;
+    }
+
     if (plane > 0)
     {
-        float center_coc = texture(noiseMap, uv).b;
+        float center_coc = surfaceCoC(uv);
         float center_radius = max(center_coc, 0.0) * max_radius;
         if (center_radius <= 0.0)
         {
@@ -93,7 +176,7 @@ void main()
             vec2 sample_uv = clamp(uv + disk * center_radius / screen_res,
                                    0.5 / screen_res,
                                    vec2(1.0) - 0.5 / screen_res);
-            float sample_coc = texture(noiseMap, sample_uv).b;
+            float sample_coc = surfaceCoC(sample_uv);
             float sample_radius = max(sample_coc, 0.0) * max_radius;
             float distance_pixels =
                 sqrt((float(i) + 0.5) / float(sample_count)) * center_radius;
@@ -123,7 +206,7 @@ void main()
         vec2 sample_uv = clamp(uv - disk * max_radius / screen_res,
                                0.5 / screen_res,
                                vec2(1.0) - 0.5 / screen_res);
-        float sample_coc = texture(noiseMap, sample_uv).b;
+        float sample_coc = surfaceCoC(sample_uv);
         float sample_radius = max(-sample_coc, 0.0) * max_radius;
         float distance_pixels =
             sqrt((float(i) + 0.5) / float(sample_count)) * max_radius;

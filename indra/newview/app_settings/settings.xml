@@ -12240,7 +12240,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldDebug</key>
   <map>
-    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 transparent far blur, 9 transparent near blur</string>
+    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

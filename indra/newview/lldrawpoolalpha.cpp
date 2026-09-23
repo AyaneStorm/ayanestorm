@@ -294,6 +294,7 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             LLGLEnable coverage_blend(GL_BLEND);
             gGL.setColorMask(true, true);
             renderAlpha(mask, false, true, true);
+            ASDepthOfField::snapshotRiggedCoverage();
             renderAlpha(mask, false, false, true);
             gGL.setColorMask(true, false);
             ASDepthOfField::endTransparentCoverageCapture();
@@ -311,9 +312,20 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
             LLGLDisable capture_blend(GL_BLEND);
             gGL.setColorMask(true, true);
             renderAlpha(mask, true, true);
+            ASDepthOfField::snapshotRiggedDepth();
             renderAlpha(mask, true, false);
             gGL.setColorMask(true, false);
             ASDepthOfField::endTransparentDepthCapture();
+            if (ASDepthOfField::beginWorldDepthCapture(capture_width,
+                                                      capture_height))
+            {
+                LLGLDepthTest world_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
+                LLGLDisable world_blend(GL_BLEND);
+                gGL.setColorMask(false, false);
+                renderAlpha(mask, true, false);
+                gGL.setColorMask(true, false);
+                ASDepthOfField::endWorldDepthCapture();
+            }
         }
         else
         {

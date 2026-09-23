@@ -28,9 +28,13 @@ namespace ASDepthOfField
     // Coverage accumulates every contributing fragment; depth remains nearest.
     bool prepareTransparentDepthCapture(U32 width, U32 height);
     bool beginTransparentCoverageCapture(U32 width, U32 height);
+    bool snapshotRiggedCoverage();
     void endTransparentCoverageCapture();
     bool beginTransparentDepthCapture(U32 width, U32 height);
+    bool snapshotRiggedDepth();
     void endTransparentDepthCapture();
+    bool beginWorldDepthCapture(U32 width, U32 height);
+    void endWorldDepthCapture();
 
     // Returns true only after the advanced renderer has written destination.
     // The caller must continue through the legacy path when this returns false.

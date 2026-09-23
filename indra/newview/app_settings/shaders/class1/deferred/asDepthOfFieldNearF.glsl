@@ -19,7 +19,7 @@ uniform float highlight_boost;
 
 in vec2 vary_fragcoord;
 
-#define AS_DOF_MAX_SAMPLES 48
+#define AS_DOF_MAX_SAMPLES 96
 #define AS_DOF_PI 3.14159265358979323846
 
 float samplePhase()

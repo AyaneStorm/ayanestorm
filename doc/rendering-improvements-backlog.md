@@ -704,20 +704,94 @@ layers, while Standard/AYAstorm will require a bounded auxiliary capture.
 
 The transparent-layer foundation uses AyaneStorm-owned auxiliary targets shared
 by all four alpha modes. Opaque HDR color and depth are preserved before alpha
-using OpenGL 4.1 framebuffer blits. A color replay accumulates visible rigged
-and ordinary transparency into a premultiplied RGB/coverage target, while a
-separate pass records nearest transparent depth without altering opaque depth.
+using OpenGL 4.1 framebuffer blits. An auxiliary replay accumulates transparent
+coverage, while a separate pass records nearest transparent depth without
+altering opaque depth.
 The owned resolve now runs on the linear HDR scene before bloom and tone mapping;
 the auxiliary captures cannot be composited correctly after the display transform.
 CoC preparation retains effective, opaque and transparent CoC plus coverage as
 separate channels. Opaque blur now follows opaque CoC even beneath in-focus
-hair; transparent blur follows transparent CoC. The prior signed
-final-minus-opaque color residual was not a real source layer and spread
-red/gold errors during camera or avatar motion. The gather now reads captured
-premultiplied radiance directly. The resolve preserves the selected compositor's
-final color where captured surfaces need no blur. The auxiliary replay uses
-source-over, so nonstandard blends and OIT layer stacks remain approximations
-once blurred; this change still needs runtime validation in every alpha mode.
+hair; transparent blur follows transparent CoC. Because the replay's RGB draw
+order can disagree with the selected alpha compositor, the gather instead
+derives an effective premultiplied contribution from final and opaque linear-HDR
+colors plus captured coverage. Signed RGB is retained for custom darkening
+blends. This preserved the actual compositor's color ordering but remained a
+single transparent focal layer; overlapping transparent surfaces at different
+depths were still approximated.
+
+The owned rigged/world transparent split snapshots rigged coverage and depth,
+captures world depth independently, records two transparent CoCs, and gathers
+each stratum before depth-ordered HDR composition. The first runtime build
+substantially improved avatar hair in front of glass and other transparent
+scenery (`AyaneStormOS-Normal_iQpgIozSHk.png` and
+`AyaneStormOS-Normal_m3scqj1Nzt.png`). A dark hair-on-hair patch remained in
+the marked region of the second image. Multiple rigged depths within one
+pixel are still represented by only one CoC; this needs a multi-depth design,
+not a blend-threshold patch. The same limitation applies to multiple world
+transparent depths. Check Standard, Exact-OIT, AVBOIT and AYAstorm separately.
+
+### DoF regression and paused implementation state (2026-09-23)
+
+- A trial that used the final HDR residual as rigged hair color where world
+  coverage was absent introduced skin-colored holes in overlapping hair
+  (`AyaneStormOS-Normal_xLRnRr0ZfI.png`). The replay's coverage does not
+  necessarily equal the selected compositor's effective coverage, so
+  subtracting the opaque face can contaminate the residual. That trial was
+  removed from both transparent gather and resolve, and the removal was built.
+- The subsequent build still had block-shaped dark patches in the back hair
+  (`AyaneStormOS-Normal_Z5WeC7F3bu.jpg`). They disappear with DoF off at the
+  same camera angle. This build still included the new 16-pixel occupancy
+  pyramid, whereas the earlier visually better build did not. Occupancy is
+  the leading suspect, not a proven root cause; the grid-shaped artifact
+  supports testing it by removal.
+- At pause, the occupancy pass/resource/bindings were removed from
+  `asdepthoffield.cpp` only. The shader still contains `shadowMap0`,
+  `use_occupancy`, `nearbyLayer` and its early-out; the now-unregistered
+  `asDepthOfFieldOccupancyF.glsl` file remains. **No build or runtime test
+  has occurred after this partial removal.** Finish removing the unused
+  occupancy shader code and file before the next build. Do not disturb the
+  rigged/world depth split or revert the earlier hair-color rollback.
+- Then build once and compare the exact back-hair camera angle with DoF on/off
+  and the hair-in-front-of-glass angle. If the blocks persist, inspect rigged
+  coverage (debug 12), rigged signed CoC (10), and rigged far/near gathers
+  (14/15) at the marked pixels; do not attribute them to occupancy without
+  that comparison. If they disappear, design a different performance
+  optimization only after the quality baseline is stable.
+- High quality uses 96 aperture samples and, with layered transparency, two
+  opaque plus four transparent gathers. Measure GPU time and memory on
+  OpenGL 4.1 and newer hardware after visual correctness is restored.
+
+Large-radius bokeh currently uses reduced-resolution stochastic aperture
+gathers. A 48-sample high-quality gather left visible dotted hexagons around
+small bright lights and stippled foreground hair. High quality now uses 96
+samples, while the cheaper presets remain 16/32; premultiplied near/far
+layers receive a nine-tap, radius-limited reconstruction before composition.
+This is a quality/performance tradeoff, not a substitute for a future
+motion-aware temporal or analytic highlight path. Measure high-quality GPU
+time on the OpenGL 4.1 baseline and modern GPUs after runtime validation.
+The acceptance target for isolated background lights is a continuous,
+approximately uniform aperture disc with a clean selected outline, not a
+collection of bright sample dots. Increasing the point-sample count and
+screen-space reconstruction alone has not met this target. The next bokeh
+stage should integrate a finite source footprint per aperture sample (or use
+an equivalent CoC-aware prefiltered representation) before considering more
+samples; preserve the aperture boundary and energy while doing so.
+
+A stronger highlight path can rasterize each selected bright source as a
+filled, antialiased aperture footprint in linear HDR, with its source color,
+signed CoC, blade count, roundness, rotation and anamorphic ratio. Distribute
+source energy across the footprint so overlapping discs accumulate radiance
+without becoming opaque stickers; retain separate coverage for depth-aware
+composition. Remove the selected highlight energy from the diffuse gather to
+avoid a sharp duplicate underneath. Candidate selection must be stable under
+camera movement and include eligible transparent highlights, not just opaque
+pixels. An OpenGL 4.1 baseline can use instanced rasterization/transform
+feedback; a newer optional path can compact candidates with compute shaders.
+These are design options, not implemented or runtime-validated. Khronos API
+references: [instanced drawing](https://wikis.khronos.org/opengl/GLAPI/glDrawElementsInstanced),
+[transform feedback](https://wikis.khronos.org/opengl/Transform_Feedback),
+[blending](https://wikis.khronos.org/opengl/Blending), and
+[compute shaders](https://wikis.khronos.org/opengl/Compute_Shader).
 
 The next highest-value quality work is foreground-edge reconstruction.
 Coverage alone is insufficient when an out-of-focus foreground silhouette

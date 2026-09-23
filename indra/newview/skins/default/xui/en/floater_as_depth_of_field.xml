@@ -121,8 +121,14 @@
     <combo_box.item label="Transparent coverage" name="transparent_coverage" value="5" />
     <combo_box.item label="Transparent signed CoC" name="transparent_coc" value="6" />
     <combo_box.item label="Opaque signed CoC" name="opaque_coc" value="7" />
-    <combo_box.item label="Transparent far blur" name="transparent_far" value="8" />
-    <combo_box.item label="Transparent near blur" name="transparent_near" value="9" />
+    <combo_box.item label="World/transparent far blur" name="transparent_far" value="8" />
+    <combo_box.item label="World/transparent near blur" name="transparent_near" value="9" />
+    <combo_box.item label="Rigged signed CoC" name="rigged_coc" value="10" />
+    <combo_box.item label="World signed CoC" name="world_coc" value="11" />
+    <combo_box.item label="Rigged coverage" name="rigged_coverage" value="12" />
+    <combo_box.item label="World coverage" name="world_coverage" value="13" />
+    <combo_box.item label="Rigged far blur" name="rigged_far" value="14" />
+    <combo_box.item label="Rigged near blur" name="rigged_near" value="15" />
   </combo_box>
   <button name="reset_dof_debug" label="D" layout="topleft"
           left="385" top="343" width="20" height="22" tool_tip="Reset to default.">

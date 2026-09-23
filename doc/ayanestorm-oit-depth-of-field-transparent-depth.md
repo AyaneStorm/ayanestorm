@@ -143,6 +143,63 @@ alone does not establish the alpha/depth values of individual pixels.
   DoF must resolve against the linear scene before tone mapping, then feed its
   result through the normal bloom/tonemap chain exactly once. Legacy DoF stays
   in its original post-tonemap position.
+- September 2026 comparison: with DoF disabled, hair strands remain mostly
+  continuous against other transparent surfaces; with owned DoF enabled,
+  broad rectangular patches appear. Transparent signed-CoC debug marks the
+  hair as foreground and the background as far. The auxiliary representation
+  stores one combined transparent color/coverage and one nearest transparent
+  depth, so overlapping alpha surfaces cannot retain separate CoC or draw
+  order. This affects transparent-on-transparent overlaps generally, not only
+  glass. A per-material workaround or radius/threshold adjustment cannot
+  represent both surfaces; the next implementation needs depth-stratified
+  transparent color, coverage and CoC, with the selected alpha compositor's
+  visible order preserved.
+- Current mitigation: once owned DoF was moved ahead of tone mapping, both
+  opaque and final scene color became comparable in linear HDR. The transparent
+  gather now recovers an effective premultiplied contribution from the selected
+  compositor's final color, opaque snapshot and replay coverage, retaining
+  signed RGB for darkening blends. This removes private RGB replay
+  ordering from the blur input; it does not create separate depth layers and
+  must not be mistaken for the final overlap solution.
+
+### Rigged/world depth strata (2026-09-23, unbuilt)
+
+The next owned path separates rigged alpha (including typical avatar hair)
+from non-rigged world alpha. During the existing auxiliary replay it snapshots
+rigged premultiplied color/coverage before world draws; the depth replay saves
+rigged depth and independently captures world depth against opaque depth.
+CoC preparation writes a second attachment containing each stratum's signed
+CoC and coverage. Separate far/near gathers blur their reconstructed linear-HDR
+contributions, and resolve composites them in measured depth order. The old
+single-layer path remains a fallback if one of these captures is unavailable.
+
+This is a targeted structural fix for hair in front of transparent scenery,
+not arbitrary-depth peeling: several rigged surfaces at different distances
+still share one stratum, as do several world surfaces. The rigged replay's
+color may differ from the selected OIT compositor; the unblurred resolve keeps
+the original scene color, but defocused overlaps need runtime comparison in
+Standard, Exact OIT, AVBOIT and AYAstorm. Additional GPU memory and two more
+gather passes require measurement, particularly on OpenGL 4.1 hardware.
+Diagnostics 10-15 expose each stratum's signed CoC, coverage and far/near
+gather, so runtime testing can distinguish an incorrect capture from a
+compositing error without another shader edit.
+
+The first runtime build improved hair in front of glass and other world
+transparency but showed a marked dark patch where rigged hair overlaps rigged
+hair. A trial using the final linear-HDR residual as rigged color in hair-only
+pixels regressed to skin-colored holes: the auxiliary replay's alpha differs
+from the selected compositor's alpha at those intersections, so subtracting
+the opaque face leaves an invalid hair residual. The trial was removed. The
+rigged pixel still has only one representative CoC; distinct overlapping hair
+depths require a multi-depth solution rather than another blend threshold.
+
+After that build, a 16-pixel occupancy tile/mip pass was tried to skip empty
+transparent gathers. A later build showed block-shaped dark patches in back
+hair, absent with DoF off and not explained by the already-removed hair-color
+trial. Occupancy is suspected but not yet isolated by a build without it.
+Removal is paused after deleting its C++ bindings and resources; its shader
+early-out and now-unregistered standalone shader file still need removal.
+The full chronology and next validation steps are in the rendering backlog.
 - cofF.glsl samples one depth and copies the already-composited RGB into
   its output, storing one circle of confusion in alpha.
 - postDeferredF.glsl blurs that mixed RGB using the circle of confusion.
