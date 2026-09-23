@@ -642,6 +642,9 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         sTransparentCoverageTarget.getHeight() == source.getHeight();
     const bool layered_transparency = transparent_depth &&
         sRiggedCoverageReady && sRiggedDepthReady && sWorldDepthReady;
+    // Keep the rejected occupancy optimization dormant, including its draw
+    // and mip generation, until its square-artifact defect is corrected.
+    const bool use_occupancy = false;
     LLRenderTarget& opaque_depth = transparent_depth ? sOpaqueDepthTarget : depth;
     sCoCProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &opaque_depth, true,
                             LLTexUnit::TFO_POINT);
@@ -689,7 +692,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sCoCProgram.unbind();
     sCoCTarget.flush();
 
-    if (layered_transparency)
+    if (layered_transparency && use_occupancy)
     {
         sOccupancyTarget.bindTarget();
         sOccupancyProgram.bind();
@@ -766,7 +769,8 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             sTransparentProgram.uniform1i(U_PLANE, plane);
             sTransparentProgram.uniform1i(U_LAYER_MODE, layer_mode);
             // Temporarily bypass occupancy rejection to isolate square DoF artifacts.
-            sTransparentProgram.uniform1i(U_USE_OCCUPANCY, 0);
+            sTransparentProgram.uniform1i(U_USE_OCCUPANCY,
+                                           use_occupancy ? 1 : 0);
             draw(screen_triangle);
             if (layered_transparency)
             {

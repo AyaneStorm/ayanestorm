@@ -1,5 +1,237 @@
 # OIT and depth of field: transparent avatar depth
 
+## DoF performance regression and initial pruning (2026-09-24)
+
+Runtime follow-up: user reports 18 FPS after pruning (previously 11 FPS),
+but hairline loss is visually unchanged after the far-gather correction.
+Do not treat the synthetic coverage test as resolution of this scene defect.
+Next capture should use rigged coverage (12), rigged signed CoC (10) and
+rigged far blur (14) at the failing hairline, with the same camera/focus and
+background radius. These distinguish missing prepared coverage, wrong depth
+classification and gather/resolve loss. Source trace also found that the
+coverage/depth replay accepts GL_LEQUAL while CoC preparation rejects depths
+within 1e-7 of opaque depth; close scalp overlays may therefore be discarded.
+This is a candidate requiring capture evidence, not a confirmed diagnosis.
+
+User reports approximately 30 FPS disabled versus 11 FPS enabled: total frame
+time increases from about 33 to 91 ms (58 ms difference, not a measured GPU
+pass duration). Layered mode runs two opaque and four transparent gathers;
+the highest quality uses 96 samples per gather. Current per-pass costs have
+not been profiled, so no single pass is established as the dominant cost.
+
+Implemented quality-preserving pruning: transparent taps with exactly zero
+support now skip color reconstruction/highlight work while retaining aperture
+normalization. Rigged samples return their captured premultiplied color before
+reading unused scene/opaque colors. Occupancy generation and mip building are
+now gated off by the same false flag as occupancy rejection; resources and
+implementation remain available for later investigation. Quality, resolution,
+sample counts and radius settings are unchanged.
+
+Validation: 1000 numerical accumulation-equivalence checks for zero-support
+pruning and targeted source checks passed. No build or runtime measurement.
+These remove avoidable work but do not establish recovery of the reported
+58 ms; remaining gather, capture and resolve costs need runtime measurement.
+
+## Background-radius hair thinning correction (2026-09-24)
+
+User verified the hairline loss predates the recent foreground fixes by
+stashing and rebuilding. High f-number, low focal length or near-zero
+background radius hide it; increasing background radius makes hair thinner
+and removes rear strands. References: `AyaneStormOS-Normal_JVxkVkgDYu.png`
+and `AyaneStormOS-Normal_sk0TbQGaTz.png`. This supersedes the suspicion that
+the recent sampling change introduced the underlying problem.
+
+The transparent far gather searched a disc sized by destination CoC, rejected
+sources whose smaller discs did not reach that destination, and divided by
+the destination sample budget. It returned zero at non-far destinations.
+Thus coverage lost inside a strand was not reliably deposited outside it;
+even empty pixels' unrelated depth changed total gathered coverage.
+
+Implemented: use the existing source-footprint near-gather algorithm for the
+far plane too, selecting positive rather than negative source CoC. Search the
+maximum aperture independently of destination depth, apply each source's
+radius/support and inverse-area weight, and accumulate premultiplied RGBA.
+Both planes use uniform-radius sampling with its area Jacobian and aligned
+source color/coverage/CoC. Near mathematics is unchanged. Occupancy remains
+disabled. Changes are confined to `asDepthOfFieldTransparentF.glsl`.
+
+Numerical validation: a 2-pixel-wide, 48-pixel-long strip at alpha 0.4 in a
+128x128 grid, circular aperture, 96 taps, no highlight boost. Maximum/source
+radii 16/4, 24/6 and 32/8 retained 1.012, 0.991 and 1.001 times input coverage.
+The old destination-gather estimator retained 0.140–0.333 across these cases.
+New output was identical with empty-pixel CoC 0 or +1. This isolates the
+gather's coverage defect; it does not validate full viewer compositing.
+
+Runtime validation pending: compare hairline/rear strands while increasing
+background radius and zooming; check background lights and foreground hair.
+Defocus should spread/soften coverage, not preserve sharp strands artificially.
+Sparse sampling, screen-edge clamping, multi-depth hair representation and
+the separately documented resolve-boundary limitation remain. No build or
+shader-version bump performed.
+
+## Foreground-radius hair regression (2026-09-23)
+
+### Implemented sampling corrections (runtime validation pending)
+
+Runtime follow-up: `AyaneStormOS-Normal_JVxkVkgDYu.png` and
+`AyaneStormOS-Normal_sk0TbQGaTz.png` show finer hairline detail at near-zero
+background radius and loss with background blur; eyes soften as well. The
+user suspects a regression. The previous texel-center alignment inadvertently
+affected the far gather too. Restrict alignment to the near gather, restoring
+the far path's previous color/CoC filtering as a controlled regression check.
+Keep the near radial-density and premultiplied normalization corrections.
+This does not prove point alignment caused all lost detail: background radius
+also directly scales positive hair/face CoC and changes resolve blending.
+Runtime comparison remains pending; no build performed.
+
+`asDepthOfFieldNearF.glsl` and the near branch of
+`asDepthOfFieldTransparentF.glsl` now sample uniformly in radius rather than
+uniformly in disc area. A `2*r` Jacobian weight preserves area integration
+while retaining central samples for small-CoC surfaces. The sample budget
+is unchanged; transparent far sampling retains its previous radial distribution.
+Transparent source reads now align color, coverage, depth ordering and CoC
+to the same full-resolution texel center, avoiding interpolation of foreground
+CoC with empty-background fallback values. Transparent near coverage overshoot
+normalizes the entire premultiplied RGBA value, not alpha alone.
+
+Numerical checks of constant-plane coverage with 96 taps:
+2/50 px source/maximum radius: 0 -> 1.0530;
+4/100 px: 0 -> 1.0086; 8/100 px: 1.5743 -> 0.9976;
+8/150 px: 0 -> 0.9983. Premultiplied color-ratio preservation and targeted
+source checks passed. No project build, shader compilation or runtime test.
+
+These corrections do not implement temporal accumulation, independent depths
+for overlapping hair, or the separate resolve-continuity redesign below.
+Point-aligned source taps can still alias very thin strands, and shifting
+samples inward trades outer-disc sampling density for central stability.
+Validate slow zoom at high foreground radius, near-zero blur, broad foreground
+blur, and the lamp boundary. Occupancy remains disabled; shader version unchanged.
+
+User comparison: foreground radius 0.0 versus 1.0, with glitches at 1.0.
+References: `AyaneStormOS-Normal_ESoBsAiYnQ.png` (sharper hair/face) and
+`AyaneStormOS-Normal_A8r7BxxXGW.png` (patchy crown/fringe and softer face).
+Occupancy rejection remains disabled in current source. This qualifies the
+earlier hair acceptance: these larger foreground-radius settings still fail.
+Radius zero suppresses multiple near stages, so the comparison does not
+isolate transparent gather from opaque near blur or final composition.
+
+Verified sampling limitation: the transparent near gather samples the entire
+maximum aperture with a fixed budget and no center sample. Its first radial
+test distance is `max_radius * sqrt(0.5 / sample_count)`. At 96 samples and
+100-pixel maximum radius this is 7.22 pixels; source radii below 6.22 pixels
+cannot pass even the first tap's one-pixel support transition. These are
+aperture-space distances (polygon/anamorphic deformation changes screen
+offsets). Raising maximum radius therefore worsens sampling of small-CoC
+surfaces near focus. Sparse inverse-area contributions can fluctuate, and
+alpha alone is clamped after accumulation. This is a concrete algorithmic
+weakness consistent with patchy hair, not a confirmed sole cause of this
+image. Separate-layer representation and resolve continuity remain relevant.
+Prioritize stable near-gather coverage and resolve continuity before bokeh
+enhancements; do not treat more samples or restoring occupancy as a fix.
+No renderer changes or build performed for this comparison.
+
+Further runtime report: with high foreground radius, zooming in/out makes
+hair strands disappear/reappear and the affected region flicker. This adds
+temporal instability to the static patching failure. The gather phase is
+screen-pixel-dependent and the radial sample budget is fixed; camera zoom
+changes strand coverage, CoC and sample intersections. That is consistent
+with unstable sparse coverage, but capture/resolve thresholds and collapsed
+hair depths are not excluded. Acceptance must include slow zoom in/out with
+high foreground radius, preserving continuous strands without popping; a
+single clean still image is insufficient.
+
+### Code-level reproductions
+
+CPU reproduction of the actual 96-tap circular near-gather equations, with
+constant unit source coverage, no highlight boost and fixed source blur radius:
+
+| Source radius | Maximum gather radius | Estimated coverage before clamp |
+| --- | --- | --- |
+| 2 px | 25 px | 1.0497 |
+| 2 px | 50 px | 0.0000 |
+| 4 px | 100 px | 0.0000 |
+| 8 px | 100 px | 1.5743 |
+| 8 px | 150 px | 0.0000 |
+
+A uniform covered plane should remain approximately unit coverage. These
+cases establish both complete sample loss and overshoot in the estimator.
+They compare different normalized CoCs, not just changing the radius slider
+at fixed depth. Zoom can change those CoCs. Alpha-only clamping then leaves
+overshot premultiplied RGB unchanged, introducing a further color/coverage
+inconsistency for ordinary source-over contributions.
+
+Independent binding defect: `asdepthoffield.cpp` binds CoC/layer metadata
+bilinearly but rigged RGB and combined coverage with point filtering.
+`surfaceCoC()` can consequently interpolate covered foreground CoC with an
+uncovered texel's opaque/background fallback. For example, -0.1 and +1
+interpolate to +0.45 at the midpoint, rejecting the tap from the near gather
+even when its point-sampled color belongs to foreground hair. Layer alpha
+also comes from the filtered metadata rather than the point-sampled rigged
+color. Correct reconstruction must keep each contributing texel's color,
+coverage and CoC associated; changing one global filter alone is not a full
+solution to the gather or multi-depth representation limitations.
+
+These are verified code/algebra failures, not a GPU reproduction of the
+user's exact scene. No project build or renderer edit performed.
+
+## Visible world near-blur boundary (2026-09-23)
+
+References: `AyaneStormOS-Normal_gk5vGLmsCb.png` (normal output) and
+`AyaneStormOS-Normal_Sq26D5FnZ8.png` (World/transparent near blur).
+The lamp shows a visible sharp/soft edge transition in normal output;
+the diagnostic shows the bright pane contribution and an irregular fringe.
+This is separate from the confirmed occupancy squares. User reports glasses,
+hair and foreground hair with background focus currently look good.
+
+Source review: diagnostic mode 9 displays raw near-gather RGB divided by
+coverage, with a 0.0001 cutoff, before the final reconstruction filter. It is
+not a coverage visualization; its bright boundary alone cannot establish a
+hard opacity transition in final output. Resolve chooses raw/blurred world
+contributions using center coverage and CoC, but uses spread contributions
+where center coverage is absent. Opaque geometry uses a separate near gather
+with an interior coverage floor. These differences warrant checking world
+coverage, world signed CoC and opaque signed CoC at the pane/frame boundary
+before changing blending. No root cause confirmed or renderer changes made.
+
+Follow-up diagnostics, same camera/panel position (align crops by panel):
+`7gL45HJmKZ` shows opaque signed CoC, `lffVmFukM0` world coverage,
+and `PCQloCDq1c` world signed CoC (all `AyaneStormOS-Normal_*.png`).
+Opaque CoC identifies the cap/base as foreground while the pane region sees
+background; world coverage fills the pane region and world CoC identifies
+most of it as foreground. The broad pane is therefore not simply missing
+transparent depth. A dark transition remains beneath the cap in signed CoC;
+its exact relation to the reported seam needs care because diagnostics pass
+through later postprocessing. World CoC also falls back to opaque CoC where
+world coverage is absent: red cap/base pixels do not establish world capture.
+Next investigation should trace the opaque/world coverage handoff and near
+resolve at this boundary, including the center-coverage branch and opaque
+interior coverage floor, before changing focus thresholds. No fix validated.
+
+### Resolve discontinuity identified by source/algebra review
+
+The layered resolve switches at center coverage `> 0.0001`. Below that
+threshold it admits the incoming near gather; above it, the center's own CoC
+controls interpolation between raw color and near/far gather. A focused center
+therefore rejects incoming near blur which an adjacent empty pixel accepts.
+The later `visible_blur` mix can additionally restore the original scene,
+because its weight omits incoming transparent-near coverage. These are
+specific continuity defects, not evidence that the lamp's exact boundary has
+been fully isolated. They affect both world and rigged layer expressions.
+
+A numerical reproduction with fixed incoming near `(RGB, alpha)=(0.2, 0.1)`
+and zero center blur gives `(0.2, 0.1)` at center coverage 0.000099 but
+approximately `(0.000051, 0.000101)` at 0.000101. With full center near blur,
+both sides agree; the defect matters at focused/far transitions, not every
+transparent edge. Raw depth is point-sampled during CoC preparation, but
+gathers interpolate signed CoC including opaque fallback values in empty
+transparent pixels, which is a separate possible source of edge transitions.
+
+Correction needs to separate incoming near coverage from center defocus while
+removing the center's replaced near contribution exactly once. Simply adding
+the near gather on top would double-count foreground color/coverage. Preserve
+in-focus compositor matching and validate both the lamp and accepted hair
+cases. No shader changes or project build made in this tracing step.
+
 ## Square cheek artifacts investigation (2026-09-23)
 
 Reference: `AyaneStormOS-Normal_NxwcjfS3CD.jpg`. Green marking surrounds

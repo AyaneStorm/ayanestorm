@@ -31,7 +31,8 @@ float samplePhase()
 vec2 apertureSample(int index, int count, float phase, out float area_weight)
 {
     float fi = float(index) + 0.5;
-    float radius = sqrt(fi / float(max(count, 1)));
+    // Reserve samples near the center even when the maximum disc is large.
+    float radius = fi / float(max(count, 1));
     float angle = fi * 2.399963229728653 + phase + aperture_rotation;
     float boundary = 1.0;
     if (aperture_blades >= 3)
@@ -41,9 +42,8 @@ vec2 apertureSample(int index, int count, float phase, out float area_weight)
         float polygon = cos(0.5 * sector) / max(cos(local_angle), 0.001);
         boundary = mix(polygon, 1.0, aperture_roundness);
     }
-    // Correct the area Jacobian introduced by radial polygon deformation.
-    // This is equivalent to equal-area angular sampling but needs no LUT.
-    area_weight = boundary * boundary;
+    // Correct both uniform-radius sampling density and polygon deformation.
+    area_weight = 2.0 * radius * boundary * boundary;
     return vec2(cos(angle) * anamorphic_ratio, sin(angle)) * radius * boundary;
 }
 
@@ -93,7 +93,7 @@ void main()
             float sample_radius = max(-sample_coc, 0.0) * max_radius;
             // Compare radii in aperture space so anamorphic and polygonal
             // kernels retain their intended foreground coverage.
-            float distance_pixels = sqrt((float(i) + 0.5) / float(sample_count)) * max_radius;
+            float distance_pixels = (float(i) + 0.5) / float(sample_count) * max_radius;
             float coverage = 1.0 - smoothstep(sample_radius - 1.0,
                                               sample_radius + 1.0,
                                               distance_pixels);
