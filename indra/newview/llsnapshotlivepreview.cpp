@@ -823,10 +823,16 @@ bool LLSnapshotLivePreview::onIdle( void* snapshot_preview )
                 previewp->mSnapshotActive = false;
                 return false;
             }
-            if (ASDoFRenderer::setProgressThumbnail(false))
-            { // Capture done: the final thumbnail uses the normal framing.
-                previewp->mThumbnailSubsampled = false;
-            }
+            // Capture done. With aperture DoF the thumbnail stays the
+            // finished picture scaled down: a screen-grab thumbnail would
+            // render the live view again (restarting its samples) and
+            // replace the result. Otherwise the normal framing.
+            //if (ASDoFRenderer::setProgressThumbnail(false))
+            //{ // Capture done: the final thumbnail uses the normal framing.
+            //    previewp->mThumbnailSubsampled = false;
+            //}
+            ASDoFRenderer::setProgressThumbnail(false);
+            previewp->mThumbnailSubsampled = ASDoFRenderer::isEnabled();
             // </AS:Chanayane>
             // Invalidate/delete any existing encoded image
             previewp->mPreviewImageEncoded = NULL;

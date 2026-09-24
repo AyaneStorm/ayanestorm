@@ -29,6 +29,7 @@
 // <AS:Chanayane> Depth-resolved volumetric input for transparency shaders.
 #include "asambientocclusion.h"
 #include "asdepthoffield.h"
+#include "asdofrenderer.h"
 #include "asvolumetriclighting.h"
 // </AS:Chanayane>
 
@@ -331,7 +332,11 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
         {
             // original code kept as the transactional fallback
             simple_shader->bind();
-            simple_shader->setMinimumAlpha(0.33f);
+            // Aperture DoF (mode 2) smooths by this depth: faint hair strands
+            // below 0.33 alpha kept the background's depth and were smoothed
+            // with it. Their own depth keeps them sharp.
+            //simple_shader->setMinimumAlpha(0.33f);
+            simple_shader->setMinimumAlpha(ASDoFRenderer::isEnabled() ? ASDoFRenderer::SHARP_DEPTH_MIN_ALPHA : 0.33f);
 
         // mask off color buffer writes as we're only writing to depth buffer
             gGL.setColorMask(false, false);

@@ -12214,6 +12214,18 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
   </map>
+  <key>ASDepthOfFieldApertureSmoothing</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: final smoothing, on a finished average, of the bokeh shapes of light sources only (recorded per sample from what the renderer drew: visible star pixels and glowing pixels, out of focus) over the dot spacing still left by the samples averaged so far (area-filtered, so single-pixel dots such as stars spread fully), as a multiple of that spacing (0 = off, up to 4; capped at 32 px). In-focus pixels are unchanged; fades as samples accumulate</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureShowSmoothing</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF debug: tints the area the final smoothing changes red (the bokeh shapes found from the samples' source dots)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
   <key>ASDepthOfFieldApertureAxialCA</key>
   <map>
     <key>Comment</key><string>Aperture-sampled DoF: axial (longitudinal) chromatic aberration. Each lens sample stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>

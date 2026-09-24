@@ -180,7 +180,7 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldDebug", "ASDepthOfFieldApertureSamples",
                 "ASDepthOfFieldApertureMaxSamples", "ASDepthOfFieldApertureSnapshotSamples",
                 "ASDepthOfFieldApertureSnapshotMaxSeconds",
-                "ASDepthOfFieldApertureResidualBlur",
+                "ASDepthOfFieldApertureResidualBlur", "ASDepthOfFieldApertureSmoothing",
                 "ASDepthOfFieldApertureAxialCA", "ASDepthOfFieldApertureAxialCAStrength",
                 "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureCatEyeStrength",
                 "ASDepthOfFieldApertureCatEyeDarken",

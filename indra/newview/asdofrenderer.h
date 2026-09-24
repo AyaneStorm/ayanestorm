@@ -46,6 +46,12 @@ namespace ASDoFRenderer
     // Mode 2 selected and DoF allowed now (renderDoF's own gate).
     bool isEnabled();
 
+    // Minimum alpha of the transparent depth replay (lldrawpoolalpha.cpp)
+    // while mode 2 is on (vanilla 0.33). Dot and final smoothing treat a
+    // pixel as sharp by its depth, so faint in-focus hair strands must
+    // write theirs; at 0.1 only nearly invisible fringes do not.
+    constexpr F32 SHARP_DEPTH_MIN_ALPHA = 0.1f;
+
     // LLPipeline::renderDoF publishes its smoothed focus distance (metres,
     // along the view axis); the next frame's lens uses it. Once per frame.
     void setFocusDistance(F32 distance);
@@ -71,6 +77,15 @@ namespace ASDoFRenderer
     // its mean brightness (0.5; 0 keeps the vanilla twinkle).
     F32 starRotationTime(F32 frame_time);
     F32 starTwinkleMean();
+
+    // Star mask for the final smoothing (lldrawpoolwlsky.cpp): right after
+    // the stars are drawn for a lens sample, beginStarMask() binds a private
+    // target and returns true when the caller should draw them again with
+    // the same state; endStarMask() restores the G-buffer. The pixels drawn
+    // are exactly this sample's star dots: summed over the samples they are
+    // each star's bokeh, the only area the final smoothing changes.
+    bool beginStarMask();
+    void endStarMask();
 
     // After a partial slice: true when the snapshot floater should refresh
     // its preview from the partial image (first after 8 samples, then every

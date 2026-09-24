@@ -303,6 +303,16 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);
 
     gSky.mVOWLSkyp->drawStars();
+    // <AS:Chanayane> Aperture DoF: same stars again into the star mask
+    if (ASDoFRenderer::beginStarMask())
+    {
+        static LLStaticHashedString sStarMask("as_star_mask");
+        gDeferredStarProgram.uniform1f(sStarMask, 1.f);
+        gSky.mVOWLSkyp->drawStars();
+        gDeferredStarProgram.uniform1f(sStarMask, 0.f);
+        ASDoFRenderer::endStarMask();
+    }
+    // </AS:Chanayane>
 
     gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     gGL.getTexUnit(1)->unbind(LLTexUnit::TT_TEXTURE);

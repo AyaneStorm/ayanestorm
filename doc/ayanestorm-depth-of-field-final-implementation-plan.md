@@ -1091,6 +1091,139 @@ dot smoothing at 0 because smoothing softened thin in-focus hair.
   0.33) into the scene depth. Hair has correct depth except the faintest
   strand tips, which read the depth behind them.
 
+### Final smoothing of the average (2026-09-24)
+
+User report: bokeh keep a dotted look at any dot smoothing, unlike real
+bokeh.
+- **Why dot smoothing cannot remove it:** it gathers 12 point taps over a
+  disk of up to 24 px. A star dot of 1–2 px is picked up only where a tap
+  lands on it, so each dot becomes 13 scattered copies instead of being
+  spread. Raising the strength widens the disk, which softens edges and
+  hair without covering it.
+- **New pass, `ASDepthOfFieldApertureSmoothing` (default 2, 0 off, up to
+  4):** it runs on the shown average (`presentAverage()`), in live and
+  snapshot views.
+  1. `Draw::MASKED` (shader `lens_mode` 3) writes the normalized average
+     premultiplied by a defocus mask (smoothstep of the pixel's radius over
+     0.5–1.5 px) into `Accumulator::mSmooth`. This is RGBA16F with automatic
+     mips, released with its slot.
+  2. `Draw::SMOOTHED` (`lens_mode` 4) gathers 16 Vogel taps over radius
+     `strength · R · ppu · |1/S_f − 1/S| · √(π / max(N, 4))`, capped at
+     32 px. N is the samples averaged so far, so the pass fades as the image
+     develops. Each tap reads the mip level about twice the spacing between
+     taps (`log2(r·√(π/16)) + 1`), so a tap covers an area instead of a
+     point. The centre also reads the mips, because one point tap on a dot
+     keeps it visible. The mask keeps sharp pixels out of the mips (no hair
+     colour halo). The reach and occlusion rules of the residual apply per
+     tap. Glow (alpha) is not smoothed.
+- **Depth:** the pass uses the depth of the last view rendered. That is
+  the central view for converged frames and the last lens sample while
+  accumulating. At the focal plane every sample agrees. Elsewhere the error
+  is below the CoC the radius follows.
+- **Simulation (disk R = 100 px, stratified dots, interior std / mean):**
+
+  | | N = 256 | N = 2048 |
+  |---|---|---|
+  | raw dots | — | 3.57 |
+  | point taps, strength 1 | — | 0.50 |
+  | mip taps + raw centre, strength 1 | — | 0.32 |
+  | mip taps, strength 1 | 0.22 | 0.24 |
+  | mip taps, strength 2, LOD + 1 (shipped) | 0.05 | 0.06 |
+
+  Dot smoothing (per sample) still applies before this pass and only helps.
+  The shape edge softens by about 2 dot spacings (about 8 px for a 100 px
+  CoC at 2048 samples).
+- **First runtime result (user):** a bright flash at the start, then the
+  whole image darkened progressively. Two causes, both fixed:
+  - **The pass ran from the first sample.** A few samples meant a radius
+    at the 32 px cap, a heavily blurred image that then faded. It now runs
+    only on a finished average: a blocking snapshot, the last slice of a
+    capture, or a converged or complete live average. Developing frames
+    and progress previews show the plain average.
+  - **Invalid values were spread by the mips.** The smoothing input is
+    half float. HDR beyond its range (sun) overflowed to Inf, and any stray
+    NaN/Inf, which is harmless as a single pixel, reached whole regions
+    through the mips and fed the auto-exposure meter, which then drifted.
+    MASKED now writes 0 for non-finite pixels and clamps to 60000.
+    SMOOTHED keeps the plain pixel when its result is not finite.
+  - Mip generation is now explicit (`TMG_MANUAL`, texture unit 0 activated
+    before `glGenerateMipmap`) instead of relying on `flush()`, which only
+    activates the unit when the bound texture changes.
+- **Second runtime result (user): hair blurred after smoothing.** The pass
+  smooths every pixel whose depth is defocused, not only bokeh. Faint hair
+  strands (alpha < 0.33) wrote no depth in mode 2's fallback depth replay
+  (`lldrawpoolalpha.cpp`), so they carried the background's depth: they
+  were smoothed and spread into the background. With mode 2 on, the replay
+  now uses `ASDoFRenderer::SHARP_DEPTH_MIN_ALPHA` (0.1). This also helps dot
+  smoothing, and autofocus may now pick faint strands. The trade-off is
+  that bokeh seen through very faint glass (alpha 0.1–0.33) is no longer
+  smoothed there.
+- **Bokeh shapes only, located exactly (user requirement):** a first
+  version guessed bokeh from brightness contrast in the average. The user
+  pointed out that the shapes are known, which is correct. Each lens sample
+  is a sharp view from one aperture point, so each small light is a dot
+  exactly where that sample's ray lands inside its bokeh. The union of the
+  dots over the samples is the bokeh shape, with the aperture shape, cat's
+  eye and partial occlusion included.
+  - **Per sample** (`Draw::SOURCES`, `lens_mode` 5, after the sample is
+    added): an out-of-focus pixel (CoC ≥ 1–2 px) whose luminance exceeds
+    the mean of an 8-tap ring by 1.05–1.2× is marked. The ring radius is
+    the dot spacing `coc·√(π/N)` (clamped 2–24 px), because a source smaller
+    than the spacing is what leaves separate dots. The test is relative, so
+    faint stars on a dark sky count. The marks are summed additively into
+    `Accumulator::mSources` (R32F, manual mips). The map is copied when a
+    capture is seeded from the live average, and invalidated
+    (`mSourcesFailed`) if an allocation fails.
+  - **At the end** (`lens_mode` 4): coverage = mean of the map over about
+    two smoothing radii × π·CoC² / N. Inside a small source's bokeh this is
+    its dot area (≥ 1 px), and it is exactly 0 where no source dot ever
+    landed. The smoothed value is blended in by
+    `smoothstep(0.05, 0.3, coverage)`. Everything else, including plain
+    blurred background, skin and hair, keeps the sampled image.
+  - **Runtime result (user): the whole background was still smoothed.**
+    The first source test (1.05× the ring mean) was wrong. In a sharp lens
+    sample, half of any texture is brighter than its ring mean, so the whole
+    textured background was marked. Any mark is also enough, because
+    coverage multiplies by π·CoC². Every point of a blurred background has
+    its own bokeh, so "bokeh shapes only" must mean isolated point lights.
+    A source must now exceed the brightest of its 8 ring taps by 1.3–1.5×.
+  - **Checking it:** `ASDepthOfFieldApertureShowSmoothing` (checkbox "Show
+    smoothed area (red)", not persisted) tints the smoothed area red, so
+    the selection is visible rather than assumed.
+- **Sources from what the renderer drew (user: "do not guess"):** all
+  brightness tests are removed. Mode 5 now marks a pixel in a lens sample
+  only when:
+  - **Glow:** the screen alpha (glow) is above 0.01. Glow is set by the
+    content on bulbs, neon and lamps, and is written by the opaque and alpha
+    passes alike.
+  - **Stars:** the sky pool drew a star there. `lldrawpoolwlsky.cpp` draws
+    the stars a second time right after the real draw, into
+    `ASDoFRenderer`'s private R16F star mask. That target shares the scene
+    depth buffer (`shareDepthBuffer`, test only), so exactly the visible
+    star pixels are marked. `starsF.glsl` gained `as_star_mask`, which
+    writes the colour to `frag_data[0]` even with the emissive buffer. The
+    mask is drawn only for accumulating lens samples, and not in
+    reflection or shadow passes.
+
+  Either way the pixel must be out of focus (CoC ≥ 1 px).
+  - **Known gap:** fullbright or PBR-emissive lights without glow are not
+    marked. They render after lighting (or through material paths) with no
+    per-pixel flag in the buffers mode 2 reads. Marking them means tagging
+    those shaders the way the stars are tagged.
+
+### Snapshot preview keeps the finished picture (2026-09-24)
+
+User report: when a capture finished, the snapshot preview was replaced by
+the current screen, and a new sampling started. At the end of a capture,
+`LLSnapshotLivePreview::onIdle` reset `mThumbnailSubsampled` to false, so
+`generateThumbnailImage(true)` took a screen-grab thumbnail
+(`thumbnailSnapshot`). That rendered the live view through
+`requestPreviewCapture()` and restarted the live average when its key
+differed from the capture's. With mode 2 on, the thumbnail now stays
+subsampled: the finished picture, scaled to the thumbnail. It remains so
+until the user refreshes. Other modes keep vanilla framing
+(`mThumbnailSubsampled` false; nothing else sets it).
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

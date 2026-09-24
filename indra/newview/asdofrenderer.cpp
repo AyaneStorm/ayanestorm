@@ -74,6 +74,11 @@ namespace
     // and, at higher strengths, deliberately softens the dots further. The
     // lens samples still make the blur and the aperture shape.
     constexpr F32 RESIDUAL_MAX_PIXELS = 24.f;
+    // Cap on the final smoothing radius (ASDepthOfFieldApertureSmoothing)
+    // and the sample count below which it stops growing (a few samples
+    // would otherwise ask for more than the blur itself).
+    constexpr F32 SMOOTHING_MAX_PIXELS = 32.f;
+    constexpr S32 SMOOTHING_MIN_SAMPLES = 4;
 
     const LLStaticHashedString U_SAMPLE_WEIGHT("sample_weight");
     const LLStaticHashedString U_RESIDUAL_SCALE("residual_scale");
@@ -91,13 +96,18 @@ namespace
     const LLStaticHashedString U_PUPIL_R2("pupil_r2");
     const LLStaticHashedString U_HL_STRENGTH("hl_strength");
     const LLStaticHashedString U_HL_THRESHOLD("hl_threshold");
+    const LLStaticHashedString U_SHOW_SMOOTHING("show_smoothing");
+    const LLStaticHashedString U_HAS_STAR_MASK("has_star_mask");
 
     // asDoFAccumulateF.glsl lens_mode.
     enum class Draw
     {
         COPY = 0,    // plain weighted copy (seeding)
         SAMPLE = 1,  // one lens sample: residual, cat's eye, spherical weights
-        AVERAGE = 2  // normalized average: cat's eye brightness compensation
+        AVERAGE = 2, // normalized average: cat's eye brightness compensation
+        MASKED = 3,  // AVERAGE premultiplied by the defocus mask (smoothing input)
+        SMOOTHED = 4, // AVERAGE with the final smoothing
+        SOURCES = 5  // one lens sample's small-source indicator (bokeh map)
     };
 
     // What this presented frame renders and shows.
@@ -134,6 +144,11 @@ namespace
     struct Accumulator
     {
         LLRenderTarget mTarget;
+        LLRenderTarget mSmooth; // mipmapped masked average (final smoothing)
+        // Per-pixel sum of the small-source indicator over the samples: the
+        // dots every small light left, i.e. exactly where its bokeh is.
+        LLRenderTarget mSources;
+        bool mSourcesFailed = false; // mSources misses samples: no smoothing
         AccumulationKey mKey;
         bool mHaveKey = false;
         F32 mKeyFocus = 0.f;    // focus frozen for this average
@@ -162,6 +177,11 @@ namespace
     bool sOcclusionOverridden = false;
     F32 sFocusDistance = 16.f;  // renderDoF's initial focus distance
     ASDoFCamera::Lens sLens;
+    ASDoFCamera::Lens sAverageLens; // lens of the shown average (valid while sLens is not)
+    // This lens sample's stars, drawn a second time by the sky pool
+    // (beginStarMask()); sStarMaskDrawn: drawn since the last accumulation.
+    LLRenderTarget sStarMask;
+    bool sStarMaskDrawn = false;
     std::vector<glm::vec2> sLensSamples;
     std::vector<glm::vec2> sPixelJitter;
     ASDoFAperture::Shape sSamplesShape; // shape sLensSamples were generated for
@@ -271,12 +291,16 @@ namespace
         slot.mKeyFocus = focus;
         slot.mHaveKey = true;
         slot.mAccumulated = 0;
+        slot.mSourcesFailed = false;
         slot.mSkyTime = gFrameTimeSeconds;
     }
 
     void release(Accumulator& slot)
     {
         slot.mTarget.release();
+        slot.mSmooth.release();
+        slot.mSources.release();
+        slot.mSourcesFailed = false;
         slot.mAccumulated = 0;
         slot.mHaveKey = false;
     }
@@ -365,17 +389,25 @@ namespace
     // residual_scale softens it by the per-pixel residual disk, and the
     // cat's-eye and spherical weights apply; both read this sample's depth.
     // AVERAGE compensates the cat's-eye light loss unless darkening is kept.
-    void drawWeighted(LLRenderTarget& source, const glm::vec4& weight, Draw mode, F32 residual_scale = 0.f)
+    // MASKED and SMOOTHED are AVERAGE plus the final smoothing (radius
+    // scale residual_scale, see smoothingScale()); SMOOTHED reads the
+    // mipmapped MASKED image from smooth.
+    // SOURCES marks this sample's small sources (residual_scale: ring radius
+    // scale); SMOOTHED also reads their summed map from sources.
+    void drawWeighted(LLRenderTarget& source, const glm::vec4& weight, Draw mode, F32 residual_scale = 0.f,
+                      LLRenderTarget* smooth = nullptr, LLRenderTarget* sources = nullptr)
     {
         if (mode == Draw::SAMPLE && !sLens.mValid)
         {
             mode = Draw::COPY; // no lens sample installed
         }
         const bool sample = mode == Draw::SAMPLE;
+        const bool smoothing = mode == Draw::MASKED || mode == Draw::SMOOTHED;
+        const bool source_map = mode == Draw::SOURCES;
         const F32 spherical = sample ? sSpherical : 0.f;
         const F32 highlight = sample ? sHighlight : 0.f;
-        const bool need_depth = residual_scale > 0.f || spherical != 0.f || highlight > 0.f;
-        const F32 cat_eye = (sample || (mode == Draw::AVERAGE && !sCatEyeDarken)) ? sCatEye : 0.f;
+        const bool need_depth = residual_scale > 0.f || spherical != 0.f || highlight > 0.f || source_map;
+        const F32 cat_eye = (sample || ((mode == Draw::AVERAGE || smoothing) && !sCatEyeDarken)) ? sCatEye : 0.f;
 
         sAccumulateProgram.bind();
         sAccumulateProgram.uniform4f(U_SAMPLE_WEIGHT, weight.x, weight.y, weight.z, weight.w);
@@ -390,6 +422,30 @@ namespace
         const F32 diagonal = sqrtf(aspect * aspect + 1.f);
         sAccumulateProgram.uniform2f(U_FIELD_SCALE, 2.f * aspect / diagonal, 2.f / diagonal);
         sAccumulateProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &source);
+        if (smooth)
+        {
+            // SOURCES: the star mask has no mips.
+            sAccumulateProgram.bindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP, smooth, false,
+                                           source_map ? LLTexUnit::TFO_POINT : LLTexUnit::TFO_TRILINEAR);
+        }
+        if (sources)
+        {
+            sAccumulateProgram.bindTexture(LLShaderMgr::SPECULAR_MAP, sources, false, LLTexUnit::TFO_TRILINEAR);
+        }
+        if (source_map)
+        {
+            sAccumulateProgram.uniform1f(U_HAS_STAR_MASK, smooth ? 1.f : 0.f);
+        }
+        if (mode == Draw::SMOOTHED)
+        {
+            static LLCachedControl<bool> show(gSavedSettings, "ASDepthOfFieldApertureShowSmoothing", false);
+            sAccumulateProgram.uniform1f(U_SHOW_SMOOTHING, show ? 1.f : 0.f);
+        }
+        if (smoothing || source_map)
+        { // Full-aperture CoC per unit defocus.
+            const ASDoFCamera::Lens& lens = smoothing ? sAverageLens : sLens;
+            sAccumulateProgram.uniform1f(U_SA_COC_SCALE, lens.mApertureRadius * pixelsPerUnit());
+        }
         if (sample)
         {
             const S32 sequence_index = sFirstSequenceIndex + sSampleIndex;
@@ -402,8 +458,9 @@ namespace
         {
             sAccumulateProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &gPipeline.mRT->deferredScreen,
                                            true, LLTexUnit::TFO_POINT);
-            sAccumulateProgram.uniform1f(U_RESIDUAL_MAX, RESIDUAL_MAX_PIXELS);
-            sAccumulateProgram.uniform1f(U_INV_FOCUS, sSampleInvFocus);
+            sAccumulateProgram.uniform1f(U_RESIDUAL_MAX, smoothing ? SMOOTHING_MAX_PIXELS : RESIDUAL_MAX_PIXELS);
+            sAccumulateProgram.uniform1f(U_INV_FOCUS,
+                                         smoothing ? 1.f / sAverageLens.mFocusDistance : sSampleInvFocus);
             sAccumulateProgram.uniform2f(U_PROJ_Z, sCentralProjection[2][2], sCentralProjection[3][2]);
             sAccumulateProgram.uniform2f(U_TEXEL_SIZE, 1.f / source.getWidth(), 1.f / source.getHeight());
             // Golden-angle rotation per sequence index decorrelates the tap pattern.
@@ -413,6 +470,14 @@ namespace
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         sAccumulateProgram.unbindTexture(LLShaderMgr::DIFFUSE_MAP);
+        if (smooth)
+        {
+            sAccumulateProgram.unbindTexture(LLShaderMgr::ALTERNATE_DIFFUSE_MAP);
+        }
+        if (sources)
+        {
+            sAccumulateProgram.unbindTexture(LLShaderMgr::SPECULAR_MAP);
+        }
         if (need_depth)
         {
             sAccumulateProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
@@ -432,6 +497,108 @@ namespace
         }
         return strength * sLens.mApertureRadius * pixelsPerUnit() *
             sqrtf(F_PI / (F32)llmax(sMaxSamples, 1));
+    }
+
+    // Final smoothing radius scale for an average of `samples`: the dot
+    // spacing coc * sqrt(pi / N) that remains, times the strength. It
+    // follows the samples actually averaged, so it fades as the average
+    // develops. 0 when off.
+    F32 smoothingScale(S32 samples)
+    {
+        static LLCachedControl<F32> strength(gSavedSettings, "ASDepthOfFieldApertureSmoothing", 2.f);
+        if (strength <= 0.f || !sAverageLens.mValid || samples <= 0)
+        {
+            return 0.f;
+        }
+        return strength * sAverageLens.mApertureRadius * pixelsPerUnit() *
+            sqrtf(F_PI / (F32)llmax(samples, SMOOTHING_MIN_SAMPLES));
+    }
+
+    // (Re)allocates a mipmapped (manual) target at the sum's size.
+    bool ensureMipTarget(LLRenderTarget& target, const Accumulator& slot, U32 format)
+    {
+        const U32 width = slot.mTarget.getWidth();
+        const U32 height = slot.mTarget.getHeight();
+        if (target.getWidth() == width && target.getHeight() == height)
+        {
+            return true;
+        }
+        target.release();
+        if (!target.allocate(width, height, format, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_MANUAL))
+        {
+            LL_WARNS_ONCE("ASDoF") << "Aperture DoF smoothing allocation failed; showing the unsmoothed average"
+                                   << LL_ENDL;
+            target.release();
+            return false;
+        }
+        return true;
+    }
+
+    void generateMips(LLRenderTarget& target)
+    {
+        // Explicit unit: glGenerateMipmap acts on the active unit's texture.
+        LLTexUnit* unit = gGL.getTexUnit(0);
+        unit->bindManual(LLTexUnit::TT_TEXTURE, target.getTexture(), true);
+        unit->activate();
+        glGenerateMipmap(GL_TEXTURE_2D);
+        unit->unbind(LLTexUnit::TT_TEXTURE);
+    }
+
+    // Adds this lens sample's light sources (glowing pixels and visible
+    // star pixels, see asDoFAccumulateF.glsl mode 5) to slot's source map
+    // (overwrites on the first sample). Blend state: as the caller's.
+    void accumulateSources(Accumulator& slot, bool first)
+    {
+        const bool drawn = sStarMaskDrawn && sStarMask.getWidth() == slot.mTarget.getWidth() &&
+            sStarMask.getHeight() == slot.mTarget.getHeight();
+        sStarMaskDrawn = false;
+        if (!sLens.mValid || slot.mSourcesFailed)
+        {
+            return;
+        }
+        if (!ensureMipTarget(slot.mSources, slot, GL_R32F))
+        {
+            slot.mSourcesFailed = true;
+            return;
+        }
+        if (!first && slot.mSources.getWidth() != slot.mTarget.getWidth())
+        {
+            slot.mSourcesFailed = true;
+            return;
+        }
+        // Sources: this sample's glowing pixels (screen alpha) and, when
+        // the sky pool drew them, its visible stars.
+        slot.mSources.bindTarget();
+        drawWeighted(gPipeline.mRT->screen, glm::vec4(1.f), Draw::SOURCES, 0.f, drawn ? &sStarMask : nullptr);
+        slot.mSources.flush();
+    }
+
+    // Writes slot's normalized average into screen, with the final
+    // smoothing when it is on and the average is finished (a developing
+    // average has few samples: smoothing it would blur heavily, then fade).
+    // Smoothing applies only where the source map shows a bokeh.
+    void presentAverage(Accumulator& slot, LLRenderTarget& screen, bool finished)
+    {
+        const glm::vec4 weight(1.f / slot.mAccumulated);
+        const F32 smoothing = finished ? smoothingScale(slot.mAccumulated) : 0.f;
+        const bool have_sources = !slot.mSourcesFailed && slot.mSources.getWidth() == slot.mTarget.getWidth() &&
+            slot.mSources.getHeight() == slot.mTarget.getHeight();
+        if (smoothing > 0.f && have_sources && ensureMipTarget(slot.mSmooth, slot, GL_RGBA16F))
+        {
+            slot.mSmooth.bindTarget();
+            drawWeighted(slot.mTarget, weight, Draw::MASKED, smoothing);
+            slot.mSmooth.flush();
+            generateMips(slot.mSmooth);
+            generateMips(slot.mSources);
+            screen.bindTarget();
+            drawWeighted(slot.mTarget, weight, Draw::SMOOTHED, smoothing, &slot.mSmooth, &slot.mSources);
+        }
+        else
+        {
+            screen.bindTarget();
+            drawWeighted(slot.mTarget, weight, Draw::AVERAGE);
+        }
+        screen.flush();
     }
 
     // (Re)allocates slot's sum at the screen size; false when that failed.
@@ -465,20 +632,28 @@ namespace
 
         LLGLDepthTest depth(GL_FALSE, GL_FALSE);
         const F32 residual = residualScale();
+        const bool first = slot.mAccumulated == 0;
+        if (first)
+        {
+            slot.mSourcesFailed = false; // a new average starts a new map
+        }
         slot.mTarget.bindTarget();
-        if (slot.mAccumulated == 0)
+        if (first)
         { // First sample of a new average overwrites.
             LLGLDisable blend(GL_BLEND);
             drawWeighted(gPipeline.mRT->screen, sSampleWeight, Draw::SAMPLE, residual);
+            slot.mTarget.flush();
+            accumulateSources(slot, true);
         }
         else
         {
             LLGLEnable blend(GL_BLEND);
             gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ONE);
             drawWeighted(gPipeline.mRT->screen, sSampleWeight, Draw::SAMPLE, residual);
+            slot.mTarget.flush();
+            accumulateSources(slot, false);
             gGL.setSceneBlendType(LLRender::BT_ALPHA);
         }
-        slot.mTarget.flush();
         ++slot.mAccumulated;
     }
 
@@ -499,6 +674,15 @@ namespace
         sCapture.mTarget.flush();
         sCapture.mAccumulated = sLive.mAccumulated;
         sCapture.mSkyTime = sLive.mSkyTime;
+        // The source map continues with the sum.
+        sCapture.mSourcesFailed = sLive.mSourcesFailed || sLive.mSources.getWidth() != sLive.mTarget.getWidth() ||
+            !ensureMipTarget(sCapture.mSources, sCapture, GL_R32F);
+        if (!sCapture.mSourcesFailed)
+        {
+            sCapture.mSources.bindTarget();
+            drawWeighted(sLive.mSources, glm::vec4(1.f), Draw::COPY);
+            sCapture.mSources.flush();
+        }
     }
 
     // Seconds one blocking snapshot display() call may spend on samples.
@@ -758,6 +942,8 @@ namespace ASDoFRenderer
     {
         release(sLive);
         release(sCapture);
+        sStarMask.release();
+        sStarMaskDrawn = false;
         sSlot = &sLive;
         sCapturePending = false;
     }
@@ -802,6 +988,50 @@ namespace ASDoFRenderer
         // a constant brightness in simulation); a still exposure averages
         // twinkle anyway.
         return sActive && sLens.mValid && sPlan == FramePlan::ACCUMULATE ? 0.5f : 0.f;
+    }
+
+    bool beginStarMask()
+    {
+        static LLCachedControl<F32> smoothing(gSavedSettings, "ASDepthOfFieldApertureSmoothing", 2.f);
+        if (!sActive || !sLens.mValid || sPlan != FramePlan::ACCUMULATE || sAccumulationFailed ||
+            smoothing <= 0.f || LLPipeline::sReflectionRender || LLPipeline::sShadowRender)
+        {
+            return false;
+        }
+        // The scene depth is attached (no writes): the second draw is
+        // occluded exactly like the first, so only visible star pixels mark.
+        static U32 shared_depth = 0;
+        LLRenderTarget& screen = gPipeline.mRT->deferredScreen;
+        if (!screen.getDepth())
+        {
+            return false;
+        }
+        if (sStarMask.getWidth() != screen.getWidth() || sStarMask.getHeight() != screen.getHeight() ||
+            shared_depth != screen.getDepth())
+        {
+            sStarMask.release();
+            shared_depth = 0;
+            if (!sStarMask.allocate(screen.getWidth(), screen.getHeight(), GL_R16F))
+            {
+                sStarMask.release();
+                return false;
+            }
+            screen.shareDepthBuffer(sStarMask);
+            shared_depth = screen.getDepth();
+        }
+        sStarMask.bindTarget();
+        GLfloat previous_clear[4];
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, previous_clear);
+        glClearColor(0.f, 0.f, 0.f, 0.f);
+        sStarMask.clear(GL_COLOR_BUFFER_BIT); // colour only: the depth is the scene's
+        glClearColor(previous_clear[0], previous_clear[1], previous_clear[2], previous_clear[3]);
+        return true;
+    }
+
+    void endStarMask()
+    {
+        sStarMask.flush(); // back to the G-buffer
+        sStarMaskDrawn = true;
     }
 
     bool isSceneFrozen()
@@ -849,6 +1079,8 @@ namespace ASDoFRenderer
         sSampleIndex = 0;
         sSampleCount = 1;
         sAccumulationFailed = false;
+        sAverageLens.mValid = false;
+        sStarMaskDrawn = false;
         sAxialCA = 0.f;
         sCatEye = 0.f;
         sCatEyeDarken = false;
@@ -986,6 +1218,7 @@ namespace ASDoFRenderer
 
         Accumulator& slot = *sSlot;
         sLens = ASDoFCamera::makeLens(key.mView, default_fov, key.mFocalLength, key.mFNumber, slot.mKeyFocus);
+        sAverageLens = sLens;
         if (!sLens.mValid)
         { // Invalid lens (e.g. focus inside the focal length): nothing clamped.
             slot.mAccumulated = 0;
@@ -1115,19 +1348,6 @@ namespace ASDoFRenderer
         // The capture progress screen leaves 2D matrices on the GL stack.
         install(sCentralProjection, sCentralModelview);
 
-        // Show the running average (converged frames reuse it unchanged).
-        if ((sPlan == FramePlan::ACCUMULATE || sPlan == FramePlan::CONVERGED) &&
-            !sAccumulationFailed && slot.mAccumulated > 0)
-        {
-            LLGLDepthTest depth(GL_FALSE, GL_FALSE);
-            LLGLDisable blend(GL_BLEND);
-            LLRenderTarget& screen = gPipeline.mRT->screen;
-            screen.bindTarget();
-            drawWeighted(slot.mTarget, glm::vec4(1.f / slot.mAccumulated), Draw::AVERAGE);
-            screen.flush();
-        }
-        glClearColor(0.f, 0.f, 0.f, 0.f);
-
         if (sSliced)
         {
             sCaptureSeconds += sSliceTimer.getElapsedTimeF32();
@@ -1135,6 +1355,20 @@ namespace ASDoFRenderer
                 !sCaptureStopped && slot.mAccumulated < sMaxSamples;
             sSliceTimer.reset(); // abandon timeout counts from the slice end
         }
+
+        // Show the running average (converged frames reuse it unchanged).
+        // The final smoothing only applies to a finished image: a blocking
+        // snapshot, the last slice of a capture, or a converged average.
+        if ((sPlan == FramePlan::ACCUMULATE || sPlan == FramePlan::CONVERGED) &&
+            !sAccumulationFailed && slot.mAccumulated > 0)
+        {
+            const bool finished = blocking || (sSliced && !sCapturePending) ||
+                sPlan == FramePlan::CONVERGED || slot.mAccumulated >= sMaxSamples;
+            LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+            LLGLDisable blend(GL_BLEND);
+            presentAverage(slot, gPipeline.mRT->screen, finished);
+        }
+        glClearColor(0.f, 0.f, 0.f, 0.f);
         finishFrame();
     }
 

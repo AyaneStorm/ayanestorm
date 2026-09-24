@@ -38,6 +38,9 @@ uniform float time;
 // <AS:Chanayane> Aperture DoF: > 0 replaces twinkle by this constant (its
 // mean) while lens samples accumulate; 0 keeps the vanilla twinkle.
 uniform float as_twinkle_mean;
+// > 0: drawing the aperture DoF star mask (one attachment): colour in
+// frag_data[0] even with the emissive buffer.
+uniform float as_star_mask;
 // </AS:Chanayane>
 
 float twinkle(){
@@ -74,5 +77,11 @@ void main()
 #else
     frag_data[0] = col;
 #endif
+    // <AS:Chanayane> Aperture DoF star mask
+    if (as_star_mask > 0.0)
+    {
+        frag_data[0] = col;
+    }
+    // </AS:Chanayane>
 }
 
