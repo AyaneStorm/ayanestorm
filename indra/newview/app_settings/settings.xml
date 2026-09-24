@@ -12180,8 +12180,8 @@ Change of this parameter will affect the layout of buttons in notification toast
   <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
   <key>ASDepthOfFieldMode</key>
   <map>
-    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development)</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development). Not persisted: every session starts with Standard</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSamples</key>
@@ -27057,7 +27057,7 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key><integer>0</integer>
       <key>Backup</key><integer>0</integer>
     </map>
-<key>ASLightRigNoEyeSpecular</key>
+    <key>ASLightRigNoEyeSpecular</key>
     <map>
       <key>Comment</key><string>Suppress My Lights specular highlights (catchlights) on the self avatar's eyes. Shader backend only</string>
       <key>Persist</key><integer>1</integer>

@@ -1218,6 +1218,43 @@ bokeh.
     per-pixel flag in the buffers mode 2 reads. Marking them means tagging
     those shaders the way the stars are tagged.
 
+### Floater reorganized into tabs (2026-09-24)
+
+User: the floater (996 px) was too tall. `floater_as_depth_of_field.xml` is
+now 425 px:
+- **Always visible:** Enable, Renderer, and Reset tuning defaults.
+- **Tabs:**
+  - Aperture: shape, rounding, rotation, anamorphic.
+  - Sampling: note, freeze animations, sample counts, snapshot
+    samples/time, dot and final smoothing, counter.
+  - Lens effects: axial CA, cat's eye, spherical, bright highlights.
+  - Advanced: the mode-1 controls.
+- **Commented out (settings unchanged):** "Diagnostic view" and "Show
+  smoothed area (red)".
+
+The floater is plain `LLFloater` with no C++ child lookups, and
+`enabled_control` greying is unchanged.
+
+### Renderer choice not persisted (2026-09-24)
+
+User: logging in with the Aperture-sampled renderer already selected is
+confusing. `ASDepthOfFieldMode` is now `Persist 0`, so every session starts
+with Standard. A value in an old settings file is ignored
+(`LLControlGroup::loadFromFile` applies saved values only to persisted
+controls). The mode is still listed in `graphic_preset_controls.xml`, so
+loading a preset saved with mode 2 selects it again.
+
+### Still-picture info dialog (2026-09-24)
+
+When `ASDepthOfFieldMode` changes to 2 from any combo, a control listener
+in `ASDoFRenderer::registerUICallbacks()` shows the `ASApertureDoFInfo`
+alert (tagged block at the end of `notifications.xml`). The alert says
+the mode is for still pictures, not live use. It advises freezing
+animations first (Ctrl+Alt+N freezes, Ctrl+J restores normal speed) and
+locking the focus with Alt+Shift+X, with "Depth of Field focus follows
+pointer" enabled. The `okignore` template gives it "Do not show this
+again".
+
 ### Live accumulation sometimes never starts (2026-09-24, open)
 
 User report: sometimes the live view never starts accumulating. The log

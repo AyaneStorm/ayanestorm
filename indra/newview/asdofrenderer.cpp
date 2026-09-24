@@ -16,6 +16,7 @@
 #include "llfloater.h"
 #include "llfontgl.h"
 #include "llgl.h"
+#include "llnotificationsutil.h"
 #include "llrender2dutils.h"
 #include "llviewershadermgr.h"
 #include "llviewerwindow.h"
@@ -943,6 +944,20 @@ namespace ASDoFRenderer
                         syncModeFlags();
                     });
             }
+        }
+
+        // Selecting the Aperture-sampled renderer (from any combo) explains
+        // that it is for still pictures; the notification has "Do not show
+        // this again".
+        if (LLControlVariable* control = gSavedSettings.getControl("ASDepthOfFieldMode"))
+        {
+            control->getSignal()->connect([](LLControlVariable*, const LLSD& value, const LLSD& previous)
+                {
+                    if (value.asInteger() == APERTURE_MODE && previous.asInteger() != APERTURE_MODE)
+                    {
+                        LLNotificationsUtil::add("ASApertureDoFInfo");
+                    }
+                });
         }
 
         // "Freeze animations" in the DoF floater: the same global time-factor

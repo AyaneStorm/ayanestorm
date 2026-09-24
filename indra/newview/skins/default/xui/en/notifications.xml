@@ -15810,4 +15810,19 @@ Avatar physics could not be restarted.
 Avatar physics restarted.
   </notification>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Aperture-sampled depth of field: still pictures only. -->
+  <notification icon="alertmodal.tga" name="ASApertureDoFInfo" type="alertmodal">
+The Aperture-sampled depth of field is for still pictures, not for live use.
+
+It renders the scene many times from different points of the lens and builds the blur up over seconds while nothing moves. Anything that moves (camera, avatars, animations) smears the picture or restarts it.
+
+For best results:
+- Freeze animations first: Ctrl+Alt+N (Ctrl+J restores normal speed).
+- Set the focus point first: enable "Depth of Field focus follows pointer", point at your subject, then press Alt+Shift+X to lock the focus.
+    <usetemplate
+     ignoretext="Do not show this again"
+     name="okignore"
+     yestext="OK" />
+  </notification>
+  <!-- </AS:Chanayane> -->
 </notifications>
