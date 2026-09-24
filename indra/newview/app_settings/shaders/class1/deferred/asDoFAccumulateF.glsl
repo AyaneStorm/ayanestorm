@@ -136,10 +136,13 @@ void main()
         // (no brightness test): glowing pixels (glow is the screen's alpha,
         // set by the content on bulbs, neon, lamps) and, from
         // altDiffuseMap, the stars drawn again by the sky pool with the
-        // scene depth attached (so only visible star pixels). Only out of
-        // focus: an in-focus light has no bokeh.
+        // scene depth attached. The sky pool draws before the opaque pools,
+        // so that depth test does not see later geometry: a star pixel
+        // counts only where the finished sample's depth is still the far
+        // plane the stars are drawn at (starsV: z = w). Only out of focus:
+        // an in-focus light has no bokeh.
         float glow = texture(diffuseMap, tc).a;
-        float star = has_star_mask > 0.0 ? texture(altDiffuseMap, tc).r : 0.0;
+        float star = has_star_mask > 0.0 && texture(depthMap, tc).r >= 1.0 ? texture(altDiffuseMap, tc).r : 0.0;
         float defocus = abs(sa_coc_scale * (inv_focus - 1.0 / max(viewDistance(tc), 1e-4)));
         bool source = (glow > GLOW_SOURCE_MIN || star > 0.0) && defocus >= 1.0;
         frag_color = vec4(source ? 1.0 : 0.0, 0.0, 0.0, 0.0);

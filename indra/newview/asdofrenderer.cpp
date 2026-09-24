@@ -164,6 +164,9 @@ namespace
     Accumulator* sSlot = &sLive;
 
     FramePlan sPlan = FramePlan::PINHOLE;
+    // Live frame rejected by makeLens (focus at or inside the zoom-adjusted
+    // focal length, or behind the camera): pinhole, reported by the counter.
+    bool sInvalidFocus = false;
     bool sActive = false;
     // Set when accumulation could not be allocated: the frame keeps its own
     // rendered sample instead of an incomplete average (logged once).
@@ -277,6 +280,43 @@ namespace
     {
         return nearMatrix(a.mProjection, b.mProjection, 1e-4f) && nearMatrix(a.mModelview, b.mModelview, 1e-3f) &&
             sameSettings(a, b);
+    }
+
+    F32 maxMatrixDelta(const glm::mat4& a, const glm::mat4& b)
+    {
+        F32 delta = 0.f;
+        for (int column = 0; column < 4; ++column)
+        {
+            for (int row = 0; row < 4; ++row)
+            {
+                delta = llmax(delta, fabsf(a[column][row] - b[column][row]));
+            }
+        }
+        return delta;
+    }
+
+    // Diagnostic: while the live average keeps restarting (never gets to
+    // accumulate), log which part of the key changes, at most every 2 s.
+    void logLiveRestart(const Accumulator& slot, const AccumulationKey& key, F32 focus)
+    {
+        static S32 streak = 0;
+        static U32 last_frame = 0;
+        static LLTimer log_timer;
+        streak = (last_frame + 1 == LLFrameTimer::getFrameCount()) ? streak + 1 : 1;
+        last_frame = LLFrameTimer::getFrameCount();
+        if (!slot.mHaveKey || streak < 10 || log_timer.getElapsedTimeF32() < 2.f)
+        {
+            return;
+        }
+        log_timer.reset();
+        LL_INFOS("ASDoF") << "Aperture DoF live average restarting for " << streak << " frames:"
+                          << " focus " << slot.mKeyFocus << " -> " << focus
+                          << (fabsf(focus - slot.mKeyFocus) > FOCUS_RESTART_TOLERANCE * fabsf(slot.mKeyFocus) ? " (changed)" : "")
+                          << ", projection delta " << maxMatrixDelta(key.mProjection, slot.mKey.mProjection)
+                          << (sameMatrix(key.mProjection, slot.mKey.mProjection) ? "" : " (changed)")
+                          << ", modelview delta " << maxMatrixDelta(key.mModelview, slot.mKey.mModelview)
+                          << (sameMatrix(key.mModelview, slot.mKey.mModelview) ? "" : " (changed)")
+                          << (sameSettings(key, slot.mKey) ? "" : ", settings/size changed") << LL_ENDL;
     }
 
     bool matches(const Accumulator& slot, const AccumulationKey& key, F32 focus)
@@ -1093,6 +1133,7 @@ namespace ASDoFRenderer
         sPreviewRequested = false;
         sSliced = false;
         sPreview = false;
+        sInvalidFocus = false;
         // Covers settings loaded after registration; cheap when unchanged.
         syncModeFlags();
         // Deferred display() clears for_snapshot before this call (sky hack),
@@ -1204,6 +1245,7 @@ namespace ASDoFRenderer
             sLiveMaxSamples = sMaxSamples;
             if (!matches(sLive, key, sFocusDistance))
             { // Moving: fast central view; averaging restarts once still.
+                logLiveRestart(sLive, key, sFocusDistance);
                 restart(sLive, key, sFocusDistance);
                 sPlan = FramePlan::PINHOLE;
                 sLens.mValid = false;
@@ -1223,6 +1265,15 @@ namespace ASDoFRenderer
         { // Invalid lens (e.g. focus inside the focal length): nothing clamped.
             slot.mAccumulated = 0;
             sPlan = FramePlan::PINHOLE;
+            sInvalidFocus = !gSnapshot;
+            static LLTimer log_timer;
+            if (log_timer.getElapsedTimeF32() > 5.f)
+            {
+                log_timer.reset();
+                LL_INFOS("ASDoF") << "Aperture DoF lens invalid, rendering pinhole: focus " << slot.mKeyFocus
+                                  << " m, view angle " << key.mView << " rad, focal length " << key.mFocalLength
+                                  << " mm (at the default FOV), f/" << key.mFNumber << LL_ENDL;
+            }
         }
         else if (slot.mAccumulated >= sMaxSamples || (!accumulate && slot.mAccumulated > 0))
         {
@@ -1380,7 +1431,8 @@ namespace ASDoFRenderer
         // the optional live counter is off). Hidden once converged,
         // while moving and in the debug view.
         const bool live_accumulating = show_progress && sPlan == FramePlan::ACCUMULATE;
-        if (gSnapshot || !isEnabled() || (!live_accumulating && !sCapturePending))
+        const bool invalid_focus = show_progress && sInvalidFocus;
+        if (gSnapshot || !isEnabled() || (!live_accumulating && !sCapturePending && !invalid_focus))
         {
             return;
         }
@@ -1397,6 +1449,11 @@ namespace ASDoFRenderer
 #else
             text = llformat("Snapshot DoF %d / %d", accumulated, target);
 #endif
+        }
+        else if (invalid_focus)
+        { // No samples: the lens cannot focus there (see makeLens).
+            accumulated = 0;
+            text = llformat("DoF: focus %.2f m is behind the camera or too close", sLive.mKeyFocus);
         }
         else
         {

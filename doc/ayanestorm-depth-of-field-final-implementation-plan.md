@@ -1206,10 +1206,38 @@ bokeh.
     reflection or shadow passes.
 
   Either way the pixel must be out of focus (CoC ≥ 1 px).
+  - **Fix (user: red smoothed hexagons where no star is visible):**
+    `POOL_WL_SKY` renders before the opaque pools, so the mask's depth
+    test ran before buildings wrote depth, and stars behind them were
+    marked. Mode 5 now counts a star pixel only where the finished
+    sample's depth is still 1.0 (stars are drawn at the far plane,
+    `starsV`: z = w). Stars behind clouds are still marked: clouds blend
+    over them without writing depth.
   - **Known gap:** fullbright or PBR-emissive lights without glow are not
     marked. They render after lighting (or through material paths) with no
     per-pixel flag in the buffers mode 2 reads. Marking them means tagging
     those shaders the way the stars are tagged.
+
+### Live accumulation sometimes never starts (2026-09-24, open)
+
+User report: sometimes the live view never starts accumulating. The log
+shows no allocation failure, so the live key keeps failing to match every
+frame: camera matrices (1e-6 relative), focus (0.5%) or settings. Suspects:
+focus-follows-pointer raycast flicker (hair, rigged mesh), which also
+retriggers the 1% rack transition, and an alt-zoom focus on an animated
+avatar. Diagnostic added: after 10 consecutive restarts, `logLiveRestart()`
+logs (at most every 2 s) the old and new focus, the projection and
+modelview deltas, and whether settings changed.
+
+Follow-up clue (user): toggling focus lock twice (Alt+Shift+X) fixes it,
+which re-captures `sLastFocusPoint`. That points to the silent
+invalid-lens path: `makeLens()` rejects a focus at or below the
+zoom-adjusted focal length, including a negative distance from a locked
+point that is now behind the camera. The frame then renders pinhole
+indefinitely. That state is no longer silent: the counter shows "DoF:
+focus X m is behind the camera or too close", and it is logged every 5 s
+with the focus, view angle, focal length and f-number. Nothing is clamped
+(section 3).
 
 ### Snapshot preview keeps the finished picture (2026-09-24)
 
