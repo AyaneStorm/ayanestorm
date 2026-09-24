@@ -65,12 +65,12 @@ namespace ASDoFRenderer
     // scroll, snow) pause so averaged renders see one instant.
     bool isSceneFrozen();
 
-    // Star dome clocks (lldrawpoolwlsky.cpp) while lens samples accumulate:
+    // Star dome state (lldrawpoolwlsky.cpp) while lens samples accumulate:
     // rotation uses the time the running average started, so stars do not
-    // drift between samples; twinkle gets a per-sample value so it averages
-    // to the mean brightness. Pass-through otherwise.
+    // drift between samples (pass-through otherwise); twinkle is replaced by
+    // its mean brightness (0.5; 0 keeps the vanilla twinkle).
     F32 starRotationTime(F32 frame_time);
-    F32 starTwinkleTime(F32 time);
+    F32 starTwinkleMean();
 
     // After a partial slice: true when the snapshot floater should refresh
     // its preview from the partial image (first after 8 samples, then every

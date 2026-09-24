@@ -4,7 +4,7 @@
 <floater name="as_depth_of_field" title="AyaneStorm Depth of Field"
          positioning="cascading" can_resize="false" can_minimize="true"
          save_rect="true" single_instance="true" layout="topleft"
-         width="430" height="736">
+         width="430" height="944">
   <check_box name="dof_enable" control_name="RenderDepthOfField"
              layout="topleft" left="15" top="15" width="365" height="20"
              label="Enable Depth of Field" />
@@ -168,7 +168,7 @@
   </button>
   <slider name="aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotMaxSeconds"
           layout="topleft" left="15" top="550" width="365" height="18"
-          label="Snapshot time limit" label_width="130" min_val="1" max_val="600"
+          label="Snapshot time limit" label_width="130" min_val="5" max_val="600"
           increment="5" decimal_digits="0" can_edit_text="true"
           tool_tip="Maximum seconds a snapshot spends rendering samples; the snapshot keeps the samples rendered so far. The snapshot floater renders in short slices and the viewer keeps running (stay still: moving the camera ends the capture). Other snapshot commands and tiled high-res snapshots block the viewer and are capped at 30 s to avoid being logged out." />
   <button name="reset_aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
@@ -201,15 +201,83 @@
           left="385" top="628" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCAStrength" />
   </button>
-  <check_box name="aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowProgress"
+  <check_box name="aperture_cat_eye" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureCatEye"
              layout="topleft" left="15" top="656" width="365" height="20"
+             label="Cat's-eye bokeh"
+             tool_tip="As in a real lens, the barrel clips the aperture away from the centre of the frame: bokeh toward the edges become lemon-shaped, their long side facing around the centre." />
+  <button name="reset_aperture_cat_eye" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="655" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEye" />
+  </button>
+  <slider name="aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" control_name="ASDepthOfFieldApertureCatEyeStrength"
+          layout="topleft" left="15" top="682" width="365" height="18"
+          label="Cat's-eye strength" label_width="130" min_val="0" max_val="2"
+          increment="0.05" decimal_digits="2" can_edit_text="true"
+          tool_tip="How much the barrel clips at the frame corner, in aperture radii. Higher values clip more and start closer to the centre." />
+  <button name="reset_aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" label="D" layout="topleft"
+          left="385" top="680" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEyeStrength" />
+  </button>
+  <check_box name="aperture_cat_eye_darken" enabled_control="ASDepthOfFieldUICatEye" control_name="ASDepthOfFieldApertureCatEyeDarken"
+             layout="topleft" left="30" top="708" width="350" height="20"
+             label="Darken corners (physical light loss)"
+             tool_tip="A real lens loses the clipped light, so the corners get darker. Off: brightness is compensated and only the bokeh shape changes." />
+  <button name="reset_aperture_cat_eye_darken" enabled_control="ASDepthOfFieldUICatEye" label="D" layout="topleft"
+          left="385" top="707" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEyeDarken" />
+  </button>
+  <check_box name="aperture_spherical" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSpherical"
+             layout="topleft" left="15" top="734" width="365" height="20"
+             label="Spherical aberration"
+             tool_tip="As in a real lens, the brightness across each bokeh disc differs in front of and behind the focus plane. Sharp areas are unchanged." />
+  <button name="reset_aperture_spherical" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="733" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSpherical" />
+  </button>
+  <slider name="aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" control_name="ASDepthOfFieldApertureSphericalStrength"
+          layout="topleft" left="15" top="760" width="365" height="18"
+          label="Spherical strength" label_width="130" min_val="-1" max_val="1"
+          increment="0.05" decimal_digits="2" can_edit_text="true"
+          tool_tip="Positive (most lenses): soft, centre-bright background bokeh and bright-rimmed foreground bokeh. Negative (over-corrected, 'soap bubble'): bright rings in the background." />
+  <button name="reset_aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" label="D" layout="topleft"
+          left="385" top="758" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSphericalStrength" />
+  </button>
+  <check_box name="aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureHighlights"
+             layout="topleft" left="15" top="786" width="365" height="20"
+             label="Bright bokeh highlights (artistic)"
+             tool_tip="Real lights are far brighter than lit surfaces, so in night photos their bokeh stay bright discs. Viewer lights are not that bright. This lets small bright points (lamps, stars, glints) keep their brightness as they blur. Sharp areas and large bright areas are unchanged. Off keeps the exact physical simulation." />
+  <button name="reset_aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="785" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlights" />
+  </button>
+  <slider name="aperture_highlight_strength" enabled_control="ASDepthOfFieldUIHighlights" control_name="ASDepthOfFieldApertureHighlightStrength"
+          layout="topleft" left="15" top="812" width="365" height="18"
+          label="Highlight strength" label_width="130" min_val="0" max_val="1"
+          increment="0.01" decimal_digits="2" can_edit_text="true"
+          tool_tip="How much brightness blurred highlights keep. The boost grows with the size of the bokeh disc." />
+  <button name="reset_aperture_highlight_strength" enabled_control="ASDepthOfFieldUIHighlights" label="D" layout="topleft"
+          left="385" top="810" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlightStrength" />
+  </button>
+  <slider name="aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" control_name="ASDepthOfFieldApertureHighlightThreshold"
+          layout="topleft" left="15" top="838" width="365" height="18"
+          label="Highlight threshold" label_width="130" min_val="0.05" max_val="8"
+          increment="0.05" decimal_digits="2" can_edit_text="true"
+          tool_tip="Brightness where highlights start (linear). Lower picks up dimmer lights such as stars; higher only the brightest lamps." />
+  <button name="reset_aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" label="D" layout="topleft"
+          left="385" top="836" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlightThreshold" />
+  </button>
+  <check_box name="aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowProgress"
+             layout="topleft" left="15" top="864" width="365" height="20"
              label="Show sample counter (never in snapshots)" />
   <button name="reset_aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-          left="385" top="655" width="20" height="22" tool_tip="Reset to default.">
+          left="385" top="863" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureShowProgress" />
   </button>
   <button name="reset_tuning" label="Reset tuning defaults"
-          layout="topleft" left="255" top="691" width="150" height="22">
+          layout="topleft" left="255" top="899" width="150" height="22">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="All" />
   </button>
 </floater>

@@ -82,6 +82,23 @@ namespace
     const LLStaticHashedString U_PROJ_Z("proj_z");
     const LLStaticHashedString U_TEXEL_SIZE("texel_size");
     const LLStaticHashedString U_TAP_ROTATION("tap_rotation");
+    const LLStaticHashedString U_LENS_MODE("lens_mode");
+    const LLStaticHashedString U_LENS_POS("lens_pos");
+    const LLStaticHashedString U_CAT_EYE("cat_eye");
+    const LLStaticHashedString U_FIELD_SCALE("field_scale");
+    const LLStaticHashedString U_SA_STRENGTH("sa_strength");
+    const LLStaticHashedString U_SA_COC_SCALE("sa_coc_scale");
+    const LLStaticHashedString U_PUPIL_R2("pupil_r2");
+    const LLStaticHashedString U_HL_STRENGTH("hl_strength");
+    const LLStaticHashedString U_HL_THRESHOLD("hl_threshold");
+
+    // asDoFAccumulateF.glsl lens_mode.
+    enum class Draw
+    {
+        COPY = 0,    // plain weighted copy (seeding)
+        SAMPLE = 1,  // one lens sample: residual, cat's eye, spherical weights
+        AVERAGE = 2  // normalized average: cat's eye brightness compensation
+    };
 
     // What this presented frame renders and shows.
     enum class FramePlan
@@ -104,6 +121,11 @@ namespace
         ASDoFAperture::Shape mShape;
         F32 mResidualBlur = 0.f;
         F32 mAxialCA = 0.f;     // focal shift / focal length; 0 = off
+        F32 mCatEye = 0.f;      // barrel shift at the frame corner; 0 = off
+        bool mCatEyeDarken = false; // keep the physical corner light loss
+        F32 mSpherical = 0.f;   // spherical aberration; 0 = off
+        F32 mHighlight = 0.f;   // artistic highlight boost; 0 = off
+        F32 mHighlightThreshold = 0.f;
         U32 mWidth = 0;
         U32 mHeight = 0;
     };
@@ -148,6 +170,12 @@ namespace
     // Axial CA of this frame's samples (key value) and the installed
     // sample's colour weight and inverse focus.
     F32 sAxialCA = 0.f;
+    // Lens character of this frame (key values).
+    F32 sCatEye = 0.f;
+    bool sCatEyeDarken = false;
+    F32 sSpherical = 0.f;
+    F32 sHighlight = 0.f;
+    F32 sHighlightThreshold = 1.f;
     glm::vec4 sSampleWeight(1.f);
     F32 sSampleInvFocus = 0.f;
 
@@ -191,6 +219,8 @@ namespace
             a.mView == b.mView && a.mFNumber == b.mFNumber && a.mFocalLength == b.mFocalLength &&
             a.mDefaultFov == b.mDefaultFov && sameShape(a.mShape, b.mShape) &&
             a.mResidualBlur == b.mResidualBlur && a.mAxialCA == b.mAxialCA &&
+            a.mCatEye == b.mCatEye && a.mCatEyeDarken == b.mCatEyeDarken && a.mSpherical == b.mSpherical &&
+            a.mHighlight == b.mHighlight && a.mHighlightThreshold == b.mHighlightThreshold &&
             a.mWidth == b.mWidth && a.mHeight == b.mHeight;
     }
 
@@ -218,6 +248,8 @@ namespace
         return a.mView == b.mView && a.mFNumber == b.mFNumber && a.mFocalLength == b.mFocalLength &&
             a.mDefaultFov == b.mDefaultFov && sameShape(a.mShape, b.mShape) &&
             a.mResidualBlur == b.mResidualBlur && a.mAxialCA == b.mAxialCA &&
+            a.mCatEye == b.mCatEye && a.mCatEyeDarken == b.mCatEyeDarken && a.mSpherical == b.mSpherical &&
+            a.mHighlight == b.mHighlight && a.mHighlightThreshold == b.mHighlightThreshold &&
             a.mWidth == b.mWidth && a.mHeight == b.mHeight;
     }
 
@@ -268,6 +300,12 @@ namespace
         setFlag("ASDepthOfFieldUIShape", mode == 1 || mode == APERTURE_MODE);
         setFlag("ASDepthOfFieldUIAxialCA",
                 mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
+        setFlag("ASDepthOfFieldUICatEye",
+                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
+        setFlag("ASDepthOfFieldUISpherical",
+                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+        setFlag("ASDepthOfFieldUIHighlights",
+                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
     }
 
     // Same state setPerspective() establishes: GL stack, cached globals
@@ -315,16 +353,52 @@ namespace
         install(projection, modelview);
     }
 
-    // Weighted fullscreen copy of source into the bound target. A positive
-    // residual_scale softens it by the per-pixel residual disk (see
-    // asDoFAccumulateF.glsl), reading this sample's depth.
-    void drawWeighted(LLRenderTarget& source, const glm::vec4& weight, F32 residual_scale = 0.f)
+    // Pixels per unit image-plane offset at unit distance (installed
+    // projection's [1][1], so zoomed snapshot tiles scale too).
+    F32 pixelsPerUnit()
     {
+        return sCentralProjection[1][1] * 0.5f * (F32)gPipeline.mRT->screen.getHeight();
+    }
+
+    // Weighted fullscreen copy of source into the bound target (see
+    // asDoFAccumulateF.glsl). SAMPLE draws one lens sample: a positive
+    // residual_scale softens it by the per-pixel residual disk, and the
+    // cat's-eye and spherical weights apply; both read this sample's depth.
+    // AVERAGE compensates the cat's-eye light loss unless darkening is kept.
+    void drawWeighted(LLRenderTarget& source, const glm::vec4& weight, Draw mode, F32 residual_scale = 0.f)
+    {
+        if (mode == Draw::SAMPLE && !sLens.mValid)
+        {
+            mode = Draw::COPY; // no lens sample installed
+        }
+        const bool sample = mode == Draw::SAMPLE;
+        const F32 spherical = sample ? sSpherical : 0.f;
+        const F32 highlight = sample ? sHighlight : 0.f;
+        const bool need_depth = residual_scale > 0.f || spherical != 0.f || highlight > 0.f;
+        const F32 cat_eye = (sample || (mode == Draw::AVERAGE && !sCatEyeDarken)) ? sCatEye : 0.f;
+
         sAccumulateProgram.bind();
         sAccumulateProgram.uniform4f(U_SAMPLE_WEIGHT, weight.x, weight.y, weight.z, weight.w);
         sAccumulateProgram.uniform1f(U_RESIDUAL_SCALE, residual_scale);
+        sAccumulateProgram.uniform1i(U_LENS_MODE, (S32)mode);
+        sAccumulateProgram.uniform1f(U_CAT_EYE, cat_eye);
+        sAccumulateProgram.uniform1f(U_SA_STRENGTH, spherical);
+        sAccumulateProgram.uniform1f(U_HL_STRENGTH, highlight);
+        sAccumulateProgram.uniform1f(U_HL_THRESHOLD, sHighlightThreshold);
+        // Field position: 1 at the frame corner, aspect-correct.
+        const F32 aspect = (F32)source.getWidth() / (F32)llmax(source.getHeight(), 1U);
+        const F32 diagonal = sqrtf(aspect * aspect + 1.f);
+        sAccumulateProgram.uniform2f(U_FIELD_SCALE, 2.f * aspect / diagonal, 2.f / diagonal);
         sAccumulateProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &source);
-        if (residual_scale > 0.f)
+        if (sample)
+        {
+            const S32 sequence_index = sFirstSequenceIndex + sSampleIndex;
+            const glm::vec2& lens = sLensSamples[sequence_index];
+            sAccumulateProgram.uniform2f(U_LENS_POS, lens.x, lens.y);
+            sAccumulateProgram.uniform1f(U_PUPIL_R2, ASDoFAperture::pupilRadius2((U32)sequence_index));
+            sAccumulateProgram.uniform1f(U_SA_COC_SCALE, sLens.mApertureRadius * pixelsPerUnit());
+        }
+        if (need_depth)
         {
             sAccumulateProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &gPipeline.mRT->deferredScreen,
                                            true, LLTexUnit::TFO_POINT);
@@ -339,7 +413,7 @@ namespace
         gPipeline.mScreenTriangleVB->setBuffer();
         gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
         sAccumulateProgram.unbindTexture(LLShaderMgr::DIFFUSE_MAP);
-        if (residual_scale > 0.f)
+        if (need_depth)
         {
             sAccumulateProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
         }
@@ -356,8 +430,7 @@ namespace
         {
             return 0.f;
         }
-        const F32 pixels_per_unit = sCentralProjection[1][1] * 0.5f * (F32)gPipeline.mRT->screen.getHeight();
-        return strength * sLens.mApertureRadius * pixels_per_unit *
+        return strength * sLens.mApertureRadius * pixelsPerUnit() *
             sqrtf(F_PI / (F32)llmax(sMaxSamples, 1));
     }
 
@@ -396,13 +469,13 @@ namespace
         if (slot.mAccumulated == 0)
         { // First sample of a new average overwrites.
             LLGLDisable blend(GL_BLEND);
-            drawWeighted(gPipeline.mRT->screen, sSampleWeight, residual);
+            drawWeighted(gPipeline.mRT->screen, sSampleWeight, Draw::SAMPLE, residual);
         }
         else
         {
             LLGLEnable blend(GL_BLEND);
             gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ONE);
-            drawWeighted(gPipeline.mRT->screen, sSampleWeight, residual);
+            drawWeighted(gPipeline.mRT->screen, sSampleWeight, Draw::SAMPLE, residual);
             gGL.setSceneBlendType(LLRender::BT_ALPHA);
         }
         slot.mTarget.flush();
@@ -422,7 +495,7 @@ namespace
         LLGLDepthTest depth(GL_FALSE, GL_FALSE);
         LLGLDisable blend(GL_BLEND);
         sCapture.mTarget.bindTarget();
-        drawWeighted(sLive.mTarget, glm::vec4(1.f));
+        drawWeighted(sLive.mTarget, glm::vec4(1.f), Draw::COPY);
         sCapture.mTarget.flush();
         sCapture.mAccumulated = sLive.mAccumulated;
         sCapture.mSkyTime = sLive.mSkyTime;
@@ -635,7 +708,9 @@ namespace ASDoFRenderer
     void registerUICallbacks()
     {
         syncModeFlags();
-        for (const char* name : { "ASDepthOfFieldMode", "ASDepthOfFieldApertureAxialCA" })
+        for (const char* name : { "ASDepthOfFieldMode", "ASDepthOfFieldApertureAxialCA",
+                                  "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureSpherical",
+                                  "ASDepthOfFieldApertureHighlights" })
         {
             if (LLControlVariable* control = gSavedSettings.getControl(name))
             {
@@ -719,17 +794,14 @@ namespace ASDoFRenderer
         return sActive && sLens.mValid && sPlan == FramePlan::ACCUMULATE ? sSlot->mSkyTime : frame_time;
     }
 
-    F32 starTwinkleTime(F32 time)
+    F32 starTwinkleMean()
     {
-        if (!(sActive && sLens.mValid && sPlan == FramePlan::ACCUMULATE))
-        {
-            return time;
-        }
-        // Golden-ratio steps over the shader's 1.25 s twinkle period: every
-        // lens sample gets its own twinkle state, so the average is the mean
-        // brightness whatever the samples-per-frame grouping.
-        const F32 index = (F32)(sFirstSequenceIndex + sSampleIndex);
-        return fmodf(index * 0.618034f, 1.f) * 1.25f;
+        // Twinkle is fract() of a per-pixel, per-time hash: uniform in
+        // [0, 1), mean 0.5. Varying it per sample left each star bokeh a sum
+        // of randomly bright, speckled dots (14x the interior variation of
+        // a constant brightness in simulation); a still exposure averages
+        // twinkle anyway.
+        return sActive && sLens.mValid && sPlan == FramePlan::ACCUMULATE ? 0.5f : 0.f;
     }
 
     bool isSceneFrozen()
@@ -778,6 +850,10 @@ namespace ASDoFRenderer
         sSampleCount = 1;
         sAccumulationFailed = false;
         sAxialCA = 0.f;
+        sCatEye = 0.f;
+        sCatEyeDarken = false;
+        sSpherical = 0.f;
+        sHighlight = 0.f;
         // One-shot: only the snapshot display() right after the request is a slice.
         const bool slice_requested = sSliceRequested;
         const bool preview_requested = sPreviewRequested;
@@ -836,6 +912,24 @@ namespace ASDoFRenderer
         static LLCachedControl<F32> axial_ca_percent(gSavedSettings, "ASDepthOfFieldApertureAxialCAStrength", 0.2f);
         key.mAxialCA = axial_ca ? llclamp((F32)axial_ca_percent, 0.f, 2.f) * 0.01f : 0.f;
         sAxialCA = key.mAxialCA;
+        static LLCachedControl<bool> cat_eye(gSavedSettings, "ASDepthOfFieldApertureCatEye", false);
+        static LLCachedControl<F32> cat_eye_strength(gSavedSettings, "ASDepthOfFieldApertureCatEyeStrength", 0.6f);
+        static LLCachedControl<bool> cat_eye_darken(gSavedSettings, "ASDepthOfFieldApertureCatEyeDarken", false);
+        static LLCachedControl<bool> spherical(gSavedSettings, "ASDepthOfFieldApertureSpherical", false);
+        static LLCachedControl<F32> spherical_strength(gSavedSettings, "ASDepthOfFieldApertureSphericalStrength", 0.5f);
+        key.mCatEye = cat_eye ? llclamp((F32)cat_eye_strength, 0.f, 2.f) : 0.f;
+        key.mCatEyeDarken = key.mCatEye > 0.f && cat_eye_darken;
+        key.mSpherical = spherical ? llclamp((F32)spherical_strength, -1.f, 1.f) : 0.f;
+        static LLCachedControl<bool> highlights(gSavedSettings, "ASDepthOfFieldApertureHighlights", false);
+        static LLCachedControl<F32> highlight_strength(gSavedSettings, "ASDepthOfFieldApertureHighlightStrength", 0.3f);
+        static LLCachedControl<F32> highlight_threshold(gSavedSettings, "ASDepthOfFieldApertureHighlightThreshold", 1.f);
+        key.mHighlight = highlights ? llclamp((F32)highlight_strength, 0.f, 1.f) : 0.f;
+        key.mHighlightThreshold = key.mHighlight > 0.f ? llclamp((F32)highlight_threshold, 0.05f, 8.f) : 0.f;
+        sCatEye = key.mCatEye;
+        sCatEyeDarken = key.mCatEyeDarken;
+        sSpherical = key.mSpherical;
+        sHighlight = key.mHighlight;
+        sHighlightThreshold = llmax(key.mHighlightThreshold, 0.05f);
         key.mWidth = gPipeline.mRT->screen.getWidth();
         key.mHeight = gPipeline.mRT->screen.getHeight();
 
@@ -1029,7 +1123,7 @@ namespace ASDoFRenderer
             LLGLDisable blend(GL_BLEND);
             LLRenderTarget& screen = gPipeline.mRT->screen;
             screen.bindTarget();
-            drawWeighted(slot.mTarget, glm::vec4(1.f / slot.mAccumulated));
+            drawWeighted(slot.mTarget, glm::vec4(1.f / slot.mAccumulated), Draw::AVERAGE);
             screen.flush();
         }
         glClearColor(0.f, 0.f, 0.f, 0.f);

@@ -35,6 +35,10 @@ uniform sampler2D diffuseMap;
 uniform float blend_factor;
 uniform float custom_alpha;
 uniform float time;
+// <AS:Chanayane> Aperture DoF: > 0 replaces twinkle by this constant (its
+// mean) while lens samples accumulate; 0 keeps the vanilla twinkle.
+uniform float as_twinkle_mean;
+// </AS:Chanayane>
 
 float twinkle(){
     float d = fract(screenpos.x + screenpos.y);
@@ -56,7 +60,10 @@ void main()
     float factor = smoothstep(0.0f, 0.9f, custom_alpha);
 
     col.a = (col.a * factor) * 32.0f;
-    col.a *= twinkle();
+    // <AS:Chanayane> Aperture DoF: constant mean twinkle while accumulating
+    //col.a *= twinkle();
+    col.a *= as_twinkle_mean > 0.0 ? as_twinkle_mean : twinkle();
+    // </AS:Chanayane>
 
     frag_data[1] = vec4(0.0f);
     frag_data[2] = vec4(0.0, 1.0, 0.0, GBUFFER_FLAG_SKIP_ATMOS);

@@ -182,6 +182,11 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldApertureSnapshotMaxSeconds",
                 "ASDepthOfFieldApertureResidualBlur",
                 "ASDepthOfFieldApertureAxialCA", "ASDepthOfFieldApertureAxialCAStrength",
+                "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureCatEyeStrength",
+                "ASDepthOfFieldApertureCatEyeDarken",
+                "ASDepthOfFieldApertureSpherical", "ASDepthOfFieldApertureSphericalStrength",
+                "ASDepthOfFieldApertureHighlights", "ASDepthOfFieldApertureHighlightStrength",
+                "ASDepthOfFieldApertureHighlightThreshold",
                 "ASDepthOfFieldApertureShowProgress"
             };
             const std::string name = data.asString();

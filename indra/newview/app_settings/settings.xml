@@ -12204,7 +12204,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureSnapshotMaxSeconds</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: time limit for one snapshot's sample rendering, 1-600 s; on reaching it the snapshot keeps the samples rendered so far. Snapshot floater captures run in short slices with the viewer running between them; other (blocking) captures and tiled snapshots are capped at 30 s, since networking is suspended meanwhile</string>
+    <key>Comment</key><string>Aperture-sampled DoF: time limit for one snapshot's sample rendering, 5-600 s in the floater; on reaching it the snapshot keeps the samples rendered so far. Snapshot floater captures run in short slices with the viewer running between them; other (blocking) captures and tiled snapshots are capped at 30 s, since networking is suspended meanwhile</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>120.0</real><key>Backup</key><integer>0</integer>
   </map>
@@ -12225,6 +12225,54 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>Aperture-sampled DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEye</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEyeStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEyeDarken</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSpherical</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSphericalStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlights</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Off keeps the exact simulation</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlightStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlightThreshold</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldUIAdvanced</key>
   <map>
@@ -12247,6 +12295,24 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUIAxialCA</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureAxialCA on (enables the aberration strength slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUICatEye</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureCatEye on (enables the cat's-eye controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUISpherical</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureSpherical on (enables the spherical aberration slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIHighlights</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureHighlights on (enables the highlight sliders)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

@@ -765,9 +765,10 @@ First runtime results (user, 2026-09-24):
     slightly.
   - Fix, in tagged edits: `ASDoFRenderer::starRotationTime()` returns the
     frame time recorded when the running average (re)started, carried
-    over by live seeding. `starTwinkleTime()` returns
+    over by live seeding. `starTwinkleTime()` returned
     `fract(index × 0.618034) × 1.25` per lens sample while accumulating.
-    Both pass the time through when not accumulating.
+    Both passed the time through when not accumulating. The twinkle part
+    was superseded by the mean twinkle; see "Star bokeh grain" below.
 - **Two captures per floater open (user saw a quick progress bar, then a
   slow one):** in the log the floater opened at 12:02:42 and a 3440×1328
   capture started, then 20 s later a 4000×4000 one.
@@ -869,6 +870,227 @@ Reference (`dof_reference.py`): the mirrors are
 
 All 30 tests pass.
 
+### Cat's-eye bokeh and spherical aberration (mode 2, optional, 2026-09-24)
+
+User request: both optional and off by default. They are per-pixel
+per-sample weights in `asDoFAccumulateF.glsl` (new `lens_mode`), with no
+extra render.
+
+**Cat's eye (mechanical vignetting):**
+- Weighting: a sample reaches a pixel only when its unit-aperture
+  position lies within a unit circle (the projected barrel) centred at
+  `cat_eye × field`. Field is the aspect-correct image position, length 1
+  at the frame corner.
+- Shape: the overlap of the two circles is the lemon, with its long axis
+  tangential.
+- Normalization (`lens_mode` 2): the average is divided by the analytic
+  open fraction (vesica area / π), clamped to at least 0.05, which keeps
+  brightness. The option `ASDepthOfFieldApertureCatEyeDarken` keeps the
+  physical corner light loss instead.
+- The analytic fraction assumes a circular aperture; polygon apertures
+  differ slightly.
+- Limitation: tiled (zoom > 1) snapshots compute the field position per
+  tile, so it is not yet mapped to the full image.
+- Settings: `ASDepthOfFieldApertureCatEye` (off),
+  `ASDepthOfFieldApertureCatEyeStrength` (0–2 aperture radii at the
+  corner, default 0.6), and `ASDepthOfFieldApertureCatEyeDarken` (off).
+
+**Spherical aberration:**
+- Weight: 1 − a·σ·(2ρ² − 1), where:
+  - ρ² is `ASDoFAperture::pupilRadius2(i)`, the uniform R4 dimension, so
+    the weight averages to 1;
+  - σ = clamp(signed full-aperture CoC in pixels / 3, −1, 1), computed
+    from this sample's depth and inverse focus (axial CA included), so it
+    is 0 at the focal plane.
+- a > 0 (typical under-corrected lens): centre-bright, soft background
+  bokeh and a bright-rimmed foreground.
+- a < 0 (over-corrected): soap-bubble background.
+- Settings: `ASDepthOfFieldApertureSpherical` (off) and
+  `ASDepthOfFieldApertureSphericalStrength` (−1…1, default 0.5).
+
+Common to both:
+- All three values are in the accumulation key and `sameSettings()`.
+- The UI flags `ASDepthOfFieldUICatEye` and `ASDepthOfFieldUISpherical`
+  are synced by `syncModeFlags()`, which listens to both checkboxes.
+- All settings are in Reset tuning defaults.
+- The floater height is now 866.
+
+Reference: the mirrors are `viewer_pupil_radius2`,
+`viewer_spherical_weight`, `viewer_cat_eye_open` and
+`viewer_cat_eye_fraction`. Two tests were added:
+- `test_spherical_weights_average_to_one`: within 4/N for N = 64…2048,
+  both signs; non-negative weights; orientation of the effect.
+- `test_cat_eye_fraction_matches_samples_and_is_tangential`: the share of
+  the viewer's 4096 samples within 0.01 of the analytic fraction for
+  d = 0…1.5, and the open pupil taller than wide for a horizontal field.
+
+All 32 tests pass.
+
+### Bright bokeh highlights (mode 2, artistic, optional, 2026-09-24)
+
+User observation: typical night photos show bright bokeh discs, while mode
+2's are faint.
+- Mode 2 is energy-correct: a point spread over a disc of radius r
+  loses brightness as 1/r². Real point lights are orders of magnitude
+  brighter than lit surfaces and saturate even when spread. Viewer lights
+  and stars are close to surface brightness.
+- User decision: an artistic control, optional and off by default, so the
+  exact simulation remains available. Mode 1's "Bokeh highlights" slider
+  is unchanged.
+
+Per-sample gain in `asDoFAccumulateF.glsl` (`lens_mode` 1):
+1 + strength · bright · isolated · min((CoC/4 px)², 1024), where:
+- **bright:** a smoothstep of luminance from 0.5T to 1.5T (T = threshold),
+  measured before residual smoothing;
+- **isolated:** a smoothstep from 2 to 8 on the ratio of the pixel's
+  luminance to the mean of an 8-tap ring 6 px away, so point lights
+  qualify, while sky, the moon and white walls do not (surfaces keep
+  their brightness when defocused, so boosting them would blow them out);
+- **area:** the full-aperture CoC radius in pixels from this sample's
+  depth and inverse focus, so in-focus pixels (CoC ≤ 1 px) are unchanged
+  and the gain compensates the spread with the disc area.
+
+Settings and UI:
+- `ASDepthOfFieldApertureHighlights` (off),
+  `ASDepthOfFieldApertureHighlightStrength` (0–1, default 0.3) and
+  `ASDepthOfFieldApertureHighlightThreshold` (0.05–8, default 1.0).
+- All are in the key and `sameSettings()`. The UI flag is
+  `ASDepthOfFieldUIHighlights`.
+- All are in Reset tuning defaults. The floater height is now 944.
+
+Reference: `viewer_highlight_gain` and
+`test_highlight_gain_only_for_defocused_isolated_bright_points` check that
+the gain is 1 in focus, when off, below the threshold and for large bright
+areas, that it grows with disc area, and that it is capped. All 33 tests
+pass.
+
+Correction to an earlier explanation: stars are not fixed-pixel sprites.
+`LLVOWLSky::updateStarGeometry` builds 16–36 m world quads on the sky
+dome, so they scale with snapshot resolution, like the bokeh and the
+residual smoothing. The dotted star bokeh in 4000×4000 snapshots is not a
+resolution effect. The open suspects are image-viewer downscaling, the
+`fract()` twinkle striping within each star quad, and dot smoothing at 1.
+
+### Sample sequence: Owen-scrambled Sobol (2026-09-24)
+
+User observation: point-light bokeh showed regular patterns and needed many
+samples. The user asked whether a tiny random offset would help, subtle
+enough not to break the bokeh shape.
+
+Analysis:
+- Randomness cannot fill the gaps between sample images: each render is one
+  lens point. Dot smoothing approximates the continuous aperture, spreading
+  each sample over its share of it.
+- Randomness can turn lattice structure into fine grain. The patterns come
+  from Kronecker sequences (R4 dimensions 0/1) passing through the polar
+  aperture mapping: six-petal "lotus" shapes with R4, spiral arms with R2.
+
+Simulation (6 blades, 90 px radius, 1 px dots, dot smoothing 2; interior
+coefficient of variation and FFT peak ratio, where lower is better):
+
+| Sequence | N=512 CV / peak | N=2048 CV / peak |
+|---|---|---|
+| R4 (dims 0/1) | 0.034 / 40.3 | 0.026 / 37.1 (petals) |
+| R2 | 0.023 / 40.7 | 0.007 / 20.3 (faint spirals) |
+| R2 + index-decaying jitter λ=0.5 / 1 | 0.029 / 0.036 | 0.020 / 0.031 (grain) |
+| Pure random | — | worst: blotchy (0.256 at smoothing 1) |
+| **Owen-scrambled Sobol** | **0.019 / 31.4** | **0.005 / 21.1 (no structure)** |
+
+Thin-strand energy error (hair gate: lens and pixel jointly, mean / max
+over 8 strand offsets):
+
+| Sequence | 4096 | 16384 |
+|---|---|---|
+| R4 dims 0–3 (previous) | 1.14 / 2.51% | 0.45 / 0.86% |
+| R2 lens + R4 jitter | 1.22 / 2.67% | 0.89 / 1.37% (fails the gate) |
+| R2 lens + Halton(5,7) jitter | 1.77 / 3.03% | 0.58 / 0.97% |
+| **Owen-scrambled Sobol dims 0–3** | 1.44 / 3.32% | **0.39 / 0.91%** |
+
+Decision: an Owen-scrambled Sobol sequence (`asdofaperture.cpp`).
+- **Dimensions:** 0/1 lens, 2/3 pixel jitter, 4 axial-CA wavelength.
+- **Direction numbers:** Joe–Kuo polynomials for dimensions 1–4. They were
+  hand-checked against the published Gray-code table (for example point 4
+  = 0.375 0.375 0.625 0.875 0.375).
+- **Scrambling:** hash-based Owen scrambling, a Laine–Karras permutation on
+  the reversed bits with fixed per-dimension seeds. It randomizes within
+  strata only, so the bokeh shape is never broken.
+- **Nets:** power-of-two prefixes are (t, m, 2)-nets, with t = 0 for the
+  lens pair and t = 1 for the jitter pair (measured).
+- **Wavelength dimension:** the wavelength moved off van der Corput, which
+  is Sobol dimension 0 (the lens angle), because reusing it would tie
+  colours to aperture sectors.
+- **Pupil radius:** `pupilRadius2` = dimension 1.
+
+Verification:
+- Python mirror: `sobol_owen_bits`, with the R4/R2 helpers removed.
+- New test `test_sobol_owen_stratified_and_decorrelated`: lens t = 0,
+  jitter t ≤ 1 for N = 16…1024, and wavelength/lens-angle covariance
+  < 5%.
+- The existing strand, aperture-density and axial-CA tests pass. The
+  axial-CA "sample 0 is green" assertion was dropped, because scrambling
+  moves it. 34/34 pass.
+- The C++ Sobol block, extracted verbatim from `asdofaperture.cpp` and
+  compiled with g++, matches the Python mirror on 50 values (indices up to
+  65535, all 5 dimensions).
+
+### Star bokeh grain: twinkle replaced by its mean (2026-09-24)
+
+User report: star bokeh stay "dotted" at any dot smoothing, unlike real
+bokeh.
+- Geometric coverage was not the limit. At about 55 px bokeh and
+  N = 2048, the dots are about 1.1 px apart, and smoothing 2 spreads each
+  by about 2 px.
+- The texture came from the star shader. Twinkle is
+  `fract(screenpos.x + screenpos.y)` with `screenpos = position.xy ×
+  mod(time, 1.25)`, which is uniform in [0, 1) and varies per sample and
+  per pixel across each star quad. The earlier per-sample twinkle time
+  (which removed the per-slice arcs) left every dot a randomly bright,
+  speckled copy.
+- Simulation (6 blades, Sobol–Owen, N = 2048), interior coefficient of
+  variation at smoothing 1 / 2: constant brightness 0.034 / 0.005; random
+  twinkle 0.132 / 0.070, 14× worse at smoothing 2 and visibly blotchy.
+- Fix:
+  - `starsF.glsl` (deferred) gets a tagged `as_twinkle_mean` uniform: when
+    it is > 0 it replaces `twinkle()`.
+  - `lldrawpoolwlsky.cpp` sets it from `ASDoFRenderer::starTwinkleMean()`:
+    0.5 (the mean) while lens samples accumulate, 0 otherwise.
+  - The star time is restored to vanilla, and `starTwinkleTime()` is
+    removed.
+  - A still exposure averages twinkle anyway, so brightness is unchanged
+    on average.
+- The underwater star shader (`environment/starsF.glsl`) is unchanged.
+
+### Dot smoothing no longer softens sharp hair (2026-09-24)
+
+User report: at 2048 samples, star bokeh still show holes. The user runs
+dot smoothing at 0 because smoothing softened thin in-focus hair.
+- **Holes at smoothing 0 are expected:** N lens samples image a point as N
+  dots, and filling between them is what the residual smoothing is for.
+- **The softening was a bug:** the residual disk was a plain gather sized
+  by the centre pixel's own defocus. A defocused background pixel next to
+  a sharp strand averaged in the strand's colour, so the strand bled into
+  its surroundings.
+- **Fix, `asDoFAccumulateF.glsl` (scatter-as-gather rule):** each tap
+  reads its own depth and contributes only when its own residual radius
+  reaches the centre (tap radius ≥ tap distance). The result is the mean of
+  the contributing taps, centre included. Sharp content (radius ≈ 0) never
+  leaks outward, and defocused content still fills its own gaps. The cost
+  is 12 extra depth fetches per pixel per sample while smoothing is on.
+- **Follow-up (user, dot smoothing 6: hair outline soft against the sky):**
+  the reach rule alone let the heavily blurred sky, whose radius reaches
+  far, spread onto the nearer hair edge pixels. Physically, a farther
+  surface cannot blur over a nearer one, because the nearer surface
+  occludes it in every lens position. Taps now also have to satisfy
+  tap distance ≤ centre distance × 1.05 (same-surface slack). The rest of
+  the softening at 6 is by design: at N = 2048, strength 6 widens every
+  defocused point by 6·√(π/N) ≈ 23% of its CoC, far beyond the dot
+  spacing. 1.5–2 only fills the gaps.
+- **Depth used for hair:** in mode 2 the mode-1 private capture declines
+  (`prepareTransparentDepthCapture` requires mode 1), so
+  `LLDrawPoolAlpha`'s fallback runs the vanilla depth replay (alpha ≥
+  0.33) into the scene depth. Hair has correct depth except the faintest
+  strand tips, which read the depth behind them.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain
@@ -877,8 +1099,8 @@ comparison points only; no code is taken from them.
 Own design choices for the remaining modules:
 - Aperture shape (`asdofaperture`): polygon edge radius `cos(π/n)/cos(θ_local)`
   blended to a circle by roundness (standard regular-polygon geometry).
-  Equal-weight lens samples come from the R2 low-discrepancy sequence, so
-  prefixes are nested. The angle is inverted through the per-blade area CDF
+  Equal-weight lens samples come from a nested low-discrepancy sequence
+  (originally R4; now Owen-scrambled Sobol, see "Sample sequence" above). The angle is inverted through the per-blade area CDF
   (∝ boundary²) and the radius is `sqrt(v)·boundary`, which gives uniform area
   density and normalized brightness for any shape.
 - Autofocus candidates to evaluate later: a robust weighted depth median over a

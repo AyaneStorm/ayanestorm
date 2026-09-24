@@ -3,8 +3,9 @@
  * @author chanayane@firestorm
  * @brief Lens-position samples for aperture-sampled depth of field.
  *
- * Equal-weight, deterministic, nested samples (prefixes of the R4
- * low-discrepancy sequence) with uniform area density over a circular or
+ * Equal-weight, deterministic, nested samples (prefixes of an
+ * Owen-scrambled Sobol sequence: dimensions 0/1 lens, 2/3 pixel jitter,
+ * 4 wavelength) with uniform area density over a circular or
  * rounded-polygon aperture, so brightness stays normalized for every shape
  * and sample count. Each sample also carries a box-filter pixel jitter so
  * sub-pixel strands integrate over the pixel footprint jointly with the
@@ -44,8 +45,8 @@ namespace ASDoFAperture
 
     // Axial (longitudinal) chromatic aberration. Each lens sample also
     // stands for a wavelength: spectralCoordinate() maps the sample index
-    // to s in (-1, 1) (blue -1, green 0, red +1) by a base-2 radical
-    // inverse, decorrelated from the R4 lens and jitter dimensions and
+    // to s in [-1, 1) (blue -1, green 0, red +1) from its own Sobol
+    // dimension, decorrelated from the lens and jitter dimensions and
     // nested like them.
     F32 spectralCoordinate(U32 index);
 
@@ -53,6 +54,13 @@ namespace ASDoFAperture
     // Each averages to exactly 1 over uniform s, so in-focus content stays
     // neutral and brightness is preserved.
     glm::vec3 spectralWeights(F32 s);
+
+    // Normalized pupil radius squared of sample index (radius over the
+    // aperture edge at its angle; Sobol dimension 1): uniform in
+    // [0, 1), so any weight linear
+    // in it averages exactly as over the aperture area. Used by spherical
+    // aberration.
+    F32 pupilRadius2(U32 index);
 }
 
 #endif

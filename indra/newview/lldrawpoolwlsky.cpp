@@ -294,9 +294,10 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     }
     gDeferredStarProgram.uniform1f(sCustomAlpha, star_alpha);
 
-    // <AS:Chanayane> Aperture DoF: per-sample twinkle while samples accumulate
-    //sStarTime = (F32)LLFrameTimer::getElapsedSeconds() * 0.5f;
-    sStarTime = ASDoFRenderer::starTwinkleTime((F32)LLFrameTimer::getElapsedSeconds() * 0.5f);
+    sStarTime = (F32)LLFrameTimer::getElapsedSeconds() * 0.5f;
+    // <AS:Chanayane> Aperture DoF: mean (constant) twinkle while samples accumulate
+    static LLStaticHashedString sTwinkleMean("as_twinkle_mean");
+    gDeferredStarProgram.uniform1f(sTwinkleMean, ASDoFRenderer::starTwinkleMean());
     // </AS:Chanayane>
 
     gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);

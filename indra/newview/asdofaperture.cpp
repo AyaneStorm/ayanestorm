@@ -13,14 +13,99 @@
 
 namespace
 {
-    // R4 Kronecker sequence: root of x^5 = x + 1. Dimensions 0/1 drive the
-    // lens, 2/3 the pixel jitter; one nested index for both.
-    constexpr F64 R4_ROOT = 1.16730397826141868426;
     constexpr F64 PI_D = 3.14159265358979323846;
 
-    F64 r4(U32 index, S32 dimension)
+    // Owen-scrambled Sobol sequence, 5 dimensions: 0/1 lens position, 2/3
+    // pixel jitter, 4 axial-CA wavelength. Power-of-two prefixes are
+    // (t, m, 2)-nets (lens pair t = 0, jitter pair t = 1): stratified in
+    // every elementary interval, which suits thin strands as well as the
+    // aperture. Kronecker sequences left lattice structure that the polar
+    // aperture mapping turned into petal/spiral patterns in point-light
+    // bokeh; hash-based Owen scrambling (Laine-Karras permutation on the
+    // reversed bits) randomizes within strata instead, so the pattern
+    // becomes fine grain without clumping. Nested and deterministic.
+    // Mirrored by dof_reference.py (sobol_owen_bits).
+    constexpr S32 SOBOL_DIMENSIONS = 5;
+    constexpr U32 SOBOL_SEEDS[SOBOL_DIMENSIONS] = { 0x8e3ba9d1u, 0x2f9b1c4du, 0x6a09e667u, 0xbb67ae85u, 0x3c6ef372u };
+
+    struct SobolDirections
     {
-        return std::fmod(0.5 + index / std::pow(R4_ROOT, dimension + 1), 1.0);
+        U32 mV[SOBOL_DIMENSIONS][32];
+
+        SobolDirections()
+        {
+            // Joe-Kuo primitive polynomials (degree s, coefficients a,
+            // initial m) for dimensions 1..4; dimension 0 is van der Corput.
+            struct Polynomial { S32 mS; U32 mA; U32 mM[3]; };
+            static const Polynomial POLYNOMIALS[SOBOL_DIMENSIONS - 1] = {
+                { 1, 0, { 1, 0, 0 } }, { 2, 1, { 1, 3, 0 } },
+                { 3, 1, { 1, 3, 1 } }, { 3, 2, { 1, 1, 1 } } };
+            for (S32 k = 0; k < 32; ++k)
+            {
+                mV[0][k] = 1u << (31 - k);
+            }
+            for (S32 d = 1; d < SOBOL_DIMENSIONS; ++d)
+            {
+                const Polynomial& p = POLYNOMIALS[d - 1];
+                U32* v = mV[d];
+                for (S32 k = 0; k < p.mS; ++k)
+                {
+                    v[k] = p.mM[k] << (31 - k);
+                }
+                for (S32 k = p.mS; k < 32; ++k)
+                {
+                    U32 x = v[k - p.mS] ^ (v[k - p.mS] >> p.mS);
+                    for (S32 j = 1; j < p.mS; ++j)
+                    {
+                        if ((p.mA >> (p.mS - 1 - j)) & 1u)
+                        {
+                            x ^= v[k - j];
+                        }
+                    }
+                    v[k] = x;
+                }
+            }
+        }
+    };
+
+    U32 reverseBits(U32 x)
+    {
+        x = (x << 16) | (x >> 16);
+        x = ((x & 0x00ff00ffu) << 8) | ((x & 0xff00ff00u) >> 8);
+        x = ((x & 0x0f0f0f0fu) << 4) | ((x & 0xf0f0f0f0u) >> 4);
+        x = ((x & 0x33333333u) << 2) | ((x & 0xccccccccu) >> 2);
+        x = ((x & 0x55555555u) << 1) | ((x & 0xaaaaaaaau) >> 1);
+        return x;
+    }
+
+    U32 laineKarras(U32 x, U32 seed)
+    {
+        x += seed;
+        x ^= x * 0x6c50b47cu;
+        x ^= x * 0xb82f1e52u;
+        x ^= x * 0xc7afe638u;
+        x ^= x * 0x8d22f6e6u;
+        return x;
+    }
+
+    U32 sobolOwenBits(U32 index, S32 dimension)
+    {
+        static const SobolDirections directions;
+        U32 x = 0;
+        for (S32 k = 0; index; index >>= 1, ++k)
+        {
+            if (index & 1u)
+            {
+                x ^= directions.mV[dimension][k];
+            }
+        }
+        return reverseBits(laineKarras(reverseBits(x), SOBOL_SEEDS[dimension]));
+    }
+
+    // [0, 1), exact in double.
+    F64 sobolOwen(U32 index, S32 dimension)
+    {
+        return (F64)sobolOwenBits(index, dimension) / 4294967296.0;
     }
 
     // Unit-circumradius edge radius at a polar angle (rotation excluded).
@@ -78,9 +163,9 @@ namespace ASDoFAperture
 
         for (U32 i = 0; i < count; ++i)
         {
-            const F64 u = r4(i, 0);
-            const F64 v = r4(i, 1);
-            pixel_jitter.emplace_back((F32)(r4(i, 2) - 0.5), (F32)(r4(i, 3) - 0.5));
+            const F64 u = sobolOwen(i, 0);
+            const F64 v = sobolOwen(i, 1);
+            pixel_jitter.emplace_back((F32)(sobolOwen(i, 2) - 0.5), (F32)(sobolOwen(i, 3) - 0.5));
 
             F64 angle;
             if (polygon)
@@ -121,20 +206,19 @@ namespace ASDoFAperture
 
     F32 spectralCoordinate(U32 index)
     {
-        // Van der Corput (bit reversal), rotated by 1/2 so sample 0 is green
-        // (s = 0); every power-of-two prefix is an even grid over [-1, 1).
-        U32 bits = index;
-        bits = (bits << 16) | (bits >> 16);
-        bits = ((bits & 0x00ff00ffu) << 8) | ((bits & 0xff00ff00u) >> 8);
-        bits = ((bits & 0x0f0f0f0fu) << 4) | ((bits & 0xf0f0f0f0u) >> 4);
-        bits = ((bits & 0x33333333u) << 2) | ((bits & 0xccccccccu) >> 2);
-        bits = ((bits & 0x55555555u) << 1) | ((bits & 0xaaaaaaaau) >> 1);
-        const F64 u = std::fmod((F64)bits / 4294967296.0 + 0.5, 1.0);
-        return (F32)(2.0 * u - 1.0);
+        // Its own Sobol dimension: a rescrambled van der Corput would be
+        // dimension 0 (the lens angle) and tie colours to aperture sectors.
+        return (F32)(2.0 * sobolOwen(index, 4) - 1.0);
     }
 
     glm::vec3 spectralWeights(F32 s)
     {
         return glm::vec3(1.f + s, 1.5f * (1.f - s * s), 1.f - s);
+    }
+
+    F32 pupilRadius2(U32 index)
+    {
+        // generate() places sample index at radius sqrt(v) * boundary.
+        return (F32)sobolOwen(index, 1);
     }
 }

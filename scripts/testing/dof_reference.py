@@ -305,21 +305,65 @@ def viewer_coc_radius_pixels(aperture_radius, focus, depth, fov_y, height_px):
             height_px / (2 * math.tan(fov_y / 2)))
 
 
-# R4 Kronecker sequence (Roberts' generalized golden ratio, root of
-# x^5 = x + 1). Dimensions 0/1 drive the lens, 2/3 the pixel jitter, so
-# the two are decorrelated but share one nested index.
-R4_ROOT = 1.16730397826141868426
-R4_ALPHAS = tuple(1 / R4_ROOT ** k for k in range(1, 5))
+# Owen-scrambled Sobol sequence, 5 dimensions: 0/1 lens, 2/3 pixel jitter,
+# 4 axial-CA wavelength. Sobol is stratified in every elementary interval
+# of each power-of-two prefix; hash-based Owen scrambling (Laine-Karras
+# permutation on reversed bits) removes the lattice structure that the
+# polar aperture mapping turned into petal/spiral patterns with Kronecker
+# sequences, without clumping. Nested and deterministic (fixed seeds).
+SOBOL_MASK = 0xffffffff
+# Joe-Kuo primitive polynomials (s, a, m) for dimensions 1..4; 0 is van der Corput.
+SOBOL_POLYNOMIALS = ((1, 0, (1,)), (2, 1, (1, 3)), (3, 1, (1, 3, 1)), (3, 2, (1, 1, 1)))
+SOBOL_SEEDS = (0x8e3ba9d1, 0x2f9b1c4d, 0x6a09e667, 0xbb67ae85, 0x3c6ef372)
 
 
-def r4_point(index):
-    return tuple((0.5 + a * index) % 1.0 for a in R4_ALPHAS)
+def _sobol_directions():
+    directions = [[1 << (31 - k) for k in range(32)]]
+    for s, a, m in SOBOL_POLYNOMIALS:
+        v = [m[k] << (31 - k) for k in range(s)]
+        for k in range(s, 32):
+            x = v[k - s] ^ (v[k - s] >> s)
+            for j in range(1, s):
+                if (a >> (s - 1 - j)) & 1:
+                    x ^= v[k - j]
+            v.append(x)
+        directions.append(v)
+    return directions
+
+
+SOBOL_DIRECTIONS = _sobol_directions()
+
+
+def _reverse32(x):
+    return int('{:032b}'.format(x & SOBOL_MASK)[::-1], 2)
+
+
+def _laine_karras(x, seed):
+    x = (x + seed) & SOBOL_MASK
+    for c in (0x6c50b47c, 0xb82f1e52, 0xc7afe638, 0x8d22f6e6):
+        x ^= (x * c) & SOBOL_MASK
+    return x
+
+
+def sobol_owen_bits(index, dim):
+    """Mirror of asdofaperture.cpp sobolOwen (32-bit value)."""
+    x, k = 0, 0
+    while index:
+        if index & 1:
+            x ^= SOBOL_DIRECTIONS[dim][k]
+        index >>= 1
+        k += 1
+    return _reverse32(_laine_karras(_reverse32(x), SOBOL_SEEDS[dim]))
+
+
+def sobol_owen(index, dim):
+    return sobol_owen_bits(index, dim) / 4294967296.0
 
 
 def viewer_pixel_jitter(count):
     """Mirror of ASDoFAperture::generate's pixel output: box-filter offsets
     in [-0.5, 0.5) output pixels."""
-    return [(p[2] - 0.5, p[3] - 0.5) for p in map(r4_point, range(count))]
+    return [(sobol_owen(i, 2) - 0.5, sobol_owen(i, 3) - 0.5) for i in range(count)]
 
 
 def aperture_boundary(angle, blades, roundness):
@@ -346,14 +390,14 @@ def _blade_cdf(x, blades, roundness):
 def viewer_aperture_samples(count, blades=0, roundness=1.0, rotation=0.0,
                             anamorphic=1.0):
     """Mirror of ASDoFAperture::generate: equal-weight, nested (prefixes of
-    the R4 sequence), deterministic unit-aperture lens positions. Angles
+    the Owen-scrambled Sobol sequence), deterministic unit-aperture lens positions. Angles
     follow the boundary(angle)^2 area CDF inside each blade, so polygon
     corners get neither more nor less density than blade centres (polar
     area element: the angle marginal is proportional to boundary^2)."""
     polygon = blades >= 3 and roundness < 1
     samples = []
     for i in range(count):
-        u, v = r4_point(i)[:2]
+        u, v = sobol_owen(i, 0), sobol_owen(i, 1)
         if polygon:
             half = math.pi / blades
             blade_f = u * blades
@@ -377,11 +421,11 @@ def viewer_aperture_samples(count, blades=0, roundness=1.0, rotation=0.0,
 
 
 def viewer_spectral_coordinate(index):
-    """Mirror of ASDoFAperture::spectralCoordinate: base-2 radical inverse
-    rotated by 1/2, mapped to s in [-1, 1) (blue -1, green 0, red +1)."""
-    bits = int('{:032b}'.format(index & 0xffffffff)[::-1], 2)
-    u = (bits / 4294967296.0 + 0.5) % 1.0
-    return 2 * u - 1
+    """Mirror of ASDoFAperture::spectralCoordinate: Owen-scrambled Sobol
+    dimension 4 mapped to s in [-1, 1) (blue -1, green 0, red +1). A
+    separate dimension, not a rescrambled van der Corput: that is Sobol
+    dimension 0 (the lens angle) and would tie colours to aperture sectors."""
+    return 2 * sobol_owen(index, 4) - 1
 
 
 def viewer_spectral_weights(s):
@@ -392,6 +436,45 @@ def viewer_spectral_weights(s):
 def viewer_axial_ca_inv_focus(focus, focal_length, alpha, s):
     """Mirror of the renderer's per-sample focus: 1/S' = 1/S - s*alpha/(2f)."""
     return 1 / focus - s * 0.5 * alpha / focal_length
+
+
+def viewer_pupil_radius2(index):
+    """Mirror of ASDoFAperture::pupilRadius2: the Sobol dimension that sets
+    the normalized sample radius (radius = sqrt(v) * boundary)."""
+    return sobol_owen(index, 1)
+
+
+def viewer_spherical_weight(strength, sigma, pupil_r2):
+    """Mirror of asDoFAccumulateF.glsl spherical aberration weight."""
+    return 1 - strength * sigma * (2 * pupil_r2 - 1)
+
+
+def viewer_cat_eye_open(lens, field, strength):
+    """Mirror of the shader's barrel test for one unit-aperture sample."""
+    return math.hypot(lens[0] - strength * field[0], lens[1] - strength * field[1]) <= 1
+
+
+def viewer_cat_eye_fraction(d):
+    """Mirror of catEyeFraction: unit circles at distance d, overlap / pi."""
+    if d >= 2:
+        return 0.0
+    h = d / 2
+    return (2 * math.acos(h) - 2 * h * math.sqrt(1 - h * h)) / math.pi
+
+
+def _smoothstep(e0, e1, x):
+    t = min(max((x - e0) / (e1 - e0), 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def viewer_highlight_gain(strength, threshold, luminance, ring_mean, coc_px):
+    """Mirror of asDoFAccumulateF.glsl bright-highlight gain."""
+    if strength <= 0 or coc_px <= 1:
+        return 1.0
+    bright = _smoothstep(0.5 * threshold, 1.5 * threshold, luminance)
+    isolated = _smoothstep(2.0, 8.0, luminance / max(ring_mean, 1e-3))
+    area = min((coc_px / 4.0) ** 2, 1024.0)
+    return 1 + strength * bright * isolated * area
 
 
 def disk_samples(radius, rings=32, sectors=128):
@@ -634,17 +717,42 @@ class ThinLensReferenceTests(unittest.TestCase):
         self.assertLess(abs(value - expected), .002)
 
     def test_axial_ca_weights_neutral_and_nested(self):
-        # Sample 0 is green; every channel averages to 1 over nested
-        # prefixes, so in-focus content stays neutral and brightness is
-        # preserved; s stays in [-1, 1). Bound: Koksma-Hlawka, weight
-        # variation <= 3 times van der Corput discrepancy <= (log2 N + 3)/(3N).
-        self.assertEqual(viewer_spectral_coordinate(0), 0.0)
+        # Every channel averages to 1 over nested prefixes, so in-focus
+        # content stays neutral and brightness is preserved; s stays in
+        # [-1, 1). Bound: Koksma-Hlawka, weight variation <= 3 times the
+        # discrepancy of a stratified base-2 sequence <= (log2 N + 3)/(3N).
         for count in (16, 64, 256, 1000, 2048):
             s_values = [viewer_spectral_coordinate(i) for i in range(count)]
             self.assertTrue(all(-1 <= s < 1 for s in s_values))
             for channel in range(3):
                 mean = math.fsum(viewer_spectral_weights(s)[channel] for s in s_values) / count
                 self.assertLess(abs(mean - 1), (math.log2(count) + 3) / count, (count, channel))
+
+    def test_sobol_owen_stratified_and_decorrelated(self):
+        # Power-of-two prefixes form (t, m, 2)-nets: every elementary
+        # interval of volume 2^t / N holds exactly 2^t points. Lens pair
+        # (0/1): t = 0; pixel jitter pair (2/3): t <= 1. Owen scrambling
+        # preserves both. The wavelength (4) is not tied to the lens angle (0).
+        def is_net(d0, d1, k, t):
+            n, m = 1 << k, k - t
+            pts = [(sobol_owen(i, d0), sobol_owen(i, d1)) for i in range(n)]
+            for a in range(m + 1):
+                counts = {}
+                for x, y in pts:
+                    cell = (int(x * (1 << a)), int(y * (1 << (m - a))))
+                    counts[cell] = counts.get(cell, 0) + 1
+                if len(counts) != 1 << m or any(c != 1 << t for c in counts.values()):
+                    return False
+            return True
+        for k in (4, 6, 8, 10):
+            self.assertTrue(is_net(0, 1, k, 0), k)
+            self.assertTrue(is_net(2, 3, k, 1), k)
+        n = 1024
+        u = [sobol_owen(i, 0) for i in range(n)]
+        s = [sobol_owen(i, 4) for i in range(n)]
+        mu, ms = sum(u) / n, sum(s) / n
+        cov = sum((a - mu) * (b - ms) for a, b in zip(u, s)) / n
+        self.assertLess(abs(cov) / (1 / 12), .05)
 
     def test_axial_ca_focus_shift_orders_channels(self):
         # Red (s = +1) focuses farther than green, blue nearer; the red-blue
@@ -657,6 +765,47 @@ class ThinLensReferenceTests(unittest.TestCase):
         self.assertLess(green, blue)
         self.assertAlmostEqual(blue - red, alpha / f, places=12)
         self.assertAlmostEqual(green, 1 / focus, places=12)
+
+    def test_spherical_weights_average_to_one(self):
+        # Pupil radius^2 is the uniform R4 dimension, so the spherical
+        # weight keeps brightness for either defocus sign and strength.
+        for count in (64, 512, 2048):
+            r2 = [viewer_pupil_radius2(i) for i in range(count)]
+            for strength in (-1.0, 0.5, 1.0):
+                for sigma in (-1.0, 1.0):
+                    mean = math.fsum(viewer_spherical_weight(strength, sigma, v) for v in r2) / count
+                    self.assertLess(abs(mean - 1), 4 / count, (count, strength, sigma))
+                    self.assertTrue(all(viewer_spherical_weight(strength, sigma, v) >= 0 for v in r2))
+        # Positive strength: background (sigma > 0) centre-bright, foreground rim-bright.
+        self.assertGreater(viewer_spherical_weight(.5, 1, 0), viewer_spherical_weight(.5, 1, 1))
+        self.assertLess(viewer_spherical_weight(.5, -1, 0), viewer_spherical_weight(.5, -1, 1))
+
+    def test_cat_eye_fraction_matches_samples_and_is_tangential(self):
+        # The analytic open fraction the average is divided by matches the
+        # share of viewer lens samples the barrel test keeps (circular
+        # aperture), and the open pupil is longer tangentially.
+        samples = viewer_aperture_samples(4096)
+        for d in (0.0, 0.3, 0.6, 1.0, 1.5):
+            open_samples = [s for s in samples if viewer_cat_eye_open(s, (1.0, 0.0), d)]
+            share = len(open_samples) / len(samples)
+            self.assertLess(abs(share - viewer_cat_eye_fraction(d)), .01, d)
+            if d >= .6:
+                xs = [s[0] for s in open_samples]
+                ys = [s[1] for s in open_samples]
+                self.assertGreater(max(ys) - min(ys), max(xs) - min(xs), d)
+        self.assertEqual(viewer_cat_eye_fraction(2.0), 0.0)
+        self.assertAlmostEqual(viewer_cat_eye_fraction(0.0), 1.0, places=12)
+
+    def test_highlight_gain_only_for_defocused_isolated_bright_points(self):
+        star = dict(strength=.3, threshold=1., luminance=4., ring_mean=.05)
+        self.assertEqual(viewer_highlight_gain(coc_px=0.5, **star), 1.0)       # in focus
+        self.assertEqual(viewer_highlight_gain(.0, 1., 4., .05, 40.), 1.0)      # off
+        self.assertEqual(viewer_highlight_gain(.3, 1., .4, .01, 40.), 1.0)      # below threshold
+        self.assertEqual(viewer_highlight_gain(.3, 1., 4., 3., 40.), 1.0)       # large bright area
+        small, large = viewer_highlight_gain(coc_px=8., **star), viewer_highlight_gain(coc_px=40., **star)
+        self.assertAlmostEqual(small, 1 + .3 * 4, places=9)                   # area (8/4)^2
+        self.assertAlmostEqual(large, 1 + .3 * 100, places=9)                 # grows with disc area
+        self.assertAlmostEqual(viewer_highlight_gain(coc_px=1000., **star), 1 + .3 * 1024, places=9)
 
     def test_viewer_blend_standard_matches_trace(self):
         red = Card(1., self.full, (1., 0., 0.), .5)
