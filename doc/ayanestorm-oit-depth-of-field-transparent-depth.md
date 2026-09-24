@@ -1,5 +1,25 @@
 # OIT and depth of field: transparent avatar depth
 
+The authoritative replacement plan is now
+[Aperture-Sampled Depth of Field](ayanestorm-depth-of-field-final-implementation-plan.md).
+The investigations below remain historical evidence; further implementation
+progress belongs in that plan's execution record.
+
+## Replacement planning research (2026-09-24)
+
+User selected highest quality first, with performance target later. Proposed
+replacement is scene rerendering across sampled lens positions, resolving
+the chosen alpha compositor per sample before HDR averaging. This avoids
+claiming that central-view Exact nodes contain all aperture-visible geometry.
+Current Exact nodes contain color, depth, blend and glow; shallow lists need
+not be rewritten into global sorted order for ordinary per-sample resolve.
+The repeatable-render boundary requires display/pipeline lifecycle work, not
+only a replacement postprocess shader. Thin-lens basis verified against
+[PBRT's camera model](https://www.pbr-book.org/4ed/Cameras_and_Film/Projective_Camera_Models).
+PBRT supplies the optical model, not proof of viewer integration/performance.
+The plan was approved and copied to `/doc` (see link above). No renderer
+changes made for planning.
+
 ## DoF performance regression and initial pruning (2026-09-24)
 
 Runtime follow-up: user reports 18 FPS after pruning (previously 11 FPS),

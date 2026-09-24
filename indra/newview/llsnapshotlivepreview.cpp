@@ -57,6 +57,9 @@
 #include "llviewertexturelist.h"
 #include "llwindow.h"
 #include "llworld.h"
+// <AS:Chanayane> Time-sliced aperture DoF captures
+#include "asdofrenderer.h"
+// </AS:Chanayane>
 #include <boost/filesystem.hpp>
 
 constexpr F32 AUTO_SNAPSHOT_TIME_DELAY = 1.f;
@@ -612,6 +615,9 @@ void LLSnapshotLivePreview::generateThumbnailImage(bool force_update)
         }
         // </FS:Ansariel>
 
+        // <AS:Chanayane> Aperture DoF: a few samples, not a full blocking capture
+        ASDoFRenderer::requestPreviewCapture();
+        // </AS:Chanayane>
         // The thumbnail is a screen view with screen grab positioning preview
         if(!gViewerWindow->thumbnailSnapshot(raw,
                                          // <FS:Ansariel> Show miniature thumbnail on collapsed snapshot panel
@@ -779,6 +785,10 @@ bool LLSnapshotLivePreview::onIdle( void* snapshot_preview )
         previewp->getWindow()->incBusyCount();
         previewp->setImageScaled(false);
 
+        // <AS:Chanayane> Aperture DoF converges over several idle calls,
+        // returning to the main loop (networking, UI) between time slices.
+        ASDoFRenderer::requestCaptureSlice();
+        // </AS:Chanayane>
         // grab the raw image
         if (gViewerWindow->rawSnapshot(
                 previewp->mPreviewImage,
@@ -794,6 +804,30 @@ bool LLSnapshotLivePreview::onIdle( void* snapshot_preview )
                 previewp->mSnapshotBufferType,
                 previewp->getMaxImageSize()))
         {
+            // <AS:Chanayane> Partial DoF average: stay out of date so the next idle call continues it.
+            if (ASDoFRenderer::isCapturePending())
+            {
+                ASDoFRenderer::resumeLiveView();
+                if (ASDoFRenderer::isCapturePreviewDue())
+                { // Progress preview: the partial image scaled down (no render).
+                  // Subsampled until the capture ends: the floater re-sizes the
+                  // thumbnail from this flag on every draw.
+                    if (!previewp->mThumbnailSubsampled)
+                    {
+                        previewp->mThumbnailSubsampled = true;
+                        ASDoFRenderer::setProgressThumbnail(true);
+                    }
+                    previewp->generateThumbnailImage(true);
+                }
+                previewp->getWindow()->decBusyCount();
+                previewp->mSnapshotActive = false;
+                return false;
+            }
+            if (ASDoFRenderer::setProgressThumbnail(false))
+            { // Capture done: the final thumbnail uses the normal framing.
+                previewp->mThumbnailSubsampled = false;
+            }
+            // </AS:Chanayane>
             // Invalidate/delete any existing encoded image
             previewp->mPreviewImageEncoded = NULL;
             // Invalidate/delete any existing formatted image

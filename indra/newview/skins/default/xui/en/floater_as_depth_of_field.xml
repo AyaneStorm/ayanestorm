@@ -4,65 +4,62 @@
 <floater name="as_depth_of_field" title="AyaneStorm Depth of Field"
          positioning="cascading" can_resize="false" can_minimize="true"
          save_rect="true" single_instance="true" layout="topleft"
-         width="430" height="430">
+         width="430" height="736">
   <check_box name="dof_enable" control_name="RenderDepthOfField"
              layout="topleft" left="15" top="15" width="365" height="20"
              label="Enable Depth of Field" />
-  <button name="reset_dof_enable" label="D" layout="topleft"
-          left="385" top="14" width="20" height="22" tool_tip="Reset to default.">
-    <button.commit_callback function="ResetControl" parameter="RenderDepthOfField" />
-  </button>
   <text name="mode_label" layout="topleft" left="15" top="46" width="125" height="18">Renderer</text>
   <combo_box name="dof_mode" control_name="ASDepthOfFieldMode"
              layout="topleft" left="145" top="42" width="235" height="22">
     <combo_box.item label="Standard / Firestorm" name="standard" value="0" />
     <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1" />
+    <combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2" />
   </combo_box>
   <button name="reset_dof_mode" label="D" layout="topleft"
           left="385" top="42" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldMode" />
   </button>
-  <text name="backend_label" layout="topleft" left="15" top="75" width="125" height="18">Backend</text>
-  <combo_box name="dof_backend" control_name="ASDepthOfFieldBackend"
+  <text name="backend_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="75" width="125" height="18">Backend</text>
+  <combo_box name="dof_backend" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldBackend"
              layout="topleft" left="145" top="71" width="235" height="22"
              tool_tip="The portable OpenGL 4.1 fragment backend is currently used. Auto reserves selection of a future optimized backend.">
     <combo_box.item label="Auto" name="auto" value="0" />
     <combo_box.item label="Fragment / OpenGL 4.1" name="fragment" value="1" />
   </combo_box>
-  <button name="reset_dof_backend" label="D" layout="topleft"
+  <button name="reset_dof_backend" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="71" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldBackend" />
   </button>
-  <text name="quality_label" layout="topleft" left="15" top="104" width="125" height="18">Bokeh quality</text>
-  <combo_box name="dof_quality" control_name="ASDepthOfFieldQuality"
+  <text name="quality_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="104" width="125" height="18">Bokeh quality</text>
+  <combo_box name="dof_quality" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldQuality"
              layout="topleft" left="145" top="100" width="235" height="22">
     <combo_box.item label="Low — 16 samples" name="low" value="0" />
     <combo_box.item label="High — 32 samples" name="high" value="1" />
     <combo_box.item label="Cinematic — 48 samples" name="cinematic" value="2" />
   </combo_box>
-  <button name="reset_dof_quality" label="D" layout="topleft"
+  <button name="reset_dof_quality" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="100" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldQuality" />
   </button>
 
-  <slider name="near_radius" control_name="ASDepthOfFieldNearRadius"
+  <slider name="near_radius" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldNearRadius"
           layout="topleft" left="15" top="137" width="365" height="18"
           label="Foreground radius" label_width="130" min_val="0" max_val="4"
           increment="0.05" decimal_digits="2" can_edit_text="true" />
-  <button name="reset_near_radius" label="D" layout="topleft"
+  <button name="reset_near_radius" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="135" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldNearRadius" />
   </button>
-  <slider name="far_radius" control_name="ASDepthOfFieldFarRadius"
+  <slider name="far_radius" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldFarRadius"
           layout="topleft" left="15" top="165" width="365" height="18"
           label="Background radius" label_width="130" min_val="0" max_val="4"
           increment="0.05" decimal_digits="2" can_edit_text="true" />
-  <button name="reset_far_radius" label="D" layout="topleft"
+  <button name="reset_far_radius" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="163" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFarRadius" />
   </button>
-  <text name="blades_label" layout="topleft" left="15" top="198" width="125" height="18">Aperture shape</text>
-  <combo_box name="aperture_blades" control_name="ASDepthOfFieldApertureBlades"
+  <text name="blades_label" enabled_control="ASDepthOfFieldUIShape" layout="topleft" left="15" top="198" width="125" height="18">Aperture shape</text>
+  <combo_box name="aperture_blades" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureBlades"
              layout="topleft" left="145" top="194" width="235" height="22">
     <combo_box.item label="Circle" name="circle" value="0" />
     <combo_box.item label="Triangle" name="triangle" value="3" />
@@ -73,45 +70,45 @@
     <combo_box.item label="Octagon" name="octagon" value="8" />
     <combo_box.item label="Nonagon" name="nonagon" value="9" />
   </combo_box>
-  <button name="reset_aperture_blades" label="D" layout="topleft"
+  <button name="reset_aperture_blades" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
           left="385" top="194" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureBlades" />
   </button>
-  <slider name="aperture_roundness" control_name="ASDepthOfFieldApertureRoundness"
+  <slider name="aperture_roundness" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureRoundness"
           layout="topleft" left="15" top="230" width="365" height="18"
           label="Blade rounding" label_width="130" min_val="0" max_val="1"
           increment="0.01" decimal_digits="2" can_edit_text="true"
           tool_tip="0 preserves the selected polygon; 1 rounds it completely back into a circle." />
-  <button name="reset_aperture_roundness" label="D" layout="topleft"
+  <button name="reset_aperture_roundness" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
           left="385" top="228" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureRoundness" />
   </button>
-  <slider name="aperture_rotation" control_name="ASDepthOfFieldApertureRotation"
+  <slider name="aperture_rotation" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureRotation"
           layout="topleft" left="15" top="258" width="365" height="18"
           label="Aperture rotation" label_width="130" min_val="0" max_val="360"
           increment="1" decimal_digits="0" can_edit_text="true" />
-  <button name="reset_aperture_rotation" label="D" layout="topleft"
+  <button name="reset_aperture_rotation" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
           left="385" top="256" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureRotation" />
   </button>
-  <slider name="anamorphic_ratio" control_name="ASDepthOfFieldAnamorphicRatio"
+  <slider name="anamorphic_ratio" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldAnamorphicRatio"
           layout="topleft" left="15" top="286" width="365" height="18"
           label="Anamorphic ratio" label_width="130" min_val="0.1" max_val="2"
           increment="0.01" decimal_digits="2" can_edit_text="true" />
-  <button name="reset_anamorphic_ratio" label="D" layout="topleft"
+  <button name="reset_anamorphic_ratio" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
           left="385" top="284" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAnamorphicRatio" />
   </button>
-  <slider name="highlight_boost" control_name="ASDepthOfFieldHighlightBoost"
+  <slider name="highlight_boost" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightBoost"
           layout="topleft" left="15" top="314" width="365" height="18"
           label="Bokeh highlights" label_width="130" min_val="0" max_val="2"
           increment="0.01" decimal_digits="2" can_edit_text="true" />
-  <button name="reset_highlight_boost" label="D" layout="topleft"
+  <button name="reset_highlight_boost" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="312" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightBoost" />
   </button>
-  <text name="debug_label" layout="topleft" left="15" top="347" width="125" height="18">Diagnostic view</text>
-  <combo_box name="dof_debug" control_name="ASDepthOfFieldDebug"
+  <text name="debug_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="347" width="125" height="18">Diagnostic view</text>
+  <combo_box name="dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldDebug"
              layout="topleft" left="145" top="343" width="235" height="22">
     <combo_box.item label="Off" name="off" value="0" />
     <combo_box.item label="Signed CoC" name="coc" value="1" />
@@ -130,12 +127,89 @@
     <combo_box.item label="Rigged far blur" name="rigged_far" value="14" />
     <combo_box.item label="Rigged near blur" name="rigged_near" value="15" />
   </combo_box>
-  <button name="reset_dof_debug" label="D" layout="topleft"
+  <button name="reset_dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
           left="385" top="343" width="20" height="22" tool_tip="Reset to default.">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldDebug" />
   </button>
+  <text name="aperture_header" layout="topleft" left="15" top="382" width="390" height="18"
+        tool_tip="Used only by the Aperture-sampled renderer. Quality, radius, highlight and diagnostic controls above apply to the Advanced renderer only.">Aperture-sampled renderer: for perfectly still images</text>
+  <text name="aperture_note" layout="topleft" left="15" top="402" width="390" height="30" wrap="true"
+        text_color="LabelTextColor">The blur builds up over seconds while nothing moves. Anything that moves (avatars, camera) smears or restarts it.</text>
+  <check_box name="aperture_freeze_animations" control_name="ASDepthOfFieldFreezeAnimations"
+             layout="topleft" left="15" top="436" width="365" height="20"
+             label="Freeze all animations"
+             tool_tip="Same as Advanced &gt; Animation &gt; Freeze Animations, and also holds the sky (sun, moon, stars, clouds) and falling snow. Not saved between sessions." />
+  <slider name="aperture_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSamples"
+          layout="topleft" left="15" top="466" width="365" height="18"
+          label="Samples per frame" label_width="130" min_val="1" max_val="32"
+          increment="1" decimal_digits="0" can_edit_text="true"
+          tool_tip="Lens samples added per frame while still. Higher converges sooner but lowers the frame rate while developing." />
+  <button name="reset_aperture_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="464" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSamples" />
+  </button>
+  <slider name="aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureMaxSamples"
+          layout="topleft" left="15" top="494" width="365" height="18"
+          label="Total samples" label_width="130" min_val="16" max_val="4096"
+          increment="16" decimal_digits="0" can_edit_text="true"
+          tool_tip="Samples in the finished live image. More is smoother but takes longer to develop. Tip: wait for the counter to finish, then take a snapshot at window size to reuse it instantly." />
+  <button name="reset_aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="492" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureMaxSamples" />
+  </button>
+  <slider name="aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotSamples"
+          layout="topleft" left="15" top="522" width="365" height="18"
+          label="Snapshot samples" label_width="130" min_val="16" max_val="4096"
+          increment="16" decimal_digits="0" can_edit_text="true"
+          tool_tip="Samples rendered for a snapshot. A finished live view with at least this many samples at the same size is reused instantly; otherwise the capture renders them, within the snapshot time limit (Esc stops it early on Windows, keeping what is rendered)." />
+  <button name="reset_aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="520" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotSamples" />
+  </button>
+  <slider name="aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotMaxSeconds"
+          layout="topleft" left="15" top="550" width="365" height="18"
+          label="Snapshot time limit" label_width="130" min_val="1" max_val="600"
+          increment="5" decimal_digits="0" can_edit_text="true"
+          tool_tip="Maximum seconds a snapshot spends rendering samples; the snapshot keeps the samples rendered so far. The snapshot floater renders in short slices and the viewer keeps running (stay still: moving the camera ends the capture). Other snapshot commands and tiled high-res snapshots block the viewer and are capped at 30 s to avoid being logged out." />
+  <button name="reset_aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="548" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotMaxSeconds" />
+  </button>
+  <slider name="aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureResidualBlur"
+          layout="topleft" left="15" top="578" width="365" height="18"
+          label="Dot smoothing" label_width="130" min_val="0" max_val="10"
+          increment="0.05" decimal_digits="2" can_edit_text="true"
+          tool_tip="Fills the gaps between sample dots in out-of-focus highlights. 1 matches the dot spacing, 2 (default) fills it smoothly; 0 is off. Higher values soften and round the bokeh shape." />
+  <button name="reset_aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="576" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureResidualBlur" />
+  </button>
+  <check_box name="aperture_axial_ca" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureAxialCA"
+             layout="topleft" left="15" top="604" width="365" height="20"
+             label="Axial chromatic aberration"
+             tool_tip="Each wavelength focuses at a slightly different distance, as in a real lens: out-of-focus highlights get coloured rims (one colour in front of the focus, another behind) while sharp areas stay neutral. Colour needs more samples to smooth out." />
+  <button name="reset_aperture_axial_ca" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="603" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCA" />
+  </button>
+  <slider name="aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" control_name="ASDepthOfFieldApertureAxialCAStrength"
+          layout="topleft" left="15" top="630" width="365" height="18"
+          label="Aberration (% of f)" label_width="130" min_val="0" max_val="2"
+          increment="0.01" decimal_digits="2" can_edit_text="true"
+          tool_tip="Red-to-blue focal shift in percent of the focal length. Real fast lenses are around 0.1-0.2; higher values exaggerate the colour fringes." />
+  <button name="reset_aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" label="D" layout="topleft"
+          left="385" top="628" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCAStrength" />
+  </button>
+  <check_box name="aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowProgress"
+             layout="topleft" left="15" top="656" width="365" height="20"
+             label="Show sample counter (never in snapshots)" />
+  <button name="reset_aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+          left="385" top="655" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureShowProgress" />
+  </button>
   <button name="reset_tuning" label="Reset tuning defaults"
-          layout="topleft" left="255" top="383" width="150" height="22">
+          layout="topleft" left="255" top="691" width="150" height="22">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="All" />
   </button>
 </floater>

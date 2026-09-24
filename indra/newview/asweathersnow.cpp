@@ -16,6 +16,7 @@
 #include "asweathersnow.h"
 
 #include "asweather.h"
+#include "asdofrenderer.h"
 #include "llappviewer.h"
 #include "llcontrol.h"
 #include "llenvironment.h"
@@ -631,7 +632,10 @@ namespace
 
     void simulate(const ASWeather::FrameContext& context)
     {
-        if (gSnapshot)
+        // Aperture DoF averages many renders of one instant: flakes must not
+        // fall between a sliced capture's slices (live frames run there) or
+        // while the DoF floater freezes all animations.
+        if (gSnapshot || ASDoFRenderer::isSceneFrozen())
         {
             return;
         }

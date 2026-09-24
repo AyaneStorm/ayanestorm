@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
+#include "asdofrenderer.h"
 // </AS:Chanayane>
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -870,6 +871,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         stop_glerror();
         display_update_camera();
         stop_glerror();
+        // <AS:Chanayane> Aperture-sampled DoF: install this frame's lens camera.
+        ASDoFRenderer::beginSample(for_snapshot);
+        // </AS:Chanayane>
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -1179,6 +1183,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         {
             gPipeline.renderDeferredLighting();
         }
+
+        // <AS:Chanayane> Aperture-sampled DoF: render and average the other lens samples.
+        ASDoFRenderer::renderRemainingSamples(result);
+        // </AS:Chanayane>
 
         LLPipeline::sUnderWaterRender = false;
 
@@ -1712,6 +1720,9 @@ void render_ui(F32 zoom_factor, int subfield)
         gViewerWindow->setup2DRender();
         gViewerWindow->updateDebugText();
         gViewerWindow->drawDebugText();
+        // <AS:Chanayane> Aperture-sampled DoF progress overlay (skips snapshots).
+        ASDoFRenderer::drawProgress();
+        // </AS:Chanayane>
     }
 
     if (!gSnapshot)

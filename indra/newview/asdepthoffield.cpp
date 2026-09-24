@@ -14,6 +14,7 @@
 #include "asdepthoffield.h"
 
 #include "asbackgroundisolate.h"
+#include "asdofrenderer.h"
 #include "llcontrol.h"
 #include "llgl.h"
 #include "llrender.h"
@@ -165,6 +166,7 @@ extern bool gCubeSnapshot;
 
 void ASDepthOfField::registerUICallbacks()
 {
+    ASDoFRenderer::registerUICallbacks();
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASDepthOfField.ResetDefault",
         [](LLUICtrl*, const LLSD& data)
@@ -175,7 +177,12 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldFarRadius", "ASDepthOfFieldApertureBlades",
                 "ASDepthOfFieldApertureRoundness", "ASDepthOfFieldApertureRotation",
                 "ASDepthOfFieldAnamorphicRatio", "ASDepthOfFieldHighlightBoost",
-                "ASDepthOfFieldDebug"
+                "ASDepthOfFieldDebug", "ASDepthOfFieldApertureSamples",
+                "ASDepthOfFieldApertureMaxSamples", "ASDepthOfFieldApertureSnapshotSamples",
+                "ASDepthOfFieldApertureSnapshotMaxSeconds",
+                "ASDepthOfFieldApertureResidualBlur",
+                "ASDepthOfFieldApertureAxialCA", "ASDepthOfFieldApertureAxialCAStrength",
+                "ASDepthOfFieldApertureShowProgress"
             };
             const std::string name = data.asString();
             if (name == "All")
@@ -208,6 +215,8 @@ void ASDepthOfField::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sTransparentProgram);
     shaders.push_back(&sOccupancyProgram);
     shaders.push_back(&sResolveProgram);
+    // Aperture-sampled renderer shares this module's registration hooks.
+    ASDoFRenderer::registerShaders(shaders);
 }
 
 bool ASDepthOfField::createShaders(S32 shader_level)
@@ -239,6 +248,7 @@ bool ASDepthOfField::createShaders(S32 shader_level)
         spec.shader->mShaderLevel = shader_level;
         success = spec.shader->createShader() && success;
     }
+    success = ASDoFRenderer::createShaders(shader_level) && success;
     return success;
 }
 
@@ -250,6 +260,7 @@ void ASDepthOfField::unloadShaders()
     sTransparentProgram.unload();
     sOccupancyProgram.unload();
     sResolveProgram.unload();
+    ASDoFRenderer::unloadShaders();
     releaseResources();
 }
 

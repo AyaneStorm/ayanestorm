@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> Keep skydome source selection aligned with celestial twilight.
 #include "asaurora.h"
+#include "asdofrenderer.h"
 #include "asbackgroundisolate.h"
 #include "ascelestialtwilight.h"
 #include "ashorizonscattering.h"
@@ -281,7 +282,10 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
 
     gGL.pushMatrix();
     gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
-    gGL.rotatef(gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
+    // <AS:Chanayane> Aperture DoF: frozen star rotation while samples accumulate
+    //gGL.rotatef(gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
+    gGL.rotatef(ASDoFRenderer::starRotationTime(gFrameTimeSeconds)*0.01f, 0.f, 0.f, 1.f);
+    // </AS:Chanayane>
     gDeferredStarProgram.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
     if (LLPipeline::sReflectionRender)
@@ -290,7 +294,10 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     }
     gDeferredStarProgram.uniform1f(sCustomAlpha, star_alpha);
 
-    sStarTime = (F32)LLFrameTimer::getElapsedSeconds() * 0.5f;
+    // <AS:Chanayane> Aperture DoF: per-sample twinkle while samples accumulate
+    //sStarTime = (F32)LLFrameTimer::getElapsedSeconds() * 0.5f;
+    sStarTime = ASDoFRenderer::starTwinkleTime((F32)LLFrameTimer::getElapsedSeconds() * 0.5f);
+    // </AS:Chanayane>
 
     gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);
 

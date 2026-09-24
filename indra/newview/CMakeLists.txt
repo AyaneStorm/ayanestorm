@@ -124,6 +124,9 @@ set(viewer_SOURCE_FILES
     aschromaticaberration.cpp
     asmotionblur.cpp
     asdepthoffield.cpp
+    asdofcamera.cpp
+    asdofaperture.cpp
+    asdofrenderer.cpp
     asdiffuseglow.cpp
     asambientocclusion.cpp
     # </AS:Chanayane>
@@ -1050,6 +1053,9 @@ set(viewer_HEADER_FILES
     aschromaticaberration.h
     asmotionblur.h
     asdepthoffield.h
+    asdofcamera.h
+    asdofaperture.h
+    asdofrenderer.h
     asdiffuseglow.h
     asambientocclusion.h
     # </AS:Chanayane>

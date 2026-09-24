@@ -833,6 +833,10 @@ Petzval control.
 
 #### Remaining AyaneStorm DoF implementation roadmap
 
+Superseded on 2026-09-24 by the quality-first
+[aperture-sampled implementation plan](ayanestorm-depth-of-field-final-implementation-plan.md).
+Retain the following as historical context, not a parallel implementation roadmap.
+
 The current blade, roundness and rotation controls affect procedural gather
 positions, but bounded independently phased gathers do not preserve a coherent
 aperture outline around isolated highlights. Visible polygonal bokeh is

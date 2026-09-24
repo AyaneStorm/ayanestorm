@@ -54,6 +54,7 @@
 // </AS:Chanayane>
 // <AS:Chanayane> Optional AyaneStorm-owned cinematic depth of field.
 #include "asdepthoffield.h"
+#include "asdofrenderer.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom.
 #include "asdiffuseglow.h"
@@ -9039,6 +9040,14 @@ bool LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst,
             F32 screen_to_target_scale_factor = (F32)gViewerWindow->getWindowHeightRaw()/dst->getHeight();
             F32 adj_COF = CameraMaxCoF / screen_to_target_scale_factor;
             // </FS:Beq>
+            // <AS:Chanayane> Aperture-sampled DoF defocuses in the scene render;
+            // only publish this frame's smoothed focus for the next lens.
+            if (advanced_only && ASDoFRenderer::isEnabled())
+            {
+                ASDoFRenderer::setFocusDistance(current_distance);
+                return false;
+            }
+            // </AS:Chanayane>
             // <AS:Chanayane> Keep Firestorm's focus and physical-lens frontend.
             // The early call runs the owned image synthesis in linear HDR;
             // failure leaves the untouched late legacy passes available.
@@ -9195,6 +9204,11 @@ void LLPipeline::renderFinalize()
                 advanced_dof_applied = true;
             }
         }
+    }
+    else if (ASDoFRenderer::isEnabled())
+    { // Focus update only; the late legacy blur must not run.
+        renderDoF(&mRT->screen, &mRT->screen, true);
+        advanced_dof_applied = true;
     }
 // </AS:Chanayane>
 
@@ -10329,7 +10343,12 @@ void LLPipeline::renderDeferredLighting()
 
     screen_target->flush();
 
-    if (!gCubeSnapshot)
+    // <AS:Chanayane> Restore the central camera before the last-frame capture;
+    // repeated aperture samples must not advance matrix history again.
+    ASDoFRenderer::endSample();
+    // if (!gCubeSnapshot)
+    if (!gCubeSnapshot && !ASDoFRenderer::isRepeatSample())
+    // </AS:Chanayane>
     {
         // this is the end of the 3D scene render, grab a copy of the modelview and projection
         // matrix for use in off-by-one-frame effects in the next frame

@@ -68,6 +68,9 @@
 // [/RLVa:KB]
 #include "fscommon.h"
 #include "llviewernetwork.h"
+// <AS:Chanayane> Aperture DoF scene freeze
+#include "asdofrenderer.h"
+// </AS:Chanayane>
 
 //=========================================================================
 namespace
@@ -1766,6 +1769,11 @@ void LLEnvironment::update(const LLViewerCamera * cam)
 
         F32Seconds delta(timer.getElapsedTimeAndResetF32());
 
+        // <AS:Chanayane> Aperture DoF averages renders of one instant: hold the
+        // day cycle (sun, moon, stars) and cloud scroll while it is frozen.
+        if (!ASDoFRenderer::isSceneFrozen())
+        {
+        // </AS:Chanayane>
         {
             DayInstance::ptr_t keeper = mCurrentEnvironment;
             // make sure the current environment does not go away until applyTimeDelta is done.
@@ -1774,6 +1782,9 @@ void LLEnvironment::update(const LLViewerCamera * cam)
         }
         // update clouds, sun, and general
         updateCloudScroll();
+        // <AS:Chanayane>
+        }
+        // </AS:Chanayane>
 
         // cache this for use in rotating the rotated light vec for shader param updates later...
         mLastCamYaw = cam->getYaw() + SUN_DELTA_YAW;

@@ -1,0 +1,1010 @@
+# AyaneStorm Aperture-Sampled Depth of Field — Implementation Plan
+
+Author: chanayane@firestorm
+Date: 2026-09-24
+Status: implementation started after user direction to proceed; milestone 1 in progress.
+Priority selected by user: highest quality first; performance target later.
+
+## Execution record — 2026-09-24
+
+Copied the original proposed plan from /tmp using cp before adding this record.
+Added scripts/testing/dof_reference.py, an independent standard-library Python
+ray/card reference. Eleven tests pass: focus-plane registration, off-axis
+projection/ray agreement, blur sign and scale, pinhole equivalence, ordered
+transparency, hidden-background visibility, correlated aperture occlusion,
+64 layers, additive energy without opacity, focused thin-card coverage, and
+disk-quadrature agreement with analytic strip coverage.
+
+Milestone 1 is not complete: general blend factors, textured/angled geometry,
+pixel-footprint integration, viewer coordinate/FOV calibration and the
+once-per-frame lifecycle inventory remain. No viewer renderer changes or
+project build in this step. These tests establish a reference foundation,
+not evidence that the viewer's hairline problem is already fixed.
+
+## Execution record — 2026-09-24 (continued): once-per-frame lifecycle inventory
+
+Read-only investigation of `llviewerdisplay.cpp`/`pipeline.cpp` to satisfy
+milestone 1's lifecycle-inventory gate before any camera-math code is written.
+No files modified in this step.
+
+**Simulation/animation advance happens before `display()`, not inside it.**
+`LLAppViewer::idle()` (`llappviewer.cpp:1758`) runs immediately before
+`display()` (`llappviewer.cpp:1795`) in the same main-loop iteration, and
+drives `gObjectList.update()` → `LLVOAvatar::updateCharacter()`/`updateMotions()`
+(skinning/animation blending), `gPipeline.updateMove()`, `LLWorld::updateParticles()`,
+and `gAgentCamera.updateCamera()`. A DoF coordinator that repeats only the
+back half of `display()` per lens sample and never re-enters `idle()` will not
+re-advance animation/skinning/particles/camera-position by construction.
+
+**Once-per-frame state inside `display()` (must run exactly once, not per sample):**
+- `LLEnvironment::instance().update(&camera)` (`llviewerdisplay.cpp:877`) — sky/sun/cloud
+  clock keyed to a `static LLFrameTimer` real-time delta; already skipped when
+  `gCubeSnapshot` (`llenvironment.cpp:1763`), the existing precedent for "internal
+  re-render, don't advance."
+- DoF's own focus-rack smoothing: `static F32 current_distance/start_distance/transition_time`
+  inside `LLPipeline::renderDoF()` (`pipeline.cpp:8927-8929`), keyed to `gFrameIntervalSeconds`.
+- Auto-exposure history: `generateExposure(..., use_history=true)` (`pipeline.cpp:7938`)
+  reads/writes `mExposureMap`/`mLastExposure`; already skipped when `gSnapshot`
+  (`pipeline.cpp:9211-9216`) — reuse this exact precedent for intermediate samples.
+- Motion-blur matrix history: `gGLLastModelView`/`gGLLastProjection` capture and
+  `ASMotionBlur::captureFrameMatrices()` (`pipeline.cpp:10336-10343`), guarded by
+  `!gCubeSnapshot`. Must fire at most once per displayed frame, not per sample,
+  or intermediate lens positions become spurious "previous frames" for velocity.
+- Global frame counters (`gFrameCount`, `gRecentFrameCount`, `gForegroundFrameCount`,
+  `llviewerdisplay.cpp:677-682`) and `LLDrawable::incrementVisible()` (`:904`) —
+  incrementing per sample desyncs every LOD/texture-budget/"seen this frame" consumer.
+- `gPipeline.resetFrameStats()` (`:844`), `LLSceneMonitor::fetchQueryResult()`/`capture()`
+  (`:1042`, `:1187`), `LLVOAvatar::updateImpostors()` (`:962`, its own 512x512
+  viewport + matrix save/restore) — all single-shot per displayed frame.
+- No TAA/motion-vector reprojection history exists in this codebase today (confirms
+  backlog's prior claim); SSR has no cross-frame history, only same-frame
+  `mSceneMap` capture (`pipeline.cpp:8157`) that must be captured per sample if
+  SSR is to stay sample-consistent.
+
+**Per-sample-shaped work already exists but is currently called once:** view
+culling (`gPipeline.updateCull`, `pipeline.cpp:2734`), draw-order bucketing
+(`gPipeline.stateSort`, `:3385`), and OIT reset/resolve
+(`ASOITDispatcher::beginFrame()`/`finishFrame()`, `asoitdispatcher.cpp:201`,
+called `pipeline.cpp:10274`/`10317`) are exactly the per-sample operations
+section 5 of this plan calls for; `beginFrame()`'s own
+`static TransparencyMode previous_mode` transition-edge detection needs
+auditing so N calls per displayed frame aren't misread as N mode-change events.
+
+**Camera/matrix state and existing save/restore precedent:** `LLViewerCamera`
+is a singleton (`llviewercamera.h:39`) holding the projection/modelview caches;
+per-frame FOV/near/far is set via `setZoomParameters`/`setNear`/`setFar`
+(`llviewerdisplay.cpp:789-790`, `:262`), and the actual perspective push happens
+in `LLViewerWindow::setup3DRender()`/`setup3DViewport()` (`llviewerwindow.cpp:6918-6932`),
+which writes the global `gGLViewport` array and calls `glViewport` directly.
+`display()` already contains a full save/restore pattern worth copying for
+per-lens-sample overrides: around `LLVOAvatar::updateImpostors()`
+(`llviewerdisplay.cpp:958-970`) it snapshots projection+modelview via
+`get_current_projection()`/`get_current_modelview()`, temporarily changes
+viewport, then restores both matrices and the viewport via
+`gViewerWindow->setup3DViewport()`. `LLViewerCamera::sCurCameraID` also needs
+an explicit decision (reuse `CAMERA_WORLD` vs. a new camera-ID slot) since
+other systems branch on it.
+
+**Post-render/pre-swap sequence (must run exactly once, after all samples):**
+`render_ui()` (`llviewerdisplay.cpp:1626`) is the single per-displayed-frame
+call that invokes `gPipeline.renderFinalize()` (`pipeline.cpp:9159`, the entire
+tonemap/bloom/DoF/AA/vignette/present chain) and then HUD/UI rendering, followed
+by `swap()` (`llviewerdisplay.cpp:1724`). The natural seam for the coordinator:
+repeat culling → state-sort → opaque/transparent render → OIT resolve
+(`llviewerdisplay.cpp:918-1187`, minus the once-per-frame items above) once per
+lens sample while accumulating HDR output per section 6, then call the
+`render_ui()`/`renderFinalize()`/`swap()` sequence exactly once on the
+normalized accumulation, feeding it in place of `mRT->screen`.
+
+**Existing integration point confirmed:** `LLPipeline::renderDoF()` is called
+twice from `renderFinalize()` — once early (`pipeline.cpp:9192`, HDR/advanced,
+gated `ASDepthOfFieldMode==1`, before SSR copy/exposure/tonemap) and once late
+(`:9275`, post-tonemap legacy fallback, only if the advanced pass didn't already
+return true). The aperture-sampled renderer's per-frame-once composite belongs
+at the advanced call site, before tonemap/bloom, per section 3 of this plan.
+
+## Execution record — 2026-09-24 (continued): off-axis camera math derivation
+
+Added `Camera.off_axis_view_and_projection()` to `scripts/testing/dof_reference.py`,
+a matrix-form (view translation + asymmetric-frustum projection) counterpart to
+the existing ray-based `Camera.ray()`, derived and cross-checked independently
+rather than transcribed from a textbook formula. First derivation attempt (a
+projection-only frustum shift, no paired view translation) was proven wrong by
+its own cross-check test before being corrected — recorded here because it is
+exactly the kind of matrix error milestone 1's "derive and unit-test matrices
+against independently generated lens rays" requirement exists to catch.
+
+Three new tests, 14 total (all pass):
+- `test_off_axis_projection_matrix_matches_ray_model_at_focal_plane`: a world
+  point on the focal plane, reached via any lens-ray for a given pinhole image
+  coordinate, projects to that same NDC coordinate through the view+projection
+  pair regardless of lens offset. Off-focal-plane agreement is deliberately not
+  asserted — that disagreement across lens positions is the blur itself.
+- `test_off_axis_projection_reduces_to_symmetric_at_zero_lens`: at zero lens
+  offset the pair reduces to an identity view and the standard symmetric
+  perspective matrix.
+- `test_off_axis_projection_depth_mapping_matches_symmetric`: near/far NDC-z
+  mapping (-1/+1) is unaffected by lens offset, matching
+  `LLViewerCamera::calcProjection`'s existing symmetric near/far handling.
+
+Convention note for the future C++ port: this reference keeps the file's
++Z-forward convention throughout (`w == z`), not OpenGL's raw eye-space
+`w == -z_eye`. The depth-row and off-diagonal signs are therefore the mirror
+of the textbook GL form; `LLViewerCamera::calcProjection`'s actual GL matrix
+(`indra/newview/llviewercamera.cpp:182-197`, standard `glm::perspective`,
+row-major `mMatrix[col][row]`, `mMatrix[2][3] = -1`) is the real target
+convention for `asdofcamera`, confirmed by reading that function directly
+before this derivation. The C++ port must re-derive/re-verify against
+`calcProjection`'s actual sign convention, not copy this file's matrix
+verbatim — this file's contribution is the algebraic derivation and the
+cross-check methodology, not a drop-in matrix.
+
+Not yet done: the C++ `asdofcamera` module itself, calibration against
+`LLViewerCamera`'s live FOV/aspect/zoom/handedness at runtime, and the
+textured/angled-geometry and pixel-footprint integration items milestone 1
+still lists as outstanding. No viewer files changed in this step; no build.
+
+## Execution record — 2026-09-24 (continued): asdofcamera module
+
+Added owned `indra/newview/asdofcamera.cpp/.h` (namespace `ASDoFCamera`,
+registered in `indra/newview/CMakeLists.txt` inside the existing camera
+post-effect ownership block). Not yet called by any render path.
+
+- `makeLens()`: zoom-adjusted focal length uses the same fixed-sensor mapping
+  as `LLPipeline::renderDoF` (`CameraFocalLength`/`CameraFieldOfView` define
+  sensor height). Aperture radius = focal length / (2 × f-number), metres.
+  Rejects focus ≤ focal length and invalid FOV/f-number via `mValid = false`;
+  no silent clamping.
+- `lensModelview()`: `T(-offset) * modelview`, offset in GL eye space
+  (right, up).
+- `lensProjection()`: shears the existing perspective projection,
+  `P[2][0] -= P[0][0]·dx/focus`, `P[2][1] -= P[1][1]·dy/focus` (glm
+  `[column][row]`). Applied to the live projection rather than rebuilding
+  one, so it inherits the viewer's FOV/aspect/near/far and any snapshot tiling.
+  Depth rows are untouched.
+- `cocRadiusPixels()`: `R·|1/S − 1/d|·H / (2·tan(fovY/2))`, for diagnostics
+  and sample-count planning only.
+
+Equivalence to the physical thin lens: sensor CoC in normalized image units is
+`A·|1/S − 1/d|` (diameter A = f/N), which equals the translated-pinhole
+disparity with lens radius R = A/2. Focus breathing is ignored, as the viewer's
+FOV mapping already does.
+
+`scripts/testing/dof_reference.py` gained `viewer_*` mirrors of each function
+in the viewer's GL convention (-Z forward, `m[column][row]`, built from
+`LLViewerCamera::calcProjection`). 18 tests pass. New:
+- focal-plane reprojection error < 0.01 px (the frozen camera-math gate) over
+  FOV 10/60/120°, aspect 0.5/1.78/3, focus 0.3/2/200 m, heights 720/2160/8640,
+  lens samples across a large f/1 aperture, and off-centre image points out
+  to 95% of the frame. A sign-flipped mutant of the shear fails this test.
+- depth mapping unchanged and zero offset is the identity.
+- pixel CoC formula equals projected rim disparity; far points shift with the
+  eye offset, near points against it.
+- zoom mapping: default FOV gives the default focal length; half tan(FOV/2)
+  doubles it.
+
+Fixed: `test_blur_radius_and_sign` compared the CoC formula with itself. It now
+derives the image offset from lens→point/focal-plane geometry and checks it
+against `Camera.ray()`.
+
+Still open in milestone 1 at this point: runtime calibration against live
+`LLViewerCamera` state (needs the coordinator; checked at milestone 2's
+zero-aperture equivalence). The sample-state contract, blend factors,
+angled/textured geometry and pixel footprint were closed in later records.
+`asdofaperture` followed; see the next record.
+
+## Execution record — 2026-09-24 (continued): asdofaperture module
+
+Added owned `indra/newview/asdofaperture.cpp/.h` (namespace `ASDoFAperture`,
+registered in CMake next to `asdofcamera`). Not yet called by any render path.
+- `generate(shape, count, out)`: unit-circumradius, equal-weight lens
+  positions. R2 sequence, so an N-sample set is a prefix of the 2N set (for
+  nested convergence sweeps) and sampling is deterministic across frames. The
+  angle is inverted through the per-blade analytic area CDF
+  `½(a²·tan x + 2ab·ln(sec x + tan x) + b²·x)` with
+  `a = (1−roundness)·cos(π/n)`, `b = roundness`, and the radius is
+  `sqrt(v)·boundary`. Blades < 3 or roundness 1 gives a circle. Rotation
+  follows the shape; the anamorphic ratio scales x.
+- `shapeFromSettings()`: reads the existing `ASDepthOfFieldAperture*` and
+  `ASDepthOfFieldAnamorphicRatio` settings with the legacy clamps. Saved values
+  are preserved.
+
+Python mirror `viewer_aperture_samples`. 21 tests pass. New:
+- samples inside the shape, deterministic, nested prefixes;
+- uniform area density: sample fraction equals area fraction on an independent
+  dense grid (tolerance 0.01 at 4096 samples) for half-planes and the outer
+  radial band, across circle, sharp hexagon, rounded rotated pentagon, sharp
+  triangle and anamorphic 9-blade shapes. A mutant using a linear-radius angle
+  CDF (too dense at blade centres) fails this test;
+- the circular sampler reproduces the analytic strip coverage within 0.002.
+
+## Execution record — 2026-09-24 (continued): reference completion
+
+`scripts/testing/dof_reference.py`, 28 tests pass (about 4 s):
+- **Viewer blend equations:** `viewer_blend_node()` mirrors
+  `asExactOITCompositeF.glsl` `blend_node()`: factor codes 0–9, separate
+  color/alpha factors, glow-only nodes (`0xffffffff`), and
+  `glow = node.glow + glow·(1 − a)`. `trace_viewer()` resolves per ray
+  far-to-near with submission-index ties (`comes_first()`). Tests: the standard
+  tuple matches `trace()` (viewer alpha is transmittance); a multiply/standard
+  pair gives the exact order-dependent values; glow order is covered.
+- **Angled/textured geometry:** `Surface` is an arbitrary parallelogram with a
+  `(u, v)` RGBA texture, which also models alpha masks. Test: on a tilted,
+  striped alpha-mask plane, every lens sample reproduces the pinhole value
+  exactly where the plane crosses the focal plane, and the plane blurs where it
+  is off focus.
+- **Pixel footprint:** `integrate_pixel()` samples lens and pixel jointly
+  (`viewer_pixel_jitter`, box filter). Test: a focused 0.3 px strand gives
+  `alpha·0.3 ± 0.01` at every sub-pixel position at 256 samples. Centre-point
+  sampling flips between 0 and alpha, which is the hairline appear/disappear
+  failure.
+- **`viewer_jitter_projection()`:** gives an exact pixel shift at all depths
+  and commutes with the lens shear.
+
+Sequence change: the aperture sampler moved from R2 to R4 (root of
+`x⁵ = x + 1`). Dimensions 0/1 drive the lens and 2/3 the jitter, under one
+nested index. The aperture density tests still pass. C++ was updated to match:
+`ASDoFAperture::generate(shape, count, lens, pixel_jitter)` and
+`ASDoFCamera::jitterProjection()`.
+
+**Measured convergence finding (report before integration, per section 10).**
+Integrated energy of a defocused 0.3 px strand (blur about 6 px), relative to
+alpha·width:
+
+| samples | R4 | R2 + Halton(2) | Halton(2,3) + R2 |
+|---|---|---|---|
+| 256 | 0.885 | 0.977 | 1.146 |
+| 1024 | 0.928 | 1.038 | 1.012 |
+| 4096 | 0.975 | 1.032 | 0.995 |
+| 16384 | 0.991 | — | — |
+
+No sequence pair reaches the 1% strand gate below a few thousand samples. The
+integrand, a thin discontinuous coverage function, dominates the error, not the
+choice of sequence. The test asserts the 1% gate at 16384 samples as an
+unbiasedness check. Consequence: defocused sub-pixel hair is the
+sample-count-limiting case. Live presets will not meet the 1% strand gate by
+lens/pixel sampling alone, and must be reported honestly (section 6). Whether
+per-sample MSAA/coverage (analytic sub-pixel coverage per lens sample) reduces
+this is a milestone-4 question, validated against this reference.
+
+## Sample-state contract (milestone 1 deliverable)
+
+Identities: a **presented frame** (simulation/animation state, one `idle()` plus
+one `display()`) contains 1..N **lens samples**. Sample `i` uses
+`ASDoFAperture` index `i` (lens offset plus pixel jitter). The sequence is
+fixed across frames.
+
+Once per presented frame, before sample 0 (existing order kept):
+`LLEnvironment::update`, focus distance and rack smoothing, frame counters,
+`LLDrawable::incrementVisible`, `resetFrameStats`, impostor updates, scene
+monitor, LOD selection. `ASDoFCamera::makeLens` is evaluated from the smoothed
+focus. If the result is invalid, the frame renders pinhole (N = 1, zero offset);
+it is never clamped.
+
+Per sample (repeatable, no simulation side effects):
+1. Install `lensModelview`, `lensProjection` and `jitterProjection` through the
+   impostor-style save/restore precedent. `LLViewerCamera` state stays central
+   for all non-render consumers.
+2. Cull for this sample's frustum without central-view occlusion rejection.
+   LOD stays frozen from the once-per-frame pass.
+3. Render the opaque G-buffer and lighting, including sample-dependent lighting
+   and SSR `mSceneMap` capture.
+4. Run the selected transparency compositor's begin/capture/resolve. Mode
+   transition detection in `ASOITDispatcher::beginFrame()` keys on presented
+   frames, not samples.
+5. Add the resolved linear-HDR color and glow to the accumulation with weight
+   1/N.
+
+Once after the last sample: normalize, then exposure (history only once),
+motion-blur matrix capture (central camera), `renderFinalize`
+tonemap/bloom/effects chain, UI/HUD, swap. Picking and any
+central-depth consumer use a separate central (zero-offset) depth, never the
+last sample's. Any sample failure (OIT overflow, shader or allocation failure)
+discards the whole frame's accumulation and follows section 5.
+
+**GL 4.1 split (user direction, 2026-09-24).** The coordinator, per-sample
+camera installation, culling, opaque/lighting, accumulation (fragment shader
+plus additive blending into an RGBA32F/RGBA16F target, format chosen by the
+section 6 precision tests) and the Standard and AYAstorm compositors are the
+common path and must be GL 4.1. Exact OIT keeps only its node capture/resolve
+behind its existing GLSL 4.30 gate; AVBOIT keeps its own gate. Both plug into
+step 4 through the dispatcher and hand back a resolved HDR sample. No
+DoF-specific OIT representation is added. The screen-space gather's
+DoF/OIT-shared captures (rigged/world depth, coverage strata) are not used by
+this path.
+
+## Execution record — 2026-09-24 (continued): milestone 2, single-sample path
+
+New owned coordinator `indra/newview/asdofrenderer.cpp/.h` (`ASDoFRenderer`),
+active for `ASDepthOfFieldMode` 2 under the same gate as `renderDoF`
+(RenderDepthOfField, edit-mode rule, not cube snapshots). Normal snapshots keep
+the ordinary path for now. Mode 2 is listed only in the owned
+`floater_as_depth_of_field.xml` as "Aperture-sampled (experimental)"; the
+Firestorm/preferences combos are unchanged until acceptance.
+
+Upstream hooks (all tagged, logic kept in the AS module):
+- `llviewerdisplay.cpp`: `ASDoFRenderer::beginSample(for_snapshot)` right after
+  `display_update_camera()`. It saves the central matrices and installs the
+  lens projection/modelview through the same state `setPerspective()` sets (GL
+  stack, `set_current_*`, `LLViewerCamera::updateFrustumPlanes`), so culling
+  uses the sample frustum. Impostor updates and sun shadows already
+  save/restore the current matrices, so the sample survives them.
+- `pipeline.cpp` end of `renderDeferredLighting()`: `ASDoFRenderer::endSample()`
+  just before the `gGLLastModelView` / `ASMotionBlur::captureFrameMatrices()`
+  capture. Motion-blur history, render_ui/HUD/UI 3D, picking and `renderDoF`'s
+  focus raycast therefore see the central camera.
+- `pipeline.cpp` `renderDoF()`: in mode 2 the early (advanced-only) call
+  publishes the smoothed `current_distance` via `setFocusDistance()` and returns
+  before any image pass. `renderFinalize()` makes that call in mode 2 and
+  marks the frame handled, so the late legacy blur never runs. The lens
+  therefore uses the previous frame's focus: one frame of latency, with rack
+  smoothing still advanced once per frame.
+- `settings.xml` (inside the existing AS block): mode comment updated, plus
+  `ASDepthOfFieldApertureDebugSample` (S32, not persisted, default -1).
+
+Runtime tests for the user build (milestone-2 gate):
+1. Mode 2 with debug sample -1 must match DoF off pixel for pixel, apart from
+   the absence of the legacy blur. The central matrices are reinstalled
+   unchanged, so any difference is a lifecycle or state bug.
+2. Debug sample 0, 1, 2… (large aperture, e.g. f/1.4, focus on an avatar):
+   each index shows one unaveraged view from a different lens position. The
+   focused subject must stay fixed while nearer and farther content shifts in
+   opposite directions. This is the live `LLViewerCamera` calibration check.
+3. Toggle modes and sample indices, resize, take a snapshot, enter
+   mouselook/build mode: no stuck offset in UI, selection outlines or picking.
+
+**Result (user, bokt, 2026-09-24): milestone-2 gate passed.**
+1. Sample -1 is pixel identical to DoF off.
+2. f/1.4, 200 mm, 60° FOV, focus-follows-pointer on an avatar face at about
+   1 m, samples 0/1/2: the face stays registered while the window, bookshelf
+   and crates behind it shift by tens of pixels between samples, the expected
+   orbit-around-focus parallax. Magnitude check: R = 200/(2·1.4) ≈ 71 mm, and
+   a background at about 4 m gives ≈ 0.053 image units ≈ 50 px at 1100 px
+   height, consistent with the screenshots.
+3. Selection and picking work after resize.
+
+Note: f/0.01 (the slider minimum) gives R = 10 m and views from inside or
+behind geometry. That is correct for that lens, not a defect. No aperture
+limit was added (section 3: no silent clamping).
+
+Known single-sample limitations (expected, resolved by milestone 3 or later):
+- Occlusion-query results carry across frames; the sample index is constant
+  per frame, so this is consistent except for one frame after changing it.
+- Post effects that reconstruct position from depth (SSR's frame-lagged scene
+  copy, motion blur) use the central matrices on depth rendered from the lens
+  sample. Irrelevant at sample -1; minor for non-zero samples.
+- World-space camera-origin uniforms (sky, water, atmospherics) remain
+  central; the lens offset is millimetres to centimetres.
+- If `renderDeferredLighting()` returns early (no cull result, startup only),
+  `endSample()` is skipped for that frame; the next `beginSample()` resets.
+
+## Execution record — 2026-09-24 (continued): milestone 3, multi-sample accumulation (first cut)
+
+`ASDoFRenderer` now renders `ASDepthOfFieldApertureSamples` (new persisted
+S32, default 8, clamped to 1..4096) lens samples per presented frame and
+averages them before `renderFinalize()`.
+- Sample 0 is the ordinary `display()` pass. Samples 1..N-1 run from one new
+  tagged `display()` hook (`renderRemainingSamples(result)`, right after
+  `renderDeferredLighting()`). Each sample repeats `updateCull`, `stateSort`,
+  G-buffer clear/`renderGeomDeferred(camera, false)` and
+  `renderDeferredLighting()`, which includes `renderGeomPostDeferred`, the
+  selected OIT compositor (`ASOITDispatcher::beginFrame`/`finishFrame` per
+  sample) and weather.
+- `endSample()` (end of `renderDeferredLighting`) adds `mRT->screen` (linear
+  HDR, glow in alpha) × 1/N into an RGBA32F accumulator through the owned
+  shader `asDoFAccumulateF.glsl` (`copyV` vertex, additive ONE/ONE), then
+  restores the central camera. After the last sample the normalized sum
+  overwrites `mRT->screen`, so exposure, tonemap, glow extraction, bloom and
+  the rest of `renderFinalize` run once on the average.
+- Once-per-frame guard: the `gGLLastModelView` / `ASMotionBlur` capture
+  condition becomes `!gCubeSnapshot && !ASDoFRenderer::isRepeatSample()`
+  (tagged, original kept). `display()`'s sim/env/texture/impostor/shadow work
+  stays single; the new loop does not re-enter it.
+- Occlusion culling is disabled for multi-sample frames (`sUseOcclusion = 0`,
+  restored after the last sample), so central-view queries never reject
+  surfaces other lens positions see. Section 5 requires this.
+- LOD and alpha-sort distances use `LLViewerCamera`'s origin, which is never
+  moved (only matrices and frustum planes change), so LOD is frozen across
+  the aperture.
+- Shaders register through `ASDepthOfField`'s existing hooks (owned file); no
+  new upstream shader-manager edit. `ASDepthOfFieldApertureSamples = 1` or an
+  invalid lens renders one central sample. The debug sample still renders one
+  unaveraged sample. Leaving mode 2 releases the accumulator.
+- Failure rule: if the accumulator cannot be allocated, the frame keeps the
+  last full sample and logs once. It never presents a partial average.
+
+Open items for the milestone-3 gate:
+- **Depth consumers:** `deferredScreen` depth after the loop is the last
+  sample's, not central. SSR's frame-lagged copy and motion blur therefore
+  reconstruct from a lens-offset depth. A central-depth pass or sample
+  ordering is needed; measure the visual impact first.
+- **Exact OIT/AVBOIT:** `beginFrame()` now runs once per sample. The Exact
+  predictive-skip counter (`skipFramesRemaining`) decrements per sample, not
+  per frame. Per-sample vanilla fallback on overflow is not yet detected, so a
+  frame could average fallback and Exact samples (violates section 5). The
+  fix is to query the fallback state after each sample and apply the
+  whole-frame rule.
+- **Sun shadow cascades** are fitted once to sample 0's frustum. Lens offsets
+  are centimetres, so coverage at the frustum edges needs checking.
+- **`RenderDepthPrePass`** (default off) is not repeated for samples ≥ 1.
+- **Cost:** about N × (cull + sort + G-buffer + lighting + transparency) per
+  frame. Measure per-sample GPU/CPU time before choosing presets (section 10).
+
+### Milestone 3 first runtime result (user, bokt, 2026-09-24)
+
+f/1.4, 200 mm, 60° FOV, avatar focus at about 1 m, background a few metres
+away. DoF off 44 FPS; mode 2 with 8 / 16 / 32 / 64 samples gives
+6.8 / 6.7 / 6.5 / 3.5 FPS.
+
+Quality: the focused face is sharp and correctly registered. Out-of-focus
+regions show discrete ghost copies (8 samples) or streaks (64 samples), not a
+smooth blur. This is the expected finite-sample behaviour, not a registration
+bug. Copy spacing is about (CoC diameter)/√N. With a CoC radius of about
+60–100 px, a smooth result needs spacing near 1 px, i.e. on the order of 10⁴
+samples. Pure aperture sampling therefore cannot deliver smooth large blur
+live (section 10 "report measured limits").
+
+Performance follow-up: 1 / 2 / 4 samples give 44 / 24 / 13 FPS; 1 sample is
+pixel identical to DoF off. Frame time is 22.7 ms + about 18 ms per extra
+sample, an exact fit through 8 samples. Each lens sample costs about 80% of a
+full frame, with no fixed overhead. The 16/32/64 readings exceed the linear
+prediction (3.4/1.7/0.9 FPS) and are attributed to FPS-counter averaging or
+the setting not yet being applied.
+
+Conclusion: the live budget is 2–4 samples, orders of magnitude short of the
+roughly 10⁴ needed for smooth large blur. Milestone-4 reuse (union culling,
+shared lighting inputs) plausibly saves 20–40% per sample, not orders of
+magnitude. Revised recommendation to the user: mode 2 becomes a
+static/converged photographic mode (progressive accumulation while camera and
+scene are unchanged, reset on change; fixed high counts for snapshots), and
+live DoF stays screen-space.
+
+Decision pending (proposed to user): (1) hybrid, where N lens samples each get
+a residual screen-space gather of radius ≈ CoC/√N; (2) progressive
+accumulation while the camera and scene are static (converged capture,
+section 6); (3) both. Recommended: (3), starting with (1).
+
+## Execution record — 2026-09-24 (continued): progressive photographic mode
+
+User decision: (1) mode 2 becomes progressive/converged (photographic);
+(2) live DoF stays screen-space (mode 1, no code change). The user is not yet
+satisfied with the visual results.
+
+`ASDoFRenderer` frame plans:
+- **PINHOLE** (first frame after any change, or invalid lens): one central
+  pass at ordinary cost; the running average restarts.
+- **ACCUMULATE** (still): `ASDepthOfFieldApertureSamples` (now per frame,
+  default 4) new lens samples, sequence indices continuing from the running
+  count, added with unit weight to the RGBA32F sum. The screen shows
+  sum/count. Occlusion is off for these frames.
+- **CONVERGED** (count ≥ `ASDepthOfFieldApertureMaxSamples`, new, default
+  512): one central pass with occlusion restored, displaying the stored
+  average, so frame time returns to about the DoF-off cost.
+- **DEBUG** (debug sample ≥ 0): unchanged single unaveraged sample.
+
+Restart key: central projection/modelview (relative 1e-6), view angle,
+f-number, focal length, default FOV, aperture shape, viewport size. Focus is
+frozen for the average and restarts only on a >0.5% change, so rack smoothing
+drift does not keep resetting it. Lens samples for the whole nested prefix are
+generated once per restart.
+
+Known limits:
+- Scene animation is not detected. Moving avatars and particles smear into
+  the average like a long exposure, and a converged frame shows the frozen
+  average while the scene keeps animating underneath. The plan's "never
+  average consecutive animation states" rule is therefore not met in this
+  mode; frozen poses are the intended use.
+- Snapshots, corrected the same day (the first cut captured the sharp
+  restart frame). Deferred `display()` clears `for_snapshot` before the hook
+  (sky hack), so snapshots already reach mode 2 and are detected with
+  `gSnapshot`. A snapshot always converges inside its capture: it renders all
+  remaining samples up to `ASDepthOfFieldApertureMaxSamples` in that
+  `display()` call, reusing a finished live average when key and size match
+  (instant), otherwise restarting. High-res tiles are separate keys, so each
+  tile converges fully; lens shear and pixel jitter compose correctly with the
+  tile's zoom/offset projection. The main-loop watchdog is pinged per sample.
+  Capture time ≈ samples × per-sample cost at snapshot resolution (512 ×
+  18 ms ≈ 9 s at window size), and the snapshot floater's preview refreshes
+  pay it too.
+- Earlier open items (last-sample depth, Exact OIT per-sample fallback, shadow
+  cascades, depth pre-pass) still apply to ACCUMULATE frames.
+
+### Progressive mode: user result and UI (2026-09-24)
+
+User (bokt): a converged result at 4096 samples (f/2.35 149 mm; f/4.88
+62 mm) "looks rather nice". Aperture shape controls (blades, roundness,
+rotation, anamorphic) are read live by mode 2, as confirmed by the user. The
+quality, radius, highlight and diagnostic controls apply to the Advanced
+renderer only.
+
+Added:
+- `ASDoFRenderer::drawProgress()`: an optional (`ASDepthOfFieldApertureShowProgress`,
+  default on) yellow "DoF n / max" counter with a progress bar, top right of
+  the 3D view, drawn like the viewer debug text. Never drawn when `gSnapshot`
+  is set, in DEBUG mode, or outside mode 2. One tagged `render_ui()` hook after
+  `drawDebugText()`.
+- Owned `floater_as_depth_of_field.xml`: an "Aperture-sampled renderer"
+  section with samples per frame, total samples and a show-counter checkbox,
+  including reset buttons (added to `ASDepthOfField.ResetDefault`). The header
+  tooltip names the controls that apply to Advanced only.
+
+### Residual per-sample softening ("dot smoothing", 2026-09-24)
+
+User observation: at 4096 samples, out-of-focus point lights show triangle
+bokeh made of distinct dots (one per lens sample). User asked for a very mild
+fill that keeps the shape.
+
+Implementation: `asDoFAccumulateF.glsl` softens each sample before
+accumulation with a 12-tap equal-area Vogel disk (plus centre). The tap
+pattern is rotated by the golden angle per sequence index. The radius comes
+from the sample's own depth:
+`strength · R · (P[1][1]·H/2) · sqrt(π/N) · |1/S − 1/d|` px. That is exactly
+the mean spacing of N equal-area sample images of a point with CoC radius
+`R·|1/S−1/d|`: about 1.1 px for a 40 px bokeh at N = 4096. It is zero at the
+focal plane, capped at 6 px (low N is not rescued by rounding the shape), and
+uses P[1][1] so zoomed snapshot tiles scale correctly. The depth-to-distance
+formula `P32/(ndc + P22)` was verified numerically against
+`viewer_projection`.
+
+Setting `ASDepthOfFieldApertureResidualBlur` (F32, default 1 = spacing,
+0 = off) is part of the restart key and exposed as "Dot smoothing" in the
+owned floater. Limits: gathers use the centre pixel's opaque depth, so
+transparent hair over a far background takes the background's radius (at most
+a few px); a halo of about one spacing may appear at focused edges.
+
+Simulation (scripts/testing, same sequence and taps; point light, triangle
+bokeh with R = 40 px, N = 4096, measured over the inner 80% of the shape):
+- strength 0: 56% pixel-to-pixel noise, 8% empty pixels;
+- strength 1: 16% noise, 0% empty;
+- strength 2: 13% noise, 0% empty.
+The effect is visible only on small bright defocused highlights. Suggested
+runtime check: 256 total samples (≈4 px spacing), smoothing 0 vs 2.
+
+Counter placement fix: the world-view rect runs under the menu, navigation
+and favourites bars, so the counter is now drawn top centre of
+`gFloaterView->getSnapRect()` (converted to screen), clear of toolbars and the
+top-right chiclets.
+
+### Snapshot capture UX (2026-09-24)
+
+User report: a 4096-sample snapshot blocks the viewer for about 80 s and
+looks frozen. User chose all four measures:
+- **Reuse live:** the snapshot target is compared with the live running
+  average. For the same key and size, an average already at or above the
+  target is used instantly; a shorter one is continued, not restarted.
+- **Separate snapshot target:** `ASDepthOfFieldApertureSnapshotSamples` (S32,
+  default 512, "Snapshot samples" in the owned floater, mode 2 only). Live
+  keeps `ASDepthOfFieldApertureMaxSamples`. The residual smoothing uses the
+  target in force as N.
+- **Progress screen:** during a snapshot's sample loop, every 0.5 s the
+  default framebuffer is cleared and shows "Capturing depth of field… n /
+  total" with a bar, then swapped; the FBO binding and viewport are restored
+  and the central camera is reinstalled after the loop. The UI scale is not
+  applied (raw pixels).
+- **Esc to stop (Windows only):** `GetAsyncKeyState(VK_ESCAPE)` while the
+  viewer window is in front, because the main loop and its input are
+  suspended during the capture. It keeps the samples done so far; a later
+  capture of the same view continues them. Not available on macOS/Linux.
+  The Esc key press may still reach the viewer afterwards.
+
+**Disconnect finding (user, 2026-09-24):** an ~80 s blocking 4096-sample
+snapshot logged the user out of Second Life. During a capture the main loop,
+including simulator networking, is suspended; the progress screen does not
+change that. Fix: `ASDepthOfFieldApertureSnapshotMaxSeconds` (F32, default
+15, clamped 1–30, "Snapshot time limit" slider) bounds one snapshot's sample
+loop. The budget is split across high-res tiles (`ceil(zoom)²` display calls
+each get total / tiles), so a whole snapshot stays within it. On reaching it,
+the capture stops like Esc and keeps its samples; repeating the same capture
+continues them. Pumping networking inside the render loop was rejected: object
+updates would mutate the scene mid-frame.
+
+### Still-image labelling and animation freeze (2026-09-24)
+
+- Mode 2 is labelled "Aperture-sampled (still images only)" in all four
+  renderer combos. The owned floater section header reads "Aperture-sampled
+  renderer: for perfectly still images", with a note that the blur builds up
+  while nothing moves and that motion smears or restarts it.
+- "Freeze all animations" checkbox in the owned floater: non-persisted
+  `ASDepthOfFieldFreezeAnimations`, whose control listener (registered via
+  `ASDepthOfField::registerUICallbacks`) calls the existing
+  `set_all_animation_time_factors(0 / 1)`, the same global freeze as
+  Advanced > Animation > Freeze Animations (Ctrl+Alt+N) and the My Lights
+  floater. No new upstream edit. Limit: freezing from the menu does not tick
+  the checkbox, and unticking restores normal speed (1.0).
+
+### Mode-dependent control enabling (2026-09-24)
+
+The owned floater greys out controls that have no effect in the selected
+renderer, using XUI `enabled_control` bound to non-persisted flags that
+`ASDoFRenderer::syncModeFlags()` derives from `ASDepthOfFieldMode`. The flags
+are updated by a control listener and re-checked each frame in `beginSample`
+(written only on change).
+- `ASDepthOfFieldUIAdvanced` (mode 1): backend, bokeh quality,
+  foreground/background radius, bokeh highlights, diagnostic view, and their
+  labels and reset buttons.
+- `ASDepthOfFieldUIShape` (modes 1 and 2): aperture shape, blade rounding,
+  rotation, anamorphic ratio.
+- `ASDepthOfFieldUIAperture` (mode 2): samples per frame, total samples, dot
+  smoothing, sample counter.
+- Always enabled: DoF enable, renderer, freeze animations, reset tuning.
+
+### Time-sliced snapshot capture (2026-09-24)
+
+Goal: a long DoF snapshot must neither freeze the viewer nor stop
+networking. Threads were rejected: the GL context, scene data and networking
+all belong to the main thread. Pausing inside `rawSnapshot()` was also
+rejected: running the main loop there would mutate the scene mid-frame.
+
+Mechanism: the snapshot floater's `LLSnapshotLivePreview::onIdle` (idle
+callback) calls `ASDoFRenderer::requestCaptureSlice()` before
+`rawSnapshot()`; both are tagged hooks. The snapshot `display()` that
+follows is a *slice*:
+1. It renders samples for about 0.3 s (`CAPTURE_SLICE_SECONDS`, measured
+   from `beginSample`, sample 0 included).
+2. It shows the partial average, and `rawSnapshot` reads it back.
+3. If `isCapturePending()` is then true, the hook leaves the snapshot out of
+   date and returns.
+4. The main loop runs (networking, UI, one live frame), and the next idle
+   call renders the next slice.
+
+With deferred rendering, snapshots larger than the window render
+single-tile in reallocated full-size buffers, so the common case is
+sliceable. Tiled (zoom > 1) snapshots, and other callers such as File > Take
+Snapshot to Disk and reports, keep the blocking path with its 30 s cap.
+
+State: two running averages.
+- `sLive`: the window-size live view.
+- `sCapture`: snapshot size. It is released when a capture finishes or is
+  abandoned: live frames free it when no slice arrives for 2 s, for example
+  after the floater closes.
+- A new capture whose key equals the live key is seeded by copying the live
+  sum, so window-size snapshots of a developed view stay instant. Live
+  frames between slices render no new samples: they show the live average
+  if there is one, else the pinhole view.
+
+Stop conditions (keep the samples rendered so far):
+- **Esc:** `GetAsyncKeyState & 0x8001`, which also catches a press between
+  slices. A stale press is discarded when a capture starts.
+- **Time limit:** `ASDepthOfFieldApertureSnapshotMaxSeconds`, now 1–600 s
+  with a default of 120, counting slice render time only.
+- **View change between slices:** the camera moved, or Esc reset the view.
+  The slice then shows the old average (`CONVERGED` plan) instead of
+  restarting on the new view.
+
+The counter reads "Snapshot DoF n / m" during a capture, even when the
+optional counter is off.
+
+Counter placement, revised after user feedback: top centre of the snap rect
+still overlapped the favorites bar, which the snap rect does not cover. The
+counter is now at the top right of the snap rect. Its top is placed below
+the lowest visible bottom edge among the views named `navigation_bar`,
+`favorite` (favorites bar) and `chiclet_bar` (notifications). The views are
+found by name, with the search retried at most every 60 frames until found,
+and are held as handles.
+
+Cost per slice: the snapshot buffer reallocation, the scratch target and the
+readback in `rawSnapshot`. At 0.3 s slices this is expected to be a small
+fraction, but it has not been measured.
+
+Non-DoF snapshots: nothing to slice. They are one `display()` pass, a
+readback and encoding. What blocks at large sizes is likely the single
+large render, buffer allocation and image encoding or scaling, which is not
+measured yet. Encoding on a worker thread would be the candidate; it is
+recorded as an idea, not implemented.
+
+First runtime results (user, 2026-09-24):
+- Slicing works: the log shows the 4000×4000 and window buffers
+  alternating about three times a second.
+- A 4000×4000 capture ran at about 5 samples/s (92 in 19 s). This is
+  intrinsic: about 7.7 times the pixels of the window.
+- **Thumbnail stall:** after a capture, the floater's thumbnail went through
+  `thumbnailSnapshot()` → `rawSnapshot()`. That is a blocking capture at
+  window size that re-rendered the whole snapshot target, which showed the
+  full-screen progress screen for many seconds. Fix: a tagged
+  `ASDoFRenderer::requestPreviewCapture()` hook before that call. The
+  thumbnail continues the live average with at most 16 new samples
+  (`PREVIEW_SAMPLES`), shows no progress screen and leaves a pending
+  capture alone. Scaling the preview image instead was rejected, because
+  the thumbnail has the window's aspect and a crop frame.
+- **Stuck at 2 / N:** every second slice saw a slightly different key,
+  from camera drift and/or the focus published by the live frame in
+  between. The capture then stopped as a "view change" (not logged at the
+  time), the floater's auto-refresh started a new one, and the cycle
+  repeated. Fix: a continuing capture ignores focus changes and drift
+  within 1e-4 (projection) and 1e-3 (modelview), about 1 mm / 0.06°. It
+  reinstalls the requested view's frozen matrices, and only a larger move
+  stops it. Capture start and view-change stops are now logged.
+- **Blocking progress screen misaligned:** the text used the font's UI
+  scale and the bar an inherited UI offset. The screen now loads UI
+  identity, zeroes the font origin and divides the text position by
+  `LLFontGL::sScaleX/Y`.
+- Live view during a capture: adds no samples (confirmed by design).
+- **"UI blocked, counter frozen at 14 / 2048":** the log showed the main
+  loop running at 3–5 FPS with slices progressing (353 samples in 83 s at
+  4000×4000), but nothing was presented. `rawSnapshot()` ends with
+  `gDisplaySwapBuffers = false`, which suppresses the next frame's swap by
+  upstream design. With a slice on every main-loop pass, no live frame was
+  ever shown. Fix: `ASDoFRenderer::resumeLiveView()` sets it back to true
+  in the pending branch of the snapshot preview hook. The live frame
+  renders a complete back buffer before its swap.
+- **Snapshot bokeh wrong, screenshot fine:** in a converged 2048-sample
+  4000×4000 capture (about 3 minutes), star bokeh appeared as several
+  copies side by side ("crowns"), and the moon was smeared sideways.
+  - Cause: the day cycle (sun, moon, star rotation) keeps advancing
+    between slices. The sky blender updates in steps
+    (`DEFAULT_UPDATE_THRESHOLD`), so each step leaves one copy.
+  - The live view averages over a much shorter time and shows it only as
+    slightly widened shapes. The old blocking capture ran no main loop, so
+    it never saw this.
+  - Fix: `ASDoFRenderer::isSceneFrozen()`, true while a capture is pending
+    or while the DoF floater's "Freeze all animations" is on. When it is
+    true, `LLEnvironment::update` skips `applyTimeDelta` and
+    `updateCloudScroll`, in a tagged block; the camera-yaw cache still
+    updates.
+  - Snow simulation pauses the same way. My first diagnosis blamed snow,
+    which was wrong: there was no snow in the scene. The snow pause is
+    kept for the same reason.
+  - After unfreezing, the sky catches up to the current time in one step.
+  - Other moving content between slices still smears, as it does in live
+    accumulation: avatar animation, particles, water, wind-driven trees.
+    Freezing is recommended.
+- **Star "crowns" persisted after the environment freeze (user, CA off:
+  still fan/lotus shapes).** A simulation of star bokeh with the viewer's
+  sample mirror (6 blades, 2048 samples, 90 px radius, 1 px dots) gave
+  clean hexagons for R4, R2 and Halton alike, with interior variation
+  of 3.6–6%. So the sample set is not the cause, and the sequence stays
+  R4. The real causes are in `lldrawpoolwlsky.cpp`:
+  - **Twinkle:** `starsV.glsl` sets each star's brightness from
+    `mod(time, 1.25)`, with time from `LLFrameTimer`. That value is
+    constant within a frame, so all samples of a snapshot slice share one
+    twinkle. Consecutive Kronecker samples trace arcs and rays across the
+    aperture, so each slice painted one arc at one brightness. Live frames
+    (2 samples each) average it out.
+  - **Rotation:** the star dome rotates by `gFrameTimeSeconds × 0.01°`,
+    about 1.8° over a 3-minute capture, and it also widens live hexagons
+    slightly.
+  - Fix, in tagged edits: `ASDoFRenderer::starRotationTime()` returns the
+    frame time recorded when the running average (re)started, carried
+    over by live seeding. `starTwinkleTime()` returns
+    `fract(index × 0.618034) × 1.25` per lens sample while accumulating.
+    Both pass the time through when not accumulating.
+- **Two captures per floater open (user saw a quick progress bar, then a
+  slow one):** in the log the floater opened at 12:02:42 and a 3440×1328
+  capture started, then 20 s later a 4000×4000 one.
+  - Cause: `LLFloaterSnapshot::onOpen` calls `updateSnapshot(true)` and
+    `updateControls` before selecting the last-used panel, so the preview
+    keeps its window size. The saved resolution only applies when the
+    first snapshot's "snapshot-updated" runs `updateControls` again.
+  - Harmless without DoF (one render); with DoF, a whole wasted capture.
+  - Fix: a tagged extra `impl->updateControls(this)` right after the panel
+    `onOpen`, so the size is set before the first idle capture.
+- A size or DoF-setting change during a pending capture now restarts it,
+  with a fresh time limit. Previously it counted as a view change and
+  finished with the old-size average. Only camera movement ends a capture
+  early (`sameSettings()` check).
+- **Progress preview (user request):** the floater's preview area stayed
+  gray during a capture.
+  - Each slice already reads the partial full-resolution average into
+    `mPreviewImage`.
+  - In the pending branch of the tagged hook,
+    `ASDoFRenderer::isCapturePreviewDue()` fires first at 8 samples, then
+    every 32. When it does, the hook sets `mThumbnailSubsampled`
+    temporarily and calls `generateThumbnailImage(true)`, which is a CPU
+    scale of the partial image to the thumbnail at the snapshot's own
+    aspect, with no render. It then restores the flag.
+  - The final thumbnail keeps the normal forced path when the capture
+    completes.
+  - No "snapshot-updated" notify mid-capture, so the save buttons stay
+    disabled.
+  - **Follow-up (user: correct ratio for an instant, then stretched):**
+    `updateLayout()` runs `setThumbnailImageSize()` on every draw from
+    `mThumbnailSubsampled`, so restoring the flag right after generation
+    re-sized the square thumbnail to window proportions.
+    - The flag now stays set for the whole capture.
+    - `ASDoFRenderer::setProgressThumbnail()` records that the hook set it,
+      so previews that are subsampled by design (the share floaters) are
+      untouched.
+    - It is cleared before the final thumbnail, which gets the normal
+      window framing.
+- Counter visibility (user request): the counter is shown only while
+  samples are being added, meaning a live frame with the ACCUMULATE plan
+  or a pending snapshot capture. It disappears once converged, while
+  moving (PINHOLE) and in the debug view.
+
+Dot smoothing (user, 2026-09-24): 2 looked ideal. The default is now 2.0, the
+slider goes to 10, and `RESIDUAL_MAX_PIXELS` rose from 6 to 24 px so higher
+values are not silently clamped.
+
+### Axial chromatic aberration (mode 2, optional, 2026-09-24)
+
+User request: optional and off by default. Lateral CA stays the existing
+post effect after DoF, which is the physically right order, because the
+per-channel magnification applies to the whole image, bokeh included. Axial
+(longitudinal) CA is a per-wavelength focus distance, so it belongs inside
+the lens integration.
+
+Model: each lens sample also stands for a wavelength.
+- **Spectral coordinate:** `ASDoFAperture::spectralCoordinate(i)` is a
+  base-2 radical inverse rotated by 1/2, mapped to s ∈ [−1, 1): blue −1,
+  green 0, red +1. It is nested and deterministic, decorrelated from the R4
+  lens and jitter dimensions, and sample 0 is green.
+- **Colour weights:** `spectralWeights(s)` = (1 + s, 1.5(1 − s²), 1 − s).
+  Each averages to exactly 1 over uniform s, so in-focus content stays
+  neutral and brightness is preserved.
+- **Focus:** per sample, 1/S′ = 1/S − s·α/(2f). α is the red-to-blue focal
+  shift over the focal length, from the thin lens with a fixed sensor: red
+  focuses farther, blue nearer. The inverse focus drives the projection
+  shear; a negative value (beyond infinity) is valid, and |1/S′| is kept at
+  least 1e−6. The same value drives the residual smoothing's `inv_focus`.
+
+Accumulation:
+- `sample_weight` is now a `vec4`: RGB are the colour weights, and alpha
+  (glow) stays 1 per sample.
+- Normalization and seeding use a uniform `vec4`.
+- There is no extra render pass. Colour noise converges with the sample
+  count.
+
+Settings and UI:
+- `ASDepthOfFieldApertureAxialCA` (bool, off) and
+  `ASDepthOfFieldApertureAxialCAStrength` (percent of f, 0–2, default 0.2,
+  typical of real fast lenses).
+- Both are part of the accumulation key and `sameSettings()`, so a change
+  restarts the average.
+- Floater: a checkbox (mode 2) and an "Aberration (% of f)" slider, enabled
+  only with mode 2 and the checkbox on, via the non-persisted
+  `ASDepthOfFieldUIAxialCA` flag synced by `syncModeFlags()`. That function
+  now listens to the checkbox too.
+- Both settings are in Reset tuning defaults. The floater height is now 736.
+
+Magnitude with defaults: at f = 50 mm and focus 2 m, the red-blue spread
+is 0.04 in inverse focus. Against a background blur scale of 0.5, the rims
+are about 8% of the bokeh radius.
+
+Reference (`dof_reference.py`): the mirrors are
+`viewer_spectral_coordinate`, `viewer_spectral_weights` and
+`viewer_axial_ca_inv_focus`. Two tests were added:
+- `test_axial_ca_weights_neutral_and_nested`: channel means within the
+  Koksma–Hlawka bound (log₂N + 3)/N for N = 16…2048, including N = 1000.
+- `test_axial_ca_focus_shift_orders_channels`.
+
+All 30 tests pass.
+
+## Design notes — screen-space gather comparison (2026-09-24)
+
+User decision: keep aperture re-rendering. Screen-space gather designs remain
+comparison points only; no code is taken from them.
+
+Own design choices for the remaining modules:
+- Aperture shape (`asdofaperture`): polygon edge radius `cos(π/n)/cos(θ_local)`
+  blended to a circle by roundness (standard regular-polygon geometry).
+  Equal-weight lens samples come from the R2 low-discrepancy sequence, so
+  prefixes are nested. The angle is inverted through the per-blade area CDF
+  (∝ boundary²) and the radius is `sqrt(v)·boundary`, which gives uniform area
+  density and normalized brightness for any shape.
+- Autofocus candidates to evaluate later: a robust weighted depth median over a
+  focus window, smoothed in reciprocal depth, versus Firestorm's cosine rack.
+  Must run once per presented frame.
+- CoC model: standard thin lens, `R·|1/S − 1/d|` (`ASDoFCamera::cocRadiusPixels`),
+  normalized by the vertical sensor size derived from the default FOV.
+
+Rejected for this plan (section 2 invariant): foreground layer accumulation
+with hole fill infers background hidden behind the foreground from neighbouring
+pixels. That is the central-view hole filling this plan excludes for hair and
+Exact OIT. Highlight sprites and highlight gamma/color shaping are artistic
+effects outside scope. Compute and variable-rate passes are unavailable on the
+GL 4.1 baseline.
+
+## 1. Decision and delivery contract
+
+Replace the advanced screen-space transparent DoF architecture with aperture-sampled scene rendering. Render real geometry from different positions on a virtual lens, resolve the selected transparency compositor independently for each position, and average complete linear-HDR samples before display processing.
+
+This is the production architecture, not merely an expensive oracle followed by another aggregate-layer replacement. A small independent numerical reference validates it; the same scene-rendering implementation delivers the final images. All milestones below are internal implementation/validation steps, not intermediate products presented as a finished fix.
+
+Quality means converging to the selected viewer renderer evaluated through a thin lens. It does not mean path-traced lighting, physical glass refraction absent from the viewer, or keeping an entire three-dimensional face sharp at an arbitrarily shallow depth of field. A point on the focal plane must remain registered and sharp; points outside it must blur consistently with the lens model.
+
+Finite samples have integration error. No promise of flawless output at every sample count, fixed real-time FPS, unlimited geometry or unlimited transparency memory. Failures must be visible as failed acceptance gates, not concealed with hair-specific thresholds or silent changes to the algorithm.
+
+## 2. Why this replaces the current approach
+
+The current rigged/world capture compresses several depths into one representative depth per class. The failed Exact-node experiment also separated focused and defocused sets before proving their visibility/composition. Neither representation solves aperture-dependent occlusion.
+
+New invariant: resolve visibility and blending for each lens sample BEFORE averaging samples. Do not average layer opacity and then use it to attenuate independently averaged background. Do not split all fragments into three global background/focus/foreground buckets.
+
+Rerasterization exposes geometry hidden from the central camera, including background behind foreground hair. Center-view fragments, depth peeling at the central view, and hole filling cannot in general supply that information.
+
+Exact OIT keeps its existing per-sample ordering, blend factors, glow and shallow-list behavior. We do not require its linked lists to remain globally sorted for a later DoF gather. AVBOIT remains an approximate compositor; DoF must not claim to turn it into Exact OIT. Standard and AYAstorm retain their own transparency behavior. Exact OIT is the principal high-quality acceptance baseline.
+
+## 3. Optical model and controls
+
+Implement an explicit thin-lens camera in a new owned camera-math module. Define positive focus distance, world/metre conversion, effective sensor dimensions, focal length, f-number, aperture orientation and pixel/aspect scaling in one place. Calibrate against the existing camera/FOV behavior; eliminate ambiguous millimetre/metre and CoC radius/diameter conversions.
+
+For each lens position, translate the camera parallel to its image plane and use an off-axis projection that keeps the chosen focal plane fixed. Do not toe-in/rotate the camera toward the focus point. Derive and unit-test matrices against independently generated lens rays, including the viewer's handedness and depth conventions.
+
+Use deterministic, nested, well-distributed aperture samples with correct probability weights. Support circular and rounded polygonal apertures, blade count, rotation and anamorphic shape. Maintain normalized brightness when aperture shape or sample count changes. Jointly sample the pixel footprint for subpixel hair; lens sampling alone does not cure raster edge aliasing. Bokeh follows the sampled aperture, not an added highlight sprite approximation.
+
+Keep focus selection, focal length, f-number and aperture UI after correcting their mapping. New quality controls describe actual samples/convergence. Independent near/far radius, per-depth maximum-CoC clipping, gather resolution and highlight boost remain legacy-only controls with saved values preserved. They must not silently affect the physical renderer. If an aperture limit is needed, constrain the whole lens explicitly rather than clipping blur independently at each depth. No extra artistic lens effects in this project.
+
+## 4. Frame and sample lifecycle
+
+Introduce an owned aperture-render coordinator; do not recursively call display(). Separate once-per-presented-frame work from repeatable scene rendering with minimal upstream hooks.
+
+Once per output frame: update scene state, animations, skinning, particles, texture state, camera/focus and lighting clocks. Freeze the render-visible state and draw inputs for all lens samples of that frame. A rendering pause is not a network/simulator pause. Do not advance simulation, focus smoothing, exposure adaptation or temporal histories once per sample.
+
+Per sample: install scoped camera/projection state, establish valid culling, render opaque and transparent geometry and sample-dependent lighting, finish that sample's selected alpha compositor, and accumulate the complete HDR result plus any separate glow channel. Every sample gets correct depth and fresh OIT capture/resolve state. Central-view depth and occlusion queries must not reject surfaces visible from another lens position.
+
+After all samples: normalize HDR accumulation, apply exposure/tone mapping, bloom and display effects in the established compatible order, render HUD/UI once and present once. Disable both legacy and current advanced DoF inside the new path. Restore ordinary camera, matrices, viewport, FBO stack, depth/blend state and renderer flags on every success, cancellation and failure path.
+
+Keep an unshifted camera/depth result for picking and consumers whose contract requires it. Do not average depth or publish the last lens sample as the main camera history. Audit screen-space reflections, AO, volumetrics, water, reflection probes, motion blur, AA and snapshots individually. View-dependent effects must use sample-consistent inputs; shared caches are allowed only where their camera coverage and semantics remain valid. Temporal consumers update once or use explicit isolated sample state. Never silently disable an effect to pass acceptance.
+
+## 5. Culling, transparency and hidden geometry
+
+Initially evaluate culling for each lens sample without reusing central-view occlusion rejection. Freeze LOD policy consistently over the aperture to avoid geometry switching between samples. Later use a conservative union of lens frusta where equivalent. Include sky, far clip, water/pre-post-water ordering, attachments, alpha masks, PBR/legacy/fullbright content, emissives and particles.
+
+Exact OIT must clear/resolve per sample and keep fences, node ownership, validation and pool growth correct even though samples share one presented frame. Stream samples through a reusable node pool rather than retaining all sample lists. Audit existing beginFrame assumptions: simulation frame and render sample are distinct identities.
+
+On node overflow, allocation or shader failure, discard the incomplete output; do not average failed and successful compositors together. Retry the same frozen state safely if possible, otherwise report failure or a clearly identified whole-frame fallback. Never silently use truncated nodes or fall back to the broken aggregate DoF. Apply the same whole-output consistency rule to AVBOIT failures.
+
+## 6. Accumulation, motion and responsiveness
+
+Use numerically stable full-precision HDR accumulation and normalized weights. Keep source-over coverage and additive/glow semantics from the resolved sample. Do not clamp signed contributions or highlights arbitrarily. Test HDR range and cancellation before selecting a lower precision format.
+
+Provide one renderer with two scheduling policies:
+
+- Live: complete each output from one frozen scene state. Never average consecutive animation states merely to obtain more lens samples. Keep a deterministic sample sequence across camera motion to avoid random per-frame sparkle. Quality remains sample-count limited and is reported honestly.
+- Converged capture: progressively complete one frozen render state, allowing cancellation and UI responsiveness between bounded GPU submissions. Restart on invalidated state; do not mix frames. No ghosting-prone history reuse in the correctness path.
+
+Support nested sample-count sweeps and convergence diagnostics. Determine production presets from measurements, not an assumed 16/32/96 budget. Bright small lights and moving thin hair must both converge; a global average error alone is insufficient. Reaching a sample/time cap is not automatically convergence.
+
+## 7. Salvage and code organization
+
+Reuse camera-control plumbing, UI framework, HDR target management patterns, shader registration, diagnostics, known scenes and existing OIT compositors. The current opaque blur is useful for comparisons, but it is not combined into aperture-rendered production output.
+
+Add owned modules such as asdofcamera, asdofaperture and asdofaccumulation (final file split kept minimal). ASDepthOfField remains the selection/settings boundary. Isolate substantial orchestration outside upstream display/pipeline modules.
+
+Expected integration boundaries: llviewerdisplay.cpp scene submission, pipeline.cpp/.h HDR finalization and sample boundaries, llviewercamera projection/state, asoitdispatcher and renderer lifecycle, shader registration and settings/UI. Existing asExactOIT capture/composite shaders should need no new DoF layer representation. File names must follow current asexactoit ownership, not stale fsexactoit references in historical notes.
+
+All required upstream edits retain original code and ownership tags. Author chanayane@firestorm. No Git mutations, no shader-version bump, and no agent-run project builds. Keep the current experimental renderer intact until the new one passes acceptance; then remove its obsolete auxiliary captures/gathers from the new path and clean up only proven-unused resources. DoF-off must acquire no new resources or passes.
+
+## 8. Independent reference and acceptance tests
+
+Before viewer integration, build a small CPU thin-lens reference for analytically intersectable opaque planes, alpha-textured cards and ordered transparent stacks. It must calculate visibility independently of the GPU implementation and reproduce the viewer blend equations for nonstandard blends. Include a dense double-precision integration and analytic pinhole/focal-plane cases.
+
+Freeze the following initial acceptance gates before implementation; do not relax them after observing a regression:
+
+- Camera math: focal-plane reprojection error below 0.01 output pixel across lens positions, zoom/FOV, aspect ratio and resolution.
+- Pinhole limit: matches the same compositor without DoF within established render-target precision; no face/color/coverage substitution.
+- Synthetic normalized linear-color cases: RMS error at most 0.001 and 99th-percentile absolute error at most 0.01 against a converged independent reference. Measure alpha/coverage separately in synthetic tests.
+- Isolated unoccluded strand/highlight tests: integrated contribution within 1% of reference, with adequate image guard band. Do not demand energy invariance where real occlusion changes it.
+- At least N/2, N and 2N convergence comparisons; reference itself must converge before judging the candidate. Use local hairline, silhouette and highlight metrics, not only whole-image metrics.
+- Slow zoom, focus rack, camera translation and animated strands: no systematic disappearing/reappearing hair, stale ghosts or discontinuities beyond measured finite-sample reference error.
+- Scene suite: baby hair against scalp, rear hair, overlapping near/focused/far hair, glass before/behind hair, lamp panes/frame, foliage, bright small lights, custom blend/glow jewelry, water, screen edges, thin alpha masks, large apertures, close camera and equal-depth overlays. Compare opaque/transparent intersections explicitly.
+- More than 4/8/16 overlapping surfaces, resource overflow, resize, shader reload, toggles, snapshots, camera cuts and interrupted captures. No arbitrary layer-count acceptance ceiling.
+- All four transparency modes tested against their own pinhole and aperture reference. Exact OIT quality is not inferred from AVBOIT's appearance or vice versa.
+
+Record lens settings, camera, animation time, compositor, GPU, resolution and sample count with each comparison. Save failure images and metrics. User reports remain evidence; synthetic success does not override a visible regression.
+
+## 9. Implementation milestones and gates
+
+1. Freeze baseline and specification. Record the existing 30 FPS off / 18 FPS experimental result, current failures and exact test settings. Inventory once-per-frame side effects and write the sample-state contract. Complete camera math/reference tests. No viewer rendering rewrite before this gate passes.
+2. Implement isolated single-sample rendering. A zero-aperture sample must reproduce ordinary output and leave all state restored. Audit GL 4.1 baseline and newer OIT backends. No multiple-lens debugging until single-sample equivalence passes.
+3. Implement complete aperture integration. Re-render visibility and transparency for each lens sample, accumulate HDR/glow, integrate post effects and lifecycle handling. Pass the synthetic and known-scene quality gates; quantify sample convergence. No release as a finished renderer before this gate passes.
+4. Optimize that implementation. Measure CPU/GPU stage timing, memory high-water mark, sample count and frame-time distributions. Reuse invariant animation/skinning, safe lighting caches and conservative visibility work first. Every optimization must pass the same images/metrics. No layer collapse, silent lower resolution, missed lens views, unsafe tile skips or unvalidated temporal denoising.
+5. Final acceptance and cleanup. Run the full quality, motion, compositor, state-failure and performance matrix. Publish measured speed/quality tradeoffs and select honest presets. Replace the experimental advanced path only after acceptance; update the single project plan with measured results and retained limitations.
+
+Each implementation milestone batches changes into a reviewable unit before asking the user for a build. Do not request a build per small shader edit. The user performs all viewer builds and runtime checks.
+
+## 10. Performance and resource contract
+
+Quality-first is not a promise of 25 FPS. Repeated scene rendering can be substantially slower than today's 18 FPS before optimization, especially in alpha-heavy scenes. Measure one lens sample and estimate N-sample cost early; report it before a lengthy integration phase, without replacing the approved optical model with a shortcut.
+
+Stream samples so accumulation memory is O(pixels), not O(samples × fragments). Explicitly budget extra HDR accumulation, glow, convergence storage, retained central-view data and any frozen-state resources at 1080p, 1440p and 4K. Reuse OIT storage with correct fences. No synchronous per-sample CPU readback, unbounded single GPU invocation, or repeated scene updates. Keep rendering cancellable and avoid driver watchdog stalls.
+
+The selected requirement defers a fixed FPS floor; it does not waive reporting unusable latency. If the required quality remains too expensive for live use, report measured limits and retain the converged-capture capability. Do not call the complete product realtime until measurements support it. A later strict performance requirement may require an explicit scope decision; this plan cannot guarantee mutually incompatible quality/time limits.
+
+## 11. Approval and source record
+
+Primary optics reference: PBRT 4th edition, Projective Camera Models, thin-lens section: https://www.pbr-book.org/4ed/Cameras_and_Film/Projective_Camera_Models . It defines aperture sampling and focus-plane ray construction. The proposed raster multi-view orchestration is our application of that camera model to this repository, not a claim that PBRT supplies the viewer integration.
+
+Repository evidence: current asdepthoffield.cpp/.h and asDepthOfField shaders; asexactoit.h and asExactOITCompositeF.glsl (per-node depth/color/blend/glow and shallow paths); asavboit.h; asoitdispatcher.h; llviewerdisplay.cpp; pipeline.cpp; existing DoF research notes and rendering backlog. Previous aggregate and selected-node failures are superseded as implementation directions, retained as historical evidence.
+
+On approval, copy this exact raw plan file into doc/ayanestorm-depth-of-field-final-implementation-plan.md using cp; do not regenerate it. That becomes the single authoritative implementation plan. Historical research/backlog documents receive a short pointer instead of another competing roadmap. Internal validation gates are part of this plan, not requests to ship temporary half-solutions.
