@@ -69,4 +69,6 @@
   <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_save_preset" top="278" width="98" label="Save preset..." />
   <combo_box allow_text_entry="false" follows="left|top" height="23" layout="topleft" left="420" name="as_light_preset_combo" top="304" width="205" tool_tip="Presets saved to disk." />
   <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_load_preset" top="330" width="205" label="Load preset..." />
+
+  <check_box follows="left|top" height="16" label="No eye highlights" layout="topleft" left="420" name="as_light_no_eye_specular" top="366" width="205" control_name="ASLightRigNoEyeSpecular" tool_tip="Removes My Lights specular highlights (catchlights) from your avatar's eyes. Eyes still receive the light's diffuse illumination. Shader backend only." />
 </floater>

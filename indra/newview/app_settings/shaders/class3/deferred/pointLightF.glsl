@@ -67,11 +67,35 @@ void pbrPunctual(vec3 diffuseColor, vec3 specularColor,
 
 GBufferInfo getGBuffer(vec2 screenpos);
 
+// <AS:Chanayane> My Lights "no eye highlights": view-space spheres (.w = radius)
+// around the self avatar's eye joints where specular is suppressed. The count
+// is left at 0 for stock lights, so their output is unchanged.
+uniform int as_eye_mask_count;
+uniform vec4 as_eye_mask[4];
+
+float asEyeSpecularScale(vec3 pos)
+{
+    float scale = 1.0;
+    for (int i = 0; i < 4; ++i)
+    {
+        if (i < as_eye_mask_count)
+        {
+            float d = length(pos - as_eye_mask[i].xyz) / as_eye_mask[i].w;
+            scale = min(scale, smoothstep(0.75, 1.0, d));
+        }
+    }
+    return scale;
+}
+// </AS:Chanayane>
+
 void main()
 {
     vec3 final_color = vec3(0);
     vec2 tc          = getScreenCoord(vary_fragcoord);
     vec3 pos         = getPosition(tc).xyz;
+    // <AS:Chanayane> My Lights eye-specular mask.
+    float as_eye_spec = asEyeSpecularScale(pos);
+    // </AS:Chanayane>
     GBufferInfo gb = getGBuffer(tc);
 
     vec3 n = gb.normal;
@@ -114,7 +138,10 @@ void main()
 
         pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, n.xyz, v, normalize(lv), nl, diffPunc, specPunc);
 
-        final_color += intensity* clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10));
+        // <AS:Chanayane> My Lights eye-specular mask.
+        // final_color += intensity* clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10));
+        final_color += intensity* clamp(nl * (diffPunc + specPunc * as_eye_spec), vec3(0), vec3(10));
+        // </AS:Chanayane>
     }
     else
     {
@@ -141,7 +168,10 @@ void main()
             if (nh > 0.0)
             {
                 float scol = fres*texture(lightFunc, vec2(nh, spec.a)).r*gt/(nh*nl);
-                final_color += lit*scol*color.rgb*spec.rgb;
+                // <AS:Chanayane> My Lights eye-specular mask.
+                // final_color += lit*scol*color.rgb*spec.rgb;
+                final_color += lit*scol*color.rgb*spec.rgb*as_eye_spec;
+                // </AS:Chanayane>
             }
         }
 
