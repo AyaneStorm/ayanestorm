@@ -1299,7 +1299,10 @@ void LLPipeline::refreshCachedSettings()
     RenderShadowResolutionScale = gSavedSettings.getF32("RenderShadowResolutionScale");
     RenderDelayCreation = gSavedSettings.getBOOL("RenderDelayCreation");
 //  RenderAnimateRes = gSavedSettings.getBOOL("RenderAnimateRes"); <FS:Beq> FIRE-23122 BUG-225920 Remove broken RenderAnimateRes functionality.
-    FreezeTime = gSavedSettings.getBOOL("FreezeTime");
+    // <AS:Chanayane> A pending aperture DoF capture keeps the world frozen.
+    // FreezeTime = gSavedSettings.getBOOL("FreezeTime");
+    FreezeTime = gSavedSettings.getBOOL("FreezeTime") || ASDoFRenderer::isWorldFrozen();
+    // </AS:Chanayane>
     DebugBeaconLineWidth = gSavedSettings.getS32("DebugBeaconLineWidth");
     RenderHighlightBrightness = gSavedSettings.getF32("RenderHighlightBrightness");
     RenderHighlightColor = gSavedSettings.getColor4("RenderHighlightColor");

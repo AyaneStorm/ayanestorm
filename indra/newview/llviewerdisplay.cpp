@@ -844,7 +844,13 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     gPipeline.resetFrameStats();    // Reset per-frame statistics.
 
-    if (!gDisconnected && !LLApp::isExiting())
+    // <AS:Chanayane> While an aperture DoF snapshot capture runs, live frames
+    // skip the (frozen) 3D scene and draw only the UI over the capture.
+    // if (!gDisconnected && !LLApp::isExiting())
+    const bool as_frozen_view = !gSnapshot && !gDisconnected && !LLApp::isExiting() &&
+        ASDoFRenderer::isLiveViewFrozen();
+    if (!gDisconnected && !LLApp::isExiting() && !as_frozen_view)
+    // </AS:Chanayane>
     {
         // Render mirrors and associated hero probes before we render the rest of the scene.
         // This ensures the scene state in the hero probes are exactly the same as the rest of the scene before we render it.
@@ -1207,6 +1213,17 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gPipeline.clearReferences();
     }
+    // <AS:Chanayane> Frozen live view during an aperture DoF capture.
+    else if (as_frozen_view)
+    {
+        // 3D matrices for world-anchored UI (name tags, selection); the
+        // camera stays still while the world is frozen.
+        display_update_camera();
+        LLAppViewer::instance()->pingMainloopTimeout("Display:RenderUI");
+        render_ui();
+        swap();
+    }
+    // </AS:Chanayane>
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
 
@@ -1657,7 +1674,15 @@ void render_ui(F32 zoom_factor, int subfield)
     }
 
     // apply gamma correction and post effects
-    gPipeline.renderFinalize();
+    // <AS:Chanayane> Aperture DoF capture: live frames show the developing
+    // capture instead of the scene; each capture slice keeps its image.
+    // gPipeline.renderFinalize();
+    if (!ASDoFRenderer::presentFrozenView())
+    {
+        gPipeline.renderFinalize();
+        ASDoFRenderer::keepFrozenView();
+    }
+    // </AS:Chanayane>
 
     {
         LLGLState::checkStates();

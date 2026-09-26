@@ -1289,6 +1289,99 @@ subsampled: the finished picture, scaled to the thumbnail. It remains so
 until the user refreshes. Other modes keep vanilla framing
 (`mThumbnailSubsampled` false; nothing else sets it).
 
+### Frozen world and UI-only screen during a sliced capture (2026-09-26)
+
+User request: during snapshot sampling the world kept updating between
+slices. Avatars walked (in T-pose with "Freeze animations", which only sets
+the animation time factor to 0) and could push the user's avatar. Each live
+frame also re-rendered the whole scene, taking time from sampling. Wanted:
+freeze the world and the screen, keep the snapshot preview progress and chat
+typing working.
+
+Why server movement showed: messages must still be processed (circuit acks,
+object state; dropping them would disconnect the viewer or lose state), but
+applying them to what is drawn can wait. Object messages only change the
+`LLViewerObject` position and put the drawable on the moved list. The drawn
+transform changes in `LLPipeline::updateMove()`, and for avatars in
+`LLVOAvatar::updateCharacter()` → `updateMoveDampedAsync()`. Avatar roots and
+the agent camera follow the *render* (drawable) position
+(`LLVOAvatar::updateCharacter`, `LLAgent::getPositionAgent`). The upstream
+freeze-frame mechanism (`LLPipeline::FreezeTime`, used by the snapshot
+floater's freeze frame and the 360 capture) blocks exactly those, so the
+server's pushes wait until the capture ends.
+
+Mechanism (`ASDoFRenderer::isWorldFrozen()`, on while `isCapturePending()`):
+- `setWorldFrozen()` pauses every `LLCharacter` (`requestPause()`, same as
+  the snapshot floater's freeze frame) and sets `LLPipeline::FreezeTime`.
+  Tagged hooks: `LLPipeline::refreshCachedSettings()` ORs the freeze in so a
+  settings refresh cannot clear it; `LLViewerObjectList::update()` takes its
+  avatar-only idle branch on `LLPipeline::FreezeTime` too (the vanilla branch
+  reads the setting); `LLAppViewer::idle()` skips particle simulation.
+- Thaw: when the last slice ends the capture, when a live frame finds no
+  pending capture (abandoned after 2 s, or replaced by a blocking snapshot),
+  on mode change and in `releaseResources()`. The moved list then applies
+  every position received meanwhile; avatars resync on their next idle
+  update. The thaw also drops the live average's key (user request): the
+  world has moved on, so the live view restarts from a pinhole frame instead
+  of continuing a sum from before the capture.
+- Live frames show the developing capture, not the world (user request,
+  same day: see whether enough samples accumulated). Each slice's
+  `render_ui()` calls `keepFrozenView()` right after `renderFinalize()`
+  (post-processed, before any UI). It blits the world-view rect of the
+  bound framebuffer (back buffer, or `rawSnapshot()`'s full-size scratch
+  target) with `GL_LINEAR` into `sFrozenView`: RGBA8, at most twice the
+  window fit, manual mips. `display()` skips the whole 3D block while
+  `isLiveViewFrozen()`: it calls `display_update_camera()` (3D matrices for
+  name tags and selection), then `render_ui()`, where `presentFrozenView()`
+  clears the window and draws the image in place of `renderFinalize()`. The
+  image is centred in the world view and fitted, never above 1:1, with
+  trilinear sampling (the accumulate shader's `COPY` mode). HUD
+  attachments, floaters, chat, the snapshot preview and the "Snapshot DoF
+  n / m" counter still draw. No world frame is rendered during a capture.
+  When a snapshot smaller than the window is cropped to another aspect,
+  the screen shows the uncropped render.
+- Slices shortened from 0.3 to 0.15 s (`CAPTURE_SLICE_SECONDS`): a UI-only
+  frame is cheap, and UI refreshes about 6 times a second instead of 3.
+  Per-slice readback overhead grows accordingly; to be measured.
+
+Not frozen: new objects rezzing and killed objects (created or removed by
+the slices' own `display()`), and texture/mesh LOD loads, which continue
+between slices.
+
+Esc on Linux and macOS: `captureCancelRequested()` read only Windows'
+`GetAsyncKeyState`, so Esc did nothing elsewhere. A tagged hook at the top
+of `LLViewerWindow::handleKey()` (every key-down, all platforms) calls
+`ASDoFRenderer::noteEscapeKey()`, which records Esc while a sliced capture
+is pending; the next slice consumes it. An edge event, so a press that
+starts and ends during a slice is not missed (the key level would be).
+Blocking captures (tiled, File > Take Snapshot to Disk; main loop
+suspended, no input events) read Esc directly on every platform, per sample
+and at capture start (stale press discarded), only while the viewer has the
+keyboard:
+- Windows: `GetAsyncKeyState(VK_ESCAPE) & 0x8001` (down now or since the
+  last query), foreground window only.
+- Linux (SDL2, the default build; SDL1 builds only get the sliced path):
+  `SDL_PumpEvents()` then `SDL_PeepEvents(SDL_PEEKEVENT, SDL_KEYDOWN)`. It
+  peeks, removing nothing, so the viewer handles the events afterwards. An
+  Esc key-down newer than the last one seen (timestamp) counts once. The
+  only SDL event filter answers X11 clipboard requests, which is safe
+  mid-render. SDL sends keyboard events to the focused window only.
+- macOS: `CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState,
+  kVK_Escape 0x35)` while `gFocusMgr.getAppHasFocus()`. It reads the level
+  only (no press history outside the event loop), so a tap shorter than
+  one sample can be missed; holding Esc stops the capture.
+
+The progress screen and the counter show "(Esc to stop)" on every platform.
+Linux and macOS paths are not built or tested by us (Windows-only builds).
+
+Esc and the final smoothing: the log showed recent stops as "stopped by a
+view change". Esc also resets the camera, and the capture sees that first.
+In that branch `planSnapshot()` kept the *new* camera for the last slice,
+so its sample-0 depth, which `presentAverage()` smoothing reads (defocus
+mask, source coverage), was another view's. The last slice now always
+renders the capture's matrices, like the drift branch, so the finished
+average gets its final smoothing of bright lights.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

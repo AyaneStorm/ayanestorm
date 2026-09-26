@@ -18,7 +18,9 @@
  * are time-sliced (requestCaptureSlice()): each rawSnapshot() call renders
  * about CAPTURE_SLICE_SECONDS of samples and returns to the main loop, so
  * networking and UI keep running; other callers and tiled snapshots block,
- * within a 30 s budget.
+ * within a 30 s budget. Between slices the world is frozen and live frames
+ * draw only the UI over the developing capture (isWorldFrozen(),
+ * isLiveViewFrozen()).
  * ASDepthOfFieldApertureDebugSample >= 0 renders only that sample, unaveraged. Upstream hooks: llviewerdisplay.cpp (beginSample,
  * renderRemainingSamples) and pipeline.cpp (focus publication, legacy blur
  * skip, endSample, once-per-frame matrix capture guard). Shaders register
@@ -66,10 +68,35 @@ namespace ASDoFRenderer
     // samples rendered so far.
     bool isCapturePending();
 
+    // Esc key-down from LLViewerWindow::handleKey (all platforms): stops a
+    // pending sliced capture at its next slice. Blocking captures (no input
+    // events) read Esc directly: Windows key state, SDL2 queue peek, macOS
+    // CoreGraphics key state.
+    void noteEscapeKey();
+
     // True while a sliced capture is pending or the DoF floater's "Freeze
     // all animations" is on: time-driven scene changes (sky and stars, cloud
     // scroll, snow) pause so averaged renders see one instant.
     bool isSceneFrozen();
+
+    // True while a sliced capture is pending: the world stays at one instant
+    // between slices. Drawables stop moving (LLPipeline::FreezeTime, which
+    // LLPipeline::refreshCachedSettings() keeps set), so server position
+    // updates (avatars walking, pushes) wait until the capture ends; avatars
+    // are paused and particles stop (llappviewer.cpp idle).
+    bool isWorldFrozen();
+
+    // Live frames during a capture skip the 3D scene and show the capture's
+    // developing picture under the UI. Each slice's render_ui() calls
+    // keepFrozenView() right after renderFinalize(): it keeps that finished
+    // partial image, reduced and mipmapped. display() skips the scene when
+    // isLiveViewFrozen() (a kept image exists; also ends an abandoned
+    // capture); render_ui() then calls presentFrozenView() instead of
+    // renderFinalize() (false when this frame rendered the scene), which
+    // draws the image fitted to the world view, at most 1:1.
+    bool isLiveViewFrozen();
+    bool presentFrozenView();
+    void keepFrozenView();
 
     // Star dome state (lldrawpoolwlsky.cpp) while lens samples accumulate:
     // rotation uses the time the running average started, so stars do not

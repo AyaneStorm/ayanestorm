@@ -29,6 +29,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "asexactoit.h"
 #include "asavboit.h"
+#include "asdofrenderer.h" // aperture DoF capture world freeze
 // </AS:Chanayane>
 
 #include "llappviewer.h"
@@ -6322,7 +6323,13 @@ void LLAppViewer::idle()
         gPipeline.updateMove();
     }
 
-    LLWorld::getInstance()->updateParticles();
+    // <AS:Chanayane> Particles stay still during an aperture DoF capture.
+    // LLWorld::getInstance()->updateParticles();
+    if (!ASDoFRenderer::isWorldFrozen())
+    {
+        LLWorld::getInstance()->updateParticles();
+    }
+    // </AS:Chanayane>
 
     if (gAgentPilot.isPlaying() && gAgentPilot.getOverrideCamera())
     {

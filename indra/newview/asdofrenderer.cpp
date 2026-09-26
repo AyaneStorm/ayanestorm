@@ -13,6 +13,7 @@
 #include "asdofaperture.h"
 #include "asdofcamera.h"
 #include "llappviewer.h"
+#include "llcharacter.h"
 #include "llfloater.h"
 #include "llfontgl.h"
 #include "llgl.h"
@@ -33,8 +34,15 @@
 #include "llwindow.h"
 #include "pipeline.h"
 
+#include "llfocusmgr.h"
+
+// Capture cancel: direct Esc reads (see captureCancelRequested()).
 #if LL_WINDOWS
-#include "llwin32headers.h" // capture cancel: GetAsyncKeyState
+#include "llwin32headers.h"
+#elif LL_SDL2
+#include "SDL2/SDL.h"
+#elif LL_DARWIN
+#include <CoreGraphics/CGEventSource.h>
 #endif
 
 extern bool gCubeSnapshot;
@@ -58,8 +66,10 @@ namespace
     // Time-sliced captures return to the main loop between slices.
     constexpr F32 MAX_SLICED_CAPTURE_SECONDS = 600.f;
     // Sample rendering per slice; the main loop (networking, UI, one live
-    // frame) runs between slices.
-    constexpr F32 CAPTURE_SLICE_SECONDS = 0.3f;
+    // frame) runs between slices. Live frames are UI-only during a capture
+    // (isLiveViewFrozen()), so short slices keep typing responsive at little
+    // cost to sampling.
+    constexpr F32 CAPTURE_SLICE_SECONDS = 0.15f;
     // A pending capture whose caller stopped calling (floater closed) is
     // abandoned after this long.
     constexpr F32 CAPTURE_ABANDON_SECONDS = 2.f;
@@ -214,6 +224,70 @@ namespace
     S32 sCaptureMaxSamples = 1;
     S32 sCapturePreviewSamples = 0; // samples in the last preview refresh
     LLTimer sSliceTimer;            // started at each slice
+    bool sEscapePressed = false;    // Esc key-down during a pending capture
+
+    // World freeze while a sliced capture is pending (setWorldFrozen()).
+    bool sWorldFrozen = false;
+    std::vector<LLAnimPauseRequest> sPauseHandles;
+    // The last slice's finished partial capture (post-processed, before any
+    // UI), reduced to at most twice the window fit and mipmapped; the
+    // UI-only live frames show it instead of the world.
+    LLRenderTarget sFrozenView;
+    bool sFrozenKept = false;
+    bool sFrozenFailed = false;   // allocation failed: no retry this capture
+    bool sLiveViewFrozen = false; // this live frame shows the kept image
+
+    void releaseFrozenView()
+    {
+        sFrozenView.release();
+        sFrozenKept = false;
+    }
+
+    // Freezes or thaws the world with the same means as the snapshot
+    // floater's freeze frame (drawables and non-avatar idle updates stop,
+    // avatars pause); positions received meanwhile apply on thaw.
+    void setWorldFrozen(bool frozen)
+    {
+        if (frozen == sWorldFrozen)
+        {
+            return;
+        }
+        sWorldFrozen = frozen;
+        if (frozen)
+        {
+            for (LLCharacter* character : LLCharacter::sInstances)
+            {
+                sPauseHandles.push_back(character->requestPause());
+            }
+        }
+        else
+        {
+            sPauseHandles.clear();
+            releaseFrozenView();
+            sFrozenFailed = false;
+            // The world moves on from here: the live view averages afresh
+            // instead of continuing a sum from before the capture.
+            sLive.mHaveKey = false;
+            sLive.mAccumulated = 0;
+        }
+        LLPipeline::FreezeTime = gSavedSettings.getBOOL("FreezeTime") || frozen;
+        LL_INFOS("ASDoF") << "Aperture DoF capture world freeze " << (frozen ? "on" : "off") << LL_ENDL;
+    }
+
+    // Ends a pending capture whose caller stopped calling (e.g. snapshot
+    // floater closed) and thaws the world once no capture is pending (also
+    // after a blocking snapshot replaced it). Checked by every live frame.
+    void checkCaptureAbandoned()
+    {
+        if (sCapturePending && sSliceTimer.getElapsedTimeF32() > CAPTURE_ABANDON_SECONDS)
+        {
+            sCapturePending = false;
+        }
+        if (!sCapturePending)
+        {
+            setWorldFrozen(false);
+        }
+    }
 
     bool sameMatrix(const glm::mat4& a, const glm::mat4& b)
     {
@@ -435,8 +509,10 @@ namespace
     // mipmapped MASKED image from smooth.
     // SOURCES marks this sample's small sources (residual_scale: ring radius
     // scale); SMOOTHED also reads their summed map from sources.
+    // filter: source sampling (TFO_TRILINEAR for a mipmapped reduction).
     void drawWeighted(LLRenderTarget& source, const glm::vec4& weight, Draw mode, F32 residual_scale = 0.f,
-                      LLRenderTarget* smooth = nullptr, LLRenderTarget* sources = nullptr)
+                      LLRenderTarget* smooth = nullptr, LLRenderTarget* sources = nullptr,
+                      LLTexUnit::eTextureFilterOptions filter = LLTexUnit::TFO_BILINEAR)
     {
         if (mode == Draw::SAMPLE && !sLens.mValid)
         {
@@ -462,7 +538,7 @@ namespace
         const F32 aspect = (F32)source.getWidth() / (F32)llmax(source.getHeight(), 1U);
         const F32 diagonal = sqrtf(aspect * aspect + 1.f);
         sAccumulateProgram.uniform2f(U_FIELD_SCALE, 2.f * aspect / diagonal, 2.f / diagonal);
-        sAccumulateProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &source);
+        sAccumulateProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, &source, false, filter);
         if (smooth)
         {
             // SOURCES: the star mask has no mips.
@@ -738,17 +814,46 @@ namespace
         return total / (tiles_per_side * tiles_per_side);
     }
 
+    // Esc reported by the viewer's key handler (noteEscapeKey()) and not yet
+    // consumed; also discards a stale press when a capture starts. Blocking
+    // captures suspend the main loop and its input events, so each platform
+    // also reads Esc directly, only while the viewer has the keyboard.
     bool captureCancelRequested()
     {
+        const bool noted = sEscapePressed;
+        sEscapePressed = false;
 #if LL_WINDOWS
-        // A blocking capture suspends the main loop (and its input), and a
-        // sliced one may miss a short press between slices: read the key
-        // state directly (down now, or pressed since the last query), only
-        // while the viewer window is in front.
+        // Down now, or pressed since the last query.
         HWND window = (HWND)gViewerWindow->getPlatformWindow();
-        return window && GetForegroundWindow() == window && (GetAsyncKeyState(VK_ESCAPE) & 0x8001);
+        return noted || (window && GetForegroundWindow() == window && (GetAsyncKeyState(VK_ESCAPE) & 0x8001));
+#elif LL_SDL2
+        // Key-down events still queued: pumped and peeked, never removed (the
+        // viewer handles them afterwards). A press counts once: only events
+        // newer than the last one seen. SDL sends keyboard events only to
+        // the focused window.
+        static Uint32 last_seen = 0;
+        bool pressed = false;
+        SDL_PumpEvents();
+        SDL_Event events[64];
+        const int count = SDL_PeepEvents(events, (int)LL_ARRAY_SIZE(events), SDL_PEEKEVENT, SDL_KEYDOWN, SDL_KEYDOWN);
+        for (int i = 0; i < count; ++i)
+        {
+            const SDL_KeyboardEvent& key = events[i].key;
+            if (key.keysym.sym == SDLK_ESCAPE && (Sint32)(key.timestamp - last_seen) > 0)
+            {
+                last_seen = key.timestamp;
+                pressed = true;
+            }
+        }
+        return noted || pressed;
+#elif LL_DARWIN
+        // Down now (no press history outside the event loop), while the
+        // viewer is the active application.
+        constexpr CGKeyCode ESCAPE_KEY = 0x35; // kVK_Escape
+        return noted || (gFocusMgr.getAppHasFocus() &&
+                         CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, ESCAPE_KEY));
 #else
-        return false;
+        return noted;
 #endif
     }
 
@@ -786,13 +891,8 @@ namespace
 
             const S32 accumulated = sSlot->mAccumulated;
             const F32 fraction = llclamp((F32)accumulated / (F32)llmax(sMaxSamples, 1), 0.f, 1.f);
-#if LL_WINDOWS
-            const char* hint = "  (Esc to stop)";
-#else
-            const char* hint = "";
-#endif
-            const std::string text = llformat("Capturing depth of field... %d / %d%s",
-                                              accumulated, sMaxSamples, hint);
+            const std::string text = llformat("Capturing depth of field... %d / %d  (Esc to stop)",
+                                              accumulated, sMaxSamples);
             const LLColor4 yellow(1.f, 0.85f, 0.1f, 1.f);
             constexpr S32 BAR_WIDTH = 400;
             constexpr S32 BAR_HEIGHT = 8;
@@ -885,13 +985,13 @@ namespace
             // image); only camera movement ends a capture early.
             if (continuing && sCapture.mAccumulated > 0 && sameSettings(key, sCapture.mKey))
             {
-                if (nearlySameView(key, sCapture.mKey))
-                { // Drift or focus smoothing between slices: keep rendering
-                  // the requested view with its frozen focus.
-                    sCentralProjection = sCapture.mKey.mProjection;
-                    sCentralModelview = sCapture.mKey.mModelview;
-                }
-                else
+                // Keep rendering the requested view with its frozen focus:
+                // drift or focus smoothing between slices, and the last
+                // slice after a camera move, whose central depth feeds the
+                // final smoothing of the finished average.
+                sCentralProjection = sCapture.mKey.mProjection;
+                sCentralModelview = sCapture.mKey.mModelview;
+                if (!nearlySameView(key, sCapture.mKey))
                 { // The camera moved (or Esc reset the view): finish with
                   // the average of the requested view.
                     sCaptureStopped = true;
@@ -1001,6 +1101,8 @@ namespace ASDoFRenderer
         sStarMaskDrawn = false;
         sSlot = &sLive;
         sCapturePending = false;
+        setWorldFrozen(false);
+        releaseFrozenView();
     }
 
     bool isEnabled()
@@ -1023,6 +1125,14 @@ namespace ASDoFRenderer
     void requestPreviewCapture()
     {
         sPreviewRequested = true;
+    }
+
+    void noteEscapeKey()
+    {
+        if (sCapturePending)
+        {
+            sEscapePressed = true;
+        }
     }
 
     bool isCapturePending()
@@ -1093,6 +1203,120 @@ namespace ASDoFRenderer
     {
         static LLCachedControl<bool> freeze(gSavedSettings, "ASDepthOfFieldFreezeAnimations", false);
         return sCapturePending || freeze;
+    }
+
+    bool isWorldFrozen()
+    {
+        return sWorldFrozen;
+    }
+
+    bool isLiveViewFrozen()
+    {
+        sLiveViewFrozen = false;
+        if (!isEnabled())
+        { // Mode switched mid-capture: the next rendered frame releases it.
+            sCapturePending = false;
+        }
+        checkCaptureAbandoned();
+        if (!sWorldFrozen || !sFrozenKept)
+        {
+            return false;
+        }
+        sLiveViewFrozen = true;
+        return true;
+    }
+
+    bool presentFrozenView()
+    {
+        if (!sLiveViewFrozen || gSnapshot || gDisconnected || !sFrozenKept)
+        {
+            return false;
+        }
+        // Fitted into the world view, centred, never above 1:1 so the
+        // capture's own pixels (and its noise) stay visible.
+        const LLRect window = gViewerWindow->getWindowRectRaw();
+        const LLRect rect = gViewerWindow->getWorldViewRectRaw();
+        const F32 kept_width = (F32)sFrozenView.getWidth();
+        const F32 kept_height = (F32)sFrozenView.getHeight();
+        const F32 scale = llmin(1.f, llmin((F32)rect.getWidth() / kept_width, (F32)rect.getHeight() / kept_height));
+        const S32 width = llmax(1, ll_round(kept_width * scale));
+        const S32 height = llmax(1, ll_round(kept_height * scale));
+
+        LLGLDisable scissor(GL_SCISSOR_TEST);
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glViewport(0, 0, window.getWidth(), window.getHeight());
+        {
+            LLGLDepthTest depth(GL_TRUE, GL_TRUE, GL_ALWAYS); // depth writes on for the clear
+            gGL.setColorMask(true, true);
+            glClearColor(0.f, 0.f, 0.f, 1.f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+            glClearColor(0.f, 0.f, 0.f, 0.f); // renderFinalize()'s clear colour
+        }
+        glViewport(rect.mLeft + (rect.getWidth() - width) / 2, rect.mBottom + (rect.getHeight() - height) / 2,
+                   width, height);
+        {
+            LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+            LLGLDisable blend(GL_BLEND);
+            drawWeighted(sFrozenView, glm::vec4(1.f), Draw::COPY, 0.f, nullptr, nullptr, LLTexUnit::TFO_TRILINEAR);
+        }
+
+        // The viewport renderFinalize() leaves for the UI.
+        gGLViewport[0] = rect.mLeft;
+        gGLViewport[1] = rect.mBottom;
+        gGLViewport[2] = rect.getWidth();
+        gGLViewport[3] = rect.getHeight();
+        glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        return true;
+    }
+
+    void keepFrozenView()
+    {
+        // Only a pending sliced capture's own display() (not thumbnails or
+        // blocking snapshots); the first slice froze the world just before.
+        if (!gSnapshot || !sSliced || !sWorldFrozen || sFrozenFailed)
+        {
+            return;
+        }
+        // renderFinalize() drew the world view rect of the bound framebuffer:
+        // the back buffer, or rawSnapshot()'s full-size scratch target.
+        const LLRect source = gViewerWindow->getWorldViewRectRaw();
+        const LLRect window = gViewerWindow->getWindowRectRaw();
+        const S32 source_width = source.getWidth();
+        const S32 source_height = source.getHeight();
+        if (source_width <= 0 || source_height <= 0 || window.getWidth() <= 0 || window.getHeight() <= 0)
+        {
+            return;
+        }
+        // Reduced to at most twice the window fit (a bilinear step of at
+        // most 2:1 per level beyond that is left to the mips).
+        const F32 fit = llmin(1.f, 2.f * llmin((F32)window.getWidth() / (F32)source_width,
+                                               (F32)window.getHeight() / (F32)source_height));
+        const U32 width = (U32)llmax(1, ll_round(source_width * fit));
+        const U32 height = (U32)llmax(1, ll_round(source_height * fit));
+        if (sFrozenView.getWidth() != width || sFrozenView.getHeight() != height)
+        {
+            releaseFrozenView();
+            if (!sFrozenView.allocate(width, height, GL_RGBA8, false, LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_MANUAL))
+            { // Live frames keep rendering the (frozen) scene.
+                LL_WARNS("ASDoF") << "Aperture DoF capture view allocation failed: " << width << "x" << height
+                                  << LL_ENDL;
+                releaseFrozenView();
+                sFrozenFailed = true;
+                return;
+            }
+        }
+
+        GLint source_fbo = 0;
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &source_fbo);
+        LLGLDisable scissor(GL_SCISSOR_TEST); // blits obey the scissor test
+        sFrozenView.bindTarget();
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, source_fbo);
+        glBlitFramebuffer(source.mLeft, source.mBottom, source.mLeft + source_width, source.mBottom + source_height,
+                          0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        sFrozenView.flush(); // rebinds the source framebuffer
+        generateMips(sFrozenView);
+        sFrozenKept = true;
     }
 
     bool setProgressThumbnail(bool active)
@@ -1247,10 +1471,7 @@ namespace ASDoFRenderer
         }
         else
         {
-            if (sCapturePending && sSliceTimer.getElapsedTimeF32() > CAPTURE_ABANDON_SECONDS)
-            { // The capture's caller went away (e.g. snapshot floater closed).
-                sCapturePending = false;
-            }
+            checkCaptureAbandoned();
             if (!sCapturePending && sCapture.mHaveKey)
             { // Finished captures keep no (possibly huge) snapshot-size sum.
                 release(sCapture);
@@ -1420,6 +1641,7 @@ namespace ASDoFRenderer
             sCapturePending = sPlan == FramePlan::ACCUMULATE && !sAccumulationFailed &&
                 !sCaptureStopped && slot.mAccumulated < sMaxSamples;
             sSliceTimer.reset(); // abandon timeout counts from the slice end
+            setWorldFrozen(sCapturePending);
         }
 
         // Show the running average (converged frames reuse it unchanged).
@@ -1459,11 +1681,7 @@ namespace ASDoFRenderer
         {
             accumulated = sCapture.mAccumulated;
             target = sCaptureMaxSamples;
-#if LL_WINDOWS
             text = llformat("Snapshot DoF %d / %d  (Esc to stop)", accumulated, target);
-#else
-            text = llformat("Snapshot DoF %d / %d", accumulated, target);
-#endif
         }
         else if (invalid_focus)
         { // No samples: the lens cannot focus there (see makeLens).

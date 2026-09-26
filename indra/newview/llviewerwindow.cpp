@@ -26,6 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llviewerwindow.h"
+// <AS:Chanayane> Aperture DoF capture: Esc stop.
+#include "asdofrenderer.h"
+// </AS:Chanayane>
 
 
 // system library includes
@@ -3271,6 +3274,13 @@ bool LLViewerWindow::handleKeyUp(KEY key, MASK mask)
 // Takes a single keydown event, usually when UI is visible
 bool LLViewerWindow::handleKey(KEY key, MASK mask)
 {
+    // <AS:Chanayane> Esc stops a pending aperture DoF snapshot capture (all platforms).
+    if (key == KEY_ESCAPE)
+    {
+        ASDoFRenderer::noteEscapeKey();
+    }
+    // </AS:Chanayane>
+
     // hide tooltips on keypress
     LLToolTipMgr::instance().blockToolTips();
 
