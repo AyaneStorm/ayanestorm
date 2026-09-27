@@ -20,6 +20,7 @@
 #include "llframetimer.h"
 #include "llgl.h"
 #include "llglslshader.h"
+#include "llprogressview.h"
 #include "llrender.h"
 #include "llrender2dutils.h"
 #include "llrendertarget.h"
@@ -515,6 +516,9 @@ namespace
     }
 
     // Overlay label: how the eye focus point is found for an avatar.
+    LLVector3 eyesPosition(LLVOAvatar* avatar, bool measured);
+    LLVOAvatar* findAvatar(const LLUUID& id);
+
     std::string eyeRadiusLabel(const LLUUID& id)
     {
         static LLCachedControl<F32> manual_mm(gSavedSettings, "ASDepthOfFieldAutofocusEyeRadius", 0.f);
@@ -523,9 +527,12 @@ namespace
             return llformat("eye %.1f mm set", llmin((F32)manual_mm, 50.f));
         }
         auto it = sEyeShapes.find(id);
-        if (it != sEyeShapes.end() && it->second.mMeasured)
-        {
-            return "eye measured";
+        LLVOAvatar* avatar = findAvatar(id);
+        if (it != sEyeShapes.end() && it->second.mMeasured && avatar)
+        { // Eyeball centre (joint) to the focus point: the iris front.
+            LLJoint* eye = nearerEye(eyePair(avatar, it->second.mAlt));
+            return llformat("eye %.1f mm measured",
+                            dist_vec(eyesPosition(avatar, true), eye->getWorldPosition()) * 1000.f);
         }
         return llformat("eye %.1f mm default", EYEBALL_RADIUS * 1000.f);
     }
@@ -1131,7 +1138,12 @@ void ASDoFAutofocus::drawOverlay()
     static LLCachedControl<bool> show_area(gSavedSettings, "ASDepthOfFieldAutofocusShowArea", true);
     // Firestorm's "Draw DoF Focus crosshair" shows this helper instead.
     static LLCachedControl<bool> show_crosshair(gSavedSettings, "FSFocusPointRender", false);
-    if (gSnapshot || !isActive() || !(show_crosshair || show_area))
+    // Hidden under the teleport/login progress screen and with the UI
+    // hidden (Ctrl+Alt+F1), like Firestorm's focus crosshair.
+    LLProgressView* progress = gViewerWindow->getProgressView();
+    if (gSnapshot || !isActive() || !(show_crosshair || show_area) ||
+        (progress && progress->getVisible()) ||
+        !gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
     {
         return;
     }

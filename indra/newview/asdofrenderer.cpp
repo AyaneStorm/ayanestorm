@@ -18,6 +18,7 @@
 #include "llfontgl.h"
 #include "llgl.h"
 #include "llnotificationsutil.h"
+#include "llprogressview.h"
 #include "llrender2dutils.h"
 #include "llviewershadermgr.h"
 #include "llviewerwindow.h"
@@ -1683,7 +1684,11 @@ namespace ASDoFRenderer
         // while moving and in the debug view.
         const bool live_accumulating = show_progress && sPlan == FramePlan::ACCUMULATE;
         const bool invalid_focus = show_progress && sInvalidFocus;
-        if (gSnapshot || !isEnabled() || (!live_accumulating && !sCapturePending && !invalid_focus))
+        // Hidden under the teleport/login progress screen (the sliced
+        // capture's progress image is not that view).
+        LLProgressView* progress_view = gViewerWindow->getProgressView();
+        if (gSnapshot || !isEnabled() || (!live_accumulating && !sCapturePending && !invalid_focus) ||
+            (progress_view && progress_view->getVisible()))
         {
             return;
         }

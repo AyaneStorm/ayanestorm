@@ -1493,8 +1493,10 @@ modes 0, 1 and 2 all use it (mode 2 through `setFocusDistance`).
   converging mode 2 image): the Focus tab's "Redetect" button
   (`ASDepthOfField.RedetectEyes`) clears the cache after an eye or head
   change. Snapshots and captures never measure (`update()` holds first).
-  The helper label shows "eye measured", "eye 12.0 mm default" or
-  "eye x.x mm set".
+  The helper label shows "eye x.x mm measured" (live distance from the eye
+  joint, the eyeball centre, to the focus point: the iris front),
+  "eye 12.0 mm default" or "eye x.x mm set". The helper is hidden under the
+  teleport/login progress screen and with the UI hidden (Ctrl+Alt+F1).
 - Eye occlusion: eyes count as visible unless the depth probe is nearer
   than 0.9 x eye distance - 5 cm; otherwise area focus.
 - Smoothing: in 1/distance, `alpha = 1 - 0.01^(dt / AutofocusTime)`.
