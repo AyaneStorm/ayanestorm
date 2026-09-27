@@ -1001,6 +1001,11 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LLViewerTexture::updateClass();
             }
 
+            // <AS:Chanayane> Textures keep their state during an aperture DoF
+            // capture (no sharpening, no avatars rezzing between slices).
+            if (!ASDoFRenderer::isWorldFrozen())
+            // </AS:Chanayane>
+            {
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
                 gBumpImageList.updateImages();  // must be called before gTextureList version so that it's textures are thrown out first.
@@ -1012,6 +1017,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
                 gTextureList.updateImages(max_image_decode_time);
             }
+            // <AS:Chanayane>
+            }
+            // </AS:Chanayane>
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("GLTF Materials Cleanup");

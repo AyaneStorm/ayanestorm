@@ -1344,9 +1344,26 @@ Mechanism (`ASDoFRenderer::isWorldFrozen()`, on while `isCapturePending()`):
   frame is cheap, and UI refreshes about 6 times a second instead of 3.
   Per-slice readback overhead grows accordingly; to be measured.
 
-Not frozen: new objects rezzing and killed objects (created or removed by
-the slices' own `display()`), and texture/mesh LOD loads, which continue
-between slices.
+Rezzing during a capture (user report, 2026-09-26: new people appeared in
+the snapshot). The slices' own `display()` created drawables, rebuilt
+geometry and uploaded textures. While frozen, all of it waits (tagged
+hooks), and it catches up on thaw:
+- `LLPipeline::addObject()` queues new objects in `mCreateQ` (the upstream
+  `RenderDelayCreation` path, so code already handles an object without a
+  drawable for a while), and `createObjects()` returns early. New
+  avatars and objects stay invisible until the capture ends.
+- `LLPipeline::updateGeom()` returns early (like for cube snapshots):
+  no rebuilds from server shape/colour changes or LOD switches.
+- `rebuildPriorityGroups()` skips `gMeshRepo.notifyLoadedMeshes()`: loaded
+  meshes wait (fetch dispatch also runs there, so fetching pauses too).
+- `display()` skips `gBumpImageList` / `gTextureList.updateImages()`: no
+  texture sharpening or bake arrival, so avatars already present do not
+  finish rezzing mid-capture. `LLViewerTexture::updateClass()` still runs.
+
+Still not frozen: objects killed by the server (people leaving) disappear
+at once; deferring kills would keep dead objects referenced. Avatar
+appearance messages that change visual parameters of an already-rezzed
+avatar can still apply.
 
 Esc on Linux and macOS: `captureCancelRequested()` read only Windows'
 `GetAsyncKeyState`, so Esc did nothing elsewhere. A tagged hook at the top

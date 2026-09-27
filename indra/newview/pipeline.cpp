@@ -2182,7 +2182,11 @@ void LLPipeline::removeMutedAVsLights(LLVOAvatar* muted_avatar)
 
 U32 LLPipeline::addObject(LLViewerObject *vobj)
 {
-    if (RenderDelayCreation)
+    // <AS:Chanayane> Objects arriving during an aperture DoF capture wait in
+    // the creation queue until the capture ends (createObjects()).
+    // if (RenderDelayCreation)
+    if (RenderDelayCreation || ASDoFRenderer::isWorldFrozen())
+    // </AS:Chanayane>
     {
         mCreateQ.push_back(vobj);
     }
@@ -2197,6 +2201,13 @@ U32 LLPipeline::addObject(LLViewerObject *vobj)
 void LLPipeline::createObjects(F32 max_dtime)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+
+    // <AS:Chanayane> No new drawables while an aperture DoF capture keeps the world frozen.
+    if (ASDoFRenderer::isWorldFrozen())
+    {
+        return;
+    }
+    // </AS:Chanayane>
 
     LLTimer update_timer;
 
@@ -3081,7 +3092,13 @@ void LLPipeline::rebuildPriorityGroups()
     LLTimer update_timer;
     assertInitialized();
 
-    gMeshRepo.notifyLoadedMeshes();
+    // <AS:Chanayane> Meshes loaded during an aperture DoF capture apply when it ends.
+    // gMeshRepo.notifyLoadedMeshes();
+    if (!ASDoFRenderer::isWorldFrozen())
+    {
+        gMeshRepo.notifyLoadedMeshes();
+    }
+    // </AS:Chanayane>
 
     mGroupQ1Locked = true;
     // Iterate through all drawables on the priority build queue,
@@ -3105,7 +3122,11 @@ void LLPipeline::updateGeom(F32 max_dtime)
     LLPointer<LLDrawable> drawablep;
 
     LL_RECORD_BLOCK_TIME(FTM_GEO_UPDATE);
-    if (gCubeSnapshot)
+    // <AS:Chanayane> Geometry stays as it was while an aperture DoF capture
+    // keeps the world frozen; queued rebuilds run when it ends.
+    // if (gCubeSnapshot)
+    if (gCubeSnapshot || ASDoFRenderer::isWorldFrozen())
+    // </AS:Chanayane>
     {
         return;
     }
