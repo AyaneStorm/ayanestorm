@@ -88,6 +88,14 @@ void main()
         float world_coc = opaque_coc;
         float rigged_depth = texture(positionMap, vary_fragcoord).r;
         float world_depth = texture(emissiveRect, vary_fragcoord).r;
+        // Under near-opaque rigged coverage the world share cannot be
+        // separated from the combined coverage. When the world layer is in
+        // front (window shades over hair), it owns the whole combined
+        // contribution; dropping it would expose the rigged layer behind it.
+        if (rigged_coverage >= 0.99 && world_depth < rigged_depth)
+        {
+            world_coverage = transparent_coverage;
+        }
         if (rigged_coverage > 0.0 && rigged_depth < device_depth - 0.0000001)
         {
             vec4 p = inv_proj * vec4(0.0, 0.0,
