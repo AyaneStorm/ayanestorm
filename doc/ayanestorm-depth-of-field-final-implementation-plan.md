@@ -1421,6 +1421,107 @@ mask, source coverage), was another view's. The last slice now always
 renders the capture's matrices, like the drift branch, so the finished
 average gets its final smoothing of bright lights.
 
+### Autofocus: area and eyes (2026-09-27, all renderers)
+
+Module `asdofautofocus.{h,cpp}`, shader `deferred/asDoFAutofocusF.glsl`,
+setting `ASDepthOfFieldFocusMode` (0 Firestorm focus point, 1 area, 2 eyes),
+floater tab "Focus". Hook: `LLPipeline::renderDoF` calls
+`ASDoFAutofocus::update()` after the Firestorm focus point; a result
+replaces `current_distance` and skips the Firestorm cosine transition, so
+modes 0, 1 and 2 all use it (mode 2 through `setFocusDistance`).
+
+- Area sampling: a 64 x 33 R32F pass reads `mRT->deferredScreen` depth at
+  2048 points (golden-ratio angle, Box-Muller radius, sigma = 1/3 of the
+  half area, clamped to the area), linearized with `inv_proj`. Row 32 is
+  the distance at the tracked eyes.
+- Readback: 3 PBO slots, `glReadPixels` into a PBO + fence; collected with a
+  zero-timeout `glClientWaitSync` 1-2 frames later. No stall.
+- Focus: weights 1/distance, sorted, weighted quantile
+  `0.5 - 0.45 * NearPriority`. Sky and far background barely count.
+- Eyes: `LLCharacter::sInstances`, non-control avatars with a visible
+  drawable (self skipped in mouselook); the avatar inside the area nearest
+  its centre. Focus point: the camera-facing surface of the nearer eye
+  (`mEyeLeftp`/`mEyeRightp` are eyeball centres: centre + 12 mm toward the
+  camera), as photographers focus on the near eye, not the eyeball centre.
+- Eye focus point from the mesh eyeballs (`measureEyes()`,
+  `collectEyeVertices()`): on every prim (root and children: mesh eyes are
+  linksets) of every world attachment rigged to an eye joint
+  (`mEyeLeft/Right`, Bento `mFaceEyeAltLeft/Right`; skin joint names
+  resolved with `LLVOAvatar::getJoint`), the vertices weighted >= 90% to
+  one eye joint are the eyeball (it rotates with the joint; lids, lashes
+  and skin follow other bones). Weights decoded as `LLSkinningUtil` does
+  (integer part = mesh joint index, fraction = weight). Faces with alpha 0
+  skipped (HUD-hidden alternate eyes). Only faces holding eye vertices are
+  skinned (`updateRiggedVolume(true, face, false)`, current pose, agent
+  space). Vertices are grouped per layer (face) and classified opaque or
+  alpha-blended (`LLFace::isInAlphaPool`): mesh eyes stack opaque layers
+  (sclera, iris, pupil) and alpha shells (cornea, shine, wetness). The
+  opaque layers are used (all layers if they hold < 8 vertices), stored in
+  the joint frame. Focus point each frame: the stored vertex nearest the
+  camera along the view axis (`eyesPosition()`: one dot product per
+  vertex with the view axis rotated into the joint frame), i.e. the
+  iris/sclera facing the camera. No shape assumed. Joint set: the one with
+  more eyeball vertices.
+- Runtime history: rays (root prims only, then per-prim picking gates) hit
+  nothing; then a sphere model (bounding-box centre + farthest vertex
+  toward the camera) measured "10.4 mm, centre 8.3 mm from joint" on a
+  LeLutka setup and a hi-res snapshot showed neither eye sharp: an eye
+  rotates about its joint, so an 8 mm centre offset meant the box covered
+  more than the eyeball (extra layers), and the focus landed millimetres
+  in front of the iris. Hence the per-layer, shape-free front vertex.
+  Result (user, bokt, 2026-09-27, LeLutka setup): eyes sharp. Layer log per
+  eye: iris/pupil disc (opaque, 2.5 x 15.5 x 15.5 mm, front 18.2 mm before
+  the joint), sclera front hemisphere (opaque, 16.9 x 34 x 34 mm: radius
+  ~17 mm, centred on the joint), cornea/wet shell (alpha, ignored, front
+  18.2 mm). So the joint is the eyeball centre; mesh eyes can be much
+  larger than a real eye (12 mm); only the front half is modelled, which
+  put the old box centre 8-9 mm forward. Manual radius sweet spot on the
+  old build was 8-9 mm from that box centre.
+- Log (`ASDoFAutofocus`): "Eyeball measure" per eye and layer (vertices,
+  opaque/alpha, used/ignored, extents in the joint frame, centre and
+  front distances from the joint); "Eye lock" at a subject lock (view-axis
+  distances of the joint, the focus point and the current focus).
+- `ASDepthOfFieldAutofocusEyeRadius` (mm) > 0: focus at the used layers'
+  box centre plus that radius toward the camera (manual override).
+  Unmeasurable (system eyes): joint + 12 mm toward the camera.
+- Measured once per avatar (the chosen one, first time it is focused on)
+  and cached; failures (meshes loading) retry every 5 s, 3 times. No
+  automatic re-measure (a slightly different point could restart a
+  converging mode 2 image): the Focus tab's "Redetect" button
+  (`ASDepthOfField.RedetectEyes`) clears the cache after an eye or head
+  change. Snapshots and captures never measure (`update()` holds first).
+  The helper label shows "eye measured", "eye 12.0 mm default" or
+  "eye x.x mm set".
+- Eye occlusion: eyes count as visible unless the depth probe is nearer
+  than 0.9 x eye distance - 5 cm; otherwise area focus.
+- Smoothing: in 1/distance, `alpha = 1 - 0.01^(dt / AutofocusTime)`.
+  Dead band: starts moving above 1% relative change, snaps below 0.3%, so
+  idle animation noise does not restart mode 2 accumulation (its own
+  restart tolerance is 0.5%).
+- Snapshots (`gSnapshot`) and sliced captures (`isWorldFrozen()`) hold the
+  current value: a snapshot uses exactly the live autofocus distance.
+- Toggle: menu "Depth of Field Autofocus" (Alt+Shift+Z, free in
+  `menu_viewer.xml`; Alt+Shift+F is Joystick Flycam) switches between point
+  focus and `ASDepthOfFieldAutofocusLastMode`.
+- Focus lock (`FSFocusPointLocked`, Alt+Shift+X) in autofocus,
+  `ASDepthOfFieldAutofocusLockMode`: 0 freezes the distance (classic);
+  1 locks the subject at the lock press: the tracked eyes (eye mode), else a
+  `lineSegmentIntersectInWorld` ray through the area centre (rigged
+  picking on). Avatar hits (body, rigged or attached mesh) store the offset
+  in the nearest skeleton joint's frame (a mesh face follows the head);
+  other objects in the object's frame (`getPositionAgent`,
+  `getRotationRegion`). Subjects are re-found by UUID each frame; gone,
+  behind the camera, or outside the area with
+  `ASDepthOfFieldAutofocusTrackOutside` off: the distance holds. No hit:
+  classic freeze. Point mode keeps Firestorm's lock unchanged.
+- Overlay (`drawOverlay()` after `drawProgress()` in `render_ui()`): area
+  outline (yellow, green on eyes, red locked), subject/eye marker and
+  "AF x.xx m (locked: name)", while the DoF floater is open or with
+  "Draw DoF Focus crosshair" (`FSFocusPointRender`), whose 3D crosshair
+  `renderFocusPoint()` skips in autofocus.
+- Known limit: alpha-blended surfaces do not write scene depth; area
+  autofocus sees behind them.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

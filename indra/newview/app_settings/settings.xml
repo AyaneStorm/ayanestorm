@@ -12340,6 +12340,72 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
+  <key>ASDepthOfFieldFocusMode</key>
+  <map>
+    <key>Comment</key><string>DoF focus, all renderers: 0 Firestorm focus point, 1 autofocus on the autofocus area (1/distance-weighted median of its depths), 2 autofocus on the eyes of the avatar in the area nearest its centre (falls back to 1)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusArea</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: size of the square autofocus area, as a fraction of the view height (0.02 to 1)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusX</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: horizontal position of the autofocus area centre, 0 left to 1 right</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusY</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: vertical position of the autofocus area centre, 0 top to 1 bottom</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusTime</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: seconds to reach a new focus distance (99%); 0 is instant</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusNearPriority</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: 0 focuses on the weighted median depth of the area, 1 on its nearest surfaces</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusLastMode</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: mode (1 area, 2 eyes) restored by the Depth of Field Autofocus toggle (Alt+Shift+Z)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusLockMode</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus, focus lock (Alt+Shift+X): 0 freezes the focus distance (classic), 1 locks the subject (tracked eyes, else the surface under the area centre) and keeps focusing on it</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusTrackOutside</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: a locked subject is tracked anywhere in the view; off, the focus holds while it is outside the autofocus area</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusEyeRadius</key>
+  <map>
+    <key>Comment</key><string>DoF eye autofocus: eyeball radius in mm (eye centre to the camera-facing surface). 0 measures mesh eyes automatically (12 mm when they cannot be measured)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusShowArea</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: outline the autofocus area, the tracked eyes and the focus distance while the Depth of Field floater is open (never in snapshots)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
   <key>ASDepthOfFieldApertureDebugSample</key>
   <map>
     <key>Comment</key><string>Aperture-sampled DoF development: -1 renders the central (pinhole) view through the new camera path; 0 or more renders only that lens sample at full aperture, unaveraged, to check focal-plane registration</string>

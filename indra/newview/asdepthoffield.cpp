@@ -14,6 +14,7 @@
 #include "asdepthoffield.h"
 
 #include "asbackgroundisolate.h"
+#include "asdofautofocus.h"
 #include "asdofrenderer.h"
 #include "llcontrol.h"
 #include "llgl.h"
@@ -167,12 +168,14 @@ extern bool gCubeSnapshot;
 void ASDepthOfField::registerUICallbacks()
 {
     ASDoFRenderer::registerUICallbacks();
+    ASDoFAutofocus::registerUICallbacks();
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASDepthOfField.ResetDefault",
         [](LLUICtrl*, const LLSD& data)
         {
             static const std::vector<std::string> controls = {
                 "ASDepthOfFieldMode", "ASDepthOfFieldBackend",
+                "ASDepthOfFieldFocusMode",
                 "ASDepthOfFieldQuality", "ASDepthOfFieldNearRadius",
                 "ASDepthOfFieldFarRadius", "ASDepthOfFieldApertureBlades",
                 "ASDepthOfFieldApertureRoundness", "ASDepthOfFieldApertureRotation",
@@ -187,13 +190,19 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldApertureSpherical", "ASDepthOfFieldApertureSphericalStrength",
                 "ASDepthOfFieldApertureHighlights", "ASDepthOfFieldApertureHighlightStrength",
                 "ASDepthOfFieldApertureHighlightThreshold",
-                "ASDepthOfFieldApertureShowProgress"
+                "ASDepthOfFieldApertureShowProgress",
+                "ASDepthOfFieldAutofocusArea", "ASDepthOfFieldAutofocusX",
+                "ASDepthOfFieldAutofocusY", "ASDepthOfFieldAutofocusTime",
+                "ASDepthOfFieldAutofocusNearPriority", "ASDepthOfFieldAutofocusShowArea",
+                "ASDepthOfFieldAutofocusLockMode", "ASDepthOfFieldAutofocusTrackOutside",
+                "ASDepthOfFieldAutofocusEyeRadius"
             };
             const std::string name = data.asString();
             if (name == "All")
             {
-                // Renderer and backend are mode choices, not tuning values.
-                for (auto it = controls.begin() + 2; it != controls.end(); ++it)
+                // Renderer, backend and focus mode are mode choices, not
+                // tuning values.
+                for (auto it = controls.begin() + 3; it != controls.end(); ++it)
                 {
                     if (LLControlVariable* control = gSavedSettings.getControl(*it))
                     {
@@ -220,8 +229,10 @@ void ASDepthOfField::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sTransparentProgram);
     shaders.push_back(&sOccupancyProgram);
     shaders.push_back(&sResolveProgram);
-    // Aperture-sampled renderer shares this module's registration hooks.
+    // Aperture-sampled renderer and autofocus share this module's
+    // registration hooks.
     ASDoFRenderer::registerShaders(shaders);
+    ASDoFAutofocus::registerShaders(shaders);
 }
 
 bool ASDepthOfField::createShaders(S32 shader_level)
@@ -254,6 +265,7 @@ bool ASDepthOfField::createShaders(S32 shader_level)
         success = spec.shader->createShader() && success;
     }
     success = ASDoFRenderer::createShaders(shader_level) && success;
+    success = ASDoFAutofocus::createShaders(shader_level) && success;
     return success;
 }
 
@@ -266,6 +278,7 @@ void ASDepthOfField::unloadShaders()
     sOccupancyProgram.unload();
     sResolveProgram.unload();
     ASDoFRenderer::unloadShaders();
+    ASDoFAutofocus::unloadShaders();
     releaseResources();
 }
 

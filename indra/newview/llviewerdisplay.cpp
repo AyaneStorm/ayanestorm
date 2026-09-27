@@ -31,6 +31,7 @@
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
 #include "asdofrenderer.h"
+#include "asdofautofocus.h"
 // </AS:Chanayane>
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -1753,8 +1754,10 @@ void render_ui(F32 zoom_factor, int subfield)
         gViewerWindow->setup2DRender();
         gViewerWindow->updateDebugText();
         gViewerWindow->drawDebugText();
-        // <AS:Chanayane> Aperture-sampled DoF progress overlay (skips snapshots).
+        // <AS:Chanayane> Aperture-sampled DoF progress and autofocus area
+        // overlays (skip snapshots).
         ASDoFRenderer::drawProgress();
+        ASDoFAutofocus::drawOverlay();
         // </AS:Chanayane>
     }
 

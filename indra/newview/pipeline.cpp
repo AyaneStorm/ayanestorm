@@ -54,6 +54,7 @@
 // </AS:Chanayane>
 // <AS:Chanayane> Optional AyaneStorm-owned cinematic depth of field.
 #include "asdepthoffield.h"
+#include "asdofautofocus.h"
 #include "asdofrenderer.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom.
@@ -5117,7 +5118,11 @@ void LLPipeline::renderSnapshotGuidesOverlay()
 void LLPipeline::renderFocusPoint()
 {
     static LLCachedControl<bool> render_focus_point_crosshair(gSavedSettings, "FSFocusPointRender", false);
-    if (sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    // <AS:Chanayane> Autofocus draws its own 2D helper (ASDoFAutofocus::drawOverlay).
+    // if (sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    if (sDoFEnabled && render_focus_point_crosshair && !ASDoFAutofocus::isActive() &&
+        gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    // </AS:Chanayane>
     {
         gDebugProgram.bind();
         LLVector3 focus_point = sLastFocusPoint;
@@ -9015,6 +9020,16 @@ bool LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst,
                 target_distance = LLViewerCamera::getInstance()->getAtAxis() * (focus_point - eye);
             }
 
+            // <AS:Chanayane> Autofocus (asdofautofocus.h) replaces the focus
+            // point and its transition; it holds its value in snapshots.
+            F32 autofocus_distance = current_distance;
+            if (ASDoFAutofocus::update(mRT->deferredScreen, *mScreenTriangleVB, autofocus_distance))
+            {
+                current_distance = autofocus_distance;
+                transition_time = 1.f;
+            }
+            else
+            // </AS:Chanayane>
             if (transition_time >= 1.f && fabsf(current_distance - target_distance) / current_distance > 0.01f)
             { // large shift happened, interpolate smoothly to new target distance
                 transition_time = 0.f;

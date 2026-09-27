@@ -4,7 +4,7 @@
 <floater name="as_depth_of_field" title="AyaneStorm Depth of Field"
          positioning="cascading" can_resize="false" can_minimize="true"
          save_rect="true" single_instance="true" layout="topleft"
-         width="430" height="425">
+         width="430" height="483">
   <!-- Toolbar: DoF on/off, then buttons. The animation freeze can also change elsewhere (Ctrl+Alt+N,
        Ctrl+J), so the button only inverts the current state
        (ASDoFRenderer::registerUICallbacks()). No focus lock button: with
@@ -39,12 +39,117 @@
        effect in the selected renderer are greyed out (enabled_control flags
        synced by ASDoFRenderer::syncModeFlags()). -->
   <tab_container name="dof_tabs" layout="topleft" follows="all"
-                 left="0" top="72" width="430" height="310"
+                 left="0" top="72" width="430" height="368"
                  tab_position="top" halign="center">
+
+    <!-- Focus: all renderers (asdofautofocus.h). -->
+    <panel name="focus_tab" label="Focus" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="343">
+      <text name="focus_mode_label" layout="topleft" left="15" top="14" width="125" height="18">Focus</text>
+      <combo_box name="focus_mode" control_name="ASDepthOfFieldFocusMode"
+                 layout="topleft" left="145" top="10" width="235" height="22"
+                 tool_tip="Focus point: Firestorm behaviour (camera focus, or pointer with 'Focus follows pointer'). Autofocus: the depths inside the autofocus area, nearer surfaces weighing more. Eyes: the near eye of the avatar in the area closest to its centre; with none visible, as Autofocus. Alt+Shift+Z switches between Focus point and the last autofocus mode; Alt+Shift+X locks the focus.">
+        <combo_box.item label="Focus point (Firestorm)" name="point" value="0" />
+        <combo_box.item label="Autofocus on area" name="area" value="1" />
+        <combo_box.item label="Autofocus on eyes" name="eyes" value="2" />
+      </combo_box>
+      <button name="reset_focus_mode" label="D" layout="topleft"
+              left="385" top="10" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFocusMode" />
+      </button>
+      <slider name="autofocus_area" control_name="ASDepthOfFieldAutofocusArea"
+              layout="topleft" left="15" top="44" width="365" height="18"
+              label="Area size" label_width="130" min_val="0.02" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Size of the square autofocus area, as a fraction of the view height. Eyes mode only tracks eyes inside it." />
+      <button name="reset_autofocus_area" label="D" layout="topleft"
+              left="385" top="42" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusArea" />
+      </button>
+      <slider name="autofocus_x" control_name="ASDepthOfFieldAutofocusX"
+              layout="topleft" left="15" top="72" width="365" height="18"
+              label="Area horizontal" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Centre of the autofocus area: 0 left edge, 1 right edge." />
+      <button name="reset_autofocus_x" label="D" layout="topleft"
+              left="385" top="70" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusX" />
+      </button>
+      <slider name="autofocus_y" control_name="ASDepthOfFieldAutofocusY"
+              layout="topleft" left="15" top="100" width="365" height="18"
+              label="Area vertical" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Centre of the autofocus area: 0 top edge, 1 bottom edge." />
+      <button name="reset_autofocus_y" label="D" layout="topleft"
+              left="385" top="98" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusY" />
+      </button>
+      <slider name="autofocus_time" control_name="ASDepthOfFieldAutofocusTime"
+              layout="topleft" left="15" top="128" width="365" height="18"
+              label="Focus time (s)" label_width="130" min_val="0" max_val="3"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Seconds to reach a new focus distance; 0 is instant. Small depth changes (breathing, idle animations) are ignored so the image stays still." />
+      <button name="reset_autofocus_time" label="D" layout="topleft"
+              left="385" top="126" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusTime" />
+      </button>
+      <slider name="autofocus_near_priority" control_name="ASDepthOfFieldAutofocusNearPriority"
+              layout="topleft" left="15" top="156" width="365" height="18"
+              label="Near priority" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="0 focuses on the typical depth of the area (weighted median); higher values favour its nearest surfaces." />
+      <button name="reset_autofocus_near_priority" label="D" layout="topleft"
+              left="385" top="154" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusNearPriority" />
+      </button>
+      <slider name="autofocus_eye_radius" control_name="ASDepthOfFieldAutofocusEyeRadius"
+              layout="topleft" left="15" top="184" width="290" height="18"
+              label="Eyeball radius (mm)" label_width="130" min_val="0" max_val="30"
+              increment="0.1" decimal_digits="1" can_edit_text="true"
+              tool_tip="Eyes mode focuses on the front of the eye, this far from the eye centre. 0 (default) measures mesh eyes automatically; the focus label shows the radius used ('measured', or 'default' 12 mm when the eyes cannot be measured, e.g. system eyes). Set a value to override." />
+      <button name="autofocus_redetect_eyes" label="Redetect" layout="topleft"
+              left="310" top="182" width="70" height="22"
+              tool_tip="Measures the mesh eyes again (each avatar is measured once, the first time it is focused on). Use after changing eyes or head.">
+        <button.commit_callback function="ASDepthOfField.RedetectEyes" />
+      </button>
+      <button name="reset_autofocus_eye_radius" label="D" layout="topleft"
+              left="385" top="182" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusEyeRadius" />
+      </button>
+      <text name="autofocus_lock_label" layout="topleft" left="15" top="214" width="125" height="18">Lock (Alt+Shift+X)</text>
+      <combo_box name="autofocus_lock_mode" control_name="ASDepthOfFieldAutofocusLockMode"
+                 layout="topleft" left="145" top="210" width="235" height="22"
+                 tool_tip="What the focus lock does in autofocus. Freeze distance: the classic lock, the focus stays at its current distance. Track subject: locks what is focused (the tracked eyes, else the surface at the area centre) and keeps it in focus as it or the camera moves; on an avatar it follows the body part, so a mesh face stays sharp.">
+        <combo_box.item label="Freeze distance" name="distance" value="0" />
+        <combo_box.item label="Track subject" name="subject" value="1" />
+      </combo_box>
+      <button name="reset_autofocus_lock_mode" label="D" layout="topleft"
+              left="385" top="210" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusLockMode" />
+      </button>
+      <check_box name="autofocus_track_outside" control_name="ASDepthOfFieldAutofocusTrackOutside"
+                 layout="topleft" left="15" top="240" width="365" height="20"
+                 label="Track the locked subject outside the area"
+                 tool_tip="On: the locked subject stays in focus anywhere in the view. Off: the focus holds while the subject is outside the autofocus area and follows it again when it comes back." />
+      <button name="reset_autofocus_track_outside" label="D" layout="topleft"
+              left="385" top="239" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusTrackOutside" />
+      </button>
+      <check_box name="autofocus_show_area" control_name="ASDepthOfFieldAutofocusShowArea"
+                 layout="topleft" left="15" top="266" width="365" height="20"
+                 label="Show autofocus area while this window is open"
+                 tool_tip="Outlines the autofocus area (yellow; green on eyes; red when locked, with the subject marked) and shows the focus distance. 'Draw DoF Focus crosshair' shows it at all times. Never in snapshots." />
+      <button name="reset_autofocus_show_area" label="D" layout="topleft"
+              left="385" top="265" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusShowArea" />
+      </button>
+      <text name="autofocus_note" layout="topleft" left="15" top="294" width="390" height="44" wrap="true"
+            text_color="LabelTextColor">Alpha-blended surfaces (some hair, clothing, particles) do not write depth: area autofocus sees what is behind them.</text>
+    </panel>
 
     <!-- Aperture shape: Advanced and Aperture-sampled renderers. -->
     <panel name="aperture_tab" label="Aperture" layout="topleft" follows="all"
-           left="0" top="0" width="430" height="285">
+           left="0" top="0" width="430" height="343">
       <text name="blades_label" enabled_control="ASDepthOfFieldUIShape" layout="topleft" left="15" top="14" width="125" height="18">Aperture shape</text>
       <combo_box name="aperture_blades" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureBlades"
                  layout="topleft" left="145" top="10" width="235" height="22">
@@ -90,7 +195,7 @@
 
     <!-- Aperture-sampled renderer: sample counts, snapshots, smoothing. -->
     <panel name="sampling_tab" label="Sampling" layout="topleft" follows="all"
-           left="0" top="0" width="430" height="285">
+           left="0" top="0" width="430" height="343">
       <text name="aperture_note" layout="topleft" left="15" top="8" width="390" height="44" wrap="true"
             text_color="LabelTextColor"
             tool_tip="Used only by the Aperture-sampled renderer.">Aperture-sampled renderer, for perfectly still images. The blur builds up over seconds while nothing moves. Anything that moves (avatars, camera) smears or restarts it.</text>
@@ -165,7 +270,7 @@
 
     <!-- Aperture-sampled renderer: optional lens character. -->
     <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"
-           left="0" top="0" width="430" height="285">
+           left="0" top="0" width="430" height="343">
       <check_box name="aperture_axial_ca" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureAxialCA"
                  layout="topleft" left="15" top="10" width="365" height="20"
                  label="Axial chromatic aberration"
@@ -255,7 +360,7 @@
 
     <!-- Advanced / AyaneStorm screen-space renderer only. -->
     <panel name="advanced_tab" label="Advanced" layout="topleft" follows="all"
-           left="0" top="0" width="430" height="285">
+           left="0" top="0" width="430" height="343">
       <text name="advanced_note" layout="topleft" left="15" top="8" width="390" height="18"
             text_color="LabelTextColor">Advanced / AyaneStorm renderer only.</text>
       <text name="backend_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="36" width="125" height="18">Backend</text>
@@ -334,7 +439,7 @@
   </tab_container>
 
   <button name="reset_tuning" label="Reset tuning defaults"
-          layout="topleft" left="255" top="390" width="150" height="22">
+          layout="topleft" left="255" top="448" width="150" height="22">
     <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="All" />
   </button>
 </floater>

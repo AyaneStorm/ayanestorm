@@ -126,6 +126,7 @@ set(viewer_SOURCE_FILES
     asdepthoffield.cpp
     asdofcamera.cpp
     asdofaperture.cpp
+    asdofautofocus.cpp
     asdofrenderer.cpp
     asdiffuseglow.cpp
     asambientocclusion.cpp
@@ -1055,6 +1056,7 @@ set(viewer_HEADER_FILES
     asdepthoffield.h
     asdofcamera.h
     asdofaperture.h
+    asdofautofocus.h
     asdofrenderer.h
     asdiffuseglow.h
     asambientocclusion.h
