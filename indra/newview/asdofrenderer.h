@@ -38,7 +38,8 @@ class LLGLSLShader;
 
 namespace ASDoFRenderer
 {
-    // Connects ASDepthOfFieldFreezeAnimations to the global animation freeze.
+    // Mode flag sync and the DoF floater toolbar (ASDepthOfField.Toolbar:
+    // "animations", "refresh").
     void registerUICallbacks();
     void registerShaders(std::vector<LLGLSLShader*>& shaders);
     bool createShaders(S32 shader_level);
@@ -74,9 +75,9 @@ namespace ASDoFRenderer
     // CoreGraphics key state.
     void noteEscapeKey();
 
-    // True while a sliced capture is pending or the DoF floater's "Freeze
-    // all animations" is on: time-driven scene changes (sky and stars, cloud
-    // scroll, snow) pause so averaged renders see one instant.
+    // True while a sliced capture is pending or animations are frozen by the
+    // DoF floater's "Toggle animations": time-driven scene changes (sky and
+    // stars, cloud scroll, snow) pause so averaged renders see one instant.
     bool isSceneFrozen();
 
     // True while a sliced capture is pending: the world stays at one instant

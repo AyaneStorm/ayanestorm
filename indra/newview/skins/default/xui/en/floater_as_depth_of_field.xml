@@ -5,9 +5,24 @@
          positioning="cascading" can_resize="false" can_minimize="true"
          save_rect="true" single_instance="true" layout="topleft"
          width="430" height="425">
+  <!-- Toolbar: DoF on/off, then buttons. The animation freeze can also change elsewhere (Ctrl+Alt+N,
+       Ctrl+J), so the button only inverts the current state
+       (ASDoFRenderer::registerUICallbacks()). No focus lock button: with
+       focus following the pointer, clicking it would focus on whatever is
+       behind the button (use Alt+Shift+X). -->
   <check_box name="dof_enable" control_name="RenderDepthOfField"
-             layout="topleft" left="15" top="15" width="365" height="20"
+             layout="topleft" left="15" top="11" width="150" height="20"
              label="Enable Depth of Field" />
+  <button name="toolbar_animations" label="Toggle animations" layout="topleft"
+          left="175" top="10" width="130" height="22"
+          tool_tip="Freezes or resumes all animations (same as Ctrl+Alt+N / Ctrl+J). While frozen from here, the sky (sun, moon, stars, clouds) and falling snow are held too.">
+    <button.commit_callback function="ASDepthOfField.Toolbar" parameter="animations" />
+  </button>
+  <button name="toolbar_refresh" enabled_control="ASDepthOfFieldUIAperture" label="Refresh" layout="topleft"
+          left="310" top="10" width="95" height="22"
+          tool_tip="Restarts accumulating samples (Aperture-sampled renderer).">
+    <button.commit_callback function="ASDepthOfField.Toolbar" parameter="refresh" />
+  </button>
   <text name="mode_label" layout="topleft" left="15" top="46" width="125" height="18">Renderer</text>
   <combo_box name="dof_mode" control_name="ASDepthOfFieldMode"
              layout="topleft" left="145" top="42" width="235" height="22">
@@ -79,75 +94,71 @@
       <text name="aperture_note" layout="topleft" left="15" top="8" width="390" height="44" wrap="true"
             text_color="LabelTextColor"
             tool_tip="Used only by the Aperture-sampled renderer.">Aperture-sampled renderer, for perfectly still images. The blur builds up over seconds while nothing moves. Anything that moves (avatars, camera) smears or restarts it.</text>
-      <check_box name="aperture_freeze_animations" control_name="ASDepthOfFieldFreezeAnimations"
-                 layout="topleft" left="15" top="56" width="365" height="20"
-                 label="Freeze all animations"
-                 tool_tip="Same as Advanced &gt; Animation &gt; Freeze Animations, and also holds the sky (sun, moon, stars, clouds) and falling snow. Not saved between sessions." />
       <slider name="aperture_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSamples"
-              layout="topleft" left="15" top="86" width="365" height="18"
+              layout="topleft" left="15" top="56" width="365" height="18"
               label="Samples per frame" label_width="130" min_val="1" max_val="32"
               increment="1" decimal_digits="0" can_edit_text="true"
               tool_tip="Lens samples added per frame while still. Higher converges sooner but lowers the frame rate while developing." />
       <button name="reset_aperture_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="84" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="54" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSamples" />
       </button>
       <slider name="aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureMaxSamples"
-              layout="topleft" left="15" top="114" width="365" height="18"
+              layout="topleft" left="15" top="84" width="365" height="18"
               label="Total samples" label_width="130" min_val="16" max_val="4096"
               increment="16" decimal_digits="0" can_edit_text="true"
               tool_tip="Samples in the finished live image. More is smoother but takes longer to develop. Tip: wait for the counter to finish, then take a snapshot at window size to reuse it instantly." />
       <button name="reset_aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="112" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="82" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureMaxSamples" />
       </button>
       <slider name="aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotSamples"
-              layout="topleft" left="15" top="142" width="365" height="18"
+              layout="topleft" left="15" top="112" width="365" height="18"
               label="Snapshot samples" label_width="130" min_val="16" max_val="4096"
               increment="16" decimal_digits="0" can_edit_text="true"
               tool_tip="Samples rendered for a snapshot. A finished live view with at least this many samples at the same size is reused instantly; otherwise the capture renders them, within the snapshot time limit (Esc stops it early on Windows, keeping what is rendered)." />
       <button name="reset_aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="140" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="110" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotSamples" />
       </button>
       <slider name="aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotMaxSeconds"
-              layout="topleft" left="15" top="170" width="365" height="18"
+              layout="topleft" left="15" top="140" width="365" height="18"
               label="Snapshot time limit" label_width="130" min_val="5" max_val="600"
               increment="5" decimal_digits="0" can_edit_text="true"
               tool_tip="Maximum seconds a snapshot spends rendering samples; the snapshot keeps the samples rendered so far. The snapshot floater renders in short slices and the viewer keeps running (stay still: moving the camera ends the capture). Other snapshot commands and tiled high-res snapshots block the viewer and are capped at 30 s to avoid being logged out." />
       <button name="reset_aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="168" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="138" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotMaxSeconds" />
       </button>
       <slider name="aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureResidualBlur"
-              layout="topleft" left="15" top="198" width="365" height="18"
+              layout="topleft" left="15" top="168" width="365" height="18"
               label="Dot smoothing" label_width="130" min_val="0" max_val="10"
               increment="0.05" decimal_digits="2" can_edit_text="true"
               tool_tip="Fills the gaps between sample dots in out-of-focus highlights. 1 matches the dot spacing, 2 (default) fills it smoothly; 0 is off. Higher values soften and round the bokeh shape." />
       <button name="reset_aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="196" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="166" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureResidualBlur" />
       </button>
       <slider name="aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSmoothing"
-              layout="topleft" left="15" top="226" width="365" height="18"
+              layout="topleft" left="15" top="196" width="365" height="18"
               label="Final smoothing" label_width="130" min_val="0" max_val="4"
               increment="0.05" decimal_digits="2" can_edit_text="true"
               tool_tip="Once sampling is finished, smooths only the bokeh shapes of light sources: stars (faint ones included) and glowing objects (bulbs, neon, lamps with glow), located from where the renderer drew them in each sample, over the spacing left between sample dots, so they read as continuous light instead of dots. Everything else, including hair and plain blurred background, stays as sampled. Fades as more samples are rendered. 2 (default) smooths fully; lower keeps crisper bokeh edges; 0 is off." />
       <button name="reset_aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="224" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="194" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSmoothing" />
       </button>
       <!-- Hidden to keep the floater short (debug aid; the setting still works).
       <check_box name="aperture_show_smoothing" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowSmoothing"
-                 layout="topleft" left="30" top="252" width="350" height="20"
+                 layout="topleft" left="30" top="222" width="350" height="20"
                  label="Show smoothed area (red)"
                  tool_tip="Tints red the areas the final smoothing changes: the bokeh shapes of small lights found from the samples. Everything not red is exactly as sampled. Not saved between sessions." />
       -->
       <check_box name="aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowProgress"
-                 layout="topleft" left="15" top="254" width="365" height="20"
+                 layout="topleft" left="15" top="224" width="365" height="20"
                  label="Show sample counter (never in snapshots)" />
       <button name="reset_aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
-              left="385" top="253" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="223" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureShowProgress" />
       </button>
     </panel>

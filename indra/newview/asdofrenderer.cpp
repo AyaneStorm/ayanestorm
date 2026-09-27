@@ -22,11 +22,13 @@
 #include "llviewershadermgr.h"
 #include "llviewerwindow.h"
 #include "llglslshader.h"
+#include "llmotioncontroller.h"
 #include "llrender.h"
 #include "llrendertarget.h"
 #include "llrootview.h"
 #include "llspatialpartition.h"
 #include "lltoolmgr.h"
+#include "lluictrl.h"
 #include "llvertexbuffer.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
@@ -1060,15 +1062,26 @@ namespace ASDoFRenderer
                 });
         }
 
-        // "Freeze animations" in the DoF floater: the same global time-factor
-        // freeze as Advanced > Animation > Freeze Animations and My Lights.
-        if (LLControlVariable* control = gSavedSettings.getControl("ASDepthOfFieldFreezeAnimations"))
-        {
-            control->getSignal()->connect([](LLControlVariable*, const LLSD& value, const LLSD&)
-                {
-                    set_all_animation_time_factors(value.asBoolean() ? 0.f : 1.f);
-                });
-        }
+        // DoF floater toolbar. The animation freeze can also change
+        // elsewhere (Ctrl+Alt+N, Ctrl+J), so the button inverts the current
+        // state instead of showing one.
+        LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+            "ASDepthOfField.Toolbar",
+            [](LLUICtrl*, const LLSD& data)
+            {
+                const std::string action = data.asString();
+                if (action == "animations")
+                { // Same global time-factor freeze as Advanced > Animation >
+                  // Freeze Animations; the setting also holds sky and snow.
+                    const bool freeze = LLMotionController::getCurrentTimeFactor() != 0.f;
+                    set_all_animation_time_factors(freeze ? 0.f : 1.f);
+                    gSavedSettings.setBOOL("ASDepthOfFieldFreezeAnimations", freeze);
+                }
+                else if (action == "refresh")
+                { // The next live frame no longer matches: restarts averaging.
+                    sLive.mHaveKey = false;
+                }
+            });
     }
 
     void registerShaders(std::vector<LLGLSLShader*>& shaders)
@@ -1201,8 +1214,9 @@ namespace ASDoFRenderer
 
     bool isSceneFrozen()
     {
+        // Unfreezing animations elsewhere (Ctrl+J) also releases the sky.
         static LLCachedControl<bool> freeze(gSavedSettings, "ASDepthOfFieldFreezeAnimations", false);
-        return sCapturePending || freeze;
+        return sCapturePending || (freeze && LLMotionController::getCurrentTimeFactor() == 0.f);
     }
 
     bool isWorldFrozen()

@@ -12330,7 +12330,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldFreezeAnimations</key>
   <map>
-    <key>Comment</key><string>DoF floater toggle: freeze all avatar animations (same as Advanced > Animation > Freeze Animations) and hold the day cycle, cloud scroll and AyaneStorm snow so aperture-sampled DoF can converge on a still scene</string>
+    <key>Comment</key><string>Set by the DoF floater's "Toggle animations" button: while animations are frozen, also hold the day cycle, cloud scroll and AyaneStorm snow so aperture-sampled DoF can converge on a still scene</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

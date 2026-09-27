@@ -611,6 +611,27 @@ updates would mutate the scene mid-frame.
   Advanced > Animation > Freeze Animations (Ctrl+Alt+N) and the My Lights
   floater. No new upstream edit. Limit: freezing from the menu does not tick
   the checkbox, and unticking restores normal speed (1.0).
+  Superseded 2026-09-27 by the toolbar "Toggle animations" button (see
+  "DoF floater toolbar").
+
+### DoF floater toolbar (2026-09-27)
+
+Row at the top of `floater_as_depth_of_field.xml`: the "Enable Depth of
+Field" checkbox, then buttons, all bound to
+`ASDepthOfField.Toolbar` (registered in `ASDoFRenderer::registerUICallbacks`).
+Both toggles only invert the current state, which can also change elsewhere.
+
+- "Toggle animations" (`animations`): freezes when
+  `LLMotionController::getCurrentTimeFactor() != 0`, else resumes at 1.0,
+  via `set_all_animation_time_factors`; sets `ASDepthOfFieldFreezeAnimations`
+  to match. `isSceneFrozen()` holds sky/snow only while that setting is on
+  and the time factor is 0, so Ctrl+J also releases the sky.
+- No focus lock button: with `FSFocusPointFollowsPointer`, the focus
+  follows the pointer to the button before the click, so locking (or
+  unlocking) from the floater always focuses behind the button. Alt+Shift+X
+  stays the way to lock.
+- "Refresh" (`refresh`, enabled in mode 2 only): clears `sLive.mHaveKey`, so
+  the next live frame restarts the average.
 
 ### Mode-dependent control enabling (2026-09-24)
 
@@ -737,7 +758,8 @@ First runtime results (user, 2026-09-24):
     slightly widened shapes. The old blocking capture ran no main loop, so
     it never saw this.
   - Fix: `ASDoFRenderer::isSceneFrozen()`, true while a capture is pending
-    or while the DoF floater's "Freeze all animations" is on. When it is
+    or while animations are frozen by the DoF floater's "Toggle animations"
+    (`ASDepthOfFieldFreezeAnimations` and time factor 0). When it is
     true, `LLEnvironment::update` skips `applyTimeDelta` and
     `updateCloudScroll`, in a tagged block; the camera-yaw cache still
     updates.
