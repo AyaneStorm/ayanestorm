@@ -12342,7 +12342,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldFocusMode</key>
   <map>
-    <key>Comment</key><string>DoF focus, all renderers: 0 Firestorm focus point, 1 autofocus on the autofocus area (1/distance-weighted median of its depths), 2 autofocus on the eyes of the avatar in the area nearest its centre (falls back to 1)</string>
+    <key>Comment</key><string>DoF focus, all renderers: 0 Firestorm focus point, 1 autofocus on the autofocus area (1/distance-weighted median of its depths), 2 autofocus on the eyes of the avatar in the area nearest the camera (falls back to 1)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12402,7 +12402,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldAutofocusShowArea</key>
   <map>
-    <key>Comment</key><string>DoF autofocus: outline the autofocus area, the tracked eyes and the focus distance while the Depth of Field floater is open (never in snapshots)</string>
+    <key>Comment</key><string>DoF autofocus: outline the autofocus area, the tracked eyes or locked subject and the focus distance while autofocus is on (menu "Show DoF Autofocus Area", Alt+Shift+V; never in snapshots)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>

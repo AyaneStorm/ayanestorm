@@ -48,7 +48,7 @@
       <text name="focus_mode_label" layout="topleft" left="15" top="14" width="125" height="18">Focus</text>
       <combo_box name="focus_mode" control_name="ASDepthOfFieldFocusMode"
                  layout="topleft" left="145" top="10" width="235" height="22"
-                 tool_tip="Focus point: Firestorm behaviour (camera focus, or pointer with 'Focus follows pointer'). Autofocus: the depths inside the autofocus area, nearer surfaces weighing more. Eyes: the near eye of the avatar in the area closest to its centre; with none visible, as Autofocus. Alt+Shift+Z switches between Focus point and the last autofocus mode; Alt+Shift+X locks the focus.">
+                 tool_tip="Focus point: Firestorm behaviour (camera focus, or pointer with 'Focus follows pointer'). Autofocus: the depths inside the autofocus area, nearer surfaces weighing more. Eyes: the near eye of the avatar in the area nearest the camera; with none visible, as Autofocus. Alt+Shift+Z switches between Focus point and the last autofocus mode; Alt+Shift+X locks the focus.">
         <combo_box.item label="Focus point (Firestorm)" name="point" value="0" />
         <combo_box.item label="Autofocus on area" name="area" value="1" />
         <combo_box.item label="Autofocus on eyes" name="eyes" value="2" />
@@ -137,8 +137,8 @@
       </button>
       <check_box name="autofocus_show_area" control_name="ASDepthOfFieldAutofocusShowArea"
                  layout="topleft" left="15" top="266" width="365" height="20"
-                 label="Show autofocus area while this window is open"
-                 tool_tip="Outlines the autofocus area (yellow; green on eyes; red when locked, with the subject marked) and shows the focus distance. 'Draw DoF Focus crosshair' shows it at all times. Never in snapshots." />
+                 label="Show autofocus area (Alt+Shift+V)"
+                 tool_tip="Outlines the autofocus area (yellow; green on eyes; red when locked, with the subject marked) and shows the focus distance while autofocus is on. Never in snapshots." />
       <button name="reset_autofocus_show_area" label="D" layout="topleft"
               left="385" top="265" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusShowArea" />

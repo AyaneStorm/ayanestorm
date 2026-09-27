@@ -10,7 +10,7 @@
  * by 1/distance (near surfaces win, the sky barely counts) and takes the
  * weighted quantile (median by default, nearer with
  * ASDepthOfFieldAutofocusNearPriority). Eye mode: the visible avatar whose
- * eyes are inside the area, closest to its centre, is focused on the
+ * eyes are inside the area, nearest the camera, is focused on the
  * camera-facing surface of its nearer eye (eyeball radius measured on mesh
  * eyes, or ASDepthOfFieldAutofocusEyeRadius); eyes hidden behind geometry
  * (checked against the depth buffer) or no avatar fall back to area mode.
@@ -60,9 +60,10 @@ namespace ASDoFAutofocus
     bool update(LLRenderTarget& depth, LLVertexBuffer& triangle, F32& distance);
 
     // Autofocus area, focus distance and tracked eyes or locked subject,
-    // while the DoF floater is open (ASDepthOfFieldAutofocusShowArea) or
-    // with Firestorm's "Draw DoF Focus crosshair" (FSFocusPointRender,
-    // whose 3D crosshair is skipped in autofocus); never in snapshots.
+    // with ASDepthOfFieldAutofocusShowArea (menu "Show DoF Autofocus Area",
+    // Alt+Shift+V) or Firestorm's "Draw DoF Focus crosshair"
+    // (FSFocusPointRender, whose 3D crosshair is skipped in autofocus);
+    // never in snapshots.
     // Called from render_ui() in 2D UI state.
     void drawOverlay();
 }

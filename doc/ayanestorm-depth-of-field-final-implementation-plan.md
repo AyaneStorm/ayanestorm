@@ -1439,8 +1439,11 @@ modes 0, 1 and 2 all use it (mode 2 through `setFocusDistance`).
 - Focus: weights 1/distance, sorted, weighted quantile
   `0.5 - 0.45 * NearPriority`. Sky and far background barely count.
 - Eyes: `LLCharacter::sInstances`, non-control avatars with a visible
-  drawable (self skipped in mouselook); the avatar inside the area nearest
-  its centre. Focus point: the camera-facing surface of the nearer eye
+  drawable (self skipped in mouselook); the avatar whose eyes are inside
+  the area, nearest the camera (was: nearest the area centre, which in a
+  crowd picked people behind the subject; user report 2026-09-27). One
+  whose eyes are hidden (seen from behind) fails the occlusion probe and
+  area autofocus takes over. Focus point: the camera-facing surface of the nearer eye
   (`mEyeLeftp`/`mEyeRightp` are eyeball centres: centre + 12 mm toward the
   camera), as photographers focus on the near eye, not the eyeball centre.
 - Eye focus point from the mesh eyeballs (`measureEyes()`,
@@ -1516,8 +1519,10 @@ modes 0, 1 and 2 all use it (mode 2 through `setFocusDistance`).
   classic freeze. Point mode keeps Firestorm's lock unchanged.
 - Overlay (`drawOverlay()` after `drawProgress()` in `render_ui()`): area
   outline (yellow, green on eyes, red locked), subject/eye marker and
-  "AF x.xx m (locked: name)", while the DoF floater is open or with
-  "Draw DoF Focus crosshair" (`FSFocusPointRender`), whose 3D crosshair
+  "AF x.xx m (locked: name)", while autofocus is on, with
+  `ASDepthOfFieldAutofocusShowArea` (menu "Show DoF Autofocus Area",
+  Alt+Shift+V, free in `menu_viewer.xml`; was: only while the DoF floater
+  is open) or "Draw DoF Focus crosshair" (`FSFocusPointRender`), whose 3D crosshair
   `renderFocusPoint()` skips in autofocus.
 - Known limit: alpha-blended surfaces do not write scene depth; area
   autofocus sees behind them.

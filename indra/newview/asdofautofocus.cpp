@@ -16,7 +16,6 @@
 #include "llcharacter.h"
 #include "lldrawable.h"
 #include "llface.h"
-#include "llfloaterreg.h"
 #include "llfontgl.h"
 #include "llframetimer.h"
 #include "llgl.h"
@@ -583,12 +582,13 @@ namespace
         return avatar && avatar->mEyeLeftp && avatar->mEyeRightp ? avatar : nullptr;
     }
 
-    // Visible avatar whose eyes are inside the area, closest to its centre.
+    // Visible avatar whose eyes are inside the area, nearest the camera:
+    // in a crowd, the subject in front, not people behind it (one whose
+    // eyes are hidden, e.g. seen from behind, fails the occlusion probe
+    // and the area autofocus takes over).
     bool findEyes(const LLVector4& rect, LLVector2& eye_uv, F32& eye_distance, LLUUID& avatar_id)
     {
-        const LLVector2 centre((rect.mV[0] + rect.mV[2]) * 0.5f, (rect.mV[1] + rect.mV[3]) * 0.5f);
-        const F32 aspect = LLViewerCamera::getInstance()->getAspect();
-        F32 best_score = F32_MAX;
+        F32 best_distance = F32_MAX;
         LLVOAvatar* best = nullptr;
         for (LLCharacter* character : LLCharacter::sInstances)
         {
@@ -606,13 +606,9 @@ namespace
             {
                 continue;
             }
-            // Screen distance in view-height units.
-            const F32 dx = (uv.mV[VX] - centre.mV[VX]) * aspect;
-            const F32 dy = uv.mV[VY] - centre.mV[VY];
-            const F32 score = dx * dx + dy * dy;
-            if (score < best_score)
+            if (distance < best_distance)
             {
-                best_score = score;
+                best_distance = distance;
                 best = avatar;
             }
         }
@@ -1135,8 +1131,7 @@ void ASDoFAutofocus::drawOverlay()
     static LLCachedControl<bool> show_area(gSavedSettings, "ASDepthOfFieldAutofocusShowArea", true);
     // Firestorm's "Draw DoF Focus crosshair" shows this helper instead.
     static LLCachedControl<bool> show_crosshair(gSavedSettings, "FSFocusPointRender", false);
-    if (gSnapshot || !isActive() ||
-        !(show_crosshair || (show_area && LLFloaterReg::instanceVisible("as_depth_of_field"))))
+    if (gSnapshot || !isActive() || !(show_crosshair || show_area))
     {
         return;
     }
