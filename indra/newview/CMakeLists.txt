@@ -123,6 +123,11 @@ set(viewer_SOURCE_FILES
     asvignette.cpp
     aschromaticaberration.cpp
     asmotionblur.cpp
+    asdepthoffield.cpp
+    asdofcamera.cpp
+    asdofaperture.cpp
+    asdofautofocus.cpp
+    asdofrenderer.cpp
     asdiffuseglow.cpp
     asambientocclusion.cpp
     # </AS:Chanayane>
@@ -1048,6 +1053,11 @@ set(viewer_HEADER_FILES
     asvignette.h
     aschromaticaberration.h
     asmotionblur.h
+    asdepthoffield.h
+    asdofcamera.h
+    asdofaperture.h
+    asdofautofocus.h
+    asdofrenderer.h
     asdiffuseglow.h
     asambientocclusion.h
     # </AS:Chanayane>

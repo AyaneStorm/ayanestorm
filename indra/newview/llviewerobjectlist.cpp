@@ -1118,7 +1118,10 @@ void LLViewerObjectList::update(LLAgent &agent)
 
     // <FS:Ansariel> Speed up debug settings
     //if (gSavedSettings.getBOOL("FreezeTime"))
-    if (freezeTime)
+    // <AS:Chanayane> Also frozen during an aperture DoF capture (LLPipeline::FreezeTime).
+    // if (freezeTime)
+    if (freezeTime || LLPipeline::FreezeTime)
+    // </AS:Chanayane>
     // </FS:Ansariel> Speed up debug settings
     {
 

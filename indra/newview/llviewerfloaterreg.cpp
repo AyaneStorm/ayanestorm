@@ -54,6 +54,9 @@
 // <AS:Chanayane> Screen-space camera motion blur.
 #include "asmotionblur.h"
 // </AS:Chanayane>
+// <AS:Chanayane> AyaneStorm cinematic depth-of-field controls.
+#include "asdepthoffield.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom controls.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -673,8 +676,10 @@ void LLViewerFloaterReg::registerFloaters()
     ASVignette::registerUICallbacks();
     ASChromaticAberration::registerUICallbacks();
     ASMotionBlur::registerUICallbacks();
+    ASDepthOfField::registerUICallbacks();
     ASDiffuseGlow::registerUICallbacks();
     LLFloaterReg::add("as_camera_effects", "floater_as_camera_effects.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    LLFloaterReg::add("as_depth_of_field", "floater_as_depth_of_field.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     LLFloaterReg::add("as_color_grading", "floater_as_color_grading.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterColorGrading>);
     // </AS:Chanayane>
     // <AS:Chanayane> Combined tabbed environment effects controls.

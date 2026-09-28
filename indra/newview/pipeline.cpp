@@ -52,6 +52,11 @@
 // <AS:Chanayane> Screen-space camera motion blur.
 #include "asmotionblur.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Optional AyaneStorm-owned cinematic depth of field.
+#include "asdepthoffield.h"
+#include "asdofautofocus.h"
+#include "asdofrenderer.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Optional camera bright-surface bloom.
 #include "asdiffuseglow.h"
 // </AS:Chanayane>
@@ -1295,7 +1300,10 @@ void LLPipeline::refreshCachedSettings()
     RenderShadowResolutionScale = gSavedSettings.getF32("RenderShadowResolutionScale");
     RenderDelayCreation = gSavedSettings.getBOOL("RenderDelayCreation");
 //  RenderAnimateRes = gSavedSettings.getBOOL("RenderAnimateRes"); <FS:Beq> FIRE-23122 BUG-225920 Remove broken RenderAnimateRes functionality.
-    FreezeTime = gSavedSettings.getBOOL("FreezeTime");
+    // <AS:Chanayane> A pending aperture DoF capture keeps the world frozen.
+    // FreezeTime = gSavedSettings.getBOOL("FreezeTime");
+    FreezeTime = gSavedSettings.getBOOL("FreezeTime") || ASDoFRenderer::isWorldFrozen();
+    // </AS:Chanayane>
     DebugBeaconLineWidth = gSavedSettings.getS32("DebugBeaconLineWidth");
     RenderHighlightBrightness = gSavedSettings.getF32("RenderHighlightBrightness");
     RenderHighlightColor = gSavedSettings.getColor4("RenderHighlightColor");
@@ -2175,7 +2183,11 @@ void LLPipeline::removeMutedAVsLights(LLVOAvatar* muted_avatar)
 
 U32 LLPipeline::addObject(LLViewerObject *vobj)
 {
-    if (RenderDelayCreation)
+    // <AS:Chanayane> Objects arriving during an aperture DoF capture wait in
+    // the creation queue until the capture ends (createObjects()).
+    // if (RenderDelayCreation)
+    if (RenderDelayCreation || ASDoFRenderer::isWorldFrozen())
+    // </AS:Chanayane>
     {
         mCreateQ.push_back(vobj);
     }
@@ -2190,6 +2202,13 @@ U32 LLPipeline::addObject(LLViewerObject *vobj)
 void LLPipeline::createObjects(F32 max_dtime)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_PIPELINE;
+
+    // <AS:Chanayane> No new drawables while an aperture DoF capture keeps the world frozen.
+    if (ASDoFRenderer::isWorldFrozen())
+    {
+        return;
+    }
+    // </AS:Chanayane>
 
     LLTimer update_timer;
 
@@ -3074,7 +3093,13 @@ void LLPipeline::rebuildPriorityGroups()
     LLTimer update_timer;
     assertInitialized();
 
-    gMeshRepo.notifyLoadedMeshes();
+    // <AS:Chanayane> Meshes loaded during an aperture DoF capture apply when it ends.
+    // gMeshRepo.notifyLoadedMeshes();
+    if (!ASDoFRenderer::isWorldFrozen())
+    {
+        gMeshRepo.notifyLoadedMeshes();
+    }
+    // </AS:Chanayane>
 
     mGroupQ1Locked = true;
     // Iterate through all drawables on the priority build queue,
@@ -3098,7 +3123,11 @@ void LLPipeline::updateGeom(F32 max_dtime)
     LLPointer<LLDrawable> drawablep;
 
     LL_RECORD_BLOCK_TIME(FTM_GEO_UPDATE);
-    if (gCubeSnapshot)
+    // <AS:Chanayane> Geometry stays as it was while an aperture DoF capture
+    // keeps the world frozen; queued rebuilds run when it ends.
+    // if (gCubeSnapshot)
+    if (gCubeSnapshot || ASDoFRenderer::isWorldFrozen())
+    // </AS:Chanayane>
     {
         return;
     }
@@ -5089,7 +5118,11 @@ void LLPipeline::renderSnapshotGuidesOverlay()
 void LLPipeline::renderFocusPoint()
 {
     static LLCachedControl<bool> render_focus_point_crosshair(gSavedSettings, "FSFocusPointRender", false);
-    if (sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    // <AS:Chanayane> Autofocus draws its own 2D helper (ASDoFAutofocus::drawOverlay).
+    // if (sDoFEnabled && render_focus_point_crosshair && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    if (sDoFEnabled && render_focus_point_crosshair && !ASDoFAutofocus::isActive() &&
+        gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    // </AS:Chanayane>
     {
         gDebugProgram.bind();
         LLVector3 focus_point = sLastFocusPoint;
@@ -8900,7 +8933,12 @@ bool LLPipeline::renderSnapshotFrame(LLRenderTarget* src, LLRenderTarget* dst)
 }
 // </FS:Beq>
 
-void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
+// <AS:Chanayane> The advanced-only call is made before tone mapping; the
+// original late call still owns the legacy fallback.
+// void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
+bool LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst,
+                           bool advanced_only)
+// </AS:Chanayane>
 {
     LL_PROFILE_GPU_ZONE("dof");
     {
@@ -8982,6 +9020,16 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
                 target_distance = LLViewerCamera::getInstance()->getAtAxis() * (focus_point - eye);
             }
 
+            // <AS:Chanayane> Autofocus (asdofautofocus.h) replaces the focus
+            // point and its transition; it holds its value in snapshots.
+            F32 autofocus_distance = current_distance;
+            if (ASDoFAutofocus::update(mRT->deferredScreen, *mScreenTriangleVB, autofocus_distance))
+            {
+                current_distance = autofocus_distance;
+                transition_time = 1.f;
+            }
+            else
+            // </AS:Chanayane>
             if (transition_time >= 1.f && fabsf(current_distance - target_distance) / current_distance > 0.01f)
             { // large shift happened, interpolate smoothly to new target distance
                 transition_time = 0.f;
@@ -9031,6 +9079,35 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             F32 screen_to_target_scale_factor = (F32)gViewerWindow->getWindowHeightRaw()/dst->getHeight();
             F32 adj_COF = CameraMaxCoF / screen_to_target_scale_factor;
             // </FS:Beq>
+            // <AS:Chanayane> Aperture-sampled DoF defocuses in the scene render;
+            // only publish this frame's smoothed focus for the next lens.
+            if (advanced_only && ASDoFRenderer::isEnabled())
+            {
+                ASDoFRenderer::setFocusDistance(current_distance);
+                return false;
+            }
+            // </AS:Chanayane>
+            // <AS:Chanayane> Keep Firestorm's focus and physical-lens frontend.
+            // The early call runs the owned image synthesis in linear HDR;
+            // failure leaves the untouched late legacy passes available.
+            if (advanced_only && ASDepthOfField::render(*src, *dst, mRT->deferredScreen,
+                    *mScreenTriangleVB, -subject_distance / 1000.f,
+                    blur_constant,
+                    tanf(1.f / LLDrawable::sCurPixelAngle) * screen_to_target_scale_factor,
+                    magnification, adj_COF))
+            {
+// <AS:Chanayane> A successful early pass supplies the HDR tonemap source.
+                // return;
+                return true;
+// </AS:Chanayane>
+            }
+// <AS:Chanayane> Never run the legacy, post-tonemap shader on the HDR target.
+            if (advanced_only)
+            {
+                return false;
+            }
+// </AS:Chanayane>
+            // </AS:Chanayane>
             { // build diffuse+bloom+CoF
                 mRT->deferredLight.bindTarget();
 
@@ -9121,6 +9198,10 @@ void LLPipeline::renderDoF(LLRenderTarget* src, LLRenderTarget* dst)
             copyRenderTarget(src, dst);
         }
     }
+// <AS:Chanayane> The late caller ignores this result; early callers use it to
+// select the color-space-consistent HDR source.
+    return true;
+// </AS:Chanayane>
 }
 
 void LLPipeline::renderFinalize()
@@ -9143,6 +9224,32 @@ void LLPipeline::renderFinalize()
 
     gGL.setColorMask(true, true);
     glClearColor(0, 0, 0, 0);
+
+// <AS:Chanayane> The owned DoF's opaque and transparent captures are linear
+// HDR. Resolve them against the linear scene before any non-linear display
+// transform; the legacy post-tonemap DoF remains below as a fallback.
+    LLRenderTarget* linear_source = &mRT->screen;
+    bool advanced_dof_applied = false;
+    if ((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
+        RenderDepthOfField && !gCubeSnapshot &&
+        gSavedSettings.getS32("ASDepthOfFieldMode") == 1)
+    {
+        if (LLRenderTarget* hdr_output = ASDepthOfField::hdrOutput(
+                mRT->screen.getWidth(), mRT->screen.getHeight()))
+        {
+            if (renderDoF(&mRT->screen, hdr_output, true))
+            {
+                linear_source = hdr_output;
+                advanced_dof_applied = true;
+            }
+        }
+    }
+    else if (ASDoFRenderer::isEnabled())
+    { // Focus update only; the late legacy blur must not run.
+        renderDoF(&mRT->screen, &mRT->screen, true);
+        advanced_dof_applied = true;
+    }
+// </AS:Chanayane>
 
     static LLCachedControl<bool> has_hdr(gSavedSettings, "RenderHDREnabled", true);
     bool hdr = gGLManager.mGLVersion > 4.05f && has_hdr();
@@ -9168,7 +9275,10 @@ void LLPipeline::renderFinalize()
         // <AS:Chanayane> Composite optional bright-surface bloom while the
         // scene is still linear HDR. Authored material glow remains in the
         // unchanged post-tonemap compatibility pass below.
-        LLRenderTarget* tonemap_source = &mRT->screen;
+// <AS:Chanayane> Feed the HDR DoF result into the same bloom/tonemap chain.
+        // LLRenderTarget* tonemap_source = &mRT->screen;
+        LLRenderTarget* tonemap_source = linear_source;
+// </AS:Chanayane>
         if (LLRenderTarget* bloom_source = ASDiffuseGlow::renderHDR(
                 *tonemap_source, mExposureMap, *mScreenTriangleVB))
         {
@@ -9187,7 +9297,10 @@ void LLPipeline::renderFinalize()
     }
     else
     {
-        gammaCorrect(&mRT->screen, &mPostPingMap);
+// <AS:Chanayane> The non-HDR display path also needs the linear DoF result.
+        // gammaCorrect(&mRT->screen, &mPostPingMap);
+        gammaCorrect(linear_source, &mPostPingMap);
+// </AS:Chanayane>
     }
 
     LLVertexBuffer::unbind();
@@ -9206,13 +9319,16 @@ void LLPipeline::renderFinalize()
     gGLViewport[3] = gViewerWindow->getWorldViewRectRaw().getHeight();
     glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
 
-    if((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
+// <AS:Chanayane> Do not defocus the same frame a second time after tone mapping.
+    if(!advanced_dof_applied &&
+       (RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
         RenderDepthOfField &&
         !gCubeSnapshot)
     {
         renderDoF(sourceBuffer, targetBuffer);
         std::swap(sourceBuffer, targetBuffer);
     }
+// </AS:Chanayane>
 
     // <AS:Chanayane> Apply camera motion blur before AA, matching the existing
     // ping-pong post-process chain (see ASChromaticAberration below).
@@ -10266,7 +10382,12 @@ void LLPipeline::renderDeferredLighting()
 
     screen_target->flush();
 
-    if (!gCubeSnapshot)
+    // <AS:Chanayane> Restore the central camera before the last-frame capture;
+    // repeated aperture samples must not advance matrix history again.
+    ASDoFRenderer::endSample();
+    // if (!gCubeSnapshot)
+    if (!gCubeSnapshot && !ASDoFRenderer::isRepeatSample())
+    // </AS:Chanayane>
     {
         // this is the end of the 3D scene render, grab a copy of the modelview and projection
         // matrix for use in off-by-one-frame effects in the next frame

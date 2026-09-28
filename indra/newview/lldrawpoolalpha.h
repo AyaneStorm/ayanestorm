@@ -70,7 +70,11 @@ public:
     void renderDebugAlpha();
 
     void renderGroupAlpha(LLSpatialGroup* group, U32 type, U32 mask, bool texture = true);
-    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
+// <AS:Chanayane> Replay visible alpha into the private premultiplied DoF layer.
+    // void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false);
+    void renderAlpha(U32 mask, bool depth_only = false, bool rigged = false,
+                     bool dof_layer = false);
+// </AS:Chanayane>
     void renderAlphaHighlight();
 
     static bool sShowDebugAlpha;

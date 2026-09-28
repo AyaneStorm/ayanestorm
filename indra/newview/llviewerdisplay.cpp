@@ -30,6 +30,8 @@
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
+#include "asdofrenderer.h"
+#include "asdofautofocus.h"
 // </AS:Chanayane>
 #include "fsyspath.h"
 #include "hexdump.h"
@@ -843,7 +845,13 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     gPipeline.resetFrameStats();    // Reset per-frame statistics.
 
-    if (!gDisconnected && !LLApp::isExiting())
+    // <AS:Chanayane> While an aperture DoF snapshot capture runs, live frames
+    // skip the (frozen) 3D scene and draw only the UI over the capture.
+    // if (!gDisconnected && !LLApp::isExiting())
+    const bool as_frozen_view = !gSnapshot && !gDisconnected && !LLApp::isExiting() &&
+        ASDoFRenderer::isLiveViewFrozen();
+    if (!gDisconnected && !LLApp::isExiting() && !as_frozen_view)
+    // </AS:Chanayane>
     {
         // Render mirrors and associated hero probes before we render the rest of the scene.
         // This ensures the scene state in the hero probes are exactly the same as the rest of the scene before we render it.
@@ -870,6 +878,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
         stop_glerror();
         display_update_camera();
         stop_glerror();
+        // <AS:Chanayane> Aperture-sampled DoF: install this frame's lens camera.
+        ASDoFRenderer::beginSample(for_snapshot);
+        // </AS:Chanayane>
 
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
@@ -991,6 +1002,11 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 LLViewerTexture::updateClass();
             }
 
+            // <AS:Chanayane> Textures keep their state during an aperture DoF
+            // capture (no sharpening, no avatars rezzing between slices).
+            if (!ASDoFRenderer::isWorldFrozen())
+            // </AS:Chanayane>
+            {
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Image Update Bump");
                 gBumpImageList.updateImages();  // must be called before gTextureList version so that it's textures are thrown out first.
@@ -1002,6 +1018,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 max_image_decode_time = llclamp(max_image_decode_time, 0.002f, 0.005f ); // min 2ms/frame, max 5ms/frame)
                 gTextureList.updateImages(max_image_decode_time);
             }
+            // <AS:Chanayane>
+            }
+            // </AS:Chanayane>
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("GLTF Materials Cleanup");
@@ -1180,6 +1199,10 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
             gPipeline.renderDeferredLighting();
         }
 
+        // <AS:Chanayane> Aperture-sampled DoF: render and average the other lens samples.
+        ASDoFRenderer::renderRemainingSamples(result);
+        // </AS:Chanayane>
+
         LLPipeline::sUnderWaterRender = false;
 
         {
@@ -1199,6 +1222,17 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         gPipeline.clearReferences();
     }
+    // <AS:Chanayane> Frozen live view during an aperture DoF capture.
+    else if (as_frozen_view)
+    {
+        // 3D matrices for world-anchored UI (name tags, selection); the
+        // camera stays still while the world is frozen.
+        display_update_camera();
+        LLAppViewer::instance()->pingMainloopTimeout("Display:RenderUI");
+        render_ui();
+        swap();
+    }
+    // </AS:Chanayane>
 
     LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
 
@@ -1649,13 +1683,25 @@ void render_ui(F32 zoom_factor, int subfield)
     }
 
     // apply gamma correction and post effects
-    gPipeline.renderFinalize();
+    // <AS:Chanayane> Aperture DoF capture: live frames show the developing
+    // capture instead of the scene; each capture slice keeps its image.
+    // gPipeline.renderFinalize();
+    if (!ASDoFRenderer::presentFrozenView())
+    {
+        gPipeline.renderFinalize();
+        ASDoFRenderer::keepFrozenView();
+    }
+    // </AS:Chanayane>
 
     {
         LLGLState::checkStates();
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
+        // <AS:Chanayane> DoF autofocus area under HUD attachments and UI
+        // panels (was drawn last, over them; see below).
+        ASDoFAutofocus::drawOverlay();
+        // </AS:Chanayane>
     render_hud_elements();
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
         if (RlvActions::hasBehaviour(RLV_BHVR_SETOVERLAY))
@@ -1712,6 +1758,11 @@ void render_ui(F32 zoom_factor, int subfield)
         gViewerWindow->setup2DRender();
         gViewerWindow->updateDebugText();
         gViewerWindow->drawDebugText();
+        // <AS:Chanayane> Aperture-sampled DoF progress overlay (skips
+        // snapshots). The autofocus area moved before render_hud_elements().
+        ASDoFRenderer::drawProgress();
+        // ASDoFAutofocus::drawOverlay();
+        // </AS:Chanayane>
     }
 
     if (!gSnapshot)

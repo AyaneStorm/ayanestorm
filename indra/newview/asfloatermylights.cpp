@@ -125,6 +125,8 @@ bool ASFloaterMyLights::postBuild()
     mMasterEnabled = gSavedSettings.getBOOL("ASLightRigMasterEnabled");
     mMasterEnabledCheck->setValue(mMasterEnabled);
     mRenderBackendCombo->setValue(gSavedSettings.getString("ASLightRigRenderBackend"));
+    // Eye-specular masking lives in the direct shader path only.
+    getChild<LLUICtrl>("as_light_no_eye_specular")->setEnabled(ASLightRigRenderer::usesShaderBackend());
     mShowOtherAvatarsCheck->setValue(gSavedSettings.getBOOL("ASLightRigShowOtherAvatars"));
 
     setControlsEnabled(false);
@@ -553,6 +555,7 @@ void ASFloaterMyLights::onMasterEnabledChanged()
 void ASFloaterMyLights::onRenderBackendChanged()
 {
     gSavedSettings.setString("ASLightRigRenderBackend", mRenderBackendCombo->getValue().asString());
+    getChild<LLUICtrl>("as_light_no_eye_specular")->setEnabled(ASLightRigRenderer::usesShaderBackend());
     updateLights();
 }
 

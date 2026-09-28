@@ -1815,6 +1815,30 @@
                function="ToggleControl"
                parameter="FSFocusPointLocked" />
             </menu_item_check>
+            <!-- <AS:Chanayane> Toggles DoF autofocus (asdofautofocus.h). -->
+            <menu_item_check
+               label="Depth of Field Autofocus"
+               layout="topleft"
+               shortcut="alt|shift|Z"
+               name="as_dof_autofocus">
+            <menu_item_check.on_check
+               function="ASDepthOfField.IsAutofocus" />
+            <menu_item_check.on_click
+               function="ASDepthOfField.ToggleAutofocus" />
+            </menu_item_check>
+            <menu_item_check
+               label="Show DoF Autofocus Area"
+               layout="topleft"
+               shortcut="alt|shift|V"
+               name="as_dof_autofocus_area">
+            <menu_item_check.on_check
+               function="CheckControl"
+               parameter="ASDepthOfFieldAutofocusShowArea" />
+            <menu_item_check.on_click
+               function="ToggleControl"
+               parameter="ASDepthOfFieldAutofocusShowArea" />
+            </menu_item_check>
+            <!-- </AS:Chanayane> -->
             <menu_item_check
                label="Draw DoF Focus crosshair"
                layout="topleft"

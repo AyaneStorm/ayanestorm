@@ -1,0 +1,539 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<!-- AyaneStorm-owned cinematic depth-of-field controls.
+     Author: chanayane@firestorm -->
+<floater name="as_depth_of_field" title="AyaneStorm Depth of Field"
+         positioning="cascading" can_resize="false" can_minimize="true"
+         save_rect="true" single_instance="true" layout="topleft"
+         width="430" height="539">
+  <!-- Toolbar: DoF on/off, then buttons. The animation freeze can also change elsewhere (Ctrl+Alt+N,
+       Ctrl+J), so the button only inverts the current state
+       (ASDoFRenderer::registerUICallbacks()). No focus lock button: with
+       focus following the pointer, clicking it would focus on whatever is
+       behind the button (use Alt+Shift+X). -->
+  <check_box name="dof_enable" control_name="RenderDepthOfField"
+             layout="topleft" left="15" top="11" width="150" height="20"
+             label="Enable Depth of Field" />
+  <button name="toolbar_animations" label="Toggle animations" layout="topleft"
+          left="175" top="10" width="130" height="22"
+          tool_tip="Freezes or resumes all animations (same as Ctrl+Alt+N / Ctrl+J). While frozen from here, the sky (sun, moon, stars, clouds) and falling snow are held too.">
+    <button.commit_callback function="ASDepthOfField.Toolbar" parameter="animations" />
+  </button>
+  <button name="toolbar_refresh" enabled_control="ASDepthOfFieldUIAperture" label="Refresh" layout="topleft"
+          left="310" top="10" width="95" height="22"
+          tool_tip="Restarts accumulating samples (Aperture-sampled renderer).">
+    <button.commit_callback function="ASDepthOfField.Toolbar" parameter="refresh" />
+  </button>
+  <text name="mode_label" layout="topleft" left="15" top="46" width="125" height="18">Renderer</text>
+  <combo_box name="dof_mode" control_name="ASDepthOfFieldMode"
+             layout="topleft" left="145" top="42" width="235" height="22">
+    <combo_box.item label="Standard / Firestorm" name="standard" value="0" />
+    <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1" />
+    <combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2" />
+  </combo_box>
+  <button name="reset_dof_mode" label="D" layout="topleft"
+          left="385" top="42" width="20" height="22" tool_tip="Reset to default.">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldMode" />
+  </button>
+
+  <!-- Grouped in tabs to keep the floater short. Controls that have no
+       effect in the selected renderer are greyed out (enabled_control flags
+       synced by ASDoFRenderer::syncModeFlags()). -->
+  <tab_container name="dof_tabs" layout="topleft" follows="all"
+                 left="0" top="72" width="430" height="424"
+                 tab_position="top" halign="center">
+
+    <!-- Focus: all renderers (asdofautofocus.h). -->
+    <panel name="focus_tab" label="Focus" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="399">
+      <text name="focus_mode_label" layout="topleft" left="15" top="14" width="125" height="18">Focus</text>
+      <combo_box name="focus_mode" control_name="ASDepthOfFieldFocusMode"
+                 layout="topleft" left="145" top="10" width="235" height="22"
+                 tool_tip="Focus point: Firestorm behaviour (camera focus, or pointer with 'Focus follows pointer'). Autofocus: the depths inside the autofocus area, nearer surfaces weighing more. Eyes: the near eye of the avatar in the area nearest the camera; with none visible, as Autofocus. Alt+Shift+Z switches between Focus point and the last autofocus mode; Alt+Shift+X locks the focus.">
+        <combo_box.item label="Focus point (Firestorm)" name="point" value="0" />
+        <combo_box.item label="Autofocus on area" name="area" value="1" />
+        <combo_box.item label="Autofocus on eyes" name="eyes" value="2" />
+      </combo_box>
+      <button name="reset_focus_mode" label="D" layout="topleft"
+              left="385" top="10" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFocusMode" />
+      </button>
+      <slider name="autofocus_area" control_name="ASDepthOfFieldAutofocusArea"
+              layout="topleft" left="15" top="44" width="365" height="18"
+              label="Area size" label_width="130" min_val="0.02" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Size of the square autofocus area, as a fraction of the view height. Eyes mode only tracks eyes inside it." />
+      <button name="reset_autofocus_area" label="D" layout="topleft"
+              left="385" top="42" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusArea" />
+      </button>
+      <slider name="autofocus_x" control_name="ASDepthOfFieldAutofocusX"
+              layout="topleft" left="15" top="72" width="365" height="18"
+              label="Area horizontal" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Centre of the autofocus area: 0 left edge, 1 right edge." />
+      <button name="reset_autofocus_x" label="D" layout="topleft"
+              left="385" top="70" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusX" />
+      </button>
+      <slider name="autofocus_y" control_name="ASDepthOfFieldAutofocusY"
+              layout="topleft" left="15" top="100" width="365" height="18"
+              label="Area vertical" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Centre of the autofocus area: 0 top edge, 1 bottom edge." />
+      <button name="reset_autofocus_y" label="D" layout="topleft"
+              left="385" top="98" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusY" />
+      </button>
+      <slider name="autofocus_time" control_name="ASDepthOfFieldAutofocusTime"
+              layout="topleft" left="15" top="128" width="365" height="18"
+              label="Focus time (s)" label_width="130" min_val="0" max_val="3"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Seconds to reach a new focus distance; 0 is instant. Small depth changes (breathing, idle animations) are ignored so the image stays still." />
+      <button name="reset_autofocus_time" label="D" layout="topleft"
+              left="385" top="126" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusTime" />
+      </button>
+      <slider name="autofocus_near_priority" control_name="ASDepthOfFieldAutofocusNearPriority"
+              layout="topleft" left="15" top="156" width="365" height="18"
+              label="Near priority" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="0 focuses on the typical depth of the area (weighted median); higher values favour its nearest surfaces." />
+      <button name="reset_autofocus_near_priority" label="D" layout="topleft"
+              left="385" top="154" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusNearPriority" />
+      </button>
+      <slider name="autofocus_eye_radius" control_name="ASDepthOfFieldAutofocusEyeRadius"
+              layout="topleft" left="15" top="184" width="290" height="18"
+              label="Eyeball radius (mm)" label_width="130" min_val="0" max_val="30"
+              increment="0.1" decimal_digits="1" can_edit_text="true"
+              tool_tip="Eyes mode focuses on the front of the eye, this far from the eye centre. 0 (default) measures mesh eyes automatically; the focus label shows the radius used ('measured', or 'default' 12 mm when the eyes cannot be measured, e.g. system eyes). Set a value to override." />
+      <button name="autofocus_redetect_eyes" label="Redetect" layout="topleft"
+              left="310" top="182" width="70" height="22"
+              tool_tip="Measures the mesh eyes again (each avatar is measured once, the first time it is focused on). Use after changing eyes or head.">
+        <button.commit_callback function="ASDepthOfField.RedetectEyes" />
+      </button>
+      <button name="reset_autofocus_eye_radius" label="D" layout="topleft"
+              left="385" top="182" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusEyeRadius" />
+      </button>
+      <text name="autofocus_lock_label" layout="topleft" left="15" top="214" width="125" height="18">Lock (Alt+Shift+X)</text>
+      <combo_box name="autofocus_lock_mode" control_name="ASDepthOfFieldAutofocusLockMode"
+                 layout="topleft" left="145" top="210" width="235" height="22"
+                 tool_tip="What the focus lock does in autofocus. Freeze distance: the classic lock, the focus stays at its current distance. Track subject: locks what is focused (the tracked eyes, else the surface at the area centre) and keeps it in focus as it or the camera moves; on an avatar it follows the body part, so a mesh face stays sharp.">
+        <combo_box.item label="Freeze distance" name="distance" value="0" />
+        <combo_box.item label="Track subject" name="subject" value="1" />
+      </combo_box>
+      <button name="reset_autofocus_lock_mode" label="D" layout="topleft"
+              left="385" top="210" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusLockMode" />
+      </button>
+      <check_box name="autofocus_track_outside" control_name="ASDepthOfFieldAutofocusTrackOutside"
+                 layout="topleft" left="15" top="240" width="365" height="20"
+                 label="Track the locked subject outside the area"
+                 tool_tip="On: the locked subject stays in focus anywhere in the view. Off: the focus holds while the subject is outside the autofocus area and follows it again when it comes back." />
+      <button name="reset_autofocus_track_outside" label="D" layout="topleft"
+              left="385" top="239" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusTrackOutside" />
+      </button>
+      <check_box name="autofocus_show_area" control_name="ASDepthOfFieldAutofocusShowArea"
+                 layout="topleft" left="15" top="266" width="365" height="20"
+                 label="Show autofocus area (Alt+Shift+V)"
+                 tool_tip="Outlines the autofocus area (yellow; green on eyes; red when locked, with the subject marked) and shows the focus distance while autofocus is on. Never in snapshots." />
+      <button name="reset_autofocus_show_area" label="D" layout="topleft"
+              left="385" top="265" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAutofocusShowArea" />
+      </button>
+      <text name="autofocus_note" layout="topleft" left="15" top="294" width="390" height="44" wrap="true"
+            text_color="LabelTextColor">Alpha-blended surfaces (some hair, clothing, particles) do not write depth: area autofocus sees what is behind them.</text>
+    </panel>
+
+    <!-- Aperture shape: Advanced and Aperture-sampled renderers. -->
+    <panel name="aperture_tab" label="Aperture" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="399">
+      <text name="blades_label" enabled_control="ASDepthOfFieldUIShape" layout="topleft" left="15" top="14" width="125" height="18">Aperture shape</text>
+      <combo_box name="aperture_blades" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureBlades"
+                 layout="topleft" left="145" top="10" width="235" height="22">
+        <combo_box.item label="Circle" name="circle" value="0" />
+        <combo_box.item label="Triangle" name="triangle" value="3" />
+        <combo_box.item label="Square" name="square" value="4" />
+        <combo_box.item label="Pentagon" name="pentagon" value="5" />
+        <combo_box.item label="Hexagon" name="hexagon" value="6" />
+        <combo_box.item label="Heptagon" name="heptagon" value="7" />
+        <combo_box.item label="Octagon" name="octagon" value="8" />
+        <combo_box.item label="Nonagon" name="nonagon" value="9" />
+      </combo_box>
+      <button name="reset_aperture_blades" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="10" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureBlades" />
+      </button>
+      <slider name="aperture_roundness" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureRoundness"
+              layout="topleft" left="15" top="44" width="365" height="18"
+              label="Blade rounding" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="0 preserves the selected polygon; 1 rounds it completely back into a circle." />
+      <button name="reset_aperture_roundness" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="42" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureRoundness" />
+      </button>
+      <slider name="aperture_rotation" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureRotation"
+              layout="topleft" left="15" top="72" width="365" height="18"
+              label="Aperture rotation" label_width="130" min_val="0" max_val="360"
+              increment="1" decimal_digits="0" can_edit_text="true" />
+      <button name="reset_aperture_rotation" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="70" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureRotation" />
+      </button>
+      <slider name="anamorphic_ratio" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldAnamorphicRatio"
+              layout="topleft" left="15" top="100" width="365" height="18"
+              label="Anamorphic ratio" label_width="130" min_val="0.1" max_val="2"
+              increment="0.01" decimal_digits="2" can_edit_text="true" />
+      <button name="reset_anamorphic_ratio" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="98" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAnamorphicRatio" />
+      </button>
+    </panel>
+
+    <!-- Aperture-sampled renderer: sample counts, snapshots, smoothing. -->
+    <panel name="sampling_tab" label="Sampling" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="399">
+      <text name="aperture_note" layout="topleft" left="15" top="8" width="390" height="44" wrap="true"
+            text_color="LabelTextColor"
+            tool_tip="Used only by the Aperture-sampled renderer.">Aperture-sampled renderer, for perfectly still images. The blur builds up over seconds while nothing moves. Anything that moves (avatars, camera) smears or restarts it.</text>
+      <slider name="aperture_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSamples"
+              layout="topleft" left="15" top="56" width="365" height="18"
+              label="Samples per frame" label_width="130" min_val="1" max_val="32"
+              increment="1" decimal_digits="0" can_edit_text="true"
+              tool_tip="Lens samples added per frame while still. Higher converges sooner but lowers the frame rate while developing." />
+      <button name="reset_aperture_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="54" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSamples" />
+      </button>
+      <slider name="aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureMaxSamples"
+              layout="topleft" left="15" top="84" width="365" height="18"
+              label="Total samples" label_width="130" min_val="16" max_val="4096"
+              increment="16" decimal_digits="0" can_edit_text="true"
+              tool_tip="Samples in the finished live image. More is smoother but takes longer to develop. Tip: wait for the counter to finish, then take a snapshot at window size to reuse it instantly." />
+      <button name="reset_aperture_max_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="82" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureMaxSamples" />
+      </button>
+      <slider name="aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotSamples"
+              layout="topleft" left="15" top="112" width="365" height="18"
+              label="Snapshot samples" label_width="130" min_val="16" max_val="4096"
+              increment="16" decimal_digits="0" can_edit_text="true"
+              tool_tip="Samples rendered for a snapshot. A finished live view with at least this many samples at the same size is reused instantly; otherwise the capture renders them, within the snapshot time limit (Esc stops it early on Windows, keeping what is rendered)." />
+      <button name="reset_aperture_snapshot_samples" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="110" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotSamples" />
+      </button>
+      <slider name="aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSnapshotMaxSeconds"
+              layout="topleft" left="15" top="140" width="365" height="18"
+              label="Snapshot time limit" label_width="130" min_val="5" max_val="600"
+              increment="5" decimal_digits="0" can_edit_text="true"
+              tool_tip="Maximum seconds a snapshot spends rendering samples; the snapshot keeps the samples rendered so far. The snapshot floater renders in short slices and the viewer keeps running (stay still: moving the camera ends the capture). Other snapshot commands and tiled high-res snapshots block the viewer and are capped at 30 s to avoid being logged out." />
+      <button name="reset_aperture_snapshot_seconds" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="138" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSnapshotMaxSeconds" />
+      </button>
+      <slider name="aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureResidualBlur"
+              layout="topleft" left="15" top="168" width="365" height="18"
+              label="Dot smoothing" label_width="130" min_val="0" max_val="10"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Fills the gaps between sample dots in out-of-focus highlights. 1 matches the dot spacing, 2 (default) fills it smoothly; 0 is off. Higher values soften and round the bokeh shape." />
+      <button name="reset_aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="166" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureResidualBlur" />
+      </button>
+      <slider name="aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSmoothing"
+              layout="topleft" left="15" top="196" width="365" height="18"
+              label="Final smoothing" label_width="130" min_val="0" max_val="4"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Once sampling is finished, smooths only the bokeh shapes of light sources: stars (faint ones included) and glowing objects (bulbs, neon, lamps with glow), located from where the renderer drew them in each sample, over the spacing left between sample dots, so they read as continuous light instead of dots. Everything else, including hair and plain blurred background, stays as sampled. Fades as more samples are rendered. 2 (default) smooths fully; lower keeps crisper bokeh edges; 0 is off." />
+      <button name="reset_aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="194" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSmoothing" />
+      </button>
+      <!-- Hidden to keep the floater short (debug aid; the setting still works).
+      <check_box name="aperture_show_smoothing" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowSmoothing"
+                 layout="topleft" left="30" top="222" width="350" height="20"
+                 label="Show smoothed area (red)"
+                 tool_tip="Tints red the areas the final smoothing changes: the bokeh shapes of small lights found from the samples. Everything not red is exactly as sampled. Not saved between sessions." />
+      -->
+      <check_box name="aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureShowProgress"
+                 layout="topleft" left="15" top="224" width="365" height="20"
+                 label="Show sample counter (never in snapshots)" />
+      <button name="reset_aperture_show_progress" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="223" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureShowProgress" />
+      </button>
+    </panel>
+
+    <!-- Optional lens character. Axial CA, cat's eye and spherical aberration:
+         Advanced and Aperture-sampled renderers; bright highlights:
+         Aperture-sampled; field curvature and astigmatism: Advanced. -->
+    <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="399">
+      <check_box name="aperture_axial_ca" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureAxialCA"
+                 layout="topleft" left="15" top="10" width="365" height="20"
+                 label="Axial chromatic aberration"
+                 tool_tip="Each wavelength focuses at a slightly different distance, as in a real lens: out-of-focus highlights get coloured rims (one colour in front of the focus, another behind) while sharp areas stay neutral. Aperture-sampled: colour needs more samples to smooth out. Advanced: applied to the opaque scene and light shapes, not to alpha layers such as alpha hair." />
+      <button name="reset_aperture_axial_ca" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="9" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCA" />
+      </button>
+      <slider name="aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" control_name="ASDepthOfFieldApertureAxialCAStrength"
+              layout="topleft" left="15" top="36" width="365" height="18"
+              label="Aberration (% of f)" label_width="130" min_val="0" max_val="2"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Red-to-blue focal shift in percent of the focal length. Real fast lenses are around 0.1-0.2; higher values exaggerate the colour fringes." />
+      <button name="reset_aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" label="D" layout="topleft"
+              left="385" top="34" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCAStrength" />
+      </button>
+      <check_box name="aperture_cat_eye" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureCatEye"
+                 layout="topleft" left="15" top="62" width="365" height="20"
+                 label="Cat's-eye bokeh"
+                 tool_tip="As in a real lens, the barrel clips the aperture away from the centre of the frame: bokeh toward the edges become lemon-shaped, their long side facing around the centre." />
+      <button name="reset_aperture_cat_eye" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="61" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEye" />
+      </button>
+      <slider name="aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" control_name="ASDepthOfFieldApertureCatEyeStrength"
+              layout="topleft" left="15" top="88" width="365" height="18"
+              label="Cat's-eye strength" label_width="130" min_val="0" max_val="2"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="How much the barrel clips at the frame corner, in aperture radii. Higher values clip more and start closer to the centre." />
+      <button name="reset_aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" label="D" layout="topleft"
+              left="385" top="86" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEyeStrength" />
+      </button>
+      <check_box name="aperture_cat_eye_darken" enabled_control="ASDepthOfFieldUICatEye" control_name="ASDepthOfFieldApertureCatEyeDarken"
+                 layout="topleft" left="30" top="114" width="350" height="20"
+                 label="Darken corners (physical light loss)"
+                 tool_tip="A real lens loses the clipped light, so the corners get darker. Off: brightness is compensated and only the bokeh shape changes." />
+      <button name="reset_aperture_cat_eye_darken" enabled_control="ASDepthOfFieldUICatEye" label="D" layout="topleft"
+              left="385" top="113" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEyeDarken" />
+      </button>
+      <check_box name="aperture_spherical" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureSpherical"
+                 layout="topleft" left="15" top="140" width="365" height="20"
+                 label="Spherical aberration"
+                 tool_tip="As in a real lens, the brightness across each bokeh disc differs in front of and behind the focus plane. Sharp areas are unchanged." />
+      <button name="reset_aperture_spherical" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
+              left="385" top="139" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSpherical" />
+      </button>
+      <slider name="aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" control_name="ASDepthOfFieldApertureSphericalStrength"
+              layout="topleft" left="15" top="166" width="365" height="18"
+              label="Spherical strength" label_width="130" min_val="-1" max_val="1"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Positive (most lenses): soft, centre-bright background bokeh and bright-rimmed foreground bokeh. Negative (over-corrected, 'soap bubble'): bright rings in the background." />
+      <button name="reset_aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" label="D" layout="topleft"
+              left="385" top="164" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSphericalStrength" />
+      </button>
+      <check_box name="aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureHighlights"
+                 layout="topleft" left="15" top="192" width="365" height="20"
+                 label="Bright bokeh highlights (artistic)"
+                 tool_tip="Real lights are far brighter than lit surfaces, so in night photos their bokeh stay bright discs. Viewer lights are not that bright. This lets small bright points (lamps, stars, glints) keep their brightness as they blur. Sharp areas and large bright areas are unchanged. Off keeps the exact physical simulation." />
+      <button name="reset_aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+              left="385" top="191" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlights" />
+      </button>
+      <slider name="aperture_highlight_strength" enabled_control="ASDepthOfFieldUIHighlights" control_name="ASDepthOfFieldApertureHighlightStrength"
+              layout="topleft" left="15" top="218" width="365" height="18"
+              label="Highlight strength" label_width="130" min_val="0" max_val="1"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="How much brightness blurred highlights keep. The boost grows with the size of the bokeh disc." />
+      <button name="reset_aperture_highlight_strength" enabled_control="ASDepthOfFieldUIHighlights" label="D" layout="topleft"
+              left="385" top="216" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlightStrength" />
+      </button>
+      <slider name="aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" control_name="ASDepthOfFieldApertureHighlightThreshold"
+              layout="topleft" left="15" top="244" width="365" height="18"
+              label="Highlight threshold" label_width="130" min_val="0.05" max_val="8"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Brightness where highlights start (linear). Lower picks up dimmer lights such as stars; higher only the brightest lamps." />
+      <button name="reset_aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" label="D" layout="topleft"
+              left="385" top="242" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlightThreshold" />
+      </button>
+      <check_box name="field_curvature" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldFieldCurvature"
+                 layout="topleft" left="15" top="270" width="365" height="20"
+                 label="Field curvature (Advanced)"
+                 tool_tip="As in a real lens, the sharp zone is curved: toward the frame edges it lies nearer (or farther) than at the centre, so a flat subject softens in the corners." />
+      <button name="reset_field_curvature" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="269" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFieldCurvature" />
+      </button>
+      <slider name="field_curvature_strength" enabled_control="ASDepthOfFieldUIFieldCurvature" control_name="ASDepthOfFieldFieldCurvatureStrength"
+              layout="topleft" left="15" top="296" width="365" height="18"
+              label="Curvature (% of f)" label_width="130" min_val="-3" max_val="3"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Focal shift at the frame corner in percent of the focal length. Positive (most lenses): the corners focus nearer. Negative: farther." />
+      <button name="reset_field_curvature_strength" enabled_control="ASDepthOfFieldUIFieldCurvature" label="D" layout="topleft"
+              left="385" top="294" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFieldCurvatureStrength" />
+      </button>
+      <check_box name="astigmatism" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldAstigmatism"
+                 layout="topleft" left="15" top="322" width="365" height="20"
+                 label="Astigmatism (Advanced)"
+                 tool_tip="As in a real lens, off-axis the directions toward and around the centre focus apart: the corners soften, background bokeh stretch around the centre (swirl) and foreground bokeh outward." />
+      <button name="reset_astigmatism" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="321" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAstigmatism" />
+      </button>
+      <slider name="astigmatism_strength" enabled_control="ASDepthOfFieldUIAstigmatism" control_name="ASDepthOfFieldAstigmatismStrength"
+              layout="topleft" left="15" top="348" width="365" height="18"
+              label="Astigmatism (% of f)" label_width="130" min_val="-3" max_val="3"
+              increment="0.05" decimal_digits="2" can_edit_text="true"
+              tool_tip="Focal split at the frame corner in percent of the focal length. Negative swaps the stretch directions (background bokeh stretch outward)." />
+      <button name="reset_astigmatism_strength" enabled_control="ASDepthOfFieldUIAstigmatism" label="D" layout="topleft"
+              left="385" top="346" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldAstigmatismStrength" />
+      </button>
+    </panel>
+
+    <!-- Advanced / AyaneStorm screen-space renderer only. -->
+    <panel name="advanced_tab" label="Advanced" layout="topleft" follows="all"
+           left="0" top="0" width="430" height="399">
+      <text name="advanced_note" layout="topleft" left="15" top="8" width="390" height="18"
+            text_color="LabelTextColor">Advanced / AyaneStorm renderer only.</text>
+      <text name="backend_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="36" width="125" height="18">Backend</text>
+      <combo_box name="dof_backend" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldBackend"
+                 layout="topleft" left="145" top="32" width="235" height="22"
+                 tool_tip="The portable OpenGL 4.1 fragment backend is currently used. Auto reserves selection of a future optimized backend.">
+        <combo_box.item label="Auto" name="auto" value="0" />
+        <combo_box.item label="Fragment / OpenGL 4.1" name="fragment" value="1" />
+      </combo_box>
+      <button name="reset_dof_backend" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="32" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldBackend" />
+      </button>
+      <text name="quality_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="64" width="125" height="18">Bokeh quality</text>
+      <combo_box name="dof_quality" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldQuality"
+                 layout="topleft" left="145" top="60" width="235" height="22">
+        <combo_box.item label="Low — 16 samples" name="low" value="0" />
+        <combo_box.item label="High — 32 samples" name="high" value="1" />
+        <combo_box.item label="Cinematic — 48 samples" name="cinematic" value="2" />
+      </combo_box>
+      <button name="reset_dof_quality" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="60" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldQuality" />
+      </button>
+      <icon name="near_radius_warning" image_name="Popup_Caution" mouse_opaque="true"
+            layout="topleft" left="15" top="95" width="16" height="16"
+            tool_tip="Foreground blur can show artifacts in close-ups, such as dark streaks on hair in front of a face. If it does, set this to 0 (no foreground blur)." />
+      <slider name="near_radius" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldNearRadius"
+              layout="topleft" left="35" top="94" width="345" height="18"
+              label="Foreground radius" label_width="110" min_val="0" max_val="4"
+              increment="0.05" decimal_digits="2" can_edit_text="true" />
+      <button name="reset_near_radius" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="92" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldNearRadius" />
+      </button>
+      <slider name="far_radius" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldFarRadius"
+              layout="topleft" left="15" top="122" width="365" height="18"
+              label="Background radius" label_width="130" min_val="0" max_val="4"
+              increment="0.05" decimal_digits="2" can_edit_text="true" />
+      <button name="reset_far_radius" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="120" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFarRadius" />
+      </button>
+      <slider name="highlight_boost" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightBoost"
+              layout="topleft" left="15" top="150" width="365" height="18"
+              label="Bokeh highlights" label_width="130" min_val="0" max_val="2"
+              increment="0.01" decimal_digits="2" can_edit_text="true" />
+      <button name="reset_highlight_boost" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="148" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightBoost" />
+      </button>
+      <check_box name="highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightSprites"
+                 layout="topleft" left="15" top="178" width="365" height="20"
+                 label="Aperture-shaped light bokeh"
+                 tool_tip="Draws small isolated out-of-focus lights as filled aperture shapes with the same total light, instead of a dotted blur." />
+      <button name="reset_highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="176" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightSprites" />
+      </button>
+      <slider name="highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightIsolation"
+              layout="topleft" left="15" top="206" width="365" height="18"
+              label="Light isolation" label_width="130" min_val="1.2" max_val="8"
+              increment="0.1" decimal_digits="1" can_edit_text="true"
+              tool_tip="How much brighter than its surroundings a light must be to get an aperture shape. Lower picks more lights." />
+      <button name="reset_highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="204" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightIsolation" />
+      </button>
+      <slider name="highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightMaxSprites"
+              layout="topleft" left="15" top="234" width="365" height="18"
+              label="Maximum light shapes" label_width="130" min_val="256" max_val="32768"
+              increment="256" decimal_digits="0" can_edit_text="true"
+              tool_tip="Performance limit. Lights beyond it keep the ordinary blur." />
+      <button name="reset_highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="232" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightMaxSprites" />
+      </button>
+      <check_box name="postfilter" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldPostfilter"
+                 layout="topleft" left="15" top="262" width="365" height="20"
+                 label="Sampling noise filter"
+                 tool_tip="Smooths the grain of large blurs over the local sampling gaps, without softening edges between different blur sizes or bokeh outlines." />
+      <button name="reset_postfilter" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="260" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldPostfilter" />
+      </button>
+      <check_box name="physical_blur" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldPhysicalBlur"
+                 layout="topleft" left="15" top="290" width="365" height="20"
+                 label="Physical blur size"
+                 tool_tip="Blur as large as the lens makes it (focal length, f-number, focus), up to the limit below, as in the Aperture-sampled renderer. Off: limited by Firestorm's Max CoF instead." />
+      <button name="reset_physical_blur" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="288" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldPhysicalBlur" />
+      </button>
+      <slider name="max_blur" enabled_control="ASDepthOfFieldUIMaxBlur" control_name="ASDepthOfFieldMaxBlur"
+              layout="topleft" left="15" top="318" width="365" height="18"
+              label="Maximum blur (%)" label_width="130" min_val="1" max_val="10"
+              increment="0.1" decimal_digits="1" can_edit_text="true"
+              tool_tip="Largest blur radius in percent of the image height. Larger blurs cost more and show more grain." />
+      <button name="reset_max_blur" enabled_control="ASDepthOfFieldUIMaxBlur" label="D" layout="topleft"
+              left="385" top="316" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldMaxBlur" />
+      </button>
+      <!-- Hidden to keep the floater short (debug aid; the setting still works).
+      <text name="debug_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="182" width="125" height="18">Diagnostic view</text>
+      <combo_box name="dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldDebug"
+                 layout="topleft" left="145" top="178" width="235" height="22">
+        <combo_box.item label="Off" name="off" value="0" />
+        <combo_box.item label="Signed CoC" name="coc" value="1" />
+        <combo_box.item label="Foreground coverage" name="near_coverage" value="2" />
+        <combo_box.item label="Far blur" name="far" value="3" />
+        <combo_box.item label="Near blur" name="near" value="4" />
+        <combo_box.item label="Transparent coverage" name="transparent_coverage" value="5" />
+        <combo_box.item label="Transparent signed CoC" name="transparent_coc" value="6" />
+        <combo_box.item label="Opaque signed CoC" name="opaque_coc" value="7" />
+        <combo_box.item label="World/transparent far blur" name="transparent_far" value="8" />
+        <combo_box.item label="World/transparent near blur" name="transparent_near" value="9" />
+        <combo_box.item label="Rigged signed CoC" name="rigged_coc" value="10" />
+        <combo_box.item label="World signed CoC" name="world_coc" value="11" />
+        <combo_box.item label="Rigged coverage" name="rigged_coverage" value="12" />
+        <combo_box.item label="World coverage" name="world_coverage" value="13" />
+        <combo_box.item label="Rigged far blur" name="rigged_far" value="14" />
+        <combo_box.item label="Rigged near blur" name="rigged_near" value="15" />
+        <combo_box.item label="Background completion" name="background_sharp" value="16" />
+        <combo_box.item label="Near back layer" name="near_back" value="17" />
+        <combo_box.item label="Near front layer" name="near_front" value="18" />
+        <combo_box.item label="Background plate (blurred)" name="background" value="19" />
+      </combo_box>
+      <button name="reset_dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="178" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldDebug" />
+      </button>
+      -->
+    </panel>
+  </tab_container>
+
+  <button name="reset_tuning" label="Reset tuning defaults"
+          layout="topleft" left="255" top="504" width="150" height="22">
+    <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="All" />
+  </button>
+</floater>

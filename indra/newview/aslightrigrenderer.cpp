@@ -15,6 +15,7 @@
 #include "llviewercamera.h"
 #include "llvieweroctree.h"
 #include "llviewershadermgr.h"
+#include "llvoavatarself.h"
 #include "pipeline.h"
 
 // Cube helper is implemented by llvieweroctree.cpp and historically declared
@@ -26,6 +27,47 @@ namespace
     std::vector<ASLightRigRenderer::Light> sLights;
     const F32 DEFERRED_RADIUS_SCALE = 1.5f;
     const F32 DEFERRED_FALLOFF_SCALE = 0.5f;
+
+    // Eye-specular mask uniforms, see pointLightF.glsl / multiPointLightF.glsl.
+    const LLStaticHashedString sEyeMaskCount("as_eye_mask_count");
+    const LLStaticHashedString sEyeMask("as_eye_mask");
+    // Legacy and Bento eye joints; mesh eyes are rigged to one of the pairs.
+    const char* const EYE_JOINTS[] = { "mEyeLeft", "mEyeRight", "mFaceEyeAltLeft", "mFaceEyeAltRight" };
+
+    // Builds view-space spheres around the self avatar's eye joints, inside
+    // which the light shaders drop My Lights specular (catchlights).
+    std::vector<LLVector4> collectEyeMasks(const glm::mat4& modelview)
+    {
+        std::vector<LLVector4> masks;
+        static LLCachedControl<bool> enabled(gSavedSettings, "ASLightRigNoEyeSpecular", false);
+        static LLCachedControl<F32> radius(gSavedSettings, "ASLightRigEyeMaskRadius", 0.02f);
+        if (!enabled || radius <= 0.f || !isAgentAvatarValid())
+        {
+            return masks;
+        }
+
+        for (const char* name : EYE_JOINTS)
+        {
+            LLJoint* joint = gAgentAvatarp->getJoint(name);
+            if (joint)
+            {
+                const glm::vec3 view = mul_mat4_vec3(modelview, glm::vec3(joint->getWorldPosition()));
+                masks.emplace_back(view.x, view.y, view.z, radius);
+            }
+        }
+        return masks;
+    }
+
+    // Uploads the mask to the bound light shader. An empty mask restores the
+    // count to 0 so stock lights sharing the program stay unaffected.
+    void applyEyeMasks(LLGLSLShader& shader, const std::vector<LLVector4>& masks)
+    {
+        shader.uniform1i(sEyeMaskCount, (GLint)masks.size());
+        if (!masks.empty())
+        {
+            shader.uniform4fv(sEyeMask, (U32)masks.size(), masks.front().mV);
+        }
+    }
 }
 
 bool ASLightRigRenderer::usesShaderBackend()
@@ -63,9 +105,11 @@ void ASLightRigRenderer::render(LLPipeline& pipeline, F32 light_scale)
 
     std::vector<LLVector4> fullscreen_lights;
     std::vector<LLVector4> fullscreen_colors;
+    const std::vector<LLVector4> eye_masks = collectEyeMasks(modelview);
 
     LLGLDepthTest depth(GL_TRUE, GL_FALSE);
     pipeline.bindDeferredShader(gDeferredLightProgram);
+    applyEyeMasks(gDeferredLightProgram, eye_masks);
     pipeline.mCubeVB->setBuffer();
 
     for (S32 index = 0; index < count_limit; ++index)
@@ -114,6 +158,7 @@ void ASLightRigRenderer::render(LLPipeline& pipeline, F32 light_scale)
                                            light.falloff * DEFERRED_FALLOFF_SCALE);
         }
     }
+    applyEyeMasks(gDeferredLightProgram, {});
     pipeline.unbindDeferredShader(gDeferredLightProgram);
 
     LLGLDepthTest fullscreen_depth(GL_FALSE);
@@ -133,8 +178,10 @@ void ASLightRigRenderer::render(LLPipeline& pipeline, F32 light_scale)
         shader.uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, fullscreen_colors.front().mV);
         shader.uniform1f(LLShaderMgr::MULTI_LIGHT_FAR_Z, far_z);
         shader.uniform1i(LLShaderMgr::CLASSIC_MODE, sky->canAutoAdjust() ? 1 : 0);
+        applyEyeMasks(shader, eye_masks);
         pipeline.mScreenTriangleVB->setBuffer();
         pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        applyEyeMasks(shader, {});
         pipeline.unbindDeferredShader(shader);
 
         fullscreen_lights.erase(fullscreen_lights.begin(), fullscreen_lights.begin() + count);

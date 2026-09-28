@@ -427,7 +427,11 @@ void LLFloaterSnapshot::Impl::updateControls(LLFloaterSnapshotBase* floater)
     // Update displayed image resolution.
     LLTextBox* image_res_tb = floater->getChild<LLTextBox>("image_res_text");
     image_res_tb->setVisible(got_snap);
-    if (got_snap)
+    // <AS:Chanayane> The requested size is known before the capture ends;
+    // updateLayout() shows this label anyway (placeholders otherwise).
+    //if (got_snap)
+    if (previewp)
+    // </AS:Chanayane>
     {
         image_res_tb->setTextArg("[WIDTH]", llformat("%d", previewp->getEncodedImageWidth()));
         image_res_tb->setTextArg("[HEIGHT]", llformat("%d", previewp->getEncodedImageHeight()));
@@ -1287,6 +1291,11 @@ void LLFloaterSnapshot::onOpen(const LLSD& key)
     std::string last_snapshot_panel = gSavedSettings.getString("FSLastSnapshotPanel");
     panel_container->selectTabByName(last_snapshot_panel.empty() ? "panel_snapshot_options" : last_snapshot_panel);
     panel_container->getCurrentPanel()->onOpen(LLSD());
+    // <AS:Chanayane> Apply the selected panel's resolution before the first
+    // capture runs; otherwise it renders at window size, then again at the
+    // chosen size (costly with aperture DoF).
+    impl->updateControls(this);
+    // </AS:Chanayane>
     mSucceessLblPanel->setVisible(false);
     mFailureLblPanel->setVisible(false);
     // </FS:Ansariel>

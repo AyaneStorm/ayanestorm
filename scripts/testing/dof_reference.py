@@ -1,0 +1,1664 @@
+#!/usr/bin/env python3
+"""Independent thin-lens visibility reference. Author: chanayane@firestorm.
+
+Run with Python 3; no viewer build or third-party packages are required.
+Coordinates are metres, +Z forward, and image coordinates at unit distance.
+This deliberately uses ray/plane intersection, not the viewer's CoC/gather.
+The viewer_* helpers mirror indra/newview/asdofcamera.cpp in the viewer's GL
+convention (-Z forward eye space, matrices indexed m[column][row]) and are
+checked against the independent ray model. Textured materials and general
+blend factors are subsequent acceptance work; these tests do not certify
+viewer integration.
+"""
+
+from dataclasses import dataclass
+import math
+import unittest
+
+
+@dataclass(frozen=True)
+class Camera:
+    focus: float
+    focal_length: float = 0.050
+    f_number: float = 2.0
+
+    def __post_init__(self):
+        if not (0 < self.focal_length < self.focus and self.f_number > 0):
+            raise ValueError("Require focus > focal length > 0 and f-number > 0")
+
+    @property
+    def aperture_radius(self):
+        return self.focal_length / (2 * self.f_number)
+
+    def ray(self, image, lens):
+        """Aim a lens-origin ray at the pinhole ray's focal-plane point."""
+        origin = (lens[0], lens[1], 0.0)
+        direction = (image[0] * self.focus - lens[0],
+                     image[1] * self.focus - lens[1], self.focus)
+        return origin, direction
+
+    def off_axis_view_and_projection(self, lens, near, far,
+                                      tan_half_fov_x, tan_half_fov_y):
+        """Eye-translation (view) plus asymmetric-frustum (projection) pair
+        for a camera translated to `lens` on a plane parallel to the image
+        plane (Kooima-style off-axis/generalized-perspective projection).
+
+        Two effects combine to keep the focal plane's image fixed while the
+        eye moves to `lens`, matching the pinhole-ray convention `ray()`
+        uses:
+
+        1. View: translate world points by `-lens` in x/y (the eye moved to
+           `lens`, so points appear shifted by `-lens` in the new eye
+           frame; z, the forward axis, is unaffected since `lens` lies in
+           the z == 0 plane).
+        2. Projection: an asymmetric frustum whose near-plane bounds are
+           shifted by `-lens * (near / self.focus)`. This is the amount
+           needed so that a point on the focal plane (z == self.focus),
+           after the step-1 view shift by `-lens`, re-centers back onto the
+           same NDC position it had from lens (0, 0) -- because at
+           z == focus the view-shifted x is `image_x*focus - lens_x`, and
+           dividing the frustum's asymmetric center by z == focus must
+           exactly cancel the residual `-lens_x` term. Solving
+           `(sx*(x - lens_x) + a*z) / z == x_pinhole/z` at z == focus with
+           `a` derived from a frustum shift `s` gives `s = lens * near / focus`
+           (near/far and fov shape otherwise standard, matching
+           `LLViewerCamera::calcProjection`'s symmetric case at lens == 0).
+
+        This reference keeps the file's +Z-forward convention throughout
+        (`apply()` expects points with positive forward distance in z, not
+        raw OpenGL -Z eye space); `w == z` here. The viewer-side C++ port
+        additionally folds in the eye-space z negation
+        (`LLViewerCamera::calcProjection`'s `mMatrix[2][3] = -1` becomes +1
+        under this file's sign convention) when translated to GL's actual
+        -Z-forward eye space -- a fixed, mechanical sign flip re-verified
+        independently once written in C++, not a change to any ratio
+        checked by the tests below.
+
+        Returns (view_translate, projection): apply view first, then
+        projection, i.e. `apply(projection, view_translate(point))`.
+        """
+        shift_x = -lens[0] * (near / self.focus)
+        shift_y = -lens[1] * (near / self.focus)
+        right = near * tan_half_fov_x + shift_x
+        left = -near * tan_half_fov_x + shift_x
+        top = near * tan_half_fov_y + shift_y
+        bottom = -near * tan_half_fov_y + shift_y
+
+        a = -(right + left) / (right - left)
+        b = -(top + bottom) / (top - bottom)
+        c = (far + near) / (far - near)
+        d = -(2.0 * far * near) / (far - near)
+        sx = 2.0 * near / (right - left)
+        sy = 2.0 * near / (top - bottom)
+
+        def view_translate(point):
+            return (point[0] - lens[0], point[1] - lens[1], point[2])
+
+        # Row-major 4x4 for this file's +Z-forward convention (w == z);
+        # multiply as column-vector-on-the-right: M @ (x, y, z, 1).
+        projection = (
+            (sx, 0.0, a, 0.0),
+            (0.0, sy, b, 0.0),
+            (0.0, 0.0, c, d),
+            (0.0, 0.0, 1.0, 0.0),
+        )
+        return view_translate, projection
+
+    @staticmethod
+    def apply(matrix, point):
+        """Apply a 4x4 row-major projection matrix, returning clip-space xyzw."""
+        x, y, z = point
+        return tuple(
+            row[0] * x + row[1] * y + row[2] * z + row[3]
+            for row in matrix
+        )
+
+
+@dataclass(frozen=True)
+class Card:
+    depth: float
+    bounds: tuple
+    color: tuple
+    alpha: float
+    additive: bool = False
+
+    def intersect(self, origin, direction):
+        """Return positive ray distance if the finite card is intersected."""
+        t = (self.depth - origin[2]) / direction[2]
+        x, y = (origin[i] + t * direction[i] for i in (0, 1))
+        left, right, bottom, top = self.bounds
+        return t if t > 0 and left <= x < right and bottom <= y < top else None
+
+
+def trace(camera, image, lens, cards, background=(0.0, 0.0, 0.0)):
+    """Resolve actual ray hits far-to-near before any aperture averaging."""
+    origin, direction = camera.ray(image, lens)
+    hits = []
+    for index, card in enumerate(cards):
+        distance = card.intersect(origin, direction)
+        if distance is not None:
+            hits.append((distance, index, card))
+    color, coverage = background, 0.0
+    # Stable submission-index tie order is explicit, not a depth epsilon.
+    for _, _, card in sorted(hits, key=lambda h: (-h[0], h[1])):
+        if card.additive:
+            color = tuple(c + v for c, v in zip(color, card.color))
+        else:
+            color = tuple(card.alpha * v + (1 - card.alpha) * c
+                          for c, v in zip(color, card.color))
+            coverage = card.alpha + (1 - card.alpha) * coverage
+    return (*color, coverage)
+
+
+# Exact OIT blend factor codes (asExactOITCompositeF.glsl blend_factor()).
+(ONE, ZERO, DEST_COLOR, SOURCE_COLOR, ONE_MINUS_DEST_COLOR,
+ ONE_MINUS_SOURCE_COLOR, DEST_ALPHA, SOURCE_ALPHA, ONE_MINUS_DEST_ALPHA,
+ ONE_MINUS_SOURCE_ALPHA) = range(10)
+# (color src, color dst, alpha src, alpha dst); None marks a glow-only node.
+STANDARD_BLEND = (SOURCE_ALPHA, ONE_MINUS_SOURCE_ALPHA, ZERO, ONE_MINUS_SOURCE_ALPHA)
+GLOW_ONLY = None
+
+
+def _blend_factor(code, src, dst):
+    table = {
+        ONE: (1.,) * 4, ZERO: (0.,) * 4, DEST_COLOR: dst, SOURCE_COLOR: src,
+        ONE_MINUS_DEST_COLOR: tuple(1 - c for c in dst),
+        ONE_MINUS_SOURCE_COLOR: tuple(1 - c for c in src),
+        DEST_ALPHA: (dst[3],) * 4, SOURCE_ALPHA: (src[3],) * 4,
+        ONE_MINUS_DEST_ALPHA: (1 - dst[3],) * 4,
+        ONE_MINUS_SOURCE_ALPHA: (1 - src[3],) * 4,
+    }
+    return table.get(code, (0.,) * 4)
+
+
+def viewer_blend_node(color, blend, node_glow, dst, glow):
+    """Mirror of asExactOITCompositeF.glsl blend_node(); returns (dst, glow)."""
+    if blend is GLOW_ONLY:
+        return dst, glow + node_glow
+    sf, df, asf, adf = (_blend_factor(code, color, dst) for code in blend)
+    rgb = tuple(color[c] * sf[c] + dst[c] * df[c] for c in range(3))
+    alpha = color[3] * asf[3] + dst[3] * adf[3]
+    return (*rgb, alpha), node_glow + glow * (1 - color[3])
+
+
+@dataclass(frozen=True)
+class Surface:
+    """Finite parallelogram at any orientation: origin + u*u_axis + v*v_axis
+    for (u, v) in extent. texture(u, v) returns straight RGBA; alpha 0 or 1
+    textures model alpha masks."""
+    origin: tuple
+    u_axis: tuple
+    v_axis: tuple
+    extent: tuple
+    texture: object
+    blend: tuple = STANDARD_BLEND
+    glow: float = 0.0
+
+    def intersect(self, origin, direction):
+        """Return (t, u, v) for a forward hit inside the extent, else None."""
+        # Solve origin + t*d = O + u*U + v*V with Cramer's rule.
+        cols = (direction, tuple(-c for c in self.u_axis), tuple(-c for c in self.v_axis))
+        rhs = tuple(self.origin[i] - origin[i] for i in range(3))
+
+        def det(a, b, c):
+            return (a[0] * (b[1] * c[2] - b[2] * c[1]) - b[0] * (a[1] * c[2] - a[2] * c[1])
+                    + c[0] * (a[1] * b[2] - a[2] * b[1]))
+        d = det(*cols)
+        if abs(d) < 1e-300:
+            return None
+        t = det(rhs, cols[1], cols[2]) / d
+        u = det(cols[0], rhs, cols[2]) / d
+        v = det(cols[0], cols[1], rhs) / d
+        u0, u1, v0, v1 = self.extent
+        return (t, u, v) if t > 0 and u0 <= u < u1 and v0 <= v < v1 else None
+
+
+def card_surface(card):
+    """Fronto-parallel Card as a Surface with the standard alpha blend."""
+    left, right, bottom, top = card.bounds
+    return Surface((0., 0., card.depth), (1., 0., 0.), (0., 1., 0.),
+                   (left, right, bottom, top),
+                   lambda u, v: (*card.color, card.alpha))
+
+
+def trace_viewer(camera, image, lens, surfaces, background=(0., 0., 0., 1.)):
+    """Per-ray Exact OIT resolve: far-to-near, submission index on ties
+    (comes_first()), viewer blend equations. Returns (r, g, b, a, glow)."""
+    origin, direction = camera.ray(image, lens)
+    hits = []
+    for index, surface in enumerate(surfaces):
+        hit = surface.intersect(origin, direction)
+        if hit is not None:
+            hits.append((hit, index, surface))
+    dst, glow = background, 0.0
+    for (t, u, v), _, surface in sorted(hits, key=lambda h: (-h[0][0], h[1])):
+        dst, glow = viewer_blend_node(surface.texture(u, v), surface.blend,
+                                      surface.glow, dst, glow)
+    return (*dst, glow)
+
+
+def viewer_jitter_projection(m, jitter_px, width, height):
+    """Mirror of ASDoFCamera::jitterProjection: shift the image by jitter_px
+    output pixels at every depth (clip x += 2*jx/W * w, with w == -z_eye)."""
+    out = [list(column) for column in m]
+    out[2][0] -= 2 * jitter_px[0] / width
+    out[2][1] -= 2 * jitter_px[1] / height
+    return out
+
+
+def integrate_pixel(camera, pixel_center, pixel_size, surfaces, count,
+                    shape=(0, 1., 0., 1.), radius=None, background=(0., 0., 0., 1.)):
+    """Joint lens + pixel-box integration with the viewer sample sequence.
+    pixel_center/pixel_size are image units (unit-distance image plane)."""
+    radius = camera.aperture_radius if radius is None else radius
+    lenses = viewer_aperture_samples(count, *shape)
+    jitters = viewer_pixel_jitter(count)
+    values = []
+    for (lx, ly), (jx, jy) in zip(lenses, jitters):
+        image = (pixel_center[0] + jx * pixel_size[0], pixel_center[1] + jy * pixel_size[1])
+        values.append(trace_viewer(camera, image, (radius * lx, radius * ly),
+                                   surfaces, background))
+    return tuple(math.fsum(v[c] for v in values) / count for c in range(5))
+
+
+def viewer_projection(fov_y, aspect, near, far):
+    """Mirror of LLViewerCamera::calcProjection, indexed m[column][row]."""
+    f = 1.0 / math.tan(fov_y * 0.5)
+    m = [[0.0] * 4 for _ in range(4)]
+    m[0][0] = f / aspect
+    m[1][1] = f
+    m[2][2] = (far + near) / (near - far)
+    m[3][2] = (2 * far * near) / (near - far)
+    m[2][3] = -1.0
+    return m
+
+
+def viewer_apply(m, point):
+    """Column-major matrix times column vector (x, y, z, 1)."""
+    p = (*point, 1.0)
+    return tuple(math.fsum(m[c][r] * p[c] for c in range(4)) for r in range(4))
+
+
+def viewer_lens_eye(eye_point, offset):
+    """Mirror of ASDoFCamera::lensModelview: eye moved by offset (right, up)."""
+    return (eye_point[0] - offset[0], eye_point[1] - offset[1], eye_point[2])
+
+
+def viewer_lens_projection(m, offset, focus):
+    """Mirror of ASDoFCamera::lensProjection: shear x/y by -z so eye-space
+    z == -focus keeps its pinhole NDC after viewer_lens_eye."""
+    out = [list(column) for column in m]
+    out[2][0] -= m[0][0] * offset[0] / focus
+    out[2][1] -= m[1][1] * offset[1] / focus
+    return out
+
+
+def viewer_focal_length_mm(fov_y, default_fov_y, default_focal_length_mm):
+    """Mirror of the zoom mapping in LLPipeline::renderDoF (35mm-style)."""
+    sensor_height = 2 * default_focal_length_mm * math.tan(default_fov_y / 2)
+    return sensor_height / (2 * math.tan(fov_y / 2))
+
+
+def viewer_coc_radius_pixels(aperture_radius, focus, depth, fov_y, height_px):
+    """Mirror of ASDoFCamera::cocRadiusPixels (aperture-rim image offset)."""
+    return (aperture_radius * abs(1 / focus - 1 / depth) *
+            height_px / (2 * math.tan(fov_y / 2)))
+
+
+# Owen-scrambled Sobol sequence, 5 dimensions: 0/1 lens, 2/3 pixel jitter,
+# 4 axial-CA wavelength. Sobol is stratified in every elementary interval
+# of each power-of-two prefix; hash-based Owen scrambling (Laine-Karras
+# permutation on reversed bits) removes the lattice structure that the
+# polar aperture mapping turned into petal/spiral patterns with Kronecker
+# sequences, without clumping. Nested and deterministic (fixed seeds).
+SOBOL_MASK = 0xffffffff
+# Joe-Kuo primitive polynomials (s, a, m) for dimensions 1..4; 0 is van der Corput.
+SOBOL_POLYNOMIALS = ((1, 0, (1,)), (2, 1, (1, 3)), (3, 1, (1, 3, 1)), (3, 2, (1, 1, 1)))
+SOBOL_SEEDS = (0x8e3ba9d1, 0x2f9b1c4d, 0x6a09e667, 0xbb67ae85, 0x3c6ef372)
+
+
+def _sobol_directions():
+    directions = [[1 << (31 - k) for k in range(32)]]
+    for s, a, m in SOBOL_POLYNOMIALS:
+        v = [m[k] << (31 - k) for k in range(s)]
+        for k in range(s, 32):
+            x = v[k - s] ^ (v[k - s] >> s)
+            for j in range(1, s):
+                if (a >> (s - 1 - j)) & 1:
+                    x ^= v[k - j]
+            v.append(x)
+        directions.append(v)
+    return directions
+
+
+SOBOL_DIRECTIONS = _sobol_directions()
+
+
+def _reverse32(x):
+    return int('{:032b}'.format(x & SOBOL_MASK)[::-1], 2)
+
+
+def _laine_karras(x, seed):
+    x = (x + seed) & SOBOL_MASK
+    for c in (0x6c50b47c, 0xb82f1e52, 0xc7afe638, 0x8d22f6e6):
+        x ^= (x * c) & SOBOL_MASK
+    return x
+
+
+def sobol_owen_bits(index, dim):
+    """Mirror of asdofaperture.cpp sobolOwen (32-bit value)."""
+    x, k = 0, 0
+    while index:
+        if index & 1:
+            x ^= SOBOL_DIRECTIONS[dim][k]
+        index >>= 1
+        k += 1
+    return _reverse32(_laine_karras(_reverse32(x), SOBOL_SEEDS[dim]))
+
+
+def sobol_owen(index, dim):
+    return sobol_owen_bits(index, dim) / 4294967296.0
+
+
+def viewer_pixel_jitter(count):
+    """Mirror of ASDoFAperture::generate's pixel output: box-filter offsets
+    in [-0.5, 0.5) output pixels."""
+    return [(sobol_owen(i, 2) - 0.5, sobol_owen(i, 3) - 0.5) for i in range(count)]
+
+
+def aperture_boundary(angle, blades, roundness):
+    """Unit-circumradius aperture edge radius at a polar angle (rotation
+    excluded). Polygon cos(pi/n)/cos(local) blended to a circle by roundness."""
+    if blades < 3 or roundness >= 1:
+        return 1.0
+    half = math.pi / blades
+    local = (angle % (2 * half)) - half
+    return (1 - roundness) * math.cos(half) / math.cos(local) + roundness
+
+
+def _blade_cdf(x, blades, roundness):
+    """Integral of boundary(x)^2 / 2 over [-pi/n, x] within one blade."""
+    half = math.pi / blades
+    a, b = (1 - roundness) * math.cos(half), roundness
+
+    def antiderivative(t):
+        return (a * a * math.tan(t) + 2 * a * b * math.log(1 / math.cos(t) + math.tan(t))
+                + b * b * t) / 2
+    return antiderivative(x) - antiderivative(-half)
+
+
+def viewer_aperture_samples(count, blades=0, roundness=1.0, rotation=0.0,
+                            anamorphic=1.0):
+    """Mirror of ASDoFAperture::generate: equal-weight, nested (prefixes of
+    the Owen-scrambled Sobol sequence), deterministic unit-aperture lens positions. Angles
+    follow the boundary(angle)^2 area CDF inside each blade, so polygon
+    corners get neither more nor less density than blade centres (polar
+    area element: the angle marginal is proportional to boundary^2)."""
+    polygon = blades >= 3 and roundness < 1
+    samples = []
+    for i in range(count):
+        u, v = sobol_owen(i, 0), sobol_owen(i, 1)
+        if polygon:
+            half = math.pi / blades
+            blade_f = u * blades
+            blade = math.floor(blade_f)
+            target = (blade_f - blade) * _blade_cdf(half, blades, roundness)
+            lo, hi = -half, half
+            for _ in range(60):
+                mid = (lo + hi) / 2
+                if _blade_cdf(mid, blades, roundness) < target:
+                    lo = mid
+                else:
+                    hi = mid
+            # Blade 0 is centred on angle pi/n, i.e. local 0 maps to pi/n.
+            angle = (lo + hi) / 2 + half + blade * 2 * half
+        else:
+            angle = 2 * math.pi * u
+        r = math.sqrt(v) * aperture_boundary(angle, blades, roundness)
+        angle += rotation
+        samples.append((anamorphic * r * math.cos(angle), r * math.sin(angle)))
+    return samples
+
+
+def viewer_spectral_coordinate(index):
+    """Mirror of ASDoFAperture::spectralCoordinate: Owen-scrambled Sobol
+    dimension 4 mapped to s in [-1, 1) (blue -1, green 0, red +1). A
+    separate dimension, not a rescrambled van der Corput: that is Sobol
+    dimension 0 (the lens angle) and would tie colours to aperture sectors."""
+    return 2 * sobol_owen(index, 4) - 1
+
+
+def viewer_spectral_weights(s):
+    """Mirror of ASDoFAperture::spectralWeights (RGB)."""
+    return (1 + s, 1.5 * (1 - s * s), 1 - s)
+
+
+def viewer_axial_ca_inv_focus(focus, focal_length, alpha, s):
+    """Mirror of the renderer's per-sample focus: 1/S' = 1/S - s*alpha/(2f)."""
+    return 1 / focus - s * 0.5 * alpha / focal_length
+
+
+def viewer_pupil_radius2(index):
+    """Mirror of ASDoFAperture::pupilRadius2: the Sobol dimension that sets
+    the normalized sample radius (radius = sqrt(v) * boundary)."""
+    return sobol_owen(index, 1)
+
+
+def viewer_spherical_weight(strength, sigma, pupil_r2):
+    """Mirror of asDoFAccumulateF.glsl spherical aberration weight."""
+    return 1 - strength * sigma * (2 * pupil_r2 - 1)
+
+
+def viewer_cat_eye_open(lens, field, strength):
+    """Mirror of the shader's barrel test for one unit-aperture sample."""
+    return math.hypot(lens[0] - strength * field[0], lens[1] - strength * field[1]) <= 1
+
+
+def viewer_cat_eye_fraction(d):
+    """Mirror of catEyeFraction: unit circles at distance d, overlap / pi."""
+    if d >= 2:
+        return 0.0
+    h = d / 2
+    return (2 * math.acos(h) - 2 * h * math.sqrt(1 - h * h)) / math.pi
+
+
+def _smoothstep(e0, e1, x):
+    t = min(max((x - e0) / (e1 - e0), 0.0), 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def viewer_highlight_gain(strength, threshold, luminance, ring_mean, coc_px):
+    """Mirror of asDoFAccumulateF.glsl bright-highlight gain."""
+    if strength <= 0 or coc_px <= 1:
+        return 1.0
+    bright = _smoothstep(0.5 * threshold, 1.5 * threshold, luminance)
+    isolated = _smoothstep(2.0, 8.0, luminance / max(ring_mean, 1e-3))
+    area = min((coc_px / 4.0) ** 2, 1024.0)
+    return 1 + strength * bright * isolated * area
+
+
+def viewer_mode1_boundary(phi, blades, roundness):
+    """Mirror of the Advanced (mode 1) gather/sprite boundary():
+    mix(cos(pi/n)/cos(mod(phi, sector) - pi/n), 1, roundness)."""
+    if blades < 3:
+        return 1.0
+    sector = 2 * math.pi / blades
+    local = (phi % sector) - 0.5 * sector
+    polygon = math.cos(0.5 * sector) / max(math.cos(local), 0.001)
+    return polygon + (1 - polygon) * roundness
+
+
+def viewer_unit_area(blades, roundness, anamorphic):
+    """Mirror of ASDoFAperture::unitArea: unit-circumradius aperture area."""
+    area = math.pi
+    if blades >= 3 and roundness < 1:
+        area = blades * _blade_cdf(math.pi / blades, blades, roundness)
+    return area * anamorphic
+
+
+def _sprite_edge_distance(dx, dy, radius, plane, blades, roundness, rotation, anamorphic):
+    sign = 1.0 if plane > 0 else -1.0
+    qx, qy = dx * sign / anamorphic, dy * sign
+    r = math.hypot(qx, qy) / radius
+    phi = math.atan2(qy, qx) - rotation
+    # Radial gap to perpendicular edge distance.
+    edge_scale = 1.0
+    if blades >= 3:
+        local = (phi % (2 * math.pi / blades)) - math.pi / blades
+        edge_scale = math.cos(local) + (1 - math.cos(local)) * roundness
+    return (viewer_mode1_boundary(phi, blades, roundness) - r) * edge_scale * radius
+
+
+def viewer_sprite_coverage(dx, dy, radius, plane, blades, roundness, rotation,
+                           anamorphic, pixel_scale=1.0):
+    """Mirror of asDepthOfFieldSpriteF.glsl coverage of the target pixel
+    centred (dx, dy) full-resolution pixels from the sprite centre."""
+    pixel_scale = max(pixel_scale, 1.0)
+    args = (radius, plane, blades, roundness, rotation, anamorphic)
+    if radius < 12 * pixel_scale:
+        grid = ((.125, .375), (-.375, .125), (-.125, -.375), (.375, -.125))
+        return sum(min(max(_sprite_edge_distance(dx + ox * pixel_scale, dy + oy * pixel_scale,
+                                                 *args) / (.5 * pixel_scale) + .5, 0.), 1.)
+                   for ox, oy in grid) / 4
+    return min(max(_sprite_edge_distance(dx, dy, *args) / pixel_scale + .5, 0.), 1.)
+
+
+# Advanced (mode 1) lens field: asdepthoffield.cpp updateLensField() and the
+# lens block of the gathers and sprites.
+CA_STRATA = (-0.75, -0.25, 0.25, 0.75)
+CA_CHANNEL_WEIGHTS = ((0.0625, 0.1875, 0.3125, 0.4375),
+                      (0.1590909, 0.3409091, 0.3409091, 0.1590909),
+                      (0.4375, 0.3125, 0.1875, 0.0625))
+
+
+def viewer_pipeline_lens(subject_m, focal_length_mm, fnumber):
+    """Mirror of LLPipeline::renderDoF's lens constants (blur_constant,
+    magnification) and ASDepthOfField::render's focal_distance."""
+    subject_mm = subject_m * 1000
+    blur_constant = focal_length_mm ** 2 / (fnumber * (subject_mm - focal_length_mm)) / 1000
+    magnification = focal_length_mm / (subject_mm - focal_length_mm)
+    return -subject_m, blur_constant, magnification
+
+
+def viewer_mode1_coc_pixels(depth, focal_distance, blur_constant, tan_pixel_angle, magnification):
+    """Mirror of asDepthOfFieldCoCF.glsl -calculateCoC: signed, positive
+    behind focus (depth: positive distance)."""
+    view_depth = -depth
+    coc = (view_depth - focal_distance) / -view_depth * blur_constant / magnification
+    coc /= tan_pixel_angle * -focal_distance
+    return -coc * math.sqrt(2)
+
+
+def viewer_lens_shift_scale(focal_distance, blur_constant, tan_pixel_angle, magnification, max_coc):
+    """Mirror of updateLensField(): normalized CoC per unit relative focal shift."""
+    focus = -focal_distance
+    focal_length = magnification * focus / (1 + magnification)
+    pixels_per_inverse = math.sqrt(2) * abs(blur_constant) / (magnification * tan_pixel_angle)
+    return pixels_per_inverse / (focal_length * max_coc)
+
+
+def viewer_mode1_normalized_coc(coc_pixels, max_coc, field2, curvature, astigmatism):
+    """Mirror of asDepthOfFieldCoCF.glsl normalizedCoC()."""
+    coc = coc_pixels / max_coc + curvature * field2
+    split = abs(astigmatism) * field2
+    if split > 0:
+        coc = coc - split if coc < 0 else coc + split
+    return min(max(coc, -1.0), 1.0)
+
+
+def viewer_astigmatic_scale(field2, signed_radius, plane_radius, astigmatism):
+    """Mirror of astigmaticScale(): (radial, circumferential) scales."""
+    split = abs(astigmatism) * field2 * plane_radius
+    radius = abs(signed_radius)
+    if split <= 0 or radius <= 0:
+        return (1.0, 1.0)
+    t = min(max((radius - 2 * split) / radius, -1.0), 1.0)
+    t = min(t, -0.1) if t < 0 else max(t, 0.1)
+    return (t, 1.0) if (astigmatism > 0) == (signed_radius >= 0) else (1.0, t)
+
+
+def viewer_channel_cover(radius, dist, sigma, delta, soft):
+    """Mirror of channelCover(): per-channel share of the strata discs
+    (radius - sigma delta s) that reach dist."""
+    cover = [1 - _smoothstep(r - soft, r + soft, dist)
+             for r in (radius - sigma * delta * s for s in CA_STRATA)]
+    return tuple(sum(w * c for w, c in zip(ws, cover)) for ws in CA_CHANNEL_WEIGHTS)
+
+
+def _deform(offset, field, scale):
+    length = math.hypot(*field)
+    if length < 1e-4 or scale == (1.0, 1.0):
+        return offset
+    rx, ry = field[0] / length, field[1] / length
+    cx, cy = -ry, rx
+    a = (offset[0] * rx + offset[1] * ry) * scale[0]
+    b = (offset[0] * cx + offset[1] * cy) * scale[1]
+    return (rx * a + cx * b, ry * a + cy * b)
+
+
+def viewer_lens_sprite_coverage(dx, dy, radius, plane, field, axis_scale, barrel,
+                                delta, cat_eye=True, spherical=0.0):
+    """Mirror of asDepthOfFieldSpriteF.glsl sampleCoverage() for a circular
+    aperture (pixel_scale 1, single sample above 12 px): per-channel
+    radiance share of the pixel at (dx, dy) from the sprite centre."""
+    sign = 1.0 if plane > 0 else -1.0
+    inverse = (1 / axis_scale[0], 1 / axis_scale[1])
+
+    def pixels_per_unit(n):
+        return radius / math.hypot(*_deform(n, field, inverse))
+
+    ux, uy = _deform((dx * sign, dy * sign), field, inverse)
+    ux, uy = ux / radius, uy / radius
+    r = math.hypot(ux, uy)
+    n = (ux / r, uy / r) if r > 1e-4 else (1.0, 0.0)
+    to_pixels = pixels_per_unit(n)
+    edge = ((1 - r) * to_pixels, to_pixels / radius)
+    rho = r  # circular aperture: edge radius 1
+    if cat_eye:
+        wx, wy = ux - barrel[0], uy - barrel[1]
+        wl = math.hypot(wx, wy)
+        nb = (wx / wl, wy / wl) if wl > 1e-4 else (1.0, 0.0)
+        barrel_pixels = pixels_per_unit(nb)
+        barrel_edge = (1 - wl) * barrel_pixels
+        if barrel_edge < edge[0]:
+            edge = (barrel_edge, (1 + nb[0] * barrel[0] + nb[1] * barrel[1]) * barrel_pixels / radius)
+    aa = 1.0 if radius >= 12 else 0.5
+    sigma = sign * min(radius / 3.0, 1.0)
+
+    def spherical_weight(rho_s):
+        if spherical == 0:
+            return 1.0
+        return max(viewer_spherical_weight(spherical, sigma, min(rho_s * rho_s, 1.0)), 0.0)
+
+    if delta <= 0.01:
+        c = min(max(edge[0] / aa + .5, 0.), 1.) * spherical_weight(rho)
+        return (c, c, c)
+    radii = [max(radius - sign * delta * s, 1.0) for s in CA_STRATA]
+    cover = [min(max((edge[0] + (ri - radius) * edge[1]) / aa + .5, 0.), 1.) * radius ** 2 / ri ** 2
+             * spherical_weight(rho * radius / ri) for ri in radii]
+    return tuple(sum(w * c for w, c in zip(ws, cover)) for ws in CA_CHANNEL_WEIGHTS)
+
+
+def _luminance(c):
+    return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+
+
+HIGHLIGHT_NEIGHBOURS = tuple((dx, dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1)) + \
+    ((-2, 0), (2, 0), (0, -2), (0, 2))
+
+
+def viewer_highlight_detect(image, coc_radius, x, y, isolation):
+    """Mirror of asDepthOfFieldHighlightF.glsl detect(): the excess of an
+    isolated defocused highlight pixel over its 8-tap ring at half the blur
+    radius (6-32 px).
+    image[y][x] is RGB; coc_radius[y][x] the blur radius in pixels."""
+    height, width = len(image), len(image[0])
+    gate = _smoothstep(2.0, 4.0, coc_radius[y][x])
+    if gate <= 0:
+        return (0.0, 0.0, 0.0)
+    ring_radius = min(max(0.5 * coc_radius[y][x], 6.0), 32.0)
+    ring_sum = [0.0, 0.0, 0.0]
+    ring_max = 0.0
+    for i in range(8):
+        angle = i * 0.785398163
+        qx = min(max(x + round(math.cos(angle) * ring_radius), 0), width - 1)
+        qy = min(max(y + round(math.sin(angle) * ring_radius), 0), height - 1)
+        ring = image[qy][qx]
+        for c in range(3):
+            ring_sum[c] += ring[c]
+        ring_max = max(ring_max, _luminance(ring))
+    color = image[y][x]
+    # Isolation of the light the pixel belongs to: its brightest pixel
+    # within 2 px (3x3 plus the 4 axis pixels at 2).
+    peak = max(_luminance(image[min(max(y + dy, 0), height - 1)][min(max(x + dx, 0), width - 1)])
+               for dx, dy in HIGHLIGHT_NEIGHBOURS)
+    ratio = peak / max(ring_max, 1e-4)
+    isolated = _smoothstep(isolation, 2 * isolation, ratio)
+    return tuple(isolated * gate * max(color[c] - ring_sum[c] / 8, 0.0) for c in range(3))
+
+
+def viewer_highlight_level_threshold(k):
+    """Mirror of levelThreshold(): 8 cell brightness levels, 2^-8 .. 2^6."""
+    return 2.0 ** (2 * k - 8)
+
+
+def viewer_highlight_cell_hash(cell):
+    """Mirror of cellHash() (stable per cell, 32-bit unsigned arithmetic)."""
+    h = ((cell[0] * 73856093) ^ (cell[1] * 19349663)) & 0xffffffff
+    h = (h * 2654435761) & 0xffffffff
+    return (h >> 8) / 16777216.0
+
+
+def viewer_highlight_keep_cells(cell_luminance, budget):
+    """Mirror of keepCell() over a dict {cell: luminance} of occupied cells:
+    the brightest cells first once they exceed the budget."""
+    occupied = len(cell_luminance)
+    counts = [sum(1 for v in cell_luminance.values()
+                  if v >= viewer_highlight_level_threshold(k)) for k in range(8)]
+
+    def keep(cell, value):
+        if occupied <= budget:
+            return True
+        above, floor_level = float(occupied), 0.0
+        for k in range(8):
+            threshold = viewer_highlight_level_threshold(k)
+            if counts[k] <= budget:
+                if value >= threshold:
+                    return True
+                if value < floor_level:
+                    return False
+                return viewer_highlight_cell_hash(cell) < (budget - counts[k]) / max(above - counts[k], 1)
+            above, floor_level = float(counts[k]), threshold
+        return value >= floor_level and viewer_highlight_cell_hash(cell) < budget / max(above, 1)
+
+    return {cell for cell, value in cell_luminance.items() if keep(cell, value)}
+
+
+NEAR_BAND_COUNT = 11
+
+
+def viewer_near_band_edge(k, max_radius):
+    """Mirror of asDepthOfFieldNearF.glsl bandEdge(): 0, 1, then
+    1 + (R - 1) ((k - 1) / 10)^1.5."""
+    return 0.0 if k == 0 else 1 + (max_radius - 1) * ((k - 1) / 10) ** 1.5
+
+
+def viewer_near_band_index(distance, max_radius):
+    """Mirror of bandIndex(): the band holding a tap distance."""
+    if distance < 1:
+        return 0
+    t = min(max((distance - 1) / max(max_radius - 1, 1e-4), 0.0), 1.0) ** (2 / 3)
+    return min(1 + math.floor(10 * t), NEAR_BAND_COUNT - 1)
+
+
+def viewer_near_band_averages(r, max_radius):
+    """Mirror of buildSource(): per band [a, b], the area average of the
+    source's reach w [d < r], w = R^2 / r^2 (sources with r >= 1)."""
+    w = max_radius * max_radius / (r * r)
+    out = []
+    for k in range(NEAR_BAND_COUNT):
+        a = viewer_near_band_edge(k, max_radius)
+        b = viewer_near_band_edge(k + 1, max_radius)
+        rc = min(max(r, a), b)
+        out.append(w * (rc * rc - a * a) / (b * b - a * a))
+    return out
+
+
+def viewer_postfilter_width(mean_radius, max_radius, samples, plane_kind,
+                            pixel_scale=1.0):
+    """Mirror of asDepthOfFieldPostfilterF.glsl: filter radius in blur px,
+    or 0 when the pixel is left unchanged."""
+    if mean_radius < 2.0 or samples <= 0:
+        return 0.0
+    if plane_kind == 0:
+        spacing = mean_radius * math.sqrt(math.pi / samples)
+    else:
+        spacing = math.sqrt(2 * math.pi * mean_radius * max_radius / samples)
+    width = min(0.5 * spacing, mean_radius / 3.0) / pixel_scale
+    return width if width >= 0.75 else 0.0
+
+
+def viewer_postfilter_weight(d, center_radius, center_alpha,
+                             neighbour_radius, neighbour_alpha):
+    """Mirror of the postfilter neighbour weight (d in units of the width).
+    An empty neighbour's radius counts as the center's."""
+    if neighbour_alpha <= 0.0001:
+        neighbour_radius = center_radius
+    sigma = max(1.0, 0.15 * center_radius)
+    weight = math.exp(-2.0 * d * d)
+    weight *= math.exp(-(neighbour_radius - center_radius) ** 2 / (2 * sigma * sigma))
+    weight *= math.exp(-(neighbour_alpha - center_alpha) ** 2 / 0.13)
+    return weight
+
+
+def disk_samples(radius, rings=32, sectors=128):
+    """Dense deterministic equal-area disk quadrature for the reference."""
+    for ring in range(rings):
+        r = radius * math.sqrt((ring + 0.5) / rings)
+        for sector in range(sectors):
+            angle = 2 * math.pi * (sector + 0.5) / sectors
+            yield r * math.cos(angle), r * math.sin(angle)
+
+
+def integrate(camera, image, cards, radius=None, rings=32, sectors=128):
+    radius = camera.aperture_radius if radius is None else radius
+    values = [trace(camera, image, lens, cards)
+              for lens in disk_samples(radius, rings, sectors)]
+    return tuple(math.fsum(v[c] for v in values) / len(values) for c in range(4))
+
+
+class ThinLensReferenceTests(unittest.TestCase):
+    def setUp(self):
+        self.camera = Camera(2.0)
+        self.full = (-100.0, 100.0, -100.0, 100.0)
+
+    def test_focal_plane_registration(self):
+        for focus in (0.2, 2.0, 100.0):
+            camera = Camera(focus)
+            for image in ((0., 0.), (.5, -.3), (-.8, .6)):
+                for lens in disk_samples(camera.aperture_radius, 4, 16):
+                    origin, direction = camera.ray(image, lens)
+                    t = focus / direction[2]
+                    for axis in (0, 1):
+                        self.assertAlmostEqual(origin[axis] + t * direction[axis],
+                                               image[axis] * focus, places=13)
+
+    def test_off_axis_projection_matrix_matches_ray_model_at_focal_plane(self):
+        # Cross-check the matrix-form off-axis projection (asdofcamera's
+        # planned basis) against the independent ray-cast model above: a
+        # world point ON THE FOCAL PLANE, reached by any lens ray aimed at
+        # a given pinhole image coordinate, must project through the
+        # view+projection pair to that same NDC coordinate regardless of
+        # lens offset. This is the defining "keep focal plane registered"
+        # contract; off-focus-plane points are expected to project
+        # differently per lens position (that disagreement IS the blur),
+        # so this check is deliberately restricted to z == focus.
+        near, far = 0.1, 1000.0
+        tan_x = tan_y = math.tan(math.radians(30.0))
+        for focus in (0.5, 2.0, 20.0):
+            camera = Camera(focus)
+            for image in ((0., 0.), (.4, -.2), (-.6, .5)):
+                for lens in disk_samples(camera.aperture_radius, 3, 12):
+                    origin, direction = camera.ray(image, lens)
+                    t = focus / direction[2]
+                    point = tuple(origin[a] + t * direction[a] for a in range(3))
+                    self.assertAlmostEqual(point[2], focus, places=12)
+                    view, projection = camera.off_axis_view_and_projection(
+                        lens, near, far, tan_x, tan_y)
+                    cx, cy, cz, cw = camera.apply(projection, view(point))
+                    self.assertGreater(cw, 0.0)
+                    self.assertAlmostEqual(cx / cw, image[0] / tan_x, places=9)
+                    self.assertAlmostEqual(cy / cw, image[1] / tan_y, places=9)
+
+    def test_off_axis_projection_reduces_to_symmetric_at_zero_lens(self):
+        near, far = 0.1, 1000.0
+        tan_x, tan_y = math.tan(math.radians(35.0)), math.tan(math.radians(20.0))
+        camera = Camera(2.0)
+        view, matrix = camera.off_axis_view_and_projection(
+            (0., 0.), near, far, tan_x, tan_y)
+        self.assertEqual(view((1.0, -2.0, 3.0)), (1.0, -2.0, 3.0))
+        # This file's convention has w == z (not GL's raw w == -z_eye), so
+        # the depth row carries the opposite sign from the textbook GL form;
+        # test_off_axis_projection_depth_mapping_matches_symmetric below
+        # independently confirms this still yields near -> -1, far -> +1.
+        expected = (
+            (1.0 / tan_x, 0.0, 0.0, 0.0),
+            (0.0, 1.0 / tan_y, 0.0, 0.0),
+            (0.0, 0.0, (far + near) / (far - near), -(2 * far * near) / (far - near)),
+            (0.0, 0.0, 1.0, 0.0),
+        )
+        for row_a, row_b in zip(matrix, expected):
+            for a, b in zip(row_a, row_b):
+                self.assertAlmostEqual(a, b, places=12)
+
+    def test_off_axis_projection_depth_mapping_matches_symmetric(self):
+        # Off-axis shifting must not disturb the near/far depth mapping:
+        # a point at z == near must map to NDC z == -1, z == far to +1,
+        # exactly as the viewer's existing symmetric calcProjection does.
+        near, far = 0.1, 1000.0
+        tan_x = tan_y = math.tan(math.radians(30.0))
+        camera = Camera(2.0)
+        for lens in ((0., 0.), (0.01, -0.005)):
+            view, matrix = camera.off_axis_view_and_projection(
+                lens, near, far, tan_x, tan_y)
+            for z, expected_ndc in ((near, -1.0), (far, 1.0)):
+                _, _, cz, cw = camera.apply(matrix, view((0.0, 0.0, z)))
+                self.assertAlmostEqual(cz / cw, expected_ndc, places=9)
+
+    def test_off_axis_projection_inverts_ray(self):
+        # Independent projection identity for a translated parallel camera.
+        for depth in (.2, 1., 2., 8.):
+            for lens in disk_samples(.025, 4, 16):
+                point = (.04, -.02, depth)
+                image = tuple((point[a] - lens[a]) / depth +
+                              lens[a] / self.camera.focus for a in (0, 1))
+                origin, direction = self.camera.ray(image, lens)
+                for axis in (0, 1):
+                    hit = origin[axis] + depth / direction[2] * direction[axis]
+                    self.assertAlmostEqual(hit, point[axis], places=13)
+
+    def test_blur_radius_and_sign(self):
+        # Image coordinate recorded for an on-axis point by a lens sample is
+        # where the lens->point line crosses the focal plane, over focus.
+        # Previously this compared the formula with itself.
+        focus = self.camera.focus
+        for lens_x in (.025, -.025):
+            for depth in (.5, 1., 2., 4., 20.):
+                crossing = lens_x + (focus / depth) * (0. - lens_x)
+                image = (crossing / focus, 0.)
+                origin, direction = self.camera.ray(image, (lens_x, 0.))
+                t = depth / direction[2]
+                self.assertAlmostEqual(origin[0] + t * direction[0], 0., places=13)
+                self.assertAlmostEqual(abs(image[0]),
+                                       abs(lens_x) * abs(1 / focus - 1 / depth), places=13)
+                if depth != focus:
+                    self.assertEqual(image[0] * lens_x > 0, depth > focus)
+        self.assertAlmostEqual(Camera(2., f_number=4.).aperture_radius * 2,
+                               self.camera.aperture_radius)
+
+    def _viewer_cases(self):
+        for fov_deg in (10., 60., 120.):
+            for aspect in (.5, 16 / 9, 3.):
+                for focus in (.3, 2., 200.):
+                    yield math.radians(fov_deg), aspect, focus
+
+    def test_viewer_lens_projection_focal_plane_pixel_error(self):
+        # Gate: focal-plane reprojection error < 0.01 output pixel across
+        # lens positions, FOV, aspect and resolution, in the viewer's GL
+        # convention. Ray model supplies the world point (+Z forward); GL
+        # eye space is (x, y, -z).
+        near, far = .1, 1024.
+        for fov_y, aspect, focus in self._viewer_cases():
+            camera = Camera(focus, focal_length=min(.2, focus / 2), f_number=1.)
+            tan_y = math.tan(fov_y / 2)
+            tan_x = tan_y * aspect
+            base = viewer_projection(fov_y, aspect, near, far)
+            for image in ((0., 0.), (.7 * tan_x, -.6 * tan_y), (-.95 * tan_x, .9 * tan_y)):
+                for lens in disk_samples(camera.aperture_radius, 2, 8):
+                    origin, direction = camera.ray(image, lens)
+                    t = focus / direction[2]
+                    world = [origin[a] + t * direction[a] for a in range(3)]
+                    eye = viewer_lens_eye((world[0], world[1], -world[2]), lens)
+                    proj = viewer_lens_projection(base, lens, focus)
+                    cx, cy, _, cw = viewer_apply(proj, eye)
+                    for height in (720, 2160, 8640):
+                        width = height * aspect
+                        err_x = abs(cx / cw - image[0] / tan_x) * width / 2
+                        err_y = abs(cy / cw - image[1] / tan_y) * height / 2
+                        self.assertLess(max(err_x, err_y), .01)
+
+    def test_viewer_lens_projection_preserves_depth_and_pinhole(self):
+        near, far = .1, 1024.
+        base = viewer_projection(math.radians(60.), 16 / 9, near, far)
+        self.assertEqual(viewer_lens_projection(base, (0., 0.), 2.), base)
+        proj = viewer_lens_projection(base, (.01, -.02), 2.)
+        for z, expected in ((-near, -1.), (-far, 1.)):
+            _, _, cz, cw = viewer_apply(proj, (.3, -.1, z))
+            self.assertAlmostEqual(cz / cw, expected, places=9)
+
+    def test_viewer_coc_matches_projected_disparity(self):
+        # Pixel CoC formula equals the rim sample's projected displacement
+        # of an off-focus point; far and near points move in opposite senses.
+        near, far = .1, 1024.
+        for fov_y, aspect, focus in self._viewer_cases():
+            radius = .01
+            base = viewer_projection(fov_y, aspect, near, far)
+            proj = viewer_lens_projection(base, (0., radius), focus)
+            for depth in (focus / 3, focus * 4):
+                point = (0., 0., -depth)
+                cx0, cy0, _, cw0 = viewer_apply(base, point)
+                cx, cy, _, cw = viewer_apply(proj, viewer_lens_eye(point, (0., radius)))
+                height = 2160
+                shift = (cy / cw - cy0 / cw0) * height / 2
+                expected = viewer_coc_radius_pixels(radius, focus, depth, fov_y, height)
+                self.assertAlmostEqual(abs(shift), expected, delta=1e-6 * max(1., expected))
+                # Eye moved up: near points drop, far points rise.
+                self.assertEqual(shift > 0, depth > focus)
+
+    APERTURE_SHAPES = ((0, 1., 0., 1.), (6, 0., 0., 1.), (5, .35, .4, 1.),
+                       (3, 0., 1., 1.), (9, .7, 0., 1.5))
+
+    @staticmethod
+    def _inside(point, blades, roundness, rotation, anamorphic, slack=1e-9):
+        x, y = point[0] / anamorphic, point[1]
+        angle = math.atan2(y, x) - rotation
+        return math.hypot(x, y) <= aperture_boundary(angle, blades, roundness) + slack
+
+    def test_aperture_samples_inside_shape_nested_and_deterministic(self):
+        for shape in self.APERTURE_SHAPES:
+            samples = viewer_aperture_samples(512, *shape)
+            self.assertEqual(samples, viewer_aperture_samples(512, *shape))
+            self.assertEqual(samples[:128], viewer_aperture_samples(128, *shape))
+            for point in samples:
+                self.assertTrue(self._inside(point, *shape))
+
+    def test_aperture_samples_uniform_area_density(self):
+        # Fraction of samples in test regions must equal the region's share
+        # of aperture area, measured independently on a dense grid. Regions:
+        # half-planes (catches centroid bias) and the outer radial band
+        # (catches corner/blade-centre density errors).
+        n, grid = 4096, 400
+        for shape in self.APERTURE_SHAPES:
+            anamorphic = shape[3]
+            samples = viewer_aperture_samples(n, *shape)
+            cells = [((i + .5) / grid * 2 - 1) * anamorphic for i in range(grid)]
+            rows = [(j + .5) / grid * 2 - 1 for j in range(grid)]
+            area_points = [(x, y) for x in cells for y in rows
+                           if self._inside((x, y), *shape, slack=0.)]
+            regions = [
+                lambda p: p[0] > 0,
+                lambda p: p[1] > .2,
+                lambda p: p[0] + p[1] < -.3,
+                lambda p: math.hypot(p[0] / anamorphic, p[1]) >
+                    .8 * aperture_boundary(math.atan2(p[1], p[0] / anamorphic) - shape[2],
+                                           shape[0], shape[1]),
+            ]
+            for region in regions:
+                expected = sum(map(region, area_points)) / len(area_points)
+                actual = sum(map(region, samples)) / n
+                self.assertLess(abs(actual - expected), .01, (shape, expected, actual))
+
+    def test_aperture_samples_converge_on_analytic_strip(self):
+        # Circular aperture sampler reproduces the analytic strip coverage
+        # used by test_aperture_convergence (same geometry).
+        card = Card(1., (-.003, .003, -1., 1.), (1., 1., 1.), .4)
+        radius = .025
+        q = .003 / ((1 - card.depth / self.camera.focus) * radius)
+        expected = .4 * 2 / math.pi * (math.asin(q) + q * math.sqrt(1 - q * q))
+        samples = viewer_aperture_samples(4096)
+        value = math.fsum(trace(self.camera, (0., 0.), (radius * x, radius * y), [card])[3]
+                          for x, y in samples) / len(samples)
+        self.assertLess(abs(value - expected), .002)
+
+    def test_axial_ca_weights_neutral_and_nested(self):
+        # Every channel averages to 1 over nested prefixes, so in-focus
+        # content stays neutral and brightness is preserved; s stays in
+        # [-1, 1). Bound: Koksma-Hlawka, weight variation <= 3 times the
+        # discrepancy of a stratified base-2 sequence <= (log2 N + 3)/(3N).
+        for count in (16, 64, 256, 1000, 2048):
+            s_values = [viewer_spectral_coordinate(i) for i in range(count)]
+            self.assertTrue(all(-1 <= s < 1 for s in s_values))
+            for channel in range(3):
+                mean = math.fsum(viewer_spectral_weights(s)[channel] for s in s_values) / count
+                self.assertLess(abs(mean - 1), (math.log2(count) + 3) / count, (count, channel))
+
+    def test_sobol_owen_stratified_and_decorrelated(self):
+        # Power-of-two prefixes form (t, m, 2)-nets: every elementary
+        # interval of volume 2^t / N holds exactly 2^t points. Lens pair
+        # (0/1): t = 0; pixel jitter pair (2/3): t <= 1. Owen scrambling
+        # preserves both. The wavelength (4) is not tied to the lens angle (0).
+        def is_net(d0, d1, k, t):
+            n, m = 1 << k, k - t
+            pts = [(sobol_owen(i, d0), sobol_owen(i, d1)) for i in range(n)]
+            for a in range(m + 1):
+                counts = {}
+                for x, y in pts:
+                    cell = (int(x * (1 << a)), int(y * (1 << (m - a))))
+                    counts[cell] = counts.get(cell, 0) + 1
+                if len(counts) != 1 << m or any(c != 1 << t for c in counts.values()):
+                    return False
+            return True
+        for k in (4, 6, 8, 10):
+            self.assertTrue(is_net(0, 1, k, 0), k)
+            self.assertTrue(is_net(2, 3, k, 1), k)
+        n = 1024
+        u = [sobol_owen(i, 0) for i in range(n)]
+        s = [sobol_owen(i, 4) for i in range(n)]
+        mu, ms = sum(u) / n, sum(s) / n
+        cov = sum((a - mu) * (b - ms) for a, b in zip(u, s)) / n
+        self.assertLess(abs(cov) / (1 / 12), .05)
+
+    def test_axial_ca_focus_shift_orders_channels(self):
+        # Red (s = +1) focuses farther than green, blue nearer; the red-blue
+        # spread is alpha / f in inverse focus.
+        focus, f, alpha = 2.0, 0.05, 0.002
+        red = viewer_axial_ca_inv_focus(focus, f, alpha, 1.0)
+        green = viewer_axial_ca_inv_focus(focus, f, alpha, 0.0)
+        blue = viewer_axial_ca_inv_focus(focus, f, alpha, -1.0)
+        self.assertLess(red, green)
+        self.assertLess(green, blue)
+        self.assertAlmostEqual(blue - red, alpha / f, places=12)
+        self.assertAlmostEqual(green, 1 / focus, places=12)
+
+    def test_spherical_weights_average_to_one(self):
+        # Pupil radius^2 is the uniform R4 dimension, so the spherical
+        # weight keeps brightness for either defocus sign and strength.
+        for count in (64, 512, 2048):
+            r2 = [viewer_pupil_radius2(i) for i in range(count)]
+            for strength in (-1.0, 0.5, 1.0):
+                for sigma in (-1.0, 1.0):
+                    mean = math.fsum(viewer_spherical_weight(strength, sigma, v) for v in r2) / count
+                    self.assertLess(abs(mean - 1), 4 / count, (count, strength, sigma))
+                    self.assertTrue(all(viewer_spherical_weight(strength, sigma, v) >= 0 for v in r2))
+        # Positive strength: background (sigma > 0) centre-bright, foreground rim-bright.
+        self.assertGreater(viewer_spherical_weight(.5, 1, 0), viewer_spherical_weight(.5, 1, 1))
+        self.assertLess(viewer_spherical_weight(.5, -1, 0), viewer_spherical_weight(.5, -1, 1))
+
+    def test_cat_eye_fraction_matches_samples_and_is_tangential(self):
+        # The analytic open fraction the average is divided by matches the
+        # share of viewer lens samples the barrel test keeps (circular
+        # aperture), and the open pupil is longer tangentially.
+        samples = viewer_aperture_samples(4096)
+        for d in (0.0, 0.3, 0.6, 1.0, 1.5):
+            open_samples = [s for s in samples if viewer_cat_eye_open(s, (1.0, 0.0), d)]
+            share = len(open_samples) / len(samples)
+            self.assertLess(abs(share - viewer_cat_eye_fraction(d)), .01, d)
+            if d >= .6:
+                xs = [s[0] for s in open_samples]
+                ys = [s[1] for s in open_samples]
+                self.assertGreater(max(ys) - min(ys), max(xs) - min(xs), d)
+        self.assertEqual(viewer_cat_eye_fraction(2.0), 0.0)
+        self.assertAlmostEqual(viewer_cat_eye_fraction(0.0), 1.0, places=12)
+
+    def test_highlight_gain_only_for_defocused_isolated_bright_points(self):
+        star = dict(strength=.3, threshold=1., luminance=4., ring_mean=.05)
+        self.assertEqual(viewer_highlight_gain(coc_px=0.5, **star), 1.0)       # in focus
+        self.assertEqual(viewer_highlight_gain(.0, 1., 4., .05, 40.), 1.0)      # off
+        self.assertEqual(viewer_highlight_gain(.3, 1., .4, .01, 40.), 1.0)      # below threshold
+        self.assertEqual(viewer_highlight_gain(.3, 1., 4., 3., 40.), 1.0)       # large bright area
+        small, large = viewer_highlight_gain(coc_px=8., **star), viewer_highlight_gain(coc_px=40., **star)
+        self.assertAlmostEqual(small, 1 + .3 * 4, places=9)                   # area (8/4)^2
+        self.assertAlmostEqual(large, 1 + .3 * 100, places=9)                 # grows with disc area
+        self.assertAlmostEqual(viewer_highlight_gain(coc_px=1000., **star), 1 + .3 * 1024, places=9)
+
+    def test_mode1_shape_matches_aperture_sampler_convention(self):
+        # The Advanced gathers and sprites use the aperture sampler's shape:
+        # a blade vertex at polar angle 0 before rotation.
+        for blades, roundness in ((3, 0.), (5, .35), (6, 0.), (9, .8)):
+            for i in range(720):
+                phi = 2 * math.pi * i / 720
+                self.assertAlmostEqual(viewer_mode1_boundary(phi, blades, roundness),
+                                       aperture_boundary(phi, blades, roundness), places=9)
+
+    def test_background_images_upright_aperture_foreground_inverted(self):
+        # Orientation of mode 1's far/near PSF: a lens offset moves a far
+        # point's image with it and a near point's against it.
+        aspect = 1.5
+        base = viewer_projection(math.radians(60.), aspect, .1, 1000.)
+        focus = 2.
+        for depth, sign in ((8., 1.), (1., -1.)):
+            point = (.1, -.05, -depth)
+            x0, y0, _, w0 = viewer_apply(viewer_lens_projection(base, (0., 0.), focus),
+                                         viewer_lens_eye(point, (0., 0.)))
+            for offset in ((.02, 0.), (0., .02), (-.014, .014)):
+                x, y, _, w = viewer_apply(viewer_lens_projection(base, offset, focus),
+                                          viewer_lens_eye(point, offset))
+                # NDC x spans aspect times more pixels than NDC y.
+                dx, dy = (x / w - x0 / w0) * aspect, y / w - y0 / w0
+                # Image displacement parallel to the offset, with the sign.
+                self.assertGreater(sign * (dx * offset[0] + dy * offset[1]), 0.)
+                self.assertAlmostEqual(dx * offset[1] - dy * offset[0], 0., places=12)
+
+    def test_unit_area_matches_shape(self):
+        for blades, roundness, anamorphic in ((0, 1., 1.), (6, 0., 1.), (5, .35, 1.),
+                                              (3, 0., 1.), (7, .2, 1.6)):
+            n = 800
+            inside = 0
+            for j in range(n):
+                for i in range(n):
+                    x = (i + .5) / n * 4 - 2
+                    y = (j + .5) / n * 4 - 2
+                    qx = x / anamorphic
+                    r = math.hypot(qx, y)
+                    if r <= viewer_mode1_boundary(math.atan2(y, qx), blades, roundness):
+                        inside += 1
+            grid_area = inside / (n * n) * 16
+            self.assertLess(abs(grid_area / viewer_unit_area(blades, roundness, anamorphic) - 1),
+                            .005)
+
+    def test_sprite_splat_conserves_energy(self):
+        # Sprite radiance E / (unitArea R^2) integrated over its antialiased
+        # footprint returns E, at full and half gather resolution, for sprite
+        # radii of at least 4 target pixels. Smaller sprites (1-2 target
+        # pixels) measured 1-10% (sharp triangle worst); their shape is not
+        # resolvable there anyway.
+        for blades, roundness, rotation, anamorphic in ((0, 1., 0., 1.), (6, 0., .3, 1.),
+                                                        (5, .35, 1., 1.), (3, 0., 0., 1.5)):
+            area = viewer_unit_area(blades, roundness, anamorphic)
+            for radius in (8., 20., 45.):
+                for plane in (1, -1):
+                    for scale in (1, 2):
+                        extent = int(radius * max(anamorphic, 1.) + 3)
+                        total = 0.
+                        # Target pixels of size `scale` full-resolution pixels.
+                        for ty in range(-extent // scale - 1, extent // scale + 2):
+                            for tx in range(-extent // scale - 1, extent // scale + 2):
+                                dx = (tx + .5) * scale - .3
+                                dy = (ty + .5) * scale + .2
+                                total += viewer_sprite_coverage(
+                                    dx, dy, radius, plane, blades, roundness,
+                                    rotation, anamorphic, scale) * scale * scale
+                        self.assertLess(abs(total / (area * radius * radius) - 1), .01)
+
+    def test_highlight_extraction_moves_energy_to_cells(self):
+        # A small light on a dim background, defocused: detect() removes its
+        # excess; the gather input plus the cell energy equals the original.
+        size = 48
+        for light_x, light_y in ((20, 20), (23, 16)):  # inside / straddling cells
+            image = [[(.05, .04, .03) for _ in range(size)] for _ in range(size)]
+            for y in range(light_y, light_y + 2):
+                for x in range(light_x, light_x + 2):
+                    image[y][x] = (6., 5., 4.)
+            radius = [[10. for _ in range(size)] for _ in range(size)]
+            cells = {}
+            gather = []
+            for y in range(size):
+                row = []
+                for x in range(size):
+                    e = viewer_highlight_detect(image, radius, x, y, 2.)
+                    key = (x // 8, y // 8)
+                    cells[key] = tuple(a + b for a, b in zip(cells.get(key, (0., 0., 0.)), e))
+                    row.append(tuple(image[y][x][c] - e[c] for c in range(3)))
+                gather.append(row)
+            original = sum(sum(p) for r in image for p in r)
+            remaining = sum(sum(p) for r in gather for p in r)
+            moved = sum(sum(v) for v in cells.values())
+            self.assertAlmostEqual(original, remaining + moved, places=9)
+            # Nearly all of the light's excess moves; the dim background stays.
+            light_excess = 4 * sum(a - b for a, b in zip((6., 5., 4.), (.05, .04, .03)))
+            self.assertGreater(moved, .99 * light_excess)
+            self.assertLess(moved, 1.01 * light_excess)
+            # Occupied as in the shader (luminance weight over 1e-4).
+            occupied = [k for k, v in cells.items() if _luminance(v) > 1e-4]
+            self.assertEqual(len(occupied), 1 if (light_x, light_y) == (20, 20) else 2)
+        # Focused (radius < 2 px) and non-isolated (uniformly bright) pixels stay.
+        focused = [[1.] * size for _ in range(size)]
+        self.assertEqual(viewer_highlight_detect(image, focused, light_x, light_y, 2.),
+                         (0., 0., 0.))
+        flat = [[(6., 5., 4.)] * size for _ in range(size)]
+        self.assertEqual(viewer_highlight_detect(flat, radius, 20, 20, 2.), (0., 0., 0.))
+        # A light 10 px wide (a star on a zoomed view) with a 40 px blur is
+        # still smaller than half its bokeh: all of it is extracted.
+        size = 64
+        image = [[(.05, .04, .03) for _ in range(size)] for _ in range(size)]
+        for y in range(27, 37):
+            for x in range(27, 37):
+                image[y][x] = (3., 3., 3.)
+        radius = [[40. for _ in range(size)] for _ in range(size)]
+        moved = sum(sum(viewer_highlight_detect(image, radius, x, y, 2.))
+                    for y in range(size) for x in range(size))
+        self.assertAlmostEqual(moved, 100 * (9. - .12), places=6)
+        # Soft-edged stars (Gaussian profile): the edge pixels go with the
+        # core, so no sparse ring of 1 px sources is left to the gather
+        # (judged alone, 8-24 edge pixels kept over 30 % of their light).
+        size = 40
+        for peak, sigma in ((3.0, 0.8), (1.5, 1.2), (0.6, 1.0)):
+            image = [[tuple(.1 + peak * math.exp(-((x - 20) ** 2 + (y - 20) ** 2) /
+                                                 (2 * sigma * sigma)) for _ in range(3))
+                      for x in range(size)] for y in range(size)]
+            radius = [[20.] * size for _ in range(size)]
+            for isolation in (1.2, 2.0):
+                star = residual = 0.0
+                for y in range(14, 27):
+                    for x in range(14, 27):
+                        excess = image[y][x][1] - .1
+                        left = excess - viewer_highlight_detect(image, radius, x, y, isolation)[1]
+                        star += excess
+                        residual += left
+                        if excess > .01:
+                            self.assertLess(left, .5 * excess, (peak, sigma, isolation, x, y))
+                self.assertLess(residual, .015 * star, (peak, sigma, isolation))
+
+    def test_highlight_budget_keeps_brightest_cells(self):
+        # Low isolation: ~30000 leaf-glint cells and 300 star cells for a
+        # 4096 budget. The stars all keep their sprites (a random pick kept
+        # about 1 in 7 and sent the rest back to the gather as dotted bokeh),
+        # and the total stays within the budget while nearly filling it.
+        import random
+        rng = random.Random(7)
+        cells = {}
+        for i in range(30000):
+            cells[(i % 240, i // 240)] = 10 ** rng.uniform(math.log10(.005), math.log10(.3))
+        stars = [(rng.randrange(240), 125 + rng.randrange(10)) for _ in range(300)]
+        for cell in stars:
+            cells[cell] = 10 ** rng.uniform(math.log10(2.), math.log10(30.))
+        kept = viewer_highlight_keep_cells(cells, 4096)
+        for cell in stars:
+            self.assertIn(cell, kept)
+        self.assertLessEqual(len(kept), 4096 * 1.03)
+        self.assertGreater(len(kept), 4096 * .9)
+        # Under the budget every occupied cell is kept.
+        small = dict(list(cells.items())[:1000])
+        self.assertEqual(viewer_highlight_keep_cells(small, 4096), set(small))
+
+    def test_near_bands_cover_distances_and_conserve_area(self):
+        # Area taps (asDepthOfFieldNearF.glsl): each tap distance maps to the
+        # band that holds it, and the band averages integrate back to the
+        # source's exact splat area w r^2 = R^2 (so coverage is conserved for
+        # any mix of radii; see dof_near_gather_sim.py for the noise gain).
+        for max_radius in (2., 7.5, 24., 150.):
+            edges = [viewer_near_band_edge(k, max_radius) for k in range(NEAR_BAND_COUNT + 1)]
+            self.assertEqual(edges[0], 0.)
+            self.assertAlmostEqual(edges[-1], max_radius, places=9)
+            for i in range(2000):
+                d = max_radius * i / 2000
+                k = viewer_near_band_index(d, max_radius)
+                self.assertLessEqual(edges[k] - 1e-9, d)
+                self.assertLess(d, edges[k + 1] + 1e-9)
+            for r in (1., 1.7, max_radius / 3, max_radius * .77, max_radius):
+                if r < 1:
+                    continue
+                bands = viewer_near_band_averages(r, max_radius)
+                area = math.fsum(bands[k] * (edges[k + 1] ** 2 - edges[k] ** 2)
+                                 for k in range(NEAR_BAND_COUNT))
+                self.assertAlmostEqual(area, max_radius * max_radius, places=6)
+                # Full reach inside the source's radius, none beyond it.
+                for k in range(NEAR_BAND_COUNT):
+                    if edges[k + 1] <= r:
+                        self.assertAlmostEqual(bands[k], max_radius ** 2 / r ** 2)
+                    if edges[k] >= r:
+                        self.assertEqual(bands[k], 0.)
+
+    def test_viewer_blend_standard_matches_trace(self):
+        red = Card(1., self.full, (1., 0., 0.), .5)
+        blue = Card(4., self.full, (0., 0., 1.), .5)
+        for cards in ([red, blue], [blue, red]):
+            expected = trace(self.camera, (0., 0.), (0., 0.), cards)
+            got = trace_viewer(self.camera, (0., 0.), (0., 0.),
+                               [card_surface(c) for c in cards])
+            for c in range(3):
+                self.assertAlmostEqual(got[c], expected[c])
+            # Viewer alpha under the standard tuple is transmittance.
+            self.assertAlmostEqual(got[3], 1 - expected[3])
+
+    def test_viewer_blend_nonstandard_is_order_dependent(self):
+        multiply = (DEST_COLOR, ZERO, ZERO, ONE)
+
+        def surface(depth, color, blend):
+            return Surface((0., 0., depth), (1., 0., 0.), (0., 1., 0.), self.full,
+                           lambda u, v: color, blend)
+        grey = (.5, .5, .5, 1.)
+        near_blue = [surface(4., (1., .5, 0., 1.), multiply),
+                     surface(1., (0., 0., 1., .5), STANDARD_BLEND)]
+        near_mult = [surface(1., (1., .5, 0., 1.), multiply),
+                     surface(4., (0., 0., 1., .5), STANDARD_BLEND)]
+        a = trace_viewer(self.camera, (0., 0.), (0., 0.), near_blue, grey)
+        b = trace_viewer(self.camera, (0., 0.), (0., 0.), near_mult, grey)
+        for got, want in ((a, (.25, .125, .5, .5)), (b, (.25, .125, 0., .5))):
+            for g, w in zip(got, want):
+                self.assertAlmostEqual(g, w)
+
+    def test_viewer_glow_accumulation_order(self):
+        def surface(depth, blend, glow, alpha=.5):
+            return Surface((0., 0., depth), (1., 0., 0.), (0., 1., 0.), self.full,
+                           lambda u, v: (1., 1., 1., alpha), blend, glow)
+        far_glow = [surface(4., GLOW_ONLY, 2.), surface(1., STANDARD_BLEND, .1)]
+        near_glow = [surface(1., GLOW_ONLY, 2.), surface(4., STANDARD_BLEND, .1)]
+        self.assertAlmostEqual(trace_viewer(self.camera, (0., 0.), (0., 0.), far_glow)[4], 1.1)
+        self.assertAlmostEqual(trace_viewer(self.camera, (0., 0.), (0., 0.), near_glow)[4], 2.1)
+
+    def test_angled_textured_surface_sharp_only_on_focal_line(self):
+        # Tilted, striped alpha-mask plane crossing the focal plane at x == 0.
+        focus = self.camera.focus
+
+        def stripes(u, v):
+            band = math.floor(u * 1000 + .5) % 2
+            return (u % 1., .3, .7, 1. if band else 0.)
+        plane = Surface((0., 0., focus), (1., 0., .8), (0., 1., 0.),
+                        (-10., 10., -10., 10.), stripes)
+        back = card_surface(Card(8., self.full, (0., 1., 0.), 1.))
+        scene = [plane, back]
+        pinhole = trace_viewer(self.camera, (0., 0.), (0., 0.), scene)
+        lens = [(self.camera.aperture_radius * x, self.camera.aperture_radius * y)
+                for x, y in viewer_aperture_samples(64)]
+        for sample in lens:
+            got = trace_viewer(self.camera, (0., 0.), sample, scene)
+            for g, w in zip(got, pinhole):
+                self.assertAlmostEqual(g, w, places=12)
+        # x == .5 hits the plane at z ~ 3.3 m: blur ~ 4 stripe periods.
+        off = (.5, 0.)
+        off_pinhole = trace_viewer(self.camera, off, (0., 0.), scene)
+        blurred = [math.fsum(trace_viewer(self.camera, off, s, scene)[c] for s in lens) / len(lens)
+                   for c in range(5)]
+        self.assertGreater(max(abs(a - b) for a, b in zip(blurred, off_pinhole)), .05)
+
+    def test_pixel_footprint_removes_subpixel_strand_aliasing(self):
+        # Focused strand 0.3 px wide: centre-point sampling is 0 or alpha;
+        # joint lens+pixel sampling gives alpha * 0.3 for every sub-pixel
+        # position (no appear/disappear as the strand moves).
+        focus, pixel, width, alpha = self.camera.focus, 1e-3, 3e-4, .6
+        centre_values, footprint_values = set(), []
+        for step in range(8):
+            # Strand stays inside the pixel: offsets -.45 .. +.145 px.
+            offset = (-.45 + step * .085) * pixel
+            strand = card_surface(Card(focus, ((offset) * focus, (offset + width) * focus,
+                                               -100., 100.), (1., 1., 1.), alpha))
+            centre_values.add(round(trace_viewer(self.camera, (0., 0.), (0., 0.), [strand])[0], 9))
+            footprint_values.append(integrate_pixel(self.camera, (0., 0.), (pixel, pixel),
+                                                    [strand], 256)[0])
+        self.assertEqual(centre_values, {0., alpha})
+        for value in footprint_values:
+            self.assertLess(abs(value - alpha * width / pixel), .01)
+
+    def test_defocused_strand_energy_converges(self):
+        # Isolated unoccluded strand gate: integrated contribution across the
+        # blurred footprint (plus guard band) within 1% of alpha * width once
+        # converged. Joint lens+pixel sampling is unbiased, but a defocused
+        # sub-pixel strand is a thin discontinuous integrand: measured error
+        # is ~10% at 256 and ~2.5% at 4096 samples (see plan record), so
+        # the 1% gate is asserted at 16384. Low counts are not converged.
+        pixel, width, alpha = 1e-3, 3e-4, .6
+        strand = card_surface(Card(1., (0., width, -100., 100.), (1., 1., 1.), alpha))
+        blur = self.camera.aperture_radius * abs(1 / self.camera.focus - 1.)
+        span = int(blur / pixel) + 4
+        total = math.fsum(
+            integrate_pixel(self.camera, (k * pixel, 0.), (pixel, pixel), [strand], 16384)[0]
+            for k in range(-span, span + 1)) * pixel
+        self.assertLess(abs(total - alpha * width) / (alpha * width), .01)
+
+    def test_viewer_jitter_projection_shifts_all_depths(self):
+        width, height = 1920, 1080
+        base = viewer_projection(math.radians(60.), width / height, .1, 1024.)
+        jitter = (.37, -.21)
+        moved = viewer_jitter_projection(base, jitter, width, height)
+        for depth in (.2, 2., 500.):
+            point = (.1, -.3, -depth)
+            x0, y0, _, w0 = viewer_apply(base, point)
+            x1, y1, _, w1 = viewer_apply(moved, point)
+            self.assertAlmostEqual((x1 / w1 - x0 / w0) * width / 2, jitter[0], places=9)
+            self.assertAlmostEqual((y1 / w1 - y0 / w0) * height / 2, jitter[1], places=9)
+        # Lens shear and jitter touch disjoint terms' sums: order-independent.
+        a = viewer_jitter_projection(viewer_lens_projection(base, (.01, .02), 2.), jitter, width, height)
+        b = viewer_lens_projection(viewer_jitter_projection(base, jitter, width, height), (.01, .02), 2.)
+        for ca, cb in zip(a, b):
+            for x, y in zip(ca, cb):
+                self.assertAlmostEqual(x, y, places=12)
+
+    def test_viewer_focal_length_zoom_mapping(self):
+        default_fov = math.radians(60.)
+        self.assertAlmostEqual(viewer_focal_length_mm(default_fov, default_fov, 50.), 50.)
+        zoomed = 2 * math.atan(math.tan(default_fov / 2) / 2)
+        self.assertAlmostEqual(viewer_focal_length_mm(zoomed, default_fov, 50.), 100.)
+
+    def test_pinhole_equivalence(self):
+        cards = [Card(1., self.full, (.8, .1, .2), .4),
+                 Card(4., self.full, (.2, .5, .9), .7)]
+        direct = trace(self.camera, (0., 0.), (0., 0.), cards)
+        averaged = integrate(self.camera, (0., 0.), cards, radius=0., rings=2, sectors=8)
+        for a, b in zip(direct, averaged):
+            self.assertAlmostEqual(a, b)
+
+    def test_transparency_depth_order(self):
+        red = Card(1., self.full, (1., 0., 0.), .5)
+        blue = Card(4., self.full, (0., 0., 1.), .5)
+        expected = (.5, 0., .25, .75)
+        for cards in ([red, blue], [blue, red]):
+            self.assertEqual(trace(self.camera, (0., 0.), (0., 0.), cards), expected)
+
+    def test_hidden_background_is_revealed(self):
+        foreground = Card(1., (-.003, .003, -1., 1.), (1., 0., 0.), 1.)
+        background = Card(4., self.full, (0., 0., 1.), 1.)
+        cards = [foreground, background]
+        self.assertEqual(trace(self.camera, (0., 0.), (0., 0.), cards), (1., 0., 0., 1.))
+        value = integrate(self.camera, (0., 0.), cards, radius=.025)
+        self.assertGreater(value[2], .1)
+        self.assertAlmostEqual(value[0] + value[2], 1.)
+        self.assertAlmostEqual(value[3], 1.)
+
+    def test_same_sample_occlusion_not_average_alpha(self):
+        # Correlated visibility: both cards hit only on the same half-lens.
+        cards = [Card(1., (0., 100., -100., 100.), (1., 0., 0.), 1.),
+                 Card(1.5, (0., 100., -100., 100.), (0., 0., 1.), 1.)]
+        value = integrate(self.camera, (0., 0.), cards)
+        self.assertAlmostEqual(value[0], .5)
+        self.assertEqual(value[2], 0.)
+        # Separately averaging two half-covered layers falsely exposes blue.
+        incorrect_blue = .5 * (1 - .5)
+        self.assertGreater(incorrect_blue, value[2])
+
+    def test_more_than_sixteen_layers(self):
+        cards = [Card(.1 + .02*i, self.full, (1., 1., 1.), .1) for i in range(64)]
+        value = trace(self.camera, (0., 0.), (0., 0.), cards)
+        expected = 1 - .9**64
+        for channel in value:
+            self.assertAlmostEqual(channel, expected)
+
+    def test_additive_has_no_opacity(self):
+        cards = [Card(1., self.full, (4., 2., 1.), 0., additive=True)]
+        self.assertEqual(integrate(self.camera, (0., 0.), cards, rings=2, sectors=8),
+                         (4., 2., 1., 0.))
+
+    def test_focused_thin_card_keeps_coverage(self):
+        card = Card(2., (-.0001, .0001, -1., 1.), (.3, .2, .1), .4)
+        for radius in (0., .01, .1):
+            value = integrate(self.camera, (0., 0.), [card], radius, rings=8, sectors=32)
+            self.assertAlmostEqual(value[3], .4)
+
+    def test_aperture_convergence(self):
+        card = Card(1., (-.003, .003, -1., 1.), (1., 1., 1.), .4)
+        # Analytic fraction of a uniform disk intersected by a central strip.
+        radius = .025
+        q = .003 / ((1 - card.depth / self.camera.focus) * radius)
+        expected = .4 * 2 / math.pi * (math.asin(q) + q * math.sqrt(1-q*q))
+        for rings, sectors in ((32, 128), (64, 256)):
+            actual = integrate(self.camera, (0., 0.), [card], radius, rings, sectors)
+            self.assertLess(abs(actual[3] - expected), .001)
+
+
+class PostfilterTests(unittest.TestCase):
+    """Invariants of the mode-1 postfilter; noise figures are in
+    dof_postfilter_sim.py."""
+
+    def test_in_focus_untouched(self):
+        for plane_kind in (0, 1):
+            self.assertEqual(viewer_postfilter_width(1.9, 40.0, 16, plane_kind), 0.0)
+
+    def test_width_follows_tap_spacing(self):
+        # Larger discs and fewer taps widen the filter; never over r / 3.
+        w96 = viewer_postfilter_width(30.0, 40.0, 96, 1)
+        w16 = viewer_postfilter_width(30.0, 40.0, 16, 1)
+        self.assertGreater(w16, w96)
+        self.assertGreater(viewer_postfilter_width(30.0, 40.0, 96, 1),
+                           viewer_postfilter_width(10.0, 40.0, 96, 1))
+        for r in (3.0, 10.0, 30.0, 60.0):
+            for n in (16, 32, 96):
+                for kind in (0, 1):
+                    self.assertLessEqual(viewer_postfilter_width(r, 60.0, n, kind),
+                                         r / 3.0 + 1e-9)
+        # Blur-resolution scale shrinks the width in blur pixels.
+        self.assertAlmostEqual(viewer_postfilter_width(30.0, 40.0, 96, 1, 2.0),
+                               viewer_postfilter_width(30.0, 40.0, 96, 1) / 2.0)
+
+    def test_different_blur_radii_do_not_mix(self):
+        # A near/far edge: 4 px next to 24 px of blur.
+        self.assertLess(viewer_postfilter_weight(0.5, 24.0, 1.0, 4.0, 1.0), 0.01)
+        self.assertLess(viewer_postfilter_weight(0.5, 4.0, 1.0, 24.0, 1.0), 1e-6)
+
+    def test_aperture_rim_kept(self):
+        # Across a disc rim coverage jumps by about 1 within one spacing.
+        self.assertLess(viewer_postfilter_weight(0.5, 20.0, 1.0, 20.0, 0.0), 0.001)
+
+    def test_noise_inside_region_averaged(self):
+        # Same radius, small coverage noise: substantial weight.
+        self.assertGreater(viewer_postfilter_weight(0.5, 20.0, 0.30, 20.5, 0.15), 0.4)
+
+
+class LensFieldTests(unittest.TestCase):
+    """Mode-1 lens character: field curvature, astigmatism, axial CA and
+    cat's eye (asdepthoffield.cpp updateLensField(), the gathers and the
+    sprite shaders)."""
+
+    def setUp(self):
+        # 50 mm f/2.8 focused at 2 m, about 1 mrad per pixel, 54 px cap.
+        self.focal_distance, self.blur_constant, self.magnification = \
+            viewer_pipeline_lens(2.0, 50.0, 2.8)
+        self.tan_pixel_angle = 0.001
+        self.max_coc = 54.0
+        self.shift = viewer_lens_shift_scale(self.focal_distance, self.blur_constant,
+                                             self.tan_pixel_angle, self.magnification,
+                                             self.max_coc)
+
+    def coc(self, depth):
+        return viewer_mode1_coc_pixels(depth, self.focal_distance, self.blur_constant,
+                                       self.tan_pixel_angle, self.magnification)
+
+    def test_field_curvature_moves_the_in_focus_surface(self):
+        # A focal shift p f moves the in-focus inverse distance by p / f; at
+        # the corner (field^2 = 1) that distance must get zero CoC.
+        f = self.magnification * 2.0 / (1 + self.magnification)
+        self.assertAlmostEqual(f, 0.05, places=6)
+        for p in (0.005, -0.01, 0.02):
+            depth = 1 / (1 / 2.0 + p / f)
+            value = viewer_mode1_normalized_coc(self.coc(depth), self.max_coc, 1.0,
+                                                p * self.shift, 0.0)
+            self.assertAlmostEqual(value, 0.0, places=5)
+            # The centre keeps its focus.
+            self.assertAlmostEqual(viewer_mode1_normalized_coc(
+                self.coc(2.0), self.max_coc, 0.0, p * self.shift, 0.0), 0.0, places=6)
+        # Positive: the flat focus plane lies behind the corner focus.
+        self.assertGreater(viewer_mode1_normalized_coc(self.coc(2.0), self.max_coc, 1.0,
+                                                       0.005 * self.shift, 0.0), 0.0)
+
+    def test_axial_ca_shift_matches_aperture_sampled_focus(self):
+        # Mode 1's extreme-wavelength CoC shift equals mode 2's per-sample
+        # focus shift (s = +-1) seen through the same CoC formula.
+        # With the lens constants fixed, the CoC is K (1/S' - 1/d): red
+        # (s = 1) focused at S' loses exactly ca_shift behind the focus.
+        f = 0.05
+        alpha = 0.002
+        ca_shift = 0.5 * alpha * self.shift
+        red_focus = 1 / viewer_axial_ca_inv_focus(2.0, f, alpha, 1.0)
+        for depth in (1.0, 5.0, 100.0):
+            red = viewer_mode1_coc_pixels(depth, -red_focus, self.blur_constant,
+                                          self.tan_pixel_angle, self.magnification)
+            green = self.coc(depth)
+            self.assertAlmostEqual((red - green) / self.max_coc, -ca_shift, places=9)
+
+    def test_ca_strata_match_spectral_weights(self):
+        for weights in CA_CHANNEL_WEIGHTS:
+            self.assertAlmostEqual(sum(weights), 1.0, places=6)
+        # Channel mean s: red +1/3, green 0, blue -1/3 (4 strata: 0.3125).
+        means = [sum(w * s for w, s in zip(ws, CA_STRATA)) for ws in CA_CHANNEL_WEIGHTS]
+        self.assertAlmostEqual(means[0], 0.3125, places=6)
+        self.assertAlmostEqual(means[1], 0.0, places=6)
+        self.assertAlmostEqual(means[2], -0.3125, places=6)
+        # Without CA every channel is the plain soft edge.
+        for d in (5.0, 9.5, 10.0, 10.5, 12.0):
+            cover = viewer_channel_cover(10.0, d, 1.0, 0.0, 1.0)
+            plain = 1 - _smoothstep(9.0, 11.0, d)
+            for c in cover:
+                self.assertAlmostEqual(c, plain, places=6)
+        # Behind focus blue reaches farther, in front red does.
+        far = viewer_channel_cover(10.0, 11.5, 1.0, 3.0, 1.0)
+        near = viewer_channel_cover(10.0, 11.5, -1.0, 3.0, 1.0)
+        self.assertGreater(far[2], far[1])
+        self.assertGreater(far[1], far[0])
+        self.assertGreater(near[0], near[1])
+        self.assertGreater(near[1], near[2])
+
+    def test_astigmatic_scale(self):
+        # In focus (radius = split): a disc of the split's radius.
+        self.assertEqual(viewer_astigmatic_scale(1.0, 4.0, 40.0, 0.1), (-1.0, 1.0))
+        # Behind focus with positive astigmatism: circumferential long axis.
+        radial, circumferential = viewer_astigmatic_scale(1.0, 20.0, 40.0, 0.1)
+        self.assertAlmostEqual(radial, 0.6)
+        self.assertEqual(circumferential, 1.0)
+        # In front: radial long axis; negative astigmatism swaps both.
+        self.assertEqual(viewer_astigmatic_scale(1.0, -20.0, 40.0, 0.1)[0], 1.0)
+        self.assertEqual(viewer_astigmatic_scale(1.0, 20.0, 40.0, -0.1)[0], 1.0)
+        # At the image centre nothing changes.
+        self.assertEqual(viewer_astigmatic_scale(0.0, 20.0, 40.0, 0.1), (1.0, 1.0))
+        # Between the focal lines the magnitude never collapses below 0.1.
+        self.assertEqual(viewer_astigmatic_scale(1.0, 8.2, 40.0, 0.1)[0], 0.1)
+
+    def sprite_energy(self, radius, plane, field, axis_scale, barrel, delta, cat_eye,
+                      spherical=0.0):
+        # Radiance as the sprite vertex shader sets it (circle: unit_area pi).
+        area = math.pi * radius * radius * abs(axis_scale[0] * axis_scale[1])
+        if cat_eye:
+            area *= max(viewer_cat_eye_fraction(math.hypot(*barrel)), 0.05)
+        extent = int(radius + delta) + 3
+        total = [0.0, 0.0, 0.0]
+        for y in range(-extent, extent + 1):
+            for x in range(-extent, extent + 1):
+                cover = viewer_lens_sprite_coverage(x, y, radius, plane, field, axis_scale,
+                                                    barrel, delta, cat_eye, spherical)
+                for c in range(3):
+                    total[c] += cover[c] / area
+        return total
+
+    def test_sprite_energy_with_lens_field(self):
+        field = (0.6, 0.45)
+        cases = (
+            # radius, plane, axis scales, barrel, delta, cat's eye
+            (20.0, 1, (1.0, 1.0), (0.0, 0.0), 4.0, False),
+            (20.0, -1, (1.0, 1.0), (0.0, 0.0), 4.0, False),
+            (20.0, 1, (0.5, 1.0), (0.0, 0.0), 0.0, False),
+            (20.0, -1, (1.0, -0.4), (0.0, 0.0), 0.0, False),
+            (20.0, 1, (1.0, 1.0), (0.36, 0.27), 0.0, True),
+            (24.0, 1, (0.7, 1.0), (0.6, 0.45), 3.0, True),
+        )
+        for radius, plane, scale, barrel, delta, cat_eye in cases:
+            energy = self.sprite_energy(radius, plane, field, scale, barrel, delta, cat_eye)
+            for value in energy:
+                self.assertLess(abs(value - 1.0), 0.02, (radius, plane, scale, barrel, delta, energy))
+
+    def test_sprite_spherical_aberration(self):
+        # Energy kept for both signs and planes, with CA and astigmatism.
+        for spherical in (0.8, -0.8):
+            for plane in (1, -1):
+                for scale, delta in (((1.0, 1.0), 0.0), ((0.7, 1.0), 3.0)):
+                    energy = self.sprite_energy(20.0, plane, (0.6, 0.45), scale, (0.0, 0.0),
+                                                delta, False, spherical)
+                    for value in energy:
+                        self.assertLess(abs(value - 1.0), 0.02, (spherical, plane, scale, energy))
+        # Positive: centre-bright behind focus, bright rim in front.
+        def at(x, plane):
+            return viewer_lens_sprite_coverage(x, 0.0, 20.0, plane, (0.0, 0.0), (1.0, 1.0),
+                                               (0.0, 0.0), 0.0, False, 0.8)[1]
+        self.assertGreater(at(0.0, 1), at(17.0, 1))
+        self.assertLess(at(0.0, -1), at(17.0, -1))
+
+    def test_sprite_ca_rims(self):
+        # Just outside a far disc only the larger blue discs reach; just
+        # inside the rim red has lost its outer strata.
+        outside = viewer_lens_sprite_coverage(21.5, 0.0, 20.0, 1, (0.0, 0.0), (1.0, 1.0),
+                                              (0.0, 0.0), 4.0, False)
+        self.assertGreater(outside[2], outside[0])
+        near = viewer_lens_sprite_coverage(21.5, 0.0, 20.0, -1, (0.0, 0.0), (1.0, 1.0),
+                                           (0.0, 0.0), 4.0, False)
+        self.assertGreater(near[0], near[2])
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

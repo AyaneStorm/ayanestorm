@@ -122,6 +122,49 @@ and opaque skin adjacent to them. Their local-light response should now closely
 match. Ordinary nearby lights can differ when more than six local lights compete
 for forward slots because direct My Lights are deliberately reserved first.
 
+## No eye highlights (eye-specular mask, Shader backend)
+
+### Behavior
+
+The persistent **No eye highlights** checkbox (`ASLightRigNoEyeSpecular`)
+removes My Lights specular highlights (catchlights) from the self avatar's
+eyes. Diffuse illumination of the eyes is kept. The checkbox is disabled while
+the backend is **LLVOVolume**, because those lights go through the stock light
+loop mixed with world lights.
+
+### Implementation
+
+- `ASLightRigRenderer::render()` collects the world positions of `mEyeLeft`,
+  `mEyeRight`, `mFaceEyeAltLeft`, and `mFaceEyeAltRight`, transforms them to
+  view space, and uploads them as `as_eye_mask[4]` (`.w` = radius) plus
+  `as_eye_mask_count` to `gDeferredLightProgram` and each
+  `gDeferredMultiLightProgram` it uses.
+- `class3/deferred/pointLightF.glsl` and `multiPointLightF.glsl` compute
+  `asEyeSpecularScale(pos)`: 0 inside each sphere, smooth edge from 75% to
+  100% of the radius. PBR `specPunc` and legacy specular are multiplied by it.
+- The count is reset to 0 before unbinding, so stock lights sharing these
+  programs are unchanged.
+- Sphere radius: debug setting `ASLightRigEyeMaskRadius` (default 0.02 m).
+
+No G-buffer tagging is needed; the mask is purely geometric. Mesh eyes work
+when rigged to either eye joint pair.
+
+### Limitations
+
+- Deferred path only. Alpha-blended cornea shells rendered in the forward
+  alpha pass still receive My Lights specular through the hardware-light
+  slots (`appendForwardLights()`).
+- Self avatar only.
+- The unused eye-joint pair (legacy vs. Bento) still has a sphere; skin
+  specular inside it is also removed. Reduce `ASLightRigEyeMaskRadius` if
+  visible on eyelids.
+
+### Runtime verification
+
+Shader backend, a light in front of the face, close-up camera. Toggle the
+checkbox: the eye highlight disappears, skin and eye diffuse remain. Check a
+snapshot. Test with system eyes, and with legacy and Bento mesh eyes.
+
 ## Teleport / region-change recovery (LLVOVolume backend)
 
 ### Symptom

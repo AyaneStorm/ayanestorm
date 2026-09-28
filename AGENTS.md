@@ -28,6 +28,7 @@ new code here;
 - Keep the original code commented inside the ownership tags when replacing existing code.
 - Substantial functionality must be placed in a new module instead of enlarging an existing upstream or shared module. For example, `fsexactoit` offloads functionality to avoid polluting `llpoolalpha` and `llpipeline`.
 - Author should be "chanayane@firestorm"
+- Use LF, not CRLF, for line endings.
 
 ## Documentation and Research
 
@@ -68,3 +69,11 @@ Logs can be checked at %APPDATA%\AyaneStorm_x64\logs and in particular AyaneStor
 ## Plan mode
 When asked to make a plan, as soon as plan is approved, the agent should copy the raw plan file to the /doc folder with a meaningful name that mimic the other AyaneStorm documents. I said copy: the agent should not generate again the same plan in a new file for any reason. Generating the plan again is a waste of token. Use copy commands! DO NOT USE apply_patch! Use copy or cp whichever is available!
 
+## Shaders
+Be very careful not to use reserved keywords as variable names as they will prevent compilation of the shader.
+
+Validate every shader you create or edit before handing off, with the Khronos validator at `.glslang/bin/glslang.exe`:
+- The viewer prepends the `#version` line, so validate a temporary copy (in your scratchpad, never in the repo) with `#version 410 core` prepended.
+- The copy's extension selects the stage: `.frag` for `*F.glsl`, `.vert` for `*V.glsl`.
+- Example (Git Bash): `{ echo "#version 410 core"; cat asFooF.glsl; } > "$SCRATCH/check.frag" && .glslang/bin/glslang.exe "$SCRATCH/check.frag"`
+- Fix every reported error. This checks GLSL 4.10 syntax and semantics only; driver-specific issues and link-time limits still need the user's runtime test.

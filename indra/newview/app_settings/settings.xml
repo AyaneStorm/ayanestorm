@@ -12177,6 +12177,381 @@ Change of this parameter will affect the layout of buttons in notification toast
     <real>0.7</real>
   </map>
 
+  <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
+  <key>ASDepthOfFieldMode</key>
+  <map>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development). Not persisted: every session starts with Standard</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSamples</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: new lens samples added to the running average per frame while the camera and lens are still (each sample re-renders the scene; cost scales linearly)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>4</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureMaxSamples</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: samples after which the average is complete and shown at ordinary rendering cost (about 18 ms per sample to reach it on a typical scene)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>512</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSnapshotSamples</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: samples rendered for a snapshot that cannot reuse the finished live view (other size, or live view not developed that far). Capture time is about samples x per-sample cost at snapshot size</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>512</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSnapshotMaxSeconds</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: time limit for one snapshot's sample rendering, 5-600 s in the floater; on reaching it the snapshot keeps the samples rendered so far. Snapshot floater captures run in short slices with the viewer running between them; other (blocking) captures and tiled snapshots are capped at 30 s, since networking is suspended meanwhile</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>120.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureResidualBlur</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: per-sample softening that fills the gaps between sample dots in out-of-focus highlights, as a multiple of the dot spacing (1 = exactly the spacing, 0 = off, up to 10; capped at 24 px). Zero at the focal plane; shrinks as total samples grow</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSmoothing</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: final smoothing, on a finished average, of the bokeh shapes of light sources only (recorded per sample from what the renderer drew: visible star pixels and glowing pixels, out of focus) over the dot spacing still left by the samples averaged so far (area-filtered, so single-pixel dots such as stars spread fully), as a multiple of that spacing (0 = off, up to 4; capped at 32 px). In-focus pixels are unchanged; fades as samples accumulate</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureShowSmoothing</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF debug: tints the area the final smoothing changes red (the bokeh shapes found from the samples' source dots)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureAxialCA</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Advanced renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureAxialCAStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEye</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEyeStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureCatEyeDarken</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSpherical</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureSphericalStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlights</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Off keeps the exact simulation</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlightStrength</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureHighlightThreshold</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIAdvanced</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 1 (enables Advanced-only DoF controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIAperture</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 2 (enables aperture-sampled DoF controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIShape</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables aperture shape controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIAxialCA</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureAxialCA on (enables the aberration strength slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUICatEye</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureCatEye on (enables the cat's-eye controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIFieldCurvature</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldFieldCurvature on (enables the field curvature slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIAstigmatism</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldAstigmatism on (enables the astigmatism slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIMaxBlur</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldPhysicalBlur on (enables the maximum blur slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUISpherical</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureSpherical on (enables the spherical aberration slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIHighlights</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureHighlights on (enables the highlight sliders)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFreezeAnimations</key>
+  <map>
+    <key>Comment</key><string>Set by the DoF floater's "Toggle animations" button: while animations are frozen, also hold the day cycle, cloud scroll and AyaneStorm snow so aperture-sampled DoF can converge on a still scene</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureShowProgress</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF: show the sample counter and progress bar at the top right of the 3D view (never in snapshots)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFocusMode</key>
+  <map>
+    <key>Comment</key><string>DoF focus, all renderers: 0 Firestorm focus point, 1 autofocus on the autofocus area (1/distance-weighted median of its depths), 2 autofocus on the eyes of the avatar in the area nearest the camera (falls back to 1)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusArea</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: size of the square autofocus area, as a fraction of the view height (0.02 to 1)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusX</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: horizontal position of the autofocus area centre, 0 left to 1 right</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusY</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: vertical position of the autofocus area centre, 0 top to 1 bottom</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusTime</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: seconds to reach a new focus distance (99%); 0 is instant</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusNearPriority</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: 0 focuses on the weighted median depth of the area, 1 on its nearest surfaces</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusLastMode</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: mode (1 area, 2 eyes) restored by the Depth of Field Autofocus toggle (Alt+Shift+Z)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusLockMode</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus, focus lock (Alt+Shift+X): 0 freezes the focus distance (classic), 1 locks the subject (tracked eyes, else the surface under the area centre) and keeps focusing on it</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusTrackOutside</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: a locked subject is tracked anywhere in the view; off, the focus holds while it is outside the autofocus area</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusEyeRadius</key>
+  <map>
+    <key>Comment</key><string>DoF eye autofocus: eyeball radius in mm (eye centre to the camera-facing surface). 0 measures mesh eyes automatically (12 mm when they cannot be measured)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAutofocusShowArea</key>
+  <map>
+    <key>Comment</key><string>DoF autofocus: outline the autofocus area, the tracked eyes or locked subject and the focus distance while autofocus is on (menu "Show DoF Autofocus Area", Alt+Shift+V; never in snapshots)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureDebugSample</key>
+  <map>
+    <key>Comment</key><string>Aperture-sampled DoF development: -1 renders the central (pinhole) view through the new camera path; 0 or more renders only that lens sample at full aperture, unaveraged, to check focal-plane registration</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>-1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldBackend</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF backend: 0 Auto, 1 portable OpenGL 4.1 fragment; 2 is reserved for a future OpenGL 4.3 compute backend</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldQuality</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF bounded sample tier: 0 16-tap, 1 32-tap, 2 48-tap</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldNearRadius</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF foreground blur-radius multiplier</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFarRadius</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF background blur-radius multiplier</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureBlades</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture blade count; values below 3 use a circular aperture</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureRoundness</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture roundness from polygonal 0 to circular 1</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.35</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldApertureRotation</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF aperture rotation in degrees</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAnamorphicRatio</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF horizontal aperture aspect ratio</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldHighlightBoost</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF bokeh highlight weighting</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.25</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldHighlightSprites</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldPostfilter</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: radius-aware postfilter that smooths sampling noise of the gathers over the local tap spacing</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldPhysicalBlur</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldMaxBlur</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>5.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFieldCurvature</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFieldCurvatureStrength</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAstigmatism</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism. Off-axis, the radial and circumferential directions focus apart: corners soften and bokeh stretch around the centre behind the focus, outward in front of it</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAstigmatismStrength</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism, the focal split at the frame corner in percent of the focal length (-3 to 3). Negative swaps the stretch directions</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldHighlightIsolation</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldHighlightMaxSprites</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: sprite budget; highlights beyond it stay in the gather</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>4096</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldDebug</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur, 16 background completion (unblurred), 17 near back layer, 18 near front layer, 19 background completion, 20 rigged near coverage, 21 world near coverage, 22 opaque result before transparency, 23 rigged layer as composited, 24 blur vs sharp blend (white blurred), 25 blur radius spread seen by the postfilter (grey: mixed radii)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
+
   <key>RenderSpotLightsInNondeferred</key>
   <map>
     <key>Comment</key>
@@ -26824,6 +27199,22 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Persist</key><integer>1</integer>
       <key>Type</key><string>Boolean</string>
       <key>Value</key><integer>0</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASLightRigNoEyeSpecular</key>
+    <map>
+      <key>Comment</key><string>Suppress My Lights specular highlights (catchlights) on the self avatar's eyes. Shader backend only</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>Boolean</string>
+      <key>Value</key><integer>0</integer>
+      <key>Backup</key><integer>0</integer>
+    </map>
+    <key>ASLightRigEyeMaskRadius</key>
+    <map>
+      <key>Comment</key><string>Radius in meters of the sphere around each eye joint where ASLightRigNoEyeSpecular removes My Lights specular</string>
+      <key>Persist</key><integer>1</integer>
+      <key>Type</key><string>F32</string>
+      <key>Value</key><real>0.02</real>
       <key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->

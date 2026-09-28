@@ -182,7 +182,7 @@ tagged selection/composite hooks should enter the shared pipeline and soften
 shader. Do not force GTAO through the existing shared shadow blur.
 
 The initial implementation should adapt the MIT-licensed Intel XeGTAO source
-vendored under `.XeGTAO`, retaining its view-space depth preparation, horizon
+vendored under `.xo`, retaining its view-space depth preparation, horizon
 evaluation, and edge-aware spatial denoise. AyaneStorm presently has no general
 TAA history, so temporal reprojection should not be a prerequisite; XeGTAO
 explicitly supports operation without TAA, with a fixed spatial noise pattern
@@ -283,7 +283,7 @@ resource management.
 | LSAO | Do not add | Clever linear-complexity line sweeps, but awkward multi-direction whole-image passes and a 2013 obscurance model make it a poor trade beside GTAO. |
 | DeepAO | Research only | Learned compute-shader pipeline and project-specific model/data burden; sparse reference implementation and no clear production advantage here. |
 | CACAO | Benchmark later, at most | The only strong second candidate: MIT-licensed, optimized, adaptive, and offers five quality levels. However it is a many-pass compute implementation officially targeting DX12/Vulkan; an OpenGL port would require 4.3-class compute and would exclude macOS. Add it only if an instrumented GTAO prototype misses a defined frame-time target. |
-| MXAO | Do not integrate | Primarily a ReShade/post-process implementation with its own compositing and indirect-light features; the public qUINT shader is marked all-rights-reserved. Native GTAO can use AyaneStorm's real G-buffer and cleaner lighting integration. |
+| MXAO | Do not integrate | Primarily a ReShade/post-process implementation with its own compositing and indirect-light features; the public qt shader is marked all-rights-reserved. Native GTAO can use AyaneStorm's real G-buffer and cleaner lighting integration. |
 | RTAO | Defer until renderer/API work exists | True scene-space quality, but requires ray-query/pipeline support plus maintained GPU acceleration structures. The OpenGL renderer has neither, so this is a renderer-backend project rather than an AO option. |
 | AAO / ABAO | Do not add | Alchemy AO (AAO) is a fast older obscurance approximation; angle-based AO (ABAO) is likewise superseded for this use. If `AAO` meant adaptive AO/ASSAO, CACAO is its optimized descendant and is the relevant candidate instead. |
 
@@ -350,7 +350,7 @@ in from the start rather than retrofit.
 
 ## XeGTAO repository follow-on audit (2026-09-22)
 
-The vendored `.XeGTAO` tree contains more than the core AO implementation.
+The vendored `.xo` tree contains more than the core AO implementation.
 AyaneStorm has already ported the important scalar XeGTAO pieces into
 `asambientocclusion`: five-level weighted view-depth mips, Hilbert/R2 spatial
 sampling, the radiometric horizon integral, packed depth edges, edge-aware
@@ -414,6 +414,551 @@ performs CoC-weighted downsampling, blurs near and far planes independently
 (including a Poisson/bokeh kernel), and resolves them in depth order. That
 architecture directly addresses background color bleeding across focused
 foreground silhouettes and should inform item 3 above.
+
+This is not an "XeGTAO DoF" algorithm in the same sense as XeGTAO itself. It
+is an unrelated Vanilla rendering-framework sample that happens to be present
+in the vendored XeGTAO repository. It is also dormant prototype code: its
+scene-view member and invocation are commented out, the whole invocation block
+is compiled out, and `vaDepthOfField::Draw()` retains an unconditional debug
+`assert(false)` after its first dispatch. Treat it as a design reference, not
+as a tested replacement.
+
+Compared with Firestorm's current DoF, its main image-quality advantage is the
+explicit separation of foreground and background blur. Firestorm stores one
+signed CoC in alpha, gathers both sides into one reduced-resolution image, and
+then mixes that image back according to the destination pixel's CoC. Its far
+gather rejects samples whose blur radius is too small, but its near gather has
+no equivalent depth/plane discrimination. The Vanilla design instead creates
+separate half-resolution near and far RGBA16F planes, uses their CoC masks to
+select blur contributors, and composites far first and near second. This is
+materially better at focused silhouettes and near/far overlap.
+
+Firestorm remains better in other respects. Its CoC is derived from focus
+distance, focal length, f-number, FOV and output resolution, with smooth focus
+transitions and established Phototools controls. The Vanilla sample uses an
+artist-defined in-focus interval and independent linear near/far transition
+ranges; its disabled integration even labels that setup as not physically
+correct. It also requires four half-resolution RGBA16F working images plus a
+full-resolution R8 CoC image and runs a split pass, five far-blur passes, three
+near-blur passes and a resolve. Firestorm uses fewer stages and permits a
+0.25-1.0 resolution scale, although its variable-radius gather can become
+expensive at large CoC values. Performance therefore needs measurement rather
+than assuming either implementation wins.
+
+The recommended upgrade is a hybrid: retain Firestorm's physical CoC/focus
+model, controls and focus targeting, but feed the signed CoC into a separately
+ported near/far split, blur and ordered resolve. Provide a fragment/FBO backend
+for macOS and optionally a compute backend elsewhere. Neither design by itself
+solves partially transparent hair, glass or particles represented by multiple
+depth layers; that remains an OIT integration problem.
+
+### qt ADoF comparison
+
+The vendored `.qt dof` is not directly usable viewer code. It offers the
+richest photographic/artistic bokeh controls of the three implementations:
+configurable polygon vertex count, roundness, rotation, anamorphic ratio,
+highlight emphasis, optional optical vignetting, CoC-linked chromatic aberration,
+autofocus and temporal focus smoothing. Its main gather also scales its polygonal
+ring count with CoC and follows with depth/CoC-weighted horizontal and vertical
+Gaussian passes.
+
+Its edge treatment is more developed than Firestorm's current single gather.
+The CoC preparation conservatively chooses nearby minimum depths, performs a
+depth-weighted four-sample color reduction, and the bokeh and Gaussian gathers
+reject contributors whose absolute CoC is too small for the current radius.
+These measures reduce focused-background leakage around foreground edges.
+However, the blur uses `abs(CoC)` and keeps near and far content in the same
+RGBA8 buffers. Consequently an out-of-focus foreground and an out-of-focus
+background can still contribute to one another when both have sufficiently
+large CoC. The Vanilla split-plane design remains the sounder basis for
+foreground/background occlusion and ordered compositing.
+
+qt is also less suitable as AyaneStorm's focus/lens model. Its CoC is an
+artistic normalized-depth curve controlled by hyperfocus plus independent near
+and far curve values, rather than Firestorm's focal-length/f-number/FOV model.
+Its autofocus estimates one focus depth from a 10x10 screen-space sample grid;
+that is useful to a generic injector, but the viewer already knows its selected
+object, pointer ray, mouselook target and locked focus point. Preserve those
+viewer-native controls instead.
+
+Cost is highly variable. At the default six-sided shape and quality five, the
+maximum main bokeh gather is about 90 taps per reduced-resolution pixel. The
+quality control can raise that into the thousands in its extreme configuration,
+in addition to an expensive full-resolution CoC preparation, two Gaussian
+passes, combine and optional chromatic-aberration pass. Default blur resolution
+is half width and height, but both working textures are allocated as
+full-resolution RGBA8. It needs profiling against Firestorm; it is not an
+automatic performance improvement.
+
+The preferred AyaneStorm design remains Firestorm's physical/viewer-native
+focus model plus Vanilla's near/far split architecture, augmented with selected
+qt mechanisms: its conservative depth-aware CoC preparation, configurable
+aperture kernel and highlight modes, Gaussian bleed rejection, optical
+vignetting and DoF-linked chromatic aberration. Do not port qt wholesale:
+retain signed near/far classification through the blur instead of its shared
+`abs(CoC)` path, use appropriate HDR render-target formats, and expose bounded
+quality presets rather than qt's potentially extreme raw sample controls.
+
+### CinematicDOF comparison
+
+The vendored `.ox/Shaders/CinematicDOF.fx` v1.2.10 is the strongest
+complete implementation reference reviewed here. It keeps a full-resolution
+signed R16F CoC (negative near, positive far), builds an expanded/blurred near
+CoC coverage mask, performs distinct half-resolution far and near disc gathers,
+tent-filters the far result, and resolves original/far first with the near plane
+over it. This directly addresses the central weakness in Firestorm and qt's
+shared blur: foreground blur must spread over background pixels without letting
+background color incorrectly spread across focused foreground silhouettes.
+
+Its near-plane handling is more developed than the Vanilla prototype. Several
+minimum-CoC gathers propagate thin foreground coverage into neighboring pixels,
+then a separable 18-offset Gaussian creates the near influence mask while
+retaining the original CoC in a second channel. The near gather uses that mask
+for both blur radius and resolve alpha. The far gather rejects negative-CoC
+samples and weights accepted samples by their ability to cover the current
+ring. Both paths use separate adjustable maximum radii and the combiner applies
+far before near. This is a better practical starting point than porting the
+Vanilla blur stages literally.
+
+Other useful mechanisms are its optional same-plane preblur for undersampling,
+9-tap tent upscale, CoC-aware highlight sharpening, highlight de/re-tonemapping,
+anamorphic deformation, texture-defined aperture shapes, low-luminance dithering
+and optional post-smoothing. Its CoC is lens-based (focus distance, focal length
+and f-number), but AyaneStorm should still retain Firestorm's established CoC
+calculation, resolution correction and viewer-native focus targeting. Because
+AyaneStorm has real linear HDR buffers, do not port this approximation that
+de-tonemaps an injected LDR backbuffer merely to reconstruct highlight range.
+
+The implementation is expensive as written: 15 raster passes. At default blur
+quality seven, the far gather takes up to 196 ring taps and the near gather up
+to 252 taps per affected half-resolution pixel; quality 30 exceeds 3,000 taps
+in each gather. Its declared working images nominally total about 31.5 bytes per
+full-resolution pixel, roughly 249 MiB at 3840x2160 before shape/noise textures,
+unless the host aliases lifetimes. Much of that comes from three "tile" R16F
+images which are actually full resolution at the compiled `TILE_SIZE == 1`,
+plus two full-resolution RGBA16F postprocess images. An AyaneStorm adaptation
+must collapse/reuse targets and offer a few bounded presets rather than expose
+this range directly.
+
+One source issue should not be carried across: `PerformNeighborTileGather()`
+uses `BUFFER_PIXEL_SIZE.x` for both axes of its neighbor offset; the Y term
+should be derived from the Y pixel size. Review all resolution scaling instead
+of translating the ReShade constants mechanically. Also verify separate rights
+and attribution for any bundled custom bokeh images, which the README credits
+to multiple artists. The shader code itself is permissively licensed: the file
+contains BSD-style redistribution terms and the repository also includes an MIT
+license; preserve the applicable notices and credits in derived files.
+
+Revised recommendation: use CinematicDOF as the primary behavioral reference
+for signed near/far classification, propagated near coverage, plane-specific
+gathers and ordered resolve. Combine it with Firestorm's camera integration and
+physical controls, a leaner render-target/pass plan informed by Vanilla, and
+selected qt aperture/optical features. Implement the result as an AS-owned
+module rather than a line-for-line ReShade translation.
+
+### DoF implementation ownership and compatibility decision
+
+Do not replace or progressively mutate Firestorm's existing blur and combine
+shaders. Their single signed-CoC/color buffer is the architectural limitation
+the new design must remove, and modifying them would increase upstream merge
+risk while eliminating a known compatibility baseline. Keep the complete
+legacy renderer available as a `Standard/Firestorm` mode.
+
+Implement the advanced renderer in new AS-owned C++ and shader files, with its
+own render targets, signed-CoC preparation, near-coverage propagation, separate
+near/far gathers and ordered resolve. Reuse behavior rather than the legacy
+rendering implementation: the existing master enable, focus-point selection and
+transition, focus lock/crosshair, focal length, f-number, FOV and maximum-CoC
+controls should retain their meanings in both modes.
+
+The minimal upstream hook belongs inside `LLPipeline::renderDoF()` after its
+focus interpolation and physical lens constants have been calculated but before
+the legacy CoC pass. Pass those calculated inputs, source/destination/depth
+targets and the screen triangle to a transactional
+`ASDepthOfField::render(...)`. A successful advanced render returns immediately;
+when the advanced mode is disabled, unsupported, incomplete or cannot allocate
+its targets, execution falls through to the untouched legacy passes. This keeps
+the rendering backend fully AyaneStorm-owned without duplicating or relocating
+Firestorm's fragile camera/focus-selection code.
+
+Add a mode selector rather than another master checkbox. Initially default it
+to the legacy renderer until shader compilation and runtime comparisons pass on
+all platforms; the advanced renderer can become the default later without
+removing the fallback. Allocate its resources only while selected. Advanced-
+only controls should cover bounded quality, near/far maximum radius, aperture
+shape/highlight treatment, optical vignetting and DoF-linked chromatic
+aberration; ordinary users should not need to retune the established lens and
+focus controls when switching modes.
+
+#### Initial AyaneStorm implementation (2026-09-22)
+
+The first implementation now follows that ownership boundary. New
+`asdepthoffield.{h,cpp}` code owns a four-stage renderer: full-resolution signed
+R16F CoC, reduced-resolution far gather, reduced-resolution foreground
+scatter-as-gather with coverage, and full-resolution ordered far-then-near
+resolve. Its new GLSL uses ordinary fragment shaders and FBOs only, keeping the
+baseline within macOS OpenGL 4.1. Quality is bounded at 16, 32 or 48 procedural
+aperture samples; the initial controls also expose separate near/far radius,
+blade count and roundness, rotation, anamorphic ratio, highlight weighting and
+diagnostic views. `CameraDoFResScale` remains the shared resolution/performance
+control. The legacy renderer is still the default and remains the transactional
+fallback on shader or target failure.
+
+The integration occurs after transparency has already been resolved and glow
+combined, at the same `LLPipeline::renderDoF()` location used by the legacy
+effect. Standard alpha, Exact OIT, AVBOIT and AYAstorm therefore all present the
+advanced renderer with their final composited scene color. They also share the
+existing post-alpha DoF depth pass in `LLDrawPoolAlpha`, which writes
+alpha-tested transparent geometry into `deferredScreen` independently of which
+alpha compositor produced the color. No advanced DoF code selects or bypasses
+an alpha mode, and fallback re-enters Firestorm's original DoF passes with the
+same source, destination and depth targets.
+
+This compatibility contract does not create per-transparent-layer depth. Like
+Firestorm DoF, the initial renderer sees one nearest accepted depth per pixel;
+hair over glass or several intersecting translucent layers cannot each receive
+independent CoC after their colors have already been collapsed. Exact OIT and
+AVBOIT retain correct alpha composition before DoF, but fully layer-aware DoF
+would require carrying color/depth/coverage out of each compositor and is a
+separate integration project. Runtime acceptance must cover Standard, Exact
+OIT, AVBOIT and AYAstorm with opaque focus, alpha-masked foliage/hair,
+translucent glass and emissive transparency at near, focal and far depths.
+
+`ASDepthOfFieldBackend` reserves an automatic backend choice, but this initial
+milestone deliberately implements only the common OpenGL 4.1 fragment path. A
+GL 4.3 compute path should be added only when it reduces measured gather cost
+(for example through tile classification, compact dispatch and shared sample
+reuse) while producing equivalent near/far masks and resolve output. Merely
+moving the same tap loops into compute would add another platform path without
+a demonstrated performance gain.
+
+#### Advanced AyaneStorm depth-of-field design review (2026-09-22)
+
+The quality review identified tile-reduced and dilated CoC bounds,
+adaptive ring counts, a modified background ring accumulator, a three-depth-
+layer foreground accumulator, content-aware foreground hole filling, a
+CoC-moment-guided postfilter, software variable shading rates and a hybrid
+gather/scatter path for exceptional highlights. Its aperture kernel also
+corrects the non-uniform area density created when circular samples are radially
+deformed into a polygon, and can vary tangential/sagittal shape across the
+screen.
+
+These are general rendering concepts which require independent AyaneStorm
+design and validation against its own renderer.
+
+One low-risk improvement has been independently derived for the portable
+backend: AyaneStorm's uniform-angle polygon samples now receive the radial
+mapping Jacobian weight (`boundary radius squared`). This produces equal-area
+integration without ie's generated CDF/LUT, adds no pass or texture, and
+remains ordinary OpenGL 4.1 GLSL. It also corrects the aperture rotation and
+anisotropic coverage math already identified during the initial implementation.
+
+Runtime diagnostics then exposed a viewer-integration defect in the initial
+build: custom sampler names were discovered as GLSL uniforms but were not
+assigned texture channels by `LLGLSLShader`, leaving CoC and layer samplers on
+texture unit zero. The signed-CoC view consequently resembled scene color and
+both layer views reproduced the unblurred input without a compile or link
+error. The shaders now use distinct existing viewer-reserved sampler slots and
+the C++ binds those slots by enum. One-time active/fallback log messages were
+also added so future silent shader or target failures are distinguishable from
+valid near-zero CoC.
+
+The initial aperture-roundness default of `1.0` also made every selected blade
+count mathematically circular, making the shape selector appear ineffective.
+The default is now `0.35`, while an explicit Circle selection remains fully
+circular; the UI states that rounding `1.0` intentionally returns any polygon
+to a circle.
+
+Large background radii in the first runtime build exposed coherent grid/band
+artifacts from reusing one bounded aperture spiral at every gather pixel. The
+portable path now varies only the sampling phase spatially while preserving the
+actual aperture orientation. At radii above six pixels, resolve also applies a
+small tent reconstruction over neighboring independently phased far gathers;
+the blend increases gradually through eighteen pixels and leaves low-radius
+detail and the foreground layer untouched.
+
+The second runtime comparison established that signed CoC classification is
+correct, but the initial near resolve was not a valid layer representation. It
+forced full opacity from the center foreground pixel, stored unassociated color,
+and composited it over the visible foreground source rather than a reconstructed
+background. That necessarily produced a blurred but hard-edged cutout. The near
+target now stores premultiplied color with coverage derived from the whole
+aperture estimate, and high-radius coverage is reconstructed across neighboring
+decorrelated gathers. The far pass also produces a conservative background
+plate beneath foreground pixels by accepting only focal/far samples within the
+foreground aperture. Resolve uses that plate only for a genuinely defocused
+near layer, then performs premultiplied over-compositing.
+
+Runtime alpha-mode results were consistent across the new hook: Exact OIT and
+AVBOIT retained good transparent color composition, while Standard and
+AYAstorm retained Firestorm's existing transparent cutout behavior. Thin hair
+over an out-of-focus background remains blurred even when its face-adjacent
+portion is focused. The cause is the common depth-only alpha pass: fragments
+below its alpha threshold do not enter `deferredScreen`, so postprocess DoF sees
+the background depth after transparency color has already been collapsed.
+Lowering that threshold globally is not a solution because ordinary glass would
+then write a misleading opaque foreground depth. Correcting this requires an
+AyaneStorm transparent-DoF representation (coverage plus depth/layer data), not
+another threshold tweak; Exact OIT/AVBOIT can source it from their retained
+layers, while Standard/AYAstorm will require a bounded auxiliary capture.
+
+The transparent-layer foundation uses AyaneStorm-owned auxiliary targets shared
+by all four alpha modes. Opaque HDR color and depth are preserved before alpha
+using OpenGL 4.1 framebuffer blits. An auxiliary replay accumulates transparent
+coverage, while a separate pass records nearest transparent depth without
+altering opaque depth.
+The owned resolve now runs on the linear HDR scene before bloom and tone mapping;
+the auxiliary captures cannot be composited correctly after the display transform.
+CoC preparation retains effective, opaque and transparent CoC plus coverage as
+separate channels. Opaque blur now follows opaque CoC even beneath in-focus
+hair; transparent blur follows transparent CoC. Because the replay's RGB draw
+order can disagree with the selected alpha compositor, the gather instead
+derives an effective premultiplied contribution from final and opaque linear-HDR
+colors plus captured coverage. Signed RGB is retained for custom darkening
+blends. This preserved the actual compositor's color ordering but remained a
+single transparent focal layer; overlapping transparent surfaces at different
+depths were still approximated.
+
+The owned rigged/world transparent split snapshots rigged coverage and depth,
+captures world depth independently, records two transparent CoCs, and gathers
+each stratum before depth-ordered HDR composition. The first runtime build
+substantially improved avatar hair in front of glass and other transparent
+scenery (`AyaneStormOS-Normal_iQpgIozSHk.png` and
+`AyaneStormOS-Normal_m3scqj1Nzt.png`). A dark hair-on-hair patch remained in
+the marked region of the second image. Multiple rigged depths within one
+pixel are still represented by only one CoC; this needs a multi-depth design,
+not a blend-threshold patch. The same limitation applies to multiple world
+transparent depths. Check Standard, Exact-OIT, AVBOIT and AYAstorm separately.
+
+### DoF regression and paused implementation state (2026-09-23)
+
+**Runtime-confirmed update:** For `AyaneStormOS-Normal_NxwcjfS3CD.jpg`,
+forcing `U_USE_OCCUPANCY` to zero in the transparent gather eliminated the
+square artifacts (user: "no more squares"). The occupancy early-out caused
+the reported squares; its precise logic defect remains undiagnosed. Keep it
+temporarily disabled. Occupancy generation, resources, bindings and shader
+code remain intact. This supersedes the partial-removal state and removal
+instructions below, which do not describe the current source. Other DoF
+limitations remain separate; this comparison does not establish their resolution.
+
+- A trial that used the final HDR residual as rigged hair color where world
+  coverage was absent introduced skin-colored holes in overlapping hair
+  (`AyaneStormOS-Normal_xLRnRr0ZfI.png`). The replay's coverage does not
+  necessarily equal the selected compositor's effective coverage, so
+  subtracting the opaque face can contaminate the residual. That trial was
+  removed from both transparent gather and resolve, and the removal was built.
+- The subsequent build still had block-shaped dark patches in the back hair
+  (`AyaneStormOS-Normal_Z5WeC7F3bu.jpg`). They disappear with DoF off at the
+  same camera angle. This build still included the new 16-pixel occupancy
+  pyramid, whereas the earlier visually better build did not. Occupancy is
+  the leading suspect, not a proven root cause; the grid-shaped artifact
+  supports testing it by removal.
+- At pause, the occupancy pass/resource/bindings were removed from
+  `asdepthoffield.cpp` only. The shader still contains `shadowMap0`,
+  `use_occupancy`, `nearbyLayer` and its early-out; the now-unregistered
+  `asDepthOfFieldOccupancyF.glsl` file remains. **No build or runtime test
+  has occurred after this partial removal.** Finish removing the unused
+  occupancy shader code and file before the next build. Do not disturb the
+  rigged/world depth split or revert the earlier hair-color rollback.
+- Then build once and compare the exact back-hair camera angle with DoF on/off
+  and the hair-in-front-of-glass angle. If the blocks persist, inspect rigged
+  coverage (debug 12), rigged signed CoC (10), and rigged far/near gathers
+  (14/15) at the marked pixels; do not attribute them to occupancy without
+  that comparison. If they disappear, design a different performance
+  optimization only after the quality baseline is stable.
+- High quality uses 96 aperture samples and, with layered transparency, two
+  opaque plus four transparent gathers. Measure GPU time and memory on
+  OpenGL 4.1 and newer hardware after visual correctness is restored.
+
+Large-radius bokeh currently uses reduced-resolution stochastic aperture
+gathers. A 48-sample high-quality gather left visible dotted hexagons around
+small bright lights and stippled foreground hair. High quality now uses 96
+samples, while the cheaper presets remain 16/32; premultiplied near/far
+layers receive a nine-tap, radius-limited reconstruction before composition.
+This is a quality/performance tradeoff, not a substitute for a future
+motion-aware temporal or analytic highlight path. Measure high-quality GPU
+time on the OpenGL 4.1 baseline and modern GPUs after runtime validation.
+The acceptance target for isolated background lights is a continuous,
+approximately uniform aperture disc with a clean selected outline, not a
+collection of bright sample dots. Increasing the point-sample count and
+screen-space reconstruction alone has not met this target. The next bokeh
+stage should integrate a finite source footprint per aperture sample (or use
+an equivalent CoC-aware prefiltered representation) before considering more
+samples; preserve the aperture boundary and energy while doing so.
+
+A stronger highlight path can rasterize each selected bright source as a
+filled, antialiased aperture footprint in linear HDR, with its source color,
+signed CoC, blade count, roundness, rotation and anamorphic ratio. Distribute
+source energy across the footprint so overlapping discs accumulate radiance
+without becoming opaque stickers; retain separate coverage for depth-aware
+composition. Remove the selected highlight energy from the diffuse gather to
+avoid a sharp duplicate underneath. Candidate selection must be stable under
+camera movement and include eligible transparent highlights, not just opaque
+pixels. An OpenGL 4.1 baseline can use instanced rasterization/transform
+feedback; a newer optional path can compact candidates with compute shaders.
+These are design options, not implemented or runtime-validated. Khronos API
+references: [instanced drawing](https://wikis.khronos.org/opengl/GLAPI/glDrawElementsInstanced),
+[transform feedback](https://wikis.khronos.org/opengl/Transform_Feedback),
+[blending](https://wikis.khronos.org/opengl/Blending), and
+[compute shaders](https://wikis.khronos.org/opengl/Compute_Shader).
+
+The next highest-value quality work is foreground-edge reconstruction.
+Coverage alone is insufficient when an out-of-focus foreground silhouette
+reveals background that was never sampled. A robust solution classifies
+contributions relative to the center into multiple CoC layers,
+estimates missing background coverage, and obtains a depth-valid replacement
+before blurring it. AyaneStorm should pursue a smaller independent variant: a
+near-coverage/occlusion prepass plus conservative background hole-fill input,
+retaining the existing separate near/far targets. This would most improve hair,
+foliage and avatar silhouettes. It must still consume the shared finalized
+color/depth contract so Standard, Exact OIT, AVBOIT and AYAstorm behave alike.
+
+For the future GL 4.3 backend, CoC tile bounds are more valuable than merely
+moving the current loops into compute. Reduce each tile to intersectable near,
+far and minimum-absolute CoC, conservatively dilate those bounds, skip absent
+planes, select work/sample density from blur size, and force full rate for
+mixed-sign tiles. That provides an actual compute advantage while the GL 4.1
+fragment path remains authoritative. A variance-aware finishing filter is also
+worth testing: retain first and second CoC moments with blurred color, then
+smooth sparse samples only when neighboring blur-radius distributions agree.
+
+Hybrid highlight scattering is visually attractive but lower priority. It
+detects statistically exceptional highlights, removes their energy from the
+gather source and adds aperture-shaped sprites so bright bokeh is not diluted.
+An AyaneStorm version would need independent thresholds, strict energy
+conservation, bounded sprite counts and careful HDR/post-tonemap placement.
+Screen-position-dependent radial/tangential aperture deformation is a cheaper
+artistic feature and can be added later as a physically motivated cat-eye or
+Petzval control.
+
+#### Remaining AyaneStorm DoF implementation roadmap
+
+Superseded on 2026-09-24 by the quality-first
+[aperture-sampled implementation plan](ayanestorm-depth-of-field-final-implementation-plan.md).
+Retain the following as historical context, not a parallel implementation roadmap.
+
+The current blade, roundness and rotation controls affect procedural gather
+positions, but bounded independently phased gathers do not preserve a coherent
+aperture outline around isolated highlights. Visible polygonal bokeh is
+therefore not complete: a selected hexagonal aperture currently tends to look
+like ordinary blur. Treat this as a missing image-synthesis capability, not a
+control-tuning problem.
+
+Complete the renderer in the following order:
+
+1. Finish and validate the transparent-layer contract. Accumulated coverage
+   must represent every contributing transparent fragment, while nearest
+   transparent depth is used only for CoC. An in-focus resolve must reproduce
+   the selected alpha compositor exactly. Exact OIT and AVBOIT should
+   eventually export already-computed coverage/transmittance through a common
+   interface; Standard and AYAstorm retain the OpenGL 4.1 auxiliary fallback.
+2. Add coherent aperture-shaped highlight scattering. Select exceptional HDR
+   highlights, subtract the same energy from the gather input, render a bounded
+   number of analytic aperture sprites, and add that energy back during
+   resolve. Blade count, roundness, rotation and anamorphic scaling must be
+   plainly visible on suitable defocused lights without changing scene
+   exposure.
+3. Replace the simple foreground model with a compact multi-CoC-layer
+   accumulator and depth-valid background hole fill. This is the main path to
+   stable hair, foliage and avatar silhouettes without hard cutouts or leaked
+   background plates.
+4. Add adaptive work selection. Portable OpenGL 4.1 uses fragment/FBO tile
+   classification and bounded quality tiers; the newer backend uses compute
+   tile reduction/dilation, plane skipping and adaptive sample density.
+5. Store first and second CoC moments and apply a radius-aware postfilter. It
+   should close sparse sampling gaps while preserving aperture boundaries and
+   mixed near/far edges.
+6. Add optional spatially varying aperture deformation for cat-eye,
+   astigmatism and Petzval-style bokeh after the central aperture response is
+   correct.
+7. Add optional DoF-linked longitudinal chromatic aberration and optical
+   vignetting only after color/coverage conservation is proven.
+
+The common path must remain OpenGL 4.1 and use fragment shaders, framebuffer
+targets and ordinary blending. Compute shaders, image load/store, group-shared
+reductions and compact dispatch require the newer backend; they are
+optimizations, not dependencies of the effect. Software variable shading rate
+belongs only in that backend unless a portable tile-resolution scheme proves
+both visually equivalent and measurably faster.
+
+No screen-space DoF can reconstruct arbitrary fully occluded background or an
+unbounded stack of transparent surfaces from one resolved frame. AyaneStorm can
+improve those cases by exporting renderer-owned layers and transmittance, but
+must keep memory and layer counts bounded. The goal is stable, energy-conserving
+real-time synthesis rather than an unbounded physical simulation.
+
+The whole reference is unsuitable as AyaneStorm's common implementation. It is
+compute-centric, uses many full-resolution RGBA16F images plus moment, tile,
+atlas and mip resources, and its declared intermediates are approximately
+0.75 GiB at 3840x2160 before external inputs and implementation overhead. It
+also includes ReShade-specific focus estimation and nonlinear dynamic-range
+packing that AyaneStorm should not inherit: viewer-native focus is more stable,
+and native render-pipeline placement should determine highlight handling.
+
+### Directional Depth Blur
+
+`.ox/Shaders/DirectionalDepthBlur.fx` is useful as a separate artistic
+Camera Effect, not as an extension or replacement for AyaneStorm's existing
+reprojection-based camera motion blur. It applies one-sided streaks only beyond
+a focus depth. Its parallel mode uses a fixed screen direction; its focus-point
+mode produces radial/zoom-like strokes toward or away from a selected point and
+can mask the effect with a rotated, deformed and feathered ellipse. Highlight
+gain and a focus-point color treatment provide additional stylization. None of
+this depends on actual camera or object velocity, so a static scene remains
+blurred.
+
+The source implementation uses four passes and declares two full-resolution
+RGBA16F targets plus one full-resolution R16F mask, nominally about 18 bytes per
+pixel or 142 MiB at 3840x2160. Its `ScaleFactor` stores a reduced copy inside a
+full-size texture rather than allocating a smaller target, while the blur still
+runs at full output resolution. Sample count is also indirectly
+resolution-dependent: it iterates over `length(screenSize) * BlurLength` with a
+step of `1 / BlurQuality`, which is about 110 taps at 1920x1080 and 220 taps at
+3840x2160 using the defaults. It only tests whether each sample lies beyond the
+focus plane; it does not reject discontinuities between different far-depth
+surfaces. Its highlight de/re-tonemapping is another workaround for ReShade's
+LDR input and is unnecessary with native linear HDR.
+
+An AyaneStorm implementation should be a new AS-owned module with bounded
+quality presets and blur length expressed in pixels at a reference short-edge
+resolution. Compute the elliptical focus mask analytically in the blur/combine
+shader instead of allocating `texFilterCircle`; use the existing postprocess
+ping-pong targets; allocate a genuinely smaller intermediate only for reduced-
+resolution modes; and add relative linear-depth rejection using the established
+motion-blur pattern. At full resolution the blur and depth transition can be
+combined in one pass. Preserve explicit one-sided direction/flip controls, and
+consider an optional symmetric mode. Place it after DoF and before AA, default
+off, with interaction tests against camera motion blur.
+
+### Depth Haze
+
+`.ox/Shaders/DepthHaze.fx` is not atmospheric scattering. It is a small
+depth-aware separable blur followed by two depth-dependent blends: distant
+pixels receive more blurred color, then a selected fog color is added most
+strongly around the vertical screen center and fades toward the top and bottom.
+It therefore supplies a useful photographic "distance softening" look that is
+different from Windlight haze, AyaneStorm horizon scattering and volumetric
+lighting. It should be exposed as an optional Camera Effect, preferably named
+`Depth Haze / Distance Softening` to avoid implying a physical atmosphere.
+
+The reference runs two full-resolution nine-tap passes into RGBA8 buffers and a
+full-resolution combine, nominally 8 bytes per pixel or 63 MiB at 3840x2160.
+Its edge weight `(1 - abs(depth difference)) / distance * neighborDepth` uses
+normalized depth, has no tunable depth sigma, and is not stable in world-space
+terms across camera ranges. Its fixed four-pixel radius also becomes visually
+smaller as resolution rises. The fog factor is a simple screen-Y triangle, so
+it follows the image center rather than the actual world horizon, and the fog
+output alpha accidentally takes the red color channel. Do not translate these
+details literally.
+
+Implement the useful concept with linear view depth, a relative bilateral
+depth threshold, resolution-independent radius, HDR or existing postprocess
+targets, and a reduced-resolution option. Separate `softening strength` from
+`tint strength`; expose start/end distance rather than normalized injected
+depth. A `screen band` mode can preserve the photographic look, while an
+optional view-ray-elevation horizon mode would remain stable under camera pitch.
+Apply scene haze before lens DoF and AA so DoF treats the softened/tinted scene
+as its input. Keep it independent of environment haze settings and default off.
 
 Reuse the architecture, not the DirectX compute wrapper verbatim. A portable
 AyaneStorm implementation needs a fragment/FBO path for macOS and should start
