@@ -39,6 +39,12 @@
 #include "llappviewermacosx-for-objc.h"
 #include <Carbon/Carbon.h> // Used for Text Input Services ("Safe" API - it's supported)
 
+// <FS:TJ> Launch new instance option from macOS dock
+#include <unordered_map>
+#include "linden_common.h"
+#include "lltrans.h"
+// </FS:TJ>
+
 @implementation LLAppDelegate
 
 @synthesize window;
@@ -54,6 +60,11 @@
 
 - (void) applicationWillFinishLaunching:(NSNotification *)notification
 {
+    // <FS:TJ> Launch new instance option from macOS dock
+    [window orderOut:nil];
+    NSWindowCollectionBehavior behavior = [window collectionBehavior];
+    [window setCollectionBehavior:behavior | NSWindowCollectionBehaviorFullScreenDisallowsTiling];
+    // </FS:TJ>
     [[NSAppleEventManager sharedAppleEventManager] setEventHandler:self andSelector:@selector(handleGetURLEvent:withReplyEvent:) forEventClass:kInternetEventClass andEventID:kAEGetURL];
 }
 
@@ -99,6 +110,14 @@
         // until applicationShouldTerminate.
         frameTimer = [NSTimer scheduledTimerWithTimeInterval:0.0 target:self
                               selector:@selector(oneFrame) userInfo:nil repeats:YES];
+
+    // <FS:TJ> Launch new instance option from macOS dock
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [window setCollectionBehavior:
+            [window collectionBehavior] &
+            ~NSWindowCollectionBehaviorFullScreenDisallowsTiling];
+    });
+    // </FS:TJ>
     } else {
         exit(0);
     }
@@ -138,6 +157,33 @@
 {
     callWindowUnhide();
 }
+
+// <FS:TJ> Launch new instance option from macOS dock
+- (NSMenu *) applicationDockMenu:(NSApplication *)sender
+{
+    std::string new_instance_label = LLTrans::getString("FSMacOSNewViewerInstance");
+    NSMenu *dockMenu = [[[NSMenu alloc] init] autorelease];
+    NSMenuItem *newInstanceItem =
+        [[[NSMenuItem alloc] initWithTitle:[NSString stringWithUTF8String:new_instance_label.c_str()]
+                                     action:@selector(launchNewInstance:)
+                              keyEquivalent:@""] autorelease];
+
+    [newInstanceItem setTarget:self];
+    [dockMenu addItem:newInstanceItem];
+    return dockMenu;
+}
+
+- (void) launchNewInstance:(id)sender
+{
+    NSWorkspaceOpenConfiguration *configuration = [NSWorkspaceOpenConfiguration configuration];
+    configuration.createsNewApplicationInstance = YES;
+
+    [[NSWorkspace sharedWorkspace]
+        openApplicationAtURL:[[NSBundle mainBundle] bundleURL]
+                configuration:configuration
+            completionHandler:nil];
+}
+// </FS:TJ>
 
 - (NSApplicationTerminateReply) applicationShouldTerminate:(NSApplication *)sender
 {
