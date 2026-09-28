@@ -1698,6 +1698,10 @@ void render_ui(F32 zoom_factor, int subfield)
 
 
         LL_PROFILE_ZONE_NAMED_CATEGORY_UI("HUD");
+        // <AS:Chanayane> DoF autofocus area under HUD attachments and UI
+        // panels (was drawn last, over them; see below).
+        ASDoFAutofocus::drawOverlay();
+        // </AS:Chanayane>
     render_hud_elements();
 // [RLVa:KB] - Checked: RLVa-2.2 (@setoverlay)
         if (RlvActions::hasBehaviour(RLV_BHVR_SETOVERLAY))
@@ -1754,10 +1758,10 @@ void render_ui(F32 zoom_factor, int subfield)
         gViewerWindow->setup2DRender();
         gViewerWindow->updateDebugText();
         gViewerWindow->drawDebugText();
-        // <AS:Chanayane> Aperture-sampled DoF progress and autofocus area
-        // overlays (skip snapshots).
+        // <AS:Chanayane> Aperture-sampled DoF progress overlay (skips
+        // snapshots). The autofocus area moved before render_hud_elements().
         ASDoFRenderer::drawProgress();
-        ASDoFAutofocus::drawOverlay();
+        // ASDoFAutofocus::drawOverlay();
         // </AS:Chanayane>
     }
 

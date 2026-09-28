@@ -1529,6 +1529,129 @@ modes 0, 1 and 2 all use it (mode 2 through `setFocusDistance`).
 - Known limit: alpha-blended surfaces do not write scene depth; area
   autofocus sees behind them.
 
+### Advanced renderer (mode 1): light shapes and foreground layers (2026-09-28)
+
+User decision: resume the live screen-space renderer (mode 1) with roadmap
+items 2 and 3 of `rendering-improvements-backlog.md`. Plan:
+[ayanestorm-depth-of-field-advanced-sprites-layers-plan.md](ayanestorm-depth-of-field-advanced-sprites-layers-plan.md).
+One correction to it: `unitArea` = anamorphic × blades × `bladeCdf(half)`
+(`bladeCdf` already spans a whole blade), not × 2. Owned files only, no build.
+
+**Shape convention aligned with mode 2.**
+- The thin-lens algebra of `ASDoFCamera` gives an image shift of
+  `P00·dx·(1/f − 1/d)`. Far points therefore image as the upright aperture,
+  near points as the inverted one.
+- Mode 1 had both planes reversed, and it put an edge centre where mode 2
+  has a blade vertex.
+- The far, near and transparent gathers now sample `uv − disk` (far) and
+  `uv + disk` (near), with a vertex at the rotation angle. The difference
+  was visible only with odd blade counts.
+
+**Light shapes (item 2)**, `asDepthOfFieldHighlightF.glsl` and
+`asDepthOfFieldSpriteV/F.glsl`:
+- **Detection:** a defocused pixel (radius smoothstep 2–4 px) that is
+  `isolation`–2×`isolation` times brighter than the brightest of 8 ring taps
+  at 6 px gives up its excess over the ring mean.
+- **Cells:** 8×8 cells sum that energy with its centroid and CoC. A mip of
+  the occupancy flag counts the occupied cells for the budget
+  (`ASDepthOfFieldHighlightMaxSprites`). Over budget, a stable per-cell hash
+  drops cells, and dropped highlights stay in the gather.
+- **Gather input:** a full-resolution copy of the opaque colour minus the
+  kept extraction. It feeds the far, near and background passes. The
+  resolve and the transparent gathers keep the originals.
+- **Sprites:** one attribute-free instanced draw (2 triangles per cell) per
+  plane, following the `asAVBOITEarlyDepthV` precedent. They are drawn
+  additively into the far target and into the near front layer. Radiance is
+  E / (`ASDoFAperture::unitArea` · R²), with alpha 0, so the resolve needs
+  no new sampler and hides far sprites behind in-focus content.
+- **Antialiasing:** perpendicular edge distance. Sprites under 12 target
+  pixels use a 4-sample rotated grid.
+- **Limit:** highlights that exist only in transparent layers are not
+  extracted.
+
+**Foreground layers and background completion (item 3):**
+- **Two near layers:** the near gather writes a back and a front
+  premultiplied layer (MRT), split softly at half the foreground radius. The
+  resolve composites back, then front. Resolve samplers: 16, the GL 4.1
+  minimum.
+- **Background completion:** push-pull at gather resolution, in
+  `asDepthOfFieldBackgroundF.glsl`.
+  - Non-foreground texels are weighted by exp2(3·CoC), so farther surfaces
+    win over in-focus mid-ground.
+  - Holes take the finest mip with at least 5% valid texels, blended toward
+    the next coarser level.
+- **Far pass:** foreground-centre pixels now blur the completion with its
+  own CoC; this replaces the old average of non-foreground taps. Far taps
+  that land on foreground read the completion instead of being rejected.
+
+Settings (persisted): `ASDepthOfFieldHighlightSprites` (on),
+`ASDepthOfFieldHighlightIsolation` (2.0), `ASDepthOfFieldHighlightMaxSprites`
+(4096), all in the Advanced tab and in Reset tuning. Debug views 16–19:
+energy moved to shapes, near back layer, near front layer, background
+completion.
+
+**Reference tests** (`dof_reference.py`, 39 pass):
+- mode-1 boundary = aperture sampler boundary;
+- far shift parallel to and along the lens offset, near shift against it;
+- `unitArea` against a dense grid (< 0.5%);
+- extraction conserves energy exactly, with 1 cell, or 2 cells when the
+  light straddles a boundary;
+- sprite splat energy within 1% for radii ≥ 4 target pixels at gather
+  scale 1 and 0.5.
+- Measured, not gated: 1–2 target-pixel sprites err 1–10% (sharp triangle
+  worst).
+
+First runtime results (user):
+- The Highlight shader failed to link: `centroid` is a reserved GLSL word.
+  It was renamed, and mode 1 had fallen back to Firestorm DoF until then.
+- Some star bokeh stayed dotted. Stars are 16–36 m quads on the
+  15000 m dome (`llvowlsky.cpp`), 0.06–0.14°, so on a zoomed portrait view
+  the larger ones exceed the fixed 6 px ring, fail the isolation test and
+  stay in the gather.
+  - The ring is now half the blur radius (6–32 px): a light qualifies when
+    it is smaller than about half its bokeh.
+  - A multi-cell light gets one sprite per cell, and these merge at such
+    radii.
+  - New test case: a 10 px light with a 40 px blur is fully extracted.
+  - Faint stars, between 1× and 2× `isolation` brighter than their ring,
+    are still only partly extracted by design,
+    to avoid popping; debug 16 shows which are.
+
+- **Mesh pattern on a defocused hair lock over an in-focus cheek.** Debug 7
+  (opaque CoC) showed the lock in opaque depth: alpha-masked hair, which
+  goes through the opaque near layers, not the rigged stratum. Two
+  regressions from this item:
+  - **Coverage leak from the soft layer split.** A surface split between
+    the back and front near layers, composited over, loses coverage
+    (0.5 / 0.5 gives 0.75), and the plate shows through it noisily.
+    - The resolve now keeps front-over-back for colour, but uses the
+      clamped sum of both coverages: the old single-layer estimate.
+    - The rescale is at most 4/3, and only where both layers are
+      partial.
+  - **Plate favoured the distant background.** The exp2(3·CoC) farness
+    weight filled the lock with the sky past the head instead of the
+    cheek. It was removed; push-pull is now unweighted, so the nearest
+    valid pixels on screen win.
+
+- After both fixes (user): "much better", a fine pattern remains on the
+  lock (open; see below).
+  - Debug 19 was burnt out: it dimmed the context to 25%, and
+    auto-exposure brightened the whole frame. The context now shows as
+    grey at its own luminance.
+- **Autofocus overlay drawn over HUDs and UI panels.**
+  `ASDoFAutofocus::drawOverlay()` moved from after `render_ui_2d()` to
+  just before `render_hud_elements()` (tagged, `llviewerdisplay.cpp`).
+  - It now sets up 2D state itself and restores the projection and
+    modelview stacks and `gGLViewport` for the HUD elements.
+  - The mode-2 progress counter stays on top.
+
+Runtime checks pending (user build): triangle aperture orientation in mode 1
+vs mode 2; clean light polygons with blades, rotation and anamorphic visible;
+no exposure change when toggling shapes; neon strips and windows stay
+gathered (debug 16); foreground edges over far background without mid-ground
+leak (debug 19); nearer foreground over farther (17/18); FPS against the
+previous mode 1.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

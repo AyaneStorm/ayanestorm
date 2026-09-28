@@ -20,6 +20,11 @@ uniform sampler2D shadowMap2;
 uniform sampler2D shadowMap3;
 uniform sampler2D shadowMap4;
 uniform sampler2D shadowMap5;
+// Near front layer (bloomMap holds the back layer) and the gather input
+// (opaque color minus extracted highlights), under free reserved names.
+// With these the resolve uses 16 samplers, the OpenGL 4.1 minimum.
+uniform sampler2D exposureMap;
+uniform sampler2D brdfLut;
 uniform float max_radius;
 uniform float near_max_radius;
 uniform int debug_mode;
@@ -58,85 +63,88 @@ void main()
     float coc = coc_data.r;
     float opaque_coc = coc_data.g;
     vec4 far_color = texture(lightMap, uv);
-    vec4 near_color = texture(bloomMap, uv);
+    vec4 near_back = texture(bloomMap, uv);
+    vec4 near_front = texture(exposureMap, uv);
 
     // Near data is premultiplied. Reconstruct neighboring independently phased
     // gathers to turn sparse coverage into a stable fractional silhouette.
     if (near_max_radius > 6.0)
     {
-        vec2 texel = 1.0 / vec2(textureSize(bloomMap, 0));
-        vec2 step_uv = texel * mix(1.0, 1.5,
-                                   smoothstep(12.0, 32.0, near_max_radius));
-        vec2 lo = texel * 0.5;
-        vec2 hi = vec2(1.0) - lo;
-        vec4 reconstructed = near_color * 4.0;
-        reconstructed += 2.0 * texture(bloomMap, clamp(uv + step_uv * vec2(-1.0,  0.0), lo, hi));
-        reconstructed += 2.0 * texture(bloomMap, clamp(uv + step_uv * vec2( 1.0,  0.0), lo, hi));
-        reconstructed += 2.0 * texture(bloomMap, clamp(uv + step_uv * vec2( 0.0, -1.0), lo, hi));
-        reconstructed += 2.0 * texture(bloomMap, clamp(uv + step_uv * vec2( 0.0,  1.0), lo, hi));
-        reconstructed += texture(bloomMap, clamp(uv + step_uv * vec2(-1.0, -1.0), lo, hi));
-        reconstructed += texture(bloomMap, clamp(uv + step_uv * vec2( 1.0, -1.0), lo, hi));
-        reconstructed += texture(bloomMap, clamp(uv + step_uv * vec2(-1.0,  1.0), lo, hi));
-        reconstructed += texture(bloomMap, clamp(uv + step_uv * vec2( 1.0,  1.0), lo, hi));
-        reconstructed *= 0.0625;
-        near_color = mix(near_color, reconstructed,
-                         smoothstep(6.0, 18.0, near_max_radius));
+        float amount = smoothstep(6.0, 18.0, near_max_radius);
+        near_back = mix(near_back,
+                        reconstructTransparent(bloomMap, uv, near_max_radius),
+                        amount);
+        near_front = mix(near_front,
+                         reconstructTransparent(exposureMap, uv, near_max_radius),
+                         amount);
     }
+    // Both layers as one premultiplied layer. Color: front over back, so a
+    // nearer foreground occludes a farther one. Coverage: their clamped sum,
+    // the single-layer estimate. Over-compositing alone would lose coverage
+    // where one surface is split across both layers (b = f = 0.5 gives 0.75)
+    // and expose the background plate through it. The rescale is at most
+    // 4/3 and only where both layers are partial.
+    vec4 near_over = near_front + near_back * (1.0 - near_front.a);
+    float near_alpha = min(near_back.a + near_front.a, 1.0);
+    vec4 near_color = vec4(near_over.rgb * (near_over.a > 0.0001 ?
+                                            near_alpha / near_over.a : 1.0),
+                           near_alpha);
 
+    // Debug views write zero glow (alpha): glow 1 bloomed the whole frame.
     if (debug_mode == 1)
     {
-        frag_color = coc < 0.0 ? vec4(-coc, 0.0, 0.0, 1.0)
-                               : vec4(vec3(coc), 1.0);
+        frag_color = coc < 0.0 ? vec4(-coc, 0.0, 0.0, 0.0)
+                               : vec4(vec3(coc), 0.0);
         return;
     }
     if (debug_mode == 2)
     {
-        frag_color = vec4(vec3(near_color.a), 1.0);
+        frag_color = vec4(vec3(near_color.a), 0.0);
         return;
     }
     if (debug_mode == 3)
     {
         vec3 debug_far = far_color.a > 0.0001 ? far_color.rgb / far_color.a : vec3(0.0);
-        frag_color = vec4(debug_far, 1.0);
+        frag_color = vec4(debug_far, 0.0);
         return;
     }
     if (debug_mode == 4)
     {
         vec3 debug_near = near_color.a > 0.0001 ? near_color.rgb / near_color.a : vec3(0.0);
-        frag_color = vec4(debug_near, 1.0);
+        frag_color = vec4(debug_near, 0.0);
         return;
     }
     if (debug_mode == 5)
     {
-        frag_color = vec4(vec3(coc_data.a), 1.0);
+        frag_color = vec4(vec3(coc_data.a), 0.0);
         return;
     }
     if (debug_mode == 6)
     {
         float transparent_coc = coc_data.b;
-        frag_color = coc_data.a <= 0.0 ? vec4(0.0, 0.0, 0.0, 1.0) :
-            (transparent_coc < 0.0 ? vec4(-transparent_coc, 0.0, 0.0, 1.0) :
-                                     vec4(vec3(transparent_coc), 1.0));
+        frag_color = coc_data.a <= 0.0 ? vec4(0.0, 0.0, 0.0, 0.0) :
+            (transparent_coc < 0.0 ? vec4(-transparent_coc, 0.0, 0.0, 0.0) :
+                                     vec4(vec3(transparent_coc), 0.0));
         return;
     }
     if (debug_mode == 7)
     {
-        frag_color = opaque_coc < 0.0 ? vec4(-opaque_coc, 0.0, 0.0, 1.0)
-                                      : vec4(vec3(opaque_coc), 1.0);
+        frag_color = opaque_coc < 0.0 ? vec4(-opaque_coc, 0.0, 0.0, 0.0)
+                                      : vec4(vec3(opaque_coc), 0.0);
         return;
     }
     if (debug_mode == 8)
     {
         vec4 layer = has_transparent_depth != 0 ?
             texture(emissiveRect, uv) : vec4(0.0);
-        frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 1.0);
+        frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 0.0);
         return;
     }
     if (debug_mode == 9)
     {
         vec4 layer = has_transparent_depth != 0 ?
             texture(positionMap, uv) : vec4(0.0);
-        frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 1.0);
+        frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 0.0);
         return;
     }
     if (debug_mode >= 10 && debug_mode <= 15)
@@ -145,12 +153,12 @@ void main()
         if (debug_mode == 10 || debug_mode == 11)
         {
             float value = debug_mode == 10 ? layers.r : layers.g;
-            frag_color = value < 0.0 ? vec4(-value, 0.0, 0.0, 1.0)
-                                     : vec4(vec3(value), 1.0);
+            frag_color = value < 0.0 ? vec4(-value, 0.0, 0.0, 0.0)
+                                     : vec4(vec3(value), 0.0);
         }
         else if (debug_mode == 12 || debug_mode == 13)
         {
-            frag_color = vec4(vec3(debug_mode == 12 ? layers.b : layers.a), 1.0);
+            frag_color = vec4(vec3(debug_mode == 12 ? layers.b : layers.a), 0.0);
         }
         else
         {
@@ -161,8 +169,30 @@ void main()
                                            texture(shadowMap2, uv);
             }
             frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a :
-                             vec3(0.0), 1.0);
+                             vec3(0.0), 0.0);
         }
+        return;
+    }
+    if (debug_mode == 16)
+    {
+        // Highlight energy moved from the gather into aperture sprites.
+        frag_color = vec4(max(opaque_source - texture(brdfLut, uv).rgb, vec3(0.0)), 0.0);
+        return;
+    }
+    if (debug_mode == 17 || debug_mode == 18)
+    {
+        vec4 layer = debug_mode == 17 ? near_back : near_front;
+        frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 0.0);
+        return;
+    }
+    if (debug_mode == 19)
+    {
+        // Blurred background completion under foreground pixels; the rest
+        // of the image in grey at its own luminance. Dimming it would make
+        // auto-exposure brighten the whole view until the plate burns out.
+        float context = dot(opaque_source, vec3(0.2126, 0.7152, 0.0722));
+        frag_color = vec4(opaque_coc < 0.0 && far_color.a > 0.0001 ?
+                          far_color.rgb / far_color.a : vec3(context), 0.0);
         return;
     }
 

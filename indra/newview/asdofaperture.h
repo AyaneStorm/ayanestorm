@@ -61,6 +61,11 @@ namespace ASDoFAperture
     // in it averages exactly as over the aperture area. Used by spherical
     // aberration.
     F32 pupilRadius2(U32 index);
+
+    // Area of the unit-circumradius aperture, anamorphic scale included
+    // (pi for a circle). The advanced renderer divides a highlight sprite's
+    // energy by unitArea * R^2 so its brightness is shape-independent.
+    F32 unitArea(const Shape& shape);
 }
 
 #endif

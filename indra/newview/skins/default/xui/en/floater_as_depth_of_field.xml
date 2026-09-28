@@ -409,6 +409,32 @@
               left="385" top="148" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightBoost" />
       </button>
+      <check_box name="highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightSprites"
+                 layout="topleft" left="15" top="178" width="365" height="20"
+                 label="Aperture-shaped light bokeh"
+                 tool_tip="Draws small isolated out-of-focus lights as filled aperture shapes with the same total light, instead of a dotted blur." />
+      <button name="reset_highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="176" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightSprites" />
+      </button>
+      <slider name="highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightIsolation"
+              layout="topleft" left="15" top="206" width="365" height="18"
+              label="Light isolation" label_width="130" min_val="1.2" max_val="8"
+              increment="0.1" decimal_digits="1" can_edit_text="true"
+              tool_tip="How much brighter than its surroundings a light must be to get an aperture shape. Lower picks more lights." />
+      <button name="reset_highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="204" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightIsolation" />
+      </button>
+      <slider name="highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightMaxSprites"
+              layout="topleft" left="15" top="234" width="365" height="18"
+              label="Maximum light shapes" label_width="130" min_val="256" max_val="32768"
+              increment="256" decimal_digits="0" can_edit_text="true"
+              tool_tip="Performance limit. Lights beyond it keep the ordinary blur." />
+      <button name="reset_highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="232" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightMaxSprites" />
+      </button>
       <!-- Hidden to keep the floater short (debug aid; the setting still works).
       <text name="debug_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="182" width="125" height="18">Diagnostic view</text>
       <combo_box name="dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldDebug"
@@ -429,6 +455,10 @@
         <combo_box.item label="World coverage" name="world_coverage" value="13" />
         <combo_box.item label="Rigged far blur" name="rigged_far" value="14" />
         <combo_box.item label="Rigged near blur" name="rigged_near" value="15" />
+        <combo_box.item label="Light energy moved to shapes" name="highlight_energy" value="16" />
+        <combo_box.item label="Near back layer" name="near_back" value="17" />
+        <combo_box.item label="Near front layer" name="near_front" value="18" />
+        <combo_box.item label="Background completion" name="background" value="19" />
       </combo_box>
       <button name="reset_dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
               left="385" top="178" width="20" height="22" tool_tip="Reset to default.">

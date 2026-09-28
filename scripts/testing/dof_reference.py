@@ -477,6 +477,82 @@ def viewer_highlight_gain(strength, threshold, luminance, ring_mean, coc_px):
     return 1 + strength * bright * isolated * area
 
 
+def viewer_mode1_boundary(phi, blades, roundness):
+    """Mirror of the Advanced (mode 1) gather/sprite boundary():
+    mix(cos(pi/n)/cos(mod(phi, sector) - pi/n), 1, roundness)."""
+    if blades < 3:
+        return 1.0
+    sector = 2 * math.pi / blades
+    local = (phi % sector) - 0.5 * sector
+    polygon = math.cos(0.5 * sector) / max(math.cos(local), 0.001)
+    return polygon + (1 - polygon) * roundness
+
+
+def viewer_unit_area(blades, roundness, anamorphic):
+    """Mirror of ASDoFAperture::unitArea: unit-circumradius aperture area."""
+    area = math.pi
+    if blades >= 3 and roundness < 1:
+        area = blades * _blade_cdf(math.pi / blades, blades, roundness)
+    return area * anamorphic
+
+
+def _sprite_edge_distance(dx, dy, radius, plane, blades, roundness, rotation, anamorphic):
+    sign = 1.0 if plane > 0 else -1.0
+    qx, qy = dx * sign / anamorphic, dy * sign
+    r = math.hypot(qx, qy) / radius
+    phi = math.atan2(qy, qx) - rotation
+    # Radial gap to perpendicular edge distance.
+    edge_scale = 1.0
+    if blades >= 3:
+        local = (phi % (2 * math.pi / blades)) - math.pi / blades
+        edge_scale = math.cos(local) + (1 - math.cos(local)) * roundness
+    return (viewer_mode1_boundary(phi, blades, roundness) - r) * edge_scale * radius
+
+
+def viewer_sprite_coverage(dx, dy, radius, plane, blades, roundness, rotation,
+                           anamorphic, pixel_scale=1.0):
+    """Mirror of asDepthOfFieldSpriteF.glsl coverage of the target pixel
+    centred (dx, dy) full-resolution pixels from the sprite centre."""
+    pixel_scale = max(pixel_scale, 1.0)
+    args = (radius, plane, blades, roundness, rotation, anamorphic)
+    if radius < 12 * pixel_scale:
+        grid = ((.125, .375), (-.375, .125), (-.125, -.375), (.375, -.125))
+        return sum(min(max(_sprite_edge_distance(dx + ox * pixel_scale, dy + oy * pixel_scale,
+                                                 *args) / (.5 * pixel_scale) + .5, 0.), 1.)
+                   for ox, oy in grid) / 4
+    return min(max(_sprite_edge_distance(dx, dy, *args) / pixel_scale + .5, 0.), 1.)
+
+
+def _luminance(c):
+    return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
+
+
+def viewer_highlight_detect(image, coc_radius, x, y, isolation):
+    """Mirror of asDepthOfFieldHighlightF.glsl detect(): the excess of an
+    isolated defocused highlight pixel over its 8-tap ring at half the blur
+    radius (6-32 px).
+    image[y][x] is RGB; coc_radius[y][x] the blur radius in pixels."""
+    height, width = len(image), len(image[0])
+    gate = _smoothstep(2.0, 4.0, coc_radius[y][x])
+    if gate <= 0:
+        return (0.0, 0.0, 0.0)
+    ring_radius = min(max(0.5 * coc_radius[y][x], 6.0), 32.0)
+    ring_sum = [0.0, 0.0, 0.0]
+    ring_max = 0.0
+    for i in range(8):
+        angle = i * 0.785398163
+        qx = min(max(x + round(math.cos(angle) * ring_radius), 0), width - 1)
+        qy = min(max(y + round(math.sin(angle) * ring_radius), 0), height - 1)
+        ring = image[qy][qx]
+        for c in range(3):
+            ring_sum[c] += ring[c]
+        ring_max = max(ring_max, _luminance(ring))
+    color = image[y][x]
+    ratio = _luminance(color) / max(ring_max, 1e-4)
+    isolated = _smoothstep(isolation, 2 * isolation, ratio)
+    return tuple(isolated * gate * max(color[c] - ring_sum[c] / 8, 0.0) for c in range(3))
+
+
 def disk_samples(radius, rings=32, sectors=128):
     """Dense deterministic equal-area disk quadrature for the reference."""
     for ring in range(rings):
@@ -806,6 +882,123 @@ class ThinLensReferenceTests(unittest.TestCase):
         self.assertAlmostEqual(small, 1 + .3 * 4, places=9)                   # area (8/4)^2
         self.assertAlmostEqual(large, 1 + .3 * 100, places=9)                 # grows with disc area
         self.assertAlmostEqual(viewer_highlight_gain(coc_px=1000., **star), 1 + .3 * 1024, places=9)
+
+    def test_mode1_shape_matches_aperture_sampler_convention(self):
+        # The Advanced gathers and sprites use the aperture sampler's shape:
+        # a blade vertex at polar angle 0 before rotation.
+        for blades, roundness in ((3, 0.), (5, .35), (6, 0.), (9, .8)):
+            for i in range(720):
+                phi = 2 * math.pi * i / 720
+                self.assertAlmostEqual(viewer_mode1_boundary(phi, blades, roundness),
+                                       aperture_boundary(phi, blades, roundness), places=9)
+
+    def test_background_images_upright_aperture_foreground_inverted(self):
+        # Orientation of mode 1's far/near PSF: a lens offset moves a far
+        # point's image with it and a near point's against it.
+        aspect = 1.5
+        base = viewer_projection(math.radians(60.), aspect, .1, 1000.)
+        focus = 2.
+        for depth, sign in ((8., 1.), (1., -1.)):
+            point = (.1, -.05, -depth)
+            x0, y0, _, w0 = viewer_apply(viewer_lens_projection(base, (0., 0.), focus),
+                                         viewer_lens_eye(point, (0., 0.)))
+            for offset in ((.02, 0.), (0., .02), (-.014, .014)):
+                x, y, _, w = viewer_apply(viewer_lens_projection(base, offset, focus),
+                                          viewer_lens_eye(point, offset))
+                # NDC x spans aspect times more pixels than NDC y.
+                dx, dy = (x / w - x0 / w0) * aspect, y / w - y0 / w0
+                # Image displacement parallel to the offset, with the sign.
+                self.assertGreater(sign * (dx * offset[0] + dy * offset[1]), 0.)
+                self.assertAlmostEqual(dx * offset[1] - dy * offset[0], 0., places=12)
+
+    def test_unit_area_matches_shape(self):
+        for blades, roundness, anamorphic in ((0, 1., 1.), (6, 0., 1.), (5, .35, 1.),
+                                              (3, 0., 1.), (7, .2, 1.6)):
+            n = 800
+            inside = 0
+            for j in range(n):
+                for i in range(n):
+                    x = (i + .5) / n * 4 - 2
+                    y = (j + .5) / n * 4 - 2
+                    qx = x / anamorphic
+                    r = math.hypot(qx, y)
+                    if r <= viewer_mode1_boundary(math.atan2(y, qx), blades, roundness):
+                        inside += 1
+            grid_area = inside / (n * n) * 16
+            self.assertLess(abs(grid_area / viewer_unit_area(blades, roundness, anamorphic) - 1),
+                            .005)
+
+    def test_sprite_splat_conserves_energy(self):
+        # Sprite radiance E / (unitArea R^2) integrated over its antialiased
+        # footprint returns E, at full and half gather resolution, for sprite
+        # radii of at least 4 target pixels. Smaller sprites (1-2 target
+        # pixels) measured 1-10% (sharp triangle worst); their shape is not
+        # resolvable there anyway.
+        for blades, roundness, rotation, anamorphic in ((0, 1., 0., 1.), (6, 0., .3, 1.),
+                                                        (5, .35, 1., 1.), (3, 0., 0., 1.5)):
+            area = viewer_unit_area(blades, roundness, anamorphic)
+            for radius in (8., 20., 45.):
+                for plane in (1, -1):
+                    for scale in (1, 2):
+                        extent = int(radius * max(anamorphic, 1.) + 3)
+                        total = 0.
+                        # Target pixels of size `scale` full-resolution pixels.
+                        for ty in range(-extent // scale - 1, extent // scale + 2):
+                            for tx in range(-extent // scale - 1, extent // scale + 2):
+                                dx = (tx + .5) * scale - .3
+                                dy = (ty + .5) * scale + .2
+                                total += viewer_sprite_coverage(
+                                    dx, dy, radius, plane, blades, roundness,
+                                    rotation, anamorphic, scale) * scale * scale
+                        self.assertLess(abs(total / (area * radius * radius) - 1), .01)
+
+    def test_highlight_extraction_moves_energy_to_cells(self):
+        # A small light on a dim background, defocused: detect() removes its
+        # excess; the gather input plus the cell energy equals the original.
+        size = 48
+        for light_x, light_y in ((20, 20), (23, 16)):  # inside / straddling cells
+            image = [[(.05, .04, .03) for _ in range(size)] for _ in range(size)]
+            for y in range(light_y, light_y + 2):
+                for x in range(light_x, light_x + 2):
+                    image[y][x] = (6., 5., 4.)
+            radius = [[10. for _ in range(size)] for _ in range(size)]
+            cells = {}
+            gather = []
+            for y in range(size):
+                row = []
+                for x in range(size):
+                    e = viewer_highlight_detect(image, radius, x, y, 2.)
+                    key = (x // 8, y // 8)
+                    cells[key] = tuple(a + b for a, b in zip(cells.get(key, (0., 0., 0.)), e))
+                    row.append(tuple(image[y][x][c] - e[c] for c in range(3)))
+                gather.append(row)
+            original = sum(sum(p) for r in image for p in r)
+            remaining = sum(sum(p) for r in gather for p in r)
+            moved = sum(sum(v) for v in cells.values())
+            self.assertAlmostEqual(original, remaining + moved, places=9)
+            # Nearly all of the light's excess moves; the dim background stays.
+            light_excess = 4 * sum(a - b for a, b in zip((6., 5., 4.), (.05, .04, .03)))
+            self.assertGreater(moved, .99 * light_excess)
+            self.assertLess(moved, 1.01 * light_excess)
+            occupied = [k for k, v in cells.items() if sum(v) > 0]
+            self.assertEqual(len(occupied), 1 if (light_x, light_y) == (20, 20) else 2)
+        # Focused (radius < 2 px) and non-isolated (uniformly bright) pixels stay.
+        focused = [[1.] * size for _ in range(size)]
+        self.assertEqual(viewer_highlight_detect(image, focused, light_x, light_y, 2.),
+                         (0., 0., 0.))
+        flat = [[(6., 5., 4.)] * size for _ in range(size)]
+        self.assertEqual(viewer_highlight_detect(flat, radius, 20, 20, 2.), (0., 0., 0.))
+        # A light 10 px wide (a star on a zoomed view) with a 40 px blur is
+        # still smaller than half its bokeh: all of it is extracted.
+        size = 64
+        image = [[(.05, .04, .03) for _ in range(size)] for _ in range(size)]
+        for y in range(27, 37):
+            for x in range(27, 37):
+                image[y][x] = (3., 3., 3.)
+        radius = [[40. for _ in range(size)] for _ in range(size)]
+        moved = sum(sum(viewer_highlight_detect(image, radius, x, y, 2.))
+                    for y in range(size) for x in range(size))
+        self.assertAlmostEqual(moved, 100 * (9. - .12), places=6)
 
     def test_viewer_blend_standard_matches_trace(self):
         red = Card(1., self.full, (1., 0., 0.), .5)

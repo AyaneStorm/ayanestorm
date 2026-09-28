@@ -44,17 +44,18 @@ vec2 apertureSample(int index, int count, float phase, out float area_weight)
     // Both gathers cover the maximum disc, including almost-focused sources.
     // Uniform radius retains central taps; 2*r compensates their area density.
     float radius = radial_fraction;
-    float angle = fi * 2.399963229728653 + phase + aperture_rotation;
+    // Polar angle before rotation; a blade vertex lies at angle 0 (ASDoFAperture).
+    float phi = fi * 2.399963229728653 + phase;
     float boundary = 1.0;
     if (aperture_blades >= 3)
     {
         float sector = 2.0 * AS_DOF_PI / float(aperture_blades);
-        float local_angle = mod(angle - aperture_rotation + 0.5 * sector,
-                                sector) - 0.5 * sector;
+        float local_angle = mod(phi, sector) - 0.5 * sector;
         float polygon = cos(0.5 * sector) / max(cos(local_angle), 0.001);
         boundary = mix(polygon, 1.0, aperture_roundness);
     }
     area_weight = boundary * boundary * 2.0 * radius;
+    float angle = phi + aperture_rotation;
     return vec2(cos(angle) * anamorphic_ratio, sin(angle)) * radius * boundary;
 }
 
@@ -181,7 +182,11 @@ void main()
         vec2 disk = apertureSample(i, sample_count, phase_angle,
                                    aperture_weight);
         kernel_area += aperture_weight;
-        vec2 sample_uv = clamp(uv - disk * max_radius / screen_res,
+        // Background points image as the upright aperture, foreground points
+        // as the inverted one (see ASDoFCamera): the source reaching this
+        // pixel lies at -disk for the far plane and +disk for the near plane.
+        float source_side = plane > 0 ? -1.0 : 1.0;
+        vec2 sample_uv = clamp(uv + source_side * disk * max_radius / screen_res,
                                0.5 / screen_res,
                                vec2(1.0) - 0.5 / screen_res);
         float sample_coc = surfaceCoC(sample_uv);

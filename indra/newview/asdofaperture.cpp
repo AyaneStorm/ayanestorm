@@ -221,4 +221,15 @@ namespace ASDoFAperture
         // generate() places sample index at radius sqrt(v) * boundary.
         return (F32)sobolOwen(index, 1);
     }
+
+    F32 unitArea(const Shape& shape)
+    {
+        const F64 roundness = shape.mRoundness;
+        F64 area = PI_D;
+        if (shape.mBlades >= 3 && roundness < 1.0)
+        {
+            area = shape.mBlades * bladeCdf(PI_D / shape.mBlades, shape.mBlades, roundness);
+        }
+        return (F32)(area * shape.mAnamorphic);
+    }
 }

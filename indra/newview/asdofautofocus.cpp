@@ -20,6 +20,7 @@
 #include "llframetimer.h"
 #include "llgl.h"
 #include "llglslshader.h"
+#include "llglstates.h"
 #include "llprogressview.h"
 #include "llrender.h"
 #include "llrender2dutils.h"
@@ -1155,6 +1156,17 @@ void ASDoFAutofocus::drawOverlay()
                           : sEyesTracked ? LLColor4(0.3f, 1.f, 0.4f, 0.9f)
                           : LLColor4(1.f, 0.85f, 0.1f, 0.9f);
 
+    // Drawn before HUD and UI (see header): enter 2D state here and restore
+    // the 3D matrices and viewport the HUD elements render with.
+    const S32 saved_viewport[4] = { gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3] };
+    gGL.matrixMode(LLRender::MM_PROJECTION);
+    gGL.pushMatrix();
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.pushMatrix();
+    gViewerWindow->setup2DRender();
+    LLGLSUIDefault gls_ui;
+    LLGLDepthTest no_depth(GL_FALSE, GL_FALSE);
+
     // Same space as the viewer's debug text: scaled UI coordinates.
     gUIProgram.bind();
     gGL.pushMatrix();
@@ -1209,4 +1221,14 @@ void ASDoFAutofocus::drawOverlay()
     gGL.popMatrix();
     gGL.flush();
     gUIProgram.unbind();
+
+    gGL.matrixMode(LLRender::MM_PROJECTION);
+    gGL.popMatrix();
+    gGL.matrixMode(LLRender::MM_MODELVIEW);
+    gGL.popMatrix();
+    for (S32 i = 0; i < 4; ++i)
+    {
+        gGLViewport[i] = saved_viewport[i];
+    }
+    glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
 }

@@ -64,7 +64,9 @@ namespace ASDoFAutofocus
     // Alt+Shift+V) or Firestorm's "Draw DoF Focus crosshair"
     // (FSFocusPointRender, whose 3D crosshair is skipped in autofocus);
     // never in snapshots.
-    // Called from render_ui() in 2D UI state.
+    // Called from render_ui() right after the world image, before HUD
+    // elements, HUD attachments and the 2D UI, so all of them draw over it.
+    // Sets up its own 2D state and restores the 3D matrices and viewport.
     void drawOverlay();
 }
 
