@@ -2119,6 +2119,24 @@ gathers and the sprite shaders (no include mechanism).
 - Sprites: rho = radius over the edge radius at that angle, per axial CA
   stratum; energy kept per channel (test within 2 %).
 
+### Dotted star bokeh: edge pixels left in the gather (2026-09-28)
+
+- User: some star bokeh still dotted; more of them at minimum "Light
+  isolation", none at maximum (all uniform).
+- Cause: detect() judged each pixel alone. A star's core passed the
+  isolation test and became a sprite, but its dimmer antialiased edge pixels
+  failed it, so the gather kept a sparse ring of 1 px sources, which it
+  turns into dots. With no extraction (maximum isolation) the whole star,
+  several pixels wide, gathers smoothly.
+- Measured (Gaussian stars, `dof_reference.py`): judged alone, 8-24 edge
+  pixels kept over 30 % of their light (3-30 % of the star left).
+- Fix: the isolation ratio uses the brightest pixel within 2 px (3x3 plus
+  the 4 axis pixels at 2), so the edges go with the core. Each pixel still
+  gives only its own excess over the ring: sky next to a light loses
+  nothing and energy is conserved. Residual now under 1.5 % of the star,
+  no pixel over 50 %. Cost: 12 more fetches per defocused pixel, in both
+  extraction passes.
+
 ### Limits
 
 - Tiled snapshots (UI shown, or larger than the maximum texture size)

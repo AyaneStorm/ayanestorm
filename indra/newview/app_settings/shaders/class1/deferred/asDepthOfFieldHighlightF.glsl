@@ -70,7 +70,24 @@ vec3 detect(ivec2 p)
         ring_sum += ring;
         ring_max = max(ring_max, luminance(ring));
     }
-    float ratio = luminance(color) / max(ring_max, 0.0001);
+    // Isolation of the light this pixel belongs to: the brightest pixel
+    // within 2 px. Judged alone, the dimmer antialiased edge pixels of a
+    // light failed the test while its core passed; the core became a sprite
+    // and its edges stayed in the gather as a sparse ring of 1 px sources,
+    // which the gather turns into dotted bokeh (more so at low isolation).
+    // Each pixel still gives only its own excess over the ring, so sky next
+    // to a light loses nothing and the energy balance is unchanged.
+    const ivec2 neighbours[12] = ivec2[12](
+        ivec2(-1, -1), ivec2(0, -1), ivec2(1, -1), ivec2(-1, 0), ivec2(1, 0),
+        ivec2(-1, 1), ivec2(0, 1), ivec2(1, 1),
+        ivec2(-2, 0), ivec2(2, 0), ivec2(0, -2), ivec2(0, 2));
+    float peak = luminance(color);
+    for (int i = 0; i < 12; ++i)
+    {
+        peak = max(peak, luminance(texelFetch(diffuseRect,
+                                              clamp(p + neighbours[i], ivec2(0), last), 0).rgb));
+    }
+    float ratio = peak / max(ring_max, 0.0001);
     float isolated = smoothstep(isolation, 2.0 * isolation, ratio);
     return isolated * gate * max(color - ring_sum * 0.125, vec3(0.0));
 }

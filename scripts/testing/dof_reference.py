@@ -643,6 +643,10 @@ def _luminance(c):
     return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
 
 
+HIGHLIGHT_NEIGHBOURS = tuple((dx, dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1)) + \
+    ((-2, 0), (2, 0), (0, -2), (0, 2))
+
+
 def viewer_highlight_detect(image, coc_radius, x, y, isolation):
     """Mirror of asDepthOfFieldHighlightF.glsl detect(): the excess of an
     isolated defocused highlight pixel over its 8-tap ring at half the blur
@@ -664,7 +668,11 @@ def viewer_highlight_detect(image, coc_radius, x, y, isolation):
             ring_sum[c] += ring[c]
         ring_max = max(ring_max, _luminance(ring))
     color = image[y][x]
-    ratio = _luminance(color) / max(ring_max, 1e-4)
+    # Isolation of the light the pixel belongs to: its brightest pixel
+    # within 2 px (3x3 plus the 4 axis pixels at 2).
+    peak = max(_luminance(image[min(max(y + dy, 0), height - 1)][min(max(x + dx, 0), width - 1)])
+               for dx, dy in HIGHLIGHT_NEIGHBOURS)
+    ratio = peak / max(ring_max, 1e-4)
     isolated = _smoothstep(isolation, 2 * isolation, ratio)
     return tuple(isolated * gate * max(color[c] - ring_sum[c] / 8, 0.0) for c in range(3))
 
@@ -1153,7 +1161,8 @@ class ThinLensReferenceTests(unittest.TestCase):
             light_excess = 4 * sum(a - b for a, b in zip((6., 5., 4.), (.05, .04, .03)))
             self.assertGreater(moved, .99 * light_excess)
             self.assertLess(moved, 1.01 * light_excess)
-            occupied = [k for k, v in cells.items() if sum(v) > 0]
+            # Occupied as in the shader (luminance weight over 1e-4).
+            occupied = [k for k, v in cells.items() if _luminance(v) > 1e-4]
             self.assertEqual(len(occupied), 1 if (light_x, light_y) == (20, 20) else 2)
         # Focused (radius < 2 px) and non-isolated (uniformly bright) pixels stay.
         focused = [[1.] * size for _ in range(size)]
@@ -1172,6 +1181,26 @@ class ThinLensReferenceTests(unittest.TestCase):
         moved = sum(sum(viewer_highlight_detect(image, radius, x, y, 2.))
                     for y in range(size) for x in range(size))
         self.assertAlmostEqual(moved, 100 * (9. - .12), places=6)
+        # Soft-edged stars (Gaussian profile): the edge pixels go with the
+        # core, so no sparse ring of 1 px sources is left to the gather
+        # (judged alone, 8-24 edge pixels kept over 30 % of their light).
+        size = 40
+        for peak, sigma in ((3.0, 0.8), (1.5, 1.2), (0.6, 1.0)):
+            image = [[tuple(.1 + peak * math.exp(-((x - 20) ** 2 + (y - 20) ** 2) /
+                                                 (2 * sigma * sigma)) for _ in range(3))
+                      for x in range(size)] for y in range(size)]
+            radius = [[20.] * size for _ in range(size)]
+            for isolation in (1.2, 2.0):
+                star = residual = 0.0
+                for y in range(14, 27):
+                    for x in range(14, 27):
+                        excess = image[y][x][1] - .1
+                        left = excess - viewer_highlight_detect(image, radius, x, y, isolation)[1]
+                        star += excess
+                        residual += left
+                        if excess > .01:
+                            self.assertLess(left, .5 * excess, (peak, sigma, isolation, x, y))
+                self.assertLess(residual, .015 * star, (peak, sigma, isolation))
 
     def test_near_bands_cover_distances_and_conserve_area(self):
         # Area taps (asDepthOfFieldNearF.glsl): each tap distance maps to the
