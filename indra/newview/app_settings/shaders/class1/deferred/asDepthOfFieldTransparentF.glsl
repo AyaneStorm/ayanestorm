@@ -2,8 +2,23 @@
  * @file asDepthOfFieldTransparentF.glsl
  * @author chanayane@firestorm
  * @brief Premultiplied transparent-layer bokeh gather for AyaneStorm DoF.
+ *
+ * gather_pass 0 (gather resolution, four attachments, mips generated after):
+ *   source pyramid of this gather's layer and plane, see buildSource().
+ * gather_pass 1: the gather. With use_pyramid, taps read the pyramid at the
+ *   mip level of the local tap spacing (area taps), as the opaque near
+ *   gather does (asDepthOfFieldNearF.glsl, same bands): a thin defocused
+ *   strand then contributes its share of every tap's area instead of
+ *   flickering between hit and miss (fine pattern on defocused hair).
+ *   Pyramid: 0 (sum rgb * hw / r^2, sum a / r^2) for the color per unit
+ *   coverage, 1-3 the 11 reach bands of a * R^2 / r^2. Sources under
+ *   split_radius (8 pi R / N, at least 1 px) stay point taps, as in the
+ *   near gather.
  */
-out vec4 frag_color;
+layout(location = 0) out vec4 frag_color;
+layout(location = 1) out vec4 frag_data1;
+layout(location = 2) out vec4 frag_data2;
+layout(location = 3) out vec4 frag_data3;
 
 uniform sampler2D diffuseRect;
 uniform sampler2D noiseMap;
@@ -13,7 +28,16 @@ uniform sampler2D specularRect;
 uniform sampler2D positionMap;
 uniform sampler2D emissiveRect;
 uniform sampler2D shadowMap0;
+// Source pyramid attachments 0-3 (gather_pass 1 with use_pyramid).
+uniform sampler2D shadowMap1;
+uniform sampler2D shadowMap2;
+uniform sampler2D shadowMap3;
+uniform sampler2D shadowMap4;
 uniform vec2 screen_res;
+uniform vec2 target_res;
+uniform int gather_pass;
+uniform int use_pyramid;
+uniform float split_radius;
 uniform int sample_count;
 uniform float max_radius;
 uniform int aperture_blades;
@@ -29,6 +53,7 @@ in vec2 vary_fragcoord;
 
 #define AS_DOF_MAX_SAMPLES 96
 #define AS_DOF_PI 3.14159265358979323846
+#define BAND_COUNT 11
 
 float samplePhase()
 {
@@ -63,6 +88,15 @@ float highlightWeight(vec3 color)
 {
     float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
     return 1.0 + highlight_boost * smoothstep(0.5, 1.5, luminance);
+}
+
+// Share of a source spread by this gather. The near plane leaves sources
+// under 0.5-2 px of blur to the resolve, which keeps them at full resolution
+// under the near spread (stratumBase() in asDepthOfFieldResolveF.glsl,
+// same ramp); spreading them too would soften in-focus surfaces.
+float spreadShare(float radius)
+{
+    return plane < 0 ? smoothstep(0.5, 2.0, radius) : 1.0;
 }
 
 vec2 sourcePixelCenter(vec2 uv)
@@ -153,11 +187,104 @@ bool nearbyLayer(vec2 uv)
     return false;
 }
 
+// Reach bands, identical to asDepthOfFieldNearF.glsl.
+float bandEdge(int k)
+{
+    return k == 0 ? 0.0 :
+        1.0 + (max_radius - 1.0) * pow(float(k - 1) / 10.0, 1.5);
+}
+
+int bandIndex(float distance)
+{
+    if (distance < 1.0)
+    {
+        return 0;
+    }
+    float t = pow(clamp((distance - 1.0) / max(max_radius - 1.0, 0.0001), 0.0, 1.0),
+                  2.0 / 3.0);
+    return min(1 + int(floor(10.0 * t)), BAND_COUNT - 1);
+}
+
+// Pyramid level 0 for this plane: the gather-resolution texel averages a 2x2
+// set of full-resolution sources, each read exactly as a point tap reads it.
+void buildSource()
+{
+    vec2 scale = screen_res / target_res;
+    ivec2 last = ivec2(screen_res) - 1;
+    vec4 color_sum = vec4(0.0);
+    float bands[BAND_COUNT];
+    for (int k = 0; k < BAND_COUNT; ++k)
+    {
+        bands[k] = 0.0;
+    }
+    for (int i = 0; i < 4; ++i)
+    {
+        vec2 offset = vec2(float(i & 1), float(i >> 1)) * 0.5 + 0.25;
+        ivec2 p = clamp(ivec2((floor(gl_FragCoord.xy) + offset) * scale),
+                        ivec2(0), last);
+        vec2 source_uv = (vec2(p) + 0.5) / screen_res;
+        float coc = surfaceCoC(source_uv);
+        float r = (plane > 0 ? coc : -coc) * max_radius;
+        if (r < split_radius)
+        {
+            continue;
+        }
+        vec4 layer = premultipliedSurface(source_uv);
+        layer.rgb = clamp(layer.rgb, vec3(-60000.0), vec3(60000.0));
+        layer.rgb *= highlightWeight(layer.rgb);
+        layer *= spreadShare(r);
+        // Color per unit coverage, weighted like the point gather (1 / r^2);
+        // bands scaled by R^2 for half-float range.
+        color_sum += layer / (r * r);
+        float w = layer.a * max_radius * max_radius / (r * r);
+        for (int k = 0; k < BAND_COUNT; ++k)
+        {
+            float a = bandEdge(k);
+            float b = bandEdge(k + 1);
+            float rc = clamp(r, a, b);
+            bands[k] += w * (rc * rc - a * a) / (b * b - a * a);
+        }
+    }
+    frag_color = color_sum * 0.25;
+    frag_data1 = vec4(bands[0], bands[1], bands[2], bands[3]) * 0.25;
+    frag_data2 = vec4(bands[4], bands[5], bands[6], bands[7]) * 0.25;
+    frag_data3 = vec4(bands[8], bands[9], bands[10], 0.0) * 0.25;
+}
+
+float bandValue(int k, vec2 uv, float lod)
+{
+    vec4 bands;
+    if (k < 4)
+    {
+        bands = textureLod(shadowMap2, uv, lod);
+        return bands[k];
+    }
+    if (k < 8)
+    {
+        bands = textureLod(shadowMap3, uv, lod);
+        return bands[k - 4];
+    }
+    bands = textureLod(shadowMap4, uv, lod);
+    return bands[k - 8];
+}
+
 void main()
 {
+    frag_data1 = vec4(0.0);
+    frag_data2 = vec4(0.0);
+    frag_data3 = vec4(0.0);
+    if (gather_pass == 0)
+    {
+        buildSource();
+        return;
+    }
+
     vec2 uv = vary_fragcoord;
     float phase_angle = samplePhase();
     vec4 accumulated = vec4(0.0);
+    bool pyramid = use_pyramid != 0;
+    float pixel_scale = max(screen_res.x / target_res.x, 1.0);
+    float inverse_scale = 1.0 / max(max_radius * max_radius, 0.0001);
 
     if (max_radius <= 0.0)
     {
@@ -189,15 +316,37 @@ void main()
         vec2 sample_uv = clamp(uv + source_side * disk * max_radius / screen_res,
                                0.5 / screen_res,
                                vec2(1.0) - 0.5 / screen_res);
+        float distance_pixels =
+            (float(i) + 0.5) / float(sample_count) * max_radius;
+        if (pyramid)
+        {
+            // Mip level matching the local tap spacing: uniform-radius taps
+            // put 2 pi d R / N px^2 around each tap at distance d.
+            float spacing = sqrt(2.0 * AS_DOF_PI * max(distance_pixels, 0.5) *
+                                 max_radius / float(sample_count));
+            float lod = log2(max(spacing / pixel_scale, 1.0));
+            float reach = bandValue(bandIndex(distance_pixels), sample_uv, lod);
+            if (reach > 0.0)
+            {
+                vec4 source = textureLod(shadowMap1, sample_uv, lod);
+                vec3 color_per_coverage = source.rgb / max(source.a, 0.000001);
+                accumulated += vec4(color_per_coverage, 1.0) *
+                               (reach * inverse_scale * aperture_weight);
+            }
+        }
         float sample_coc = surfaceCoC(sample_uv);
         float plane_coc = plane > 0 ? sample_coc : -sample_coc;
         float sample_radius = max(plane_coc, 0.0) * max_radius;
-        float distance_pixels =
-            (float(i) + 0.5) / float(sample_count) * max_radius;
+        // Point tap: every source without the pyramid, otherwise only
+        // sources under split_radius, which the pyramid leaves out.
+        if (pyramid && sample_radius >= split_radius)
+        {
+            continue;
+        }
         float support = 1.0 - smoothstep(sample_radius - 1.0,
                                          sample_radius + 1.0,
                                          distance_pixels);
-        support *= plane_coc > 0.0 ? 1.0 : 0.0;
+        support *= plane_coc > 0.0 ? spreadShare(sample_radius) : 0.0;
         // Rejected taps contribute exactly zero. Keep their aperture area in
         // kernel_area, but avoid color reconstruction and highlight work.
         if (support <= 0.0)

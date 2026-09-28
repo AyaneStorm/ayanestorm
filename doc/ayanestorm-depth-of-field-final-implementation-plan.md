@@ -1645,6 +1645,267 @@ First runtime results (user):
     modelview stacks and `gGLViewport` for the HUD elements.
   - The mode-2 progress counter stays on top.
 
+- **Debug views bloomed:** every debug output wrote alpha 1, which is
+  glow, so the whole frame bloomed. That caused the soft blobs in debug
+  16, the burnt debug 19 and the blurry edges of debug 10. All debug
+  outputs now write glow 0.
+- **Remaining fine pattern on the lock: near-gather sampling noise.**
+  - Findings:
+    - Bokeh quality changes it directly (Low worst, Cinematic best);
+      `CameraDoFResScale` hardly does.
+    - Debug 18 (front layer) is empty, and light shapes off changes
+      nothing.
+    - Point taps see a thin defocused strand only when they land on it,
+      so its spread coverage flickers from pixel to pixel. This predates
+      today (backlog: "stippled foreground hair").
+  - **Fix: area taps.**
+    - A near source pyramid at gather resolution (`sNearSourceTarget`,
+      4 RGBA16F attachments, manual mips, built by `near_pass` 0 of
+      `asDepthOfFieldNearF.glsl`) holds colour and 11 reach bands.
+    - Each band stores the area average of each source's reach,
+      w·[d < r] with w = R²/r².
+    - Each tap reads the mip level that matches the local tap spacing,
+      √(2π·d·R/N).
+    - This is linear in the sources, so mips stay exact for any radius
+      mix, and the integrated coverage is exact.
+    - The front layer uses min(band, front weight). Sources under 1 px
+      of blur stay point taps.
+  - **Measured** (`scripts/testing/dof_near_gather_sim.py`, 96 taps):
+    per-pixel coverage error 3.5–7× lower, mean within 2% on uniform,
+    1:5 mixed, ramped and face scenes.
+  - Rejected by the same simulation:
+    - one mean radius per texel: −33% on mixed radii;
+    - point values of the reach at 7 or 11 distances: +6–16%.
+  - Cost: one pass, 4 mip chains, and 2–4 fetches per tap instead of 2.
+    The tap count is unchanged. Below 2 px of maximum foreground blur,
+    the gather keeps point taps.
+  - New test (`dof_reference.py`, 40 pass): the bands hold every tap
+    distance, and band averages integrate to the exact splat area.
+
+- **Area taps made no visible difference (user).**
+  - The log shows mode 1 active with no shader errors.
+  - Debug 12 (rigged coverage) is about 1 over the whole hair, lock
+    included. The lock renders through the rigged transparent stratum,
+    which the resolve composites over the opaque result. Its alpha also
+    passes the depth replay, which is why debug 7 showed it.
+  - Debug 15 (rigged near colour) is smooth, so the pattern is in that
+    gather's coverage, which still used point taps.
+  - The blocks in debug 4 are only colour ÷ coverage over sparse mip
+    texels, and do not reach the final image.
+  - **Change: `asDepthOfFieldTransparentF.glsl` gets the same area taps**,
+    in all four transparent gathers (world and rigged, far and near).
+    - A `gather_pass` 0 rebuilds the shared `sNearSourceTarget` for each
+      gather (layer and plane). No extra memory: the opaque near gather
+      is done with it.
+    - Attachment 0 holds colour per unit coverage (Σ rgb·hw/r²,
+      Σ a/r²); 1–3 hold the 11 reach bands of a·R²/r².
+    - Cost: 4 extra build passes and their mips per frame.
+  - New debug views: 20 = rigged near coverage, 21 = world near coverage.
+
+- **Transparent area taps: the pattern remains (user: "bad, more or
+  less").** Dark speckles on the lock over the cheek.
+  - Debug 20 (rigged near coverage) is smooth, so the rigged gather is not
+    the source.
+  - Debug 13 shows world coverage only on the windows, and debug 21 is
+    black. That rules out the suspected world-layer division by
+    (1 − rigged coverage).
+  - Rigged depth is captured with minimum alpha 0.004, so the front lock
+    should own the nearest rigged depth.
+  - Unexplained so far. New stage views to locate it:
+    - 22: opaque result before the transparent layers;
+    - 23: the rigged layer as composited;
+    - 24: the final blend toward the blurred result (white) versus the
+      sharp compositor output (black).
+
+- **Stage views located it (user captures).**
+  - 23 (rigged layer as composited) is smooth on the lock.
+  - 24 (blend) is white on the lock: blurred result everywhere. Pixels
+    without transparency are white by design.
+  - 22 (opaque result) shows the lock's alpha-masked strands sharp and
+    dark with flecked edges, though they are defocused (debug 7).
+  - **Cause:** the near gather's ownership rule gave every foreground
+    pixel full coverage at its own position. It was meant for point taps,
+    which under-estimate interiors and would tear holes. On a thin strand
+    it keeps the strand opaque and sharp, and the blurred rigged layer
+    above leaves it visible as dark flecks.
+  - **Fix:** with area taps (which estimate interiors correctly) the rule
+    applies only to point-tapped sources under 1 px of blur.
+    - A defocused strand now becomes a veil over the background plate.
+    - A solid foreground area still reaches coverage 1 inside and 0.5 at
+      its edge.
+
+- **Worse after removing ownership (user).** The flecks are gone only at
+  foreground radius 0.
+  - Debug 22 still shows sharp dark lock strands.
+  - Debug 2 (near coverage) is about 1 over the whole side of the head,
+    which is foreground with a small blur.
+  - Debug 4 (near colour) carries the sharp dark strands.
+  - **Cause, in the area taps:** one pyramid colour per texel, weighted by
+    pixel count. The face beside the lock (r ≈ 2 px, weight 1/4) dominates
+    coverage, while the lock (r ≈ 15, weight 1/225) supplies half the
+    colour, so the face's contribution took the lock's dark colour.
+  - **Fix:** split by source radius, at 8πR/N, clamped to at least 1 px.
+    - Only sources above it enter the pyramid.
+    - Smaller ones stay point taps (tap spacing at distance r is under
+      r/2 there), with their own colour and their ownership rule.
+    - The pyramid is used only when the split is below R.
+  - Simulated (`dof_near_gather_sim.py lockface`, 96 taps, R = 24):
+    - colour error 0.011, against 0.033 for point taps and 0.044 for one
+      pyramid;
+    - colour weighted 1/r²: 0.109, rejected;
+    - trade-off: strands blurred less than the split keep point-tap
+      coverage noise (mixed: 0.042 against 0.014).
+
+- **Still bad after the split (user: "you're not fixing the issue").**
+  Debug 22 kept the sharp dark strands through three different near
+  gathers, so they never came from the near layer.
+  - **Actual cause, in the resolve (pre-existing):**
+    - At a defocused foreground pixel, the base colour starts as the
+      pixel itself (`opaque_source`, since `far_blend` is 0 for
+      foreground).
+    - It was replaced by the plate only by the far target's alpha, and the
+      far pass classifies foreground at gather resolution (0.7) from a
+      bilinear CoC.
+    - A 1–2 px strand blends with the in-focus cheek, is not classified
+      as foreground, and gets alpha ≈ 0. So the sharp strand stayed as the
+      base and showed through the near layer's partial coverage.
+    - The old ownership rule hid this by painting the strand's own dark
+      colour there.
+  - **Fix:** under a pixel with near blur > 1 px, the base is always the
+    background completion (`sBackgroundTarget`, which covers every
+    foreground pixel). It is blended toward the far target's blurred plate
+    by far alpha × smoothstep(0.5, 2, completion blur).
+  - The completion takes the resolve's 16th sampler (`brdfLut`): debug 16
+    now shows it, and the sprite-energy view is dropped.
+  - I should have traced the resolve after the first unchanged debug 22,
+    instead of reworking the gathers.
+
+- **Compared with Firestorm (user):** Firestorm's single blur of the
+  composited image renders the lock as a smooth veil; ours still showed
+  thin dark strokes along it.
+  - Remaining cause: the ownership rule, still active for point-tapped
+    sources under the split (≈6 px at Cinematic). It painted such strands
+    opaque in their own sharp colour.
+  - **Fix:** ownership only below 1 px of blur, for every path.
+  - Point-tap simulation of a solid foreground half-plane without
+    ownership, 200 random phases per case (N 16/32/96, R 12/24/60,
+    r 1.5–0.75R):
+    - one radius or more inside the edge, coverage 1.000 (one case 0.96:
+      N 32, R 60, r 6);
+    - at the edge, coverage 0.5–0.77.
+    So solid interiors need no ownership, and the old "torn holes" should
+    not return. Runtime check: a hand close to the camera.
+- **Still bad (user); full read of the C++ and every shader.** The real
+  cause is in the transparent composite, not the gathers.
+  - The mode-23 capture (rigged layer over black) contains the face: the
+    face is alpha-blended and rigged, like the hair. The rigged replay
+    keeps one depth per pixel (the nearest), so a strand pixel carries
+    the face with the strand's blur. Nothing of the in-focus face remains
+    behind it.
+  - The resolve took `mix(raw, near, blend)` per stratum. An in-focus
+    pixel kept only its raw content, so the strand's blurred spread was
+    dropped at every face pixel and reached the image only inside the
+    strand's own pixels, over a base without the face layer. The final
+    `mix(source, color, visible_blur)` also ignored the transparent near
+    coverage. Result: strand-shaped dark strokes. Debug 22 (before
+    transparency) was already smooth.
+  - **Fix** (`composeStratum()`, `riggedBehind()` in
+    `asDepthOfFieldResolveF.glsl`; `spreadShare()` in
+    `asDepthOfFieldTransparentF.glsl`):
+    - every stratum (rigged, world, single-layer) is composited as near
+      spread over its own pixel content;
+    - the transparent near gathers leave sources under 0.5–2 px of blur
+      to that raw content (same smoothstep as the resolve blend), so
+      in-focus surfaces stay full-resolution and are not counted twice;
+    - where the rigged surface itself is a defocused foreground, the
+      in-focus rigged content behind it comes from rings of 8
+      full-resolution taps at 2–64 px (nearest rings with in-focus or
+      empty rigged pixels); no new sampler;
+    - `visible_blur` includes the rigged and world near coverage.
+- **Not much better (user: mode 2 correct, mode 1 debug 0 and 23).** In that
+  view the face is not in the rigged layer. Debug 23 showed the rigged hair
+  smooth, with sharp black strand-shaped holes: pixels where alpha-masked
+  (opaque) lock strands hide the rigged hair behind them.
+  - **Cause: composite order.** The opaque near veil went over the opaque
+    base, then the transparent strata went over it. So the in-focus alpha
+    hair behind the defocused opaque strands was painted over their blur.
+  - **Fix** (`stratumBase()`, `over()` in the resolve):
+    - order is opaque base, then each transparent stratum's base (raw in
+      focus, far blur, or the rigged fill behind a defocused surface) in
+      depth order, then the opaque near veil, then the transparent near
+      veils;
+    - the opaque near gather now leaves sources under 0.5–2 px of blur to
+      the sharp base (`spreadShare()`, same ramp as the transparent
+      gathers), and the resolve base fades from the sharp pixel to the
+      completion over the same 0.5–2 px. The ownership rule is gone.
+      Otherwise a nearly focused skin pixel, spread at full coverage,
+      would now wash out in-focus alpha brows and lashes in front of it.
+- **Still jagged strand-shaped strokes (user).** The jagged edges are those
+  of the alpha-masked strands. Under an opaque foreground strand the rigged
+  hair behind is zeroed (hidden), so the base there showed the face while
+  its neighbours showed in-focus rigged hair; the thin veil did not hide
+  the difference.
+  - **Fix:** `riggedBehind()` also fills rigged content hidden by a
+    defocused opaque foreground (blend over the same 0.5–2 px ramp).
+    Neighbours whose front surface (rigged if present, else opaque) is a
+    defocused foreground count as unknown and are skipped, instead of as
+    empty.
+- **Diagnosed with captures before changing code.** Debug 23 was clean where
+  the strokes were; debug 22 showed the dark lock strands perfectly sharp in
+  the opaque result; debug 7 showed them red (depth correct) and the whole
+  head red too, since cheek, ear and hair cap lie slightly in front of the
+  focus point.
+  - **Cause:** the background completion counts only non-foreground pixels.
+    Around the lock everything is foreground, so the pull found nothing and
+    fell back to the pixel itself (the sharp strand), or reached the sky past
+    the head. That sharp strand was the base under the thin veil. The rigged
+    fill had the same absolute test, which left the remaining black hole in
+    debug 23.
+  - **Fix:** "behind" is relative. `opaqueBehind()` (resolve) fills a
+    defocused opaque pixel from nearby pixels blurred at least ~2 px less
+    (rings of 8 taps, 2–64 px; background neighbours give their blurred
+    plate). The completion is used only where nothing is found.
+    `riggedBehind()` uses the same relative test.
+- **Debug 22 still showed crisp strands (user). Full audit of the opaque
+  path: every way a strand pixel can reach debug 22 sharp.**
+  1. The base's sharp share under 2 px of blur: correct (a nearly focused
+     strand is sharp).
+  2. The completion's pull fallback returned the pixel itself when no
+     background lay within reach, so the sharp strand was its own "behind".
+     The whole-screen background average tried instead showed grey patches
+     inside the slightly defocused hair cap (user). **Kept the self
+     fallback:** thin strands never reach it, since `opaqueBehind()` fills
+     them first from nearby less-blurred surfaces. Deep inside a large
+     region the pixel itself is the best estimate.
+  3. The near gather's separate centre term added the centre pixel's colour
+     at weight 1/r². One source covering the whole disc totals N/R² over all
+     taps, so the centre counted R²/(N r²) of a full disc: about 30 % of the
+     veil colour for R 20, N 96, r 3. Each thin strand redrew itself into
+     the veil at its own pixels. **Fixed:** term removed; the taps near
+     d = 0 sample the centre with its true area share.
+     `dof_near_gather_sim.py` never modelled this term, which is why the
+     simulations did not reproduce the strokes.
+  - **Hair showing through a nearly focused arm (user).** Two leaks:
+    - the base mixed self (1 − s) + behind · s under a veil that covers
+      about s on a solid surface, so behind leaked at s (1 − s), up to 25 %
+      (the rigged fill copied ponytail hair behind the arm).
+      **Fixed:** `exclusiveBase()`/`exclusiveFill()`: behind fills only
+      max(s − veil, 0) / (1 − veil), for the opaque base, the rigged fill
+      under opaque surfaces and every stratum base;
+    - a transparent stratum's far spread was drawn over any opaque pixel
+      without a surface of that stratum, even an in-focus one in front of
+      it (the ponytail's blur over the back); this predates the session.
+      **Fixed:** scaled by the opaque far blend, as for the opaque plate.
+  - **Status (user, 2026-09-28): better, not yet as good as mode 2 or
+    Firestorm; paused.** Open leads: some lock strands stay crisp in
+    debug 22 (possibly too little mode-1 CoC compared with mode 2); the
+    rigged fill still fails where the lock is wider than 64 px.
+  - Transparent stage, checked for the same class of defect: no centre term
+    in the transparent gathers; the final `mix(source, …, visible_blur)`
+    cannot return a sharp opaque strand under defocused alpha hair
+    (`rigged_blend` is 1 there), and the coverage capture excludes rigged
+    hair hidden behind the strand.
+
 Runtime checks pending (user build): triangle aperture orientation in mode 1
 vs mode 2; clean light polygons with blades, rotation and anamorphic visible;
 no exposure change when toggling shapes; neon strips and windows stay

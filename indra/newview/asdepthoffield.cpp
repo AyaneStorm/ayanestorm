@@ -42,6 +42,9 @@ namespace
     LLRenderTarget sFarTarget;
     // Two premultiplied foreground layers: 0 back, 1 front (plus near sprites).
     LLRenderTarget sNearTarget;
+    // Foreground source pyramid for area taps (asDepthOfFieldNearF.glsl):
+    // color, 11 reach bands and the front-layer weight in 4 attachments.
+    LLRenderTarget sNearSourceTarget;
     // Highlight cells (energy + occupancy with mips; centroid, CoC) and the
     // gather input with their energy removed. Allocated only with sprites on.
     LLRenderTarget sCellTarget;
@@ -102,6 +105,25 @@ namespace
     const LLStaticHashedString U_UNIT_AREA("unit_area");
     const LLStaticHashedString U_BG_PASS("bg_pass");
     const LLStaticHashedString U_MAX_LEVEL("max_level");
+    const LLStaticHashedString U_NEAR_PASS("near_pass");
+    const LLStaticHashedString U_USE_PYRAMID("use_pyramid");
+    const LLStaticHashedString U_GATHER_PASS("gather_pass");
+    const LLStaticHashedString U_SPLIT_RADIUS("split_radius");
+
+    // Area taps (asDepthOfFieldNearF.glsl): sources blurred less than this
+    // stay point taps, which are dense enough there (tap spacing at distance
+    // r under r / 2 once r > 8 pi R / N) and keep their own color.
+    F32 pyramidSplitRadius(F32 radius, S32 samples)
+    {
+        return llmax(1.f, 8.f * F_PI * radius / (F32)llmax(samples, 1));
+    }
+
+    // The pyramid only helps when some sources can exceed the split; below
+    // 2 px of maximum blur its bands degenerate.
+    bool usePyramid(F32 radius, S32 samples)
+    {
+        return radius >= 2.f && pyramidSplitRadius(radius, samples) < radius;
+    }
 
     // Full-resolution pixels per highlight cell side (CELL_SIZE in
     // asDepthOfFieldHighlightF.glsl).
@@ -118,6 +140,7 @@ namespace
         sCoCTarget.release();
         sFarTarget.release();
         sNearTarget.release();
+        sNearSourceTarget.release();
         releaseSpriteResources();
         sBackgroundPushTarget.release();
         sBackgroundTarget.release();
@@ -141,6 +164,7 @@ namespace
         if (sCoCTarget.isComplete() && sCoCTarget.getNumTextures() == 2 &&
             sFarTarget.isComplete() && sNearTarget.isComplete() &&
             sNearTarget.getNumTextures() == 2 &&
+            sNearSourceTarget.isComplete() && sNearSourceTarget.getNumTextures() == 4 &&
             sBackgroundPushTarget.isComplete() && sBackgroundTarget.isComplete() &&
             sTransparentFarTarget.isComplete() && sTransparentNearTarget.isComplete() &&
             sRiggedFarTarget.isComplete() && sRiggedNearTarget.isComplete() &&
@@ -159,6 +183,12 @@ namespace
             !sFarTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
             !sNearTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
             !sNearTarget.addColorAttachment(GL_RGBA16F) ||
+            !sNearSourceTarget.allocate(blur_width, blur_height, GL_RGBA16F,
+                                        false, LLTexUnit::TT_TEXTURE,
+                                        LLTexUnit::TMG_MANUAL) ||
+            !sNearSourceTarget.addColorAttachment(GL_RGBA16F) ||
+            !sNearSourceTarget.addColorAttachment(GL_RGBA16F) ||
+            !sNearSourceTarget.addColorAttachment(GL_RGBA16F) ||
             !sBackgroundPushTarget.allocate(blur_width, blur_height, GL_RGBA16F,
                                             false, LLTexUnit::TT_TEXTURE,
                                             LLTexUnit::TMG_MANUAL) ||
@@ -757,7 +787,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     const F32 rotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
     const F32 anamorphic = llclamp(gSavedSettings.getF32("ASDepthOfFieldAnamorphicRatio"), 0.1f, 2.f);
     const F32 highlight_boost = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightBoost"), 0.f, 2.f);
-    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 19);
+    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 24);
     const F32 isolation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightIsolation"), 1.2f, 8.f);
     const F32 sprite_budget = (F32)llclamp(gSavedSettings.getS32("ASDepthOfFieldHighlightMaxSprites"), 256, 32768);
 
@@ -1009,13 +1039,61 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     }
     sFarTarget.flush();
 
+    // Foreground source pyramid, so near taps integrate an area instead of
+    // a point (fine pattern on defocused hair), for sources above the split
+    // radius only (see usePyramid()).
+    const bool near_pyramid = usePyramid(near_radius, samples);
+    static const LLShaderMgr::eGLSLReservedUniforms pyramid_slots[] = {
+        LLShaderMgr::DEFERRED_SPECULAR, LLShaderMgr::DEFERRED_EMISSIVE,
+        LLShaderMgr::DEFERRED_LIGHT, LLShaderMgr::DEFERRED_BLOOM };
+    if (near_pyramid)
+    {
+        sNearSourceTarget.bindTarget();
+        sNearProgram.bind();
+        sNearProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gather_input, false, LLTexUnit::TFO_POINT);
+        sNearProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sCoCTarget, false, LLTexUnit::TFO_POINT);
+        configureGather(sNearProgram, samples, near_radius, blades, roundness,
+                        rotation, anamorphic, highlight_boost);
+        sNearProgram.uniform2f(U_TARGET_RES, (F32)sBlurWidth, (F32)sBlurHeight);
+        sNearProgram.uniform1i(U_NEAR_PASS, 0);
+        sNearProgram.uniform1f(U_SPLIT_RADIUS, pyramidSplitRadius(near_radius, samples));
+        draw(screen_triangle);
+        sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
+        sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather_input.getUsage());
+        sNearProgram.unbind();
+        sNearSourceTarget.flush();
+        for (U32 attachment = 0; attachment < 4; ++attachment)
+        {
+            generateMips(sNearSourceTarget, attachment);
+        }
+    }
+
     sNearTarget.bindTarget();
     sNearProgram.bind();
     sNearProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gather_input, false, LLTexUnit::TFO_BILINEAR);
     sNearProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sCoCTarget, false, LLTexUnit::TFO_BILINEAR);
+    if (near_pyramid)
+    {
+        for (U32 attachment = 0; attachment < 4; ++attachment)
+        {
+            sNearProgram.bindTexture(pyramid_slots[attachment], &sNearSourceTarget, false,
+                                     LLTexUnit::TFO_TRILINEAR, attachment);
+        }
+    }
     configureGather(sNearProgram, samples, near_radius, blades, roundness,
                     rotation, anamorphic, highlight_boost);
+    sNearProgram.uniform2f(U_TARGET_RES, (F32)sBlurWidth, (F32)sBlurHeight);
+    sNearProgram.uniform1i(U_NEAR_PASS, 1);
+    sNearProgram.uniform1i(U_USE_PYRAMID, near_pyramid ? 1 : 0);
+    sNearProgram.uniform1f(U_SPLIT_RADIUS, pyramidSplitRadius(near_radius, samples));
     draw(screen_triangle);
+    if (near_pyramid)
+    {
+        for (U32 attachment = 0; attachment < 4; ++attachment)
+        {
+            sNearProgram.unbindTexture(pyramid_slots[attachment], sNearSourceTarget.getUsage());
+        }
+    }
     sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
     sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather_input.getUsage());
     sNearProgram.unbind();
@@ -1027,11 +1105,28 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
 
     if (transparent_depth)
     {
-        auto gather_transparency = [&](LLRenderTarget& target, S32 plane,
-                                       S32 layer_mode, F32 radius)
+        // One transparent pass: gather_pass 0 builds this gather's source
+        // pyramid into the shared sNearSourceTarget (the opaque near gather
+        // is done with it), gather_pass 1 gathers, with area taps when the
+        // pyramid was built (see asDepthOfFieldTransparentF.glsl).
+        auto transparent_pass = [&](LLRenderTarget& target, S32 plane,
+                                    S32 layer_mode, F32 radius, S32 pass,
+                                    bool pyramid)
         {
+            static const LLShaderMgr::eGLSLReservedUniforms pyramid_slots[] = {
+                LLShaderMgr::DEFERRED_SHADOW1, LLShaderMgr::DEFERRED_SHADOW2,
+                LLShaderMgr::DEFERRED_SHADOW3, LLShaderMgr::DEFERRED_SHADOW4 };
             target.bindTarget();
             sTransparentProgram.bind();
+            if (pass == 1 && pyramid)
+            {
+                for (U32 attachment = 0; attachment < 4; ++attachment)
+                {
+                    sTransparentProgram.bindTexture(pyramid_slots[attachment],
+                                                    &sNearSourceTarget, false,
+                                                    LLTexUnit::TFO_TRILINEAR, attachment);
+                }
+            }
             sTransparentProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE,
                                             &source, false, LLTexUnit::TFO_BILINEAR);
             sTransparentProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE,
@@ -1064,7 +1159,19 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             // Temporarily bypass occupancy rejection to isolate square DoF artifacts.
             sTransparentProgram.uniform1i(U_USE_OCCUPANCY,
                                            use_occupancy ? 1 : 0);
+            sTransparentProgram.uniform2f(U_TARGET_RES, (F32)sBlurWidth, (F32)sBlurHeight);
+            sTransparentProgram.uniform1i(U_GATHER_PASS, pass);
+            sTransparentProgram.uniform1i(U_USE_PYRAMID, pyramid ? 1 : 0);
+            sTransparentProgram.uniform1f(U_SPLIT_RADIUS, pyramidSplitRadius(radius, samples));
             draw(screen_triangle);
+            if (pass == 1 && pyramid)
+            {
+                for (U32 attachment = 0; attachment < 4; ++attachment)
+                {
+                    sTransparentProgram.unbindTexture(pyramid_slots[attachment],
+                                                      sNearSourceTarget.getUsage());
+                }
+            }
             if (layered_transparency)
             {
                 sTransparentProgram.unbindTexture(LLShaderMgr::DEFERRED_SHADOW0,
@@ -1087,6 +1194,20 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             sTransparentProgram.unbind();
             target.flush();
         };
+        auto gather_transparency = [&](LLRenderTarget& target, S32 plane,
+                                       S32 layer_mode, F32 radius)
+        {
+            const bool pyramid = usePyramid(radius, samples);
+            if (pyramid)
+            {
+                transparent_pass(sNearSourceTarget, plane, layer_mode, radius, 0, false);
+                for (U32 attachment = 0; attachment < 4; ++attachment)
+                {
+                    generateMips(sNearSourceTarget, attachment);
+                }
+            }
+            transparent_pass(target, plane, layer_mode, radius, 1, pyramid);
+        };
         const S32 base_layer = layered_transparency ? 1 : 0;
         gather_transparency(sTransparentFarTarget, 1, base_layer, far_radius);
         gather_transparency(sTransparentNearTarget, -1, base_layer, near_radius);
@@ -1105,7 +1226,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sFarTarget, false, LLTexUnit::TFO_BILINEAR);
     sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sNearTarget, false, LLTexUnit::TFO_BILINEAR, 0);
     sResolveProgram.bindTexture(LLShaderMgr::EXPOSURE_MAP, &sNearTarget, false, LLTexUnit::TFO_BILINEAR, 1);
-    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_BRDF_LUT, &gather_input, false, LLTexUnit::TFO_BILINEAR);
+    sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_BRDF_LUT, &sBackgroundTarget, false, LLTexUnit::TFO_BILINEAR);
     if (transparent_depth)
     {
         sResolveProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR,
@@ -1168,7 +1289,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR,
                                       sTransparentCoverageTarget.getUsage());
     }
-    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_BRDF_LUT, gather_input.getUsage());
+    sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_BRDF_LUT, sBackgroundTarget.getUsage());
     sResolveProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP, sNearTarget.getUsage());
     sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sNearTarget.getUsage());
     sResolveProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sFarTarget.getUsage());

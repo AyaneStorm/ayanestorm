@@ -81,6 +81,12 @@ void main()
 
     // Finest level with enough background, blended toward the next coarser
     // one while its valid fraction is small, so the fill has no mip blocks.
+    // Without any within reach: the pixel itself. Deep inside a large,
+    // slightly defocused region (a hair cap in front of focus) that is the
+    // best estimate; the whole-screen background average tried instead
+    // showed through the thin veil as grey patches. Thin strands do not
+    // reach this: the resolve fills them first from nearby less-blurred
+    // surfaces (opaqueBehind() in asDepthOfFieldResolveF.glsl).
     vec4 result = vec4(texture(diffuseRect, uv).rgb, 0.0);
     for (int level = 1; level <= max_level; ++level)
     {

@@ -20,9 +20,10 @@ uniform sampler2D shadowMap2;
 uniform sampler2D shadowMap3;
 uniform sampler2D shadowMap4;
 uniform sampler2D shadowMap5;
-// Near front layer (bloomMap holds the back layer) and the gather input
-// (opaque color minus extracted highlights), under free reserved names.
-// With these the resolve uses 16 samplers, the OpenGL 4.1 minimum.
+// Near front layer (bloomMap holds the back layer) and the background
+// completion (rgb, signed CoC; asDepthOfFieldBackgroundF.glsl), under free
+// reserved names. With these the resolve uses 16 samplers, the OpenGL 4.1
+// minimum.
 uniform sampler2D exposureMap;
 uniform sampler2D brdfLut;
 uniform float max_radius;
@@ -50,6 +51,162 @@ vec4 reconstructTransparent(sampler2D layer, vec2 uv, float radius)
     sum += texture(layer, clamp(uv + step_uv * vec2(-1.0,  1.0), lo, hi));
     sum += texture(layer, clamp(uv + step_uv * vec2( 1.0,  1.0), lo, hi));
     return sum * 0.0625;
+}
+
+// What a transparent stratum shows at this pixel without its near spread:
+// its own content in focus, its far blur, or, where the surface itself is a
+// defocused foreground, behind in its place. The near spreads (opaque and
+// transparent) are composited over every stratum's base afterwards: a
+// defocused foreground veil lies in front of in-focus content whichever
+// layer that content was captured in. Before, the opaque veil went under the
+// transparent strata, so in-focus alpha hair painted over the blur of the
+// alpha-masked strands in front of it (strand-shaped holes, dark strokes),
+// and an in-focus pixel kept only its raw content, cutting off transparent
+// spreads. The near gathers leave sources under 0.5-2 px of blur to raw, at
+// full resolution (spreadShare() in asDepthOfFieldTransparentF.glsl, same
+// ramp).
+//
+// Base of a pixel whose surface is a defocused foreground: its sharp share
+// (1 - spread) plus behind, under a veil of coverage veil. Behind fills only
+// what neither covers, max(spread - veil, 0): a solid surface's own veil
+// covers about spread, so behind must vanish there. The plain mix
+// self (1 - s) + behind s leaked behind through at s (1 - s) (up to 25 %):
+// hair filled in behind a nearly focused arm showed through it.
+vec4 exclusiveBase(vec4 self_color, vec4 behind, float spread, float veil)
+{
+    veil = clamp(veil, 0.0, 1.0);
+    if (veil >= spread || veil > 0.999)
+    {
+        return self_color;
+    }
+    return (self_color * (1.0 - spread) + behind * (spread - veil)) / (1.0 - veil);
+}
+
+// Weight of a fill placed under a veil, exclusive in the same way.
+float exclusiveFill(float spread, float veil)
+{
+    veil = clamp(veil, 0.0, 1.0);
+    return veil >= spread || veil > 0.999 ? 0.0 : (spread - veil) / (1.0 - veil);
+}
+
+// Without a surface of this stratum here, only its far spread remains. That
+// comes from surfaces behind the focal plane, so an opaque surface here that
+// is in focus or in front of it hides it (far_visibility: the opaque far
+// blend, as for the opaque plate). Before, a ponytail's blur spread over a
+// nearly focused arm in front of it.
+vec4 stratumBase(vec4 raw, float coverage, vec4 far_layer, float coc,
+                 float blend, vec4 behind, float veil, float far_visibility)
+{
+    if (coverage <= 0.0001)
+    {
+        return far_layer * far_visibility;
+    }
+    return coc < 0.0 ? exclusiveBase(raw, behind, blend, veil)
+                     : mix(raw, far_layer, blend);
+}
+
+vec3 over(vec4 front, vec3 back)
+{
+    return front.rgb + back * (1.0 - clamp(front.a, 0.0, 1.0));
+}
+
+// Opaque content behind a defocused opaque foreground pixel: nearby pixels
+// blurred at least ~2 px less, i.e. farther surfaces, whether background or
+// a nearer-to-focus foreground. The background completion counts only
+// non-foreground pixels: under a strand over a cheek that is itself slightly
+// in front of focus it found none nearby and fell back to the sharp strand
+// (or reached the sky past the head), which then showed through the thin
+// veil as sharp dark strokes. Rings of 8 full-resolution taps at 2 to 64 px;
+// background neighbours contribute their blurred plate, as the base does
+// there. Alpha: how much was found (at least two taps' worth gives 1).
+vec4 opaqueBehind(vec2 uv, float center_radius)
+{
+    ivec2 size = textureSize(diffuseRect, 0);
+    vec2 center = uv * vec2(size);
+    vec3 sum = vec3(0.0);
+    float weight_sum = 0.0;
+    float radius = 2.0;
+    for (int ring = 0; ring < 6; ++ring)
+    {
+        for (int k = 0; k < 8; ++k)
+        {
+            float angle = (float(k) + 0.5 * float(ring & 1)) * 0.78539816339;
+            ivec2 p = clamp(ivec2(center + vec2(cos(angle), sin(angle)) * radius),
+                            ivec2(0), size - 1);
+            float coc = texelFetch(noiseMap, p, 0).g;
+            float weight = smoothstep(0.5, 2.0, center_radius -
+                                      max(-coc, 0.0) * near_max_radius);
+            if (weight <= 0.0)
+            {
+                continue;
+            }
+            vec3 color = texelFetch(diffuseRect, p, 0).rgb;
+            if (coc > 0.0)
+            {
+                vec4 plate = texture(lightMap, (vec2(p) + 0.5) / vec2(size));
+                if (plate.a > 0.0001)
+                {
+                    color = mix(color, plate.rgb / plate.a,
+                                smoothstep(0.5, 2.0, coc * max_radius));
+                }
+            }
+            sum += color * weight;
+            weight_sum += weight;
+        }
+        if (weight_sum >= 2.0)
+        {
+            break;
+        }
+        radius *= 2.0;
+    }
+    return vec4(weight_sum > 0.0 ? sum / weight_sum : vec3(0.0),
+                clamp(weight_sum * 0.5, 0.0, 1.0));
+}
+
+// In-focus rigged content behind a defocused foreground pixel: either the
+// rigged surface itself is the foreground (the replay keeps one depth per
+// pixel, so a strand over an alpha-blended face carries the face with the
+// strand's blur), or an opaque foreground (alpha-masked lock strands) hides
+// it and its coverage was zeroed. Both are unknown, not empty: under a thin
+// veil a hole there showed the face where the neighbours show hair
+// (jagged strand-shaped strokes). Rings of 8 full-resolution taps at 2 to
+// 64 px; the nearest rings with known pixels give the estimate. Known is
+// relative, as in opaqueBehind(): a front surface (rigged if present, else
+// opaque) blurred at least ~2 px less than this pixel's, so a cheek slightly
+// in front of focus still counts behind a strand.
+vec4 riggedBehind(vec2 uv, float center_radius)
+{
+    ivec2 size = textureSize(shadowMap3, 0);
+    vec2 center = uv * vec2(size);
+    vec4 sum = vec4(0.0);
+    float weight_sum = 0.0;
+    float radius = 2.0;
+    for (int ring = 0; ring < 6; ++ring)
+    {
+        for (int k = 0; k < 8; ++k)
+        {
+            float angle = (float(k) + 0.5 * float(ring & 1)) * 0.78539816339;
+            ivec2 p = clamp(ivec2(center + vec2(cos(angle), sin(angle)) * radius),
+                            ivec2(0), size - 1);
+            vec4 layers = texelFetch(shadowMap0, p, 0);
+            float present = layers.b > 0.0001 ? 1.0 : 0.0;
+            float front_coc = present > 0.0 ? layers.r : texelFetch(noiseMap, p, 0).g;
+            float focus = smoothstep(0.5, 2.0, center_radius -
+                max(-front_coc, 0.0) * near_max_radius);
+            if (focus <= 0.0)
+            {
+                continue;
+            }
+            sum += focus * present * vec4(texelFetch(shadowMap3, p, 0).rgb, layers.b);
+            weight_sum += focus;
+        }
+        if (weight_sum >= 2.0)
+        {
+            break;
+        }
+        radius *= 2.0;
+    }
+    return weight_sum > 0.0 ? sum / weight_sum : vec4(0.0);
 }
 
 void main()
@@ -175,14 +332,26 @@ void main()
     }
     if (debug_mode == 16)
     {
-        // Highlight energy moved from the gather into aperture sprites.
-        frag_color = vec4(max(opaque_source - texture(brdfLut, uv).rgb, vec3(0.0)), 0.0);
+        // Background completion (unblurred): what the resolve puts behind a
+        // defocused foreground pixel. The sprite-energy view it replaced
+        // needed this sampler slot.
+        frag_color = vec4(texture(brdfLut, uv).rgb, 0.0);
         return;
     }
     if (debug_mode == 17 || debug_mode == 18)
     {
         vec4 layer = debug_mode == 17 ? near_back : near_front;
         frag_color = vec4(layer.a > 0.0001 ? layer.rgb / layer.a : vec3(0.0), 0.0);
+        return;
+    }
+    if (debug_mode == 20 || debug_mode == 21)
+    {
+        // Spread coverage of the rigged / world near transparent gathers
+        // (15 and 9 show their color divided by it).
+        vec4 layer = debug_mode == 20 ?
+            (has_layers != 0 ? texture(shadowMap2, uv) : vec4(0.0)) :
+            (has_transparent_depth != 0 ? texture(positionMap, uv) : vec4(0.0));
+        frag_color = vec4(vec3(layer.a), 0.0);
         return;
     }
     if (debug_mode == 19)
@@ -229,15 +398,47 @@ void main()
     vec3 resolved_far = far_color.a > 0.0001 ? far_color.rgb / far_color.a : opaque_source;
     vec3 color = mix(opaque_source, resolved_far, far_blend);
     float near_pixel_blur = max(-opaque_coc, 0.0) * near_max_radius;
-    // The near gather guarantees full ownership of source foreground pixels
-    // only once their blur reaches one pixel. Revealing synthesized background
-    // before then causes camera-dependent seams near the focal plane.
-    if (near_pixel_blur > 1.0 && far_color.a > 0.0001)
+    // A defocused foreground pixel reaches the image only through the near
+    // layers; underneath them lies what is behind it, never the pixel
+    // itself. The far target alone cannot supply that: it classifies
+    // foreground at gather resolution, where a strand 1-2 px wide blends
+    // with its surroundings and gets no plate (alpha 0), so the sharp strand
+    // stayed as the base and showed through its partial near coverage (dark
+    // flecks on defocused hair). The completion covers every foreground
+    // pixel; the far target's blurred plate replaces it where the
+    // background behind is itself defocused. Between 0.5 and 2 px of blur
+    // the pixel fades from its sharp self to that, the complement of the
+    // near gather's spreadShare() (no seams at the focal plane).
+    if (near_pixel_blur > 0.5)
     {
-        vec3 background_fill = far_color.rgb / far_color.a;
-        color = mix(color, background_fill, far_color.a);
+        vec4 completion = texture(brdfLut, uv);
+        vec3 behind = completion.rgb;
+        if (far_color.a > 0.0001)
+        {
+            float behind_blur = smoothstep(0.5, 2.0, max(completion.a, 0.0) * max_radius);
+            behind = mix(behind, far_color.rgb / far_color.a, far_color.a * behind_blur);
+        }
+        // Nearby farther surfaces first; the completion only where none
+        // lies within reach (see opaqueBehind()).
+        vec4 local_behind = opaqueBehind(uv, near_pixel_blur);
+        behind = mix(behind, local_behind.rgb, local_behind.a);
+        color = exclusiveBase(vec4(color, 1.0), vec4(behind, 1.0),
+                              smoothstep(0.5, 2.0, near_pixel_blur),
+                              near_color.a).rgb;
     }
-    color = color * (1.0 - near_color.a) + near_color.rgb;
+    // Stage views for locating artifacts: 22 opaque result before the
+    // transparent layers, 23 rigged layer as composited (premultiplied, over
+    // black), 24 final blend toward the blurred result (white) versus the
+    // sharp compositor output (black). 23 and 24 need the layered path.
+    if (debug_mode == 22)
+    {
+        frag_color = vec4(over(near_color, color), 0.0);
+        return;
+    }
+    if (has_transparent_depth == 0)
+    {
+        color = over(near_color, color);
+    }
 
     if (has_transparent_depth != 0)
     {
@@ -303,33 +504,68 @@ void main()
                 -layers.r * near_max_radius : layers.r * max_radius;
             float world_blend = smoothstep(0.5, 2.0, world_radius);
             float rigged_blend = smoothstep(0.5, 2.0, rigged_radius);
-            vec4 world_layer = layers.a > 0.0001 ?
-                mix(world_raw, layers.g < 0.0 ?
-                     transparent_near : transparent_far, world_blend) :
-                transparent_near +
-                transparent_far * (1.0 - transparent_near.a);
-            vec4 rigged_layer = layers.b > 0.0001 ?
-                mix(rigged_raw, layers.r < 0.0 ?
-                     rigged_near : rigged_far, rigged_blend) :
-                rigged_near + rigged_far * (1.0 - rigged_near.a);
-            world_layer.a = clamp(world_layer.a, 0.0, 1.0);
-            rigged_layer.a = clamp(rigged_layer.a, 0.0, 1.0);
+            bool rigged_present = layers.b > 0.0001;
+            // Rigged content hidden by a defocused opaque foreground.
+            float hidden_blend = rigged_present ? 0.0 :
+                smoothstep(0.5, 2.0, near_pixel_blur);
+            vec4 rigged_behind = (rigged_present && layers.r < 0.0 &&
+                                  rigged_blend > 0.0) || hidden_blend > 0.0 ?
+                riggedBehind(uv, rigged_present ? rigged_radius : near_pixel_blur) :
+                vec4(0.0);
+            // Every veil composited over the strata bases below.
+            float veil = 1.0 - (1.0 - clamp(near_color.a, 0.0, 1.0)) *
+                               (1.0 - clamp(transparent_near.a, 0.0, 1.0)) *
+                               (1.0 - clamp(rigged_near.a, 0.0, 1.0));
+            vec4 world_base = stratumBase(world_raw, layers.a, transparent_far,
+                                          layers.g, world_blend, vec4(0.0), veil,
+                                          far_blend);
+            vec4 rigged_base = stratumBase(rigged_raw, layers.b, rigged_far,
+                                           layers.r, rigged_blend, rigged_behind, veil,
+                                           far_blend);
+            rigged_base = mix(rigged_base, rigged_behind,
+                              exclusiveFill(hidden_blend, veil));
+            if (debug_mode == 23)
+            {
+                frag_color = vec4(over(rigged_near, rigged_base.rgb), 0.0);
+                return;
+            }
+            // Bases in depth order, then the foreground veils over all of them.
             if (!world_in_front)
             {
-                color = world_layer.rgb + color * (1.0 - world_layer.a);
-                color = rigged_layer.rgb + color * (1.0 - rigged_layer.a);
+                color = over(world_base, color);
+                color = over(rigged_base, color);
+                color = over(near_color, color);
+                color = over(transparent_near, color);
+                color = over(rigged_near, color);
             }
             else
             {
-                color = rigged_layer.rgb + color * (1.0 - rigged_layer.a);
-                color = world_layer.rgb + color * (1.0 - world_layer.a);
+                color = over(rigged_base, color);
+                color = over(world_base, color);
+                color = over(near_color, color);
+                color = over(rigged_near, color);
+                color = over(transparent_near, color);
             }
             if (transparent_surface.a > 0.0001)
             {
+                // Includes the transparent near spread: an in-focus pixel
+                // under a defocused strand's veil is no longer sharp.
                 float visible_blur = max(max(world_blend, rigged_blend),
                                          max(far_blend, near_color.a));
+                visible_blur = max(visible_blur,
+                                   max(rigged_near.a, transparent_near.a));
                 color = mix(source.rgb, color,
                             clamp(visible_blur, 0.0, 1.0));
+                if (debug_mode == 24)
+                {
+                    frag_color = vec4(vec3(clamp(visible_blur, 0.0, 1.0)), 0.0);
+                    return;
+                }
+            }
+            else if (debug_mode == 24)
+            {
+                frag_color = vec4(1.0, 1.0, 1.0, 0.0);
+                return;
             }
             frag_color = vec4(color, source.a);
             return;
@@ -344,28 +580,21 @@ void main()
             -transparent_coc * near_max_radius :
              transparent_coc * max_radius;
         float transparent_blend = smoothstep(0.5, 2.0, transparent_radius);
-        vec4 transparent_layer;
-        if (transparent_surface.a > 0.0001)
-        {
-            vec4 blurred_layer = transparent_coc < 0.0 ?
-                transparent_near : transparent_far;
-            transparent_layer = mix(raw_layer, blurred_layer,
-                                    transparent_blend);
-        }
-        else
-        {
-            // Near coverage is in front of far coverage when independently
-            // blurred transparent silhouettes overlap at this pixel.
-            transparent_layer = transparent_near +
-                transparent_far * (1.0 - transparent_near.a);
-        }
-        transparent_layer.a = clamp(transparent_layer.a, 0.0, 1.0);
-        color = transparent_layer.rgb + color * (1.0 - transparent_layer.a);
+        // Base, then the foreground veils (see stratumBase()).
+        vec4 transparent_base = stratumBase(raw_layer, transparent_surface.a,
+                                            transparent_far, transparent_coc,
+                                            transparent_blend, vec4(0.0),
+                                            1.0 - (1.0 - clamp(near_color.a, 0.0, 1.0)) *
+                                                  (1.0 - clamp(transparent_near.a, 0.0, 1.0)),
+                                            far_blend);
+        color = over(transparent_base, color);
+        color = over(near_color, color);
+        color = over(transparent_near, color);
         if (transparent_surface.a > 0.0001)
         {
             // Keep the selected alpha compositor exact when neither layer
             // needs defocus. Unoccupied pixels must still admit bokeh spread.
-            float visible_blur = max(transparent_blend,
+            float visible_blur = max(max(transparent_blend, transparent_near.a),
                                      max(far_blend, near_color.a));
             color = mix(source.rgb, color, clamp(visible_blur, 0.0, 1.0));
         }

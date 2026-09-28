@@ -553,6 +553,36 @@ def viewer_highlight_detect(image, coc_radius, x, y, isolation):
     return tuple(isolated * gate * max(color[c] - ring_sum[c] / 8, 0.0) for c in range(3))
 
 
+NEAR_BAND_COUNT = 11
+
+
+def viewer_near_band_edge(k, max_radius):
+    """Mirror of asDepthOfFieldNearF.glsl bandEdge(): 0, 1, then
+    1 + (R - 1) ((k - 1) / 10)^1.5."""
+    return 0.0 if k == 0 else 1 + (max_radius - 1) * ((k - 1) / 10) ** 1.5
+
+
+def viewer_near_band_index(distance, max_radius):
+    """Mirror of bandIndex(): the band holding a tap distance."""
+    if distance < 1:
+        return 0
+    t = min(max((distance - 1) / max(max_radius - 1, 1e-4), 0.0), 1.0) ** (2 / 3)
+    return min(1 + math.floor(10 * t), NEAR_BAND_COUNT - 1)
+
+
+def viewer_near_band_averages(r, max_radius):
+    """Mirror of buildSource(): per band [a, b], the area average of the
+    source's reach w [d < r], w = R^2 / r^2 (sources with r >= 1)."""
+    w = max_radius * max_radius / (r * r)
+    out = []
+    for k in range(NEAR_BAND_COUNT):
+        a = viewer_near_band_edge(k, max_radius)
+        b = viewer_near_band_edge(k + 1, max_radius)
+        rc = min(max(r, a), b)
+        out.append(w * (rc * rc - a * a) / (b * b - a * a))
+    return out
+
+
 def disk_samples(radius, rings=32, sectors=128):
     """Dense deterministic equal-area disk quadrature for the reference."""
     for ring in range(rings):
@@ -999,6 +1029,34 @@ class ThinLensReferenceTests(unittest.TestCase):
         moved = sum(sum(viewer_highlight_detect(image, radius, x, y, 2.))
                     for y in range(size) for x in range(size))
         self.assertAlmostEqual(moved, 100 * (9. - .12), places=6)
+
+    def test_near_bands_cover_distances_and_conserve_area(self):
+        # Area taps (asDepthOfFieldNearF.glsl): each tap distance maps to the
+        # band that holds it, and the band averages integrate back to the
+        # source's exact splat area w r^2 = R^2 (so coverage is conserved for
+        # any mix of radii; see dof_near_gather_sim.py for the noise gain).
+        for max_radius in (2., 7.5, 24., 150.):
+            edges = [viewer_near_band_edge(k, max_radius) for k in range(NEAR_BAND_COUNT + 1)]
+            self.assertEqual(edges[0], 0.)
+            self.assertAlmostEqual(edges[-1], max_radius, places=9)
+            for i in range(2000):
+                d = max_radius * i / 2000
+                k = viewer_near_band_index(d, max_radius)
+                self.assertLessEqual(edges[k] - 1e-9, d)
+                self.assertLess(d, edges[k + 1] + 1e-9)
+            for r in (1., 1.7, max_radius / 3, max_radius * .77, max_radius):
+                if r < 1:
+                    continue
+                bands = viewer_near_band_averages(r, max_radius)
+                area = math.fsum(bands[k] * (edges[k + 1] ** 2 - edges[k] ** 2)
+                                 for k in range(NEAR_BAND_COUNT))
+                self.assertAlmostEqual(area, max_radius * max_radius, places=6)
+                # Full reach inside the source's radius, none beyond it.
+                for k in range(NEAR_BAND_COUNT):
+                    if edges[k + 1] <= r:
+                        self.assertAlmostEqual(bands[k], max_radius ** 2 / r ** 2)
+                    if edges[k] >= r:
+                        self.assertEqual(bands[k], 0.)
 
     def test_viewer_blend_standard_matches_trace(self):
         red = Card(1., self.full, (1., 0., 0.), .5)

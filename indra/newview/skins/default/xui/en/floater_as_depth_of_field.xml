@@ -455,10 +455,10 @@
         <combo_box.item label="World coverage" name="world_coverage" value="13" />
         <combo_box.item label="Rigged far blur" name="rigged_far" value="14" />
         <combo_box.item label="Rigged near blur" name="rigged_near" value="15" />
-        <combo_box.item label="Light energy moved to shapes" name="highlight_energy" value="16" />
+        <combo_box.item label="Background completion" name="background_sharp" value="16" />
         <combo_box.item label="Near back layer" name="near_back" value="17" />
         <combo_box.item label="Near front layer" name="near_front" value="18" />
-        <combo_box.item label="Background completion" name="background" value="19" />
+        <combo_box.item label="Background plate (blurred)" name="background" value="19" />
       </combo_box>
       <button name="reset_dof_debug" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
               left="385" top="178" width="20" height="22" tool_tip="Reset to default.">
