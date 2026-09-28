@@ -16,6 +16,9 @@
  */
 layout(location = 0) out vec4 frag_data0;
 layout(location = 1) out vec4 frag_data1;
+// Pass 0: the cell's brightness levels (budget ranking, see keepCell()).
+layout(location = 2) out vec4 frag_data2;
+layout(location = 3) out vec4 frag_data3;
 
 // Original opaque linear-HDR color.
 uniform sampler2D diffuseRect;
@@ -23,6 +26,9 @@ uniform sampler2D diffuseRect;
 uniform sampler2D noiseMap;
 // Cell energy (rgb) and occupancy (a) with mips (pass 1 only).
 uniform sampler2D specularRect;
+// Cell brightness levels 0-3 and 4-7 with mips (pass 1 only).
+uniform sampler2D lightMap;
+uniform sampler2D bloomMap;
 uniform vec2 screen_res;
 uniform float max_radius;
 uniform float near_max_radius;
@@ -92,19 +98,66 @@ vec3 detect(ivec2 p)
     return isolated * gate * max(color - ring_sum * 0.125, vec3(0.0));
 }
 
-// Cells over the sprite budget keep their highlight in the gather. The hash
-// is stable per cell, so a static view never flickers.
-bool keepCell(ivec2 cell)
+// Budget ranking. Pass 0 flags, per cell, whether its extracted luminance
+// reaches each of 8 levels (factor 4 apart, 2^-8 to 2^6); the top mips count
+// the cells at each level. Over the budget, the brightest cells keep their
+// sprite: every cell at the first level that fits, and the band just below
+// it fills the rest by a stable per-cell hash. A random pick over all cells
+// let leaf glints (low isolation) crowd out stars, whose dropped cells went
+// back to the gather as dotted bokeh. Same function in
+// asDepthOfFieldSpriteV.glsl.
+float levelThreshold(int k)
 {
-    float occupied = texelFetch(specularRect, ivec2(0), cell_top_level).a *
-                     float(cell_grid.x * cell_grid.y);
+    return exp2(2.0 * float(k) - 8.0);
+}
+
+vec4 cellLevels(float cell_luminance, int first)
+{
+    return step(vec4(levelThreshold(first), levelThreshold(first + 1),
+                     levelThreshold(first + 2), levelThreshold(first + 3)),
+                vec4(cell_luminance));
+}
+
+float cellHash(ivec2 cell)
+{
+    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u;
+    h *= 2654435761u;
+    return float(h >> 8) / 16777216.0;
+}
+
+bool keepCell(ivec2 cell, float cell_luminance)
+{
+    float cells = float(cell_grid.x * cell_grid.y);
+    float occupied = texelFetch(specularRect, ivec2(0), cell_top_level).a * cells;
     if (occupied <= sprite_budget)
     {
         return true;
     }
-    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u;
-    h *= 2654435761u;
-    return float(h >> 8) / 16777216.0 < sprite_budget / occupied;
+    vec4 low = texelFetch(lightMap, ivec2(0), cell_top_level) * cells;
+    vec4 high = texelFetch(bloomMap, ivec2(0), cell_top_level) * cells;
+    float counts[8] = float[8](low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w);
+    float above = occupied;   // cells at the level below (all occupied at first)
+    float floor_level = 0.0;  // its threshold
+    for (int k = 0; k < 8; ++k)
+    {
+        float threshold = levelThreshold(k);
+        if (counts[k] <= sprite_budget)
+        {
+            if (cell_luminance >= threshold)
+            {
+                return true;
+            }
+            if (cell_luminance < floor_level)
+            {
+                return false;
+            }
+            return cellHash(cell) < (sprite_budget - counts[k]) / max(above - counts[k], 1.0);
+        }
+        above = counts[k];
+        floor_level = threshold;
+    }
+    // Even the top level exceeds the budget: a stable share of it.
+    return cell_luminance >= floor_level && cellHash(cell) < sprite_budget / max(above, 1.0);
 }
 
 void main()
@@ -143,16 +196,23 @@ void main()
         frag_data1 = occupied
             ? vec4(center_sum / weight / screen_res, coc_sum / weight, weight)
             : vec4(0.0);
+        // Counts only: keepCell() reads the stored energy in both pass 1 and
+        // the sprites, so they always agree on which cells are kept.
+        frag_data2 = occupied ? cellLevels(luminance(energy), 0) : vec4(0.0);
+        frag_data3 = occupied ? cellLevels(luminance(energy), 4) : vec4(0.0);
         return;
     }
 
     ivec2 p = ivec2(gl_FragCoord.xy);
     ivec2 cell = p / CELL_SIZE;
     vec3 color = texelFetch(diffuseRect, p, 0).rgb;
-    if (texelFetch(specularRect, cell, 0).a > 0.5 && keepCell(cell))
+    vec4 cell_energy = texelFetch(specularRect, cell, 0);
+    if (cell_energy.a > 0.5 && keepCell(cell, luminance(cell_energy.rgb)))
     {
         color -= detect(p);
     }
     frag_data0 = vec4(color, 1.0);
     frag_data1 = vec4(0.0);
+    frag_data2 = vec4(0.0);
+    frag_data3 = vec4(0.0);
 }

@@ -11,6 +11,9 @@
 uniform sampler2D specularRect;
 // Cell centroid uv (xy), signed CoC (z).
 uniform sampler2D emissiveRect;
+// Cell brightness levels 0-3 and 4-7 with mips (budget ranking).
+uniform sampler2D lightMap;
+uniform sampler2D bloomMap;
 uniform vec2 screen_res;
 uniform vec2 target_res;
 uniform float max_radius;
@@ -70,18 +73,52 @@ float catEyeFraction(float d)
     return (2.0 * acos(h) - 2.0 * h * sqrt(1.0 - h * h)) / 3.14159265358979323846;
 }
 
-// Same rule as asDepthOfFieldHighlightF.glsl keepCell().
-bool keepCell(ivec2 cell)
+// Same rule as asDepthOfFieldHighlightF.glsl keepCell() (brightest cells
+// first over the budget); keep the two copies identical.
+float levelThreshold(int k)
 {
-    float occupied = texelFetch(specularRect, ivec2(0), cell_top_level).a *
-                     float(cell_grid.x * cell_grid.y);
+    return exp2(2.0 * float(k) - 8.0);
+}
+
+float cellHash(ivec2 cell)
+{
+    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u;
+    h *= 2654435761u;
+    return float(h >> 8) / 16777216.0;
+}
+
+bool keepCell(ivec2 cell, float cell_luminance)
+{
+    float cells = float(cell_grid.x * cell_grid.y);
+    float occupied = texelFetch(specularRect, ivec2(0), cell_top_level).a * cells;
     if (occupied <= sprite_budget)
     {
         return true;
     }
-    uint h = uint(cell.x) * 73856093u ^ uint(cell.y) * 19349663u;
-    h *= 2654435761u;
-    return float(h >> 8) / 16777216.0 < sprite_budget / occupied;
+    vec4 low = texelFetch(lightMap, ivec2(0), cell_top_level) * cells;
+    vec4 high = texelFetch(bloomMap, ivec2(0), cell_top_level) * cells;
+    float counts[8] = float[8](low.x, low.y, low.z, low.w, high.x, high.y, high.z, high.w);
+    float above = occupied;
+    float floor_level = 0.0;
+    for (int k = 0; k < 8; ++k)
+    {
+        float threshold = levelThreshold(k);
+        if (counts[k] <= sprite_budget)
+        {
+            if (cell_luminance >= threshold)
+            {
+                return true;
+            }
+            if (cell_luminance < floor_level)
+            {
+                return false;
+            }
+            return cellHash(cell) < (sprite_budget - counts[k]) / max(above - counts[k], 1.0);
+        }
+        above = counts[k];
+        floor_level = threshold;
+    }
+    return cell_luminance >= floor_level && cellHash(cell) < sprite_budget / max(above, 1.0);
 }
 
 void main()
@@ -102,7 +139,8 @@ void main()
     vary_barrel = vec2(0.0);
     vary_delta = 0.0;
     bool this_plane = plane > 0 ? data.z > 0.0 : data.z < 0.0;
-    if (energy.a < 0.5 || !this_plane || !keepCell(cell))
+    if (energy.a < 0.5 || !this_plane ||
+        !keepCell(cell, dot(energy.rgb, vec3(0.2126, 0.7152, 0.0722))))
     {
         gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
         return;

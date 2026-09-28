@@ -2137,6 +2137,27 @@ gathers and the sprite shaders (no include mechanism).
   no pixel over 50 %. Cost: 12 more fetches per defocused pixel, in both
   extraction passes.
 
+- **Still dotted after that fix (user):** all dots at minimum isolation,
+  all clean at maximum. Confirmed cause: the sprite budget. At minimum
+  isolation leaf glints make tens of thousands of candidate cells; over the
+  budget (4096) keepCell() kept a random share (about 1 in 7), and dropped
+  star cells went back to the gather. Minimum isolation with 32768 sprites
+  (more than the cells of a 1080p view) gave clean shapes.
+- **Fix: brightest cells first.** Pass 0 also writes, per cell, whether its
+  extracted luminance reaches each of 8 levels (2^-8 to 2^6, factor 4) into
+  two more cell attachments, with mips; their top level counts the cells at
+  each level. Over the budget, every cell at the first level that fits is
+  kept, and the band just below fills the rest by the stable per-cell hash.
+  Pass 1 and the sprite vertex shader share the rule (two identical copies)
+  and read the same stored energy, so removed and redrawn energy still
+  match. Test: 30000 glint cells plus 300 star cells, budget 4096: every
+  star kept, 90-103 % of the budget used.
+- Runtime (user): bokeh shapes clean everywhere. Also confirmed: spherical
+  aberration, astigmatism, the maximum blur slider, field curvature (seen on
+  a zoomed-out view; in a centred portrait the corners are background
+  already at the blur cap, so a positive shift changes nothing). Ranges
+  kept at -3..3 % of f.
+
 ### Limits
 
 - Tiled snapshots (UI shown, or larger than the maximum texture size)

@@ -49,8 +49,10 @@ namespace
     // Foreground source pyramid for area taps (asDepthOfFieldNearF.glsl):
     // color, 11 reach bands and the front-layer weight in 4 attachments.
     LLRenderTarget sNearSourceTarget;
-    // Highlight cells (energy + occupancy with mips; centroid, CoC) and the
-    // gather input with their energy removed. Allocated only with sprites on.
+    // Highlight cells (energy + occupancy with mips; centroid, CoC;
+    // brightness levels 0-3 and 4-7 with mips, for the budget ranking) and
+    // the gather input with their energy removed. Allocated only with
+    // sprites on.
     LLRenderTarget sCellTarget;
     LLRenderTarget sGatherInputTarget;
     // Background completion: weighted push pyramid and its pulled result.
@@ -349,7 +351,7 @@ namespace
     {
         const U32 cells_x = (width + HIGHLIGHT_CELL_SIZE - 1) / HIGHLIGHT_CELL_SIZE;
         const U32 cells_y = (height + HIGHLIGHT_CELL_SIZE - 1) / HIGHLIGHT_CELL_SIZE;
-        if (sCellTarget.isComplete() && sCellTarget.getNumTextures() == 2 &&
+        if (sCellTarget.isComplete() && sCellTarget.getNumTextures() == 4 &&
             sCellTarget.getWidth() == cells_x && sCellTarget.getHeight() == cells_y &&
             sGatherInputTarget.isComplete() &&
             sGatherInputTarget.getWidth() == width && sGatherInputTarget.getHeight() == height)
@@ -359,6 +361,8 @@ namespace
         releaseSpriteResources();
         if (!sCellTarget.allocate(cells_x, cells_y, GL_RGBA16F, false,
                                   LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_MANUAL) ||
+            !sCellTarget.addColorAttachment(GL_RGBA16F) ||
+            !sCellTarget.addColorAttachment(GL_RGBA16F) ||
             !sCellTarget.addColorAttachment(GL_RGBA16F) ||
             !sGatherInputTarget.allocate(width, height, GL_RGBA16F))
         {
@@ -1038,6 +1042,10 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             {
                 sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sCellTarget,
                                               false, LLTexUnit::TFO_TRILINEAR);
+                sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sCellTarget,
+                                              false, LLTexUnit::TFO_TRILINEAR, 2);
+                sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sCellTarget,
+                                              false, LLTexUnit::TFO_TRILINEAR, 3);
             }
             sHighlightProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES,
                                         (F32)sWidth, (F32)sHeight);
@@ -1051,6 +1059,10 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             draw(screen_triangle);
             if (pass == 1)
             {
+                sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM,
+                                                sCellTarget.getUsage());
+                sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT,
+                                                sCellTarget.getUsage());
                 sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR,
                                                 sCellTarget.getUsage());
             }
@@ -1060,9 +1072,11 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
             target.flush();
         };
         highlight_pass(sCellTarget, 0);
-        // The top level's occupancy average gives the sprite count for the
-        // budget rule.
+        // The top levels' averages give the sprite count and the counts per
+        // brightness level for the budget rule.
         generateMips(sCellTarget, 0);
+        generateMips(sCellTarget, 2);
+        generateMips(sCellTarget, 3);
         highlight_pass(sGatherInputTarget, 1);
     }
     LLRenderTarget& gather_input = sprites ? sGatherInputTarget : opaque_color;
@@ -1127,6 +1141,10 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
                                    false, LLTexUnit::TFO_TRILINEAR, 0);
         sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sCellTarget,
                                    false, LLTexUnit::TFO_POINT, 1);
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sCellTarget,
+                                   false, LLTexUnit::TFO_TRILINEAR, 2);
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sCellTarget,
+                                   false, LLTexUnit::TFO_TRILINEAR, 3);
         sSpriteProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)sWidth, (F32)sHeight);
         sSpriteProgram.uniform2f(U_TARGET_RES, target_width, target_height);
         sSpriteProgram.uniform1f(U_MAX_RADIUS, far_radius);
@@ -1145,6 +1163,8 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         // VAO; positions come from gl_VertexID/gl_InstanceID.
         screen_triangle.setBuffer();
         glDrawArraysInstanced(GL_TRIANGLES, 0, 3, 2 * cells_x * cells_y);
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sCellTarget.getUsage());
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sCellTarget.getUsage());
         sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sCellTarget.getUsage());
         sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sCellTarget.getUsage());
         sSpriteProgram.unbind();

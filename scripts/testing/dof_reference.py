@@ -677,6 +677,43 @@ def viewer_highlight_detect(image, coc_radius, x, y, isolation):
     return tuple(isolated * gate * max(color[c] - ring_sum[c] / 8, 0.0) for c in range(3))
 
 
+def viewer_highlight_level_threshold(k):
+    """Mirror of levelThreshold(): 8 cell brightness levels, 2^-8 .. 2^6."""
+    return 2.0 ** (2 * k - 8)
+
+
+def viewer_highlight_cell_hash(cell):
+    """Mirror of cellHash() (stable per cell, 32-bit unsigned arithmetic)."""
+    h = ((cell[0] * 73856093) ^ (cell[1] * 19349663)) & 0xffffffff
+    h = (h * 2654435761) & 0xffffffff
+    return (h >> 8) / 16777216.0
+
+
+def viewer_highlight_keep_cells(cell_luminance, budget):
+    """Mirror of keepCell() over a dict {cell: luminance} of occupied cells:
+    the brightest cells first once they exceed the budget."""
+    occupied = len(cell_luminance)
+    counts = [sum(1 for v in cell_luminance.values()
+                  if v >= viewer_highlight_level_threshold(k)) for k in range(8)]
+
+    def keep(cell, value):
+        if occupied <= budget:
+            return True
+        above, floor_level = float(occupied), 0.0
+        for k in range(8):
+            threshold = viewer_highlight_level_threshold(k)
+            if counts[k] <= budget:
+                if value >= threshold:
+                    return True
+                if value < floor_level:
+                    return False
+                return viewer_highlight_cell_hash(cell) < (budget - counts[k]) / max(above - counts[k], 1)
+            above, floor_level = float(counts[k]), threshold
+        return value >= floor_level and viewer_highlight_cell_hash(cell) < budget / max(above, 1)
+
+    return {cell for cell, value in cell_luminance.items() if keep(cell, value)}
+
+
 NEAR_BAND_COUNT = 11
 
 
@@ -1201,6 +1238,28 @@ class ThinLensReferenceTests(unittest.TestCase):
                         if excess > .01:
                             self.assertLess(left, .5 * excess, (peak, sigma, isolation, x, y))
                 self.assertLess(residual, .015 * star, (peak, sigma, isolation))
+
+    def test_highlight_budget_keeps_brightest_cells(self):
+        # Low isolation: ~30000 leaf-glint cells and 300 star cells for a
+        # 4096 budget. The stars all keep their sprites (a random pick kept
+        # about 1 in 7 and sent the rest back to the gather as dotted bokeh),
+        # and the total stays within the budget while nearly filling it.
+        import random
+        rng = random.Random(7)
+        cells = {}
+        for i in range(30000):
+            cells[(i % 240, i // 240)] = 10 ** rng.uniform(math.log10(.005), math.log10(.3))
+        stars = [(rng.randrange(240), 125 + rng.randrange(10)) for _ in range(300)]
+        for cell in stars:
+            cells[cell] = 10 ** rng.uniform(math.log10(2.), math.log10(30.))
+        kept = viewer_highlight_keep_cells(cells, 4096)
+        for cell in stars:
+            self.assertIn(cell, kept)
+        self.assertLessEqual(len(kept), 4096 * 1.03)
+        self.assertGreater(len(kept), 4096 * .9)
+        # Under the budget every occupied cell is kept.
+        small = dict(list(cells.items())[:1000])
+        self.assertEqual(viewer_highlight_keep_cells(small, 4096), set(small))
 
     def test_near_bands_cover_distances_and_conserve_area(self):
         # Area taps (asDepthOfFieldNearF.glsl): each tap distance maps to the
