@@ -4,7 +4,7 @@
      border="false" follows="left|top|right|bottom">
     <accordion
      follows="left|top|right|bottom"
-     height="385"
+     height="400"
      layout="topleft"
      left="3"
      top="0"
