@@ -31,6 +31,9 @@ uniform float near_max_radius;
 uniform int debug_mode;
 uniform int has_transparent_depth;
 uniform int has_layers;
+// 1 when asDepthOfFieldPostfilterF.glsl already smoothed every gathered
+// layer: the fixed 3x3 tents below are then skipped.
+uniform int postfiltered;
 
 in vec2 vary_fragcoord;
 
@@ -110,21 +113,42 @@ vec3 over(vec4 front, vec3 back)
     return front.rgb + back * (1.0 - clamp(front.a, 0.0, 1.0));
 }
 
+// The behind fills below read rings at 2, 4 ... 64 px. Each ring weighs a
+// quarter of the previous one, so the nearest known content dominates but
+// the fill changes continuously between pixels. They used to stop at the
+// first ring with enough taps: neighbouring pixels stopping at different
+// rings copied different distant content, which drew hard-edged patches of
+// hair texture once blurs grew past the 10 px default (radius x4).
+float ringWeight(int ring)
+{
+    return exp2(-2.0 * float(ring));
+}
+
+// Stop once the rings left could change the fill by under 8 %: their total
+// weight is at most 8 taps x 4^-j summed over the remaining j.
+bool ringsDone(int ring, float weight_sum)
+{
+    float remaining = 8.0 * exp2(-2.0 * float(ring + 1)) * (4.0 / 3.0);
+    return weight_sum > 0.0 && remaining <= 0.08 * weight_sum;
+}
+
 // Opaque content behind a defocused opaque foreground pixel: nearby pixels
 // blurred at least ~2 px less, i.e. farther surfaces, whether background or
 // a nearer-to-focus foreground. The background completion counts only
 // non-foreground pixels: under a strand over a cheek that is itself slightly
 // in front of focus it found none nearby and fell back to the sharp strand
 // (or reached the sky past the head), which then showed through the thin
-// veil as sharp dark strokes. Rings of 8 full-resolution taps at 2 to 64 px;
-// background neighbours contribute their blurred plate, as the base does
-// there. Alpha: how much was found (at least two taps' worth gives 1).
+// veil as sharp dark strokes. Rings of 8 full-resolution taps at 2 to 64 px
+// (see ringWeight()); background neighbours contribute their blurred plate,
+// as the base does there. Alpha: how much was found (at least two taps'
+// worth gives 1).
 vec4 opaqueBehind(vec2 uv, float center_radius)
 {
     ivec2 size = textureSize(diffuseRect, 0);
     vec2 center = uv * vec2(size);
     vec3 sum = vec3(0.0);
     float weight_sum = 0.0;
+    float found = 0.0;
     float radius = 2.0;
     for (int ring = 0; ring < 6; ++ring)
     {
@@ -150,17 +174,18 @@ vec4 opaqueBehind(vec2 uv, float center_radius)
                                 smoothstep(0.5, 2.0, coc * max_radius));
                 }
             }
-            sum += color * weight;
-            weight_sum += weight;
+            sum += color * weight * ringWeight(ring);
+            weight_sum += weight * ringWeight(ring);
+            found += weight;
         }
-        if (weight_sum >= 2.0)
+        if (ringsDone(ring, weight_sum))
         {
             break;
         }
         radius *= 2.0;
     }
     return vec4(weight_sum > 0.0 ? sum / weight_sum : vec3(0.0),
-                clamp(weight_sum * 0.5, 0.0, 1.0));
+                clamp(found * 0.5, 0.0, 1.0));
 }
 
 // In-focus rigged content behind a defocused foreground pixel: either the
@@ -170,7 +195,7 @@ vec4 opaqueBehind(vec2 uv, float center_radius)
 // it and its coverage was zeroed. Both are unknown, not empty: under a thin
 // veil a hole there showed the face where the neighbours show hair
 // (jagged strand-shaped strokes). Rings of 8 full-resolution taps at 2 to
-// 64 px; the nearest rings with known pixels give the estimate. Known is
+// 64 px (see ringWeight()); the nearest known pixels dominate. Known is
 // relative, as in opaqueBehind(): a front surface (rigged if present, else
 // opaque) blurred at least ~2 px less than this pixel's, so a cheek slightly
 // in front of focus still counts behind a strand.
@@ -197,10 +222,11 @@ vec4 riggedBehind(vec2 uv, float center_radius)
             {
                 continue;
             }
-            sum += focus * present * vec4(texelFetch(shadowMap3, p, 0).rgb, layers.b);
-            weight_sum += focus;
+            float weight = focus * ringWeight(ring);
+            sum += weight * present * vec4(texelFetch(shadowMap3, p, 0).rgb, layers.b);
+            weight_sum += weight;
         }
-        if (weight_sum >= 2.0)
+        if (ringsDone(ring, weight_sum))
         {
             break;
         }
@@ -225,7 +251,7 @@ void main()
 
     // Near data is premultiplied. Reconstruct neighboring independently phased
     // gathers to turn sparse coverage into a stable fractional silhouette.
-    if (near_max_radius > 6.0)
+    if (postfiltered == 0 && near_max_radius > 6.0)
     {
         float amount = smoothstep(6.0, 18.0, near_max_radius);
         near_back = mix(near_back,
@@ -330,6 +356,16 @@ void main()
         }
         return;
     }
+    if (debug_mode == 25)
+    {
+        // Radius spread sqrt(var) / R written by the postfilter into the far
+        // and near layers in this mode (grey: mixed blur radii); near where
+        // covered, far elsewhere.
+        vec3 spread = near_color.a > 0.0001 ? near_color.rgb / near_color.a :
+                      (far_color.a > 0.0001 ? far_color.rgb / far_color.a : vec3(0.0));
+        frag_color = vec4(spread, 0.0);
+        return;
+    }
     if (debug_mode == 16)
     {
         // Background completion (unblurred): what the resolve puts behind a
@@ -374,7 +410,7 @@ void main()
     // reduced-resolution pixels use decorrelated aperture phases, so a small
     // tent reconstruction removes coherent grids without softening low-radius
     // detail or changing the foreground layer.
-    if (opaque_coc > 0.0 && pixel_blur > 6.0)
+    if (postfiltered == 0 && opaque_coc > 0.0 && pixel_blur > 6.0)
     {
         vec2 texel = 1.0 / vec2(textureSize(lightMap, 0));
         vec2 step_uv = texel * mix(1.0, 1.5,
@@ -446,14 +482,14 @@ void main()
         vec4 transparent_near = texture(positionMap, uv);
         // Reconstruct sparse aperture samples in premultiplied space so
         // foreground hair and transparent light discs retain smooth coverage.
-        if (max_radius > 6.0)
+        if (postfiltered == 0 && max_radius > 6.0)
         {
             transparent_far = mix(transparent_far,
                                   reconstructTransparent(emissiveRect, uv,
                                                          max_radius),
                                   smoothstep(6.0, 18.0, max_radius));
         }
-        if (near_max_radius > 6.0)
+        if (postfiltered == 0 && near_max_radius > 6.0)
         {
             transparent_near = mix(transparent_near,
                                    reconstructTransparent(positionMap, uv,
@@ -484,14 +520,14 @@ void main()
             }
             vec4 rigged_far = texture(shadowMap1, uv);
             vec4 rigged_near = texture(shadowMap2, uv);
-            if (max_radius > 6.0)
+            if (postfiltered == 0 && max_radius > 6.0)
             {
                 rigged_far = mix(rigged_far,
                                  reconstructTransparent(shadowMap1, uv,
                                                         max_radius),
                                  smoothstep(6.0, 18.0, max_radius));
             }
-            if (near_max_radius > 6.0)
+            if (postfiltered == 0 && near_max_radius > 6.0)
             {
                 rigged_near = mix(rigged_near,
                                   reconstructTransparent(shadowMap2, uv,

@@ -37,8 +37,12 @@ namespace
     LLGLSLShader sHighlightProgram;
     LLGLSLShader sSpriteProgram;
     LLGLSLShader sBackgroundProgram;
+    LLGLSLShader sPostfilterProgram;
 
     LLRenderTarget sCoCTarget;
+    // Gather targets carry, next to their color, the source blur radius
+    // moments the postfilter reads (far: attachment 1; near: 2; transparent
+    // gathers: 1).
     LLRenderTarget sFarTarget;
     // Two premultiplied foreground layers: 0 back, 1 front (plus near sprites).
     LLRenderTarget sNearTarget;
@@ -52,6 +56,8 @@ namespace
     // Background completion: weighted push pyramid and its pulled result.
     LLRenderTarget sBackgroundPushTarget;
     LLRenderTarget sBackgroundTarget;
+    // Postfilter scratch: one layer filtered here, then blitted back.
+    LLRenderTarget sPostfilterTarget;
     LLRenderTarget sTransparentFarTarget;
     LLRenderTarget sTransparentNearTarget;
     LLRenderTarget sRiggedFarTarget;
@@ -109,6 +115,10 @@ namespace
     const LLStaticHashedString U_USE_PYRAMID("use_pyramid");
     const LLStaticHashedString U_GATHER_PASS("gather_pass");
     const LLStaticHashedString U_SPLIT_RADIUS("split_radius");
+    const LLStaticHashedString U_PLANE_KIND("plane_kind");
+    const LLStaticHashedString U_MOMENT_CHANNEL("moment_channel");
+    const LLStaticHashedString U_DEBUG_VIEW("debug_view");
+    const LLStaticHashedString U_POSTFILTERED("postfiltered");
 
     // Area taps (asDepthOfFieldNearF.glsl): sources blurred less than this
     // stay point taps, which are dense enough there (tap spacing at distance
@@ -144,6 +154,7 @@ namespace
         releaseSpriteResources();
         sBackgroundPushTarget.release();
         sBackgroundTarget.release();
+        sPostfilterTarget.release();
         sTransparentFarTarget.release();
         sTransparentNearTarget.release();
         sRiggedFarTarget.release();
@@ -162,12 +173,15 @@ namespace
         const U32 tile_width = (width + 15U) / 16U;
         const U32 tile_height = (height + 15U) / 16U;
         if (sCoCTarget.isComplete() && sCoCTarget.getNumTextures() == 2 &&
-            sFarTarget.isComplete() && sNearTarget.isComplete() &&
-            sNearTarget.getNumTextures() == 2 &&
+            sFarTarget.isComplete() && sFarTarget.getNumTextures() == 2 &&
+            sNearTarget.isComplete() && sNearTarget.getNumTextures() == 3 &&
             sNearSourceTarget.isComplete() && sNearSourceTarget.getNumTextures() == 4 &&
             sBackgroundPushTarget.isComplete() && sBackgroundTarget.isComplete() &&
-            sTransparentFarTarget.isComplete() && sTransparentNearTarget.isComplete() &&
-            sRiggedFarTarget.isComplete() && sRiggedNearTarget.isComplete() &&
+            sPostfilterTarget.isComplete() &&
+            sTransparentFarTarget.isComplete() && sTransparentFarTarget.getNumTextures() == 2 &&
+            sTransparentNearTarget.isComplete() && sTransparentNearTarget.getNumTextures() == 2 &&
+            sRiggedFarTarget.isComplete() && sRiggedFarTarget.getNumTextures() == 2 &&
+            sRiggedNearTarget.isComplete() && sRiggedNearTarget.getNumTextures() == 2 &&
             sOccupancyTarget.isComplete() &&
             sOccupancyTarget.getWidth() == tile_width &&
             sOccupancyTarget.getHeight() == tile_height &&
@@ -181,7 +195,9 @@ namespace
         if (!sCoCTarget.allocate(width, height, GL_RGBA16F) ||
             !sCoCTarget.addColorAttachment(GL_RGBA16F) ||
             !sFarTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sFarTarget.addColorAttachment(GL_RGBA16F) ||
             !sNearTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sNearTarget.addColorAttachment(GL_RGBA16F) ||
             !sNearTarget.addColorAttachment(GL_RGBA16F) ||
             !sNearSourceTarget.allocate(blur_width, blur_height, GL_RGBA16F,
                                         false, LLTexUnit::TT_TEXTURE,
@@ -194,10 +210,15 @@ namespace
                                             LLTexUnit::TMG_MANUAL) ||
             !sBackgroundPushTarget.addColorAttachment(GL_RGBA16F) ||
             !sBackgroundTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sPostfilterTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
             !sTransparentFarTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sTransparentFarTarget.addColorAttachment(GL_RGBA16F) ||
             !sTransparentNearTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sTransparentNearTarget.addColorAttachment(GL_RGBA16F) ||
             !sRiggedFarTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sRiggedFarTarget.addColorAttachment(GL_RGBA16F) ||
             !sRiggedNearTarget.allocate(blur_width, blur_height, GL_RGBA16F) ||
+            !sRiggedNearTarget.addColorAttachment(GL_RGBA16F) ||
             !sOccupancyTarget.allocate(tile_width, tile_height, GL_RGBA16F,
                                        false, LLTexUnit::TT_TEXTURE,
                                        LLTexUnit::TMG_AUTO))
@@ -262,7 +283,7 @@ namespace
                sNearProgram.isComplete() && sTransparentProgram.isComplete() &&
                sOccupancyProgram.isComplete() && sResolveProgram.isComplete() &&
                sHighlightProgram.isComplete() && sSpriteProgram.isComplete() &&
-               sBackgroundProgram.isComplete();
+               sBackgroundProgram.isComplete() && sPostfilterProgram.isComplete();
     }
 
     // Top mip level index of a target (its 1x1 level).
@@ -300,7 +321,7 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldApertureRoundness", "ASDepthOfFieldApertureRotation",
                 "ASDepthOfFieldAnamorphicRatio", "ASDepthOfFieldHighlightBoost",
                 "ASDepthOfFieldHighlightSprites", "ASDepthOfFieldHighlightIsolation",
-                "ASDepthOfFieldHighlightMaxSprites",
+                "ASDepthOfFieldHighlightMaxSprites", "ASDepthOfFieldPostfilter",
                 "ASDepthOfFieldDebug", "ASDepthOfFieldApertureSamples",
                 "ASDepthOfFieldApertureMaxSamples", "ASDepthOfFieldApertureSnapshotSamples",
                 "ASDepthOfFieldApertureSnapshotMaxSeconds",
@@ -353,6 +374,7 @@ void ASDepthOfField::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sHighlightProgram);
     shaders.push_back(&sSpriteProgram);
     shaders.push_back(&sBackgroundProgram);
+    shaders.push_back(&sPostfilterProgram);
     // Aperture-sampled renderer and autofocus share this module's
     // registration hooks.
     ASDoFRenderer::registerShaders(shaders);
@@ -375,7 +397,8 @@ bool ASDepthOfField::createShaders(S32 shader_level)
         { &sOccupancyProgram, "AyaneStorm Depth of Field Layer Occupancy Shader", "deferred/asDepthOfFieldOccupancyF.glsl" },
         { &sResolveProgram, "AyaneStorm Depth of Field Resolve Shader", "deferred/asDepthOfFieldResolveF.glsl" },
         { &sHighlightProgram, "AyaneStorm Depth of Field Highlight Extraction Shader", "deferred/asDepthOfFieldHighlightF.glsl" },
-        { &sBackgroundProgram, "AyaneStorm Depth of Field Background Completion Shader", "deferred/asDepthOfFieldBackgroundF.glsl" }
+        { &sBackgroundProgram, "AyaneStorm Depth of Field Background Completion Shader", "deferred/asDepthOfFieldBackgroundF.glsl" },
+        { &sPostfilterProgram, "AyaneStorm Depth of Field Postfilter Shader", "deferred/asDepthOfFieldPostfilterF.glsl" }
     };
 
     bool success = true;
@@ -417,6 +440,7 @@ void ASDepthOfField::unloadShaders()
     sHighlightProgram.unload();
     sSpriteProgram.unload();
     sBackgroundProgram.unload();
+    sPostfilterProgram.unload();
     ASDoFRenderer::unloadShaders();
     ASDoFAutofocus::unloadShaders();
     releaseResources();
@@ -787,7 +811,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     const F32 rotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
     const F32 anamorphic = llclamp(gSavedSettings.getF32("ASDepthOfFieldAnamorphicRatio"), 0.1f, 2.f);
     const F32 highlight_boost = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightBoost"), 0.f, 2.f);
-    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 24);
+    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 25);
     const F32 isolation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightIsolation"), 1.2f, 8.f);
     const F32 sprite_budget = (F32)llclamp(gSavedSettings.getS32("ASDepthOfFieldHighlightMaxSprites"), 256, 32768);
 
@@ -1021,6 +1045,51 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     };
 
+    // Sampling-noise postfilter (asDepthOfFieldPostfilterF.glsl): one
+    // gathered layer is filtered into sPostfilterTarget, then blitted back
+    // into its own attachment. Runs before the sprites, so the analytic
+    // aperture shapes stay crisp. Debug 25 always runs it (its view).
+    const bool postfilter = gSavedSettings.getBOOL("ASDepthOfFieldPostfilter") ||
+                            debug_mode == 25;
+    auto postfilter_layer = [&](LLRenderTarget& target, U32 color_attachment,
+                                U32 moment_attachment, S32 moment_channel,
+                                S32 plane_kind, F32 radius)
+    {
+        LLGLDisable scissor(GL_SCISSOR_TEST);
+        sPostfilterTarget.bindTarget();
+        const U32 filter_fbo = LLRenderTarget::sCurFBO;
+        sPostfilterProgram.bind();
+        sPostfilterProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &target, false,
+                                       LLTexUnit::TFO_POINT, color_attachment);
+        sPostfilterProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &target, false,
+                                       LLTexUnit::TFO_POINT, moment_attachment);
+        sPostfilterProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)sWidth, (F32)sHeight);
+        sPostfilterProgram.uniform2f(U_TARGET_RES, (F32)sBlurWidth, (F32)sBlurHeight);
+        sPostfilterProgram.uniform1i(U_SAMPLE_COUNT, samples);
+        sPostfilterProgram.uniform1f(U_MAX_RADIUS, radius);
+        sPostfilterProgram.uniform1i(U_PLANE_KIND, plane_kind);
+        sPostfilterProgram.uniform1i(U_MOMENT_CHANNEL, moment_channel);
+        sPostfilterProgram.uniform1i(U_DEBUG_VIEW, debug_mode == 25 ? 1 : 0);
+        draw(screen_triangle);
+        sPostfilterProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, target.getUsage());
+        sPostfilterProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, target.getUsage());
+        sPostfilterProgram.unbind();
+        sPostfilterTarget.flush();
+
+        // Framebuffer blits are part of the OpenGL 4.1 baseline; the draw
+        // buffer selects the one attachment to replace.
+        target.bindTarget();
+        const U32 target_fbo = LLRenderTarget::sCurFBO;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, filter_fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, target_fbo);
+        glDrawBuffer(GL_COLOR_ATTACHMENT0 + color_attachment);
+        glBlitFramebuffer(0, 0, sBlurWidth, sBlurHeight, 0, 0, sBlurWidth, sBlurHeight,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        glBindFramebuffer(GL_FRAMEBUFFER, target_fbo);
+        target.flush();
+    };
+
     sFarTarget.bindTarget();
     sFarProgram.bind();
     sFarProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gather_input, false, LLTexUnit::TFO_BILINEAR);
@@ -1033,11 +1102,17 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sFarProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
     sFarProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather_input.getUsage());
     sFarProgram.unbind();
+    sFarTarget.flush();
+    if (postfilter)
+    {
+        postfilter_layer(sFarTarget, 0, 1, 0, 0, far_radius);
+    }
     if (sprites)
     {
+        sFarTarget.bindTarget();
         draw_sprites(1, (F32)sBlurWidth, (F32)sBlurHeight);
+        sFarTarget.flush();
     }
-    sFarTarget.flush();
 
     // Foreground source pyramid, so near taps integrate an area instead of
     // a point (fine pattern on defocused hair), for sources above the split
@@ -1097,11 +1172,19 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sCoCTarget.getUsage());
     sNearProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather_input.getUsage());
     sNearProgram.unbind();
+    sNearTarget.flush();
+    if (postfilter)
+    {
+        // Back layer: moments .xy; front layer: .zw.
+        postfilter_layer(sNearTarget, 0, 2, 0, 1, near_radius);
+        postfilter_layer(sNearTarget, 1, 2, 1, 1, near_radius);
+    }
     if (sprites)
     {
+        sNearTarget.bindTarget();
         draw_sprites(-1, (F32)sBlurWidth, (F32)sBlurHeight);
+        sNearTarget.flush();
     }
-    sNearTarget.flush();
 
     if (transparent_depth)
     {
@@ -1207,6 +1290,10 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
                 }
             }
             transparent_pass(target, plane, layer_mode, radius, 1, pyramid);
+            if (postfilter)
+            {
+                postfilter_layer(target, 0, 1, 0, 1, radius);
+            }
         };
         const S32 base_layer = layered_transparency ? 1 : 0;
         gather_transparency(sTransparentFarTarget, 1, base_layer, far_radius);
@@ -1264,6 +1351,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sResolveProgram.uniform1i(U_DEBUG_MODE, debug_mode);
     sResolveProgram.uniform1i(U_HAS_TRANSPARENT_DEPTH, transparent_depth ? 1 : 0);
     sResolveProgram.uniform1i(U_HAS_LAYERS, layered_transparency ? 1 : 0);
+    sResolveProgram.uniform1i(U_POSTFILTERED, postfilter ? 1 : 0);
     draw(screen_triangle);
     if (transparent_depth)
     {

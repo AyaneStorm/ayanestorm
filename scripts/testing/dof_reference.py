@@ -583,6 +583,33 @@ def viewer_near_band_averages(r, max_radius):
     return out
 
 
+def viewer_postfilter_width(mean_radius, max_radius, samples, plane_kind,
+                            pixel_scale=1.0):
+    """Mirror of asDepthOfFieldPostfilterF.glsl: filter radius in blur px,
+    or 0 when the pixel is left unchanged."""
+    if mean_radius < 2.0 or samples <= 0:
+        return 0.0
+    if plane_kind == 0:
+        spacing = mean_radius * math.sqrt(math.pi / samples)
+    else:
+        spacing = math.sqrt(2 * math.pi * mean_radius * max_radius / samples)
+    width = min(0.5 * spacing, mean_radius / 3.0) / pixel_scale
+    return width if width >= 0.75 else 0.0
+
+
+def viewer_postfilter_weight(d, center_radius, center_alpha,
+                             neighbour_radius, neighbour_alpha):
+    """Mirror of the postfilter neighbour weight (d in units of the width).
+    An empty neighbour's radius counts as the center's."""
+    if neighbour_alpha <= 0.0001:
+        neighbour_radius = center_radius
+    sigma = max(1.0, 0.15 * center_radius)
+    weight = math.exp(-2.0 * d * d)
+    weight *= math.exp(-(neighbour_radius - center_radius) ** 2 / (2 * sigma * sigma))
+    weight *= math.exp(-(neighbour_alpha - center_alpha) ** 2 / 0.13)
+    return weight
+
+
 def disk_samples(radius, rings=32, sectors=128):
     """Dense deterministic equal-area disk quadrature for the reference."""
     for ring in range(rings):
@@ -1242,6 +1269,44 @@ class ThinLensReferenceTests(unittest.TestCase):
         for rings, sectors in ((32, 128), (64, 256)):
             actual = integrate(self.camera, (0., 0.), [card], radius, rings, sectors)
             self.assertLess(abs(actual[3] - expected), .001)
+
+
+class PostfilterTests(unittest.TestCase):
+    """Invariants of the mode-1 postfilter; noise figures are in
+    dof_postfilter_sim.py."""
+
+    def test_in_focus_untouched(self):
+        for plane_kind in (0, 1):
+            self.assertEqual(viewer_postfilter_width(1.9, 40.0, 16, plane_kind), 0.0)
+
+    def test_width_follows_tap_spacing(self):
+        # Larger discs and fewer taps widen the filter; never over r / 3.
+        w96 = viewer_postfilter_width(30.0, 40.0, 96, 1)
+        w16 = viewer_postfilter_width(30.0, 40.0, 16, 1)
+        self.assertGreater(w16, w96)
+        self.assertGreater(viewer_postfilter_width(30.0, 40.0, 96, 1),
+                           viewer_postfilter_width(10.0, 40.0, 96, 1))
+        for r in (3.0, 10.0, 30.0, 60.0):
+            for n in (16, 32, 96):
+                for kind in (0, 1):
+                    self.assertLessEqual(viewer_postfilter_width(r, 60.0, n, kind),
+                                         r / 3.0 + 1e-9)
+        # Blur-resolution scale shrinks the width in blur pixels.
+        self.assertAlmostEqual(viewer_postfilter_width(30.0, 40.0, 96, 1, 2.0),
+                               viewer_postfilter_width(30.0, 40.0, 96, 1) / 2.0)
+
+    def test_different_blur_radii_do_not_mix(self):
+        # A near/far edge: 4 px next to 24 px of blur.
+        self.assertLess(viewer_postfilter_weight(0.5, 24.0, 1.0, 4.0, 1.0), 0.01)
+        self.assertLess(viewer_postfilter_weight(0.5, 4.0, 1.0, 24.0, 1.0), 1e-6)
+
+    def test_aperture_rim_kept(self):
+        # Across a disc rim coverage jumps by about 1 within one spacing.
+        self.assertLess(viewer_postfilter_weight(0.5, 20.0, 1.0, 20.0, 0.0), 0.001)
+
+    def test_noise_inside_region_averaged(self):
+        # Same radius, small coverage noise: substantial weight.
+        self.assertGreater(viewer_postfilter_weight(0.5, 20.0, 0.30, 20.5, 0.15), 0.4)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,9 @@
  */
 layout(location = 0) out vec4 frag_data0;
 layout(location = 1) out vec4 frag_data1;
+// Radius moments attachment of the near target (postfilter input, already
+// consumed): add nothing rather than leave it undefined.
+layout(location = 2) out vec4 frag_data2;
 
 uniform vec2 screen_res;
 uniform vec2 target_res;
@@ -81,4 +84,5 @@ void main()
     vec4 sprite = vec4(vary_energy * coverage, 0.0);
     frag_data0 = plane > 0 ? sprite : vec4(0.0);
     frag_data1 = plane > 0 ? vec4(0.0) : sprite;
+    frag_data2 = vec4(0.0);
 }

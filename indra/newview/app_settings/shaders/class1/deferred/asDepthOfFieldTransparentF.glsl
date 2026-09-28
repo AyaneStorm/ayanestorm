@@ -16,6 +16,8 @@
  *   near gather.
  */
 layout(location = 0) out vec4 frag_color;
+// Pass 1: first and second moments of the accumulated source blur radius,
+// weighted by coverage (asDepthOfFieldPostfilterF.glsl).
 layout(location = 1) out vec4 frag_data1;
 layout(location = 2) out vec4 frag_data2;
 layout(location = 3) out vec4 frag_data3;
@@ -282,6 +284,7 @@ void main()
     vec2 uv = vary_fragcoord;
     float phase_angle = samplePhase();
     vec4 accumulated = vec4(0.0);
+    vec3 moment_sum = vec3(0.0);   // sum w r, sum w r^2, sum w
     bool pyramid = use_pyramid != 0;
     float pixel_scale = max(screen_res.x / target_res.x, 1.0);
     float inverse_scale = 1.0 / max(max_radius * max_radius, 0.0001);
@@ -330,8 +333,12 @@ void main()
             {
                 vec4 source = textureLod(shadowMap1, sample_uv, lod);
                 vec3 color_per_coverage = source.rgb / max(source.a, 0.000001);
-                accumulated += vec4(color_per_coverage, 1.0) *
-                               (reach * inverse_scale * aperture_weight);
+                float tap_coverage = reach * inverse_scale * aperture_weight;
+                accumulated += vec4(color_per_coverage, 1.0) * tap_coverage;
+                // The pyramid keeps no per-source radius; every source
+                // reaching this tap is blurred at least this much.
+                float r = max(distance_pixels, split_radius);
+                moment_sum += tap_coverage * vec3(r, r * r, 1.0);
             }
         }
         float sample_coc = surfaceCoC(sample_uv);
@@ -358,6 +365,8 @@ void main()
         vec4 layer = premultipliedSurface(sample_uv);
         layer.rgb *= highlightWeight(layer.rgb);
         accumulated += layer * weight;
+        moment_sum += weight * layer.a *
+                      vec3(sample_radius, sample_radius * sample_radius, 1.0);
     }
 
     float coverage_scale = max_radius * max_radius /
@@ -365,4 +374,5 @@ void main()
     frag_color = accumulated * coverage_scale;
     // Correct coverage overshoot without leaving excess premultiplied RGB.
     frag_color /= max(frag_color.a, 1.0);
+    frag_data1 = vec4(moment_sum.xy / max(moment_sum.z, 0.000001), 0.0, 0.0);
 }

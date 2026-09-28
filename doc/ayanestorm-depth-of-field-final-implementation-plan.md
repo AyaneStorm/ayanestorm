@@ -1913,6 +1913,95 @@ gathered (debug 16); foreground edges over far background without mid-ground
 leak (debug 19); nearer foreground over farther (17/18); FPS against the
 previous mode 1.
 
+## Advanced renderer (mode 1): CoC-moments postfilter (2026-09-28)
+
+Roadmap item 5. Plan:
+[ayanestorm-depth-of-field-advanced-postfilter-plan.md](ayanestorm-depth-of-field-advanced-postfilter-plan.md).
+
+### Execution record
+
+- **Moments:** every gather writes the first and second moments of the
+  source blur radius it accumulated (same weights as its colour):
+  - far: location 1, into a new `sFarTarget` attachment;
+  - near: location 2, back pair in .xy and front pair in .zw, into a third
+    `sNearTarget` attachment;
+  - transparent pass 1: location 1, into a second attachment of each
+    transparent target.
+  - Area (pyramid) taps keep no per-source radius; they count as
+    `max(tap distance, split radius)`, a lower bound.
+  - The sprite shader writes zero to location 2, so the near moments are
+    not left undefined under additive blending.
+- **Postfilter** (`asDepthOfFieldPostfilterF.glsl`): 12-tap fixed Vogel disc
+  plus the centre, into `sPostfilterTarget`, then blitted back into the one
+  attachment (`glDrawBuffer` + `glBlitFramebuffer`).
+  - Order: far, near back and front, and each transparent layer, all right
+    after their gathers and before the sprites.
+  - Width: half the local tap spacing (far `r·sqrt(π/N)`, others
+    `sqrt(2π·r·R/N)`), at most r/3, in blur pixels; untouched under 2 px of
+    blur or 0.75 px of width.
+  - Weight: Gaussian in distance × radius similarity (σ = max(1, 0.15 r)) ×
+    coverage similarity (exp(−Δa²/0.13)). An empty neighbour counts as the
+    centre's radius. An empty centre takes the coverage-weighted radius of
+    its neighbours at 1 and 3 px.
+- **Tuning** (`scripts/testing/dof_postfilter_sim.py`, point-tap near gather
+  against a 1024-tap reference, R 24):
+  - The planned variance widening of the radius tolerance blurred the true
+    near/far transition (edge error 0.019 → 0.032 at N 96). Removed; the
+    second moment now only feeds debug 25.
+  - Width 1× the spacing was also worse at the edge than 0.5×.
+  - The empty-centre probe at 1 px only lost 15 % of a sparse disc's
+    coverage at N 16; with 1 and 3 px the loss is 7 % (N 16), 2 % (N 32),
+    under 1 % (N 96).
+- **Final numbers**, N 16 / 32 / 96, rms against the reference:
+
+  | case | before | after |
+  |---|---|---|
+  | thin-strand veil, coverage | 0.137 / 0.112 / 0.038 | 0.063 / 0.046 / 0.013 |
+  | spread disc, rim included | 0.034 / 0.019 / 0.008 | 0.011 / 0.006 / 0.003 |
+  | near/far edge, colour in 16 px band | 0.111 / 0.052 / 0.019 | 0.109 / 0.046 / 0.018 |
+
+  Veil mean coverage is kept within 1 %.
+- **Resolve:** uniform `postfiltered` skips the fixed 3×3 tents (far and
+  every `reconstructTransparent`), which remain the fallback when the filter
+  is off.
+- **Debug 25:** the postfilter writes the radius spread `sqrt(var)/R`
+  instead of filtering; the resolve shows the near layer where covered,
+  the far layer elsewhere.
+- **Setting:** `ASDepthOfFieldPostfilter` (default on), "Sampling noise
+  filter" on the Advanced tab, in the reset list.
+- **Tests:** `dof_reference.py` `PostfilterTests` (width limits and scaling,
+  no mixing of 4 vs 24 px, rim kept, noise averaged): 45 tests pass.
+
+- **Runtime (user):** no visible difference at default radii. Mode 1's
+  maximum blur is `CameraMaxCoF` (default 10 px, `pipeline.cpp:9080`), where
+  96 taps leave almost no noise: the filter width stays under its threshold
+  (far) or under 1 px (near), and the old tents are nearly off as well. With
+  both radius multipliers at 4 (40 px): the result differs at edges and
+  looks **better with the filter on**, so it stays on by default.
+  - The simulation against the old 3×3 tents (the correct baseline; the
+    table above compares against no filter) had the tents equal or slightly
+    lower in rms error. The user's view at edges prevails; rms against a
+    dense reference does not capture what reads better there.
+
+- **Radius ×4 findings (user captures).**
+  - The strands over the face become a soft veil close to mode 2. Most of
+    the remaining difference with mode 2 was mode 1's 10 px default cap,
+    not compositing. Whether to default mode 1 to the physical CoC is open.
+  - New at large blur: hard-edged blocks of hair texture below the chin, in
+    the rigged layer only (debug 23; debug 22 clean). **Cause:** both behind
+    fills (`riggedBehind()`, `opaqueBehind()`) stopped at the first ring
+    with two taps' worth of known pixels, so neighbouring pixels stopping at
+    different rings copied different distant content. **Fix:** rings weigh
+    4^−ring and all count (`ringWeight()`). The loop exits only when the
+    rings left could change the fill by under 8 % (`ringsDone()`), which
+    also bounds the cost.
+
+Runtime checks pending (user build):
+1. large far blur and the hair lock look smoother, Low most of all;
+2. no halo at a foreground edge over far background;
+3. light shapes keep crisp polygon edges;
+4. toggling the setting shows the difference; note the FPS cost.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

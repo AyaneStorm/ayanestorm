@@ -37,7 +37,7 @@
  */
 layout(location = 0) out vec4 frag_data0;   // back layer | source color
 layout(location = 1) out vec4 frag_data1;   // front layer | bands 0-3
-layout(location = 2) out vec4 frag_data2;   // bands 4-7
+layout(location = 2) out vec4 frag_data2;   // bands 4-7 | radius moments
 layout(location = 3) out vec4 frag_data3;   // bands 8-10, front weight
 
 // Gather input: opaque color with extracted highlight sprites removed.
@@ -211,6 +211,9 @@ void main()
     vec2 weight_sum = vec2(0.0);
     vec2 coverage_sum = vec2(0.0);
     vec2 coverage = vec2(0.0);
+    // Source blur radius moments per layer, same weights as the color:
+    // (back r, back r^2, front r, front r^2).
+    vec4 moment_sum = vec4(0.0);
     float kernel_area_sum = 0.0;
     float phase = samplePhase();
     bool pyramid = use_pyramid != 0;
@@ -263,6 +266,11 @@ void main()
                     sum_front += sample_color * weight * share.y;
                     weight_sum += weight * share;
                     coverage_sum += aperture_weight * share;
+                    // The pyramid keeps no per-source radius; every source
+                    // reaching this tap is blurred at least this much.
+                    float r = max(distance_pixels, split_radius);
+                    moment_sum += weight * vec4(share.x * vec2(r, r * r),
+                                                share.y * vec2(r, r * r));
                 }
             }
 
@@ -291,6 +299,9 @@ void main()
             sum_front += sample_color * weight * share.y;
             weight_sum += weight * share;
             coverage_sum += support * aperture_weight * inverse_splat_area * share;
+            vec2 radius_moments = vec2(sample_radius, sample_radius * sample_radius);
+            moment_sum += weight * vec4(share.x * radius_moments,
+                                        share.y * radius_moments);
         }
 
         // Estimate each layer's accumulated opacity rather than taking the
@@ -308,6 +319,7 @@ void main()
     vec3 front_color = weight_sum.y > 0.0001 ? sum_front / weight_sum.y : center_color;
     frag_data0 = vec4(back_color * coverage.x, coverage.x);
     frag_data1 = vec4(front_color * coverage.y, coverage.y);
-    frag_data2 = vec4(0.0);
+    frag_data2 = vec4(moment_sum.xy / max(weight_sum.x, 0.0001),
+                      moment_sum.zw / max(weight_sum.y, 0.0001));
     frag_data3 = vec4(0.0);
 }

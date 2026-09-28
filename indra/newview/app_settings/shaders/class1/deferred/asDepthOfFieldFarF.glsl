@@ -3,7 +3,11 @@
  * @author chanayane@firestorm
  * @brief Plane-discriminating far bokeh gather for AyaneStorm DoF.
  */
-out vec4 frag_color;
+layout(location = 0) out vec4 frag_color;
+// First and second moments of the accumulated source blur radius (full
+// resolution px), same weights as the color: the postfilter's edge test
+// (asDepthOfFieldPostfilterF.glsl).
+layout(location = 1) out vec4 frag_moments;
 
 // Gather input: opaque color with extracted highlight sprites removed.
 uniform sampler2D diffuseRect;
@@ -74,10 +78,11 @@ vec4 farSource(vec2 sample_uv, bool completion_only)
 }
 
 vec4 gatherFar(vec2 uv, vec3 center_color, float center_radius, float phase,
-               bool completion_only)
+               bool completion_only, out vec2 moments)
 {
     vec3 sum = center_color * highlightWeight(center_color);
     float weight_sum = highlightWeight(center_color);
+    vec2 moment_sum = weight_sum * vec2(center_radius, center_radius * center_radius);
 
     for (int i = 0; i < AS_DOF_MAX_SAMPLES; ++i)
     {
@@ -104,8 +109,10 @@ vec4 gatherFar(vec2 uv, vec3 center_color, float center_radius, float phase,
         float weight = coverage * aperture_weight * highlightWeight(source.rgb);
         sum += source.rgb * weight;
         weight_sum += weight;
+        moment_sum += weight * vec2(sample_radius, sample_radius * sample_radius);
     }
 
+    moments = moment_sum / max(weight_sum, 0.0001);
     return vec4(sum / max(weight_sum, 0.0001), 1.0);
 }
 
@@ -114,6 +121,7 @@ void main()
     vec2 uv = vary_fragcoord;
     float center_coc = texture(noiseMap, uv).g;
     float phase = samplePhase();
+    vec2 moments = vec2(0.0);
 
     // Foreground center: blur the depth-biased background completion with its
     // own CoC. The near layers own these pixels; this plate is revealed only by
@@ -122,18 +130,22 @@ void main()
     {
         vec4 background = texture(lightMap, uv);
         float background_radius = max(background.a, 0.0) * max_radius;
+        moments = vec2(background_radius, background_radius * background_radius);
         frag_color = background_radius < 0.5
             ? vec4(background.rgb, 1.0)
-            : gatherFar(uv, background.rgb, background_radius, phase, true);
+            : gatherFar(uv, background.rgb, background_radius, phase, true, moments);
+        frag_moments = vec4(moments, 0.0, 0.0);
         return;
     }
 
     if (center_coc <= 0.0001 || max_radius <= 0.0)
     {
         frag_color = vec4(0.0);
+        frag_moments = vec4(0.0);
         return;
     }
 
     frag_color = gatherFar(uv, texture(diffuseRect, uv).rgb,
-                           center_coc * max_radius, phase, false);
+                           center_coc * max_radius, phase, false, moments);
+    frag_moments = vec4(moments, 0.0, 0.0);
 }

@@ -385,9 +385,12 @@
               left="385" top="60" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldQuality" />
       </button>
+      <icon name="near_radius_warning" image_name="Popup_Caution" mouse_opaque="true"
+            layout="topleft" left="15" top="95" width="16" height="16"
+            tool_tip="Foreground blur can show artifacts in close-ups, such as dark streaks on hair in front of a face. If it does, set this to 0 (no foreground blur)." />
       <slider name="near_radius" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldNearRadius"
-              layout="topleft" left="15" top="94" width="365" height="18"
-              label="Foreground radius" label_width="130" min_val="0" max_val="4"
+              layout="topleft" left="35" top="94" width="345" height="18"
+              label="Foreground radius" label_width="110" min_val="0" max_val="4"
               increment="0.05" decimal_digits="2" can_edit_text="true" />
       <button name="reset_near_radius" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
               left="385" top="92" width="20" height="22" tool_tip="Reset to default.">
@@ -434,6 +437,14 @@
       <button name="reset_highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
               left="385" top="232" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightMaxSprites" />
+      </button>
+      <check_box name="postfilter" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldPostfilter"
+                 layout="topleft" left="15" top="262" width="365" height="20"
+                 label="Sampling noise filter"
+                 tool_tip="Smooths the grain of large blurs over the local sampling gaps, without softening edges between different blur sizes or bokeh outlines." />
+      <button name="reset_postfilter" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+              left="385" top="260" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldPostfilter" />
       </button>
       <!-- Hidden to keep the floater short (debug aid; the setting still works).
       <text name="debug_label" enabled_control="ASDepthOfFieldUIAdvanced" layout="topleft" left="15" top="182" width="125" height="18">Diagnostic view</text>
