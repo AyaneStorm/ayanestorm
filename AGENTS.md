@@ -71,3 +71,9 @@ When asked to make a plan, as soon as plan is approved, the agent should copy th
 
 ## Shaders
 Be very careful not to use reserved keywords as variable names as they will prevent compilation of the shader.
+
+Validate every shader you create or edit before handing off, with the Khronos validator at `.glslang/bin/glslang.exe`:
+- The viewer prepends the `#version` line, so validate a temporary copy (in your scratchpad, never in the repo) with `#version 410 core` prepended.
+- The copy's extension selects the stage: `.frag` for `*F.glsl`, `.vert` for `*V.glsl`.
+- Example (Git Bash): `{ echo "#version 410 core"; cat asFooF.glsl; } > "$SCRATCH/check.frag" && .glslang/bin/glslang.exe "$SCRATCH/check.frag"`
+- Fix every reported error. This checks GLSL 4.10 syntax and semantics only; driver-specific issues and link-time limits still need the user's runtime test.

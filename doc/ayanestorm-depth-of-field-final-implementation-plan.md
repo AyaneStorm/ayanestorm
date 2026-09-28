@@ -2002,6 +2002,141 @@ Runtime checks pending (user build):
 3. light shapes keep crisp polygon edges;
 4. toggling the setting shows the difference; note the FPS cost.
 
+Runtime (user, 2026-09-28): light shapes and postfilter OK.
+
+## Advanced renderer (mode 1): physical blur size and lens character (2026-09-28)
+
+Roadmap items 6 and 7 (`rendering-improvements-backlog.md`), plus the open
+CoC-cap decision. User order: cat's eye, DoF-linked chromatic aberration and
+optical vignetting, then astigmatism and field curvature. All optional and
+off by default, except the physical blur size.
+
+### Physical blur size (decision)
+
+- Mode 1 was capped by Firestorm's Max CoF (`CameraMaxCoF`, 10 px), which
+  was most of the remaining difference with mode 2 (radius x4 findings).
+- Decision: default to the physical CoC. `ASDepthOfFieldPhysicalBlur` (on)
+  caps it at `ASDepthOfFieldMaxBlur` percent of the image height (default 5,
+  1-10), so live views and FBO snapshots keep the same framing at any
+  resolution. Off: the old Max CoF cap (clamped to 150 px).
+- Why 5 %: 54 px at 1080p, above the 40 px the user judged close to mode 2;
+  larger blurs cost more (fixed tap count, worse cache) and show more grain.
+  The radius multipliers still scale the physical size.
+
+### Shared lens field
+
+`updateLensField()` (asdepthoffield.cpp) computes, per frame:
+- field position `(uv - 0.5) * field_scale`, length 1 at the frame corner,
+  aspect-correct (same as mode 2's `field_scale`);
+- focus shifts in normalized CoC. A focal shift p f moves the in-focus
+  inverse distance by p / f; the CoC pass maps that to K p / f pixels with
+  K = sqrt(2) blur_constant / (magnification tan_pixel_angle) (pixels per
+  unit of 1/S - 1/d) and f = magnification S / (1 + magnification). Only
+  the pipeline's existing lens constants are needed.
+
+The same GLSL lens block is duplicated in the far, near and transparent
+gathers and the sprite shaders (no include mechanism).
+
+### Cat's eye and optical vignetting
+
+- Settings shared with mode 2 (`ASDepthOfFieldApertureCatEye*`); the
+  floater enables them in modes 1 and 2.
+- Gathers: a tap passes only when its unit aperture position (anamorphic
+  scale included, as mode 2's `lens_pos`) lies within the barrel circle
+  centred at cat_eye * field. Mode 1's far image is +disk and mode 2's image
+  shift is along the lens offset for far points, so both clip the same side.
+- Clipped taps leave the kernel entirely (no kernel area): the far average,
+  the near coverage and the transparent coverage stay normalized.
+- The barrel shift is capped at 1.6 aperture radii (about 10 % of the
+  aperture open) so that some taps always remain.
+- Sprites: the edge distance is the nearer of the polygon and barrel edges;
+  radiance is divided by the analytic open fraction (exact for a circle, as
+  in mode 2).
+- Optical vignetting = mode 2's "Darken corners": the resolve multiplies the
+  final colour by the open fraction (5 % floor), so in-focus content darkens
+  with the same law. The gathers themselves always keep brightness.
+- Approximation: the kernel uses the gathering pixel's field position, not
+  each source's.
+
+### Axial (DoF-linked) chromatic aberration
+
+- Settings shared with mode 2 (`ASDepthOfFieldApertureAxialCA*`, percent of
+  f). Mode 1 uses mode 2's spectral model: wavelength s blurs to radius
+  R - sigma delta s (sigma +1 behind focus, -1 in front, red s = 1 focuses
+  farther), delta = K alpha / (2 f), channel weights red 1 + s, green
+  1.5 (1 - s^2), blue 1 - s. Four strata of s (channel mean s +-0.3125
+  against the exact +-1/3).
+- Rejected first: a post-resolve pass extrapolating each channel with a
+  small extra blur (variance-difference model). Against the exact spectral
+  blur (scratch simulation) its fringe correlated only 0.35-0.44 on
+  sharp-edged bokeh discs, whose rims are the most visible case.
+- Far gather: per-channel inclusion. The taps span R + delta; each channel
+  weighs a tap by its own coverage of the source and of this pixel's disc;
+  normalized per channel.
+- Near gather: per-channel coverage for point taps; pyramid taps read each
+  channel's reach band at the distance shifted by its mean offset (delta/3,
+  so it matters once delta approaches a band width).
+- The resolve composites one alpha (16 samplers, the GL 4.1 minimum, so no
+  room for per-channel alpha). Over what lies behind (b):
+  color a_c + b (1 - a_c) = [color a_c + b (a_g - a_c)] + b (1 - a_g).
+  The near layer stores the bracket with alpha a_g, with b estimated from
+  the non-foreground taps (or the pixel itself when it is not foreground).
+  Exact when the estimate matches; zero change without CA.
+- Sprites: per-channel mixture of the strata discs, each with (R / R_s)^2 of
+  the radiance, so each channel keeps its energy.
+- Not applied: the transparent strata (alpha hair, windows); stated in the
+  tooltip.
+
+### Field curvature and astigmatism
+
+- New mode-1 settings: `ASDepthOfFieldFieldCurvature` / `...Strength` and
+  `ASDepthOfFieldAstigmatism` / `...Strength`, focal shift at the frame
+  corner in percent of f (-3 to 3, default 0.5).
+- Field curvature (CoC pass): coc += curvature field^2. Positive: the
+  corners focus nearer (Petzval surface of a simple positive lens), so a
+  flat subject softens toward the edges.
+- Astigmatism (CoC pass): |coc| += |astigmatism| field^2 (the larger axis
+  blur; an in-focus corner pixel gets the split as a disc).
+- Astigmatism (gathers and sprites): the aperture image is scaled by 1 on
+  its long axis and (R - 2 split) / R on the other (negative between the
+  focal lines: flipped; magnitude at least 0.1). Positive: long axis
+  circumferential behind the focus (swirling background), radial in front;
+  negative swaps them.
+- The near and transparent gathers use one deformation per pixel: the
+  pixel's own blur on that plane, else half the maximum radius.
+
+### Limits
+
+- Tiled snapshots (UI shown, or larger than the maximum texture size)
+  compute the field per tile, as in mode 2. Ordinary snapshots render in one
+  full-size FBO and are correct.
+- Mode 2 has no field curvature or astigmatism: both are per-pixel focus
+  changes, which one lens-sample projection cannot express.
+
+### Verification
+
+- `dof_reference.py` `LensFieldTests` (51 tests pass):
+  - field curvature puts the corner focus at the shifted distance;
+  - mode 1's CA shift equals mode 2's per-sample focus shift;
+  - strata weights sum to 1 with the right channel means;
+  - astigmatic scales and orientations;
+  - sprite energy within 2 % per channel with barrel, astigmatism and CA
+    combined;
+  - CA rim order (blue outside far discs, red outside near ones).
+- All eleven mode-1 shaders pass glslang 16.6 (GLSL 4.10 core).
+
+Runtime checks pending (user build):
+1. physical blur on by default: blur size vs mode 2, FPS against the 10 px
+   cap (toggle "Physical blur size");
+2. cat's eye: lemon-shaped light shapes and background toward the corners,
+   long side around the centre, same orientation as mode 2;
+3. "Darken corners": corners darken like mode 2;
+4. axial CA at 1-2 %: blue rims outside background bokeh, red outside
+   foreground bokeh; no colour on in-focus areas; no halo on hair veils;
+5. field curvature: flat subject softens toward the corners;
+6. astigmatism: background bokeh stretch around the centre at the corners;
+7. everything off: identical to before.
+
 ## Design notes — screen-space gather comparison (2026-09-24)
 
 User decision: keep aperture re-rendering. Screen-space gather designs remain

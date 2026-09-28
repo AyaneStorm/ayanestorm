@@ -61,12 +61,77 @@ uniform float highlight_boost;
 uniform int near_pass;
 uniform int use_pyramid;
 uniform float split_radius;
+// Lens field (asdepthoffield.cpp, setLensUniforms()); the same block is in
+// the far and transparent gathers and the sprite shaders.
+uniform vec2 field_scale;   // (uv - 0.5) * field_scale: field position, length 1 at the frame corner
+uniform float cat_eye;      // cat's-eye barrel shift at the frame corner, aperture radii; 0 off
+uniform float astigmatism;  // axis focus split at the frame corner, normalized CoC; 0 off
+uniform float ca_shift;     // axial CA blur shift of the extreme wavelengths, normalized CoC; 0 off
 
 in vec2 vary_fragcoord;
 
 #define AS_DOF_MAX_SAMPLES 96
 #define AS_DOF_PI 3.14159265358979323846
 #define BAND_COUNT 11
+
+vec2 fieldPosition(vec2 uv)
+{
+    return (uv - 0.5) * field_scale;
+}
+
+// Cat's eye, see asDepthOfFieldFarF.glsl.
+vec2 barrelCenter(vec2 field)
+{
+    vec2 shift = cat_eye * field;
+    float len = length(shift);
+    return len > 1.6 ? shift * (1.6 / len) : shift;
+}
+
+bool barrelOpen(vec2 disk, vec2 barrel)
+{
+    vec2 d = disk - barrel;
+    return cat_eye <= 0.0 || dot(d, d) <= 1.0;
+}
+
+// Astigmatism, see asDepthOfFieldFarF.glsl.
+vec2 astigmaticScale(vec2 field, float signed_radius, float plane_radius)
+{
+    float split = abs(astigmatism) * dot(field, field) * plane_radius;
+    float radius = abs(signed_radius);
+    if (split <= 0.0 || radius <= 0.0)
+    {
+        return vec2(1.0);
+    }
+    float t = clamp((radius - 2.0 * split) / radius, -1.0, 1.0);
+    t = t < 0.0 ? min(t, -0.1) : max(t, 0.1);
+    return (astigmatism > 0.0) == (signed_radius >= 0.0) ? vec2(t, 1.0) : vec2(1.0, t);
+}
+
+vec2 deform(vec2 offset, vec2 field, vec2 axis_scale)
+{
+    float len = length(field);
+    if (len < 0.0001 || axis_scale == vec2(1.0))
+    {
+        return offset;
+    }
+    vec2 radial = field / len;
+    vec2 circumferential = vec2(-radial.y, radial.x);
+    return radial * (dot(offset, radial) * axis_scale.x) +
+           circumferential * (dot(offset, circumferential) * axis_scale.y);
+}
+
+// Axial chromatic aberration, see asDepthOfFieldFarF.glsl.
+const vec4 CA_STRATA = vec4(-0.75, -0.25, 0.25, 0.75);
+const vec4 CA_RED = vec4(0.0625, 0.1875, 0.3125, 0.4375);
+const vec4 CA_GREEN = vec4(0.1590909, 0.3409091, 0.3409091, 0.1590909);
+const vec4 CA_BLUE = vec4(0.4375, 0.3125, 0.1875, 0.0625);
+
+vec3 channelCover(float radius, float dist, float sigma, float delta, float soft)
+{
+    vec4 radii = vec4(radius) - sigma * delta * CA_STRATA;
+    vec4 cover = vec4(1.0) - smoothstep(radii - soft, radii + soft, vec4(dist));
+    return vec3(dot(cover, CA_RED), dot(cover, CA_GREEN), dot(cover, CA_BLUE));
+}
 
 float samplePhase()
 {
@@ -205,20 +270,37 @@ void main()
     vec2 uv = vary_fragcoord;
     vec3 center_color = texture(diffuseRect, uv).rgb;
     float center_coc = texture(noiseMap, uv).g;
-    // x: back layer, y: front layer.
+    // Per channel (all equal without axial CA), back and front layers.
     vec3 sum_back = vec3(0.0);
     vec3 sum_front = vec3(0.0);
-    vec2 weight_sum = vec2(0.0);
-    vec2 coverage_sum = vec2(0.0);
-    vec2 coverage = vec2(0.0);
-    // Source blur radius moments per layer, same weights as the color:
-    // (back r, back r^2, front r, front r^2).
+    vec3 weight_back = vec3(0.0);
+    vec3 weight_front = vec3(0.0);
+    vec3 coverage_back = vec3(0.0);
+    vec3 coverage_front = vec3(0.0);
+    // Source blur radius moments per layer, same weights as the (green)
+    // color: (back r, back r^2, front r, front r^2).
     vec4 moment_sum = vec4(0.0);
     float kernel_area_sum = 0.0;
     float phase = samplePhase();
     bool pyramid = use_pyramid != 0;
     float pixel_scale = max(screen_res.x / target_res.x, 1.0);
     float inverse_scale = 1.0 / max(max_radius * max_radius, 0.0001);
+    vec2 field = fieldPosition(uv);
+    vec2 barrel = barrelCenter(field);
+    // One aperture deformation for all taps: this pixel's own foreground
+    // blur, else half the maximum (sources are unknown before the taps).
+    float shape_radius = center_coc < 0.0 ? -center_coc * max_radius : 0.5 * max_radius;
+    vec2 axis_scale = astigmaticScale(field, -shape_radius, max_radius);
+    // Axial CA: red discs grow in front of the focus (sigma -1). The taps
+    // span the widest channel; the pyramid reads each channel's reach at
+    // the distance shifted by its mean radius offset (delta / 3).
+    float delta = ca_shift * max_radius;
+    bool chroma = delta > 0.01;
+    float reach_radius = chroma ? max_radius + delta : max_radius;
+    // What lies behind the veil (non-foreground taps), for the channel
+    // coverage correction below.
+    vec3 behind_sum = vec3(0.0);
+    float behind_weight = 0.0;
 
     // No separate center term. It added the center pixel's color at weight
     // 1 / r^2 while a disc fully covered by one source totals N / R^2 over
@@ -237,89 +319,127 @@ void main()
             }
             float aperture_weight;
             vec2 disk = apertureSample(i, sample_count, phase, aperture_weight);
+            // Taps the barrel clips are outside the kernel: they count
+            // neither as coverage nor as kernel area.
+            if (!barrelOpen(disk, barrel))
+            {
+                continue;
+            }
             kernel_area_sum += aperture_weight;
-            vec2 offset_pixels = disk * max_radius;
+            vec2 offset_pixels = deform(disk * reach_radius, field, axis_scale);
             // A foreground point images as the inverted aperture (see
             // ASDoFCamera): the source reaching this pixel lies at +disk.
             vec2 sample_uv = clamp(uv + offset_pixels / screen_res,
                                    0.5 / screen_res, vec2(1.0) - 0.5 / screen_res);
             // Compare radii in aperture space so anamorphic and polygonal
             // kernels retain their intended foreground coverage.
-            float distance_pixels = (float(i) + 0.5) / float(sample_count) * max_radius;
+            float distance_pixels = (float(i) + 0.5) / float(sample_count) * reach_radius;
 
             if (pyramid)
             {
                 // Mip level matching the local tap spacing: uniform-radius
                 // taps put 2 pi d R / N px^2 around each tap at distance d.
                 float spacing = sqrt(2.0 * AS_DOF_PI * max(distance_pixels, 0.5) *
-                                     max_radius / float(sample_count));
+                                     reach_radius / float(sample_count));
                 float lod = log2(max(spacing / pixel_scale, 1.0));
-                float reach = bandValue(bandIndex(distance_pixels), sample_uv, lod);
-                if (reach > 0.0)
+                vec3 reach = vec3(bandValue(bandIndex(distance_pixels), sample_uv, lod));
+                if (chroma)
                 {
-                    float front = min(reach, textureLod(bloomMap, sample_uv, lod).a);
-                    vec2 share = vec2(reach - front, front) * inverse_scale;
+                    reach.r = bandValue(bandIndex(max(distance_pixels - delta / 3.0, 0.0)),
+                                        sample_uv, lod);
+                    reach.b = bandValue(bandIndex(distance_pixels + delta / 3.0),
+                                        sample_uv, lod);
+                }
+                if (max(reach.r, max(reach.g, reach.b)) > 0.0)
+                {
+                    vec3 front = min(reach, vec3(textureLod(bloomMap, sample_uv, lod).a));
+                    vec3 share_back = (reach - front) * inverse_scale;
+                    vec3 share_front = front * inverse_scale;
                     vec4 source = textureLod(specularRect, sample_uv, lod);
                     vec3 sample_color = source.rgb / max(source.a, 0.000001);
                     float weight = aperture_weight * highlightWeight(sample_color);
-                    sum_back += sample_color * weight * share.x;
-                    sum_front += sample_color * weight * share.y;
-                    weight_sum += weight * share;
-                    coverage_sum += aperture_weight * share;
+                    sum_back += sample_color * weight * share_back;
+                    sum_front += sample_color * weight * share_front;
+                    weight_back += weight * share_back;
+                    weight_front += weight * share_front;
+                    coverage_back += aperture_weight * share_back;
+                    coverage_front += aperture_weight * share_front;
                     // The pyramid keeps no per-source radius; every source
                     // reaching this tap is blurred at least this much.
                     float r = max(distance_pixels, split_radius);
-                    moment_sum += weight * vec4(share.x * vec2(r, r * r),
-                                                share.y * vec2(r, r * r));
+                    moment_sum += weight * vec4(share_back.g * vec2(r, r * r),
+                                                share_front.g * vec2(r, r * r));
                 }
             }
 
             float sample_coc = texture(noiseMap, sample_uv).g;
             float sample_radius = max(-sample_coc, 0.0) * max_radius;
+            if (chroma && sample_coc >= 0.0)
+            {
+                behind_sum += texture(diffuseRect, sample_uv).rgb * aperture_weight;
+                behind_weight += aperture_weight;
+            }
             // Point tap: every source without the pyramid, otherwise only
             // sources under split_radius, which the pyramid leaves out.
             if (sample_coc >= 0.0 || (pyramid && sample_radius >= split_radius))
             {
                 continue;
             }
-            float support = (1.0 - smoothstep(sample_radius - 1.0,
-                                              sample_radius + 1.0,
-                                              distance_pixels)) *
-                            spreadShare(sample_radius);
-            if (support <= 0.0)
+            vec3 support = chroma ?
+                channelCover(sample_radius, distance_pixels, -1.0, delta,
+                             max(1.0, 0.25 * delta)) :
+                vec3(1.0 - smoothstep(sample_radius - 1.0, sample_radius + 1.0,
+                                      distance_pixels));
+            support *= spreadShare(sample_radius);
+            if (max(support.r, max(support.g, support.b)) <= 0.0)
             {
                 continue;
             }
             vec3 sample_color = texture(diffuseRect, sample_uv).rgb;
             float inverse_splat_area = 1.0 / max(sample_radius * sample_radius, 1.0);
             float front = frontShare(sample_radius);
-            vec2 share = vec2(1.0 - front, front);
-            float weight = support * aperture_weight * inverse_splat_area * highlightWeight(sample_color);
-            sum_back += sample_color * weight * share.x;
-            sum_front += sample_color * weight * share.y;
-            weight_sum += weight * share;
-            coverage_sum += support * aperture_weight * inverse_splat_area * share;
+            vec3 weight = support * (aperture_weight * inverse_splat_area *
+                                     highlightWeight(sample_color));
+            sum_back += sample_color * weight * (1.0 - front);
+            sum_front += sample_color * weight * front;
+            weight_back += weight * (1.0 - front);
+            weight_front += weight * front;
+            coverage_back += support * (aperture_weight * inverse_splat_area * (1.0 - front));
+            coverage_front += support * (aperture_weight * inverse_splat_area * front);
             vec2 radius_moments = vec2(sample_radius, sample_radius * sample_radius);
-            moment_sum += weight * vec4(share.x * radius_moments,
-                                        share.y * radius_moments);
+            moment_sum += weight.g * vec4((1.0 - front) * radius_moments,
+                                          front * radius_moments);
         }
 
         // Estimate each layer's accumulated opacity rather than taking the
         // hardest individual sample. A uniform foreground plane converges to
         // one while a silhouette edge produces a naturally fractional mask.
-        float coverage_scale = max_radius * max_radius / max(kernel_area_sum, 0.0001);
-        coverage = clamp(coverage_sum * coverage_scale, vec2(0.0), vec2(1.0));
+        float coverage_scale = reach_radius * reach_radius / max(kernel_area_sum, 0.0001);
+        coverage_back = clamp(coverage_back * coverage_scale, vec3(0.0), vec3(1.0));
+        coverage_front = clamp(coverage_front * coverage_scale, vec3(0.0), vec3(1.0));
         // No ownership rule: inside a solid foreground every tap nearer than
         // the source's radius lands on it, so the estimate reaches full
         // coverage by itself, and nearly focused pixels stay in the
         // resolve's sharp base (spreadShare()).
     }
 
-    vec3 back_color = weight_sum.x > 0.0001 ? sum_back / weight_sum.x : center_color;
-    vec3 front_color = weight_sum.y > 0.0001 ? sum_front / weight_sum.y : center_color;
-    frag_data0 = vec4(back_color * coverage.x, coverage.x);
-    frag_data1 = vec4(front_color * coverage.y, coverage.y);
-    frag_data2 = vec4(moment_sum.xy / max(weight_sum.x, 0.0001),
-                      moment_sum.zw / max(weight_sum.y, 0.0001));
+    vec3 back_color = weight_back.g > 0.0001 ?
+        sum_back / max(weight_back, vec3(0.0001)) : center_color;
+    vec3 front_color = weight_front.g > 0.0001 ?
+        sum_front / max(weight_front, vec3(0.0001)) : center_color;
+    // Axial CA: each channel has its own coverage, but the resolve composites
+    // one alpha (green). Over what lies behind (b), a channel then needs
+    // color * a_c + b (1 - a_c) = [color * a_c + b (a_g - a_c)] + b (1 - a_g):
+    // the bracket, with b estimated from the non-foreground taps (or this
+    // pixel when it is not foreground), goes into the layer. Without CA the
+    // correction is zero.
+    vec3 behind = center_coc >= 0.0 || behind_weight <= 0.0 ?
+        center_color : behind_sum / behind_weight;
+    frag_data0 = vec4(back_color * coverage_back +
+                      behind * (coverage_back.g - coverage_back), coverage_back.g);
+    frag_data1 = vec4(front_color * coverage_front +
+                      behind * (coverage_front.g - coverage_front), coverage_front.g);
+    frag_data2 = vec4(moment_sum.xy / max(weight_back.g, 0.0001),
+                      moment_sum.zw / max(weight_front.g, 0.0001));
     frag_data3 = vec4(0.0);
 }

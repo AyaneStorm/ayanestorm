@@ -119,6 +119,89 @@ namespace
     const LLStaticHashedString U_MOMENT_CHANNEL("moment_channel");
     const LLStaticHashedString U_DEBUG_VIEW("debug_view");
     const LLStaticHashedString U_POSTFILTERED("postfiltered");
+    const LLStaticHashedString U_FIELD_SCALE("field_scale");
+    const LLStaticHashedString U_CAT_EYE("cat_eye");
+    const LLStaticHashedString U_ASTIGMATISM("astigmatism");
+    const LLStaticHashedString U_CA_SHIFT("ca_shift");
+    const LLStaticHashedString U_FIELD_CURVATURE("field_curvature");
+    const LLStaticHashedString U_VIGNETTE_SHIFT("vignette_shift");
+
+    // Spatially varying lens character of the current frame (render()).
+    // Focus shifts are in normalized CoC (CoC / max_coc) at the frame corner.
+    struct LensField
+    {
+        F32 mFieldScale[2] = { 0.f, 0.f }; // (uv - 0.5) * scale: field position, 1 at the corner
+        F32 mCatEye = 0.f;         // barrel shift at the corner, aperture radii; 0 off
+        F32 mVignette = 0.f;       // barrel shift whose light loss is kept; 0 off
+        F32 mCurvature = 0.f;      // field curvature: signed CoC shift
+        F32 mAstigmatism = 0.f;    // radial/circumferential focus split (sign: long axis)
+        F32 mAxialCA = 0.f;        // blur shift of the extreme wavelengths
+    };
+    LensField sLensField;
+
+    // Lens field uniforms of the gathers and sprites (shaders without one
+    // ignore it).
+    void setLensUniforms(LLGLSLShader& shader)
+    {
+        shader.uniform2f(U_FIELD_SCALE, sLensField.mFieldScale[0], sLensField.mFieldScale[1]);
+        shader.uniform1f(U_CAT_EYE, sLensField.mCatEye);
+        shader.uniform1f(U_ASTIGMATISM, sLensField.mAstigmatism);
+        shader.uniform1f(U_CA_SHIFT, sLensField.mAxialCA);
+    }
+
+    // Reads the lens character settings for this frame. Focus shifts are
+    // given in percent of the focal length f; on the thin lens with a fixed
+    // sensor, a focal shift p f moves the in-focus inverse distance by p / f,
+    // which the CoC pass turns into K p / f pixels, with K = sqrt(2) *
+    // blur_constant / (magnification * tan_pixel_angle) its pixels per unit
+    // of (1 / focus - 1 / distance) (asDepthOfFieldCoCF.glsl) and
+    // f = magnification * S / (1 + magnification) (S the focus distance).
+    void updateLensField(U32 width, U32 height, F32 focal_distance, F32 blur_constant,
+                         F32 tan_pixel_angle, F32 magnification, F32 max_coc)
+    {
+        sLensField = LensField();
+        const F32 aspect = (F32)width / (F32)llmax(height, 1U);
+        const F32 diagonal = sqrtf(aspect * aspect + 1.f);
+        sLensField.mFieldScale[0] = 2.f * aspect / diagonal;
+        sLensField.mFieldScale[1] = 2.f / diagonal;
+
+        // Shared with the aperture-sampled renderer.
+        if (gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"))
+        {
+            sLensField.mCatEye = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureCatEyeStrength"), 0.f, 2.f);
+            if (gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEyeDarken"))
+            {
+                sLensField.mVignette = sLensField.mCatEye;
+            }
+        }
+
+        const F32 focus = -focal_distance;
+        if (focus <= 0.f || magnification <= 0.f || tan_pixel_angle <= 0.f || max_coc <= 0.f)
+        {
+            return;
+        }
+        const F32 focal_length = magnification * focus / (1.f + magnification);
+        const F32 pixels_per_inverse = F_SQRT2 * fabsf(blur_constant) / (magnification * tan_pixel_angle);
+        // Normalized CoC per unit relative focal shift.
+        const F32 shift_scale = pixels_per_inverse / (focal_length * max_coc);
+        if (gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"))
+        {
+            // Red-to-blue shift alpha f: each extreme wavelength moves by
+            // half (the aperture-sampled renderer's 1/S' = 1/S - s alpha / 2f).
+            sLensField.mAxialCA = 0.5f * 0.01f *
+                llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureAxialCAStrength"), 0.f, 2.f) * shift_scale;
+        }
+        if (gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"))
+        {
+            sLensField.mCurvature = 0.01f *
+                llclamp(gSavedSettings.getF32("ASDepthOfFieldFieldCurvatureStrength"), -3.f, 3.f) * shift_scale;
+        }
+        if (gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"))
+        {
+            sLensField.mAstigmatism = 0.01f *
+                llclamp(gSavedSettings.getF32("ASDepthOfFieldAstigmatismStrength"), -3.f, 3.f) * shift_scale;
+        }
+    }
 
     // Area taps (asDepthOfFieldNearF.glsl): sources blurred less than this
     // stay point taps, which are dense enough there (tap spacing at distance
@@ -246,6 +329,7 @@ namespace
         shader.uniform1f(U_APERTURE_ROTATION, rotation);
         shader.uniform1f(U_ANAMORPHIC_RATIO, anamorphic);
         shader.uniform1f(U_HIGHLIGHT_BOOST, highlight_boost);
+        setLensUniforms(shader);
     }
 
     void draw(LLVertexBuffer& triangle)
@@ -322,6 +406,9 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldAnamorphicRatio", "ASDepthOfFieldHighlightBoost",
                 "ASDepthOfFieldHighlightSprites", "ASDepthOfFieldHighlightIsolation",
                 "ASDepthOfFieldHighlightMaxSprites", "ASDepthOfFieldPostfilter",
+                "ASDepthOfFieldPhysicalBlur", "ASDepthOfFieldMaxBlur",
+                "ASDepthOfFieldFieldCurvature", "ASDepthOfFieldFieldCurvatureStrength",
+                "ASDepthOfFieldAstigmatism", "ASDepthOfFieldAstigmatismStrength",
                 "ASDepthOfFieldDebug", "ASDepthOfFieldApertureSamples",
                 "ASDepthOfFieldApertureMaxSamples", "ASDepthOfFieldApertureSnapshotSamples",
                 "ASDepthOfFieldApertureSnapshotMaxSeconds",
@@ -787,7 +874,15 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         return false;
     }
 
-    const F32 abs_max_coc = llclamp(fabsf(max_coc), 0.f, 150.f);
+    // Physical blur size by default: the lens CoC up to a share of the image
+    // height (the same framing at any resolution, snapshots included),
+    // instead of Firestorm's Max CoF (10 px by default), which was most of
+    // the difference with the aperture-sampled renderer.
+    const F32 abs_max_coc = gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur") ?
+        0.01f * llclamp(gSavedSettings.getF32("ASDepthOfFieldMaxBlur"), 1.f, 10.f) * (F32)source.getHeight() :
+        llclamp(fabsf(max_coc), 0.f, 150.f);
+    updateLensField(source.getWidth(), source.getHeight(), focal_distance, blur_constant,
+                    tan_pixel_angle, magnification, abs_max_coc);
     const F32 scale = llclamp(gSavedSettings.getF32("CameraDoFResScale"), 0.25f, 1.f);
     if (!ensureResources(source.getWidth(), source.getHeight(), scale))
     {
@@ -878,6 +973,9 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sCoCProgram.uniform1f(U_TAN_PIXEL_ANGLE, tan_pixel_angle);
     sCoCProgram.uniform1f(U_MAGNIFICATION, magnification);
     sCoCProgram.uniform1f(U_MAX_COC, abs_max_coc);
+    sCoCProgram.uniform2f(U_FIELD_SCALE, sLensField.mFieldScale[0], sLensField.mFieldScale[1]);
+    sCoCProgram.uniform1f(U_FIELD_CURVATURE, sLensField.mCurvature);
+    sCoCProgram.uniform1f(U_ASTIGMATISM, sLensField.mAstigmatism);
     draw(screen_triangle);
     if (transparent_depth)
     {
@@ -1035,6 +1133,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         sSpriteProgram.uniform2i(U_CELL_GRID, cells_x, cells_y);
         sSpriteProgram.uniform1i(U_CELL_TOP_LEVEL, cell_top_level);
         sSpriteProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
+        setLensUniforms(sSpriteProgram);
         // Attribute-free: any bound vertex buffer satisfies the core-profile
         // VAO; positions come from gl_VertexID/gl_InstanceID.
         screen_triangle.setBuffer();
@@ -1352,6 +1451,8 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     sResolveProgram.uniform1i(U_HAS_TRANSPARENT_DEPTH, transparent_depth ? 1 : 0);
     sResolveProgram.uniform1i(U_HAS_LAYERS, layered_transparency ? 1 : 0);
     sResolveProgram.uniform1i(U_POSTFILTERED, postfilter ? 1 : 0);
+    sResolveProgram.uniform1f(U_VIGNETTE_SHIFT, sLensField.mVignette);
+    sResolveProgram.uniform2f(U_FIELD_SCALE, sLensField.mFieldScale[0], sLensField.mFieldScale[1]);
     draw(screen_triangle);
     if (transparent_depth)
     {

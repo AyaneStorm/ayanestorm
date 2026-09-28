@@ -440,10 +440,20 @@ namespace
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
         setFlag("ASDepthOfFieldUIShape", mode == 1 || mode == APERTURE_MODE);
+        // Axial CA and cat's eye (with its corner darkening) apply to both
+        // the Advanced and the Aperture-sampled renderers.
+        const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
         setFlag("ASDepthOfFieldUIAxialCA",
-                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
+                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
-                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
+                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
+        // Advanced renderer only.
+        setFlag("ASDepthOfFieldUIFieldCurvature",
+                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
+        setFlag("ASDepthOfFieldUIAstigmatism",
+                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"));
+        setFlag("ASDepthOfFieldUIMaxBlur",
+                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
                 mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
         setFlag("ASDepthOfFieldUIHighlights",
@@ -1038,7 +1048,8 @@ namespace ASDoFRenderer
         syncModeFlags();
         for (const char* name : { "ASDepthOfFieldMode", "ASDepthOfFieldApertureAxialCA",
                                   "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureSpherical",
-                                  "ASDepthOfFieldApertureHighlights" })
+                                  "ASDepthOfFieldApertureHighlights", "ASDepthOfFieldFieldCurvature",
+                                  "ASDepthOfFieldAstigmatism", "ASDepthOfFieldPhysicalBlur" })
         {
             if (LLControlVariable* control = gSavedSettings.getControl(name))
             {

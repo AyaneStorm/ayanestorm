@@ -50,12 +50,64 @@ uniform float highlight_boost;
 uniform int plane;
 uniform int layer_mode;
 uniform int use_occupancy;
+// Lens field (asdepthoffield.cpp, setLensUniforms()); the same block is in
+// the far and near gathers and the sprite shaders. Axial CA (ca_shift) is
+// not applied to the transparent strata.
+uniform vec2 field_scale;   // (uv - 0.5) * field_scale: field position, length 1 at the frame corner
+uniform float cat_eye;      // cat's-eye barrel shift at the frame corner, aperture radii; 0 off
+uniform float astigmatism;  // axis focus split at the frame corner, normalized CoC; 0 off
 
 in vec2 vary_fragcoord;
 
 #define AS_DOF_MAX_SAMPLES 96
 #define AS_DOF_PI 3.14159265358979323846
 #define BAND_COUNT 11
+
+vec2 fieldPosition(vec2 uv)
+{
+    return (uv - 0.5) * field_scale;
+}
+
+// Cat's eye, see asDepthOfFieldFarF.glsl.
+vec2 barrelCenter(vec2 field)
+{
+    vec2 shift = cat_eye * field;
+    float len = length(shift);
+    return len > 1.6 ? shift * (1.6 / len) : shift;
+}
+
+bool barrelOpen(vec2 disk, vec2 barrel)
+{
+    vec2 d = disk - barrel;
+    return cat_eye <= 0.0 || dot(d, d) <= 1.0;
+}
+
+// Astigmatism, see asDepthOfFieldFarF.glsl.
+vec2 astigmaticScale(vec2 field, float signed_radius, float plane_radius)
+{
+    float split = abs(astigmatism) * dot(field, field) * plane_radius;
+    float radius = abs(signed_radius);
+    if (split <= 0.0 || radius <= 0.0)
+    {
+        return vec2(1.0);
+    }
+    float t = clamp((radius - 2.0 * split) / radius, -1.0, 1.0);
+    t = t < 0.0 ? min(t, -0.1) : max(t, 0.1);
+    return (astigmatism > 0.0) == (signed_radius >= 0.0) ? vec2(t, 1.0) : vec2(1.0, t);
+}
+
+vec2 deform(vec2 offset, vec2 field, vec2 axis_scale)
+{
+    float len = length(field);
+    if (len < 0.0001 || axis_scale == vec2(1.0))
+    {
+        return offset;
+    }
+    vec2 radial = field / len;
+    vec2 circumferential = vec2(-radial.y, radial.x);
+    return radial * (dot(offset, radial) * axis_scale.x) +
+           circumferential * (dot(offset, circumferential) * axis_scale.y);
+}
 
 float samplePhase()
 {
@@ -305,18 +357,31 @@ void main()
     // depth must not shrink or suppress a transparent strand's outgoing blur.
     // Normalize by source area so increasing its radius spreads its coverage.
     float kernel_area = 0.0;
+    vec2 field = fieldPosition(uv);
+    vec2 barrel = barrelCenter(field);
+    // One aperture deformation for all taps: this pixel's own blur on this
+    // plane, else half the maximum (see asDepthOfFieldNearF.glsl).
+    float center_plane_coc = float(plane) * surfaceCoC(uv);
+    float shape_radius = center_plane_coc > 0.0 ? center_plane_coc * max_radius :
+                                                  0.5 * max_radius;
+    vec2 axis_scale = astigmaticScale(field, float(plane) * shape_radius, max_radius);
     for (int i = 0; i < AS_DOF_MAX_SAMPLES; ++i)
     {
         if (i >= sample_count) break;
         float aperture_weight;
         vec2 disk = apertureSample(i, sample_count, phase_angle,
                                    aperture_weight);
+        // Clipped by the barrel: outside the kernel (no kernel area).
+        if (!barrelOpen(disk, barrel))
+        {
+            continue;
+        }
         kernel_area += aperture_weight;
         // Background points image as the upright aperture, foreground points
         // as the inverted one (see ASDoFCamera): the source reaching this
         // pixel lies at -disk for the far plane and +disk for the near plane.
         float source_side = plane > 0 ? -1.0 : 1.0;
-        vec2 sample_uv = clamp(uv + source_side * disk * max_radius / screen_res,
+        vec2 sample_uv = clamp(uv + source_side * deform(disk * max_radius, field, axis_scale) / screen_res,
                                0.5 / screen_res,
                                vec2(1.0) - 0.5 / screen_res);
         float distance_pixels =

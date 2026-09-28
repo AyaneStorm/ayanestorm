@@ -24,6 +24,16 @@ uniform float magnification;
 uniform float max_coc;
 uniform int has_transparent_depth;
 uniform int has_layers;
+// Off-axis focus (asdepthoffield.cpp, lens field), in normalized CoC at the
+// frame corner; the field position is (uv - 0.5) * field_scale, length 1 at
+// the corner, so both terms grow with field^2.
+uniform vec2 field_scale;
+// Field curvature: the in-focus surface bends toward the camera (> 0, as in
+// most lenses) or away from it (< 0), a signed shift of every CoC.
+uniform float field_curvature;
+// Astigmatism: the radial and circumferential image axes focus apart; the
+// blur magnitude grows by the split (the gathers stretch the aperture).
+uniform float astigmatism;
 
 in vec2 vary_fragcoord;
 
@@ -36,6 +46,23 @@ float calculateCoC(float depth)
     return coc * 1.41421356237;
 }
 
+// Normalized signed CoC (negative foreground, positive background) with the
+// off-axis focus terms. Past the focal lines the larger axis blur is kept:
+// |coc| + split; at the focal plane the sign is positive (far plane).
+float normalizedCoC(float depth)
+{
+    float coc = -calculateCoC(depth) / max(max_coc, 0.0001);
+    vec2 field = (vary_fragcoord - 0.5) * field_scale;
+    float field2 = dot(field, field);
+    coc += field_curvature * field2;
+    float split = abs(astigmatism) * field2;
+    if (split > 0.0)
+    {
+        coc = coc < 0.0 ? coc - split : coc + split;
+    }
+    return clamp(coc, -1.0, 1.0);
+}
+
 void main()
 {
     float device_depth = texture(depthMap, vary_fragcoord).r;
@@ -45,7 +72,7 @@ void main()
     // Firestorm's camera-space formula is positive in front of focus and
     // negative behind it. Store the module's explicit convention instead:
     // negative foreground, positive background.
-    float opaque_coc = clamp(-calculateCoC(view_depth) / max(max_coc, 0.0001), -1.0, 1.0);
+    float opaque_coc = normalizedCoC(view_depth);
     float effective_coc = opaque_coc;
     float transparent_coc = opaque_coc;
     float transparent_coverage = 0.0;
@@ -62,8 +89,7 @@ void main()
             float transparent_ndc_depth = transparent_device_depth * 2.0 - 1.0;
             vec4 transparent_position = inv_proj * vec4(0.0, 0.0, transparent_ndc_depth, 1.0);
             float transparent_view_depth = transparent_position.z / transparent_position.w;
-            transparent_coc = clamp(-calculateCoC(transparent_view_depth) /
-                                    max(max_coc, 0.0001), -1.0, 1.0);
+            transparent_coc = normalizedCoC(transparent_view_depth);
             float influence = smoothstep(0.05, 0.65, transparent_coverage);
             effective_coc = mix(opaque_coc, transparent_coc, influence);
         }
@@ -100,8 +126,7 @@ void main()
         {
             vec4 p = inv_proj * vec4(0.0, 0.0,
                                     rigged_depth * 2.0 - 1.0, 1.0);
-            rigged_coc = clamp(-calculateCoC(p.z / p.w) /
-                               max(max_coc, 0.0001), -1.0, 1.0);
+            rigged_coc = normalizedCoC(p.z / p.w);
         }
         else
         {
@@ -111,8 +136,7 @@ void main()
         {
             vec4 p = inv_proj * vec4(0.0, 0.0,
                                     world_depth * 2.0 - 1.0, 1.0);
-            world_coc = clamp(-calculateCoC(p.z / p.w) /
-                              max(max_coc, 0.0001), -1.0, 1.0);
+            world_coc = normalizedCoC(p.z / p.w);
         }
         else
         {

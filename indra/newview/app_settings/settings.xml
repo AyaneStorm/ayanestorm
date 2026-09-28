@@ -12228,31 +12228,31 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureAxialCA</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: axial (longitudinal) chromatic aberration. Each lens sample stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Advanced renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureAxialCAStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEye</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeDarken</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12306,13 +12306,31 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldUIAxialCA</key>
   <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureAxialCA on (enables the aberration strength slider)</string>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureAxialCA on (enables the aberration strength slider)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldUICatEye</key>
   <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureCatEye on (enables the cat's-eye controls)</string>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureCatEye on (enables the cat's-eye controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIFieldCurvature</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldFieldCurvature on (enables the field curvature slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIAstigmatism</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldAstigmatism on (enables the astigmatism slider)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIMaxBlur</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldPhysicalBlur on (enables the maximum blur slider)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12477,6 +12495,42 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>AyaneStorm Advanced DoF: radius-aware postfilter that smooths sampling noise of the gathers over the local tap spacing</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldPhysicalBlur</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldMaxBlur</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>5.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFieldCurvature</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldFieldCurvatureStrength</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAstigmatism</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism. Off-axis, the radial and circumferential directions focus apart: corners soften and bokeh stretch around the centre behind the focus, outward in front of it</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldAstigmatismStrength</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism, the focal split at the frame corner in percent of the focal length (-3 to 3). Negative swaps the stretch directions</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightIsolation</key>
   <map>

@@ -34,8 +34,31 @@ uniform int has_layers;
 // 1 when asDepthOfFieldPostfilterF.glsl already smoothed every gathered
 // layer: the fixed 3x3 tents below are then skipped.
 uniform int postfiltered;
+// Optical vignetting: the light the cat's-eye barrel clips (asdepthoffield.cpp,
+// setLensUniforms()). Barrel shift at the frame corner in aperture radii, 0
+// off; field position (uv - 0.5) * field_scale, length 1 at the corner.
+uniform float vignette_shift;
+uniform vec2 field_scale;
 
 in vec2 vary_fragcoord;
+
+// Open fraction of a unit-circle aperture clipped by a unit circle at
+// distance d: lens (vesica) area over pi (as in asDoFAccumulateF.glsl, with
+// the same 5 % floor as the aperture-sampled renderer).
+float vignette(vec2 uv)
+{
+    if (vignette_shift <= 0.0)
+    {
+        return 1.0;
+    }
+    float d = vignette_shift * length((uv - 0.5) * field_scale);
+    if (d >= 2.0)
+    {
+        return 0.05;
+    }
+    float h = 0.5 * d;
+    return max((2.0 * acos(h) - 2.0 * h * sqrt(1.0 - h * h)) / 3.14159265358979323846, 0.05);
+}
 
 vec4 reconstructTransparent(sampler2D layer, vec2 uv, float radius)
 {
@@ -603,7 +626,7 @@ void main()
                 frag_color = vec4(1.0, 1.0, 1.0, 0.0);
                 return;
             }
-            frag_color = vec4(color, source.a);
+            frag_color = vec4(color * vignette(uv), source.a);
             return;
         }
         // Reconstruct from the actual alpha-mode resolve, not the separately
@@ -636,5 +659,5 @@ void main()
         }
     }
 
-    frag_color = vec4(color, source.a);
+    frag_color = vec4(color * vignette(uv), source.a);
 }

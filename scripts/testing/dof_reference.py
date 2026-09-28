@@ -523,6 +523,114 @@ def viewer_sprite_coverage(dx, dy, radius, plane, blades, roundness, rotation,
     return min(max(_sprite_edge_distance(dx, dy, *args) / pixel_scale + .5, 0.), 1.)
 
 
+# Advanced (mode 1) lens field: asdepthoffield.cpp updateLensField() and the
+# lens block of the gathers and sprites.
+CA_STRATA = (-0.75, -0.25, 0.25, 0.75)
+CA_CHANNEL_WEIGHTS = ((0.0625, 0.1875, 0.3125, 0.4375),
+                      (0.1590909, 0.3409091, 0.3409091, 0.1590909),
+                      (0.4375, 0.3125, 0.1875, 0.0625))
+
+
+def viewer_pipeline_lens(subject_m, focal_length_mm, fnumber):
+    """Mirror of LLPipeline::renderDoF's lens constants (blur_constant,
+    magnification) and ASDepthOfField::render's focal_distance."""
+    subject_mm = subject_m * 1000
+    blur_constant = focal_length_mm ** 2 / (fnumber * (subject_mm - focal_length_mm)) / 1000
+    magnification = focal_length_mm / (subject_mm - focal_length_mm)
+    return -subject_m, blur_constant, magnification
+
+
+def viewer_mode1_coc_pixels(depth, focal_distance, blur_constant, tan_pixel_angle, magnification):
+    """Mirror of asDepthOfFieldCoCF.glsl -calculateCoC: signed, positive
+    behind focus (depth: positive distance)."""
+    view_depth = -depth
+    coc = (view_depth - focal_distance) / -view_depth * blur_constant / magnification
+    coc /= tan_pixel_angle * -focal_distance
+    return -coc * math.sqrt(2)
+
+
+def viewer_lens_shift_scale(focal_distance, blur_constant, tan_pixel_angle, magnification, max_coc):
+    """Mirror of updateLensField(): normalized CoC per unit relative focal shift."""
+    focus = -focal_distance
+    focal_length = magnification * focus / (1 + magnification)
+    pixels_per_inverse = math.sqrt(2) * abs(blur_constant) / (magnification * tan_pixel_angle)
+    return pixels_per_inverse / (focal_length * max_coc)
+
+
+def viewer_mode1_normalized_coc(coc_pixels, max_coc, field2, curvature, astigmatism):
+    """Mirror of asDepthOfFieldCoCF.glsl normalizedCoC()."""
+    coc = coc_pixels / max_coc + curvature * field2
+    split = abs(astigmatism) * field2
+    if split > 0:
+        coc = coc - split if coc < 0 else coc + split
+    return min(max(coc, -1.0), 1.0)
+
+
+def viewer_astigmatic_scale(field2, signed_radius, plane_radius, astigmatism):
+    """Mirror of astigmaticScale(): (radial, circumferential) scales."""
+    split = abs(astigmatism) * field2 * plane_radius
+    radius = abs(signed_radius)
+    if split <= 0 or radius <= 0:
+        return (1.0, 1.0)
+    t = min(max((radius - 2 * split) / radius, -1.0), 1.0)
+    t = min(t, -0.1) if t < 0 else max(t, 0.1)
+    return (t, 1.0) if (astigmatism > 0) == (signed_radius >= 0) else (1.0, t)
+
+
+def viewer_channel_cover(radius, dist, sigma, delta, soft):
+    """Mirror of channelCover(): per-channel share of the strata discs
+    (radius - sigma delta s) that reach dist."""
+    cover = [1 - _smoothstep(r - soft, r + soft, dist)
+             for r in (radius - sigma * delta * s for s in CA_STRATA)]
+    return tuple(sum(w * c for w, c in zip(ws, cover)) for ws in CA_CHANNEL_WEIGHTS)
+
+
+def _deform(offset, field, scale):
+    length = math.hypot(*field)
+    if length < 1e-4 or scale == (1.0, 1.0):
+        return offset
+    rx, ry = field[0] / length, field[1] / length
+    cx, cy = -ry, rx
+    a = (offset[0] * rx + offset[1] * ry) * scale[0]
+    b = (offset[0] * cx + offset[1] * cy) * scale[1]
+    return (rx * a + cx * b, ry * a + cy * b)
+
+
+def viewer_lens_sprite_coverage(dx, dy, radius, plane, field, axis_scale, barrel,
+                                delta, cat_eye=True):
+    """Mirror of asDepthOfFieldSpriteF.glsl sampleCoverage() for a circular
+    aperture (pixel_scale 1, single sample above 12 px): per-channel
+    radiance share of the pixel at (dx, dy) from the sprite centre."""
+    sign = 1.0 if plane > 0 else -1.0
+    inverse = (1 / axis_scale[0], 1 / axis_scale[1])
+
+    def pixels_per_unit(n):
+        return radius / math.hypot(*_deform(n, field, inverse))
+
+    ux, uy = _deform((dx * sign, dy * sign), field, inverse)
+    ux, uy = ux / radius, uy / radius
+    r = math.hypot(ux, uy)
+    n = (ux / r, uy / r) if r > 1e-4 else (1.0, 0.0)
+    to_pixels = pixels_per_unit(n)
+    edge = ((1 - r) * to_pixels, to_pixels / radius)
+    if cat_eye:
+        wx, wy = ux - barrel[0], uy - barrel[1]
+        wl = math.hypot(wx, wy)
+        nb = (wx / wl, wy / wl) if wl > 1e-4 else (1.0, 0.0)
+        barrel_pixels = pixels_per_unit(nb)
+        barrel_edge = (1 - wl) * barrel_pixels
+        if barrel_edge < edge[0]:
+            edge = (barrel_edge, (1 + nb[0] * barrel[0] + nb[1] * barrel[1]) * barrel_pixels / radius)
+    aa = 1.0 if radius >= 12 else 0.5
+    if delta <= 0.01:
+        c = min(max(edge[0] / aa + .5, 0.), 1.)
+        return (c, c, c)
+    radii = [max(radius - sign * delta * s, 1.0) for s in CA_STRATA]
+    cover = [min(max((edge[0] + (ri - radius) * edge[1]) / aa + .5, 0.), 1.) * radius ** 2 / ri ** 2
+             for ri in radii]
+    return tuple(sum(w * c for w, c in zip(ws, cover)) for ws in CA_CHANNEL_WEIGHTS)
+
+
 def _luminance(c):
     return .2126 * c[0] + .7152 * c[1] + .0722 * c[2]
 
@@ -1307,6 +1415,136 @@ class PostfilterTests(unittest.TestCase):
     def test_noise_inside_region_averaged(self):
         # Same radius, small coverage noise: substantial weight.
         self.assertGreater(viewer_postfilter_weight(0.5, 20.0, 0.30, 20.5, 0.15), 0.4)
+
+
+class LensFieldTests(unittest.TestCase):
+    """Mode-1 lens character: field curvature, astigmatism, axial CA and
+    cat's eye (asdepthoffield.cpp updateLensField(), the gathers and the
+    sprite shaders)."""
+
+    def setUp(self):
+        # 50 mm f/2.8 focused at 2 m, about 1 mrad per pixel, 54 px cap.
+        self.focal_distance, self.blur_constant, self.magnification = \
+            viewer_pipeline_lens(2.0, 50.0, 2.8)
+        self.tan_pixel_angle = 0.001
+        self.max_coc = 54.0
+        self.shift = viewer_lens_shift_scale(self.focal_distance, self.blur_constant,
+                                             self.tan_pixel_angle, self.magnification,
+                                             self.max_coc)
+
+    def coc(self, depth):
+        return viewer_mode1_coc_pixels(depth, self.focal_distance, self.blur_constant,
+                                       self.tan_pixel_angle, self.magnification)
+
+    def test_field_curvature_moves_the_in_focus_surface(self):
+        # A focal shift p f moves the in-focus inverse distance by p / f; at
+        # the corner (field^2 = 1) that distance must get zero CoC.
+        f = self.magnification * 2.0 / (1 + self.magnification)
+        self.assertAlmostEqual(f, 0.05, places=6)
+        for p in (0.005, -0.01, 0.02):
+            depth = 1 / (1 / 2.0 + p / f)
+            value = viewer_mode1_normalized_coc(self.coc(depth), self.max_coc, 1.0,
+                                                p * self.shift, 0.0)
+            self.assertAlmostEqual(value, 0.0, places=5)
+            # The centre keeps its focus.
+            self.assertAlmostEqual(viewer_mode1_normalized_coc(
+                self.coc(2.0), self.max_coc, 0.0, p * self.shift, 0.0), 0.0, places=6)
+        # Positive: the flat focus plane lies behind the corner focus.
+        self.assertGreater(viewer_mode1_normalized_coc(self.coc(2.0), self.max_coc, 1.0,
+                                                       0.005 * self.shift, 0.0), 0.0)
+
+    def test_axial_ca_shift_matches_aperture_sampled_focus(self):
+        # Mode 1's extreme-wavelength CoC shift equals mode 2's per-sample
+        # focus shift (s = +-1) seen through the same CoC formula.
+        # With the lens constants fixed, the CoC is K (1/S' - 1/d): red
+        # (s = 1) focused at S' loses exactly ca_shift behind the focus.
+        f = 0.05
+        alpha = 0.002
+        ca_shift = 0.5 * alpha * self.shift
+        red_focus = 1 / viewer_axial_ca_inv_focus(2.0, f, alpha, 1.0)
+        for depth in (1.0, 5.0, 100.0):
+            red = viewer_mode1_coc_pixels(depth, -red_focus, self.blur_constant,
+                                          self.tan_pixel_angle, self.magnification)
+            green = self.coc(depth)
+            self.assertAlmostEqual((red - green) / self.max_coc, -ca_shift, places=9)
+
+    def test_ca_strata_match_spectral_weights(self):
+        for weights in CA_CHANNEL_WEIGHTS:
+            self.assertAlmostEqual(sum(weights), 1.0, places=6)
+        # Channel mean s: red +1/3, green 0, blue -1/3 (4 strata: 0.3125).
+        means = [sum(w * s for w, s in zip(ws, CA_STRATA)) for ws in CA_CHANNEL_WEIGHTS]
+        self.assertAlmostEqual(means[0], 0.3125, places=6)
+        self.assertAlmostEqual(means[1], 0.0, places=6)
+        self.assertAlmostEqual(means[2], -0.3125, places=6)
+        # Without CA every channel is the plain soft edge.
+        for d in (5.0, 9.5, 10.0, 10.5, 12.0):
+            cover = viewer_channel_cover(10.0, d, 1.0, 0.0, 1.0)
+            plain = 1 - _smoothstep(9.0, 11.0, d)
+            for c in cover:
+                self.assertAlmostEqual(c, plain, places=6)
+        # Behind focus blue reaches farther, in front red does.
+        far = viewer_channel_cover(10.0, 11.5, 1.0, 3.0, 1.0)
+        near = viewer_channel_cover(10.0, 11.5, -1.0, 3.0, 1.0)
+        self.assertGreater(far[2], far[1])
+        self.assertGreater(far[1], far[0])
+        self.assertGreater(near[0], near[1])
+        self.assertGreater(near[1], near[2])
+
+    def test_astigmatic_scale(self):
+        # In focus (radius = split): a disc of the split's radius.
+        self.assertEqual(viewer_astigmatic_scale(1.0, 4.0, 40.0, 0.1), (-1.0, 1.0))
+        # Behind focus with positive astigmatism: circumferential long axis.
+        radial, circumferential = viewer_astigmatic_scale(1.0, 20.0, 40.0, 0.1)
+        self.assertAlmostEqual(radial, 0.6)
+        self.assertEqual(circumferential, 1.0)
+        # In front: radial long axis; negative astigmatism swaps both.
+        self.assertEqual(viewer_astigmatic_scale(1.0, -20.0, 40.0, 0.1)[0], 1.0)
+        self.assertEqual(viewer_astigmatic_scale(1.0, 20.0, 40.0, -0.1)[0], 1.0)
+        # At the image centre nothing changes.
+        self.assertEqual(viewer_astigmatic_scale(0.0, 20.0, 40.0, 0.1), (1.0, 1.0))
+        # Between the focal lines the magnitude never collapses below 0.1.
+        self.assertEqual(viewer_astigmatic_scale(1.0, 8.2, 40.0, 0.1)[0], 0.1)
+
+    def sprite_energy(self, radius, plane, field, axis_scale, barrel, delta, cat_eye):
+        # Radiance as the sprite vertex shader sets it (circle: unit_area pi).
+        area = math.pi * radius * radius * abs(axis_scale[0] * axis_scale[1])
+        if cat_eye:
+            area *= max(viewer_cat_eye_fraction(math.hypot(*barrel)), 0.05)
+        extent = int(radius + delta) + 3
+        total = [0.0, 0.0, 0.0]
+        for y in range(-extent, extent + 1):
+            for x in range(-extent, extent + 1):
+                cover = viewer_lens_sprite_coverage(x, y, radius, plane, field, axis_scale,
+                                                    barrel, delta, cat_eye)
+                for c in range(3):
+                    total[c] += cover[c] / area
+        return total
+
+    def test_sprite_energy_with_lens_field(self):
+        field = (0.6, 0.45)
+        cases = (
+            # radius, plane, axis scales, barrel, delta, cat's eye
+            (20.0, 1, (1.0, 1.0), (0.0, 0.0), 4.0, False),
+            (20.0, -1, (1.0, 1.0), (0.0, 0.0), 4.0, False),
+            (20.0, 1, (0.5, 1.0), (0.0, 0.0), 0.0, False),
+            (20.0, -1, (1.0, -0.4), (0.0, 0.0), 0.0, False),
+            (20.0, 1, (1.0, 1.0), (0.36, 0.27), 0.0, True),
+            (24.0, 1, (0.7, 1.0), (0.6, 0.45), 3.0, True),
+        )
+        for radius, plane, scale, barrel, delta, cat_eye in cases:
+            energy = self.sprite_energy(radius, plane, field, scale, barrel, delta, cat_eye)
+            for value in energy:
+                self.assertLess(abs(value - 1.0), 0.02, (radius, plane, scale, barrel, delta, energy))
+
+    def test_sprite_ca_rims(self):
+        # Just outside a far disc only the larger blue discs reach; just
+        # inside the rim red has lost its outer strata.
+        outside = viewer_lens_sprite_coverage(21.5, 0.0, 20.0, 1, (0.0, 0.0), (1.0, 1.0),
+                                              (0.0, 0.0), 4.0, False)
+        self.assertGreater(outside[2], outside[0])
+        near = viewer_lens_sprite_coverage(21.5, 0.0, 20.0, -1, (0.0, 0.0), (1.0, 1.0),
+                                           (0.0, 0.0), 4.0, False)
+        self.assertGreater(near[0], near[2])
 
 
 if __name__ == "__main__":
