@@ -5,6 +5,9 @@
     <file>DejaVuSans.ttf</file>
     <file functor="is_emoji_use_color">TwemojiSVG.ttf</file>
     <file functor="is_emoji_use_bw">NotoEmoji-Regular.ttf</file>
+    <!-- <AS:Chanayane> bundled Japanese fallback so CJK does not depend on optional Windows supplemental fonts -->
+    <file>NotoSansJP-Regular.ttf</file>
+    <!-- </AS:Chanayane> -->
     <os name="Windows">
       <file>meiryo.TTC</file>
       <file>MSGOTHIC.TTC</file>
