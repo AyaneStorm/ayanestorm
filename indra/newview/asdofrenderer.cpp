@@ -440,7 +440,8 @@ namespace
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
         setFlag("ASDepthOfFieldUIShape", mode == 1 || mode == APERTURE_MODE);
-        // Axial CA and cat's eye (with its corner darkening) apply to both
+        // Axial CA, cat's eye (with its corner darkening) and spherical
+        // aberration apply to both
         // the Advanced and the Aperture-sampled renderers.
         const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
         setFlag("ASDepthOfFieldUIAxialCA",
@@ -455,7 +456,7 @@ namespace
         setFlag("ASDepthOfFieldUIMaxBlur",
                 mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
-                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
         setFlag("ASDepthOfFieldUIHighlights",
                 mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
     }

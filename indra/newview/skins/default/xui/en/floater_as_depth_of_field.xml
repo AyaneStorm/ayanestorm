@@ -268,8 +268,8 @@
       </button>
     </panel>
 
-    <!-- Optional lens character. Axial CA and cat's eye: Advanced and
-         Aperture-sampled renderers; spherical aberration and bright highlights:
+    <!-- Optional lens character. Axial CA, cat's eye and spherical aberration:
+         Advanced and Aperture-sampled renderers; bright highlights:
          Aperture-sampled; field curvature and astigmatism: Advanced. -->
     <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"
            left="0" top="0" width="430" height="399">
@@ -315,11 +315,11 @@
               left="385" top="113" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureCatEyeDarken" />
       </button>
-      <check_box name="aperture_spherical" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSpherical"
+      <check_box name="aperture_spherical" enabled_control="ASDepthOfFieldUIShape" control_name="ASDepthOfFieldApertureSpherical"
                  layout="topleft" left="15" top="140" width="365" height="20"
                  label="Spherical aberration"
                  tool_tip="As in a real lens, the brightness across each bokeh disc differs in front of and behind the focus plane. Sharp areas are unchanged." />
-      <button name="reset_aperture_spherical" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+      <button name="reset_aperture_spherical" enabled_control="ASDepthOfFieldUIShape" label="D" layout="topleft"
               left="385" top="139" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSpherical" />
       </button>

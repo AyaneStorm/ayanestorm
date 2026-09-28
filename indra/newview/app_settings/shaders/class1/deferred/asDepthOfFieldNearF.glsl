@@ -67,6 +67,7 @@ uniform vec2 field_scale;   // (uv - 0.5) * field_scale: field position, length 
 uniform float cat_eye;      // cat's-eye barrel shift at the frame corner, aperture radii; 0 off
 uniform float astigmatism;  // axis focus split at the frame corner, normalized CoC; 0 off
 uniform float ca_shift;     // axial CA blur shift of the extreme wavelengths, normalized CoC; 0 off
+uniform float sa_strength;  // spherical aberration, -1..1; 0 off
 
 in vec2 vary_fragcoord;
 
@@ -131,6 +132,17 @@ vec3 channelCover(float radius, float dist, float sigma, float delta, float soft
     vec4 radii = vec4(radius) - sigma * delta * CA_STRATA;
     vec4 cover = vec4(1.0) - smoothstep(radii - soft, radii + soft, vec4(dist));
     return vec3(dot(cover, CA_RED), dot(cover, CA_GREEN), dot(cover, CA_BLUE));
+}
+
+// Spherical aberration, see asDepthOfFieldFarF.glsl.
+float sphericalWeight(float signed_radius, float pupil_r2)
+{
+    if (sa_strength == 0.0)
+    {
+        return 1.0;
+    }
+    float sigma = clamp(signed_radius / 3.0, -1.0, 1.0);
+    return max(1.0 - sa_strength * sigma * (2.0 * clamp(pupil_r2, 0.0, 1.0) - 1.0), 0.0);
 }
 
 float samplePhase()
@@ -353,8 +365,13 @@ void main()
                 if (max(reach.r, max(reach.g, reach.b)) > 0.0)
                 {
                     vec3 front = min(reach, vec3(textureLod(bloomMap, sample_uv, lod).a));
-                    vec3 share_back = (reach - front) * inverse_scale;
-                    vec3 share_front = front * inverse_scale;
+                    // Spherical aberration: the pyramid keeps no per-source
+                    // radius, so the disc position is taken relative to the
+                    // kernel (exact for sources at the maximum blur).
+                    float spherical = sphericalWeight(-reach_radius,
+                        distance_pixels * distance_pixels / (reach_radius * reach_radius));
+                    vec3 share_back = (reach - front) * (inverse_scale * spherical);
+                    vec3 share_front = front * (inverse_scale * spherical);
                     vec4 source = textureLod(specularRect, sample_uv, lod);
                     vec3 sample_color = source.rgb / max(source.a, 0.000001);
                     float weight = aperture_weight * highlightWeight(sample_color);
@@ -390,7 +407,9 @@ void main()
                              max(1.0, 0.25 * delta)) :
                 vec3(1.0 - smoothstep(sample_radius - 1.0, sample_radius + 1.0,
                                       distance_pixels));
-            support *= spreadShare(sample_radius);
+            support *= spreadShare(sample_radius) *
+                sphericalWeight(-sample_radius, distance_pixels * distance_pixels /
+                                                max(sample_radius * sample_radius, 0.0001));
             if (max(support.r, max(support.g, support.b)) <= 0.0)
             {
                 continue;

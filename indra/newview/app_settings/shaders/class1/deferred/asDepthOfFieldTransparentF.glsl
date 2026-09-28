@@ -56,6 +56,7 @@ uniform int use_occupancy;
 uniform vec2 field_scale;   // (uv - 0.5) * field_scale: field position, length 1 at the frame corner
 uniform float cat_eye;      // cat's-eye barrel shift at the frame corner, aperture radii; 0 off
 uniform float astigmatism;  // axis focus split at the frame corner, normalized CoC; 0 off
+uniform float sa_strength;  // spherical aberration, -1..1; 0 off
 
 in vec2 vary_fragcoord;
 
@@ -107,6 +108,17 @@ vec2 deform(vec2 offset, vec2 field, vec2 axis_scale)
     vec2 circumferential = vec2(-radial.y, radial.x);
     return radial * (dot(offset, radial) * axis_scale.x) +
            circumferential * (dot(offset, circumferential) * axis_scale.y);
+}
+
+// Spherical aberration, see asDepthOfFieldFarF.glsl.
+float sphericalWeight(float signed_radius, float pupil_r2)
+{
+    if (sa_strength == 0.0)
+    {
+        return 1.0;
+    }
+    float sigma = clamp(signed_radius / 3.0, -1.0, 1.0);
+    return max(1.0 - sa_strength * sigma * (2.0 * clamp(pupil_r2, 0.0, 1.0) - 1.0), 0.0);
 }
 
 float samplePhase()
@@ -398,7 +410,12 @@ void main()
             {
                 vec4 source = textureLod(shadowMap1, sample_uv, lod);
                 vec3 color_per_coverage = source.rgb / max(source.a, 0.000001);
-                float tap_coverage = reach * inverse_scale * aperture_weight;
+                // Spherical aberration relative to the kernel (the pyramid
+                // keeps no per-source radius; see asDepthOfFieldNearF.glsl).
+                float tap_coverage = reach * inverse_scale * aperture_weight *
+                    sphericalWeight(float(plane) * max_radius,
+                                    distance_pixels * distance_pixels /
+                                    max(max_radius * max_radius, 0.0001));
                 accumulated += vec4(color_per_coverage, 1.0) * tap_coverage;
                 // The pyramid keeps no per-source radius; every source
                 // reaching this tap is blurred at least this much.
@@ -419,6 +436,9 @@ void main()
                                          sample_radius + 1.0,
                                          distance_pixels);
         support *= plane_coc > 0.0 ? spreadShare(sample_radius) : 0.0;
+        support *= sphericalWeight(float(plane) * sample_radius,
+                                   distance_pixels * distance_pixels /
+                                   max(sample_radius * sample_radius, 0.0001));
         // Rejected taps contribute exactly zero. Keep their aperture area in
         // kernel_area, but avoid color reconstruction and highlight work.
         if (support <= 0.0)

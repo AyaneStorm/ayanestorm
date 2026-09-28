@@ -29,6 +29,7 @@ uniform vec2 field_scale;   // (uv - 0.5) * field_scale: field position, length 
 uniform float cat_eye;      // cat's-eye barrel shift at the frame corner, aperture radii; 0 off
 uniform float astigmatism;  // axis focus split at the frame corner, normalized CoC; 0 off
 uniform float ca_shift;     // axial CA blur shift of the extreme wavelengths, normalized CoC; 0 off
+uniform float sa_strength;  // spherical aberration, -1..1; 0 off
 
 in vec2 vary_fragcoord;
 
@@ -112,6 +113,23 @@ vec3 channelCover(float radius, float dist, float sigma, float delta, float soft
     return vec3(dot(cover, CA_RED), dot(cover, CA_GREEN), dot(cover, CA_BLUE));
 }
 
+// Spherical aberration, the aperture-sampled renderer's weight
+// (asDoFAccumulateF.glsl): light at normalized pupil radius squared
+// pupil_r2 of a source blurred signed_radius px (positive behind focus)
+// weighs 1 - a sigma (2 pupil_r2 - 1), sigma = clamp(radius / 3, -1, 1).
+// It averages to 1 over the aperture, so only the profile across each disc
+// changes: a > 0 (most lenses) gives centre-bright background and
+// bright-rimmed foreground bokeh, a < 0 the reverse (soap bubbles).
+float sphericalWeight(float signed_radius, float pupil_r2)
+{
+    if (sa_strength == 0.0)
+    {
+        return 1.0;
+    }
+    float sigma = clamp(signed_radius / 3.0, -1.0, 1.0);
+    return max(1.0 - sa_strength * sigma * (2.0 * clamp(pupil_r2, 0.0, 1.0) - 1.0), 0.0);
+}
+
 float samplePhase()
 {
     vec2 pixel = floor(gl_FragCoord.xy);
@@ -163,8 +181,10 @@ vec4 farSource(vec2 sample_uv, bool completion_only)
 vec4 gatherFar(vec2 uv, vec3 center_color, float center_radius, float phase,
                bool completion_only, out vec2 moments)
 {
-    vec3 sum = center_color * highlightWeight(center_color);
-    vec3 weight_sum = vec3(highlightWeight(center_color));
+    // The pixel itself sits at its own disc's centre.
+    float center_weight = highlightWeight(center_color) * sphericalWeight(center_radius, 0.0);
+    vec3 sum = center_color * center_weight;
+    vec3 weight_sum = vec3(center_weight);
     vec2 moment_sum = weight_sum.g * vec2(center_radius, center_radius * center_radius);
     vec2 field = fieldPosition(uv);
     vec2 barrel = barrelCenter(field);
@@ -212,6 +232,10 @@ vec4 gatherFar(vec2 uv, vec3 center_color, float center_radius, float phase,
                                              distance_pixels));
         }
         coverage *= source.a > 0.0 ? 1.0 : 0.0;
+        // Spherical aberration: this pixel lies at distance / radius of the
+        // source's disc.
+        coverage *= sphericalWeight(sample_radius, sample_radius > 0.0 ?
+            distance_pixels * distance_pixels / (sample_radius * sample_radius) : 0.0);
         vec3 weight = coverage * aperture_weight * highlightWeight(source.rgb);
         sum += source.rgb * weight;
         weight_sum += weight;

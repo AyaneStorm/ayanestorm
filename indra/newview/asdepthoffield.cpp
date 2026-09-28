@@ -125,6 +125,7 @@ namespace
     const LLStaticHashedString U_CA_SHIFT("ca_shift");
     const LLStaticHashedString U_FIELD_CURVATURE("field_curvature");
     const LLStaticHashedString U_VIGNETTE_SHIFT("vignette_shift");
+    const LLStaticHashedString U_SA_STRENGTH("sa_strength");
 
     // Spatially varying lens character of the current frame (render()).
     // Focus shifts are in normalized CoC (CoC / max_coc) at the frame corner.
@@ -136,6 +137,7 @@ namespace
         F32 mCurvature = 0.f;      // field curvature: signed CoC shift
         F32 mAstigmatism = 0.f;    // radial/circumferential focus split (sign: long axis)
         F32 mAxialCA = 0.f;        // blur shift of the extreme wavelengths
+        F32 mSpherical = 0.f;      // spherical aberration, -1..1; 0 off
     };
     LensField sLensField;
 
@@ -147,6 +149,7 @@ namespace
         shader.uniform1f(U_CAT_EYE, sLensField.mCatEye);
         shader.uniform1f(U_ASTIGMATISM, sLensField.mAstigmatism);
         shader.uniform1f(U_CA_SHIFT, sLensField.mAxialCA);
+        shader.uniform1f(U_SA_STRENGTH, sLensField.mSpherical);
     }
 
     // Reads the lens character settings for this frame. Focus shifts are
@@ -173,6 +176,10 @@ namespace
             {
                 sLensField.mVignette = sLensField.mCatEye;
             }
+        }
+        if (gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"))
+        {
+            sLensField.mSpherical = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureSphericalStrength"), -1.f, 1.f);
         }
 
         const F32 focus = -focal_distance;

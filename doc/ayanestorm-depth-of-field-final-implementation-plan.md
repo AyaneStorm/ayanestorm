@@ -2105,6 +2105,20 @@ gathers and the sprite shaders (no include mechanism).
 - The near and transparent gathers use one deformation per pixel: the
   pixel's own blur on that plane, else half the maximum radius.
 
+### Spherical aberration (added on user request)
+
+- Settings shared with mode 2 (`ASDepthOfFieldApertureSpherical*`), now
+  enabled in both modes.
+- Mode 2's weight 1 - a sigma (2 rho^2 - 1), sigma = clamp(signed radius /
+  3, -1, 1), rho the position across the source's disc. It averages to 1
+  over the aperture: only the profile inside each disc changes.
+- Far and point taps (near, transparent): rho = distance / source radius.
+  Pyramid taps keep no per-source radius: rho = distance / kernel radius
+  (exact for sources at the maximum blur). The weight also scales the
+  coverage, so a solid foreground stays covered on average.
+- Sprites: rho = radius over the edge radius at that angle, per axial CA
+  stratum; energy kept per channel (test within 2 %).
+
 ### Limits
 
 - Tiled snapshots (UI shown, or larger than the maximum texture size)

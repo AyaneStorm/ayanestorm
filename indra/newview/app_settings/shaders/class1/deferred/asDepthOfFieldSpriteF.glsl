@@ -21,6 +21,7 @@ uniform float aperture_roundness;
 uniform float aperture_rotation;
 uniform float anamorphic_ratio;
 uniform float cat_eye;
+uniform float sa_strength;  // spherical aberration, -1..1; 0 off
 
 flat in vec3 vary_energy;
 flat in vec2 vary_center;
@@ -82,8 +83,10 @@ float boundary(float phi, out float edge_scale)
 }
 
 // Signed distance inside the aperture edge, in full-resolution pixels (x),
-// and its rate of change with the sprite radius (y, for axial CA).
-vec2 edgeDistance(vec2 pixel)
+// its rate of change with the sprite radius (y, for axial CA) and the
+// position across the aperture, radius over the edge radius at that angle
+// (z, for spherical aberration).
+vec3 edgeDistance(vec2 pixel)
 {
     // Background points image as the upright aperture, foreground points as
     // the inverted one (see ASDoFCamera). u: unit aperture position,
@@ -113,7 +116,22 @@ vec2 edgeDistance(vec2 pixel)
                         (1.0 + dot(n, vary_barrel)) * barrel_pixels / vary_radius);
         }
     }
-    return edge;
+    return vec3(edge, r / max(b, 0.0001));
+}
+
+// Spherical aberration, the gathers' weight (asDepthOfFieldFarF.glsl) at
+// the relative disc radii rho (one per axial CA stratum). It averages to 1
+// over the aperture area, so the sprite keeps its energy.
+vec4 sphericalWeight(vec4 rho)
+{
+    if (sa_strength == 0.0)
+    {
+        return vec4(1.0);
+    }
+    float sigma = plane > 0 ? clamp(vary_radius / 3.0, 0.0, 1.0) :
+                              -clamp(vary_radius / 3.0, 0.0, 1.0);
+    vec4 pupil_r2 = clamp(rho * rho, vec4(0.0), vec4(1.0));
+    return max(vec4(1.0) - sa_strength * sigma * (2.0 * pupil_r2 - vec4(1.0)), vec4(0.0));
 }
 
 // Coverage of one antialiasing sample: per channel with axial CA (each
@@ -121,16 +139,18 @@ vec2 edgeDistance(vec2 pixel)
 // radiance, so every channel keeps its energy), else the same for all.
 vec3 sampleCoverage(vec2 pixel, float aa_width)
 {
-    vec2 edge = edgeDistance(pixel);
+    vec3 edge = edgeDistance(pixel);
     if (vary_delta <= 0.01)
     {
-        return vec3(clamp(edge.x / aa_width + 0.5, 0.0, 1.0));
+        return vec3(clamp(edge.x / aa_width + 0.5, 0.0, 1.0) *
+                    sphericalWeight(vec4(edge.z)).x);
     }
     float sigma = plane > 0 ? 1.0 : -1.0;
     vec4 radii = max(vec4(vary_radius) - sigma * vary_delta * CA_STRATA, vec4(1.0));
     vec4 cover = clamp((vec4(edge.x) + (radii - vec4(vary_radius)) * edge.y) / aa_width +
                        vec4(0.5), vec4(0.0), vec4(1.0));
     cover *= vec4(vary_radius * vary_radius) / (radii * radii);
+    cover *= sphericalWeight(vec4(edge.z * vary_radius) / radii);
     return vec3(dot(cover, CA_RED), dot(cover, CA_GREEN), dot(cover, CA_BLUE));
 }
 

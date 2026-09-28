@@ -12258,13 +12258,13 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureSpherical</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSphericalStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
+    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
@@ -12336,7 +12336,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldUISpherical</key>
   <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 with ASDepthOfFieldApertureSpherical on (enables the spherical aberration slider)</string>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 with ASDepthOfFieldApertureSpherical on (enables the spherical aberration slider)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

@@ -597,7 +597,7 @@ def _deform(offset, field, scale):
 
 
 def viewer_lens_sprite_coverage(dx, dy, radius, plane, field, axis_scale, barrel,
-                                delta, cat_eye=True):
+                                delta, cat_eye=True, spherical=0.0):
     """Mirror of asDepthOfFieldSpriteF.glsl sampleCoverage() for a circular
     aperture (pixel_scale 1, single sample above 12 px): per-channel
     radiance share of the pixel at (dx, dy) from the sprite centre."""
@@ -613,6 +613,7 @@ def viewer_lens_sprite_coverage(dx, dy, radius, plane, field, axis_scale, barrel
     n = (ux / r, uy / r) if r > 1e-4 else (1.0, 0.0)
     to_pixels = pixels_per_unit(n)
     edge = ((1 - r) * to_pixels, to_pixels / radius)
+    rho = r  # circular aperture: edge radius 1
     if cat_eye:
         wx, wy = ux - barrel[0], uy - barrel[1]
         wl = math.hypot(wx, wy)
@@ -622,12 +623,19 @@ def viewer_lens_sprite_coverage(dx, dy, radius, plane, field, axis_scale, barrel
         if barrel_edge < edge[0]:
             edge = (barrel_edge, (1 + nb[0] * barrel[0] + nb[1] * barrel[1]) * barrel_pixels / radius)
     aa = 1.0 if radius >= 12 else 0.5
+    sigma = sign * min(radius / 3.0, 1.0)
+
+    def spherical_weight(rho_s):
+        if spherical == 0:
+            return 1.0
+        return max(viewer_spherical_weight(spherical, sigma, min(rho_s * rho_s, 1.0)), 0.0)
+
     if delta <= 0.01:
-        c = min(max(edge[0] / aa + .5, 0.), 1.)
+        c = min(max(edge[0] / aa + .5, 0.), 1.) * spherical_weight(rho)
         return (c, c, c)
     radii = [max(radius - sign * delta * s, 1.0) for s in CA_STRATA]
     cover = [min(max((edge[0] + (ri - radius) * edge[1]) / aa + .5, 0.), 1.) * radius ** 2 / ri ** 2
-             for ri in radii]
+             * spherical_weight(rho * radius / ri) for ri in radii]
     return tuple(sum(w * c for w, c in zip(ws, cover)) for ws in CA_CHANNEL_WEIGHTS)
 
 
@@ -1505,7 +1513,8 @@ class LensFieldTests(unittest.TestCase):
         # Between the focal lines the magnitude never collapses below 0.1.
         self.assertEqual(viewer_astigmatic_scale(1.0, 8.2, 40.0, 0.1)[0], 0.1)
 
-    def sprite_energy(self, radius, plane, field, axis_scale, barrel, delta, cat_eye):
+    def sprite_energy(self, radius, plane, field, axis_scale, barrel, delta, cat_eye,
+                      spherical=0.0):
         # Radiance as the sprite vertex shader sets it (circle: unit_area pi).
         area = math.pi * radius * radius * abs(axis_scale[0] * axis_scale[1])
         if cat_eye:
@@ -1515,7 +1524,7 @@ class LensFieldTests(unittest.TestCase):
         for y in range(-extent, extent + 1):
             for x in range(-extent, extent + 1):
                 cover = viewer_lens_sprite_coverage(x, y, radius, plane, field, axis_scale,
-                                                    barrel, delta, cat_eye)
+                                                    barrel, delta, cat_eye, spherical)
                 for c in range(3):
                     total[c] += cover[c] / area
         return total
@@ -1535,6 +1544,22 @@ class LensFieldTests(unittest.TestCase):
             energy = self.sprite_energy(radius, plane, field, scale, barrel, delta, cat_eye)
             for value in energy:
                 self.assertLess(abs(value - 1.0), 0.02, (radius, plane, scale, barrel, delta, energy))
+
+    def test_sprite_spherical_aberration(self):
+        # Energy kept for both signs and planes, with CA and astigmatism.
+        for spherical in (0.8, -0.8):
+            for plane in (1, -1):
+                for scale, delta in (((1.0, 1.0), 0.0), ((0.7, 1.0), 3.0)):
+                    energy = self.sprite_energy(20.0, plane, (0.6, 0.45), scale, (0.0, 0.0),
+                                                delta, False, spherical)
+                    for value in energy:
+                        self.assertLess(abs(value - 1.0), 0.02, (spherical, plane, scale, energy))
+        # Positive: centre-bright behind focus, bright rim in front.
+        def at(x, plane):
+            return viewer_lens_sprite_coverage(x, 0.0, 20.0, plane, (0.0, 0.0), (1.0, 1.0),
+                                               (0.0, 0.0), 0.0, False, 0.8)[1]
+        self.assertGreater(at(0.0, 1), at(17.0, 1))
+        self.assertLess(at(0.0, -1), at(17.0, -1))
 
     def test_sprite_ca_rims(self):
         # Just outside a far disc only the larger blue discs reach; just
