@@ -11868,7 +11868,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASRenderMacOITDebugMode</key>
   <map>
     <key>Comment</key>
-    <string>Mac OIT diagnostic: 0 normal rendering, 1 covered pixels (magenta), 2 total transmittance, 3 exact layers per pixel (grey 0, blue 1, green 2, yellow 3, orange 4, red when a moment-weighted tail exists behind them), 4 normalized average transparent color (blue where weight is zero).</string>
+    <string>Mac OIT diagnostic: 0 normal rendering, 1 covered pixels (magenta), 2 total transmittance, 3 exact layers per pixel (grey 0, blue 1, green 2, yellow 3, orange 4, red when a moment-weighted tail exists behind them), 4 normalized average transparent color (blue where weight is zero), 5 normal rendering plus a capture trace logged every two seconds (pixels produced by each stage, GL errors).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

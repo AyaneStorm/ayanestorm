@@ -37,6 +37,7 @@
 #include <unordered_map>
 
 #include "asbackgroundisolate.h"
+#include "llframetimer.h"
 #include "llglslshader.h"
 #include "lldrawpoolalpha.h"
 #include "llimagegl.h"
@@ -87,10 +88,13 @@ S32 exactLayers()
     return llclamp(S32(layers), 2, 4);
 }
 
+// Debug mode 5 renders normally and logs a capture trace (see CaptureTrace).
+constexpr S32 DEBUG_TRACE = 5;
+
 S32 debugMode()
 {
     static LLCachedControl<S32> mode(gSavedSettings, "ASRenderMacOITDebugMode", 0);
-    return llclamp(S32(mode), 0, 4);
+    return llclamp(S32(mode), 0, DEBUG_TRACE);
 }
 
 F32 momentBias()
@@ -464,6 +468,104 @@ void drawFullscreen()
     gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 }
 
+// Debug mode 5: reads the capture targets back after each stage and logs how
+// many pixels each stage produced, plus the first GL error per stage. Runs at
+// most once every two seconds; the readbacks stall, so it is diagnostic only.
+class CaptureTrace
+{
+public:
+    explicit CaptureTrace(U32 width, U32 height) : mWidth(width), mHeight(height)
+    {
+        static LLFrameTimer timer;
+        mActive = debugMode() == DEBUG_TRACE && timer.getElapsedTimeF32() >= 2.f;
+        if (mActive)
+        {
+            timer.reset();
+            while (glGetError() != GL_NO_ERROR)
+            {
+            }
+        }
+    }
+
+    ~CaptureTrace()
+    {
+        if (mActive)
+        {
+            LL_INFOS("MacOIT") << "Mac OIT trace " << mWidth << "x" << mHeight << ":"
+                               << mText << LL_ENDL;
+        }
+    }
+
+    bool active() const { return mActive; }
+
+    void error(const char* stage)
+    {
+        const GLenum code = glGetError();
+        if (code != GL_NO_ERROR)
+        {
+            mText += llformat(" [GL error 0x%04x after %s]", code, stage);
+        }
+    }
+
+    // Opaque depth copied into the private depth-stencil target.
+    void depth(GLuint fbo)
+    {
+        std::vector<F32> values(size_t(mWidth) * mHeight);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadPixels(0, 0, mWidth, mHeight, GL_DEPTH_COMPONENT, GL_FLOAT, values.data());
+        U32 below_far = 0;
+        F32 lowest = 1.f;
+        for (F32 d : values)
+        {
+            below_far += d < 1.f ? 1 : 0;
+            lowest = llmin(lowest, d);
+        }
+        mText += llformat(" depth<1 %u (min %.6f)", below_far, lowest);
+    }
+
+    // Fragments counted by the KEYS pass stencil.
+    void stencil(GLuint fbo)
+    {
+        std::vector<U8> stencil(size_t(mWidth) * mHeight);
+        GLint alignment = 4;
+        glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+        glPixelStorei(GL_PACK_ALIGNMENT, 1);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadPixels(0, 0, mWidth, mHeight, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, stencil.data());
+        glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+        U32 covered = 0;
+        U32 deepest = 0;
+        for (U8 count : stencil)
+        {
+            covered += count ? 1 : 0;
+            deepest = llmax(deepest, U32(count));
+        }
+        mText += llformat(" stencil>0 %u (max %u)", covered, deepest);
+    }
+
+    // Pixels whose channel of color attachment `index` satisfies `test`.
+    template <typename Test>
+    void channel(const char* label, GLuint fbo, S32 index, S32 component, Test test)
+    {
+        std::vector<F32> texels(size_t(mWidth) * mHeight * 4);
+        glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        glReadBuffer(GL_COLOR_ATTACHMENT0 + index);
+        glReadPixels(0, 0, mWidth, mHeight, GL_RGBA, GL_FLOAT, texels.data());
+        U32 count = 0;
+        for (size_t i = component; i < texels.size(); i += 4)
+        {
+            count += test(texels[i]) ? 1 : 0;
+        }
+        mText += llformat(" %s %u", label, count);
+    }
+
+private:
+    U32 mWidth;
+    U32 mHeight;
+    bool mActive = false;
+    std::string mText;
+};
+
 // Binds a peel target with its moment attachment enabled or not: only the
 // last peel pass writes moments.
 void bindPeelFramebuffer(GLuint fbo, GLsizei draw_buffers, U32 width, U32 height)
@@ -719,6 +821,9 @@ bool ASMacOIT::renderPostDeferredCapture(
         pool.forwardRender(false);
         sCaptureActive = false;
     };
+    CaptureTrace trace(width, height);
+    const auto valid_key = [](F32 key) { return key < EMPTY_KEY; };
+    const auto positive = [](F32 value) { return value > 0.f; };
     const GLfloat empty_keys[4] = { EMPTY_KEY, EMPTY_KEY, EMPTY_KEY, 0.f };
     const GLfloat zero[4] = { 0.f, 0.f, 0.f, 0.f };
 
@@ -738,6 +843,12 @@ bool ASMacOIT::renderPostDeferredCapture(
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
         gMacOITDepthCopyProgram.unbind();
 
+        if (trace.active())
+        {
+            trace.error("depth copy");
+            trace.depth(sResources.depthFBO);
+        }
+
         // Every peel target starts empty; the tail moments start at zero.
         bindPeelFramebuffer(sResources.peelOddFBO, 2, width, height);
         glClearBufferfv(GL_COLOR, 0, empty_keys);
@@ -754,6 +865,12 @@ bool ASMacOIT::renderPostDeferredCapture(
         glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
         configurePass(PASS_KEYS, 0, 0, false, 0);
         render_pass();
+        if (trace.active())
+        {
+            trace.error("keys");
+            trace.stencil(sResources.depthFBO);
+            trace.channel("key0", sResources.keysFBO, 0, 0, valid_key);
+        }
     }
 
     for (S32 k = 1; k < layers; ++k)
@@ -775,6 +892,10 @@ bool ASMacOIT::renderPostDeferredCapture(
         configurePass(PASS_PEEL, (k - 1) >> 1, k >> 1, moment_pass,
                       ((k - 1) & 1) ? sResources.keysOdd : sResources.keysEven);
         render_pass();
+        if (trace.active())
+        {
+            trace.error("peel");
+        }
     }
 
     {
@@ -808,6 +929,10 @@ bool ASMacOIT::renderPostDeferredCapture(
             gGL.getTexUnit(unit)->unbind(LLTexUnit::TT_TEXTURE);
         }
         gMacOITMergeProgram.unbind();
+        if (trace.active())
+        {
+            trace.error("merge");
+        }
     }
 
     {
@@ -824,6 +949,13 @@ bool ASMacOIT::renderPostDeferredCapture(
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
         configurePass(PASS_COLOR, 0, 0, false, sResources.state);
         render_pass();
+        if (trace.active())
+        {
+            trace.error("color");
+            trace.channel("weight>0", sResources.colorFBO, 1, 0, positive);
+            trace.channel("depth>0", sResources.colorFBO, 1, 1, positive);
+            trace.channel("glow>0", sResources.colorFBO, 0, 3, positive);
+        }
     }
 
     // Leave GL exactly as the trackers believe it is.
@@ -853,6 +985,11 @@ bool ASMacOIT::configureCapturedDrawIfActive(LLGLSLShader* shader)
     // forwardRender()'s LLGLDisable(GL_BLEND) scope disables blending on every
     // draw buffer; the per-attachment equations survive it.
     glEnable(GL_BLEND);
+    // renderAlpha() ends with setSceneBlendType(BT_ALPHA), so every pass after
+    // the first would otherwise blend ADD targets with SRC_ALPHA factors and,
+    // for this module's zero-alpha outputs, write nothing. MIN targets ignore
+    // the factors. gGL skips the call while the cache already holds ONE, ONE.
+    gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ONE);
     bindState(shader);
     return true;
 }
@@ -894,6 +1031,7 @@ bool ASMacOIT::handleCapturedEmissives(
     LLGLSLShader* const previous = LLGLSLShader::sCurBoundShaderPtr;
     bool drawn = false;
     glEnable(GL_BLEND);
+    gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ONE);
     if (!emissives.empty())
     {
         bindState(&gMacOITEmissiveProgram);
@@ -965,7 +1103,8 @@ bool ASMacOIT::finishFrame(LLPipeline& pipeline, LLRenderTarget& screen)
         gMacOITResolveProgram.uniform1i(weight_depth, 1);
         gMacOITResolveProgram.uniform1i(state, 2);
         gMacOITResolveProgram.uniform1i(exact_layers, exactLayers());
-        gMacOITResolveProgram.uniform1i(debug_mode, debugMode());
+        const S32 mode = debugMode();
+        gMacOITResolveProgram.uniform1i(debug_mode, mode == DEBUG_TRACE ? 0 : mode);
         gGL.getTexUnit(0)->bindManual(LLTexUnit::TT_TEXTURE, sResources.moments);
         gGL.getTexUnit(1)->bindManual(LLTexUnit::TT_TEXTURE, sResources.keysOdd);
         gGL.getTexUnit(2)->bindManual(LLTexUnit::TT_TEXTURE, sResources.state);

@@ -188,6 +188,32 @@
         top="86"
         width="60" />
 
+      <text
+        type="string"
+        length="1"
+        follows="left|top"
+        height="14"
+        layout="topleft"
+        left="15"
+        name="render_mac_oit_debug_label"
+        width="225"
+        top="115">
+        Mac OIT debug mode (0 = off):
+      </text>
+      <spinner
+        control_name="ASRenderMacOITDebugMode"
+        decimal_digits="0"
+        follows="left|top"
+        increment="1"
+        label_width="0"
+        left="250"
+        max_val="5"
+        min_val="0"
+        name="render_mac_oit_debug"
+        tool_tip="0: final. 1: covered pixels (magenta). 2: total transmittance. 3: exact layers per pixel (grey 0, blue 1, green 2, yellow 3, orange 4, red when a moment-weighted tail exists behind them). 4: average transparent color (blue where weight is zero). 5: normal rendering plus a capture trace in the log every two seconds."
+        top="111"
+        width="60" />
+
       <view_border
         bevel_style="none"
         border_thickness="1"
@@ -195,7 +221,7 @@
         height="0"
         left="15"
         name="rendering_section_divider"
-        top="112"
+        top="137"
         width="460" />
 
       <!-- Keep the volumetric master control and links to dedicated rendering settings here. -->
@@ -211,7 +237,7 @@
         name="render_volumetric_lighting"
         radio_style="false"
         tool_tip="If checked, renders raymarched sun/moon light shafts through shadowed geometry. Requires Shadows to be enabled above None in the graphics preferences. Works on macOS."
-        top="135"
+        top="160"
         width="400" />
 
       <check_box
@@ -225,7 +251,7 @@
         name="render_partial_celestial_bodies"
         radio_style="false"
         tool_tip="Keeps sun and moon discs visible until their upper edges pass below the horizon. Disable for the original center-based cutoffs. Atmospheric influence remains independent. Changes are applied live."
-        top="160"
+        top="185"
         width="430" />
 
       <button
@@ -235,7 +261,7 @@
         layout="topleft"
         left="15"
         name="open_volumetric_lighting_settings"
-        top="190"
+        top="215"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -250,7 +276,7 @@
         layout="topleft"
         left="250"
         name="open_camera_effects"
-        top="190"
+        top="215"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -264,7 +290,7 @@
         layout="topleft"
         left="15"
         name="open_moon_settings"
-        top="225"
+        top="250"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -277,7 +303,7 @@
         layout="topleft"
         left="250"
         name="open_sun_settings"
-        top="225"
+        top="250"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -291,7 +317,7 @@
         layout="topleft"
         left="15"
         name="open_aurora_settings"
-        top="260"
+        top="285"
         width="220">
         <button.commit_callback
           function="Floater.ToggleOrBringToFront"
@@ -300,19 +326,19 @@
       <!-- Viewer-local extensible Weather settings. -->
       <button follows="left|top" height="23" label="Weather settings"
               layout="topleft" left="250" name="open_weather_settings"
-              top="260" width="220">
+              top="285" width="220">
         <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_weather" />
       </button>
       <!-- Viewer-local analytic horizon-light controls. -->
       <button follows="left|top" height="23" label="Horizon lighting"
               layout="topleft" left="15" name="open_horizon_settings"
-              top="295" width="220">
+              top="320" width="220">
         <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_horizon_settings" />
       </button>
       <!-- <AS:Chanayane> Viewer-local photographic color grading. -->
       <button follows="left|top" height="23" label="Color grading"
               layout="topleft" left="250" name="open_color_grading"
-              top="295" width="220">
+              top="320" width="220">
         <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_color_grading" />
       </button>
       <!-- </AS:Chanayane> -->

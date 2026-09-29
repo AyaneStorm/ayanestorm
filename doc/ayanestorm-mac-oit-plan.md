@@ -191,3 +191,22 @@ Tagged edits inside existing `<AS:Chanayane>` blocks: `llglslshader.cpp`
 4. `ASRenderMacOITExactLayers` 2/3/4 live; mode switching live; resize;
    snapshots; isolate backdrop with transparent content; Standard unchanged.
 5. Tracy GPU zones "Mac OIT keys/peel/merge/color/resolve" against Standard.
+
+### Runtime fixes (2026-09-30)
+
+1. **Crash on selecting mode 4 (Windows).** `glBlendEquation` (GL 1.2) is a
+   `glh_genext.h` function pointer the viewer never loads, so it is null on
+   Windows (access violation at offset 0). Use `glBlendEquationSeparate`,
+   which `llgl.cpp` loads. Every other GL call in the module was audited:
+   each is either loaded by `llgl.cpp` or exported by GL 1.1.
+2. **No transparency at all.** Debug mode 5 (capture trace) showed the depth
+   copy and KEYS pass correct (stencil and key0 on ~190k pixels) but zero
+   weight, optical depth and glow after the COLOR pass, with no GL error.
+   Cause: `LLDrawPoolAlpha::renderAlpha()` ends with an unconditional
+   `gGL.setSceneBlendType(BT_ALPHA)`, so after the first `forwardRender()` the
+   blend factors were `SRC_ALPHA, ONE_MINUS_SRC_ALPHA`. MIN targets ignore
+   factors (keys worked); ADD targets with this module's zero-alpha outputs
+   received `dst` unchanged. Fix: re-assert `gGL.blendFunc(ONE, ONE)` in the
+   per-draw capture hook and before glow draws (cached, free when unchanged).
+   Trap for any blend-based capture in the alpha pool: never assume blend
+   factors survive a `forwardRender()`.
