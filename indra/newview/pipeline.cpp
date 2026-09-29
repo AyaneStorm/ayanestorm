@@ -29,6 +29,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "asexactoit.h"
 #include "asavboit.h"
+#include "asmacoit.h"
 #include "asoitdispatcher.h"
 // </AS:Chanayane>
 
@@ -1067,6 +1068,7 @@ bool LLPipeline::allocateScreenBufferInternal(U32 resX, U32 resY)
         // <AS:Chanayane> Allocate Exact OIT resources for the main full-resolution target.
         ASExactOIT::allocateResources(resX, resY);
         ASAVBOIT::allocateResources(resX, resY);
+        ASMacOIT::allocateResources(resX, resY);
         // </AS:Chanayane>
 
         // <AS:Chanayane> Allocate volumetric lighting resources alongside Exact OIT.
@@ -1493,6 +1495,7 @@ void LLPipeline::releaseScreenBuffers()
     // <AS:Chanayane> Release Exact OIT screen resources, optionally retaining its node pool.
     ASAVBOIT::releaseResources();
     ASExactOIT::releaseResources();
+    ASMacOIT::releaseResources();
     // </AS:Chanayane>
     // <AS:Chanayane> Release volumetric lighting resources.
     ASVolumetricLighting::releaseResources();

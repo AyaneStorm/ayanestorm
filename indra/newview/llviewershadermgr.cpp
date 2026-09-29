@@ -66,6 +66,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "asexactoit.h"
 #include "asavboit.h"
+#include "asmacoit.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Optional volumetric lighting
 #include "asvolumetriclighting.h"
@@ -482,6 +483,7 @@ void LLViewerShaderMgr::finalizeShaderList()
 // <AS:Chanayane> Register independent OIT shader families.
     ASExactOIT::registerShaders(mShaderList);
     ASAVBOIT::registerShaders(mShaderList);
+    ASMacOIT::registerShaders(mShaderList);
 // </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
@@ -625,6 +627,7 @@ void LLViewerShaderMgr::setShaders()
 // <AS:Chanayane> Include independent OIT shader revisions in the cache key.
             hash_obj.update(ASExactOIT::shaderCacheRevision());
             hash_obj.update(ASAVBOIT::shaderCacheRevision());
+            hash_obj.update(ASMacOIT::shaderCacheRevision());
 // </AS:Chanayane>
 // <AS:Chanayane> Include volumetric lighting shader revision in the cache key.
             hash_obj.update(ASVolumetricLighting::shaderCacheRevision());
@@ -1231,6 +1234,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // <AS:Chanayane> Unload independent OIT shader families.
         ASAVBOIT::unloadShaders();
         ASExactOIT::unloadShaders();
+        ASMacOIT::unloadShaders();
 // </AS:Chanayane>
 // <AS:Chanayane> Unload optional volumetric lighting shaders.
         ASVolumetricLighting::unloadShaders();
@@ -3241,10 +3245,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gRlvSphereProgram.createShader();
     }
     // [/RLV:KB]
-// <AS:Chanayane> Load AVBOIT from vanilla shaders, then load Exact OIT independently.
+// <AS:Chanayane> Load AVBOIT and Mac OIT from vanilla shaders, then load Exact OIT independently.
     if (success)
     {
         ASAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+        ASMacOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     success = ASExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
 // </AS:Chanayane>

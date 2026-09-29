@@ -107,6 +107,9 @@ class LLPipeline
     // <AS:Chanayane> AVBOIT performs its own post-transparency debug traversal.
     friend class ASAVBOIT;
     // </AS:Chanayane>
+    // <AS:Chanayane> Mac OIT performs its own post-transparency debug traversal.
+    friend class ASMacOIT;
+    // </AS:Chanayane>
     // <AS:Chanayane> Allow the isolated AS module to populate protected
     // hardware-light bookkeeping without moving its logic into LLPipeline.
     friend class ASLightRigRenderer;

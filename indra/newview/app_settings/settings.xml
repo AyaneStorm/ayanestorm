@@ -11831,7 +11831,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <map>
     <key>Comment</key>
     <!-- <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string> -->
-    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT, 3 AYAstorm unified alpha ordering.</string>
+    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT, 3 AYAstorm unified alpha ordering, 4 Mac OIT (OpenGL 4.1 order-independent transparency).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -11839,6 +11839,41 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>-1</integer>
     <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Mac OIT (ASRenderOITMode 4). -->
+  <key>ASRenderMacOITExactLayers</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT: nearest transparent layers per pixel blended exactly (2-4); deeper layers use a per-pixel moment estimate. Each layer costs one alpha geometry pass.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>4</integer>
+  </map>
+  <key>ASRenderMacOITMomentBias</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT: moment bias keeping the tail reconstruction stable in float32 (MBOIT default 5e-7).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>5e-7</real>
+  </map>
+  <key>ASRenderMacOITDebugMode</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT diagnostic: 0 normal rendering, 1 covered pixels (magenta), 2 total transmittance, 3 exact layers per pixel (grey 0, blue 1, green 2, yellow 3, orange 4, red when a moment-weighted tail exists behind them), 4 normalized average transparent color (blue where weight is zero).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
     <integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->

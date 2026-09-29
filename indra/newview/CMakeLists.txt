@@ -181,6 +181,7 @@ set(viewer_SOURCE_FILES
     fsdata.cpp
     fsdroptarget.cpp
     asavboit.cpp
+    asmacoit.cpp
     asoitdispatcher.cpp
     asexactoit.cpp
     fsexportperms.cpp
@@ -1120,6 +1121,7 @@ set(viewer_HEADER_FILES
     fsdata.h
     fsdroptarget.h
     asavboit.h
+    asmacoit.h
     asoitdispatcher.h
     asexactoit.h
     fsexportperms.h

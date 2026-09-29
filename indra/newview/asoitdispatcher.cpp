@@ -10,6 +10,7 @@
 
 #include "asavboit.h"
 #include "asexactoit.h"
+#include "asmacoit.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
@@ -30,7 +31,8 @@ enum class TransparencyMode : S32
     STANDARD = 0,
     EXACT_OIT = 1,
     AVBOIT = 2,
-    AYASTORM = 3
+    AYASTORM = 3,
+    MAC_OIT = 4
 };
 
 TransparencyMode sTransparencyMode = TransparencyMode::STANDARD;
@@ -127,7 +129,7 @@ TransparencyMode synchronizeModeSettings()
 {
     S32 mode = gSavedSettings.getS32("ASRenderOITMode");
     if (mode < static_cast<S32>(TransparencyMode::STANDARD) ||
-        mode > static_cast<S32>(TransparencyMode::AYASTORM))
+        mode > static_cast<S32>(TransparencyMode::MAC_OIT))
     {
         // Migrate existing installations before making the selector authoritative.
         mode = gSavedSettings.getBOOL("ASRenderAVBOIT") ?
@@ -190,7 +192,8 @@ void ASOITDispatcher::refreshOrderIndependentAlphaState()
     // ASAVBOIT::available(), which additionally requires allocated resources:
     // those are created lazily at the first alpha pass, after culling, so it
     // would read false on the frame the mode is enabled.
-    sOrderIndependentAlpha = ASExactOIT::isEnabled() || ASAVBOIT::requested();
+    sOrderIndependentAlpha = ASExactOIT::isEnabled() || ASAVBOIT::requested() ||
+        ASMacOIT::requested();
 }
 
 bool ASOITDispatcher::orderIndependentAlphaActive()
@@ -224,16 +227,19 @@ void ASOITDispatcher::beginFrame()
     previous_mode = mode;
     ASAVBOIT::beginFrame();
     ASExactOIT::beginFrame();
+    ASMacOIT::beginFrame();
 }
 
 bool ASOITDispatcher::captureActive()
 {
-    return ASAVBOIT::captureActive() || ASExactOIT::captureActive();
+    return ASMacOIT::captureActive() || ASAVBOIT::captureActive() ||
+        ASExactOIT::captureActive();
 }
 
 bool ASOITDispatcher::captureCompleted()
 {
-    return ASAVBOIT::captureCompleted() || ASExactOIT::captureCompleted();
+    return ASMacOIT::captureCompleted() || ASAVBOIT::captureCompleted() ||
+        ASExactOIT::captureCompleted();
 }
 
 ASAlphaGroupTraversal::ASAlphaGroupTraversal(
@@ -290,7 +296,9 @@ bool ASOITDispatcher::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
-    if (ASAVBOIT::renderPostDeferredCapture(
+    if (ASMacOIT::renderPostDeferredCapture(
+            pool, prepare, water_sign, emissive_shader, pbr_emissive_shader) ||
+        ASAVBOIT::renderPostDeferredCapture(
             pool, prepare, water_sign, emissive_shader, pbr_emissive_shader))
     {
         return true;
@@ -330,6 +338,10 @@ bool ASOITDispatcher::configureCapturedDrawIfActive(
     LLGLSLShader* shader, U32 color_source, U32 color_destination,
     U32 alpha_source, U32 alpha_destination)
 {
+    if (ASMacOIT::captureActive())
+    {
+        return ASMacOIT::configureCapturedDrawIfActive(shader);
+    }
     if (ASAVBOIT::captureActive())
     {
         return ASAVBOIT::configureCapturedDrawIfActive(shader);
@@ -346,6 +358,12 @@ bool ASOITDispatcher::handleCapturedEmissives(
     std::vector<LLDrawInfo*>& rigged_emissives,
     std::vector<LLDrawInfo*>& pbr_rigged_emissives)
 {
+    if (ASMacOIT::captureActive())
+    {
+        return ASMacOIT::handleCapturedEmissives(
+            pool, depth_only, emissives, pbr_emissives, rigged_emissives,
+            pbr_rigged_emissives);
+    }
     if (ASAVBOIT::captureActive())
     {
         return ASAVBOIT::handleCapturedEmissives(
@@ -359,7 +377,11 @@ bool ASOITDispatcher::handleCapturedEmissives(
 
 void ASOITDispatcher::configureGLTFCapturedDraw(LLGLSLShader& shader)
 {
-    if (ASAVBOIT::captureActive())
+    if (ASMacOIT::captureActive())
+    {
+        ASMacOIT::configureGLTFCapturedDraw(shader);
+    }
+    else if (ASAVBOIT::captureActive())
     {
         ASAVBOIT::configureGLTFCapturedDraw(shader);
     }
@@ -371,25 +393,29 @@ void ASOITDispatcher::configureGLTFCapturedDraw(LLGLSLShader& shader)
 
 LLGLSLShader& ASOITDispatcher::gltfProgram(LLGLSLShader& ordinary)
 {
-    return ASAVBOIT::captureActive() ? ASAVBOIT::gltfProgram(ordinary) :
+    return ASMacOIT::captureActive() ? ASMacOIT::gltfProgram(ordinary) :
+        ASAVBOIT::captureActive() ? ASAVBOIT::gltfProgram(ordinary) :
         ASExactOIT::gltfProgram(ordinary);
 }
 
 LLGLSLShader* ASOITDispatcher::alphaShader(LLGLSLShader* ordinary)
 {
-    return ASAVBOIT::captureActive() ? ASAVBOIT::alphaShader(ordinary) :
+    return ASMacOIT::captureActive() ? ASMacOIT::alphaShader(ordinary) :
+        ASAVBOIT::captureActive() ? ASAVBOIT::alphaShader(ordinary) :
         ASExactOIT::alphaShader(ordinary);
 }
 
 LLGLSLShader* ASOITDispatcher::pbrAlphaShader(LLGLSLShader* ordinary)
 {
-    return ASAVBOIT::captureActive() ? ASAVBOIT::pbrAlphaShader(ordinary) :
+    return ASMacOIT::captureActive() ? ASMacOIT::pbrAlphaShader(ordinary) :
+        ASAVBOIT::captureActive() ? ASAVBOIT::pbrAlphaShader(ordinary) :
         ASExactOIT::pbrAlphaShader(ordinary);
 }
 
 LLGLSLShader* ASOITDispatcher::fullbrightAlphaShader(LLGLSLShader* ordinary)
 {
-    return ASAVBOIT::captureActive() ?
+    return ASMacOIT::captureActive() ? ASMacOIT::fullbrightAlphaShader(ordinary) :
+        ASAVBOIT::captureActive() ?
         ASAVBOIT::fullbrightAlphaShader(ordinary) :
         ASExactOIT::fullbrightAlphaShader(ordinary);
 }
@@ -397,7 +423,8 @@ LLGLSLShader* ASOITDispatcher::fullbrightAlphaShader(LLGLSLShader* ordinary)
 LLGLSLShader* ASOITDispatcher::materialAlphaShader(
     U32 mask, LLGLSLShader* ordinary)
 {
-    return ASAVBOIT::captureActive() ?
+    return ASMacOIT::captureActive() ? ASMacOIT::materialAlphaShader(mask, ordinary) :
+        ASAVBOIT::captureActive() ?
         ASAVBOIT::materialAlphaShader(mask, ordinary) :
         ASExactOIT::materialAlphaShader(mask, ordinary);
 }
@@ -407,7 +434,8 @@ void ASOITDispatcher::finishFrame(
     LLVertexBuffer& screen_triangle, bool cube_snapshot,
     bool impostor_render, bool mouselook)
 {
-    if (!ASAVBOIT::finishFrame(pipeline, screen))
+    if (!ASMacOIT::finishFrame(pipeline, screen) &&
+        !ASAVBOIT::finishFrame(pipeline, screen))
     {
         ASExactOIT::finishFrame(
             pipeline, screen, screen_triangle, cube_snapshot,

@@ -3581,7 +3581,7 @@
 				 layout="topleft"
 				 height="23"
 				 control_name="ASRenderOITMode"
-				 tool_tip="Select Standard, AYAstorm unified alpha ordering, lossless Exact OIT, or faster approximate AVBOIT. The selection is applied live."
+				 tool_tip="Select Standard, AYAstorm unified alpha ordering, lossless Exact OIT, faster approximate AVBOIT, or Mac OIT (OpenGL 4.1, works on macOS). The selection is applied live."
 				 left="3"
 				 name="render_oit_mode"
 				 width="240"
@@ -3602,6 +3602,10 @@
 					 label="AYAstorm (mayatonton)"
 					 name="ayastorm"
 					 value="3" />
+					<combo_box.item
+					 label="Mac OIT"
+					 name="mac_oit"
+					 value="4" />
 				</combo_box>
 				<!-- </AS:Chanayane> -->
 			</panel>

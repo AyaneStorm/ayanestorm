@@ -87,6 +87,9 @@ private:
     // <AS:Chanayane> AVBOIT owns its capture traversal outside Exact OIT.
     friend class ASAVBOIT;
     // </AS:Chanayane>
+    // <AS:Chanayane> Mac OIT owns its capture traversal and glow redraws.
+    friend class ASMacOIT;
+    // </AS:Chanayane>
 
     LLGLSLShader* target_shader;
 
