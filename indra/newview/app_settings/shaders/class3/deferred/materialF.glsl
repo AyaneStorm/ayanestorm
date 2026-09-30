@@ -513,6 +513,11 @@ void main()
 #ifdef EXACT_OIT
     // exact_oit_store(max(vec4(color * final_scale * asVolumetricTransmittance(pos.xyz) + volumetric_foreground, al), vec4(0)));
     exact_oit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
+#elif defined(MACOIT)
+    // Mac OIT composites its front layers exactly, so it takes Standard's
+    // glare-raised alpha as Exact OIT does. The AVBOIT path below would cap
+    // gloss highlights and discard zero-alpha shiny surfaces (lens glass).
+    avboit_store(max(vec4(color * final_scale + volumetric_foreground, al), vec4(0)));
 #elif defined(AVBOIT)
     // Specular glare is a single-blend presentation trick that raises output
     // alpha so highlights read as solid. It is not a physical opacity. Feeding

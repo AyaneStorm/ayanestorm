@@ -210,3 +210,32 @@ Tagged edits inside existing `<AS:Chanayane>` blocks: `llglslshader.cpp`
    per-draw capture hook and before glow draws (cached, free when unchanged).
    Trap for any blend-based capture in the alpha pool: never assume blend
    factors survive a `forwardRender()`.
+3. **Atlas / shared-unit clash on 16-unit GPUs (latent, unbuilt).** Not the
+   cause of the missing lens glass: that test had volumetric lighting off,
+   and the atlas is bound only when it is enabled.
+   `ASVolumetricLighting::bindTransparencyAtlas()` rebinds the atlas on every
+   alpha shader switch to unit `mActiveTextureChannels` (the first unit after
+   the linked samplers). The shared state unit was `units - 1` whenever
+   `max_channels < units`. With 16 units (macOS), a 15-channel capture
+   program (legacy material with normal + specular maps) put the atlas on
+   unit 15, so that draw and every later draw of the pass sampled the atlas as
+   Mac OIT state. Windows has 32 units, so no clash. Fix: the shared unit
+   requires `max_channels + 1 < units`; otherwise per-program units are used.
+4. **Lip gloss shine weaker than Standard (all platforms).** `materialF.glsl`
+   gave the AVBOIT hook base alpha and scaled glare into color, capped at 4x,
+   and zero-alpha shiny surfaces were discarded. Mac OIT composites its front
+   layers exactly, so under `MACOIT` it now takes Standard's glare-raised
+   alpha `al`, like Exact OIT. Prepasses still key base alpha (no lighting
+   there), so a glare-only fragment is not a layer; it is still weighted and
+   resolved correctly when it is the pixel's only transparent surface.
+5. **Lens glass missing on macOS: suspected sampler overflow (to confirm).**
+   A Mac OIT clone has one more sampler (`macoitState`) than its source. A
+   class3 legacy material program with normal + specular maps, sun shadow,
+   reflection probes and the volumetric atlas sits near 16 samplers; if the
+   clone reaches 17 it fails to link on macOS (16 units) only.
+   `LLGLSLShader::createShader()` then silently retries at a lower shader
+   level, and for `materialF.glsl` class1 is a debug stub with no OIT hook, so
+   that material's fragments contribute nothing. Evidence to look for in the
+   macOS log: "Failed to link shader: Material Mac OIT Shader" /
+   "trying again using shader level", and "Mac OIT capture programs use up
+   to N of 16".
