@@ -221,21 +221,17 @@ Tagged edits inside existing `<AS:Chanayane>` blocks: `llglslshader.cpp`
    unit 15, so that draw and every later draw of the pass sampled the atlas as
    Mac OIT state. Windows has 32 units, so no clash. Fix: the shared unit
    requires `max_channels + 1 < units`; otherwise per-program units are used.
-4. **Lip gloss shine weaker than Standard (all platforms).** `materialF.glsl`
+4. **Lip gloss shine weaker than Standard (all platforms, bokt).** `materialF.glsl`
    gave the AVBOIT hook base alpha and scaled glare into color, capped at 4x,
    and zero-alpha shiny surfaces were discarded. Mac OIT composites its front
    layers exactly, so under `MACOIT` it now takes Standard's glare-raised
    alpha `al`, like Exact OIT. Prepasses still key base alpha (no lighting
    there), so a glare-only fragment is not a layer; it is still weighted and
    resolved correctly when it is the pixel's only transparent surface.
-5. **Lens glass missing on macOS: suspected sampler overflow (to confirm).**
-   A Mac OIT clone has one more sampler (`macoitState`) than its source. A
-   class3 legacy material program with normal + specular maps, sun shadow,
-   reflection probes and the volumetric atlas sits near 16 samplers; if the
-   clone reaches 17 it fails to link on macOS (16 units) only.
-   `LLGLSLShader::createShader()` then silently retries at a lower shader
-   level, and for `materialF.glsl` class1 is a debug stub with no OIT hook, so
-   that material's fragments contribute nothing. Evidence to look for in the
-   macOS log: "Failed to link shader: Material Mac OIT Shader" /
-   "trying again using shader level", and "Mac OIT capture programs use up
-   to N of 16".
+5. **Lens glass missing on macOS: fixed by item 4 (bokt on macOS).** The
+   sampler-overflow suspicion was refuted by the macOS log: capture programs
+   use at most 11 of 16 units, shared state unit 15, no link failures. The
+   lens is a shiny legacy material whose base alpha is zero or near zero; the
+   old AVBOIT hook discarded or near-zeroed it. After item 4 the capture trace
+   shows about 1150 more weighted pixels than keyed pixels (glare-only
+   fragments). Why Windows showed the lens before item 4 is not established.
