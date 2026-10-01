@@ -111,6 +111,17 @@ vec2 deform(vec2 offset, vec2 field, vec2 axis_scale)
 }
 
 // Spherical aberration, see asDepthOfFieldFarF.glsl.
+// Mean of max(1 + c - 2 c u, 0) over u in [0, 1]: 1 for |c| <= 1.
+float sphericalNorm(float c)
+{
+    if (abs(c) <= 1.0)
+    {
+        return 1.0;
+    }
+    float q = (1.0 + c) * (1.0 + c) / (4.0 * abs(c));
+    return c > 0.0 ? q : 1.0 + q;
+}
+
 float sphericalWeight(float signed_radius, float pupil_r2)
 {
     if (sa_strength == 0.0)
@@ -118,7 +129,8 @@ float sphericalWeight(float signed_radius, float pupil_r2)
         return 1.0;
     }
     float sigma = clamp(signed_radius / 3.0, -1.0, 1.0);
-    return max(1.0 - sa_strength * sigma * (2.0 * clamp(pupil_r2, 0.0, 1.0) - 1.0), 0.0);
+    return max(1.0 - sa_strength * sigma * (2.0 * clamp(pupil_r2, 0.0, 1.0) - 1.0), 0.0) /
+           sphericalNorm(sa_strength * sigma);
 }
 
 float samplePhase()

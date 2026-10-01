@@ -107,6 +107,8 @@ namespace
     const LLStaticHashedString U_SA_STRENGTH("sa_strength");
     const LLStaticHashedString U_CAT_EYE("cat_eye");
     const LLStaticHashedString U_VIGNETTE_SHIFT("vignette_shift");
+    const LLStaticHashedString U_CA_SHIFT("ca_shift");
+    const LLStaticHashedString U_CA_REACH("ca_reach");
     const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
     const LLStaticHashedString U_TILE_PASS("tile_pass");
     const LLStaticHashedString U_TILE_REACH("tile_reach");
@@ -229,6 +231,7 @@ namespace
         shader.uniform1f(U_SA_STRENGTH, lens.mField.mSpherical);
         shader.uniform1f(U_CAT_EYE, lens.mField.mCatEye);
         shader.uniform1f(U_VIGNETTE_SHIFT, lens.mField.mVignette);
+        shader.uniform1f(U_CA_SHIFT, lens.mField.mAxialCA);
         shader.uniform1i(U_APERTURE_BLADES, lens.mShape.mBlades);
         shader.uniform1f(U_APERTURE_ROUNDNESS, lens.mShape.mRoundness);
         shader.uniform1f(U_APERTURE_ROTATION, lens.mShape.mRotation);
@@ -285,8 +288,11 @@ namespace
             !sTileReduce.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sTileX.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sTileY.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
+            // Second attachments: per-channel coverage (axial CA).
             !sNear2.allocate(gather_width, gather_height, GL_RGBA16F) ||
+            !sNear2.addColorAttachment(GL_RGBA16F) ||
             !sNear1.allocate(gather_width, gather_height, GL_RGBA16F) ||
+            !sNear1.addColorAttachment(GL_RGBA16F) ||
             !sFar.allocate(gather_width, gather_height, GL_RGBA16F) ||
             !sBack.allocate(gather_width, gather_height, GL_RGBA16F))
         {
@@ -593,9 +599,12 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     // 2. Veil kernel radius per tile: N2, N1, B1.
     {
         LL_PROFILE_GPU_ZONE("Live DoF tiles");
-        // B1 ends where the B1/B2 ramp does.
-        const F32 veil_radius = llmax(lens.mNearRadius,
-                                      llmin(1.25f * lens.mFarSplitRadius, lens.mFarRadius));
+        // B1 ends where the B1/B2 ramp does. Axial CA widens every source by
+        // its widest stratum (0.75 delta, asDoFLiveGatherF.glsl).
+        const F32 ca_near = 0.75f * lens.mField.mAxialCA * lens.mNearRadius;
+        const F32 ca_far = 0.75f * lens.mField.mAxialCA * lens.mFarRadius;
+        const F32 veil_radius = llmax(lens.mNearRadius + ca_near,
+                                      llmin(1.25f * lens.mFarSplitRadius, lens.mFarRadius) + ca_far);
         const F32 veil_gather = veil_radius * gather_height / (F32)height;
         const S32 reach = llclamp((S32)ceilf(veil_gather / (F32)TILE), 0, MAX_TILE_REACH);
         LLRenderTarget* previous = nullptr;
@@ -620,6 +629,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             }
             sTileProgram.uniform1i(U_TILE_PASS, pass);
             sTileProgram.uniform1i(U_TILE_REACH, reach);
+            sTileProgram.uniform2f(U_CA_REACH, ca_near * lens.mGatherScale, ca_far * lens.mGatherScale);
             sTileProgram.uniform1i(U_MAX_LEVEL, max_level);
             draw(screen_triangle);
             if (pass == 0)
@@ -673,6 +683,12 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
                 sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, gather.mBehind, false,
                                            LLTexUnit::TFO_POINT);
             }
+            if (gather.mBehind == &sNear2)
+            {
+                // N2's per-channel coverage (axial CA).
+                sGatherProgram.bindTexture(LLShaderMgr::NORMAL_MAP, &sNear2, false,
+                                           LLTexUnit::TFO_POINT, 1);
+            }
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false,
                                        LLTexUnit::TFO_TRILINEAR, 0);
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false,
@@ -684,6 +700,10 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.uniform1i(U_DEBUG_MODE, debug_mode);
             setLensUniforms(sGatherProgram, lens);
             draw(screen_triangle);
+            if (gather.mBehind == &sNear2)
+            {
+                sGatherProgram.unbindTexture(LLShaderMgr::NORMAL_MAP, sNear2.getUsage());
+            }
             if (gather.mBehind)
             {
                 sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, gather.mBehind->getUsage());
@@ -714,12 +734,14 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
                                       LLTexUnit::TFO_TRILINEAR, 3);
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sBack, false, LLTexUnit::TFO_BILINEAR);
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sNear1, false, LLTexUnit::TFO_BILINEAR);
-        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false, LLTexUnit::TFO_POINT);
+        // The veil's per-channel coverage (axial CA). Debug view 3 is drawn
+        // by the B1 gather, so the composite stays within 16 texture units.
+        sCompositeProgram.bindTexture(LLShaderMgr::NORMAL_MAP, &sNear1, false, LLTexUnit::TFO_BILINEAR, 1);
         sCompositeProgram.uniform1i(U_MAX_LEVEL, max_level);
         sCompositeProgram.uniform1i(U_DEBUG_MODE, debug_mode);
         setLensUniforms(sCompositeProgram, lens);
         draw(screen_triangle);
-        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sTileY.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::NORMAL_MAP, sNear1.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sNear1.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sBack.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsB.getUsage());

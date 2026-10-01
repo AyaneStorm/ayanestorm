@@ -122,6 +122,17 @@ vec3 edgeDistance(vec2 pixel)
 // Spherical aberration, the gathers' weight (asDepthOfFieldFarF.glsl) at
 // the relative disc radii rho (one per axial CA stratum). It averages to 1
 // over the aperture area, so the sprite keeps its energy.
+// Mean of max(1 + c - 2 c u, 0) over u in [0, 1]: 1 for |c| <= 1.
+float sphericalNorm(float c)
+{
+    if (abs(c) <= 1.0)
+    {
+        return 1.0;
+    }
+    float q = (1.0 + c) * (1.0 + c) / (4.0 * abs(c));
+    return c > 0.0 ? q : 1.0 + q;
+}
+
 vec4 sphericalWeight(vec4 rho)
 {
     if (sa_strength == 0.0)
@@ -131,7 +142,8 @@ vec4 sphericalWeight(vec4 rho)
     float sigma = plane > 0 ? clamp(vary_radius / 3.0, 0.0, 1.0) :
                               -clamp(vary_radius / 3.0, 0.0, 1.0);
     vec4 pupil_r2 = clamp(rho * rho, vec4(0.0), vec4(1.0));
-    return max(vec4(1.0) - sa_strength * sigma * (2.0 * pupil_r2 - vec4(1.0)), vec4(0.0));
+    return max(vec4(1.0) - sa_strength * sigma * (2.0 * pupil_r2 - vec4(1.0)), vec4(0.0)) /
+           sphericalNorm(sa_strength * sigma);
 }
 
 // Coverage of one antialiasing sample: per channel with axial CA (each

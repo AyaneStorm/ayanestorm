@@ -12,6 +12,7 @@
  *   a tile where nearer bins hide all of it got 0 while its neighbour's
  *   gather ran and read the fill: the fill stopped at tile edges (grey
  *   blocks seen through semi-transparent in-focus hair);
+ *   with axial CA, a bin's radius grows by its widest stratum (ca_reach);
  *   tile_pass 1, 2: dilation along x, then y: a neighbour tile k tiles away
  *   counts when its radius spans the k - 1 tiles between the two (a
  *   conservative square around each disc).
@@ -29,6 +30,9 @@ uniform int tile_pass;
 uniform int max_level;
 // Dilation reach in tiles: ceil(largest veil radius / TILE).
 uniform int tile_reach;
+// Axial CA: widest stratum's radius increase in front of and behind the
+// focus, gather pixels (asDoFLiveGatherF.glsl); 0 off.
+uniform vec2 ca_reach;
 
 const int TILE = 8;
 const int MAX_REACH = 64;
@@ -75,6 +79,7 @@ void main()
                                           binRadius(bloomMap, 2, 2, uv)));
             }
         }
+        radius += mix(vec3(0.0), ca_reach.xxy, greaterThan(radius, vec3(0.0)));
         frag_color = vec4(radius, 0.0);
         return;
     }

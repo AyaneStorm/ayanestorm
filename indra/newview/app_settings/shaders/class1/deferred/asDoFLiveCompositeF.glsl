@@ -31,13 +31,12 @@ uniform sampler2D specularRect;  // F (S.rgb, W), mipmapped
 uniform sampler2D emissiveRect;  // visibility (V_N1, V_F, V_B1, V_B2), mipmapped
 uniform sampler2D lightMap;      // background: B1 over B2 (premultiplied)
 uniform sampler2D bloomMap;      // foreground veil: N2 over N1 (premultiplied)
-uniform sampler2D noiseMap;      // tile kernel radii (debug view)
+uniform sampler2D normalMap;     // axial CA: the veil's per-channel coverage
 uniform int max_level;
 uniform int debug_mode;
 uniform int bins_source;
-uniform float near_radius;
-uniform float far_split_radius;
-uniform float gather_scale;
+// Axial CA (asDoFLiveGatherF.glsl): the veil is laid per channel.
+uniform float ca_shift;
 // Optical vignetting: the light the cat's-eye barrel clips, kept when
 // darkening is on (barrel shift at the frame corner, aperture radii; 0
 // off). The gathers renormalize every source to its open aperture; the
@@ -108,7 +107,14 @@ void main()
                 (focus.a > 0.0001 ? focus.rgb / focus.a : source.rgb);
     vec4 veil = texture(bloomMap, uv);
 
-    vec4 layered = over(veil, over(focus, vec4(back, 1.0)));
+    vec4 under = over(focus, vec4(back, 1.0));
+    vec4 layered = over(veil, under);
+    if (ca_shift > 0.0)
+    {
+        // One alpha lost the fringes of dark edges over bright areas.
+        vec3 veil_alpha = clamp(texture(normalMap, uv).rgb, 0.0, 1.0);
+        layered.rgb = veil.rgb + under.rgb * (1.0 - veil_alpha);
+    }
     // The pixel's own focus share, where no veil covers it, keeps the
     // source's exact compositing: add the source's difference from the bins
     // for that share only. A pixel all in focus and unveiled is then the
@@ -134,14 +140,8 @@ void main()
     }
     else if (debug_mode == 3)
     {
-        // Tile kernel radii relative to each bin's largest: N2 red, N1
-        // green, B1 blue. A gathered tile shows at least a quarter
-        // brightness, so the smallest kernels (half a gather pixel) stand
-        // apart from skipped tiles (black).
-        vec3 radii = texelFetch(noiseMap, ivec2(gl_FragCoord.xy * gather_scale) / 8, 0).xyz;
-        vec3 relative = clamp(vec3(radii.xy / max(0.5 * near_radius, 0.5),
-                                   radii.z / max(0.625 * far_split_radius, 0.5)), 0.0, 1.0);
-        color = mix(vec3(0.0), 0.25 + 0.75 * relative, greaterThan(radii, vec3(0.0)));
+        // Tile kernel radii, drawn by the B1 gather (asDoFLiveGatherF.glsl).
+        color = background.a > 0.0001 ? background.rgb / background.a : vec3(0.0);
     }
     else if (debug_mode == 4)
     {

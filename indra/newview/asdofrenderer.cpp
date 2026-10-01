@@ -439,9 +439,8 @@ namespace
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
         // Live (mode 3) shares the Advanced renderer's blur size, quality,
-        // aperture shape, field curvature, spherical aberration and cat's-eye
-        // controls; axial CA follows
-        // (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
+        // aperture shape, field curvature and lens-effect controls, except
+        // astigmatism (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
         const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
         setFlag("ASDepthOfFieldUILive", mode == ASDoFLive::LIVE_MODE);
@@ -449,15 +448,13 @@ namespace
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
         setFlag("ASDepthOfFieldUIShape", screen_space || mode == APERTURE_MODE);
         // Axial CA, cat's eye (with its corner darkening) and spherical
-        // aberration apply to both
-        // the Advanced and the Aperture-sampled renderers; spherical
-        // aberration and cat's eye to Live too, whose axial CA checkbox is
-        // enabled ahead of its effect (phase 4).
+        // aberration apply to the Advanced, the Aperture-sampled and the
+        // Live renderers.
         const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
         const bool live = mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUILens", lens_modes || live);
         setFlag("ASDepthOfFieldUIAxialCA",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
                 (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
         // Advanced and Live renderers.
@@ -1462,7 +1459,7 @@ namespace ASDoFRenderer
         key.mResidualBlur = gSavedSettings.getF32("ASDepthOfFieldApertureResidualBlur");
         static LLCachedControl<bool> axial_ca(gSavedSettings, "ASDepthOfFieldApertureAxialCA", false);
         static LLCachedControl<F32> axial_ca_percent(gSavedSettings, "ASDepthOfFieldApertureAxialCAStrength", 0.2f);
-        key.mAxialCA = axial_ca ? llclamp((F32)axial_ca_percent, 0.f, 2.f) * 0.01f : 0.f;
+        key.mAxialCA = axial_ca ? llclamp((F32)axial_ca_percent, 0.f, 10.f) * 0.01f : 0.f;
         sAxialCA = key.mAxialCA;
         static LLCachedControl<bool> cat_eye(gSavedSettings, "ASDepthOfFieldApertureCatEye", false);
         static LLCachedControl<F32> cat_eye_strength(gSavedSettings, "ASDepthOfFieldApertureCatEyeStrength", 0.6f);
@@ -1471,7 +1468,7 @@ namespace ASDoFRenderer
         static LLCachedControl<F32> spherical_strength(gSavedSettings, "ASDepthOfFieldApertureSphericalStrength", 0.5f);
         key.mCatEye = cat_eye ? llclamp((F32)cat_eye_strength, 0.f, 2.f) : 0.f;
         key.mCatEyeDarken = key.mCatEye > 0.f && cat_eye_darken;
-        key.mSpherical = spherical ? llclamp((F32)spherical_strength, -1.f, 1.f) : 0.f;
+        key.mSpherical = spherical ? llclamp((F32)spherical_strength, -5.f, 5.f) : 0.f;
         static LLCachedControl<bool> highlights(gSavedSettings, "ASDepthOfFieldApertureHighlights", false);
         static LLCachedControl<F32> highlight_strength(gSavedSettings, "ASDepthOfFieldApertureHighlightStrength", 0.3f);
         static LLCachedControl<F32> highlight_threshold(gSavedSettings, "ASDepthOfFieldApertureHighlightThreshold", 1.f);

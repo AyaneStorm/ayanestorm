@@ -172,7 +172,7 @@ namespace
         }
         if (gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"))
         {
-            field.mSpherical = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureSphericalStrength"), -1.f, 1.f);
+            field.mSpherical = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureSphericalStrength"), -5.f, 5.f);
         }
 
         const F32 focus = -focal_distance;
@@ -189,7 +189,7 @@ namespace
             // Red-to-blue shift alpha f: each extreme wavelength moves by
             // half (the aperture-sampled renderer's 1/S' = 1/S - s alpha / 2f).
             field.mAxialCA = 0.5f * 0.01f *
-                llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureAxialCAStrength"), 0.f, 2.f) * shift_scale;
+                llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureAxialCAStrength"), 0.f, 10.f) * shift_scale;
         }
         if (gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"))
         {

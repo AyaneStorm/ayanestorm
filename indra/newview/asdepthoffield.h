@@ -38,7 +38,7 @@ namespace ASDepthOfField
         F32 mCurvature = 0.f;      // field curvature: signed CoC shift
         F32 mAstigmatism = 0.f;    // radial/circumferential focus split (sign: long axis)
         F32 mAxialCA = 0.f;        // blur shift of the extreme wavelengths
-        F32 mSpherical = 0.f;      // spherical aberration, -1..1; 0 off
+        F32 mSpherical = 0.f;      // spherical aberration, -5..5; 0 off
     };
     // max_coc: the frame's largest blur radius in pixels (> 0).
     LensField lensField(U32 width, U32 height, F32 focal_distance, F32 blur_constant,

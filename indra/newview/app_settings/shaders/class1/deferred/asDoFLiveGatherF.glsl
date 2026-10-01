@@ -23,12 +23,21 @@
  * Cat's eye (cat_eye > 0): the lens barrel clips each source's aperture
  *   (barrelReach()); without darkening its light is renormalized to the open
  *   part, as in the other renderers. The composite applies the darkening.
+ * Axial CA (ca_shift > 0): every tap evaluates four wavelength strata
+ *   (addTap()); coverage is per channel. The foreground veil keeps it in a
+ *   second output (frag_alpha), N1 is written over N2 per channel, and the
+ *   composite lays the veil per channel: one (green) alpha lost the fringes
+ *   of dark edges over bright areas, its error as large as the fringe
+ *   (scripts/testing/dof_live_reference.py, test_axial_ca_edge). B1 is
+ *   written over B2 per channel here.
  * Each layer is premultiplied colour and coverage. Layers 1 and 3 are drawn
  * after 0 and 2 and write the pair the composite reads: N1 is written over
  * N2 (one foreground veil), B1 over B2 normalized (the background).
  */
 
 layout(location = 0) out vec4 frag_color;
+// Per-channel coverage (rgb) of N2, then of the foreground veil (axial CA).
+layout(location = 1) out vec4 frag_alpha;
 
 uniform sampler2D diffuseRect;   // the bin's (S.rgb, W), mipmapped
 uniform sampler2D specularRect;  // radius (E_N2, E_N1, E_B1, M_B2), mipmapped
@@ -36,13 +45,21 @@ uniform sampler2D emissiveRect;  // visibility (V_N1, V_F, V_B1, V_B2), mipmappe
 uniform sampler2D bloomMap;      // F (S.rgb, W), mipmapped: skip in-focus pixels
 uniform sampler2D noiseMap;      // tile kernel radii (N2, N1, B1)
 uniform sampler2D lightMap;      // layer 1: the N2 veil; layer 3: B2
+uniform sampler2D normalMap;     // layer 1, axial CA: N2's per-channel coverage
 uniform vec2 target_res;
 uniform int layer;
 uniform int max_rings;
 uniform int max_level;
-// Composite debug views 9 and 10 (asDoFLiveCompositeF.glsl): the B1 pass
-// writes B1 alone, or B2 alone, instead of B1 over B2.
+// Composite debug views 3, 9 and 10 (asDoFLiveCompositeF.glsl): the B1
+// pass writes the tile kernel radii, B1 alone, or B2 alone, instead of B1
+// over B2.
 uniform int debug_mode;
+// Axial CA: blur shift of the extreme wavelengths, normalized CoC; 0 off.
+uniform float ca_shift;
+uniform float near_radius;
+uniform float far_radius;
+uniform float far_split_radius;
+uniform float gather_scale;
 
 const int LAYER_N2 = 0;
 const int LAYER_N1 = 1;
@@ -107,6 +124,9 @@ bool readTap(vec2 uv, float lod, out vec4 layer_value, out float energy)
 const int BARREL_NODES = 24;
 const float BARREL_MAX_SHIFT = 1.6;
 bool barrel_on = false;
+// Open fraction for the last |sa| > 1 (barrelReach()).
+float barrel_cut_sa = 0.0;
+float barrel_cut_fraction = 1.0;
 float barrel_lo[BARREL_NODES];
 float barrel_hi[BARREL_NODES];
 float barrel_area[BARREL_NODES + 1];
@@ -228,8 +248,32 @@ float barrelReach(float r, float d, float s, float sa, vec4 sector)
     {
         return 0.0;
     }
+    float open_fraction = barrel_fraction.x + sa * barrel_fraction.y;
+    if (abs(sa) > 1.0)
+    {
+        // The spherical profile cut where it turns negative
+        // (liveSphericalNorm()); the open fraction is that cut profile's,
+        // over the same band, kept for the last strength.
+        float cut = (1.0 + sa) / (2.0 * sa);
+        vec2 positive = sa > 0.0 ? vec2(0.0, cut) : vec2(cut, 1.0);
+        ua = max(ua, positive.x);
+        ub = min(ub, positive.y);
+        if (ub <= ua)
+        {
+            return 0.0;
+        }
+        if (sa != barrel_cut_sa)
+        {
+            vec2 whole = barrelMoments(barrel_area[0], barrel_area[BARREL_NODES], 0.0,
+                                       2.0 * LIVE_PI_G * (1.0 - 0.5 / float(BARREL_NODES)),
+                                       positive.x, positive.y);
+            barrel_cut_sa = sa;
+            barrel_cut_fraction = (whole.x + sa * whole.y) / unit_area;
+        }
+        open_fraction = barrel_cut_fraction;
+    }
+    open_fraction = max(open_fraction, 0.01);
     vec2 moments = barrelMoments(sector.x, sector.y, sector.z, sector.w, ua, ub);
-    float open_fraction = max(barrel_fraction.x + sa * barrel_fraction.y, 0.01);
     return max(moments.x + sa * moments.y, 0.0) /
            ((sector.y - sector.x) * (hi - lo) / r2) / open_fraction;
 }
@@ -250,7 +294,28 @@ bool self_on = false;
 float self_weight;  // the pixel's own B1 density W_p
 float self_radius;  // and radius r_p
 float self_sa;
-float self_hidden;
+vec3 self_hidden;
+
+// Axial chromatic aberration, the other renderers' spectral model
+// (ASDoFAperture::spectralWeights, channelCover() in
+// asDepthOfFieldFarF.glsl): wavelength s blurs to radius r - sigma delta s
+// (sigma +1 behind the focus, -1 in front; red, s > 0, focuses farther),
+// four strata of s, channel weights red 1 + s, green 1.5 (1 - s^2), blue
+// 1 - s, each summing to 1. Each stratum has its own exact reach and keeps
+// the source's energy (W / r_k^2), so a uniform field keeps coverage 1 in
+// every channel; the kernels span the widest stratum (+ 0.75 delta, the
+// tile pass and farKernel()).
+const vec4 CA_STRATA = vec4(-0.75, -0.25, 0.25, 0.75);
+const vec4 CA_RED = vec4(0.0625, 0.1875, 0.3125, 0.4375);
+const vec4 CA_GREEN = vec4(0.1590909, 0.3409091, 0.3409091, 0.1590909);
+const vec4 CA_BLUE = vec4(0.4375, 0.3125, 0.1875, 0.0625);
+bool ca_on = false;
+float ca_sigma_delta;  // sigma delta, gather pixels
+
+float caStratumRadius(float r, int k)
+{
+    return max(abs(r - ca_sigma_delta * CA_STRATA[k]), 0.5);
+}
 
 // One tap: adds its colour and weight. d and s are aperture-space distance
 // and spacing (the reach test); spacing is the image-space tap spacing (the
@@ -258,7 +323,7 @@ float self_hidden;
 // Taps past the frame read its edge: content continues there, so a
 // foreground touching the frame keeps its coverage.
 void addTap(vec2 center, vec2 offset, float d, float s, float spacing,
-            float area, vec4 sector, inout vec3 color_sum, inout float weight_sum)
+            float area, vec4 sector, inout vec3 color_sum, inout vec3 weight_sum)
 {
     vec2 uv = clamp((center + offset) / target_res, vec2(0.0), vec2(1.0));
     float lod = log2(max(spacing, 1.0));
@@ -269,17 +334,42 @@ void addTap(vec2 center, vec2 offset, float d, float s, float spacing,
         return;
     }
     float r = sqrt(value.a / energy);
-    float sa = liveSphericalProduct(r, layer == LAYER_B2 || layer == LAYER_B1);
-    float reach = barrel_on ? barrelReach(r, d, s, sa, sector) : liveReach(r, d, s, sa);
-    float weight = area / unit_area * energy * reach;
-    color_sum += value.rgb / value.a * weight;
-    weight_sum += weight;
-    if (self_on && r < self_radius)
+    bool background = layer == LAYER_B2 || layer == LAYER_B1;
+    if (!ca_on)
     {
-        float reach_own = barrel_on ? barrelReach(self_radius, d, s, self_sa, sector) :
-                                      liveReach(self_radius, d, s, self_sa);
-        self_hidden += area / unit_area * value.a * self_weight /
-                       (self_radius * self_radius) * max(reach_own - reach, 0.0);
+        float sa = liveSphericalProduct(r, background);
+        float reach = barrel_on ? barrelReach(r, d, s, sa, sector) : liveReach(r, d, s, sa);
+        float weight = area / unit_area * energy * reach;
+        color_sum += value.rgb / value.a * weight;
+        weight_sum += vec3(weight);
+        if (self_on && r < self_radius)
+        {
+            float reach_own = barrel_on ? barrelReach(self_radius, d, s, self_sa, sector) :
+                                          liveReach(self_radius, d, s, self_sa);
+            self_hidden += vec3(area / unit_area * value.a * self_weight /
+                                (self_radius * self_radius) * max(reach_own - reach, 0.0));
+        }
+        return;
+    }
+    vec3 rgb = value.rgb / value.a;
+    for (int k = 0; k < 4; ++k)
+    {
+        vec3 channels = vec3(CA_RED[k], CA_GREEN[k], CA_BLUE[k]);
+        float r_k = caStratumRadius(r, k);
+        float sa = liveSphericalProduct(r_k, background);
+        float reach = barrel_on ? barrelReach(r_k, d, s, sa, sector) : liveReach(r_k, d, s, sa);
+        vec3 weight = area / unit_area * value.a / (r_k * r_k) * reach * channels;
+        color_sum += rgb * weight;
+        weight_sum += weight;
+        float own_k = self_on ? caStratumRadius(self_radius, k) : 0.0;
+        if (self_on && r_k < own_k)
+        {
+            float own_sa = liveSphericalProduct(own_k, true);
+            float reach_own = barrel_on ? barrelReach(own_k, d, s, own_sa, sector) :
+                                          liveReach(own_k, d, s, own_sa);
+            self_hidden += area / unit_area * value.a * self_weight / (own_k * own_k) *
+                           max(reach_own - reach, 0.0) * channels;
+        }
     }
 }
 
@@ -296,9 +386,11 @@ float farKernel(vec2 uv)
     return energies.w / value.a;
 }
 
-// This layer at this pixel: premultiplied colour and coverage.
-vec4 gatherLayer(vec2 center)
+// This layer at this pixel: premultiplied colour and coverage, and the
+// coverage per channel (axial CA; the coverage in every channel otherwise).
+vec4 gatherLayer(vec2 center, out vec3 alpha)
 {
+    alpha = vec3(0.0);
     vec2 uv = center / target_res;
     float kernel;
     bool background = layer == LAYER_B2 || layer == LAYER_B1;
@@ -309,7 +401,9 @@ vec4 gatherLayer(vec2 center)
     }
     if (layer == LAYER_B2)
     {
+        // The tile pass adds the widest stratum to the veil kernels.
         kernel = farKernel(uv);
+        kernel = ca_on && kernel > 0.0 ? kernel + 0.75 * abs(ca_sigma_delta) : kernel;
     }
     else
     {
@@ -335,12 +429,12 @@ vec4 gatherLayer(vec2 center)
     // the aperture-sampled renderer (ASDoFCamera).
     float direction = background ? -1.0 : 1.0;
     vec3 color_sum = vec3(0.0);
-    float weight_sum = 0.0;
+    vec3 weight_sum = vec3(0.0);
     float squeeze = max(anamorphic_ratio, 1.0);
     // The pixel's own B1, completed (selfOcclusion()).
     vec4 self_color = vec4(0.0);
     self_on = false;
-    self_hidden = 0.0;
+    self_hidden = vec3(0.0);
     if (layer == LAYER_B1)
     {
         vec4 own;
@@ -395,29 +489,65 @@ vec4 gatherLayer(vec2 center)
     // Premultiplied for every layer: skipped pixels are (0, 0, 0, 0), and the
     // composite's bilinear upsampling must not mix that black into the
     // colour of their neighbours (dark fringes along in-focus strands).
-    float coverage = clamp(weight_sum, 0.0, 1.0);
-    vec4 result = weight_sum > 0.0 ? vec4(color_sum / weight_sum * coverage, coverage) : vec4(0.0);
+    if (!ca_on)
+    {
+        float coverage = clamp(weight_sum.g, 0.0, 1.0);
+        vec4 result = weight_sum.g > 0.0 ? vec4(color_sum / weight_sum.g * coverage, coverage) :
+                                           vec4(0.0);
+        if (self_on)
+        {
+            result += self_color * min(1.0 - coverage, self_hidden.g);
+        }
+        alpha = vec3(result.a);
+        return result;
+    }
+    vec3 coverage = clamp(weight_sum, 0.0, 1.0);
+    vec3 premultiplied = color_sum / max(weight_sum, vec3(1e-20)) * coverage;
     if (self_on)
     {
-        result += self_color * min(1.0 - coverage, self_hidden);
+        vec3 fill = min(1.0 - coverage, self_hidden);
+        premultiplied += self_color.rgb * fill;
+        coverage += fill;
     }
-    return result;
+    alpha = coverage;
+    if (layer == LAYER_B2)
+    {
+        // Normalized by the composite with one alpha: colour per channel.
+        return vec4(premultiplied / max(coverage, vec3(1e-6)) * coverage.g, coverage.g);
+    }
+    return vec4(premultiplied, coverage.g);
 }
 
 void main()
 {
     vec2 center = gl_FragCoord.xy;
-    vec4 result = gatherLayer(center);
+    bool background = layer == LAYER_B2 || layer == LAYER_B1;
+    float delta = ca_shift * (background ? far_radius : near_radius) * gather_scale;
+    ca_on = delta > 0.0;
+    ca_sigma_delta = background ? delta : -delta;
+    vec3 alpha;
+    vec4 result = gatherLayer(center, alpha);
     if (layer == LAYER_N1)
     {
         // N2 in front of N1.
         vec4 near2 = texelFetch(lightMap, ivec2(center), 0);
-        result = near2 + result * (1.0 - near2.a);
+        if (!ca_on)
+        {
+            result = near2 + result * (1.0 - near2.a);
+            alpha = vec3(result.a);
+        }
+        else
+        {
+            vec3 near2_alpha = texelFetch(normalMap, ivec2(center), 0).rgb;
+            result = vec4(near2.rgb + result.rgb * (1.0 - near2_alpha),
+                          near2.a + result.a * (1.0 - near2.a));
+            alpha = near2_alpha + alpha * (1.0 - near2_alpha);
+        }
     }
     else if (layer == LAYER_B1)
     {
         // B1 in front of B2, which is the farthest content: normalized, it
-        // fills whatever B1 leaves uncovered.
+        // fills whatever B1 leaves uncovered (per channel with axial CA).
         vec4 back2 = texelFetch(lightMap, ivec2(center), 0);
         if (debug_mode == 10)
         {
@@ -425,8 +555,28 @@ void main()
         }
         else if (back2.a > 0.0001 && debug_mode != 9)
         {
-            result += vec4(back2.rgb / back2.a, 1.0) * (1.0 - result.a);
+            if (!ca_on)
+            {
+                result += vec4(back2.rgb / back2.a, 1.0) * (1.0 - result.a);
+            }
+            else
+            {
+                result = vec4(result.rgb + back2.rgb / back2.a * (1.0 - alpha),
+                              result.a + (1.0 - result.a));
+            }
+        }
+        if (debug_mode == 3)
+        {
+            // Tile kernel radii relative to each bin's largest: N2 red, N1
+            // green, B1 blue. A gathered tile shows at least a quarter
+            // brightness, so the smallest kernels (half a gather pixel)
+            // stand apart from skipped tiles (black).
+            vec3 radii = texelFetch(noiseMap, ivec2(center) / TILE, 0).xyz;
+            vec3 relative = clamp(vec3(radii.xy / max(0.5 * near_radius, 0.5),
+                                       radii.z / max(0.625 * far_split_radius, 0.5)), 0.0, 1.0);
+            result = vec4(mix(vec3(0.0), 0.25 + 0.75 * relative, greaterThan(radii, vec3(0.0))), 1.0);
         }
     }
     frag_color = result;
+    frag_alpha = vec4(alpha, 1.0);
 }

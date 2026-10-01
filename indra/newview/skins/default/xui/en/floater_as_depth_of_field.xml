@@ -269,10 +269,10 @@
       </button>
     </panel>
 
-    <!-- Optional lens character. Axial CA: Advanced and Aperture-sampled
-         renderers; cat's eye and spherical aberration: those and Live;
-         bright highlights: Aperture-sampled; field curvature: Advanced and
-         Live; astigmatism: Advanced. -->
+    <!-- Optional lens character. Axial CA, cat's eye and spherical
+         aberration: Advanced, Aperture-sampled and Live renderers; bright
+         highlights: Aperture-sampled; field curvature: Advanced and Live;
+         astigmatism: Advanced. -->
     <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"
            left="0" top="0" width="430" height="399">
       <check_box name="aperture_axial_ca" enabled_control="ASDepthOfFieldUILens" control_name="ASDepthOfFieldApertureAxialCA"
@@ -285,9 +285,9 @@
       </button>
       <slider name="aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" control_name="ASDepthOfFieldApertureAxialCAStrength"
               layout="topleft" left="15" top="36" width="365" height="18"
-              label="Aberration (% of f)" label_width="130" min_val="0" max_val="2"
+              label="Aberration (% of f)" label_width="130" min_val="0" max_val="10"
               increment="0.01" decimal_digits="2" can_edit_text="true"
-              tool_tip="Red-to-blue focal shift in percent of the focal length. Real fast lenses are around 0.1-0.2; higher values exaggerate the colour fringes." />
+              tool_tip="Red-to-blue focal shift in percent of the focal length. Real fast lenses are around 0.1-0.2; higher values exaggerate the colour fringes. The fringes grow with the aperture: at small apertures (high f-numbers) only large values show." />
       <button name="reset_aperture_axial_ca_strength" enabled_control="ASDepthOfFieldUIAxialCA" label="D" layout="topleft"
               left="385" top="34" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureAxialCAStrength" />
@@ -327,9 +327,9 @@
       </button>
       <slider name="aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" control_name="ASDepthOfFieldApertureSphericalStrength"
               layout="topleft" left="15" top="166" width="365" height="18"
-              label="Spherical strength" label_width="130" min_val="-1" max_val="1"
+              label="Spherical strength" label_width="130" min_val="-5" max_val="5"
               increment="0.05" decimal_digits="2" can_edit_text="true"
-              tool_tip="Positive (most lenses): soft, centre-bright background bokeh and bright-rimmed foreground bokeh. Negative (over-corrected, 'soap bubble'): bright rings in the background." />
+              tool_tip="Positive (most lenses): soft, centre-bright background bokeh and bright-rimmed foreground bokeh. Negative (over-corrected, 'soap bubble'): bright rings in the background. Beyond 1 (stylised): a hard core or a thin ring." />
       <button name="reset_aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" label="D" layout="topleft"
               left="385" top="164" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSphericalStrength" />

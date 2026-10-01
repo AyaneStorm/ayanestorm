@@ -12269,7 +12269,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureAxialCAStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
+    <key>Comment</key><string>Aperture-sampled, Advanced and Live DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-10). Real fast lenses are around 0.1-0.2</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
   </map>
@@ -12299,7 +12299,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureSphericalStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
+    <key>Comment</key><string>Aperture-sampled, Advanced and Live DoF: spherical aberration strength (-5 to 5). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims. Beyond 1 (stylised): a hard core or a thin ring</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>

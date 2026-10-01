@@ -853,3 +853,49 @@ settings. Mode 1 and mode 2 rendering stay unchanged.
   - The strands-over-rock, hidden-veil-tile, polygon-tile and minimum-radius gates pass with the fill on. 26 tests pass.
 - **Cost.** One completed read per B1 gather pixel. The extra reach runs only for taps sharper than the pixel's own B1. With cat's eye on, that is a second barrel integration for those taps.
 - glslang links Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
+- **Runtime (2026-10-01).** The user confirmed the jaw line is gone ("looks perfect so far") and committed steps 1 to 3 with this fix.
+
+### Step 4: axial chromatic aberration (2026-10-01, unbuilt)
+
+- **Gate result: single alpha rejected (the plan's stop point).**
+  - The model measured compositing the layers with one (green) alpha against per channel, on a hard blurred edge (`evaluate_ca_edge()`).
+  - On bright over dark the error is under 0.2%. On dark over bright it is as large as the fringe itself: in the fringe band, rms 1.85% against a 1.75% fringe at delta = 0.4 R (about the strongest setting at 2 m and 50 mm), and 3.4% against 3.2% at delta = R.
+  - A dark foreground has no colour to fringe. Its fringe comes from the per-channel coverage of what lies behind, so one alpha loses it.
+  - The user chose the per-channel veil.
+- **Strata (`addTap()`).** As in modes 1 and 2:
+  - Four strata of wavelength s, with radius `|r - sigma delta s|` (floored at half a gather pixel), sigma +1 behind and -1 in front.
+  - `delta = ca_shift * (near or far radius)` in gather pixels.
+  - Channel weights red 1 + s, green 1.5 (1 - s^2), blue 1 - s.
+  - Each stratum has its own exact reach (spherical aberration and the barrel included) and keeps the source's energy (`W / r_k^2`), so each channel's weights partition exactly.
+  - B1 self-occlusion runs per stratum.
+- **Kernels.** The tile pass adds the widest stratum (`ca_reach`, 0.75 delta per side) to each non-empty tile radius before dilation, and C++ widens `tile_reach` likewise. B2's own kernel grows in the gather.
+- **Per-channel compositing.**
+  - N2 and N1 write their per-channel coverage to a second attachment (`frag_alpha`, `sNear2` and `sNear1`). N1 is written over N2 per channel.
+  - B1 is written over normalized B2 per channel inside the B1 pass, which needs no storage.
+  - B2 stays normalized: colour per channel, one alpha.
+  - The composite lays the veil per channel (`normalMap`). `exact_share` keeps the green alpha.
+- **Texture units.** Debug view 3 (tile kernels) is now drawn by the B1 gather into the background target. The composite dropped `noiseMap` and has 15 active samplers with the veil alpha, under macOS's 16 (glslang reflection).
+- **CA off.** Every changed operation keeps its previous code in a uniform branch (`ca_on`, `ca_shift > 0`), and the tile radius adds 0. The only visible difference is debug view 3, now upsampled from the gather target.
+- **UI.** The axial CA strength slider is enabled in Live (`ASDepthOfFieldUIAxialCA`). Every lens effect except astigmatism now works in Live.
+- **Model.**
+  - The gather became a stratum loop: one neutral stratum when off, and the existing 26 tests pass unchanged.
+  - `test_axial_ca_uniform_coverage_per_channel`: coverage 1 to 1e-9 in every channel for 3 shapes, with and without the barrel, both sides, delta 0.3 to 6, radii 0.5 to 8, and spherical aberration 0 and 1.
+  - `test_axial_ca_edge`: a hard edge composited per channel is within 1% rms of a per-channel brute-force splat for every quality, side, shift up to delta = R and colour pair. It also documents the single-alpha loss.
+  - 28 tests pass.
+- **Cost (CA on).** Four reach evaluations per tap (four barrel integrations with cat's eye), one more RGBA16F half-resolution attachment written by each foreground pass, and one more composite fetch. CA off adds only the second attachments' writes in the two foreground passes.
+- glslang links Reduce, Tile, Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
+
+### Wider lens-effect limits: axial CA 10%, spherical aberration ±5 (2026-10-01, unbuilt)
+
+- **Why.** At the user's f/15, axial CA at the 2% limit shifts the colours by about 2 px, and spherical aberration at ±1 was too subtle. Both effects scale with the aperture like the blur itself. The user asked for 10% and ±5, in all three modes. Within the old ranges, every mode is unchanged.
+- **Limits.** The slider ranges, the clamps in `computeLensField()` (modes 1 and 3) and in the aperture-sampled key (`asdofrenderer.cpp`, mode 2), the `LensField` comment, and the `settings.xml` comments, which now name Live. Each tooltip explains the stylised range.
+- **Spherical profile beyond 1.** `1 - c (2 u - 1)` (c = a sigma, u = rho^2) turns negative near the rim (c > 1) or the centre (c < -1). It is cut at zero and divided by its mean, which is `(1 + c)^2 / (4 c)` for c > 1 and `1 + (1 + c)^2 / (4 |c|)` for c < -1. The result is a hard bright core or a thin ring, and the source keeps its energy.
+  - Mode 1: `sphericalWeight()` in Far, Near, Transparent and Sprite divides by `sphericalNorm()`.
+  - Mode 2: `asDoFAccumulateF.glsl` clamps the weight at zero and divides likewise. Before, a weight could turn negative and subtract colour.
+  - Live: `liveReach()` cuts the integration interval at `u0 = (1 + c) / (2 c)` and divides by `liveSphericalNorm()`. `barrelReach()` cuts the band's u range the same way, and its open fraction is the cut profile's (one whole-aperture band integral, kept for the last strength).
+  - For |c| <= 1 the norm is exactly 1 and the cut is outside [0, 1], so every mode keeps its previous results: mode 2's pupil radius is in [0, 1), where the weight is already >= 0.
+- **Model.** `spherical_norm()` and `spherical_cut()` feed `spherical_reach()` and `BarrelBand.reach()`. The truth splat clamps at zero before renormalizing.
+  - Uniform coverage is exact to 1e-11 for strengths down to -5 and up to 5, and with the barrel at 3 and -5.
+  - A light's bokeh at 3 and -5 keeps its energy and stays within 2x the unclipped gather's error. Measured: 1.74x at 3 rings for the thin ring, under 1x at 7 rings.
+  - 28 tests pass.
+- glslang compiles the Live set (linked), and mode 1's Far, Near, Transparent and Sprite and mode 2's Accumulate (alone), at 410 core and 400. `git diff --check` is clean, LF throughout.

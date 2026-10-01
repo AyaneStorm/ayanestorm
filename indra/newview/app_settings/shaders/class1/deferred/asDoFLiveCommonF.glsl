@@ -315,7 +315,19 @@ float liveSphericalProduct(float r, bool background)
 // G(r^2) = r^2, so a whole disc keeps its energy, in any aperture shape
 // (the profile is radial in aperture space, as in the aperture-sampled
 // renderer). A point sample of the profile per tap would not partition it
-// (scripts/testing/dof_live_reference.py).
+// (scripts/testing/dof_live_reference.py). Beyond |sa| = 1 the profile is
+// cut where it turns negative, u0 = (1 + sa) / (2 sa) r^2, and divided by
+// its mean (liveSphericalNorm()), as in the other renderers.
+float liveSphericalNorm(float sa)
+{
+    if (abs(sa) <= 1.0)
+    {
+        return 1.0;
+    }
+    float q = (1.0 + sa) * (1.0 + sa) / (4.0 * abs(sa));
+    return sa > 0.0 ? q : 1.0 + q;
+}
+
 float liveReach(float r, float d, float s, float sa)
 {
     if (sa == 0.0)
@@ -333,8 +345,20 @@ float liveReach(float r, float d, float s, float sa)
     float area = d <= 0.0 ? 0.25 * s * s : 2.0 * d * s;
     lo = min(lo, r2);
     hi = min(hi, r2);
+    float norm = 1.0;
+    if (abs(sa) > 1.0)
+    {
+        float cut = (1.0 + sa) / (2.0 * sa) * r2;
+        hi = sa > 0.0 ? min(hi, cut) : hi;
+        lo = sa > 0.0 ? lo : max(lo, cut);
+        norm = liveSphericalNorm(sa);
+        if (hi <= lo)
+        {
+            return 0.0;
+        }
+    }
     // G(hi) - G(lo), factored: hi^2 - lo^2 in 32-bit floats loses the
     // narrow outer annuli of wide kernels.
     float g = (hi - lo) * ((1.0 + sa) - sa * (hi + lo) / r2);
-    return max(g / area, 0.0);
+    return max(g / area / norm, 0.0);
 }

@@ -268,12 +268,32 @@ def reach_fraction(r, d, s, ring, sa=0.0):
     return spherical_reach(r, inner2, outer2, area, sa)
 
 
+def spherical_norm(sa):
+    """Mean of max(1 + sa - 2 sa u, 0) over u in [0, 1]: 1 for |sa| <= 1.
+    Beyond, the profile turns negative near the rim (sa > 1) or the centre
+    (sa < -1); it is cut there and divided by this mean, so the source
+    keeps its energy (liveSphericalNorm(), sphericalNorm() in modes 1, 2)."""
+    sa = np.asarray(sa, float)
+    q = (1.0 + sa) ** 2 / (4.0 * np.maximum(np.abs(sa), 1e-12))
+    return np.where(np.abs(sa) <= 1.0, 1.0, np.where(sa > 0.0, q, 1.0 + q))
+
+
+def spherical_cut(sa):
+    """(lo, hi) of the profile's positive part in u = rho^2."""
+    sa = np.asarray(sa, float)
+    cut = (1.0 + sa) / (2.0 * np.where(sa == 0.0, 1.0, sa))
+    return np.where(sa < -1.0, cut, 0.0), np.where(sa > 1.0, cut, 1.0)
+
+
 def spherical_reach(r, inner2, outer2, area, sa):
     r2 = np.maximum(r * r, 1e-12)
     hi = np.minimum(r2, outer2)
     lo = np.minimum(r2, inner2)
+    cut_lo, cut_hi = spherical_cut(sa)
+    lo = np.maximum(lo, cut_lo * r2)
+    hi = np.maximum(np.minimum(hi, cut_hi * r2), lo)
     g = lambda u: (1.0 + sa) * u - sa * u * u / r2
-    return np.clip((g(hi) - g(lo)) / area, 0.0, None)
+    return np.clip((g(hi) - g(lo)) / area / spherical_norm(sa), 0.0, None)
 
 
 # Spherical aberration ramps in over this full-resolution blur radius, as in
@@ -422,23 +442,52 @@ class BarrelBand:
         else:
             lo, hi = 0.0 * s, 0.25 * s * s
         r2 = np.maximum(r * r, 1e-12)
-        ua = np.minimum(lo / r2, 1.0)
-        ub = np.minimum(hi / r2, 1.0)
+        cut_lo, cut_hi = spherical_cut(sa)
+        ua = np.maximum(np.minimum(lo / r2, 1.0), cut_lo)
+        ub = np.maximum(np.minimum(np.minimum(hi / r2, 1.0), cut_hi), ua)
         a0 = area_to(theta - half, self.shape)
         a1 = area_to(theta + half, self.shape)
         m0, m1 = self.integral(a0, a1, theta - half, theta + half, ua, ub)
-        f = np.maximum(self.fraction[0] + sa * self.fraction[1], 0.01)
+        # Beyond |sa| = 1 the open fraction is the cut profile's.
+        w0, w1 = self.integral(0.0, self.U, 0.0, 2.0 * math.pi, cut_lo, cut_hi)
+        f = np.where(np.abs(sa) > 1.0, (w0 + sa * w1) / self.U,
+                     self.fraction[0] + sa * self.fraction[1])
+        f = np.maximum(f, 0.01)
         return np.maximum(m0 + sa * m1, 0.0) / ((a1 - a0) * (hi - lo) / r2) / f
+
+
+# Axial chromatic aberration (phase 4 step 4), the aperture-sampled
+# renderer's spectral model (ASDoFAperture::spectralWeights, channelCover()
+# in asDepthOfFieldFarF.glsl): wavelength s blurs to radius r - sigma delta s
+# (sigma +1 behind the focus, -1 in front), four strata of s, channel
+# weights red 1 + s, green 1.5 (1 - s^2), blue 1 - s, each summing to 1.
+CA_STRATA = np.array([-0.75, -0.25, 0.25, 0.75])
+CA_WEIGHTS = np.array([[0.0625, 0.1875, 0.3125, 0.4375],
+                       [0.1590909, 0.3409091, 0.3409091, 0.1590909],
+                       [0.4375, 0.3125, 0.1875, 0.0625]])
+
+
+def ca_strata(ca_delta, near):
+    """(radius offset, rgb weights) per stratum: r_k = |r + offset|, floored
+    at half a gather pixel like every source. One neutral stratum when off."""
+    if ca_delta <= 0.0:
+        return [(0.0, np.ones(3))]
+    sigma = -1.0 if near else 1.0
+    return [(-sigma * ca_delta * CA_STRATA[k], CA_WEIGHTS[:, k]) for k in range(4)]
+
+
+def stratum_radius(r, offset):
+    return r if offset == 0.0 else np.maximum(np.abs(r + offset), 0.5)
 
 
 def gather(mips, x, y, kernel_radius, rings, near, complete=True,
            shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False, sa_strength=0.0,
-           barrel=None, self_fill=False):
+           barrel=None, self_fill=False, ca_delta=0.0):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
-    Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
-    near: True for one shared kernel (coverage is the energy sum), False for
-    the far layer (colour normalized, coverage clamped energy sum).
+    Returns (premultiplied rgb, coverage, rgb). kernel_radius: array per
+    pixel. near: True for one shared kernel (coverage is the energy sum),
+    False for the far layer (colour normalized, coverage clamped energy sum).
 
     self_fill (B1, the near background): behind the focus, sharper content
     is nearer. A tap whose B1 is sharper than this pixel's own hides B1
@@ -449,21 +498,34 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
     the tap its own content does not reach; the coverage deficit is filled
     with the pixel's colour, up to that sum. Equal radii (and smooth ramps,
     whose coverage is already 1) add nothing; neither do taps without B1
-    (a true edge over the far background) (evaluate_self_occlusion())."""
+    (a true edge over the far background) (evaluate_self_occlusion()).
+
+    ca_delta > 0 (axial CA, gather pixels): every tap evaluates the four
+    strata, each with its own radius, its own exact reach and its energy
+    rescaled (W / r_k^2, so each stratum's disc keeps the source's
+    energy), weighted per channel; coverage is then per channel (an
+    (..., 3) array). kernel_radius must already include 0.75 ca_delta (the
+    widest stratum), as the tile pass adds it."""
     taps, s_unit, unit_area = aperture_taps(rings, shape, midpoint_areas)
     R = np.maximum(kernel_radius, 0.5)
     s = s_unit * R
+    strata = ca_strata(ca_delta, near)
     color = np.zeros(x.shape + (3,))
-    weight = np.zeros(x.shape)
+    weight = np.zeros(x.shape + (3,))
     band = BarrelBand(barrel, shape) if barrel is not None else None
+
+    def tap_reach(r, sa, d, ring, theta, half):
+        if band is None:
+            return reach_fraction(r, d, s, ring, sa)
+        return band.reach(r, d, s, ring, sa, theta, half)
+
     if self_fill:
         vp, fp = read_completed(mips, x, y, np.zeros(x.shape))
         w_p = np.where(fp, vp[..., 3], 0.0)
         r_p = np.sqrt(w_p / np.maximum(np.where(fp, vp[..., 4], 0.0), 1e-12))
         c_p = vp[..., 0:3] / np.maximum(w_p, 1e-12)[..., None]
         own = w_p > 0.001
-        sa_p = spherical_product(sa_strength, r_p, near)
-        hidden = np.zeros(x.shape)
+        hidden = np.zeros(x.shape + (3,))
     for (dx, dy, d_unit, area_unit, footprint), (theta, half) in zip(taps, tap_angles(rings)):
         lod = np.log2(np.maximum(LOD_SCALE * s * footprint, 1.0))
         d = d_unit * R
@@ -477,31 +539,33 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
         W = np.where(found, v[..., 3], 0.0)
         E = np.where(found, v[..., 4], 0.0)
         r_tap = np.sqrt(W / np.maximum(E, 1e-12))
-        sa = spherical_product(sa_strength, r_tap, near)
-        if band is None:
-            reach = reach_fraction(r_tap, d, s, d_unit > 0, sa)
-        else:
-            reach = band.reach(r_tap, d, s, d_unit > 0, sa, theta, half)
-        wt = area / unit_area * E * reach
         rgb = v[..., 0:3] / np.maximum(W, 1e-12)[..., None]
-        color += rgb * wt[..., None]
-        weight += wt
-        if self_fill:
-            if band is None:
-                reach_p = reach_fraction(r_p, d, s, d_unit > 0, sa_p)
-            else:
-                reach_p = band.reach(r_p, d, s, d_unit > 0, sa_p, theta, half)
-            sharper = own & (W > 0.0) & (r_tap < r_p)
-            hidden += np.where(sharper, area / unit_area * W * w_p / np.maximum(r_p * r_p, 1e-12) *
-                               np.maximum(reach_p - reach, 0.0), 0.0)
+        for offset, channels in strata:
+            r_k = stratum_radius(r_tap, offset)
+            e_k = E if offset == 0.0 else W / (r_k * r_k)
+            reach = tap_reach(r_k, spherical_product(sa_strength, r_k, near), d, d_unit > 0,
+                              theta, half)
+            wt = (area / unit_area * e_k * reach)[..., None] * channels
+            color += rgb * wt
+            weight += wt
+            if self_fill:
+                rp_k = stratum_radius(r_p, offset)
+                reach_p = tap_reach(rp_k, spherical_product(sa_strength, rp_k, near), d,
+                                    d_unit > 0, theta, half)
+                sharper = own & (W > 0.0) & (r_k < rp_k)
+                hidden += np.where(sharper, area / unit_area * W * w_p /
+                                   np.maximum(rp_k * rp_k, 1e-12) *
+                                   np.maximum(reach_p - reach, 0.0), 0.0)[..., None] * channels
     coverage = np.clip(weight, 0.0, 1.0)
-    rgb = color / np.maximum(weight, 1e-12)[..., None]
-    pre = rgb * coverage[..., None]
+    rgb = color / np.maximum(weight, 1e-12)
+    pre = rgb * coverage
     if self_fill:
         fill = np.minimum(1.0 - coverage, hidden)
-        pre = pre + c_p * fill[..., None]
+        pre = pre + c_p * fill
         coverage = coverage + fill
-        rgb = pre / np.maximum(coverage, 1e-12)[..., None]
+        rgb = pre / np.maximum(coverage, 1e-12)
+    if ca_delta <= 0.0:
+        coverage = coverage[..., 1]
     return pre, coverage, rgb
 
 
@@ -531,7 +595,7 @@ def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True, barrel=None)
         if sa_strength != 0.0:
             sa = float(spherical_product(sa_strength, r, near))
             rho2 = np.minimum(dist * dist / (r * r), 1.0)
-            profiled = k * (1.0 - sa * (2.0 * rho2 - 1.0))
+            profiled = k * np.maximum(1.0 - sa * (2.0 * rho2 - 1.0), 0.0)
             k = profiled * k.sum() / profiled.sum()
         if barrel is not None:
             sign = 1.0 if near else -1.0
@@ -547,6 +611,56 @@ def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True, barrel=None)
     coverage = np.clip(cov, 0.0, 1.0)
     rgb = acc / np.maximum(cov, 1e-12)[..., None]
     return rgb * coverage[..., None], coverage, rgb, cov
+
+
+def scatter_truth_ca(color, alpha, radius, near, delta):
+    """scatter_truth() per wavelength stratum: every source splats each
+    stratum's disc (radius as ca_strata()) into the channels by their
+    weights. Returns per-channel (premultiplied rgb, coverage)."""
+    h, w = alpha.shape
+    acc = np.zeros((h, w, 3))
+    cov = np.zeros((h, w, 3))
+    yy, xx = np.mgrid[0:h, 0:w]
+    ys, xs = np.nonzero(alpha > 0)
+    for py, px in zip(ys, xs):
+        for offset, channels in ca_strata(delta, near):
+            r = float(stratum_radius(max(radius[py, px], 0.5), offset))
+            ext = int(math.ceil(r + 1))
+            y0, y1 = max(py - ext, 0), min(py + ext + 1, h)
+            x0, x1 = max(px - ext, 0), min(px + ext + 1, w)
+            dist = np.hypot(xx[y0:y1, x0:x1] - px, yy[y0:y1, x0:x1] - py)
+            k = np.clip(r + 0.5 - dist, 0.0, 1.0) * alpha[py, px] / (math.pi * r * r)
+            acc[y0:y1, x0:x1] += k[..., None] * channels * color[py, px]
+            cov[y0:y1, x0:x1] += k[..., None] * channels
+    coverage = np.clip(cov, 0.0, 1.0)
+    return acc / np.maximum(cov, 1e-12) * coverage, coverage
+
+
+def evaluate_ca_edge(rings, delta_ratio, front, back, near=True, R=10.0):
+    """A blurred half-plane (radius R, axial CA delta = delta_ratio R) over
+    a uniform background. Returns, over the fringe band, the rms of (the
+    per-channel gather composited per channel - the per-channel truth),
+    of (single green alpha - per channel), and of the true fringe colour
+    (each pixel's deviation from its grey)."""
+    yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
+    sel = xx < SIZE / 2
+    color = np.zeros((SIZE, SIZE, 3))
+    color[sel] = front
+    alpha = sel.astype(float)
+    radius = np.where(sel, R, 0.0)
+    delta = delta_ratio * R
+    mips = build_mips(make_layer(color, alpha, radius))
+    kernel = tile_kernel(radius, alpha) + 0.75 * delta
+    pre, cov, _ = gather(mips, xx + 0.5, yy + 0.5, kernel, rings, near=near, ca_delta=delta)
+    t_pre, t_cov = scatter_truth_ca(color, alpha, radius, near, delta)
+    bg = np.array(back, float)
+    per_channel = pre + (1 - cov) * bg
+    single = pre + (1 - cov[..., 1:2]) * bg
+    truth = t_pre + (1 - t_cov) * bg
+    band = (np.abs(xx + 0.5 - SIZE / 2) < R + delta) & (yy > 20) & (yy < SIZE - 20)
+    rms = lambda a: float(np.sqrt(np.mean(a[band] ** 2)))
+    fringe = truth - truth.mean(axis=-1, keepdims=True)
+    return rms(per_channel - truth), rms(single - per_channel), rms(fringe)
 
 
 # ---------------------------------------------------------------- scenes
@@ -1139,7 +1253,7 @@ class LiveDoFTests(unittest.TestCase):
                 for rings in rings_list:
                     taps, s, area = aperture_taps(rings, shape)
                     for radius in (0.5, kernel * 0.6, kernel):
-                        for sa in (-1.0, -0.4, 0.7, 1.0):
+                        for sa in (-5.0, -2.5, -1.0, -0.4, 0.7, 1.0, 3.0, 5.0):
                             actual = sum(
                                 t[3] * kernel * kernel / area / (radius * radius) *
                                 reach_fraction(radius, t[2] * kernel, s * kernel, t[2] > 0, sa)
@@ -1165,12 +1279,14 @@ class LiveDoFTests(unittest.TestCase):
             r0 = radial(t0)
             base = np.sqrt(np.mean((radial(g0) - r0) ** 2)) / r0.max()
             for near in (True, False):
-                for sa in (1.0, -1.0, 0.5):
+                # Beyond 1 the profile is cut and renormalized: a thin ring
+                # (or a hard core), softened by the tap spacing at Low.
+                for sa, limit in ((1.0, 1.5), (-1.0, 1.5), (0.5, 1.5), (3.0, 2.0), (-5.0, 2.0)):
                     _, _, g, t, energy = evaluate("light", rings, sa_strength=sa, near=near)
                     self.assertAlmostEqual(float(g.sum()), float(energy.sum()), delta=0.02)
                     rg, rt = radial(g), radial(t)
                     rms = np.sqrt(np.mean((rg - rt) ** 2)) / rt.max()
-                    self.assertLess(rms, 1.5 * base, (rings, near, sa))
+                    self.assertLess(rms, limit * base, (rings, near, sa))
                     rim_bright = (sa > 0) == near
                     self.assertEqual(rg[4] > rg[0], rim_bright, (rings, near, sa))
 
@@ -1187,7 +1303,7 @@ class LiveDoFTests(unittest.TestCase):
                         rings = int(np.clip(math.ceil(kernel - 0.5), 1, q))
                         taps, s, area = aperture_taps(rings, shape)
                         for radius in (0.3 * kernel, 0.6 * kernel, kernel):
-                            for sa in (0.0, 1.0, -1.0):
+                            for sa in (0.0, 1.0, -1.0, 3.0, -5.0):
                                 actual = sum(
                                     t[3] * kernel * kernel / area / (radius * radius) *
                                     band.reach(radius, t[2] * kernel, s * kernel, t[2] > 0,
@@ -1227,6 +1343,54 @@ class LiveDoFTests(unittest.TestCase):
                     moved = cg - cg0
                     self.assertGreater(float(moved @ ct) / float(ct @ ct), 0.6,
                                        (rings, near, shift))
+
+    def test_axial_ca_uniform_coverage_per_channel(self):
+        # Each stratum's reach is exact and its energy rescaled: a uniform
+        # field keeps coverage 1 in every channel for any shift, side,
+        # shape, source radius, spherical aberration and barrel, once the
+        # kernel spans the widest stratum (+ 0.75 delta).
+        for shape in ((0, 1.0, 0.0, 1.0), (5, 0.0, 0.3, 1.33), (6, 0.0, 0.0, 1.0)):
+            for barrel in (None, np.array([0.9, 0.4])):
+                band = BarrelBand(barrel, shape) if barrel is not None else None
+                for near in (True, False):
+                    for delta in (0.3, 2.0, 6.0):
+                        for radius in (0.5, 2.0, 8.0):
+                            for sa_strength in (0.0, 1.0):
+                                kernel = radius + 0.75 * delta
+                                q = 7
+                                rings = int(np.clip(math.ceil(kernel - 0.5), 1, q))
+                                taps, s, area = aperture_taps(rings, shape)
+                                total = np.zeros(3)
+                                for t, (theta, half) in zip(taps, tap_angles(rings)):
+                                    for offset, channels in ca_strata(delta, near):
+                                        r_k = float(stratum_radius(radius, offset))
+                                        sa = float(spherical_product(sa_strength, r_k, near))
+                                        if band is None:
+                                            reach = reach_fraction(r_k, t[2] * kernel, s * kernel,
+                                                                   t[2] > 0, sa)
+                                        else:
+                                            reach = band.reach(r_k, t[2] * kernel, s * kernel,
+                                                               t[2] > 0, sa, theta, half)
+                                        total += (t[3] * kernel * kernel / area / (r_k * r_k) *
+                                                  float(reach) * channels)
+                                np.testing.assert_allclose(total, 1.0, atol=1e-9)
+
+    def test_axial_ca_edge(self):
+        # A hard blurred edge against a per-channel brute-force splat,
+        # composited per channel: within 1% rms in the fringe band. One
+        # (green) alpha instead loses a dark-over-bright edge's fringe: its
+        # error is as large as the fringe itself, hence the per-channel
+        # foreground veil (asDoFLiveGatherF.glsl, veil alpha).
+        for rings in QUALITY_RINGS:
+            for near in (True, False):
+                for ratio in (0.2, 0.5, 1.0):
+                    for front, back in (((1.0, 1.0, 1.0), (0.05, 0.05, 0.05)),
+                                        ((0.05, 0.05, 0.05), (1.0, 1.0, 1.0)),
+                                        ((0.9, 0.6, 0.4), (0.3, 0.5, 0.8))):
+                        err, _, _ = evaluate_ca_edge(rings, ratio, front, back, near)
+                        self.assertLess(err, 0.01, (rings, near, ratio, front))
+        _, single, fringe = evaluate_ca_edge(7, 0.5, (0.05, 0.05, 0.05), (1.0, 1.0, 1.0))
+        self.assertGreater(single, 0.8 * fringe)
 
     def test_field_curvature_capture_matches_library(self):
         # Field curvature (phase 4, step 1): the Mac OIT capture computes the
