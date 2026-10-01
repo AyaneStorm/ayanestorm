@@ -143,15 +143,24 @@ float liveFarEnergy(float weight, float moment)
 // ---------------------------------------------------------------- reads
 //
 // Every layer is read "alone", completed where nearer bins hide it, by the
-// push-pull recurrence c(l) = S(l) + (1 - V(l)) c(l + 1), ending with S / V
-// at the top level (scripts/testing/dof_live_reference.py,
+// push-pull recurrence
+//     c(l) = S + (1 - V) (S + k c(l + 1)) / (V + k),
+// ending with S / V at the top level (scripts/testing/dof_live_reference.py,
 // read_completed()). What the bin shows (V = 1) is read exactly, in one
-// fetch; what is hidden is filled from coarser levels in proportion to what
-// is missing, continuously. A threshold rule ("first level where half the
-// footprint shows the bin") fails in any hole as large as the visible part.
+// fetch. What is hidden takes the visible part's own density S / V, blended
+// continuously toward the coarser levels as less is visible: a hole (V = 0)
+// fills from the content around it, and a surface split softly between two
+// bins (on a blur ramp) stays opaque in each. Plain push-pull
+// (c(l) = S + (1 - V) c(l + 1)) averaged the empty space around an object
+// into its hidden part: the far background leaked through the avatar as a
+// grey veil in squares (coarse mip texels). A threshold rule ("first level
+// where half the footprint shows the bin") fails in any hole as large as
+// the visible part.
 
 // Stop once the hidden share left is below this.
 const float LIVE_COMPLETE_EPSILON = 0.01;
+// k: weight of the coarser estimate against the level's own density.
+const float LIVE_COMPLETE_PRIOR = 0.05;
 
 // layer: (S.rgb, W) mips; energy_map: its energy mips (all four channels
 // completed alike); vis_map .channel: the visibility in front of the bin,
@@ -170,11 +179,13 @@ bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
         bool last = level >= max_lod;
         float visibility = vis_channel < 0 ? 1.0 :
             textureLod(vis_map, uv, level)[vis_channel];
+        float density = 1.0 / (visibility + LIVE_COMPLETE_PRIOR);
         // The top level normalizes what is left by its own visibility.
-        float share = last ? (visibility > 0.000001 ? hidden / visibility : 0.0) : hidden;
+        float share = last ? (visibility > 0.000001 ? hidden / visibility : 0.0) :
+                             hidden * (1.0 + LIVE_COMPLETE_PRIOR) * density;
         value += textureLod(layer, uv, level) * share;
         energy += textureLod(energy_map, uv, level) * share;
-        hidden *= 1.0 - visibility;
+        hidden *= LIVE_COMPLETE_PRIOR * (1.0 - visibility) * density;
         if (last || hidden <= LIVE_COMPLETE_EPSILON)
         {
             break;

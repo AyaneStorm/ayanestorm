@@ -499,3 +499,36 @@ Also changed:
   - 3 ("Veil tiles"): B1 in blue.
   - 4: B1 over B2.
   - 5: the combined veil.
+
+### Completion keeps split surfaces opaque (2026-10-01, unbuilt)
+
+**Runtime of the split (user).** The rock is correctly blurred behind the hair strands.
+
+**Defect.** A grey veil over the whole avatar. Its strength varies, and it is made of squares.
+
+**Cause: the push-pull completion itself.**
+- One surface on a blur ramp is split softly between two bins, for example F 0.6 and B1 0.4.
+- B1 alone at that pixel is (0.4, V = 0.4). The hidden 0.6 is the same surface, so B1 alone should be opaque.
+- Plain push-pull, `c(l) = S + (1 - V) c(l + 1)`, filled that 0.6 from coarser levels. Those levels average the empty space around the avatar, so coverage fell below 1 and the completed far background leaked through as grey-blue.
+- The squares are the coarse mip texels under bilinear filtering.
+- The focus fill under the foreground veils had the same flaw.
+- Before push-pull, these reads were `S / V`. That is exact for split surfaces but empty in holes.
+
+**Model first.** `evaluate_split_surface()` puts a 40x60 object at F 0.6 / B1 0.4 over empty space.
+- Plain push-pull leaves an 18% coverage deficit inside the object.
+
+**Principle adopted.** The hidden part takes the visible part's own density `S / V`, blended continuously toward the coarser estimate as less is visible:
+`c(l) = S + (1 - V) (S + k c(l + 1)) / (V + k)`, with `k = 0.05` (`LIVE_COMPLETE_PRIOR`).
+- Read front to back: `value += t S (1 + k) / (V + k)`, then `t *= k (1 - V) / (V + k)`.
+- A hole (V = 0) is plain push-pull. A fully visible bin (V = 1) is one exact fetch.
+- There is no threshold.
+
+**Results (5 rings):**
+- split surface deficit: 0.0044 (was 0.18);
+- rock fringe, smooth background: 0.0005 (was 0.0046);
+- rock fringe, fine checker: 0.024 (was 0.021). This is detail no method can recover behind the rock.
+- `far_hole`: 0.004.
+- far strands: 0.0074.
+- 14 tests pass.
+
+The hidden share also falls faster, so fewer mip levels are read.

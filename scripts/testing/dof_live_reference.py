@@ -143,13 +143,27 @@ def make_layer(color, alpha, radius, visibility=None):
 # Push-pull stops once the hidden share left is below this
 # (asDoFLiveCommonF.glsl, LIVE_COMPLETE_EPSILON).
 COMPLETE_EPSILON = 0.01
+# Weight of the coarser estimate against the level's own visible density
+# (asDoFLiveCommonF.glsl, LIVE_COMPLETE_PRIOR). None: plain push-pull.
+COMPLETE_PRIOR = 0.05
 
 
-def read_completed(mips, x, y, lod):
-    """The bin alone at lod, visibility-completed by push-pull:
-    c(l) = S(l) + (1 - V(l)) c(l + 1), with S / V at the top level, read
-    front to back with the hidden share t = prod (1 - V). Returns
-    (values, found); found is false only where no level shows the bin."""
+def read_completed(mips, x, y, lod, prior=None):
+    """The bin alone at lod, visibility-completed by push-pull. The hidden
+    part (1 - V) of a level is filled with the visible part's own density
+    S / V, blended continuously toward the coarser estimate c(l + 1) as
+    less is visible:
+        c(l) = S + (1 - V) (S + k c(l + 1)) / (V + k),
+    with S / V at the top level. Plain push-pull (k -> infinity),
+    c(l) = S + (1 - V) c(l + 1), fills the hidden part from coarser levels
+    that average in the empty space around an object: a surface split
+    softly between two bins (F 0.6, B1 0.4) read its B1 alone with
+    coverage under 1, and the far background leaked through it (the user's
+    grey veil in squares). Read front to back:
+        value += t S (1 + k) / (V + k),  t *= k (1 - V) / (V + k).
+    Returns (values, found); found is false only where no level shows the
+    bin."""
+    k = COMPLETE_PRIOR if prior is None else prior
     top = len(mips) - 1
     out = np.zeros(x.shape + (6,))
     hidden = np.ones(x.shape)
@@ -158,11 +172,17 @@ def read_completed(mips, x, y, lod):
         v = sample_trilinear(mips, x, y, level)
         vis = v[..., 6]
         last = level >= top
-        # Top level: normalize what is left by its visibility.
-        share = np.where(last, hidden / np.maximum(vis, 1e-6) * (vis > 1e-6), hidden)
         active = hidden > COMPLETE_EPSILON
+        if k == float("inf"):
+            gain = np.ones(x.shape)
+            carry = 1.0 - vis
+        else:
+            gain = (1.0 + k) / (vis + k)
+            carry = k * (1.0 - vis) / (vis + k)
+        # Top level: normalize what is left by its visibility.
+        share = np.where(last, hidden / np.maximum(vis, 1e-6) * (vis > 1e-6), hidden * gain)
         out += np.where(active[..., None], v[..., 0:6] * share[..., None], 0.0)
-        hidden = np.where(active & ~last, hidden * (1.0 - vis), 0.0)
+        hidden = np.where(active & ~last, hidden * carry, 0.0)
         if not (hidden > COMPLETE_EPSILON).any():
             break
     found = out[..., 3] > 1e-6
@@ -513,6 +533,25 @@ def evaluate_far_strands(rings, split):
     return float(np.sqrt(np.mean((image[sl] - truth[sl]) ** 2)))
 
 
+def evaluate_split_surface(prior):
+    """An object split softly between two bins (F 0.6, B1 0.4, as on the
+    0.5-2 px ramp) in front of empty space. Its B1 alone must stay opaque
+    inside the object: the hidden 0.6 is the same surface. Returns the
+    largest coverage deficit inside the object, away from its edge."""
+    h = w = SIZE
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    inside = (np.abs(xx - w / 2) < 20) & (np.abs(yy - h / 2) < 30)
+    color = np.zeros((h, w, 3))
+    color[:] = (0.6, 0.4, 0.3)
+    w_b1 = np.where(inside, 0.4, 0.0)
+    vis = np.where(inside, 0.4, 1.0)
+    mips = build_mips(make_layer(color, w_b1, np.full((h, w), 1.0), visibility=vis))
+    core = (np.abs(xx - w / 2) < 17) & (np.abs(yy - h / 2) < 27)
+    v, _ = read_completed(mips, xx[core] + 0.5, yy[core] + 0.5, np.zeros(int(core.sum())),
+                          prior=prior)
+    return float(np.max(1.0 - v[..., 3]))
+
+
 class LiveDoFTests(unittest.TestCase):
     def test_taps_tile_the_disc(self):
         for rings in QUALITY_RINGS:
@@ -596,6 +635,12 @@ class LiveDoFTests(unittest.TestCase):
             self.assertLess(new, 0.03, rings)
             self.assertLess(new, 0.5 * old, (rings, new, old))
 
+    def test_split_surface_stays_opaque(self):
+        # The user's grey veil: plain push-pull lets the far background
+        # through a surface split between two bins.
+        self.assertLess(evaluate_split_surface(None), 0.02)
+        self.assertGreater(evaluate_split_surface(float("inf")), 0.1)
+
     def test_bin_split_restores_coverage(self):
         # An opaque surface split 50/50 between two adjacent bins: the back
         # bin alone is (W, S) / V with V = 1 - W_front, so it is opaque again
@@ -650,6 +695,9 @@ def survey():
             print(f"{'checker' if pattern else 'smooth':16s} {rings:5d} "
                   f"{evaluate_rock(rings, True, pattern=pattern):10.4f} "
                   f"{evaluate_rock(rings, False, pattern=pattern):10.4f}")
+    print(f"split surface deficit: prior {COMPLETE_PRIOR} "
+          f"{evaluate_split_surface(None):.4f}, plain push-pull "
+          f"{evaluate_split_surface(float('inf')):.4f}")
     print(f"{'far strands':16s} {'rings':>5s} {'B1 / B2':>10s} {'one B':>10s}")
     for rings in QUALITY_RINGS:
         print(f"{'':16s} {rings:5d} {evaluate_far_strands(rings, True):10.4f} "
