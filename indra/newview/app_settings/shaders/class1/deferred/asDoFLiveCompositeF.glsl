@@ -38,6 +38,11 @@ uniform int bins_source;
 uniform float near_radius;
 uniform float far_split_radius;
 uniform float gather_scale;
+// Optical vignetting: the light the cat's-eye barrel clips, kept when
+// darkening is on (barrel shift at the frame corner, aperture radii; 0
+// off). The gathers renormalize every source to its open aperture; the
+// whole image darkens here, as in the Advanced renderer's resolve.
+uniform float vignette_shift;
 
 in vec2 vary_fragcoord;
 
@@ -46,6 +51,25 @@ vec4 liveBinVisibility(vec4 bins[5]);
 bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
                    int vis_channel, vec2 uv, float lod, float max_lod,
                    out vec4 value, out vec4 energy);
+vec2 liveFieldPosition(vec2 uv);
+
+// Open fraction of a unit-circle aperture clipped by a unit circle at
+// distance d: lens (vesica) area over pi, with the other renderers' 5 %
+// floor (vignette(), asDepthOfFieldResolveF.glsl).
+float vignette(vec2 uv)
+{
+    if (vignette_shift <= 0.0)
+    {
+        return 1.0;
+    }
+    float d = vignette_shift * length(liveFieldPosition(uv));
+    if (d >= 2.0)
+    {
+        return 0.05;
+    }
+    float h = 0.5 * d;
+    return max((2.0 * acos(h) - 2.0 * h * sqrt(1.0 - h * h)) / 3.14159265358979323846, 0.05);
+}
 
 // F alone at gather resolution, completed where nearer bins hide it.
 vec4 focusFill(vec2 uv)
@@ -92,7 +116,8 @@ void main()
     // blurred.
     float exact_share = clamp(focus_share * (1.0 - veil.a), 0.0, 1.0);
     vec3 bins_sum = bins[0].rgb + bins[1].rgb + bins[2].rgb + bins[3].rgb + bins[4].rgb;
-    vec3 color = max(layered.rgb + exact_share * (source.rgb - bins_sum), vec3(0.0));
+    vec3 color = max(layered.rgb + exact_share * (source.rgb - bins_sum), vec3(0.0)) *
+                 vignette(uv);
 
     // Debug views write zero glow: glow would bloom the whole frame.
     if (debug_mode == 1)

@@ -269,8 +269,8 @@
       </button>
     </panel>
 
-    <!-- Optional lens character. Axial CA and cat's eye: Advanced and
-         Aperture-sampled renderers; spherical aberration: those and Live;
+    <!-- Optional lens character. Axial CA: Advanced and Aperture-sampled
+         renderers; cat's eye and spherical aberration: those and Live;
          bright highlights: Aperture-sampled; field curvature: Advanced and
          Live; astigmatism: Advanced. -->
     <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"

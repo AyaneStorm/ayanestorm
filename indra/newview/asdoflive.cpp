@@ -105,6 +105,8 @@ namespace
     const LLStaticHashedString U_FIELD_SCALE("field_scale");
     const LLStaticHashedString U_FIELD_CURVATURE("field_curvature");
     const LLStaticHashedString U_SA_STRENGTH("sa_strength");
+    const LLStaticHashedString U_CAT_EYE("cat_eye");
+    const LLStaticHashedString U_VIGNETTE_SHIFT("vignette_shift");
     const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
     const LLStaticHashedString U_TILE_PASS("tile_pass");
     const LLStaticHashedString U_TILE_REACH("tile_reach");
@@ -225,6 +227,8 @@ namespace
         shader.uniform2f(U_FIELD_SCALE, lens.mField.mFieldScale[0], lens.mField.mFieldScale[1]);
         shader.uniform1f(U_FIELD_CURVATURE, lens.mField.mCurvature);
         shader.uniform1f(U_SA_STRENGTH, lens.mField.mSpherical);
+        shader.uniform1f(U_CAT_EYE, lens.mField.mCatEye);
+        shader.uniform1f(U_VIGNETTE_SHIFT, lens.mField.mVignette);
         shader.uniform1i(U_APERTURE_BLADES, lens.mShape.mBlades);
         shader.uniform1f(U_APERTURE_ROUNDNESS, lens.mShape.mRoundness);
         shader.uniform1f(U_APERTURE_ROTATION, lens.mShape.mRotation);

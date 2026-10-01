@@ -290,8 +290,150 @@ def spherical_product(strength, r_gather, near):
     return strength * (-sigma if near else sigma)
 
 
+# ---------------------------------------------------------------- cat's eye
+
+# Barrel band nodes per pixel (asDoFLiveGatherF.glsl BARREL_NODES).
+BARREL_NODES = 24
+# Barrel shift cap, aperture radii (barrelCenter(), asDepthOfFieldFarF.glsl).
+BARREL_MAX_SHIFT = 1.6
+
+
+def barrel_center(field, cat_eye):
+    shift = cat_eye * np.asarray(field, float)
+    n = math.hypot(shift[0], shift[1])
+    return shift * (BARREL_MAX_SHIFT / n) if n > BARREL_MAX_SHIFT else shift
+
+
+def tap_angles(rings):
+    """(angle, half sector) of aperture_taps()' taps, in order."""
+    out = [(0.0, math.pi)]
+    for k in range(1, rings + 1):
+        count = 6 * k
+        offset = 0.5 if k & 1 else 0.0
+        for j in range(count):
+            out.append((2.0 * math.pi * (j + offset) / count, math.pi / count))
+    return out
+
+
+def area_to(angle, shape):
+    """liveApertureAreaTo(): cumulative unit-aperture area from angle 0."""
+    blades, roundness, rotation, anamorphic = shape
+    return anamorphic * aperture_cdf(angle, blades, roundness)
+
+
+def ramp_mean(l0, l1, a, b):
+    """Mean over a linear ramp l0..l1 (scalars) of (c, c - c^2), with
+    c = clamp(l, a, b) (arrays, a <= b): the moments of the spherical
+    profile's antiderivative H(u) = u + sa (u - u^2) along the ramp."""
+    a = np.asarray(a, float)
+    b = np.maximum(np.asarray(b, float), a)
+    lo_v, hi_v = min(l0, l1), max(l0, l1)
+    span = hi_v - lo_v
+    if span < 1e-9:
+        c = np.clip(l0, a, b)
+        return c, c - c * c
+    pa = np.clip((a - lo_v) / span, 0.0, 1.0)
+    pb = np.clip((hi_v - b) / span, 0.0, 1.0)
+    pm = np.maximum(1.0 - pa - pb, 0.0)
+    x0 = np.maximum(lo_v, a)
+    x1 = np.maximum(np.minimum(hi_v, b), x0)
+    mean = 0.5 * (x0 + x1)
+    sq = (x0 * x0 + x0 * x1 + x1 * x1) / 3.0
+    return (pa * a + pb * b + pm * mean,
+            pa * (a - a * a) + pb * (b - b * b) + pm * (mean - sq))
+
+
+class BarrelBand:
+    """Cat's eye (phase 4 step 3). A pupil point p of a source's unit
+    aperture (rotation, polygon and squeeze included) passes when
+    |p - barrel| <= 1. In the area-uniform angle A = area_to(theta) and
+    u = tau^2 (tau = pupil radius / boundary), every aperture is the
+    rectangle [0, U] x [0, 1], every tap an exact sub-rectangle, and the
+    open part a band u1(A) <= u <= u2(A) along each ray. The band is
+    sampled at BARREL_NODES angles and linear in A between them; taps and
+    the per-pixel open fraction integrate that same band exactly, so a
+    uniform field keeps coverage 1 for any kernel, ring count, source
+    radius and shape. Only the barrel's outline is approximated."""
+
+    def __init__(self, barrel, shape, nodes=BARREL_NODES):
+        self.n = nodes
+        self.shape = shape
+        self.lo = np.zeros(nodes)
+        self.hi = np.zeros(nodes)
+        self.area = np.zeros(nodes + 1)
+        blades, roundness, rotation, anamorphic = shape
+        barrel = np.asarray(barrel, float)
+        for j in range(nodes + 1):
+            theta = 2.0 * math.pi * j / nodes
+            self.area[j] = area_to(theta, shape)
+            if j == nodes:
+                break
+            boundary = aperture_boundary(theta, blades, roundness)
+            a = theta + rotation
+            v = np.array([math.cos(a) * anamorphic, math.sin(a)]) * boundary
+            qa = v @ v
+            qb = v @ barrel
+            qc = barrel @ barrel - 1.0
+            disc = qb * qb - qa * qc
+            if disc < 0.0:
+                # The ray misses the barrel: an empty band, continuous
+                # with the tangent ray's.
+                t1 = t2 = qb / qa
+            else:
+                q = math.sqrt(disc)
+                t1, t2 = (qb - q) / qa, (qb + q) / qa
+            self.lo[j] = max(t1, 0.0) ** 2
+            self.hi[j] = max(t2, 0.0) ** 2
+        self.U = self.area[nodes] - self.area[0]
+        f0, f1 = self.integral(0.0, self.U, 0.0, 2.0 * math.pi, 0.0, 1.0)
+        self.fraction = (float(f0) / self.U, float(f1) / self.U)
+
+    def integral(self, a0, a1, theta0, theta1, ua, ub):
+        """Moments (open, profile) of the band over A in [a0, a1] (the
+        sector theta0..theta1) and u in [ua, ub]."""
+        n = self.n
+        step = 2.0 * math.pi / n
+        m0 = np.zeros(np.shape(ua))
+        m1 = np.zeros(np.shape(ua))
+        for j in range(math.floor(theta0 / step), math.floor(theta1 / step) + 1):
+            wraps = math.floor(j / n)
+            jj = j - wraps * n
+            k = (jj + 1) % n
+            s0 = self.area[jj] + wraps * self.U
+            s1 = self.area[jj + 1] + wraps * self.U
+            x0, x1 = max(s0, a0), min(s1, a1)
+            if x1 <= x0:
+                continue
+            t0, t1 = (x0 - s0) / (s1 - s0), (x1 - s0) / (s1 - s0)
+            h0, h1 = ramp_mean(self.hi[jj] + (self.hi[k] - self.hi[jj]) * t0,
+                               self.hi[jj] + (self.hi[k] - self.hi[jj]) * t1, ua, ub)
+            l0, l1 = ramp_mean(self.lo[jj] + (self.lo[k] - self.lo[jj]) * t0,
+                               self.lo[jj] + (self.lo[k] - self.lo[jj]) * t1, ua, ub)
+            m0 = m0 + (x1 - x0) * (h0 - l0)
+            m1 = m1 + (x1 - x0) * (h1 - l1)
+        return m0, m1
+
+    def reach(self, r, d, s, ring, sa, theta, half):
+        """reach_fraction() with the barrel, compensated: the share of the
+        tap's area the source reaches through the barrel, over the open
+        fraction of its aperture (same band)."""
+        if ring:
+            lo, hi = (d - 0.5 * s) ** 2, (d + 0.5 * s) ** 2
+        else:
+            lo, hi = 0.0 * s, 0.25 * s * s
+        r2 = np.maximum(r * r, 1e-12)
+        ua = np.minimum(lo / r2, 1.0)
+        ub = np.minimum(hi / r2, 1.0)
+        a0 = area_to(theta - half, self.shape)
+        a1 = area_to(theta + half, self.shape)
+        m0, m1 = self.integral(a0, a1, theta - half, theta + half, ua, ub)
+        f = np.maximum(self.fraction[0] + sa * self.fraction[1], 0.01)
+        return np.maximum(m0 + sa * m1, 0.0) / ((a1 - a0) * (hi - lo) / r2) / f
+
+
 def gather(mips, x, y, kernel_radius, rings, near, complete=True,
-           shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False, sa_strength=0.0):
+           shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False, sa_strength=0.0,
+           barrel=None):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
     Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
@@ -302,7 +444,8 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
     s = s_unit * R
     color = np.zeros(x.shape + (3,))
     weight = np.zeros(x.shape)
-    for dx, dy, d_unit, area_unit, footprint in taps:
+    band = BarrelBand(barrel, shape) if barrel is not None else None
+    for (dx, dy, d_unit, area_unit, footprint), (theta, half) in zip(taps, tap_angles(rings)):
         lod = np.log2(np.maximum(LOD_SCALE * s * footprint, 1.0))
         d = d_unit * R
         area = area_unit * R * R
@@ -316,7 +459,10 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
         E = np.where(found, v[..., 4], 0.0)
         r_tap = np.sqrt(W / np.maximum(E, 1e-12))
         sa = spherical_product(sa_strength, r_tap, near)
-        reach = reach_fraction(r_tap, d, s, d_unit > 0, sa)
+        if band is None:
+            reach = reach_fraction(r_tap, d, s, d_unit > 0, sa)
+        else:
+            reach = band.reach(r_tap, d, s, d_unit > 0, sa, theta, half)
         wt = area / unit_area * E * reach
         rgb = v[..., 0:3] / np.maximum(W, 1e-12)[..., None]
         color += rgb * wt[..., None]
@@ -328,12 +474,15 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
 
 # ---------------------------------------------------------------- truth
 
-def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True):
+def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True, barrel=None):
     """Brute-force splat: each source spreads alpha over its own disc
     (1 px antialiased edge), normalized to the disc's area. With spherical
     aberration, every pixel of the disc also weighs 1 - a sigma (2 rho^2 - 1),
     rho = distance / r, renormalized to keep the source's energy (the
-    antialiased edge reaches past rho = 1)."""
+    antialiased edge reaches past rho = 1). With a barrel (circular
+    aperture), a disc pixel passes where its pupil point, (source - pixel)
+    / r in front of the focus and (pixel - source) / r behind, lies inside
+    the barrel (1 px antialiased), renormalized likewise (compensated)."""
     h, w = alpha.shape
     acc = np.zeros((h, w, 3))
     cov = np.zeros((h, w))
@@ -351,6 +500,13 @@ def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True):
             rho2 = np.minimum(dist * dist / (r * r), 1.0)
             profiled = k * (1.0 - sa * (2.0 * rho2 - 1.0))
             k = profiled * k.sum() / profiled.sum()
+        if barrel is not None:
+            sign = 1.0 if near else -1.0
+            qx = sign * (px - xx[y0:y1, x0:x1]) / r - barrel[0]
+            qy = sign * (py - yy[y0:y1, x0:x1]) / r - barrel[1]
+            inside = np.clip((1.0 - np.hypot(qx, qy)) * r + 0.5, 0.0, 1.0)
+            clipped = k * inside
+            k = clipped * k.sum() / max(clipped.sum(), 1e-12)
         # Normalize by the full disc area (also outside the frame).
         k = k * alpha[py, px] / (math.pi * r * r)
         acc[y0:y1, x0:x1] += color[py, px] * k[..., None]
@@ -459,14 +615,15 @@ def completed_radius(mips):
 
 
 def evaluate(name, rings, background=(0.5, 0.5, 0.5), sa_strength=0.0, near=True,
-             shape=(0, 1.0, 0.0, 1.0)):
+             shape=(0, 1.0, 0.0, 1.0), barrel=None):
     color, alpha, radius = scene(name)
-    t_pre, t_cov, _, t_energy = scatter_truth(color, alpha, radius, sa_strength, near)
+    t_pre, t_cov, _, t_energy = scatter_truth(color, alpha, radius, sa_strength, near,
+                                              barrel)
     mips = build_mips(make_layer(color, alpha, radius))
     yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
     R = tile_kernel(radius, alpha)
     g_pre, g_cov, _ = gather(mips, xx + 0.5, yy + 0.5, R, rings, near=near,
-                             shape=shape, sa_strength=sa_strength)
+                             shape=shape, sa_strength=sa_strength, barrel=barrel)
     bg = np.array(background)
     t_img = t_pre + (1 - t_cov)[..., None] * bg
     g_img = g_pre + (1 - g_cov)[..., None] * bg
@@ -917,6 +1074,60 @@ class LiveDoFTests(unittest.TestCase):
                     self.assertLess(rms, 1.5 * base, (rings, near, sa))
                     rim_bright = (sa > 0) == near
                     self.assertEqual(rg[4] > rg[0], rim_bright, (rings, near, sa))
+
+    def test_cat_eye_uniform_coverage_is_exact(self):
+        # Taps and the open fraction integrate one barrel band: a uniform
+        # field keeps coverage 1 for any barrel, shape, kernel, ring count,
+        # source radius and spherical aberration (no tile steps).
+        for shape in ((0, 1.0, 0.0, 1.0), (5, 0.0, 0.3, 1.0), (5, 0.5, 0.3, 1.33),
+                      (6, 0.0, 0.0, 1.0), (6, 0.5, 0.0, 1.33)):
+            for shift, angle in ((0.0, 0.0), (0.4, 0.3), (0.95, 2.0), (1.3, -1.0), (1.6, 0.5)):
+                band = BarrelBand(np.array([math.cos(angle), math.sin(angle)]) * shift, shape)
+                for kernel in (0.5, 1.0, 2.5, 6.0, 20.0):
+                    for q in QUALITY_RINGS:
+                        rings = int(np.clip(math.ceil(kernel - 0.5), 1, q))
+                        taps, s, area = aperture_taps(rings, shape)
+                        for radius in (0.3 * kernel, 0.6 * kernel, kernel):
+                            for sa in (0.0, 1.0, -1.0):
+                                actual = sum(
+                                    t[3] * kernel * kernel / area / (radius * radius) *
+                                    band.reach(radius, t[2] * kernel, s * kernel, t[2] > 0,
+                                               sa, theta, half)
+                                    for t, (theta, half) in zip(taps, tap_angles(rings)))
+                                self.assertAlmostEqual(float(actual), 1.0, places=9)
+
+    def test_cat_eye_open_fraction(self):
+        # The band's open fraction against the exact vesica (circle).
+        for shift in (0.3, 0.8, 1.2, 1.6):
+            band = BarrelBand(np.array([shift, 0.0]), (0, 1.0, 0.0, 1.0))
+            h = 0.5 * shift
+            vesica = (2.0 * math.acos(h) - 2.0 * h * math.sqrt(1.0 - h * h)) / math.pi
+            self.assertLess(abs(band.fraction[0] / vesica - 1.0), 0.03, shift)
+        # No barrel shift on a circle: nothing clipped.
+        self.assertAlmostEqual(BarrelBand(np.zeros(2), (0, 1.0, 0.0, 1.0)).fraction[0], 1.0,
+                               places=12)
+
+    def test_cat_eye_bokeh(self):
+        # An isolated light against a brute-force clipped splat: energy
+        # exact, error within the unclipped gather's, and the bokeh moved
+        # toward the open side as the truth.
+        yy, xx = np.mgrid[0:SIZE, 0:SIZE]
+        for rings in QUALITY_RINGS:
+            _, _, g0, t0, _ = evaluate("light", rings)
+            base = np.sqrt(np.mean((g0 - t0) ** 2)) / t0.max()
+            for near in (True, False):
+                for shift, angle in ((0.8, 0.5), (1.2, 2.0), (1.6, 0.0)):
+                    barrel = np.array([math.cos(angle), math.sin(angle)]) * shift
+                    _, _, g, t, energy = evaluate("light", rings, near=near, barrel=barrel)
+                    self.assertAlmostEqual(float(g.sum()), float(energy.sum()), delta=0.02)
+                    rms = np.sqrt(np.mean((g - t) ** 2)) / t.max()
+                    self.assertLess(rms, 1.05 * base, (rings, near, shift))
+                    cg = np.array([(g * xx).sum(), (g * yy).sum()]) / g.sum() - SIZE // 2
+                    cg0 = np.array([(g0 * xx).sum(), (g0 * yy).sum()]) / g0.sum() - SIZE // 2
+                    ct = np.array([(t * xx).sum(), (t * yy).sum()]) / t.sum() - SIZE // 2
+                    moved = cg - cg0
+                    self.assertGreater(float(moved @ ct) / float(ct @ ct), 0.6,
+                                       (rings, near, shift))
 
     def test_field_curvature_capture_matches_library(self):
         # Field curvature (phase 4, step 1): the Mac OIT capture computes the

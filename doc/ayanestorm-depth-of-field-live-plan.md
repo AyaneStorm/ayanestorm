@@ -810,3 +810,24 @@ settings. Mode 1 and mode 2 rendering stay unchanged.
   - **Gate change.** The planned "2% rms against brute force" is out of reach even without spherical aberration. An isolated single-pixel light's rim is softened by the tap spacing: 9.2 / 5.1 / 3.8% at 3 / 5 / 7 rings. With spherical aberration the error is 13 / 6.0 / 2.0% (bright rim) and 6.5 / 2.3 / 3.4% (bright centre).
   - 22 tests pass.
 - glslang links Reduce, Tile, Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
+- **Runtime (2026-10-01).** The user confirmed step 2 works.
+
+### Step 3: cat's eye and corner darkening (2026-10-01, unbuilt)
+
+- **Clip.** A pupil point p of a source's unit aperture (rotation, polygon and squeeze included) passes when `|p - barrel| <= 1`. The barrel is `cat_eye * field` at the gathering pixel, capped at 1.6, as in modes 1 and 2. For a tap reading a source of radius r, `p = tap offset / r`. The clip follows each source's own disc, not the kernel, so small sources in a large tile kernel are clipped correctly.
+- **Why not the planned sub-pattern.** The model measured it first.
+  - Sampling the clip at a few angles per tap, normalized by a per-pixel open fraction, left uniform-coverage errors of 2 to 4% at kernels of 6 and more, and up to 35% at tiny kernels. Clipping each tap's sector to the barrel's cone of directions analytically did not fix it.
+  - The error changed with the tile's kernel and the ring count, which is the tile-step mechanism of the grey blocks.
+- **Barrel band (`asDoFLiveGatherF.glsl`, model `BarrelBand`).**
+  - In the area-uniform angle `A = liveApertureAreaTo(theta)` and `u = tau^2`, every aperture shape is the rectangle `[0, unit_area] x [0, 1]` and every tap an exact sub-rectangle (the existing sector areas).
+  - The open part is a band `u1(A) <= u <= u2(A)` along each ray (the exact ray and circle intersection). It is sampled at 24 node angles per pixel (`setupBarrel()`) and is linear in A between them.
+  - Every tap (`barrelReach()`) and the aperture's open fraction integrate that same band exactly, spherical profile included (`rampMean()`: the moments of `u + sa (u - u^2)` along a clamped linear ramp). A uniform field therefore keeps coverage 1 by construction for any kernel, ring count, source radius, shape and spherical aberration. The only approximation left is the barrel's outline.
+- **Compensation and darkening.** The gathers always renormalize a source to its open aperture (open fraction `f0 + sa f1`, floor 0.01). With darkening (`ApertureCatEyeDarken`), the composite multiplies the final colour by the vesica fraction, as mode 1's resolve does (`vignette()`, 5% floor), so in-focus content darkens too. With cat's eye off, the previous code runs unchanged: the tap area is the same expression as `liveTapSectorArea()`.
+- **Wiring.** `cat_eye` and `vignette_shift` are uploaded with the lens uniforms (`LensField::mCatEye`, `mVignette`). The cat's-eye strength slider and darken checkbox are enabled in Live. Only axial CA's checkbox is still ahead of its effect.
+- **Model gate.**
+  - `test_cat_eye_uniform_coverage_is_exact`: coverage 1 to 1e-9 for 5 shapes, 5 barrel shifts up to the cap, kernels 0.5 to 20, every ring count, radii 0.3 to 1 times the kernel, and spherical aberration -1, 0 and 1.
+  - `test_cat_eye_open_fraction`: the band's open fraction is within 3% of the exact vesica (circle) at every shift: 0.1 / 0.8 / 1.4 / 2.5% at 0.3 / 0.8 / 1.2 / 1.6. At shift 0 it is exactly 1.
+  - `test_cat_eye_bokeh`: against a brute-force clipped splat, an isolated light's energy is exact. Its error is within 1.05x the unclipped gather's error (it is lower in every case measured), and its centroid moves toward the truth's at least 60% of the way (the gate). Measured: 94 to 98% of the truth's shift, net of the unclipped gather's own offset.
+  - 25 tests pass. 16 and 32 nodes gave nearly the same bokeh error as 24.
+- **Cost.** It applies only with cat's eye on: 24 node rays per gather pixel and layer, then one to five band segments per ring tap and 25 for the centre tap. This is ALU only, with no extra texture reads.
+- glslang links Reduce, Tile, Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.

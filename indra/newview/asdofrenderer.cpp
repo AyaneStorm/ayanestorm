@@ -439,8 +439,8 @@ namespace
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
         // Live (mode 3) shares the Advanced renderer's blur size, quality,
-        // aperture shape, field curvature and spherical aberration controls;
-        // its other lens effects follow
+        // aperture shape, field curvature, spherical aberration and cat's-eye
+        // controls; axial CA follows
         // (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
         const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
@@ -451,15 +451,15 @@ namespace
         // Axial CA, cat's eye (with its corner darkening) and spherical
         // aberration apply to both
         // the Advanced and the Aperture-sampled renderers; spherical
-        // aberration to Live too, whose lens checkboxes are enabled ahead
-        // of their effects (phase 4).
+        // aberration and cat's eye to Live too, whose axial CA checkbox is
+        // enabled ahead of its effect (phase 4).
         const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
         const bool live = mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUILens", lens_modes || live);
         setFlag("ASDepthOfFieldUIAxialCA",
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
         // Advanced and Live renderers.
         setFlag("ASDepthOfFieldUIFieldCurvature",
                 screen_space && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
