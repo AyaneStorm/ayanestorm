@@ -23,6 +23,7 @@
  * locks the subject (the tracked eyes, else the surface under the area
  * centre, fixed to its avatar joint or object) and keeps focusing on it,
  * also outside the area with ASDepthOfFieldAutofocusTrackOutside.
+ * Turning DoF on in autofocus releases the lock.
  * Snapshots and sliced captures hold the current autofocus distance: a
  * snapshot focuses exactly as the live view did.
  */
