@@ -208,6 +208,16 @@ GLuint sStateTexture = 0;
 U64 sStateUnits = 0;
 // Live DoF bins requested for this frame's capture, and written by it.
 bool sDoFLensSet = false;
+// Set once per session when the driver rejects the bins framebuffer (eight
+// colour attachments, 80 B per pixel; tile-based GPUs may cap the bytes a
+// pass writes per pixel). Live DoF then falls back to one layer; Mac OIT
+// itself is unaffected.
+bool sDoFBinsUnsupported = false;
+
+bool dofBinsWanted()
+{
+    return sDoFLensSet && !sDoFBinsUnsupported;
+}
 ASMacOIT::DoFLens sDoFLens;
 bool sDoFBinsActive = false;
 bool sDoFBinsReady = false;
@@ -855,7 +865,7 @@ bool ASMacOIT::capture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader, bool dof_only)
 {
-    const bool wanted = dof_only ? sDoFLensSet && !sProbeFailed && supported() : requested();
+    const bool wanted = dof_only ? dofBinsWanted() && !sProbeFailed && supported() : requested();
     if (!wanted || !shadersReady() ||
         pool.getType() != LLDrawPool::POOL_ALPHA_POST_WATER ||
         LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || gCubeSnapshot ||
@@ -891,7 +901,7 @@ bool ASMacOIT::capture(
         }
     }
     if (!sResources.available || sResources.width != width || sResources.height != height ||
-        sResources.hasDoFBins != sDoFLensSet)
+        sResources.hasDoFBins != dofBinsWanted())
     {
         allocateResources(width, height);
         if (!sResources.available)
@@ -900,7 +910,7 @@ bool ASMacOIT::capture(
         }
     }
     sDoFOnly = dof_only;
-    sDoFBinsActive = sDoFLensSet && sResources.hasDoFBins;
+    sDoFBinsActive = dofBinsWanted() && sResources.hasDoFBins;
 
     prepare(&gMacOITAlphaProgram, true, water_sign);
     prepare(&gMacOITPBRAlphaProgram, true, water_sign);
@@ -1398,8 +1408,7 @@ bool ASMacOIT::allocate(U32 width, U32 height)
     sResources.peelEvenFBO = createFramebuffer({ sResources.keysEven, sResources.moments }, true);
     sResources.mergeFBO = createFramebuffer({ sResources.state }, false);
     sResources.colorFBO = createFramebuffer({ sResources.moments, sResources.keysOdd }, true);
-    bool dof_ok = true;
-    if (sDoFLensSet)
+    if (dofBinsWanted())
     {
         // Live DoF bins, only while requested: 48 B per pixel.
         for (GLuint& texture : sResources.dofBins)
@@ -1411,9 +1420,25 @@ bool ASMacOIT::allocate(U32 width, U32 height)
               sResources.dofBins[2], sResources.dofBins[3], sResources.dofBins[4],
               sResources.dofBins[5] }, true);
         sResources.hasDoFBins = sResources.colorBinsFBO != 0;
-        dof_ok = sResources.hasDoFBins;
+        if (!sResources.hasDoFBins)
+        {
+            // Only the bins are lost: Mac OIT keeps its own targets.
+            for (GLuint& texture : sResources.dofBins)
+            {
+                if (texture)
+                {
+                    LLImageGL::deleteTextures(1, &texture);
+                }
+            }
+            sDoFBinsUnsupported = true;
+            GLint draw_buffers = 0;
+            glGetIntegerv(GL_MAX_DRAW_BUFFERS, &draw_buffers);
+            LL_WARNS("MacOIT") << "Live DoF transparency bins unsupported by this driver (8 colour "
+                                  "attachments, 80 B per pixel; draw buffers " << draw_buffers
+                               << "); Live DoF stays one layer for this session" << LL_ENDL;
+        }
     }
-    return glGetError() == GL_NO_ERROR && dof_ok &&
+    return glGetError() == GL_NO_ERROR &&
         sResources.depthFBO && sResources.keysFBO && sResources.peelOddFBO &&
         sResources.peelEvenFBO && sResources.mergeFBO && sResources.colorFBO;
 }
@@ -1423,7 +1448,7 @@ void ASMacOIT::allocateResources(U32 width, U32 height)
     releaseResources();
     // Until the first capture has run the blending self-test, allocation is
     // deferred to that capture.
-    if ((!requested() && !sDoFLensSet) || !shadersReady() || !sProbed)
+    if ((!requested() && !dofBinsWanted()) || !shadersReady() || !sProbed)
     {
         return;
     }

@@ -598,3 +598,18 @@ These observations isolate the visible defect to B1 before the B1-over-B2 combin
 - Khronos validator: Reduce, Tile, Gather and Composite each linked with the common library under both GLSL 410 core and 400 core: all eight pass.
 - Reference model: all 19 tests pass. Edited files checked for LF line endings.
 - Viewer build and runtime verification remain with the user; shader revision unchanged.
+
+### Known residual, and Mac preparation (2026-10-01)
+
+**Aperture fix (user, commit "new live dof fix 4").** The tile-aligned blocks came from the ring-tap areas.
+- Taps used `boundary^2` sampled at the tap angle instead of each tap's sector integral.
+- Error on the first ring: triangle -19%, hexagon -9.3% (worst), square +8.5% and octagon +1.3% (clamped coverage, no visible veil), odd blade counts under 1.1%, circle exact. This matches the user's ranking of shapes.
+- The model had used a circular aperture only, so it could not reproduce the defect.
+- `liveTapSectorArea()` now integrates each sector exactly.
+
+**Known residual (minor, deferred).** A thin line along a sharp silhouette in front of B1 hair (neck against ponytail) shows sky. View 9 confirms it as a thin magenta line: B1's coverage dips there. The likely cause is the fill of B1's hidden part averaging in the gaps between strands. Not modelled yet.
+
+**Mac preparation.** Mac OIT's COLOR pass with bins writes 8 colour attachments, 2 x 16 B + 6 x 8 B = 80 B per pixel. Apple's tile-based GPUs may cap the bytes a pass writes per pixel (unverified).
+- Before, a rejected `colorBinsFBO` failed the whole Mac OIT allocation: Mac OIT itself would have been lost.
+- Now a rejected bins framebuffer sets `sDoFBinsUnsupported` once per session and logs `Live DoF transparency bins unsupported by this driver`.
+- Live DoF then stays one layer, and Mac OIT is unaffected. No reallocation every frame (`dofBinsWanted()`).
