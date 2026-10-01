@@ -579,16 +579,27 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
     const bool enabled = sFrameAtlasConsumer && sAtlasProducedThisFrame &&
         sShadersLoaded && sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
+
+    // Generic/indexed alpha material submission reuses link-mapped units
+    // after shader binding, so the atlas uses the proven appended channel.
+    // The sampler is not a reserved uniform, so linking leaves it on unit 0.
+    // Point it at its own unit even while disabled: Apple's GL rejects every
+    // draw (GL_INVALID_OPERATION) of a program in which two samplers of
+    // different types share a unit, even an unsampled one, which dropped
+    // whole hair faces whenever unit 0 held a cube or shadow sampler.
+    const S32 location = shader.getUniformLocation(atlas_sampler);
+    const GLint channel = shader.mActiveTextureChannels;
+    const bool has_unit = location > -1 && channel >= 0 &&
+        channel < gGLManager.mNumTextureImageUnits;
+    if (has_unit)
+    {
+        shader.uniform1i(atlas_sampler, channel);
+    }
+
     if (enabled)
     {
-        const S32 location = shader.getUniformLocation(atlas_sampler);
-        const GLint channel = shader.mActiveTextureChannels;
-
-        // Generic/indexed alpha material submission reuses link-mapped units
-        // after shader binding, so the atlas uses the proven appended channel.
-        if (location > -1 && channel >= 0 && channel < gGLManager.mNumTextureImageUnits)
+        if (has_unit)
         {
-            glUniform1i(location, channel);
             gGL.getTexUnit(channel)->bindManual(sTransparencyAtlas.getUsage(),
                                                 sTransparencyAtlas.getTexture(0));
             gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);

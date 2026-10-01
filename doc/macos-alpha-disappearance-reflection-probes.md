@@ -218,3 +218,68 @@ back texture. Error code: 1282` (GL_INVALID_OPERATION left pending by an
 earlier call). The source call is unknown. Use `RenderDebugGL` on the Mac to
 find it. Vivian's log (older Special build 82817, M4 Max, macOS 27.0.1) has no
 shader or GL errors.
+
+### Reflection-Probe Toggle (Developer Mac, Build `c8708d19b7`)
+
+- Turning reflection probes off removes the hair defect, and turning them back
+  on restores it. Logs 02-04 have no shader errors. The toggle was therefore
+  probe level/coverage, not `RenderReflectionsEnabled`, which selects the
+  class2 probe shader (`llviewershadermgr.cpp` `has_reflection_probes`).
+- The minimal-preset crash still occurs in build `c8708d19b7`. The class2
+  `Bent` stubs were uncommitted, so that build did not include them.
+- `class3/deferred/reflectionProbeF.glsl` differs from Firestorm only in
+  bent-normal plumbing, which is a no-op for alpha (`norm, norm`). Mac
+  featuretable and the SSR/probe defaults in `settings.xml` match Firestorm.
+- Hypothesis: screen-space reflections, or the probe radiance, on glossy hair
+  sample the sky beside the head, which reads as see-through holes. Test:
+  probes on, `RenderScreenSpaceReflections` off.
+
+### Correction: The Toggle Is Screen Space Reflections
+
+The control that removes and restores the hair defect is
+`RenderScreenSpaceReflections`, not reflection probes. SSR also runs on alpha
+surfaces: `doProbeSample()` taps `sceneMap` when `transparent` and glossiness
+>= 0.9.
+
+Compared with `.phoenix-firestorm-master`, the SSR path is unchanged:
+- `screenSpaceReflUtil.glsl` (class1 and class3) and `screenSpaceReflPostF.glsl`
+  are identical. `reflectionProbeF.glsl` differs only by the bent-normal no-op.
+- `copyScreenSpaceReflections()` (previous-frame `mRT->screen` plus
+  `deferredScreen` depth into `mSceneMap`) is called at the same point.
+- `gGLLastModelView` is updated as in Firestorm when DoF is off
+  (`isRepeatSample()` is false).
+- `RenderScreenSpaceReflections` defaults to 0 at every preset in both viewers.
+  No AyaneStorm code enables it; the AS-only `floater_advanced_lighting.xml`
+  only exposes the checkbox.
+
+Conclusion pending: probably upstream SSR behaviour on glossy alpha hair, which
+users only see in AyaneStorm because they enabled SSR there. Validate by
+enabling SSR in Firestorm on the same Mac and outfit.
+
+## Root Cause: Unassigned `asVolumetricAtlas` Sampler (Apple GL)
+
+User test sequence (2026-10-02): hair bad with SSR off, Standard OIT and
+godrays off. SSR and Mac OIT changes move the defect around. Turning godrays
+(volumetric lighting) on fixes it with nothing else changed.
+
+- `asVolumetricAtlas` (in `alphaF`, `materialF`, `pbralphaF`, `fullbrightF`
+  and `waterF`) is not a reserved uniform, so `mapUniforms()` never gives it a
+  texture unit and GL leaves it on unit 0.
+- `ASVolumetricLighting::bindTransparencyAtlas()` assigned the unit
+  (`mActiveTextureChannels`) only while volumetrics were enabled.
+- Apple's GL rejects every draw of a program in which samplers of different
+  types share a unit, even one that is never sampled (`GL_INVALID_OPERATION`,
+  the 1282 seen by `readBackRaw`). Where unit 0 held a cube-array or shadow
+  sampler, whole hair faces were not drawn and the sky showed where the scalp
+  would be. Windows drivers tolerate this; Firestorm has no such sampler.
+- SSR, probe level and Mac OIT change the sampler layout, so they move the
+  defect between programs.
+
+Fix: `bindTransparencyAtlas()` always sets the sampler to its appended unit
+(`uniform1i`, cached per program; the cache is cleared on relink) and binds the
+atlas texture only when enabled.
+
+Residual risk: a program that declares the sampler but is drawn without
+`bindTransparencyAtlas()` (outside the alpha, simple and water pools) still has
+it on unit 0.
+Verification: the `readBackRaw` 1282 warnings should disappear.
