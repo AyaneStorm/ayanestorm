@@ -4,7 +4,7 @@
  * @brief AyaneStorm Live depth of field (ASDepthOfFieldMode 3).
  *
  * Passes (all OpenGL 4.1 fragment, see doc/ayanestorm-depth-of-field-live-plan.md):
- *   1. reduce     full resolution to the half-resolution bin sums, two passes
+ *   1. reduce     full resolution to the half-resolution bin sums, one pass
  *                 (N2, N1, energies; F, B1, B2, visibility), then mip chains;
  *   2. complete   the bins behind N2 completed where nearer bins hide them
  *                 (push-pull), one draw per mip level, top down;
@@ -49,9 +49,12 @@ namespace
     LLGLSLShader sCompositeProgram;
 
     // Bin sums at gather resolution, mipmapped (asDoFLiveReduceF.glsl):
-    // A = N2, N1, radius moments; B = F, B1, B2, visibility.
+    // A = N2, N1, radius moments; B = F, B1, B2, visibility. Written in one
+    // pass through sReduceFBO (seven draw buffers).
     LLRenderTarget sBinsA;
     LLRenderTarget sBinsB;
+    GLuint sReduceFBO = 0;
+    const U32 BIN_TEXTURES = 7;
     // Completed bins, mipmapped (asDoFLiveCompleteF.glsl): A = N1, F, B1,
     // B2; B = energies (E_N1, E_B1, M_B2). Written level by level through
     // sCompleteFBO.
@@ -119,7 +122,6 @@ namespace
     const LLStaticHashedString U_VIGNETTE_SHIFT("vignette_shift");
     const LLStaticHashedString U_CA_SHIFT("ca_shift");
     const LLStaticHashedString U_CA_REACH("ca_reach");
-    const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
     const LLStaticHashedString U_TILE_PASS("tile_pass");
     const LLStaticHashedString U_TILE_REACH("tile_reach");
     const LLStaticHashedString U_LAYER("layer");
@@ -258,6 +260,11 @@ namespace
             glDeleteFramebuffers(1, &sCompleteFBO);
             sCompleteFBO = 0;
         }
+        if (sReduceFBO)
+        {
+            glDeleteFramebuffers(1, &sReduceFBO);
+            sReduceFBO = 0;
+        }
         sBinsA.release();
         sBinsB.release();
         sDoneA.release();
@@ -357,6 +364,26 @@ namespace
         return success;
     }
 
+    // The FBO writing level 0 of both bin targets in one pass.
+    bool allocateReduce()
+    {
+        const U32 saved_fbo = LLRenderTarget::sCurFBO;
+        glGenFramebuffers(1, &sReduceFBO);
+        glBindFramebuffer(GL_FRAMEBUFFER, sReduceFBO);
+        GLenum buffers[BIN_TEXTURES];
+        for (U32 i = 0; i < BIN_TEXTURES; ++i)
+        {
+            const GLuint texture = i < 3 ? sBinsA.getTexture(i) : sBinsB.getTexture(i - 3);
+            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D,
+                                   texture, 0);
+            buffers[i] = GL_COLOR_ATTACHMENT0 + i;
+        }
+        glDrawBuffers(BIN_TEXTURES, buffers);
+        const bool success = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glBindFramebuffer(GL_FRAMEBUFFER, saved_fbo);
+        return success;
+    }
+
     bool ensureTargets(U32 width, U32 height)
     {
         if (sWidth == width && sHeight == height && sBinsA.isComplete())
@@ -370,6 +397,7 @@ namespace
         const U32 tiles_y = (gather_height + TILE - 1) / TILE;
         if (!allocateMipmapped(sBinsA, gather_width, gather_height, 3) ||
             !allocateMipmapped(sBinsB, gather_width, gather_height, 4) ||
+            !allocateReduce() ||
             !allocateComplete(gather_width, gather_height) ||
             !sTileReduce.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sTileX.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
@@ -643,25 +671,25 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     // 1. Bins at gather resolution, then their mip chains.
     {
         LL_PROFILE_GPU_ZONE("Live DoF reduce");
-        for (S32 pass = 0; pass < 2; ++pass)
-        {
-            LLRenderTarget& target = pass == 0 ? sBinsA : sBinsB;
-            target.bindTarget();
-            sReduceProgram.bind();
-            sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false, LLTexUnit::TFO_POINT);
-            sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true, LLTexUnit::TFO_POINT);
-            bindBins(sReduceProgram, bins);
-            sReduceProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
-            sReduceProgram.uniform2f(U_TARGET_RES, gather_width, gather_height);
-            sReduceProgram.uniform1i(U_REDUCE_PASS, pass);
-            setLensUniforms(sReduceProgram, lens);
-            draw(screen_triangle);
-            unbindBins(sReduceProgram, bins);
-            sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
-            sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
-            sReduceProgram.unbind();
-            target.flush();
-        }
+        GLint viewport[4];
+        glGetIntegerv(GL_VIEWPORT, viewport);
+        LLGLDisable scissor(GL_SCISSOR_TEST);
+        const U32 saved_fbo = LLRenderTarget::sCurFBO;
+        glBindFramebuffer(GL_FRAMEBUFFER, sReduceFBO);
+        glViewport(0, 0, sBinsA.getWidth(), sBinsA.getHeight());
+        sReduceProgram.bind();
+        sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false, LLTexUnit::TFO_POINT);
+        sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true, LLTexUnit::TFO_POINT);
+        bindBins(sReduceProgram, bins);
+        sReduceProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
+        setLensUniforms(sReduceProgram, lens);
+        draw(screen_triangle);
+        unbindBins(sReduceProgram, bins);
+        sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
+        sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
+        sReduceProgram.unbind();
+        glBindFramebuffer(GL_FRAMEBUFFER, saved_fbo);
+        glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
         for (U32 attachment = 0; attachment < sBinsA.getNumTextures(); ++attachment)
         {
             generateMips(sBinsA, attachment);

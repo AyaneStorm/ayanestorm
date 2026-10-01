@@ -1070,3 +1070,14 @@ already wired into `ASDepthOfField`. There are no non-owned edits and no cache r
   - everything else is equal within 0.0002.
 - glslang links Reduce, Tile, Gather and Composite with the library, and compiles Complete alone, at 410 core and 400. `git diff --check` is clean, LF throughout.
 - Also in this step: the `sa_strength` comment range in the common library is fixed to -5..5.
+
+### Step 1: runtime (2026-10-01)
+
+- The user saw no defect. In the same area (camera and scene not identical): DoF off 46 FPS, Live 41 FPS, so Live costs about 2.65 ms, against about 6.7 ms measured earlier (56.5 / 41 FPS). Committed.
+
+### Step 2: one reduce pass (2026-10-01, unbuilt)
+
+- `asDoFLiveReduceF.glsl` writes all seven bin outputs: N2, N1, radius, F, B1, B2, visibility. `reduce_pass` is removed.
+- `sReduceFBO` attaches level 0 of `sBinsA` (3) and `sBinsB` (4) with 7 draw buffers. It is allocated and checked in `ensureTargets()`. If it is incomplete, the allocation fails and Live returns false, as for any target.
+- Each full-resolution pixel is now decomposed once instead of twice. The model is unchanged: same sums.
+- glslang links Reduce with the library at 410 core and 400. `git diff --check` is clean, LF throughout.

@@ -9,20 +9,22 @@
  * as the fallback, the composited image as one surface at the depth buffer's
  * depth.
  *
- * Two passes (reduce_pass), up to four attachments (LLRenderTarget's limit):
- *   0: N2 (S.rgb, W), N1 (S.rgb, W), radius (E_N2, E_N1, E_B1, M_B2)
- *   1: F (S.rgb, W), B1 (S.rgb, W), B2 (S.rgb, W),
- *      visibility (V_N1, V_F, V_B1, V_B2)
+ * One pass, seven outputs (the two bin targets through one FBO, OpenGL
+ * 4.1 guarantees eight draw buffers): N2 (S.rgb, W), N1 (S.rgb, W),
+ * radius (E_N2, E_N1, E_B1, M_B2), F (S.rgb, W), B1 (S.rgb, W),
+ * B2 (S.rgb, W), visibility (V_N1, V_F, V_B1, V_B2),
  * with S = sum colour w, W = sum w, E = sum w / r^2 (r in gather pixels, the
- * energy the gathers spread), M = sum w r (the far kernel radius).
+ * energy the gathers spread), M = sum w r (the far kernel radius). Two
+ * passes of four (LLRenderTarget's limit) decomposed every pixel twice.
  */
 
-layout(location = 0) out vec4 frag_data0;
-layout(location = 1) out vec4 frag_data1;
-layout(location = 2) out vec4 frag_data2;
-layout(location = 3) out vec4 frag_data3;
-
-uniform int reduce_pass;
+layout(location = 0) out vec4 frag_near2;
+layout(location = 1) out vec4 frag_near1;
+layout(location = 2) out vec4 frag_radius;
+layout(location = 3) out vec4 frag_focus;
+layout(location = 4) out vec4 frag_back1;
+layout(location = 5) out vec4 frag_back2;
+layout(location = 6) out vec4 frag_visibility;
 
 void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy);
 vec4 liveBinVisibility(vec4 bins[5]);
@@ -53,18 +55,11 @@ void main()
         radius += energy;
         visibility += liveBinVisibility(bins);
     }
-    if (reduce_pass == 0)
-    {
-        frag_data0 = n2 * 0.25;
-        frag_data1 = n1 * 0.25;
-        frag_data2 = radius * 0.25;
-        frag_data3 = vec4(0.0);
-    }
-    else
-    {
-        frag_data0 = focus * 0.25;
-        frag_data1 = back1 * 0.25;
-        frag_data2 = back2 * 0.25;
-        frag_data3 = visibility * 0.25;
-    }
+    frag_near2 = n2 * 0.25;
+    frag_near1 = n1 * 0.25;
+    frag_radius = radius * 0.25;
+    frag_focus = focus * 0.25;
+    frag_back1 = back1 * 0.25;
+    frag_back2 = back2 * 0.25;
+    frag_visibility = visibility * 0.25;
 }
