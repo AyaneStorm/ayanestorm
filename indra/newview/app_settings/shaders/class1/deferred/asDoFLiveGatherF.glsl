@@ -8,18 +8,17 @@
  * integrates the area it stands for: no random phase, no noise, the same
  * result at any resolution (scripts/testing/dof_live_reference.py).
  *
- * A tap's layer is read "alone": its sums divided by the visibility in
- * front of the bin, V. Its sources spread energy E = sum w / r^2 over their
- * discs; the tap adds area / unit_area * E times the share of its area the
- * sources reach (liveReach()), with r = sqrt(W / E).
+ * A tap reads its layer "alone", completed where nearer bins hide it
+ * (liveCompleted(), push-pull): the background behind a foreground rock is
+ * the background around it, never nothing. Its sources spread energy
+ * E = sum w / r^2 over their discs; the tap adds area / unit_area * E times
+ * the share of its area the sources reach (liveReach()), r = sqrt(W / E).
  *
  * layer 0 (N2), 1 (N1): one kernel radius per tile (asDoFLiveTileF.glsl).
- *   Output: premultiplied colour and coverage (a veil).
- * layer 2 (B): the pixel's own mean radius M / W, from the finest mip level
- *   holding enough background: nearer, less blurred surfaces hide the
- *   spread of farther ones, and holes (in-focus or foreground pixels) take
- *   the radius of the background around them and fill from it.
- *   Output: premultiplied colour and coverage, normalized by the composite.
+ * layer 2 (B): the pixel's own mean radius M / W, completed: nearer, less
+ *   blurred surfaces hide the spread of farther ones, and holes take the
+ *   radius of the background around them.
+ * Output: premultiplied colour and coverage.
  */
 
 layout(location = 0) out vec4 frag_color;
@@ -37,37 +36,33 @@ uniform int max_level;
 const int TILE = 8;
 const int MAX_RINGS = 7;
 const float LIVE_PI_G = 3.14159265358979323846;
-// Finest-level search for the far kernel: enough background weight.
-const float FAR_RADIUS_MIN_WEIGHT = 0.25;
 
 uniform float unit_area;
 uniform float anamorphic_ratio;
 vec2 liveTapOffset(float angle, float distance, out float boundary);
 float liveReach(float r, float d, float s);
+bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
+                   int vis_channel, vec2 uv, float lod, float max_lod,
+                   out vec4 value, out vec4 energy);
 
-// The layer alone at uv and lod: (S.rgb, W) / V and E / V. Returns false
-// where nothing of the bin is visible.
+// The layer alone at uv and lod, completed (liveCompleted()): visibility in
+// front of N2 is 1, of N1 V.x, of B V.z. energies: (E_N2, E_N1, M_B, E_B).
+bool readLayer(vec2 uv, float lod, out vec4 value, out vec4 energies)
+{
+    int vis_channel = layer == 0 ? -1 : (layer == 1 ? 0 : 2);
+    return liveCompleted(diffuseRect, specularRect, emissiveRect, vis_channel,
+                         uv, lod, float(max_level), value, energies);
+}
+
 bool readTap(vec2 uv, float lod, out vec4 layer_value, out float energy)
 {
-    vec4 value = textureLod(diffuseRect, uv, lod);
-    vec4 radius = textureLod(specularRect, uv, lod);
-    float visibility = 1.0;
-    if (layer == 1)
-    {
-        visibility = textureLod(emissiveRect, uv, lod).x;
-    }
-    else if (layer == 2)
-    {
-        visibility = textureLod(emissiveRect, uv, lod).z;
-    }
-    energy = layer == 0 ? radius.x : (layer == 1 ? radius.y : radius.w);
-    if (visibility < 0.001 || value.a < 0.00001 || energy <= 0.0)
+    vec4 energies;
+    if (!readLayer(uv, lod, layer_value, energies))
     {
         return false;
     }
-    layer_value = value / visibility;
-    energy /= visibility;
-    return true;
+    energy = layer == 0 ? energies.x : (layer == 1 ? energies.y : energies.w);
+    return layer_value.a > 0.00001 && energy > 0.0;
 }
 
 // One tap: adds its colour and weight. d and s are aperture-space distance
@@ -91,22 +86,17 @@ void addTap(vec2 center, vec2 offset, float d, float s, float spacing,
     weight_sum += weight;
 }
 
-// Far kernel radius M / W at the finest level with enough background.
+// Far kernel radius: the completed mean radius M / W here; 0 where no
+// background exists at all.
 float farKernel(vec2 uv)
 {
-    for (int level = 0; level <= 16; ++level)
+    vec4 value;
+    vec4 energies;
+    if (!readLayer(uv, 0.0, value, energies))
     {
-        if (level > max_level)
-        {
-            break;
-        }
-        float weight = textureLod(diffuseRect, uv, float(level)).a;
-        if (weight >= FAR_RADIUS_MIN_WEIGHT)
-        {
-            return textureLod(specularRect, uv, float(level)).z / weight;
-        }
+        return 0.0;
     }
-    return 0.0;
+    return energies.z / value.a;
 }
 
 void main()
@@ -122,7 +112,16 @@ void main()
             frag_color = vec4(0.0);
             return;
         }
+        // A background blurred under half a gather pixel is still read
+        // (centre taps, nearly sharp): returning nothing left the holes it
+        // hides black.
         kernel = farKernel(uv);
+        if (kernel <= 0.0)
+        {
+            frag_color = vec4(0.0);
+            return;
+        }
+        kernel = max(kernel, 0.5);
     }
     else
     {

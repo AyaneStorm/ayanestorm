@@ -128,6 +128,49 @@ void liveDecompose(ivec2 p, out vec4 bins[4], out vec4 energy)
     energy += vec4(w.x * inv_r2, w.y * inv_r2, w.w * r, w.w * inv_r2);
 }
 
+// ---------------------------------------------------------------- reads
+//
+// Every layer is read "alone", completed where nearer bins hide it, by the
+// push-pull recurrence c(l) = S(l) + (1 - V(l)) c(l + 1), ending with S / V
+// at the top level (scripts/testing/dof_live_reference.py,
+// read_completed()). What the bin shows (V = 1) is read exactly, in one
+// fetch; what is hidden is filled from coarser levels in proportion to what
+// is missing, continuously. A threshold rule ("first level where half the
+// footprint shows the bin") fails in any hole as large as the visible part.
+
+// Stop once the hidden share left is below this.
+const float LIVE_COMPLETE_EPSILON = 0.01;
+
+// layer: (S.rgb, W) mips; energy_map: its energy mips (all four channels
+// completed alike); vis_map .channel: the visibility in front of the bin,
+// channel < 0 for the front bin (always visible). Returns false where no
+// level shows anything of the bin.
+bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
+                   int vis_channel, vec2 uv, float lod, float max_lod,
+                   out vec4 value, out vec4 energy)
+{
+    value = vec4(0.0);
+    energy = vec4(0.0);
+    float hidden = 1.0;
+    for (int step = 0; step <= 16; ++step)
+    {
+        float level = min(lod + float(step), max_lod);
+        bool last = level >= max_lod;
+        float visibility = vis_channel < 0 ? 1.0 :
+            textureLod(vis_map, uv, level)[vis_channel];
+        // The top level normalizes what is left by its own visibility.
+        float share = last ? (visibility > 0.000001 ? hidden / visibility : 0.0) : hidden;
+        value += textureLod(layer, uv, level) * share;
+        energy += textureLod(energy_map, uv, level) * share;
+        hidden *= 1.0 - visibility;
+        if (last || hidden <= LIVE_COMPLETE_EPSILON)
+        {
+            break;
+        }
+    }
+    return value.a > 0.000001;
+}
+
 // Visibility in front of N1, F and B of a decomposed pixel.
 vec3 liveBinVisibility(vec4 bins[4])
 {

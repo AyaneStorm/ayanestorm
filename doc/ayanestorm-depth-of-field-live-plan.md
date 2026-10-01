@@ -434,3 +434,27 @@ User run on Windows, Mac OIT mode with Live DoF, bokt. The log shows "transparen
 Also changed:
 - Debug 7 now shows `1 - exact_share` (white: layered result).
 - The "Live DoF active" log line is written only when the size changes, instead of every 100 frames.
+
+### Hidden layers: push-pull completed reads (2026-10-01, unbuilt)
+
+**Defect (user, a foreground rock).** The defocused rock had a hard edge exactly where the far layer was black in debug 4.
+- The far gather filled holes only within the background's own blur radius: a few pixels for the sea just behind the focus. Inside the rock-wide hole it found nothing, or did not run at all below 0.5 px.
+- The composite then fell back to the source pixel: the sharp rock, under its own partly transparent veil.
+
+**Model first.** `dof_live_reference.py` now carries visibility V per bin and a rock scene: a solid foreground blurred 12 px over a background blurred 1.5 px. It scores the fringe against the true layered result, away from the frame borders. The truth leaves off-frame sources out, while the renderer continues the frame's edge content.
+- **The old path reproduces the defect.** Fringe rms: 0.057 on a smooth background, 0.047 with a fine checker.
+- **A threshold rule ("finest level where V >= 0.5") was tried first and rejected.** Inside a hole as large as the visible part, no level qualifies, so the kernel stayed 0 (0.115 rms).
+- **The `far_hole` scene had been mis-specified** (hole visible-and-empty, V = 1). It is now V = 0, as the renderer produces behind a focus pixel.
+
+**Principle adopted.** Every layer read is completed by the push-pull recurrence `c(l) = S(l) + (1 - V(l)) c(l + 1)`, ending with `S / V` at the top level (`liveCompleted()` in `asDoFLiveCommonF.glsl`, `read_completed()` in the model).
+- Visible content is read exactly, in one fetch. Hidden content is filled from coarser levels in proportion to what is missing, continuously, stopping at a hidden share below 0.01.
+- One function serves every gather tap, the far kernel and the composite's focus fill (which replaces the earlier threshold-based `focusFill`).
+- The far gather no longer returns nothing below 0.5 px: it reads such content nearly sharp.
+
+**Results** (fringe rms, all ring counts):
+- smooth background: 0.0046 (was 0.057);
+- fine checker: 0.021 (was 0.047). The remainder is detail no method can recover behind the rock.
+- `far_hole`: 0.003.
+- 12 tests pass.
+
+**Debug 3 (foreground tiles)** now normalizes by at least 0.5 px. With Foreground radius 0 it divided by ~0 and showed tiny radii as saturated red. The user's foreground screenshots so far were taken at Foreground radius 0, so the tile widening reach was 0.

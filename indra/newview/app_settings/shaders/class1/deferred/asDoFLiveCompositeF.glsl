@@ -5,9 +5,10 @@
  *
  * - F (in focus) stays at full resolution. What this pixel shows of the
  *   focus bin is exact; what a nearer bin hides of it (1 - V_F of the pixel)
- *   is filled from F's mips at the finest level where enough of F is
- *   visible. The in-focus face under a defocused strand therefore comes from
- *   the face around it, never from the strand (mode 1's sharp halos).
+ *   is F completed at gather resolution (liveCompleted(), push-pull), the
+ *   same read as the gathers'. The in-focus face under a defocused strand
+ *   therefore comes from the face around it, never from the strand (mode
+ *   1's sharp halos).
  * - B is the far gather (holes already filled); N1 and N2 are the near
  *   veils. All three are premultiplied and upsampled bilinearly (they are
  *   blurred); B is normalized after the read.
@@ -40,24 +41,17 @@ in vec2 vary_fragcoord;
 
 void liveDecompose(ivec2 p, out vec4 bins[4], out vec4 energy);
 vec3 liveBinVisibility(vec4 bins[4]);
+bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
+                   int vis_channel, vec2 uv, float lod, float max_lod,
+                   out vec4 value, out vec4 energy);
 
-// Visible-normalized fill of F: (S, W) / V at the finest gather level where
-// at least half of the footprint shows the focus bin.
+// F alone at gather resolution, completed where nearer bins hide it.
 vec4 focusFill(vec2 uv)
 {
-    for (int level = 0; level <= 16; ++level)
-    {
-        if (level > max_level)
-        {
-            break;
-        }
-        float visibility = textureLod(emissiveRect, uv, float(level)).y;
-        if (visibility >= 0.5)
-        {
-            return textureLod(specularRect, uv, float(level)) / visibility;
-        }
-    }
-    return vec4(0.0);
+    vec4 value;
+    vec4 unused;
+    return liveCompleted(specularRect, specularRect, emissiveRect, 1, uv, 0.0,
+                         float(max_level), value, unused) ? value : vec4(0.0);
 }
 
 vec4 over(vec4 front, vec4 back)
@@ -117,7 +111,7 @@ void main()
         // Tile kernel radii relative to the foreground maximum: N2 red,
         // N1 green.
         vec2 radii = texture(noiseMap, uv).xy;
-        color = vec3(radii / max(0.5 * near_radius, 0.0001), 0.0);
+        color = vec3(radii / max(0.5 * near_radius, 0.5), 0.0);
     }
     else if (debug_mode == 4)
     {

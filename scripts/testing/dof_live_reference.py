@@ -21,6 +21,14 @@ Model (all in gather-resolution pixels):
 - Near layers use one kernel radius (the tile's dilated maximum). The far
   layer uses the pixel's own mean radius M / W: nearer (less blurred)
   surfaces in front occlude the spread of farther ones.
+- Every read is visibility-completed (read_completed()), by the push-pull
+  recurrence c(l) = S(l) + (1 - V(l)) c(l + 1), ending with S / V at the
+  top level: what a bin shows (V = 1) is read exactly, in one fetch; what
+  nearer bins hide of it is filled from coarser levels, continuously, in
+  proportion to what is missing. Every gather and the composite's focus
+  layer read layers this way. A threshold rule ("the first level where at
+  least half the footprint shows the bin") was measured first and fails
+  inside any hole as large as the visible part: no level ever qualifies.
 
 Ground truth: every source pixel splats a disc of its own radius (1 px
 antialiased edge, normalized to its area), so energy is exact.
@@ -116,12 +124,54 @@ def ring_taps(rings):
 
 # ---------------------------------------------------------------- layers
 
-def make_layer(color, alpha, radius):
-    """Per-pixel layer sums for one bin: channels S (rgb), W, E, M."""
+def make_layer(color, alpha, radius, visibility=None):
+    """Per-pixel layer sums for one bin: channels S (rgb), W, E, M, V.
+    alpha is the bin's visible weight; V the visibility in front of the bin
+    (1 for the front bin)."""
     r = np.maximum(radius, 0.5)
     w = alpha
+    v = np.ones_like(alpha) if visibility is None else visibility
     return np.stack([color[..., 0] * w, color[..., 1] * w, color[..., 2] * w,
-                     w, w / (r * r), w * r], axis=-1)
+                     w, w / (r * r), w * r, v], axis=-1)
+
+
+# Push-pull stops once the hidden share left is below this
+# (asDoFLiveCommonF.glsl, LIVE_COMPLETE_EPSILON).
+COMPLETE_EPSILON = 0.01
+
+
+def read_completed(mips, x, y, lod):
+    """The bin alone at lod, visibility-completed by push-pull:
+    c(l) = S(l) + (1 - V(l)) c(l + 1), with S / V at the top level, read
+    front to back with the hidden share t = prod (1 - V). Returns
+    (values, found); found is false only where no level shows the bin."""
+    top = len(mips) - 1
+    out = np.zeros(x.shape + (6,))
+    hidden = np.ones(x.shape)
+    for step in range(top + 1):
+        level = np.minimum(lod + step, top)
+        v = sample_trilinear(mips, x, y, level)
+        vis = v[..., 6]
+        last = level >= top
+        # Top level: normalize what is left by its visibility.
+        share = np.where(last, hidden / np.maximum(vis, 1e-6) * (vis > 1e-6), hidden)
+        active = hidden > COMPLETE_EPSILON
+        out += np.where(active[..., None], v[..., 0:6] * share[..., None], 0.0)
+        hidden = np.where(active & ~last, hidden * (1.0 - vis), 0.0)
+        if not (hidden > COMPLETE_EPSILON).any():
+            break
+    found = out[..., 3] > 1e-6
+    return out, found
+
+
+def read_raw(mips, x, y, lod):
+    """The previous read (before completion): the sums divided by V at the
+    tap's own level, nothing where the bin is hidden there."""
+    v = sample_trilinear(mips, x, y, lod)
+    found = v[..., 6] >= 0.001
+    out = np.zeros(x.shape + (6,))
+    out[found] = v[found][..., 0:6] / v[found][..., 6:7]
+    return out, found
 
 
 def reach_fraction(r, d, s, ring):
@@ -135,7 +185,7 @@ def reach_fraction(r, d, s, ring):
     return np.clip(r * r / (0.25 * s * s), 0.0, 1.0)
 
 
-def gather(mips, x, y, kernel_radius, rings, near):
+def gather(mips, x, y, kernel_radius, rings, near, complete=True):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
     Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
@@ -155,9 +205,9 @@ def gather(mips, x, y, kernel_radius, rings, near):
         # circular aperture the sign does not change the result.
         sx = x + (dx if near else -dx) * R
         sy = y + (dy if near else -dy) * R
-        v = sample_trilinear(mips, sx, sy, lod)
-        W = v[..., 3]
-        E = v[..., 4]
+        v, found = (read_completed if complete else read_raw)(mips, sx, sy, lod)
+        W = np.where(found, v[..., 3], 0.0)
+        E = np.where(found, v[..., 4], 0.0)
         r_tap = np.sqrt(W / np.maximum(E, 1e-12))
         reach = reach_fraction(r_tap, d, s, d_unit > 0)
         wt = area / math.pi * E * reach
@@ -298,14 +348,18 @@ def evaluate(name, rings, background=(0.5, 0.5, 0.5)):
     return cov_rms, img_rms, g_cov, t_cov, t_energy
 
 
-# Minimum weight sum for a mip level to define a pixel's own far radius.
+# Minimum weight sum for a mip level to define a pixel's own far radius
+# (previous, uncompleted kernel only).
 FAR_RADIUS_MIN_WEIGHT = 0.25
 
 
-def far_kernel(mips, x, y):
-    """Far kernel radius: the pixel's mean radius M / W at the finest level
-    holding enough far content, so holes (in-focus or foreground pixels)
-    take the radius of the background around them."""
+def far_kernel(mips, x, y, complete=True):
+    """Far kernel radius: the pixel's mean radius M / W, completed, so holes
+    (in-focus or foreground pixels) take the radius of the background around
+    them. The previous kernel searched raw W instead."""
+    if complete:
+        v, found = read_completed(mips, x, y, np.zeros(x.shape))
+        return np.where(found & (v[..., 3] > 1e-6), v[..., 5] / np.maximum(v[..., 3], 1e-6), 0.0)
     radius = np.zeros(x.shape)
     found = np.zeros(x.shape, dtype=bool)
     for level, m in enumerate(mips):
@@ -339,7 +393,8 @@ def far_scene(name):
 def evaluate_far(name, rings):
     color, alpha, radius = far_scene(name)
     _, _, t_rgb, t_energy = scatter_truth(color, alpha, radius)
-    mips = build_mips(make_layer(color, alpha, radius))
+    # Where the background is absent, a nearer bin (focus) hides it: V = 0.
+    mips = build_mips(make_layer(color, alpha, radius, visibility=alpha))
     yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
     x, y = xx + 0.5, yy + 0.5
     R = far_kernel(mips, x, y)
@@ -349,6 +404,62 @@ def evaluate_far(name, rings):
     valid = t_energy[sl] > 0.5
     err = np.abs(g_rgb[sl] - t_rgb[sl]).max(axis=-1)[valid]
     return float(np.sqrt(np.mean(err ** 2))), float(err.max())
+
+
+def evaluate_rock(rings, complete, near_radius=12.0, back_radius=1.5, pattern=False):
+    """A solid foreground (left half, N2) blurred near_radius over a
+    background blurred back_radius (B, hidden behind the foreground: V = 0
+    there). Truth: the foreground's scatter over the whole background's
+    scatter (the hidden part included). Returns the rms image error over the
+    foreground's fringe, where its veil is partly transparent.
+
+    The previous far gather (complete=False) found no background inside the
+    hole and the composite fell back to the sharp source, the foreground
+    itself: a hard edge where the veil fades (the user's foreground rock)."""
+    h = w = SIZE
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    rock = xx < w / 2
+    rock_color = np.array([0.30, 0.35, 0.30])
+    # Smooth background (sky to sea): what the rock hides is predictable from
+    # what shows around it. pattern=True adds a fine checker no method can
+    # recover behind the rock (reported, not gated).
+    t = (yy / (h - 1))[..., None]
+    back_color = (1 - t) * np.array([0.55, 0.70, 0.95]) + t * np.array([0.85, 0.75, 0.55])
+    if pattern:
+        back_color = back_color.copy()
+        back_color[(((xx // 4) + (yy // 4)) % 2) == 1] *= 0.6
+
+    near_c = np.zeros((h, w, 3))
+    near_c[rock] = rock_color
+    near_a = rock.astype(float)
+    near_r = np.full((h, w), near_radius)
+    t_pre, t_cov, _, _ = scatter_truth(near_c, near_a, near_r)
+    _, _, t_back, _ = scatter_truth(back_color, np.ones((h, w)), np.full((h, w), back_radius))
+    truth = t_pre + (1 - t_cov)[..., None] * t_back
+
+    near_mips = build_mips(make_layer(near_c, near_a, near_r))
+    back_vis = (~rock).astype(float)
+    back_mips = build_mips(make_layer(back_color, back_vis, np.full((h, w), back_radius),
+                                      visibility=back_vis))
+    x, y = xx + 0.5, yy + 0.5
+    g_pre, g_cov, _ = gather(near_mips, x, y, tile_kernel(near_r, near_a), rings, near=True)
+    kernel = np.maximum(far_kernel(back_mips, x, y, complete), 0.0)
+    f_pre, f_cov, f_rgb = gather(back_mips, x, y, kernel, rings, near=False, complete=complete)
+    if complete:
+        back = f_rgb
+    else:
+        # Previous composite: no far result -> the source pixel (sharp).
+        source = np.where(rock[..., None], rock_color, back_color)
+        back = np.where(((f_cov > 0.0001) & (kernel >= 0.5))[..., None], f_rgb, source)
+    image = g_pre + (1 - g_cov)[..., None] * back
+    # The truth leaves off-frame sources out, the renderer continues the
+    # frame's edge content: score away from all four borders.
+    fringe = (t_cov > 0.02) & (t_cov < 0.98)
+    fringe[:14] = False
+    fringe[-14:] = False
+    fringe[:, :14] = False
+    fringe[:, -14:] = False
+    return float(np.sqrt(np.mean((image[fringe] - truth[fringe]) ** 2)))
 
 
 class LiveDoFTests(unittest.TestCase):
@@ -410,6 +521,20 @@ class LiveDoFTests(unittest.TestCase):
                 rms, _ = evaluate_far(name, rings)
                 self.assertLess(rms, 0.04, (name, rings))
 
+    def test_foreground_over_hidden_background(self):
+        # The user's foreground rock: completed reads fill the background the
+        # rock hides; the previous reads left the sharp rock under its veil.
+        for rings in QUALITY_RINGS:
+            new = evaluate_rock(rings, True)
+            old = evaluate_rock(rings, False)
+            self.assertLess(new, 0.01, rings)
+            self.assertLess(new, 0.2 * old, (rings, new, old))
+            # A fine pattern hidden behind the rock cannot be recovered;
+            # completion still beats the sharp foreground underneath.
+            new = evaluate_rock(rings, True, pattern=True)
+            old = evaluate_rock(rings, False, pattern=True)
+            self.assertLess(new, 0.6 * old, (rings, new, old))
+
     def test_bin_split_restores_coverage(self):
         # An opaque surface split 50/50 between two adjacent bins: the back
         # bin alone is (W, S) / V with V = 1 - W_front, so it is opaque again
@@ -458,6 +583,12 @@ def survey():
             if name == "light":
                 extra = f"  energy {g_cov.sum():.4f} / {t_energy.sum():.4f}"
             print(f"{name:10s} {rings:5d} {cov:9.4f} {img:9.4f}{extra}")
+    print(f"{'rock fringe':16s} {'rings':>5s} {'completed':>10s} {'previous':>10s}")
+    for pattern in (False, True):
+        for rings in QUALITY_RINGS:
+            print(f"{'checker' if pattern else 'smooth':16s} {rings:5d} "
+                  f"{evaluate_rock(rings, True, pattern=pattern):10.4f} "
+                  f"{evaluate_rock(rings, False, pattern=pattern):10.4f}")
     print(f"{'far scene':10s} {'rings':>5s} {'rgb rms':>9s} {'rgb max':>9s}")
     for name in ("far_hole", "far_ramp"):
         for rings in QUALITY_RINGS:
