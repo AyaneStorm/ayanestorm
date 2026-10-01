@@ -12,6 +12,7 @@
 
 #include "asdofaperture.h"
 #include "asdofcamera.h"
+#include "asdoflive.h"
 #include "llappviewer.h"
 #include "llcharacter.h"
 #include "llfloater.h"
@@ -437,13 +438,19 @@ namespace
     void syncModeFlags()
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
+        // Live (mode 3) shares the Advanced renderer's blur size, quality and
+        // aperture shape controls, not its lens effects (yet).
+        const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
+        setFlag("ASDepthOfFieldUILive", mode == ASDoFLive::LIVE_MODE);
+        setFlag("ASDepthOfFieldUIScreenSpace", screen_space);
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
-        setFlag("ASDepthOfFieldUIShape", mode == 1 || mode == APERTURE_MODE);
+        setFlag("ASDepthOfFieldUIShape", screen_space || mode == APERTURE_MODE);
         // Axial CA, cat's eye (with its corner darkening) and spherical
         // aberration apply to both
         // the Advanced and the Aperture-sampled renderers.
         const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
+        setFlag("ASDepthOfFieldUILens", lens_modes);
         setFlag("ASDepthOfFieldUIAxialCA",
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
@@ -454,7 +461,7 @@ namespace
         setFlag("ASDepthOfFieldUIAstigmatism",
                 mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"));
         setFlag("ASDepthOfFieldUIMaxBlur",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
+                screen_space && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
         setFlag("ASDepthOfFieldUIHighlights",

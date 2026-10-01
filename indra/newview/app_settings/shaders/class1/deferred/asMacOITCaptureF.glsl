@@ -52,6 +52,30 @@ uniform sampler2D macoitState;
 layout(location = 0) out vec4 macoit_target0;
 layout(location = 1) out vec4 macoit_target1;
 
+#ifdef MACOIT_DOF
+// Live DoF transparency bins (asdoflive.cpp; doc/ayanestorm-depth-of-field-
+// live-plan.md, phase 2). In the COLOR pass, with macoitDofBins set, every
+// fragment also adds its weighted colour to the blur bins its own depth
+// falls in, front to back N2, N1, F, B, as (colour * w, w), plus the bins'
+// energy and radius sums. The bins therefore partition exactly what this
+// pass accumulates. Only programs that can draw blended alpha declare these:
+// non-blend GLTF variants keep their implicit frag_data[4] locations.
+uniform int macoitDofBins;
+// focal_distance, blur_constant, tan_pixel_angle, magnification
+uniform vec4 macoitDofLens;
+// max_coc, near_radius, far_radius, split_radius (full-resolution pixels)
+uniform vec4 macoitDofRadii;
+// Full-resolution to gather pixels.
+uniform float macoitDofGatherScale;
+
+layout(location = 2) out vec4 macoit_dof_n2;
+layout(location = 3) out vec4 macoit_dof_n1;
+layout(location = 4) out vec4 macoit_dof_focus;
+layout(location = 5) out vec4 macoit_dof_back;
+// (sum w / r^2 of N2, of N1, sum w r of B, sum w / r^2 of B), r in gather px.
+layout(location = 6) out vec4 macoit_dof_energy;
+#endif
+
 float macoit_absorbance_fraction(float z, float b1, float b2, float l21,
                                  float inv_d11, float inv_d22);
 
@@ -76,15 +100,75 @@ const float MACOIT_MIN_LAYER_ALPHA = 1.0 / 255.0;
 // 14 um at 2 m) when matching a glow fragment to its layer.
 const uint MACOIT_GLOW_TOLERANCE = 4u;
 
+// Eye-space distance of the fragment along the view axis.
+float macoit_view_distance()
+{
+    float ndc = gl_FragCoord.z * 2.0 - 1.0;
+    return 2.0 * macoitDepth.x * macoitDepth.y /
+        (macoitDepth.y + macoitDepth.x - ndc * (macoitDepth.y - macoitDepth.x));
+}
+
 // Log-distance depth, 0 at the near plane and 1 at the far plane. Uniform
 // relative precision: one 22-bit step is about 1.7e-6 of the distance.
 float macoit_depth01()
 {
-    float ndc = gl_FragCoord.z * 2.0 - 1.0;
-    float view = 2.0 * macoitDepth.x * macoitDepth.y /
-        (macoitDepth.y + macoitDepth.x - ndc * (macoitDepth.y - macoitDepth.x));
-    return clamp(log2(view / macoitDepth.x) * macoitDepth.z, 0.0, 1.0);
+    return clamp(log2(macoit_view_distance() / macoitDepth.x) * macoitDepth.z, 0.0, 1.0);
 }
+
+#ifdef MACOIT_DOF
+// Signed blur radius (full px, negative in front of the focus) and bin
+// weights. Must match liveBlurRadius() and liveBinWeights() in
+// asDoFLiveCommonF.glsl.
+float macoit_dof_radius(float view_distance)
+{
+    float z = -view_distance;
+    float coc = (z - macoitDofLens.x) / -z * macoitDofLens.y;
+    coc /= macoitDofLens.w;
+    coc = coc / (macoitDofLens.z * -macoitDofLens.x) * 1.41421356237;
+    coc = clamp(-coc / max(macoitDofRadii.x, 0.0001), -1.0, 1.0);
+    return coc < 0.0 ? coc * macoitDofRadii.y : coc * macoitDofRadii.z;
+}
+
+vec4 macoit_dof_weights(float signed_radius)
+{
+    float a = abs(signed_radius);
+    float focus = 1.0 - smoothstep(0.5, 2.0, a);
+    if (signed_radius >= 0.0)
+    {
+        return vec4(0.0, 0.0, focus, 1.0 - focus);
+    }
+    float split = macoitDofRadii.w;
+    float strong = smoothstep(0.8 * split, 1.25 * split, a);
+    return vec4((1.0 - focus) * strong, (1.0 - focus) * (1.0 - strong), focus, 0.0);
+}
+
+void macoit_dof_clear()
+{
+    macoit_dof_n2 = vec4(0.0);
+    macoit_dof_n1 = vec4(0.0);
+    macoit_dof_focus = vec4(0.0);
+    macoit_dof_back = vec4(0.0);
+    macoit_dof_energy = vec4(0.0);
+}
+
+void macoit_dof_store(vec3 color, float weight)
+{
+    if (macoitDofBins == 0)
+    {
+        macoit_dof_clear();
+        return;
+    }
+    float signed_radius = macoit_dof_radius(macoit_view_distance());
+    vec4 w = macoit_dof_weights(signed_radius) * weight;
+    float r = max(abs(signed_radius) * macoitDofGatherScale, 0.5);
+    float inv_r2 = 1.0 / (r * r);
+    macoit_dof_n2 = vec4(color * w.x, w.x);
+    macoit_dof_n1 = vec4(color * w.y, w.y);
+    macoit_dof_focus = vec4(color * w.z, w.z);
+    macoit_dof_back = vec4(color * w.w, w.w);
+    macoit_dof_energy = vec4(w.x * inv_r2, w.y * inv_r2, w.w * r, w.w * inv_r2);
+}
+#endif
 
 uint macoit_depth_bits(float depth01)
 {
@@ -171,6 +255,11 @@ void avboit_store(vec4 color)
     float alpha = clamp(color.a, 0.0, 1.0);
     float depth01 = macoit_depth01();
     uint depth_bits = macoit_depth_bits(depth01);
+#ifdef MACOIT_DOF
+    // Draw buffers 2..6 exist only in the COLOR pass with bins; no output
+    // stays undefined in any pass.
+    macoit_dof_clear();
+#endif
 
     if (alpha <= 0.0)
     {
@@ -217,12 +306,19 @@ void avboit_store(vec4 color)
     float weight = alpha * macoit_front_transmittance(depth01, depth_bits, 0u);
     macoit_target0 = vec4(max(color.rgb, vec3(0.0)) * weight, 0.0);
     macoit_target1 = vec4(weight, macoit_optical_depth(alpha), 0.0, 0.0);
+#ifdef MACOIT_DOF
+    macoit_dof_store(max(color.rgb, vec3(0.0)), weight);
+#endif
 }
 
 // Glow adds to the pixel's glow, attenuated like any other contribution by
 // the layers in front of it, as vanilla's sorted glow suppression does.
 void macoit_store_glow(float glow)
 {
+#ifdef MACOIT_DOF
+    // Glow is not part of the blur bins.
+    macoit_dof_clear();
+#endif
     if (avboitRasterPass != MACOIT_PASS_COLOR || glow <= 0.0)
     {
         discard;

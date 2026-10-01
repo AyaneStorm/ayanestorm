@@ -9,6 +9,7 @@
 #include "asoitdispatcher.h"
 
 #include "asavboit.h"
+#include "asdoflive.h"
 #include "asexactoit.h"
 #include "asmacoit.h"
 #include "lldrawpoolalpha.h"
@@ -296,6 +297,21 @@ bool ASOITDispatcher::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
+    // Live DoF (ASDepthOfFieldMode 3) splits transparency into blur bins by
+    // each fragment's own depth, with Mac OIT's weights: inside Mac OIT's own
+    // capture in mode 4, otherwise by a DoF-only Mac OIT capture first, which
+    // leaves the selected mode's rendering unchanged.
+    if (pool.getType() == LLDrawPool::POOL_ALPHA_POST_WATER && gPipeline.mRT)
+    {
+        ASMacOIT::DoFLens lens;
+        const bool bins = ASDoFLive::transparencyLens(gPipeline.mRT->screen.getHeight(), lens);
+        ASMacOIT::setDoFLens(bins ? &lens : nullptr);
+        if (bins && !ASMacOIT::requested())
+        {
+            ASMacOIT::renderDoFCapture(pool, prepare, water_sign);
+        }
+    }
+
     if (ASMacOIT::renderPostDeferredCapture(
             pool, prepare, water_sign, emissive_shader, pbr_emissive_shader) ||
         ASAVBOIT::renderPostDeferredCapture(

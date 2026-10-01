@@ -1,0 +1,677 @@
+/**
+ * @file asdoflive.cpp
+ * @author chanayane@firestorm
+ * @brief AyaneStorm Live depth of field (ASDepthOfFieldMode 3).
+ *
+ * Passes (all OpenGL 4.1 fragment, see doc/ayanestorm-depth-of-field-live-plan.md):
+ *   1. reduce     full resolution to the half-resolution bin sums, two passes
+ *                 of three attachments, then mip chains;
+ *   2. tiles      foreground kernel radius per 8x8 gather-pixel tile:
+ *                 reduce, then dilation along x and y;
+ *   3. gathers    area-tap scatter-as-gather of N2, N1 (tile kernel) and B
+ *                 (own kernel, hole fill);
+ *   4. composite  full resolution, N2 over N1 over F over B.
+ * Bins come from two sources:
+ *   - transparency bins: Mac OIT's COLOR pass adds every transparent
+ *     fragment, with its exact weight, to the bins of its own depth
+ *     (asMacOITCaptureF.glsl, MACOIT_DOF). The opaque colour and depth are
+ *     kept before the alpha pool (prepareCapture()) and binned by T, the
+ *     transmittance in front of them;
+ *   - fallback: the composited image binned by the depth buffer, one surface
+ *     per pixel (first frame, or no capture).
+ */
+#include "llviewerprecompiledheaders.h"
+
+#include "asdoflive.h"
+
+#include "asbackgroundisolate.h"
+#include "asdofaperture.h"
+#include "llgl.h"
+#include "llrender.h"
+#include "llrendertarget.h"
+#include "llshadermgr.h"
+#include "llvertexbuffer.h"
+#include "llviewercontrol.h"
+#include "pipeline.h"
+
+extern bool gCubeSnapshot;
+
+namespace
+{
+    LLGLSLShader sReduceProgram;
+    LLGLSLShader sTileProgram;
+    LLGLSLShader sGatherProgram;
+    LLGLSLShader sCompositeProgram;
+
+    // Bin sums at gather resolution, mipmapped (asDoFLiveReduceF.glsl):
+    // A = N2, N1, radius moments; B = F, B, visibility.
+    LLRenderTarget sBinsA;
+    LLRenderTarget sBinsB;
+    // Tile kernel radii: reduce, dilated along x, dilated along y.
+    LLRenderTarget sTileReduce;
+    LLRenderTarget sTileX;
+    LLRenderTarget sTileY;
+    // Gathered layers at gather resolution.
+    LLRenderTarget sNear2;
+    LLRenderTarget sNear1;
+    LLRenderTarget sFar;
+    // Opaque scene before the post-water alpha pool, for the bins path.
+    LLRenderTarget sOpaqueColor;
+    LLRenderTarget sOpaqueDepth;
+    bool sOpaqueReady = false;
+
+    // Lens of the last Live frame per image height (resolution independent),
+    // for the next frame's transparency capture (transparencyLens()).
+    struct CaptureLens
+    {
+        bool mValid = false;
+        F32 mFocalDistance = 0.f;
+        F32 mBlurConstant = 0.f;
+        F32 mMagnification = 0.f;
+        F32 mTanPixelAngleHeight = 0.f;  // tan_pixel_angle * height
+        F32 mMaxCoCPerHeight = 0.f;      // max_coc / height
+        F32 mNearScale = 0.f;            // near radius / max_coc
+        F32 mFarScale = 0.f;             // far radius / max_coc
+    };
+    CaptureLens sCaptureLens;
+
+    U32 sWidth = 0;
+    U32 sHeight = 0;
+
+    // Gather pixels per tile side (TILE in asDoFLiveTileF.glsl and
+    // asDoFLiveGatherF.glsl).
+    const U32 TILE = 8;
+    // Ring counts of the quality presets: 37, 91, 169 taps.
+    const S32 QUALITY_RINGS[] = { 3, 5, 7 };
+    // Dilation loop bound of asDoFLiveTileF.glsl.
+    const S32 MAX_TILE_REACH = 64;
+
+    const char* const COMMON_LIBRARY = "deferred/asDoFLiveCommonF.glsl";
+
+    const LLStaticHashedString U_TARGET_RES("target_res");
+    const LLStaticHashedString U_FOCAL_DISTANCE("focal_distance");
+    const LLStaticHashedString U_BLUR_CONSTANT("blur_constant");
+    const LLStaticHashedString U_TAN_PIXEL_ANGLE("tan_pixel_angle");
+    const LLStaticHashedString U_MAGNIFICATION("magnification");
+    const LLStaticHashedString U_MAX_COC("max_coc");
+    const LLStaticHashedString U_NEAR_RADIUS("near_radius");
+    const LLStaticHashedString U_FAR_RADIUS("far_radius");
+    const LLStaticHashedString U_SPLIT_RADIUS("split_radius");
+    const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
+    const LLStaticHashedString U_TILE_PASS("tile_pass");
+    const LLStaticHashedString U_TILE_REACH("tile_reach");
+    const LLStaticHashedString U_LAYER("layer");
+    const LLStaticHashedString U_MAX_RINGS("max_rings");
+    const LLStaticHashedString U_MAX_LEVEL("max_level");
+    const LLStaticHashedString U_APERTURE_BLADES("aperture_blades");
+    const LLStaticHashedString U_APERTURE_ROUNDNESS("aperture_roundness");
+    const LLStaticHashedString U_APERTURE_ROTATION("aperture_rotation");
+    const LLStaticHashedString U_ANAMORPHIC_RATIO("anamorphic_ratio");
+    const LLStaticHashedString U_UNIT_AREA("unit_area");
+    const LLStaticHashedString U_DEBUG_MODE("debug_mode");
+    const LLStaticHashedString U_BINS_SOURCE("bins_source");
+    const LLStaticHashedString U_GATHER_SCALE("gather_scale");
+
+    // This frame's lens values, uploaded to every program that links the
+    // common library.
+    struct Lens
+    {
+        F32 mFocalDistance = 0.f;
+        F32 mBlurConstant = 0.f;
+        F32 mTanPixelAngle = 0.f;
+        F32 mMagnification = 0.f;
+        F32 mMaxCoC = 0.f;
+        F32 mNearRadius = 0.f;
+        F32 mFarRadius = 0.f;
+        F32 mSplitRadius = 0.f;
+        ASDoFAperture::Shape mShape;
+        F32 mUnitArea = F_PI;
+        F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
+    };
+
+    // Each near bin spans the same radius ratio from 2 px up.
+    F32 splitRadius(F32 near_radius)
+    {
+        return llmax(sqrtf(2.f * near_radius), 2.5f);
+    }
+
+    // Live DoF selected and its transparency bins wanted.
+    bool binsWanted()
+    {
+        static LLCachedControl<S32> mode(gSavedSettings, "ASDepthOfFieldMode", 0);
+        static LLCachedControl<bool> transparency(gSavedSettings, "ASDepthOfFieldLiveTransparency", true);
+        return S32(mode) == ASDoFLive::LIVE_MODE && transparency && LLPipeline::RenderDepthOfField &&
+            sCaptureLens.mValid && !gCubeSnapshot && !ASBackgroundIsolate::isActive();
+    }
+
+    // Binds a raw GL texture to the unit a reserved sampler got at link.
+    void bindRaw(LLGLSLShader& shader, S32 uniform, GLuint texture)
+    {
+        const S32 unit = shader.getTextureChannel(uniform);
+        if (unit >= 0)
+        {
+            gGL.getTexUnit(unit)->bindManual(LLTexUnit::TT_TEXTURE, texture);
+        }
+    }
+
+    void unbindRaw(LLGLSLShader& shader, S32 uniform)
+    {
+        const S32 unit = shader.getTextureChannel(uniform);
+        if (unit >= 0)
+        {
+            gGL.getTexUnit(unit)->unbind(LLTexUnit::TT_TEXTURE);
+        }
+    }
+
+    // Mac OIT bins (shadowMap0..4) and its weight / optical depth sums
+    // (shadowMap5), as declared in asDoFLiveCommonF.glsl.
+    const S32 BIN_SAMPLERS[] = {
+        LLShaderMgr::DEFERRED_SHADOW0, LLShaderMgr::DEFERRED_SHADOW1,
+        LLShaderMgr::DEFERRED_SHADOW2, LLShaderMgr::DEFERRED_SHADOW3,
+        LLShaderMgr::DEFERRED_SHADOW4 };
+
+    void bindBins(LLGLSLShader& shader, bool bins)
+    {
+        shader.uniform1i(U_BINS_SOURCE, bins ? 1 : 0);
+        if (!bins)
+        {
+            return;
+        }
+        for (U32 i = 0; i < ASMacOIT::DOF_BIN_TEXTURES; ++i)
+        {
+            bindRaw(shader, BIN_SAMPLERS[i], ASMacOIT::dofBinTexture(i));
+        }
+        bindRaw(shader, LLShaderMgr::DEFERRED_SHADOW5, ASMacOIT::dofWeightTexture());
+    }
+
+    void unbindBins(LLGLSLShader& shader, bool bins)
+    {
+        if (!bins)
+        {
+            return;
+        }
+        unbindRaw(shader, LLShaderMgr::DEFERRED_SHADOW5);
+        for (S32 uniform : BIN_SAMPLERS)
+        {
+            unbindRaw(shader, uniform);
+        }
+    }
+
+    void setLensUniforms(LLGLSLShader& shader, const Lens& lens)
+    {
+        shader.uniform1f(U_FOCAL_DISTANCE, lens.mFocalDistance);
+        shader.uniform1f(U_BLUR_CONSTANT, lens.mBlurConstant);
+        shader.uniform1f(U_TAN_PIXEL_ANGLE, lens.mTanPixelAngle);
+        shader.uniform1f(U_MAGNIFICATION, lens.mMagnification);
+        shader.uniform1f(U_MAX_COC, lens.mMaxCoC);
+        shader.uniform1f(U_NEAR_RADIUS, lens.mNearRadius);
+        shader.uniform1f(U_FAR_RADIUS, lens.mFarRadius);
+        shader.uniform1f(U_SPLIT_RADIUS, lens.mSplitRadius);
+        shader.uniform1i(U_APERTURE_BLADES, lens.mShape.mBlades);
+        shader.uniform1f(U_APERTURE_ROUNDNESS, lens.mShape.mRoundness);
+        shader.uniform1f(U_APERTURE_ROTATION, lens.mShape.mRotation);
+        shader.uniform1f(U_ANAMORPHIC_RATIO, lens.mShape.mAnamorphic);
+        shader.uniform1f(U_UNIT_AREA, lens.mUnitArea);
+        shader.uniform1f(U_GATHER_SCALE, lens.mGatherScale);
+    }
+
+    void releaseTargets()
+    {
+        sBinsA.release();
+        sBinsB.release();
+        sTileReduce.release();
+        sTileX.release();
+        sTileY.release();
+        sNear2.release();
+        sNear1.release();
+        sFar.release();
+        sWidth = 0;
+        sHeight = 0;
+    }
+
+    bool allocateMipmapped(LLRenderTarget& target, U32 width, U32 height, U32 attachments)
+    {
+        if (!target.allocate(width, height, GL_RGBA16F, false,
+                             LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_MANUAL))
+        {
+            return false;
+        }
+        for (U32 i = 1; i < attachments; ++i)
+        {
+            if (!target.addColorAttachment(GL_RGBA16F))
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool ensureTargets(U32 width, U32 height)
+    {
+        if (sWidth == width && sHeight == height && sBinsA.isComplete())
+        {
+            return true;
+        }
+        releaseTargets();
+        const U32 gather_width = (width + 1) / 2;
+        const U32 gather_height = (height + 1) / 2;
+        const U32 tiles_x = (gather_width + TILE - 1) / TILE;
+        const U32 tiles_y = (gather_height + TILE - 1) / TILE;
+        if (!allocateMipmapped(sBinsA, gather_width, gather_height, 3) ||
+            !allocateMipmapped(sBinsB, gather_width, gather_height, 3) ||
+            !sTileReduce.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
+            !sTileX.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
+            !sTileY.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
+            !sNear2.allocate(gather_width, gather_height, GL_RGBA16F) ||
+            !sNear1.allocate(gather_width, gather_height, GL_RGBA16F) ||
+            !sFar.allocate(gather_width, gather_height, GL_RGBA16F))
+        {
+            releaseTargets();
+            return false;
+        }
+        sWidth = width;
+        sHeight = height;
+        return true;
+    }
+
+    bool shadersComplete()
+    {
+        return sReduceProgram.isComplete() && sTileProgram.isComplete() &&
+               sGatherProgram.isComplete() && sCompositeProgram.isComplete();
+    }
+
+    // Top mip level index of a target (its 1x1 level).
+    S32 topMipLevel(const LLRenderTarget& target)
+    {
+        return (S32)floorf(log2f((F32)llmax(target.getWidth(), target.getHeight())));
+    }
+
+    void generateMips(LLRenderTarget& target, U32 attachment)
+    {
+        // Explicit unit: glGenerateMipmap acts on the active unit's texture.
+        LLTexUnit* unit = gGL.getTexUnit(0);
+        unit->bindManual(LLTexUnit::TT_TEXTURE, target.getTexture(attachment), true);
+        unit->activate();
+        glGenerateMipmap(GL_TEXTURE_2D);
+        unit->unbind(LLTexUnit::TT_TEXTURE);
+    }
+
+    void draw(LLVertexBuffer& triangle)
+    {
+        triangle.setBuffer();
+        triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+    }
+
+    bool createProgram(LLGLSLShader& program, const char* name, const char* fragment,
+                       bool library, S32 shader_level)
+    {
+        program.mName = name;
+        program.mShaderFiles.clear();
+        program.clearPermutations();
+        program.mFeatures.isDeferred = true;
+        program.mShaderFiles.emplace_back("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
+        program.mShaderFiles.emplace_back(fragment, GL_FRAGMENT_SHADER);
+        if (library)
+        {
+            program.mShaderFiles.emplace_back(COMMON_LIBRARY, GL_FRAGMENT_SHADER);
+        }
+        program.mShaderLevel = shader_level;
+        return program.createShader();
+    }
+}
+
+void ASDoFLive::registerShaders(std::vector<LLGLSLShader*>& shaders)
+{
+    shaders.push_back(&sReduceProgram);
+    shaders.push_back(&sTileProgram);
+    shaders.push_back(&sGatherProgram);
+    shaders.push_back(&sCompositeProgram);
+}
+
+bool ASDoFLive::createShaders(S32 shader_level)
+{
+    bool success = createProgram(sReduceProgram, "AyaneStorm Live DoF Reduce Shader",
+                                 "deferred/asDoFLiveReduceF.glsl", true, shader_level);
+    success = createProgram(sTileProgram, "AyaneStorm Live DoF Tile Shader",
+                            "deferred/asDoFLiveTileF.glsl", false, shader_level) && success;
+    success = createProgram(sGatherProgram, "AyaneStorm Live DoF Gather Shader",
+                            "deferred/asDoFLiveGatherF.glsl", true, shader_level) && success;
+    success = createProgram(sCompositeProgram, "AyaneStorm Live DoF Composite Shader",
+                            "deferred/asDoFLiveCompositeF.glsl", true, shader_level) && success;
+    if (!success)
+    {
+        LL_WARNS("ASDoFLive") << "Live DoF shaders failed to load; Live DoF is unavailable." << LL_ENDL;
+    }
+    return success;
+}
+
+void ASDoFLive::unloadShaders()
+{
+    sReduceProgram.unload();
+    sTileProgram.unload();
+    sGatherProgram.unload();
+    sCompositeProgram.unload();
+    releaseResources();
+}
+
+void ASDoFLive::releaseResources()
+{
+    // Called every frame while another renderer is selected.
+    sCaptureLens.mValid = false;
+    sOpaqueReady = false;
+    if (sWidth || sBinsA.isComplete() || sOpaqueColor.isComplete())
+    {
+        releaseTargets();
+        sOpaqueColor.release();
+        sOpaqueDepth.release();
+    }
+}
+
+bool ASDoFLive::transparencyLens(U32 height, ASMacOIT::DoFLens& lens)
+{
+    if (!binsWanted() || height == 0)
+    {
+        return false;
+    }
+    const F32 h = (F32)height;
+    lens.mFocalDistance = sCaptureLens.mFocalDistance;
+    lens.mBlurConstant = sCaptureLens.mBlurConstant;
+    lens.mMagnification = sCaptureLens.mMagnification;
+    lens.mTanPixelAngle = sCaptureLens.mTanPixelAngleHeight / h;
+    lens.mMaxCoC = sCaptureLens.mMaxCoCPerHeight * h;
+    lens.mNearRadius = lens.mMaxCoC * sCaptureLens.mNearScale;
+    lens.mFarRadius = lens.mMaxCoC * sCaptureLens.mFarScale;
+    lens.mSplitRadius = splitRadius(lens.mNearRadius);
+    lens.mGatherScale = (F32)((height + 1) / 2) / h;
+    return true;
+}
+
+void ASDoFLive::prepareCapture(U32 width, U32 height)
+{
+    sOpaqueReady = false;
+    if (!binsWanted() || width == 0 || height == 0)
+    {
+        return;
+    }
+    if (!sOpaqueColor.isComplete() || sOpaqueColor.getWidth() != width ||
+        sOpaqueColor.getHeight() != height)
+    {
+        sOpaqueColor.release();
+        sOpaqueDepth.release();
+        if (!sOpaqueColor.allocate(width, height, GL_RGBA16F) ||
+            !sOpaqueDepth.allocate(width, height, 0, true))
+        {
+            sOpaqueColor.release();
+            sOpaqueDepth.release();
+            LL_WARNS_ONCE("ASDoFLive") << "Live DoF opaque copy allocation failed; "
+                                          "transparency stays one layer." << LL_ENDL;
+            return;
+        }
+    }
+
+    // The scene target holds the opaque colour and depth here; framebuffer
+    // blits are part of the OpenGL 4.1 baseline.
+    const U32 scene_fbo = LLRenderTarget::sCurFBO;
+    LLGLDisable scissor(GL_SCISSOR_TEST);
+    gGL.setColorMask(true, true);
+    sOpaqueColor.bindTarget();
+    const U32 color_fbo = LLRenderTarget::sCurFBO;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, scene_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, color_fbo);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, color_fbo);
+    sOpaqueColor.flush();
+
+    sOpaqueDepth.bindTarget();
+    const U32 depth_fbo = LLRenderTarget::sCurFBO;
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, scene_fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, depth_fbo);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, depth_fbo);
+    sOpaqueDepth.flush();
+    gGL.setColorMask(true, false);
+    sOpaqueReady = true;
+}
+
+bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
+                       LLRenderTarget& depth, LLVertexBuffer& screen_triangle,
+                       F32 focal_distance, F32 blur_constant, F32 tan_pixel_angle,
+                       F32 magnification, F32 max_coc)
+{
+    if (!shadersComplete() || gCubeSnapshot || ASBackgroundIsolate::isActive() ||
+        &source == &destination || source.getWidth() == 0 || source.getHeight() == 0 ||
+        source.getWidth() != destination.getWidth() ||
+        source.getHeight() != destination.getHeight())
+    {
+        if (!shadersComplete())
+        {
+            LL_WARNS_ONCE("ASDoFLive") << "Live DoF shaders are incomplete; no DoF applied." << LL_ENDL;
+        }
+        return false;
+    }
+
+    const U32 width = source.getWidth();
+    const U32 height = source.getHeight();
+    if (!ensureTargets(width, height))
+    {
+        LL_WARNS_ONCE("ASDoFLive") << "Live DoF target allocation failed at "
+                                   << width << "x" << height << LL_ENDL;
+        return false;
+    }
+    static U32 logged_width = 0;
+    static U32 logged_height = 0;
+    if (logged_width != width || logged_height != height)
+    {
+        logged_width = width;
+        logged_height = height;
+        LL_INFOS("ASDoFLive") << "Live DoF active at " << width << "x" << height << LL_ENDL;
+    }
+
+    // Blur size: the same frontend as the Advanced renderer (physical blur
+    // in percent of the image height by default, so any resolution and
+    // snapshots frame alike).
+    Lens lens;
+    lens.mFocalDistance = focal_distance;
+    lens.mBlurConstant = blur_constant;
+    lens.mTanPixelAngle = tan_pixel_angle;
+    lens.mMagnification = magnification;
+    lens.mMaxCoC = gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur") ?
+        0.01f * llclamp(gSavedSettings.getF32("ASDepthOfFieldMaxBlur"), 1.f, 10.f) * (F32)height :
+        llclamp(fabsf(max_coc), 0.f, 150.f);
+    lens.mNearRadius = lens.mMaxCoC * llclamp(gSavedSettings.getF32("ASDepthOfFieldNearRadius"), 0.f, 4.f);
+    lens.mFarRadius = lens.mMaxCoC * llclamp(gSavedSettings.getF32("ASDepthOfFieldFarRadius"), 0.f, 4.f);
+    lens.mSplitRadius = splitRadius(lens.mNearRadius);
+    lens.mShape.mBlades = llclamp(gSavedSettings.getS32("ASDepthOfFieldApertureBlades"), 0, 12);
+    lens.mShape.mRoundness = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureRoundness"), 0.f, 1.f);
+    lens.mShape.mRotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
+    lens.mShape.mAnamorphic = llclamp(gSavedSettings.getF32("ASDepthOfFieldAnamorphicRatio"), 0.1f, 2.f);
+    lens.mUnitArea = ASDoFAperture::unitArea(lens.mShape);
+    const S32 rings = QUALITY_RINGS[llclamp(gSavedSettings.getS32("ASDepthOfFieldQuality"), 0, 2)];
+    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldLiveDebug"), 0, 8);
+
+    const F32 gather_width = (F32)sBinsA.getWidth();
+    const F32 gather_height = (F32)sBinsA.getHeight();
+    const S32 max_level = topMipLevel(sBinsA);
+    lens.mGatherScale = gather_height / (F32)height;
+
+    // Transparency bins of this frame, or the one-layer fallback: the
+    // composited image by the depth buffer.
+    const bool bins = sOpaqueReady && ASMacOIT::dofBinsReady(width, height) &&
+        sOpaqueColor.getWidth() == width && sOpaqueColor.getHeight() == height;
+    sOpaqueReady = false;
+    LLRenderTarget& bin_color = bins ? sOpaqueColor : source;
+    LLRenderTarget& bin_depth = bins ? sOpaqueDepth : depth;
+    static S32 logged_bins = -1;
+    if (logged_bins != (bins ? 1 : 0))
+    {
+        logged_bins = bins ? 1 : 0;
+        LL_INFOS("ASDoFLive") << "Live DoF transparency bins "
+                              << (bins ? "from Mac OIT" : "unavailable; one layer") << LL_ENDL;
+    }
+
+    // The next capture's lens, per image height.
+    sCaptureLens.mValid = lens.mMaxCoC > 0.f;
+    sCaptureLens.mFocalDistance = lens.mFocalDistance;
+    sCaptureLens.mBlurConstant = lens.mBlurConstant;
+    sCaptureLens.mMagnification = lens.mMagnification;
+    sCaptureLens.mTanPixelAngleHeight = lens.mTanPixelAngle * (F32)height;
+    sCaptureLens.mMaxCoCPerHeight = lens.mMaxCoC / (F32)height;
+    sCaptureLens.mNearScale = lens.mMaxCoC > 0.f ? lens.mNearRadius / lens.mMaxCoC : 0.f;
+    sCaptureLens.mFarScale = lens.mMaxCoC > 0.f ? lens.mFarRadius / lens.mMaxCoC : 0.f;
+
+    LL_PROFILE_GPU_ZONE("AyaneStorm Live DoF");
+    LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);
+    LLGLDisable blend(GL_BLEND);
+
+    // 1. Bins at gather resolution, then their mip chains.
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF reduce");
+        for (S32 pass = 0; pass < 2; ++pass)
+        {
+            LLRenderTarget& target = pass == 0 ? sBinsA : sBinsB;
+            target.bindTarget();
+            sReduceProgram.bind();
+            sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false, LLTexUnit::TFO_POINT);
+            sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true, LLTexUnit::TFO_POINT);
+            bindBins(sReduceProgram, bins);
+            sReduceProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
+            sReduceProgram.uniform2f(U_TARGET_RES, gather_width, gather_height);
+            sReduceProgram.uniform1i(U_REDUCE_PASS, pass);
+            setLensUniforms(sReduceProgram, lens);
+            draw(screen_triangle);
+            unbindBins(sReduceProgram, bins);
+            sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
+            sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
+            sReduceProgram.unbind();
+            target.flush();
+        }
+        for (U32 attachment = 0; attachment < 3; ++attachment)
+        {
+            generateMips(sBinsA, attachment);
+            generateMips(sBinsB, attachment);
+        }
+    }
+
+    // 2. Foreground kernel radius per tile.
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF tiles");
+        const F32 near_gather = lens.mNearRadius * gather_height / (F32)height;
+        const S32 reach = llclamp((S32)ceilf(near_gather / (F32)TILE), 0, MAX_TILE_REACH);
+        LLRenderTarget* previous = nullptr;
+        LLRenderTarget* const outputs[] = { &sTileReduce, &sTileX, &sTileY };
+        for (S32 pass = 0; pass < 3; ++pass)
+        {
+            LLRenderTarget& target = *outputs[pass];
+            target.bindTarget();
+            sTileProgram.bind();
+            if (pass == 0)
+            {
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &sBinsA, false, LLTexUnit::TFO_POINT, 0);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false, LLTexUnit::TFO_POINT, 1);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsA, false, LLTexUnit::TFO_POINT, 2);
+            }
+            else
+            {
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, previous, false, LLTexUnit::TFO_POINT);
+            }
+            sTileProgram.uniform1i(U_TILE_PASS, pass);
+            sTileProgram.uniform1i(U_TILE_REACH, reach);
+            draw(screen_triangle);
+            if (pass == 0)
+            {
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsA.getUsage());
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsA.getUsage());
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sBinsA.getUsage());
+            }
+            else
+            {
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, previous->getUsage());
+            }
+            sTileProgram.unbind();
+            target.flush();
+            previous = &target;
+        }
+    }
+
+    // 3. Gathers: N2, N1, B.
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF gathers");
+        struct Gather
+        {
+            LLRenderTarget* mOutput;
+            LLRenderTarget* mBins;
+            U32 mAttachment;
+        };
+        const Gather gathers[] = {
+            { &sNear2, &sBinsA, 0 },
+            { &sNear1, &sBinsA, 1 },
+            { &sFar, &sBinsB, 1 },
+        };
+        for (S32 layer = 0; layer < 3; ++layer)
+        {
+            const Gather& gather = gathers[layer];
+            gather.mOutput->bindTarget();
+            sGatherProgram.bind();
+            sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather.mBins, false,
+                                       LLTexUnit::TFO_TRILINEAR, gather.mAttachment);
+            sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false,
+                                       LLTexUnit::TFO_TRILINEAR, 2);
+            sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsB, false,
+                                       LLTexUnit::TFO_TRILINEAR, 2);
+            sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false,
+                                       LLTexUnit::TFO_TRILINEAR, 0);
+            sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false,
+                                       LLTexUnit::TFO_POINT);
+            sGatherProgram.uniform2f(U_TARGET_RES, gather_width, gather_height);
+            sGatherProgram.uniform1i(U_LAYER, layer);
+            sGatherProgram.uniform1i(U_MAX_RINGS, rings);
+            sGatherProgram.uniform1i(U_MAX_LEVEL, max_level);
+            setLensUniforms(sGatherProgram, lens);
+            draw(screen_triangle);
+            sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sTileY.getUsage());
+            sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sBinsB.getUsage());
+            sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsB.getUsage());
+            sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsA.getUsage());
+            sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather.mBins->getUsage());
+            sGatherProgram.unbind();
+            gather.mOutput->flush();
+        }
+    }
+
+    // 4. Composite at full resolution.
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF composite");
+        destination.bindTarget();
+        sCompositeProgram.bind();
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_PROJECTION, &source, false, LLTexUnit::TFO_POINT);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false, LLTexUnit::TFO_POINT);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true, LLTexUnit::TFO_POINT);
+        bindBins(sCompositeProgram, bins);
+        sCompositeProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsB, false,
+                                      LLTexUnit::TFO_TRILINEAR, 0);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsB, false,
+                                      LLTexUnit::TFO_TRILINEAR, 2);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sFar, false, LLTexUnit::TFO_BILINEAR);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sNear1, false, LLTexUnit::TFO_BILINEAR);
+        sCompositeProgram.bindTexture(LLShaderMgr::EXPOSURE_MAP, &sNear2, false, LLTexUnit::TFO_BILINEAR);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false, LLTexUnit::TFO_POINT);
+        sCompositeProgram.uniform1i(U_MAX_LEVEL, max_level);
+        sCompositeProgram.uniform1i(U_DEBUG_MODE, debug_mode);
+        setLensUniforms(sCompositeProgram, lens);
+        draw(screen_triangle);
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sTileY.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP, sNear2.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sNear1.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sFar.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsB.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsB.getUsage());
+        unbindBins(sCompositeProgram, bins);
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_PROJECTION, source.getUsage());
+        sCompositeProgram.unbind();
+        destination.flush();
+    }
+    return true;
+}

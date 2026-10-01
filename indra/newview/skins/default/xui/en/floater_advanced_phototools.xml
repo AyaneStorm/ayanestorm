@@ -304,7 +304,7 @@
 
             <!-- <AS:Chanayane> Select and configure the independent AyaneStorm DoF renderer. -->
             <combo_box control_name="ASDepthOfFieldMode" enabled_control="RenderDepthOfField" height="20" layout="topleft" left="7" name="ASDepthOfFieldMode" top_pad="4" width="198">
-                  <combo_box.item label="Standard / Firestorm" name="standard" value="0" /> <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1" /> <combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2" /> </combo_box>
+                  <combo_box.item label="Standard / Firestorm" name="standard" value="0" /> <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1" /> <combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2" /> <combo_box.item label="Live / AyaneStorm (new)" name="live" value="3" /> </combo_box>
             <button enabled_control="RenderDepthOfField" follows="left|top" name="ASDepthOfFieldSettings" height="20" label="Settings" layout="topleft" left_pad="3" top_delta="0" width="62">
                   <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_depth_of_field" /></button>
             <!-- </AS:Chanayane> -->

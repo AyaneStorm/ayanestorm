@@ -21,6 +21,10 @@ namespace ASDepthOfField
     void unloadShaders();
     void releaseResources();
 
+    // True when the selected renderer runs on the final linear-HDR image:
+    // Advanced (mode 1) or Live (mode 3).
+    bool usesScreenSpaceRenderer();
+
     // Dedicated linear-HDR output; never alias the final scene or its depth.
     LLRenderTarget* hdrOutput(U32 width, U32 height);
 

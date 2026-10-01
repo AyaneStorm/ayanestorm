@@ -127,6 +127,7 @@ set(viewer_SOURCE_FILES
     asdofcamera.cpp
     asdofaperture.cpp
     asdofautofocus.cpp
+    asdoflive.cpp
     asdofrenderer.cpp
     asdiffuseglow.cpp
     asambientocclusion.cpp
@@ -1065,6 +1066,7 @@ set(viewer_HEADER_FILES
     asdofcamera.h
     asdofaperture.h
     asdofautofocus.h
+    asdoflive.h
     asdofrenderer.h
     asdiffuseglow.h
     asambientocclusion.h

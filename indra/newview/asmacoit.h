@@ -28,6 +28,23 @@ class ASMacOIT
 public:
     using PrepareShader = void (*)(LLGLSLShader*, bool, F32);
 
+    // Live DoF (ASDepthOfFieldMode 3) transparency bins: the lens of the
+    // frame, in the capture's full-resolution pixels (asdoflive.cpp).
+    struct DoFLens
+    {
+        F32 mFocalDistance = 0.f;
+        F32 mBlurConstant = 0.f;
+        F32 mTanPixelAngle = 0.f;
+        F32 mMagnification = 0.f;
+        F32 mMaxCoC = 0.f;
+        F32 mNearRadius = 0.f;
+        F32 mFarRadius = 0.f;
+        F32 mSplitRadius = 0.f;
+        F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
+    };
+    // Number of bin textures: N2, N1, F, B colour sums and their energies.
+    static constexpr U32 DOF_BIN_TEXTURES = 5;
+
     static const char* shaderCacheRevision();
     // User intent (ASRenderOITMode 4) and hardware support.
     static bool requested();
@@ -51,6 +68,18 @@ public:
     static void configureGLTFCapturedDraw(LLGLSLShader& shader);
     static bool finishFrame(LLPipeline& pipeline, LLRenderTarget& screen);
 
+    // Bins requested for this frame's post-water capture (nullptr: none).
+    // Mode 4 writes them in its own COLOR pass; any other mode runs
+    // renderDoFCapture(), which captures without compositing anything.
+    static void setDoFLens(const DoFLens* lens);
+    static bool renderDoFCapture(LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign);
+    // True when this frame's bins exist at width x height. The textures
+    // (RGBA16F, full resolution, no mips) stay valid until the next capture.
+    static bool dofBinsReady(U32 width, U32 height);
+    static GLuint dofBinTexture(U32 index);
+    // Sum of weights (x) and of optical depth (y) of the same capture.
+    static GLuint dofWeightTexture();
+
     static LLGLSLShader& gltfProgram(LLGLSLShader& ordinary_program);
     static LLGLSLShader* alphaShader(LLGLSLShader* ordinary);
     static LLGLSLShader* pbrAlphaShader(LLGLSLShader* ordinary);
@@ -65,6 +94,9 @@ private:
     static bool supported();
     static bool shadersReady();
     static bool allocate(U32 width, U32 height);
+    static bool capture(LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
+                        LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader,
+                        bool dof_only);
     static bool probeBlending();
 };
 

@@ -12215,7 +12215,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
   <key>ASDepthOfFieldMode</key>
   <map>
-    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development). Not persisted: every session starts with Standard</string>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development), 3 AyaneStorm Live (layered, noise-free). Not persisted: every session starts with Standard</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12320,6 +12320,24 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>Aperture-sampled DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIScreenSpace</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 3 (enables the controls shared by the Advanced and Live renderers)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUILive</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 3 (enables Live-only DoF controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUILens</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables the lens effect checkboxes; the Live renderer has none yet)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldUIAdvanced</key>
   <map>
@@ -12584,6 +12602,24 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur, 16 background completion (unblurred), 17 near back layer, 18 near front layer, 19 background completion, 20 rigged near coverage, 21 world near coverage, 22 opaque result before transparency, 23 rigged layer as composited, 24 blur vs sharp blend (white blurred), 25 blur radius spread seen by the postfilter (grey: mixed radii)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldLiveDebug</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Live DoF debug view: 0 off, 1 bin shares (strong foreground red, foreground orange, focus green, background blue), 2 bin weight sum (white), 3 foreground kernel per tile (strong red, other green), 4 background layer, 5 foreground veils, 6 focus layer, 7 blend toward the layered result (white), 8 bins source (green: Mac OIT transparency bins, grey: composited image as one layer)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldLiveTransparency</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Live DoF: blur every transparent surface (hair, glass) by its own depth, from a Mac OIT capture (free in the Mac OIT transparency mode, extra alpha passes in the others). Off: the image is blurred as one layer at the depth buffer's depth, as in Firestorm</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldLiveExactLayers</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Live DoF: exact transparent layers of its own Mac OIT capture when another transparency mode is selected (2-4; geometry passes = layers + 1). The Mac OIT mode uses ASRenderMacOITExactLayers</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>2</integer><key>Backup</key><integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->
 

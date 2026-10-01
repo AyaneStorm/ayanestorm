@@ -16,6 +16,7 @@
 #include "asbackgroundisolate.h"
 #include "asdofaperture.h"
 #include "asdofautofocus.h"
+#include "asdoflive.h"
 #include "asdofrenderer.h"
 #include "llcontrol.h"
 #include "llgl.h"
@@ -435,7 +436,8 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldAutofocusY", "ASDepthOfFieldAutofocusTime",
                 "ASDepthOfFieldAutofocusNearPriority", "ASDepthOfFieldAutofocusShowArea",
                 "ASDepthOfFieldAutofocusLockMode", "ASDepthOfFieldAutofocusTrackOutside",
-                "ASDepthOfFieldAutofocusEyeRadius"
+                "ASDepthOfFieldAutofocusEyeRadius", "ASDepthOfFieldLiveDebug",
+                "ASDepthOfFieldLiveTransparency", "ASDepthOfFieldLiveExactLayers"
             };
             const std::string name = data.asString();
             if (name == "All")
@@ -473,8 +475,9 @@ void ASDepthOfField::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sSpriteProgram);
     shaders.push_back(&sBackgroundProgram);
     shaders.push_back(&sPostfilterProgram);
-    // Aperture-sampled renderer and autofocus share this module's
+    // Aperture-sampled and Live renderers and autofocus share this module's
     // registration hooks.
+    ASDoFLive::registerShaders(shaders);
     ASDoFRenderer::registerShaders(shaders);
     ASDoFAutofocus::registerShaders(shaders);
 }
@@ -522,6 +525,7 @@ bool ASDepthOfField::createShaders(S32 shader_level)
     sSpriteProgram.mShaderLevel = shader_level;
     success = sSpriteProgram.createShader() && success;
 
+    success = ASDoFLive::createShaders(shader_level) && success;
     success = ASDoFRenderer::createShaders(shader_level) && success;
     success = ASDoFAutofocus::createShaders(shader_level) && success;
     return success;
@@ -539,13 +543,21 @@ void ASDepthOfField::unloadShaders()
     sSpriteProgram.unload();
     sBackgroundProgram.unload();
     sPostfilterProgram.unload();
+    ASDoFLive::unloadShaders();
     ASDoFRenderer::unloadShaders();
     ASDoFAutofocus::unloadShaders();
     releaseResources();
 }
 
+bool ASDepthOfField::usesScreenSpaceRenderer()
+{
+    const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
+    return mode == 1 || mode == ASDoFLive::LIVE_MODE;
+}
+
 void ASDepthOfField::releaseResources()
 {
+    ASDoFLive::releaseResources();
     releaseGatherResources();
     sHDROutputTarget.release();
     sTransparentDepthTarget.release();
@@ -592,6 +604,13 @@ bool ASDepthOfField::prepareTransparentDepthCapture(U32 width, U32 height)
     sRiggedCoverageReady = false;
     sRiggedDepthReady = false;
     sWorldDepthReady = false;
+    if (gSavedSettings.getS32("ASDepthOfFieldMode") == ASDoFLive::LIVE_MODE)
+    {
+        // Live DoF keeps the opaque layer for its transparency bins; the
+        // alpha pool keeps its vanilla DoF depth pass (false).
+        ASDoFLive::prepareCapture(width, height);
+        return false;
+    }
     if (gSavedSettings.getS32("ASDepthOfFieldMode") != 1 ||
         width == 0 || height == 0 || ASBackgroundIsolate::isActive() ||
         !shadersComplete())
@@ -864,7 +883,19 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
                              F32 focal_distance, F32 blur_constant, F32 tan_pixel_angle,
                              F32 magnification, F32 max_coc)
 {
-    if (gSavedSettings.getS32("ASDepthOfFieldMode") != 1)
+    const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
+    if (mode == ASDoFLive::LIVE_MODE)
+    {
+        // The Advanced renderer's targets are not needed meanwhile.
+        if (sCoCTarget.isComplete() || sFarTarget.isComplete() || sNearTarget.isComplete())
+        {
+            releaseGatherResources();
+        }
+        return ASDoFLive::render(source, destination, depth, screen_triangle, focal_distance,
+                                 blur_constant, tan_pixel_angle, magnification, max_coc);
+    }
+    ASDoFLive::releaseResources();
+    if (mode != 1)
     {
         if (sCoCTarget.isComplete() || sFarTarget.isComplete() || sNearTarget.isComplete())
         {

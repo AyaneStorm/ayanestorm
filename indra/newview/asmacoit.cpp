@@ -79,8 +79,19 @@ const char* const EMISSIVE_TERMINAL = "deferred/asMacOITEmissiveF.glsl";
 const char* const PBR_GLOW_TERMINAL = "deferred/asMacOITPbrGlowF.glsl";
 const char* const FULLSCREEN_VERTEX = "deferred/postDeferredNoTCV.glsl";
 
+// True while a Live DoF-only capture runs (renderDoFCapture()): it keys its
+// own number of exact layers and composites nothing.
+bool sDoFOnly = false;
+
 S32 exactLayers()
 {
+    if (sDoFOnly)
+    {
+        // DoF bins need less exactness than the image (they are blurred
+        // where it matters): 2 keeps the capture at three geometry passes.
+        static LLCachedControl<S32> dof_layers(gSavedSettings, "ASDepthOfFieldLiveExactLayers", 2);
+        return llclamp(S32(dof_layers), 2, 4);
+    }
     // The tail's moment anchor is layer K-2, so K >= 2. Four keys keep hair
     // exact behind a thick two-face pane (doc/ayanestorm-oit-avboit-glass-
     // darkening.md); scripts/testing/macoit_reference.py measures each K.
@@ -136,6 +147,11 @@ struct CaptureProgram
     GLint layerRows = -1;
     GLint depth = -1;
     GLint stateUnit = -1;
+    // Live DoF bins (MACOIT_DOF programs only).
+    GLint dofBins = -1;
+    GLint dofLens = -1;
+    GLint dofRadii = -1;
+    GLint dofGatherScale = -1;
 };
 
 std::vector<CaptureProgram> sCapturePrograms;
@@ -165,6 +181,11 @@ struct Resources
     GLuint peelEvenFBO = 0;// keysEven, moments
     GLuint mergeFBO = 0;   // state
     GLuint colorFBO = 0;   // moments, keysOdd
+    // Live DoF bins (RGBA16F, ADD): N2, N1, F, B (colour * w, w) and the
+    // energies; written with the COLOR pass through colorBinsFBO.
+    GLuint dofBins[ASMacOIT::DOF_BIN_TEXTURES] = {};
+    GLuint colorBinsFBO = 0; // moments, keysOdd, dofBins[0..4]
+    bool hasDoFBins = false;
     U32 width = 0;
     U32 height = 0;
     bool available = false;
@@ -184,9 +205,15 @@ GLuint sStateTexture = 0;
 // Texture units that received sStateTexture this frame, unbound afterwards so
 // LLTexUnit never caches a name this module may delete.
 U64 sStateUnits = 0;
+// Live DoF bins requested for this frame's capture, and written by it.
+bool sDoFLensSet = false;
+ASMacOIT::DoFLens sDoFLens;
+bool sDoFBinsActive = false;
+bool sDoFBinsReady = false;
 
 bool cloneCaptureProgram(LLGLSLShader& destination, const LLGLSLShader& source,
-                         const std::string& name, const char* terminal)
+                         const std::string& name, const char* terminal,
+                         bool dof_outputs = true)
 {
     destination.mName = name;
     destination.mFeatures = source.mFeatures;
@@ -212,6 +239,13 @@ bool cloneCaptureProgram(LLGLSLShader& destination, const LLGLSLShader& source,
     // Selects the material shaders' weighted-OIT hook (see file comment).
     destination.addPermutation("AVBOIT", "1");
     destination.addPermutation("MACOIT", "1");
+    if (dof_outputs)
+    {
+        // Live DoF bin outputs at locations 2..6. Left out of programs that
+        // declare their own unlocated outputs (non-blend GLTF variants,
+        // frag_data[4]): those would no longer fit in 8 draw buffers.
+        destination.addPermutation("MACOIT_DOF", "1");
+    }
     return destination.createShader();
 }
 
@@ -291,6 +325,10 @@ void indexCapturePrograms()
         entry.exactLayers = glGetUniformLocation(object, "macoitExactLayers");
         entry.layerRows = glGetUniformLocation(object, "macoitLayerRows");
         entry.depth = glGetUniformLocation(object, "macoitDepth");
+        entry.dofBins = glGetUniformLocation(object, "macoitDofBins");
+        entry.dofLens = glGetUniformLocation(object, "macoitDofLens");
+        entry.dofRadii = glGetUniformLocation(object, "macoitDofRadii");
+        entry.dofGatherScale = glGetUniformLocation(object, "macoitDofGatherScale");
         const GLint state = glGetUniformLocation(object, "macoitState");
         if (state >= 0)
         {
@@ -384,6 +422,21 @@ void configurePass(GLint pass, GLint read_channel, GLint write_channel, bool mom
         {
             glProgramUniform3f(object, entry.depth, near_depth, far_depth, inverse_log_range);
         }
+        if (entry.dofBins >= 0)
+        {
+            const bool bins = pass == PASS_COLOR && sDoFBinsActive;
+            glProgramUniform1i(object, entry.dofBins, bins ? 1 : 0);
+            if (bins)
+            {
+                glProgramUniform4f(object, entry.dofLens, sDoFLens.mFocalDistance,
+                                   sDoFLens.mBlurConstant, sDoFLens.mTanPixelAngle,
+                                   sDoFLens.mMagnification);
+                glProgramUniform4f(object, entry.dofRadii, sDoFLens.mMaxCoC,
+                                   sDoFLens.mNearRadius, sDoFLens.mFarRadius,
+                                   sDoFLens.mSplitRadius);
+                glProgramUniform1f(object, entry.dofGatherScale, sDoFLens.mGatherScale);
+            }
+        }
     }
 }
 
@@ -427,7 +480,9 @@ GLuint createFramebuffer(std::initializer_list<GLuint> colors, bool depth_stenci
     GLuint fbo = 0;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    GLenum buffers[4] = { GL_NONE, GL_NONE, GL_NONE, GL_NONE };
+    // Up to 8 colour attachments, OpenGL 4.1's guaranteed draw buffers.
+    GLenum buffers[8] = { GL_NONE, GL_NONE, GL_NONE, GL_NONE,
+                          GL_NONE, GL_NONE, GL_NONE, GL_NONE };
     GLsizei count = 0;
     for (GLuint color : colors)
     {
@@ -673,7 +728,8 @@ void ASMacOIT::loadShaders(S32 shader_level)
             success = cloneCaptureProgram(
                 gMacOITGLTFProgram.mGLTFVariants[i],
                 gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[i],
-                "Mac OIT GLTF PBR Metallic Roughness Variant", nullptr);
+                "Mac OIT GLTF PBR Metallic Roughness Variant", nullptr,
+                (i & LLGLSLShader::GLTFVariant::ALPHA_BLEND) != 0);
         }
     }
 
@@ -734,6 +790,32 @@ void ASMacOIT::beginFrame()
     sCaptureActive = false;
     sCaptureCompleted = false;
     sFrameReady = false;
+    sDoFBinsReady = false;
+}
+
+void ASMacOIT::setDoFLens(const DoFLens* lens)
+{
+    sDoFLensSet = lens != nullptr;
+    if (lens)
+    {
+        sDoFLens = *lens;
+    }
+}
+
+bool ASMacOIT::dofBinsReady(U32 width, U32 height)
+{
+    return sDoFBinsReady && sResources.hasDoFBins &&
+        sResources.width == width && sResources.height == height;
+}
+
+GLuint ASMacOIT::dofBinTexture(U32 index)
+{
+    return index < DOF_BIN_TEXTURES ? sResources.dofBins[index] : 0;
+}
+
+GLuint ASMacOIT::dofWeightTexture()
+{
+    return sResources.keysOdd;
 }
 
 bool ASMacOIT::captureActive()
@@ -750,7 +832,28 @@ bool ASMacOIT::renderPostDeferredCapture(
     LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
     LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader)
 {
-    if (!requested() || !shadersReady() ||
+    return capture(pool, prepare, water_sign, emissive_shader, pbr_emissive_shader, false);
+}
+
+bool ASMacOIT::renderDoFCapture(LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign)
+{
+    // The pool's own emissive programs stay as they are: the DoF capture
+    // draws no glow.
+    LLGLSLShader* emissive_shader = nullptr;
+    LLGLSLShader* pbr_emissive_shader = nullptr;
+    return capture(pool, prepare, water_sign, emissive_shader, pbr_emissive_shader, true);
+}
+
+// The capture behind both entry points. dof_only: Live DoF bins for another
+// transparency mode; the keys, moments and weights are computed as usual but
+// nothing is composited (no resolve), glow is skipped, and the frame is not
+// reported as captured, so the selected mode renders it unchanged.
+bool ASMacOIT::capture(
+    LLDrawPoolAlpha& pool, PrepareShader prepare, F32 water_sign,
+    LLGLSLShader*& emissive_shader, LLGLSLShader*& pbr_emissive_shader, bool dof_only)
+{
+    const bool wanted = dof_only ? sDoFLensSet && !sProbeFailed && supported() : requested();
+    if (!wanted || !shadersReady() ||
         pool.getType() != LLDrawPool::POOL_ALPHA_POST_WATER ||
         LLPipeline::sRenderingHUDs || LLPipeline::sImpostorRender || gCubeSnapshot ||
         !gPipeline.mRT)
@@ -773,14 +876,19 @@ bool ASMacOIT::renderPostDeferredCapture(
         {
             sProbeFailed = true;
             // ASRenderOITMode is authoritative; resetting it is what returns
-            // the dispatcher to Standard.
-            gSavedSettings.setS32("ASRenderOITMode", 0);
+            // the dispatcher to Standard. A DoF-only capture leaves the
+            // selected mode alone (Live DoF falls back to one layer).
+            if (!dof_only)
+            {
+                gSavedSettings.setS32("ASRenderOITMode", 0);
+            }
             LL_WARNS("MacOIT") << "Mac OIT disabled for this session: the driver "
                                   "failed the blending self-test" << LL_ENDL;
             return false;
         }
     }
-    if (!sResources.available || sResources.width != width || sResources.height != height)
+    if (!sResources.available || sResources.width != width || sResources.height != height ||
+        sResources.hasDoFBins != sDoFLensSet)
     {
         allocateResources(width, height);
         if (!sResources.available)
@@ -788,6 +896,8 @@ bool ASMacOIT::renderPostDeferredCapture(
             return false;
         }
     }
+    sDoFOnly = dof_only;
+    sDoFBinsActive = sDoFLensSet && sResources.hasDoFBins;
 
     prepare(&gMacOITAlphaProgram, true, water_sign);
     prepare(&gMacOITPBRAlphaProgram, true, water_sign);
@@ -799,10 +909,13 @@ bool ASMacOIT::renderPostDeferredCapture(
             prepare(&program, true, water_sign);
         }
     }
-    prepare(&gMacOITEmissiveProgram, false, water_sign);
-    prepare(&gMacOITPBRGlowProgram, false, water_sign);
-    emissive_shader = &gMacOITEmissiveProgram;
-    pbr_emissive_shader = &gMacOITPBRGlowProgram;
+    if (!dof_only)
+    {
+        prepare(&gMacOITEmissiveProgram, false, water_sign);
+        prepare(&gMacOITPBRGlowProgram, false, water_sign);
+        emissive_shader = &gMacOITEmissiveProgram;
+        pbr_emissive_shader = &gMacOITPBRGlowProgram;
+    }
     LLGLSLShader::unbind();
 
     // GL state for the whole capture. Blending is tracked as disabled: every
@@ -942,13 +1055,17 @@ bool ASMacOIT::renderPostDeferredCapture(
     {
         LL_PROFILE_GPU_ZONE("Mac OIT color");
         // moments and keysOdd are free after the merge: reuse them as the
-        // color and weight/optical-depth accumulators.
-        bindFramebuffer(sResources.colorFBO, width, height);
+        // color and weight/optical-depth accumulators. With Live DoF bins,
+        // their five targets follow as attachments 2..6, also ADD.
+        bindFramebuffer(sDoFBinsActive ? sResources.colorBinsFBO : sResources.colorFBO,
+                        width, height);
         gGL.setColorMask(true, true);  // clears obey the color mask
-        glClearBufferfv(GL_COLOR, 0, zero);
-        glClearBufferfv(GL_COLOR, 1, zero);
-        glBlendEquationi(0, GL_FUNC_ADD);
-        glBlendEquationi(1, GL_FUNC_ADD);
+        const GLint attachments = sDoFBinsActive ? 2 + GLint(DOF_BIN_TEXTURES) : 2;
+        for (GLint attachment = 0; attachment < attachments; ++attachment)
+        {
+            glClearBufferfv(GL_COLOR, attachment, zero);
+            glBlendEquationi(attachment, GL_FUNC_ADD);
+        }
         glStencilFunc(GL_ALWAYS, 0, 0xFF);
         glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
         configurePass(PASS_COLOR, 0, 0, false, sResources.state);
@@ -975,6 +1092,13 @@ bool ASMacOIT::renderPostDeferredCapture(
     glViewport(0, 0, LLRenderTarget::sCurResX, LLRenderTarget::sCurResY);
     gGL.setColorMask(true, false);
 
+    sDoFBinsReady = sDoFBinsActive;
+    sDoFBinsActive = false;
+    sDoFOnly = false;
+    if (dof_only)
+    {
+        return true;
+    }
     sCaptureCompleted = true;
     sFrameReady = true;
     return true;
@@ -1009,8 +1133,9 @@ bool ASMacOIT::handleCapturedEmissives(
     {
         return false;
     }
-    // Glow is weighted only in the color pass; it never forms a layer.
-    if (depth_only || sPass != PASS_COLOR)
+    // Glow is weighted only in the color pass; it never forms a layer. A
+    // DoF-only capture draws none.
+    if (depth_only || sPass != PASS_COLOR || sDoFOnly)
     {
         return true;
     }
@@ -1270,7 +1395,21 @@ bool ASMacOIT::allocate(U32 width, U32 height)
     sResources.peelEvenFBO = createFramebuffer({ sResources.keysEven, sResources.moments }, true);
     sResources.mergeFBO = createFramebuffer({ sResources.state }, false);
     sResources.colorFBO = createFramebuffer({ sResources.moments, sResources.keysOdd }, true);
-    return glGetError() == GL_NO_ERROR &&
+    bool dof_ok = true;
+    if (sDoFLensSet)
+    {
+        // Live DoF bins, only while requested: 40 B per pixel.
+        for (GLuint& texture : sResources.dofBins)
+        {
+            texture = createTexture(GL_RGBA16F, width, height);
+        }
+        sResources.colorBinsFBO = createFramebuffer(
+            { sResources.moments, sResources.keysOdd, sResources.dofBins[0], sResources.dofBins[1],
+              sResources.dofBins[2], sResources.dofBins[3], sResources.dofBins[4] }, true);
+        sResources.hasDoFBins = sResources.colorBinsFBO != 0;
+        dof_ok = sResources.hasDoFBins;
+    }
+    return glGetError() == GL_NO_ERROR && dof_ok &&
         sResources.depthFBO && sResources.keysFBO && sResources.peelOddFBO &&
         sResources.peelEvenFBO && sResources.mergeFBO && sResources.colorFBO;
 }
@@ -1280,7 +1419,7 @@ void ASMacOIT::allocateResources(U32 width, U32 height)
     releaseResources();
     // Until the first capture has run the blending self-test, allocation is
     // deferred to that capture.
-    if (!requested() || !shadersReady() || !sProbed)
+    if ((!requested() && !sDoFLensSet) || !shadersReady() || !sProbed)
     {
         return;
     }
@@ -1296,7 +1435,8 @@ void ASMacOIT::allocateResources(U32 width, U32 height)
 void ASMacOIT::releaseResources()
 {
     for (GLuint* fbo : { &sResources.depthFBO, &sResources.keysFBO, &sResources.peelOddFBO,
-                         &sResources.peelEvenFBO, &sResources.mergeFBO, &sResources.colorFBO })
+                         &sResources.peelEvenFBO, &sResources.mergeFBO, &sResources.colorFBO,
+                         &sResources.colorBinsFBO })
     {
         if (*fbo)
         {
@@ -1311,12 +1451,20 @@ void ASMacOIT::releaseResources()
             LLImageGL::deleteTextures(1, texture);
         }
     }
+    for (GLuint& texture : sResources.dofBins)
+    {
+        if (texture)
+        {
+            LLImageGL::deleteTextures(1, &texture);
+        }
+    }
     if (sResources.depthStencil)
     {
         glDeleteRenderbuffers(1, &sResources.depthStencil);
     }
     sResources = Resources();
     sFrameReady = false;
+    sDoFBinsReady = false;
 }
 
 void ASMacOIT::appendDiagnostics(LLSD& info)
@@ -1324,7 +1472,8 @@ void ASMacOIT::appendDiagnostics(LLSD& info)
     const U64 pixels = U64(sResources.width) * sResources.height;
     // Four RGBA32F targets (the state texture holds three layers) plus
     // DEPTH24_STENCIL8.
-    const U64 bytes = pixels * (16u * (3u + STATE_LAYERS) + 4u);
+    const U64 bytes = pixels * (16u * (3u + STATE_LAYERS) + 4u +
+                                (sResources.hasDoFBins ? 8u * DOF_BIN_TEXTURES : 0u));
     info["MACOIT_AVAILABLE"] = sResources.available;
     info["MACOIT_EXACT_LAYERS"] = LLSD::Integer(exactLayers());
     info["MACOIT_WIDTH"] = LLSD::Integer(sResources.width);
