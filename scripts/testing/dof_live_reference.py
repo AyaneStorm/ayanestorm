@@ -245,19 +245,53 @@ def read_raw(mips, x, y, lod):
     return out, found
 
 
-def reach_fraction(r, d, s, ring):
+def reach_fraction(r, d, s, ring, sa=0.0):
     """Share of a tap's area that a source of radius r reaches. A ring tap
     stands for the annulus [d - s/2, d + s/2], the centre tap for the disc
     of radius s/2; the share is the part of that area inside radius r, so
     the taps integrate pi r^2 exactly for any r (a smoothstep over one
-    spacing lost up to 9% coverage for r between rings)."""
+    spacing lost up to 9% coverage for r between rings).
+
+    sa = a sigma: spherical aberration (phase 4 step 2). Light at pupil
+    radius rho = t / r of the source's disc weighs 1 - sa (2 rho^2 - 1);
+    the share is that profile integrated over the same part, exactly: with
+    u = t^2, G(u) = (1 + sa) u - sa u^2 / r^2, and G(r^2) = r^2, so a whole
+    disc keeps its energy for any sa (spherical_reach())."""
     if ring:
-        return np.clip((r * r - (d - 0.5 * s) ** 2) / (2.0 * d * s), 0.0, 1.0)
-    return np.clip(r * r / (0.25 * s * s), 0.0, 1.0)
+        inner2 = (d - 0.5 * s) ** 2
+        outer2 = (d + 0.5 * s) ** 2
+        area = 2.0 * d * s
+    else:
+        inner2 = 0.0
+        outer2 = 0.25 * s * s
+        area = 0.25 * s * s
+    return spherical_reach(r, inner2, outer2, area, sa)
+
+
+def spherical_reach(r, inner2, outer2, area, sa):
+    r2 = np.maximum(r * r, 1e-12)
+    hi = np.minimum(r2, outer2)
+    lo = np.minimum(r2, inner2)
+    g = lambda u: (1.0 + sa) * u - sa * u * u / r2
+    return np.clip((g(hi) - g(lo)) / area, 0.0, None)
+
+
+# Spherical aberration ramps in over this full-resolution blur radius, as in
+# the aperture-sampled renderer (SA_FOCUS_PIXELS, asDoFAccumulateF.glsl).
+SA_FOCUS_PIXELS = 3.0
+# Full-resolution to gather pixels.
+GATHER_SCALE = 0.5
+
+
+def spherical_product(strength, r_gather, near):
+    """a sigma of a source of gather-pixel radius r: sigma is the signed
+    full-resolution radius / 3, clamped to 1 (negative in front)."""
+    sigma = np.minimum(r_gather / GATHER_SCALE / SA_FOCUS_PIXELS, 1.0)
+    return strength * (-sigma if near else sigma)
 
 
 def gather(mips, x, y, kernel_radius, rings, near, complete=True,
-           shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False):
+           shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False, sa_strength=0.0):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
     Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
@@ -281,7 +315,8 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
         W = np.where(found, v[..., 3], 0.0)
         E = np.where(found, v[..., 4], 0.0)
         r_tap = np.sqrt(W / np.maximum(E, 1e-12))
-        reach = reach_fraction(r_tap, d, s, d_unit > 0)
+        sa = spherical_product(sa_strength, r_tap, near)
+        reach = reach_fraction(r_tap, d, s, d_unit > 0, sa)
         wt = area / unit_area * E * reach
         rgb = v[..., 0:3] / np.maximum(W, 1e-12)[..., None]
         color += rgb * wt[..., None]
@@ -293,9 +328,12 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
 
 # ---------------------------------------------------------------- truth
 
-def scatter_truth(color, alpha, radius):
+def scatter_truth(color, alpha, radius, sa_strength=0.0, near=True):
     """Brute-force splat: each source spreads alpha over its own disc
-    (1 px antialiased edge), normalized to the disc's area."""
+    (1 px antialiased edge), normalized to the disc's area. With spherical
+    aberration, every pixel of the disc also weighs 1 - a sigma (2 rho^2 - 1),
+    rho = distance / r, renormalized to keep the source's energy (the
+    antialiased edge reaches past rho = 1)."""
     h, w = alpha.shape
     acc = np.zeros((h, w, 3))
     cov = np.zeros((h, w))
@@ -308,6 +346,11 @@ def scatter_truth(color, alpha, radius):
         x0, x1 = max(px - ext, 0), min(px + ext + 1, w)
         dist = np.hypot(xx[y0:y1, x0:x1] - px, yy[y0:y1, x0:x1] - py)
         k = np.clip(r + 0.5 - dist, 0.0, 1.0)
+        if sa_strength != 0.0:
+            sa = float(spherical_product(sa_strength, r, near))
+            rho2 = np.minimum(dist * dist / (r * r), 1.0)
+            profiled = k * (1.0 - sa * (2.0 * rho2 - 1.0))
+            k = profiled * k.sum() / profiled.sum()
         # Normalize by the full disc area (also outside the frame).
         k = k * alpha[py, px] / (math.pi * r * r)
         acc[y0:y1, x0:x1] += color[py, px] * k[..., None]
@@ -415,13 +458,15 @@ def completed_radius(mips):
     return radius, np.where(weight > 0.001, 1.0, 0.0)
 
 
-def evaluate(name, rings, background=(0.5, 0.5, 0.5)):
+def evaluate(name, rings, background=(0.5, 0.5, 0.5), sa_strength=0.0, near=True,
+             shape=(0, 1.0, 0.0, 1.0)):
     color, alpha, radius = scene(name)
-    t_pre, t_cov, _, t_energy = scatter_truth(color, alpha, radius)
+    t_pre, t_cov, _, t_energy = scatter_truth(color, alpha, radius, sa_strength, near)
     mips = build_mips(make_layer(color, alpha, radius))
     yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
     R = tile_kernel(radius, alpha)
-    g_pre, g_cov, _ = gather(mips, xx + 0.5, yy + 0.5, R, rings, near=True)
+    g_pre, g_cov, _ = gather(mips, xx + 0.5, yy + 0.5, R, rings, near=near,
+                             shape=shape, sa_strength=sa_strength)
     bg = np.array(background)
     t_img = t_pre + (1 - t_cov)[..., None] * bg
     g_img = g_pre + (1 - g_cov)[..., None] * bg
@@ -826,6 +871,52 @@ class LiveDoFTests(unittest.TestCase):
         self.assertTrue((kernel > 0.0).all())
         _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, np.maximum(kernel, 0.5), 5, near=False)
         np.testing.assert_allclose(cov[8:-8, 8:-8], 0.16, atol=1e-3)
+
+    def test_spherical_partitions_any_kernel(self):
+        # The profile is integrated per tap exactly: a uniform field keeps
+        # its coverage for any strength, shape, kernel and source radius.
+        for shape in ((0, 1.0, 0.0, 1.0), (5, 0.0, 0.3, 1.0), (5, 0.5, 0.3, 1.33),
+                      (6, 0.0, 0.0, 1.0), (6, 0.5, 0.0, 1.33)):
+            for kernel in (0.5, 1.0, 2.5, 4.0, 8.0, 20.0):
+                rings_list = sorted({int(np.clip(math.ceil(kernel - 0.5), 1, q))
+                                     for q in QUALITY_RINGS})
+                for rings in rings_list:
+                    taps, s, area = aperture_taps(rings, shape)
+                    for radius in (0.5, kernel * 0.6, kernel):
+                        for sa in (-1.0, -0.4, 0.7, 1.0):
+                            actual = sum(
+                                t[3] * kernel * kernel / area / (radius * radius) *
+                                reach_fraction(radius, t[2] * kernel, s * kernel, t[2] > 0, sa)
+                                for t in taps)
+                            self.assertAlmostEqual(float(actual), 1.0, places=11)
+
+    def test_spherical_bokeh_profile(self):
+        # An isolated light against a brute-force profiled splat: energy
+        # exact; the azimuthal profile (the bokeh's look) within 1.5x of the
+        # same gather's error without spherical aberration (an isolated
+        # light's rim is softened by the tap spacing alone, 9% / 5% / 4% at
+        # 3 / 5 / 7 rings), and its direction right: a > 0 brightens the
+        # rim in front of the focus and the centre behind it.
+        yy, xx = np.mgrid[0:SIZE, 0:SIZE]
+        dist = np.hypot(xx - SIZE // 2, yy - SIZE // 2)
+        bins = np.floor(dist / 2.0).astype(int)
+
+        def radial(img):
+            return np.array([img[bins == b].mean() for b in range(6)])
+
+        for rings in QUALITY_RINGS:
+            _, _, g0, t0, _ = evaluate("light", rings)
+            r0 = radial(t0)
+            base = np.sqrt(np.mean((radial(g0) - r0) ** 2)) / r0.max()
+            for near in (True, False):
+                for sa in (1.0, -1.0, 0.5):
+                    _, _, g, t, energy = evaluate("light", rings, sa_strength=sa, near=near)
+                    self.assertAlmostEqual(float(g.sum()), float(energy.sum()), delta=0.02)
+                    rg, rt = radial(g), radial(t)
+                    rms = np.sqrt(np.mean((rg - rt) ** 2)) / rt.max()
+                    self.assertLess(rms, 1.5 * base, (rings, near, sa))
+                    rim_bright = (sa > 0) == near
+                    self.assertEqual(rg[4] > rg[0], rim_bright, (rings, near, sa))
 
     def test_field_curvature_capture_matches_library(self):
         # Field curvature (phase 4, step 1): the Mac OIT capture computes the

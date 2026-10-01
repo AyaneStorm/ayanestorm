@@ -52,7 +52,8 @@ uniform float unit_area;
 uniform float anamorphic_ratio;
 vec2 liveTapOffset(float angle, float distance, out float boundary);
 float liveTapSectorArea(float angle, float half_angle);
-float liveReach(float r, float d, float s);
+float liveReach(float r, float d, float s, float sa);
+float liveSphericalProduct(float r, bool background);
 bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
                    int vis_channel, vec2 uv, float lod, float max_lod,
                    out vec4 value, out vec4 energy);
@@ -97,7 +98,8 @@ void addTap(vec2 center, vec2 offset, float d, float s, float spacing,
         return;
     }
     float r = sqrt(value.a / energy);
-    float weight = area / unit_area * energy * liveReach(r, d, s);
+    float sa = liveSphericalProduct(r, layer == LAYER_B2 || layer == LAYER_B1);
+    float weight = area / unit_area * energy * liveReach(r, d, s, sa);
     color_sum += value.rgb / value.a * weight;
     weight_sum += weight;
 }

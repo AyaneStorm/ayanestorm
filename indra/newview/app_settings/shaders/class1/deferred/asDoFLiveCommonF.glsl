@@ -35,6 +35,8 @@ uniform float far_split_radius;
 // CoC pass (asDepthOfFieldCoCF.glsl).
 uniform vec2 field_scale;
 uniform float field_curvature;
+// Spherical aberration, -1..1; 0 off (liveSphericalProduct()).
+uniform float sa_strength;
 
 const float LIVE_PI = 3.14159265358979323846;
 
@@ -294,15 +296,45 @@ vec2 liveTapOffset(float angle, float distance, out float boundary)
     return vec2(cos(a) * anamorphic_ratio, sin(a)) * (distance * boundary);
 }
 
+// Spherical aberration, the aperture-sampled renderer's weight
+// (asDoFAccumulateF.glsl): light at pupil radius rho of a source's disc
+// weighs 1 - a sigma (2 rho^2 - 1), sigma = the signed full-resolution blur
+// radius / 3, clamped to 1 (negative in front of the focus). Returns
+// a sigma for a source of radius r gather pixels; background: behind.
+float liveSphericalProduct(float r, bool background)
+{
+    float sigma = min(r / (3.0 * max(gather_scale, 0.0001)), 1.0);
+    return sa_strength * (background ? sigma : -sigma);
+}
+
 // Share of a tap's area a source of radius r reaches: the part of the
 // annulus [d - s/2, d + s/2] (centre tap: the disc of radius s/2) inside r,
 // so the taps integrate the source's whole disc for any r.
-float liveReach(float r, float d, float s)
+// sa (liveSphericalProduct()) weighs that part by the spherical profile,
+// integrated exactly: with u = t^2, G(u) = (1 + sa) u - sa u^2 / r^2 and
+// G(r^2) = r^2, so a whole disc keeps its energy, in any aperture shape
+// (the profile is radial in aperture space, as in the aperture-sampled
+// renderer). A point sample of the profile per tap would not partition it
+// (scripts/testing/dof_live_reference.py).
+float liveReach(float r, float d, float s, float sa)
 {
-    if (d <= 0.0)
+    if (sa == 0.0)
     {
-        return clamp(r * r / (0.25 * s * s), 0.0, 1.0);
+        if (d <= 0.0)
+        {
+            return clamp(r * r / (0.25 * s * s), 0.0, 1.0);
+        }
+        float inner = d - 0.5 * s;
+        return clamp((r * r - inner * inner) / (2.0 * d * s), 0.0, 1.0);
     }
-    float inner = d - 0.5 * s;
-    return clamp((r * r - inner * inner) / (2.0 * d * s), 0.0, 1.0);
+    float r2 = max(r * r, 1e-8);
+    float lo = d <= 0.0 ? 0.0 : (d - 0.5 * s) * (d - 0.5 * s);
+    float hi = (d + 0.5 * s) * (d + 0.5 * s);
+    float area = d <= 0.0 ? 0.25 * s * s : 2.0 * d * s;
+    lo = min(lo, r2);
+    hi = min(hi, r2);
+    // G(hi) - G(lo), factored: hi^2 - lo^2 in 32-bit floats loses the
+    // narrow outer annuli of wide kernels.
+    float g = (hi - lo) * ((1.0 + sa) - sa * (hi + lo) / r2);
+    return max(g / area, 0.0);
 }

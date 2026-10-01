@@ -439,8 +439,9 @@ namespace
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
         // Live (mode 3) shares the Advanced renderer's blur size, quality,
-        // aperture shape and field curvature controls; its other lens effects
-        // follow (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
+        // aperture shape, field curvature and spherical aberration controls;
+        // its other lens effects follow
+        // (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
         const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
         setFlag("ASDepthOfFieldUILive", mode == ASDoFLive::LIVE_MODE);
@@ -449,9 +450,12 @@ namespace
         setFlag("ASDepthOfFieldUIShape", screen_space || mode == APERTURE_MODE);
         // Axial CA, cat's eye (with its corner darkening) and spherical
         // aberration apply to both
-        // the Advanced and the Aperture-sampled renderers.
+        // the Advanced and the Aperture-sampled renderers; spherical
+        // aberration to Live too, whose lens checkboxes are enabled ahead
+        // of their effects (phase 4).
         const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
-        setFlag("ASDepthOfFieldUILens", lens_modes);
+        const bool live = mode == ASDoFLive::LIVE_MODE;
+        setFlag("ASDepthOfFieldUILens", lens_modes || live);
         setFlag("ASDepthOfFieldUIAxialCA",
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
@@ -465,7 +469,7 @@ namespace
         setFlag("ASDepthOfFieldUIMaxBlur",
                 screen_space && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
         setFlag("ASDepthOfFieldUIHighlights",
                 mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
     }

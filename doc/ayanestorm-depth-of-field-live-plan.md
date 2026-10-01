@@ -796,3 +796,17 @@ settings. Mode 1 and mode 2 rendering stay unchanged.
 - **UI.** The field-curvature checkbox is enabled for modes 1 and 3 (`ASDepthOfFieldUIScreenSpace`), and so is its slider (`syncModeFlags()`). Astigmatism stays mode 1 only.
 - **Model gate.** `test_field_curvature_capture_matches_library`: the capture's and the library's field positions and normalized CoC agree at every pixel centre to 1e-12. The gathers already handle arbitrary per-pixel radii (the ramp scenes). 20 tests pass.
 - glslang at 410 core and 400, `git diff --check` clean, LF throughout.
+- **Build fix.** The first build failed: `LensField` was declared twice in `asdepthoffield.h` (the redone refactor added it again after the first attempt was reverted in the `.cpp` only). The duplicate is removed.
+
+### Step 2: spherical aberration (2026-10-01, unbuilt)
+
+- **Profile.** Light at pupil radius rho of a source's disc weighs `1 - sa (2 rho^2 - 1)`, with `sa = a sigma` and `sigma = min(r_fullres / 3, 1)`, negative for the N layers (`liveSphericalProduct()`), as in modes 1 and 2.
+- **Exact per tap.** `liveReach(r, d, s, sa)` integrates the profile over the part of the tap's annulus inside r. With `u = t^2`, `G(u) = (1 + sa) u - sa u^2 / r^2`, and `G(r^2) = r^2`, so a whole disc keeps its energy for any strength, aperture shape, ring count and kernel. The difference is factored, `(hi - lo)((1 + sa) - sa (hi + lo) / r^2)`, for 32-bit precision. With `sa == 0` the previous code runs unchanged.
+- **Wiring.** `sa_strength` is uploaded with the lens uniforms (`LensField::mSpherical`). The gathers pass the layer's side: N2 and N1 in front, B1 and B2 behind. The tiles, kernels and composite are unchanged.
+- **UI.** The lens checkboxes (`ASDepthOfFieldUILens`) are enabled in Live, and the spherical strength slider with them. The axial CA and cat's-eye checkboxes are enabled ahead of steps 3 and 4 but do nothing in Live yet; their sliders stay disabled there.
+- **Model gate.**
+  - `test_spherical_partitions_any_kernel`: uniform coverage exact to 1e-11 for the circle, 5 and 6 blades, roundness 0 and 0.5, anamorphic 1 and 1.33, every ring count, kernel 0.5 to 20, source radius and strength.
+  - `test_spherical_bokeh_profile`: an isolated light's energy is exact. Its azimuthal profile is within 1.5x the same gather's error without spherical aberration, and the direction is right (a > 0: bright rim in front, bright centre behind).
+  - **Gate change.** The planned "2% rms against brute force" is out of reach even without spherical aberration. An isolated single-pixel light's rim is softened by the tap spacing: 9.2 / 5.1 / 3.8% at 3 / 5 / 7 rings. With spherical aberration the error is 13 / 6.0 / 2.0% (bright rim) and 6.5 / 2.3 / 3.4% (bright centre).
+  - 22 tests pass.
+- glslang links Reduce, Tile, Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.

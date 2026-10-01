@@ -269,9 +269,10 @@
       </button>
     </panel>
 
-    <!-- Optional lens character. Axial CA, cat's eye and spherical aberration:
-         Advanced and Aperture-sampled renderers; bright highlights:
-         Aperture-sampled; field curvature and astigmatism: Advanced. -->
+    <!-- Optional lens character. Axial CA and cat's eye: Advanced and
+         Aperture-sampled renderers; spherical aberration: those and Live;
+         bright highlights: Aperture-sampled; field curvature: Advanced and
+         Live; astigmatism: Advanced. -->
     <panel name="effects_tab" label="Lens effects" layout="topleft" follows="all"
            left="0" top="0" width="430" height="399">
       <check_box name="aperture_axial_ca" enabled_control="ASDepthOfFieldUILens" control_name="ASDepthOfFieldApertureAxialCA"
