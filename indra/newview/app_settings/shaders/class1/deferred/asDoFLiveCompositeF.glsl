@@ -37,6 +37,7 @@ uniform int debug_mode;
 uniform int bins_source;
 uniform float near_radius;
 uniform float far_split_radius;
+uniform float gather_scale;
 
 in vec2 vary_fragcoord;
 
@@ -109,10 +110,13 @@ void main()
     else if (debug_mode == 3)
     {
         // Tile kernel radii relative to each bin's largest: N2 red, N1
-        // green, B1 blue.
-        vec3 radii = texture(noiseMap, uv).xyz;
-        color = vec3(radii.xy / max(0.5 * near_radius, 0.5),
-                     radii.z / max(0.625 * far_split_radius, 0.5));
+        // green, B1 blue. A gathered tile shows at least a quarter
+        // brightness, so the smallest kernels (half a gather pixel) stand
+        // apart from skipped tiles (black).
+        vec3 radii = texelFetch(noiseMap, ivec2(gl_FragCoord.xy * gather_scale) / 8, 0).xyz;
+        vec3 relative = clamp(vec3(radii.xy / max(0.5 * near_radius, 0.5),
+                                   radii.z / max(0.625 * far_split_radius, 0.5)), 0.0, 1.0);
+        color = mix(vec3(0.0), 0.25 + 0.75 * relative, greaterThan(radii, vec3(0.0)));
     }
     else if (debug_mode == 4)
     {
@@ -131,6 +135,16 @@ void main()
     {
         // White: the layered result; black: the source's exact compositing.
         color = vec3(1.0 - exact_share);
+    }
+    else if (debug_mode == 9)
+    {
+        // B1 alone (the gather skips B2): magenta where it does not cover.
+        color = background.rgb + (1.0 - clamp(background.a, 0.0, 1.0)) * vec3(1.0, 0.0, 1.0);
+    }
+    else if (debug_mode == 10)
+    {
+        // B2 alone, normalized; black where it holds nothing.
+        color = background.a > 0.0001 ? background.rgb / background.a : vec3(0.0);
     }
     else if (debug_mode == 8)
     {

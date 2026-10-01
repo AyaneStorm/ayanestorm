@@ -36,6 +36,9 @@ uniform vec2 target_res;
 uniform int layer;
 uniform int max_rings;
 uniform int max_level;
+// Composite debug views 9 and 10 (asDoFLiveCompositeF.glsl): the B1 pass
+// writes B1 alone, or B2 alone, instead of B1 over B2.
+uniform int debug_mode;
 
 const int LAYER_N2 = 0;
 const int LAYER_N1 = 1;
@@ -48,6 +51,7 @@ const float LIVE_PI_G = 3.14159265358979323846;
 uniform float unit_area;
 uniform float anamorphic_ratio;
 vec2 liveTapOffset(float angle, float distance, out float boundary);
+float liveTapSectorArea(float angle, float half_angle);
 float liveReach(float r, float d, float s);
 bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
                    int vis_channel, vec2 uv, float lod, float max_lod,
@@ -124,25 +128,24 @@ vec4 gatherLayer(vec2 center)
     }
     if (layer == LAYER_B2)
     {
-        // A background blurred under half a gather pixel is still read
-        // (centre taps, nearly sharp): returning nothing left the holes it
-        // hides black.
         kernel = farKernel(uv);
-        if (kernel <= 0.0)
-        {
-            return vec4(0.0);
-        }
-        kernel = max(kernel, 0.5);
     }
     else
     {
         vec3 radii = texelFetch(noiseMap, ivec2(center) / TILE, 0).xyz;
         kernel = layer == LAYER_N2 ? radii.x : (layer == LAYER_N1 ? radii.y : radii.z);
     }
-    if (kernel < 0.5)
+    // Skip only where the bin holds nothing (kernel 0). Every source's
+    // radius is at least half a gather pixel (liveDecompose()), so content
+    // just off the focus sits exactly at 0.5: a "kernel < 0.5" test skipped
+    // it whenever 16-bit rounding of W / E fell a hair below, tile by tile
+    // (the far background showed through in blocks). Such content is read
+    // nearly sharp, by the centre taps.
+    if (kernel <= 0.0)
     {
         return vec4(0.0);
     }
+    kernel = max(kernel, 0.5);
 
     int rings = clamp(int(ceil(kernel - 0.5)), 1, min(max_rings, MAX_RINGS));
     float s = kernel / (float(rings) + 0.5);
@@ -173,10 +176,10 @@ vec4 gatherLayer(vec2 center)
             float angle = 2.0 * LIVE_PI_G * (float(j) + offset) / float(count);
             float boundary;
             vec2 tap = liveTapOffset(angle, d, boundary);
-            // Ring tap area pi s^2 / 3 in aperture space, scaled to the
-            // image by the polygon boundary squared and the anamorphic
-            // squeeze, as unit_area is for the whole aperture.
-            float area = anamorphic_ratio * (LIVE_PI_G * s * s / 3.0) * boundary * boundary;
+            // Integrate the whole angular sector, not boundary^2 at its
+            // midpoint: every ring must partition its annulus exactly.
+            // The radial squared-width is 2*d*s; squeeze is in the area.
+            float area = 2.0 * d * s * liveTapSectorArea(angle, LIVE_PI_G / float(count));
             addTap(center, tap * direction, d, s, s * boundary * squeeze, area,
                    color_sum, weight_sum);
         }
@@ -208,7 +211,11 @@ void main()
         // B1 in front of B2, which is the farthest content: normalized, it
         // fills whatever B1 leaves uncovered.
         vec4 back2 = texelFetch(lightMap, ivec2(center), 0);
-        if (back2.a > 0.0001)
+        if (debug_mode == 10)
+        {
+            result = back2;
+        }
+        else if (back2.a > 0.0001 && debug_mode != 9)
         {
             result += vec4(back2.rgb / back2.a, 1.0) * (1.0 - result.a);
         }

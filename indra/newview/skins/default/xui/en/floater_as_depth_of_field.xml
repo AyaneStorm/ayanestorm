@@ -521,6 +521,8 @@
         <combo_box.item label="Focus layer" name="focus" value="6" />
         <combo_box.item label="Blurred vs sharp" name="blend" value="7" />
         <combo_box.item label="Bins source (green: per depth)" name="source" value="8" />
+        <combo_box.item label="Near background alone" name="back1" value="9" />
+        <combo_box.item label="Far background alone" name="back2" value="10" />
       </combo_box>
       <button name="reset_live_debug" enabled_control="ASDepthOfFieldUILive" label="D" layout="topleft"
               left="385" top="346" width="20" height="22" tool_tip="Reset to default.">

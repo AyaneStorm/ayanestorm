@@ -232,6 +232,45 @@ float liveBoundary(float angle)
     return mix(polygon, 1.0, aperture_roundness);
 }
 
+// Integral of boundary^2 / 2 within a blade, centred on its side normal.
+// Same primitive as ASDoFAperture::unitArea(). A boundary sample at the
+// tap angle underestimates a hexagon's first ring by about 9%, exposing
+// B2 through an opaque B1 in tile-aligned squares (reference model).
+float liveBladeAreaPrimitive(float local_angle, float half_sector)
+{
+    float a = (1.0 - aperture_roundness) * cos(half_sector);
+    float b = aperture_roundness;
+    float tangent = tan(local_angle);
+    return 0.5 * (a * a * tangent +
+                  2.0 * a * b * log(1.0 / cos(local_angle) + tangent) +
+                  b * b * local_angle);
+}
+
+// Cumulative unit-aperture area from angle 0, continued across blades.
+// Rotation changes offsets only; squeeze scales all areas alike.
+float liveApertureAreaTo(float angle)
+{
+    if (aperture_blades < 3 || aperture_roundness >= 1.0)
+    {
+        return 0.5 * anamorphic_ratio * angle;
+    }
+    float sector = 2.0 * LIVE_PI / float(aperture_blades);
+    float blade = floor(angle / sector);
+    float local_angle = angle - blade * sector - 0.5 * sector;
+    float blade_area = unit_area / float(aperture_blades);
+    return (blade + 0.5) * blade_area +
+           anamorphic_ratio * liveBladeAreaPrimitive(local_angle, 0.5 * sector);
+}
+
+// Exact area of the angular sector represented by one ring tap. These
+// sectors partition each annulus, so any uniform source radius <= kernel
+// keeps its coverage, including sources that reach only the inner rings.
+float liveTapSectorArea(float angle, float half_angle)
+{
+    return liveApertureAreaTo(angle + half_angle) -
+           liveApertureAreaTo(angle - half_angle);
+}
+
 // Image offset (gather pixels) of a tap at angle and aperture-space
 // distance; the boundary is returned for the tap's area.
 vec2 liveTapOffset(float angle, float distance, out float boundary)

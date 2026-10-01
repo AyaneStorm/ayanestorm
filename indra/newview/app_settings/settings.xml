@@ -12605,7 +12605,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldLiveDebug</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Live DoF debug view: 0 off, 1 bin shares (strong foreground red, foreground orange, focus green, background blue), 2 bin weight sum (white), 3 foreground kernel per tile (strong red, other green), 4 background layer, 5 foreground veils, 6 focus layer, 7 blend toward the layered result (white), 8 bins source (green: Mac OIT transparency bins, grey: composited image as one layer)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF debug view: 0 off, 1 bin shares (strong foreground red, foreground orange, focus green, near background purple, far background blue), 2 bin weight sum (white), 3 veil kernel per tile (strong foreground red, foreground green, near background blue; black: skipped), 4 background layer, 5 foreground veils, 6 focus layer, 7 blend toward the layered result (white), 8 bins source (green: Mac OIT transparency bins, grey: composited image as one layer), 9 near background alone (magenta: uncovered), 10 far background alone</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

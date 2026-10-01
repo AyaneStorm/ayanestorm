@@ -344,7 +344,7 @@ bool ASDoFLive::createShaders(S32 shader_level)
     bool success = createProgram(sReduceProgram, "AyaneStorm Live DoF Reduce Shader",
                                  "deferred/asDoFLiveReduceF.glsl", true, shader_level);
     success = createProgram(sTileProgram, "AyaneStorm Live DoF Tile Shader",
-                            "deferred/asDoFLiveTileF.glsl", false, shader_level) && success;
+                            "deferred/asDoFLiveTileF.glsl", true, shader_level) && success;
     success = createProgram(sGatherProgram, "AyaneStorm Live DoF Gather Shader",
                             "deferred/asDoFLiveGatherF.glsl", true, shader_level) && success;
     success = createProgram(sCompositeProgram, "AyaneStorm Live DoF Composite Shader",
@@ -500,7 +500,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     lens.mShape.mAnamorphic = llclamp(gSavedSettings.getF32("ASDepthOfFieldAnamorphicRatio"), 0.1f, 2.f);
     lens.mUnitArea = ASDoFAperture::unitArea(lens.mShape);
     const S32 rings = QUALITY_RINGS[llclamp(gSavedSettings.getS32("ASDepthOfFieldQuality"), 0, 2)];
-    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldLiveDebug"), 0, 8);
+    const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldLiveDebug"), 0, 10);
 
     const F32 gather_width = (F32)sBinsA.getWidth();
     const F32 gather_height = (F32)sBinsA.getHeight();
@@ -585,10 +585,12 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sTileProgram.bind();
             if (pass == 0)
             {
-                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &sBinsA, false, LLTexUnit::TFO_POINT, 0);
-                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false, LLTexUnit::TFO_POINT, 1);
-                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsA, false, LLTexUnit::TFO_POINT, 2);
-                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false, LLTexUnit::TFO_POINT, 1);
+                // The bins completed, as the gathers read them (mips).
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &sBinsA, false, LLTexUnit::TFO_TRILINEAR, 0);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false, LLTexUnit::TFO_TRILINEAR, 1);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsA, false, LLTexUnit::TFO_TRILINEAR, 2);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false, LLTexUnit::TFO_TRILINEAR, 1);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sBinsB, false, LLTexUnit::TFO_TRILINEAR, 3);
             }
             else
             {
@@ -596,9 +598,11 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             }
             sTileProgram.uniform1i(U_TILE_PASS, pass);
             sTileProgram.uniform1i(U_TILE_REACH, reach);
+            sTileProgram.uniform1i(U_MAX_LEVEL, max_level);
             draw(screen_triangle);
             if (pass == 0)
             {
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sBinsB.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sBinsB.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsA.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsA.getUsage());
@@ -655,6 +659,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.uniform1i(U_LAYER, layer);
             sGatherProgram.uniform1i(U_MAX_RINGS, rings);
             sGatherProgram.uniform1i(U_MAX_LEVEL, max_level);
+            sGatherProgram.uniform1i(U_DEBUG_MODE, debug_mode);
             setLensUniforms(sGatherProgram, lens);
             draw(screen_triangle);
             if (gather.mBehind)

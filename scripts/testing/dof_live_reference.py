@@ -11,6 +11,8 @@ Model (all in gather-resolution pixels):
 - Taps: a centre tap plus rings k = 1..n of 6k taps at radius k s, with
   s = R / (n + 1/2). Every ring tap stands for an area of pi s^2 / 3 and
   the centre for pi s^2 / 4, so the taps tile the disc of radius R exactly.
+  Polygon taps integrate boundary^2 / 2 over their angular sectors,
+  including roundness and anamorphic squeeze (aperture_taps()).
 - A tap reads its layer with trilinear filtering (GL texel centres) at
   lod = log2(LOD_SCALE s): an area sample whose footprint matches the tap
   spacing.
@@ -27,7 +29,8 @@ Model (all in gather-resolution pixels):
   between nearly sharp strands by the strands' small radius
   (evaluate_far_strands()).
 - Every read is visibility-completed (read_completed()), by the push-pull
-  recurrence c(l) = S(l) + (1 - V(l)) c(l + 1), ending with S / V at the
+  recurrence c(l) = S(l) + (1 - V(l)) (S(l) + k c(l + 1)) / (V(l) + k),
+  k = 0.05, ending with S / V at the
   top level: what a bin shows (V = 1) is read exactly, in one fetch; what
   nearer bins hide of it is filled from coarser levels, continuously, in
   proportion to what is missing. Every gather and the composite's focus
@@ -48,6 +51,8 @@ import sys
 import unittest
 
 import numpy as np
+
+from dof_reference import aperture_boundary, _blade_cdf, viewer_unit_area
 
 # Footprint of an area tap relative to the tap spacing (trilinear tent).
 LOD_SCALE = 1.0
@@ -125,6 +130,47 @@ def ring_taps(rings):
             taps.append((k * s * math.cos(a), k * s * math.sin(a), k * s,
                          math.pi * s * s / 3.0))
     return taps, s
+
+
+def aperture_cdf(angle, blades, roundness):
+    """Integral of boundary^2 / 2 from angle 0, continued across blades.
+    The same blade primitive defines ASDoFAperture::unitArea()."""
+    if blades < 3 or roundness >= 1.0:
+        return 0.5 * angle
+    half = math.pi / blades
+    blade = math.floor(angle / (2.0 * half))
+    local = angle - blade * 2.0 * half - half
+    return (blade * _blade_cdf(half, blades, roundness) +
+            _blade_cdf(local, blades, roundness))
+
+
+def aperture_taps(rings, shape, midpoint_areas=False):
+    """Shader taps including polygon, rotation, squeeze and mip footprint.
+    midpoint_areas reproduces the old boundary-at-tap area approximation;
+    exact sector integrals partition each annulus without coverage bias."""
+    blades, roundness, rotation, anamorphic = shape
+    s = 1.0 / (rings + 0.5)
+    unit_area = viewer_unit_area(blades, roundness, anamorphic)
+    squeeze = max(anamorphic, 1.0)
+    taps = [(0.0, 0.0, 0.0, unit_area * 0.25 * s * s, squeeze)]
+    for k in range(1, rings + 1):
+        count = 6 * k
+        offset = 0.5 if k & 1 else 0.0
+        half_angle = math.pi / count
+        for j in range(count):
+            angle = 2.0 * math.pi * (j + offset) / count
+            boundary = aperture_boundary(angle, blades, roundness)
+            if midpoint_areas:
+                sector_area = anamorphic * half_angle * boundary * boundary
+            else:
+                sector_area = anamorphic * (
+                    aperture_cdf(angle + half_angle, blades, roundness) -
+                    aperture_cdf(angle - half_angle, blades, roundness))
+            a = angle + rotation
+            taps.append((anamorphic * math.cos(a) * k * s * boundary,
+                         math.sin(a) * k * s * boundary, k * s,
+                         2.0 * k * s * s * sector_area, boundary * squeeze))
+    return taps, s, unit_area
 
 
 # ---------------------------------------------------------------- layers
@@ -210,19 +256,20 @@ def reach_fraction(r, d, s, ring):
     return np.clip(r * r / (0.25 * s * s), 0.0, 1.0)
 
 
-def gather(mips, x, y, kernel_radius, rings, near, complete=True):
+def gather(mips, x, y, kernel_radius, rings, near, complete=True,
+           shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
     Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
     near: True for one shared kernel (coverage is the energy sum), False for
     the far layer (colour normalized, coverage clamped energy sum)."""
-    taps, s_unit = ring_taps(rings)
+    taps, s_unit, unit_area = aperture_taps(rings, shape, midpoint_areas)
     R = np.maximum(kernel_radius, 0.5)
     s = s_unit * R
-    lod = np.log2(np.maximum(LOD_SCALE * s, 1.0))
     color = np.zeros(x.shape + (3,))
     weight = np.zeros(x.shape)
-    for dx, dy, d_unit, area_unit in taps:
+    for dx, dy, d_unit, area_unit, footprint in taps:
+        lod = np.log2(np.maximum(LOD_SCALE * s * footprint, 1.0))
         d = d_unit * R
         area = area_unit * R * R
         # Foreground sources image as the inverted aperture: the source
@@ -235,7 +282,7 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True):
         E = np.where(found, v[..., 4], 0.0)
         r_tap = np.sqrt(W / np.maximum(E, 1e-12))
         reach = reach_fraction(r_tap, d, s, d_unit > 0)
-        wt = area / math.pi * E * reach
+        wt = area / unit_area * E * reach
         rgb = v[..., 0:3] / np.maximum(W, 1e-12)[..., None]
         color += rgb * wt[..., None]
         weight += wt
@@ -353,6 +400,19 @@ def tile_kernel(radius, alpha):
             dil[ty, tx] = tmax[max(ty - reach, 0):ty + reach + 1,
                                max(tx - reach, 0):tx + reach + 1].max()
     return np.kron(dil, np.ones((TILE, TILE)))[:h, :w]
+
+
+def completed_radius(mips):
+    """Per-pixel (radius, weight) of a layer as the gathers read it:
+    completed (read_completed()). The tile pass reduces this, not the raw
+    level 0: the gathers read filled-in content where nearer bins hide the
+    bin, and a tile kernel of 0 there skipped that fill tile by tile."""
+    h, w = mips[0].shape[0], mips[0].shape[1]
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    v, found = read_completed(mips, xx + 0.5, yy + 0.5, np.zeros((h, w)))
+    weight = np.where(found, v[..., 3], 0.0)
+    radius = np.sqrt(weight / np.maximum(v[..., 4], 1e-12))
+    return radius, np.where(weight > 0.001, 1.0, 0.0)
 
 
 def evaluate(name, rings, background=(0.5, 0.5, 0.5)):
@@ -552,7 +612,110 @@ def evaluate_split_surface(prior):
     return float(np.max(1.0 - v[..., 3]))
 
 
+def evaluate_hidden_veil_tiles(rings, completed):
+    """A veil bin (B1, radius 2) visible on the left and hidden by an
+    opaque in-focus surface on the right (V = 0): what the gather reads
+    there is the completed fill. Returns the largest coverage step between
+    neighbouring pixels inside the hidden part (the user's grey blocks
+    behind the in-focus torso). Tile kernels from the raw bin are 0 past
+    the dilation reach, and the fill stops at a tile edge; from the
+    completed bin the fill is continuous."""
+    h = w = SIZE
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    color = np.zeros((h, w, 3))
+    color[:] = (0.5, 0.3, 0.2)
+    visible = xx < 30
+    alpha = np.where(visible, 1.0, 0.0)
+    radius = np.full((h, w), 2.0)
+    mips = build_mips(make_layer(color, alpha, radius, visibility=visible.astype(float)))
+    if completed:
+        r_tiles, a_tiles = completed_radius(mips)
+    else:
+        r_tiles, a_tiles = radius, alpha
+    kernel = tile_kernel(r_tiles, a_tiles)
+    _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, kernel, rings, near=False)
+    # The gathers skip tiles that hold nothing (asDoFLiveGatherF.glsl).
+    cov = np.where(kernel > 0.0, cov, 0.0)
+    hidden = cov[16:h - 16, 34:w - 4]
+    return float(np.abs(np.diff(hidden, axis=1)).max())
+
+
+def evaluate_polygon_tiles(midpoint_areas):
+    """Opaque B1 over a hidden light B2, with actual stepped tile maxima.
+    A larger source changes nearby tiles' kernels. The measured strip is
+    outside that source's reach, so its B1 coverage must remain one. Ring
+    counts adapt to each kernel as in asDoFLiveGatherF.glsl."""
+    h = w = 64
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    color = np.empty((h, w, 3))
+    color[:] = (0.12, 0.06, 0.03)
+    weight = np.ones((h, w))
+    radius = np.full((h, w), 0.5)
+    radius[8, 40] = 1.5
+    mips = build_mips(make_layer(color, weight, radius))
+    kernel = tile_kernel(radius, weight)
+    ring_counts = np.clip(np.ceil(kernel - 0.5), 1, 7).astype(int)
+    coverage = np.zeros((h, w))
+    premultiplied = np.zeros((h, w, 3))
+    for rings in np.unique(ring_counts):
+        selected = ring_counts == rings
+        pre, cov, _ = gather(mips, xx[selected] + 0.5, yy[selected] + 0.5,
+                             kernel[selected], int(rings), near=False,
+                             shape=(6, 0.0, 0.0, 1.0), midpoint_areas=midpoint_areas)
+        coverage[selected] = cov
+        premultiplied[selected] = pre
+    image = premultiplied + (1.0 - coverage)[..., None] * np.array((0.6, 0.6, 0.6))
+    strip = (slice(16, 20), slice(8, 60))
+    return coverage[strip], image[strip]
+
+
 class LiveDoFTests(unittest.TestCase):
+    def test_polygon_taps_partition_annuli(self):
+        # Every ring must integrate its own annulus exactly, not merely
+        # normalize the entire kernel (small sources reach only inner rings).
+        for blades in (0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12):
+            for roundness in (0.0, 0.35, 1.0):
+                for anamorphic in (0.1, 1.0, 2.0):
+                    for rings in range(1, 8):
+                        taps, s, area = aperture_taps(
+                            rings, (blades, roundness, 0.37, anamorphic))
+                        self.assertAlmostEqual(sum(t[3] for t in taps), area, places=11)
+                        for k in range(1, rings + 1):
+                            ring_area = sum(t[3] for t in taps if abs(t[2] - k * s) < 1e-12)
+                            self.assertAlmostEqual(ring_area, area * 2.0 * k * s * s,
+                                                   places=11)
+
+    def test_polygon_uniform_coverage_for_any_kernel(self):
+        # Integrate an infinite constant layer, including unclamped weights
+        # and partial coverage. This catches both loss and gain of energy.
+        for shape in ((0, 1.0, 0.0, 1.0), (3, 0.0, 0.2, 0.1),
+                      (6, 0.0, 0.0, 1.0), (7, 0.35, 0.7, 2.0),
+                      (12, 0.8, 1.2, 0.5)):
+            for kernel in (0.5, 1.0, 1.5, 2.0, 2.5, 4.0, 8.0, 20.0):
+                rings = int(np.clip(math.ceil(kernel - 0.5), 1, 7))
+                taps, s, area = aperture_taps(rings, shape)
+                for radius in (0.5, kernel * 0.75, kernel):
+                    for alpha in (0.16, 1.0):
+                        actual = sum(t[3] * kernel * kernel / area * alpha / (radius * radius) *
+                                     reach_fraction(radius, t[2] * kernel, s * kernel, t[2] > 0)
+                                     for t in taps)
+                        self.assertAlmostEqual(float(actual), alpha, places=11)
+
+    def test_polygon_tile_staircase(self):
+        # Reproduces debug 9's tile-aligned coverage deficit. The old
+        # circular-only model had no aperture-area approximation to expose.
+        old_cov, old_image = evaluate_polygon_tiles(True)
+        new_cov, new_image = evaluate_polygon_tiles(False)
+        # Hexagon: six first-ring taps all sit at side midpoints, so their
+        # estimated area is pi * 3/4 versus the true 3*sqrt(3)/2.
+        expected = 1.0 / 9.0 + 8.0 / 9.0 * math.pi / (2.0 * math.sqrt(3.0))
+        self.assertAlmostEqual(float(old_cov.min()), expected, places=10)
+        self.assertGreater(float(np.max(np.abs(np.diff(old_cov, axis=1)))), 0.08)
+        self.assertGreater(float(old_image.max()), 0.15)
+        np.testing.assert_allclose(new_cov, 1.0, atol=1e-12)
+        np.testing.assert_allclose(new_image, np.broadcast_to((0.12, 0.06, 0.03), new_image.shape),
+                                   atol=1e-12)
+
     def test_taps_tile_the_disc(self):
         for rings in QUALITY_RINGS:
             taps, _ = ring_taps(rings)
@@ -641,6 +804,29 @@ class LiveDoFTests(unittest.TestCase):
         self.assertLess(evaluate_split_surface(None), 0.02)
         self.assertGreater(evaluate_split_surface(float("inf")), 0.1)
 
+    def test_hidden_veil_fill_is_continuous(self):
+        # The user's grey blocks: tile kernels must cover what the gathers
+        # read, the completed bin.
+        for rings in QUALITY_RINGS:
+            self.assertGreater(evaluate_hidden_veil_tiles(rings, False), 0.5, rings)
+            self.assertLess(evaluate_hidden_veil_tiles(rings, True), 0.02, rings)
+
+    def test_minimum_radius_is_gathered(self):
+        # Content just off the focus has the minimum radius, half a gather
+        # pixel: its tile kernel is 0.5 up to 16-bit rounding. The gathers
+        # skip only empty tiles (kernel 0) and read at least 0.5, so a
+        # kernel a hair under 0.5 still gathers full coverage.
+        h = w = SIZE
+        yy, xx = np.mgrid[0:h, 0:w].astype(float)
+        color = np.zeros((h, w, 3))
+        color[:] = (0.7, 0.45, 0.3)
+        weight = np.full((h, w), 0.16)
+        mips = build_mips(make_layer(color, weight, np.full((h, w), 0.25)))
+        kernel = np.full((h, w), 0.5 * (1.0 - 1e-3))
+        self.assertTrue((kernel > 0.0).all())
+        _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, np.maximum(kernel, 0.5), 5, near=False)
+        np.testing.assert_allclose(cov[8:-8, 8:-8], 0.16, atol=1e-3)
+
     def test_bin_split_restores_coverage(self):
         # An opaque surface split 50/50 between two adjacent bins: the back
         # bin alone is (W, S) / V with V = 1 - W_front, so it is opaque again
@@ -698,6 +884,10 @@ def survey():
     print(f"split surface deficit: prior {COMPLETE_PRIOR} "
           f"{evaluate_split_surface(None):.4f}, plain push-pull "
           f"{evaluate_split_surface(float('inf')):.4f}")
+    print("hidden veil coverage step: completed tiles " +
+          ", ".join(f"{evaluate_hidden_veil_tiles(r, True):.4f}" for r in QUALITY_RINGS) +
+          "; raw tiles " +
+          ", ".join(f"{evaluate_hidden_veil_tiles(r, False):.4f}" for r in QUALITY_RINGS))
     print(f"{'far strands':16s} {'rings':>5s} {'B1 / B2':>10s} {'one B':>10s}")
     for rings in QUALITY_RINGS:
         print(f"{'':16s} {rings:5d} {evaluate_far_strands(rings, True):10.4f} "
