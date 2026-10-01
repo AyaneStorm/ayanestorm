@@ -438,8 +438,9 @@ namespace
     void syncModeFlags()
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
-        // Live (mode 3) shares the Advanced renderer's blur size, quality and
-        // aperture shape controls, not its lens effects (yet).
+        // Live (mode 3) shares the Advanced renderer's blur size, quality,
+        // aperture shape and field curvature controls; its other lens effects
+        // follow (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
         const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
         setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
         setFlag("ASDepthOfFieldUILive", mode == ASDoFLive::LIVE_MODE);
@@ -455,9 +456,10 @@ namespace
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
                 lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
-        // Advanced renderer only.
+        // Advanced and Live renderers.
         setFlag("ASDepthOfFieldUIFieldCurvature",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
+                screen_space && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
+        // Advanced renderer only.
         setFlag("ASDepthOfFieldUIAstigmatism",
                 mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"));
         setFlag("ASDepthOfFieldUIMaxBlur",

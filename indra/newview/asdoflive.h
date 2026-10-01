@@ -34,9 +34,9 @@ namespace ASDoFLive
 
     // Transparency bins (plan phase 2). The capture runs before this frame's
     // focus is known, so it uses the last Live frame's lens, rescaled to the
-    // capture's image height. False when Live DoF is not active or has not
+    // capture's image size. False when Live DoF is not active or has not
     // rendered yet; the frame then uses the one-layer fallback.
-    bool transparencyLens(U32 height, ASMacOIT::DoFLens& lens);
+    bool transparencyLens(U32 width, U32 height, ASMacOIT::DoFLens& lens);
     // Called before the post-water alpha pool renders: keeps the opaque
     // colour and depth the bins are completed with.
     void prepareCapture(U32 width, U32 height);

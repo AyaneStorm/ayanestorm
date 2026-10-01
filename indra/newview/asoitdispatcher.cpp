@@ -304,7 +304,8 @@ bool ASOITDispatcher::renderPostDeferredCapture(
     if (pool.getType() == LLDrawPool::POOL_ALPHA_POST_WATER && gPipeline.mRT)
     {
         ASMacOIT::DoFLens lens;
-        const bool bins = ASDoFLive::transparencyLens(gPipeline.mRT->screen.getHeight(), lens);
+        const bool bins = ASDoFLive::transparencyLens(gPipeline.mRT->screen.getWidth(),
+                                                      gPipeline.mRT->screen.getHeight(), lens);
         ASMacOIT::setDoFLens(bins ? &lens : nullptr);
         if (bins && !ASMacOIT::requested())
         {

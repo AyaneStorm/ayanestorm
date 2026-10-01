@@ -359,11 +359,11 @@
               left="385" top="242" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlightThreshold" />
       </button>
-      <check_box name="field_curvature" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldFieldCurvature"
+      <check_box name="field_curvature" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldFieldCurvature"
                  layout="topleft" left="15" top="270" width="365" height="20"
                  label="Field curvature (Advanced)"
                  tool_tip="As in a real lens, the sharp zone is curved: toward the frame edges it lies nearer (or farther) than at the centre, so a flat subject softens in the corners." />
-      <button name="reset_field_curvature" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+      <button name="reset_field_curvature" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="269" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFieldCurvature" />
       </button>

@@ -153,6 +153,8 @@ struct CaptureProgram
     GLint dofRadii = -1;
     GLint dofGatherScale = -1;
     GLint dofFarSplit = -1;
+    GLint dofField = -1;
+    GLint dofCurvature = -1;
 };
 
 std::vector<CaptureProgram> sCapturePrograms;
@@ -341,6 +343,8 @@ void indexCapturePrograms()
         entry.dofRadii = glGetUniformLocation(object, "macoitDofRadii");
         entry.dofGatherScale = glGetUniformLocation(object, "macoitDofGatherScale");
         entry.dofFarSplit = glGetUniformLocation(object, "macoitDofFarSplit");
+        entry.dofField = glGetUniformLocation(object, "macoitDofField");
+        entry.dofCurvature = glGetUniformLocation(object, "macoitDofCurvature");
         const GLint state = glGetUniformLocation(object, "macoitState");
         if (state >= 0)
         {
@@ -448,6 +452,13 @@ void configurePass(GLint pass, GLint read_channel, GLint write_channel, bool mom
                                    sDoFLens.mSplitRadius);
                 glProgramUniform1f(object, entry.dofGatherScale, sDoFLens.mGatherScale);
                 glProgramUniform1f(object, entry.dofFarSplit, sDoFLens.mFarSplitRadius);
+                // Field position from gl_FragCoord: frag * xy - zw.
+                const F32 width = (F32)llmax(sResources.width, 1U);
+                const F32 height = (F32)llmax(sResources.height, 1U);
+                glProgramUniform4f(object, entry.dofField,
+                                   sDoFLens.mFieldScale[0] / width, sDoFLens.mFieldScale[1] / height,
+                                   0.5f * sDoFLens.mFieldScale[0], 0.5f * sDoFLens.mFieldScale[1]);
+                glProgramUniform1f(object, entry.dofCurvature, sDoFLens.mCurvature);
             }
         }
     }

@@ -69,6 +69,10 @@ uniform vec4 macoitDofRadii;
 uniform float macoitDofGatherScale;
 // B1 / B2 boundary (full-resolution pixels).
 uniform float macoitDofFarSplit;
+// Field position gl_FragCoord.xy * xy - zw, and field curvature
+// (ASDepthOfField::LensField).
+uniform vec4 macoitDofField;
+uniform float macoitDofCurvature;
 
 layout(location = 2) out vec4 macoit_dof_n2;
 layout(location = 3) out vec4 macoit_dof_n1;
@@ -128,7 +132,9 @@ float macoit_dof_radius(float view_distance)
     float coc = (z - macoitDofLens.x) / -z * macoitDofLens.y;
     coc /= macoitDofLens.w;
     coc = coc / (macoitDofLens.z * -macoitDofLens.x) * 1.41421356237;
-    coc = clamp(-coc / max(macoitDofRadii.x, 0.0001), -1.0, 1.0);
+    coc = -coc / max(macoitDofRadii.x, 0.0001);
+    vec2 field = gl_FragCoord.xy * macoitDofField.xy - macoitDofField.zw;
+    coc = clamp(coc + macoitDofCurvature * dot(field, field), -1.0, 1.0);
     return coc < 0.0 ? coc * macoitDofRadii.y : coc * macoitDofRadii.z;
 }
 

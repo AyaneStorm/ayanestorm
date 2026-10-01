@@ -613,3 +613,186 @@ These observations isolate the visible defect to B1 before the B1-over-B2 combin
 - Before, a rejected `colorBinsFBO` failed the whole Mac OIT allocation: Mac OIT itself would have been lost.
 - Now a rejected bins framebuffer sets `sDoFBinsUnsupported` once per session and logs `Live DoF transparency bins unsupported by this driver`.
 - Live DoF then stays one layer, and Mac OIT is unaffected. No reallocation every frame (`dofBinsWanted()`).
+
+**Mac runtime (user, 2026-10-01).** A portrait closeup with thin hair over a blurred background looks flawless on macOS: no noise, no pattern, no strand halos. That was the original complaint about mode 1.
+
+---
+
+# AyaneStorm Live DoF (mode 3), phase 4: lens effects — Plan
+
+Author: chanayane@firestorm
+Date: 2026-10-01
+
+## Context
+
+Live DoF (mode 3) is accepted on Windows and macOS (noise-free, transparent hair per
+depth, correct for every aperture shape). It ignores the lens-effect settings that modes 1
+and 2 honour. The user wants them back, in this order, astigmatism skipped for now:
+
+1. field curvature;
+2. spherical aberration;
+3. cat's eye (mechanical vignetting) and its corner darkening;
+4. axial chromatic aberration.
+
+Lessons that shape this plan:
+- **Point-sampled areas.** The last defect came from point-sampling the aperture area per
+  tap. Every effect that changes a tap's weight must integrate it exactly over the tap's
+  region (or be normalized by the same discretization), so a uniform field keeps
+  coverage 1.
+- **Model the user's settings.** The reference model must include the user's actual
+  settings: blade count, roundness, anamorphic ratio, quality.
+- Each effect is its own step: model first, then shader, then the user's runtime check
+  against mode 2 (the aperture-sampled reference, which models the real lens).
+
+Settings are shared with modes 1 and 2, with the same meanings and scales; there are no new
+settings. Mode 1 and mode 2 rendering stay unchanged.
+
+## Shared groundwork
+
+- **Lens field values.** Extract the settings math of `updateLensField()`
+  (`asdepthoffield.cpp`) into a public helper on `ASDepthOfField`. It returns the existing
+  `LensField` struct: field scale, cat eye, vignette, curvature, axial CA, spherical. Mode 1
+  calls it with identical results. Live calls it with its own lens values.
+- **Field position.** It is `(uv - 0.5) * field_scale`, length 1 at the frame corner, as in
+  `asDepthOfFieldFarF.glsl` (`fieldPosition()`). It is added to `asDoFLiveCommonF.glsl`.
+- **Live lens uniforms** (`setLensUniforms()` in `asdoflive.cpp`): `field_scale`,
+  `field_curvature`, `sa_strength`, `cat_eye`, `vignette_shift`, `ca_shift`.
+- **UI** (`asdofrenderer.cpp` `syncModeFlags()`): `lens_modes` includes Live for axial CA,
+  cat's eye and spherical aberration. The field-curvature flag becomes mode 1 or 3.
+  Astigmatism stays mode 1 only.
+- **Reference model.** `dof_live_reference.py` gains a field position per pixel, and
+  brute-force truths for each effect. Every gather test runs for circle, 5 and 6 blades,
+  roundness 0 and 0.5, anamorphic 1 and 1.33, and all three ring counts.
+
+## Step 1: field curvature
+
+- A signed shift of every pixel's normalized CoC: `coc += field_curvature * field^2`
+  before the clamp, as `normalizedCoC()` in `asDepthOfFieldCoCF.glsl` does.
+- **Live library.** Applied in `liveBlurRadius()`, which takes the pixel position. The bins
+  then re-sort by themselves; the gathers are unchanged.
+- **Mac OIT capture.** Applied in `macoit_dof_radius()` (`asMacOITCaptureF.glsl`): one
+  `vec4` uniform carries the field scale and curvature, and the fragment position comes
+  from `gl_FragCoord` over the capture size.
+  - `ASMacOIT::DoFLens` gains the fields.
+  - `transparencyLens()` fills them per image height, like the other lens values.
+- **Model gate.** The decomposition still sums to the source. `macoit_dof_radius` equals
+  `liveBlurRadius` at the same pixel.
+
+## Step 2: spherical aberration
+
+- **Profile.** As in modes 1 and 2: light at normalized pupil radius ρ of a source's disc
+  weighs `1 - a σ (2ρ² - 1)`, with `σ = clamp(signed_radius / 3, -1, 1)` in full-res px.
+  It averages to 1 over the disc.
+- **Exact per tap.** `liveReach()` becomes, when `sa_strength != 0`, the exact integral of
+  the profile over the part of the tap's annulus `[d - s/2, d + s/2]` (centre tap: the
+  disc of radius `s/2`) that lies inside the source radius r. This is a closed-form
+  polynomial in ρ, divided by the annulus area.
+  - A uniform field then still sums exactly to W (partition).
+  - Polygonal and anamorphic apertures keep `liveTapSectorArea()`: the profile is radial in
+    aperture space, as in mode 2.
+- **Sign.** The source's sign comes from the layer: N layers in front, B layers behind.
+  r is converted to full-res px through `gather_scale`.
+- **Model gate:**
+  - uniform-field coverage error under 0.1% for every shape and ring count;
+  - the bokeh profile of an isolated light within 2% rms of a brute-force splat with the
+    same weight.
+
+## Step 3: cat's eye and corner darkening
+
+- **Clip.** Toward the corners, the aperture is clipped by the lens barrel: a unit circle
+  centred at `cat_eye * field` in unit aperture coordinates, capped at 1.6 radii
+  (`barrelCenter()` in `asDepthOfFieldFarF.glsl`).
+- **Open fraction per tap.** Each tap gets the open fraction of its own region (its angular
+  sector times its annulus, in unit aperture coordinates). It is computed from a fixed
+  sub-pattern of points inside the region. The point count is set by the model gate.
+- **Without darkening.** Coverage and colour weights are divided by the clipped fraction of
+  the aperture, computed over the same tap regions with the same sub-pattern. A uniform
+  field then gives coverage 1 by construction. This is normalization by the same
+  discretization, never an analytic fraction mixed with a sampled one, which would bring
+  the tile-aligned veil back.
+- **With darkening** (`ApertureCatEyeDarken`): no renormalization. The composite multiplies
+  the final colour by the vesica fraction, as `vignette()` in
+  `asDepthOfFieldResolveF.glsl` does for mode 1. In-focus content darkens toward the
+  corners too, as with a real lens.
+- **Field position.** It is taken at the gathering pixel; the barrel varies slowly across
+  the frame.
+- **Model gate:**
+  - uniform-field coverage within 0.2% at any field position, shape, ring count and kernel
+    size (no tile dependence);
+  - bokeh shape against a brute-force clipped splat.
+
+## Step 4: axial chromatic aberration
+
+- **Strata.** Mode 1's spectral model (`channelCover()`, `CA_STRATA` and the channel
+  weights in `asDepthOfFieldFarF.glsl`): four wavelength strata, whose radii are
+  `r - σ δ s_k` (δ = `ca_shift` times the maximum radius, σ = ±1 by layer).
+- **Per tap.** The exact reach (with Step 2's profile when it is on) is evaluated per
+  stratum. Energy is rescaled per stratum, `E (r / r_k)²`, so each stratum's disc keeps
+  its energy. Each channel takes its weighted sum of strata.
+  - Colour sums are per channel. Each channel's coverage partitions exactly (its strata
+    weights sum to 1).
+- **Kernels.** Tile kernels and the B2 kernel grow by δ, so the widest stratum is covered.
+- **Layering.** The layers keep one alpha (green coverage) for over-compositing, with
+  premultiplied per-channel colour.
+  - The error is `(a_green - a_channel) * behind`, only at blur edges.
+  - Per-channel alphas would need two more composite samplers (17 of macOS's 16).
+  - The model reports this error. It must stay under 2% rms on a hard-edge test at the
+    strongest setting. Otherwise the step stops and comes back to the user.
+- **In-focus content (F)** is not split by wavelength (the shift there is under a pixel).
+- **Model gate:**
+  - per-channel coverage of a uniform field exact (under 0.1%);
+  - fringe colour against a per-channel brute-force splat.
+
+## Files
+
+- **Owned:**
+  - `asdoflive.cpp`;
+  - `asdepthoffield.{h,cpp}`: lens-field helper extracted, mode 1 behaviour identical;
+  - `asdofrenderer.cpp`: UI flags;
+  - `asmacoit.{h,cpp}`: DoFLens field values, one uniform;
+  - shaders `asDoFLiveCommonF.glsl`, `asDoFLiveGatherF.glsl`, `asDoFLiveTileF.glsl`,
+    `asDoFLiveCompositeF.glsl`, `asMacOITCaptureF.glsl`;
+  - `scripts/testing/dof_live_reference.py`;
+  - `doc/ayanestorm-depth-of-field-live-plan.md`.
+- **Non-owned:** none expected. The floater controls exist already and only their
+  enable flags change, in `asdofrenderer.cpp`.
+- **Reused:**
+  - `updateLensField()` math;
+  - `fieldPosition()`, `barrelCenter()`, `sphericalWeight()` profile, `channelCover()`
+    strata and weights;
+  - `vignette()` vesica fraction;
+  - `liveTapSectorArea()`.
+
+## Verification
+
+- **Per step:** `python scripts/testing/dof_live_reference.py` passes, with the new gates,
+  before any shader edit. glslang validates and links every changed shader at
+  `#version 410 core` and `#version 400`. `git diff --check` is clean, and every file is LF.
+- **Runtime (user builds), Windows then macOS, after each step:**
+  1. Effect off: identical to the current build (debug views and images).
+  2. Effect on, Live against mode 2, same scene: comparable look (curvature shifting the
+     focus toward the corners; SA rim or centre bokeh; cat's-eye corner bokeh and
+     optional darkening; colour fringes on blur edges).
+  3. Debug view 9 "Near background alone" stays free of magenta blocks for every aperture
+     shape (the regression guard for coverage).
+  4. Snapshots at window size and 2×.
+  5. FPS at Low against the current 45 FPS reference scene, with the effect on and off.
+- Findings go in the plan doc's execution record. Astigmatism stays deferred.
+
+## Phase 4 execution record
+
+### Groundwork and step 1: field curvature (2026-10-01, unbuilt)
+
+- **`ASDepthOfField::lensField()`** (`asdepthoffield.{h,cpp}`) returns the shared `LensField`.
+  - Mode 1's former `updateLensField()` body is now the pure `computeLensField()` in the same anonymous namespace. Mode 1 assigns its result to `sLensField`, so its behaviour is identical.
+  - The struct moved to the header.
+- **Live** (`asdoflive.cpp`) fills `Lens::mField` from it every frame and uploads `field_scale` and `field_curvature`.
+- **Live library** (`asDoFLiveCommonF.glsl`): `liveBlurRadius(device_depth, uv)` adds `field_curvature * field^2` to the normalized CoC before the clamp, as mode 1's `normalizedCoC()` does. `liveDecompose()` passes the pixel centre's uv.
+- **Mac OIT capture**:
+  - `transparencyLens(width, height, lens)` calls the same `lensField()` with the capture's size and lens values.
+  - `DoFLens` carries the field scale and curvature.
+  - `configurePass()` uploads `macoitDofField = (scale / size, scale / 2)` and `macoitDofCurvature`.
+  - `macoit_dof_radius()` uses `gl_FragCoord.xy * xy - zw`.
+- **UI.** The field-curvature checkbox is enabled for modes 1 and 3 (`ASDepthOfFieldUIScreenSpace`), and so is its slider (`syncModeFlags()`). Astigmatism stays mode 1 only.
+- **Model gate.** `test_field_curvature_capture_matches_library`: the capture's and the library's field positions and normalized CoC agree at every pixel centre to 1e-12. The gathers already handle arbitrary per-pixel radii (the ramp scenes). 20 tests pass.
+- glslang at 410 core and 400, `git diff --check` clean, LF throughout.

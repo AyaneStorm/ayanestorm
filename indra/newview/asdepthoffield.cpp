@@ -131,17 +131,7 @@ namespace
     const LLStaticHashedString U_SA_STRENGTH("sa_strength");
 
     // Spatially varying lens character of the current frame (render()).
-    // Focus shifts are in normalized CoC (CoC / max_coc) at the frame corner.
-    struct LensField
-    {
-        F32 mFieldScale[2] = { 0.f, 0.f }; // (uv - 0.5) * scale: field position, 1 at the corner
-        F32 mCatEye = 0.f;         // barrel shift at the corner, aperture radii; 0 off
-        F32 mVignette = 0.f;       // barrel shift whose light loss is kept; 0 off
-        F32 mCurvature = 0.f;      // field curvature: signed CoC shift
-        F32 mAstigmatism = 0.f;    // radial/circumferential focus split (sign: long axis)
-        F32 mAxialCA = 0.f;        // blur shift of the extreme wavelengths
-        F32 mSpherical = 0.f;      // spherical aberration, -1..1; 0 off
-    };
+    using LensField = ASDepthOfField::LensField;
     LensField sLensField;
 
     // Lens field uniforms of the gathers and sprites (shaders without one
@@ -162,33 +152,33 @@ namespace
     // blur_constant / (magnification * tan_pixel_angle) its pixels per unit
     // of (1 / focus - 1 / distance) (asDepthOfFieldCoCF.glsl) and
     // f = magnification * S / (1 + magnification) (S the focus distance).
-    void updateLensField(U32 width, U32 height, F32 focal_distance, F32 blur_constant,
-                         F32 tan_pixel_angle, F32 magnification, F32 max_coc)
+    LensField computeLensField(U32 width, U32 height, F32 focal_distance, F32 blur_constant,
+                               F32 tan_pixel_angle, F32 magnification, F32 max_coc)
     {
-        sLensField = LensField();
+        LensField field;
         const F32 aspect = (F32)width / (F32)llmax(height, 1U);
         const F32 diagonal = sqrtf(aspect * aspect + 1.f);
-        sLensField.mFieldScale[0] = 2.f * aspect / diagonal;
-        sLensField.mFieldScale[1] = 2.f / diagonal;
+        field.mFieldScale[0] = 2.f * aspect / diagonal;
+        field.mFieldScale[1] = 2.f / diagonal;
 
         // Shared with the aperture-sampled renderer.
         if (gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"))
         {
-            sLensField.mCatEye = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureCatEyeStrength"), 0.f, 2.f);
+            field.mCatEye = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureCatEyeStrength"), 0.f, 2.f);
             if (gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEyeDarken"))
             {
-                sLensField.mVignette = sLensField.mCatEye;
+                field.mVignette = field.mCatEye;
             }
         }
         if (gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"))
         {
-            sLensField.mSpherical = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureSphericalStrength"), -1.f, 1.f);
+            field.mSpherical = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureSphericalStrength"), -1.f, 1.f);
         }
 
         const F32 focus = -focal_distance;
         if (focus <= 0.f || magnification <= 0.f || tan_pixel_angle <= 0.f || max_coc <= 0.f)
         {
-            return;
+            return field;
         }
         const F32 focal_length = magnification * focus / (1.f + magnification);
         const F32 pixels_per_inverse = F_SQRT2 * fabsf(blur_constant) / (magnification * tan_pixel_angle);
@@ -198,19 +188,20 @@ namespace
         {
             // Red-to-blue shift alpha f: each extreme wavelength moves by
             // half (the aperture-sampled renderer's 1/S' = 1/S - s alpha / 2f).
-            sLensField.mAxialCA = 0.5f * 0.01f *
+            field.mAxialCA = 0.5f * 0.01f *
                 llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureAxialCAStrength"), 0.f, 2.f) * shift_scale;
         }
         if (gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"))
         {
-            sLensField.mCurvature = 0.01f *
+            field.mCurvature = 0.01f *
                 llclamp(gSavedSettings.getF32("ASDepthOfFieldFieldCurvatureStrength"), -3.f, 3.f) * shift_scale;
         }
         if (gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"))
         {
-            sLensField.mAstigmatism = 0.01f *
+            field.mAstigmatism = 0.01f *
                 llclamp(gSavedSettings.getF32("ASDepthOfFieldAstigmatismStrength"), -3.f, 3.f) * shift_scale;
         }
+        return field;
     }
 
     // Area taps (asDepthOfFieldNearF.glsl): sources blurred less than this
@@ -553,6 +544,14 @@ bool ASDepthOfField::usesScreenSpaceRenderer()
 {
     const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
     return mode == 1 || mode == ASDoFLive::LIVE_MODE;
+}
+
+ASDepthOfField::LensField ASDepthOfField::lensField(U32 width, U32 height, F32 focal_distance,
+                                                    F32 blur_constant, F32 tan_pixel_angle,
+                                                    F32 magnification, F32 max_coc)
+{
+    return computeLensField(width, height, focal_distance, blur_constant, tan_pixel_angle,
+                            magnification, max_coc);
 }
 
 void ASDepthOfField::releaseResources()
@@ -923,8 +922,8 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     const F32 abs_max_coc = gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur") ?
         0.01f * llclamp(gSavedSettings.getF32("ASDepthOfFieldMaxBlur"), 1.f, 10.f) * (F32)source.getHeight() :
         llclamp(fabsf(max_coc), 0.f, 150.f);
-    updateLensField(source.getWidth(), source.getHeight(), focal_distance, blur_constant,
-                    tan_pixel_angle, magnification, abs_max_coc);
+    sLensField = computeLensField(source.getWidth(), source.getHeight(), focal_distance,
+                                  blur_constant, tan_pixel_angle, magnification, abs_max_coc);
     const F32 scale = llclamp(gSavedSettings.getF32("CameraDoFResScale"), 0.25f, 1.f);
     if (!ensureResources(source.getWidth(), source.getHeight(), scale))
     {

@@ -42,6 +42,11 @@ public:
         F32 mSplitRadius = 0.f;     // N1 / N2 boundary
         F32 mFarSplitRadius = 0.f;  // B1 / B2 boundary
         F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
+        // Lens field (ASDepthOfField::LensField): field position is
+        // (uv - 0.5) * scale; curvature shifts the normalized CoC by
+        // curvature * field^2.
+        F32 mFieldScale[2] = { 0.f, 0.f };
+        F32 mCurvature = 0.f;
     };
     // Number of bin textures: N2, N1, F, B1, B2 colour sums and their
     // energies. With the two accumulators, 8 draw buffers: OpenGL 4.1's

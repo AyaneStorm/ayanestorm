@@ -29,6 +29,12 @@ uniform float split_radius;
 // nearly sharp hair with the far background behind it: the far background
 // was blurred by the hair's radius between strands, and spread over them.
 uniform float far_split_radius;
+// Lens field (ASDepthOfField::LensField): field position (uv - 0.5) *
+// field_scale, length 1 at the frame corner. Field curvature shifts every
+// normalized CoC by field_curvature * field^2, as the Advanced renderer's
+// CoC pass (asDepthOfFieldCoCF.glsl).
+uniform vec2 field_scale;
+uniform float field_curvature;
 
 const float LIVE_PI = 3.14159265358979323846;
 
@@ -43,12 +49,19 @@ float liveLensCoC(float view_depth)
     return coc / pixel_length * 1.41421356237;
 }
 
-// Signed blur radius in full-resolution pixels of a device depth: negative
-// in front of the focus (foreground), positive behind it.
-float liveBlurRadius(float device_depth)
+vec2 liveFieldPosition(vec2 uv)
+{
+    return (uv - 0.5) * field_scale;
+}
+
+// Signed blur radius in full-resolution pixels of a device depth at uv:
+// negative in front of the focus (foreground), positive behind it.
+float liveBlurRadius(float device_depth, vec2 uv)
 {
     vec4 p = inv_proj * vec4(0.0, 0.0, device_depth * 2.0 - 1.0, 1.0);
     float coc = -liveLensCoC(p.z / p.w) / max(max_coc, 0.0001);
+    vec2 field = liveFieldPosition(uv);
+    coc += field_curvature * dot(field, field);
     coc = clamp(coc, -1.0, 1.0);
     return coc < 0.0 ? coc * near_radius : coc * far_radius;
 }
@@ -98,7 +111,8 @@ void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy)
 {
     vec3 color = max(texelFetch(diffuseRect, p, 0).rgb, vec3(0.0));
     // Depth by position: its target may not match the image's size.
-    float signed_radius = liveBlurRadius(texture(depthMap, (vec2(p) + 0.5) / screen_res).r);
+    vec2 uv = (vec2(p) + 0.5) / screen_res;
+    float signed_radius = liveBlurRadius(texture(depthMap, uv).r, uv);
     float opaque_weight = 1.0;
     bins[0] = vec4(0.0);
     bins[1] = vec4(0.0);

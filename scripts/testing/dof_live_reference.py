@@ -827,6 +827,32 @@ class LiveDoFTests(unittest.TestCase):
         _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, np.maximum(kernel, 0.5), 5, near=False)
         np.testing.assert_allclose(cov[8:-8, 8:-8], 0.16, atol=1e-3)
 
+    def test_field_curvature_capture_matches_library(self):
+        # Field curvature (phase 4, step 1): the Mac OIT capture computes the
+        # field position from gl_FragCoord with the uniforms asmacoit.cpp
+        # uploads (xy = scale / size, zw = scale / 2); the Live library from
+        # the pixel's uv. Both must give the same normalized CoC at every
+        # pixel centre, or a fragment and the opaque surface at the same
+        # depth would land in different bins.
+        width, height = 3440, 1328
+        aspect = width / height
+        diagonal = math.hypot(aspect, 1.0)
+        scale = np.array([2.0 * aspect / diagonal, 2.0 / diagonal])
+        curvature = 0.37
+        rng = np.random.default_rng(5)
+        p = np.stack([rng.integers(0, width, 500), rng.integers(0, height, 500)], axis=-1)
+        frag = p + 0.5
+        field_capture = frag * (scale / np.array([width, height])) - 0.5 * scale
+        uv = (p + 0.5) / np.array([width, height])
+        field_library = (uv - 0.5) * scale
+        np.testing.assert_allclose(field_capture, field_library, atol=1e-12)
+        coc = rng.uniform(-1.2, 1.2, 500)
+        both = [np.clip(coc + curvature * (f ** 2).sum(-1), -1.0, 1.0)
+                for f in (field_capture, field_library)]
+        np.testing.assert_allclose(both[0], both[1], atol=1e-12)
+        # The frame corner is at field length 1.
+        self.assertAlmostEqual(float(np.hypot(*(0.5 * scale))), 1.0, places=12)
+
     def test_bin_split_restores_coverage(self):
         # An opaque surface split 50/50 between two adjacent bins: the back
         # bin alone is (W, S) / V with V = 1 - W_front, so it is opaque again

@@ -26,6 +26,7 @@
 #include "asdoflive.h"
 
 #include "asbackgroundisolate.h"
+#include "asdepthoffield.h"
 #include "asdofaperture.h"
 #include "llgl.h"
 #include "llrender.h"
@@ -101,6 +102,8 @@ namespace
     const LLStaticHashedString U_FAR_RADIUS("far_radius");
     const LLStaticHashedString U_SPLIT_RADIUS("split_radius");
     const LLStaticHashedString U_FAR_SPLIT_RADIUS("far_split_radius");
+    const LLStaticHashedString U_FIELD_SCALE("field_scale");
+    const LLStaticHashedString U_FIELD_CURVATURE("field_curvature");
     const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
     const LLStaticHashedString U_TILE_PASS("tile_pass");
     const LLStaticHashedString U_TILE_REACH("tile_reach");
@@ -129,6 +132,8 @@ namespace
         F32 mFarRadius = 0.f;
         F32 mSplitRadius = 0.f;
         F32 mFarSplitRadius = 0.f;
+        // Lens effects shared with the Advanced renderer.
+        ASDepthOfField::LensField mField;
         ASDoFAperture::Shape mShape;
         F32 mUnitArea = F_PI;
         F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
@@ -216,6 +221,8 @@ namespace
         shader.uniform1f(U_FAR_RADIUS, lens.mFarRadius);
         shader.uniform1f(U_SPLIT_RADIUS, lens.mSplitRadius);
         shader.uniform1f(U_FAR_SPLIT_RADIUS, lens.mFarSplitRadius);
+        shader.uniform2f(U_FIELD_SCALE, lens.mField.mFieldScale[0], lens.mField.mFieldScale[1]);
+        shader.uniform1f(U_FIELD_CURVATURE, lens.mField.mCurvature);
         shader.uniform1i(U_APERTURE_BLADES, lens.mShape.mBlades);
         shader.uniform1f(U_APERTURE_ROUNDNESS, lens.mShape.mRoundness);
         shader.uniform1f(U_APERTURE_ROTATION, lens.mShape.mRotation);
@@ -378,9 +385,9 @@ void ASDoFLive::releaseResources()
     }
 }
 
-bool ASDoFLive::transparencyLens(U32 height, ASMacOIT::DoFLens& lens)
+bool ASDoFLive::transparencyLens(U32 width, U32 height, ASMacOIT::DoFLens& lens)
 {
-    if (!binsWanted() || height == 0)
+    if (!binsWanted() || width == 0 || height == 0)
     {
         return false;
     }
@@ -395,6 +402,13 @@ bool ASDoFLive::transparencyLens(U32 height, ASMacOIT::DoFLens& lens)
     lens.mSplitRadius = splitRadius(lens.mNearRadius);
     lens.mFarSplitRadius = splitRadius(lens.mFarRadius);
     lens.mGatherScale = (F32)((height + 1) / 2) / h;
+    // The same lens field the Live passes use, at the capture's size.
+    const ASDepthOfField::LensField field = ASDepthOfField::lensField(
+        width, height, lens.mFocalDistance, lens.mBlurConstant, lens.mTanPixelAngle,
+        lens.mMagnification, lens.mMaxCoC);
+    lens.mFieldScale[0] = field.mFieldScale[0];
+    lens.mFieldScale[1] = field.mFieldScale[1];
+    lens.mCurvature = field.mCurvature;
     return true;
 }
 
@@ -494,6 +508,8 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     lens.mFarRadius = lens.mMaxCoC * llclamp(gSavedSettings.getF32("ASDepthOfFieldFarRadius"), 0.f, 4.f);
     lens.mSplitRadius = splitRadius(lens.mNearRadius);
     lens.mFarSplitRadius = splitRadius(lens.mFarRadius);
+    lens.mField = ASDepthOfField::lensField(width, height, focal_distance, blur_constant,
+                                            tan_pixel_angle, magnification, lens.mMaxCoC);
     lens.mShape.mBlades = llclamp(gSavedSettings.getS32("ASDepthOfFieldApertureBlades"), 0, 12);
     lens.mShape.mRoundness = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureRoundness"), 0.f, 1.f);
     lens.mShape.mRotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
