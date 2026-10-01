@@ -69,6 +69,26 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
     glossenv = legacyenv;
 }
 
+// <AS:Chanayane> class3 softenLightF.glsl calls the GTAO bent-normal variants;
+// without probes there is nothing for the bent normal to steer, so forward to
+// the geometric-normal versions. Missing definitions failed the Deferred Soften
+// link (and crashed) whenever reflection probes dropped to class2.
+void sampleReflectionProbesBent(inout vec3 ambenv, inout vec3 glossenv,
+        vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, bool transparent, vec3 amblit_linear)
+{
+    sampleReflectionProbes(ambenv, glossenv, tc, pos, norm, glossiness, transparent, amblit_linear);
+}
+
+void sampleReflectionProbesLegacyBent(inout vec3 ambenv, inout vec3 glossenv,
+        inout vec3 legacyenv, vec2 tc, vec3 pos, vec3 ambient_norm, vec3 norm,
+        float glossiness, float envIntensity, bool transparent, vec3 amblit_linear)
+{
+    sampleReflectionProbesLegacy(ambenv, glossenv, legacyenv, tc, pos, norm,
+        glossiness, envIntensity, transparent, amblit_linear);
+}
+// </AS:Chanayane>
+
 void applyGlossEnv(inout vec3 color, vec3 glossenv, vec4 spec, vec3 pos, vec3 norm)
 {
 

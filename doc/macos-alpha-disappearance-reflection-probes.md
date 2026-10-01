@@ -149,3 +149,72 @@ hidden. Support-aware queries still return false, so OIT does not execute and
 vanilla alpha sorting remains selected; this does not explain the Mid boundary.
 Darwin should nevertheless force/migrate the stored mode to Standard to make
 state match the UI.
+
+## Hair With Sky-Coloured Holes (Standard Mode, DoF Off)
+
+Report (2026-10-01): two macOS users, pre-Mac-OIT build, Standard alpha mode,
+DoF off. Rigged alpha-blend hair shows hard-edged holes through which the sky,
+not the scalp or head, is visible.
+
+Leading hypothesis: rigged alpha draw order combined with depth writes. Vanilla
+`LLDrawPoolAlpha::forwardRender()` sets `write_depth = rigged` and draws rigged
+alpha first with depth writes enabled (minimum-alpha discard only). If the head
+or scalp is also alpha-blend, or the hair's inner layer is a separate
+alpha-blend face, and the outer hair face draws first, its semi-transparent
+pixels write depth. The surface behind then fails the depth test and the sky
+shows through. The edges are hard because they follow the alpha discard
+threshold. Ordering within one avatar's rigged alpha can vary with texture
+batching or vertex-buffer splitting, which may explain why only macOS shows it.
+
+Second hypothesis: the upstream Apple Silicon alpha-blend disappearance bug
+above, which here affects only some faces.
+
+Discriminating tests:
+
+1. Same Mac and outfit in current Firestorm. If Firestorm shows the same
+   defect, it is upstream behaviour.
+2. Check whether the head or skin uses alpha-blend mode. Switching the head to
+   alpha mode None or Mask should fix the first hypothesis.
+3. Switching the hair to alpha Mask should remove the holes in both cases.
+4. Look for shader or GL errors in the log.
+
+### Firestorm Comparison (Users: Firestorm Is Clean)
+
+Static diff of v1.0.86 against `.phoenix-firestorm-master`. None of the
+following explains the defect in Standard mode with DoF off:
+
+- `lldrawpoolalpha.cpp`: the Standard path (`renderNonOITPostDeferred`) is the
+  vanilla rigged-then-world `forwardRender()` pair with the same depth writes.
+  `ASAlphaGroupTraversal` only reorders in AYAstorm mode (3). The DoF blocks are
+  gated by `RenderDepthOfField`.
+- `llspatialpartition.cpp`: the sort skip needs OIT requested (false on Darwin).
+- Alpha shaders: the OIT branches compile out. The volumetric atlas is sampled
+  only when `asVolumetricEnabled`. `bindTransparencyAtlas` sets only that
+  uniform while volumetrics are off.
+- `lldrawpoolwlsky.cpp`, `ASBackgroundIsolate::renderBaseLayer`,
+  `ASWeather::prepare`: all inactive with their features off.
+- `llvovolume`/`llvoavatar`/`llmodel`/`llgl`/`llglslshader`: unrelated.
+- Reserved-uniform list insertions match the `llshadermgr.h` enum.
+
+Not yet audited: `llviewershadermgr.cpp` (102 tag lines: alpha program
+features/defines), `pipeline.cpp` deferred and post passes, GTAO.
+Needed from users: exact version, Mac model, `AyaneStorm.log`, value of
+`ASRenderOITMode`, and whether volumetrics, GTAO or background isolate are on.
+
+### Developer Mac Logs (2026-10-01)
+
+Mac build 82326 (`0f285a955a`) on an Apple M4 (16 GB), macOS 26.6.2.
+
+Crash at the minimal graphics preset: `Deferred Soften Shader` link error
+`No definition of sampleReflectionProbesBent`, then
+`ASSERT (mProgramObject != 0)` in `LLGLSLShader::bind`. Cause: GTAO bent
+normals made `class3/deferred/softenLightF.glsl` call
+`sampleReflectionProbesBent` and `sampleReflectionProbesLegacyBent`, which
+existed only in `class3/deferred/reflectionProbeF.glsl`. Fix: forwarding stubs
+in `class2/deferred/reflectionProbeF.glsl`.
+
+Hair lead: 77 occurrences of `readBackRaw : GL Error happens before reading
+back texture. Error code: 1282` (GL_INVALID_OPERATION left pending by an
+earlier call). The source call is unknown. Use `RenderDebugGL` on the Mac to
+find it. Vivian's log (older Special build 82817, M4 Max, macOS 27.0.1) has no
+shader or GL errors.
