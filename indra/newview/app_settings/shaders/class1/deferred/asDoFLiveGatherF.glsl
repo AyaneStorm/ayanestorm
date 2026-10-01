@@ -9,8 +9,8 @@
  * result at any resolution (scripts/testing/dof_live_reference.py).
  *
  * A tap reads its layer "alone", completed where nearer bins hide it
- * (liveCompleted(), push-pull): the background behind a foreground rock is
- * the background around it, never nothing. Its sources spread energy
+ * (asDoFLiveCompleteF.glsl, push-pull): the background behind a foreground
+ * rock is the background around it, never nothing. Its sources spread energy
  * E = sum w / r^2 over their discs; the tap adds area / unit_area * E times
  * the share of its area the sources reach (liveReach()), r = sqrt(W / E).
  *
@@ -39,17 +39,17 @@ layout(location = 0) out vec4 frag_color;
 // Per-channel coverage (rgb) of N2, then of the foreground veil (axial CA).
 layout(location = 1) out vec4 frag_alpha;
 
+// The layer alone: N2 raw, the others completed (asDoFLiveCompleteF.glsl).
 uniform sampler2D diffuseRect;   // the bin's (S.rgb, W), mipmapped
-uniform sampler2D specularRect;  // radius (E_N2, E_N1, E_B1, M_B2), mipmapped
-uniform sampler2D emissiveRect;  // visibility (V_N1, V_F, V_B1, V_B2), mipmapped
-uniform sampler2D bloomMap;      // F (S.rgb, W), mipmapped: skip in-focus pixels
+// N2: raw (E_N2, ...); others: completed (E_N1, E_B1, M_B2), mipmapped.
+uniform sampler2D specularRect;
+uniform sampler2D bloomMap;      // F (S.rgb, W), raw: skip in-focus pixels
 uniform sampler2D noiseMap;      // tile kernel radii (N2, N1, B1)
 uniform sampler2D lightMap;      // layer 1: the N2 veil; layer 3: B2
 uniform sampler2D normalMap;     // layer 1, axial CA: N2's per-channel coverage
 uniform vec2 target_res;
 uniform int layer;
 uniform int max_rings;
-uniform int max_level;
 // Composite debug views 3, 9 and 10 (asDoFLiveCompositeF.glsl): the B1
 // pass writes the tile kernel radii, B1 alone, or B2 alone, instead of B1
 // over B2.
@@ -78,19 +78,14 @@ float liveApertureAreaTo(float angle);
 vec2 liveFieldPosition(vec2 uv);
 float liveReach(float r, float d, float s, float sa);
 float liveSphericalProduct(float r, bool background);
-bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
-                   int vis_channel, vec2 uv, float lod, float max_lod,
-                   out vec4 value, out vec4 energy);
 float liveFarEnergy(float weight, float moment);
 
-// The layer alone at uv and lod, completed (liveCompleted()): visibility in
-// front of N2 is 1, of N1 V.x, of B1 V.z, of B2 V.w.
+// The layer alone at uv and lod, and its energies.
 bool readLayer(vec2 uv, float lod, out vec4 value, out vec4 energies)
 {
-    int vis_channel = layer == LAYER_N2 ? -1 :
-        (layer == LAYER_N1 ? 0 : (layer == LAYER_B1 ? 2 : 3));
-    return liveCompleted(diffuseRect, specularRect, emissiveRect, vis_channel,
-                         uv, lod, float(max_level), value, energies);
+    value = textureLod(diffuseRect, uv, lod);
+    energies = textureLod(specularRect, uv, lod);
+    return value.a > 0.000001;
 }
 
 bool readTap(vec2 uv, float lod, out vec4 layer_value, out float energy)
@@ -100,9 +95,9 @@ bool readTap(vec2 uv, float lod, out vec4 layer_value, out float energy)
     {
         return false;
     }
-    energy = layer == LAYER_N2 ? energies.x :
-        (layer == LAYER_N1 ? energies.y :
-         (layer == LAYER_B1 ? energies.z : liveFarEnergy(layer_value.a, energies.w)));
+    // N2: raw .x; N1, B1, B2: completed .x, .y, .z (M_B2).
+    energy = layer == LAYER_N2 || layer == LAYER_N1 ? energies.x :
+        (layer == LAYER_B1 ? energies.y : liveFarEnergy(layer_value.a, energies.z));
     return layer_value.a > 0.00001 && energy > 0.0;
 }
 
@@ -383,7 +378,7 @@ float farKernel(vec2 uv)
     {
         return 0.0;
     }
-    return energies.w / value.a;
+    return energies.z / value.a;
 }
 
 // This layer at this pixel: premultiplied colour and coverage, and the
@@ -439,11 +434,11 @@ vec4 gatherLayer(vec2 center, out vec3 alpha)
     {
         vec4 own;
         vec4 own_energies;
-        if (readLayer(uv, 0.0, own, own_energies) && own.a > 0.001 && own_energies.z > 0.0)
+        if (readLayer(uv, 0.0, own, own_energies) && own.a > 0.001 && own_energies.y > 0.0)
         {
             self_on = true;
             self_weight = own.a;
-            self_radius = sqrt(own.a / own_energies.z);
+            self_radius = sqrt(own.a / own_energies.y);
             self_sa = liveSphericalProduct(self_radius, true);
             self_color = vec4(own.rgb / own.a, 1.0);
         }

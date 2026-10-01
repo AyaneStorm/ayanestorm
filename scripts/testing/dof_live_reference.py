@@ -31,7 +31,8 @@ Model (all in gather-resolution pixels):
 - Every read is visibility-completed (read_completed()), by the push-pull
   recurrence c(l) = S(l) + (1 - V(l)) (S(l) + k c(l + 1)) / (V(l) + k),
   k = 0.05, ending with S / V at the
-  top level: what a bin shows (V = 1) is read exactly, in one fetch; what
+  top level, evaluated once per texel of each level (build_completed());
+  a read is one trilinear fetch. What a bin shows (V = 1) is read exactly; what
   nearer bins hide of it is filled from coarser levels, continuously, in
   proportion to what is missing. Every gather and the composite's focus
   layer read layers this way. A threshold rule ("the first level where at
@@ -186,11 +187,8 @@ def make_layer(color, alpha, radius, visibility=None):
                      w, w / (r * r), w * r, v], axis=-1)
 
 
-# Push-pull stops once the hidden share left is below this
-# (asDoFLiveCommonF.glsl, LIVE_COMPLETE_EPSILON).
-COMPLETE_EPSILON = 0.01
 # Weight of the coarser estimate against the level's own visible density
-# (asDoFLiveCommonF.glsl, LIVE_COMPLETE_PRIOR). None: plain push-pull.
+# (asDoFLiveCompleteF.glsl, LIVE_COMPLETE_PRIOR). None: plain push-pull.
 COMPLETE_PRIOR = 0.05
 
 
@@ -205,34 +203,57 @@ def read_completed(mips, x, y, lod, prior=None):
     that average in the empty space around an object: a surface split
     softly between two bins (F 0.6, B1 0.4) read its B1 alone with
     coverage under 1, and the far background leaked through it (the user's
-    grey veil in squares). Read front to back:
-        value += t S (1 + k) / (V + k),  t *= k (1 - V) / (V + k).
+    grey veil in squares).
+    The recurrence runs once per texel of each level, top down
+    (build_completed(), asDoFLiveCompleteF.glsl), and a read is one trilinear
+    fetch of the completed chain. Evaluating it per tap (up to three reads
+    per level, about ten levels behind an avatar) gave the same errors
+    against brute force or larger (doc, phase 5).
     Returns (values, found); found is false only where no level shows the
     bin."""
     k = COMPLETE_PRIOR if prior is None else prior
+    completed = _completed_mips(mips, k)
+    out = sample_trilinear(completed, x, y, lod)
+    return out, out[..., 3] > 1e-6
+
+
+_completed_cache = {}
+
+
+def _completed_mips(mips, k):
+    key = (id(mips), k)
+    entry = _completed_cache.get(key)
+    if entry is None or entry[0] is not mips:
+        if len(_completed_cache) > 64:
+            _completed_cache.clear()
+        entry = (mips, build_completed(mips, k))
+        _completed_cache[key] = entry
+    return entry[1]
+
+
+def build_completed(mips, k=COMPLETE_PRIOR):
+    """Completed chain of a bin's mips (channels S.rgb, W, E, M):
+        c(top) = S / V,
+        c(l) = S (1 + k) / (V + k) + k (1 - V) / (V + k) c(l + 1),
+    c(l + 1) read bilinearly at level l's texel centres."""
     top = len(mips) - 1
-    out = np.zeros(x.shape + (6,))
-    hidden = np.ones(x.shape)
-    for step in range(top + 1):
-        level = np.minimum(lod + step, top)
-        v = sample_trilinear(mips, x, y, level)
-        vis = v[..., 6]
-        last = level >= top
-        active = hidden > COMPLETE_EPSILON
+    out = [None] * (top + 1)
+    s = mips[top]
+    vis = s[..., 6:7]
+    out[top] = np.where(vis > 1e-6, s[..., 0:6] / np.maximum(vis, 1e-6), 0.0)
+    for level in range(top - 1, -1, -1):
+        s = mips[level]
+        h, w = s.shape[0], s.shape[1]
+        yy, xx = np.mgrid[0:h, 0:w].astype(float)
+        coarser = sample_level(out[level + 1], (xx + 0.5) / 2.0, (yy + 0.5) / 2.0)
+        vis = s[..., 6:7]
         if k == float("inf"):
-            gain = np.ones(x.shape)
-            carry = 1.0 - vis
+            gain, carry = 1.0, 1.0 - vis
         else:
             gain = (1.0 + k) / (vis + k)
             carry = k * (1.0 - vis) / (vis + k)
-        # Top level: normalize what is left by its visibility.
-        share = np.where(last, hidden / np.maximum(vis, 1e-6) * (vis > 1e-6), hidden * gain)
-        out += np.where(active[..., None], v[..., 0:6] * share[..., None], 0.0)
-        hidden = np.where(active & ~last, hidden * carry, 0.0)
-        if not (hidden > COMPLETE_EPSILON).any():
-            break
-    found = out[..., 3] > 1e-6
-    return out, found
+        out[level] = s[..., 0:6] * gain + carry * coarser
+    return out
 
 
 def read_raw(mips, x, y, lod):

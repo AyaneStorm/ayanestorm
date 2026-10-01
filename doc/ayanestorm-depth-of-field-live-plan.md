@@ -899,3 +899,174 @@ settings. Mode 1 and mode 2 rendering stay unchanged.
   - A light's bokeh at 3 and -5 keeps its energy and stays within 2x the unclipped gather's error. Measured: 1.74x at 3 rings for the thin ring, under 1x at 7 rings.
   - 28 tests pass.
 - glslang compiles the Live set (linked), and mode 1's Far, Near, Transparent and Sprite and mode 2's Accumulate (alone), at 410 core and 400. `git diff --check` is clean, LF throughout.
+
+# AyaneStorm Live DoF (mode 3), phase 5: speed and cleanup — Plan
+
+Author: chanayane@firestorm
+Date: 2026-10-01
+
+## Context
+
+Phase 4 (lens effects) is committed. The user wants Live faster with plain settings (no lens
+effects), and Live's own code cleaned up. Modes 1 and 2 are not touched. Astigmatism stays
+deferred; macOS is checked after.
+
+Where the plain gather spends its time (`asDoFLiveGatherF.glsl`, `asDoFLiveCommonF.glsl`):
+- **Completion per tap.** Every tap of N1, B1 and B2 runs `liveCompleted()`, the push-pull
+  recurrence, itself: per mip level, three trilinear reads (visibility, sums, energies).
+  - It stops once the hidden share is under 1%. Where the bin shows, that is one level, so
+    3 reads.
+  - Behind the avatar (B1, B2), it is up to about 10 levels, so up to about 30 reads per tap.
+  - The tile pass reads every gather pixel this way too, three bins each, and the composite
+    once per hidden focus pixel.
+- **Tap geometry per tap.** `liveTapOffset()` and two `liveApertureAreaTo()` calls cost
+  cos, sin and the boundary, plus for polygons tan, log and cos twice. This is identical
+  for every pixel.
+- **Reduce twice.** Two passes each decompose all four full-resolution pixels. Each
+  decomposition reads up to 9 textures plus the depth unprojection. The only reason is
+  LLRenderTarget's 4-attachment limit.
+
+**Feasibility, already checked in the model** (scratch prototype): building the completion
+once per mip level, then reading it with one trilinear fetch, passes all 28 tests. The
+survey errors against brute force are equal or better:
+- far hole: 0.0041 → 0.0030 rms;
+- checker rock: 0.024 → 0.020;
+- split surface: 0.0044 → 0.0013;
+- hidden-veil step: 0.0011 → 0.
+
+The one regression is the smooth rock fringe, 0.0005 → 0.0028, still 20× under the old
+defect's 0.057.
+
+Each step below is its own build, check and commit, in this order.
+
+## Step 1: completion pyramid
+
+- **Recurrence, once per texel** of each level, top-down:
+  - `c(top) = S / V`;
+  - `c(l) = S·(1+k)/(V+k) + k(1−V)/(V+k) · c(l+1)`, with `c(l+1)` read bilinearly at the
+    texel centre;
+  - k = 0.05, as now.
+  - This is exactly `liveCompleted()` unrolled, without its 1% early stop.
+- **Targets.** Two new mipmapped RGBA16F targets at gather resolution (`TMG_MANUAL`, as
+  `allocateMipmapped()`):
+  - `sDoneA`: completed N1, F, B1, B2 sums `(S.rgb, W)`;
+  - `sDoneB`: completed energies `(E_N1, E_B1, M_B2, 0)`, each completed with its own
+    bin's visibility.
+  - N2 needs none: it is the front bin (V = 1), so its read is the raw mip, as today.
+- **Passes.** A new small program, `asDoFLiveCompleteF.glsl` (linked with the library),
+  with 5 outputs. It renders level by level from the top:
+  - one raw FBO, with the five textures' level l attached by `glFramebufferTexture2D`,
+    and the viewport set to the level size;
+  - the precedent is `checkAttachment()` in `asambientocclusion.cpp`;
+  - during level l's draw, the `sDone` textures' `GL_TEXTURE_BASE_LEVEL` is l+1, so
+    reading `c(l+1)` while writing level l is no feedback loop under GL 4.1. It is reset
+    to 0 after.
+  - The raw sums and visibility come from `sBinsA`/`sBinsB` by `texelFetch` at level l.
+  - About 10 levels at 1080p, so about 10 tiny draws.
+- **Readers.**
+  - Gathers: one `textureLod` of the completed sums and one of the energies per tap, with
+    no loop and no visibility read.
+  - `farKernel()`, the B1 self read, tile pass 0 and the composite's `focusFill()` read the
+    same textures at lod 0.
+  - The composite drops `emissiveRect` (14 samplers).
+  - `liveCompleted()` and its constants are removed from the library.
+- **Memory.** 5 more half-resolution RGBA16F mip chains: about +28 MB at 1080p and +79 MB
+  at 3024×1964.
+- **Model.** `read_completed()` becomes the pyramid: `build_completed(mips)`, then
+  `sample_trilinear`. Gates:
+  - all tests pass;
+  - the survey matches the prototype numbers above (recorded in the doc).
+
+## Step 2: one reduce pass
+
+- One raw FBO over the 7 textures of `sBinsA` (3) and `sBinsB` (4), with 7 draw buffers.
+  OpenGL 4.1 guarantees 8, and Mac OIT's `colorBinsFBO` already uses 8 on Apple.
+- `asDoFLiveReduceF.glsl` writes all seven outputs. `reduce_pass` and the second draw are
+  removed, which halves the full-resolution decomposition.
+- If the FBO is incomplete, Live logs once and returns false, the same as a failed target
+  allocation.
+- **Model:** unchanged (same sums).
+
+## Step 3: tap table
+
+- **Per frame on the CPU**, for the 169 taps of 7 rings, in the gather's order (the table
+  is the same for every ring count): `vec4(unit offset x, y, boundary · squeeze, sector
+  area span)`.
+  - Rotation, anamorphic ratio and polygon boundary are included.
+  - The span is `liveApertureAreaTo(θ+h) − liveApertureAreaTo(θ−h)`, computed with
+    `ASDoFAperture`'s blade primitive.
+- **Upload.** `uniform4fv(U_TAPS, 169, ...)` to the gather program: 676 components, within
+  GL 4.1's 1024 fragment minimum together with the existing uniforms.
+- **Per tap in the gather:**
+  - `offset = taps[i].xy · d`;
+  - `spacing = s · taps[i].z`;
+  - `area = 2 d s · taps[i].w`.
+  - The barrel path (cat's eye on) still computes its sector bounds itself, so it is
+    unchanged.
+- **Model gate:** a Python mirror of the C++ table equals `aperture_taps()` within 1e-6 for
+  circle, 5 and 6 blades, roundness 0 and 0.5, anamorphic 1 and 1.33, rotation 0 and 15°.
+
+## Step 4: cleanup (Live only)
+
+- **Remove:** the unused `liveTapSectorArea()`, with comments pointing at
+  `liveApertureAreaTo()`; whatever steps 1 to 3 leave unused (uniforms, samplers,
+  `bindRaw` paths).
+- **Fix stale comments:**
+  - `sa_strength` "-1..1" becomes -5..5 (common library);
+  - the gather header's "selfOcclusion()", a function that does not exist;
+  - `asdoflive.cpp`'s pass list (reduce, complete, tiles, gathers, composite).
+- **Doc:** an execution record per step. The original "Passes" section is marked as
+  superseded by phase 5.
+- **No behaviour change.** Images are identical to step 3.
+
+## Files (all owned)
+
+- `indra/newview/asdoflive.cpp`;
+- shaders `asDoFLiveCommonF.glsl`, `asDoFLiveReduceF.glsl`, `asDoFLiveTileF.glsl`,
+  `asDoFLiveGatherF.glsl`, `asDoFLiveCompositeF.glsl`, and the new
+  `asDoFLiveCompleteF.glsl`;
+- `scripts/testing/dof_live_reference.py`;
+- `doc/ayanestorm-depth-of-field-live-plan.md`.
+
+The new shader is registered in `ASDoFLive::registerShaders()`/`createShaders()`, which are
+already wired into `ASDepthOfField`. There are no non-owned edits and no cache revision bump.
+
+## Verification
+
+- **Per step:**
+  - `python scripts/testing/dof_live_reference.py` passes, and the survey numbers are
+    recorded;
+  - glslang links every Live program with the library at `#version 410 core` and `400`;
+  - `git diff --check` is clean, and LF throughout.
+- **Runtime (user builds), Windows:**
+  1. FPS in the 45 FPS reference scene at Low, Medium and High, Live with lens effects off,
+     before (HEAD) and after each step.
+  2. Debug views 4, 6, 9 and 10 look as before: no magenta blocks in 9, and holes behind
+     the avatar filled.
+  3. The jaw and neck scene, hair over the beach: unchanged.
+  4. Lens effects on (cat's eye, CA, spherical): unchanged.
+  5. Snapshots at window size and 2×.
+- macOS afterwards, as agreed.
+
+## Phase 5 execution record
+
+### Step 1: completion pyramid (2026-10-01, unbuilt)
+
+- **New pass** `asDoFLiveCompleteF.glsl` ("Live DoF complete"), between the reduce and the tiles. It runs one draw per mip level, top down, into `sDoneA` (completed N1, F, B1, B2) and `sDoneB` (completed E_N1, E_B1, M_B2) through a raw FBO (`sCompleteFBO`, 5 draw buffers).
+  - During level l's draw, the completed textures' base level is l + 1. They are reset to 0 after.
+  - Their mip storage comes from one `glGenerateMipmap` at allocation.
+  - The program is created without the common library, so the library's samplers never count against macOS's 16 units.
+- **Readers.**
+  - Gathers: one `textureLod` of sums and one of energies per tap. N2 reads its raw mips, as before.
+  - The tile pass reads per texel with `texelFetch`.
+  - The composite's `focusFill()` reads completed F at level 0, and drops `emissiveRect` (14 samplers).
+  - `liveCompleted()`, `LIVE_COMPLETE_EPSILON` and the `max_level` uniforms are removed.
+- **Model.** `read_completed()` now reads `build_completed()`, the same recurrence once per texel. All 28 tests pass. The survey is identical to the feasibility prototype. The changes against the per-tap reads:
+  - smooth rock fringe: 0.0005 to 0.0028 (old defect 0.057);
+  - checker rock: 0.024 to 0.020;
+  - split surface: 0.0044 to 0.0013;
+  - hidden-veil step: 0.0011 to 0;
+  - far hole: 0.0041 to 0.0030 rms;
+  - everything else is equal within 0.0002.
+- glslang links Reduce, Tile, Gather and Composite with the library, and compiles Complete alone, at 410 core and 400. `git diff --check` is clean, LF throughout.
+- Also in this step: the `sa_strength` comment range in the common library is fixed to -5..5.

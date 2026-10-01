@@ -6,8 +6,8 @@
  *
  * - F (in focus) stays at full resolution. What this pixel shows of the
  *   focus bin is exact; what a nearer bin hides of it (1 - V_F of the pixel)
- *   is F completed at gather resolution (liveCompleted(), push-pull), the
- *   same read as the gathers'. The in-focus face under a defocused strand
+ *   is F completed at gather resolution (asDoFLiveCompleteF.glsl,
+ *   push-pull), the same read as the gathers'. The in-focus face under a defocused strand
  *   therefore comes from the face around it, never from the strand (mode
  *   1's sharp halos).
  * - The background is B1 over B2 (holes already filled), the foreground
@@ -27,12 +27,10 @@
 layout(location = 0) out vec4 frag_color;
 
 uniform sampler2D projectionMap; // composited linear HDR image (glow in alpha)
-uniform sampler2D specularRect;  // F (S.rgb, W), mipmapped
-uniform sampler2D emissiveRect;  // visibility (V_N1, V_F, V_B1, V_B2), mipmapped
+uniform sampler2D specularRect;  // F (S.rgb, W), completed
 uniform sampler2D lightMap;      // background: B1 over B2 (premultiplied)
 uniform sampler2D bloomMap;      // foreground veil: N2 over N1 (premultiplied)
 uniform sampler2D normalMap;     // axial CA: the veil's per-channel coverage
-uniform int max_level;
 uniform int debug_mode;
 uniform int bins_source;
 // Axial CA (asDoFLiveGatherF.glsl): the veil is laid per channel.
@@ -47,9 +45,6 @@ in vec2 vary_fragcoord;
 
 void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy);
 vec4 liveBinVisibility(vec4 bins[5]);
-bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
-                   int vis_channel, vec2 uv, float lod, float max_lod,
-                   out vec4 value, out vec4 energy);
 vec2 liveFieldPosition(vec2 uv);
 
 // Open fraction of a unit-circle aperture clipped by a unit circle at
@@ -73,10 +68,8 @@ float vignette(vec2 uv)
 // F alone at gather resolution, completed where nearer bins hide it.
 vec4 focusFill(vec2 uv)
 {
-    vec4 value;
-    vec4 unused;
-    return liveCompleted(specularRect, specularRect, emissiveRect, 1, uv, 0.0,
-                         float(max_level), value, unused) ? value : vec4(0.0);
+    vec4 value = textureLod(specularRect, uv, 0.0);
+    return value.a > 0.000001 ? value : vec4(0.0);
 }
 
 vec4 over(vec4 front, vec4 back)
