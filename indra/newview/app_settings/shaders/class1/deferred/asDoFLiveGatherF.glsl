@@ -15,7 +15,8 @@
  * the share of its area the sources reach (liveReach()), r = sqrt(W / E).
  *
  * layer 0 (N2), 1 (N1), 3 (B1): veils, one kernel radius per tile
- *   (asDoFLiveTileF.glsl).
+ *   (asDoFLiveTileF.glsl). B1 also fills behind its own sharper content
+ *   (selfOcclusion()).
  * layer 2 (B2): the pixel's own mean radius M / W, completed: nearer, less
  *   blurred surfaces hide the spread of farther ones, and holes take the
  *   radius of the background around them.
@@ -233,6 +234,24 @@ float barrelReach(float r, float d, float s, float sa, vec4 sector)
            ((sector.y - sector.x) * (hi - lo) / r2) / open_fraction;
 }
 
+// B1 self-occlusion. Behind the focus, sharper content is nearer: a tap
+// whose B1 is sharper than this pixel's own hides B1 behind it that no bin
+// stores (completion runs only for nearer bins). The jaw edge, partly B1 on
+// the focus ramp, over a more blurred B1 neck left the far background
+// showing through in a light line below the jaw (thin magenta lines in
+// debug view 9). Each such tap's hidden share is what content like the
+// pixel's own B1 (density, radius) would add over the part of the tap its
+// own content does not reach; gatherLayer() fills the coverage deficit with
+// the pixel's colour, up to that sum. Equal radii, smooth blur ramps
+// (coverage already 1) and taps without B1 (a true edge over the far
+// background) add nothing (scripts/testing/dof_live_reference.py,
+// evaluate_self_occlusion()).
+bool self_on = false;
+float self_weight;  // the pixel's own B1 density W_p
+float self_radius;  // and radius r_p
+float self_sa;
+float self_hidden;
+
 // One tap: adds its colour and weight. d and s are aperture-space distance
 // and spacing (the reach test); spacing is the image-space tap spacing (the
 // mip level); sector is the tap's (A0, A1, theta0, theta1) for the barrel.
@@ -255,6 +274,13 @@ void addTap(vec2 center, vec2 offset, float d, float s, float spacing,
     float weight = area / unit_area * energy * reach;
     color_sum += value.rgb / value.a * weight;
     weight_sum += weight;
+    if (self_on && r < self_radius)
+    {
+        float reach_own = barrel_on ? barrelReach(self_radius, d, s, self_sa, sector) :
+                                      liveReach(self_radius, d, s, self_sa);
+        self_hidden += area / unit_area * value.a * self_weight /
+                       (self_radius * self_radius) * max(reach_own - reach, 0.0);
+    }
 }
 
 // Far kernel radius: the completed mean radius M / W here; 0 where no far
@@ -311,6 +337,23 @@ vec4 gatherLayer(vec2 center)
     vec3 color_sum = vec3(0.0);
     float weight_sum = 0.0;
     float squeeze = max(anamorphic_ratio, 1.0);
+    // The pixel's own B1, completed (selfOcclusion()).
+    vec4 self_color = vec4(0.0);
+    self_on = false;
+    self_hidden = 0.0;
+    if (layer == LAYER_B1)
+    {
+        vec4 own;
+        vec4 own_energies;
+        if (readLayer(uv, 0.0, own, own_energies) && own.a > 0.001 && own_energies.z > 0.0)
+        {
+            self_on = true;
+            self_weight = own.a;
+            self_radius = sqrt(own.a / own_energies.z);
+            self_sa = liveSphericalProduct(self_radius, true);
+            self_color = vec4(own.rgb / own.a, 1.0);
+        }
+    }
     setupBarrel(uv);
     vec4 centre_sector = barrel_on ?
         vec4(liveApertureAreaTo(-LIVE_PI_G), liveApertureAreaTo(LIVE_PI_G), -LIVE_PI_G, LIVE_PI_G) :
@@ -349,15 +392,16 @@ vec4 gatherLayer(vec2 center)
         }
     }
 
-    if (weight_sum <= 0.0)
-    {
-        return vec4(0.0);
-    }
     // Premultiplied for every layer: skipped pixels are (0, 0, 0, 0), and the
     // composite's bilinear upsampling must not mix that black into the
     // colour of their neighbours (dark fringes along in-focus strands).
     float coverage = clamp(weight_sum, 0.0, 1.0);
-    return vec4(color_sum / weight_sum * coverage, coverage);
+    vec4 result = weight_sum > 0.0 ? vec4(color_sum / weight_sum * coverage, coverage) : vec4(0.0);
+    if (self_on)
+    {
+        result += self_color * min(1.0 - coverage, self_hidden);
+    }
+    return result;
 }
 
 void main()

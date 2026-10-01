@@ -433,18 +433,37 @@ class BarrelBand:
 
 def gather(mips, x, y, kernel_radius, rings, near, complete=True,
            shape=(0, 1.0, 0.0, 1.0), midpoint_areas=False, sa_strength=0.0,
-           barrel=None):
+           barrel=None, self_fill=False):
     """Area-tap scatter-as-gather at pixels (x, y) (pixel centres).
 
     Returns (premultiplied rgb, coverage). kernel_radius: array per pixel.
     near: True for one shared kernel (coverage is the energy sum), False for
-    the far layer (colour normalized, coverage clamped energy sum)."""
+    the far layer (colour normalized, coverage clamped energy sum).
+
+    self_fill (B1, the near background): behind the focus, sharper content
+    is nearer. A tap whose B1 is sharper than this pixel's own hides B1
+    behind it that no bin stores (only nearer bins trigger completion): the
+    jaw edge, partly B1 on the focus ramp, over a more blurred B1 neck left
+    a light line below the jaw. Each tap's hidden share is what content like
+    the pixel's own B1 (density W_p, radius r_p) would add over the part of
+    the tap its own content does not reach; the coverage deficit is filled
+    with the pixel's colour, up to that sum. Equal radii (and smooth ramps,
+    whose coverage is already 1) add nothing; neither do taps without B1
+    (a true edge over the far background) (evaluate_self_occlusion())."""
     taps, s_unit, unit_area = aperture_taps(rings, shape, midpoint_areas)
     R = np.maximum(kernel_radius, 0.5)
     s = s_unit * R
     color = np.zeros(x.shape + (3,))
     weight = np.zeros(x.shape)
     band = BarrelBand(barrel, shape) if barrel is not None else None
+    if self_fill:
+        vp, fp = read_completed(mips, x, y, np.zeros(x.shape))
+        w_p = np.where(fp, vp[..., 3], 0.0)
+        r_p = np.sqrt(w_p / np.maximum(np.where(fp, vp[..., 4], 0.0), 1e-12))
+        c_p = vp[..., 0:3] / np.maximum(w_p, 1e-12)[..., None]
+        own = w_p > 0.001
+        sa_p = spherical_product(sa_strength, r_p, near)
+        hidden = np.zeros(x.shape)
     for (dx, dy, d_unit, area_unit, footprint), (theta, half) in zip(taps, tap_angles(rings)):
         lod = np.log2(np.maximum(LOD_SCALE * s * footprint, 1.0))
         d = d_unit * R
@@ -467,9 +486,23 @@ def gather(mips, x, y, kernel_radius, rings, near, complete=True,
         rgb = v[..., 0:3] / np.maximum(W, 1e-12)[..., None]
         color += rgb * wt[..., None]
         weight += wt
+        if self_fill:
+            if band is None:
+                reach_p = reach_fraction(r_p, d, s, d_unit > 0, sa_p)
+            else:
+                reach_p = band.reach(r_p, d, s, d_unit > 0, sa_p, theta, half)
+            sharper = own & (W > 0.0) & (r_tap < r_p)
+            hidden += np.where(sharper, area / unit_area * W * w_p / np.maximum(r_p * r_p, 1e-12) *
+                               np.maximum(reach_p - reach, 0.0), 0.0)
     coverage = np.clip(weight, 0.0, 1.0)
     rgb = color / np.maximum(weight, 1e-12)[..., None]
-    return rgb * coverage[..., None], coverage, rgb
+    pre = rgb * coverage[..., None]
+    if self_fill:
+        fill = np.minimum(1.0 - coverage, hidden)
+        pre = pre + c_p * fill[..., None]
+        coverage = coverage + fill
+        rgb = pre / np.maximum(coverage, 1e-12)[..., None]
+    return pre, coverage, rgb
 
 
 # ---------------------------------------------------------------- truth
@@ -779,7 +812,7 @@ def evaluate_far_strands(rings, split):
         b1 = build_mips(make_layer(strand_color, strand_alpha, strand_r))
         b2 = build_mips(make_layer(back_color, back_w, back_r, visibility=back_w))
         b1_pre, b1_cov, _ = gather(b1, x, y, tile_kernel(strand_r, strand_alpha), rings,
-                                   near=False)
+                                   near=False, self_fill=True)
         _, _, b2_rgb = gather(b2, x, y, far_kernel(b2, x, y), rings, near=False)
         image = b1_pre + (1 - b1_cov)[..., None] * b2_rgb
     else:
@@ -793,6 +826,43 @@ def evaluate_far_strands(rings, split):
     m = 14
     sl = (slice(m, SIZE - m), slice(m, SIZE - m))
     return float(np.sqrt(np.mean((image[sl] - truth[sl]) ** 2)))
+
+
+def evaluate_self_occlusion(self_fill, max_blur_pct=3.0, rings=7, shape=(6, 0.0, 0.0, 1.0)):
+    """The user's jaw line (1398 px high, max blur 3%, multipliers 1,
+    Cinematic, hexagon): an in-focus face whose edge is blurred 1.2 px (F
+    0.55, B1 0.45 on the focus ramp) above a neck blurred 6.5 px (B1), a
+    bright far background (B2) at the left. Gather resolution is half.
+    Returns (largest colour error on the neck below the jaw, B1 coverage
+    across the neck / background edge)."""
+    def ramp(e0, e1, v):
+        t = np.clip((v - e0) / (e1 - e0), 0.0, 1.0)
+        return t * t * (3 - 2 * t)
+    max_coc = 0.01 * max_blur_pct * 1398
+    far_split = max(math.sqrt(2.0 * max_coc), 2.5)
+    yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
+    face = yy < 48
+    beach = xx < 16
+    r_full = np.where(beach, min(40.0, max_coc), np.where(face, 1.2, 6.5))
+    color = np.zeros((SIZE, SIZE, 3))
+    color[:] = (0.80, 0.55, 0.42)
+    color[face] = (0.85, 0.60, 0.47)
+    color[beach] = (0.95, 0.95, 0.92)
+    focus = 1.0 - ramp(0.5, 2.0, r_full)
+    strong = (1.0 - focus) * ramp(0.8 * far_split, 1.25 * far_split, r_full)
+    b1 = 1.0 - focus - strong
+    r_g = np.maximum(0.5 * r_full, 0.5)
+    m1 = build_mips(make_layer(color, b1, r_g, visibility=1.0 - focus))
+    m2 = build_mips(make_layer(color, strong, r_g, visibility=1.0 - focus - b1))
+    x, y = xx + 0.5, yy + 0.5
+    r_tiles, a_tiles = completed_radius(m1)
+    b1_pre, b1_cov, _ = gather(m1, x, y, tile_kernel(r_tiles, a_tiles), rings, near=False,
+                               shape=shape, self_fill=self_fill)
+    _, _, b2_rgb = gather(m2, x, y, far_kernel(m2, x, y), rings, near=False, shape=shape)
+    back = b1_pre + (1 - b1_cov)[..., None] * b2_rgb
+    image = focus[..., None] * color + (1 - focus)[..., None] * back
+    neck = (slice(48, 56), slice(24, 88))
+    return float(np.abs(image[neck] - color[neck]).max()), b1_cov[70, 14:21]
 
 
 def evaluate_split_surface(prior):
@@ -835,7 +905,7 @@ def evaluate_hidden_veil_tiles(rings, completed):
     else:
         r_tiles, a_tiles = radius, alpha
     kernel = tile_kernel(r_tiles, a_tiles)
-    _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, kernel, rings, near=False)
+    _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, kernel, rings, near=False, self_fill=True)
     # The gathers skip tiles that hold nothing (asDoFLiveGatherF.glsl).
     cov = np.where(kernel > 0.0, cov, 0.0)
     hidden = cov[16:h - 16, 34:w - 4]
@@ -863,7 +933,8 @@ def evaluate_polygon_tiles(midpoint_areas):
         selected = ring_counts == rings
         pre, cov, _ = gather(mips, xx[selected] + 0.5, yy[selected] + 0.5,
                              kernel[selected], int(rings), near=False,
-                             shape=(6, 0.0, 0.0, 1.0), midpoint_areas=midpoint_areas)
+                             shape=(6, 0.0, 0.0, 1.0), midpoint_areas=midpoint_areas,
+                             self_fill=True)
         coverage[selected] = cov
         premultiplied[selected] = pre
     image = premultiplied + (1.0 - coverage)[..., None] * np.array((0.6, 0.6, 0.6))
@@ -1000,6 +1071,33 @@ class LiveDoFTests(unittest.TestCase):
             self.assertLess(new, 0.03, rings)
             self.assertLess(new, 0.5 * old, (rings, new, old))
 
+    def test_self_occlusion_fills_behind_sharper_b1(self):
+        # The jaw line: the light background showed through the neck below
+        # an in-focus jaw whose edge is partly B1. The fill closes it and
+        # leaves the neck's real see-through at the background edge as it
+        # was. evaluate_far_strands() (strands over the far background) is
+        # gated by test_strands_over_far_background with the fill on.
+        before, edge_before = evaluate_self_occlusion(False)
+        after, edge_after = evaluate_self_occlusion(True)
+        self.assertGreater(before, 0.08)
+        self.assertLess(after, 0.01)
+        np.testing.assert_allclose(edge_after, edge_before, atol=1e-9)
+        # A textured surface receding behind the focus (no occlusion):
+        # coverage stays 1 and the colours as without the fill.
+        yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(float)
+        radius = 0.6 + 5.4 * xx / (SIZE - 1)
+        color = np.zeros((SIZE, SIZE, 3))
+        color[:] = (0.5, 0.5, 0.5)
+        color[((xx // 2 + yy // 2) % 2) == 1] = (0.9, 0.7, 0.3)
+        mips = build_mips(make_layer(color, np.ones((SIZE, SIZE)), radius))
+        r_tiles, a_tiles = completed_radius(mips)
+        kernel = tile_kernel(r_tiles, a_tiles)
+        plain = gather(mips, xx + 0.5, yy + 0.5, kernel, 7, near=False)
+        filled = gather(mips, xx + 0.5, yy + 0.5, kernel, 7, near=False, self_fill=True)
+        sl = (slice(10, -10), slice(10, -10))
+        np.testing.assert_allclose(filled[1][sl], 1.0, atol=1e-9)
+        self.assertLess(float(np.abs(filled[2][sl] - plain[2][sl]).max()), 0.01)
+
     def test_split_surface_stays_opaque(self):
         # The user's grey veil: plain push-pull lets the far background
         # through a surface split between two bins.
@@ -1026,7 +1124,8 @@ class LiveDoFTests(unittest.TestCase):
         mips = build_mips(make_layer(color, weight, np.full((h, w), 0.25)))
         kernel = np.full((h, w), 0.5 * (1.0 - 1e-3))
         self.assertTrue((kernel > 0.0).all())
-        _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, np.maximum(kernel, 0.5), 5, near=False)
+        _, cov, _ = gather(mips, xx + 0.5, yy + 0.5, np.maximum(kernel, 0.5), 5, near=False,
+                           self_fill=True)
         np.testing.assert_allclose(cov[8:-8, 8:-8], 0.16, atol=1e-3)
 
     def test_spherical_partitions_any_kernel(self):

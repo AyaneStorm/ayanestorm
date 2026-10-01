@@ -831,3 +831,25 @@ settings. Mode 1 and mode 2 rendering stay unchanged.
   - 25 tests pass. 16 and 32 nodes gave nearly the same bokeh error as 24.
 - **Cost.** It applies only with cat's eye on: 24 node rays per gather pixel and layer, then one to five band segments per ring tap and 25 for the centre tap. This is ALU only, with no extra texture reads.
 - glslang links Reduce, Tile, Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
+- **Runtime (2026-10-01).** The user confirmed cat's eye works.
+
+### Fix: B1 self-occlusion, the jaw line (2026-10-01, unbuilt)
+
+- **Defect.** With max blur above about 2.4%, a light line ran along the jaw, with or without cat's eye. Debug view 9 showed it as thin magenta, like the earlier silhouette line in the hair.
+- **User settings, modelled first.** Max blur 3% of a 1398 px high window, physical blur, multipliers 1, Cinematic (7 rings), hexagon with roundness 0, f/15, cat's eye and spherical aberration off.
+- **Cause (model `evaluate_self_occlusion()`).**
+  - Behind the focus, sharper content is nearer. The jaw edge, blurred about 1.2 px, is split between F (0.55) and B1 (0.45) on the focus ramp. Above about 2.4%, `far_split_radius` lets the neck below, blurred about 6.5 px, into B1 as well.
+  - Taps from the neck toward the jaw read the jaw edge, which is too sharp to reach. The neck hidden behind the jaw is stored nowhere: completion runs only for nearer bins. B1 coverage fell to 0.79 for about 6 px below the jaw, and the far background showed through.
+  - The deficit is 11 to 20% at any max blur whenever B1 holds content blurrier than a sharp edge next to it. At 1% the user's neck was in B2, which is normalized.
+- **Fix (`asDoFLiveGatherF.glsl`, B1 only).**
+  - The pixel's own completed B1 gives a density `W_p`, radius `r_p` and colour.
+  - A tap whose B1 is sharper (`r < r_p`) adds a hidden share: `area / unit_area * W_tap * W_p / r_p^2 * max(reach(r_p) - reach(r), 0)`. That is what content like the pixel's own would add over the part of the tap its own content does not reach, with the same reach function (spherical aberration and barrel included).
+  - The coverage deficit is filled with the pixel's colour, up to that sum.
+  - Equal radii give exactly zero: the reach difference is continuous. The first prototype tested "sharper" alone, and float rounding then filled the neck's real see-through at the background edge. Smooth blur ramps already have coverage 1, and taps without B1 (a true edge over B2) add nothing.
+- **Model.** `gather(..., self_fill=True)` for every B1 gather. `test_self_occlusion_fills_behind_sharper_b1` checks three things:
+  - On the jaw, the colour error drops from 0.106 to under 0.01.
+  - The neck and background edge see-through is unchanged to 1e-9.
+  - A receding textured surface keeps coverage 1 and its colours within 0.01.
+  - The strands-over-rock, hidden-veil-tile, polygon-tile and minimum-radius gates pass with the fill on. 26 tests pass.
+- **Cost.** One completed read per B1 gather pixel. The extra reach runs only for taps sharper than the pixel's own B1. With cat's eye on, that is a second barrel integration for those taps.
+- glslang links Gather and Composite with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
