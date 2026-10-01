@@ -4,9 +4,10 @@
  * @brief Live DoF (mode 3) shared library: blur radius, CoC bins and the
  *        aperture tap pattern. Linked into every Live DoF program (no main()).
  *
- * Content is split by blur into four bins, front to back: N2 (strong
- * foreground), N1 (foreground), F (focus), B (background). Every bin is kept
- * as premultiplied sums so box filtering (mips) is exact; see
+ * Content is split by blur into five bins, front to back: N2 (strong
+ * foreground), N1 (foreground), F (focus), B1 (near background), B2 (far
+ * background). Every bin is kept as premultiplied sums so box filtering
+ * (mips) is exact; see
  * doc/ayanestorm-depth-of-field-live-plan.md and
  * scripts/testing/dof_live_reference.py, which this mirrors.
  */
@@ -24,6 +25,10 @@ uniform float far_radius;
 // N1/N2 boundary, full-resolution pixels: sqrt(2 * near_radius), so each
 // near bin spans the same radius ratio (mixed radii stay close in a bin).
 uniform float split_radius;
+// B1/B2 boundary, likewise sqrt(2 * far_radius). One background bin mixed
+// nearly sharp hair with the far background behind it: the far background
+// was blurred by the hair's radius between strands, and spread over them.
+uniform float far_split_radius;
 
 const float LIVE_PI = 3.14159265358979323846;
 
@@ -48,35 +53,28 @@ float liveBlurRadius(float device_depth)
     return coc < 0.0 ? coc * near_radius : coc * far_radius;
 }
 
-// Bin weights (N2, N1, F, B) of a surface blurred signed_radius full px.
-// F keeps the sharp ramp of the other renderers (0.5 to 2 px); the rest
-// goes to B behind the focus, or to N1/N2 split softly around split_radius.
+// Bin weights (N2, N1, F, B1) of a surface blurred signed_radius full px;
+// B2 takes the rest, 1 - their sum. F keeps the sharp ramp of the other
+// renderers (0.5 to 2 px); the rest is split softly in two around
+// split_radius in front of the focus, around far_split_radius behind it.
 vec4 liveBinWeights(float signed_radius)
 {
     float a = abs(signed_radius);
     float focus = 1.0 - smoothstep(0.5, 2.0, a);
-    if (signed_radius >= 0.0)
-    {
-        return vec4(0.0, 0.0, focus, 1.0 - focus);
-    }
-    float strong = smoothstep(0.8 * split_radius, 1.25 * split_radius, a);
-    return vec4((1.0 - focus) * strong, (1.0 - focus) * (1.0 - strong), focus, 0.0);
-}
-
-// Visibility in front of each bin for one surface split by weights w:
-// (V_N1, V_F, V_B); V_N2 is 1.
-vec3 liveVisibility(vec4 w)
-{
-    return vec3(1.0 - w.x, 1.0 - w.x - w.y, 1.0 - w.x - w.y - w.z);
+    bool behind = signed_radius >= 0.0;
+    float split = behind ? far_split_radius : split_radius;
+    float strong = (1.0 - focus) * smoothstep(0.8 * split, 1.25 * split, a);
+    float weak = 1.0 - focus - strong;
+    return behind ? vec4(0.0, 0.0, focus, weak) : vec4(strong, weak, focus, 0.0);
 }
 
 // ---------------------------------------------------------------- pixels
 //
-// One full-resolution pixel split into the four bins, as (S.rgb, W) sums.
+// One full-resolution pixel split into the five bins, as (S.rgb, W) sums.
 // bins_source 0: one surface, diffuseRect at depthMap's depth (the
 //   composited image by the depth buffer; the fallback).
-// bins_source 1: the transparency bins of Mac OIT's capture (shadowMap0..3,
-//   energies in shadowMap4), rescaled as asMacOITResolveF.glsl composites
+// bins_source 1: the transparency bins of Mac OIT's capture (shadowMap0..4,
+//   energies in shadowMap5), rescaled as asMacOITResolveF.glsl composites
 //   them, plus the opaque surface (diffuseRect, depthMap) weighted by T, the
 //   transmittance in front of it. Their sum is the transparency composite.
 
@@ -85,15 +83,18 @@ uniform sampler2D depthMap;
 uniform sampler2D shadowMap0;   // N2 (colour * w, w)
 uniform sampler2D shadowMap1;   // N1
 uniform sampler2D shadowMap2;   // F
-uniform sampler2D shadowMap3;   // B
-uniform sampler2D shadowMap4;   // energies (w / r^2 N2, N1; w r B; w / r^2 B)
-uniform sampler2D shadowMap5;   // sum of weights, sum of optical depth
+uniform sampler2D shadowMap3;   // B1
+uniform sampler2D shadowMap4;   // B2
+uniform sampler2D shadowMap5;   // energies (w / r^2 N2, N1, B1; w r B2)
+uniform sampler2D positionMap;  // sum of weights, sum of optical depth
 uniform int bins_source;
 uniform vec2 screen_res;        // full resolution
 uniform float gather_scale;     // full-resolution to gather pixels
 
-// bins[0..3] = N2, N1, F, B; energy as shadowMap4.
-void liveDecompose(ivec2 p, out vec4 bins[4], out vec4 energy)
+// bins[0..4] = N2, N1, F, B1, B2; energy as shadowMap5. B2 keeps its mean
+// radius M only: its energy is W^3 / M^2 (liveFarEnergy()), exact for one
+// radius and close within the bin's small radius ratio.
+void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy)
 {
     vec3 color = max(texelFetch(diffuseRect, p, 0).rgb, vec3(0.0));
     // Depth by position: its target may not match the image's size.
@@ -103,10 +104,11 @@ void liveDecompose(ivec2 p, out vec4 bins[4], out vec4 energy)
     bins[1] = vec4(0.0);
     bins[2] = vec4(0.0);
     bins[3] = vec4(0.0);
+    bins[4] = vec4(0.0);
     energy = vec4(0.0);
     if (bins_source != 0)
     {
-        vec2 weight_depth = texelFetch(shadowMap5, p, 0).xy;
+        vec2 weight_depth = texelFetch(positionMap, p, 0).xy;
         float transmittance = exp(-weight_depth.y);
         // Mac OIT composites sum(c w) / sum(w) * (1 - T): the same scale
         // makes the bins add up to exactly that.
@@ -115,17 +117,27 @@ void liveDecompose(ivec2 p, out vec4 bins[4], out vec4 energy)
         bins[1] = texelFetch(shadowMap1, p, 0) * scale;
         bins[2] = texelFetch(shadowMap2, p, 0) * scale;
         bins[3] = texelFetch(shadowMap3, p, 0) * scale;
-        energy = texelFetch(shadowMap4, p, 0) * scale;
+        bins[4] = texelFetch(shadowMap4, p, 0) * scale;
+        energy = texelFetch(shadowMap5, p, 0) * scale;
         opaque_weight = transmittance;
     }
-    vec4 w = liveBinWeights(signed_radius) * opaque_weight;
+    vec4 shares = liveBinWeights(signed_radius);
+    vec4 w = shares * opaque_weight;
+    float far_weight = max(1.0 - dot(shares, vec4(1.0)), 0.0) * opaque_weight;
     float r = max(abs(signed_radius) * gather_scale, 0.5);
     float inv_r2 = 1.0 / (r * r);
     bins[0] += vec4(color * w.x, w.x);
     bins[1] += vec4(color * w.y, w.y);
     bins[2] += vec4(color * w.z, w.z);
     bins[3] += vec4(color * w.w, w.w);
-    energy += vec4(w.x * inv_r2, w.y * inv_r2, w.w * r, w.w * inv_r2);
+    bins[4] += vec4(color * far_weight, far_weight);
+    energy += vec4(w.x * inv_r2, w.y * inv_r2, w.w * inv_r2, far_weight * r);
+}
+
+// Energy sum w / r^2 of B2 sums with weight W and radius moment M.
+float liveFarEnergy(float weight, float moment)
+{
+    return moment > 0.0 ? weight * weight * weight / (moment * moment) : 0.0;
 }
 
 // ---------------------------------------------------------------- reads
@@ -171,11 +183,13 @@ bool liveCompleted(sampler2D layer, sampler2D energy_map, sampler2D vis_map,
     return value.a > 0.000001;
 }
 
-// Visibility in front of N1, F and B of a decomposed pixel.
-vec3 liveBinVisibility(vec4 bins[4])
+// Visibility in front of N1, F, B1 and B2 of a decomposed pixel.
+vec4 liveBinVisibility(vec4 bins[5])
 {
-    return vec3(1.0 - bins[0].a, 1.0 - bins[0].a - bins[1].a,
-                1.0 - bins[0].a - bins[1].a - bins[2].a);
+    float n1 = 1.0 - bins[0].a;
+    float focus = n1 - bins[1].a;
+    float back1 = focus - bins[2].a;
+    return vec4(n1, focus, back1, back1 - bins[3].a);
 }
 
 // ---------------------------------------------------------------- taps

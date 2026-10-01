@@ -458,3 +458,44 @@ Also changed:
 - 12 tests pass.
 
 **Debug 3 (foreground tiles)** now normalizes by at least 0.5 px. With Foreground radius 0 it divided by ~0 and showed tiny radii as saturated red. The user's foreground screenshots so far were taken at Foreground radius 0, so the tile widening reach was 0.
+
+### Runtime of push-pull, and the background split (2026-10-01, unbuilt)
+
+**Runtime (user, Windows, Mac OIT).**
+- The nose and face patches at Foreground radius 1.0 are gone. The focus layer is smooth.
+- The foreground rock edge is soft over a filled background.
+- **Defect 1:** the rock behind the hair strands still shows sharp.
+- **Defect 2:** a grey patch on the ponytail, which is just behind the focus, in front of the rock.
+- In debug 1, the strands are F/B (radius about 1-3 px) and the rock is B (tens of px). Debug 7 is white there, so the exact correction is not involved.
+
+**Cause.** There was one background bin. The far gather blurs each pixel by its own mean radius M / W.
+- At gather resolution, a strand and the gap beside it share texels. The rock seen in the gaps was blurred by the strands' small radius.
+- Within one bin there is no front-to-back order: the rock's wide blur spread over the nearly sharp hair (defect 2).
+- This is the mixed-radius case that N1/N2 already solves for the foreground.
+
+**Model first.** `evaluate_far_strands()` puts 1 px strands (radius 1) over a checker background (radius 8) and scores against the true layered result.
+- One bin: rms 0.027-0.036.
+- B1 over B2: rms 0.0075 at every ring count.
+- 13 tests pass.
+
+**Change: the background is split like the foreground.**
+- Bins: N2, N1, F, B1, B2.
+- The B1/B2 boundary is `far_split = max(sqrt(2 * far_radius), 2.5)` with the same soft 0.8-1.25 ramp. Each background bin then spans the same radius ratio.
+- **B1 (near background)** is gathered like a veil: tile kernel (tile `.z`), coverage from energy, upright aperture.
+- **B2 (far background)** keeps the own-kernel, completed, normalized gather. It is filled behind B1 by push-pull.
+- **Energies:**
+  - (E_N2, E_N1, E_B1, M_B2).
+  - B2's energy is `W^3 / M^2` (`liveFarEnergy()`): exact for one radius, and close within the bin's small ratio. It is only used for B2's normalized colour weighting.
+- **Mac OIT capture:** one more output, `macoit_dof_back2`, at location 7. `colorBinsFBO` has 8 attachments, OpenGL 4.1's guaranteed maximum and macOS's. If the FBO is incomplete, the existing fallback (one layer) applies. 48 B/px.
+- **Samplers:** the weight / optical-depth texture moved from `shadowMap5` to `positionMap`, and the energies to `shadowMap5`.
+- **Reduce:** pass 0 writes N2, N1, energies; pass 1 writes F, B1, B2, visibility (V_N1, V_F, V_B1, V_B2). That is 4 attachments, LLRenderTarget's limit.
+- **Gathers** run in the order N2; N1, written over N2 (`sNear1` = the whole foreground veil); B2; B1, written over B2 normalized (`sBack` = the whole background).
+  - The composite reads these two, not four layers: it stays at 15 texture units (macOS: 16).
+  - The background fallback chain is unchanged: background, then focus, then source.
+- **Gather skip:** both background gathers skip pixels that F covers fully at gather resolution.
+- **Tile dilation reach:** `max(near_radius, min(1.25 * far_split, far_radius))`.
+- **Debug views:**
+  - 1: B1 purple, B2 blue.
+  - 3 ("Veil tiles"): B1 in blue.
+  - 4: B1 over B2.
+  - 5: the combined veil.

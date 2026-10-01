@@ -21,6 +21,11 @@ Model (all in gather-resolution pixels):
 - Near layers use one kernel radius (the tile's dilated maximum). The far
   layer uses the pixel's own mean radius M / W: nearer (less blurred)
   surfaces in front occlude the spread of farther ones.
+- The background is split like the foreground, geometrically: B1 (near
+  background, gathered like a near layer, a veil) over B2 (far background,
+  own kernel, normalized). One background bin blurred whatever showed
+  between nearly sharp strands by the strands' small radius
+  (evaluate_far_strands()).
 - Every read is visibility-completed (read_completed()), by the push-pull
   recurrence c(l) = S(l) + (1 - V(l)) c(l + 1), ending with S / V at the
   top level: what a bin shows (V = 1) is read exactly, in one fetch; what
@@ -462,6 +467,52 @@ def evaluate_rock(rings, complete, near_radius=12.0, back_radius=1.5, pattern=Fa
     return float(np.sqrt(np.mean((image[fringe] - truth[fringe]) ** 2)))
 
 
+def evaluate_far_strands(rings, split):
+    """Nearly sharp strands (behind the focus, radius 1) in front of a far
+    background (radius 8): the user's rock between hair strands. Truth: the
+    strands' scatter over the whole background's scatter. split=False: one
+    background bin, own mean-radius kernel (the strands and the background
+    mix in it); split=True: B1 (strands, tile kernel, a veil) over B2 (the
+    background, completed behind the strands). Returns the rms image error
+    away from the borders."""
+    h = w = SIZE
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    back_color = np.zeros((h, w, 3))
+    back_color[:] = (0.75, 0.72, 0.70)
+    back_color[(((xx // 3) + (yy // 3)) % 2) == 1] = (0.25, 0.25, 0.22)
+    strand = (xx.astype(int) % 4) == 0
+    strand_alpha = np.where(strand, 0.8, 0.0)
+    strand_color = np.zeros((h, w, 3))
+    strand_color[:] = (0.30, 0.18, 0.08)
+    strand_r = np.full((h, w), 1.0)
+    back_r = np.full((h, w), 8.0)
+
+    s_pre, s_cov, _, _ = scatter_truth(strand_color, strand_alpha, strand_r)
+    _, _, t_back, _ = scatter_truth(back_color, np.ones((h, w)), back_r)
+    truth = s_pre + (1 - s_cov)[..., None] * t_back
+
+    x, y = xx + 0.5, yy + 0.5
+    back_w = 1.0 - strand_alpha
+    if split:
+        b1 = build_mips(make_layer(strand_color, strand_alpha, strand_r))
+        b2 = build_mips(make_layer(back_color, back_w, back_r, visibility=back_w))
+        b1_pre, b1_cov, _ = gather(b1, x, y, tile_kernel(strand_r, strand_alpha), rings,
+                                   near=False)
+        _, _, b2_rgb = gather(b2, x, y, far_kernel(b2, x, y), rings, near=False)
+        image = b1_pre + (1 - b1_cov)[..., None] * b2_rgb
+    else:
+        # One bin: both surfaces' sums added per pixel, nothing in front.
+        a = make_layer(strand_color, strand_alpha, strand_r)
+        b = make_layer(back_color, back_w, back_r)
+        both = a + b
+        both[..., 6] = 1.0
+        mips = build_mips(both)
+        _, _, image = gather(mips, x, y, far_kernel(mips, x, y), rings, near=False)
+    m = 14
+    sl = (slice(m, SIZE - m), slice(m, SIZE - m))
+    return float(np.sqrt(np.mean((image[sl] - truth[sl]) ** 2)))
+
+
 class LiveDoFTests(unittest.TestCase):
     def test_taps_tile_the_disc(self):
         for rings in QUALITY_RINGS:
@@ -535,6 +586,16 @@ class LiveDoFTests(unittest.TestCase):
             old = evaluate_rock(rings, False, pattern=True)
             self.assertLess(new, 0.6 * old, (rings, new, old))
 
+    def test_strands_over_far_background(self):
+        # The user's sharp rock between hair strands: one background bin
+        # blurs the rock by the strands' radius; B1 over B2 blurs each by
+        # its own.
+        for rings in QUALITY_RINGS:
+            new = evaluate_far_strands(rings, True)
+            old = evaluate_far_strands(rings, False)
+            self.assertLess(new, 0.03, rings)
+            self.assertLess(new, 0.5 * old, (rings, new, old))
+
     def test_bin_split_restores_coverage(self):
         # An opaque surface split 50/50 between two adjacent bins: the back
         # bin alone is (W, S) / V with V = 1 - W_front, so it is opaque again
@@ -589,6 +650,10 @@ def survey():
             print(f"{'checker' if pattern else 'smooth':16s} {rings:5d} "
                   f"{evaluate_rock(rings, True, pattern=pattern):10.4f} "
                   f"{evaluate_rock(rings, False, pattern=pattern):10.4f}")
+    print(f"{'far strands':16s} {'rings':>5s} {'B1 / B2':>10s} {'one B':>10s}")
+    for rings in QUALITY_RINGS:
+        print(f"{'':16s} {rings:5d} {evaluate_far_strands(rings, True):10.4f} "
+              f"{evaluate_far_strands(rings, False):10.4f}")
     print(f"{'far scene':10s} {'rings':>5s} {'rgb rms':>9s} {'rgb max':>9s}")
     for name in ("far_hole", "far_ramp"):
         for rings in QUALITY_RINGS:

@@ -515,7 +515,7 @@
         <combo_box.item label="Off" name="off" value="0" />
         <combo_box.item label="Blur bins" name="bins" value="1" />
         <combo_box.item label="Bin weight sum" name="bin_sum" value="2" />
-        <combo_box.item label="Foreground tiles" name="tiles" value="3" />
+        <combo_box.item label="Veil tiles" name="tiles" value="3" />
         <combo_box.item label="Background layer" name="far" value="4" />
         <combo_box.item label="Foreground veils" name="near" value="5" />
         <combo_box.item label="Focus layer" name="focus" value="6" />

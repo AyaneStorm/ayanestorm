@@ -152,6 +152,7 @@ struct CaptureProgram
     GLint dofLens = -1;
     GLint dofRadii = -1;
     GLint dofGatherScale = -1;
+    GLint dofFarSplit = -1;
 };
 
 std::vector<CaptureProgram> sCapturePrograms;
@@ -181,10 +182,10 @@ struct Resources
     GLuint peelEvenFBO = 0;// keysEven, moments
     GLuint mergeFBO = 0;   // state
     GLuint colorFBO = 0;   // moments, keysOdd
-    // Live DoF bins (RGBA16F, ADD): N2, N1, F, B (colour * w, w) and the
-    // energies; written with the COLOR pass through colorBinsFBO.
+    // Live DoF bins (RGBA16F, ADD): N2, N1, F, B1, B2 (colour * w, w) and
+    // the energies; written with the COLOR pass through colorBinsFBO.
     GLuint dofBins[ASMacOIT::DOF_BIN_TEXTURES] = {};
-    GLuint colorBinsFBO = 0; // moments, keysOdd, dofBins[0..4]
+    GLuint colorBinsFBO = 0; // moments, keysOdd, dofBins[0..5]
     bool hasDoFBins = false;
     U32 width = 0;
     U32 height = 0;
@@ -241,7 +242,7 @@ bool cloneCaptureProgram(LLGLSLShader& destination, const LLGLSLShader& source,
     destination.addPermutation("MACOIT", "1");
     if (dof_outputs)
     {
-        // Live DoF bin outputs at locations 2..6. Left out of programs that
+        // Live DoF bin outputs at locations 2..7. Left out of programs that
         // declare their own unlocated outputs (non-blend GLTF variants,
         // frag_data[4]): those would no longer fit in 8 draw buffers.
         destination.addPermutation("MACOIT_DOF", "1");
@@ -329,6 +330,7 @@ void indexCapturePrograms()
         entry.dofLens = glGetUniformLocation(object, "macoitDofLens");
         entry.dofRadii = glGetUniformLocation(object, "macoitDofRadii");
         entry.dofGatherScale = glGetUniformLocation(object, "macoitDofGatherScale");
+        entry.dofFarSplit = glGetUniformLocation(object, "macoitDofFarSplit");
         const GLint state = glGetUniformLocation(object, "macoitState");
         if (state >= 0)
         {
@@ -435,6 +437,7 @@ void configurePass(GLint pass, GLint read_channel, GLint write_channel, bool mom
                                    sDoFLens.mNearRadius, sDoFLens.mFarRadius,
                                    sDoFLens.mSplitRadius);
                 glProgramUniform1f(object, entry.dofGatherScale, sDoFLens.mGatherScale);
+                glProgramUniform1f(object, entry.dofFarSplit, sDoFLens.mFarSplitRadius);
             }
         }
     }
@@ -1056,7 +1059,7 @@ bool ASMacOIT::capture(
         LL_PROFILE_GPU_ZONE("Mac OIT color");
         // moments and keysOdd are free after the merge: reuse them as the
         // color and weight/optical-depth accumulators. With Live DoF bins,
-        // their five targets follow as attachments 2..6, also ADD.
+        // their six targets follow as attachments 2..7, also ADD.
         bindFramebuffer(sDoFBinsActive ? sResources.colorBinsFBO : sResources.colorFBO,
                         width, height);
         gGL.setColorMask(true, true);  // clears obey the color mask
@@ -1398,14 +1401,15 @@ bool ASMacOIT::allocate(U32 width, U32 height)
     bool dof_ok = true;
     if (sDoFLensSet)
     {
-        // Live DoF bins, only while requested: 40 B per pixel.
+        // Live DoF bins, only while requested: 48 B per pixel.
         for (GLuint& texture : sResources.dofBins)
         {
             texture = createTexture(GL_RGBA16F, width, height);
         }
         sResources.colorBinsFBO = createFramebuffer(
             { sResources.moments, sResources.keysOdd, sResources.dofBins[0], sResources.dofBins[1],
-              sResources.dofBins[2], sResources.dofBins[3], sResources.dofBins[4] }, true);
+              sResources.dofBins[2], sResources.dofBins[3], sResources.dofBins[4],
+              sResources.dofBins[5] }, true);
         sResources.hasDoFBins = sResources.colorBinsFBO != 0;
         dof_ok = sResources.hasDoFBins;
     }

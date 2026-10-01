@@ -39,11 +39,14 @@ public:
         F32 mMaxCoC = 0.f;
         F32 mNearRadius = 0.f;
         F32 mFarRadius = 0.f;
-        F32 mSplitRadius = 0.f;
+        F32 mSplitRadius = 0.f;     // N1 / N2 boundary
+        F32 mFarSplitRadius = 0.f;  // B1 / B2 boundary
         F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
     };
-    // Number of bin textures: N2, N1, F, B colour sums and their energies.
-    static constexpr U32 DOF_BIN_TEXTURES = 5;
+    // Number of bin textures: N2, N1, F, B1, B2 colour sums and their
+    // energies. With the two accumulators, 8 draw buffers: OpenGL 4.1's
+    // guaranteed maximum (and macOS's).
+    static constexpr U32 DOF_BIN_TEXTURES = 6;
 
     static const char* shaderCacheRevision();
     // User intent (ASRenderOITMode 4) and hardware support.

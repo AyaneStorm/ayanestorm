@@ -5,12 +5,13 @@
  *
  * Passes (all OpenGL 4.1 fragment, see doc/ayanestorm-depth-of-field-live-plan.md):
  *   1. reduce     full resolution to the half-resolution bin sums, two passes
- *                 of three attachments, then mip chains;
- *   2. tiles      foreground kernel radius per 8x8 gather-pixel tile:
+ *                 (N2, N1, energies; F, B1, B2, visibility), then mip chains;
+ *   2. tiles      veil kernel radius (N2, N1, B1) per 8x8 gather-pixel tile:
  *                 reduce, then dilation along x and y;
- *   3. gathers    area-tap scatter-as-gather of N2, N1 (tile kernel) and B
- *                 (own kernel, hole fill);
- *   4. composite  full resolution, N2 over N1 over F over B.
+ *   3. gathers    area-tap scatter-as-gather of N2, N1, B1 (tile kernel) and
+ *                 B2 (own kernel, hole fill); N1 is written over N2, B1 over
+ *                 B2;
+ *   4. composite  full resolution, N2 over N1 over F over B1 over B2.
  * Bins come from two sources:
  *   - transparency bins: Mac OIT's COLOR pass adds every transparent
  *     fragment, with its exact weight, to the bins of its own depth
@@ -44,17 +45,19 @@ namespace
     LLGLSLShader sCompositeProgram;
 
     // Bin sums at gather resolution, mipmapped (asDoFLiveReduceF.glsl):
-    // A = N2, N1, radius moments; B = F, B, visibility.
+    // A = N2, N1, radius moments; B = F, B1, B2, visibility.
     LLRenderTarget sBinsA;
     LLRenderTarget sBinsB;
     // Tile kernel radii: reduce, dilated along x, dilated along y.
     LLRenderTarget sTileReduce;
     LLRenderTarget sTileX;
     LLRenderTarget sTileY;
-    // Gathered layers at gather resolution.
+    // Gathered layers at gather resolution: N2, then N2 over N1 (the
+    // foreground veil); B2, then B1 over B2 (the background).
     LLRenderTarget sNear2;
     LLRenderTarget sNear1;
     LLRenderTarget sFar;
+    LLRenderTarget sBack;
     // Opaque scene before the post-water alpha pool, for the bins path.
     LLRenderTarget sOpaqueColor;
     LLRenderTarget sOpaqueDepth;
@@ -97,6 +100,7 @@ namespace
     const LLStaticHashedString U_NEAR_RADIUS("near_radius");
     const LLStaticHashedString U_FAR_RADIUS("far_radius");
     const LLStaticHashedString U_SPLIT_RADIUS("split_radius");
+    const LLStaticHashedString U_FAR_SPLIT_RADIUS("far_split_radius");
     const LLStaticHashedString U_REDUCE_PASS("reduce_pass");
     const LLStaticHashedString U_TILE_PASS("tile_pass");
     const LLStaticHashedString U_TILE_REACH("tile_reach");
@@ -124,15 +128,17 @@ namespace
         F32 mNearRadius = 0.f;
         F32 mFarRadius = 0.f;
         F32 mSplitRadius = 0.f;
+        F32 mFarSplitRadius = 0.f;
         ASDoFAperture::Shape mShape;
         F32 mUnitArea = F_PI;
         F32 mGatherScale = 0.5f;  // full-resolution to gather pixels
     };
 
-    // Each near bin spans the same radius ratio from 2 px up.
-    F32 splitRadius(F32 near_radius)
+    // Each of the two bins on a side of the focus spans the same radius
+    // ratio from 2 px up to that side's largest radius.
+    F32 splitRadius(F32 side_radius)
     {
-        return llmax(sqrtf(2.f * near_radius), 2.5f);
+        return llmax(sqrtf(2.f * side_radius), 2.5f);
     }
 
     // Live DoF selected and its transparency bins wanted.
@@ -163,12 +169,14 @@ namespace
         }
     }
 
-    // Mac OIT bins (shadowMap0..4) and its weight / optical depth sums
-    // (shadowMap5), as declared in asDoFLiveCommonF.glsl.
+    // Mac OIT bins (shadowMap0..5) and its weight / optical depth sums
+    // (positionMap), as declared in asDoFLiveCommonF.glsl.
     const S32 BIN_SAMPLERS[] = {
         LLShaderMgr::DEFERRED_SHADOW0, LLShaderMgr::DEFERRED_SHADOW1,
         LLShaderMgr::DEFERRED_SHADOW2, LLShaderMgr::DEFERRED_SHADOW3,
-        LLShaderMgr::DEFERRED_SHADOW4 };
+        LLShaderMgr::DEFERRED_SHADOW4, LLShaderMgr::DEFERRED_SHADOW5 };
+    static_assert(sizeof(BIN_SAMPLERS) / sizeof(BIN_SAMPLERS[0]) == ASMacOIT::DOF_BIN_TEXTURES,
+                  "one sampler per Mac OIT bin texture");
 
     void bindBins(LLGLSLShader& shader, bool bins)
     {
@@ -181,7 +189,7 @@ namespace
         {
             bindRaw(shader, BIN_SAMPLERS[i], ASMacOIT::dofBinTexture(i));
         }
-        bindRaw(shader, LLShaderMgr::DEFERRED_SHADOW5, ASMacOIT::dofWeightTexture());
+        bindRaw(shader, LLShaderMgr::DEFERRED_POSITION, ASMacOIT::dofWeightTexture());
     }
 
     void unbindBins(LLGLSLShader& shader, bool bins)
@@ -190,7 +198,7 @@ namespace
         {
             return;
         }
-        unbindRaw(shader, LLShaderMgr::DEFERRED_SHADOW5);
+        unbindRaw(shader, LLShaderMgr::DEFERRED_POSITION);
         for (S32 uniform : BIN_SAMPLERS)
         {
             unbindRaw(shader, uniform);
@@ -207,6 +215,7 @@ namespace
         shader.uniform1f(U_NEAR_RADIUS, lens.mNearRadius);
         shader.uniform1f(U_FAR_RADIUS, lens.mFarRadius);
         shader.uniform1f(U_SPLIT_RADIUS, lens.mSplitRadius);
+        shader.uniform1f(U_FAR_SPLIT_RADIUS, lens.mFarSplitRadius);
         shader.uniform1i(U_APERTURE_BLADES, lens.mShape.mBlades);
         shader.uniform1f(U_APERTURE_ROUNDNESS, lens.mShape.mRoundness);
         shader.uniform1f(U_APERTURE_ROTATION, lens.mShape.mRotation);
@@ -225,6 +234,7 @@ namespace
         sNear2.release();
         sNear1.release();
         sFar.release();
+        sBack.release();
         sWidth = 0;
         sHeight = 0;
     }
@@ -258,13 +268,14 @@ namespace
         const U32 tiles_x = (gather_width + TILE - 1) / TILE;
         const U32 tiles_y = (gather_height + TILE - 1) / TILE;
         if (!allocateMipmapped(sBinsA, gather_width, gather_height, 3) ||
-            !allocateMipmapped(sBinsB, gather_width, gather_height, 3) ||
+            !allocateMipmapped(sBinsB, gather_width, gather_height, 4) ||
             !sTileReduce.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sTileX.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sTileY.allocate(tiles_x, tiles_y, GL_RGBA16F) ||
             !sNear2.allocate(gather_width, gather_height, GL_RGBA16F) ||
             !sNear1.allocate(gather_width, gather_height, GL_RGBA16F) ||
-            !sFar.allocate(gather_width, gather_height, GL_RGBA16F))
+            !sFar.allocate(gather_width, gather_height, GL_RGBA16F) ||
+            !sBack.allocate(gather_width, gather_height, GL_RGBA16F))
         {
             releaseTargets();
             return false;
@@ -382,6 +393,7 @@ bool ASDoFLive::transparencyLens(U32 height, ASMacOIT::DoFLens& lens)
     lens.mNearRadius = lens.mMaxCoC * sCaptureLens.mNearScale;
     lens.mFarRadius = lens.mMaxCoC * sCaptureLens.mFarScale;
     lens.mSplitRadius = splitRadius(lens.mNearRadius);
+    lens.mFarSplitRadius = splitRadius(lens.mFarRadius);
     lens.mGatherScale = (F32)((height + 1) / 2) / h;
     return true;
 }
@@ -481,6 +493,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     lens.mNearRadius = lens.mMaxCoC * llclamp(gSavedSettings.getF32("ASDepthOfFieldNearRadius"), 0.f, 4.f);
     lens.mFarRadius = lens.mMaxCoC * llclamp(gSavedSettings.getF32("ASDepthOfFieldFarRadius"), 0.f, 4.f);
     lens.mSplitRadius = splitRadius(lens.mNearRadius);
+    lens.mFarSplitRadius = splitRadius(lens.mFarRadius);
     lens.mShape.mBlades = llclamp(gSavedSettings.getS32("ASDepthOfFieldApertureBlades"), 0, 12);
     lens.mShape.mRoundness = llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureRoundness"), 0.f, 1.f);
     lens.mShape.mRotation = gSavedSettings.getF32("ASDepthOfFieldApertureRotation") * DEG_TO_RAD;
@@ -545,18 +558,24 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sReduceProgram.unbind();
             target.flush();
         }
-        for (U32 attachment = 0; attachment < 3; ++attachment)
+        for (U32 attachment = 0; attachment < sBinsA.getNumTextures(); ++attachment)
         {
             generateMips(sBinsA, attachment);
+        }
+        for (U32 attachment = 0; attachment < sBinsB.getNumTextures(); ++attachment)
+        {
             generateMips(sBinsB, attachment);
         }
     }
 
-    // 2. Foreground kernel radius per tile.
+    // 2. Veil kernel radius per tile: N2, N1, B1.
     {
         LL_PROFILE_GPU_ZONE("Live DoF tiles");
-        const F32 near_gather = lens.mNearRadius * gather_height / (F32)height;
-        const S32 reach = llclamp((S32)ceilf(near_gather / (F32)TILE), 0, MAX_TILE_REACH);
+        // B1 ends where the B1/B2 ramp does.
+        const F32 veil_radius = llmax(lens.mNearRadius,
+                                      llmin(1.25f * lens.mFarSplitRadius, lens.mFarRadius));
+        const F32 veil_gather = veil_radius * gather_height / (F32)height;
+        const S32 reach = llclamp((S32)ceilf(veil_gather / (F32)TILE), 0, MAX_TILE_REACH);
         LLRenderTarget* previous = nullptr;
         LLRenderTarget* const outputs[] = { &sTileReduce, &sTileX, &sTileY };
         for (S32 pass = 0; pass < 3; ++pass)
@@ -569,6 +588,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
                 sTileProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &sBinsA, false, LLTexUnit::TFO_POINT, 0);
                 sTileProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false, LLTexUnit::TFO_POINT, 1);
                 sTileProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsA, false, LLTexUnit::TFO_POINT, 2);
+                sTileProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false, LLTexUnit::TFO_POINT, 1);
             }
             else
             {
@@ -579,6 +599,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             draw(screen_triangle);
             if (pass == 0)
             {
+                sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sBinsB.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsA.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsA.getUsage());
                 sTileProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sBinsA.getUsage());
@@ -593,7 +614,8 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         }
     }
 
-    // 3. Gathers: N2, N1, B.
+    // 3. Gathers, in layer order (asDoFLiveGatherF.glsl): N2; N1, written
+    // over N2; B2; B1, written over B2.
     {
         LL_PROFILE_GPU_ZONE("Live DoF gathers");
         struct Gather
@@ -601,13 +623,15 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             LLRenderTarget* mOutput;
             LLRenderTarget* mBins;
             U32 mAttachment;
+            LLRenderTarget* mBehind;  // the layer this one is written over
         };
         const Gather gathers[] = {
-            { &sNear2, &sBinsA, 0 },
-            { &sNear1, &sBinsA, 1 },
-            { &sFar, &sBinsB, 1 },
+            { &sNear2, &sBinsA, 0, nullptr },
+            { &sNear1, &sBinsA, 1, &sNear2 },
+            { &sFar, &sBinsB, 2, nullptr },
+            { &sBack, &sBinsB, 1, &sFar },
         };
-        for (S32 layer = 0; layer < 3; ++layer)
+        for (S32 layer = 0; layer < 4; ++layer)
         {
             const Gather& gather = gathers[layer];
             gather.mOutput->bindTarget();
@@ -617,7 +641,12 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsA, false,
                                        LLTexUnit::TFO_TRILINEAR, 2);
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsB, false,
-                                       LLTexUnit::TFO_TRILINEAR, 2);
+                                       LLTexUnit::TFO_TRILINEAR, 3);
+            if (gather.mBehind)
+            {
+                sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, gather.mBehind, false,
+                                           LLTexUnit::TFO_POINT);
+            }
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sBinsB, false,
                                        LLTexUnit::TFO_TRILINEAR, 0);
             sGatherProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false,
@@ -628,6 +657,10 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.uniform1i(U_MAX_LEVEL, max_level);
             setLensUniforms(sGatherProgram, lens);
             draw(screen_triangle);
+            if (gather.mBehind)
+            {
+                sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, gather.mBehind->getUsage());
+            }
             sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sTileY.getUsage());
             sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sBinsB.getUsage());
             sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsB.getUsage());
@@ -651,19 +684,17 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sBinsB, false,
                                       LLTexUnit::TFO_TRILINEAR, 0);
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sBinsB, false,
-                                      LLTexUnit::TFO_TRILINEAR, 2);
-        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sFar, false, LLTexUnit::TFO_BILINEAR);
+                                      LLTexUnit::TFO_TRILINEAR, 3);
+        sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sBack, false, LLTexUnit::TFO_BILINEAR);
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sNear1, false, LLTexUnit::TFO_BILINEAR);
-        sCompositeProgram.bindTexture(LLShaderMgr::EXPOSURE_MAP, &sNear2, false, LLTexUnit::TFO_BILINEAR);
         sCompositeProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sTileY, false, LLTexUnit::TFO_POINT);
         sCompositeProgram.uniform1i(U_MAX_LEVEL, max_level);
         sCompositeProgram.uniform1i(U_DEBUG_MODE, debug_mode);
         setLensUniforms(sCompositeProgram, lens);
         draw(screen_triangle);
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sTileY.getUsage());
-        sCompositeProgram.unbindTexture(LLShaderMgr::EXPOSURE_MAP, sNear2.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sNear1.getUsage());
-        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sFar.getUsage());
+        sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sBack.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sBinsB.getUsage());
         sCompositeProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sBinsB.getUsage());
         unbindBins(sCompositeProgram, bins);
