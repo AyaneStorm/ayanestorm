@@ -502,14 +502,6 @@
               left="385" top="316" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldMaxBlur" />
       </button>
-      <check_box name="live_transparency" enabled_control="ASDepthOfFieldUILive" control_name="ASDepthOfFieldLiveTransparency"
-                 layout="topleft" left="15" top="374" width="365" height="20"
-                 label="Live: blur transparency by its own depth"
-                 tool_tip="Hair, glass and other transparent surfaces are blurred at their own depth, separately from what lies behind them (uses a Mac OIT capture; free with the Mac OIT transparency mode, extra alpha passes with the others). Off: blurred as one layer, as in Firestorm." />
-      <button name="reset_live_transparency" enabled_control="ASDepthOfFieldUILive" label="D" layout="topleft"
-              left="385" top="372" width="20" height="22" tool_tip="Reset to default.">
-        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldLiveTransparency" />
-      </button>
       <text name="live_debug_label" enabled_control="ASDepthOfFieldUILive" layout="topleft" left="15" top="350" width="125" height="18">Live diagnostic view</text>
       <combo_box name="live_debug" enabled_control="ASDepthOfFieldUILive" control_name="ASDepthOfFieldLiveDebug"
                  layout="topleft" left="145" top="346" width="235" height="22">

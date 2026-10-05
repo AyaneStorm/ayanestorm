@@ -1392,3 +1392,9 @@ glslang links every highlight and sprite variant, Live and mode 1, at 410 core a
 - glslang links the highlight program, Live and mode 1, at 410 core and 400. The previous full suite passed (37 tests), and the new test passes on its own.
 
 **Runtime (user, Windows, 2026-10-06):** works.
+
+### Transparency bins always on (2026-10-06, unbuilt)
+
+- User decision: "blur transparency by its own depth" is always on. Off, transparent surfaces blurred at the depth behind them, which looks bad.
+- `ASDepthOfFieldLiveTransparency` is removed: the setting (`settings.xml`, AS DoF block), the floater checkbox and its reset button, and the reset list (`asdepthoffield.cpp`). `binsWanted()` (`asdoflive.cpp`) no longer reads it. A saved "off" from an older build is ignored.
+- The one-layer fallback is unchanged: on the first frame, when Mac OIT is unsupported, or on a size mismatch.

@@ -12615,12 +12615,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldLiveTransparency</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Live DoF: blur every transparent surface (hair, glass) by its own depth, from a Mac OIT capture (free in the Mac OIT transparency mode, extra alpha passes in the others). Off: the image is blurred as one layer at the depth buffer's depth, as in Firestorm</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
-  </map>
   <key>ASDepthOfFieldLiveExactLayers</key>
   <map>
     <key>Comment</key><string>AyaneStorm Live DoF: exact transparent layers of its own Mac OIT capture when another transparency mode is selected (2-4; geometry passes = layers + 1). The Mac OIT mode uses ASRenderMacOITExactLayers</string>

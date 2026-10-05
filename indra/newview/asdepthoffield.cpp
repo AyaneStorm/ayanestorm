@@ -428,7 +428,7 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldAutofocusNearPriority", "ASDepthOfFieldAutofocusShowArea",
                 "ASDepthOfFieldAutofocusLockMode", "ASDepthOfFieldAutofocusTrackOutside",
                 "ASDepthOfFieldAutofocusEyeRadius", "ASDepthOfFieldLiveDebug",
-                "ASDepthOfFieldLiveTransparency", "ASDepthOfFieldLiveExactLayers"
+                "ASDepthOfFieldLiveExactLayers"
             };
             const std::string name = data.asString();
             if (name == "All")

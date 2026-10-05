@@ -203,12 +203,13 @@ namespace
         return llmax(sqrtf(2.f * side_radius), 2.5f);
     }
 
-    // Live DoF selected and its transparency bins wanted.
+    // Live DoF selected: its transparency bins are always wanted (one layer
+    // blurred transparent surfaces at the depth behind them; it was a
+    // setting until 2026-10-06).
     bool binsWanted()
     {
         static LLCachedControl<S32> mode(gSavedSettings, "ASDepthOfFieldMode", 0);
-        static LLCachedControl<bool> transparency(gSavedSettings, "ASDepthOfFieldLiveTransparency", true);
-        return S32(mode) == ASDoFLive::LIVE_MODE && transparency && LLPipeline::RenderDepthOfField &&
+        return S32(mode) == ASDoFLive::LIVE_MODE && LLPipeline::RenderDepthOfField &&
             sCaptureLens.mValid && !gCubeSnapshot && !ASBackgroundIsolate::isActive();
     }
 
