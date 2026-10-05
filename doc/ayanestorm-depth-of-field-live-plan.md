@@ -1081,3 +1081,25 @@ already wired into `ASDepthOfField`. There are no non-owned edits and no cache r
 - `sReduceFBO` attaches level 0 of `sBinsA` (3) and `sBinsB` (4) with 7 draw buffers. It is allocated and checked in `ensureTargets()`. If it is incomplete, the allocation fails and Live returns false, as for any target.
 - Each full-resolution pixel is now decomposed once instead of twice. The model is unchanged: same sums.
 - glslang links Reduce with the library at 410 core and 400. `git diff --check` is clean, LF throughout.
+
+### Step 2: runtime (2026-10-01)
+
+- Built and tested by the user. Committed.
+
+### macOS runtime after steps 1 and 2 (2026-10-05)
+
+- The user confirmed Live works as expected on macOS.
+
+### Step 3: tap table (2026-10-05, unbuilt)
+
+- **Table.** `uploadTapTable()` (`asdoflive.cpp`) computes the 168 ring taps of the 7-ring pattern once per frame, in double: `(unit offset x, y, boundary, sector area span)`, with rotation, polygon and squeeze included. Every ring count reads the prefix it needs (ring k from `3 k (k - 1)`). It is uploaded with the first gather layer, and the program keeps it for the other three.
+  - The geometry comes from `ASDoFAperture::boundaryAt()` and `areaTo()`, both new. `areaTo()` uses the same blade primitive as `unitArea()`.
+- **Gather.** Under `LIVE_TAP_TABLE`, each ring tap reads `live_taps[]`: `tap = xy d`, `spacing = s z squeeze`, `area = 2 d s w`. This removes, per tap, cos and sin, plus mod, cos and a divide, and for polygons two tan, log and cos.
+  - **Cat's eye on:** the barrel still computes its sector bounds and its area per tap, as before.
+  - The centre tap is unchanged.
+- **Fallbacks:**
+  - **Uniform budget.** The table adds 672 components. With every scalar in its own vec4, the gather's total is 756, under OpenGL 4.1's guaranteed 1024 (glslang reflection).
+  - If a driver still refuses the link, `createShaders()` logs `Live DoF gather tap table refused; per-tap geometry` and rebuilds the gather without the define. That is the previous per-tap code, with the same images.
+  - **Stale table.** It is rebuilt every frame, so no shape change can leave it out of date.
+- **Model gate.** `test_tap_table_matches_taps`: one float32 7-ring table (`live_tap_table()`) rebuilds `aperture_taps()` for 3, 5 and 7 rings within 1e-6. The shapes are blades 0, 3, 5, 6 and 12, roundness 0 and 0.5, anamorphic 0.1, 1, 1.33 and 2, and rotations 0, 15° and -200°. Every ring's areas still sum to its annulus. 29 tests pass.
+- glslang links Gather with the library, with and without `LIVE_TAP_TABLE`, at 410 core and 400.

@@ -174,6 +174,44 @@ def aperture_taps(rings, shape, midpoint_areas=False):
     return taps, s, unit_area
 
 
+def live_tap_table(shape, max_rings=7):
+    """Mirror of the per-frame tap table of asdoflive.cpp (buildTapTable()):
+    per ring tap, in the gather's order, (unit offset x, y, boundary, sector
+    area span), float32 as uploaded. Independent of the ring count and of
+    the spacing; the gather scales it by d and s."""
+    blades, roundness, rotation, anamorphic = shape
+    table = []
+    for k in range(1, max_rings + 1):
+        count = 6 * k
+        offset = 0.5 if k & 1 else 0.0
+        half_angle = math.pi / count
+        for j in range(count):
+            angle = 2.0 * math.pi * (j + offset) / count
+            boundary = aperture_boundary(angle, blades, roundness)
+            span = anamorphic * (aperture_cdf(angle + half_angle, blades, roundness) -
+                                 aperture_cdf(angle - half_angle, blades, roundness))
+            a = angle + rotation
+            table.append((anamorphic * math.cos(a) * boundary, math.sin(a) * boundary,
+                          boundary, span))
+    return np.array(table, dtype=np.float32)
+
+
+def taps_from_table(table, rings, anamorphic, unit_area):
+    """The gather's taps rebuilt from the table, as asDoFLiveGatherF.glsl
+    reads it: offset = xy d, spacing = s z squeeze, area = 2 d s w."""
+    s = 1.0 / (rings + 0.5)
+    squeeze = max(anamorphic, 1.0)
+    taps = [(0.0, 0.0, 0.0, unit_area * 0.25 * s * s, squeeze)]
+    index = 0
+    for k in range(1, rings + 1):
+        d = k * s
+        for _ in range(6 * k):
+            x, y, boundary, span = (float(v) for v in table[index])
+            taps.append((x * d, y * d, d, 2.0 * d * s * span, boundary * squeeze))
+            index += 1
+    return taps
+
+
 # ---------------------------------------------------------------- layers
 
 def make_layer(color, alpha, radius, visibility=None):
@@ -1474,6 +1512,32 @@ class LiveDoFTests(unittest.TestCase):
             for i in range(n):
                 S[bins[i]] += c[i] * w[i]
             np.testing.assert_allclose(S.sum(axis=0) + T * opaque, ref, atol=1e-12)
+
+    def test_tap_table_matches_taps(self):
+        # Phase 5, step 3: the gather reads its tap geometry from a per-frame
+        # table (asdoflive.cpp) instead of computing it per tap. One 7-ring
+        # table, uploaded as float32, must rebuild every ring count's taps,
+        # for every shape, rotation and squeeze; the sector areas must still
+        # partition each annulus (sum over a ring = its annulus area).
+        for blades in (0, 5, 6, 3, 12):
+            for roundness in (0.0, 0.5):
+                for anamorphic in (1.0, 1.33, 0.1, 2.0):
+                    for rotation in (0.0, math.radians(15.0), math.radians(-200.0)):
+                        shape = (blades, roundness, rotation, anamorphic)
+                        table = live_tap_table(shape)
+                        self.assertEqual(len(table), 168)
+                        for rings in QUALITY_RINGS:
+                            expected, s, unit_area = aperture_taps(rings, shape)
+                            rebuilt = taps_from_table(table, rings, anamorphic, unit_area)
+                            np.testing.assert_allclose(np.array(rebuilt), np.array(expected),
+                                                       rtol=1e-6, atol=1e-7,
+                                                       err_msg=str((shape, rings)))
+                            index = 1
+                            for k in range(1, rings + 1):
+                                ring = sum(t[3] for t in rebuilt[index:index + 6 * k])
+                                annulus = unit_area * ((k + 0.5) ** 2 - (k - 0.5) ** 2) * s * s
+                                self.assertAlmostEqual(ring / annulus, 1.0, delta=1e-6)
+                                index += 6 * k
 
 
 def survey():

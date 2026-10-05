@@ -66,6 +66,16 @@ namespace ASDoFAperture
     // (pi for a circle). The advanced renderer divides a highlight sprite's
     // energy by unitArea * R^2 so its brightness is shape-independent.
     F32 unitArea(const Shape& shape);
+
+    // Edge radius of the unit-circumradius aperture at a polar angle >= 0,
+    // rotation and anamorphic scale excluded (1 for a circle).
+    F64 boundaryAt(const Shape& shape, F64 angle);
+
+    // Aperture area swept from polar angle 0 to angle, anamorphic scale
+    // included, continued across blades and below 0: one whole turn adds
+    // unitArea(). The Live renderer's per-frame tap table takes its sector
+    // areas from it (asDoFLiveCommonF.glsl, liveApertureAreaTo()).
+    F64 areaTo(const Shape& shape, F64 angle);
 }
 
 #endif

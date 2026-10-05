@@ -27,6 +27,8 @@
 
 #include "asdoflive.h"
 
+#include <cmath>
+
 #include "asbackgroundisolate.h"
 #include "asdepthoffield.h"
 #include "asdofaperture.h"
@@ -100,6 +102,14 @@ namespace
     const U32 TILE = 8;
     // Ring counts of the quality presets: 37, 91, 169 taps.
     const S32 QUALITY_RINGS[] = { 3, 5, 7 };
+    // Tap table of the gather (LIVE_TAP_TABLE, live_taps[] in
+    // asDoFLiveGatherF.glsl): the ring taps of the 7-ring pattern, 6 k on
+    // ring k, the centre excluded. Every ring count reads its prefix.
+    const S32 TABLE_RINGS = 7;
+    const S32 TABLE_TAPS = 3 * TABLE_RINGS * (TABLE_RINGS + 1);
+    // Gather linked with the tap table; false: the per-tap fallback.
+    bool sGatherTable = false;
+    constexpr F64 PI_D = 3.14159265358979323846;
     // Dilation loop bound of asDoFLiveTileF.glsl.
     const S32 MAX_TILE_REACH = 64;
 
@@ -136,6 +146,7 @@ namespace
     const LLStaticHashedString U_DEBUG_MODE("debug_mode");
     const LLStaticHashedString U_BINS_SOURCE("bins_source");
     const LLStaticHashedString U_GATHER_SCALE("gather_scale");
+    const LLStaticHashedString U_LIVE_TAPS("live_taps");
 
     // This frame's lens values, uploaded to every program that links the
     // common library.
@@ -251,6 +262,35 @@ namespace
         shader.uniform1f(U_ANAMORPHIC_RATIO, lens.mShape.mAnamorphic);
         shader.uniform1f(U_UNIT_AREA, lens.mUnitArea);
         shader.uniform1f(U_GATHER_SCALE, lens.mGatherScale);
+    }
+
+    // Ring tap geometry in the gather's order, the same for every pixel and
+    // ring count: (unit offset x, y, boundary, sector area span), rotation,
+    // polygon and squeeze included. The gather computed it per tap (cos,
+    // sin, and tan, log and cos twice for a polygon); here once per frame,
+    // in double. Mirrored by dof_live_reference.py (live_tap_table()).
+    void uploadTapTable(LLGLSLShader& shader, const ASDoFAperture::Shape& shape)
+    {
+        F32 table[TABLE_TAPS * 4];
+        S32 i = 0;
+        for (S32 k = 1; k <= TABLE_RINGS; ++k)
+        {
+            const S32 count = 6 * k;
+            const F64 offset = (k & 1) ? 0.5 : 0.0;
+            const F64 half_angle = PI_D / count;
+            for (S32 j = 0; j < count; ++j, i += 4)
+            {
+                const F64 angle = 2.0 * PI_D * (j + offset) / count;
+                const F64 boundary = ASDoFAperture::boundaryAt(shape, angle);
+                const F64 rotated = angle + shape.mRotation;
+                table[i] = (F32)(shape.mAnamorphic * std::cos(rotated) * boundary);
+                table[i + 1] = (F32)(std::sin(rotated) * boundary);
+                table[i + 2] = (F32)boundary;
+                table[i + 3] = (F32)(ASDoFAperture::areaTo(shape, angle + half_angle) -
+                                     ASDoFAperture::areaTo(shape, angle - half_angle));
+            }
+        }
+        shader.uniform4fv(U_LIVE_TAPS, TABLE_TAPS, table);
     }
 
     void releaseTargets()
@@ -432,11 +472,15 @@ namespace
     }
 
     bool createProgram(LLGLSLShader& program, const char* name, const char* fragment,
-                       bool library, S32 shader_level)
+                       bool library, S32 shader_level, const char* define = nullptr)
     {
         program.mName = name;
         program.mShaderFiles.clear();
         program.clearPermutations();
+        if (define)
+        {
+            program.addPermutation(define, "1");
+        }
         program.mFeatures.isDeferred = true;
         program.mShaderFiles.emplace_back("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER);
         program.mShaderFiles.emplace_back(fragment, GL_FRAGMENT_SHADER);
@@ -467,8 +511,19 @@ bool ASDoFLive::createShaders(S32 shader_level)
                             "deferred/asDoFLiveCompleteF.glsl", false, shader_level) && success;
     success = createProgram(sTileProgram, "AyaneStorm Live DoF Tile Shader",
                             "deferred/asDoFLiveTileF.glsl", true, shader_level) && success;
-    success = createProgram(sGatherProgram, "AyaneStorm Live DoF Gather Shader",
-                            "deferred/asDoFLiveGatherF.glsl", true, shader_level) && success;
+    // The tap table adds 672 uniform components (OpenGL 4.1 guarantees 1024
+    // per fragment shader). A driver that refuses it gets the per-tap
+    // geometry instead: the same images, only slower.
+    sGatherTable = createProgram(sGatherProgram, "AyaneStorm Live DoF Gather Shader",
+                                 "deferred/asDoFLiveGatherF.glsl", true, shader_level,
+                                 "LIVE_TAP_TABLE");
+    if (!sGatherTable)
+    {
+        LL_WARNS("ASDoFLive") << "Live DoF gather tap table refused; per-tap geometry." << LL_ENDL;
+        sGatherProgram.unload();
+        success = createProgram(sGatherProgram, "AyaneStorm Live DoF Gather Shader",
+                                "deferred/asDoFLiveGatherF.glsl", true, shader_level) && success;
+    }
     success = createProgram(sCompositeProgram, "AyaneStorm Live DoF Composite Shader",
                             "deferred/asDoFLiveCompositeF.glsl", true, shader_level) && success;
     if (!success)
@@ -872,6 +927,11 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.uniform1i(U_MAX_RINGS, rings);
             sGatherProgram.uniform1i(U_DEBUG_MODE, debug_mode);
             setLensUniforms(sGatherProgram, lens);
+            if (sGatherTable && layer == 0)
+            {
+                // Program state: once per frame serves all four layers.
+                uploadTapTable(sGatherProgram, lens.mShape);
+            }
             draw(screen_triangle);
             if (gather.mBehind == &sNear2)
             {

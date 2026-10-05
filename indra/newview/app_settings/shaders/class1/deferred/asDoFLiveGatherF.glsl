@@ -69,6 +69,14 @@ const int TILE = 8;
 const int MAX_RINGS = 7;
 const float LIVE_PI_G = 3.14159265358979323846;
 
+#ifdef LIVE_TAP_TABLE
+// Ring tap geometry, the same for every pixel (asdoflive.cpp,
+// uploadTapTable()): unit offset (x, y), boundary, sector area span. Ring
+// k's taps start at 3 k (k - 1). Without it (a driver refusing 672 more
+// uniform components), the taps compute the same geometry themselves.
+uniform vec4 live_taps[3 * MAX_RINGS * (MAX_RINGS + 1)];
+#endif
+
 uniform float unit_area;
 uniform float anamorphic_ratio;
 // Cat's-eye barrel shift at the frame corner, aperture radii; 0 off.
@@ -465,17 +473,34 @@ vec4 gatherLayer(vec2 center, out vec3 alpha)
                 break;
             }
             float angle = 2.0 * LIVE_PI_G * (float(j) + offset) / float(count);
+            float half_angle = LIVE_PI_G / float(count);
+#ifdef LIVE_TAP_TABLE
+            vec4 entry = live_taps[3 * k * (k - 1) + j];
+            vec2 tap = entry.xy * d;
+            float boundary = entry.z;
+            float area = 2.0 * d * s * entry.w;
+            // Only the barrel reads the sector bounds; it keeps its own
+            // areas, unchanged.
+            vec4 sector = vec4(0.0);
+            if (barrel_on)
+            {
+                sector = vec4(liveApertureAreaTo(angle - half_angle),
+                              liveApertureAreaTo(angle + half_angle),
+                              angle - half_angle, angle + half_angle);
+                area = 2.0 * d * s * (sector.y - sector.x);
+            }
+#else
             float boundary;
             vec2 tap = liveTapOffset(angle, d, boundary);
             // Integrate the whole angular sector, not boundary^2 at its
             // midpoint: every ring must partition its annulus exactly
-            // (liveTapSectorArea()). The radial squared-width is 2*d*s;
+            // (liveApertureAreaTo()). The radial squared-width is 2*d*s;
             // squeeze is in the area.
-            float half_angle = LIVE_PI_G / float(count);
             vec4 sector = vec4(liveApertureAreaTo(angle - half_angle),
                                liveApertureAreaTo(angle + half_angle),
                                angle - half_angle, angle + half_angle);
             float area = 2.0 * d * s * (sector.y - sector.x);
+#endif
             addTap(center, tap * direction, d, s, s * boundary * squeeze, area,
                    sector, color_sum, weight_sum);
         }

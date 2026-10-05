@@ -232,4 +232,24 @@ namespace ASDoFAperture
         }
         return (F32)(area * shape.mAnamorphic);
     }
+
+    F64 boundaryAt(const Shape& shape, F64 angle)
+    {
+        return boundary(angle, shape.mBlades, shape.mRoundness);
+    }
+
+    F64 areaTo(const Shape& shape, F64 angle)
+    {
+        const F64 roundness = shape.mRoundness;
+        if (shape.mBlades < 3 || roundness >= 1.0)
+        {
+            return 0.5 * shape.mAnamorphic * angle;
+        }
+        // Whole blades below angle, then the part of its own blade.
+        const F64 sector = 2.0 * PI_D / shape.mBlades;
+        const F64 blade = std::floor(angle / sector);
+        const F64 local = angle - blade * sector - 0.5 * sector;
+        return shape.mAnamorphic * (blade * bladeCdf(0.5 * sector, shape.mBlades, roundness) +
+                                    bladeCdf(local, shape.mBlades, roundness));
+    }
 }
