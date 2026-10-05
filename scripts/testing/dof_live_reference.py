@@ -1280,10 +1280,25 @@ def ideal_bokeh(gx, gy, cx, cy, radius, plane, shape, energy, barrel=None, delta
     return np.asarray(energy, dtype=float) * out
 
 
-def extract_highlights(image, radius, isolation=2.0, budget=4096):
+def live_highlight_gain(strength, threshold, luminance, radius):
+    """highlightGain() (LIVE_SPRITES): the Aperture-sampled renderer's bright
+    bokeh highlights (asDoFAccumulateF.glsl, artistic, not energy
+    preserving) on the sprites' light: 1 + strength * bright * area, area =
+    min((radius / 4)^2, 1024) with the full-resolution blur radius. The
+    extraction has already found the light isolated, so mode 2's ring test
+    is left out; strength 0 is off."""
+    if strength <= 0.0 or radius <= 1.0:
+        return 1.0
+    bright = float(smoothstep(0.5 * threshold, 1.5 * threshold, luminance))
+    return 1.0 + strength * bright * min((radius / 4.0) ** 2, 1024.0)
+
+
+def extract_highlights(image, radius, isolation=2.0, budget=4096, boost=None):
     """asDepthOfFieldHighlightF.glsl at full resolution: the gather input
     (image minus the excess of kept cells) and the kept cells' sprites
-    (energy, centroid x, y, signed radius)."""
+    (energy, centroid x, y, signed radius). boost (strength, threshold):
+    the bright highlights gain on the cells' energy only; the gather input
+    loses the light itself."""
     from dof_reference import viewer_highlight_detect, viewer_highlight_keep_cells
     h, w = radius.shape
     magnitude = np.abs(radius)
@@ -1293,6 +1308,12 @@ def extract_highlights(image, radius, isolation=2.0, budget=4096):
             if magnitude[y, x] > 2.0:
                 excess[y, x] = viewer_highlight_detect(image, magnitude, x, y, isolation)
     lum = excess @ np.array([0.2126, 0.7152, 0.0722])
+    boosted = excess
+    if boost is not None:
+        pixel_lum = image @ np.array([0.2126, 0.7152, 0.0722])
+        gain = np.vectorize(lambda l, r: live_highlight_gain(boost[0], boost[1], l, r))(
+            pixel_lum, magnitude)
+        boosted = excess * gain[..., None]
     cells = {}
     for cy in range(0, h, 8):
         for cx in range(0, w, 8):
@@ -1301,7 +1322,7 @@ def extract_highlights(image, radius, isolation=2.0, budget=4096):
                 continue
             yy, xx = np.mgrid[cy:cy + l.shape[0], cx:cx + l.shape[1]]
             cells[(cx // 8, cy // 8)] = (
-                excess[cy:cy + 8, cx:cx + 8].sum(axis=(0, 1)),
+                boosted[cy:cy + 8, cx:cx + 8].sum(axis=(0, 1)),
                 float(((xx + 0.5) * l).sum() / l.sum()), float(((yy + 0.5) * l).sum() / l.sum()),
                 float((radius[cy:cy + 8, cx:cx + 8] * l).sum() / l.sum()))
     kept = viewer_highlight_keep_cells(
@@ -1988,6 +2009,33 @@ class LiveDoFTests(unittest.TestCase):
         fraction = a_front / total
         self.assertAlmostEqual(total * fraction, a_front)
         self.assertAlmostEqual(total * (1.0 - fraction), a_back)
+
+    def test_sprite_bright_highlights(self):
+        # The Aperture-sampled renderer's artistic bright highlights on
+        # Live's sprites: the same gain as mode 2 for an isolated light (its
+        # ring test passes: the extraction found the light isolated), on the
+        # sprites' energy only. The gather input is unchanged, so sharp and
+        # large bright areas keep their light; strength 0 is off.
+        from dof_reference import viewer_highlight_gain
+        for strength in (0.0, 0.3, 1.0):
+            for threshold in (0.5, 1.0, 4.0):
+                for luminance in (0.2, 1.0, 3.0, 30.0):
+                    for radius in (1.0, 3.0, 20.0, 200.0):
+                        self.assertAlmostEqual(
+                            live_highlight_gain(strength, threshold, luminance, radius),
+                            viewer_highlight_gain(strength, threshold, luminance, 1e-6, radius))
+        size = 64
+        image = np.full((size, size, 3), 0.05)
+        image[30:32, 30:32] = 20.0
+        radius = np.full((size, size), 20.0)
+        plain_input, plain, _ = extract_highlights(image, radius)
+        boost_input, boosted, _ = extract_highlights(image, radius, boost=(0.3, 1.0))
+        np.testing.assert_array_equal(plain_input, boost_input)
+        gain = live_highlight_gain(0.3, 1.0, 20.0, 20.0)
+        np.testing.assert_allclose(sum(k[0] for k in boosted), gain * sum(k[0] for k in plain),
+                                   rtol=1e-12)
+        _, off, _ = extract_highlights(image, radius, boost=(0.0, 1.0))
+        np.testing.assert_allclose(sum(k[0] for k in off), sum(k[0] for k in plain), rtol=1e-12)
 
     def test_highlight_extraction_scope(self):
         # Only small isolated lights move: a bright area wider than the ring

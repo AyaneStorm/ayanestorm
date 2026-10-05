@@ -173,6 +173,8 @@ namespace
     const LLStaticHashedString U_SPRITE_BUDGET("sprite_budget");
     const LLStaticHashedString U_PLANE("plane");
     const LLStaticHashedString U_LIVE_PART("live_part");
+    const LLStaticHashedString U_HL_STRENGTH("hl_strength");
+    const LLStaticHashedString U_HL_THRESHOLD("hl_threshold");
 
     // This frame's lens values, uploaded to every program that links the
     // common library.
@@ -806,6 +808,12 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     }
     const F32 isolation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightIsolation"), 1.2f, 8.f);
     const F32 sprite_budget = (F32)llclamp(gSavedSettings.getS32("ASDepthOfFieldHighlightMaxSprites"), 256, 32768);
+    // Bright bokeh highlights (artistic), the Aperture-sampled renderer's
+    // settings and ranges, on the sprites' light.
+    const F32 hl_strength = gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights") ?
+        llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureHighlightStrength"), 0.f, 1.f) : 0.f;
+    const F32 hl_threshold =
+        llclamp(gSavedSettings.getF32("ASDepthOfFieldApertureHighlightThreshold"), 0.05f, 8.f);
     const S32 cells_x = sprites ? (S32)sCellTarget.getWidth() : 0;
     const S32 cells_y = sprites ? (S32)sCellTarget.getHeight() : 0;
     const S32 cell_top_level = sprites ? topMipLevel(sCellTarget) : 0;
@@ -858,6 +866,8 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sHighlightProgram.uniform2i(U_CELL_GRID, cells_x, cells_y);
             sHighlightProgram.uniform1i(U_CELL_TOP_LEVEL, cell_top_level);
             sHighlightProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
+            sHighlightProgram.uniform1f(U_HL_STRENGTH, hl_strength);
+            sHighlightProgram.uniform1f(U_HL_THRESHOLD, hl_threshold);
             setLensUniforms(sHighlightProgram, lens);
             draw(screen_triangle);
             if (pass == 1)

@@ -1376,3 +1376,19 @@ Without an occluder, the sprite with the visibility keeps the energy within 0.25
 - `test_sprite_layer_order`: the compositing algebra, and the parts recomposing from the stored sum and fraction.
 
 glslang links every highlight and sprite variant, Live and mode 1, at 410 core and 400.
+
+**Runtime (user, Windows, 2026-10-06):** fixed. In the on/off comparison there are no triangles over the hair or the palms, and the backdrop bokeh is flat ("visually it's very good").
+
+### Bright bokeh highlights in Live (2026-10-06, unbuilt)
+
+- **What it is.** The Aperture-sampled renderer's artistic option (`ASDepthOfFieldApertureHighlights`, with `Strength` and `Threshold`). In mode 2, an isolated bright point's light is multiplied by `1 + strength * bright * min((radius / 4)^2, 1024)`, with `bright = smoothstep(0.5 t, 1.5 t, luminance)`, so lamps keep their brightness as they blur.
+- **Live.** `highlightGain()` (`asDepthOfFieldHighlightF.glsl`, `LIVE_SPRITES`) applies the same gain, per pixel, to the light the sprites carry. It uses Live's full-resolution blur radius. Mode 2's ring test is left out: the extraction has already found the light isolated. The gather input loses only the light itself, so sharp and large bright areas are unchanged, as in mode 2. It works only with "Aperture-shaped light bokeh" on, which the tooltip now says.
+- **UI.** A new flag, `ASDepthOfFieldUIBrightHighlights` (modes 2 and 3), enables the checkbox. `ASDepthOfFieldUIHighlights` (the sliders) now covers Live too (`asdofrenderer.cpp`). The `settings.xml` comments name Live.
+- **Model.** `test_sprite_bright_highlights`:
+  - the gain equals mode 2's `viewer_highlight_gain()` for an isolated light, across strengths, thresholds, luminances and radii;
+  - the gather input is unchanged;
+  - the cells carry exactly `gain ×` the light;
+  - strength 0 is off.
+- glslang links the highlight program, Live and mode 1, at 410 core and 400. The previous full suite passed (37 tests), and the new test passes on its own.
+
+**Runtime (user, Windows, 2026-10-06):** works.

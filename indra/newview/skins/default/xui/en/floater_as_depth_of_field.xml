@@ -334,11 +334,11 @@
               left="385" top="164" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureSphericalStrength" />
       </button>
-      <check_box name="aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureHighlights"
+      <check_box name="aperture_highlights" enabled_control="ASDepthOfFieldUIBrightHighlights" control_name="ASDepthOfFieldApertureHighlights"
                  layout="topleft" left="15" top="192" width="365" height="20"
                  label="Bright bokeh highlights (artistic)"
-                 tool_tip="Real lights are far brighter than lit surfaces, so in night photos their bokeh stay bright discs. Viewer lights are not that bright. This lets small bright points (lamps, stars, glints) keep their brightness as they blur. Sharp areas and large bright areas are unchanged. Off keeps the exact physical simulation." />
-      <button name="reset_aperture_highlights" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
+                 tool_tip="Real lights are far brighter than lit surfaces, so in night photos their bokeh stay bright discs. Viewer lights are not that bright. This lets small bright points (lamps, stars, glints) keep their brightness as they blur. Sharp areas and large bright areas are unchanged. Off keeps the exact physical simulation. Live: applies to the aperture-shaped light bokeh, so that option must be on." />
+      <button name="reset_aperture_highlights" enabled_control="ASDepthOfFieldUIBrightHighlights" label="D" layout="topleft"
               left="385" top="191" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldApertureHighlights" />
       </button>

@@ -467,8 +467,12 @@ namespace
                 screen_space && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
                 (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+        // Bright bokeh highlights: Aperture-sampled, and Live on its light
+        // sprites (ASDepthOfFieldHighlightSprites).
+        const bool bright_modes = mode == APERTURE_MODE || live;
+        setFlag("ASDepthOfFieldUIBrightHighlights", bright_modes);
         setFlag("ASDepthOfFieldUIHighlights",
-                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
+                bright_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
     }
 
     // Same state setPerspective() establishes: GL stack, cached globals

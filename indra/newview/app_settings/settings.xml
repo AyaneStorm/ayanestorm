@@ -12305,19 +12305,19 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureHighlights</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Off keeps the exact simulation</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Live applies it to its light sprites (ASDepthOfFieldHighlightSprites). Off keeps the exact simulation</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureHighlightStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureHighlightThreshold</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
   </map>
@@ -12354,6 +12354,12 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUIShape</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables aperture shape controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIBrightHighlights</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 or 3 (enables the bright bokeh highlights checkbox)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>

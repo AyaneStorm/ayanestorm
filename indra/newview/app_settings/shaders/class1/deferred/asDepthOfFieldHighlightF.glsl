@@ -17,7 +17,8 @@
  * LIVE_SPRITES: the same extraction for Live DoF (asdoflive.cpp), linked with
  * asDoFLiveCommonF.glsl: the radius comes from the depth (highlightCoC()) and
  * each cell keeps the light alone in the front and the back bin of its side
- * (highlightParts()): their sum, and the front fraction in frag_data1.w.
+ * (highlightParts()): their sum, and the front fraction in frag_data1.w;
+ * the bright bokeh highlights gain applies to that energy (highlightGain()).
  * Without the define the code is mode 1's.
  */
 layout(location = 0) out vec4 frag_data0;
@@ -98,10 +99,42 @@ vec2 highlightParts(ivec2 p)
     vec2 front_back = radius < 0.0 ? vec2(1.0, visibility.x) : visibility.zw;
     return min(split * transmittance / max(front_back, vec2(0.0001)), vec2(1.0));
 }
+
+// Bright bokeh highlights (ASDepthOfFieldApertureHighlights, artistic, not
+// energy preserving): the Aperture-sampled renderer's gain
+// (asDoFAccumulateF.glsl) on the sprites' light, 1 + strength * bright *
+// min((radius / 4)^2, 1024), radius the full-resolution blur. The extraction
+// has already found the light isolated, so mode 2's ring test is left out;
+// the gather input loses only the light itself. hl_strength 0: off. Mirrored
+// by dof_live_reference.py (live_highlight_gain()).
+uniform float hl_strength;
+uniform float hl_threshold;
+
+float highlightGain(ivec2 p)
+{
+    if (hl_strength <= 0.0)
+    {
+        return 1.0;
+    }
+    float coc = highlightCoC(p);
+    float radius = coc < 0.0 ? -coc * near_max_radius : coc * max_radius;
+    if (radius <= 1.0)
+    {
+        return 1.0;
+    }
+    float luma = dot(texelFetch(diffuseRect, p, 0).rgb, vec3(0.2126, 0.7152, 0.0722));
+    float bright = smoothstep(0.5 * hl_threshold, 1.5 * hl_threshold, luma);
+    return 1.0 + hl_strength * bright * min(radius * radius / 16.0, 1024.0);
+}
 #else
 float highlightCoC(ivec2 p)
 {
     return texelFetch(noiseMap, p, 0).g;
+}
+
+float highlightGain(ivec2 p)
+{
+    return 1.0;
 }
 
 vec2 highlightParts(ivec2 p)
@@ -258,7 +291,7 @@ void main()
                     continue;
                 }
                 vec2 parts = highlightParts(p);
-                energy += excess * (parts.x + parts.y);
+                energy += excess * (parts.x + parts.y) * highlightGain(p);
                 front_sum += l * parts.x;
                 part_sum += l * (parts.x + parts.y);
                 center_sum += (vec2(p) + 0.5) * l;
