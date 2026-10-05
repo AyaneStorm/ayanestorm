@@ -1115,6 +1115,322 @@ def evaluate_polygon_tiles(midpoint_areas):
     return coverage[strip], image[strip]
 
 
+# ---------------------------------------------------------------- highlight sprites
+#
+# Phase 3: isolated defocused lights leave the gather input and are drawn as
+# aperture sprites (asDepthOfFieldHighlightF.glsl and asDepthOfFieldSpriteV/F
+# .glsl under LIVE_SPRITES). A source smaller than the tap spacing is seen only
+# through the taps whose mip footprint covers it, so its bokeh carries a ring
+# pattern (about 25% relative variation inside a triangle at any ring count).
+
+SPRITE_CA_STRATA = (-0.75, -0.25, 0.25, 0.75)
+SPRITE_CA_WEIGHTS = np.array([[0.0625, 0.1875, 0.3125, 0.4375],
+                              [0.1590909, 0.3409091, 0.3409091, 0.1590909],
+                              [0.4375, 0.3125, 0.1875, 0.0625]])
+# Antialiasing grids of asDepthOfFieldSpriteF.glsl (target-pixel units).
+SPRITE_GRID4 = ((0.125, 0.375), (-0.375, 0.125), (-0.125, -0.375), (0.375, -0.125))
+SPRITE_GRID16 = tuple(((i + 0.5) / 4 - 0.5 + ((j % 2) - 0.5) * 0.125,
+                       (j + 0.5) / 4 - 0.5 + ((i % 2) - 0.5) * 0.125)
+                      for j in range(4) for i in range(4))
+SPRITE_GRID64 = tuple(((i + 0.5) / 8 - 0.5, (j + 0.5) / 8 - 0.5) for j in range(8) for i in range(8))
+
+
+def sprite_boundary(phi, blades, roundness):
+    """boundary() of asDepthOfFieldSpriteF.glsl: edge radius and the radial
+    to perpendicular gap scale."""
+    if blades < 3:
+        return np.ones_like(phi), np.ones_like(phi)
+    sector = 2 * math.pi / blades
+    local = np.mod(phi, sector) - 0.5 * sector
+    polygon = math.cos(0.5 * sector) / np.maximum(np.cos(local), 0.001)
+    return (polygon * (1 - roundness) + roundness,
+            np.cos(local) * (1 - roundness) + roundness)
+
+
+def sprite_edge(qx, qy, radius, plane, shape, barrel):
+    """liveEdge() (LIVE_SPRITES): signed distance inside the aperture of this
+    radius, barrel included (the nearer edge wins), full-resolution pixels,
+    and the pupil position over the edge radius. No astigmatism in Live."""
+    blades, roundness, rotation, anamorphic = shape
+    sign = 1.0 if plane > 0 else -1.0
+    ux, uy = qx * sign / radius, qy * sign / radius
+    vx, vy = ux / anamorphic, uy
+    r = np.hypot(vx, vy)
+    b, edge_scale = sprite_boundary(np.arctan2(vy, vx) - rotation, blades, roundness)
+    edge = (b - r) * edge_scale * radius
+    if barrel is not None:
+        edge = np.minimum(edge, (1.0 - np.hypot(ux - barrel[0], uy - barrel[1])) * radius)
+    return edge, r / np.maximum(b, 1e-4)
+
+
+def sprite_profile(rho, c):
+    """sphericalWeight() at relative pupil radius rho, c = a sigma, cut at
+    zero and divided by its mean (spherical_norm())."""
+    if c == 0.0:
+        return np.ones_like(rho)
+    return np.maximum(1.0 - c * (2.0 * np.clip(rho * rho, 0.0, 1.0) - 1.0), 0.0) / \
+        float(spherical_norm(c))
+
+
+def sprite_profile_moment(c, lo, hi):
+    """Integral of the cut profile times rho over [lo, hi]."""
+    if c > 1.0:
+        hi = min(hi, math.sqrt((1.0 + c) / (2.0 * c)))
+    elif c < -1.0:
+        lo = max(lo, math.sqrt((1.0 + c) / (2.0 * c)))
+    if hi <= lo:
+        return 0.0
+    g = lambda x: 0.5 * (1.0 + c) * x * x - 0.5 * c * x ** 4
+    return (g(hi) - g(lo)) / float(spherical_norm(c))
+
+
+def sprite_open_fraction(shape, barrel, c, angles=64):
+    """liveOpenFraction() (asDepthOfFieldSpriteV.glsl, LIVE_SPRITES): the
+    share of the profiled aperture inside the barrel, a polar integral over
+    the aperture angle with the exact ray and circle intersection. Mode 1
+    divides by the circle's vesica fraction, which is off by up to 58% for a
+    clipped triangle and ignores the spherical profile's cut."""
+    if barrel is None:
+        return 1.0
+    blades, roundness, rotation, anamorphic = shape
+    inside = full = 0.0
+    for i in range(angles):
+        phi = 2.0 * math.pi * (i + 0.5) / angles
+        b = float(sprite_boundary(np.array(phi), blades, roundness)[0])
+        dx, dy = anamorphic * math.cos(phi + rotation), math.sin(phi + rotation)
+        qa = dx * dx + dy * dy
+        qb = -2.0 * (dx * barrel[0] + dy * barrel[1])
+        qc = barrel[0] ** 2 + barrel[1] ** 2 - 1.0
+        disc = qb * qb - 4.0 * qa * qc
+        if disc > 0.0:
+            root = math.sqrt(disc)
+            lo = max((-qb - root) / (2.0 * qa), 0.0)
+            hi = min((-qb + root) / (2.0 * qa), b)
+            inside += b * b * sprite_profile_moment(c, lo / b, hi / b)
+        full += b * b * sprite_profile_moment(c, 0.0, 1.0)
+    return inside / full
+
+
+def live_sprite(gx, gy, cx, cy, radius, plane, shape, energy, barrel=None, delta=0.0,
+                sa_strength=0.0, scale=2.0):
+    """Mirror of the Live sprite (asDepthOfFieldSpriteV/F.glsl, LIVE_SPRITES)
+    at target pixels (gx, gy) (indices), centre (cx, cy) in full-resolution
+    pixels: per-channel radiance per full-resolution pixel. Every axial CA
+    stratum is an exact scaled aperture with its own antialiasing grid and
+    keeps its energy; the open fraction is exact (sprite_open_fraction())."""
+    radius = max(radius, 1.0)
+    unit_area = viewer_unit_area(shape[0], shape[1], shape[3])
+    sign = 1.0 if plane > 0 else -1.0
+    c = sa_strength * sign * min(radius / 3.0, 1.0)
+    fraction = max(sprite_open_fraction(shape, barrel, c), 0.01)
+    strata = ([(0.0, np.ones(3))] if delta <= 0.01 else
+              [(SPRITE_CA_STRATA[k], SPRITE_CA_WEIGHTS[:, k]) for k in range(4)])
+    px, py = (gx + 0.5) * scale, (gy + 0.5) * scale
+    out = np.zeros(np.shape(gx) + (3,))
+    for offset, channels in strata:
+        r_k = max(radius - sign * delta * offset, 1.0)
+        # Sub-pixel features (a 3 px triangle, a thin spherical ring) need
+        # the finer grids: 16 samples left up to 23% energy error there.
+        if r_k < 3.0 * scale:
+            grid, aa = SPRITE_GRID64, 0.125 * scale
+        elif r_k < 6.0 * scale:
+            grid, aa = SPRITE_GRID16, 0.25 * scale
+        elif r_k < 12.0 * scale:
+            grid, aa = SPRITE_GRID4, 0.5 * scale
+        else:
+            grid, aa = ((0.0, 0.0),), scale
+        cover = 0.0
+        for ox, oy in grid:
+            edge, rho = sprite_edge(px + ox * scale - cx, py + oy * scale - cy, r_k, plane,
+                                    shape, barrel)
+            cover = cover + np.clip(edge / aa + 0.5, 0.0, 1.0) * sprite_profile(rho, c)
+        cover = cover / len(grid)
+        out += (cover / (unit_area * r_k * r_k * fraction))[..., None] * channels
+    return np.asarray(energy, dtype=float) * out
+
+
+def ideal_bokeh(gx, gy, cx, cy, radius, plane, shape, energy, barrel=None, delta=0.0,
+                sa_strength=0.0, scale=2.0, supersample=8):
+    """Truth: a point light's bokeh averaged over each target pixel, per
+    stratum the clipped aperture with the spherical profile, normalized to
+    keep the energy (compensated, as the gathers)."""
+    blades, roundness, rotation, anamorphic = shape
+    sign = 1.0 if plane > 0 else -1.0
+    c = sa_strength * sign * min(max(radius, 1.0) / 3.0, 1.0)
+    offsets = (np.arange(supersample) + 0.5) / supersample
+    strata = ([(0.0, np.ones(3))] if delta <= 0.01 else
+              [(SPRITE_CA_STRATA[k], SPRITE_CA_WEIGHTS[:, k]) for k in range(4)])
+    out = np.zeros(np.shape(gx) + (3,))
+    for offset, channels in strata:
+        r_k = max(radius - sign * delta * offset, 1.0)
+        acc = np.zeros(np.shape(gx))
+        for oy in offsets:
+            for ox in offsets:
+                ux = ((gx + ox) * scale - cx) * sign / r_k
+                uy = ((gy + oy) * scale - cy) * sign / r_k
+                r = np.hypot(ux / anamorphic, uy)
+                b, _ = sprite_boundary(np.arctan2(uy, ux / anamorphic) - rotation, blades,
+                                       roundness)
+                weight = (r <= b) * sprite_profile(r / b, c)
+                if barrel is not None:
+                    weight = weight * (np.hypot(ux - barrel[0], uy - barrel[1]) <= 1.0)
+                acc += weight
+        total = acc.sum() * scale * scale
+        out += (acc / max(total, 1e-12))[..., None] * channels
+    return np.asarray(energy, dtype=float) * out
+
+
+def extract_highlights(image, radius, isolation=2.0, budget=4096):
+    """asDepthOfFieldHighlightF.glsl at full resolution: the gather input
+    (image minus the excess of kept cells) and the kept cells' sprites
+    (energy, centroid x, y, signed radius)."""
+    from dof_reference import viewer_highlight_detect, viewer_highlight_keep_cells
+    h, w = radius.shape
+    magnitude = np.abs(radius)
+    excess = np.zeros_like(image)
+    for y in range(h):
+        for x in range(w):
+            if magnitude[y, x] > 2.0:
+                excess[y, x] = viewer_highlight_detect(image, magnitude, x, y, isolation)
+    lum = excess @ np.array([0.2126, 0.7152, 0.0722])
+    cells = {}
+    for cy in range(0, h, 8):
+        for cx in range(0, w, 8):
+            l = lum[cy:cy + 8, cx:cx + 8]
+            if l.sum() <= 0.0001:
+                continue
+            yy, xx = np.mgrid[cy:cy + l.shape[0], cx:cx + l.shape[1]]
+            cells[(cx // 8, cy // 8)] = (
+                excess[cy:cy + 8, cx:cx + 8].sum(axis=(0, 1)),
+                float(((xx + 0.5) * l).sum() / l.sum()), float(((yy + 0.5) * l).sum() / l.sum()),
+                float((radius[cy:cy + 8, cx:cx + 8] * l).sum() / l.sum()))
+    kept = viewer_highlight_keep_cells(
+        {cell: float(v[0] @ np.array([0.2126, 0.7152, 0.0722])) for cell, v in cells.items()},
+        budget)
+    gather_input = image.copy()
+    for (cx, cy) in kept:
+        gather_input[cy * 8:cy * 8 + 8, cx * 8:cx * 8 + 8] -= excess[cy * 8:cy * 8 + 8,
+                                                                     cx * 8:cx * 8 + 8]
+    return gather_input, [cells[cell] for cell in kept], excess
+
+
+def sprite_layer_parts(front_share, back_share, transmittance, v_front, v_back):
+    """highlightParts() (LIVE_SPRITES): the light alone in the front and the
+    back bin of its side (B1 and B2 behind the focus, N2 and N1 in front),
+    a_b = share_b T / V_b. The front part is drawn over its layer pair, the
+    back part into the back layer, under what the front holds there."""
+    a_front = min(front_share * transmittance / max(v_front, 1e-4), 1.0)
+    a_back = min(back_share * transmittance / max(v_back, 1e-4), 1.0)
+    return a_front, a_back
+
+
+def sprite_far_visibility(gx, gy, cx, cy, radius, shape, kernel, scale=2.0):
+    """The far (B2) sprite at each target pixel only where that pixel's own
+    B2 kernel (completed M / W, gather pixels) reaches the light, as the far
+    gather sees it: a nearer, sharper B2 surface (palm leaves over a lit
+    backdrop) hides the spread of a farther light. Full up to half a pixel
+    past the kernel (the sprite's antialiased rim), then over one pixel."""
+    qx = (gx + 0.5) * scale - cx
+    qy = (gy + 0.5) * scale - cy
+    b, _ = sprite_boundary(np.arctan2(qy, qx / shape[3]) - shape[2], shape[0], shape[1])
+    distance = np.hypot(qx / shape[3], qy) / b / scale
+    return np.clip(kernel - distance + 1.5, 0.0, 1.0)
+
+
+def sprite_layer_scale(front_share, back_share, transmittance, v_front, v_back):
+    """highlightScale() (LIVE_SPRITES): the opaque light's energy in the
+    layer the sprite is drawn into, the background (B1 over B2) or the veil
+    (N2 over N1). Each bin is read alone (S / V), so the surface's share b
+    shows a_b = share_b T / V_b of its light, and the pair is composited
+    over: a_front + (1 - a_front) a_back. The composite then attenuates the
+    layer by whatever it lays over it."""
+    a_front = min(front_share * transmittance / max(v_front, 1e-4), 1.0)
+    a_back = min(back_share * transmittance / max(v_back, 1e-4), 1.0)
+    return a_front + (1.0 - a_front) * a_back
+
+
+def evaluate_sprite_light(rings, shape, sprites=True, size=128, radius_full=20.0):
+    """A small bright light over a dim textured far background (one radius),
+    through the Live far gather with and without sprites, at gather
+    resolution. Returns (light contribution, ideal light bokeh, mask of the
+    ideal interior, light energy)."""
+    rng = np.random.default_rng(3)
+    yy, xx = np.mgrid[0:size, 0:size].astype(float)
+    background = 0.04 + 0.01 * np.sin(xx / 5.0)[..., None] * np.array([1.0, 0.8, 0.6]) + \
+        0.004 * rng.random((size, size, 3))
+    image = background.copy()
+    c = size // 2
+    image[c - 1:c + 1, c - 1:c + 1] += 30.0
+    radius = np.full((size, size), radius_full)
+
+    def far(full):
+        half = 0.25 * (full[0::2, 0::2] + full[1::2, 0::2] + full[0::2, 1::2] + full[1::2, 1::2])
+        g = size // 2
+        mips = build_mips(make_layer(half, np.ones((g, g)), np.full((g, g), radius_full / 2)))
+        gy, gx = np.mgrid[0:g, 0:g].astype(float)
+        pre, cov, _ = gather(mips, gx + 0.5, gy + 0.5, np.full((g, g), radius_full / 2), rings,
+                             near=False, shape=shape)
+        return pre / np.maximum(cov, 1e-12)[..., None]
+
+    g = size // 2
+    gy, gx = np.mgrid[0:g, 0:g].astype(float)
+    reference = far(background)
+    energy = (image - background).sum(axis=(0, 1))
+    truth = ideal_bokeh(gx, gy, float(c), float(c), radius_full, 1, shape, energy)
+    if sprites:
+        gather_input, kept, _ = extract_highlights(image, radius)
+        light = far(gather_input) - reference
+        for cell_energy, sx, sy, r in kept:
+            # (DST_ALPHA, ONE) into the background, normalized by the
+            # composite: exactly the sprite (test_sprite_dst_alpha_blend).
+            light = light + live_sprite(gx, gy, sx, sy, abs(r), 1, shape, cell_energy)
+    else:
+        light = far(image) - reference
+    interior = ideal_bokeh(gx, gy, float(c), float(c), 0.8 * radius_full, 1, shape,
+                           np.ones(3))[..., 1] > 0.99 * ideal_bokeh(
+        gx, gy, float(c), float(c), 0.8 * radius_full, 1, shape, np.ones(3))[..., 1].max()
+    return light, truth, interior, energy
+
+
+def evaluate_sprite_occluder(shape, occluder=True, size=128):
+    """A light on a far backdrop (radius 20 full px) beside a nearer,
+    sharper far surface (radius 8, also B2), through the far gather: the
+    light's contribution over and outside the surface, for the gather alone,
+    the sprite without and with the B2 visibility."""
+    yy, xx = np.mgrid[0:size, 0:size].astype(float)
+    background = np.full((size, size, 3), 0.04)
+    background[..., 1] += 0.01 * np.sin(xx / 5.0)
+    radius = np.full((size, size), 20.0)
+    surface = (xx >= 72) & (xx < 100) if occluder else np.zeros((size, size), dtype=bool)
+    background[surface] = (0.02, 0.05, 0.02)
+    radius[surface] = 8.0
+    image = background.copy()
+    image[63:65, 63:65] += 30.0
+    g = size // 2
+    gy, gx = np.mgrid[0:g, 0:g].astype(float)
+
+    def far(full):
+        half = 0.25 * (full[0::2, 0::2] + full[1::2, 0::2] + full[0::2, 1::2] + full[1::2, 1::2])
+        mips = build_mips(make_layer(half, np.ones((g, g)), radius[0::2, 0::2] / 2.0))
+        kernel = far_kernel(mips, gx + 0.5, gy + 0.5)
+        pre, cov, _ = gather(mips, gx + 0.5, gy + 0.5, kernel, 7, near=False, shape=shape)
+        return pre / np.maximum(cov, 1e-12)[..., None], kernel
+
+    reference, kernel = far(background)
+    gathered = far(image)[0] - reference
+    gather_input, kept, _ = extract_highlights(image, radius)
+    naive = far(gather_input)[0] - reference
+    visible = naive.copy()
+    for energy, sx, sy, r in kept:
+        sprite = live_sprite(gx, gy, sx, sy, abs(r), 1, shape, energy)
+        naive += sprite
+        visible += sprite * sprite_far_visibility(gx, gy, sx, sy, abs(r), shape,
+                                                  kernel)[..., None]
+    over = surface[0::2, 0::2]
+    return {name: (float(v[over].sum()), float(v[~over].sum()))
+            for name, v in (("gather", gathered), ("naive", naive), ("visible", visible))}
+
+
 class LiveDoFTests(unittest.TestCase):
     def test_polygon_taps_partition_annuli(self):
         # Every ring must integrate its own annulus exactly, not merely
@@ -1512,6 +1828,179 @@ class LiveDoFTests(unittest.TestCase):
             for i in range(n):
                 S[bins[i]] += c[i] * w[i]
             np.testing.assert_allclose(S.sum(axis=0) + T * opaque, ref, atol=1e-12)
+
+    def test_sprite_light_is_flat(self):
+        # Phase 3: a small light through the far gather leaves a ring pattern
+        # inside its bokeh (6-22% relative std here); with its excess drawn
+        # as a sprite the inside is flat and the energy is kept. The rms
+        # against the point-light truth falls 2.5-8x; what remains is the
+        # 2x2 px light's own edge softness, which the truth leaves out.
+        for shape in ((3, 0.0, 0.0, 1.0), (6, 0.0, 0.0, 1.0), (0, 1.0, 0.0, 1.0),
+                      (5, 0.5, 0.3, 1.0), (6, 0.0, 0.0, 1.33)):
+            for rings in QUALITY_RINGS:
+                light, truth, interior, energy = evaluate_sprite_light(rings, shape, True)
+                base, _, _, _ = evaluate_sprite_light(rings, shape, False)
+                g = light[..., 1]
+                self.assertLess(g[interior].std() / g[interior].mean(), 0.01, (shape, rings))
+                np.testing.assert_allclose(light.sum(axis=(0, 1)) * 4 / energy, 1.0, atol=0.01)
+                rms = np.sqrt(((light - truth) ** 2).mean())
+                rms_base = np.sqrt(((base - truth) ** 2).mean())
+                self.assertLess(rms * 2.0, rms_base, (shape, rings))
+
+    def test_sprite_matches_ideal_bokeh(self):
+        # Every lens effect Live has, on the sprite alone: the energy is kept
+        # within 3% (open fraction >= 0.25, radius >= 8 full px), 6% for the
+        # smallest sprites (radius 3-5; none below 2, where the extraction
+        # gate smoothstep(2, 4) is 0; worst: a 3 px triangle with strong CA,
+        # whose smallest stratum is clamped to 1 px) and 12% for slivers the
+        # barrel clips below a quarter of the aperture (radius 8 up). Mode
+        # 1's vesica normalization was off by up to 58% for a clipped
+        # triangle, and its shared barrel edge by up to 2.7x with strong CA.
+        n = 64
+        gy, gx = np.mgrid[0:n, 0:n].astype(float)
+        energy = np.array([100.0, 100.0, 100.0])
+        lenses = ({}, dict(barrel=(0.56, 0.56)), dict(barrel=(1.0, 0.99)), dict(delta=4.0),
+                  dict(sa_strength=1.0), dict(sa_strength=-3.0), dict(sa_strength=5.0),
+                  dict(barrel=(0.6, 0.5), delta=4.0, sa_strength=1.0),
+                  dict(barrel=(-1.1, 0.4), delta=2.0, sa_strength=-3.0))
+        for shape in ((3, 0.0, 0.0, 1.0), (6, 0.0, 0.0, 1.0), (0, 1.0, 0.0, 1.0),
+                      (5, 0.5, 0.3, 1.0), (6, 0.0, 0.0, 1.33), (4, 0.2, 1.0, 0.7)):
+            for lens in lenses:
+                fraction = sprite_open_fraction(shape, lens.get("barrel"), 0.0)
+                for plane in (1, -1):
+                    for radius in (24.0, 8.0, 5.0, 3.0):
+                        if fraction < 0.25 and radius < 8.0:
+                            # The open part is under a few gather pixels
+                            # (0.6 px at radius 3): no raster holds it.
+                            continue
+                        for offset in (0.3, 0.77):
+                            sprite = live_sprite(gx, gy, n + offset, n + offset, radius, plane,
+                                                 shape, energy, **lens)
+                            error = np.abs(sprite.sum(axis=(0, 1)) * 4 / energy - 1.0).max()
+                            limit = 0.12 if fraction < 0.25 else (0.03 if radius >= 8 else 0.06)
+                            self.assertLess(error, limit, (shape, lens, plane, radius, offset))
+        # The open fraction against a brute-force area, triangle at 1.4.
+        grid = np.linspace(-1.2, 1.2, 1201)
+        x, y = np.meshgrid(grid, grid)
+        b, _ = sprite_boundary(np.arctan2(y, x), 3, 0.0)
+        aperture = np.hypot(x, y) <= b
+        brute = (aperture & (np.hypot(x - 1.0, y - 0.99) <= 1.0)).sum() / aperture.sum()
+        self.assertAlmostEqual(sprite_open_fraction((3, 0.0, 0.0, 1.0), (1.0, 0.99), 0.0),
+                               brute, delta=0.005)
+        # Shape: a large sprite against the truth, rms within 3% of its peak.
+        for shape in ((3, 0.0, 0.0, 1.0), (6, 0.0, 0.0, 1.33)):
+            for lens in ({}, dict(barrel=(0.6, 0.5), delta=4.0, sa_strength=1.0)):
+                sprite = live_sprite(gx, gy, n + 0.3, n + 0.3, 24.0, 1, shape, energy, **lens)
+                truth = ideal_bokeh(gx, gy, n + 0.3, n + 0.3, 24.0, 1, shape, energy, **lens)
+                self.assertLess(np.sqrt(((sprite - truth) ** 2).mean()) / truth.max(), 0.03)
+
+    def test_sprite_energy_partition(self):
+        # What the gather input loses is exactly what the kept cells carry:
+        # every light keeps its energy, whatever the budget drops.
+        rng = np.random.default_rng(11)
+        size = 64
+        image = 0.05 + 0.02 * rng.random((size, size, 3))
+        for _ in range(12):
+            y, x = rng.integers(4, size - 4, 2)
+            image[y, x] += rng.uniform(2.0, 40.0)
+        radius = np.where(np.arange(size)[None, :] < size // 2, 16.0, -9.0) * np.ones((size, 1))
+        counts = []
+        for budget in (4096, 3):
+            gather_input, kept, excess = extract_highlights(image, radius, budget=budget)
+            moved = sum((k[0] for k in kept), np.zeros(3))
+            np.testing.assert_allclose(image.sum(axis=(0, 1)) - gather_input.sum(axis=(0, 1)),
+                                       moved, rtol=1e-12)
+            counts.append(len(kept))
+        # The budget drops cells; their light stays in the gather input.
+        self.assertGreater(counts[0], counts[1])
+
+    def test_sprite_dst_alpha_blend(self):
+        # Far sprites are blended (DST_ALPHA, ONE) into the premultiplied
+        # background, whose alpha stays: the composite's normalization then
+        # returns background + sprite exactly, at any coverage. Where the
+        # background holds nothing (alpha 0: F covers the pixel) the light
+        # adds nothing; it is hidden behind the focus.
+        rng = np.random.default_rng(2)
+        alpha = rng.uniform(0.05, 1.0, 100)
+        color = rng.random((100, 3))
+        sprite = rng.random((100, 3)) * 5.0
+        stored = color * alpha[:, None] + sprite * alpha[:, None]
+        np.testing.assert_allclose(stored / alpha[:, None], color + sprite, rtol=1e-12)
+        # Alpha 0: the blend adds sprite * 0.
+        np.testing.assert_array_equal(np.zeros(3) + sprite[0] * 0.0, np.zeros(3))
+
+    def test_sprite_layer_scale(self):
+        # Behind a strand in a nearer bin (V = T), the layer read alone holds
+        # the full light and the veil attenuates it once in the composite:
+        # scale 1. Behind glass in its own bin (V = 1): T. A surface split
+        # 0.4 / 0.6 between B1 and B2 (V_B2 = 1 - 0.4 T): its layers
+        # composite back to the whole light, with or without the strand.
+        self.assertAlmostEqual(sprite_layer_scale(0.0, 1.0, 0.3, 1.0, 0.3), 1.0)
+        self.assertAlmostEqual(sprite_layer_scale(0.0, 1.0, 0.3, 1.0, 1.0), 0.3)
+        self.assertAlmostEqual(sprite_layer_scale(0.0, 1.0, 1.0, 1.0, 1.0), 1.0)
+        for t in (1.0, 0.3):
+            self.assertAlmostEqual(sprite_layer_scale(0.4, 0.6, t, t, t - 0.4 * t), 1.0)
+        # Summing the shares instead would give 1.4 there.
+        self.assertGreater(0.4 * 1.0 / 1.0 + 0.6 * 1.0 / 0.6, 1.3)
+
+    def test_sprite_far_occlusion(self):
+        # Palm leaves over a lit backdrop, both B2: the sprite without the
+        # B2 visibility showed the light over the nearer leaves (14-23 of 90
+        # units here), the gather alone almost nothing (0.1-0.3). With the
+        # visibility at least 90% of that leak goes; without an occluder it
+        # keeps the energy within 0.5%.
+        for shape in ((3, 0.0, 0.0, 1.0), (6, 0.0, 0.0, 1.0), (0, 1.0, 0.0, 1.0)):
+            result = evaluate_sprite_occluder(shape)
+            self.assertLess(result["visible"][0], 0.1 * result["naive"][0], shape)
+            self.assertAlmostEqual(result["visible"][1], result["naive"][1],
+                                   delta=0.01 * result["naive"][1])
+            clear = evaluate_sprite_occluder(shape, occluder=False)
+            self.assertAlmostEqual(sum(clear["visible"]), sum(clear["naive"]),
+                                   delta=0.005 * sum(clear["naive"]))
+
+    def test_sprite_layer_order(self):
+        # Far: the back part (B2) is drawn into B2 before B1 is laid over
+        # it, so a B1 strand covers it like gathered light; the front part
+        # (B1) is drawn over the pair. Near: the back part (N1) is weighted
+        # by 1 - N2 coverage, the front part (N2) is added on top. Drawn
+        # over the combined background instead, a B2 light showed over
+        # the hair strands just behind the focus.
+        rng = np.random.default_rng(4)
+        strand = rng.uniform(0.0, 1.0, 50)           # B1 (or N2) coverage
+        b1 = rng.random((50, 3)) * strand[:, None]   # premultiplied
+        b2_alpha = rng.uniform(0.2, 1.0, 50)
+        b2 = rng.random((50, 3)) * b2_alpha[:, None]
+        light_back = rng.random((50, 3)) * 4.0
+        light_front = rng.random((50, 3)) * 4.0
+        # (DST_ALPHA, ONE) into B2, then the B1 pass: B1 + B2 / a2 (1 - a1).
+        b2_lit = b2 + light_back * b2_alpha[:, None]
+        background = b1 + b2_lit / b2_alpha[:, None] * (1.0 - strand[:, None])
+        background += light_front                    # (DST_ALPHA, ONE), alpha 1
+        expected = (b1 + light_front +
+                    (b2 / b2_alpha[:, None] + light_back) * (1.0 - strand[:, None]))
+        np.testing.assert_allclose(background, expected, rtol=1e-12)
+        # The parts recompose the light of its layer pair.
+        a_front, a_back = sprite_layer_parts(0.4, 0.6, 0.5, 0.5, 0.5 - 0.4 * 0.5)
+        self.assertAlmostEqual(a_front + (1.0 - a_front) * a_back,
+                               sprite_layer_scale(0.4, 0.6, 0.5, 0.5, 0.5 - 0.4 * 0.5))
+        # The cell keeps their sum and the front fraction; both come back.
+        total = a_front + a_back
+        fraction = a_front / total
+        self.assertAlmostEqual(total * fraction, a_front)
+        self.assertAlmostEqual(total * (1.0 - fraction), a_back)
+
+    def test_highlight_extraction_scope(self):
+        # Only small isolated lights move: a bright area wider than the ring
+        # and an in-focus light (blur under 2 px) stay in the gather.
+        size = 64
+        image = np.full((size, size, 3), 0.05)
+        image[20:44, 20:44] = 8.0
+        image[5, 5] = 30.0
+        radius = np.full((size, size), 16.0)
+        radius[0:12, 0:12] = 1.5
+        _, kept, excess = extract_highlights(image, radius)
+        self.assertEqual(len(kept), 0)
+        self.assertEqual(float(excess.sum()), 0.0)
 
     def test_tap_table_matches_taps(self):
         # Phase 5, step 3: the gather reads its tap geometry from a per-frame

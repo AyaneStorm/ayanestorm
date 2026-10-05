@@ -451,29 +451,29 @@
               left="385" top="148" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightBoost" />
       </button>
-      <check_box name="highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightSprites"
+      <check_box name="highlight_sprites" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldHighlightSprites"
                  layout="topleft" left="15" top="178" width="365" height="20"
                  label="Aperture-shaped light bokeh"
                  tool_tip="Draws small isolated out-of-focus lights as filled aperture shapes with the same total light, instead of a dotted blur." />
-      <button name="reset_highlight_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+      <button name="reset_highlight_sprites" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="176" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightSprites" />
       </button>
-      <slider name="highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightIsolation"
+      <slider name="highlight_isolation" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldHighlightIsolation"
               layout="topleft" left="15" top="206" width="365" height="18"
               label="Light isolation" label_width="130" min_val="1.2" max_val="8"
               increment="0.1" decimal_digits="1" can_edit_text="true"
               tool_tip="How much brighter than its surroundings a light must be to get an aperture shape. Lower picks more lights." />
-      <button name="reset_highlight_isolation" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+      <button name="reset_highlight_isolation" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="204" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightIsolation" />
       </button>
-      <slider name="highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldHighlightMaxSprites"
+      <slider name="highlight_max_sprites" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldHighlightMaxSprites"
               layout="topleft" left="15" top="234" width="365" height="18"
               label="Maximum light shapes" label_width="130" min_val="256" max_val="32768"
               increment="256" decimal_digits="0" can_edit_text="true"
               tool_tip="Performance limit. Lights beyond it keep the ordinary blur." />
-      <button name="reset_highlight_max_sprites" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
+      <button name="reset_highlight_max_sprites" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="232" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightMaxSprites" />
       </button>

@@ -14,6 +14,12 @@
  *                 B2 (own kernel, hole fill); N1 is written over N2, B1 over
  *                 B2;
  *   5. composite  full resolution, N2 over N1 over F over B1 over B2.
+ * Highlight sprites (ASDepthOfFieldHighlightSprites): before the reduce,
+ * isolated defocused lights leave the bin colour (mode 1's extraction,
+ * asDepthOfFieldHighlightF.glsl under LIVE_SPRITES); after the gathers they
+ * are drawn as aperture sprites into the background and the veil
+ * (asDepthOfFieldSpriteV/F.glsl). A light smaller than the tap spacing kept
+ * a ring pattern in the gather.
  * Bins come from two sources:
  *   - transparency bins: Mac OIT's COLOR pass adds every transparent
  *     fragment, with its exact weight, to the bins of its own depth
@@ -49,6 +55,9 @@ namespace
     LLGLSLShader sTileProgram;
     LLGLSLShader sGatherProgram;
     LLGLSLShader sCompositeProgram;
+    // Highlight sprites (optional: Live runs without them).
+    LLGLSLShader sHighlightProgram;
+    LLGLSLShader sSpriteProgram;
 
     // Bin sums at gather resolution, mipmapped (asDoFLiveReduceF.glsl):
     // A = N2, N1, radius moments; B = F, B1, B2, visibility. Written in one
@@ -77,6 +86,11 @@ namespace
     // Opaque scene before the post-water alpha pool, for the bins path.
     LLRenderTarget sOpaqueColor;
     LLRenderTarget sOpaqueDepth;
+    // Highlight cells (asDepthOfFieldHighlightF.glsl): energy + occupancy,
+    // centroid + signed CoC, brightness levels 0-3 and 4-7; mipmapped for
+    // the sprite budget. The bin colour with the kept lights removed.
+    LLRenderTarget sCellTarget;
+    LLRenderTarget sHighlightInput;
     bool sOpaqueReady = false;
 
     // Lens of the last Live frame per image height (resolution independent),
@@ -110,6 +124,9 @@ namespace
     // Gather linked with the tap table; false: the per-tap fallback.
     bool sGatherTable = false;
     constexpr F64 PI_D = 3.14159265358979323846;
+    // Full-resolution pixels per highlight cell side (CELL_SIZE in
+    // asDepthOfFieldHighlightF.glsl).
+    const U32 HIGHLIGHT_CELL_SIZE = 8;
     // Dilation loop bound of asDoFLiveTileF.glsl.
     const S32 MAX_TILE_REACH = 64;
 
@@ -147,6 +164,15 @@ namespace
     const LLStaticHashedString U_BINS_SOURCE("bins_source");
     const LLStaticHashedString U_GATHER_SCALE("gather_scale");
     const LLStaticHashedString U_LIVE_TAPS("live_taps");
+    const LLStaticHashedString U_MAX_RADIUS("max_radius");
+    const LLStaticHashedString U_NEAR_MAX_RADIUS("near_max_radius");
+    const LLStaticHashedString U_ISOLATION("isolation");
+    const LLStaticHashedString U_HIGHLIGHT_PASS("highlight_pass");
+    const LLStaticHashedString U_CELL_GRID("cell_grid");
+    const LLStaticHashedString U_CELL_TOP_LEVEL("cell_top_level");
+    const LLStaticHashedString U_SPRITE_BUDGET("sprite_budget");
+    const LLStaticHashedString U_PLANE("plane");
+    const LLStaticHashedString U_LIVE_PART("live_part");
 
     // This frame's lens values, uploaded to every program that links the
     // common library.
@@ -320,6 +346,12 @@ namespace
         sHeight = 0;
     }
 
+    void releaseSpriteTargets()
+    {
+        sCellTarget.release();
+        sHighlightInput.release();
+    }
+
     bool allocateMipmapped(LLRenderTarget& target, U32 width, U32 height, U32 attachments)
     {
         if (!target.allocate(width, height, GL_RGBA16F, false,
@@ -351,6 +383,26 @@ namespace
         unit->activate();
         glGenerateMipmap(GL_TEXTURE_2D);
         unit->unbind(LLTexUnit::TT_TEXTURE);
+    }
+
+    bool ensureSpriteTargets(U32 width, U32 height)
+    {
+        const U32 cells_x = (width + HIGHLIGHT_CELL_SIZE - 1) / HIGHLIGHT_CELL_SIZE;
+        const U32 cells_y = (height + HIGHLIGHT_CELL_SIZE - 1) / HIGHLIGHT_CELL_SIZE;
+        if (sCellTarget.isComplete() && sCellTarget.getWidth() == cells_x &&
+            sCellTarget.getHeight() == cells_y && sHighlightInput.isComplete() &&
+            sHighlightInput.getWidth() == width && sHighlightInput.getHeight() == height)
+        {
+            return true;
+        }
+        releaseSpriteTargets();
+        if (!allocateMipmapped(sCellTarget, cells_x, cells_y, 4) ||
+            !sHighlightInput.allocate(width, height, GL_RGBA16F))
+        {
+            releaseSpriteTargets();
+            return false;
+        }
+        return true;
     }
 
     // Completed textures in output order (asDoFLiveCompleteF.glsl).
@@ -500,6 +552,8 @@ void ASDoFLive::registerShaders(std::vector<LLGLSLShader*>& shaders)
     shaders.push_back(&sTileProgram);
     shaders.push_back(&sGatherProgram);
     shaders.push_back(&sCompositeProgram);
+    shaders.push_back(&sHighlightProgram);
+    shaders.push_back(&sSpriteProgram);
 }
 
 bool ASDoFLive::createShaders(S32 shader_level)
@@ -530,6 +584,26 @@ bool ASDoFLive::createShaders(S32 shader_level)
     {
         LL_WARNS("ASDoFLive") << "Live DoF shaders failed to load; Live DoF is unavailable." << LL_ENDL;
     }
+    // Highlight sprites, mode 1's shaders with LIVE_SPRITES. Optional: Live
+    // keeps every light in the gather without them.
+    bool sprites = createProgram(sHighlightProgram, "AyaneStorm Live DoF Highlight Shader",
+                                 "deferred/asDepthOfFieldHighlightF.glsl", true, shader_level,
+                                 "LIVE_SPRITES");
+    // Attribute-free instanced aperture sprites (asDepthOfFieldSpriteV.glsl).
+    sSpriteProgram.mName = "AyaneStorm Live DoF Highlight Sprite Shader";
+    sSpriteProgram.mShaderFiles.clear();
+    sSpriteProgram.clearPermutations();
+    sSpriteProgram.addPermutation("LIVE_SPRITES", "1");
+    sSpriteProgram.mFeatures.attachNothing = true;
+    sSpriteProgram.mShaderFiles.emplace_back("deferred/asDepthOfFieldSpriteV.glsl", GL_VERTEX_SHADER);
+    sSpriteProgram.mShaderFiles.emplace_back("deferred/asDepthOfFieldSpriteF.glsl", GL_FRAGMENT_SHADER);
+    sSpriteProgram.mShaderLevel = shader_level;
+    sprites = sSpriteProgram.createShader() && sprites;
+    if (!sprites)
+    {
+        LL_WARNS("ASDoFLive") << "Live DoF highlight sprite shaders failed to load; "
+                                 "lights stay in the gather." << LL_ENDL;
+    }
     return success;
 }
 
@@ -540,6 +614,8 @@ void ASDoFLive::unloadShaders()
     sTileProgram.unload();
     sGatherProgram.unload();
     sCompositeProgram.unload();
+    sHighlightProgram.unload();
+    sSpriteProgram.unload();
     releaseResources();
 }
 
@@ -553,6 +629,10 @@ void ASDoFLive::releaseResources()
         releaseTargets();
         sOpaqueColor.release();
         sOpaqueDepth.release();
+    }
+    if (sCellTarget.isComplete() || sHighlightInput.isComplete())
+    {
+        releaseSpriteTargets();
     }
 }
 
@@ -709,6 +789,30 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
                               << (bins ? "from Mac OIT" : "unavailable; one layer") << LL_ENDL;
     }
 
+    // Highlight sprites, with mode 1's settings. Without their programs or
+    // targets every light stays in the gather, as before.
+    bool sprites = gSavedSettings.getBOOL("ASDepthOfFieldHighlightSprites") &&
+        sHighlightProgram.isComplete() && sSpriteProgram.isComplete() &&
+        (lens.mNearRadius > 0.f || lens.mFarRadius > 0.f);
+    if (sprites && !ensureSpriteTargets(width, height))
+    {
+        LL_WARNS_ONCE("ASDoFLive") << "Live DoF highlight sprite allocation failed; "
+                                      "lights stay in the gather." << LL_ENDL;
+        sprites = false;
+    }
+    if (!sprites && sCellTarget.isComplete())
+    {
+        releaseSpriteTargets();
+    }
+    const F32 isolation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightIsolation"), 1.2f, 8.f);
+    const F32 sprite_budget = (F32)llclamp(gSavedSettings.getS32("ASDepthOfFieldHighlightMaxSprites"), 256, 32768);
+    const S32 cells_x = sprites ? (S32)sCellTarget.getWidth() : 0;
+    const S32 cells_y = sprites ? (S32)sCellTarget.getHeight() : 0;
+    const S32 cell_top_level = sprites ? topMipLevel(sCellTarget) : 0;
+    // The reduce bins the bin colour without the lights the sprites redraw;
+    // the composite keeps the original for its exact in-focus share.
+    LLRenderTarget& gather_input = sprites ? sHighlightInput : bin_color;
+
     // The next capture's lens, per image height.
     sCaptureLens.mValid = lens.mMaxCoC > 0.f;
     sCaptureLens.mFocalDistance = lens.mFocalDistance;
@@ -723,6 +827,60 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);
     LLGLDisable blend(GL_BLEND);
 
+    // 0. Highlight extraction (asDepthOfFieldHighlightF.glsl, LIVE_SPRITES):
+    // cells of isolated defocused light, then the gather input without it.
+    if (sprites)
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF highlights");
+        auto highlight_pass = [&](LLRenderTarget& target, S32 pass)
+        {
+            target.bindTarget();
+            sHighlightProgram.bind();
+            sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false,
+                                          LLTexUnit::TFO_POINT);
+            sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true,
+                                          LLTexUnit::TFO_POINT);
+            bindBins(sHighlightProgram, bins);
+            if (pass == 1)
+            {
+                sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sCellTarget, false,
+                                              LLTexUnit::TFO_TRILINEAR, 0);
+                sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sCellTarget, false,
+                                              LLTexUnit::TFO_TRILINEAR, 2);
+                sHighlightProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sCellTarget, false,
+                                              LLTexUnit::TFO_TRILINEAR, 3);
+            }
+            sHighlightProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
+            sHighlightProgram.uniform1f(U_MAX_RADIUS, lens.mFarRadius);
+            sHighlightProgram.uniform1f(U_NEAR_MAX_RADIUS, lens.mNearRadius);
+            sHighlightProgram.uniform1f(U_ISOLATION, isolation);
+            sHighlightProgram.uniform1i(U_HIGHLIGHT_PASS, pass);
+            sHighlightProgram.uniform2i(U_CELL_GRID, cells_x, cells_y);
+            sHighlightProgram.uniform1i(U_CELL_TOP_LEVEL, cell_top_level);
+            sHighlightProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
+            setLensUniforms(sHighlightProgram, lens);
+            draw(screen_triangle);
+            if (pass == 1)
+            {
+                sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sCellTarget.getUsage());
+                sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sCellTarget.getUsage());
+                sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sCellTarget.getUsage());
+            }
+            unbindBins(sHighlightProgram, bins);
+            sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
+            sHighlightProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
+            sHighlightProgram.unbind();
+            target.flush();
+        };
+        highlight_pass(sCellTarget, 0);
+        // The top levels' averages give the sprite count and the counts per
+        // brightness level for the budget rule.
+        generateMips(sCellTarget, 0);
+        generateMips(sCellTarget, 2);
+        generateMips(sCellTarget, 3);
+        highlight_pass(sHighlightInput, 1);
+    }
+
     // 1. Bins at gather resolution, then their mip chains.
     {
         LL_PROFILE_GPU_ZONE("Live DoF reduce");
@@ -733,7 +891,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         glBindFramebuffer(GL_FRAMEBUFFER, sReduceFBO);
         glViewport(0, 0, sBinsA.getWidth(), sBinsA.getHeight());
         sReduceProgram.bind();
-        sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &bin_color, false, LLTexUnit::TFO_POINT);
+        sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &gather_input, false, LLTexUnit::TFO_POINT);
         sReduceProgram.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &bin_depth, true, LLTexUnit::TFO_POINT);
         bindBins(sReduceProgram, bins);
         sReduceProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
@@ -741,7 +899,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         draw(screen_triangle);
         unbindBins(sReduceProgram, bins);
         sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH, bin_depth.getUsage());
-        sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, bin_color.getUsage());
+        sReduceProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather_input.getUsage());
         sReduceProgram.unbind();
         glBindFramebuffer(GL_FRAMEBUFFER, saved_fbo);
         glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -879,6 +1037,91 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         }
     }
 
+    // Highlight sprites (asDepthOfFieldSpriteV/F.glsl, LIVE_SPRITES), each
+    // part of a cell's light in its own layer: the far back part (B2) into
+    // B2 before B1 is laid over it, so hair just behind the focus covers it
+    // as it covers gathered light; the far front part (B1) over the
+    // background; near, the front part (N2) over the veil and the back part
+    // (N1) under N2's coverage. The diagnostic views 3, 9 and 10 keep the
+    // background targets for themselves.
+    const bool draw_live_sprites = sprites && debug_mode != 3 && debug_mode != 9 &&
+                                   debug_mode != 10;
+    auto draw_sprites = [&](LLRenderTarget& target, S32 plane, S32 part)
+    {
+        LL_PROFILE_GPU_ZONE("Live DoF sprites");
+        LLGLEnable sprite_blend(GL_BLEND);
+        target.bindTarget();
+        if (plane > 0)
+        {
+            // The background is divided by its alpha (B2 by the B1 pass, the
+            // background by the composite): the light weighted by it comes
+            // out at exactly its radiance, and nothing where F empties it.
+            gGL.blendFunc(LLRender::BF_DEST_ALPHA, LLRender::BF_ONE,
+                          LLRender::BF_ZERO, LLRender::BF_ONE);
+        }
+        else
+        {
+            // Light over what lies behind the veil; its coverage stays.
+            gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ONE,
+                          LLRender::BF_ZERO, LLRender::BF_ONE);
+        }
+        sSpriteProgram.bind();
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_SPECULAR, &sCellTarget, false,
+                                   LLTexUnit::TFO_TRILINEAR, 0);
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_EMISSIVE, &sCellTarget, false,
+                                   LLTexUnit::TFO_POINT, 1);
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_LIGHT, &sCellTarget, false,
+                                   LLTexUnit::TFO_TRILINEAR, 2);
+        sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_BLOOM, &sCellTarget, false,
+                                   LLTexUnit::TFO_TRILINEAR, 3);
+        if (part == 0 && plane > 0)
+        {
+            // B2's own kernel per pixel: completed (S, W) and M.
+            sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_DIFFUSE, &sDoneA, false,
+                                       LLTexUnit::TFO_POINT, 3);
+            sSpriteProgram.bindTexture(LLShaderMgr::NORMAL_MAP, &sDoneB, false,
+                                       LLTexUnit::TFO_POINT, 0);
+        }
+        else if (part == 0)
+        {
+            // N2, whose coverage lies over N1.
+            sSpriteProgram.bindTexture(LLShaderMgr::DEFERRED_NOISE, &sNear2, false,
+                                       LLTexUnit::TFO_POINT, 0);
+        }
+        sSpriteProgram.uniform2f(LLShaderMgr::DEFERRED_SCREEN_RES, (F32)width, (F32)height);
+        sSpriteProgram.uniform2f(U_TARGET_RES, gather_width, gather_height);
+        sSpriteProgram.uniform1f(U_MAX_RADIUS, lens.mFarRadius);
+        sSpriteProgram.uniform1f(U_NEAR_MAX_RADIUS, lens.mNearRadius);
+        sSpriteProgram.uniform1i(U_PLANE, plane);
+        sSpriteProgram.uniform1i(U_LIVE_PART, part);
+        sSpriteProgram.uniform2i(U_CELL_GRID, cells_x, cells_y);
+        sSpriteProgram.uniform1i(U_CELL_TOP_LEVEL, cell_top_level);
+        sSpriteProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
+        // Aperture, squeeze, unit area, field, cat's eye, axial CA and
+        // spherical aberration; astigmatism stays 0 (Live has none).
+        setLensUniforms(sSpriteProgram, lens);
+        // Attribute-free: any bound vertex buffer satisfies the core-profile
+        // VAO; positions come from gl_VertexID and gl_InstanceID.
+        screen_triangle.setBuffer();
+        glDrawArraysInstanced(GL_TRIANGLES, 0, 3, 2 * cells_x * cells_y);
+        if (part == 0 && plane > 0)
+        {
+            sSpriteProgram.unbindTexture(LLShaderMgr::NORMAL_MAP, sDoneB.getUsage());
+            sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, sDoneA.getUsage());
+        }
+        else if (part == 0)
+        {
+            sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_NOISE, sNear2.getUsage());
+        }
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_BLOOM, sCellTarget.getUsage());
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_LIGHT, sCellTarget.getUsage());
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_EMISSIVE, sCellTarget.getUsage());
+        sSpriteProgram.unbindTexture(LLShaderMgr::DEFERRED_SPECULAR, sCellTarget.getUsage());
+        sSpriteProgram.unbind();
+        target.flush();
+        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+    };
+
     // 4. Gathers, in layer order (asDoFLiveGatherF.glsl): N2; N1, written
     // over N2; B2; B1, written over B2.
     {
@@ -947,6 +1190,24 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
             sGatherProgram.unbindTexture(LLShaderMgr::DEFERRED_DIFFUSE, gather.mBins->getUsage());
             sGatherProgram.unbind();
             gather.mOutput->flush();
+            if (layer == 2 && draw_live_sprites && lens.mFarRadius > 0.f)
+            {
+                // The far back part into B2, before B1 is laid over it.
+                draw_sprites(sFar, 1, 0);
+            }
+        }
+    }
+
+    if (draw_live_sprites)
+    {
+        if (lens.mFarRadius > 0.f)
+        {
+            draw_sprites(sBack, 1, 1);
+        }
+        if (lens.mNearRadius > 0.f)
+        {
+            draw_sprites(sNear1, -1, 1);
+            draw_sprites(sNear1, -1, 0);
         }
     }
 

@@ -1103,3 +1103,276 @@ already wired into `ASDepthOfField`. There are no non-owned edits and no cache r
   - **Stale table.** It is rebuilt every frame, so no shape change can leave it out of date.
 - **Model gate.** `test_tap_table_matches_taps`: one float32 7-ring table (`live_tap_table()`) rebuilds `aperture_taps()` for 3, 5 and 7 rings within 1e-6. The shapes are blades 0, 3, 5, 6 and 12, roundness 0 and 0.5, anamorphic 0.1, 1, 1.33 and 2, and rotations 0, 15° and -200°. Every ring's areas still sum to its annulus. 29 tests pass.
 - glslang links Gather with the library, with and without `LIVE_TAP_TABLE`, at 410 core and 400.
+
+# AyaneStorm Live DoF (mode 3), phase 3: highlight sprites — Plan
+
+Author: chanayane@firestorm
+Date: 2026-10-05
+
+## Context
+
+Small isolated lights blurred by Live show a pattern inside their bokeh: nested bands and
+spots that follow the aperture shape (user screenshot, 3 blades). The cause is the gather:
+- a source smaller than the tap spacing is seen only through the taps whose mip footprint
+  covers it, so its contribution varies ring by ring;
+- the reference model reproduces it with the old per-tap geometry: about 25% relative
+  variation inside the shape at every ring count. The tap table (phase 5, step 3) did not
+  cause it.
+
+The sector-area fix (phase 1) made uniform surfaces exact. It cannot fix point sources.
+Phase 3 of the original plan was the planned answer. Mode 1 already does this:
+- isolated defocused highlight energy is taken out of the gather input;
+- it is redrawn as analytic aperture-shaped sprites with exact energy.
+
+Outcome: flat, crisp aperture shapes for isolated lights in Live, energy preserved, every
+lens effect Live supports, in snapshots too. Mode 1's images stay identical.
+
+## Design
+
+### Reuse mode 1's highlight and sprite shaders (user choice)
+
+- `asDepthOfFieldHighlightF.glsl` and `asDepthOfFieldSpriteF.glsl` gain a `LIVE_SPRITES`
+  define.
+- Mode 1 compiles without it, so its code is unchanged.
+- `asDepthOfFieldSpriteV.glsl` is used as is.
+- The hooks:
+  1. **Radius source.** `detect()` and pass 0 read the signed normalized CoC through
+     `highlightCoC(p)`.
+     - Mode 1: `texelFetch(noiseMap, p, 0).g`, as today.
+     - Live: `liveBlurRadius(depth, uv)` (field curvature included), divided by
+       `max_radius` behind or `near_max_radius` in front. The cells then store the same
+       normalized CoC that `SpriteV` decodes.
+  2. **Sprite energy scale.** Pass 0 multiplies each pixel's excess by `highlightScale(p)`
+     before summing the cell energy.
+     - Mode 1: 1.
+     - Live: the opaque surface's layer-alone factor `sum_b share_b * T / V_b` (bins from
+       `liveDecompose()`, visibility from `liveBinVisibility()`).
+     - Why: the gathers read every layer "alone" (S / V), and the composite re-attenuates it
+       under the veil. A light behind a strand in a nearer bin therefore keeps its full
+       energy in its layer, and a light behind glass in its own bin keeps `T`.
+     - Fallback (one layer): T = V = 1, so the factor is 1.
+     - Only pixels with excess > 0 run it, which keeps it cheap.
+  3. **Near output slot.** `SpriteF` writes both planes to location 0 under `LIVE_SPRITES`,
+     and zeros to the other locations. Live's veil target keeps its per-channel alpha in
+     attachment 1.
+- The Live highlight program links the Live common library, the same way the other Live
+  programs do (`createProgram(..., library = true, ..., "LIVE_SPRITES")`).
+
+### Extraction (Live)
+
+- **Input.** The Live bin colour: `sOpaqueColor` with Mac OIT bins, `source` in the
+  fallback.
+- **Pass 0, cells.** Cells of 8x8 full-resolution pixels hold the energy, centroid,
+  normalized CoC and brightness levels. Then the mips of attachments 0, 2 and 3 are built
+  (Live's `generateMips()`), for the budget rule.
+- **Pass 1, gather input.** The bin colour minus `detect(p)` in kept cells, written to a
+  full-resolution RGBA16F copy.
+  - The reduce pass bins this copy instead of the bin colour.
+  - Opaque light × T then leaves exactly what pass 0 moved into the sprites, so energy is
+    preserved.
+  - W and the energies are unchanged, so the coverage and tile kernels are unchanged.
+- **In focus.** The gate `smoothstep(2, 4, radius)` sits above F's ramp (F share 0 from
+  2 px), so F is never touched.
+- **The composite** keeps reading the original bin colour. Its exact in-focus correction is
+  unchanged.
+- **Scope.** Only opaque lights are extracted. Lights painted on alpha geometry stay in the
+  gather, as in mode 1.
+
+### Sprites
+
+- Drawn after the four gathers, before the composite, with Live's lens uniforms. Astigmatism
+  is uploaded as 0 (Live has none).
+- **Far plane, into `sBack`** (B1 over B2), blend `(DST_ALPHA, ONE)` for colour and
+  `(ZERO, ONE)` for alpha (`gGL.blendFunc` with 4 factors).
+  - The composite divides the background by its alpha, so the sprite comes out at exactly
+    its radiance.
+  - Where the background is skipped (alpha 0: fully in focus), the light is hidden behind F,
+    which is correct.
+- **Near plane, into `sNear1`** (the whole veil), blend `(ONE, ONE)` for colour and
+  `(ZERO, ONE)` for alpha. Light adds over everything behind it, as in mode 1.
+- **Resolution.** Gather resolution (`target_res` = gather size, `screen_res` = full size,
+  as mode 1 does at its blur resolution). The edge is antialiased over one gather pixel
+  (2 full px), then upsampled bilinearly.
+- **Skipped** in debug views 3, 9 and 10 (`sBack` holds diagnostics there), when the setting
+  is off, and when the sprite allocation fails. That last case logs once, and highlights
+  stay in the gather.
+
+### Settings and UI
+
+- **Shared with mode 1**, same meanings: `ASDepthOfFieldHighlightSprites` (on),
+  `ASDepthOfFieldHighlightIsolation` (2) and `ASDepthOfFieldHighlightMaxSprites` (4096).
+- **UI.** Their three floater controls switch from `ASDepthOfFieldUIAdvanced` to
+  `ASDepthOfFieldUIScreenSpace` (modes 1 and 3). `HighlightBoost` stays mode 1 only.
+- **Comments.** The `settings.xml` comments name Live, inside the AS block.
+
+### Resources and cost
+
+- `sCellTarget` (cells, 4 x RGBA16F, mipmapped) and `sHighlightInput` (full res RGBA16F,
+  8 B/px). They are allocated only with sprites on, and released otherwise, as mode 1 does.
+- **Passes:**
+  - cell pass, about 21 fetches per full-res pixel; pixels under 2 px of blur leave after
+    one depth read;
+  - full-res copy with detection only in kept cells;
+  - 3 tiny mip chains;
+  - one instanced draw per plane (2 × cells instances, empty cells degenerate).
+- GPU zones "Live DoF highlights" and "Live DoF sprites".
+
+## Model first (gate before any shader edit)
+
+`scripts/testing/dof_live_reference.py`, reusing `dof_reference.py`'s
+`viewer_highlight_detect()`, `viewer_highlight_keep_cells()` and `viewer_sprite_coverage()`.
+- `test_sprite_light_is_flat`.
+  - Setup: a small bright spot over a dim textured background, with Live gather plus sprite
+    against a brute-force scatter. Shapes: the user's 3 blades at roundness 0, 6 blades at
+    roundness 0, the circle, 5 blades at roundness 0.5, and anamorphic 1.33. Rings 3, 5
+    and 7.
+  - Gates:
+    - interior relative std under 2% (now about 25%);
+    - total energy within 1%;
+    - bokeh rms at least 5× lower than without sprites.
+- `test_sprite_energy_partition`: gather input plus cell energies equals the original image
+  to float precision, kept cells and budget included.
+- `test_sprite_layer_alone_scale`: a light behind a nearer-bin strand, and behind same-bin
+  glass. The layered result is within 2% of the truth.
+- `test_sprite_dst_alpha_blend`: background normalization returns the sprite radiance
+  exactly for background alpha in (0, 1].
+- `test_highlight_extraction_scope`: a bright area larger than the ring, and an in-focus
+  light (r < 2), are not extracted.
+- All existing tests still pass.
+
+## Files
+
+- **Owned, modified:**
+  - `indra/newview/asdoflive.cpp`: resources, the highlight and sprite programs, the passes,
+    reduce input, sprite draws.
+  - `asDepthOfFieldHighlightF.glsl` and `asDepthOfFieldSpriteF.glsl`: the `LIVE_SPRITES`
+    hooks.
+  - `asDoFLiveCommonF.glsl`: only if a small helper is needed for the layer-alone factor.
+  - `floater_as_depth_of_field.xml`: three enabled_controls.
+  - `scripts/testing/dof_live_reference.py`.
+  - `doc/ayanestorm-depth-of-field-live-plan.md`.
+- **Non-owned, tagged:** `settings.xml`, three comments inside the AS block.
+- **Reused:**
+  - `asDepthOfFieldSpriteV.glsl`, detection and the budget rule;
+  - Live's `createProgram()`, `allocateMipmapped()`, `generateMips()`, `topMipLevel()` and
+    `setLensUniforms()`;
+  - `ASDoFAperture::unitArea()`.
+- No cache revision bump. Mode 1 and mode 2 behaviour unchanged.
+
+## Verification
+
+- The model gates pass before shader work. glslang validates:
+  - the Live highlight program linked with the library, and Sprite V+F with `LIVE_SPRITES`,
+    at 410 core and 400;
+  - mode 1's Highlight and Sprite without the define.
+- **Runtime (user builds), Windows then macOS:**
+  1. Your backdrop scene with 3 blades: the triangles are flat inside, with no bands or
+     spots. Also check 6 blades and the circle.
+  2. Sprites off: identical to the current build.
+  3. Lights behind hair strands and behind glass: the brightness matches sprites off,
+     without the pattern.
+  4. Near lights (a glint close to the camera): a filled veil shape.
+  5. Lens effects (cat's eye, CA, spherical) with sprites on.
+  6. Mode 1: unchanged.
+  7. Snapshots at window size and 2×.
+  8. GPU zones "Live DoF highlights" and "Live DoF sprites", and FPS at Low and Cinematic.
+  9. Log: no shader errors, no sprite allocation warning.
+- On approval, this plan is appended verbatim to `doc/ayanestorm-depth-of-field-live-plan.md`
+  (copy command, no rewrite), and later findings go in its execution record.
+
+## Phase 3 execution record
+
+### Highlight sprites (2026-10-06, unbuilt)
+
+**Model first: findings that changed the plan.** The prototype compared a numpy mirror of mode 1's sprite shaders, drawn at Live's gather resolution, against a supersampled ideal bokeh. The ideal covers the clipped polygon, each CA stratum and the spherical profile, and keeps the light's energy (compensated, as the gathers).
+- **Cat's eye energy.** Mode 1 divides by the circle's vesica fraction. For a clipped polygon the energy was off by up to +29 / -58% (triangle) and ±5-7% (hexagon). With spherical aberration on as well, even the circle was off by 14%: the profile is normalized over the unclipped aperture.
+- **Small sprites at gather resolution.** Mode 1's 4-sample, linear-edge coverage lost up to 14% (2 px triangle). Its CA strata share one linearized barrel edge, which is off by up to 2.7x when the CA shift is close to the radius.
+- **Where sprites are needed.** The gather leaves a pattern inside a point light's bokeh from about 3 gather px of radius: 16-45% relative std for a triangle, 2-24% for a hexagon or circle. So mode 1's gate, `smoothstep(2, 4)` on the full-resolution radius, is right for Live too, and no extra hook was needed.
+
+**Design deviations, all under `LIVE_SPRITES` (mode 1 compiles unchanged):**
+- **`asDepthOfFieldSpriteV.glsl`** (the plan had it used as is): `liveOpenFraction()`, the exact share of the profiled aperture inside the barrel.
+  - It is a polar integral over 64 aperture angles, with the exact ray and circle intersection and a closed-form integral of the cut spherical profile (`liveProfileMoment()`).
+  - It replaces the vesica only under cat's eye; the floor is 0.01, as in the gathers.
+  - Error: 0.4% against a brute-force area, triangle at shift 1.4.
+- **`asDepthOfFieldSpriteF.glsl`:** `liveCoverage()`.
+  - Every CA stratum is an exact scaled aperture (`liveEdge()`, barrel included), with its own antialiasing grid by size:
+    - 8x8 below 3 target px;
+    - 4x4 with odd rows offset by 1/8, below 6;
+    - mode 1's rotated 4, below 12;
+    - 1 sample above.
+  - Each stratum keeps its energy ((R / R_k)^2).
+  - Both planes write location 0.
+- **`asDepthOfFieldHighlightF.glsl`:**
+  - `highlightCoC()`: radius from depth, normalized by the side's radius.
+  - `highlightScale()`: the light's share in the layer its sprite is drawn into. Each bin is read alone (`a_b = share_b T / V_b`), and the pair composites over: `a_front + (1 - a_front) a_back`.
+  - A plain sum of the bin shares would give 1.4 for a surface split 0.4 / 0.6 between B1 and B2. The over gives 1, with or without a strand in front.
+
+**`asdoflive.cpp`:**
+- The `sHighlightProgram` (linked with the Live library) and `sSpriteProgram` programs. Both are optional: if they fail, a warning is logged and lights stay in the gather.
+- `sCellTarget` (4 x RGBA16F, mipmapped) and `sHighlightInput` (full resolution). They are allocated only with sprites on.
+- **Pass 0, "Live DoF highlights":** cells, the mips of attachments 0, 2 and 3, then the gather input. The reduce bins `sHighlightInput`; the composite keeps the original bin colour.
+- **"Live DoF sprites",** after the gathers:
+  - far into `sBack` with `(DST_ALPHA, ONE | ZERO, ONE)`: the composite divides the background by its alpha, so the light comes out exact, and it is hidden where F empties the background;
+  - near into `sNear1` with `(ONE, ONE | ZERO, ONE)`;
+  - skipped in debug views 3, 9 and 10.
+- **Settings shared with mode 1:** `ASDepthOfFieldHighlightSprites`, `Isolation` and `MaxSprites`. Their floater controls now use `ASDepthOfFieldUIScreenSpace`, and the `settings.xml` comments name Live (inside the AS DoF block).
+
+**Model gates** (`dof_live_reference.py`):
+- **`test_sprite_light_is_flat`.** A 2x2 px light over a textured far background, through extraction, the residual far gather and the sprite. Shapes: 3 and 6 blades, the circle, 5 blades at roundness 0.5, and anamorphic 1.33, at every quality.
+  - Interior relative std is under 1% (measured 0.000; the gather alone was 6-22%).
+  - Energy within 1%.
+  - Rms against the point-light truth at least 2x lower (measured 2.5-8x). The planned 5x was out of reach: the rest is the 2x2 light's own edge softness, which the point truth leaves out.
+- **`test_sprite_matches_ideal_bokeh`.** 6 shapes x 9 lens sets (cat's eye, CA, spherical -3 to 5, and combinations) x both planes x radius 3-24 x 2 centre offsets. Energy error limits:
+  - 3% from radius 8 with open fraction >= 0.25;
+  - 6% for radius 3-5. The worst case is a 3 px triangle with strong CA, whose smallest stratum is clamped to 1 px. 16 samples left up to 23% there, hence the 8x8 grid.
+  - 12% for slivers under a quarter of the aperture (radius >= 8).
+  - Also checked: the open fraction against a brute-force area; shape rms under 3% of the peak.
+- **`test_sprite_energy_partition`:** the gather input loses exactly what the kept cells carry, with the budget on or off.
+- **`test_sprite_dst_alpha_blend`:** the background blend is exact at any coverage.
+- **`test_sprite_layer_scale`:** strand, glass and the split surface.
+- **`test_highlight_extraction_scope`:** a bright area and an in-focus light are not extracted.
+- 35 tests pass.
+
+**Known limits:**
+- Lights on alpha geometry stay in the gather.
+- Barrel slivers of a few gather pixels keep up to 12% energy error.
+- A light behind glass in its own bin, with other transparency in the same bin, is approximated.
+
+**Validation:** glslang links the Live highlight program with the library (12 samplers) and the Live sprite V+F (4 samplers), and compiles mode 1's highlight and sprite programs without the define, at 410 core and 400.
+
+**Runtime checks:** as in the plan's verification list.
+
+### Sprites in their own layers (2026-10-06, unbuilt)
+
+**Runtime (user, Windows):** the triangles are flat, so the pattern is gone. Two defects, from the on/off comparison:
+1. Bokeh triangles over hair strands, where sprites off shows none.
+2. Faint triangles over the palm trees, which hide the lights with sprites off.
+
+**Causes:**
+1. The B1 gather writes B1 over B2 into one target in one pass. The far sprites were drawn after it, so a far light (B2) landed on top of the hair just behind the focus (B1). The near side had the mirror flaw: an N1 light was drawn over N2.
+2. Inside B2, occlusion comes from each pixel's own kernel (M / W): a palm pixel, nearer and sharper, gathers only within its own smaller radius. A sprite ignored that kernel.
+
+**Model:** `evaluate_sprite_occluder()` places a light on a backdrop (radius 20 full px) beside a nearer B2 surface (radius 8).
+
+| | light over the surface (of 90 units) |
+|---|---|
+| gather alone | 0.1-0.3 |
+| sprite before | 14-23 |
+| sprite with the B2 visibility | 0.4-1.2 |
+
+Without an occluder, the sprite with the visibility keeps the energy within 0.25%.
+
+**Fix:**
+- **Highlight pass (`highlightParts()`).** The cell keeps the light alone in the front bin and the back bin of its side (`a_b = share_b T / V_b`): their sum in `.rgb`, and the front fraction in `frag_data1.w` (mode 1 keeps its weight there). Composited, the sum is unchanged.
+- **Sprites, one part per draw** (`live_part`):
+  - **Far back (B2):** drawn into B2 right after the B2 gather, with `(DST_ALPHA, ONE)`; the B1 pass divides B2 by its alpha. It is shown only where the pixel's completed B2 kernel reaches the light's aperture-space distance: full up to half a pixel past the kernel, then over one pixel (`liveBackVisibility()`, model `sprite_far_visibility()`).
+  - **Far front (B1):** over the background, as before.
+  - **Near front (N2):** over the veil.
+  - **Near back (N1):** weighted by `1 - N2 coverage`, read from N2.
+- **Samplers:** the Live sprite program uses 7 (B2 sums and energies, N2).
+
+**Tests:**
+- `test_sprite_far_occlusion`: at least 90% of the leak removed; energy kept outside the surface within 1%, and without an occluder within 0.5%.
+- `test_sprite_layer_order`: the compositing algebra, and the parts recomposing from the stored sum and fraction.
+
+glslang links every highlight and sprite variant, Live and mode 1, at 410 core and 400.

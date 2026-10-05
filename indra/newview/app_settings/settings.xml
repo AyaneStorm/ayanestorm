@@ -12539,7 +12539,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldHighlightSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
+    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12587,13 +12587,13 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldHighlightIsolation</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
+    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightMaxSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: sprite budget; highlights beyond it stay in the gather</string>
+    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: sprite budget; highlights beyond it stay in the gather</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>4096</integer><key>Backup</key><integer>0</integer>
   </map>

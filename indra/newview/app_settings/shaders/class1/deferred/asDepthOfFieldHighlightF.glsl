@@ -13,6 +13,12 @@
  * signed CoC. highlight_pass 1 (full resolution): gather input = opaque
  * color minus the extraction of kept cells. Both passes evaluate the same
  * detect(), so the removed and the redrawn energy match exactly.
+ *
+ * LIVE_SPRITES: the same extraction for Live DoF (asdoflive.cpp), linked with
+ * asDoFLiveCommonF.glsl: the radius comes from the depth (highlightCoC()) and
+ * each cell keeps the light alone in the front and the back bin of its side
+ * (highlightParts()): their sum, and the front fraction in frag_data1.w.
+ * Without the define the code is mode 1's.
  */
 layout(location = 0) out vec4 frag_data0;
 layout(location = 1) out vec4 frag_data1;
@@ -40,6 +46,70 @@ uniform float sprite_budget;
 
 #define CELL_SIZE 8
 
+#ifdef LIVE_SPRITES
+// Live DoF (asdoflive.cpp): linked with asDoFLiveCommonF.glsl. diffuseRect is
+// Live's bin colour (the opaque surface, or the composited image in its
+// one-layer fallback); the blur radius comes from depthMap.
+uniform sampler2D depthMap;
+uniform sampler2D positionMap;  // Mac OIT sum of weights, sum of optical depth
+uniform int bins_source;
+float liveBlurRadius(float device_depth, vec2 uv);
+void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy);
+vec4 liveBinVisibility(vec4 bins[5]);
+
+// Signed CoC normalized as the sprites decode it (asDepthOfFieldSpriteV.glsl):
+// the radius over the side's largest radius.
+float highlightCoC(ivec2 p)
+{
+    vec2 uv = (vec2(p) + 0.5) / screen_res;
+    float radius = liveBlurRadius(texture(depthMap, uv).r, uv);
+    return radius < 0.0 ? radius / max(near_max_radius, 0.0001) :
+                          radius / max(max_radius, 0.0001);
+}
+
+// The opaque light alone in the front and the back bin of its side (B1 and
+// B2 behind the focus, N2 and N1 in front): each bin is read alone (S / V),
+// so the surface's share b shows a_b = share_b T / V_b of its light (T: the
+// transmittance in front of it). The sprites draw the front part over its
+// layer pair and the back part into the back layer, under what the front
+// holds there (asdoflive.cpp): a light behind a B1 hair strand stays behind
+// it. A light behind a strand in a nearer bin keeps its full excess, behind
+// glass in its own bin T. One layer (bins_source 0): (0, 1). Mirrored by
+// dof_live_reference.py (sprite_layer_parts()).
+vec4 liveBinWeights(float signed_radius);
+
+vec2 highlightParts(ivec2 p)
+{
+    vec2 uv = (vec2(p) + 0.5) / screen_res;
+    float radius = liveBlurRadius(texture(depthMap, uv).r, uv);
+    vec4 shares = liveBinWeights(radius);       // N2, N1, F, B1
+    float far_share = max(1.0 - dot(shares, vec4(1.0)), 0.0);
+    vec2 split = radius < 0.0 ? shares.xy : vec2(shares.w, far_share);
+    if (bins_source == 0)
+    {
+        // One surface per pixel: nothing in front of it, V_back = 1 - front.
+        return vec2(split.x, split.y / max(1.0 - split.x, 0.0001));
+    }
+    vec4 bins[5];
+    vec4 energy;
+    liveDecompose(p, bins, energy);
+    vec4 visibility = liveBinVisibility(bins);  // in front of N1, F, B1, B2
+    float transmittance = exp(-texelFetch(positionMap, p, 0).y);
+    vec2 front_back = radius < 0.0 ? vec2(1.0, visibility.x) : visibility.zw;
+    return min(split * transmittance / max(front_back, vec2(0.0001)), vec2(1.0));
+}
+#else
+float highlightCoC(ivec2 p)
+{
+    return texelFetch(noiseMap, p, 0).g;
+}
+
+vec2 highlightParts(ivec2 p)
+{
+    return vec2(0.0, 1.0);
+}
+#endif
+
 float luminance(vec3 color)
 {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
@@ -56,7 +126,7 @@ float luminance(vec3 color)
 vec3 detect(ivec2 p)
 {
     ivec2 last = ivec2(screen_res) - 1;
-    float coc = texelFetch(noiseMap, p, 0).g;
+    float coc = highlightCoC(p);
     float radius = coc < 0.0 ? -coc * near_max_radius : coc * max_radius;
     float gate = smoothstep(2.0, 4.0, radius);
     if (gate <= 0.0)
@@ -170,6 +240,8 @@ void main()
         vec2 center_sum = vec2(0.0);
         float coc_sum = 0.0;
         float weight = 0.0;
+        float front_sum = 0.0;  // LIVE_SPRITES: luminance of the front parts
+        float part_sum = 0.0;
         for (int y = 0; y < CELL_SIZE; ++y)
         {
             for (int x = 0; x < CELL_SIZE; ++x)
@@ -185,17 +257,28 @@ void main()
                 {
                     continue;
                 }
-                energy += excess;
+                vec2 parts = highlightParts(p);
+                energy += excess * (parts.x + parts.y);
+                front_sum += l * parts.x;
+                part_sum += l * (parts.x + parts.y);
                 center_sum += (vec2(p) + 0.5) * l;
-                coc_sum += texelFetch(noiseMap, p, 0).g * l;
+                coc_sum += highlightCoC(p) * l;
                 weight += l;
             }
         }
         bool occupied = weight > 0.0001;
         frag_data0 = vec4(energy, occupied ? 1.0 : 0.0);
+#ifdef LIVE_SPRITES
+        // .w: the share of the cell's energy in the front bin.
+        frag_data1 = occupied
+            ? vec4(center_sum / weight / screen_res, coc_sum / weight,
+                   part_sum > 0.0 ? front_sum / part_sum : 0.0)
+            : vec4(0.0);
+#else
         frag_data1 = occupied
             ? vec4(center_sum / weight / screen_res, coc_sum / weight, weight)
             : vec4(0.0);
+#endif
         // Counts only: keepCell() reads the stored energy in both pass 1 and
         // the sprites, so they always agree on which cells are kept.
         frag_data2 = occupied ? cellLevels(luminance(energy), 0) : vec4(0.0);
