@@ -26900,7 +26900,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASStarsSiderealOffset</key>
     <map><key>Comment</key><string>Real-sky sidereal time offset in hours, added to the free-running sky rotation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsMagnitudeContrast</key>
-    <map><key>Comment</key><string>Real-sky brightness exponent applied to stellar flux; 1 is physical (linear flux), lower compresses the range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.7</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Real-sky brightness exponent applied to stellar flux; 1 is physical (linear flux), lower compresses the range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsDensity</key>
     <map><key>Comment</key><string>Star count multiplier; procedural: 1 matches the 666 stars stock draws; real sky: 1 draws the 6660 brightest, 3 all 20000</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsColorAmount</key>
@@ -26912,13 +26912,13 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASStarsBrightness</key>
     <map><key>Comment</key><string>Star brightness multiplier on top of the sky setting</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.2</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsBrightnessVariation</key>
-    <map><key>Comment</key><string>Procedural star brightness contrast: 0 all stars equally bright (stock), 1 spans 1:100</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Procedural star brightness contrast: 0 all stars equally bright (stock), 1 real-sky-like spread (most stars faint, a few bright and larger)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsSize</key>
     <map><key>Comment</key><string>Star sprite size multiplier</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.75</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsTwinkle</key>
     <map><key>Comment</key><string>Star twinkle amount; 0 steady, 1 stock</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsMilkyWay</key>
-    <map><key>Comment</key><string>Extra stars added in a Milky Way band (1 adds 1.5x the background count)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Extra stars added in a Milky Way band (1 adds 1.5x the background count)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.15</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsSeed</key>
     <map><key>Comment</key><string>Star pattern seed; 0 picks a new random sky each time stars are built</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
     <!-- </AS:Chanayane> -->

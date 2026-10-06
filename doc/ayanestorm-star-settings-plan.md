@@ -125,4 +125,4 @@ After approval: copy this plan to `doc/ayanestorm-star-settings-plan.md`.
 
 ### Defaults: real sky
 - `ASStarsMode` default 1 (real sky), `ASStarsSaturation` default 2.0; density 1.0 and color realism 1.0 unchanged. The stock look is now the master toggle off, not the defaults.
-- Tuned defaults: `ASStarsBrightness` 1.2, `ASStarsSize` 2.75, `ASStarsTwinkle` 0.75, `ASStarsLatitude` 45, `ASStarsMagnitudeContrast` 0.7.
+- Tuned defaults: `ASStarsBrightness` 1.2, `ASStarsSize` 2.75, `ASStarsTwinkle` 0.75, `ASStarsLatitude` 45, `ASStarsMagnitudeContrast` 0.75; procedural `ASStarsMilkyWay` 0.15, `ASStarsBrightnessVariation` 0.75.
