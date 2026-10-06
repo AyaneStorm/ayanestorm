@@ -148,3 +148,4 @@ lut/
 .mr/
 .glslang/
 .ca
+*.exr

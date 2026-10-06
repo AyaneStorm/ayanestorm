@@ -2,26 +2,35 @@
 """
 @file as_build_milky_way.py
 @author chanayane@firestorm
-@brief Builds the AyaneStorm real-sky Milky Way / deep-sky glow texture from
-the Celestial Data sets (Frohn & Hernangomez 2023, BSD 3-Clause,
-https://doi.org/10.5281/zenodo.7561601), itself from d3-celestial.
+@brief Builds the AyaneStorm real-sky Milky Way and deep-sky glow textures.
+
+Sources:
+- Celestial Data (Frohn & Hernangomez 2023, BSD 3-Clause,
+  https://doi.org/10.5281/zenodo.7561601, from d3-celestial): Milky Way
+  outlines (mw), bright deep-sky objects (dsos.bright), Local Group (lg).
+- Optional photographic band (--photo): NASA SVS Deep Star Maps 2020
+  milkyway_2020_*.exr (https://svs.gsfc.nasa.gov/4851; credit: NASA/Goddard
+  Space Flight Center Scientific Visualization Studio. Gaia DR2:
+  ESA/Gaia/DPAC), linear half-float plate carree, ICRF/J2000, RA 0h at the
+  center, RA increasing to the left; Gaia DR2 stars only (no stars brighter
+  than magnitude 11.5).
 
 Usage:
-    python as_build_milky_way.py <celestial data dir> <out.png> [--preview p.png]
-                                 [--no-mottle] [--seed N]
+    python as_build_milky_way.py <celestial data dir> <out dir>
+        [--photo milkyway_2020_8k.exr] [--preview p.png] [--no-mottle] [--seed N]
 
-Inputs (from <celestial data dir>): mw.min.geojson (5 nested Milky Way
-brightness outlines ol1..ol5), dsos.bright.min.geojson (hand-picked bright
-deep-sky objects), lg.min.geojson (Local Group: LMC and SMC).
-
-Output: 2048x2048 RGB PNG (no alpha, viewable as is), two stacked 2048x1024
-equirectangular maps in J2000 equatorial coordinates: top half = Milky Way,
-bottom half = deep-sky objects, so the viewer scales them separately. In each
-half x = (RA + 180) / 360 with RA wrapped to [-180, 180] (the GeoJSON
-longitude) and north at the top. RGB = linear glow color. The viewer's PNG
-decoder flips rows, so in GL the Milky Way half is v in [0.5, 1] and the
-deep-sky half v in [0, 0.5], each with v = (dec + 90) / 180 inside its half.
-Requires numpy and Pillow.
+Outputs in <out dir>, equirectangular J2000, x = (RA + 180) / 360 with RA
+wrapped to [-180, 180] (the GeoJSON longitude, RA increasing to the right),
+north at the top (the viewer's PNG decoder flips rows, so GL v = (dec + 90) /
+180), RGB gamma-encoded (value^(1/2.2), decoded in the shader) so 8 bits do
+not band in the faint glow:
+- as_milky_way.jpg: the band, 4096x2048 from --photo, else 2048x1024 from
+  the outlines. JPEG q90 without chroma subsampling: the photo's faint-star
+  texture does not compress as PNG (16.8 MB vs 3.2 MB, mean error 3/255).
+- as_deep_sky.png: 2048x1024 deep-sky glow. With --photo only nebulae (gas
+  glow is not in star data; the photo already shows the Magellanic Clouds,
+  Andromeda, Triangulum and the clusters as stars).
+Requires numpy and Pillow (+ OpenEXR for --photo).
 """
 
 import argparse
@@ -150,7 +159,8 @@ def parse_dim(dim):
     return a, b
 
 
-def deep_sky(data_dir):
+def deep_sky(data_dir, kinds=None):
+    """Deep-sky glow; kinds: object types to draw (None = all)."""
     objects = []
     with open(os.path.join(data_dir, "dsos.bright.min.geojson"), encoding="utf-8") as f:
         for feat in json.load(f)["features"]:
@@ -176,6 +186,8 @@ def deep_sky(data_dir):
     lum = np.zeros((H, W))
     lats = row_latitudes()
     for name, kind, mag, dim, lon, lat in objects:
+        if kinds is not None and kind not in kinds:
+            continue
         tint, weight = DSO_STYLE[kind]
         peak = min(surface(mag, dim) * scale, 1.0) * weight
         # Dimensions are total extents in arcminutes: +-2 sigma.
@@ -197,27 +209,85 @@ def deep_sky(data_dir):
     return rgb, lum
 
 
+# Photo mode: nebula types kept in the deep-sky layer.
+NEBULA_KINDS = {"sfr", "en", "bn", "rn"}
+PHOTO_W, PHOTO_H = 4096, 2048
+# Photo normalisation: this luminance percentile maps to 1.
+PHOTO_WHITE_PERCENTILE = 99.99
+
+
+def photo_band(path, outline_band):
+    """Loads the NASA SVS milkyway_2020 EXR, checks its orientation against
+    the outline band, flips it to our RA-to-the-right layout and resamples it
+    to PHOTO_W x PHOTO_H (area average)."""
+    import OpenEXR
+    with OpenEXR.File(path) as f:
+        rgb = f.channels()["RGB"].pixels.astype(np.float32)
+
+    def resize(img, w, h):
+        return np.dstack([np.asarray(Image.fromarray(np.ascontiguousarray(img[..., c])).resize((w, h), Image.BOX))
+                          for c in range(3)])
+
+    # Orientation check: circular cross-correlation in RA against the
+    # outline band for the four flips; expect RA flipped, no shift.
+    lum = resize(rgb, W, H).mean(axis=2)
+    ref = outline_band.mean(axis=2)
+    ref = (ref - ref.mean()) / ref.std()
+    best = None
+    for name, img in (("as is", lum), ("flip RA", lum[:, ::-1]),
+                      ("flip Dec", lum[::-1]), ("flip both", lum[::-1, ::-1])):
+        a = np.log1p(img / max(np.median(img), 1e-9))
+        a = (a - a.mean()) / a.std()
+        corr = np.fft.irfft(np.fft.rfft(a, axis=1) * np.conj(np.fft.rfft(ref, axis=1)), n=W, axis=1).sum(axis=0) / a.size
+        shift = int(np.argmax(corr))
+        shift_deg = (shift if shift <= W // 2 else shift - W) * 360.0 / W
+        print("  orientation %-9s corr %.3f shift %+.1f deg" % (name, corr[shift], shift_deg))
+        if best is None or corr[shift] > best[1]:
+            best = (name, corr[shift], shift_deg)
+    if best[0] != "flip RA" or abs(best[2]) > 3.0:
+        raise SystemExit("unexpected orientation %s (shift %.1f deg): not the documented SVS layout" % (best[0], best[2]))
+
+    band = resize(rgb[:, ::-1], PHOTO_W, PHOTO_H)
+    white = np.percentile(band.mean(axis=2), PHOTO_WHITE_PERCENTILE)
+    print("  photo white point %.4g (luminance p%g)" % (white, PHOTO_WHITE_PERCENTILE))
+    return np.clip(band / white, 0.0, 1.0)
+
+
+def save_gamma(path, rgb):
+    img = Image.fromarray((np.clip(rgb, 0.0, 1.0) ** (1.0 / 2.2) * 255.0 + 0.5).astype(np.uint8), "RGB")
+    if path.lower().endswith(".jpg"):
+        img.save(path, "JPEG", quality=90, subsampling=0, optimize=True)
+    else:
+        img.save(path, optimize=True)
+    print("wrote %s %dx%d (%d bytes)" % (path, rgb.shape[1], rgb.shape[0], os.path.getsize(path)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("data_dir")
-    ap.add_argument("out")
+    ap.add_argument("out_dir")
+    ap.add_argument("--photo", help="NASA SVS milkyway_2020_*.exr (celestial)")
     ap.add_argument("--preview")
     ap.add_argument("--no-mottle", action="store_true")
     ap.add_argument("--seed", type=int, default=7)
     args = ap.parse_args()
 
-    mw = np.clip(milky_way(args.data_dir, not args.no_mottle, args.seed), 0.0, 1.0)
-    dso_rgb, _ = deep_sky(args.data_dir)
+    outline = np.clip(milky_way(args.data_dir, not args.no_mottle, args.seed), 0.0, 1.0)
+    if args.photo:
+        band = photo_band(args.photo, outline)
+        dso_rgb, _ = deep_sky(args.data_dir, NEBULA_KINDS)
+    else:
+        band = outline
+        dso_rgb, _ = deep_sky(args.data_dir)
     dso_rgb = np.clip(dso_rgb, 0.0, 1.0)
 
-    # Top half Milky Way, bottom half deep-sky.
-    out = np.vstack([mw, dso_rgb])
-    Image.fromarray((out * 255.0 + 0.5).astype(np.uint8), "RGB").save(args.out, optimize=True)
-    print("wrote %s (%d bytes)" % (args.out, os.path.getsize(args.out)))
+    save_gamma(os.path.join(args.out_dir, "as_milky_way.jpg"), band)
+    save_gamma(os.path.join(args.out_dir, "as_deep_sky.png"), dso_rgb)
     if args.preview:
-        # Both layers combined, gamma-encoded, for eyeballing.
-        rgb = np.clip(mw + dso_rgb, 0.0, 1.0)
-        Image.fromarray((rgb ** (1 / 2.2) * 255).astype(np.uint8), "RGB").save(args.preview)
+        # Both layers combined at the deep-sky resolution, for eyeballing.
+        small = np.dstack([np.asarray(Image.fromarray(np.ascontiguousarray(band[..., c]).astype(np.float32)).resize((W, H), Image.BOX))
+                           for c in range(3)])
+        save_gamma(args.preview, small + dso_rgb)
 
 
 if __name__ == "__main__":

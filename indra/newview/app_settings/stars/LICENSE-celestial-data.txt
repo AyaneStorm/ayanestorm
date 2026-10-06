@@ -1,9 +1,16 @@
-as_star_catalog.bin and as_milky_way.png are derived from "Celestial Data"
+as_milky_way.jpg (the Milky Way band) is derived from NASA SVS "Deep Star
+Maps 2020" (https://svs.gsfc.nasa.gov/4851), milkyway_2020 layer, by
+scripts/content_tools/as_build_milky_way.py (reprojected, resampled,
+normalised). Credit: NASA/Goddard Space Flight Center Scientific
+Visualization Studio. Gaia DR2: ESA/Gaia/DPAC.
+
+as_star_catalog.bin and as_deep_sky.png are derived from "Celestial Data"
 (Frohn O, Hernangomez D, 2023, https://doi.org/10.5281/zenodo.7561601), itself
 from d3-celestial (https://github.com/ofrohn/d3-celestial), by
 scripts/content_tools/as_build_star_catalog.py (stars) and
-scripts/content_tools/as_build_milky_way.py (Milky Way outlines, bright
-deep-sky objects, Local Group). They are distributed under the license below.
+scripts/content_tools/as_build_milky_way.py (bright deep-sky objects, Local
+Group; its Milky Way outlines are also used to verify the band's
+orientation). They are distributed under the license below.
 
 BSD 3-Clause License
 

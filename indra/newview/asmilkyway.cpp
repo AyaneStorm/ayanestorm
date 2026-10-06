@@ -4,11 +4,12 @@
  * @brief Viewer-local real-sky Milky Way and deep-sky glow, drawn on the sky
  * dome from a catalogue-derived equirectangular texture.
  *
- * Texture: app_settings/stars/as_milky_way.png, built by
- * scripts/content_tools/as_build_milky_way.py from Celestial Data (BSD
- * 3-Clause, see app_settings/stars/LICENSE-celestial-data.txt). RGB, two
- * stacked equirectangular maps: Milky Way on top, deep-sky objects below.
- * Rotates with the real-sky stars through
+ * Textures (app_settings/stars, built by
+ * scripts/content_tools/as_build_milky_way.py; sources and credits in
+ * app_settings/stars/LICENSE-celestial-data.txt): as_milky_way.jpg (the band,
+ * NASA SVS Deep Star Maps 2020 Gaia layer) and as_deep_sky.png (nebulae),
+ * equirectangular J2000, gamma-encoded RGB. Rotates with the real-sky stars
+ * through
  * ASStars::localToEquatorial().
  */
 
@@ -22,7 +23,7 @@
 #include "lldir.h"
 #include "llenvironment.h"
 #include "llgl.h"
-#include "llimagepng.h"
+#include "llimage.h"
 #include "llrender.h"
 #include "llsettingssky.h"
 #include "llviewercontrol.h"
@@ -30,7 +31,6 @@
 namespace
 {
     LLGLSLShader sMilkyWayProgram;
-    const LLStaticHashedString sMapSampler("as_milky_way_map");
     // Local->equatorial rotation as three mat3 columns (no hashed-name
     // uniformMatrix3fv in LLGLSLShader).
     const LLStaticHashedString sRotation0("mw_rot0");
@@ -40,86 +40,98 @@ namespace
     const LLStaticHashedString sDeepSkyIntensity("mw_dso_intensity");
     const LLStaticHashedString sSaturation("mw_saturation");
 
-    // Overall glow level relative to the texture (1 = texture white). The
+    // Overall glow level relative to the textures (1 = texture white). The
     // glow is diffuse, so far below the stock star level (x32).
     constexpr F32 GLOW_SCALE = 0.25f;
 
-    S32 sChannel = -1;
-    GLuint sTexture = 0;
-    LLPointer<LLImageRaw> sImage;
-    bool sLoadTried = false;
-
-    void releaseTexture()
+    // One glow texture: file in app_settings/stars, private sampler and
+    // channel, decoded image (kept CPU side for GL restores), GL name.
+    struct GlowTexture
     {
-        if (sTexture)
-        {
-            glDeleteTextures(1, &sTexture);
-            sTexture = 0;
-        }
-    }
+        const char* mFile;
+        LLStaticHashedString mSampler;
+        S32 mChannel = -1;
+        GLuint mTexture = 0;
+        LLPointer<LLImageRaw> mImage;
+        bool mLoadTried = false;
 
-    // Decodes the PNG once (CPU side; kept for GL restores).
-    bool loadImage()
-    {
-        if (sLoadTried)
-        {
-            return sImage.notNull();
-        }
-        sLoadTried = true;
-        const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "stars", "as_milky_way.png");
-        LLPointer<LLImagePNG> png = new LLImagePNG();
-        LLPointer<LLImageRaw> raw = new LLImageRaw();
-        if (!png->load(path) || !png->decode(raw, 0.f) || raw->getComponents() != 3)
-        {
-            LL_WARNS("ASMilkyWay") << "Milky Way texture missing or invalid: " << path << LL_ENDL;
-            return false;
-        }
-        sImage = raw;
-        return true;
-    }
+        GlowTexture(const char* file, const char* sampler) : mFile(file), mSampler(sampler) {}
 
-    // Uploads on first use, then binds. Unpack state saved and restored as
-    // in ascolorlut.cpp.
-    bool bindTexture()
-    {
-        if (sChannel < 0 || !loadImage())
+        void release()
         {
-            return false;
+            if (mTexture)
+            {
+                glDeleteTextures(1, &mTexture);
+                mTexture = 0;
+            }
         }
-        LLTexUnit* unit = gGL.getTexUnit(sChannel);
-        if (sTexture)
+
+        // Decodes once, by file extension (JPEG band, PNG deep-sky).
+        bool load()
         {
-            unit->bindManual(LLTexUnit::TT_TEXTURE, sTexture);
+            if (mLoadTried)
+            {
+                return mImage.notNull();
+            }
+            mLoadTried = true;
+            const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "stars", mFile);
+            LLPointer<LLImageFormatted> image = LLImageFormatted::createFromExtension(path);
+            LLPointer<LLImageRaw> raw = new LLImageRaw();
+            if (image.isNull() || !image->load(path) || !image->decode(raw, 0.f) || raw->getComponents() != 3)
+            {
+                LL_WARNS("ASMilkyWay") << "Glow texture missing or invalid: " << path << LL_ENDL;
+                return false;
+            }
+            mImage = raw;
             return true;
         }
 
-        glGenTextures(1, &sTexture);
-        unit->bindManual(LLTexUnit::TT_TEXTURE, sTexture);
-        // No mips: the content is soft, and mips would show a seam where
-        // atan() wraps at RA 12h.
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        const GLenum stores[] = { GL_UNPACK_ALIGNMENT, GL_UNPACK_ROW_LENGTH, GL_UNPACK_SKIP_PIXELS,
-                                  GL_UNPACK_SKIP_ROWS, GL_UNPACK_SWAP_BYTES };
-        GLint saved[5], unpack_buffer;
-        glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
-        for (S32 i = 0; i < 5; ++i)
+        // Uploads on first use, then binds. Unpack state saved and restored
+        // as in ascolorlut.cpp.
+        bool bind()
         {
-            glGetIntegerv(stores[i], &saved[i]);
-            glPixelStorei(stores[i], i == 0 ? 1 : 0);
+            if (mChannel < 0 || !load())
+            {
+                return false;
+            }
+            LLTexUnit* unit = gGL.getTexUnit(mChannel);
+            if (mTexture)
+            {
+                unit->bindManual(LLTexUnit::TT_TEXTURE, mTexture);
+                return true;
+            }
+
+            glGenTextures(1, &mTexture);
+            unit->bindManual(LLTexUnit::TT_TEXTURE, mTexture);
+            // No mips: they would show a seam where atan() wraps at RA 12h.
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            const GLenum stores[] = { GL_UNPACK_ALIGNMENT, GL_UNPACK_ROW_LENGTH, GL_UNPACK_SKIP_PIXELS,
+                                      GL_UNPACK_SKIP_ROWS, GL_UNPACK_SWAP_BYTES };
+            GLint saved[5], unpack_buffer;
+            glGetIntegerv(GL_PIXEL_UNPACK_BUFFER_BINDING, &unpack_buffer);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+            for (S32 i = 0; i < 5; ++i)
+            {
+                glGetIntegerv(stores[i], &saved[i]);
+                glPixelStorei(stores[i], i == 0 ? 1 : 0);
+            }
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, mImage->getWidth(), mImage->getHeight(), 0,
+                         GL_RGB, GL_UNSIGNED_BYTE, mImage->getData());
+            for (S32 i = 0; i < 5; ++i)
+            {
+                glPixelStorei(stores[i], saved[i]);
+            }
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpack_buffer);
+            return true;
         }
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB8, sImage->getWidth(), sImage->getHeight(), 0,
-                     GL_RGB, GL_UNSIGNED_BYTE, sImage->getData());
-        for (S32 i = 0; i < 5; ++i)
-        {
-            glPixelStorei(stores[i], saved[i]);
-        }
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, unpack_buffer);
-        return true;
-    }
+    };
+
+    GlowTexture sBand("as_milky_way.jpg", "as_milky_way_map");
+    GlowTexture sDeepSky("as_deep_sky.png", "as_deep_sky_map");
+    GlowTexture* const sTextures[] = { &sBand, &sDeepSky };
 }
 
 void ASMilkyWay::registerShader(std::vector<LLGLSLShader*>& shaders)
@@ -147,27 +159,34 @@ bool ASMilkyWay::createShader(S32 shader_level)
         return false;
     }
 
-    // Private sampler on the first free channel (the viewer only assigns
+    // Private samplers on the first free channels (the viewer only assigns
     // channels to its reserved sampler names).
-    sChannel = sMilkyWayProgram.mActiveTextureChannels;
-    if (sMilkyWayProgram.getUniformLocation(sMapSampler) < 0 ||
-        sChannel >= gGLManager.mNumTextureImageUnits || sChannel >= S32(LL_NUM_TEXTURE_LAYERS))
+    for (GlowTexture* texture : sTextures)
     {
-        sChannel = -1;
-        return true;
+        const S32 channel = sMilkyWayProgram.mActiveTextureChannels;
+        texture->mChannel = -1;
+        if (sMilkyWayProgram.getUniformLocation(texture->mSampler) < 0 ||
+            channel >= gGLManager.mNumTextureImageUnits || channel >= S32(LL_NUM_TEXTURE_LAYERS))
+        {
+            continue;
+        }
+        texture->mChannel = channel;
+        sMilkyWayProgram.bind();
+        sMilkyWayProgram.uniform1i(texture->mSampler, channel);
+        sMilkyWayProgram.unbind();
+        sMilkyWayProgram.mActiveTextureChannels += 1;
     }
-    sMilkyWayProgram.bind();
-    sMilkyWayProgram.uniform1i(sMapSampler, sChannel);
-    sMilkyWayProgram.unbind();
-    sMilkyWayProgram.mActiveTextureChannels += 1;
     return true;
 }
 
 void ASMilkyWay::unloadShader()
 {
     sMilkyWayProgram.unload();
-    releaseTexture();
-    sChannel = -1;
+    for (GlowTexture* texture : sTextures)
+    {
+        texture->release();
+        texture->mChannel = -1;
+    }
 }
 
 bool ASMilkyWay::configureShader(bool hdri_sky)
@@ -197,7 +216,9 @@ bool ASMilkyWay::configureShader(bool hdri_sky)
     }
 
     sMilkyWayProgram.bind();
-    if (!bindTexture())
+    // Both samplers must be bound: an unbound one would read whatever its
+    // unit holds.
+    if (!sBand.bind() || !sDeepSky.bind())
     {
         sMilkyWayProgram.unbind();
         return false;
