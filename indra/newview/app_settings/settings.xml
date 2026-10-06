@@ -26904,13 +26904,15 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASMilkyWayEnabled</key>
     <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow (Magellanic Clouds, Andromeda, nebulae)</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWayIntensity</key>
-    <map><key>Comment</key><string>Real-sky Milky Way glow intensity</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.5</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Real-sky Milky Way glow intensity</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWayDeepSkyIntensity</key>
     <map><key>Comment</key><string>Real-sky deep-sky glow intensity (Magellanic Clouds, galaxies, nebulae, clusters)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWaySaturation</key>
-    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow color saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow color saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.85</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsFaintLevel</key>
+    <map><key>Comment</key><string>Real-sky brightness of the faintest drawn star; 1 is about white on screen, lower makes faint stars dim points so bright stars stand out</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsDensity</key>
-    <map><key>Comment</key><string>Star count multiplier; procedural: 1 matches the 666 stars stock draws; real sky: 1 draws the 6660 brightest, 3 all 20000</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Star count multiplier; procedural: 1 matches the 666 stars stock draws; real sky: 1 draws the 6660 brightest, 3 all 20000</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>3.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsColorAmount</key>
     <map><key>Comment</key><string>Blend from stock star tint (0) to blackbody star colors (1)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsSaturation</key>
@@ -26918,7 +26920,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASStarsTemperatureBias</key>
     <map><key>Comment</key><string>Shifts sampled star temperatures: negative warmer (red), positive cooler (blue)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsBrightness</key>
-    <map><key>Comment</key><string>Star brightness multiplier on top of the sky setting</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.2</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Star brightness multiplier on top of the sky setting</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.5</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsBrightnessVariation</key>
     <map><key>Comment</key><string>Procedural star brightness contrast: 0 all stars equally bright (stock), 1 real-sky-like spread (most stars faint, a few bright and larger)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsSize</key>

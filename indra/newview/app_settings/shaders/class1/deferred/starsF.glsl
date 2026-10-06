@@ -48,10 +48,12 @@ uniform float as_star_mask;
 uniform float as_twinkle_amount;
 // Viewer-local brightness multiplier (1 = stock), after the smoothstep.
 uniform float as_star_brightness;
-// Real sky: > 0 decodes per-star brightness from vertex alpha, stored as
-// log2 over this many octaves (alpha 1 = the stock level). 0 = stock,
-// which ignores vertex alpha.
+// Encoded stars: > 0 decodes per-star brightness from vertex alpha, stored
+// as log2 over as_star_log_range octaves, as_star_log_offset of them below
+// the stock level (so alpha above offset/range is brighter than stock). 0 =
+// stock, which ignores vertex alpha.
 uniform float as_star_log_range;
+uniform float as_star_log_offset;
 // </AS:Chanayane>
 
 float twinkle(){
@@ -79,7 +81,7 @@ void main()
     // and real-sky per-star brightness
     if (as_star_log_range > 0.0)
     {
-        col.a *= exp2((vertex_color.a - 1.0) * as_star_log_range);
+        col.a *= exp2(vertex_color.a * as_star_log_range - as_star_log_offset);
     }
     // </AS:Chanayane>
     // <AS:Chanayane> Aperture DoF: constant mean twinkle while accumulating

@@ -202,4 +202,16 @@ Edited: `lldrawpoolwlsky.cpp`, `llviewershadermgr.cpp`, `CMakeLists.txt` (tagged
 - Viewer: `asmilkyway.cpp` `GlowTexture` (file, private sampler/channel, CPU image, GL name) x2, loaded by extension through `LLImageFormatted::createFromExtension`; both must bind or the pass is skipped. Band texture = 4096x2048 RGB8 (~32 MB VRAM once padded).
 - Placement check on the final JPEG: plane/|b|=50-70 brightness ratio 12.8x; LMC 0.47 vs its RA-mirrored position 0.02; Sgr star cloud 0.70; north galactic pole 0.002.
 - Open: the faint all-sky starlight background is real but may read as haze in-world (script could subtract a black level); the stars between mag 7.25 (catalogue limit) and 11.5 (start of the Gaia-only layer) are in neither layer.
-- Tuned defaults (in-world): `ASMilkyWayEnabled` on, `ASMilkyWayIntensity` 2.5, `ASMilkyWayDeepSkyIntensity` 2.0, `ASMilkyWaySaturation` 1.0.
+- Tuned defaults (in-world): `ASMilkyWayEnabled` on, `ASMilkyWayIntensity` 2.0, `ASMilkyWayDeepSkyIntensity` 2.0, `ASMilkyWaySaturation` 1.0.
+
+### Bright stars standing out (Southern Cross hard to find)
+- Cause: faint stars sat at 1/32 of the stock level, ~1.2 on screen (white after tone mapping), so magnitude 5-6 stars looked almost as bright as Crux; level was capped at the stock level and the surplus went into size only (a white core cannot get whiter); sprite size was constant below the stock level.
+- Fix: encoding now spans 11 octaves (`LOG_OCTAVES_BELOW` 8 + `LOG_OCTAVES_ABOVE` 3), decoded `exp2(a * as_star_log_range - as_star_log_offset)` in `starsF.glsl`; levels up to `MAX_LEVEL` 8x stock stay brightness (the glow pass extracts bright HDR pixels, `glowExtractF.glsl`, and DoF bokeh gets stronger), surplus beyond goes to size. Size follows brightness for every star: `max(level^0.25, 0.35) * sqrt(max(level / 8, 1))`, capped 4x (`levelSizeScale`). Applies to procedural brightness contrast too (its faint level stays 1/32, `PROCEDURAL_FAINT_LEVEL`).
+- New `ASStarsFaintLevel` (real sky, 0.05-2, default 0.5; 1 = previous 1/32 of stock): faintest drawn star level = value / 32.
+- Simulated (density 1, limit mag 6.26, contrast 0.75, faint 0.5, brightness 1.2, size 2.75; screen = 32 * brightness * level): Sirius 122 (x1.34), Acrux 26, Mimosa 19, Gacrux 15 (x0.8-0.9), Delta Crucis 6.7, mag 4 2.9, mag 5 1.4 (x0.44), faintest 0.59 (x0.35).
+- Panel 720 px; Environment Effects tab container 745 / floater 770.
+
+### Stars panel in tabs
+- `panel_as_stars_settings.xml` (270 px, was 720): master toggle + Star source above a nested `tab_container` (inline tab panels, like `panel_as_weather.xml`), "Reset all" below. Tabs: Stars (density, brightness, size, twinkle), Color (realism, saturation, temperature), Real sky (latitude, sidereal offset, magnitude contrast, faint star brightness), Milky Way (glow toggle, intensities, saturation), Procedural (brightness contrast, Milky Way concentration, seed). Section header texts dropped (the tabs replace them); control names unchanged.
+- Standalone floater 300 px; Environment Effects floater back to 700 / tab container 675 (tallest embedded panel is again Horizon at 680).
+- Tuned defaults (in-world): `ASStarsDensity` 3.0 (real sky: all 20000 stars; procedural 1998), `ASStarsBrightness` 1.5, `ASStarsFaintLevel` 0.6, `ASMilkyWaySaturation` 0.85.

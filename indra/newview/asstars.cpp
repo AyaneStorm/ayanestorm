@@ -37,26 +37,51 @@ namespace
     // background count.
     constexpr F32 MILKY_WAY_EXTRA_STARS = 1.5f;
 
-    // Real sky: per-star brightness relative to the stock star level
-    // (which the shader's x32 already pushes past white). The faintest
-    // drawn star sits at REAL_SKY_FAINT_LEVEL; brightness is stored in
-    // vertex alpha as log2 over REAL_SKY_LOG_RANGE octaves (8-bit alpha
-    // cannot hold the ~1:1000 range linearly) and decoded in starsF.glsl.
-    // Brightness above the stock level goes into sprite area.
+    // Encoded per-star brightness ("level"), relative to the stock star
+    // level (which the shader's x32 already pushes past white). Stored in
+    // vertex alpha as log2 over LOG_OCTAVES_BELOW + LOG_OCTAVES_ABOVE
+    // octaves around the stock level (8-bit alpha cannot hold the ~1:1000
+    // range linearly), decoded in starsF.glsl. Up to MAX_LEVEL (8x stock)
+    // brightness stays brightness, so the brightest stars feed the glow pass
+    // and the DoF bokeh instead of only growing; beyond it, sprite area.
+    constexpr F32 LOG_OCTAVES_BELOW = 8.f;
+    constexpr F32 LOG_OCTAVES_ABOVE = 3.f;
+    constexpr F32 MAX_LEVEL = 8.f; // 2^LOG_OCTAVES_ABOVE
     constexpr F32 REAL_SKY_BASE_SIZE = 18.f;
-    constexpr F32 REAL_SKY_FAINT_LEVEL = 1.f / 32.f;
+    // Sprite size follows brightness: level^0.25 up to MAX_LEVEL, at least
+    // MIN_SIZE_SCALE, then sqrt of the surplus; capped overall.
+    constexpr F32 MIN_SIZE_SCALE = 0.35f;
+    constexpr F32 REAL_SKY_MAX_SIZE_SCALE = 4.f;
+    // Procedural brightness contrast: faintest star level (1/32 of stock).
+    constexpr F32 PROCEDURAL_FAINT_LEVEL = 1.f / 32.f;
+    // Real sky: ASStarsFaintLevel 1 puts the faintest drawn star at 1/32 of
+    // the stock level (~white on screen); the default 0.5 a dim point.
+    constexpr F32 REAL_SKY_FAINT_UNIT = 1.f / 32.f;
     // Real sky: stars per unit of density; 1 draws the 6660 brightest
     // (about the naked-eye limit, magnitude 6.3), 3 the whole catalogue.
     constexpr U32 REAL_SKY_STARS_PER_DENSITY = 6660;
-    constexpr F32 REAL_SKY_LOG_RANGE = 8.f;
-    constexpr F32 REAL_SKY_MAX_SIZE_SCALE = 4.f;
+
+    // Level -> encoded vertex alpha.
+    F32 encodeLevel(F32 level)
+    {
+        const F32 octaves = std::log2(llclamp(level, std::exp2(-LOG_OCTAVES_BELOW), MAX_LEVEL));
+        return llclamp((octaves + LOG_OCTAVES_BELOW) / (LOG_OCTAVES_BELOW + LOG_OCTAVES_ABOVE), 0.f, 1.f);
+    }
+
+    // Level -> sprite size scale.
+    F32 levelSizeScale(F32 level)
+    {
+        const F32 scale = llmax(std::pow(llmin(level, MAX_LEVEL), 0.25f), MIN_SIZE_SCALE) *
+                          std::sqrt(llmax(level / MAX_LEVEL, 1.f));
+        return llmin(scale, REAL_SKY_MAX_SIZE_SCALE);
+    }
 
     // Settings that change the catalogue and therefore need a rebuild.
     const std::vector<std::string> sCatalogueControls = {
         "ASStarsDensity", "ASStarsColorAmount", "ASStarsSaturation",
         "ASStarsTemperatureBias", "ASStarsBrightnessVariation", "ASStarsSize",
         "ASStarsMilkyWay", "ASStarsSeed", "ASStarsEnabled",
-        "ASStarsMode", "ASStarsMagnitudeContrast"
+        "ASStarsMode", "ASStarsMagnitudeContrast", "ASStarsFaintLevel"
     };
     // Every resettable setting of the panel.
     const std::vector<std::string> sAllControls = {
@@ -64,7 +89,7 @@ namespace
         "ASStarsTemperatureBias", "ASStarsBrightness", "ASStarsBrightnessVariation",
         "ASStarsSize", "ASStarsTwinkle", "ASStarsMilkyWay", "ASStarsSeed",
         "ASStarsMode", "ASStarsLatitude", "ASStarsSiderealOffset",
-        "ASStarsMagnitudeContrast", "ASMilkyWayEnabled", "ASMilkyWayIntensity",
+        "ASStarsMagnitudeContrast", "ASStarsFaintLevel", "ASMilkyWayEnabled", "ASMilkyWayIntensity",
         "ASMilkyWayDeepSkyIntensity", "ASMilkyWaySaturation"
     };
 
@@ -371,6 +396,7 @@ void ASStars::generate(F32 radius, std::vector<LLVector3>& positions,
     const F32 amount = llclamp(color_amount, 0.f, 1.f);
     const F32 temperature_scale = std::pow(2.f, llclamp(temperature_bias, -1.f, 1.f));
     const F32 contrast = llclamp(magnitude_contrast, 0.05f, 1.f);
+    const F32 faint_level = llclamp(gSavedSettings.getF32("ASStarsFaintLevel"), 0.01f, 4.f) * REAL_SKY_FAINT_UNIT;
     // Real sky: magnitude of the faintest drawn star (the eye's limit).
     const F32 limit_mag = sRealSky && sCount > 0 ? sCatalogue[sCount - 1].mMag : 0.f;
 
@@ -387,9 +413,9 @@ void ASStars::generate(F32 radius, std::vector<LLVector3>& positions,
             // to the faintest drawn star) ^ contrast. Up to the stock level
             // it is log-encoded in vertex alpha; the rest grows the sprite.
             const F32 flux = std::pow(10.f, -0.4f * (star.mMag - limit_mag));
-            const F32 level = std::pow(flux, contrast) * REAL_SKY_FAINT_LEVEL;
-            intensities[i] = llclamp(1.f + std::log2(llmin(level, 1.f)) / REAL_SKY_LOG_RANGE, 0.f, 1.f);
-            size_scale = llmin(std::sqrt(llmax(level, 1.f)), REAL_SKY_MAX_SIZE_SCALE);
+            const F32 level = std::pow(flux, contrast) * faint_level;
+            intensities[i] = encodeLevel(level);
+            size_scale = levelSizeScale(level);
             // Unknown B-V: a Sun-like color.
             temperature = star.mHasBV ? bvToTemperature(star.mBV) : 5800.f;
         }
@@ -423,10 +449,10 @@ void ASStars::generate(F32 radius, std::vector<LLVector3>& positions,
                 // the real-sky faint level (median ~2x it, ~2% of stars
                 // above the stock level). Blended in log space from the
                 // stock level (contrast 0) to the target (contrast 1).
-                const F32 target = std::pow(llmax(1.f - u, 1.e-4f), -0.4f / 0.45f) * REAL_SKY_FAINT_LEVEL;
+                const F32 target = std::pow(llmax(1.f - u, 1.e-4f), -0.4f / 0.45f) * PROCEDURAL_FAINT_LEVEL;
                 const F32 level = std::exp2(variation * std::log2(target));
-                intensities[i] = llclamp(1.f + std::log2(llmin(level, 1.f)) / REAL_SKY_LOG_RANGE, 0.f, 1.f);
-                size_scale = llmin(std::sqrt(llmax(level, 1.f)), REAL_SKY_MAX_SIZE_SCALE);
+                intensities[i] = encodeLevel(level);
+                size_scale = levelSizeScale(level);
             }
         }
 
@@ -500,10 +526,12 @@ void ASStars::applySkyTransform(F32 star_time, LLGLSLShader& shader)
     static LLStaticHashedString sStarUp("as_star_up");
     static LLStaticHashedString sHorizonFade("as_star_horizon_fade");
     static LLStaticHashedString sLogRange("as_star_log_range");
+    static LLStaticHashedString sLogOffset("as_star_log_offset");
 
     // Encoded stars decode per-star brightness from vertex alpha; stock
     // ignores it.
-    shader.uniform1f(sLogRange, sEncoded ? REAL_SKY_LOG_RANGE : 0.f);
+    shader.uniform1f(sLogRange, sEncoded ? LOG_OCTAVES_BELOW + LOG_OCTAVES_ABOVE : 0.f);
+    shader.uniform1f(sLogOffset, LOG_OCTAVES_BELOW);
 
     if (!sRealSky)
     {
