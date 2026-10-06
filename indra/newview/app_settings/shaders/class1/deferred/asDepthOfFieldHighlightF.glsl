@@ -10,9 +10,15 @@
  *
  * highlight_pass 0 (cell grid): per cell of CELL_SIZE^2 full-resolution
  * pixels, sum the extracted energy with its luminance-weighted centre and
- * signed CoC. highlight_pass 1 (full resolution): gather input = opaque
- * color minus the extraction of kept cells. Both passes evaluate the same
+ * signed CoC. highlight_pass 1 (full resolution): gather input = bin colour
+ * minus the extraction of kept cells. Both passes evaluate the same
  * detect(), so the removed and the redrawn energy match exactly.
+ *
+ * Live DoF (asdoflive.cpp), linked with asDoFLiveCommonF.glsl: the radius
+ * comes from the depth (highlightCoC()) and each cell keeps the light alone
+ * in the front and the back bin of its side (highlightParts()): their sum,
+ * and the front fraction in frag_data1.w; the bright bokeh highlights gain
+ * applies to that energy (highlightGain()).
  */
 layout(location = 0) out vec4 frag_data0;
 layout(location = 1) out vec4 frag_data1;
@@ -20,10 +26,9 @@ layout(location = 1) out vec4 frag_data1;
 layout(location = 2) out vec4 frag_data2;
 layout(location = 3) out vec4 frag_data3;
 
-// Original opaque linear-HDR color.
+// Live's bin colour (the opaque surface, or the composited image in its
+// one-layer fallback), linear HDR.
 uniform sampler2D diffuseRect;
-// Signed CoC target; g is the opaque CoC.
-uniform sampler2D noiseMap;
 // Cell energy (rgb) and occupancy (a) with mips (pass 1 only).
 uniform sampler2D specularRect;
 // Cell brightness levels 0-3 and 4-7 with mips (pass 1 only).
@@ -39,6 +44,83 @@ uniform int cell_top_level;
 uniform float sprite_budget;
 
 #define CELL_SIZE 8
+
+// The blur radius comes from depthMap (asDoFLiveCommonF.glsl).
+uniform sampler2D depthMap;
+uniform sampler2D positionMap;  // Mac OIT sum of weights, sum of optical depth
+uniform int bins_source;
+float liveBlurRadius(float device_depth, vec2 uv);
+void liveDecompose(ivec2 p, out vec4 bins[5], out vec4 energy);
+vec4 liveBinVisibility(vec4 bins[5]);
+
+// Signed CoC normalized as the sprites decode it (asDepthOfFieldSpriteV.glsl):
+// the radius over the side's largest radius.
+float highlightCoC(ivec2 p)
+{
+    vec2 uv = (vec2(p) + 0.5) / screen_res;
+    float radius = liveBlurRadius(texture(depthMap, uv).r, uv);
+    return radius < 0.0 ? radius / max(near_max_radius, 0.0001) :
+                          radius / max(max_radius, 0.0001);
+}
+
+// The opaque light alone in the front and the back bin of its side (B1 and
+// B2 behind the focus, N2 and N1 in front): each bin is read alone (S / V),
+// so the surface's share b shows a_b = share_b T / V_b of its light (T: the
+// transmittance in front of it). The sprites draw the front part over its
+// layer pair and the back part into the back layer, under what the front
+// holds there (asdoflive.cpp): a light behind a B1 hair strand stays behind
+// it. A light behind a strand in a nearer bin keeps its full excess, behind
+// glass in its own bin T. One layer (bins_source 0): (0, 1). Mirrored by
+// dof_live_reference.py (sprite_layer_parts()).
+vec4 liveBinWeights(float signed_radius);
+
+vec2 highlightParts(ivec2 p)
+{
+    vec2 uv = (vec2(p) + 0.5) / screen_res;
+    float radius = liveBlurRadius(texture(depthMap, uv).r, uv);
+    vec4 shares = liveBinWeights(radius);       // N2, N1, F, B1
+    float far_share = max(1.0 - dot(shares, vec4(1.0)), 0.0);
+    vec2 split = radius < 0.0 ? shares.xy : vec2(shares.w, far_share);
+    if (bins_source == 0)
+    {
+        // One surface per pixel: nothing in front of it, V_back = 1 - front.
+        return vec2(split.x, split.y / max(1.0 - split.x, 0.0001));
+    }
+    vec4 bins[5];
+    vec4 energy;
+    liveDecompose(p, bins, energy);
+    vec4 visibility = liveBinVisibility(bins);  // in front of N1, F, B1, B2
+    float transmittance = exp(-texelFetch(positionMap, p, 0).y);
+    vec2 front_back = radius < 0.0 ? vec2(1.0, visibility.x) : visibility.zw;
+    return min(split * transmittance / max(front_back, vec2(0.0001)), vec2(1.0));
+}
+
+// Bright bokeh highlights (ASDepthOfFieldApertureHighlights, artistic, not
+// energy preserving): the Aperture-sampled renderer's gain
+// (asDoFAccumulateF.glsl) on the sprites' light, 1 + strength * bright *
+// min((radius / 4)^2, 1024), radius the full-resolution blur. The extraction
+// has already found the light isolated, so mode 2's ring test is left out;
+// the gather input loses only the light itself. hl_strength 0: off. Mirrored
+// by dof_live_reference.py (live_highlight_gain()).
+uniform float hl_strength;
+uniform float hl_threshold;
+
+float highlightGain(ivec2 p)
+{
+    if (hl_strength <= 0.0)
+    {
+        return 1.0;
+    }
+    float coc = highlightCoC(p);
+    float radius = coc < 0.0 ? -coc * near_max_radius : coc * max_radius;
+    if (radius <= 1.0)
+    {
+        return 1.0;
+    }
+    float luma = dot(texelFetch(diffuseRect, p, 0).rgb, vec3(0.2126, 0.7152, 0.0722));
+    float bright = smoothstep(0.5 * hl_threshold, 1.5 * hl_threshold, luma);
+    return 1.0 + hl_strength * bright * min(radius * radius / 16.0, 1024.0);
+}
 
 float luminance(vec3 color)
 {
@@ -56,7 +138,7 @@ float luminance(vec3 color)
 vec3 detect(ivec2 p)
 {
     ivec2 last = ivec2(screen_res) - 1;
-    float coc = texelFetch(noiseMap, p, 0).g;
+    float coc = highlightCoC(p);
     float radius = coc < 0.0 ? -coc * near_max_radius : coc * max_radius;
     float gate = smoothstep(2.0, 4.0, radius);
     if (gate <= 0.0)
@@ -170,6 +252,8 @@ void main()
         vec2 center_sum = vec2(0.0);
         float coc_sum = 0.0;
         float weight = 0.0;
+        float front_sum = 0.0;  // luminance of the front parts
+        float part_sum = 0.0;
         for (int y = 0; y < CELL_SIZE; ++y)
         {
             for (int x = 0; x < CELL_SIZE; ++x)
@@ -185,16 +269,21 @@ void main()
                 {
                     continue;
                 }
-                energy += excess;
+                vec2 parts = highlightParts(p);
+                energy += excess * (parts.x + parts.y) * highlightGain(p);
+                front_sum += l * parts.x;
+                part_sum += l * (parts.x + parts.y);
                 center_sum += (vec2(p) + 0.5) * l;
-                coc_sum += texelFetch(noiseMap, p, 0).g * l;
+                coc_sum += highlightCoC(p) * l;
                 weight += l;
             }
         }
         bool occupied = weight > 0.0001;
         frag_data0 = vec4(energy, occupied ? 1.0 : 0.0);
+        // .w: the share of the cell's energy in the front bin.
         frag_data1 = occupied
-            ? vec4(center_sum / weight / screen_res, coc_sum / weight, weight)
+            ? vec4(center_sum / weight / screen_res, coc_sum / weight,
+                   part_sum > 0.0 ? front_sum / part_sum : 0.0)
             : vec4(0.0);
         // Counts only: keepCell() reads the stored energy in both pass 1 and
         // the sprites, so they always agree on which cells are kept.

@@ -105,6 +105,18 @@ float residualRadius(float distance_m)
     return min(residual_scale * abs(inv_focus - 1.0 / max(distance_m, 1e-4)), residual_max);
 }
 
+// Spherical aberration: mean of max(1 + c - 2 c u, 0) over the pupil
+// (u = pupil_r2 uniform in [0, 1]); 1 for |c| <= 1.
+float sphericalNorm(float c)
+{
+    if (abs(c) <= 1.0)
+    {
+        return 1.0;
+    }
+    float q = (1.0 + c) * (1.0 + c) / (4.0 * abs(c));
+    return c > 0.0 ? q : 1.0 + q;
+}
+
 // Open fraction of a unit-circle aperture clipped by a unit circle at
 // distance d: lens (vesica) area over pi.
 float catEyeFraction(float d)
@@ -273,8 +285,11 @@ void main()
         }
         if (sa_strength != 0.0)
         {
+            // Cut at zero and renormalized beyond |sa sigma| = 1 (a ring or
+            // a hard core); a no-op within 1, where the weight is >= 0.
             float sigma = clamp(sa_coc_scale * defocus / SA_FOCUS_PIXELS, -1.0, 1.0);
-            w *= 1.0 - sa_strength * sigma * (2.0 * pupil_r2 - 1.0);
+            w *= max(1.0 - sa_strength * sigma * (2.0 * pupil_r2 - 1.0), 0.0) /
+                 sphericalNorm(sa_strength * sigma);
         }
         if (hl_strength > 0.0 && w > 0.0)
         {

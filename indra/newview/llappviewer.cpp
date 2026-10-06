@@ -29,6 +29,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "asexactoit.h"
 #include "asavboit.h"
+#include "asmacoit.h"
 #include "asdofrenderer.h" // aperture DoF capture world freeze
 // </AS:Chanayane>
 
@@ -4144,6 +4145,7 @@ LLSD LLAppViewer::getViewerInfo() const
 // <AS:Chanayane> OIT diagnostics.
     ASExactOIT::appendDiagnostics(info);
     ASAVBOIT::appendDiagnostics(info);
+    ASMacOIT::appendDiagnostics(info);
 // </AS:Chanayane>
     // </AS:Chanayane>
 

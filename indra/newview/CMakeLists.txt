@@ -110,6 +110,12 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local star catalogue settings.
+    asstars.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local real-sky Milky Way glow.
+    asmilkyway.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
     ashorizonscattering.cpp
     # </AS:Chanayane>
@@ -127,6 +133,7 @@ set(viewer_SOURCE_FILES
     asdofcamera.cpp
     asdofaperture.cpp
     asdofautofocus.cpp
+    asdoflive.cpp
     asdofrenderer.cpp
     asdiffuseglow.cpp
     asambientocclusion.cpp
@@ -181,6 +188,7 @@ set(viewer_SOURCE_FILES
     fsdata.cpp
     fsdroptarget.cpp
     asavboit.cpp
+    asmacoit.cpp
     asoitdispatcher.cpp
     asexactoit.cpp
     fsexportperms.cpp
@@ -1047,6 +1055,12 @@ set(viewer_HEADER_FILES
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local star catalogue settings.
+    asstars.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local real-sky Milky Way glow.
+    asmilkyway.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
     ashorizonscattering.h
     # </AS:Chanayane>
@@ -1064,6 +1078,7 @@ set(viewer_HEADER_FILES
     asdofcamera.h
     asdofaperture.h
     asdofautofocus.h
+    asdoflive.h
     asdofrenderer.h
     asdiffuseglow.h
     asambientocclusion.h
@@ -1120,6 +1135,7 @@ set(viewer_HEADER_FILES
     fsdata.h
     fsdroptarget.h
     asavboit.h
+    asmacoit.h
     asoitdispatcher.h
     asexactoit.h
     fsexportperms.h

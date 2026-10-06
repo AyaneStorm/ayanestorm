@@ -6,6 +6,9 @@
  * Attribute-free instanced draw: two triangles per highlight cell
  * (asDepthOfFieldHighlightF.glsl). Empty cells, cells dropped by the sprite
  * budget and cells of the other plane collapse to a degenerate triangle.
+ * Live DoF (asdoflive.cpp): the exact open fraction under cat's eye
+ * (liveOpenFraction()) and one part of each cell's light per draw
+ * (live_part).
  */
 // Cell energy (rgb) and occupancy (a), with mips.
 uniform sampler2D specularRect;
@@ -24,23 +27,23 @@ uniform int plane;
 uniform ivec2 cell_grid;
 uniform int cell_top_level;
 uniform float sprite_budget;
-// Lens field (asdepthoffield.cpp, setLensUniforms()), as in the gathers.
+// Bokeh shape saturation (ASDepthOfFieldHighlightSaturation): 1 unchanged,
+// 0 grey, above 1 more vivid.
+uniform float sprite_saturation;
+// Lens field (asdoflive.cpp, setLensUniforms()), as in the gathers.
 uniform vec2 field_scale;
 uniform float cat_eye;
-uniform float astigmatism;
 uniform float ca_shift;
 
 flat out vec3 vary_energy;
 flat out vec2 vary_center;
 flat out float vary_radius;
-// Field position, (radial, circumferential) aperture scales, barrel centre
-// and axial CA shift (px) of this sprite (asDepthOfFieldSpriteF.glsl).
-flat out vec2 vary_field;
-flat out vec2 vary_axis_scale;
+// Barrel centre and axial CA shift (px) of this sprite
+// (asDepthOfFieldSpriteF.glsl).
 flat out vec2 vary_barrel;
 flat out float vary_delta;
 
-// Cat's eye and astigmatism, see asDepthOfFieldFarF.glsl.
+// Cat's eye: the barrel's centre at this field position, aperture radii.
 vec2 barrelCenter(vec2 field)
 {
     vec2 shift = cat_eye * field;
@@ -48,29 +51,90 @@ vec2 barrelCenter(vec2 field)
     return len > 1.6 ? shift * (1.6 / len) : shift;
 }
 
-vec2 astigmaticScale(vec2 field, float signed_radius, float plane_radius)
+// The exact open share of the aperture under cat's eye, spherical profile
+// included, as Live's gathers renormalize every source to its exact open
+// aperture (scripts/testing/dof_live_reference.py, sprite_open_fraction()).
+uniform int aperture_blades;
+uniform float aperture_roundness;
+uniform float aperture_rotation;
+uniform float sa_strength;
+// 1: the front part of each cell's light (B1, N2), 0: the back part (B2,
+// N1); the cell keeps their sum and the front fraction (centroid .w,
+// asDepthOfFieldHighlightF.glsl).
+uniform int live_part;
+
+float liveSphericalNorm(float c)
 {
-    float split = abs(astigmatism) * dot(field, field) * plane_radius;
-    float radius = abs(signed_radius);
-    if (split <= 0.0 || radius <= 0.0)
+    if (abs(c) <= 1.0)
     {
-        return vec2(1.0);
+        return 1.0;
     }
-    float t = clamp((radius - 2.0 * split) / radius, -1.0, 1.0);
-    t = t < 0.0 ? min(t, -0.1) : max(t, 0.1);
-    return (astigmatism > 0.0) == (signed_radius >= 0.0) ? vec2(t, 1.0) : vec2(1.0, t);
+    float q = (1.0 + c) * (1.0 + c) / (4.0 * abs(c));
+    return c > 0.0 ? q : 1.0 + q;
 }
 
-// Open fraction of a unit-circle aperture clipped by a unit circle at
-// distance d: lens (vesica) area over pi (as in asDoFAccumulateF.glsl).
-float catEyeFraction(float d)
+// Integral of the cut spherical profile max(1 + c - 2 c rho^2, 0) times rho
+// over [lo, hi], divided by its mean (asDepthOfFieldSpriteF.glsl,
+// sphericalWeight()).
+float liveProfileMoment(float c, float lo, float hi)
 {
-    if (d >= 2.0)
+    if (c > 1.0)
+    {
+        hi = min(hi, sqrt((1.0 + c) / (2.0 * c)));
+    }
+    else if (c < -1.0)
+    {
+        lo = max(lo, sqrt((1.0 + c) / (2.0 * c)));
+    }
+    if (hi <= lo)
     {
         return 0.0;
     }
-    float h = 0.5 * d;
-    return (2.0 * acos(h) - 2.0 * h * sqrt(1.0 - h * h)) / 3.14159265358979323846;
+    float g_hi = 0.5 * (1.0 + c) * hi * hi - 0.5 * c * hi * hi * hi * hi;
+    float g_lo = 0.5 * (1.0 + c) * lo * lo - 0.5 * c * lo * lo * lo * lo;
+    return (g_hi - g_lo) / liveSphericalNorm(c);
+}
+
+// Edge radius at a polar angle before rotation (asDepthOfFieldSpriteF.glsl).
+float liveBoundary(float phi)
+{
+    if (aperture_blades < 3)
+    {
+        return 1.0;
+    }
+    float sector = 2.0 * 3.14159265358979323846 / float(aperture_blades);
+    float local_angle = mod(phi, sector) - 0.5 * sector;
+    float polygon = cos(0.5 * sector) / max(cos(local_angle), 0.001);
+    return mix(polygon, 1.0, aperture_roundness);
+}
+
+// Share of the profiled unit aperture inside the barrel's unit circle: a
+// polar integral over 64 aperture angles, each with the exact ray and circle
+// intersection (0.4% from a brute-force area for a triangle at shift 1.4).
+float liveOpenFraction(vec2 barrel, float c)
+{
+    float inside = 0.0;
+    float full = 0.0;
+    for (int i = 0; i < 64; ++i)
+    {
+        float phi = 2.0 * 3.14159265358979323846 * (float(i) + 0.5) / 64.0;
+        float b = liveBoundary(phi);
+        vec2 dir = vec2(anamorphic_ratio * cos(phi + aperture_rotation),
+                        sin(phi + aperture_rotation));
+        float qa = dot(dir, dir);
+        float qb = -2.0 * dot(dir, barrel);
+        float qc = dot(barrel, barrel) - 1.0;
+        float disc = qb * qb - 4.0 * qa * qc;
+        if (disc > 0.0)
+        {
+            float root = sqrt(disc);
+            float lo = max((-qb - root) / (2.0 * qa), 0.0);
+            float hi = min((-qb + root) / (2.0 * qa), b);
+            inside += b * b * liveProfileMoment(c, lo / b, hi / b);
+        }
+        full += b * b * liveProfileMoment(c, 0.0, 1.0);
+    }
+    return full > 0.0 ? inside / full : 1.0;
 }
 
 // Same rule as asDepthOfFieldHighlightF.glsl keepCell() (brightest cells
@@ -134,8 +198,6 @@ void main()
     vary_energy = vec3(0.0);
     vary_center = vec2(0.0);
     vary_radius = 1.0;
-    vary_field = vec2(0.0);
-    vary_axis_scale = vec2(1.0);
     vary_barrel = vec2(0.0);
     vary_delta = 0.0;
     bool this_plane = plane > 0 ? data.z > 0.0 : data.z < 0.0;
@@ -150,30 +212,38 @@ void main()
     float radius = max(plane > 0 ? data.z * max_radius : -data.z * near_max_radius, 1.0);
     vec2 center = data.xy * screen_res;
     vec2 field = (data.xy - 0.5) * field_scale;
-    vec2 axis_scale = astigmaticScale(field, plane > 0 ? radius : -radius, plane_radius);
     vec2 barrel = barrelCenter(field);
     // Axial CA widens the bluest (far) or reddest (near) disc by delta.
     float delta = ca_shift * plane_radius;
-    // Margin for the antialiased edge: 1.5 target pixels. The deformation
-    // and the barrel only shrink the shape.
+    // Margin for the antialiased edge: 1.5 target pixels. The barrel only
+    // shrinks the shape.
     float half_size = (radius + delta) * max(anamorphic_ratio, 1.0) +
                       1.5 * max(screen_res.x / target_res.x, 1.0);
     vec2 pixel = center + corners[(gl_InstanceID % 2) * 3 + gl_VertexID] * half_size;
 
     // Radiance per full-resolution pixel: the energy spread over the
     // aperture's area, so brightness is independent of shape and radius.
-    // The astigmatic scales and the open share of the clipped aperture
-    // (exact for a circle) shrink that area.
-    float area = unit_area * radius * radius * abs(axis_scale.x * axis_scale.y);
+    // The open share of the clipped aperture shrinks that area.
+    float area = unit_area * radius * radius;
     if (cat_eye > 0.0)
     {
-        area *= max(catEyeFraction(length(barrel)), 0.05);
+        float sigma = (plane > 0 ? 1.0 : -1.0) * clamp(radius / 3.0, 0.0, 1.0);
+        area *= max(liveOpenFraction(barrel, sa_strength * sigma), 0.01);
     }
-    vary_energy = energy.rgb / area;
+    float part = live_part != 0 ? data.w : 1.0 - data.w;
+    if (part <= 0.0001)
+    {
+        vary_energy = vec3(0.0);
+        gl_Position = vec4(2.0, 2.0, 0.0, 1.0);
+        return;
+    }
+    vary_energy = energy.rgb * part / area;
+    // Saturation around the luminance, which it keeps (the gather lost
+    // exactly this luminance); channels pushed below 0 are clipped.
+    float luma = dot(vary_energy, vec3(0.2126, 0.7152, 0.0722));
+    vary_energy = max(mix(vec3(luma), vary_energy, sprite_saturation), vec3(0.0));
     vary_center = center;
     vary_radius = radius;
-    vary_field = field;
-    vary_axis_scale = axis_scale;
     vary_barrel = barrel;
     vary_delta = delta;
     gl_Position = vec4(pixel / screen_res * 2.0 - 1.0, 0.0, 1.0);

@@ -139,7 +139,7 @@ namespace
     Subject sSubject;
     bool sLockHandled = false;    // this focus lock press was processed
     bool sSubjectInView = false;  // the subject set the focus this frame
-    LLVector2 sSubjectUV;
+    LLVector2 sSubjectUV;         // its screen position; may lie off screen
 
     const LLStaticHashedString U_AF_RECT("af_rect");
     const LLStaticHashedString U_EYE_UV("eye_uv");
@@ -1024,6 +1024,21 @@ void ASDoFAutofocus::registerUICallbacks()
                 gSavedSettings.setS32("ASDepthOfFieldFocusMode", last == FOCUS_EYES ? FOCUS_EYES : FOCUS_AREA);
             }
         });
+    // Turning DoF on in autofocus starts unlocked: a lock kept through DoF
+    // off re-picked its subject from whatever lay under the area on the
+    // first result (a shoulder instead of the locked eyes), or held a
+    // distance from another scene. Point focus keeps Firestorm's lock.
+    if (LLControlVariable* control = gSavedSettings.getControl("RenderDepthOfField"))
+    {
+        control->getSignal()->connect([](LLControlVariable*, const LLSD& value, const LLSD& previous)
+            {
+                if (value.asBoolean() && !previous.asBoolean() && focusMode() != FOCUS_POINT &&
+                    gSavedSettings.getBOOL("FSFocusPointLocked"))
+                {
+                    gSavedSettings.setBOOL("FSFocusPointLocked", false);
+                }
+            });
+    }
     // Floater "Redetect": measure every avatar's eyeballs again.
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASDepthOfField.RedetectEyes",
@@ -1183,7 +1198,11 @@ void ASDoFAutofocus::drawOverlay()
         const S32 left = to_x(rect.mV[0]);
         const S32 top = to_y(rect.mV[3]);
         gl_rect_2d(left, top, to_x(rect.mV[2]), to_y(rect.mV[1]), colour, false);
-        if (locked ? sSubjectInView : sHasEyeCandidate)
+        // Tracked outside the frame (ASDepthOfFieldAutofocusTrackOutside):
+        // said in the label, no marker.
+        const bool off_screen = locked && sSubjectInView &&
+            !insideRect(LLVector4(0.f, 0.f, 1.f, 1.f), sSubjectUV);
+        if ((locked ? sSubjectInView : sHasEyeCandidate) && !off_screen)
         { // Tracked subject or eyes.
             const LLVector2& uv = locked ? sSubjectUV : sEyeUV;
             const S32 x = to_x(uv.mV[VX]);
@@ -1206,7 +1225,8 @@ void ASDoFAutofocus::drawOverlay()
                     const std::string eyes = sSubject.mType == Subject::EYES
                         ? ", " + eyeRadiusLabel(sSubject.mID) : std::string();
                     text += llformat(" (locked: %s%s%s)", name.c_str(), eyes.c_str(),
-                                     sSubjectInView ? "" : ", holding");
+                                     !sSubjectInView ? ", holding" :
+                                     (off_screen ? ", off-screen" : ""));
                 }
             }
             else if (sEyesTracked)

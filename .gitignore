@@ -147,3 +147,5 @@ lut/
 .ie*/
 .mr/
 .glslang/
+.ca
+*.exr

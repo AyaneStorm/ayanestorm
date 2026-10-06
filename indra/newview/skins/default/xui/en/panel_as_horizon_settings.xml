@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<panel border="false" follows="all" height="680" layout="topleft" left="1" top="1" width="460" name="as_horizon_settings">
+<panel border="false" follows="all" height="580" layout="topleft" left="1" top="1" width="460" name="as_horizon_settings">
   <!-- Viewer-local analytic horizon light; all settings apply live. -->
   <text follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="horizon_label" top="10" width="300">Horizon scattering</text>
   <check_box control_name="ASHorizonScatteringEnabled" follows="left|top" height="16" label="Enable procedural horizon light" layout="topleft" left="15" name="horizon_enabled" top="34" width="410" tool_tip="Adds a viewer-local analytic sunset and sunrise band without modifying the active EEP." />

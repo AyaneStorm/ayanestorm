@@ -12,6 +12,7 @@
 
 #include "asdofaperture.h"
 #include "asdofcamera.h"
+#include "asdoflive.h"
 #include "llappviewer.h"
 #include "llcharacter.h"
 #include "llfloater.h"
@@ -437,28 +438,35 @@ namespace
     void syncModeFlags()
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
-        setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
+        // Blur size, quality, sprites and field curvature: Live (mode 3)
+        // only, since the Advanced renderer (mode 1) is retired
+        // (doc/ayanestorm-depth-of-field-live-plan.md).
+        const bool live = mode == ASDoFLive::LIVE_MODE;
+        const bool screen_space = live;
+        setFlag("ASDepthOfFieldUILive", live);
+        setFlag("ASDepthOfFieldUIScreenSpace", screen_space);
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
-        setFlag("ASDepthOfFieldUIShape", mode == 1 || mode == APERTURE_MODE);
+        setFlag("ASDepthOfFieldUIShape", screen_space || mode == APERTURE_MODE);
         // Axial CA, cat's eye (with its corner darkening) and spherical
-        // aberration apply to both
-        // the Advanced and the Aperture-sampled renderers.
-        const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
+        // aberration apply to the Aperture-sampled and the Live renderers.
+        const bool lens_modes = mode == APERTURE_MODE;
+        setFlag("ASDepthOfFieldUILens", lens_modes || live);
         setFlag("ASDepthOfFieldUIAxialCA",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
-        // Advanced renderer only.
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
         setFlag("ASDepthOfFieldUIFieldCurvature",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
-        setFlag("ASDepthOfFieldUIAstigmatism",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"));
+                screen_space && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
         setFlag("ASDepthOfFieldUIMaxBlur",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
+                screen_space && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
-                lens_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+                (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureSpherical"));
+        // Bright bokeh highlights: Aperture-sampled, and Live on its light
+        // sprites (ASDepthOfFieldHighlightSprites).
+        const bool bright_modes = mode == APERTURE_MODE || live;
+        setFlag("ASDepthOfFieldUIBrightHighlights", bright_modes);
         setFlag("ASDepthOfFieldUIHighlights",
-                mode == APERTURE_MODE && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
+                bright_modes && gSavedSettings.getBOOL("ASDepthOfFieldApertureHighlights"));
     }
 
     // Same state setPerspective() establishes: GL stack, cached globals
@@ -1046,11 +1054,24 @@ namespace ASDoFRenderer
 {
     void registerUICallbacks()
     {
+        // The retired Advanced renderer (mode 1), from an old graphic
+        // preset, becomes Live. Connected first; the slots below read the
+        // setting, which is then 3.
+        if (LLControlVariable* control = gSavedSettings.getControl("ASDepthOfFieldMode"))
+        {
+            control->getSignal()->connect([](LLControlVariable*, const LLSD& value, const LLSD&)
+                {
+                    if (value.asInteger() == 1)
+                    {
+                        gSavedSettings.setS32("ASDepthOfFieldMode", ASDoFLive::LIVE_MODE);
+                    }
+                });
+        }
         syncModeFlags();
         for (const char* name : { "ASDepthOfFieldMode", "ASDepthOfFieldApertureAxialCA",
                                   "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureSpherical",
                                   "ASDepthOfFieldApertureHighlights", "ASDepthOfFieldFieldCurvature",
-                                  "ASDepthOfFieldAstigmatism", "ASDepthOfFieldPhysicalBlur" })
+                                  "ASDepthOfFieldPhysicalBlur" })
         {
             if (LLControlVariable* control = gSavedSettings.getControl(name))
             {
@@ -1449,7 +1470,7 @@ namespace ASDoFRenderer
         key.mResidualBlur = gSavedSettings.getF32("ASDepthOfFieldApertureResidualBlur");
         static LLCachedControl<bool> axial_ca(gSavedSettings, "ASDepthOfFieldApertureAxialCA", false);
         static LLCachedControl<F32> axial_ca_percent(gSavedSettings, "ASDepthOfFieldApertureAxialCAStrength", 0.2f);
-        key.mAxialCA = axial_ca ? llclamp((F32)axial_ca_percent, 0.f, 2.f) * 0.01f : 0.f;
+        key.mAxialCA = axial_ca ? llclamp((F32)axial_ca_percent, 0.f, 10.f) * 0.01f : 0.f;
         sAxialCA = key.mAxialCA;
         static LLCachedControl<bool> cat_eye(gSavedSettings, "ASDepthOfFieldApertureCatEye", false);
         static LLCachedControl<F32> cat_eye_strength(gSavedSettings, "ASDepthOfFieldApertureCatEyeStrength", 0.6f);
@@ -1458,7 +1479,7 @@ namespace ASDoFRenderer
         static LLCachedControl<F32> spherical_strength(gSavedSettings, "ASDepthOfFieldApertureSphericalStrength", 0.5f);
         key.mCatEye = cat_eye ? llclamp((F32)cat_eye_strength, 0.f, 2.f) : 0.f;
         key.mCatEyeDarken = key.mCatEye > 0.f && cat_eye_darken;
-        key.mSpherical = spherical ? llclamp((F32)spherical_strength, -1.f, 1.f) : 0.f;
+        key.mSpherical = spherical ? llclamp((F32)spherical_strength, -5.f, 5.f) : 0.f;
         static LLCachedControl<bool> highlights(gSavedSettings, "ASDepthOfFieldApertureHighlights", false);
         static LLCachedControl<F32> highlight_strength(gSavedSettings, "ASDepthOfFieldApertureHighlightStrength", 0.3f);
         static LLCachedControl<F32> highlight_threshold(gSavedSettings, "ASDepthOfFieldApertureHighlightThreshold", 1.f);

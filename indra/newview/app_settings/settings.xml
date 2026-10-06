@@ -11831,7 +11831,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <map>
     <key>Comment</key>
     <!-- <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT.</string> -->
-    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT, 3 AYAstorm unified alpha ordering.</string>
+    <string>Transparency renderer: -1 migrates legacy settings, 0 Standard, 1 Exact OIT, 2 AVBOIT, 3 AYAstorm unified alpha ordering, 4 Mac OIT (OpenGL 4.1 order-independent transparency).</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -11839,6 +11839,41 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>-1</integer>
     <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Mac OIT (ASRenderOITMode 4). -->
+  <key>ASRenderMacOITExactLayers</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT: nearest transparent layers per pixel blended exactly (2-4); deeper layers use a per-pixel moment estimate. Each layer costs one alpha geometry pass.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
+    <integer>4</integer>
+  </map>
+  <key>ASRenderMacOITMomentBias</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT: moment bias keeping the tail reconstruction stable in float32 (MBOIT default 5e-7).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>5e-7</real>
+  </map>
+  <key>ASRenderMacOITDebugMode</key>
+  <map>
+    <key>Comment</key>
+    <string>Mac OIT diagnostic: 0 normal rendering, 1 covered pixels (magenta), 2 total transmittance, 3 exact layers per pixel (grey 0, blue 1, green 2, yellow 3, orange 4, red when a moment-weighted tail exists behind them), 4 normalized average transparent color (blue where weight is zero), 5 normal rendering plus a capture trace logged every two seconds (pixels produced by each stage, GL errors).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>S32</string>
+    <key>Value</key>
     <integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->
@@ -12180,7 +12215,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
   <key>ASDepthOfFieldMode</key>
   <map>
-    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development). Not persisted: every session starts with Standard</string>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 2 aperture-sampled (still images), 3 AyaneStorm Live (layered, noise-free); 1 (the retired Advanced renderer) switches to Live. Not persisted: every session starts with Standard</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12228,67 +12263,79 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureAxialCA</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Advanced renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Live renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureAxialCAStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-2). Real fast lenses are around 0.1-0.2</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-10). Real fast lenses are around 0.1-0.2</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEye</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeDarken</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSpherical</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSphericalStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration strength (-1 to 1). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: spherical aberration strength (-5 to 5). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims. Beyond 1 (stylised): a hard core or a thin ring</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureHighlights</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Off keeps the exact simulation</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: bright bokeh highlights (artistic, not physical). Isolated bright points (lamps, stars, glints) gain energy as they defocus, like the overexposed lights of real night photos; in-focus pixels and large bright areas are unchanged. Live applies it to its light sprites (ASDepthOfFieldHighlightSprites). Off keeps the exact simulation</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureHighlightStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: bright highlight strength (0-1). The boost grows with the bokeh disc area, capped</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.3</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureHighlightThreshold</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: linear luminance where bright highlights start (ramp from half to 1.5 times this value)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldUIAdvanced</key>
+  <key>ASDepthOfFieldUIScreenSpace</key>
   <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 1 (enables Advanced-only DoF controls)</string>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 3 (enables the Live renderer's blur, sprite and field curvature controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUILive</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 3 (enables Live-only DoF controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUILens</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables the lens effect checkboxes; the Live renderer has none yet)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12301,6 +12348,12 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUIShape</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables aperture shape controls)</string>
+    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
+    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldUIBrightHighlights</key>
+  <map>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 2 or 3 (enables the bright bokeh highlights checkbox)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12319,12 +12372,6 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUIFieldCurvature</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldFieldCurvature on (enables the field curvature slider)</string>
-    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldUIAstigmatism</key>
-  <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldAstigmatism on (enables the astigmatism slider)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12430,15 +12477,9 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>-1</integer><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldBackend</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm DoF backend: 0 Auto, 1 portable OpenGL 4.1 fragment; 2 is reserved for a future OpenGL 4.3 compute backend</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
   <key>ASDepthOfFieldQuality</key>
   <map>
-    <key>Comment</key><string>AyaneStorm DoF bounded sample tier: 0 16-tap, 1 32-tap, 2 48-tap</string>
+    <key>Comment</key><string>AyaneStorm Live DoF bokeh quality: 0 Low (37 area samples), 1 High (91), 2 Cinematic (169)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12478,77 +12519,65 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldHighlightBoost</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm DoF bokeh highlight weighting</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-    <key>Value</key><real>0.25</real><key>Backup</key><integer>0</integer>
-  </map>
   <key>ASDepthOfFieldHighlightSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldPostfilter</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: radius-aware postfilter that smooths sampling noise of the gathers over the local tap spacing</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldPhysicalBlur</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldMaxBlur</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>5.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldFieldCurvature</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldFieldCurvatureStrength</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldAstigmatism</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism. Off-axis, the radial and circumferential directions focus apart: corners soften and bokeh stretch around the centre behind the focus, outward in front of it</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldAstigmatismStrength</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism, the focal split at the frame corner in percent of the focal length (-3 to 3). Negative swaps the stretch directions</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightIsolation</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightMaxSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: sprite budget; highlights beyond it stay in the gather</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: sprite budget; highlights beyond it stay in the gather</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>4096</integer><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldDebug</key>
+  <key>ASDepthOfFieldHighlightSaturation</key>
   <map>
-    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur, 16 background completion (unblurred), 17 near back layer, 18 near front layer, 19 background completion, 20 rigged near coverage, 21 world near coverage, 22 opaque result before transparency, 23 rigged layer as composited, 24 blur vs sharp blend (white blurred), 25 blur radius spread seen by the postfilter (grey: mixed radii)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: colour saturation of the aperture-shaped light bokeh (1 unchanged, 0 grey, above 1 more vivid); keeps their brightness</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldLiveDebug</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Live DoF debug view: 0 off, 1 bin shares (strong foreground red, foreground orange, focus green, near background purple, far background blue), 2 bin weight sum (white), 3 veil kernel per tile (strong foreground red, foreground green, near background blue; black: skipped), 4 background layer, 5 foreground veils, 6 focus layer, 7 blend toward the layered result (white), 8 bins source (green: Mac OIT transparency bins, grey: composited image as one layer), 9 near background alone (magenta: uncovered), 10 far background alone</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
+  </map>
+  <key>ASDepthOfFieldLiveExactLayers</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Live DoF: exact transparent layers of its own Mac OIT capture when another transparency mode is selected (2-4; geometry passes = layers + 1). The Mac OIT mode uses ASRenderMacOITExactLayers</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
+    <key>Value</key><integer>2</integer><key>Backup</key><integer>0</integer>
   </map>
   <!-- </AS:Chanayane> -->
 
@@ -26815,6 +26844,52 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Viewer-local star settings; defaults: real sky (ASStarsEnabled off gives the stock sky). -->
+    <key>ASStarsEnabled</key>
+    <map><key>Comment</key><string>Use the AyaneStorm star settings; off draws the stock stars</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsProceduralUI</key>
+    <map><key>Comment</key><string>Derived, not saved: ASStarsEnabled and procedural star source; enables procedural-only panel controls</string><key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsRealSkyUI</key>
+    <map><key>Comment</key><string>Derived, not saved: ASStarsEnabled and real-sky star source; enables real-sky-only panel controls</string><key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsMode</key>
+    <map><key>Comment</key><string>Star source: 0 procedural (random), 1 real-sky catalogue sorted by magnitude</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsLatitude</key>
+    <map><key>Comment</key><string>Real-sky observer latitude in degrees (north positive); sets the celestial pole altitude</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>45.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSiderealOffset</key>
+    <map><key>Comment</key><string>Real-sky sidereal time offset in hours, added to the free-running sky rotation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsMagnitudeContrast</key>
+    <map><key>Comment</key><string>Real-sky brightness exponent applied to stellar flux; 1 is physical (linear flux), lower compresses the range</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
+    <key>ASMilkyWayEnabled</key>
+    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow (Magellanic Clouds, Andromeda, nebulae)</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASMilkyWayIntensity</key>
+    <map><key>Comment</key><string>Real-sky Milky Way glow intensity</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer></map>
+    <key>ASMilkyWayDeepSkyIntensity</key>
+    <map><key>Comment</key><string>Real-sky deep-sky glow intensity (Magellanic Clouds, galaxies, nebulae, clusters)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASMilkyWaySaturation</key>
+    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow color saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.45</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsFaintLevel</key>
+    <map><key>Comment</key><string>Real-sky brightness of the faintest drawn star; 1 is about white on screen, lower makes faint stars dim points so bright stars stand out</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsDensity</key>
+    <map><key>Comment</key><string>Star count multiplier; procedural: 1 matches the 666 stars stock draws; real sky: 1 draws the 6660 brightest, 3 all 20000</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>3.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsColorAmount</key>
+    <map><key>Comment</key><string>Blend from stock star tint (0) to blackbody star colors (1)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSaturation</key>
+    <map><key>Comment</key><string>Star color saturation around luminance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsTemperatureBias</key>
+    <map><key>Comment</key><string>Shifts sampled star temperatures: negative warmer (red), positive cooler (blue)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsBrightness</key>
+    <map><key>Comment</key><string>Star brightness multiplier on top of the sky setting</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.5</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsBrightnessVariation</key>
+    <map><key>Comment</key><string>Procedural star brightness contrast: 0 all stars equally bright (stock), 1 real-sky-like spread (most stars faint, a few bright and larger)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSize</key>
+    <map><key>Comment</key><string>Star sprite size multiplier</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.75</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsTwinkle</key>
+    <map><key>Comment</key><string>Star twinkle amount; 0 steady, 1 stock</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.75</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsMilkyWay</key>
+    <map><key>Comment</key><string>Extra stars added in a Milky Way band (1 adds 1.5x the background count)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.15</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSeed</key>
+    <map><key>Comment</key><string>Star pattern seed; 0 picks a new random sky each time stars are built</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local analytic horizon scattering. -->
     <key>ASHorizonScatteringEnabled</key>
     <map><key>Comment</key><string>Enable viewer-local analytic horizon illumination</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
@@ -29957,5 +30032,16 @@ Change of this parameter will affect the layout of buttons in notification toast
       </array>
     </map>
     <!-- </FS:TP> -->
+    <key>FSStreamtitleHistoryLength</key>
+    <map>
+        <key>Comment</key>
+        <string>The maximum number of stream titles shown in the history</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>U32</string>
+        <key>Value</key>
+        <integer>10</integer>
+    </map>
   </map>
 </llsd>

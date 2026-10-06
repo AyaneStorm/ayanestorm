@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<panel class="as_color_grading_panel" border="false" follows="all" height="650" layout="topleft" name="as_color_grading" width="480">
+<panel class="as_color_grading_panel" border="false" follows="all" height="590" layout="topleft" name="as_color_grading" width="480">
   <check_box control_name="ASColorGradingEnabled" follows="left|top" height="20" label="Enable color grading" layout="topleft" left="15" name="enabled" top="10" width="180" tool_tip="Applies viewer-local grading live to the camera image and normal snapshots." />
   <combo_box allow_text_entry="true" follows="left|top" height="23" layout="topleft" left="15" max_chars="64" name="preset" top="40" width="190" tool_tip="Select a preset or type a new preset name." />
   <button follows="left|top" height="23" label="Save" layout="topleft" left="210" name="save_preset" top="40" width="55" />
   <button follows="left|top" height="23" label="Delete" layout="topleft" left="270" name="delete_preset" top="40" width="55" />
   <button follows="left|top" height="23" label="Before" layout="topleft" left="330" name="before" top="40" tool_tip="Hold to temporarily bypass all grading." width="65" />
   <button follows="left|top" height="23" label="Reset all" layout="topleft" left="400" name="reset_all" top="40" width="70" />
-  <tab_container follows="all" height="565" layout="topleft" left="5" name="grading_tabs" tab_position="top" top="78" width="470">
-   <panel border="false" height="530" label="Basic" layout="topleft" name="basic" width="468">
+  <tab_container follows="all" height="504" layout="topleft" left="5" name="grading_tabs" tab_position="top" top="78" width="470">
+   <panel border="false" height="480" label="Basic" layout="topleft" name="basic" width="468">
     <text follows="left|top" font="SansSerifSmallBold" height="18" layout="topleft" left="15" name="light_heading" top="11" width="200">Light</text>
     <as_color_slider color_1="0.28 0.28 0.28 1" color_2="0.56 0.56 0.56 1" color_3="0.92 0.92 0.92 1" can_edit_text="true" control_name="ASColorGradeExposure" decimal_digits="2" follows="left|top" height="24" increment="0.05" label="Exposure" label_width="130" layout="topleft" left="15" max_val="5" min_val="-5" name="ASColorGradeExposure" show_text="true" text_width="52" tool_tip="Exposure in photographic stops, applied before tone mapping." top="31" track_thickness="7" width="415"><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank"/></as_color_slider>
     <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeExposure" top="33" tool_tip="Reset Exposure" width="20" />
@@ -36,7 +36,7 @@
     <as_color_slider color_1="0.95 0.08 0.08 1" color_2="1 0.50 0.05 1" color_3="0.96 0.90 0.05 1" color_4="0.22 0.82 0.12 1" color_5="0.04 0.78 0.72 1" color_6="0.06 0.38 0.96 1" color_7="0.48 0.12 0.92 1" color_8="0.90 0.08 0.62 1" color_9="0.95 0.08 0.08 1" can_edit_text="true" control_name="ASColorGradeHue" decimal_digits="0" follows="left|top" height="24" increment="1" label="Hue" label_width="130" layout="topleft" left="15" max_val="180" min_val="-180" name="ASColorGradeHue" show_text="true" text_width="52" tool_tip="Rotates all colors around the hue wheel." top="446" track_thickness="7" width="415"><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank"/></as_color_slider>
     <button follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeHue" top="448" tool_tip="Reset Hue" width="20" />
    </panel>
-   <panel border="false" height="530" label="Color Mixer" layout="topleft" name="mixer" width="468">
+   <panel border="false" height="480" label="Color Mixer" layout="topleft" name="mixer" width="468">
     <text follows="left|top" font="SansSerifSmallBold" height="18" layout="topleft" left="15" name="mixer_label" top="5" width="200">Color range</text>
     <check_box control_name="ASColorGradeColorizeEnabled" follows="right|top" height="20" label="Colorize" layout="topleft" left="365" name="colorize" top="3" width="90" tool_tip="Replace scene colors with one adjustable tint while retaining tonal detail." />
     <button follows="left|top" height="30" image_selected="ASColorGradeBand_On" image_unselected="ASColorGradeBand_Off" is_toggle="true" label="" layout="topleft" left="20" name="band_red" tool_tip="Red" top="28" width="30" />
@@ -111,7 +111,7 @@
     <button height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_mixer_softness" top="410" tool_tip="Reset Softness" width="20" />
     <button height="23" label="Reset" layout="topleft" left="350" name="reset_mixer_band" top="448" tool_tip="Restore the selected band color and all of its settings to defaults." width="105" />
    </panel>
-   <panel border="false" height="530" label="Split Toning" layout="topleft" name="split_toning" width="468">
+   <panel border="false" height="480" label="Split Toning" layout="topleft" name="split_toning" width="468">
     <check_box control_name="ASColorGradeSplitToningEnabled" follows="left|top" height="20" label="Enable split toning" layout="topleft" left="15" name="split_toning_enabled" top="8" width="180" tool_tip="Apply separate color tints to highlights and shadows." />
     <text follows="left|top" font="SansSerifSmallBold" height="18" layout="topleft" left="15" name="split_highlights_label" top="40" width="200">Highlights</text>
     <button enabled_control="ASColorGradeSplitToningEnabled" follows="left|top" height="24" image_selected="ASColorGradeBand_On" image_unselected="ASColorGradeBand_Off" label="" layout="topleft" left="405" name="split_highlights_swatch" top="35" tool_tip="Current highlight tint" width="30" />
@@ -128,7 +128,7 @@
     <as_color_slider enabled_control="ASColorGradeSplitToningEnabled" color_1="0.5 0.5 0.5 1" color_2="1 0 0 1" can_edit_text="true" control_name="ASColorGradeSplitShadowsSaturation" decimal_digits="0" height="24" increment="1" label="Saturation" label_width="120" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeSplitShadowsSaturation" show_text="true" text_width="52" top="300" track_thickness="7" width="415" tool_tip="Strength of the shadow tint."><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank" /></as_color_slider>
     <button enabled_control="ASColorGradeSplitToningEnabled" height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeSplitShadowsSaturation" top="302" width="20" />
    </panel>
-   <panel border="false" height="530" label="LUT" layout="topleft" name="lut" width="468">
+   <panel border="false" height="480" label="LUT" layout="topleft" name="lut" width="468">
     <check_box control_name="ASColorGradeLUTEnabled" follows="left|top" height="20" label="Enable LUT" layout="topleft" left="15" name="lut_enabled" top="18" width="180" />
     <button follows="left|top" height="23" label="&lt;" layout="topleft" left="15" name="lut_previous" top="55" tool_tip="Select the previous LUT." width="26" />
     <combo_box follows="left|top" height="23" layout="topleft" left="46" name="lut_file" top="55" width="369" tool_tip="Select a .cube file from the user LUT folder or app_settings/lut." />
@@ -142,7 +142,7 @@
     <text follows="left|top" height="85" layout="topleft" left="15" name="lut_help" top="255" width="430" wrap="true">Use 3D .cube LUTs intended for sRGB images. Camera-log LUTs need conversion before use.
 Import copies a file into your user LUT folder. LUT files are not included with color grading presets.</text>
    </panel>
-   <panel border="false" height="530" label="Effects" layout="topleft" name="effects" width="468">
+   <panel border="false" height="480" label="Effects" layout="topleft" name="effects" width="468">
     <text follows="left|top" font="SansSerifSmallBold" height="18" layout="topleft" left="15" name="grain_heading" top="11" width="200">Grain</text>
     <as_color_slider color_1="0.28 0.28 0.28 1" color_2="0.56 0.56 0.56 1" color_3="0.92 0.92 0.92 1" can_edit_text="true" control_name="ASColorGradeGrainAmount" decimal_digits="0" height="24" increment="1" label="Amount" label_width="140" layout="topleft" left="15" max_val="100" min_val="0" name="ASColorGradeGrainAmount" show_text="true" text_width="52" top="31" track_thickness="7" width="415"><slider_bar track_highlight_horizontal_image="Blank" track_image_horizontal="Blank"/></as_color_slider>
     <button height="20" image_overlay="Refresh_Off" layout="topleft" left="440" name="reset_ASColorGradeGrainAmount" top="33" width="20" />

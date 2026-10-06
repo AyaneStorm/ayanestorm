@@ -17,9 +17,11 @@ Available for the following platforms:
 - **My Lights** floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
 - **Advanced Shape Deformer**: edit avatar-joint positions and scales with live previews, comparison bypasses, undo/redo, notecard import/export, worn-deformer loading and optional persistent mesh baking
 - **Environment Effects panel** gathering viewer-local photographic effects in one place
+- **Depth of Field** with a new noise-free **Live** mode that looks the same on Windows and macOS, plus an **aperture-sampled** mode for still images with shaped bokeh, lens effects and autofocus (see below)
+- **Realistic night sky**: about 20,000 real stars with their true colors and brightness, positioned for any latitude, with a photographic Milky Way, the Magellanic Clouds and bright nebulae (see below)
 - **Viewer-local color grading** with exposure, white balance, tonal controls, vibrance, an eight-band color mixer, Colorize, split toning, grain, Negative color inversion and reusable presets
 - **Importable 1D and 3D `.cube` LUTs** with automatic naming, alphabetical selection, Previous/Next navigation and adjustable strength
-- **Selectable transparency rendering** with standard alpha blending, lossless Exact OIT and AVBOIT (unavailable for MacOS at the moment, unfortunately)
+- **Selectable transparency rendering**: standard alpha blending, AYAstorm unified alpha ordering, lossless Exact OIT, AVBOIT, and the new **Mac OIT**, an order-independent transparency mode built on OpenGL 4.1 that finally brings correct transparency sorting to macOS (also available on Windows and Linux; Exact OIT and AVBOIT remain unavailable on macOS)
 - **Volumetric sun and moon god rays**, with optional volumetric local lights
 - **Procedural sunrise** and sunset horizon lighting, including colored clouds, sky haze and water-horizon fog
 - **Procedural sunset sun** with configurable color, edge feathering, shimmer and halo
@@ -71,6 +73,27 @@ Open **AyaneStorm > Advanced Shape Deformer** to edit the position and scale of 
 
 > [!IMPORTANT]
 > The live preview is temporary. Baking uploads a new mesh asset and incurs the region's normal L$ upload fee. Position overrides use standard rigged-mesh behavior; scale overrides are visible only in compatible AyaneStorm viewers. The deformer is calibrated for the displayed worn shape, so remove unrelated worn deformers before baking unless their combined effect is intentional.
+
+### Depth of Field
+
+Open the **AyaneStorm Depth of Field** floater to choose a mode:
+
+- **Live (new)**: a layered depth of field designed to be noise-free and stable while you move. It looks the same on Windows and macOS and blurs transparent objects such as hair and glass at their real depth. Light sources can turn into aperture-shaped bokeh highlights in their own layers, with adjustable color saturation. It shares the aperture shape and lens effects below, and adds field curvature.
+- **Aperture-sampled (still images only)**: renders the scene through many points of a virtual lens and averages them, for photographic snapshots. Choose the aperture shape (circle, triangle to nonagon, square), blade rounding, rotation and anamorphic ratio, and add lens effects: cat's-eye bokeh, spherical aberration, axial chromatic aberration, corner darkening and bright bokeh highlights.
+- **Standard (Firestorm)** remains available.
+- Autofocus on eyes or on an area, subject tracking, adjustable focus time and a physical blur size based on the camera settings.
+
+### Night sky
+
+Open **Star Settings** (from the toolbar, the menus, or the **Stars** tab of the Environment Effects panel). Everything is viewer-local and does not change the region's environment settings.
+
+- **Real sky** (default): the 20,000 brightest stars of a real star catalogue, with colors from their measured temperature and brightness from their magnitude, so constellations such as Orion or the Southern Cross are recognizable. Choose a latitude, or pick one of over 50 places (the world's largest cities, the largest city of other notable countries, the poles and the equator). The sky turns around the celestial pole, which sits above the viewer's north.
+- **Milky Way and deep-sky glow**: a photographic Milky Way from NASA's Deep Star Maps (Gaia data), with real dust lanes and star clouds, plus the Magellanic Clouds, Andromeda and bright nebulae. It turns with the stars, fades at dawn and toward the horizon, and blurs naturally with depth of field.
+- **Procedural** mode: improved random stars with temperature colors, adjustable brightness contrast and an optional Milky Way band.
+- Adjustable density, brightness, size, twinkle, color realism and saturation, star brightness contrast and the faintness of the dimmest stars. Bright stars glow and give strong bokeh with depth of field.
+- Untick **Enable AyaneStorm stars** to get the stock sky back.
+
+Star data: Celestial Data (Frohn & Hernangómez, BSD 3-Clause). Milky Way: NASA/Goddard Space Flight Center Scientific Visualization Studio; Gaia DR2: ESA/Gaia/DPAC.
 
 ## Quick build instructions (for Windows):
 

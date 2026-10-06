@@ -520,6 +520,20 @@
            />
   <!-- </AS:Chanayane> -->
 
+  <!-- <AS:Chanayane> Star settings toolbar command -->
+  <command name="as_stars_settings"
+           available_in_toybox="true"
+           icon="Command_ASStarsSettings_Icon"
+           label_ref="Command_ASStarsSettings_Label"
+           tooltip_ref="Command_ASStarsSettings_Tooltip"
+           execute_function="Floater.Toggle"
+           execute_parameters="as_stars_settings"
+           is_running_function="Floater.IsOpen"
+           is_running_parameters="as_stars_settings"
+           checkbox_control="ASStarsEnabled"
+           />
+  <!-- </AS:Chanayane> -->
+
   <!-- <AS:Chanayane> Horizon lighting settings toolbar command -->
   <command name="as_horizon_settings"
            available_in_toybox="true"

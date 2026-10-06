@@ -219,9 +219,8 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
 
     prepare_alpha_shader(pbr_shader, true, water_sign);
 
-// <AS:Chanayane> Preserve opaque depth before any transparency renderer can
-// write or resolve alpha. The later owned-DoF capture reuses this private depth
-// attachment for consistent visibility in all four alpha modes.
+// <AS:Chanayane> Live DoF keeps the opaque colour and depth before any
+// transparency renderer can write or resolve alpha (its transparency bins).
     if (!LLPipeline::sImpostorRender && LLPipeline::RenderDepthOfField &&
         !gCubeSnapshot && !LLPipeline::sRenderingHUDs &&
         getType() == LLDrawPool::POOL_ALPHA_POST_WATER)
@@ -265,90 +264,29 @@ void LLDrawPoolAlpha::renderPostDeferred(S32 pass)
     {
         //update depth buffer sampler
 
-// <AS:Chanayane> Capture premultiplied transparent radiance and nearest depth
-// without overwriting opaque scene depth. The color replay uses the ordinary
-// material shaders in every alpha mode; a coverage-only pass loses the color
-// needed for stable transparent bokeh.
-        // Original shader selection occurred here, before the coverage pass:
-        // simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
-        // Original shared-depth pass:
-        // simple_shader->bind();
-        // simple_shader->setMinimumAlpha(0.33f);
-        // gGL.setColorMask(false, false);
-        // renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX |
-        //     LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 |
-        //     LLVertexBuffer::MAP_TEXCOORD2, true);
-        // gGL.setColorMask(true, false);
-        const U32 capture_width = gPipeline.mRT->deferredScreen.getWidth();
-        const U32 capture_height = gPipeline.mRT->deferredScreen.getHeight();
-        const U32 mask = getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX |
-            LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 |
-            LLVertexBuffer::MAP_TEXCOORD2;
-        bool coverage_captured = false;
-        if (ASDepthOfField::beginTransparentCoverageCapture(capture_width,
-                                                            capture_height))
-        {
-            LLGLSLShader::unbind();
-            // The target starts black with the opaque scene's depth. Replay
-            // source-over color and alpha without writing transparent depth.
-            LLGLDepthTest coverage_depth(GL_TRUE, GL_FALSE, GL_LEQUAL);
-            LLGLEnable coverage_blend(GL_BLEND);
-            gGL.setColorMask(true, true);
-            renderAlpha(mask, false, true, true);
-            ASDepthOfField::snapshotRiggedCoverage();
-            renderAlpha(mask, false, false, true);
-            gGL.setColorMask(true, false);
-            ASDepthOfField::endTransparentCoverageCapture();
-            coverage_captured = true;
-        }
-
+// <AS:Chanayane> Vanilla depth pass for DoF focus. The Advanced DoF renderer's
+// transparent coverage/depth captures that ran here are retired with it
+// (doc/ayanestorm-depth-of-field-live-plan.md); this was already the path of
+// every other renderer.
         simple_shader = fullbright_shader = &gDeferredFullbrightAlphaMaskProgram;
-        if (coverage_captured &&
-            ASDepthOfField::beginTransparentDepthCapture(capture_width,
-                                                         capture_height))
-        {
-            simple_shader->bind();
-            simple_shader->setMinimumAlpha(MINIMUM_ALPHA);
-            LLGLDepthTest nearest_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
-            LLGLDisable capture_blend(GL_BLEND);
-            gGL.setColorMask(true, true);
-            renderAlpha(mask, true, true);
-            ASDepthOfField::snapshotRiggedDepth();
-            renderAlpha(mask, true, false);
-            gGL.setColorMask(true, false);
-            ASDepthOfField::endTransparentDepthCapture();
-            if (ASDepthOfField::beginWorldDepthCapture(capture_width,
-                                                      capture_height))
-            {
-                LLGLDepthTest world_depth(GL_TRUE, GL_TRUE, GL_LEQUAL);
-                LLGLDisable world_blend(GL_BLEND);
-                gGL.setColorMask(false, false);
-                renderAlpha(mask, true, false);
-                gGL.setColorMask(true, false);
-                ASDepthOfField::endWorldDepthCapture();
-            }
-        }
-        else
-        {
-            // original code kept as the transactional fallback
-            simple_shader->bind();
-            // Aperture DoF (mode 2) smooths by this depth: faint hair strands
-            // below 0.33 alpha kept the background's depth and were smoothed
-            // with it. Their own depth keeps them sharp.
-            //simple_shader->setMinimumAlpha(0.33f);
-            simple_shader->setMinimumAlpha(ASDoFRenderer::isEnabled() ? ASDoFRenderer::SHARP_DEPTH_MIN_ALPHA : 0.33f);
+
+        simple_shader->bind();
+        // Aperture DoF (mode 2) smooths by this depth: faint hair strands
+        // below 0.33 alpha kept the background's depth and were smoothed
+        // with it. Their own depth keeps them sharp.
+        //simple_shader->setMinimumAlpha(0.33f);
+        simple_shader->setMinimumAlpha(ASDoFRenderer::isEnabled() ? ASDoFRenderer::SHARP_DEPTH_MIN_ALPHA : 0.33f);
+// </AS:Chanayane>
 
         // mask off color buffer writes as we're only writing to depth buffer
-            gGL.setColorMask(false, false);
+        gGL.setColorMask(false, false);
 
         // If the face is more than 90% transparent, then don't update the Depth buffer for Dof
         // We don't want the nearly invisible objects to cause of DoF effects
         renderAlpha(getVertexDataMask() | LLVertexBuffer::MAP_TEXTURE_INDEX | LLVertexBuffer::MAP_TANGENT | LLVertexBuffer::MAP_TEXCOORD1 | LLVertexBuffer::MAP_TEXCOORD2,
             true); // <--- discard mostly transparent faces
 
-            gGL.setColorMask(true, false);
-        }
-// </AS:Chanayane>
+        gGL.setColorMask(true, false);
     }
 }
 

@@ -1609,6 +1609,18 @@
                  function="Floater.Visible"
                  parameter="as_aurora_settings" />
             </menu_item_check>
+            <!-- <AS:Chanayane> Star settings floater -->
+            <menu_item_check
+             label="Star Settings..."
+             name="as_stars_settings">
+                <menu_item_check.on_click
+                 function="Floater.Toggle"
+                 parameter="as_stars_settings" />
+                <menu_item_check.on_check
+                 function="Floater.Visible"
+                 parameter="as_stars_settings" />
+            </menu_item_check>
+            <!-- </AS:Chanayane> -->
             <menu_item_check
              label="Horizon Lighting..."
              name="as_horizon_settings">
@@ -6736,6 +6748,18 @@
          <menu_item_check.on_click
             function="Floater.Toggle"
             parameter="as_aurora_settings" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+      <!-- <AS:Chanayane> Star settings floater -->
+      <menu_item_check
+         label="Star Settings..."
+         name="AS Star Settings">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_stars_settings" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_stars_settings" />
       </menu_item_check>
       <!-- </AS:Chanayane> -->
       <!-- <AS:Chanayane> Horizon lighting settings floater -->

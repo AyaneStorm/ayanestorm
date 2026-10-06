@@ -1,0 +1,42 @@
+as_milky_way.jpg (the Milky Way band) is derived from NASA SVS "Deep Star
+Maps 2020" (https://svs.gsfc.nasa.gov/4851), milkyway_2020 layer, by
+scripts/content_tools/as_build_milky_way.py (reprojected, resampled,
+normalised). Credit: NASA/Goddard Space Flight Center Scientific
+Visualization Studio. Gaia DR2: ESA/Gaia/DPAC.
+
+as_star_catalog.bin and as_deep_sky.png are derived from "Celestial Data"
+(Frohn O, Hernangomez D, 2023, https://doi.org/10.5281/zenodo.7561601), itself
+from d3-celestial (https://github.com/ofrohn/d3-celestial), by
+scripts/content_tools/as_build_star_catalog.py (stars) and
+scripts/content_tools/as_build_milky_way.py (bright deep-sky objects, Local
+Group; its Milky Way outlines are also used to verify the band's
+orientation). They are distributed under the license below.
+
+BSD 3-Clause License
+
+Copyright (c) 2023, Olaf Frohn & Diego Hernangómez 
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

@@ -36,6 +36,9 @@
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local real-sky Milky Way shader lifecycle.
+#include "asmilkyway.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Viewer-local analytic horizon-scattering shader lifecycle.
 #include "ashorizonscattering.h"
 // </AS:Chanayane>
@@ -66,6 +69,7 @@
 // <AS:Chanayane> Exact OIT and AVBOIT
 #include "asexactoit.h"
 #include "asavboit.h"
+#include "asmacoit.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Optional volumetric lighting
 #include "asvolumetriclighting.h"
@@ -482,6 +486,7 @@ void LLViewerShaderMgr::finalizeShaderList()
 // <AS:Chanayane> Register independent OIT shader families.
     ASExactOIT::registerShaders(mShaderList);
     ASAVBOIT::registerShaders(mShaderList);
+    ASMacOIT::registerShaders(mShaderList);
 // </AS:Chanayane>
     mShaderList.push_back(&gDeferredFullbrightShinyProgram);
     mShaderList.push_back(&gHUDFullbrightShinyProgram);
@@ -491,6 +496,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gEnvironmentMapProgram);
     // <AS:Chanayane> Register the independent optional aurora shader.
     ASAurora::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the independent optional Milky Way shader.
+    ASMilkyWay::registerShader(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional horizon shader.
     ASHorizonScattering::registerShader(mShaderList);
@@ -625,6 +633,7 @@ void LLViewerShaderMgr::setShaders()
 // <AS:Chanayane> Include independent OIT shader revisions in the cache key.
             hash_obj.update(ASExactOIT::shaderCacheRevision());
             hash_obj.update(ASAVBOIT::shaderCacheRevision());
+            hash_obj.update(ASMacOIT::shaderCacheRevision());
 // </AS:Chanayane>
 // <AS:Chanayane> Include volumetric lighting shader revision in the cache key.
             hash_obj.update(ASVolumetricLighting::shaderCacheRevision());
@@ -1231,6 +1240,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // <AS:Chanayane> Unload independent OIT shader families.
         ASAVBOIT::unloadShaders();
         ASExactOIT::unloadShaders();
+        ASMacOIT::unloadShaders();
 // </AS:Chanayane>
 // <AS:Chanayane> Unload optional volumetric lighting shaders.
         ASVolumetricLighting::unloadShaders();
@@ -1240,6 +1250,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional aurora shader.
         ASAurora::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional Milky Way shader and texture.
+        ASMilkyWay::unloadShader();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional horizon-scattering shader.
         ASHorizonScattering::unloadShader();
@@ -3085,6 +3098,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         ASAurora::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
+    // <AS:Chanayane> Build the independent real-sky Milky Way pass; optional
+    // like the aurora (configureShader() skips an incomplete program).
+    if (success)
+    {
+        ASMilkyWay::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
 
     // <AS:Chanayane> Build the independent broad horizon-scattering pass.
     if (success)
@@ -3241,10 +3261,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gRlvSphereProgram.createShader();
     }
     // [/RLV:KB]
-// <AS:Chanayane> Load AVBOIT from vanilla shaders, then load Exact OIT independently.
+// <AS:Chanayane> Load AVBOIT and Mac OIT from vanilla shaders, then load Exact OIT independently.
     if (success)
     {
         ASAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+        ASMacOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
     }
     success = ASExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
 // </AS:Chanayane>

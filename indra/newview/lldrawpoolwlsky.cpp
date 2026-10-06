@@ -36,6 +36,8 @@
 #include "ashorizonscattering.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
+#include "asmilkyway.h"
+#include "asstars.h"
 // </AS:Chanayane>
 
 #include "llerror.h"
@@ -283,8 +285,9 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     gGL.pushMatrix();
     gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
     // <AS:Chanayane> Aperture DoF: frozen star rotation while samples accumulate
+    // and ASStars real-sky orientation (sidereal spin + latitude tilt)
     //gGL.rotatef(gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
-    gGL.rotatef(ASDoFRenderer::starRotationTime(gFrameTimeSeconds)*0.01f, 0.f, 0.f, 1.f);
+    ASStars::applySkyTransform(ASDoFRenderer::starRotationTime(gFrameTimeSeconds), gDeferredStarProgram);
     // </AS:Chanayane>
     gDeferredStarProgram.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 
@@ -298,6 +301,13 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     // <AS:Chanayane> Aperture DoF: mean (constant) twinkle while samples accumulate
     static LLStaticHashedString sTwinkleMean("as_twinkle_mean");
     gDeferredStarProgram.uniform1f(sTwinkleMean, ASDoFRenderer::starTwinkleMean());
+    // Viewer-local twinkle amount (1 = stock)
+    static LLStaticHashedString sTwinkleAmount("as_twinkle_amount");
+    gDeferredStarProgram.uniform1f(sTwinkleAmount, ASStars::twinkleAmount());
+    // Viewer-local brightness multiplier, applied in the shader after the
+    // custom_alpha smoothstep (which saturates at 0.9 and would cap it)
+    static LLStaticHashedString sStarBrightness("as_star_brightness");
+    gDeferredStarProgram.uniform1f(sStarBrightness, ASStars::brightness());
     // </AS:Chanayane>
 
     gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);
@@ -569,6 +579,18 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
         renderSkyHazeDeferred(origin, camHeightLocal);
         // <AS:Chanayane> AS-owned horizon layer at the sky-order insertion point.
         ASHorizonScattering::render(use_hdri_sky());
+        // </AS:Chanayane>
+        // <AS:Chanayane> Real-sky Milky Way glow: over the sky haze, behind
+        // the moon, stars, aurora and clouds; not in reflection probes (stars
+        // are not either). Same state handling as the aurora below.
+        if (!gCubeSnapshot && ASMilkyWay::configureShader(use_hdri_sky()))
+        {
+            LLGLSPipelineBlendSkyBox milky_way_state(false, false);
+            gGL.setSceneBlendType(LLRender::BT_ADD);
+            renderDome(origin, camHeightLocal, &ASMilkyWay::getShader());
+            ASMilkyWay::getShader().unbind();
+            gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        }
         // </AS:Chanayane>
         renderHeavenlyBodies();
         if (!gCubeSnapshot)

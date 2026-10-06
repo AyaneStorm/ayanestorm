@@ -30,6 +30,9 @@ out vec4 frag_data[4];
 in vec4 vertex_color;
 in vec2 vary_texcoord0;
 in vec2 screenpos;
+// <AS:Chanayane> Real-sky horizon fade from starsV.glsl (1 = none)
+in float vary_as_horizon;
+// </AS:Chanayane>
 
 uniform sampler2D diffuseMap;
 uniform float blend_factor;
@@ -41,6 +44,16 @@ uniform float as_twinkle_mean;
 // > 0: drawing the aperture DoF star mask (one attachment): colour in
 // frag_data[0] even with the emissive buffer.
 uniform float as_star_mask;
+// Viewer-local twinkle depth: 0 steady, 1 stock.
+uniform float as_twinkle_amount;
+// Viewer-local brightness multiplier (1 = stock), after the smoothstep.
+uniform float as_star_brightness;
+// Encoded stars: > 0 decodes per-star brightness from vertex alpha, stored
+// as log2 over as_star_log_range octaves, as_star_log_offset of them below
+// the stock level (so alpha above offset/range is brighter than stock). 0 =
+// stock, which ignores vertex alpha.
+uniform float as_star_log_range;
+uniform float as_star_log_offset;
 // </AS:Chanayane>
 
 float twinkle(){
@@ -62,10 +75,19 @@ void main()
 
     float factor = smoothstep(0.0f, 0.9f, custom_alpha);
 
-    col.a = (col.a * factor) * 32.0f;
+    // <AS:Chanayane> Viewer-local brightness multiplier
+    //col.a = (col.a * factor) * 32.0f;
+    col.a = (col.a * factor) * 32.0f * as_star_brightness * vary_as_horizon;
+    // and real-sky per-star brightness
+    if (as_star_log_range > 0.0)
+    {
+        col.a *= exp2(vertex_color.a * as_star_log_range - as_star_log_offset);
+    }
+    // </AS:Chanayane>
     // <AS:Chanayane> Aperture DoF: constant mean twinkle while accumulating
+    // and viewer-local twinkle amount
     //col.a *= twinkle();
-    col.a *= as_twinkle_mean > 0.0 ? as_twinkle_mean : twinkle();
+    col.a *= mix(1.0, as_twinkle_mean > 0.0 ? as_twinkle_mean : twinkle(), as_twinkle_amount);
     // </AS:Chanayane>
 
     frag_data[1] = vec4(0.0f);

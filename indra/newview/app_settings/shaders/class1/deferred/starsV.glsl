@@ -35,6 +35,13 @@ out vec4 vertex_color;
 out vec2 vary_texcoord0;
 out vec2 screenpos;
 
+// <AS:Chanayane> Real-sky stars: local zenith in the star frame and fade
+// switch (0 = stock, no fade); stars below the horizon fade out.
+uniform vec3 as_star_up;
+uniform float as_star_horizon_fade;
+out float vary_as_horizon;
+// </AS:Chanayane>
+
 void main()
 {
     //transform vertex
@@ -51,4 +58,8 @@ void main()
     screenpos = position.xy * vec2(t, t);
     vary_texcoord0 = (texture_matrix0 * vec4(texcoord0,0,1)).xy;
     vertex_color = diffuse_color;
+    // <AS:Chanayane> Real-sky horizon fade (sine of the altitude)
+    float altitude = dot(normalize(position), as_star_up);
+    vary_as_horizon = as_star_horizon_fade > 0.0 ? smoothstep(-0.01, 0.06, altitude) : 1.0;
+    // </AS:Chanayane>
 }
