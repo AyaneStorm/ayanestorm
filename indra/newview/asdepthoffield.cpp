@@ -111,6 +111,7 @@ namespace
     const LLStaticHashedString U_CELL_GRID("cell_grid");
     const LLStaticHashedString U_CELL_TOP_LEVEL("cell_top_level");
     const LLStaticHashedString U_SPRITE_BUDGET("sprite_budget");
+    const LLStaticHashedString U_SPRITE_SATURATION("sprite_saturation");
     const LLStaticHashedString U_UNIT_AREA("unit_area");
     const LLStaticHashedString U_BG_PASS("bg_pass");
     const LLStaticHashedString U_MAX_LEVEL("max_level");
@@ -408,7 +409,8 @@ void ASDepthOfField::registerUICallbacks()
                 "ASDepthOfFieldApertureRoundness", "ASDepthOfFieldApertureRotation",
                 "ASDepthOfFieldAnamorphicRatio", "ASDepthOfFieldHighlightBoost",
                 "ASDepthOfFieldHighlightSprites", "ASDepthOfFieldHighlightIsolation",
-                "ASDepthOfFieldHighlightMaxSprites", "ASDepthOfFieldPostfilter",
+                "ASDepthOfFieldHighlightMaxSprites", "ASDepthOfFieldHighlightSaturation",
+                "ASDepthOfFieldPostfilter",
                 "ASDepthOfFieldPhysicalBlur", "ASDepthOfFieldMaxBlur",
                 "ASDepthOfFieldFieldCurvature", "ASDepthOfFieldFieldCurvatureStrength",
                 "ASDepthOfFieldAstigmatism", "ASDepthOfFieldAstigmatismStrength",
@@ -950,6 +952,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
     const S32 debug_mode = llclamp(gSavedSettings.getS32("ASDepthOfFieldDebug"), 0, 25);
     const F32 isolation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightIsolation"), 1.2f, 8.f);
     const F32 sprite_budget = (F32)llclamp(gSavedSettings.getS32("ASDepthOfFieldHighlightMaxSprites"), 256, 32768);
+    const F32 sprite_saturation = llclamp(gSavedSettings.getF32("ASDepthOfFieldHighlightSaturation"), 0.f, 3.f);
 
     // Sprites are optional; without their resources the gathers keep every
     // highlight, as before.
@@ -1188,6 +1191,7 @@ bool ASDepthOfField::render(LLRenderTarget& source, LLRenderTarget& destination,
         sSpriteProgram.uniform2i(U_CELL_GRID, cells_x, cells_y);
         sSpriteProgram.uniform1i(U_CELL_TOP_LEVEL, cell_top_level);
         sSpriteProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
+        sSpriteProgram.uniform1f(U_SPRITE_SATURATION, sprite_saturation);
         setLensUniforms(sSpriteProgram);
         // Attribute-free: any bound vertex buffer satisfies the core-profile
         // VAO; positions come from gl_VertexID/gl_InstanceID.

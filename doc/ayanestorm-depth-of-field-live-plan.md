@@ -1401,3 +1401,14 @@ glslang links every highlight and sprite variant, Live and mode 1, at 410 core a
 
 ## Fix: Preferences > Graphics > Depth of Field layout
 - The "Depth of Field renderer" row (label + combo + Settings button, added in 0084e0bf88) made the Settings button the previous widget of `RenderDepthOfFieldInEditMode`, whose `left_delta="18"` then placed it under the button; every control below is chained with `left_delta`, so the whole column shifted right and was clipped. Fixed by giving that check box an absolute `left="28"` (tagged, original kept commented) in `panel_preferences_graphics1.xml`; check boxes back at x 28, sliders at x 10.
+
+## Bokeh shape saturation (before phase 5 step 4)
+
+`ASDepthOfFieldHighlightSaturation` (F32, default 1, range 0-3), Advanced tab
+"Bokeh shape saturation", in Reset tuning defaults. Applied in
+`asDepthOfFieldSpriteV.glsl` to each sprite's energy, around its luminance
+(Rec. 709 weights), so brightness and the energy balance with the gather are
+kept; channels pushed below 0 are clipped. The sprite shader is shared, so
+Advanced (mode 1) and Live get it, snapshots included. Only the aperture
+sprites change: lights left in the gather (not isolated, over the sprite
+budget, or sprites off) keep their colour.

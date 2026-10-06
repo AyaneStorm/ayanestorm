@@ -477,34 +477,43 @@
               left="385" top="232" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightMaxSprites" />
       </button>
+      <slider name="highlight_saturation" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldHighlightSaturation"
+              layout="topleft" left="15" top="262" width="365" height="18"
+              label="Bokeh shape saturation" label_width="130" min_val="0" max_val="3"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
+              tool_tip="Colour of the aperture-shaped light bokeh: higher is more vivid, lower more white and grey. Their brightness is kept." />
+      <button name="reset_highlight_saturation" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
+              left="385" top="260" width="20" height="22" tool_tip="Reset to default.">
+        <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldHighlightSaturation" />
+      </button>
       <check_box name="postfilter" enabled_control="ASDepthOfFieldUIAdvanced" control_name="ASDepthOfFieldPostfilter"
-                 layout="topleft" left="15" top="262" width="365" height="20"
+                 layout="topleft" left="15" top="290" width="365" height="20"
                  label="Sampling noise filter"
                  tool_tip="Smooths the grain of large blurs over the local sampling gaps, without softening edges between different blur sizes or bokeh outlines." />
       <button name="reset_postfilter" enabled_control="ASDepthOfFieldUIAdvanced" label="D" layout="topleft"
-              left="385" top="260" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="288" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldPostfilter" />
       </button>
       <check_box name="physical_blur" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldPhysicalBlur"
-                 layout="topleft" left="15" top="290" width="365" height="20"
+                 layout="topleft" left="15" top="318" width="365" height="20"
                  label="Physical blur size"
                  tool_tip="Blur as large as the lens makes it (focal length, f-number, focus), up to the limit below, as in the Aperture-sampled renderer. Off: limited by Firestorm's Max CoF instead." />
       <button name="reset_physical_blur" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
-              left="385" top="288" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="316" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldPhysicalBlur" />
       </button>
       <slider name="max_blur" enabled_control="ASDepthOfFieldUIMaxBlur" control_name="ASDepthOfFieldMaxBlur"
-              layout="topleft" left="15" top="318" width="365" height="18"
+              layout="topleft" left="15" top="346" width="365" height="18"
               label="Maximum blur (%)" label_width="130" min_val="1" max_val="10"
               increment="0.1" decimal_digits="1" can_edit_text="true"
               tool_tip="Largest blur radius in percent of the image height. Larger blurs cost more and show more grain." />
       <button name="reset_max_blur" enabled_control="ASDepthOfFieldUIMaxBlur" label="D" layout="topleft"
-              left="385" top="316" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="344" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldMaxBlur" />
       </button>
-      <text name="live_debug_label" enabled_control="ASDepthOfFieldUILive" layout="topleft" left="15" top="350" width="125" height="18">Live diagnostic view</text>
+      <text name="live_debug_label" enabled_control="ASDepthOfFieldUILive" layout="topleft" left="15" top="378" width="125" height="18">Live diagnostic view</text>
       <combo_box name="live_debug" enabled_control="ASDepthOfFieldUILive" control_name="ASDepthOfFieldLiveDebug"
-                 layout="topleft" left="145" top="346" width="235" height="22">
+                 layout="topleft" left="145" top="374" width="235" height="22">
         <combo_box.item label="Off" name="off" value="0" />
         <combo_box.item label="Blur bins" name="bins" value="1" />
         <combo_box.item label="Bin weight sum" name="bin_sum" value="2" />
@@ -518,7 +527,7 @@
         <combo_box.item label="Far background alone" name="back2" value="10" />
       </combo_box>
       <button name="reset_live_debug" enabled_control="ASDepthOfFieldUILive" label="D" layout="topleft"
-              left="385" top="346" width="20" height="22" tool_tip="Reset to default.">
+              left="385" top="374" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldLiveDebug" />
       </button>
       <!-- Hidden to keep the floater short (debug aid; the setting still works).

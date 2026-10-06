@@ -12603,6 +12603,12 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>4096</integer><key>Backup</key><integer>0</integer>
   </map>
+  <key>ASDepthOfFieldHighlightSaturation</key>
+  <map>
+    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: colour saturation of the aperture-shaped light bokeh (1 unchanged, 0 grey, above 1 more vivid); keeps their brightness</string>
+    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
+    <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
+  </map>
   <key>ASDepthOfFieldDebug</key>
   <map>
     <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur, 16 background completion (unblurred), 17 near back layer, 18 near front layer, 19 background completion, 20 rigged near coverage, 21 world near coverage, 22 opaque result before transparency, 23 rigged layer as composited, 24 blur vs sharp blend (white blurred), 25 blur radius spread seen by the postfilter (grey: mixed radii)</string>

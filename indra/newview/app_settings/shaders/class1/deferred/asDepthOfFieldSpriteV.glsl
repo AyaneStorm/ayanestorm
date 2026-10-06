@@ -27,6 +27,9 @@ uniform int plane;
 uniform ivec2 cell_grid;
 uniform int cell_top_level;
 uniform float sprite_budget;
+// Bokeh shape saturation (ASDepthOfFieldHighlightSaturation): 1 unchanged,
+// 0 grey, above 1 more vivid.
+uniform float sprite_saturation;
 // Lens field (asdepthoffield.cpp, setLensUniforms()), as in the gathers.
 uniform vec2 field_scale;
 uniform float cat_eye;
@@ -279,6 +282,10 @@ void main()
 #else
     vary_energy = energy.rgb / area;
 #endif
+    // Saturation around the luminance, which it keeps (the gather lost
+    // exactly this luminance); channels pushed below 0 are clipped.
+    float luma = dot(vary_energy, vec3(0.2126, 0.7152, 0.0722));
+    vary_energy = max(mix(vec3(luma), vary_energy, sprite_saturation), vec3(0.0));
     vary_center = center;
     vary_radius = radius;
     vary_field = field;
