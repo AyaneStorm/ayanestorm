@@ -1782,6 +1782,9 @@ If you do not understand the distinction then leave this control alone."
          <button.commit_callback function="Floater.ToggleOrBringToFront" parameter="as_depth_of_field"/>
        </button>
        <!-- </AS:Chanayane> -->
+        <!-- <AS:Chanayane> Absolute left: the renderer row above made the
+             Settings button the previous widget, so left_delta="18" put this
+             check box (and every left_delta-chained control below) under it.
         <check_box
          control_name="RenderDepthOfFieldInEditMode"
          enabled_control="RenderDepthOfField"
@@ -1793,6 +1796,19 @@ If you do not understand the distinction then leave this control alone."
          name="RenderDepthOfFieldInEditMode"
          top_pad="4"
          width="256"/>
+        -->
+        <check_box
+         control_name="RenderDepthOfFieldInEditMode"
+         enabled_control="RenderDepthOfField"
+         height="16"
+         initial_value="false"
+         label="Enable while in edit mode"
+         layout="topleft"
+         left="28"
+         name="RenderDepthOfFieldInEditMode"
+         top_pad="4"
+         width="256"/>
+        <!-- </AS:Chanayane> -->
         <check_box
          control_name="FSFocusPointFollowsPointer"
          enabled_control="RenderDepthOfField"

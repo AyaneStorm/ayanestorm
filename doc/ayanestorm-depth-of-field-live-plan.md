@@ -1398,3 +1398,6 @@ glslang links every highlight and sprite variant, Live and mode 1, at 410 core a
 - User decision: "blur transparency by its own depth" is always on. Off, transparent surfaces blurred at the depth behind them, which looks bad.
 - `ASDepthOfFieldLiveTransparency` is removed: the setting (`settings.xml`, AS DoF block), the floater checkbox and its reset button, and the reset list (`asdepthoffield.cpp`). `binsWanted()` (`asdoflive.cpp`) no longer reads it. A saved "off" from an older build is ignored.
 - The one-layer fallback is unchanged: on the first frame, when Mac OIT is unsupported, or on a size mismatch.
+
+## Fix: Preferences > Graphics > Depth of Field layout
+- The "Depth of Field renderer" row (label + combo + Settings button, added in 0084e0bf88) made the Settings button the previous widget of `RenderDepthOfFieldInEditMode`, whose `left_delta="18"` then placed it under the button; every control below is chained with `left_delta`, so the whole column shifted right and was clipped. Fixed by giving that check box an absolute `left="28"` (tagged, original kept commented) in `panel_preferences_graphics1.xml`; check boxes back at x 28, sliders at x 10.
