@@ -36,6 +36,7 @@
 #include "ashorizonscattering.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
+#include "asstars.h"
 // </AS:Chanayane>
 
 #include "llerror.h"
@@ -298,6 +299,13 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     // <AS:Chanayane> Aperture DoF: mean (constant) twinkle while samples accumulate
     static LLStaticHashedString sTwinkleMean("as_twinkle_mean");
     gDeferredStarProgram.uniform1f(sTwinkleMean, ASDoFRenderer::starTwinkleMean());
+    // Viewer-local twinkle amount (1 = stock)
+    static LLStaticHashedString sTwinkleAmount("as_twinkle_amount");
+    gDeferredStarProgram.uniform1f(sTwinkleAmount, ASStars::twinkleAmount());
+    // Viewer-local brightness multiplier, applied in the shader after the
+    // custom_alpha smoothstep (which saturates at 0.9 and would cap it)
+    static LLStaticHashedString sStarBrightness("as_star_brightness");
+    gDeferredStarProgram.uniform1f(sStarBrightness, ASStars::brightness());
     // </AS:Chanayane>
 
     gDeferredStarProgram.uniform1f(LLShaderMgr::WATER_TIME, sStarTime);

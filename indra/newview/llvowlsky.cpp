@@ -35,6 +35,9 @@
 #include "llviewercontrol.h"
 #include "llenvironment.h"
 #include "llsettingssky.h"
+// <AS:Chanayane> Viewer-local star catalogue
+#include "asstars.h"
+// </AS:Chanayane>
 
 constexpr U32 MIN_SKY_DETAIL = 8;
 constexpr U32 MAX_SKY_DETAIL = 180;
@@ -61,7 +64,10 @@ inline U32 LLVOWLSky::getStripsNumIndices(void)
 
 inline U32 LLVOWLSky::getStarsNumVerts(void)
 {
-    return 1000;
+    // <AS:Chanayane> Count latched by the last star generation
+    //return 1000;
+    return ASStars::starCount();
+    // </AS:Chanayane>
 }
 
 inline U32 LLVOWLSky::getStarsNumIndices(void)
@@ -289,9 +295,25 @@ void LLVOWLSky::drawStars(void)
     if (mStarsVerts.notNull())
     {
         mStarsVerts->setBuffer();
-        mStarsVerts->drawArrays(LLRender::TRIANGLES, 0, getStarsNumVerts()*4);
+        // <AS:Chanayane> Draw every star (6 verts each); the stock *4 only
+        // drew the first 2/3, which ASStars' default count reproduces.
+        //mStarsVerts->drawArrays(LLRender::TRIANGLES, 0, getStarsNumVerts()*4);
+        mStarsVerts->drawArrays(LLRender::TRIANGLES, 0, getStarsNumVerts()*6);
+        // </AS:Chanayane>
     }
 }
+
+// <AS:Chanayane> Regenerate the star catalogue after a star setting change.
+void LLVOWLSky::asRebuildStars()
+{
+    // Rebuild the star buffer directly (as the WLSkyDetail handler does for
+    // the whole sky) instead of waiting for a full sky geometry update.
+    initStars();
+    mStarsVerts = nullptr;
+    updateStarColors();
+    updateStarGeometry(mDrawable);
+}
+// </AS:Chanayane>
 
 void LLVOWLSky::drawFsSky(void)
 {
@@ -339,38 +361,42 @@ void LLVOWLSky::initStars()
 {
     const F32 DISTANCE_TO_STARS = LLEnvironment::instance().getCurrentSky()->getDomeRadius();
 
-    // Initialize star map
-    mStarVertices.resize(getStarsNumVerts());
-    mStarColors.resize(getStarsNumVerts());
-    mStarIntensities.resize(getStarsNumVerts());
-
-    std::vector<LLVector3>::iterator v_p = mStarVertices.begin();
-    std::vector<LLColor4>::iterator v_c = mStarColors.begin();
-    std::vector<F32>::iterator v_i = mStarIntensities.begin();
-
-    U32 i;
-
-    for (i = 0; i < getStarsNumVerts(); ++i)
-    {
-        v_p->mV[VX] = ll_frand() - 0.5f;
-        v_p->mV[VY] = ll_frand() - 0.5f;
-
-        // we only want stars on the top half of the dome!
-
-        v_p->mV[VZ] = ll_frand()/2.f;
-
-        v_p->normVec();
-        *v_p *= DISTANCE_TO_STARS;
-        *v_i = llmin((F32)pow(ll_frand(),2.f) + 0.1f, 1.f);
-        v_c->mV[VRED]   = 0.75f + ll_frand() * 0.25f ;
-        v_c->mV[VGREEN] = 1.f ;
-        v_c->mV[VBLUE]  = 0.75f + ll_frand() * 0.25f ;
-        v_c->mV[VALPHA] = 1.f;
-        v_c->clamp();
-        v_p++;
-        v_c++;
-        v_i++;
-    }
+    // <AS:Chanayane> Configurable star catalogue; defaults match the stock
+    // generator below.
+    ASStars::generate(DISTANCE_TO_STARS, mStarVertices, mStarColors, mStarIntensities);
+    //// Initialize star map
+    //mStarVertices.resize(getStarsNumVerts());
+    //mStarColors.resize(getStarsNumVerts());
+    //mStarIntensities.resize(getStarsNumVerts());
+    //
+    //std::vector<LLVector3>::iterator v_p = mStarVertices.begin();
+    //std::vector<LLColor4>::iterator v_c = mStarColors.begin();
+    //std::vector<F32>::iterator v_i = mStarIntensities.begin();
+    //
+    //U32 i;
+    //
+    //for (i = 0; i < getStarsNumVerts(); ++i)
+    //{
+    //    v_p->mV[VX] = ll_frand() - 0.5f;
+    //    v_p->mV[VY] = ll_frand() - 0.5f;
+    //
+    //    // we only want stars on the top half of the dome!
+    //
+    //    v_p->mV[VZ] = ll_frand()/2.f;
+    //
+    //    v_p->normVec();
+    //    *v_p *= DISTANCE_TO_STARS;
+    //    *v_i = llmin((F32)pow(ll_frand(),2.f) + 0.1f, 1.f);
+    //    v_c->mV[VRED]   = 0.75f + ll_frand() * 0.25f ;
+    //    v_c->mV[VGREEN] = 1.f ;
+    //    v_c->mV[VBLUE]  = 0.75f + ll_frand() * 0.25f ;
+    //    v_c->mV[VALPHA] = 1.f;
+    //    v_c->clamp();
+    //    v_p++;
+    //    v_c++;
+    //    v_i++;
+    //}
+    // </AS:Chanayane>
 }
 
 void LLVOWLSky::buildStripsBuffer(U32 begin_stack,
@@ -516,6 +542,14 @@ bool LLVOWLSky::updateStarGeometry(LLDrawable *drawable)
     LLStrider<LLColor4U> colorsp;
     LLStrider<LLVector2> texcoordsp;
 
+    // <AS:Chanayane> Zero star density: no buffer, drawStars() skips it
+    if (getStarsNumVerts() == 0)
+    {
+        mStarsVerts = nullptr;
+        return true;
+    }
+    // </AS:Chanayane>
+
     if (mStarsVerts.isNull())
     {
         mStarsVerts = new LLVertexBuffer(LLDrawPoolWLSky::STAR_VERTEX_DATA_MASK);
@@ -550,7 +584,10 @@ bool LLVOWLSky::updateStarGeometry(LLDrawable *drawable)
         LLVector3 left = at%LLVector3(0,0,1);
         LLVector3 up = at%left;
 
-        F32 sc = 16.0f + (ll_frand() * 20.0f);
+        // <AS:Chanayane> Per-star size from the catalogue, stable across rebuilds
+        //F32 sc = 16.0f + (ll_frand() * 20.0f);
+        F32 sc = ASStars::starSize(vtx);
+        // </AS:Chanayane>
         left *= sc;
         up *= sc;
 

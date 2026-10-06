@@ -2794,6 +2794,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- <AS:Chanayane> Aurora settings toolbar command. -->
   <string name="Command_ASAuroraSettings_Label">Aurora Settings</string>
   <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Star settings toolbar command. -->
+  <string name="Command_ASStarsSettings_Label">Star Settings</string>
+  <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Horizon lighting toolbar command. -->
   <string name="Command_ASHorizonSettings_Label">Horizon Lighting</string>
   <!-- </AS:Chanayane> -->
@@ -2897,6 +2900,9 @@ name="Command_360_Capture_Label">360° Snapshot</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Aurora settings toolbar command. -->
   <string name="Command_ASAuroraSettings_Tooltip">Show or hide aurora settings</string>
+  <!-- </AS:Chanayane> -->
+  <!-- <AS:Chanayane> Star settings toolbar command. -->
+  <string name="Command_ASStarsSettings_Tooltip">Show or hide star settings</string>
   <!-- </AS:Chanayane> -->
   <!-- <AS:Chanayane> Horizon lighting toolbar command. -->
   <string name="Command_ASHorizonSettings_Tooltip">Show or hide procedural horizon lighting settings</string>

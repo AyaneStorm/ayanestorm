@@ -41,6 +41,10 @@ uniform float as_twinkle_mean;
 // > 0: drawing the aperture DoF star mask (one attachment): colour in
 // frag_data[0] even with the emissive buffer.
 uniform float as_star_mask;
+// Viewer-local twinkle depth: 0 steady, 1 stock.
+uniform float as_twinkle_amount;
+// Viewer-local brightness multiplier (1 = stock), after the smoothstep.
+uniform float as_star_brightness;
 // </AS:Chanayane>
 
 float twinkle(){
@@ -62,10 +66,14 @@ void main()
 
     float factor = smoothstep(0.0f, 0.9f, custom_alpha);
 
-    col.a = (col.a * factor) * 32.0f;
+    // <AS:Chanayane> Viewer-local brightness multiplier
+    //col.a = (col.a * factor) * 32.0f;
+    col.a = (col.a * factor) * 32.0f * as_star_brightness;
+    // </AS:Chanayane>
     // <AS:Chanayane> Aperture DoF: constant mean twinkle while accumulating
+    // and viewer-local twinkle amount
     //col.a *= twinkle();
-    col.a *= as_twinkle_mean > 0.0 ? as_twinkle_mean : twinkle();
+    col.a *= mix(1.0, as_twinkle_mean > 0.0 ? as_twinkle_mean : twinkle(), as_twinkle_amount);
     // </AS:Chanayane>
 
     frag_data[1] = vec4(0.0f);

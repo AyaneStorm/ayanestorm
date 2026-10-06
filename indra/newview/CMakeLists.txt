@@ -110,6 +110,9 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local star catalogue settings.
+    asstars.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
     ashorizonscattering.cpp
     # </AS:Chanayane>
@@ -1048,6 +1051,9 @@ set(viewer_HEADER_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local procedural aurora module.
     asaurora.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Viewer-local star catalogue settings.
+    asstars.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local analytic horizon-scattering module.
     ashorizonscattering.h

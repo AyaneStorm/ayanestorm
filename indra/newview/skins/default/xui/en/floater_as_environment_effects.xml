@@ -55,6 +55,10 @@
       label="Moon"
       name="moon_settings_tab" />
     <panel
+      filename="panel_as_stars_settings.xml"
+      label="Stars"
+      name="stars_settings_tab" />
+    <panel
       filename="panel_as_aurora_settings.xml"
       label="Auroras"
       name="aurora_settings_tab" />

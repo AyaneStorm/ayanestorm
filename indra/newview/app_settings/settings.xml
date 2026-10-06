@@ -26886,6 +26886,30 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key><integer>0</integer>
     </map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> Viewer-local star settings; defaults reproduce the stock sky. -->
+    <key>ASStarsEnabled</key>
+    <map><key>Comment</key><string>Use the AyaneStorm star settings; off draws the stock stars</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsDensity</key>
+    <map><key>Comment</key><string>Star count multiplier; 1 matches the 666 stars stock draws</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsColorAmount</key>
+    <map><key>Comment</key><string>Blend from stock star tint (0) to blackbody star colors (1)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSaturation</key>
+    <map><key>Comment</key><string>Star color saturation around luminance</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsTemperatureBias</key>
+    <map><key>Comment</key><string>Shifts sampled star temperatures: negative warmer (red), positive cooler (blue)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsBrightness</key>
+    <map><key>Comment</key><string>Star brightness multiplier on top of the sky setting</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsBrightnessSpread</key>
+    <map><key>Comment</key><string>Star intensity distribution exponent; higher leaves fewer bright stars</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSize</key>
+    <map><key>Comment</key><string>Star sprite size multiplier</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsTwinkle</key>
+    <map><key>Comment</key><string>Star twinkle amount; 0 steady, 1 stock</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsMilkyWay</key>
+    <map><key>Comment</key><string>Extra stars added in a Milky Way band (1 adds 1.5x the background count)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.0</real><key>Backup</key><integer>0</integer></map>
+    <key>ASStarsSeed</key>
+    <map><key>Comment</key><string>Star pattern seed; 0 picks a new random sky each time stars are built</string><key>Persist</key><integer>1</integer><key>Type</key><string>S32</string><key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer></map>
+    <!-- </AS:Chanayane> -->
     <!-- <AS:Chanayane> Viewer-local analytic horizon scattering. -->
     <key>ASHorizonScatteringEnabled</key>
     <map><key>Comment</key><string>Enable viewer-local analytic horizon illumination</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>

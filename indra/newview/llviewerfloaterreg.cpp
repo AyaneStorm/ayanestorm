@@ -36,6 +36,7 @@
 // <AS:Chanayane> Register viewer-local aurora settings callbacks.
 #include "asaurora.h"
 #include "ashorizonscattering.h"
+#include "asstars.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Register viewer-local celestial and volumetric settings callbacks.
 #include "asmoonrendering.h"
@@ -662,6 +663,10 @@ void LLViewerFloaterReg::registerFloaters()
     // <AS:Chanayane> Viewer-local aurora controls.
     ASAurora::registerUICallbacks();
     LLFloaterReg::add("as_aurora_settings", "floater_as_aurora_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Viewer-local star controls.
+    ASStars::registerUICallbacks();
+    LLFloaterReg::add("as_stars_settings", "floater_as_stars_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     // </AS:Chanayane>
     // <AS:Chanayane> Viewer-local procedural sunset sun controls.
     ASProceduralSun::registerUICallbacks();

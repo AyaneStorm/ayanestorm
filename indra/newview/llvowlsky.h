@@ -54,6 +54,10 @@ public:
     void cleanupGL();
     void restoreGL();
 
+    // <AS:Chanayane> Regenerate stars after an ASStars setting change.
+    void asRebuildStars();
+    // </AS:Chanayane>
+
 private:
 
     // helper function for initializing the stars.
