@@ -10,16 +10,15 @@
  *
  * highlight_pass 0 (cell grid): per cell of CELL_SIZE^2 full-resolution
  * pixels, sum the extracted energy with its luminance-weighted centre and
- * signed CoC. highlight_pass 1 (full resolution): gather input = opaque
- * color minus the extraction of kept cells. Both passes evaluate the same
+ * signed CoC. highlight_pass 1 (full resolution): gather input = bin colour
+ * minus the extraction of kept cells. Both passes evaluate the same
  * detect(), so the removed and the redrawn energy match exactly.
  *
- * LIVE_SPRITES: the same extraction for Live DoF (asdoflive.cpp), linked with
- * asDoFLiveCommonF.glsl: the radius comes from the depth (highlightCoC()) and
- * each cell keeps the light alone in the front and the back bin of its side
- * (highlightParts()): their sum, and the front fraction in frag_data1.w;
- * the bright bokeh highlights gain applies to that energy (highlightGain()).
- * Without the define the code is mode 1's.
+ * Live DoF (asdoflive.cpp), linked with asDoFLiveCommonF.glsl: the radius
+ * comes from the depth (highlightCoC()) and each cell keeps the light alone
+ * in the front and the back bin of its side (highlightParts()): their sum,
+ * and the front fraction in frag_data1.w; the bright bokeh highlights gain
+ * applies to that energy (highlightGain()).
  */
 layout(location = 0) out vec4 frag_data0;
 layout(location = 1) out vec4 frag_data1;
@@ -27,10 +26,9 @@ layout(location = 1) out vec4 frag_data1;
 layout(location = 2) out vec4 frag_data2;
 layout(location = 3) out vec4 frag_data3;
 
-// Original opaque linear-HDR color.
+// Live's bin colour (the opaque surface, or the composited image in its
+// one-layer fallback), linear HDR.
 uniform sampler2D diffuseRect;
-// Signed CoC target; g is the opaque CoC.
-uniform sampler2D noiseMap;
 // Cell energy (rgb) and occupancy (a) with mips (pass 1 only).
 uniform sampler2D specularRect;
 // Cell brightness levels 0-3 and 4-7 with mips (pass 1 only).
@@ -47,10 +45,7 @@ uniform float sprite_budget;
 
 #define CELL_SIZE 8
 
-#ifdef LIVE_SPRITES
-// Live DoF (asdoflive.cpp): linked with asDoFLiveCommonF.glsl. diffuseRect is
-// Live's bin colour (the opaque surface, or the composited image in its
-// one-layer fallback); the blur radius comes from depthMap.
+// The blur radius comes from depthMap (asDoFLiveCommonF.glsl).
 uniform sampler2D depthMap;
 uniform sampler2D positionMap;  // Mac OIT sum of weights, sum of optical depth
 uniform int bins_source;
@@ -126,22 +121,6 @@ float highlightGain(ivec2 p)
     float bright = smoothstep(0.5 * hl_threshold, 1.5 * hl_threshold, luma);
     return 1.0 + hl_strength * bright * min(radius * radius / 16.0, 1024.0);
 }
-#else
-float highlightCoC(ivec2 p)
-{
-    return texelFetch(noiseMap, p, 0).g;
-}
-
-float highlightGain(ivec2 p)
-{
-    return 1.0;
-}
-
-vec2 highlightParts(ivec2 p)
-{
-    return vec2(0.0, 1.0);
-}
-#endif
 
 float luminance(vec3 color)
 {
@@ -273,7 +252,7 @@ void main()
         vec2 center_sum = vec2(0.0);
         float coc_sum = 0.0;
         float weight = 0.0;
-        float front_sum = 0.0;  // LIVE_SPRITES: luminance of the front parts
+        float front_sum = 0.0;  // luminance of the front parts
         float part_sum = 0.0;
         for (int y = 0; y < CELL_SIZE; ++y)
         {
@@ -301,17 +280,11 @@ void main()
         }
         bool occupied = weight > 0.0001;
         frag_data0 = vec4(energy, occupied ? 1.0 : 0.0);
-#ifdef LIVE_SPRITES
         // .w: the share of the cell's energy in the front bin.
         frag_data1 = occupied
             ? vec4(center_sum / weight / screen_res, coc_sum / weight,
                    part_sum > 0.0 ? front_sum / part_sum : 0.0)
             : vec4(0.0);
-#else
-        frag_data1 = occupied
-            ? vec4(center_sum / weight / screen_res, coc_sum / weight, weight)
-            : vec4(0.0);
-#endif
         // Counts only: keepCell() reads the stored energy in both pass 1 and
         // the sprites, so they always agree on which cells are kept.
         frag_data2 = occupied ? cellLevels(luminance(energy), 0) : vec4(0.0);

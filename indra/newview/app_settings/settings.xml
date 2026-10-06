@@ -12215,7 +12215,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <!-- <AS:Chanayane> AyaneStorm-owned cinematic depth-of-field backend. -->
   <key>ASDepthOfFieldMode</key>
   <map>
-    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 1 AyaneStorm Cinematic, 2 aperture-sampled (experimental, in development), 3 AyaneStorm Live (layered, noise-free). Not persisted: every session starts with Standard</string>
+    <key>Comment</key><string>Depth-of-field renderer: 0 Standard Firestorm, 2 aperture-sampled (still images), 3 AyaneStorm Live (layered, noise-free); 1 (the retired Advanced renderer) switches to Live. Not persisted: every session starts with Standard</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12263,43 +12263,43 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldApertureAxialCA</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Advanced renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: axial (longitudinal) chromatic aberration. Each wavelength (a lens sample, or a colour channel's blur radius in the Live renderer) stands for a wavelength focused at a slightly different distance, giving coloured rims on out-of-focus content while in-focus areas stay neutral</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureAxialCAStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled, Advanced and Live DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-10). Real fast lenses are around 0.1-0.2</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: axial chromatic aberration strength, the red-to-blue focal shift in percent of the focal length (0-10). Real fast lenses are around 0.1-0.2</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.2</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEye</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: cat's-eye bokeh (mechanical vignetting). Off-axis, the lens barrel clips the aperture, so bokeh toward the frame edges become lemon-shaped</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: cat's-eye strength, the barrel offset at the frame corner in aperture radii (0-2). Higher values clip more and start closer to the centre</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureCatEyeDarken</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF (optical vignetting): keep the corner darkening that the cat's-eye clipping causes in a real lens (off: brightness is compensated)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSpherical</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled and Advanced DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: spherical aberration. Bokeh brightness varies across the disc differently in front of and behind the focus plane</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldApertureSphericalStrength</key>
   <map>
-    <key>Comment</key><string>Aperture-sampled, Advanced and Live DoF: spherical aberration strength (-5 to 5). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims. Beyond 1 (stylised): a hard core or a thin ring</string>
+    <key>Comment</key><string>Aperture-sampled and Live DoF: spherical aberration strength (-5 to 5). Positive (typical under-corrected lens): soft centre-bright background bokeh, bright-rimmed foreground. Negative (over-corrected): soap-bubble background bokeh with bright rims. Beyond 1 (stylised): a hard core or a thin ring</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
@@ -12323,7 +12323,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   </map>
   <key>ASDepthOfFieldUIScreenSpace</key>
   <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 3 (enables the controls shared by the Advanced and Live renderers)</string>
+    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 3 (enables the Live renderer's blur, sprite and field curvature controls)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12336,12 +12336,6 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUILens</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 or 2 (enables the lens effect checkboxes; the Live renderer has none yet)</string>
-    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldUIAdvanced</key>
-  <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode == 1 (enables Advanced-only DoF controls)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12378,12 +12372,6 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASDepthOfFieldUIFieldCurvature</key>
   <map>
     <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldFieldCurvature on (enables the field curvature slider)</string>
-    <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldUIAstigmatism</key>
-  <map>
-    <key>Comment</key><string>Internal UI state, mirrors ASDepthOfFieldMode 1 with ASDepthOfFieldAstigmatism on (enables the astigmatism slider)</string>
     <key>Persist</key><integer>0</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12489,15 +12477,9 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>-1</integer><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldBackend</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm DoF backend: 0 Auto, 1 portable OpenGL 4.1 fragment; 2 is reserved for a future OpenGL 4.3 compute backend</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
   <key>ASDepthOfFieldQuality</key>
   <map>
-    <key>Comment</key><string>AyaneStorm DoF bounded sample tier: 0 16-tap, 1 32-tap, 2 48-tap</string>
+    <key>Comment</key><string>AyaneStorm Live DoF bokeh quality: 0 Low (37 area samples), 1 High (91), 2 Cinematic (169)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
@@ -12537,83 +12519,53 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
   </map>
-  <key>ASDepthOfFieldHighlightBoost</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm DoF bokeh highlight weighting</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-    <key>Value</key><real>0.25</real><key>Backup</key><integer>0</integer>
-  </map>
   <key>ASDepthOfFieldHighlightSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldPostfilter</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: radius-aware postfilter that smooths sampling noise of the gathers over the local tap spacing</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: draw isolated defocused highlights as aperture-shaped sprites (energy moved out of the gather)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldPhysicalBlur</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: use the lens's physical blur size, limited by ASDepthOfFieldMaxBlur, instead of Firestorm's Max CoF (CameraMaxCoF)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldMaxBlur</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: largest physical blur radius in percent of the image height (1-10), with ASDepthOfFieldPhysicalBlur on</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>5.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldFieldCurvature</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: field curvature. The in-focus surface bends off-axis, so the frame edges focus nearer (or farther) than the centre</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
     <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldFieldCurvatureStrength</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-    <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldAstigmatism</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism. Off-axis, the radial and circumferential directions focus apart: corners soften and bokeh stretch around the centre behind the focus, outward in front of it</string>
-    <key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldAstigmatismStrength</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm Advanced DoF: astigmatism, the focal split at the frame corner in percent of the focal length (-3 to 3). Negative swaps the stretch directions</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: field curvature, the focal shift at the frame corner in percent of the focal length (-3 to 3). Positive: the corners focus nearer, as in most lenses</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightIsolation</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: how many times brighter than its surrounding ring a pixel must be to become a sprite (full effect at twice this)</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightMaxSprites</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: sprite budget; highlights beyond it stay in the gather</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: sprite budget; highlights beyond it stay in the gather</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>S32</string>
     <key>Value</key><integer>4096</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldHighlightSaturation</key>
   <map>
-    <key>Comment</key><string>AyaneStorm Advanced and Live DoF: colour saturation of the aperture-shaped light bokeh (1 unchanged, 0 grey, above 1 more vivid); keeps their brightness</string>
+    <key>Comment</key><string>AyaneStorm Live DoF: colour saturation of the aperture-shaped light bokeh (1 unchanged, 0 grey, above 1 more vivid); keeps their brightness</string>
     <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
     <key>Value</key><real>1.0</real><key>Backup</key><integer>0</integer>
-  </map>
-  <key>ASDepthOfFieldDebug</key>
-  <map>
-    <key>Comment</key><string>AyaneStorm DoF debug view: 0 off, 1 effective CoC, 2 near coverage, 3 far blur, 4 near blur, 5 transparent coverage, 6 transparent CoC, 7 opaque CoC, 8 world far blur, 9 world near blur, 10 rigged CoC, 11 world CoC, 12 rigged coverage, 13 world coverage, 14 rigged far blur, 15 rigged near blur, 16 background completion (unblurred), 17 near back layer, 18 near front layer, 19 background completion, 20 rigged near coverage, 21 world near coverage, 22 opaque result before transparency, 23 rigged layer as composited, 24 blur vs sharp blend (white blurred), 25 blur radius spread seen by the postfilter (grey: mixed radii)</string>
-    <key>Persist</key><integer>0</integer><key>Type</key><string>S32</string>
-    <key>Value</key><integer>0</integer><key>Backup</key><integer>0</integer>
   </map>
   <key>ASDepthOfFieldLiveDebug</key>
   <map>

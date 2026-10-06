@@ -9233,7 +9233,8 @@ void LLPipeline::renderFinalize()
 // transform; the legacy post-tonemap DoF remains below as a fallback.
     LLRenderTarget* linear_source = &mRT->screen;
     bool advanced_dof_applied = false;
-    // Live DoF (mode 3) shares the Advanced renderer's linear-HDR path.
+    // Live DoF (mode 3) runs on the linear-HDR scene; this path was the
+    // retired Advanced renderer's (mode 1):
     // gSavedSettings.getS32("ASDepthOfFieldMode") == 1)
     if ((RenderDepthOfFieldInEditMode || !LLToolMgr::getInstance()->inBuildMode()) &&
         RenderDepthOfField && !gCubeSnapshot &&

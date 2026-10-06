@@ -78,9 +78,9 @@ Open **AyaneStorm > Advanced Shape Deformer** to edit the position and scale of 
 
 Open the **AyaneStorm Depth of Field** floater to choose a mode:
 
-- **Live (new)**: a layered depth of field designed to be noise-free and stable while you move. It looks the same on Windows and macOS and blurs transparent objects such as hair and glass at their real depth. Light sources can turn into aperture-shaped bokeh highlights in their own layers.
-- **Aperture-sampled (still images only)**: renders the scene through many points of a virtual lens and averages them, for photographic snapshots. Choose the aperture shape (circle, triangle to nonagon, square), blade rounding, rotation and anamorphic ratio, and add lens effects: cat's-eye bokeh, spherical aberration, axial chromatic aberration, astigmatism, field curvature and corner darkening.
-- **Standard (Firestorm)** and **Advanced** modes remain available.
+- **Live (new)**: a layered depth of field designed to be noise-free and stable while you move. It looks the same on Windows and macOS and blurs transparent objects such as hair and glass at their real depth. Light sources can turn into aperture-shaped bokeh highlights in their own layers, with adjustable color saturation. It shares the aperture shape and lens effects below, and adds field curvature.
+- **Aperture-sampled (still images only)**: renders the scene through many points of a virtual lens and averages them, for photographic snapshots. Choose the aperture shape (circle, triangle to nonagon, square), blade rounding, rotation and anamorphic ratio, and add lens effects: cat's-eye bokeh, spherical aberration, axial chromatic aberration, corner darkening and bright bokeh highlights.
+- **Standard (Firestorm)** remains available.
 - Autofocus on eyes or on an area, subject tracking, adjustable focus time and a physical blur size based on the camera settings.
 
 ### Night sky

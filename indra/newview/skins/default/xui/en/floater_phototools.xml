@@ -2043,7 +2043,9 @@
 				 top_pad="3"
 				 width="220">
 					<combo_box.item label="Standard / Firestorm DoF" name="standard" value="0"/>
+					<!-- Advanced renderer retired:
 					<combo_box.item label="Advanced / AyaneStorm DoF" name="advanced" value="1"/>
+					-->
 					<combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2"/>
 					<combo_box.item label="Live / AyaneStorm DoF (new)" name="live" value="3"/>
 				</combo_box>

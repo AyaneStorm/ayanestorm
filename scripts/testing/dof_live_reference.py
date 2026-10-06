@@ -373,7 +373,7 @@ def spherical_product(strength, r_gather, near):
 
 # Barrel band nodes per pixel (asDoFLiveGatherF.glsl BARREL_NODES).
 BARREL_NODES = 24
-# Barrel shift cap, aperture radii (barrelCenter(), asDepthOfFieldFarF.glsl).
+# Barrel shift cap, aperture radii (barrelCenter(), asDepthOfFieldSpriteV.glsl).
 BARREL_MAX_SHIFT = 1.6
 
 
@@ -516,8 +516,7 @@ class BarrelBand:
 
 
 # Axial chromatic aberration (phase 4 step 4), the aperture-sampled
-# renderer's spectral model (ASDoFAperture::spectralWeights, channelCover()
-# in asDepthOfFieldFarF.glsl): wavelength s blurs to radius r - sigma delta s
+# renderer's spectral model (ASDoFAperture::spectralWeights): wavelength s blurs to radius r - sigma delta s
 # (sigma +1 behind the focus, -1 in front), four strata of s, channel
 # weights red 1 + s, green 1.5 (1 - s^2), blue 1 - s, each summing to 1.
 CA_STRATA = np.array([-0.75, -0.25, 0.25, 0.75])
@@ -1119,7 +1118,7 @@ def evaluate_polygon_tiles(midpoint_areas):
 #
 # Phase 3: isolated defocused lights leave the gather input and are drawn as
 # aperture sprites (asDepthOfFieldHighlightF.glsl and asDepthOfFieldSpriteV/F
-# .glsl under LIVE_SPRITES). A source smaller than the tap spacing is seen only
+# .glsl). A source smaller than the tap spacing is seen only
 # through the taps whose mip footprint covers it, so its bokeh carries a ring
 # pattern (about 25% relative variation inside a triangle at any ring count).
 
@@ -1148,7 +1147,7 @@ def sprite_boundary(phi, blades, roundness):
 
 
 def sprite_edge(qx, qy, radius, plane, shape, barrel):
-    """liveEdge() (LIVE_SPRITES): signed distance inside the aperture of this
+    """liveEdge() (asDepthOfFieldSpriteF.glsl): signed distance inside the aperture of this
     radius, barrel included (the nearer edge wins), full-resolution pixels,
     and the pupil position over the edge radius. No astigmatism in Live."""
     blades, roundness, rotation, anamorphic = shape
@@ -1185,7 +1184,7 @@ def sprite_profile_moment(c, lo, hi):
 
 
 def sprite_open_fraction(shape, barrel, c, angles=64):
-    """liveOpenFraction() (asDepthOfFieldSpriteV.glsl, LIVE_SPRITES): the
+    """liveOpenFraction() (asDepthOfFieldSpriteV.glsl): the
     share of the profiled aperture inside the barrel, a polar integral over
     the aperture angle with the exact ray and circle intersection. Mode 1
     divides by the circle's vesica fraction, which is off by up to 58% for a
@@ -1213,7 +1212,7 @@ def sprite_open_fraction(shape, barrel, c, angles=64):
 
 def live_sprite(gx, gy, cx, cy, radius, plane, shape, energy, barrel=None, delta=0.0,
                 sa_strength=0.0, scale=2.0):
-    """Mirror of the Live sprite (asDepthOfFieldSpriteV/F.glsl, LIVE_SPRITES)
+    """Mirror of the Live sprite (asDepthOfFieldSpriteV/F.glsl)
     at target pixels (gx, gy) (indices), centre (cx, cy) in full-resolution
     pixels: per-channel radiance per full-resolution pixel. Every axial CA
     stratum is an exact scaled aperture with its own antialiasing grid and
@@ -1281,7 +1280,7 @@ def ideal_bokeh(gx, gy, cx, cy, radius, plane, shape, energy, barrel=None, delta
 
 
 def live_highlight_gain(strength, threshold, luminance, radius):
-    """highlightGain() (LIVE_SPRITES): the Aperture-sampled renderer's bright
+    """highlightGain() (asDepthOfFieldHighlightF.glsl): the Aperture-sampled renderer's bright
     bokeh highlights (asDoFAccumulateF.glsl, artistic, not energy
     preserving) on the sprites' light: 1 + strength * bright * area, area =
     min((radius / 4)^2, 1024) with the full-resolution blur radius. The
@@ -1336,7 +1335,7 @@ def extract_highlights(image, radius, isolation=2.0, budget=4096, boost=None):
 
 
 def sprite_layer_parts(front_share, back_share, transmittance, v_front, v_back):
-    """highlightParts() (LIVE_SPRITES): the light alone in the front and the
+    """highlightParts() (asDepthOfFieldHighlightF.glsl): the light alone in the front and the
     back bin of its side (B1 and B2 behind the focus, N2 and N1 in front),
     a_b = share_b T / V_b. The front part is drawn over its layer pair, the
     back part into the back layer, under what the front holds there."""
@@ -1359,7 +1358,7 @@ def sprite_far_visibility(gx, gy, cx, cy, radius, shape, kernel, scale=2.0):
 
 
 def sprite_layer_scale(front_share, back_share, transmittance, v_front, v_back):
-    """highlightScale() (LIVE_SPRITES): the opaque light's energy in the
+    """Former highlightScale(), superseded by highlightParts(): the opaque light's energy in the
     layer the sprite is drawn into, the background (B1 over B2) or the veil
     (N2 over N1). Each bin is read alone (S / V), so the surface's share b
     shows a_b = share_b T / V_b of its light, and the pair is composited

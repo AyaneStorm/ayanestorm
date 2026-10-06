@@ -9,6 +9,11 @@ convention (-Z forward eye space, matrices indexed m[column][row]) and are
 checked against the independent ray model. Textured materials and general
 blend factors are subsequent acceptance work; these tests do not certify
 viewer integration.
+
+The Advanced renderer (mode 1) is retired: the mirrors of its shaders
+(asDepthOfField CoC/Near/Postfilter, the sprite's sampleCoverage()) and their
+tests are kept as a historical reference; dof_live_reference.py imports the
+aperture helpers from here.
 """
 
 from dataclasses import dataclass

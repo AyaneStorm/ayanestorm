@@ -4,22 +4,23 @@
  * @brief AyaneStorm Live depth of field (ASDepthOfFieldMode 3).
  *
  * Passes (all OpenGL 4.1 fragment, see doc/ayanestorm-depth-of-field-live-plan.md):
+ *   0. highlights (ASDepthOfFieldHighlightSprites, optional): isolated
+ *                 defocused lights leave the bin colour, per 8x8 cell
+ *                 (asDepthOfFieldHighlightF.glsl);
  *   1. reduce     full resolution to the half-resolution bin sums, one pass
  *                 (N2, N1, energies; F, B1, B2, visibility), then mip chains;
  *   2. complete   the bins behind N2 completed where nearer bins hide them
  *                 (push-pull), one draw per mip level, top down;
  *   3. tiles      veil kernel radius (N2, N1, B1) per 8x8 gather-pixel tile:
  *                 reduce, then dilation along x and y;
- *   4. gathers    area-tap scatter-as-gather of N2, N1, B1 (tile kernel) and
- *                 B2 (own kernel, hole fill); N1 is written over N2, B1 over
- *                 B2;
+ *   4. gathers    area-tap scatter-as-gather in layer order: N2, then N1
+ *                 written over it (tile kernel); B2 (own kernel, hole
+ *                 fill), then B1 written over it (tile kernel). The sprites
+ *                 (asDepthOfFieldSpriteV/F.glsl) are drawn into each layer
+ *                 in between, each part of a cell's light in its own layer;
  *   5. composite  full resolution, N2 over N1 over F over B1 over B2.
- * Highlight sprites (ASDepthOfFieldHighlightSprites): before the reduce,
- * isolated defocused lights leave the bin colour (mode 1's extraction,
- * asDepthOfFieldHighlightF.glsl under LIVE_SPRITES); after the gathers they
- * are drawn as aperture sprites into the background and the veil
- * (asDepthOfFieldSpriteV/F.glsl). A light smaller than the tap spacing kept
- * a ring pattern in the gather.
+ * A light smaller than the tap spacing kept a ring pattern in the gather,
+ * hence the sprites.
  * Bins come from two sources:
  *   - transparency bins: Mac OIT's COLOR pass adds every transparent
  *     fragment, with its exact weight, to the bins of its own depth
@@ -190,7 +191,7 @@ namespace
         F32 mFarRadius = 0.f;
         F32 mSplitRadius = 0.f;
         F32 mFarSplitRadius = 0.f;
-        // Lens effects shared with the Advanced renderer.
+        // Lens effects (asdepthoffield.h).
         ASDepthOfField::LensField mField;
         ASDoFAperture::Shape mShape;
         F32 mUnitArea = F_PI;
@@ -588,16 +589,14 @@ bool ASDoFLive::createShaders(S32 shader_level)
     {
         LL_WARNS("ASDoFLive") << "Live DoF shaders failed to load; Live DoF is unavailable." << LL_ENDL;
     }
-    // Highlight sprites, mode 1's shaders with LIVE_SPRITES. Optional: Live
-    // keeps every light in the gather without them.
+    // Highlight sprites. Optional: Live keeps every light in the gather
+    // without them.
     bool sprites = createProgram(sHighlightProgram, "AyaneStorm Live DoF Highlight Shader",
-                                 "deferred/asDepthOfFieldHighlightF.glsl", true, shader_level,
-                                 "LIVE_SPRITES");
+                                 "deferred/asDepthOfFieldHighlightF.glsl", true, shader_level);
     // Attribute-free instanced aperture sprites (asDepthOfFieldSpriteV.glsl).
     sSpriteProgram.mName = "AyaneStorm Live DoF Highlight Sprite Shader";
     sSpriteProgram.mShaderFiles.clear();
     sSpriteProgram.clearPermutations();
-    sSpriteProgram.addPermutation("LIVE_SPRITES", "1");
     sSpriteProgram.mFeatures.attachNothing = true;
     sSpriteProgram.mShaderFiles.emplace_back("deferred/asDepthOfFieldSpriteV.glsl", GL_VERTEX_SHADER);
     sSpriteProgram.mShaderFiles.emplace_back("deferred/asDepthOfFieldSpriteF.glsl", GL_FRAGMENT_SHADER);
@@ -748,9 +747,8 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         LL_INFOS("ASDoFLive") << "Live DoF active at " << width << "x" << height << LL_ENDL;
     }
 
-    // Blur size: the same frontend as the Advanced renderer (physical blur
-    // in percent of the image height by default, so any resolution and
-    // snapshots frame alike).
+    // Blur size: physical blur in percent of the image height by default, so
+    // any resolution and snapshots frame alike.
     Lens lens;
     lens.mFocalDistance = focal_distance;
     lens.mBlurConstant = blur_constant;
@@ -793,7 +791,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
                               << (bins ? "from Mac OIT" : "unavailable; one layer") << LL_ENDL;
     }
 
-    // Highlight sprites, with mode 1's settings. Without their programs or
+    // Highlight sprites. Without their programs or
     // targets every light stays in the gather, as before.
     bool sprites = gSavedSettings.getBOOL("ASDepthOfFieldHighlightSprites") &&
         sHighlightProgram.isComplete() && sSpriteProgram.isComplete() &&
@@ -838,7 +836,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
     LLGLDepthTest depth_test(GL_FALSE, GL_FALSE);
     LLGLDisable blend(GL_BLEND);
 
-    // 0. Highlight extraction (asDepthOfFieldHighlightF.glsl, LIVE_SPRITES):
+    // 0. Highlight extraction (asDepthOfFieldHighlightF.glsl):
     // cells of isolated defocused light, then the gather input without it.
     if (sprites)
     {
@@ -1050,7 +1048,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         }
     }
 
-    // Highlight sprites (asDepthOfFieldSpriteV/F.glsl, LIVE_SPRITES), each
+    // Highlight sprites (asDepthOfFieldSpriteV/F.glsl), each
     // part of a cell's light in its own layer: the far back part (B2) into
     // B2 before B1 is laid over it, so hair just behind the focus covers it
     // as it covers gathered light; the far front part (B1) over the
@@ -1112,7 +1110,7 @@ bool ASDoFLive::render(LLRenderTarget& source, LLRenderTarget& destination,
         sSpriteProgram.uniform1f(U_SPRITE_BUDGET, sprite_budget);
         sSpriteProgram.uniform1f(U_SPRITE_SATURATION, sprite_saturation);
         // Aperture, squeeze, unit area, field, cat's eye, axial CA and
-        // spherical aberration; astigmatism stays 0 (Live has none).
+        // spherical aberration.
         setLensUniforms(sSpriteProgram, lens);
         // Attribute-free: any bound vertex buffer satisfies the core-profile
         // VAO; positions come from gl_VertexID and gl_InstanceID.

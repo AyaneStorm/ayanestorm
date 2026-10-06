@@ -31,8 +31,7 @@ uniform float split_radius;
 uniform float far_split_radius;
 // Lens field (ASDepthOfField::LensField): field position (uv - 0.5) *
 // field_scale, length 1 at the frame corner. Field curvature shifts every
-// normalized CoC by field_curvature * field^2, as the Advanced renderer's
-// CoC pass (asDepthOfFieldCoCF.glsl).
+// normalized CoC by field_curvature * field^2 (liveBlurRadius()).
 uniform vec2 field_scale;
 uniform float field_curvature;
 // Spherical aberration, -5..5; 0 off (liveSphericalProduct()).
@@ -41,8 +40,8 @@ uniform float sa_strength;
 const float LIVE_PI = 3.14159265358979323846;
 
 // Lens circle of confusion at view depth z (negative forward), in
-// full-resolution pixels, positive in front of the focus. Same formula as
-// asDepthOfFieldCoCF.glsl (Firestorm's thin-lens frontend).
+// full-resolution pixels, positive in front of the focus. Firestorm's
+// thin-lens frontend (its CoF shader's formula).
 float liveLensCoC(float view_depth)
 {
     float coc = (view_depth - focal_distance) / -view_depth * blur_constant;
@@ -226,15 +225,6 @@ float liveApertureAreaTo(float angle)
     float blade_area = unit_area / float(aperture_blades);
     return (blade + 0.5) * blade_area +
            anamorphic_ratio * liveBladeAreaPrimitive(local_angle, 0.5 * sector);
-}
-
-// Exact area of the angular sector represented by one ring tap. These
-// sectors partition each annulus, so any uniform source radius <= kernel
-// keeps its coverage, including sources that reach only the inner rings.
-float liveTapSectorArea(float angle, float half_angle)
-{
-    return liveApertureAreaTo(angle + half_angle) -
-           liveApertureAreaTo(angle - half_angle);
 }
 
 // Image offset (gather pixels) of a tap at angle and aperture-space

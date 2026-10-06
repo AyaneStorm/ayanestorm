@@ -438,31 +438,25 @@ namespace
     void syncModeFlags()
     {
         const S32 mode = gSavedSettings.getS32("ASDepthOfFieldMode");
-        // Live (mode 3) shares the Advanced renderer's blur size, quality,
-        // aperture shape, field curvature and lens-effect controls, except
-        // astigmatism (doc/ayanestorm-depth-of-field-live-plan.md, phase 4).
-        const bool screen_space = mode == 1 || mode == ASDoFLive::LIVE_MODE;
-        setFlag("ASDepthOfFieldUIAdvanced", mode == 1);
-        setFlag("ASDepthOfFieldUILive", mode == ASDoFLive::LIVE_MODE);
+        // Blur size, quality, sprites and field curvature: Live (mode 3)
+        // only, since the Advanced renderer (mode 1) is retired
+        // (doc/ayanestorm-depth-of-field-live-plan.md).
+        const bool live = mode == ASDoFLive::LIVE_MODE;
+        const bool screen_space = live;
+        setFlag("ASDepthOfFieldUILive", live);
         setFlag("ASDepthOfFieldUIScreenSpace", screen_space);
         setFlag("ASDepthOfFieldUIAperture", mode == APERTURE_MODE);
         setFlag("ASDepthOfFieldUIShape", screen_space || mode == APERTURE_MODE);
         // Axial CA, cat's eye (with its corner darkening) and spherical
-        // aberration apply to the Advanced, the Aperture-sampled and the
-        // Live renderers.
-        const bool lens_modes = mode == 1 || mode == APERTURE_MODE;
-        const bool live = mode == ASDoFLive::LIVE_MODE;
+        // aberration apply to the Aperture-sampled and the Live renderers.
+        const bool lens_modes = mode == APERTURE_MODE;
         setFlag("ASDepthOfFieldUILens", lens_modes || live);
         setFlag("ASDepthOfFieldUIAxialCA",
                 (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureAxialCA"));
         setFlag("ASDepthOfFieldUICatEye",
                 (lens_modes || live) && gSavedSettings.getBOOL("ASDepthOfFieldApertureCatEye"));
-        // Advanced and Live renderers.
         setFlag("ASDepthOfFieldUIFieldCurvature",
                 screen_space && gSavedSettings.getBOOL("ASDepthOfFieldFieldCurvature"));
-        // Advanced renderer only.
-        setFlag("ASDepthOfFieldUIAstigmatism",
-                mode == 1 && gSavedSettings.getBOOL("ASDepthOfFieldAstigmatism"));
         setFlag("ASDepthOfFieldUIMaxBlur",
                 screen_space && gSavedSettings.getBOOL("ASDepthOfFieldPhysicalBlur"));
         setFlag("ASDepthOfFieldUISpherical",
@@ -1060,11 +1054,24 @@ namespace ASDoFRenderer
 {
     void registerUICallbacks()
     {
+        // The retired Advanced renderer (mode 1), from an old graphic
+        // preset, becomes Live. Connected first; the slots below read the
+        // setting, which is then 3.
+        if (LLControlVariable* control = gSavedSettings.getControl("ASDepthOfFieldMode"))
+        {
+            control->getSignal()->connect([](LLControlVariable*, const LLSD& value, const LLSD&)
+                {
+                    if (value.asInteger() == 1)
+                    {
+                        gSavedSettings.setS32("ASDepthOfFieldMode", ASDoFLive::LIVE_MODE);
+                    }
+                });
+        }
         syncModeFlags();
         for (const char* name : { "ASDepthOfFieldMode", "ASDepthOfFieldApertureAxialCA",
                                   "ASDepthOfFieldApertureCatEye", "ASDepthOfFieldApertureSpherical",
                                   "ASDepthOfFieldApertureHighlights", "ASDepthOfFieldFieldCurvature",
-                                  "ASDepthOfFieldAstigmatism", "ASDepthOfFieldPhysicalBlur" })
+                                  "ASDepthOfFieldPhysicalBlur" })
         {
             if (LLControlVariable* control = gSavedSettings.getControl(name))
             {

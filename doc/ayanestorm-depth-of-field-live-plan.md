@@ -106,6 +106,8 @@ avoids mode 1's 0.75 loss.
 
 ### Passes (`ASDoFLive::render`, all GL 4.1 fragment)
 
+> Superseded: the original pass design. The passes as built are listed in the `asdoflive.cpp` header and the phase execution records below (one reduce pass, completion pyramid, tap table, highlight sprites per layer).
+
 1. **Opaque bin** (full res, additive into the bin targets): opaque color × T into its bins.
    T is read from Mac OIT's weight/optical-depth target; T = 1 without transparency.
 2. **Reduce** (to half res, 6 attachments).
@@ -1412,3 +1414,96 @@ kept; channels pushed below 0 are clipped. The sprite shader is shared, so
 Advanced (mode 1) and Live get it, snapshots included. Only the aperture
 sprites change: lights left in the gather (not isolated, over the sprite
 budget, or sprites off) keep their colour.
+
+
+# Retire Advanced DoF (mode 1) + Live phase 5 step 4 cleanup — Plan
+
+## Context
+Live DoF (mode 3) is accepted, so the Advanced renderer (mode 1), including astigmatism, is retired. Live phase 5 step 4 (cleanup, no image change) is done in the same pass. Hard constraint: Standard (mode 0), Aperture-sampled (mode 2) and Live (mode 3) must behave exactly as before, snapshots included.
+
+## What stays (shared, used by Live / mode 2 / everyone)
+- `asdepthoffield.cpp/.h` module itself: the shader registration hub (`registerShaders/createShaders/unloadShaders` also drive ASDoFLive, ASDoFRenderer, ASDoFAutofocus), `registerUICallbacks` (`ASDepthOfField.ResetDefault`), `lensField()` (Live), `hdrOutput()`, `usesScreenSpaceRenderer()`, `render()` (dispatch to `ASDoFLive::render`), `prepareTransparentDepthCapture()` (calls `ASDoFLive::prepareCapture`).
+- `asDepthOfFieldHighlightF.glsl`, `asDepthOfFieldSpriteV/F.glsl` (Live's sprites, `LIVE_SPRITES`).
+- Mode values unchanged: 0 Standard, 2 Aperture, 3 Live (`ASDoFLive::LIVE_MODE`); 1 becomes unused.
+- `scripts/testing/dof_reference.py` (imported by `dof_live_reference.py`).
+
+## Removal
+
+### C++ — `asdepthoffield.cpp/.h` (AS-owned)
+- Delete mode-1 programs (CoC, Far, Near, Transparent, Occupancy, Resolve, Highlight, Sprite, Background, Postfilter), all its render targets and flags, `ensureResources/ensureSpriteResources/releaseGatherResources/configureGather/setLensUniforms/pyramid helpers/shadersComplete/topMipLevel/generateMips`, the mode-1 body of `render()` and of `prepareTransparentDepthCapture()`.
+- Delete the capture API used only by mode 1: `beginTransparentCoverageCapture`, `snapshotRiggedCoverage`, `endTransparentCoverageCapture`, `beginTransparentDepthCapture`, `snapshotRiggedDepth`, `endTransparentDepthCapture`, `beginWorldDepthCapture`, `endWorldDepthCapture` (all return false / no-op outside mode 1 today: `sTransparentDepthPrepared` is only set by mode 1).
+- `render()`: Live → `ASDoFLive::render`; otherwise `ASDoFLive::releaseResources()`, return false (same as today for modes 0/2).
+- `usesScreenSpaceRenderer()`: `mode == LIVE_MODE`.
+- `LensField`: drop `mAstigmatism` and its settings read; comments no longer mention mode 1.
+- Reset list: drop removed settings (keep the first-3 "mode choices" offset correct: Mode, FocusMode... recheck order since Backend leaves).
+
+### FS-owned call sites (tagged edits, originals kept commented)
+- `lldrawpoolalpha.cpp`: in the final DoF depth pass, remove the coverage/depth/world capture branch; the existing fallback (vanilla depth pass with the mode-2 `SHARP_DEPTH_MIN_ALPHA`) becomes the only path — exactly what runs today in modes 0/2/3. Keep the `prepareTransparentDepthCapture` call (Live needs it).
+- `pipeline.cpp`: comment updates only (`ASDepthOfField::render` / `usesScreenSpaceRenderer` calls unchanged).
+
+### Shaders
+- Delete (plain file delete, no git): `asDepthOfField{CoC,Far,Near,Transparent,Occupancy,Resolve,Background,Postfilter}F.glsl` (referenced only by `asdepthoffield.cpp`; Live shaders mention them in comments only).
+- Highlight/Sprite shaders: drop the non-`LIVE_SPRITES` branches (mode 1's code: `#else` paths, `astigmaticScale`, `deform`, `catEyeFraction`, `sampleCoverage` if unused, `astigmatism` uniform), make the Live code unconditional and remove the `LIVE_SPRITES` permutation from `asdoflive.cpp`. Validate with glslang.
+- Fix comments in Live shaders that point at deleted files (move the needed explanation inline or point at the doc).
+
+### Settings / UI
+- `settings.xml`: remove `ASDepthOfFieldHighlightBoost`, `Postfilter`, `Astigmatism`, `AstigmatismStrength`, `Debug`, `Backend`, `UIAdvanced`, `UIAstigmatism`; `ASDepthOfFieldMode` comment updated.
+- `graphic_preset_controls.xml`: drop `Backend`, `HighlightBoost`.
+- `asdofrenderer.cpp` `syncModeFlags()`: drop mode-1 terms (`screen_space = live`, `lens_modes = APERTURE_MODE`), remove UIAdvanced/UIAstigmatism flags and the Astigmatism signal. Add: if `ASDepthOfFieldMode` becomes 1 (an old graphic preset), set it to 3 (Live).
+- Mode combos: remove the "Advanced / AyaneStorm" item in `floater_as_depth_of_field.xml`, `floater_phototools.xml`, `floater_advanced_phototools.xml`, `panel_preferences_graphics1.xml` (FS files: tagged, original line commented).
+- `floater_as_depth_of_field.xml`: remove astigmatism rows (Lens effects tab), Backend, Bokeh highlights (boost), Sampling noise filter, the hidden mode-1 debug block; repack the Advanced tab rows (no height change unless rows freed allow a trim — will report). Advanced-tab note text updated.
+
+### Live phase 5 step 4 (no behaviour change)
+- Remove `liveTapSectorArea()` (`asDoFLiveCommonF.glsl`).
+- Remove leftovers unused after steps 1–3 (uniforms, samplers, C++ uniform names, bindRaw paths) — each verified by grep across C++ and all linked shaders before removal.
+- Stale comments: `sa_strength` "-1..1" → "-5..5" (sprite shader), gather header's nonexistent `selfOcclusion()`, `asdoflive.cpp` header pass list and "mode 1's extraction" wording.
+
+### Scripts / docs
+- Delete mode-1-only sims `scripts/testing/dof_near_gather_sim.py`, `dof_postfilter_sim.py`; keep `dof_reference.py` (comments adjusted).
+- `doc/ayanestorm-depth-of-field-live-plan.md`: mark the original "Passes" section superseded; add execution record (retirement + step 4). README: remove the Advanced renderer.
+
+## Safety checks
+- Before deleting each symbol/file: grep the whole `indra/` + `scripts/` for remaining references; after edits, grep again for every removed identifier, setting name and shader filename (must be zero hits outside docs).
+- glslang on Highlight (with Live common library linked declarations), SpriteV, SpriteF and every edited Live shader.
+- Mode 2 untouched except `syncModeFlags` flag math: verify each flag's value for modes 0/2/3 is unchanged (table in the execution record).
+- No shader/cache revision bumps; LF; AS tags on FS files.
+
+## Verification (user build)
+- Mode 0: Firestorm DoF as before. Mode 2: accumulation and snapshot as before (incl. transparent depth/sharp hair). Mode 3: identical image to before, sprites, saturation slider, bright highlights, snapshots; Live debug views.
+- Combos show 3 renderers; loading an old preset with mode 1 switches to Live; floater tabs laid out, no orphan controls; Reset tuning defaults works.
+
+## Retirement and step 4 execution record
+- `asdepthoffield.cpp/.h` (1552 to 230 lines): only the hub is left. That means registration and UI callbacks for Live, Aperture-sampled and autofocus, `lensField()` (no `mAstigmatism`), `hdrOutput()`, and `render()` / `usesScreenSpaceRenderer()`, both Live-only. `prepareTransparentDepthCapture()` is now `void` and calls `ASDoFLive::prepareCapture()` in Live only.
+  - Removed: the eight coverage/depth/world capture functions. They only did anything after mode 1 had prepared its targets (`sTransparentDepthPrepared`).
+  - Reset tuning defaults: the list starts with the two mode choices (Mode, FocusMode), so the offset is now 2 (it was 3 with Backend).
+- `lldrawpoolalpha.cpp` (tagged): the final DoF depth pass is the vanilla pass with mode 2's `SHARP_DEPTH_MIN_ALPHA`. This is the branch modes 0, 2 and 3 already ran.
+  - The extra parameter of `renderAlpha()` (added for the coverage replay) is kept. It defaults to off, which keeps the change in this FS file small.
+- Deleted shaders: `asDepthOfField{CoC,Far,Near,Transparent,Occupancy,Resolve,Background,Postfilter}F.glsl`.
+- Highlight/Sprite shaders are Live-only: no `LIVE_SPRITES` define, no astigmatism, no `noiseMap` in the highlight pass (only mode 1's `highlightCoC()` read it), and the varyings `vary_field` and `vary_axis_scale` are removed.
+  - glslang: all three compile, and SpriteV+F link (`-l`).
+- Settings removed: `HighlightBoost`, `Postfilter`, `Astigmatism`, `AstigmatismStrength`, `Debug`, `Backend`, `UIAdvanced`, `UIAstigmatism`. `graphic_preset_controls.xml` no longer lists Backend and HighlightBoost.
+  - `ASDepthOfFieldMode` 1 (from an old preset) is switched to 3 by a slot connected first in `ASDoFRenderer::registerUICallbacks()`. The mode isn't persisted, so every session still starts at 0.
+- `syncModeFlags()` gives the same values as before for modes 0, 2 and 3:
+
+  | Flag | 0 | 2 | 3 |
+  |---|---|---|---|
+  | UILive / UIScreenSpace | off | off | on |
+  | UIAperture | off | on | off |
+  | UIShape | off | on | on |
+  | UILens (and AxialCA / CatEye / Spherical with their toggles) | off | on | on |
+  | UIFieldCurvature / UIMaxBlur (with their toggles) | off | off | on |
+  | UIBrightHighlights | off | on | on |
+
+- UI:
+  - The "Advanced / AyaneStorm" item is removed from all four renderer combos (commented out in the FS files).
+  - In the DoF floater: astigmatism rows, Backend, Bokeh highlights (boost), the sampling noise filter and the hidden mode-1 diagnostic block are removed. The Advanced tab is repacked at a 28 px step, ending at 312 px.
+  - The floater is not resized: the tallest tab (Focus) ends at 338 px of 399.
+- Step 4:
+  - `liveTapSectorArea()` is removed.
+  - No uniform is unused in any Live program (scan of each program's linked files), and no C++ uniform name or helper is unused.
+  - Comments fixed: the gather header's nonexistent `selfOcclusion()`, `sa_strength` "-1..1" changed to -5..5 (sprite), the `asdoflive.cpp` pass list (the gather order is N2, N1, B2, B1; highlights and sprites added), and every pointer to a deleted shader.
+- Scripts:
+  - `dof_near_gather_sim.py` and `dof_postfilter_sim.py` are deleted.
+  - `dof_reference.py` is kept: `dof_live_reference.py` imports its aperture helpers. A note at its top marks its mode-1 mirrors as historical.
+- README: Advanced is removed. Field curvature is credited to Live and astigmatism is dropped; the README had listed both under Aperture-sampled, but the code only had them in mode 1.
+- Unbuilt.

@@ -16,7 +16,7 @@
  *
  * layer 0 (N2), 1 (N1), 3 (B1): veils, one kernel radius per tile
  *   (asDoFLiveTileF.glsl). B1 also fills behind its own sharper content
- *   (selfOcclusion()).
+ *   (the pixel's own B1, self_* in addTap()).
  * layer 2 (B2): the pixel's own mean radius M / W, completed: nearer, less
  *   blurred surfaces hide the spread of farther ones, and holes take the
  *   radius of the background around them.
@@ -300,8 +300,7 @@ float self_sa;
 vec3 self_hidden;
 
 // Axial chromatic aberration, the other renderers' spectral model
-// (ASDoFAperture::spectralWeights, channelCover() in
-// asDepthOfFieldFarF.glsl): wavelength s blurs to radius r - sigma delta s
+// (ASDoFAperture::spectralWeights): wavelength s blurs to radius r - sigma delta s
 // (sigma +1 behind the focus, -1 in front; red, s > 0, focuses farther),
 // four strata of s, channel weights red 1 + s, green 1.5 (1 - s^2), blue
 // 1 - s, each summing to 1. Each stratum has its own exact reach and keeps
@@ -434,7 +433,7 @@ vec4 gatherLayer(vec2 center, out vec3 alpha)
     vec3 color_sum = vec3(0.0);
     vec3 weight_sum = vec3(0.0);
     float squeeze = max(anamorphic_ratio, 1.0);
-    // The pixel's own B1, completed (selfOcclusion()).
+    // The pixel's own B1, completed (self_*, hidden in addTap()).
     vec4 self_color = vec4(0.0);
     self_on = false;
     self_hidden = vec3(0.0);

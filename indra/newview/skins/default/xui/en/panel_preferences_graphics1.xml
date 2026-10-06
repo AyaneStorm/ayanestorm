@@ -1772,7 +1772,9 @@ If you do not understand the distinction then leave this control alone."
                   enabled_control="RenderDepthOfField" follows="left|top" height="22"
                   layout="topleft" left_pad="0" top_delta="-3" width="210">
          <combo_box.item label="Standard / Firestorm" name="standard" value="0"/>
+         <!-- Advanced renderer retired:
          <combo_box.item label="Advanced / AyaneStorm" name="advanced" value="1"/>
+         -->
          <combo_box.item label="Aperture-sampled (still images only)" name="aperture" value="2"/>
          <combo_box.item label="Live / AyaneStorm (new)" name="live" value="3"/>
        </combo_box>

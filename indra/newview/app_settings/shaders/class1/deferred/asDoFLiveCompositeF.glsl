@@ -38,7 +38,7 @@ uniform float ca_shift;
 // Optical vignetting: the light the cat's-eye barrel clips, kept when
 // darkening is on (barrel shift at the frame corner, aperture radii; 0
 // off). The gathers renormalize every source to its open aperture; the
-// whole image darkens here, as in the Advanced renderer's resolve.
+// whole image darkens here.
 uniform float vignette_shift;
 
 in vec2 vary_fragcoord;
@@ -48,8 +48,7 @@ vec4 liveBinVisibility(vec4 bins[5]);
 vec2 liveFieldPosition(vec2 uv);
 
 // Open fraction of a unit-circle aperture clipped by a unit circle at
-// distance d: lens (vesica) area over pi, with the other renderers' 5 %
-// floor (vignette(), asDepthOfFieldResolveF.glsl).
+// distance d: lens (vesica) area over pi, with a 5 % floor.
 float vignette(vec2 uv)
 {
     if (vignette_shift <= 0.0)
