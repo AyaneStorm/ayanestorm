@@ -36,6 +36,7 @@
 #include "ashorizonscattering.h"
 #include "asmoonrendering.h"
 #include "asproceduralsun.h"
+#include "asmilkyway.h"
 #include "asstars.h"
 // </AS:Chanayane>
 
@@ -578,6 +579,18 @@ void LLDrawPoolWLSky::renderDeferred(S32 pass)
         renderSkyHazeDeferred(origin, camHeightLocal);
         // <AS:Chanayane> AS-owned horizon layer at the sky-order insertion point.
         ASHorizonScattering::render(use_hdri_sky());
+        // </AS:Chanayane>
+        // <AS:Chanayane> Real-sky Milky Way glow: over the sky haze, behind
+        // the moon, stars, aurora and clouds; not in reflection probes (stars
+        // are not either). Same state handling as the aurora below.
+        if (!gCubeSnapshot && ASMilkyWay::configureShader(use_hdri_sky()))
+        {
+            LLGLSPipelineBlendSkyBox milky_way_state(false, false);
+            gGL.setSceneBlendType(LLRender::BT_ADD);
+            renderDome(origin, camHeightLocal, &ASMilkyWay::getShader());
+            ASMilkyWay::getShader().unbind();
+            gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        }
         // </AS:Chanayane>
         renderHeavenlyBodies();
         if (!gCubeSnapshot)

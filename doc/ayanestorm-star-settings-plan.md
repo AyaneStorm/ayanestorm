@@ -124,5 +124,73 @@ After approval: copy this plan to `doc/ayanestorm-star-settings-plan.md`.
 - `enabled_control` takes one boolean, so `ASStarsProceduralUI` / `ASStarsRealSkyUI` (Persist 0) are derived from `ASStarsEnabled` and `ASStarsMode` by `updatePanelStates()` (signals + once at registration). Procedural-only rows (brightness contrast, Milky Way, seed, randomize) and real-sky rows (latitude, sidereal offset, magnitude contrast) use them; tooltips say why a control is greyed out (LLView tooltips still show on disabled controls).
 
 ### Defaults: real sky
-- `ASStarsMode` default 1 (real sky), `ASStarsSaturation` default 2.0; density 1.0 and color realism 1.0 unchanged. The stock look is now the master toggle off, not the defaults.
+- `ASStarsMode` default 1 (real sky), `ASStarsSaturation` default 1.0; density 1.0 and color realism 1.0 unchanged. The stock look is now the master toggle off, not the defaults.
 - Tuned defaults: `ASStarsBrightness` 1.2, `ASStarsSize` 2.75, `ASStarsTwinkle` 0.75, `ASStarsLatitude` 45, `ASStarsMagnitudeContrast` 0.75; procedural `ASStarsMilkyWay` 0.15, `ASStarsBrightnessVariation` 0.75.
+
+---
+
+# AyaneStorm Milky Way Glow — Plan
+
+## Context
+Real-sky mode now draws catalogue stars, but a real night sky (and the DoF reference photo) also shows the diffuse Milky Way band, the Magellanic Clouds and bright nebulae/galaxies. Goal: a real-sky-only glow layer driven by real data in `.ca` (Celestial Data, BSD 3-Clause, already credited in `app_settings/stars/LICENSE-celestial-data.txt`), rotating exactly with the catalogue stars (same latitude / sidereal transform), fading by day and at the horizon, blurred normally by DoF and present in snapshots.
+
+## Data (verified)
+- `mw.min.geojson`: Milky Way in 5 nested brightness outlines `ol1` (faint outer, 10k pts) .. `ol5` (core clouds, 584 pts), MultiPolygons with holes (Great Rift gaps), lon = RA in [-180, 180], lat = Dec.
+- `dsos.bright.min.geojson`: 32 hand-picked objects with `type` (s/sd galaxy, sfr nebula, gc, oc...), `mag`, `dim` (arcmin, "a" or "a x b"): Andromeda, Triangulum, Orion Nebula, Lagoon, Pleiades, Southern Pleiades, LMC (PGC 17223)...
+- `lg.min.geojson`: SMC (mag 2.7, 320x185') and LMC (mag 0.9, 645x550'); take SMC from here, dedupe LMC.
+
+## Design
+
+### 1. Offline texture — `scripts/content_tools/as_build_milky_way.py` (numpy + Pillow)
+- Output `indra/newview/app_settings/stars/as_milky_way.png`: 2048x1024 RGBA, equirectangular, x = (RA_lon + 180) / 360, north at top (PNG rows are flipped on decode, `llpngwrapper.cpp:190`, so GL v = (dec + 90) / 180).
+- Milky Way: rasterize each level (outer ring filled, holes cleared) to a mask, blur (radius growing toward the outer levels, ~0.4-1.2 deg), accumulate weighted levels (e.g. 0.15, 0.3, 0.5, 0.75, 1.0 cumulative). Tint: outer cool white -> core warm (~(0.75,0.8,1) -> (1,0.85,0.65)). Light fractal mottling modulated by level (star-cloud texture), seedable, off with a flag.
+- Deep-sky: Gaussian ellipses (no position angle in the data: axis-aligned in the local tangent frame, corrected for the equirect stretch 1/cos(dec)), peak from surface brightness (10^(-0.4 mag) / area, normalised so the LMC ~ MW core). Tint by type: galaxies warm white, emission nebulae pink-red, reflection nebulae blue, globular yellow-white, open clusters faint blue-white haze (low weight: their stars are already drawn).
+- RGB = combined glow color; A = deep-sky share of the pixel (so the viewer can scale Milky Way and deep-sky separately).
+- Writes a scratchpad preview while tuning; the PNG is committed (expected a few hundred KB; check size).
+- Shipped via the existing `self.path("stars")` manifest line; license file gets the extra source note (lg/dsos/mw from the same dataset).
+
+### 2. New module `indra/newview/asmilkyway.h/.cpp` (namespace `ASMilkyWay`)
+Mirrors `asaurora.cpp`:
+- `registerShader / createShader / unloadShader` (program `deferred/asmilkywayV.glsl` + `asmilkywayF.glsl`, `isDeferred`, `SG_SKY`, `HAS_EMISSIVE` permutation as in `ASAurora::createShader`); `unloadShader` also releases the texture (GL restore).
+- Texture: `LLImagePNG::load` + `decode` into `LLImageRaw` once, upload lazily at first bind with `glTexImage2D` RGBA8 (unpack-state save/restore and `bindManual` pattern from `ascolorlut.cpp:373-411`); linear filter, wrap S repeat, T clamp, no mips (soft content; avoids the RA seam mip artifact). Missing file: warn once, skip the pass.
+- `configureShader()`: returns false unless `ASStarsEnabled`, `ASStars::realSkyActive()`, `ASMilkyWayEnabled`, not HDRI sky, and night factor > 0. Night factor = same as stars: `smoothstep(0, 0.9, EEP star brightness / 500)` times `ASStars::brightness()`-independent own intensity. Sets uniforms: `mw_rot` (mat3 local->equatorial), intensities, saturation, horizon fade, binds the texture.
+- Rotation: add `ASStars::localToEquatorial(F32 star_time)` (LLMatrix3 = transpose of Rx(tilt)·Rz(spin)) sharing the tilt/spin math of `ASStars::applySkyTransform`, so glow and stars can never drift apart; use `ASDoFRenderer::starRotationTime(gFrameTimeSeconds)` (DoF freeze).
+
+### 3. Shaders (new, ours)
+- `asmilkywayV.glsl`: like `asauroraV.glsl`; direction `normalize(position - camPosLocal)` in the WL dome frame (Y up), converted to agent axes `(d.z, d.x, d.y)` (renderDome's 120 deg rotation about (1,1,1) maps dome x->north, y->up, z->east).
+- `asmilkywayF.glsl`: `eq = mw_rot * dir`; `u = atan(eq.y, eq.x) / 2pi + 0.5`, `v = asin(eq.z) / pi + 0.5`; `textureLod(..., 0)`; `color = rgb * mix(mw_intensity, dso_intensity, a)`, saturation around luminance, horizon fade `smoothstep(0, 0.15, dir_up)` (extinction), times night factor; outputs exactly like `asauroraF.glsl` (frag_data[0] or [3] with HAS_EMISSIVE, [1]/[2] zero). Validate both with glslang.
+
+### 4. Render hook — `lldrawpoolwlsky.cpp` `renderDeferred()` (tagged)
+After `ASHorizonScattering::render(...)` and before `renderHeavenlyBodies()`, inside `!gCubeSnapshot` (stars are not in reflection probes either): `if (ASMilkyWay::configureShader()) { LLGLSPipelineBlendSkyBox(false,false); BT_ADD; renderDome(origin, camHeightLocal, &ASMilkyWay::getShader()); unbind; BT_ALPHA; }` — same state handling as the aurora block. Behind moon/stars/aurora/clouds, over the sky haze. Not drawn into the DoF star mask (diffuse glow is blurred as normal scene color). Background-isolate mode already returns early.
+
+### 5. Registration (tagged)
+- `llviewershadermgr.cpp`: `ASMilkyWay::registerShader / unloadShader / createShader` next to the three `ASAurora::` calls (L495, L1246, L3089).
+- `CMakeLists.txt`: `asmilkyway.cpp/.h`.
+- `asstars.cpp`: nothing else (realSkyActive already exposed).
+
+### 6. Settings + panel
+| Control | Type | Default | Range |
+|---|---|---|---|
+| ASMilkyWayEnabled | Boolean | 1 | |
+| ASMilkyWayIntensity | F32 | 1.0 (tuned in-world) | 0-4 |
+| ASMilkyWayDeepSkyIntensity | F32 | 1.0 | 0-4 |
+| ASMilkyWaySaturation | F32 | 1.0 | 0-3 |
+- New "Milky Way" rows in the Real sky section of `panel_as_stars_settings.xml` (checkbox + 3 sliders + resets, `increment="0.001"`, 3 decimals, `enabled_control="ASStarsRealSkyUI"`, tooltips explaining real-sky-only); panel/floater heights grow by ~120 px (Environment Effects tab container is 675 px: check fit, else grow it). Add the 4 controls to `ASStars` reset-all list (no rebuild needed: live uniforms).
+
+## Files
+New: `scripts/content_tools/as_build_milky_way.py`, `app_settings/stars/as_milky_way.png`, `asmilkyway.h/.cpp`, `shaders/class1/deferred/asmilkywayV.glsl`, `asmilkywayF.glsl`.
+Edited: `lldrawpoolwlsky.cpp`, `llviewershadermgr.cpp`, `CMakeLists.txt` (tagged); `asstars.h/.cpp`, `settings.xml`, `panel_as_stars_settings.xml`, `floater_as_stars_settings.xml`, `LICENSE-celestial-data.txt`, `doc/ayanestorm-star-settings-plan.md` (append section).
+
+## Verification
+- Offline: preview PNG shows the band (Cygnus Rift, Sagittarius core brightest), LMC/SMC, M31, M42 at the right RA/Dec; numeric check that shader math (dome->agent->equatorial->uv) puts a known direction (e.g. Sagittarius core RA 266, Dec -29) where the catalogue star frame puts it (reuse the earlier alt/az verification script).
+- glslang on both shaders.
+- In-world (user build): at -41 latitude the core passes overhead with the Magellanic Clouds near the south pole; at 45 N the band arcs through Cygnus/Cassiopeia; glow turns with the stars when changing sidereal offset; gone by day and in procedural mode; fades at the horizon; DoF snapshot blurs it softly (no star-mask bokeh from it); no seam at RA 0h / 24h.
+
+## Milky Way glow — implementation notes
+- Texture: `python scripts/content_tools/as_build_milky_way.py .ca/data indra/newview/app_settings/stars/as_milky_way.png [--preview p.png] [--no-mottle] [--seed N]` -> 2048x1024 RGBA, 279 KB. Blur is numpy FFT (no scipy): horizontal per row with sigma / cos(dec), wrapping in RA; vertical zero-padded. Final tuning: level blur 3.0/2.0/1.3/0.8/0.5 deg (ol1..ol5), mottle 0.35 * sqrt(glow), DSO sigma = extent / 4, LMC peak 0.5.
+- Data fixes in the script: NGC 6121 (M4) has M42's coordinates in dsos.bright (overridden to RA 245.897, Dec -26.526); `GC` (galactic-centre marker) skipped; LMC/SMC taken from lg (PGC 17223 / NGC 292 entries dropped).
+- `ASStars::localToEquatorial()` shares `realSkyAngles()` with `applySkyTransform()`; the matrix goes to the shader as three vec3 columns (`mw_rot0..2`; LLGLSLShader has no hashed-name uniformMatrix3fv).
+- Verified numerically: renderDome's 120 deg rotation about (1,1,1) maps dome x->north, y->up, z->east (shader swizzle `(d.z, d.x, d.y)`); A == Rx(tilt)*Rz(spin) (the star dome transform); equatorial round trip exact; galactic centre lands at uv (0.24, 0.339) as painted.
+- Night factor = the stars' `smoothstep(0, 0.9, EEP star brightness / 500)`; `GLOW_SCALE` 0.25 in `asmilkyway.cpp` sets the base level (tune in-world with the intensity sliders first).
+- Environment Effects tab container grown to 715 px (floater 740) for the 692 px stars panel.
+- Texture layout changed (replaces the RGBA / deep-sky-share design above): A = deep-sky share made the Milky Way pixels (share ~0) transparent in image viewers and fragile to tools that drop RGB under alpha 0. Now a 2048x2048 RGB PNG (246 KB), two stacked equirectangular maps: top half Milky Way, bottom half deep-sky (file rows; after the decoder's flip GL v in [0.5, 1] = Milky Way, [0, 0.5] = deep-sky, v = (dec + 90) / 180 within each half). Shader samples both and sums `band * mw_intensity + deep_sky * mw_dso_intensity` (exact per-layer scaling). Values are linear, so the file looks dark in image viewers; `--preview` writes a gamma-encoded combined view.

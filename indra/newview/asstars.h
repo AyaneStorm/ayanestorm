@@ -43,6 +43,10 @@ namespace ASStars
     // spin, or real-sky sidereal spin + latitude tilt) and sets the bound
     // star shader's horizon-fade uniforms. star_time: seconds, DoF-frozen.
     void applySkyTransform(F32 star_time, LLGLSLShader& shader);
+    // Real-sky rotation from the local frame (x east, y north, z up) to the
+    // J2000 equatorial frame, as a GL column-major mat3; same orientation as
+    // applySkyTransform() at star_time.
+    void localToEquatorial(F32 star_time, F32 out[9]);
 }
 
 #endif

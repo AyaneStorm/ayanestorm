@@ -1,8 +1,9 @@
-as_star_catalog.bin is derived from "Celestial Data" (Frohn O, Hernangomez D, 2023,
-https://doi.org/10.5281/zenodo.7561601), itself from d3-celestial
-(https://github.com/ofrohn/d3-celestial), by
-scripts/content_tools/as_build_star_catalog.py. It is distributed under the
-license below.
+as_star_catalog.bin and as_milky_way.png are derived from "Celestial Data"
+(Frohn O, Hernangomez D, 2023, https://doi.org/10.5281/zenodo.7561601), itself
+from d3-celestial (https://github.com/ofrohn/d3-celestial), by
+scripts/content_tools/as_build_star_catalog.py (stars) and
+scripts/content_tools/as_build_milky_way.py (Milky Way outlines, bright
+deep-sky objects, Local Group). They are distributed under the license below.
 
 BSD 3-Clause License
 

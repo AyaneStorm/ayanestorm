@@ -64,7 +64,8 @@ namespace
         "ASStarsTemperatureBias", "ASStarsBrightness", "ASStarsBrightnessVariation",
         "ASStarsSize", "ASStarsTwinkle", "ASStarsMilkyWay", "ASStarsSeed",
         "ASStarsMode", "ASStarsLatitude", "ASStarsSiderealOffset",
-        "ASStarsMagnitudeContrast"
+        "ASStarsMagnitudeContrast", "ASMilkyWayEnabled", "ASMilkyWayIntensity",
+        "ASMilkyWayDeepSkyIntensity", "ASMilkyWaySaturation"
     };
 
     U32 sCount = 0;
@@ -237,6 +238,23 @@ namespace
             dir = -dir;
         }
         return dir;
+    }
+
+    // Real-sky orientation. Stars are in the equatorial frame (z = north
+    // celestial pole); the local frame is x east, y north, z up. Spin by the
+    // local sidereal time around the pole, then tilt the pole up to the
+    // observer's latitude above the north horizon. Free running at the stock
+    // rate. Shared by the star dome and the Milky Way glow.
+    void realSkyAngles(F32 star_time, F32& tilt_deg, F32& spin_deg)
+    {
+        static LLCachedControl<F32> latitude(gSavedSettings, "ASStarsLatitude", 45.f);
+        static LLCachedControl<F32> sidereal_offset(gSavedSettings, "ASStarsSiderealOffset", 0.f);
+        const F32 lst_deg = star_time * 0.01f + (F32)sidereal_offset * 15.f;
+        // Tilt about east: maps the pole (0,0,1) to (0, cos lat, sin lat).
+        tilt_deg = -(90.f - llclamp((F32)latitude, -90.f, 90.f));
+        // Spin about the pole: hour angle 0 (RA = LST) lands on the south
+        // meridian.
+        spin_deg = -(lst_deg + 90.f);
     }
 
     // Derived panel enable states (ASStarsProceduralUI / ASStarsRealSkyUI).
@@ -496,17 +514,8 @@ void ASStars::applySkyTransform(F32 star_time, LLGLSLShader& shader)
         return;
     }
 
-    // Real sky: stars are in the equatorial frame (z = north celestial
-    // pole). The local frame is x east, y north, z up. Spin by the local
-    // sidereal time around the pole, then tilt the pole up to the observer's
-    // latitude above the north horizon. Free running at the stock rate.
-    static LLCachedControl<F32> latitude(gSavedSettings, "ASStarsLatitude", 45.f);
-    static LLCachedControl<F32> sidereal_offset(gSavedSettings, "ASStarsSiderealOffset", 0.f);
-    const F32 lst_deg = star_time * 0.01f + (F32)sidereal_offset * 15.f;
-    // Tilt about east: maps the pole (0,0,1) to (0, cos lat, sin lat).
-    const F32 tilt_deg = -(90.f - llclamp((F32)latitude, -90.f, 90.f));
-    // Spin about the pole: hour angle 0 (RA = LST) lands on the south meridian.
-    const F32 spin_deg = -(lst_deg + 90.f);
+    F32 tilt_deg, spin_deg;
+    realSkyAngles(star_time, tilt_deg, spin_deg);
 
     // Applied right to left: spin first, then tilt.
     gGL.rotatef(tilt_deg, 1.f, 0.f, 0.f);
@@ -518,4 +527,19 @@ void ASStars::applySkyTransform(F32 star_time, LLGLSLShader& shader)
     const F32 spin = spin_deg * DEG_TO_RAD;
     shader.uniform3f(sStarUp, std::sin(tilt) * std::sin(spin), std::sin(tilt) * std::cos(spin), std::cos(tilt));
     shader.uniform1f(sHorizonFade, 1.f);
+}
+
+void ASStars::localToEquatorial(F32 star_time, F32 out[9])
+{
+    // local = A * equatorial with A = Rx(tilt) * Rz(spin) (the matrix
+    // applySkyTransform() builds), so equatorial = A^T * local. A^T in GL
+    // column-major order is A in row-major order.
+    F32 tilt_deg, spin_deg;
+    realSkyAngles(star_time, tilt_deg, spin_deg);
+    const F32 ct = std::cos(tilt_deg * DEG_TO_RAD), st = std::sin(tilt_deg * DEG_TO_RAD);
+    const F32 cs = std::cos(spin_deg * DEG_TO_RAD), ss = std::sin(spin_deg * DEG_TO_RAD);
+    const F32 a[9] = { cs,      -ss,      0.f,
+                       ct * ss,  ct * cs, -st,
+                       st * ss,  st * cs,  ct };
+    std::copy(a, a + 9, out);
 }

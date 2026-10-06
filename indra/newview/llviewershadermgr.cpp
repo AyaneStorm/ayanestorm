@@ -36,6 +36,9 @@
 // <AS:Chanayane> Viewer-local procedural aurora shader lifecycle.
 #include "asaurora.h"
 // </AS:Chanayane>
+// <AS:Chanayane> Viewer-local real-sky Milky Way shader lifecycle.
+#include "asmilkyway.h"
+// </AS:Chanayane>
 // <AS:Chanayane> Viewer-local analytic horizon-scattering shader lifecycle.
 #include "ashorizonscattering.h"
 // </AS:Chanayane>
@@ -493,6 +496,9 @@ void LLViewerShaderMgr::finalizeShaderList()
     mShaderList.push_back(&gEnvironmentMapProgram);
     // <AS:Chanayane> Register the independent optional aurora shader.
     ASAurora::registerShader(mShaderList);
+    // </AS:Chanayane>
+    // <AS:Chanayane> Register the independent optional Milky Way shader.
+    ASMilkyWay::registerShader(mShaderList);
     // </AS:Chanayane>
     // <AS:Chanayane> Register the independent optional horizon shader.
     ASHorizonScattering::registerShader(mShaderList);
@@ -1244,6 +1250,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional aurora shader.
         ASAurora::unloadShader();
+        // </AS:Chanayane>
+        // <AS:Chanayane> Unload the optional Milky Way shader and texture.
+        ASMilkyWay::unloadShader();
         // </AS:Chanayane>
         // <AS:Chanayane> Unload the optional horizon-scattering shader.
         ASHorizonScattering::unloadShader();
@@ -3087,6 +3096,13 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // Aurora is optional and must not take down the core sky shaders if a
         // driver rejects it; configureShader() skips an incomplete program.
         ASAurora::createShader(mShaderLevel[SHADER_DEFERRED]);
+    }
+    // </AS:Chanayane>
+    // <AS:Chanayane> Build the independent real-sky Milky Way pass; optional
+    // like the aurora (configureShader() skips an incomplete program).
+    if (success)
+    {
+        ASMilkyWay::createShader(mShaderLevel[SHADER_DEFERRED]);
     }
     // </AS:Chanayane>
 
