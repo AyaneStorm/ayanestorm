@@ -202,7 +202,7 @@ Edited: `lldrawpoolwlsky.cpp`, `llviewershadermgr.cpp`, `CMakeLists.txt` (tagged
 - Viewer: `asmilkyway.cpp` `GlowTexture` (file, private sampler/channel, CPU image, GL name) x2, loaded by extension through `LLImageFormatted::createFromExtension`; both must bind or the pass is skipped. Band texture = 4096x2048 RGB8 (~32 MB VRAM once padded).
 - Placement check on the final JPEG: plane/|b|=50-70 brightness ratio 12.8x; LMC 0.47 vs its RA-mirrored position 0.02; Sgr star cloud 0.70; north galactic pole 0.002.
 - Open: the faint all-sky starlight background is real but may read as haze in-world (script could subtract a black level); the stars between mag 7.25 (catalogue limit) and 11.5 (start of the Gaia-only layer) are in neither layer.
-- Tuned defaults (in-world): `ASMilkyWayEnabled` on, `ASMilkyWayIntensity` 2.0, `ASMilkyWayDeepSkyIntensity` 2.0, `ASMilkyWaySaturation` 1.0.
+- Tuned defaults (in-world): `ASMilkyWayEnabled` on, `ASMilkyWayIntensity` 0.5, `ASMilkyWayDeepSkyIntensity` 2.0, `ASMilkyWaySaturation` 1.0.
 
 ### Bright stars standing out (Southern Cross hard to find)
 - Cause: faint stars sat at 1/32 of the stock level, ~1.2 on screen (white after tone mapping), so magnitude 5-6 stars looked almost as bright as Crux; level was capped at the stock level and the surplus went into size only (a white core cannot get whiter); sprite size was constant below the stock level.
@@ -214,4 +214,8 @@ Edited: `lldrawpoolwlsky.cpp`, `llviewershadermgr.cpp`, `CMakeLists.txt` (tagged
 ### Stars panel in tabs
 - `panel_as_stars_settings.xml` (270 px, was 720): master toggle + Star source above a nested `tab_container` (inline tab panels, like `panel_as_weather.xml`), "Reset all" below. Tabs: Stars (density, brightness, size, twinkle), Color (realism, saturation, temperature), Real sky (latitude, sidereal offset, magnitude contrast, faint star brightness), Milky Way (glow toggle, intensities, saturation), Procedural (brightness contrast, Milky Way concentration, seed). Section header texts dropped (the tabs replace them); control names unchanged.
 - Standalone floater 300 px; Environment Effects floater back to 700 / tab container 675 (tallest embedded panel is again Horizon at 680).
-- Tuned defaults (in-world): `ASStarsDensity` 3.0 (real sky: all 20000 stars; procedural 1998), `ASStarsBrightness` 1.5, `ASStarsFaintLevel` 0.6, `ASMilkyWaySaturation` 0.85.
+- Tuned defaults (in-world): `ASStarsDensity` 3.0 (real sky: all 20000 stars; procedural 1998), `ASStarsBrightness` 1.5, `ASStarsFaintLevel` 0.6, `ASMilkyWaySaturation` 0.45.
+
+### Latitude place presets
+- Real sky tab: "Place" combo (`stars_latitude_preset`, commit callback `ASStars.LatitudePreset`, item value = latitude; "none" placeholder) sets `ASStarsLatitude`. 53 entries, cities sorted alphabetically, then North Pole / Equator / South Pole: the 30 largest urban areas (UN World Urbanization Prospects list: Tokyo, Delhi, Shanghai, Dhaka, Sao Paulo, Cairo, Mexico City, Beijing, Mumbai, Osaka, Chongqing, Karachi, Kinshasa, Lagos, Istanbul, Kolkata, Buenos Aires, Manila, Guangzhou, Tianjin, Lahore, Bangalore, Rio de Janeiro, Shenzhen, Moscow, Chennai, Bogota, Jakarta, Lima, Paris), largest city of other notable countries (New York, London, Toronto, Sydney, Auckland, Nuuk, Reykjavik, Oslo, Stockholm, Helsinki, Berlin, Madrid, Rome, Seoul, Bangkok, Singapore, Nairobi, Johannesburg, Santiago) plus McMurdo Station (Antarctica), and North Pole / Equator / South Pole. City-centre latitudes, 2 decimals.
+- Tab panels 152 px, tab container 180, stars panel 282, standalone floater 312.

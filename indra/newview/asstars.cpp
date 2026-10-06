@@ -305,6 +305,19 @@ void ASStars::registerUICallbacks()
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASStars.RandomizeSeed",
         [](LLUICtrl*, const LLSD&) { gSavedSettings.setS32("ASStarsSeed", 1 + ll_rand(999999)); });
+    // Place presets: the combo item value is the latitude in degrees
+    // ("none" for the placeholder entry).
+    LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
+        "ASStars.LatitudePreset",
+        [](LLUICtrl* ctrl, const LLSD&)
+        {
+            const LLSD value = ctrl ? ctrl->getValue() : LLSD();
+            if (value.isUndefined() || value.asString() == "none")
+            {
+                return;
+            }
+            gSavedSettings.setF32("ASStarsLatitude", llclamp((F32)value.asReal(), -90.f, 90.f));
+        });
     LLUICtrl::CommitCallbackRegistry::defaultRegistrar().add(
         "ASStars.ResetDefault",
         [](LLUICtrl*, const LLSD& data)

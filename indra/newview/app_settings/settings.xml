@@ -26904,11 +26904,11 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASMilkyWayEnabled</key>
     <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow (Magellanic Clouds, Andromeda, nebulae)</string><key>Persist</key><integer>1</integer><key>Type</key><string>Boolean</string><key>Value</key><integer>1</integer><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWayIntensity</key>
-    <map><key>Comment</key><string>Real-sky Milky Way glow intensity</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Real-sky Milky Way glow intensity</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.5</real><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWayDeepSkyIntensity</key>
     <map><key>Comment</key><string>Real-sky deep-sky glow intensity (Magellanic Clouds, galaxies, nebulae, clusters)</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>2.0</real><key>Backup</key><integer>0</integer></map>
     <key>ASMilkyWaySaturation</key>
-    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow color saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.85</real><key>Backup</key><integer>0</integer></map>
+    <map><key>Comment</key><string>Real-sky Milky Way and deep-sky glow color saturation</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.45</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsFaintLevel</key>
     <map><key>Comment</key><string>Real-sky brightness of the faintest drawn star; 1 is about white on screen, lower makes faint stars dim points so bright stars stand out</string><key>Persist</key><integer>1</integer><key>Type</key><string>F32</string><key>Value</key><real>0.6</real><key>Backup</key><integer>0</integer></map>
     <key>ASStarsDensity</key>

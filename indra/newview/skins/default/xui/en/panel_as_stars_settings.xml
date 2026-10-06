@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes"?>
 <!-- AyaneStorm Viewer; author: chanayane@firestorm -->
-<panel border="false" follows="all" height="270" layout="topleft" left="1" top="1" width="460" name="as_stars_settings">
+<panel border="false" follows="all" height="282" layout="topleft" left="1" top="1" width="460" name="as_stars_settings">
   <!-- All controls apply live and remain local to this viewer. Defaults: real sky; the master toggle off gives the stock sky. -->
   <!-- Master toggle and star source above the tabs; settings grouped by tab. -->
   <check_box control_name="ASStarsEnabled" follows="left|top" height="16" label="Enable AyaneStorm stars" layout="topleft" left="15" name="stars_enabled" top="10" width="410" tool_tip="Uses the settings below. When off, stars are drawn exactly as in the stock viewer." />
@@ -9,8 +9,8 @@
     <combo_box.item label="Procedural" name="procedural" value="0" />
     <combo_box.item label="Real sky" name="real_sky" value="1" />
   </combo_box>
-  <tab_container follows="all" height="168" layout="topleft" left="2" name="stars_tabs" tab_position="top" top="64" width="456">
-    <panel border="false" follows="all" height="140" label="Stars" layout="topleft" left="0" name="stars_tab_main" top="0" width="456">
+  <tab_container follows="all" height="180" layout="topleft" left="2" name="stars_tabs" tab_position="top" top="64" width="456">
+    <panel border="false" follows="all" height="152" label="Stars" layout="topleft" left="0" name="stars_tab_main" top="0" width="456">
       <slider can_edit_text="true" control_name="ASStarsDensity" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Density" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="30.0" min_val="0.0" name="stars_density" show_text="true" text_width="60" top="12" width="390" tool_tip="Star count multiplier. Procedural: 1 matches the stock sky (666 stars). Real sky: the brightest stars are kept; 1 draws 6660 (naked-eye limit), 3 or more all 20000 (down to magnitude 7.25)." />
       <button follows="left|top" height="20" image_overlay="Refresh_Off" enabled_control="ASStarsEnabled" layout="topleft" left="415" name="reset_stars_density" top="10" tool_tip="Reset density to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsDensity" /></button>
       <slider can_edit_text="true" control_name="ASStarsBrightness" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Brightness" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="4.0" min_val="0.0" name="stars_brightness" show_text="true" text_width="60" top="40" width="390" tool_tip="Multiplies the sky setting's star brightness." />
@@ -20,7 +20,7 @@
       <slider can_edit_text="true" control_name="ASStarsTwinkle" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Twinkle" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="stars_twinkle" show_text="true" text_width="60" top="96" width="390" tool_tip="0 keeps stars steady; 1 is the stock twinkle." />
       <button follows="left|top" height="20" image_overlay="Refresh_Off" enabled_control="ASStarsEnabled" layout="topleft" left="415" name="reset_stars_twinkle" top="94" tool_tip="Reset twinkle to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsTwinkle" /></button>
     </panel>
-    <panel border="false" follows="all" height="140" label="Color" layout="topleft" left="0" name="stars_tab_color" top="0" width="456">
+    <panel border="false" follows="all" height="152" label="Color" layout="topleft" left="0" name="stars_tab_color" top="0" width="456">
       <slider can_edit_text="true" control_name="ASStarsColorAmount" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Color realism" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="stars_color_amount" show_text="true" text_width="60" top="12" width="390" tool_tip="0 keeps the stock star tint; 1 colors each star by its temperature (blue-white to red)." />
       <button follows="left|top" height="20" image_overlay="Refresh_Off" enabled_control="ASStarsEnabled" layout="topleft" left="415" name="reset_stars_color_amount" top="10" tool_tip="Reset color realism to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsColorAmount" /></button>
       <slider can_edit_text="true" control_name="ASStarsSaturation" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Color saturation" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="3.0" min_val="0.0" name="stars_saturation" show_text="true" text_width="60" top="40" width="390" />
@@ -28,17 +28,75 @@
       <slider can_edit_text="true" control_name="ASStarsTemperatureBias" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Temperature (warm/cool)" label_width="190" enabled_control="ASStarsEnabled" layout="topleft" left="15" max_val="1.0" min_val="-1.0" name="stars_temperature_bias" show_text="true" text_width="60" top="68" width="390" tool_tip="Negative values shift stars toward orange and red; positive values toward blue." />
       <button follows="left|top" height="20" image_overlay="Refresh_Off" enabled_control="ASStarsEnabled" layout="topleft" left="415" name="reset_stars_temperature_bias" top="66" tool_tip="Reset temperature to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsTemperatureBias" /></button>
     </panel>
-    <panel border="false" follows="all" height="140" label="Real sky" layout="topleft" left="0" name="stars_tab_real_sky" top="0" width="456">
-      <slider can_edit_text="true" control_name="ASStarsLatitude" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Latitude" label_width="190" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="stars_latitude" show_text="true" text_width="60" top="12" width="390" tool_tip="Observer latitude in degrees (north positive). 45 suits most of Europe and North America; the pole star sits this high above the north horizon. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
-      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_latitude" top="10" tool_tip="Reset latitude to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsLatitude" /></button>
-      <slider can_edit_text="true" control_name="ASStarsSiderealOffset" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Sidereal time offset" label_width="190" layout="topleft" left="15" max_val="24.0" min_val="0.0" name="stars_sidereal_offset" show_text="true" text_width="60" top="40" width="390" tool_tip="Hours added to the free-running sky rotation; picks which constellations are up. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
-      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_sidereal_offset" top="38" tool_tip="Reset sidereal time offset to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsSiderealOffset" /></button>
-      <slider can_edit_text="true" control_name="ASStarsMagnitudeContrast" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Magnitude contrast" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.1" name="stars_magnitude_contrast" show_text="true" text_width="60" top="68" width="390" tool_tip="How much brighter bright stars look than faint ones; 1 is physical (brightest stars bigger, faint ones dimmer); lower values even them out. In Procedural mode use Brightness contrast instead. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
-      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_magnitude_contrast" top="66" tool_tip="Reset magnitude contrast to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsMagnitudeContrast" /></button>
-      <slider can_edit_text="true" control_name="ASStarsFaintLevel" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Faint star brightness" label_width="190" layout="topleft" left="15" max_val="2.0" min_val="0.05" name="stars_faint_level" show_text="true" text_width="60" top="96" width="390" tool_tip="Brightness of the faintest drawn stars; 1 is about white on screen. Lower values turn faint stars into dim points so bright stars and constellations stand out. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
-      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_faint_level" top="94" tool_tip="Reset faint star brightness to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsFaintLevel" /></button>
+    <panel border="false" follows="all" height="152" label="Real sky" layout="topleft" left="0" name="stars_tab_real_sky" top="0" width="456">
+      <text follows="left|top" height="16" layout="topleft" left="15" name="stars_latitude_preset_label" top="16" width="190">Place</text>
+      <combo_box enabled_control="ASStarsRealSkyUI" follows="left|top" height="23" layout="topleft" left="205" max_chars="64" name="stars_latitude_preset" top="10" width="200" tool_tip="Sets Latitude to see the sky as from this place: the 30 largest cities in the world, the largest city of other notable countries, and reference points. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars.">
+        <combo_box.item label="Choose a place..." name="none" value="none" />
+        <combo_box.item label="Auckland, New Zealand (36.9 S)" name="auckland" value="-36.85" />
+        <combo_box.item label="Bangalore, India (13.0 N)" name="bangalore" value="12.97" />
+        <combo_box.item label="Bangkok, Thailand (13.8 N)" name="bangkok" value="13.76" />
+        <combo_box.item label="Beijing, China (39.9 N)" name="beijing" value="39.90" />
+        <combo_box.item label="Berlin, Germany (52.5 N)" name="berlin" value="52.52" />
+        <combo_box.item label="Bogota, Colombia (4.7 N)" name="bogota" value="4.71" />
+        <combo_box.item label="Buenos Aires, Argentina (34.6 S)" name="buenos_aires" value="-34.60" />
+        <combo_box.item label="Cairo, Egypt (30.0 N)" name="cairo" value="30.04" />
+        <combo_box.item label="Chennai, India (13.1 N)" name="chennai" value="13.08" />
+        <combo_box.item label="Chongqing, China (29.6 N)" name="chongqing" value="29.56" />
+        <combo_box.item label="Delhi, India (28.6 N)" name="delhi" value="28.61" />
+        <combo_box.item label="Dhaka, Bangladesh (23.8 N)" name="dhaka" value="23.81" />
+        <combo_box.item label="Guangzhou, China (23.1 N)" name="guangzhou" value="23.13" />
+        <combo_box.item label="Helsinki, Finland (60.2 N)" name="helsinki" value="60.17" />
+        <combo_box.item label="Istanbul, Turkey (41.0 N)" name="istanbul" value="41.01" />
+        <combo_box.item label="Jakarta, Indonesia (6.2 S)" name="jakarta" value="-6.21" />
+        <combo_box.item label="Johannesburg, South Africa (26.2 S)" name="johannesburg" value="-26.20" />
+        <combo_box.item label="Karachi, Pakistan (24.9 N)" name="karachi" value="24.86" />
+        <combo_box.item label="Kinshasa, DR Congo (4.4 S)" name="kinshasa" value="-4.44" />
+        <combo_box.item label="Kolkata, India (22.6 N)" name="kolkata" value="22.57" />
+        <combo_box.item label="Lagos, Nigeria (6.5 N)" name="lagos" value="6.52" />
+        <combo_box.item label="Lahore, Pakistan (31.6 N)" name="lahore" value="31.55" />
+        <combo_box.item label="Lima, Peru (12.1 S)" name="lima" value="-12.05" />
+        <combo_box.item label="London, United Kingdom (51.5 N)" name="london" value="51.51" />
+        <combo_box.item label="Madrid, Spain (40.4 N)" name="madrid" value="40.42" />
+        <combo_box.item label="Manila, Philippines (14.6 N)" name="manila" value="14.60" />
+        <combo_box.item label="McMurdo Station, Antarctica (77.8 S)" name="mcmurdo_station" value="-77.85" />
+        <combo_box.item label="Mexico City, Mexico (19.4 N)" name="mexico_city" value="19.43" />
+        <combo_box.item label="Moscow, Russia (55.8 N)" name="moscow" value="55.76" />
+        <combo_box.item label="Mumbai, India (19.1 N)" name="mumbai" value="19.08" />
+        <combo_box.item label="Nairobi, Kenya (1.3 S)" name="nairobi" value="-1.29" />
+        <combo_box.item label="New York, United States (40.7 N)" name="new_york" value="40.71" />
+        <combo_box.item label="Nuuk, Greenland (64.2 N)" name="nuuk" value="64.18" />
+        <combo_box.item label="Osaka, Japan (34.7 N)" name="osaka" value="34.69" />
+        <combo_box.item label="Oslo, Norway (59.9 N)" name="oslo" value="59.91" />
+        <combo_box.item label="Paris, France (48.9 N)" name="paris" value="48.86" />
+        <combo_box.item label="Reykjavik, Iceland (64.2 N)" name="reykjavik" value="64.15" />
+        <combo_box.item label="Rio de Janeiro, Brazil (22.9 S)" name="rio_de_janeiro" value="-22.91" />
+        <combo_box.item label="Rome, Italy (41.9 N)" name="rome" value="41.90" />
+        <combo_box.item label="Santiago, Chile (33.5 S)" name="santiago" value="-33.45" />
+        <combo_box.item label="Sao Paulo, Brazil (23.6 S)" name="sao_paulo" value="-23.55" />
+        <combo_box.item label="Seoul, South Korea (37.6 N)" name="seoul" value="37.57" />
+        <combo_box.item label="Shanghai, China (31.2 N)" name="shanghai" value="31.23" />
+        <combo_box.item label="Shenzhen, China (22.5 N)" name="shenzhen" value="22.54" />
+        <combo_box.item label="Singapore, Singapore (1.4 N)" name="singapore" value="1.35" />
+        <combo_box.item label="Stockholm, Sweden (59.3 N)" name="stockholm" value="59.33" />
+        <combo_box.item label="Sydney, Australia (33.9 S)" name="sydney" value="-33.87" />
+        <combo_box.item label="Tianjin, China (39.3 N)" name="tianjin" value="39.34" />
+        <combo_box.item label="Tokyo, Japan (35.7 N)" name="tokyo" value="35.68" />
+        <combo_box.item label="Toronto, Canada (43.6 N)" name="toronto" value="43.65" />
+        <combo_box.item label="North Pole (90.0 N)" name="north_pole" value="90.00" />
+        <combo_box.item label="Equator (0.0)" name="equator" value="0.00" />
+        <combo_box.item label="South Pole (90.0 S)" name="south_pole" value="-90.00" />
+        <combo_box.commit_callback function="ASStars.LatitudePreset" />
+      </combo_box>
+      <slider can_edit_text="true" control_name="ASStarsLatitude" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Latitude" label_width="190" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="stars_latitude" show_text="true" text_width="60" top="40" width="390" tool_tip="Observer latitude in degrees (north positive). 45 suits most of Europe and North America; the pole star sits this high above the north horizon. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
+      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_latitude" top="38" tool_tip="Reset latitude to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsLatitude" /></button>
+      <slider can_edit_text="true" control_name="ASStarsSiderealOffset" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Sidereal time offset" label_width="190" layout="topleft" left="15" max_val="24.0" min_val="0.0" name="stars_sidereal_offset" show_text="true" text_width="60" top="68" width="390" tool_tip="Hours added to the free-running sky rotation; picks which constellations are up. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
+      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_sidereal_offset" top="66" tool_tip="Reset sidereal time offset to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsSiderealOffset" /></button>
+      <slider can_edit_text="true" control_name="ASStarsMagnitudeContrast" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Magnitude contrast" label_width="190" layout="topleft" left="15" max_val="1.0" min_val="0.1" name="stars_magnitude_contrast" show_text="true" text_width="60" top="96" width="390" tool_tip="How much brighter bright stars look than faint ones; 1 is physical (brightest stars bigger, faint ones dimmer); lower values even them out. In Procedural mode use Brightness contrast instead. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
+      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_magnitude_contrast" top="94" tool_tip="Reset magnitude contrast to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsMagnitudeContrast" /></button>
+      <slider can_edit_text="true" control_name="ASStarsFaintLevel" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Faint star brightness" label_width="190" layout="topleft" left="15" max_val="2.0" min_val="0.05" name="stars_faint_level" show_text="true" text_width="60" top="124" width="390" tool_tip="Brightness of the faintest drawn stars; 1 is about white on screen. Lower values turn faint stars into dim points so bright stars and constellations stand out. Greyed out in Procedural mode: real-sky settings only apply to catalogue stars." />
+      <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_stars_faint_level" top="122" tool_tip="Reset faint star brightness to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsFaintLevel" /></button>
     </panel>
-    <panel border="false" follows="all" height="140" label="Milky Way" layout="topleft" left="0" name="stars_tab_milky_way" top="0" width="456">
+    <panel border="false" follows="all" height="152" label="Milky Way" layout="topleft" left="0" name="stars_tab_milky_way" top="0" width="456">
       <check_box control_name="ASMilkyWayEnabled" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" label="Milky Way and deep-sky glow" layout="topleft" left="15" name="milky_way_enabled" top="12" width="410" tool_tip="Draws the Milky Way band, the Magellanic Clouds, Andromeda and bright nebulae from real sky data, fading by day and toward the horizon. Greyed out in Procedural mode: the glow is mapped from real sky data and turns with the catalogue stars." />
       <slider can_edit_text="true" control_name="ASMilkyWayIntensity" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Milky Way intensity" label_width="190" layout="topleft" left="15" max_val="4.0" min_val="0.0" name="milky_way_intensity" show_text="true" text_width="60" top="40" width="390" tool_tip="Brightness of the Milky Way band. Greyed out in Procedural mode: the glow is mapped from real sky data and turns with the catalogue stars." />
       <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_milky_way_intensity" top="38" tool_tip="Reset milky way intensity to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASMilkyWayIntensity" /></button>
@@ -47,7 +105,7 @@
       <slider can_edit_text="true" control_name="ASMilkyWaySaturation" decimal_digits="3" enabled_control="ASStarsRealSkyUI" follows="left|top" height="16" increment="0.001" label="Glow saturation" label_width="190" layout="topleft" left="15" max_val="3.0" min_val="0.0" name="milky_way_saturation" show_text="true" text_width="60" top="96" width="390" tool_tip="Color saturation of the glow: warm core, cool outer band, pink nebulae. Greyed out in Procedural mode: the glow is mapped from real sky data and turns with the catalogue stars." />
       <button enabled_control="ASStarsRealSkyUI" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="415" name="reset_milky_way_saturation" top="94" tool_tip="Reset glow saturation to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASMilkyWaySaturation" /></button>
     </panel>
-    <panel border="false" follows="all" height="140" label="Procedural" layout="topleft" left="0" name="stars_tab_procedural" top="0" width="456">
+    <panel border="false" follows="all" height="152" label="Procedural" layout="topleft" left="0" name="stars_tab_procedural" top="0" width="456">
       <slider can_edit_text="true" control_name="ASStarsBrightnessVariation" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Brightness contrast" label_width="190" enabled_control="ASStarsProceduralUI" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="stars_brightness_variation" show_text="true" text_width="60" top="12" width="390" tool_tip="Procedural only. 0 draws every star equally bright (stock); higher values make most stars faint and a few bright, like the real sky. In Real sky mode use Magnitude contrast instead. Greyed out in Real sky mode, where star brightness and positions come from the catalogue." />
       <button follows="left|top" height="20" image_overlay="Refresh_Off" enabled_control="ASStarsProceduralUI" layout="topleft" left="415" name="reset_stars_brightness_variation" top="10" tool_tip="Reset brightness contrast to its default value" width="20"><button.commit_callback function="ASStars.ResetDefault" parameter="ASStarsBrightnessVariation" /></button>
       <slider can_edit_text="true" control_name="ASStarsMilkyWay" decimal_digits="3" follows="left|top" height="16" increment="0.001" label="Milky Way concentration" label_width="190" enabled_control="ASStarsProceduralUI" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="stars_milky_way" show_text="true" text_width="60" top="40" width="390" tool_tip="Procedural only. Adds extra stars in a band across the sky; the background field keeps its density. Greyed out in Real sky mode, where star brightness and positions come from the catalogue." />
@@ -59,7 +117,7 @@
       </button>
     </panel>
   </tab_container>
-  <button follows="left|top" height="23" label="Reset all" enabled_control="ASStarsEnabled" layout="topleft" left="250" name="reset_stars_all" top="238" width="155" tool_tip="Restore the default star settings (real sky). Untick Enable AyaneStorm stars for the stock look.">
+  <button follows="left|top" height="23" label="Reset all" enabled_control="ASStarsEnabled" layout="topleft" left="250" name="reset_stars_all" top="250" width="155" tool_tip="Restore the default star settings (real sky). Untick Enable AyaneStorm stars for the stock look.">
     <button.commit_callback function="ASStars.ResetDefault" parameter="all" />
   </button>
 </panel>
