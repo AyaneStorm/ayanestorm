@@ -486,6 +486,14 @@ void LLVOWLSky::buildStripsBuffer(U32 begin_stack,
 
 void LLVOWLSky::updateStarColors()
 {
+    // <AS:Chanayane> Encoded alpha is a log brightness (real sky, or
+    // procedural brightness contrast): the random walk below (down to half
+    // alpha) would dim stars by several octaves.
+    if (ASStars::encodedBrightness())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     std::vector<LLColor4>::iterator v_c = mStarColors.begin();
     std::vector<F32>::iterator v_i = mStarIntensities.begin();
     std::vector<LLVector3>::iterator v_p = mStarVertices.begin();
@@ -583,6 +591,17 @@ bool LLVOWLSky::updateStarGeometry(LLDrawable *drawable)
         at.normVec();
         LLVector3 left = at%LLVector3(0,0,1);
         LLVector3 up = at%left;
+        // <AS:Chanayane> Real-sky stars cover the whole sphere: unit sprite
+        // axes, with a fallback reference near the pole (Polaris) where the
+        // stock cross product collapses. Stock sprites shrink toward the
+        // zenith and stay unchanged in procedural mode.
+        if (ASStars::realSkyActive())
+        {
+            left = fabsf(at.mV[VZ]) > 0.9f ? at%LLVector3(1,0,0) : at%LLVector3(0,0,1);
+            left.normVec();
+            up = at%left;
+        }
+        // </AS:Chanayane>
 
         // <AS:Chanayane> Per-star size from the catalogue, stable across rebuilds
         //F32 sc = 16.0f + (ll_frand() * 20.0f);

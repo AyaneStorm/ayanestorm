@@ -284,8 +284,9 @@ void LLDrawPoolWLSky::renderStarsDeferred(const LLVector3& camPosLocal) const
     gGL.pushMatrix();
     gGL.translatef(camPosLocal.mV[0], camPosLocal.mV[1], camPosLocal.mV[2]);
     // <AS:Chanayane> Aperture DoF: frozen star rotation while samples accumulate
+    // and ASStars real-sky orientation (sidereal spin + latitude tilt)
     //gGL.rotatef(gFrameTimeSeconds*0.01f, 0.f, 0.f, 1.f);
-    gGL.rotatef(ASDoFRenderer::starRotationTime(gFrameTimeSeconds)*0.01f, 0.f, 0.f, 1.f);
+    ASStars::applySkyTransform(ASDoFRenderer::starRotationTime(gFrameTimeSeconds), gDeferredStarProgram);
     // </AS:Chanayane>
     gDeferredStarProgram.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
 

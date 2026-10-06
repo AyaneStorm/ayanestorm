@@ -13,6 +13,8 @@
 #include "v3math.h"
 #include "v4color.h"
 
+class LLGLSLShader;
+
 namespace ASStars
 {
     void registerUICallbacks();
@@ -30,6 +32,17 @@ namespace ASStars
     // Live multipliers (no rebuild needed).
     F32 brightness();
     F32 twinkleAmount();
+
+    // True when the last generate() built the real-sky catalogue (stars in
+    // the equatorial frame, whole sphere).
+    bool realSkyActive();
+    // True when the last generate() stored log-encoded per-star brightness
+    // in vertex alpha (real sky, or procedural brightness contrast > 0).
+    bool encodedBrightness();
+    // Applies the star dome rotation to the current GL matrix (stock zenith
+    // spin, or real-sky sidereal spin + latitude tilt) and sets the bound
+    // star shader's horizon-fade uniforms. star_time: seconds, DoF-frozen.
+    void applySkyTransform(F32 star_time, LLGLSLShader& shader);
 }
 
 #endif

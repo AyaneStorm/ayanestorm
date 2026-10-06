@@ -79,3 +79,50 @@ Brightness and Twinkle are uniforms (live, no rebuild); others rebuild the catal
 
 ## Doc
 After approval: copy this plan to `doc/ayanestorm-star-settings-plan.md`.
+
+## Follow-ups (implemented after the plan)
+
+### Master toggle
+- `ASStarsEnabled` (default on). Off: `generate()` uses stock parameters, `brightness()`/`twinkleAmount()` return 1; panel controls grey out via `enabled_control`; toybox command has `checkbox_control`.
+- Pitfall fixed: setting change signals connected in `registerUICallbacks()` fire before `LLCachedControl`s created later (their slots connect after), so `generate()` read stale values. `generate()` now reads `gSavedSettings` directly.
+
+### Brightness above 1.0
+- `custom_alpha` goes through `smoothstep(0, 0.9, ...)` in `starsF.glsl`, which saturated the multiplier. Multiplier is now the `as_star_brightness` uniform applied after the smoothstep.
+
+### Milky Way concentration
+- Band stars are added on top of the background count (`MILKY_WAY_EXTRA_STARS` = 1.5x at full concentration) instead of being taken from it.
+
+### Real-sky catalogue (`ASStarsMode` = 1)
+- Source: Celestial Data (Frohn & Hernangomez 2023, BSD 3-Clause, doi 10.5281/zenodo.7561601, from d3-celestial), `stars.14` set: 118,216 stars, J2000 RA/Dec, `mag`, `bv` (B-V, null for 1,279 stars). No distance/size (not needed: apparent size follows brightness).
+- `scripts/content_tools/as_build_star_catalog.py <stars.14.min.geojson> <out.bin> [count]` writes `indra/newview/app_settings/stars/as_star_catalog.bin`: 20,000 brightest stars (faintest mag 7.25), 200 KB. Format: `ASSTAR01`, u32 count, u32 0, then per star int16 x,y,z (equatorial unit vector * 32767), mag*1000, bv*1000 (-32768 unknown), sorted brightest first.
+- License: `app_settings/stars/LICENSE-celestial-data.txt` ships next to the binary; `viewer_manifest.py` packages `app_settings/stars`.
+- Count = brightest `round(666 * density)` stars (density 30 = all 20,000). Magnitude limit = faintest drawn star.
+- Brightness: `energy = (10^(-0.4 (mag - limit)))^contrast * 0.15`; vertex alpha = min(energy, 1), the remainder goes to sprite area (size 18 * sqrt(energy/alpha), max 4x). `ASStarsMagnitudeContrast` default 0.4.
+- Color: B-V -> temperature (Ballesteros 2012) -> existing `blackbody()`; unknown B-V = 5800 K. Color realism/saturation/temperature bias apply as in procedural mode.
+- Orientation (`ASStars::applySkyTransform`, replaces the stock zenith spin in `renderStarsDeferred`): stars stay in the equatorial frame; GL matrix = translate * Rx(-(90 - latitude)) * Rz(-(LST + 90)), local frame x east / y north / z up. LST (deg) = `starRotationTime * 0.01 + ASStarsSiderealOffset * 15` (free running at the stock rate, DoF-frozen). Verified numerically against the standard alt/az formulas (error ~1e-15, east/west handedness included).
+- Horizon: whole sphere is drawn; `starsV.glsl` fades stars below the horizon using `as_star_up` (local zenith in the star frame) when `as_star_horizon_fade` = 1 (0 in procedural mode = stock).
+- Sprites: real-sky quads use unit axes with an x-axis fallback near the pole (stock `at % z` collapses at Polaris).
+- `ASStarsLatitude` default 45 (Europe / North America).
+- Next: realistic Milky Way glow from `mw.geojson` (5 brightness outlines).
+
+### Real-sky brightness fix (all stars looked equally bright)
+- Root cause: stock `starsF.glsl` never reads `vertex_color.a` (alpha = texture alpha * smoothstep * 32), so per-star intensity was ignored in every mode; and the x32 would clip any linear intensity above ~0.03 anyway.
+- Real sky now stores brightness in vertex alpha as log2 over 8 octaves (`REAL_SKY_LOG_RANGE`), alpha 1 = stock level; `starsF.glsl` decodes `exp2((a - 1) * as_star_log_range)` when `as_star_log_range` > 0 (0 in procedural = stock).
+- Level = flux^contrast / 128 (`REAL_SKY_FAINT_LEVEL`): faintest drawn star = 1/128 of the stock level; above the stock level the surplus grows the sprite (sqrt, max 4x).
+- `updateStarColors()` (random walk of alpha down to half) is skipped in real sky: it would dim log-encoded stars by up to 4 octaves.
+- `ASStarsMagnitudeContrast` default 0.7 (1 = physical linear flux). Decoded level at density 30 (limit mag 7.25), contrast 0.7: mag -1.4 = 32 (x1.5 size), 0 = 27, 2 = 7.5, 4 = 2.0, 6 = 0.56, 7.25 = 0.25.
+- Procedural "Brightness contrast" had no visible effect for the same root cause. Replaced `ASStarsBrightnessSpread` (intensity distribution exponent) by `ASStarsBrightnessVariation` (0-1, default 0): 0 keeps the stock path (alpha ignored, all stars equal); > 0 log-encodes `level = intensity^(2 * contrast)` (stock intensity distribution, 1:100 at 1) like the real sky. `ASStars::encodedBrightness()` (real sky or contrast > 0) drives `as_star_log_range` and the `updateStarColors()` skip.
+
+### Real-sky visibility defaults
+- At the first real-sky defaults hardly any star was visible (needed density 10+, contrast 1, brightness 4). Now: `REAL_SKY_FAINT_LEVEL` 1/32 (was 1/128, equals brightness 4), real-sky count = 6660 * density (`REAL_SKY_STARS_PER_DENSITY`; 1 = naked-eye limit ~mag 6.3, 3 = all 20000; procedural keeps 666 * density), `ASStarsMagnitudeContrast` default 1.0, `ASStarsColorAmount` default 1.0 (procedural default is no longer the stock tint; master toggle off still gives stock).
+
+### Procedural brightness contrast, second pass
+- First version (`level = intensity^(2 * contrast)`) still looked uniform: past the stock x32 gain everything above ~1/32 of the stock level is plain white, and procedural sprite sizes were random, unrelated to brightness.
+- Now modelled on the real sky: target level = `(1-u)^(-0.4/0.45) / 32` (synthetic magnitude from the star-count law N(<m) ~ 10^(0.45 m); faintest at the real-sky faint level, median ~2x it, ~2% above the stock level), blended in log space from the stock level by contrast; surplus above stock grows the sprite (sqrt, max 4x); sprite size blends from the random stock size to the brightness-driven size by contrast. Simulated displayed level at contrast 1: p10 1.1, p50 1.85, p90 8, p99 32.
+
+### Mode-dependent panel greying
+- `enabled_control` takes one boolean, so `ASStarsProceduralUI` / `ASStarsRealSkyUI` (Persist 0) are derived from `ASStarsEnabled` and `ASStarsMode` by `updatePanelStates()` (signals + once at registration). Procedural-only rows (brightness contrast, Milky Way, seed, randomize) and real-sky rows (latitude, sidereal offset, magnitude contrast) use them; tooltips say why a control is greyed out (LLView tooltips still show on disabled controls).
+
+### Defaults: real sky
+- `ASStarsMode` default 1 (real sky), `ASStarsSaturation` default 2.0; density 1.0 and color realism 1.0 unchanged. The stock look is now the master toggle off, not the defaults.
+- Tuned defaults: `ASStarsBrightness` 1.2, `ASStarsSize` 2.75, `ASStarsTwinkle` 0.75, `ASStarsLatitude` 45, `ASStarsMagnitudeContrast` 0.7.

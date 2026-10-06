@@ -1,8 +1,9 @@
 /**
  * @file asstars.cpp
  * @author chanayane@firestorm
- * @brief Viewer-local star catalogue: density, blackbody colors, size and
- * twinkle. Defaults reproduce the stock LLVOWLSky stars.
+ * @brief Viewer-local star catalogue: procedural (density, blackbody colors,
+ * size, twinkle) or real sky from a magnitude-sorted catalogue. Defaults
+ * reproduce the stock LLVOWLSky stars.
  */
 
 #include "llviewerprecompiledheaders.h"
@@ -11,9 +12,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <random>
 
 #include "llcontrol.h"
+#include "lldir.h"
+#include "llfile.h"
+#include "llglslshader.h"
+#include "llrender.h"
 #include "llrand.h"
 #include "llsky.h"
 #include "lluictrl.h"
@@ -31,21 +37,109 @@ namespace
     // background count.
     constexpr F32 MILKY_WAY_EXTRA_STARS = 1.5f;
 
+    // Real sky: per-star brightness relative to the stock star level
+    // (which the shader's x32 already pushes past white). The faintest
+    // drawn star sits at REAL_SKY_FAINT_LEVEL; brightness is stored in
+    // vertex alpha as log2 over REAL_SKY_LOG_RANGE octaves (8-bit alpha
+    // cannot hold the ~1:1000 range linearly) and decoded in starsF.glsl.
+    // Brightness above the stock level goes into sprite area.
+    constexpr F32 REAL_SKY_BASE_SIZE = 18.f;
+    constexpr F32 REAL_SKY_FAINT_LEVEL = 1.f / 32.f;
+    // Real sky: stars per unit of density; 1 draws the 6660 brightest
+    // (about the naked-eye limit, magnitude 6.3), 3 the whole catalogue.
+    constexpr U32 REAL_SKY_STARS_PER_DENSITY = 6660;
+    constexpr F32 REAL_SKY_LOG_RANGE = 8.f;
+    constexpr F32 REAL_SKY_MAX_SIZE_SCALE = 4.f;
+
     // Settings that change the catalogue and therefore need a rebuild.
     const std::vector<std::string> sCatalogueControls = {
         "ASStarsDensity", "ASStarsColorAmount", "ASStarsSaturation",
-        "ASStarsTemperatureBias", "ASStarsBrightnessSpread", "ASStarsSize",
-        "ASStarsMilkyWay", "ASStarsSeed", "ASStarsEnabled"
+        "ASStarsTemperatureBias", "ASStarsBrightnessVariation", "ASStarsSize",
+        "ASStarsMilkyWay", "ASStarsSeed", "ASStarsEnabled",
+        "ASStarsMode", "ASStarsMagnitudeContrast"
     };
     // Every resettable setting of the panel.
     const std::vector<std::string> sAllControls = {
         "ASStarsDensity", "ASStarsColorAmount", "ASStarsSaturation",
-        "ASStarsTemperatureBias", "ASStarsBrightness", "ASStarsBrightnessSpread",
-        "ASStarsSize", "ASStarsTwinkle", "ASStarsMilkyWay", "ASStarsSeed"
+        "ASStarsTemperatureBias", "ASStarsBrightness", "ASStarsBrightnessVariation",
+        "ASStarsSize", "ASStarsTwinkle", "ASStarsMilkyWay", "ASStarsSeed",
+        "ASStarsMode", "ASStarsLatitude", "ASStarsSiderealOffset",
+        "ASStarsMagnitudeContrast"
     };
 
     U32 sCount = 0;
     std::vector<F32> sSizes;
+    // Latched by generate(): the stars are in the equatorial frame.
+    bool sRealSky = false;
+    // Latched by generate(): vertex alpha holds log-encoded brightness
+    // (real sky, or procedural with brightness contrast > 0).
+    bool sEncoded = false;
+
+    // Real-sky catalogue (app_settings/stars/as_star_catalog.bin, built by
+    // scripts/content_tools/as_build_star_catalog.py), brightest first.
+    struct CatalogueStar
+    {
+        LLVector3 mDir;  // J2000 equatorial unit vector, z = north pole
+        F32 mMag;        // apparent magnitude
+        F32 mBV;         // B-V color index
+        bool mHasBV;
+    };
+    std::vector<CatalogueStar> sCatalogue;
+    bool sCatalogueLoaded = false;
+
+    // Loads the catalogue once; false (empty catalogue) when missing or
+    // malformed, in which case the procedural sky is used.
+    bool loadCatalogue()
+    {
+        if (sCatalogueLoaded)
+        {
+            return !sCatalogue.empty();
+        }
+        sCatalogueLoaded = true;
+
+        const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "stars", "as_star_catalog.bin");
+        llifstream file(path.c_str(), std::ios::in | std::ios::binary);
+        char magic[8] = {};
+        U32 header[2] = {};
+        if (!file.is_open()
+            || !file.read(magic, sizeof(magic))
+            || memcmp(magic, "ASSTAR01", sizeof(magic)) != 0
+            || !file.read(reinterpret_cast<char*>(header), sizeof(header))
+            || header[0] > 1000000)
+        {
+            LL_WARNS("ASStars") << "Star catalogue missing or invalid: " << path << LL_ENDL;
+            return false;
+        }
+
+        // Records: int16 x, y, z (* 32767), mag (* 1000), bv (* 1000 or -32768).
+        std::vector<S16> records((size_t)header[0] * 5);
+        if (!file.read(reinterpret_cast<char*>(records.data()), records.size() * sizeof(S16)))
+        {
+            LL_WARNS("ASStars") << "Star catalogue truncated: " << path << LL_ENDL;
+            return false;
+        }
+
+        sCatalogue.resize(header[0]);
+        for (U32 i = 0; i < header[0]; ++i)
+        {
+            const S16* r = &records[(size_t)i * 5];
+            CatalogueStar& star = sCatalogue[i];
+            star.mDir.set(r[0] / 32767.f, r[1] / 32767.f, r[2] / 32767.f);
+            star.mDir.normVec();
+            star.mMag = r[3] / 1000.f;
+            star.mHasBV = r[4] != -32768;
+            star.mBV = star.mHasBV ? r[4] / 1000.f : 0.f;
+        }
+        LL_INFOS("ASStars") << "Loaded " << sCatalogue.size() << " catalogue stars" << LL_ENDL;
+        return true;
+    }
+
+    // B-V color index to effective temperature (Ballesteros 2012).
+    F32 bvToTemperature(F32 bv)
+    {
+        bv = llclamp(bv, -0.4f, 2.0f);
+        return 4600.f * (1.f / (0.92f * bv + 1.7f) + 1.f / (0.92f * bv + 0.62f));
+    }
 
     // Rough naked-eye spectral class mix: temperature range (K) and weight.
     struct SpectralClass { F32 mMinK; F32 mMaxK; F32 mWeight; };
@@ -145,6 +239,15 @@ namespace
         return dir;
     }
 
+    // Derived panel enable states (ASStarsProceduralUI / ASStarsRealSkyUI).
+    void updatePanelStates()
+    {
+        const bool on = gSavedSettings.getBOOL("ASStarsEnabled");
+        const S32 mode = gSavedSettings.getS32("ASStarsMode");
+        gSavedSettings.setBOOL("ASStarsProceduralUI", on && mode != 1);
+        gSavedSettings.setBOOL("ASStarsRealSkyUI", on && mode == 1);
+    }
+
     void requestRebuild()
     {
         if (gSky.mVOWLSkyp.notNull())
@@ -184,84 +287,159 @@ void ASStars::registerUICallbacks()
             control->getSignal()->connect([](LLControlVariable*, const LLSD&, const LLSD&) { requestRebuild(); });
         }
     }
+
+    // Panel enable states: enabled_control takes a single boolean, so keep
+    // derived ones for "enabled and procedural" / "enabled and real sky".
+    for (const char* name : { "ASStarsEnabled", "ASStarsMode" })
+    {
+        if (LLControlVariable* control = gSavedSettings.getControl(name))
+        {
+            control->getSignal()->connect([](LLControlVariable*, const LLSD&, const LLSD&) { updatePanelStates(); });
+        }
+    }
+    updatePanelStates();
 }
 
 void ASStars::generate(F32 radius, std::vector<LLVector3>& positions,
                        std::vector<LLColor4>& colors, std::vector<F32>& intensities)
 {
-    static LLCachedControl<bool> enabled(gSavedSettings, "ASStarsEnabled", true);
-    static LLCachedControl<F32> density_ctl(gSavedSettings, "ASStarsDensity", 1.f);
-    static LLCachedControl<F32> color_amount_ctl(gSavedSettings, "ASStarsColorAmount", 0.f);
-    static LLCachedControl<F32> saturation_ctl(gSavedSettings, "ASStarsSaturation", 1.f);
-    static LLCachedControl<F32> temperature_bias_ctl(gSavedSettings, "ASStarsTemperatureBias", 0.f);
-    static LLCachedControl<F32> brightness_spread_ctl(gSavedSettings, "ASStarsBrightnessSpread", 2.f);
-    static LLCachedControl<F32> size_ctl(gSavedSettings, "ASStarsSize", 1.f);
-    static LLCachedControl<F32> milky_way_ctl(gSavedSettings, "ASStarsMilkyWay", 0.f);
-    static LLCachedControl<S32> seed_ctl(gSavedSettings, "ASStarsSeed", 0);
+    // Read settings directly, not through LLCachedControl: generate() runs
+    // from the settings' own change signals (connected first, at startup),
+    // which fire before a cached control would have picked up the new value.
+    // Master toggle off: the stock parameters, whatever the panel holds.
+    const bool on = gSavedSettings.getBOOL("ASStarsEnabled");
+    const F32 density = on ? gSavedSettings.getF32("ASStarsDensity") : 1.f;
+    const F32 color_amount = on ? gSavedSettings.getF32("ASStarsColorAmount") : 0.f;
+    const F32 saturation = on ? gSavedSettings.getF32("ASStarsSaturation") : 1.f;
+    const F32 temperature_bias = on ? gSavedSettings.getF32("ASStarsTemperatureBias") : 0.f;
+    const F32 brightness_variation = on ? gSavedSettings.getF32("ASStarsBrightnessVariation") : 0.f;
+    const F32 size = on ? gSavedSettings.getF32("ASStarsSize") : 1.f;
+    const F32 milky_way = on ? gSavedSettings.getF32("ASStarsMilkyWay") : 0.f;
+    const S32 seed = on ? gSavedSettings.getS32("ASStarsSeed") : 0;
 
-    // Master toggle off: the stock parameters (setting defaults), whatever
-    // the panel holds.
-    const bool on = enabled;
-    const F32 density = on ? (F32)density_ctl : 1.f;
-    const F32 color_amount = on ? (F32)color_amount_ctl : 0.f;
-    const F32 saturation = on ? (F32)saturation_ctl : 1.f;
-    const F32 temperature_bias = on ? (F32)temperature_bias_ctl : 0.f;
-    const F32 brightness_spread = on ? (F32)brightness_spread_ctl : 2.f;
-    const F32 size = on ? (F32)size_ctl : 1.f;
-    const F32 milky_way = on ? (F32)milky_way_ctl : 0.f;
-    const S32 seed = on ? (S32)seed_ctl : 0;
+    const S32 mode = on ? gSavedSettings.getS32("ASStarsMode") : 0;
+    const F32 magnitude_contrast = gSavedSettings.getF32("ASStarsMagnitudeContrast");
 
-    // The Milky Way band adds stars on top of the background field instead
-    // of taking them from it, so the rest of the sky keeps its density.
-    const F32 band = llclamp((F32)milky_way, 0.f, 1.f);
-    const U32 background_count = (U32)llclamp(ll_round(STOCK_VISIBLE_STARS * llmax((F32)density, 0.f)), 0, (S32)MAX_STARS);
-    const U32 band_count = (U32)ll_round(background_count * band * MILKY_WAY_EXTRA_STARS);
-    sCount = llmin(background_count + band_count, MAX_STARS);
+    sRealSky = mode == 1 && loadCatalogue();
+    // Procedural with zero brightness contrast keeps the stock path: alpha
+    // ignored by the shader, all stars equally bright.
+    const F32 variation = llclamp(brightness_variation, 0.f, 1.f);
+    sEncoded = sRealSky || variation > 0.f;
+
+    // Count. Procedural: the Milky Way band adds stars on top of the
+    // background field instead of taking them from it, so the rest of the
+    // sky keeps its density. Real sky: the brightest stars of the catalogue.
+    const U32 stars_per_density = sRealSky ? REAL_SKY_STARS_PER_DENSITY : STOCK_VISIBLE_STARS;
+    const U32 background_count = (U32)llclamp(ll_round(stars_per_density * llmax(density, 0.f)), 0, (S32)MAX_STARS);
+    U32 band_count = 0;
+    if (sRealSky)
+    {
+        sCount = llmin(background_count, (U32)sCatalogue.size());
+    }
+    else
+    {
+        band_count = (U32)ll_round(background_count * llclamp(milky_way, 0.f, 1.f) * MILKY_WAY_EXTRA_STARS);
+        sCount = llmin(background_count + band_count, MAX_STARS);
+    }
     positions.resize(sCount);
     colors.resize(sCount);
     intensities.resize(sCount);
     sSizes.resize(sCount);
 
     // Seed 0 keeps stock behaviour: a different sky every time.
-    std::mt19937 rng(seed > 0 ? (U32)(S32)seed : (U32)ll_rand());
+    std::mt19937 rng(seed > 0 ? (U32)seed : (U32)ll_rand());
     std::uniform_real_distribution<F32> uni(0.f, 1.f);
 
-    const F32 amount = llclamp((F32)color_amount, 0.f, 1.f);
-    const F32 spread = llmax((F32)brightness_spread, 0.01f);
-    const F32 temperature_scale = std::pow(2.f, llclamp((F32)temperature_bias, -1.f, 1.f));
+    const F32 amount = llclamp(color_amount, 0.f, 1.f);
+    const F32 temperature_scale = std::pow(2.f, llclamp(temperature_bias, -1.f, 1.f));
+    const F32 contrast = llclamp(magnitude_contrast, 0.05f, 1.f);
+    // Real sky: magnitude of the faintest drawn star (the eye's limit).
+    const F32 limit_mag = sRealSky && sCount > 0 ? sCatalogue[sCount - 1].mMag : 0.f;
 
     for (U32 i = 0; i < sCount; ++i)
     {
-        // Position: stock upper-hemisphere distribution for the background,
-        // then the extra band stars.
-        LLVector3 dir;
-        if (i >= background_count)
+        F32 size_scale = 1.f;
+        F32 temperature = 0.f;
+        if (sRealSky)
         {
-            dir = sampleBandDirection(rng);
+            const CatalogueStar& star = sCatalogue[i];
+            positions[i] = star.mDir * radius;
+
+            // Brightness relative to the stock star level: flux (relative
+            // to the faintest drawn star) ^ contrast. Up to the stock level
+            // it is log-encoded in vertex alpha; the rest grows the sprite.
+            const F32 flux = std::pow(10.f, -0.4f * (star.mMag - limit_mag));
+            const F32 level = std::pow(flux, contrast) * REAL_SKY_FAINT_LEVEL;
+            intensities[i] = llclamp(1.f + std::log2(llmin(level, 1.f)) / REAL_SKY_LOG_RANGE, 0.f, 1.f);
+            size_scale = llmin(std::sqrt(llmax(level, 1.f)), REAL_SKY_MAX_SIZE_SCALE);
+            // Unknown B-V: a Sun-like color.
+            temperature = star.mHasBV ? bvToTemperature(star.mBV) : 5800.f;
         }
         else
         {
-            dir.set(uni(rng) - 0.5f, uni(rng) - 0.5f, uni(rng) / 2.f);
-            dir.normVec();
-        }
-        positions[i] = dir * radius;
+            // Position: stock upper-hemisphere distribution for the
+            // background, then the extra band stars.
+            LLVector3 dir;
+            if (i >= background_count)
+            {
+                dir = sampleBandDirection(rng);
+            }
+            else
+            {
+                dir.set(uni(rng) - 0.5f, uni(rng) - 0.5f, uni(rng) / 2.f);
+                dir.normVec();
+            }
+            positions[i] = dir * radius;
 
-        intensities[i] = llmin(std::pow(uni(rng), spread) + 0.1f, 1.f);
+            // Stock intensity distribution, in [0.1, 1].
+            const F32 u = uni(rng);
+            intensities[i] = llmin(std::pow(u, 2.f) + 0.1f, 1.f);
+            if (sEncoded)
+            {
+                // Brightness contrast, modelled on the real sky (past the
+                // stock x32 gain everything above ~1/32 of the stock level
+                // is plain white, so contrast must come from levels below
+                // it and from sprite size). Target: a synthetic magnitude
+                // from the star-count law N(<m) ~ 10^(0.45 m), i.e. flux
+                // ~ (1-u)^(-0.4/0.45) above the faintest star, which sits at
+                // the real-sky faint level (median ~2x it, ~2% of stars
+                // above the stock level). Blended in log space from the
+                // stock level (contrast 0) to the target (contrast 1).
+                const F32 target = std::pow(llmax(1.f - u, 1.e-4f), -0.4f / 0.45f) * REAL_SKY_FAINT_LEVEL;
+                const F32 level = std::exp2(variation * std::log2(target));
+                intensities[i] = llclamp(1.f + std::log2(llmin(level, 1.f)) / REAL_SKY_LOG_RANGE, 0.f, 1.f);
+                size_scale = llmin(std::sqrt(llmax(level, 1.f)), REAL_SKY_MAX_SIZE_SCALE);
+            }
+        }
 
         // Stock greenish-white tint, blended toward a blackbody color.
         LLColor3 col(0.75f + uni(rng) * 0.25f, 1.f, 0.75f + uni(rng) * 0.25f);
         if (amount > 0.f)
         {
-            const LLColor3 real = blackbody(sampleTemperature(rng) * temperature_scale);
+            if (!sRealSky)
+            {
+                temperature = sampleTemperature(rng);
+            }
+            const LLColor3 real = blackbody(temperature * temperature_scale);
             col = col * (1.f - amount) + real * amount;
         }
         const F32 lum = col.mV[VRED] * 0.2126f + col.mV[VGREEN] * 0.7152f + col.mV[VBLUE] * 0.0722f;
         const LLColor3 grey(lum, lum, lum);
-        col = grey + (col - grey) * llmax((F32)saturation, 0.f);
-        colors[i].set(col, 1.f);
+        col = grey + (col - grey) * llmax(saturation, 0.f);
+        // Encoded: alpha carries the brightness from the start (stock
+        // starts at 1 and lets updateStarColors() settle it).
+        colors[i].set(col, sEncoded ? intensities[i] : 1.f);
         colors[i].clamp();
 
-        sSizes[i] = (16.f + uni(rng) * 20.f) * llmax((F32)size, 0.f);
+        // Procedural: random stock size, blended toward the brightness-driven
+        // size as brightness contrast rises.
+        F32 base_size = REAL_SKY_BASE_SIZE * size_scale;
+        if (!sRealSky)
+        {
+            const F32 stock_size = 16.f + uni(rng) * 20.f;
+            base_size = stock_size + (base_size - stock_size) * variation;
+        }
+        sSizes[i] = base_size * llmax(size, 0.f);
     }
 }
 
@@ -287,4 +465,57 @@ F32 ASStars::twinkleAmount()
     static LLCachedControl<bool> enabled(gSavedSettings, "ASStarsEnabled", true);
     static LLCachedControl<F32> twinkle(gSavedSettings, "ASStarsTwinkle", 1.f);
     return enabled ? llclamp((F32)twinkle, 0.f, 1.f) : 1.f;
+}
+
+bool ASStars::realSkyActive()
+{
+    return sRealSky;
+}
+
+bool ASStars::encodedBrightness()
+{
+    return sEncoded;
+}
+
+void ASStars::applySkyTransform(F32 star_time, LLGLSLShader& shader)
+{
+    static LLStaticHashedString sStarUp("as_star_up");
+    static LLStaticHashedString sHorizonFade("as_star_horizon_fade");
+    static LLStaticHashedString sLogRange("as_star_log_range");
+
+    // Encoded stars decode per-star brightness from vertex alpha; stock
+    // ignores it.
+    shader.uniform1f(sLogRange, sEncoded ? REAL_SKY_LOG_RANGE : 0.f);
+
+    if (!sRealSky)
+    {
+        // Stock: slow spin around the zenith, no horizon fade (stars are
+        // generated on the upper hemisphere only).
+        gGL.rotatef(star_time * 0.01f, 0.f, 0.f, 1.f);
+        shader.uniform1f(sHorizonFade, 0.f);
+        return;
+    }
+
+    // Real sky: stars are in the equatorial frame (z = north celestial
+    // pole). The local frame is x east, y north, z up. Spin by the local
+    // sidereal time around the pole, then tilt the pole up to the observer's
+    // latitude above the north horizon. Free running at the stock rate.
+    static LLCachedControl<F32> latitude(gSavedSettings, "ASStarsLatitude", 45.f);
+    static LLCachedControl<F32> sidereal_offset(gSavedSettings, "ASStarsSiderealOffset", 0.f);
+    const F32 lst_deg = star_time * 0.01f + (F32)sidereal_offset * 15.f;
+    // Tilt about east: maps the pole (0,0,1) to (0, cos lat, sin lat).
+    const F32 tilt_deg = -(90.f - llclamp((F32)latitude, -90.f, 90.f));
+    // Spin about the pole: hour angle 0 (RA = LST) lands on the south meridian.
+    const F32 spin_deg = -(lst_deg + 90.f);
+
+    // Applied right to left: spin first, then tilt.
+    gGL.rotatef(tilt_deg, 1.f, 0.f, 0.f);
+    gGL.rotatef(spin_deg, 0.f, 0.f, 1.f);
+
+    // Local zenith expressed in the star frame (inverse rotation of +z), for
+    // the vertex shader's below-horizon fade.
+    const F32 tilt = tilt_deg * DEG_TO_RAD;
+    const F32 spin = spin_deg * DEG_TO_RAD;
+    shader.uniform3f(sStarUp, std::sin(tilt) * std::sin(spin), std::sin(tilt) * std::cos(spin), std::cos(tilt));
+    shader.uniform1f(sHorizonFade, 1.f);
 }

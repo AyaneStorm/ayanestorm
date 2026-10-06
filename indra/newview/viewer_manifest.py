@@ -113,6 +113,10 @@ class ViewerManifest(LLManifest,FSViewerManifest):
                 # ... and the entire windlight directory
                 self.path("windlight")
 
+                # <AS:Chanayane> Real-sky star catalogue and its license
+                self.path("stars")
+                # </AS:Chanayane>
+
                 # ... and the entire image filters directory
                 self.path("filters")
 
