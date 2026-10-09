@@ -188,7 +188,12 @@ void main()
             frag_color = vec4(vec3(sampled.a) * inv_exposure, 0.0);
             return;
         }
-        float dist = abs(getPosition(vary_fragcoord).z);
+        // Same distance metric as the gathered path below. This branch is
+        // also the real composite for Exact mode (per-pixel source, no
+        // gather), and getPosition() relies on inv_proj, which this
+        // program's plain bind() does not guarantee to be the scene
+        // projection; zNear/zFar are set explicitly by draw_composite().
+        float dist = linearViewDepth(vary_fragcoord);
         frag_color = vec4(sampled.rgb, compositeTransmittance(dist));
         return;
     }

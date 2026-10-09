@@ -616,8 +616,7 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
     if (gFrameCount != last_frame)
     {
         last_frame = gFrameCount;
-        sFrameAtlasConsumer = isEnabled() && getDebugMode() == 0 &&
-            !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+        sFrameAtlasConsumer = isEnabled() && getDebugMode() == 0;
         if (sFrameAtlasConsumer)
         {
             sFrameScatterAlbedo = getScatterAlbedo();
@@ -636,8 +635,16 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             sFrameSceneDensity = sFrameScatterDensity * altitude_fade;
         }
     }
-    sAtlasConsumerSeen = sAtlasConsumerSeen || sFrameAtlasConsumer;
-    const bool enabled = sFrameAtlasConsumer && sAtlasProducedThisFrame &&
+    // Cube snapshots (reflection probes) and HUDs are checked per call, never
+    // cached per frame. The cache is decided by the first call of a frame;
+    // when that call came from a probe or HUD draw, the whole frame - main
+    // view included - lost the atlas, and alpha surfaces (hair, foliage)
+    // rendered with no volumetric scatter, at their unfogged color. The
+    // reverse case also leaked the main view's atlas into probes and HUDs.
+    const bool consumer = sFrameAtlasConsumer && !gCubeSnapshot &&
+        !LLPipeline::sRenderingHUDs;
+    sAtlasConsumerSeen = sAtlasConsumerSeen || consumer;
+    const bool enabled = consumer && sAtlasProducedThisFrame &&
         sShadersLoaded && sTransparencyAtlas.isComplete();
     shader.uniform1i(atlas_enabled, enabled ? 1 : 0);
 
@@ -1427,7 +1434,8 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     // Exact mode: accumulate the light volumes first (own target, cannot be
     // nested inside sVolumetricTarget's bind). Debug modes 8+ inspect other
     // passes and skip the directional work as the raymarch does.
-    const bool exact_mode = isExactMode() && debug_mode < 8;
+    const bool directional_debug = debug_mode < 8;
+    const bool exact_mode = isExactMode() && directional_debug;
     bool exact_ready = false;
     if (exact_mode)
     {
@@ -1459,7 +1467,7 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         {
             resolveExact(pipeline, sun_source, debug_mode);
         }
-        else if (debug_mode < 8)
+        else if (directional_debug)
         {
             pipeline.bindDeferredShader(gASVolumetricLightProgram);
 

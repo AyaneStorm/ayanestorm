@@ -244,6 +244,20 @@ Runtime checks for the user:
 4. GPU cost (stride 1 vs 2/4).
 5. macOS run.
 
+## Fixes found while testing phase 1 (2026-10-09, bokt)
+
+- Alpha surfaces (hair, alpha foliage) rendered at their unfogged color in
+  both modes: `bindTransparencyAtlas()` cached the atlas enable decision per
+  `gFrameCount` from the first call of the frame, including the
+  `!gCubeSnapshot && !sRenderingHUDs` terms. A probe/HUD draw deciding the
+  cache disabled the atlas for the main view (and the reverse leaked it into
+  probes/HUDs). Now those two terms are checked per call. Diagnosed with
+  temporary per-program logging (removed): atlas produced/bound correctly.
+- Exact mode barely darkened distant objects: Exact uses the composite's
+  raw (no-gather) branch, which derived distance via `getPosition()`
+  (`inv_proj`), not valid for this plainly bound program. Now uses
+  `linearViewDepth()` like the gathered branch.
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
