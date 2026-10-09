@@ -2,7 +2,7 @@
 <panel
   border="false"
   follows="all"
-  height="330"
+  height="360"
   layout="topleft"
   left="1"
   top="1"
@@ -129,8 +129,42 @@
     height="16"
     layout="topleft"
     left="15"
-    name="render_volumetric_lighting_quality_label"
+    name="render_volumetric_lighting_mode_label"
     top="174"
+    width="150">
+    Implementation:
+  </text>
+  <combo_box
+    control_name="RenderVolumetricLightingMode"
+    enabled_control="RenderVolumetricLighting"
+    follows="left|top"
+    height="23"
+    layout="topleft"
+    left="170"
+    mouse_opaque="true"
+    name="render_volumetric_lighting_mode"
+    tool_tip="Raymarch samples the shadow maps along each view ray (Ray quality applies). Exact computes the shadowed part of each ray analytically from the sun shadow maps, per pixel at full resolution, with no sampling noise or patterns (Ray quality does not apply). Changes are applied live."
+    top="171"
+    width="215">
+    <combo_box.item
+      label="Raymarch"
+      name="0"
+      value="0" />
+    <combo_box.item
+      label="Exact (light volumes)"
+      name="1"
+      value="1" />
+  </combo_box>
+
+  <text
+    type="string"
+    length="1"
+    follows="left|top"
+    height="16"
+    layout="topleft"
+    left="15"
+    name="render_volumetric_lighting_quality_label"
+    top="204"
     width="150">
     Ray quality:
   </text>
@@ -143,8 +177,8 @@
     left="170"
     mouse_opaque="true"
     name="render_volumetric_lighting_quality"
-    tool_tip="Normal and High trade target resolution for the same edge-adaptive sample count (16, up to 32 near silhouettes). Very High and Ultra use full resolution with a flat sample count everywhere (32 / 64), at a large GPU cost. Changes are applied live."
-    top="171"
+    tool_tip="Raymarch implementation only. Normal and High trade target resolution for the same edge-adaptive sample count (16, up to 32 near silhouettes). Very High and Ultra use full resolution with a flat sample count everywhere (32 / 64), at a large GPU cost. Changes are applied live."
+    top="201"
     width="215">
     <combo_box.item
       label="Normal (half resolution)"
@@ -174,7 +208,7 @@
     left="15"
     name="render_volumetric_lighting_debug_label"
     width="225"
-    top="206">
+    top="236">
     Debug mode (0 = off):
   </text>
   <spinner
@@ -190,8 +224,8 @@
     max_val="11"
     min_val="0"
     name="render_volumetric_lighting_debug"
-    tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. 10: raw 4x4 cumulative transparency atlas (near to far, left-to-right along each row, starting at the bottom and progressing upward). 11: same atlas layout, showing raw scene transmittance T (white/1.0 = no attenuation, black/0.0 = fully attenuated) instead of scatter color. All non-zero modes replace the screen outright."
-    top="202"
+    tool_tip="0: normal. Directional-only: 1: raw sun/moon scatter. 2: mean occlusion. 3: mean visibility. 4: reconstructed view-space position. 5: ray distance. 6: amplified reverse device-depth proximity. 7: fixed off-center inverse-projection magnitude sanity check; green is finite/nonzero, black is near-zero, and magenta is NaN/Inf. Local-only: 8: raw local-light scatter. 9: fraction of selected local-light volumes intersecting each visible ray. 10: raw 4x4 cumulative transparency atlas (near to far, left-to-right along each row, starting at the bottom and progressing upward). 11: same atlas layout, showing raw scene transmittance T (white/1.0 = no attenuation, black/0.0 = fully attenuated) instead of scatter color. All non-zero modes replace the screen outright. Exact implementation supports 1-3 for the directional pass (2/3 are transmittance-weighted)."
+    top="232"
     width="60" />
 
   <check_box
@@ -207,7 +241,7 @@
     name="render_volumetric_local_lights"
     radio_style="false"
     width="400"
-    top="237" />
+    top="267" />
 
   <slider
     can_edit_text="true"
@@ -226,7 +260,7 @@
     name="render_volumetric_local_lights_intensity"
     show_text="true"
     tool_tip="Controls only the unshadowed fog contribution from nearby local lights."
-    top="265"
+    top="295"
     width="295" />
 
   <text
@@ -238,7 +272,7 @@
     left="15"
     name="render_volumetric_local_lights_max_count_label"
     width="225"
-    top="297">
+    top="327">
     Maximum local lights:
   </text>
   <spinner
@@ -255,16 +289,17 @@
     min_val="0"
     name="render_volumetric_local_lights_max_count"
     tool_tip="Caps the highest-scored nearby lights evaluated per pixel. Lower this if local volumetrics cost too much GPU time."
-    top="293"
+    top="323"
     width="60" />
   <!-- Per-value reset buttons mirror the Aurora settings panel. -->
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_albedo" top="61" tool_tip="Reset scatter albedo to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingAlbedo" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_density" top="88" tool_tip="Reset scatter density to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingDensity" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_sun_asymmetry" top="116" tool_tip="Reset sun sky gradient to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingSunAsymmetry" /></button>
   <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_moon_asymmetry" top="144" tool_tip="Reset moon sky gradient to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingAsymmetry" /></button>
-  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_quality" top="172" tool_tip="Reset ray quality to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingQuality" /></button>
-  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_debug" top="202" tool_tip="Reset debug mode to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingDebug" /></button>
-  <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_intensity" top="263" tool_tip="Reset local intensity to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsIntensity" /></button>
-  <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_max_count" top="293" tool_tip="Reset maximum local lights to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsMaxCount" /></button>
+  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_mode" top="172" tool_tip="Reset implementation to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingMode" /></button>
+  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_quality" top="202" tool_tip="Reset ray quality to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingQuality" /></button>
+  <button enabled_control="RenderVolumetricLighting" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_debug" top="232" tool_tip="Reset debug mode to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLightingDebug" /></button>
+  <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_intensity" top="293" tool_tip="Reset local intensity to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsIntensity" /></button>
+  <button enabled_control="RenderVolumetricLocalLights" follows="left|top" height="20" image_overlay="Refresh_Off" layout="topleft" left="395" name="reset_volumetric_local_max_count" top="323" tool_tip="Reset maximum local lights to its default value" width="20"><button.commit_callback function="ASVolumetricLighting.ResetDefault" parameter="RenderVolumetricLocalLightsMaxCount" /></button>
   <!-- [/AS:Chanayane] -->
 </panel>

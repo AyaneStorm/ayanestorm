@@ -13823,6 +13823,32 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>RenderVolumetricLightingMode</key>
+    <map>
+      <key>Comment</key>
+      <string>Directional volumetric lighting implementation. 0 - Raymarch (sampled, quality tiers apply), 1 - Exact (analytic shadow light volumes, full resolution, no sampling).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>RenderVolumetricLightingExactMeshStride</key>
+    <map>
+      <key>Comment</key>
+      <string>Development diagnostic for the Exact volumetric mode: shadow-map texels per light-volume mesh cell (1 = every texel, exact at shadow-map resolution; 2-8 = coarser and cheaper).</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <integer>1</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
     <!-- </AS:Chanayane> -->
   <key>RenderReflectionsEnabled</key>
   <map>

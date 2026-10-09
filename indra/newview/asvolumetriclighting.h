@@ -78,7 +78,11 @@ public:
 
     // 0 Normal, 1 High, 2 Very High, 3 Ultra (RenderVolumetricLightingQuality).
     static S32 getQualityTier();
-    // True for High/Very High/Ultra (full-resolution target); false for Normal.
+    // True when RenderVolumetricLightingMode selects the exact light-volume
+    // implementation and its shaders loaded; quality tiers do not apply.
+    static bool isExactMode();
+    // True for Exact mode and High/Very High/Ultra (full-resolution target);
+    // false for Normal.
     static bool isFullResolution();
     static S32 getSampleCount();
     static S32 getEdgeSampleMultiplier();
@@ -101,14 +105,34 @@ private:
     static void applyDirectionalInvariants(LLGLSLShader& shader, LLPipeline& pipeline,
                                            bool sun_source);
     static void renderLocalLights(LLPipeline& pipeline);
+
+    // Exact mode directional pass, step 1: rasterizes each sun cascade's
+    // closed shadow volume into sExactAccum (signed, additive). Returns false
+    // when it cannot run, so the caller falls back to the raymarch.
+    // See doc/volumetric_lighting_exact_redesign_research.md.
+    static bool accumulateExactVolumes(LLPipeline& pipeline);
+    // Step 2: converts sExactAccum into scatter in the currently bound
+    // sVolumetricTarget (same brightness formula as the raymarch).
+    static void resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode);
     static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
 
     static bool sSupportChecked;
     static bool sSupported;
     static bool sShadersLoaded;
+    static bool sExactShadersLoaded;
 
     static LLRenderTarget sVolumetricTarget;
+
+    // Exact mode: full-resolution R32F signed accumulation of the shadowed,
+    // transmittance-weighted ray length (R32F is required: +/- pairs cancel,
+    // 16-bit float loses ~1 m at a few hundred metres). Allocated only while
+    // Exact mode runs.
+    static LLRenderTarget sExactAccum;
+    // Sampler object with depth comparison disabled, so the light-volume
+    // vertex shader can texelFetch raw depth from the comparing sun shadow
+    // maps without changing their texture state.
+    static U32 sExactShadowSampler;
     static LLRenderTarget sTransparencyAtlas;
 
     // The atlas is built one tile (slice) per draw call instead of all 16 in

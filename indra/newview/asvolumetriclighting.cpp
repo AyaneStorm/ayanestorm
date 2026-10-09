@@ -45,9 +45,13 @@
 #include "llviewercontrol.h"
 #include "llviewertexture.h"
 #include "llviewertexturelist.h"
+#include "llvertexbuffer.h"
 #include "llvovolume.h"
 #include "llworld.h"
 #include "pipeline.h"
+
+#include "glm/matrix.hpp"
+#include "glm/gtc/type_ptr.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -64,6 +68,12 @@ LLGLSLShader gASVolumetricLightProgram;
 LLGLSLShader gASVolumetricLocalLightProgram;
 LLGLSLShader gASVolumetricCompositeProgram;
 LLGLSLShader gASVolumetricAtlasProgram;
+LLGLSLShader gASVolumetricExactVolumeProgram;
+LLGLSLShader gASVolumetricExactResolveProgram;
+
+// Exact mode ray range. Phase 1 keeps the raymarch's MAX_MARCH_DISTANCE so
+// both modes integrate the same range and can be compared directly.
+constexpr F32 EXACT_MAX_DISTANCE = 128.f;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
@@ -281,7 +291,8 @@ void ASVolumetricLighting::registerUICallbacks()
             static const std::vector<std::string> volumetric_controls = {
                 "RenderVolumetricLightingAlbedo", "RenderVolumetricLightingDensity",
                 "RenderVolumetricLightingSunAsymmetry", "RenderVolumetricLightingAsymmetry",
-                "RenderVolumetricLightingQuality", "RenderVolumetricLightingDebug",
+                "RenderVolumetricLightingQuality", "RenderVolumetricLightingMode",
+                "RenderVolumetricLightingDebug",
                 "RenderVolumetricLocalLightsIntensity", "RenderVolumetricLocalLightsMaxCount"
             };
             const std::string control_name = data.asString();
@@ -307,7 +318,10 @@ F32 ASVolumetricLighting::getMoonPhaseIlluminatedFraction()
 bool ASVolumetricLighting::sSupportChecked = false;
 bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
+bool ASVolumetricLighting::sExactShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
+LLRenderTarget ASVolumetricLighting::sExactAccum;
+U32 ASVolumetricLighting::sExactShadowSampler = 0;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
 U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
 U32 ASVolumetricLighting::sAtlasFBO = 0;
@@ -434,6 +448,44 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
     }
 
     sShadersLoaded = success;
+
+    // Exact mode programs load independently: a failure only disables Exact
+    // mode (isExactMode() returns false and the raymarch runs instead).
+    sExactShadersLoaded = false;
+    if (success)
+    {
+        gASVolumetricExactVolumeProgram.unload();
+        gASVolumetricExactVolumeProgram.mName = "AS Volumetric Exact Volume Shader";
+        gASVolumetricExactVolumeProgram.mFeatures.isDeferred = true;
+        gASVolumetricExactVolumeProgram.clearPermutations();
+        gASVolumetricExactVolumeProgram.mShaderFiles.clear();
+        gASVolumetricExactVolumeProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactVolumeV.glsl", GL_VERTEX_SHADER));
+        gASVolumetricExactVolumeProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactVolumeF.glsl", GL_FRAGMENT_SHADER));
+        gASVolumetricExactVolumeProgram.mShaderLevel = shader_level;
+        bool exact_success = gASVolumetricExactVolumeProgram.createShader();
+
+        if (exact_success)
+        {
+            gASVolumetricExactResolveProgram.unload();
+            gASVolumetricExactResolveProgram.mName = "AS Volumetric Exact Resolve Shader";
+            gASVolumetricExactResolveProgram.mFeatures.isDeferred = true;
+            gASVolumetricExactResolveProgram.clearPermutations();
+            gASVolumetricExactResolveProgram.mShaderFiles.clear();
+            gASVolumetricExactResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricExactResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactResolveF.glsl", GL_FRAGMENT_SHADER));
+            gASVolumetricExactResolveProgram.mShaderLevel = shader_level;
+            exact_success = gASVolumetricExactResolveProgram.createShader();
+        }
+
+        if (!exact_success)
+        {
+            LL_WARNS("Volumetric") << "Exact volumetric shaders failed to load; Exact mode unavailable" << LL_ENDL;
+            gASVolumetricExactVolumeProgram.unload();
+            gASVolumetricExactResolveProgram.unload();
+        }
+        sExactShadersLoaded = exact_success;
+    }
+
     return true; // failure here must not fail the whole deferred shader load
 }
 
@@ -443,7 +495,10 @@ void ASVolumetricLighting::unloadShaders()
     gASVolumetricLocalLightProgram.unload();
     gASVolumetricAtlasProgram.unload();
     gASVolumetricCompositeProgram.unload();
+    gASVolumetricExactVolumeProgram.unload();
+    gASVolumetricExactResolveProgram.unload();
     sShadersLoaded = false;
+    sExactShadersLoaded = false;
 }
 
 void ASVolumetricLighting::allocateResources(U32 width, U32 height)
@@ -530,6 +585,12 @@ void ASVolumetricLighting::releaseResources()
 {
     sVolumetricTarget.release();
     sTransparencyAtlas.release();
+    sExactAccum.release();
+    if (sExactShadowSampler != 0)
+    {
+        glDeleteSamplers(1, &sExactShadowSampler);
+        sExactShadowSampler = 0;
+    }
     releaseAtlasIntegralAttachments();
     sAtlasConsumerSeen = true;
     sAtlasProducedThisFrame = false;
@@ -627,12 +688,19 @@ S32 ASVolumetricLighting::getQualityTier()
     return llclamp((S32)quality, 0, 3);
 }
 
+bool ASVolumetricLighting::isExactMode()
+{
+    // RenderVolumetricLightingMode: 0 raymarch, 1 exact light volumes.
+    static LLCachedControl<S32> mode(gSavedSettings, "RenderVolumetricLightingMode", 0);
+    return mode == 1 && sExactShadersLoaded;
+}
+
 bool ASVolumetricLighting::isFullResolution()
 {
     // Normal is the only tier that halves the target resolution; High,
     // Very High and Ultra all raymarch at full resolution and differ only
-    // in sample count.
-    return getQualityTier() != 0;
+    // in sample count. Exact mode is always per-pixel (no gather/upsample).
+    return isExactMode() || getQualityTier() != 0;
 }
 
 S32 ASVolumetricLighting::getSampleCount()
@@ -1043,6 +1111,186 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     return true;
 }
 
+bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
+{
+    const U32 width = sVolumetricTarget.getWidth();
+    const U32 height = sVolumetricTarget.getHeight();
+    if (!sExactAccum.isComplete() || sExactAccum.getWidth() != width ||
+        sExactAccum.getHeight() != height)
+    {
+        sExactAccum.release();
+        if (!sExactAccum.allocate(width, height, GL_R32F))
+        {
+            return false;
+        }
+    }
+
+    if (sExactShadowSampler == 0)
+    {
+        glGenSamplers(1, &sExactShadowSampler);
+        glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+        glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+
+    LLGLSLShader& program = gASVolumetricExactVolumeProgram;
+    const S32 shadow_channel = program.mActiveTextureChannels;
+    if (shadow_channel < 0 || shadow_channel >= gGLManager.mNumTextureImageUnits)
+    {
+        return false;
+    }
+
+    static LLCachedControl<S32> stride_setting(gSavedSettings,
+        "RenderVolumetricLightingExactMeshStride", 1);
+    const S32 stride = llclamp((S32)stride_setting, 1, 8);
+
+    // gl_FrontFacing means "outward normal faces the camera" (ray entering
+    // the shadowed volume) for a standard projection and an orientation-
+    // preserving texture->view mapping. A mirrored projection (positive
+    // determinant; a standard GL perspective matrix has a negative one) or
+    // a mirroring shadow matrix flips that; both are folded into one flag.
+    const glm::mat4 projection = get_current_projection();
+    const bool projection_mirrored = glm::determinant(projection) > 0.f;
+
+    LL_PROFILE_GPU_ZONE("AS volumetric exact volumes");
+
+    sExactAccum.bindTarget();
+    GLfloat saved_clear_color[4];
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, saved_clear_color);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    sExactAccum.clear(GL_COLOR_BUFFER_BIT);
+    glClearColor(saved_clear_color[0], saved_clear_color[1],
+                 saved_clear_color[2], saved_clear_color[3]);
+
+    // Signed additive accumulation; every face counts, so no depth test and
+    // no culling, and depth clamp keeps faces in front of the near plane and
+    // beyond the far plane from being clipped away.
+    LLGLEnable blend(GL_BLEND);
+    gGL.setSceneBlendType(LLRender::BT_ADD);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    LLGLEnable depth_clamp(GL_DEPTH_CLAMP);
+
+    pipeline.bindDeferredShader(program);
+    program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
+    program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
+    program.uniformMatrix4fv(LLStaticHashedString("as_projection"), 1, GL_FALSE,
+                             glm::value_ptr(projection));
+    program.uniform1i(LLStaticHashedString("as_grid_stride"), stride);
+    program.uniform1i(LLStaticHashedString("as_shadow_depth"), shadow_channel);
+    gGL.syncMatrices();
+
+    // Attribute-less draws: no stale vertex arrays may stay enabled.
+    LLVertexBuffer::unbind();
+    LLVertexBuffer::setupClientArrays(0);
+    glBindSampler(shadow_channel, sExactShadowSampler);
+
+    const LLVector4& clip = pipeline.mSunClipPlanes;
+    for (S32 cascade = 0; cascade < 4; ++cascade)
+    {
+        // Cascades with no receivers were only cleared this frame and keep a
+        // stale matrix; they hold no shadow and contribute nothing.
+        if (cascade > LLPipeline::RenderShadowSplits ||
+            pipeline.mShadowExtents[cascade][0] == pipeline.mShadowExtents[cascade][1])
+        {
+            continue;
+        }
+
+        LLRenderTarget* shadow_target = pipeline.getSunShadowTarget(cascade);
+        if (!shadow_target || shadow_target->getDepth() == 0)
+        {
+            continue;
+        }
+
+        const glm::mat4& shadow_matrix = pipeline.mSunShadowMatrix[cascade];
+        const F32 shadow_det = glm::determinant(shadow_matrix);
+        if (!std::isfinite(shadow_det) || fabsf(shadow_det) < 1e-20f)
+        {
+            continue;
+        }
+        const glm::mat4 shadow_to_view = glm::inverse(shadow_matrix);
+        const bool orientation_flip = (shadow_det < 0.f) != projection_mirrored;
+
+        const S32 shadow_width = (S32)shadow_target->getWidth();
+        const S32 shadow_height = (S32)shadow_target->getHeight();
+        const S32 grid_x = (shadow_width - 1) / stride + 1;
+        const S32 grid_y = (shadow_height - 1) / stride + 1;
+        if (grid_x < 2 || grid_y < 2)
+        {
+            continue;
+        }
+
+        gGL.getTexUnit(shadow_channel)->bindManual(LLTexUnit::TT_TEXTURE, shadow_target->getDepth());
+        program.uniformMatrix4fv(LLStaticHashedString("as_shadow_to_view"), 1, GL_FALSE,
+                                 glm::value_ptr(shadow_to_view));
+        program.uniform2f(LLStaticHashedString("as_shadow_size"),
+                          (F32)shadow_width, (F32)shadow_height);
+        program.uniform2i(LLStaticHashedString("as_grid_size"), grid_x, grid_y);
+        program.uniform1i(LLStaticHashedString("as_orientation_flip"), orientation_flip ? 1 : 0);
+        program.uniform1f(LLStaticHashedString("as_slab_near"), cascade > 0 ? clip.mV[cascade - 1] : 0.f);
+        program.uniform1f(LLStaticHashedString("as_slab_far"), clip.mV[cascade]);
+
+        static LLStaticHashedString mesh_part("as_mesh_part");
+        program.uniform1i(mesh_part, 0);
+        glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 2 * grid_x, grid_y - 1);
+        program.uniform1i(mesh_part, 1);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 2 * grid_y);
+        program.uniform1i(mesh_part, 2);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 2 * grid_y);
+        program.uniform1i(mesh_part, 3);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 2 * grid_x);
+        program.uniform1i(mesh_part, 4);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 2 * grid_x);
+        program.uniform1i(mesh_part, 5);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 2 * ((grid_x - 1) + (grid_y - 1)) + 2);
+    }
+
+    glBindSampler(shadow_channel, 0);
+    gGL.getTexUnit(shadow_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    program.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    pipeline.unbindDeferredShader(program);
+
+    sExactAccum.flush();
+    return true;
+}
+
+void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode)
+{
+    LLGLSLShader& program = gASVolumetricExactResolveProgram;
+    pipeline.bindDeferredShader(program);
+    program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
+
+    // Custom sampler: own appended unit (see bindTransparencyAtlas() for the
+    // Apple shared-unit restriction).
+    static LLStaticHashedString accum_sampler("as_exact_accum");
+    const S32 accum_channel = program.mActiveTextureChannels;
+    if (accum_channel >= 0 && accum_channel < gGLManager.mNumTextureImageUnits)
+    {
+        program.uniform1i(accum_sampler, accum_channel);
+        gGL.getTexUnit(accum_channel)->bindManual(LLTexUnit::TT_TEXTURE, sExactAccum.getTexture(0));
+        gGL.getTexUnit(accum_channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+    }
+
+    program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
+    program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));
+    program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
+    program.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
+    applyDirectionalInvariants(program, pipeline, sun_source);
+
+    pipeline.mScreenTriangleVB->setBuffer();
+    pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+    if (accum_channel >= 0 && accum_channel < gGLManager.mNumTextureImageUnits)
+    {
+        gGL.getTexUnit(accum_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    }
+    program.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    pipeline.unbindDeferredShader(program);
+}
+
 void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& screen)
 {
     const bool enabled = isEnabled();
@@ -1176,18 +1424,42 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         (camera_altitude - ALTITUDE_FADE_START) / (ALTITUDE_FADE_END - ALTITUDE_FADE_START),
         0.f, 1.f);
 
+    // Exact mode: accumulate the light volumes first (own target, cannot be
+    // nested inside sVolumetricTarget's bind). Debug modes 8+ inspect other
+    // passes and skip the directional work as the raymarch does.
+    const bool exact_mode = isExactMode() && debug_mode < 8;
+    bool exact_ready = false;
+    if (exact_mode)
+    {
+#if AS_VOLUMETRIC_PERFORMANCE_LOGGING
+        sDirectionalGpuTimer.begin();
+#endif
+        exact_ready = accumulateExactVolumes(pipeline);
+    }
+    else if (sExactAccum.isComplete())
+    {
+        sExactAccum.release();
+    }
+
     // ---- Raymarch pass: sample shadow occlusion along the view ray -------
     {
         LL_PROFILE_GPU_ZONE("AS volumetric directional");
 #if AS_VOLUMETRIC_PERFORMANCE_LOGGING
-        sDirectionalGpuTimer.begin();
+        if (!exact_mode)
+        {
+            sDirectionalGpuTimer.begin();
+        }
 #endif
         LLGLDisable blend(GL_BLEND);
 
         sVolumetricTarget.bindTarget();
         sVolumetricTarget.clear(GL_COLOR_BUFFER_BIT);
 
-        if (debug_mode < 8)
+        if (exact_ready)
+        {
+            resolveExact(pipeline, sun_source, debug_mode);
+        }
+        else if (debug_mode < 8)
         {
             pipeline.bindDeferredShader(gASVolumetricLightProgram);
 
@@ -1372,8 +1644,9 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         // Mode 0 (real composite) and mode 1 (scatter debug view) both go
         // through the depth-aware gather; Normal's half-res source and
         // High's full-res source are both served by it (section 3). Modes
-        // 2/3/10/11 below must stay unfiltered raw values.
-        draw_composite(screen, sVolumetricTarget, false, debug_mode == 1, false,
+        // 2/3/10/11 below must stay unfiltered raw values. Exact mode output
+        // is already exact per pixel at full resolution: no gather.
+        draw_composite(screen, sVolumetricTarget, exact_ready, debug_mode == 1, false,
                         debug_mode == 0 ? attenuate_scene_strength : 0.f);
     }
     else
