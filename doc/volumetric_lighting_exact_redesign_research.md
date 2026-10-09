@@ -258,6 +258,41 @@ Runtime checks for the user:
   (`inv_proj`), not valid for this plainly bound program. Now uses
   `linearViewDepth()` like the gathered branch.
 
+Phase 1 status: **bokt** (2026-10-09).
+
+## Known issue: dither lattice on alpha surfaces (hair)
+
+Regular dot lattice on alpha-blended surfaces (hair), stronger with high sun
+asymmetry ("sky gradient (sun)"), in both modes and every OIT renderer. Cause
+(by code reading, not yet confirmed by a test): the transparency atlas
+(`asVolumetricAtlasF.glsl`) is still the sampled path - one Bayer-jittered
+shadow sample per slice, half resolution, bilinearly read by alpha shaders.
+Higher asymmetry raises scatter toward the sun, so the dither amplitude grows.
+Fix: exact atlas - accumulate the phase 1 light-volume crossings per slice
+(clamp to slice far distance instead of scene depth).
+
+### Exact atlas (bokt 2026-10-10: hair dither lattice gone)
+
+Measured cost (user scene, RTX 3080 Ti, exact opaque + exact atlas): volumetric
+off 44 fps (22.7 ms); stride 1: 30 fps (+10.6 ms); stride 2: 40 fps
+(+2.3 ms). 4x fewer vertices -> ~4.6x less cost: vertex/primitive bound.
+
+`renderExactAtlas()` replaces the sampled atlas in Exact mode (sampled one
+stays as fallback and for Raymarch mode). Pass 1: the same light-volume mesh
+(shared `drawExactVolumes()` helper) rasterized at atlas tile resolution
+into `sExactAtlasAccum` (4 x RGBA32F, slice k -> attachment k/4, channel
+k%4) with `asVolumetricExactAtlasVolumeF.glsl`. Per fragment, with slab
+entry/exit A/B and slice end e (radial, ((k+1)/16)^2 * 128 m), G monotonic:
+
+    slice_k = e <= A ? 0 : sign * (clamp(G(t), G(A), min(G(B), G(e))) - G(A))
+
+3 exp() per fragment for all 16 slices; G(e_k) uploaded as `as_slice_g[16]`
+and shared with the resolve. Pass 2 `asVolumetricExactAtlasResolveF.glsl`
+writes the 4x4 atlas: lit = G(e_k) - shadowed, disc-clamped phase, same
+brightness constants; alpha = same transmittance as the sampled atlas.
+Consumers unchanged. Cost: one more full light-volume vertex pass (fill is
+tiny at tile resolution); replaces the ~0.28 ms sampled atlas.
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,

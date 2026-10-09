@@ -70,6 +70,8 @@ LLGLSLShader gASVolumetricCompositeProgram;
 LLGLSLShader gASVolumetricAtlasProgram;
 LLGLSLShader gASVolumetricExactVolumeProgram;
 LLGLSLShader gASVolumetricExactResolveProgram;
+LLGLSLShader gASVolumetricExactAtlasVolumeProgram;
+LLGLSLShader gASVolumetricExactAtlasResolveProgram;
 
 // Exact mode ray range. Phase 1 keeps the raymarch's MAX_MARCH_DISTANCE so
 // both modes integrate the same range and can be compared directly.
@@ -321,6 +323,7 @@ bool ASVolumetricLighting::sShadersLoaded = false;
 bool ASVolumetricLighting::sExactShadersLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 LLRenderTarget ASVolumetricLighting::sExactAccum;
+LLRenderTarget ASVolumetricLighting::sExactAtlasAccum;
 U32 ASVolumetricLighting::sExactShadowSampler = 0;
 LLRenderTarget ASVolumetricLighting::sTransparencyAtlas;
 U32 ASVolumetricLighting::sAtlasIntegralTex[2] = { 0, 0 };
@@ -477,11 +480,39 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
             exact_success = gASVolumetricExactResolveProgram.createShader();
         }
 
+        if (exact_success)
+        {
+            gASVolumetricExactAtlasVolumeProgram.unload();
+            gASVolumetricExactAtlasVolumeProgram.mName = "AS Volumetric Exact Atlas Volume Shader";
+            gASVolumetricExactAtlasVolumeProgram.mFeatures.isDeferred = true;
+            gASVolumetricExactAtlasVolumeProgram.clearPermutations();
+            gASVolumetricExactAtlasVolumeProgram.mShaderFiles.clear();
+            gASVolumetricExactAtlasVolumeProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactVolumeV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricExactAtlasVolumeProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactAtlasVolumeF.glsl", GL_FRAGMENT_SHADER));
+            gASVolumetricExactAtlasVolumeProgram.mShaderLevel = shader_level;
+            exact_success = gASVolumetricExactAtlasVolumeProgram.createShader();
+        }
+
+        if (exact_success)
+        {
+            gASVolumetricExactAtlasResolveProgram.unload();
+            gASVolumetricExactAtlasResolveProgram.mName = "AS Volumetric Exact Atlas Resolve Shader";
+            gASVolumetricExactAtlasResolveProgram.mFeatures.isDeferred = true;
+            gASVolumetricExactAtlasResolveProgram.clearPermutations();
+            gASVolumetricExactAtlasResolveProgram.mShaderFiles.clear();
+            gASVolumetricExactAtlasResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricExactAtlasResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactAtlasResolveF.glsl", GL_FRAGMENT_SHADER));
+            gASVolumetricExactAtlasResolveProgram.mShaderLevel = shader_level;
+            exact_success = gASVolumetricExactAtlasResolveProgram.createShader();
+        }
+
         if (!exact_success)
         {
             LL_WARNS("Volumetric") << "Exact volumetric shaders failed to load; Exact mode unavailable" << LL_ENDL;
             gASVolumetricExactVolumeProgram.unload();
             gASVolumetricExactResolveProgram.unload();
+            gASVolumetricExactAtlasVolumeProgram.unload();
+            gASVolumetricExactAtlasResolveProgram.unload();
         }
         sExactShadersLoaded = exact_success;
     }
@@ -497,6 +528,8 @@ void ASVolumetricLighting::unloadShaders()
     gASVolumetricCompositeProgram.unload();
     gASVolumetricExactVolumeProgram.unload();
     gASVolumetricExactResolveProgram.unload();
+    gASVolumetricExactAtlasVolumeProgram.unload();
+    gASVolumetricExactAtlasResolveProgram.unload();
     sShadersLoaded = false;
     sExactShadersLoaded = false;
 }
@@ -586,6 +619,7 @@ void ASVolumetricLighting::releaseResources()
     sVolumetricTarget.release();
     sTransparencyAtlas.release();
     sExactAccum.release();
+    sExactAtlasAccum.release();
     if (sExactShadowSampler != 0)
     {
         glDeleteSamplers(1, &sExactShadowSampler);
@@ -1118,20 +1152,9 @@ bool ASVolumetricLighting::renderTransparencyAtlas(LLPipeline& pipeline,
     return true;
 }
 
-bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
+bool ASVolumetricLighting::drawExactVolumes(LLPipeline& pipeline, LLGLSLShader& program,
+                                            LLRenderTarget& target)
 {
-    const U32 width = sVolumetricTarget.getWidth();
-    const U32 height = sVolumetricTarget.getHeight();
-    if (!sExactAccum.isComplete() || sExactAccum.getWidth() != width ||
-        sExactAccum.getHeight() != height)
-    {
-        sExactAccum.release();
-        if (!sExactAccum.allocate(width, height, GL_R32F))
-        {
-            return false;
-        }
-    }
-
     if (sExactShadowSampler == 0)
     {
         glGenSamplers(1, &sExactShadowSampler);
@@ -1142,7 +1165,6 @@ bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
         glSamplerParameteri(sExactShadowSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     }
 
-    LLGLSLShader& program = gASVolumetricExactVolumeProgram;
     const S32 shadow_channel = program.mActiveTextureChannels;
     if (shadow_channel < 0 || shadow_channel >= gGLManager.mNumTextureImageUnits)
     {
@@ -1161,33 +1183,27 @@ bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
     const glm::mat4 projection = get_current_projection();
     const bool projection_mirrored = glm::determinant(projection) > 0.f;
 
-    LL_PROFILE_GPU_ZONE("AS volumetric exact volumes");
-
-    sExactAccum.bindTarget();
-    GLfloat saved_clear_color[4];
-    glGetFloatv(GL_COLOR_CLEAR_VALUE, saved_clear_color);
-    glClearColor(0.f, 0.f, 0.f, 0.f);
-    sExactAccum.clear(GL_COLOR_BUFFER_BIT);
-    glClearColor(saved_clear_color[0], saved_clear_color[1],
-                 saved_clear_color[2], saved_clear_color[3]);
-
-    // Signed additive accumulation; every face counts, so no depth test and
-    // no culling, and depth clamp keeps faces in front of the near plane and
-    // beyond the far plane from being clipped away.
-    LLGLEnable blend(GL_BLEND);
-    gGL.setSceneBlendType(LLRender::BT_ADD);
-    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-    LLGLEnable depth_clamp(GL_DEPTH_CLAMP);
-
-    pipeline.bindDeferredShader(program);
-    program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
-    program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
-    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
     program.uniformMatrix4fv(LLStaticHashedString("as_projection"), 1, GL_FALSE,
                              glm::value_ptr(projection));
     program.uniform1i(LLStaticHashedString("as_grid_stride"), stride);
     program.uniform1i(LLStaticHashedString("as_shadow_depth"), shadow_channel);
     gGL.syncMatrices();
+
+    target.bindTarget();
+    GLfloat saved_clear_color[4];
+    glGetFloatv(GL_COLOR_CLEAR_VALUE, saved_clear_color);
+    glClearColor(0.f, 0.f, 0.f, 0.f);
+    target.clear(GL_COLOR_BUFFER_BIT);
+    glClearColor(saved_clear_color[0], saved_clear_color[1],
+                 saved_clear_color[2], saved_clear_color[3]);
+
+    // Signed additive accumulation (into every attachment); every face
+    // counts, so no depth test and no culling, and depth clamp keeps faces in
+    // front of the near plane and beyond the far plane from being clipped.
+    LLGLEnable blend(GL_BLEND);
+    gGL.setSceneBlendType(LLRender::BT_ADD);
+    glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+    LLGLEnable depth_clamp(GL_DEPTH_CLAMP);
 
     // Attribute-less draws: no stale vertex arrays may stay enabled.
     LLVertexBuffer::unbind();
@@ -1256,10 +1272,144 @@ bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
 
     glBindSampler(shadow_channel, 0);
     gGL.getTexUnit(shadow_channel)->unbind(LLTexUnit::TT_TEXTURE);
+
+    target.flush();
+    return true;
+}
+
+bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
+{
+    const U32 width = sVolumetricTarget.getWidth();
+    const U32 height = sVolumetricTarget.getHeight();
+    if (!sExactAccum.isComplete() || sExactAccum.getWidth() != width ||
+        sExactAccum.getHeight() != height)
+    {
+        sExactAccum.release();
+        if (!sExactAccum.allocate(width, height, GL_R32F))
+        {
+            return false;
+        }
+    }
+
+    LL_PROFILE_GPU_ZONE("AS volumetric exact volumes");
+
+    LLGLSLShader& program = gASVolumetricExactVolumeProgram;
+    pipeline.bindDeferredShader(program);
+    program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
+    program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
+    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
+
+    const bool drawn = drawExactVolumes(pipeline, program, sExactAccum);
+
     program.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     pipeline.unbindDeferredShader(program);
+    return drawn;
+}
 
-    sExactAccum.flush();
+bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength)
+{
+    // The atlas is allocated as a multiple of 4 in both dimensions (see
+    // allocateResources()), so every tile is exactly a quarter of it.
+    const U32 tile_width = sTransparencyAtlas.getWidth() / 4;
+    const U32 tile_height = sTransparencyAtlas.getHeight() / 4;
+    if (!sTransparencyAtlas.isComplete() || tile_width == 0 || tile_height == 0)
+    {
+        return false;
+    }
+    if (!sExactAtlasAccum.isComplete() || sExactAtlasAccum.getWidth() != tile_width ||
+        sExactAtlasAccum.getHeight() != tile_height)
+    {
+        sExactAtlasAccum.release();
+        bool allocated = sExactAtlasAccum.allocate(tile_width, tile_height, GL_RGBA32F);
+        for (S32 i = 1; allocated && i < 4; ++i)
+        {
+            allocated = sExactAtlasAccum.addColorAttachment(GL_RGBA32F);
+        }
+        if (!allocated)
+        {
+            sExactAtlasAccum.release();
+            return false;
+        }
+    }
+
+    // G(slice far distance) for the 16 slices, shared by both passes so the
+    // crossings clamp to exactly the total the resolve subtracts from.
+    const F32 density = getScatterDensity();
+    F32 slice_g[16];
+    for (S32 k = 0; k < 16; ++k)
+    {
+        const F64 fraction = (F64)(k + 1) / 16.0;
+        const F64 slice_end = fraction * fraction * (F64)EXACT_MAX_DISTANCE;
+        const F64 x = (F64)density * slice_end;
+        slice_g[k] = (F32)(x < 1e-3 ? slice_end * (1.0 - 0.5 * x + x * x / 6.0)
+                                    : (1.0 - exp(-x)) / (F64)density);
+    }
+    static LLStaticHashedString slice_g_name("as_slice_g");
+
+    {
+        LL_PROFILE_GPU_ZONE("AS volumetric exact atlas volumes");
+        LLGLSLShader& program = gASVolumetricExactAtlasVolumeProgram;
+        pipeline.bindDeferredShader(program);
+        program.uniform1f(LLStaticHashedString("scatter_density"), density);
+        program.uniform2f(LLStaticHashedString("as_target_size"),
+                          (F32)tile_width, (F32)tile_height);
+        program.uniform1fv(slice_g_name, 16, slice_g);
+        const bool drawn = drawExactVolumes(pipeline, program, sExactAtlasAccum);
+        pipeline.unbindDeferredShader(program);
+        if (!drawn)
+        {
+            return false;
+        }
+    }
+
+    LL_PROFILE_GPU_ZONE("AS volumetric exact atlas resolve");
+    LLGLSLShader& program = gASVolumetricExactAtlasResolveProgram;
+    LLGLDisable blend(GL_BLEND);
+    sTransparencyAtlas.bindTarget();
+    pipeline.bindDeferredShader(program);
+
+    // Four custom samplers on their own appended units (see
+    // bindTransparencyAtlas() for the Apple shared-unit restriction).
+    const S32 first_channel = program.mActiveTextureChannels;
+    if (first_channel < 0 || first_channel + 4 > gGLManager.mNumTextureImageUnits)
+    {
+        pipeline.unbindDeferredShader(program);
+        sTransparencyAtlas.flush();
+        return false;
+    }
+    static const LLStaticHashedString slice_samplers[4] = {
+        LLStaticHashedString("as_atlas_slices0"), LLStaticHashedString("as_atlas_slices1"),
+        LLStaticHashedString("as_atlas_slices2"), LLStaticHashedString("as_atlas_slices3") };
+    for (S32 i = 0; i < 4; ++i)
+    {
+        program.uniform1i(slice_samplers[i], first_channel + i);
+        gGL.getTexUnit(first_channel + i)->bindManual(LLTexUnit::TT_TEXTURE,
+                                                      sExactAtlasAccum.getTexture(i));
+        gGL.getTexUnit(first_channel + i)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+    }
+
+    const bool sun_source = isVolumetricSunSource();
+    program.uniform2i(LLStaticHashedString("as_tile_size"), (S32)tile_width, (S32)tile_height);
+    program.uniform1fv(slice_g_name, 16, slice_g);
+    program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
+    program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));
+    program.uniform1f(LLStaticHashedString("scatter_density"), density);
+    // Altitude-faded like the opaque composite (see renderPass()).
+    program.uniform1f(LLStaticHashedString("transmittance_density"),
+                      density * attenuate_scene_strength);
+    program.uniform1i(LLStaticHashedString("atlas_debug"), getDebugMode() == 10 ? 1 : 0);
+    applyDirectionalInvariants(program, pipeline, sun_source);
+    gGL.syncMatrices();
+
+    pipeline.mScreenTriangleVB->setBuffer();
+    pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+    for (S32 i = 0; i < 4; ++i)
+    {
+        gGL.getTexUnit(first_channel + i)->unbind(LLTexUnit::TT_TEXTURE);
+    }
+    pipeline.unbindDeferredShader(program);
+    sTransparencyAtlas.flush();
     return true;
 }
 
@@ -1448,6 +1598,10 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
     {
         sExactAccum.release();
     }
+    if (!isExactMode() && sExactAtlasAccum.isComplete())
+    {
+        sExactAtlasAccum.release();
+    }
 
     // ---- Raymarch pass: sample shadow occlusion along the view ray -------
     {
@@ -1511,8 +1665,11 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 #if AS_VOLUMETRIC_PERFORMANCE_LOGGING
         sAtlasGpuTimer.begin();
 #endif
-        sAtlasProducedThisFrame = renderTransparencyAtlas(
-            pipeline, attenuate_scene_strength);
+        // Exact mode builds the atlas from the light volumes too (no dither);
+        // the sampled atlas remains the fallback.
+        sAtlasProducedThisFrame =
+            (isExactMode() && renderExactAtlas(pipeline, attenuate_scene_strength)) ||
+            renderTransparencyAtlas(pipeline, attenuate_scene_strength);
 #if AS_VOLUMETRIC_PERFORMANCE_LOGGING
         sAtlasGpuTimer.end();
 #endif

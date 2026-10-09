@@ -111,6 +111,16 @@ private:
     // when it cannot run, so the caller falls back to the raymarch.
     // See doc/volumetric_lighting_exact_redesign_research.md.
     static bool accumulateExactVolumes(LLPipeline& pipeline);
+    // Shared by both exact accumulation passes: with `program` already bound
+    // and its pass-specific uniforms set, binds `target`, clears it and
+    // additively rasterizes every valid cascade's closed shadow volume.
+    static bool drawExactVolumes(LLPipeline& pipeline, LLGLSLShader& program,
+                                 LLRenderTarget& target);
+    // Exact transparency atlas: accumulates the light-volume crossings for
+    // all 16 slice end distances at tile resolution (sExactAtlasAccum), then
+    // resolves them into sTransparencyAtlas with the same layout and meaning
+    // as the sampled renderTransparencyAtlas(). No dither.
+    static bool renderExactAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     // Step 2: converts sExactAccum into scatter in the currently bound
     // sVolumetricTarget (same brightness formula as the raymarch).
     static void resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode);
@@ -129,6 +139,9 @@ private:
     // 16-bit float loses ~1 m at a few hundred metres). Allocated only while
     // Exact mode runs.
     static LLRenderTarget sExactAccum;
+    // Exact atlas: 4 RGBA32F attachments at atlas tile resolution, slice k in
+    // attachment k / 4, channel k % 4.
+    static LLRenderTarget sExactAtlasAccum;
     // Sampler object with depth comparison disabled, so the light-volume
     // vertex shader can texelFetch raw depth from the comparing sun shadow
     // maps without changing their texture state.
