@@ -38,6 +38,11 @@
 // starts inside S. No depth test and no lit/shadow lookup is involved, so
 // the result depends only on the mesh topology. Faces are never culled or
 // clipped (depth clamp on).
+//
+// Range: the medium density fades linearly to zero between as_fade_start and
+// as_fade_end (radial metres, as_fade_end = last cascade far plane), so G is
+// evaluated at the faded effective length D(t). G(D(t)) is non-decreasing,
+// so the telescoping above stays exact.
 
 /*[EXTRA_CODE_HERE]*/
 
@@ -48,7 +53,8 @@ in vec3 vary_view_pos;
 uniform sampler2D depthMap;
 uniform vec2 screen_res;
 uniform float scatter_density;
-uniform float as_max_distance;
+uniform float as_fade_start;
+uniform float as_fade_end;
 uniform float as_slab_near;        // view-space distance along -z
 uniform float as_slab_far;
 uniform int as_orientation_flip;   // 1 when texture->screen mapping mirrors winding
@@ -67,6 +73,15 @@ float transmittedLength(float t)
     return (1.0 - exp(-x)) / scatter_density;
 }
 
+// Effective medium length of [0, t]: density weight 1 up to as_fade_start,
+// linear to 0 at as_fade_end, 0 beyond.
+float fadedLength(float t)
+{
+    float ramp = max(as_fade_end - as_fade_start, 1e-3);
+    float x = clamp(t - as_fade_start, 0.0, ramp);
+    return min(t, as_fade_start) + x - 0.5 * x * x / ramp;
+}
+
 void main()
 {
     // Per-pixel ray quantities come from the scene depth sample only, so
@@ -74,14 +89,15 @@ void main()
     float depth = texelFetch(depthMap, ivec2(gl_FragCoord.xy), 0).r;
     vec3 scene_pos = getPositionWithDepth(gl_FragCoord.xy / screen_res, depth).xyz;
     float scene_dist = length(scene_pos);
-    float ray_end = min(scene_dist, as_max_distance);
+    float ray_end = min(scene_dist, as_fade_end);
     float forward = max(-scene_pos.z / max(scene_dist, 1e-6), 1e-6);
 
     float a = min(as_slab_near / forward, ray_end);
     float b = min(as_slab_far / forward, ray_end);
     float t = clamp(length(vary_view_pos), a, b);
 
-    float contribution = transmittedLength(t) - transmittedLength(a);
+    float contribution = transmittedLength(fadedLength(t)) -
+                         transmittedLength(fadedLength(a));
     bool entering = gl_FrontFacing != (as_orientation_flip != 0);
     frag_color = vec4(entering ? -contribution : contribution, 0.0, 0.0, 0.0);
 }

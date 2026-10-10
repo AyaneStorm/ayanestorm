@@ -31,7 +31,9 @@
 // k % 4. G is monotonic, so with A/B = slab entry/exit and e = slice end:
 //   G(clamp(t, min(A, e), min(B, e))) - G(min(A, e))
 //     = e <= A ? 0 : clamp(G(t), G(A), min(G(B), G(e))) - G(A)
-// which needs only three exp() per fragment for all 16 slices.
+// which needs only three exp() per fragment for all 16 slices. G here is
+// G(D(t)) with the faded medium length D of asVolumetricExactVolumeF.glsl
+// (still monotonic), and slice ends span as_atlas_range.
 
 /*[EXTRA_CODE_HERE]*/
 
@@ -47,11 +49,13 @@ uniform float scatter_density;
 uniform float as_slab_near;
 uniform float as_slab_far;
 uniform int as_orientation_flip;
-uniform float as_slice_g[16];      // G(slice end distance), from the CPU
+uniform float as_slice_g[16];      // G(D(slice end distance)), from the CPU
+uniform float as_atlas_range;      // last slice end distance (radial metres)
+uniform float as_fade_start;
+uniform float as_fade_end;
 
 vec3 getPositionWithNDC(vec3 ndc);
 
-const float MAX_MARCH_DISTANCE = 128.0;
 const float ATLAS_SLICES = 16.0;
 
 float transmittedLength(float t)
@@ -64,6 +68,14 @@ float transmittedLength(float t)
     return (1.0 - exp(-x)) / scatter_density;
 }
 
+// Must match asVolumetricExactVolumeF.glsl.
+float fadedLength(float t)
+{
+    float ramp = max(as_fade_end - as_fade_start, 1e-3);
+    float x = clamp(t - as_fade_start, 0.0, ramp);
+    return min(t, as_fade_start) + x - 0.5 * x * x / ramp;
+}
+
 void main()
 {
     // Per-pixel ray from the texel center only, so every fragment of this
@@ -72,9 +84,9 @@ void main()
     vec3 ray_dir = normalize(getPositionWithNDC(vec3(uv * 2.0 - 1.0, 1.0)));
     float forward = max(-ray_dir.z, 1e-6);
     float slab_a = as_slab_near / forward;
-    float g_a = transmittedLength(slab_a);
-    float g_b = transmittedLength(as_slab_far / forward);
-    float g_t = transmittedLength(length(vary_view_pos));
+    float g_a = transmittedLength(fadedLength(slab_a));
+    float g_b = transmittedLength(fadedLength(as_slab_far / forward));
+    float g_t = transmittedLength(fadedLength(length(vary_view_pos)));
 
     bool entering = gl_FrontFacing != (as_orientation_flip != 0);
     float sign_factor = entering ? -1.0 : 1.0;
@@ -83,7 +95,7 @@ void main()
     for (int k = 0; k < 16; ++k)
     {
         float fraction = float(k + 1) / ATLAS_SLICES;
-        float slice_end = fraction * fraction * MAX_MARCH_DISTANCE;
+        float slice_end = fraction * fraction * as_atlas_range;
         slices[k] = slice_end <= slab_a ? 0.0 :
             sign_factor * (clamp(g_t, g_a, min(g_b, as_slice_g[k])) - g_a);
     }

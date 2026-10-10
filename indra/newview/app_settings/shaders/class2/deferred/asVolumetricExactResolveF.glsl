@@ -24,9 +24,10 @@
  */
 
 // Full resolution, one pixel in, one pixel out (no gather, no jitter).
-// lit = G(ray_end) - shadowed, where shadowed was accumulated exactly by
-// asVolumetricExactVolumeF.glsl. Brightness uses the same formula and
-// constants as asVolumetricLightF.glsl so both modes match visually.
+// lit = G(D(ray_end)) - shadowed, where shadowed was accumulated exactly by
+// asVolumetricExactVolumeF.glsl (D = faded medium length, same function).
+// Physical single scattering, HDR: scatter = albedo * density * phase * lit,
+// no clamp, no range normalisation (scene is pre-tonemap here).
 
 /*[EXTRA_CODE_HERE]*/
 
@@ -40,18 +41,14 @@ uniform vec2 screen_res;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
-uniform float as_max_distance;
+uniform float as_fade_start;
+uniform float as_fade_end;
 uniform vec3  as_active_light_dir;
 uniform vec3  as_active_light_color;
 uniform vec2  as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 uniform int   debug_mode;      // 2: occlusion, 3: visibility (grayscale)
 
 vec4 getPositionWithDepth(vec2 pos_screen, float depth);
-
-// Must match asVolumetricLightF.glsl: brightness normalisation, independent
-// of as_max_distance so the march range never changes brightness.
-const float BRIGHTNESS_SCALE = 64.0;
-const float BRIGHTNESS_REFERENCE_DISTANCE = 128.0;
 
 float transmittedLength(float t)
 {
@@ -61,6 +58,14 @@ float transmittedLength(float t)
         return t * (1.0 - 0.5 * x + x * x * (1.0 / 6.0));
     }
     return (1.0 - exp(-x)) / scatter_density;
+}
+
+// Must match asVolumetricExactVolumeF.glsl.
+float fadedLength(float t)
+{
+    float ramp = max(as_fade_end - as_fade_start, 1e-3);
+    float x = clamp(t - as_fade_start, 0.0, ramp);
+    return min(t, as_fade_start) + x - 0.5 * x * x / ramp;
 }
 
 float phaseHG(float cos_theta, float g)
@@ -76,10 +81,10 @@ void main()
     float depth = texelFetch(depthMap, px, 0).r;
     vec3 scene_pos = getPositionWithDepth(gl_FragCoord.xy / screen_res, depth).xyz;
     float scene_dist = length(scene_pos);
-    float ray_end = min(scene_dist, as_max_distance);
+    float ray_end = min(scene_dist, as_fade_end);
     vec3 ray_dir = scene_pos / max(scene_dist, 1e-6);
 
-    float total = transmittedLength(ray_end);
+    float total = transmittedLength(fadedLength(ray_end));
     float shadowed = clamp(texelFetch(as_exact_accum, px, 0).r, 0.0, total);
     float lit = total - shadowed;
 
@@ -100,9 +105,7 @@ void main()
     }
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
-    float scatter = scatter_density * scatter_albedo * BRIGHTNESS_SCALE *
-                    phase * (lit / BRIGHTNESS_REFERENCE_DISTANCE);
-    scatter = clamp(scatter, 0.0, 1.0);
+    float scatter = scatter_density * scatter_albedo * phase * lit;
 
     frag_color = vec4(as_active_light_color * scatter, 0.0);
 }

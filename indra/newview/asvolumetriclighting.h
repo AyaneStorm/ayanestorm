@@ -106,6 +106,12 @@ private:
                                            bool sun_source);
     static void renderLocalLights(LLPipeline& pipeline);
 
+    // Exact mode range: far plane of the last sun cascade, in metres. The
+    // medium density fades to zero over its last quarter.
+    static F32 getExactRange(LLPipeline& pipeline);
+    // Sets as_fade_start / as_fade_end (exact shaders' fadedLength()).
+    static void applyExactRange(LLGLSLShader& shader, LLPipeline& pipeline);
+
     // Exact mode directional pass, step 1: rasterizes each sun cascade's
     // closed shadow volume into sExactAccum (signed, additive). Returns false
     // when it cannot run, so the caller falls back to the raymarch.
@@ -175,6 +181,10 @@ private:
     static bool sAtlasConsumerSeen;
     static bool sAtlasProducedThisFrame;
     static U32 sAtlasUnusedFrames;
+    // Distance spanned by the atlas slices produced this frame (128 m for the
+    // sampled atlas, the exact range for the exact atlas); consumers read it
+    // as asVolumetricAtlasRange.
+    static F32 sAtlasRange;
 
     // Per-frame cache for bindTransparencyAtlas(), refreshed once per frame
     // (gFrameCount-guarded) inside bindTransparencyAtlas() itself instead of

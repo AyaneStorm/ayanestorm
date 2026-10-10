@@ -28,6 +28,8 @@
 // exact per-slice shadowed integrals of asVolumetricExactAtlasVolumeF.glsl:
 // RGB = light color * scatter accumulated from the camera to the slice far
 // distance, A = scene transmittance at that distance. No sampling, no dither.
+// Slices span as_atlas_range (consumers read the same range); brightness as
+// in asVolumetricExactResolveF.glsl.
 
 /*[EXTRA_CODE_HERE]*/
 
@@ -40,7 +42,10 @@ uniform sampler2D as_atlas_slices1; // slices 4-7
 uniform sampler2D as_atlas_slices2; // slices 8-11
 uniform sampler2D as_atlas_slices3; // slices 12-15
 uniform ivec2 as_tile_size;
-uniform float as_slice_g[16];       // G(slice end distance), from the CPU
+uniform float as_slice_g[16];       // G(D(slice end distance)), from the CPU
+uniform float as_atlas_range;       // last slice end distance (radial metres)
+uniform float as_fade_start;        // transmittance sky fade, as the composite
+uniform float as_fade_end;
 uniform float scatter_albedo;
 uniform float scatter_asymmetry;
 uniform float scatter_density;
@@ -52,10 +57,7 @@ uniform vec2 as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 
 vec3 getPositionWithNDC(vec3 ndc);
 
-const float MAX_MARCH_DISTANCE = 128.0;
 const float ATLAS_SLICES = 16.0;
-// Must match asVolumetricLightF.glsl / asVolumetricExactResolveF.glsl.
-const float BRIGHTNESS_SCALE = 64.0;
 // Must match asVolumetricCompositeF.glsl / asVolumetricAtlasF.glsl.
 const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
 
@@ -108,19 +110,19 @@ void main()
     }
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
-    float scatter = clamp(scatter_density * scatter_albedo * BRIGHTNESS_SCALE *
-                          phase * (lit / MAX_MARCH_DISTANCE), 0.0, 1.0);
+    float scatter = scatter_density * scatter_albedo * phase * lit;
 
-    // Scene transmittance, identical to asVolumetricAtlasF.glsl (view-depth
-    // metric, smooth optical-depth ceiling, 100-128 m sky fade).
+    // Scene transmittance, as asVolumetricAtlasF.glsl (view-depth metric,
+    // smooth optical-depth ceiling) with the composite's Exact sky fade
+    // window instead of 100-128 m.
     float fraction = float(slice + 1) / ATLAS_SLICES;
-    float slice_end = fraction * fraction * MAX_MARCH_DISTANCE;
+    float slice_end = fraction * fraction * as_atlas_range;
     float view_depth = slice_end * abs(ray_dir.z);
     float optical_depth = transmittance_density * view_depth;
     float limited_depth = MAX_SCENE_OPTICAL_DEPTH *
                           (1.0 - exp(-optical_depth / MAX_SCENE_OPTICAL_DEPTH));
     float beer_lambert = exp(-limited_depth);
-    float sky_fade = smoothstep(100.0, MAX_MARCH_DISTANCE, view_depth);
+    float sky_fade = smoothstep(as_fade_start, as_fade_end, view_depth);
     float transmittance = mix(beer_lambert, 1.0, sky_fade);
 
     if (atlas_debug != 0)

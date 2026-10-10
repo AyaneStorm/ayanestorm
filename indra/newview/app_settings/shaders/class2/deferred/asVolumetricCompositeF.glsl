@@ -130,13 +130,15 @@ vec3 gatherScatter(vec2 uv, float center_depth)
 // low as 0.001 visibly flattened the whole sky, while attenuateScene was
 // otherwise verified correct since it exactly matched the disabled case at
 // extinction=0). Skip attenuation entirely at/beyond the boundary instead.
-const float SKY_DISTANCE = 128.0;
-// Start of the fade-to-1.0 band, ending at SKY_DISTANCE. A hard cutoff at
-// SKY_DISTANCE alone produces a visible seam: geometry a hair closer than the
+// Raymarch: 128 m. Exact: the medium's fade end (last cascade far plane).
+uniform float skyDistance;
+// Start of the fade-to-1.0 band, ending at skyDistance. A hard cutoff at
+// skyDistance alone produces a visible seam: geometry a hair closer than the
 // boundary is attenuated, geometry a hair beyond it is not. Fading T back to
 // 1.0 across this band removes that pop while still landing on exactly 1.0
-// at SKY_DISTANCE, matching the sky-side assumption below unchanged.
-const float SKY_FADE_START = 100.0;
+// at skyDistance, matching the sky-side assumption below unchanged.
+// Raymarch: 100 m. Exact: the medium's fade start.
+uniform float skyFadeStart;
 // The directional model contains only single scattering. In a shadowed ray
 // its scatter can approach zero while unconstrained Beer-Lambert extinction
 // also removes essentially all scene light, producing an unphysical black
@@ -150,11 +152,11 @@ const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
 // Beer-Lambert transmittance at a given view-space distance. Matches the
 // raymarch/atlas passes' exp(-extinction * distance) for real, finite-depth
 // scene geometry; smoothly fades to 1.0 (no attenuation) over
-// [SKY_FADE_START, SKY_DISTANCE), and is exactly 1.0 at or beyond
-// SKY_DISTANCE, since that range is sky/atmosphere, not ground fog.
+// [skyFadeStart, skyDistance), and is exactly 1.0 at or beyond
+// skyDistance, since that range is sky/atmosphere, not ground fog.
 float sceneTransmittance(float dist)
 {
-    if (dist >= SKY_DISTANCE)
+    if (dist >= skyDistance)
     {
         return 1.0;
     }
@@ -162,7 +164,7 @@ float sceneTransmittance(float dist)
     float limited_depth = MAX_SCENE_OPTICAL_DEPTH *
                           (1.0 - exp(-optical_depth / MAX_SCENE_OPTICAL_DEPTH));
     float beer_lambert = exp(-limited_depth);
-    float fade = smoothstep(SKY_FADE_START, SKY_DISTANCE, dist);
+    float fade = smoothstep(skyFadeStart, skyDistance, dist);
     return mix(beer_lambert, 1.0, fade);
 }
 

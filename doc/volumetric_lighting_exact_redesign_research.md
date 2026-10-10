@@ -136,9 +136,8 @@ pixels.
 
 ### Phase function
 
-Keep HG but evaluate a two-lobe mix (forward lobe + near-isotropic lobe)
-so side-on scatter is not 6x suppressed; remove the [0,1] clamp and the
-128 m normalisation (scene is HDR before tonemap).
+Keep HG (two-lobe mix tried and rejected, see Phase 2); remove the [0,1]
+clamp and the 128 m normalisation (scene is HDR before tonemap).
 
 ## Hard requirement: macOS OpenGL 4.1 core
 
@@ -372,6 +371,46 @@ brightness constants; alpha = same transmittance as the sampled atlas.
 Consumers unchanged. Cost: one more full light-volume vertex pass (fill is
 tiny at tile resolution); replaces the ~0.28 ms sampled atlas.
 
+## Phase 2: range, brightness, phase (implemented, unbuilt, 2026-10-10)
+
+Exact mode only; Raymarch unchanged.
+
+- Range R = `mSunClipPlanes[RenderShadowSplits]` (last cascade far plane,
+  up to 512 m), used as a radial distance: radial >= view depth, so the
+  medium always ends inside shadow coverage. Fallback 128 m.
+- Fade: medium density weight w = 1 up to 0.75 R, linear to 0 at R
+  (`EXACT_FADE_START_FRACTION`). Effective length
+  `D(t) = min(t, F0) + x - x^2 / (2 (R - F0))`, x = clamp(t - F0, 0, R - F0).
+  Every exact shader uses G(D(t)) instead of G(t) (`fadedLength()`). With
+  density sigma*w, scatter integrand w * exp(-sigma D) = d/dt G(D(t)), so
+  this is the exact single-scatter integral of the faded medium, and
+  G(D) is non-decreasing, so telescoping and the atlas clamp formula hold.
+  Ray end = min(scene distance, R). No hard edge at R.
+- Brightness: physical, HDR: scatter = albedo * density * phase * lit, no
+  [0,1] clamp, no /128. Old factor was BRIGHTNESS_SCALE / 128 = 0.5, so
+  Exact is ~2x brighter per metre than before plus the longer range;
+  retune albedo/density at runtime.
+- Phase: plain HG kept. A tried `mix(HG(g), 1/(4 pi), w)` slider (Side
+  scatter) was removed: a normalised mix only redistributes light. At
+  g = 0.4, w = 1 makes 0 deg ~4x dimmer, 90 deg only 1.5x brighter
+  (crossover ~70 deg), so toward-sun shafts vanished into a flat veil
+  (confirmed at runtime). Side-on shaft visibility must come from contrast
+  (phase 3 haze modulation), not from the phase function.
+- Atlas: slices span R (`as_atlas_range`, slice_g = G(D(e_k)) on CPU).
+  Consumers (`alphaF`, `pbralphaF`, `materialF`, `fullbrightF`, `waterF`)
+  read the slice range from `asVolumetricAtlasRange` (`sAtlasRange`: 128
+  for the sampled atlas, R for the exact atlas).
+- Composite / atlas transmittance: same view-depth metric and optical-depth
+  limiter; the sky fade window (`skyFadeStart`, `skyDistance` uniforms) is
+  100-128 m in Raymarch, 0.75 R - R in Exact. Distant geometry beyond R
+  stays unattenuated like the sky (haze modulation is phase 3).
+
+Runtime checks:
+1. Shafts visible beyond 128 m, no edge/seam at R, no hard ring on terrain.
+2. No speckle at long range (R32F precision at 512 m).
+3. Alpha surfaces (hair, foliage) at 150-500 m match opaque neighbours.
+4. Raymarch mode unchanged (atlas range 128, sky fade 100-128).
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
@@ -383,7 +422,8 @@ New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
 1. A only (geometry shafts, single cascade first, then cascades). Validate
    exactness against current Ultra (64 samples) as reference; must work in
    snapshots.
-2. Remove 128 m cap in exact mode, phase function change.
+2. Remove 128 m cap in exact mode, phase function change (implemented,
+   see "Phase 2").
 3. C (haze modulation).
 4. B (cloud shafts).
 5. Perf: tile compaction, profiling vs current Normal/High.

@@ -96,6 +96,7 @@ uniform sampler2D exclusionTex;
 uniform int asVolumetricEnabled;
 uniform vec2 screen_res;
 uniform sampler2D asVolumetricAtlas;
+uniform float asVolumetricAtlasRange; // last slice end distance (metres)
 uniform float asVolumetricSceneDensity;
 
 // Strength of the optional horizon-fog blend toward atmospheric haze color
@@ -110,7 +111,7 @@ uniform float as_horizon_fog_intensity;
 vec3 asVolumetricWaterForeground(vec3 view_position)
 {
     if (asVolumetricEnabled == 0) return vec3(0.0);
-    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float coordinate = sqrt(clamp(length(view_position) / asVolumetricAtlasRange, 0.0, 1.0)) * 16.0;
     float upper = clamp(floor(coordinate), 0.0, 15.0);
     float weight = fract(coordinate);
     if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }

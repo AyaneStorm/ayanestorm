@@ -73,9 +73,13 @@ LLGLSLShader gASVolumetricExactResolveProgram;
 LLGLSLShader gASVolumetricExactAtlasVolumeProgram;
 LLGLSLShader gASVolumetricExactAtlasResolveProgram;
 
-// Exact mode ray range. Phase 1 keeps the raymarch's MAX_MARCH_DISTANCE so
-// both modes integrate the same range and can be compared directly.
-constexpr F32 EXACT_MAX_DISTANCE = 128.f;
+// Raymarch ray range and composite sky fade (MAX_MARCH_DISTANCE in
+// asVolumetricLightF.glsl / asVolumetricAtlasF.glsl).
+constexpr F32 RAYMARCH_MAX_DISTANCE = 128.f;
+constexpr F32 RAYMARCH_SKY_FADE_START = 100.f;
+// Exact mode: the medium density fades linearly to zero over the last
+// quarter of the shadow range (see getExactRange()).
+constexpr F32 EXACT_FADE_START_FRACTION = 0.75f;
 
 constexpr S32 MAX_VOLUMETRIC_LOCAL_LIGHTS = 64;
 constexpr F32 VOLUMETRIC_LOCAL_LIGHT_FALLOFF = 0.5f;
@@ -333,6 +337,7 @@ U32 ASVolumetricLighting::sAtlasIntegralHeight = 0;
 bool ASVolumetricLighting::sAtlasConsumerSeen = true;
 bool ASVolumetricLighting::sAtlasProducedThisFrame = false;
 U32 ASVolumetricLighting::sAtlasUnusedFrames = 0;
+F32 ASVolumetricLighting::sAtlasRange = 128.f;
 bool ASVolumetricLighting::sFrameAtlasConsumer = false;
 F32  ASVolumetricLighting::sFrameScatterAlbedo = 0.f;
 F32  ASVolumetricLighting::sFrameScatterAsymmetry = 0.f;
@@ -711,6 +716,8 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
         shader.uniform1f(LLStaticHashedString("scatter_albedo"), sFrameScatterAlbedo);
         shader.uniform1f(LLStaticHashedString("scatter_asymmetry"), sFrameScatterAsymmetry);
         shader.uniform1f(LLStaticHashedString("scatter_density"), sFrameScatterDensity);
+        // Distance spanned by the 16 slices of the atlas produced this frame.
+        shader.uniform1f(LLStaticHashedString("asVolumetricAtlasRange"), sAtlasRange);
 
         // Water is a real surface beyond the atlas's 128 m sky cutoff, so it
         // evaluates bounded scene extinction itself instead of consuming the
@@ -831,6 +838,23 @@ F32 ASVolumetricLighting::getScatterDensity()
     static LLCachedControl<F32> density(gSavedSettings,
         "RenderVolumetricLightingDensity", 0.012f);
     return llmax((F32)density, 0.f);
+}
+
+F32 ASVolumetricLighting::getExactRange(LLPipeline& pipeline)
+{
+    // Far plane (view depth) of the last sun cascade. Used as a radial
+    // distance, so the faded medium always ends inside shadow coverage
+    // (radial >= view depth).
+    const S32 last = llclamp(LLPipeline::RenderShadowSplits, 0, 3);
+    const F32 range = pipeline.mSunClipPlanes.mV[last];
+    return (std::isfinite(range) && range > 1.f) ? range : RAYMARCH_MAX_DISTANCE;
+}
+
+void ASVolumetricLighting::applyExactRange(LLGLSLShader& shader, LLPipeline& pipeline)
+{
+    const F32 range = getExactRange(pipeline);
+    shader.uniform1f(LLStaticHashedString("as_fade_start"), range * EXACT_FADE_START_FRACTION);
+    shader.uniform1f(LLStaticHashedString("as_fade_end"), range);
 }
 
 S32 ASVolumetricLighting::getDebugMode()
@@ -1297,7 +1321,7 @@ bool ASVolumetricLighting::accumulateExactVolumes(LLPipeline& pipeline)
     pipeline.bindDeferredShader(program);
     program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
     program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
-    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
+    applyExactRange(program, pipeline);
 
     const bool drawn = drawExactVolumes(pipeline, program, sExactAccum);
 
@@ -1332,19 +1356,27 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
         }
     }
 
-    // G(slice far distance) for the 16 slices, shared by both passes so the
-    // crossings clamp to exactly the total the resolve subtracts from.
+    // G(D(slice far distance)) for the 16 slices (D = faded medium length,
+    // as fadedLength() in the exact shaders), shared by both passes so the
+    // crossings clamp to exactly the total the resolve subtracts from. The
+    // slices span the whole exact range.
     const F32 density = getScatterDensity();
+    const F64 range = (F64)getExactRange(pipeline);
+    const F64 fade_start = range * (F64)EXACT_FADE_START_FRACTION;
+    const F64 ramp = llmax(range - fade_start, 1e-3);
     F32 slice_g[16];
     for (S32 k = 0; k < 16; ++k)
     {
         const F64 fraction = (F64)(k + 1) / 16.0;
-        const F64 slice_end = fraction * fraction * (F64)EXACT_MAX_DISTANCE;
-        const F64 x = (F64)density * slice_end;
-        slice_g[k] = (F32)(x < 1e-3 ? slice_end * (1.0 - 0.5 * x + x * x / 6.0)
+        const F64 slice_end = fraction * fraction * range;
+        const F64 over = llclamp(slice_end - fade_start, 0.0, ramp);
+        const F64 length = llmin(slice_end, fade_start) + over - 0.5 * over * over / ramp;
+        const F64 x = (F64)density * length;
+        slice_g[k] = (F32)(x < 1e-3 ? length * (1.0 - 0.5 * x + x * x / 6.0)
                                     : (1.0 - exp(-x)) / (F64)density);
     }
     static LLStaticHashedString slice_g_name("as_slice_g");
+    static LLStaticHashedString atlas_range_name("as_atlas_range");
 
     {
         LL_PROFILE_GPU_ZONE("AS volumetric exact atlas volumes");
@@ -1354,6 +1386,8 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
         program.uniform2f(LLStaticHashedString("as_target_size"),
                           (F32)tile_width, (F32)tile_height);
         program.uniform1fv(slice_g_name, 16, slice_g);
+        program.uniform1f(atlas_range_name, (F32)range);
+        applyExactRange(program, pipeline);
         const bool drawn = drawExactVolumes(pipeline, program, sExactAtlasAccum);
         pipeline.unbindDeferredShader(program);
         if (!drawn)
@@ -1391,6 +1425,8 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
     const bool sun_source = isVolumetricSunSource();
     program.uniform2i(LLStaticHashedString("as_tile_size"), (S32)tile_width, (S32)tile_height);
     program.uniform1fv(slice_g_name, 16, slice_g);
+    program.uniform1f(atlas_range_name, (F32)range);
+    applyExactRange(program, pipeline);
     program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));
     program.uniform1f(LLStaticHashedString("scatter_density"), density);
@@ -1410,6 +1446,7 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
     }
     pipeline.unbindDeferredShader(program);
     sTransparencyAtlas.flush();
+    sAtlasRange = (F32)range;
     return true;
 }
 
@@ -1433,7 +1470,7 @@ void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S
     program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));
     program.uniform1f(LLStaticHashedString("scatter_density"), getScatterDensity());
-    program.uniform1f(LLStaticHashedString("as_max_distance"), EXACT_MAX_DISTANCE);
+    applyExactRange(program, pipeline);
     program.uniform1i(LLStaticHashedString("debug_mode"), debug_mode);
     applyDirectionalInvariants(program, pipeline, sun_source);
 
@@ -1666,7 +1703,9 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
         sAtlasGpuTimer.begin();
 #endif
         // Exact mode builds the atlas from the light volumes too (no dither);
-        // the sampled atlas remains the fallback.
+        // the sampled atlas remains the fallback. The sampled atlas spans
+        // the raymarch range; renderExactAtlas() sets the exact range.
+        sAtlasRange = RAYMARCH_MAX_DISTANCE;
         sAtlasProducedThisFrame =
             (isExactMode() && renderExactAtlas(pipeline, attenuate_scene_strength)) ||
             renderTransparencyAtlas(pipeline, attenuate_scene_strength);
@@ -1734,6 +1773,12 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 
         gASVolumetricCompositeProgram.uniform1i(
             LLStaticHashedString("attenuateScene"), attenuate_scene ? 1 : 0);
+        // Sky boundary: the raymarch range, or the end of Exact mode's
+        // faded medium (its transmittance fades out over the same window).
+        const F32 sky_distance = exact_ready ? getExactRange(pipeline) : RAYMARCH_MAX_DISTANCE;
+        gASVolumetricCompositeProgram.uniform1f(LLStaticHashedString("skyDistance"), sky_distance);
+        gASVolumetricCompositeProgram.uniform1f(LLStaticHashedString("skyFadeStart"),
+            exact_ready ? sky_distance * EXACT_FADE_START_FRACTION : RAYMARCH_SKY_FADE_START);
         if (attenuate_scene)
         {
             // Scaling density itself (rather than gating attenuation on/off)
