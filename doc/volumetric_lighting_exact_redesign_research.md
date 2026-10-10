@@ -411,6 +411,75 @@ Runtime checks:
 3. Alpha surfaces (hair, foliage) at 150-500 m match opaque neighbours.
 4. Raymarch mode unchanged (atlas range 128, sky fade 100-128).
 
+## Phase 3: haze modulation (built, tested, REVERTED 2026-10-10)
+
+Reverted: the GBA haze channels made the accumulation RGBA32F (4x blend
+bandwidth on a fill-bound pass of ~50 layers/pixel, plus 3 exp per
+fragment). Measured 30 -> 14 fps (user scene, Exact) for an invisible gain
+(see runtime result below). Code is back to phase 2. For phase 4, remove the
+shadowed share of SL haze inside the cloud-shadow march instead (km range,
+where it is visible), not via extra light-volume channels. The method and
+SL haze model below remain valid for that.
+
+Where SL haze comes from: not `softenLightF.glsl` but the separate deferred
+haze pass (`LLPipeline::renderDeferredLighting()`, `gHazeProgram`,
+`class3/deferred/hazeF.glsl`): `screen = screen * atten.r +
+srgb_to_linear(2 * additive) * sky_hdr_scale`, skipped for depth 1 (sky) and
+below water when the camera is under water. `additive` from
+`calcAtmosphericVars()` (`class1/windlight/atmosphericsFuncs.glsl`) is
+`[blue_horizon*bw*(cs + amb) + haze_horizon*hw*(cs*haze_glow + amb)] *
+(1 - T_sl)`, `cs` = attenuated sunlight. It is a uniform medium with per-RGB
+extinction `sigma = (blue_density + haze_density) * density_multiplier *
+distance_multiplier * k`, k = max_y / |eye y| when |eye y| > max_y (SL scales
+the whole eye position), so `1 - T_sl = 1 - exp(-sigma * len)`.
+
+Method (exact w.r.t. SL's model):
+- `sExactAccum` is RGBA32F. GBA = shadowed transmittance-weighted length in
+  SL's medium per channel, same light-volume crossings (telescoping),
+  unfaded, clamped to the scene depth only.
+- Shadowed share of SL in-scatter: `f = sigma * G_shadowed / (1 - T_sl)`.
+- `asVolumetricExactResolveF.glsl` recomputes `additive` and its sun part
+  (every term with `cs`) with a local copy of `calcAtmosphericVars()`
+  (must stay in sync with upstream), then
+  `removed = haze(additive) - haze(additive - f * sun_part)` with `haze()` =
+  hazeF.glsl's output incl. its clamp at 10, and writes
+  `scatter - removed * T` (T = composite scene transmittance, which
+  multiplies the screen haze included).
+- Uniforms: our programs are not in `LLViewerShaderMgr::mShaderList`, so
+  environment uniforms never arrive by themselves; `mUniformsDirty = true`
+  before `bindDeferredShader()` applies them on bind, then the haze pass's
+  own overrides are set identically (`sun_up_factor`, `lightnorm` via
+  `ASCelestialTwilight`, `waterPlane`; sun/moon dir and color come from
+  `bindDeferredShader()`).
+- Diagnostic toggle `RenderVolumetricLightingExactHazeModulation`
+  (non-persistent, default on). Debug modes never subtract.
+
+Limits (v1):
+- Within the shadow range (<= 512 m) SL haze is often a small share of the
+  pixel, so the contrast gain depends on the sky's haze/density settings.
+  Large gains need phase 4 (km-scale cloud shadows).
+- Sky pixels untouched (separate sky shader, very long path).
+- Alpha surfaces draw after the haze pass with their own haze; the opaque
+  pixel's removal is applied under them too (by opaque depth), so foliage or
+  hair in front of distant shadowed terrain may darken slightly. Check at
+  runtime.
+
+Runtime result (built, 2026-10-10): plumbing verified with Exact debug
+modes 4-6 (4: shadowed fraction f, 5: removed haze x100, 6: R density
+multiplier x1e4, G distance multiplier, B shadowed SL length / 100 m).
+Debug 4 shows clean exact shafts, debug 6 shows the sky uniforms arriving
+and the GBA accumulation, debug 5 is near black: the removal is ~1e-4
+linear, below one 8-bit step after tonemap, so toggling the diagnostic gives
+pixel-identical screenshots even with haze density raised. Correct, but
+invisible at <= 512 m; kept as the base for phase 4 (km-scale cloud shadows,
+where SL haze is a large share of the pixel).
+
+Runtime checks:
+1. Toggle the diagnostic: shadowed air darker, lit shafts unchanged.
+2. Hazy sky (high haze density / density multiplier): strong dark bands.
+3. No change on sky, none under water, no NaN/black pixels.
+4. Alpha foliage/hair edges against distant shadowed terrain.
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
@@ -424,7 +493,7 @@ New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
    snapshots.
 2. Remove 128 m cap in exact mode, phase function change (implemented,
    see "Phase 2").
-3. C (haze modulation).
+3. C (haze modulation): tried and reverted (see "Phase 3"); folded into 4.
 4. B (cloud shafts).
 5. Perf: tile compaction, profiling vs current Normal/High.
 
