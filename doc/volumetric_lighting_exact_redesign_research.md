@@ -277,6 +277,85 @@ Measured cost (user scene, RTX 3080 Ti, exact opaque + exact atlas): volumetric
 off 44 fps (22.7 ms); stride 1: 30 fps (+10.6 ms); stride 2: 40 fps
 (+2.3 ms). 4x fewer vertices -> ~4.6x less cost: vertex/primitive bound.
 
+Rejected: coarse atlas mesh (stride x4 + min-depth 4x4 footprint). Measured
+26.6 -> 30.4 fps (off 40.8), but min-depth dilation closed foliage gaps and
+visibly darkened alpha bushes; any coarse mesh must grow, shrink or
+point-sample occluders (darker / brighter / popping rays). Removed. Same for
+`RenderVolumetricLightingExactMeshStride` > 1: point-sampled grid slides with
+the per-frame cascade refit, rays jump.
+
+### Exact speedups (tried, measured, REVERTED 2026-10-10)
+
+Everything in this section (flat tiles, GPU tile compaction, slab-near
+clipping, profiling settings) was reverted to the exact atlas commit; the
+measurements below are kept as the record of why. Exact mode stays as the
+expensive, artifact-free option; work moves on to phase 2.
+
+Measured split: atlas pass ~4.7 ms with almost no fragments -> vertex/setup
+cost ~4.7 ms per pass; opaque pass adds ~3.7 ms fragment work.
+
+1. Flat tiles: `asVolumetricExactTileClassifyF.glsl` marks each 8x8-cell
+   tile flat when all 81 vertex depths are within 2 mm (along the light,
+   converted per cascade) of the plane through three corners. The vertex
+   shader draws non-flat tiles fully (part 6, row strips joined by
+   degenerates, even counts keep winding) and flat tiles as one fan from the
+   center vertex through every border vertex (part 7, clockwise -> normal
+   -depth). Fans share all border vertices, so no T-junctions. Each part
+   collapses (zero-area) the tiles it does not own. Flags computed once per
+   frame, shared by opaque and atlas passes. Fallback: full row strips.
+2. Slab-near clipping: crossings with t < a contribute exactly 0, so
+   `gl_ClipDistance[0] = -z - slab_near` clips them (GL_CLIP_DISTANCE0).
+   Clip cracks lie on that plane, where the contribution is 0.
+Index-buffer vertex reuse still deferred (small-batch reuse on modern GPUs).
+
+Result (built): no gain (exact 27.8 fps, raymarch Ultra 38.9, off 39.4).
+Suspected cause: collapsing does not skip vertex shading. Every tile runs
+both parts (158 + 34 vertices vs ~128 per tile before), so vertex
+invocations rose ~50% and only flat tiles' rasterization was saved. A real
+gain needs compaction (draw only the tiles each part owns). To verify first:
+`RenderVolumetricLightingExactProfile` logs per-stage GPU time and flat-tile
+share per cascade; `RenderVolumetricLightingExactTiles` = false A/Bs the
+full mesh.
+
+Profile (RTX 3080 Ti, 4 cascades of 3456x1344, 72576 tiles each): flat
+72-93%. Tiles on 18.9 ms (volumes 12.4, atlas volumes 6.2, classify 0.26);
+tiles off 17.0 ms (11.5 / 5.4). Confirms the collapse cost.
+
+### GPU tile compaction (implemented, unbuilt)
+
+Per cascade, no compute shaders: classify into level 0 of an RG32UI count
+pyramid (full, flat), five 4x4 reductions to a 1x1 top
+(`asVolumetricExactTileReduceF.glsl`), then a list pass
+(`asVolumetricExactTileListF.glsl`, HistoPyramid traversal) writes entry k =
+k-th full tile (.xy) and k-th flat tile (.zw) into an RGBA16UI list. The top
+counts go by glReadPixels (RED/GREEN_INTEGER) into a pixel pack buffer that
+holds two DrawArraysIndirectCommands per cascade; parts 6/7 draw with
+glDrawArraysIndirect and read their tile from the list (no CPU sync, no
+collapsed instances). Up to 1024 tiles per axis, else full mesh.
+`scripts/as_gl41_tile_compaction_check.c` runs the real reduce/list shaders on
+macOS: all pass on Apple M4 (4.1 Metal - 90.5): exact lists, integer
+readback into the pack buffer, indirect draw with VS list fetch.
+
+Result (built, correct counts): tiles on 21.9 ms (lists 3.1, volumes 13.8,
+atlas volumes 4.9); off 20.1 ms (14.1 / 6.0). ~2.4x fewer vertices barely
+moved the mesh passes: they are NOT vertex bound (earlier stride inference
+conflated vertex count with triangle size). Tiles now default off. Profile
+now also logs fragments (GL_SAMPLES_PASSED) and primitives
+(GL_PRIMITIVES_GENERATED) per mesh pass plus target sizes, to measure
+overdraw before the next change.
+
+Measured (tiles off, 3440x1328, 4 cascades 3456x1344): volumes 11.9 ms =
+229.6 M fragments (50 layers per pixel) + 37.2 M primitives; atlas volumes
+5.5 ms = 3.6 M fragments (same 50 layers at 430x166) + the same 37.2 M
+primitives. So the atlas pass is triangle-setup bound (~6.8 G prim/s) and
+the opaque pass adds ~6.4 ms of fill. Both are hardware throughput limits
+of the method at this shadow resolution, not vertex shading. Most layers
+are crossings behind the visible scene (no depth test: rays run through the
+whole cascade volume) and cancel in pairs. Cutting them exactly needs an
+inside-volume test at the clip point, which disagrees with the rasterizer
+at ties on caster surfaces (seam sparkles). Note: raymarch fps comparisons
+may be CPU-masked (Ultra 38.9 vs off 39.4 fps); its GPU time is unmeasured.
+
 `renderExactAtlas()` replaces the sampled atlas in Exact mode (sampled one
 stays as fallback and for Raymarch mode). Pass 1: the same light-volume mesh
 (shared `drawExactVolumes()` helper) rasterized at atlas tile resolution
