@@ -73,6 +73,13 @@ public:
     // No-ops internally when !isEnabled() or during cube snapshots.
     static void renderPass(LLPipeline& pipeline, LLRenderTarget& screen);
 
+    // Exact mode cloud shadows. Call from LLPipeline::renderDeferredLighting()
+    // right after the sun shadow pass (light_target flushed, not bound):
+    // bakes this frame's cloud shadow map and multiplies the sun shadow
+    // channel (r) of light_target by the cloud transmittance, so a cloud
+    // shadow is exactly a sun shadow. No-op otherwise.
+    static void renderCloudShadows(LLPipeline& pipeline, LLRenderTarget& light_target);
+
     // Bind the cumulative depth atlas used by transparent material shaders.
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
@@ -127,8 +134,18 @@ private:
     // resolves them into sTransparencyAtlas with the same layout and meaning
     // as the sampled renderTransparencyAtlas(). No dither.
     static bool renderExactAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
+    // Exact mode clouds: updates the lazy cloud anchor and bakes the cloud
+    // shadow map (sphere model, see asVolumetricCloudShadowF.glsl) for the
+    // active light. Returns false (no clouds this frame) when SL draws no
+    // clouds or the shader is unavailable.
+    static bool renderCloudShadow(LLPipeline& pipeline, bool sun_source);
+    // Binds this frame's cloud shadow map on `channel` and sets the
+    // asVolumetricCloudUtilF.glsl uniforms of the bound `program`; returns
+    // false (as_cloud_enabled = 0) when there are no clouds this frame.
+    static bool applyCloudUniforms(LLGLSLShader& program, S32 channel);
     // Step 2: converts sExactAccum into scatter in the currently bound
-    // sVolumetricTarget (same brightness formula as the raymarch).
+    // sVolumetricTarget (same brightness formula as the raymarch), dimmed
+    // under clouds, plus the cloud rays of the medium beyond the exact range.
     static void resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode);
     static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
@@ -137,6 +154,7 @@ private:
     static bool sSupported;
     static bool sShadersLoaded;
     static bool sExactShadersLoaded;
+    static bool sCloudShadowLoaded;
 
     static LLRenderTarget sVolumetricTarget;
 

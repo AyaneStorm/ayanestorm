@@ -191,6 +191,10 @@ float asVolumetricReflectionProtection(vec3 view_direction,
 }
 // </AS:Chanayane>
 
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
+
 uniform int classic_mode;
 uniform vec3 lightDir;
 uniform vec3 specular;
@@ -353,7 +357,10 @@ void main()
     float water_mask = texture(exclusionTex, distort).r;
 
 #ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, distort);
+    // <AS:Chanayane> Cloud shadows.
+    // shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, distort);
+    shadow = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, distort), pos.xyz);
+    // </AS:Chanayane>
 #endif
 
     vec3 sunlit_linear = sunlit;

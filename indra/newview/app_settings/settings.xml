@@ -13745,6 +13745,45 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>ASRenderVolumetricLightingCloudRayDensityKm</key>
+    <map>
+      <key>Comment</key>
+      <string>Exact volumetric mode: scattering density per kilometre of the thin far air beyond the light shaft range, lit only through the cloud shadows (cloud light rays). Clear air is about 0.1-0.5; 0 disables cloud rays.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>0.2</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASRenderVolumetricLightingCloudThickness</key>
+    <map>
+      <key>Comment</key>
+      <string>Exact volumetric mode: optical thickness of a full overcast for cloud shadows (0 = no cloud shadow, higher = darker). The sunlight still coming through a cloud is e^(-thickness x Cloud Coverage), so thin broken clouds let more through. This light comes from the whole cloud: it ignores sun shadows (they vanish under clouds) but is reduced by ambient occlusion (enclosed places stay dark).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>6.9</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
+    <key>ASRenderVolumetricLightingCloudRayStrength</key>
+    <map>
+      <key>Comment</key>
+      <string>Exact volumetric mode: brightness multiplier of the cloud light rays (far air beyond the light shaft range). 1 is physical single scattering, which is faint against SL's bright sky.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>1.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
     <key>RenderVolumetricLightingAsymmetry</key>
     <map>
       <key>Comment</key>

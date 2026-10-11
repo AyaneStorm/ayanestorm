@@ -245,6 +245,14 @@ bool LLShaderMgr::attachShaderFeatures(LLGLSLShader * shader)
         {
             return false;
         }
+        // <AS:Chanayane> Cloud shadows (asCloudSunShadow()) for the shaders
+        // that sample the sun shadow themselves; dropped by the linker when
+        // unused.
+        if (!shader->attachFragmentObject("deferred/asCloudShadowUtilF.glsl"))
+        {
+            return false;
+        }
+        // </AS:Chanayane>
     }
 
     if (features->hasReflectionProbes)

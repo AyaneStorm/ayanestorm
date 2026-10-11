@@ -9894,6 +9894,11 @@ void LLPipeline::renderDeferredLighting()
                 unbindDeferredShader(sun_shader);
             }
             deferred_light_target->flush();
+
+            // <AS:Chanayane> Cloud shadows: multiply the sun shadow channel
+            // by the cloud transmittance (no-op unless Exact volumetric mode).
+            ASVolumetricLighting::renderCloudShadows(*this, *deferred_light_target);
+            // </AS:Chanayane>
         }
 
         if (RenderDeferredSSAO && !gCubeSnapshot)

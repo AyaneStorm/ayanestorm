@@ -986,6 +986,9 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/gbufferUtil.glsl",                    1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/globalF.glsl",                          1));
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/shadowUtil.glsl",                      1) );
+    // <AS:Chanayane> Cloud shadows, attached with shadowUtil (hasShadows).
+    index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/asCloudShadowUtilF.glsl",              1) );
+    // </AS:Chanayane>
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/aoUtil.glsl",                          1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/pbrterrainUtilF.glsl",                 1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/tonemapUtilF.glsl",                    1) );

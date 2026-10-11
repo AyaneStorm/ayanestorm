@@ -153,6 +153,10 @@ float asVolumetricTransmittance(vec3 view_position)
 }
 // </AS:Chanayane>
 
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
+
 void waterClip(vec3 pos);
 
 vec3 srgb_to_linear(vec3 c);
@@ -347,7 +351,8 @@ void main()
 //     shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
 // #endif
 #ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    // shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    shadow = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, frag), pos.xyz);
 #endif
 // </AS:Chanayane>
 

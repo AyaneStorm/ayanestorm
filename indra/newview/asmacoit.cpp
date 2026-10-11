@@ -356,14 +356,15 @@ void indexCapturePrograms()
         sCapturePrograms.push_back(entry);
     });
 
-    // Linked samplers occupy units 0..channels-1, and the volumetric atlas is
-    // rebound on every shader switch to the first unit after them
-    // (ASVolumetricLighting::bindTransparencyAtlas), so the last unit is free
-    // in every program only when channels + 1 stays below the limit. With 16
-    // units (macOS), a 15-channel material program would otherwise put the
-    // atlas on the shared unit and every later draw would sample it as state.
+    // Linked samplers occupy units 0..channels-1, and the volumetric atlas and
+    // cloud shadow map are rebound on every shader switch to the two units
+    // after them (ASVolumetricLighting::bindTransparencyAtlas), so the last
+    // unit is free in every program only when channels + 2 stays below the
+    // limit. With 16 units (macOS), a 14-channel material program would
+    // otherwise put the cloud map on the shared unit and every later draw
+    // would sample it as state.
     const S32 units = gGLManager.mNumTextureImageUnits;
-    sSharedStateUnit = max_channels + 1 < units ? units - 1 : -1;
+    sSharedStateUnit = max_channels + 2 < units ? units - 1 : -1;
     if (sSharedStateUnit >= 0)
     {
         for (CaptureProgram& entry : sCapturePrograms)

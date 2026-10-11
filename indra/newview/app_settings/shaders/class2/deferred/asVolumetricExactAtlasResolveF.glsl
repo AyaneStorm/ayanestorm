@@ -57,6 +57,11 @@ uniform vec2 as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 
 vec3 getPositionWithNDC(vec3 ndc);
 
+// asVolumetricCloudUtilF.glsl: shafts dim under clouds exactly as in
+// asVolumetricExactResolveF.glsl, so alpha surfaces match opaque ones.
+float meanCloudTransmittance(vec3 ray_dir, float t_end, float sigma, int steps);
+const int SHAFT_CLOUD_STEPS = 8;
+
 const float ATLAS_SLICES = 16.0;
 // Must match asVolumetricCompositeF.glsl / asVolumetricAtlasF.glsl.
 const float MAX_SCENE_OPTICAL_DEPTH = 2.3;
@@ -110,13 +115,15 @@ void main()
     }
     float phase = phaseHG(cos_theta, scatter_asymmetry);
 
-    float scatter = scatter_density * scatter_albedo * phase * lit;
+    float fraction = float(slice + 1) / ATLAS_SLICES;
+    float slice_end = fraction * fraction * as_atlas_range;
+
+    float scatter = scatter_density * scatter_albedo * phase * lit *
+        meanCloudTransmittance(ray_dir, slice_end, scatter_density, SHAFT_CLOUD_STEPS);
 
     // Scene transmittance, as asVolumetricAtlasF.glsl (view-depth metric,
     // smooth optical-depth ceiling) with the composite's Exact sky fade
     // window instead of 100-128 m.
-    float fraction = float(slice + 1) / ATLAS_SLICES;
-    float slice_end = fraction * fraction * as_atlas_range;
     float view_depth = slice_end * abs(ray_dir.z);
     float optical_depth = transmittance_density * view_depth;
     float limited_depth = MAX_SCENE_OPTICAL_DEPTH *

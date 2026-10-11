@@ -143,6 +143,10 @@ float asVolumetricTransmittance(vec3 view_position)
 }
 // </AS:Chanayane>
 
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
+
 uniform vec4 light_position[8];
 uniform vec3 light_direction[8];
 uniform vec4 light_attenuation[8];
@@ -341,7 +345,10 @@ float getShadow(vec3 pos, vec3 norm)
 {
 #ifdef HAS_SUN_SHADOW
     #if (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
-        return sampleDirectionalShadow(pos, norm, vary_texcoord0.xy);
+        // <AS:Chanayane> Cloud shadows.
+        // return sampleDirectionalShadow(pos, norm, vary_texcoord0.xy);
+        return asCloudSunShadow(sampleDirectionalShadow(pos, norm, vary_texcoord0.xy), pos);
+        // </AS:Chanayane>
     #else
         return 1;
     #endif

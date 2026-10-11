@@ -480,6 +480,380 @@ Runtime checks:
 3. No change on sky, none under water, no NaN/black pixels.
 4. Alpha foliage/hair edges against distant shadowed terrain.
 
+## Phase 4 research: cloud shadows (2026-10-10)
+
+### How SL clouds are drawn
+
+- Geometry: `LLVOWLSky::buildStripsBuffer()` unit dome direction (x0, y0,
+  z0), Y up, times `getDomeRadius()` (fixed `LLSettingsSky::DOME_RADIUS` =
+  15000). `LLDrawPoolWLSky::renderDome()`: translate to camera, rotate 120
+  deg about (1,1,1) (dome (x0, y0, z0) -> agent (east, north, up) =
+  (z0, x0, y0)), scale 0.333 (~5000 m), translate -camHeightLocal in dome Y.
+  So clouds are painted on a camera-centred sphere; opacity is a function of
+  view direction only.
+- UV: `texcoord0 = ((1 - z0)/2, (1 - x0)/2)` = ((1 - east)/2, (1 - north)/2)
+  of the unit direction (planar projection of the hemisphere).
+  `cloudsV.glsl`: x negated, then `(uv - 0.5) / cloud_scale + 0.5`;
+  uv1 (self-shadow) = uv0 + lightnorm.xz * 0.0125; uv2/uv3 = x16 (detail);
+  `altitude_blend_factor = clamp((15000 y0 - camHeight + 50 + 512) / max_y)`
+  (fades only within ~4 deg of the horizon).
+- Opacity `alpha1` (`cloudsF.glsl`, copied unchanged in AyaneStorm's
+  `asHorizonCloudTintF.glsl`): 4 disturbance fetches + 2 density fetches of
+  `cloud_noise_texture` / `_next` mixed by `blend_factor`, scroll
+  `cloud_pos_density1/2.xy`, density `cloud_pos_density1.z`,
+  `cloud_shadow`, `cloud_variance`, two smoothing squarings, times
+  `altitude_blend_factor`. Uniforms set in
+  `LLDrawPoolWLSky::renderSkyCloudsDeferred()`, scroll in
+  `LLSettingsVOSky::applySpecial()` (x flipped).
+
+### Key property: cloud shadow is a 2D map
+
+Model the clouds as that sphere (radius R, ~5000 m). For a point p, the sun
+ray p + uL hits the sphere at one point q, and every point on the same sun
+ray hits the same q. So cloud transmittance c(p) is constant along L: a 2D
+function of p projected on the plane perpendicular to L, exactly a shadow
+map. Bake it once per frame into a small 2D texture (each texel: sphere
+intersection, direction -> SL uv, `alpha1`; transmittance = 1 - alpha1),
+then any 3D lookup is 1 bilinear fetch. Low frequency (km-scale features):
+a few hundred texels square suffice; mipmaps give band-limited samples.
+
+### Which medium shows cloud shafts
+
+Our medium (default density 0.012/m, mean free path ~83 m) dies out within
+~250 m; cloud shadow barely varies over that range, so km-long shafts can
+not appear in it. Cloud shafts live in SL's own haze (sigma ~1e-4/m: 1 - T
+~40% at 5 km) and in the sky colour. So phase 4 is the phase 3 method
+applied to cloud shadow instead of geometry shadow: remove the
+cloud-shadowed share of SL's sun in-scatter, with the shadow integral
+computed by a prefiltered march (N fixed steps over the full view ray, each
+1 fetch of the baked map at a mip matched to the step footprint: band
+limited, no jitter, no history), for terrain pixels (hazeF.glsl model, up to
+scene depth) and sky pixels (sky shader model, its own path length).
+Computed in a cheap pass, not in the light-volume mesh (phase 3 lesson).
+
+Decisions (user, 2026-10-10):
+- Light: the active directional light (sun or moon), same as the shafts.
+- Sphere, not plane: SL paints clouds by view direction (dome moved to the
+  camera every frame), so only a sphere matches the drawn clouds (rays from
+  the visible gaps). A plane with world uv is stable but stretches vs the
+  drawn clouds away from zenith (~40% at 45 deg elevation).
+- Lazy world anchor: sphere centre fixed in world (stable shadows while
+  walking, orbiting, zooming); re-anchored only when the camera is > ~300 m
+  away, sliding smoothly to the camera over a few seconds. Mismatch with the
+  drawn clouds ~ offset / R (300 m / 5 km = 6%). Independent of sims.
+- Our medium under clouds: dim the near-field shafts too, by multiplying
+  each pixel's scatter by the e^(-sigma t)-weighted mean cloud transmittance
+  along its view ray (same march). Not exact (exact needs per-segment
+  products, i.e. extra light-volume channels, phase 3 cost); error only
+  where a cloud-shadow edge lies within our medium's ~250 m.
+### Sky colour model (`class1/deferred/skyV.glsl`, `skyF.glsl`)
+
+Per dome vertex: `rel_pos = dir * 15000 - (0, camHeight, 0) + (0, 50, 0)`,
+scaled to y = max_y above the horizon (32000 below); path length L =
+|rel_pos|; `T = exp(-(blue_density + haze_density) * density_multiplier *
+L)` (no distance_multiplier, unlike terrain haze). Colour = above-cloud
+haze `[blue_horizon*bw*(sun + amb) + haze_horizon*hw*(sun*glow + amb)] *
+(1 - T)`, blended toward the below-cloud colour (sun dimmed by
+cloud_shadow, amb raised) by `1 - T^(1/4)`. Linear in (sunlight, ambient),
+so the sun part = same formula with ambient terms zeroed. `skyF.glsl`:
++ rainbow + halo, x2, clamp [0,5] into the G-buffer (sRGB), clouds then
+alpha-blended over it (`alpha1`), `softenLightF.glsl` (SKIP_ATMOS):
+`srgb_to_linear(gbuffer) * sky_hdr_scale`.
+
+### Implementation plan (Exact mode, not started)
+
+1. Lazy anchor (CPU): world point; when the camera is > 300 m away, slide
+   it to the camera over a few seconds.
+2. Cloud shadow bake: one fullscreen pass into a R16F texture (~1024^2,
+   mipmapped), texel = point on the plane through the anchor perpendicular
+   to the active light L, extent 2R x 2R. Per texel: intersect the sun ray
+   with the sphere (radius R ~5000 m, centre anchor), direction -> SL uv
+   exactly as `cloudsV.glsl`, `alpha1` exactly as `cloudsF.glsl`, store
+   1 - alpha1. Program in SG_SKY (gets cloud_pos_density1, lightnorm),
+   cloud noise textures and blend_factor as `renderSkyCloudsDeferred()`.
+   Skipped when cloud_scale < 0.001 or clouds disabled. Points outside the
+   sphere: no cloud data, lit.
+3. Prefiltered march, importance-spaced: with u = 1 - e^(-sigma t), the
+   e^(-sigma t)-weighted mean of c along [0, t_end] is the plain mean of c
+   over u uniform in [0, 1 - e^(-sigma t_end)]; N fixed midpoints
+   t_i = -ln(1 - u_i) / sigma, each 1 fetch at a mip matched to the
+   spacing. No jitter, no history, band limited.
+4. In `asVolumetricExactResolveF.glsl`:
+   - our scatter *= mean cloud transmittance (our sigma, to the ray end);
+   - terrain pixels: f = shadowed share of SL haze (terrain sigma incl.
+     distance_multiplier and max_y k, to scene depth), remove
+     `haze(A) - haze(A - f * sun_part)` (phase 3 code, kept in the doc);
+   - sky pixels: f with the sky path (sky sigma, length L), remove the
+     sun part of the sky colour through skyF/softenLight's nonlinearity,
+     weighted by (1 - alpha1) of the pixel's own cloud.
+5. Cost estimate: bake ~1024^2 x 6 fetches; per pixel ~16 + 8 fetches,
+   plus 6 on sky pixels: ~1 ms at 3440x1328 (to measure).
+
+### Correction: the dome is not centred on the camera
+
+`LLEnvironment::getCamHeight()` = `getDomeOffset() * getDomeRadius()` =
+0.96 * 15000 = 14400, and `renderDome()` translates the dome by
+-camHeightLocal: the camera sits 0.96 R above the dome centre, so the drawn
+clouds lie on a shallow cap above the viewer (direction from the camera ->
+hit point on that sphere -> unit vector from the centre -> UV and
+altitude_blend). The first build A used a sphere centred on the anchor:
+directions below ~74 deg elevation gave y0 < 0.96, a negative altitude in
+altitude_blend_factor and no cloud (bokt symptom: cloud shadows only with
+the sun at 74 deg). Fixed: physical sphere radius R = CLOUD_CEILING_HEIGHT
+(2000 m) / (1 - 0.96) = 50 km, centre 0.96 R below the anchor; map 2048^2
+over +-25 km (low suns hit the ceiling ~H / tan(elevation) away); anchor
+re-centres at 100 m (mismatch ~ offset / 2000 m). Debug 4 on sky pixels
+shows the baked map seen from the anchor (must reproduce the drawn clouds
+toward the light, grey elsewhere).
+
+### Build A (implemented, unbuilt)
+
+Steps 1, 2 and the near-shaft dimming of step 4.
+- `asVolumetricCloudShadowF.glsl`: bake into `gCloudShadowMap` (R16F
+  1024^2, `TMG_AUTO` mips on flush), program in SG_SKY with
+  `mUniformsDirty` set before bind; noise textures / blend_factor /
+  cloud_variance as `renderSkyCloudsDeferred()`. Skipped (no clouds) with an
+  HDRI sky, clouds render type off, no noise texture, cloud_scale < 0.001.
+- `ASVolumetricLighting::renderCloudShadow()`: lazy anchor in global
+  coordinates (snap > 5 km, slide when > 300 m, time constant 1.5 s, stop
+  within 5 m), dome-space light (`toLightNorm` permutation of the sun/moon
+  direction), basis e1/e2, and `as_cloud_from_view` (view -> map coords and
+  along-light distance / R) from the camera axes and the anchor offset.
+- Resolve: scatter *= importance-spaced mean cloud transmittance (8 steps,
+  our sigma, to the ray end). Debug (Exact): 4 cloud shadow on the scene,
+  5 dimming factor.
+- Not yet: the transparency atlas (alpha surfaces keep undimmed shafts
+  under clouds), haze/sky removal (build B).
+
+Result (bokt after the dome correction): debug 4 sky reproduces the drawn
+clouds, shafts dim under clouds. Alpha foliage stayed bright (atlas not
+dimmed) -> fixed in build B.
+
+### Build B (implemented, unbuilt)
+
+- `asVolumetricCloudUtilF.glsl`: shared cloud lookups/marches, linked into
+  both exact resolves (`applyCloudUniforms()` binds the map on an appended
+  unit for either program).
+- Atlas resolve: shafts * mean cloud transmittance up to each slice end
+  (alpha surfaces now dim like opaque ones).
+- Opaque resolve, cloud rays (`RenderVolumetricLightingExactHazeModulation`,
+  non-persistent, default on): per-channel cloud-shadowed share f of SL's
+  in-scatter (16-step importance march for the mean RGB sigma, each
+  channel reweighted by its exact density ratio), then
+  - terrain: hazeF.glsl model (phase 3 `terrainHaze()`), removed x
+    composite T;
+  - sky: skyV.glsl model replicated for the view direction (dome vertex hit
+    from camPosLocal = (0, getCamHeight(), 0), same max_y / -32000 clamp,
+    sky sigma without distance_multiplier, horizon blend toward the
+    below-cloud colour), SG_SKY light colours (`getSunlightColor() *
+    twilight influence`), output through skyF/softenLight
+    (`srgb_to_linear(clamp(2c, 0, 5)) * sky_hdr_scale`). Rainbow, halo and
+    the clouds drawn over the sky are not modelled (only affect the
+    nonlinearity).
+  - environment uniforms via `mUniformsDirty` + haze pass overrides, as in
+    phase 3.
+- Debug (Exact): 6 shadowed share f, 7 removed x4.
+
+Built result: with a cloud over the sun the whole sky went black (debug 6
+all white) and clouds turned red. Causes: (1) SL's sky path ends at max_y
+(1.6 km), entirely below the 2 km ceiling, so a covered sun shadowed all of
+it; (2) cloud pixels over the sky lost sky light; (3) removal from the
+model, not the pixel. Fixes (unbuilt):
+1. Sky shadowed share over a physical atmosphere: weight e^(-altitude /
+   8 km) along the view ray (= meanCloudTransmittance with sigma = sin(elev)
+   / 8000, path capped at 100 km): only the air below the ceiling (~22%)
+   can be shadowed.
+2. Scaled by the drawn cloud's transmittance at that pixel
+   (`skyCloudTransmittance()`, from the baked map toward the light).
+3. Removed in G-buffer space from the actual pixel (screen bound as
+   `as_scene_color`): delta = f * min(2 * modelled sun part, pixel *
+   modelled sun share), so the sun disc and model mismatch cannot overshoot.
+
+Built result (fixes 1-3): sky correct, but no cloud rays at all. Debug 6
+facing a cloud-covered sun: black around the sun (all drawn cloud, so fix 2
+zeroed it), grey only in sky gaps, no streaks. Fixes (unbuilt):
+4. Cloud pixels: cloudsV.glsl adds its own below-cloud haze in front of each
+   cloud (`oHazeColorBelowCloud = additiveColorBelowCloud * (1 -
+   sqrt(T_sky))`, same dome vertex, half the optical depth). That air is all
+   below the ceiling, which is where crepuscular rays are: its sunlit part
+   is removed with the shadowed share marched from the camera to the cloud
+   layer, weighted by the cloud alpha; the sky part keeps the clear-sky
+   weight. delta = min(2 (f_sky (1 - a) sun_sky + f_below a sun_cloud_haze),
+   pixel * sun share). Debug 6 shows f_sky (1 - a) + f_below a.
+5. Mip selection: the map is constant along the light, so a march step moves
+   on it by step * sin(angle to light), not by step. The old LOD over-blurred
+   by 1 / sin, i.e. most toward the light where the rays are (~6x at 10 deg).
+   `cloudTexelsPerMetre(ray_dir)` now scales by that sine.
+
+Built result (fixes 4-5): ground effect good, but clouds near the sun went
+dark with teal/blue fringes (debug 6 white there: the air in front of them
+fully shadowed). Cause: the per-channel front-haze model ignored the
+cloud's per-channel clamp (cloudsF.glsl clamps colour to 1, the sun glow
+saturates it) and AyaneStorm's horizon cloud tint shader
+(asHorizonCloudTintF.glsl), which redraws the clouds with its own colour;
+`cloud_color` is also SG_SKY only. A red channel modelled far above the
+pixel was removed entirely. Fix (unbuilt): the cloud part is one scale for
+all channels, kept *= 1 - f_below * a * s, with s = luminance of the sunlit
+front-haze share (1 - sqrt(T)) * sun_below_cloud / add_below_cloud: bounded,
+hue-preserving, independent of the cloud shader. Saturation by the glow is
+not modelled (slight over-darkening right next to the sun).
+Also seen (same build, higher sun): the sun disc itself turned grey (the
+glow-sized cap let the removal take most of the disc pixel). Fix (unbuilt):
+no sky/cloud removal inside the disc (`as_disc_sin_cos`); the disc is
+direct light, and a cloud over it is already drawn by SL.
+
+Built result (disc fix): bright hard disc in a muddy brown sky, green ring,
+dark flat horizon; with the setting off SL's soft glow. Causes: (1) under
+cloud, the "disc" is the cloud's saturated glow, so excluding it left a
+hard bright disc; (2) double counting: SL already dims the sunlight below
+the clouds by the coverage (`sunlight * (1 - cloud_shadow)` in cloudsV.glsl
+and the terrain haze), and the removal came on top, strongest at the
+horizon (longest air path below the clouds); (3) the sky part was per
+channel: removing the red/orange glow left green. Fix (unbuilt):
+redistribute instead of remove.
+- Map is RG16F: g = 1 where the plane point is under the cloud layer; the
+  1x1 mip gives the mean transmittance there,
+  mean_t = (r - (1 - g)) / g (`cloudMeanTransmittance()`).
+- Terrain and cloud front haze (SL dims by coverage): sunlit part *
+  litRatio = lit / mean_t, capped at the unshadowed sun 1 / (1 - cloud_shadow).
+- Sky (SL does not dim it): change = shadowed - below_share * (1 - mean_t),
+  below_share = the e^(-kt) weight below the cloud layer (hit distance).
+- Sky and cloud scales are luminance scalars on the pixel (hue kept); the
+  disc only skips the sky part, the cloud part applies over it.
+- Average equals SL; shadowed air darker, gaps brighter (removed < 0).
+- Debug 6: brightness relative to SL (0.5 = unchanged); 7: |change| x4.
+
+Built result (redistribution): sky still darker than SL toward the sun,
+green blob, ground brighter. ABANDONED: SL's sky, clouds and haze are
+painted terms (glow, per-channel clamps, coverage dimming, AyaneStorm's
+horizon cloud tint); every way of shadowing them (remove, cap,
+redistribute) hit another one. Modulating SL's haze/sky/clouds is removed
+entirely (setting `RenderVolumetricLightingExactHazeModulation`, scene
+colour binding, haze/sky replicas, RG map).
+
+### Build C: cloud rays and cloud shadows, our own medium only (unbuilt)
+
+The request is rays and shadows from clouds, not a change of SL's sky.
+1. Cloud rays: our medium continues beyond the exact range, lit only by the
+   cloud shadow map. Its density ramps in over the exact fade
+   [0.75R, R] (complement of the exact medium's fade), extinction e^-sigma t,
+   up to the scene or the cloud layer (max 20 km): `cloudRayLength()`, 16
+   importance-spaced prefiltered samples. scatter = albedo density phase
+   (lit_exact * cloud + far_lit). Added light only. Debug 6: lit share of
+   the far medium.
+2. Cloud shadows on the ground (next): cloud transmittance on SL's sun
+   shadow term, needs the bake before the deferred sun lighting.
+3. Done: all SL haze/sky/cloud modulation removed.
+Known: alpha surfaces only get the near shafts (atlas range).
+
+Built result (build C): sky colours correct again, fps unchanged (~30).
+Debug 6 (frozen clouds) shows cloud-shaped lit/shadowed air, but debug 1
+shows no far contribution: the far medium used the near density (0.012/m,
+fog-like), so e^(-sigma t) absorbed everything past ~80 m beyond the
+shaft range (far share ~3% of the glow), and debug 6 only measured that
+near air. e^(-sigma t) from the camera could also underflow (sigma t0 >
+~87) into NaN (black). Fix (unbuilt):
+- far medium has its own density `RenderVolumetricLightingCloudRayDensity`
+  (default 0.0002/m, clear air), scatter = albedo phase (density lit cloud
+  + cloud_ray_density far_lit);
+- not dimmed by the near medium; extinction e^(-sigma (t - t0)) relative
+  to its start (no underflow).
+Expected brightness: optical depth 0.0002 x 14 km (horizon) ~ 2.8, ~0.4
+overhead (2 km): comparable to the near shafts.
+
+Built result: debug 6 and debug 1 show real crepuscular rays fanning from
+the sun (frozen clouds). Debug 0 barely changes, even with a denser far
+medium: single scattering saturates at albedo * phase * sunlight (1 -
+e^-tau is already ~0.9 toward the horizon), a few percent of SL's bright
+sunset sky. The Debug Settings field also rounds to 3 decimals (0.0005 ->
+0.001). Fix (unbuilt): density in per-km units
+(`ASRenderVolumetricLightingCloudRayDensityKm`, default 0.2) and an artistic
+multiplier `ASRenderVolumetricLightingCloudRayStrength` (default 1 =
+physical) on the far scatter.
+
+Built result: user does not want SL's sky touched again (additive only).
+With Strength raised, debug 0 shows no beams, only the clouds around the
+sun getting brighter: the far medium used the near shafts' strongly
+forward phase (user asymmetry), so its light piled up around the sun,
+where the clouds are, and the streaks away from it stayed dim (debug 1:
+brightest top centre). Fix (unbuilt): far medium uses its own broad phase
+(HG g = 0.2, `CLOUD_RAY_ASYMMETRY`), near shafts unchanged.
+
+Built result: no visible cloud beams in debug 0 (only foliage/avatar
+shafts). Cloud rays left as they are; moving on to cloud shadows.
+
+### Cloud shadows on the scene (unbuilt)
+
+Requirement: a cloud shadow must look exactly like a sun shadow, so the
+normal shadows disappear inside it.
+- `ASVolumetricLighting::renderCloudShadows()`, called from
+  `LLPipeline::renderDeferredLighting()` right after the sun shadow pass
+  (sunLightF / sunLightSSAOF into `mRT->deferredLight`): bakes the cloud
+  map (moved here from renderPass, so it exists before the lighting), then
+  `asVolumetricCloudApplyF.glsl` multiplies `deferredLight.r` (the sun
+  shadow softenLight reads, 1 = lit) by the cloud transmittance (blend
+  ZERO, SRC_COLOR; output (T, 1, 1, 1)). Same darkening as a sun shadow by
+  construction; also beyond the cascades (r = 1 there). Map mip 1 (~50 m
+  soft edge). No LL shader edits.
+- Exact mode only (the bake lives there).
+Built result: works on the opaque scene; alpha-blended surfaces (dress
+lace, hair) stay lit. Fix (unbuilt): the surfaces that sample the sun
+shadow themselves (alphaF, pbralphaF, materialF blend, class3 waterF)
+multiply sampleDirectionalShadow() by an inline `asCloudShadow()` (same
+lookup as cloudTransmittance(), mip 1). bindTransparencyAtlas() binds the
+map on the unit after the atlas (applyCloudUniforms(); otherwise the
+sampler points at the atlas unit, Apple shared-unit rule; never in cube
+snapshots/HUDs); asmacoit.cpp keeps channels + 2 below the unit limit for
+its shared state unit. Not covered: GLTF alpha (pbrmetallicroughnessF).
+
+Realism (user): clouds never block the sun completely; the light they
+diffuse comes from the whole cloud and casts no shadows. Sun shadow under
+clouds = shadow * T + d * (1 - T), d = `ASRenderVolumetricLightingCloudShadowLight`
+(default 0.1, tuned by the user in an overcast view; 0.3 was too bright):
+under a full cloud, geometry shadows vanish and the ground keeps 10% of
+the sun. The setting is the share through a full overcast; the deck
+thickens with coverage (Beer-Lambert), d = setting ^ cloud_shadow
+(coverage 0.5 -> ~0.32, 0.3 -> ~0.5), computed in applyCloudUniforms().
+
+Refactor (user): no duplicated AS code in SL shaders. The lookup lives in
+one AS file, `class1/deferred/asCloudShadowUtilF.glsl` (uniforms,
+asCloudTransmittance(), asCloudSunShadow()), registered with the basic
+shaders (llviewershadermgr.cpp) and attached next to shadowUtil.glsl for
+every hasShadows program (LLShaderMgr::attachShaderFeatures(); unused code
+and uniforms are dropped at link). alphaF / pbralphaF / materialF / waterF
+keep only a prototype and the tagged one-line call.
+
+Built result: trees (self-shadowed canopies) got lighter under a cloud and
+darker when it left. Cause: shadow * T + d * (1 - T) relit what the sun
+shadow had darkened (directional, shadow-free light). Fix (unbuilt): a
+cloud only dims the sun, sun term = shadow * mix(d, 1, T): shaded parts
+never brighten; under a thick cloud the sun is down to d (0.1), so
+geometry shadows almost vanish. Opaque apply pass back to a multiply
+(ZERO, SRC_COLOR, r only).
+
+User: shadows on the ground no longer disappear (10% of SL's bright sun
+still draws them). Physical model instead: the light through a cloud comes
+from the whole cloud, like sky light: it ignores the sun shadow but is
+occluded like ambient light. Opaque: r = shadow * T + d * (1 - T) * ao
+(blend ONE, SRC_ALPHA, r only), ao = GTAO visibility when effective
+(ASAmbientOcclusion::bindResult(), .a with bent normals, as softenLight),
+else legacy SSAO recomputed in the pass (hasAmbientOcclusion / aoUtil; the
+sun pass's own copy is in the target's g), else 1. Shadows vanish on open
+ground; canopy interiors, eaves, corners stay dark. Forward surfaces
+(alpha, water) have no AO: mix(d, shadow, T).
+Tuned by the user with this model: setting 0.001 (d = 0.001 ^ coverage:
+~0.03 at coverage 0.5, ~0.13 at 0.3); default changed to 0.001.
+That is the input's 3-decimal limit, so the setting became an optical
+thickness: `ASRenderVolumetricLightingCloudThickness` (default 6.9 =
+-ln 0.001), d = e^(-thickness * coverage); replaces
+ASRenderVolumetricLightingCloudShadowLight. Opaque: apply pass blends ONE, SRC_ALPHA into r only
+(output (d (1 - T), 0, 0, T)); alpha/water shaders `asCloudSunShadow()`.
+
+Runtime checks: debug 4 on open ground shows cloud-shadow patches that
+drift with the cloud scroll and line up with the gaps seen toward the
+light; shadows stay still while walking/orbiting; no clouds -> all white;
+fps cost vs build without clouds.
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,

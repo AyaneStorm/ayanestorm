@@ -114,6 +114,10 @@ float asVolumetricTransmittance(vec3 view_position)
 }
 // </AS:Chanayane>
 
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
+
 in vec2 base_color_texcoord;
 in vec2 normal_texcoord;
 in vec2 metallic_roughness_texcoord;
@@ -240,7 +244,10 @@ void main()
     vec2 frag = vary_fragcoord.xy/vary_fragcoord.z*0.5+0.5;
 
 #ifdef HAS_SUN_SHADOW
-    scol = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    // <AS:Chanayane> Cloud shadows.
+    // scol = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    scol = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, frag), pos.xyz);
+    // </AS:Chanayane>
 #endif
 
     vec3 orm = texture(specularMap, metallic_roughness_texcoord.xy).rgb; //orm is packed into "emissiveRect" to keep the data in linear color space

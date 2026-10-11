@@ -27,6 +27,7 @@
 
 #include "asvolumetriclighting.h"
 
+#include "asambientocclusion.h"
 #include "asbackgroundisolate.h"
 #include "llcontrol.h"
 #include "lluictrl.h"
@@ -41,6 +42,10 @@
 #include "llshadermgr.h"
 #include "lluiimage.h"
 #include "lldrawable.h"
+#include "llagent.h"
+#include "llframetimer.h"
+#include "llsky.h"
+#include "llvosky.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llviewertexture.h"
@@ -61,6 +66,7 @@
 
 extern bool gCubeSnapshot;
 extern U32 gFrameCount;
+extern LLPointer<LLImageGL> gEXRImage;
 
 namespace
 {
@@ -72,6 +78,35 @@ LLGLSLShader gASVolumetricExactVolumeProgram;
 LLGLSLShader gASVolumetricExactResolveProgram;
 LLGLSLShader gASVolumetricExactAtlasVolumeProgram;
 LLGLSLShader gASVolumetricExactAtlasResolveProgram;
+LLGLSLShader gASVolumetricCloudShadowProgram;
+LLGLSLShader gASVolumetricCloudApplyProgram;
+
+// Cloud shadows (Exact mode, phase 4). SL paints the clouds on its sky dome,
+// a sphere whose centre lies getDomeOffset() (0.96) radii below the camera
+// (LLEnvironment::getCamHeight()), so they form a shallow cap above the
+// viewer; drawing only uses directions, so the dome has no physical size.
+// Here the same sphere is scaled so the cap top lies CLOUD_CEILING_HEIGHT
+// above a lazy world anchor: fixed in the world so the shadows stay still
+// while the camera moves, re-centred on the camera (with a smooth slide)
+// only when it gets CLOUD_ANCHOR_MAX_OFFSET away. The mismatch with the
+// drawn, camera-attached clouds is about offset / ceiling height.
+constexpr F32 CLOUD_CEILING_HEIGHT = 2000.f;
+constexpr F32 CLOUD_MAP_EXTENT = 25000.f;        // map half extent: low suns reach far
+constexpr F64 CLOUD_ANCHOR_MAX_OFFSET = 100.0;   // <= 5% mismatch
+constexpr F64 CLOUD_ANCHOR_SNAP_OFFSET = 5000.0; // teleports: no slide
+constexpr F32 CLOUD_ANCHOR_SLIDE_SECONDS = 1.5f; // exponential time constant
+constexpr U32 CLOUD_SHADOW_MAP_SIZE = 2048;
+LLRenderTarget gCloudShadowMap;
+LLVector3d gCloudAnchorGlobal;
+bool gCloudAnchorValid = false;
+bool gCloudAnchorSliding = false;
+bool gCloudShadowReady = false;   // gCloudShadowMap valid for this frame
+glm::mat4 gCloudFromView(1.f);    // view -> anchor-relative dome position
+LLVector3 gCloudE1;               // map plane basis and light (dome space)
+LLVector3 gCloudE2;
+LLVector3 gCloudLight;
+F32 gCloudRadius = 1.f;           // sphere radius and centre depth below the anchor
+F32 gCloudCentreDepth = 0.f;
 
 // Raymarch ray range and composite sky fade (MAX_MARCH_DISTANCE in
 // asVolumetricLightF.glsl / asVolumetricAtlasF.glsl).
@@ -325,6 +360,7 @@ bool ASVolumetricLighting::sSupportChecked = false;
 bool ASVolumetricLighting::sSupported = false;
 bool ASVolumetricLighting::sShadersLoaded = false;
 bool ASVolumetricLighting::sExactShadersLoaded = false;
+bool ASVolumetricLighting::sCloudShadowLoaded = false;
 LLRenderTarget ASVolumetricLighting::sVolumetricTarget;
 LLRenderTarget ASVolumetricLighting::sExactAccum;
 LLRenderTarget ASVolumetricLighting::sExactAtlasAccum;
@@ -480,6 +516,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
             gASVolumetricExactResolveProgram.clearPermutations();
             gASVolumetricExactResolveProgram.mShaderFiles.clear();
             gASVolumetricExactResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricExactResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricCloudUtilF.glsl", GL_FRAGMENT_SHADER));
             gASVolumetricExactResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactResolveF.glsl", GL_FRAGMENT_SHADER));
             gASVolumetricExactResolveProgram.mShaderLevel = shader_level;
             exact_success = gASVolumetricExactResolveProgram.createShader();
@@ -506,6 +543,7 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
             gASVolumetricExactAtlasResolveProgram.clearPermutations();
             gASVolumetricExactAtlasResolveProgram.mShaderFiles.clear();
             gASVolumetricExactAtlasResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricExactAtlasResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricCloudUtilF.glsl", GL_FRAGMENT_SHADER));
             gASVolumetricExactAtlasResolveProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricExactAtlasResolveF.glsl", GL_FRAGMENT_SHADER));
             gASVolumetricExactAtlasResolveProgram.mShaderLevel = shader_level;
             exact_success = gASVolumetricExactAtlasResolveProgram.createShader();
@@ -520,6 +558,46 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
             gASVolumetricExactAtlasResolveProgram.unload();
         }
         sExactShadersLoaded = exact_success;
+
+        // Optional cloud shadow bake (Exact mode clouds). SG_SKY: receives the
+        // sky-group environment uniforms the cloud pass gets
+        // (cloud_pos_density1 with scroll, lightnorm).
+        sCloudShadowLoaded = false;
+        if (exact_success)
+        {
+            gASVolumetricCloudShadowProgram.unload();
+            gASVolumetricCloudShadowProgram.mName = "AS Volumetric Cloud Shadow Shader";
+            gASVolumetricCloudShadowProgram.mFeatures.isDeferred = true;
+            gASVolumetricCloudShadowProgram.mShaderGroup = LLGLSLShader::SG_SKY;
+            gASVolumetricCloudShadowProgram.clearPermutations();
+            gASVolumetricCloudShadowProgram.mShaderFiles.clear();
+            gASVolumetricCloudShadowProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+            gASVolumetricCloudShadowProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricCloudShadowF.glsl", GL_FRAGMENT_SHADER));
+            gASVolumetricCloudShadowProgram.mShaderLevel = shader_level;
+            sCloudShadowLoaded = gASVolumetricCloudShadowProgram.createShader();
+
+            // Cloud shadows on the scene: multiplies the sun shadow channel.
+            if (sCloudShadowLoaded)
+            {
+                gASVolumetricCloudApplyProgram.unload();
+                gASVolumetricCloudApplyProgram.mName = "AS Volumetric Cloud Shadow Apply Shader";
+                gASVolumetricCloudApplyProgram.mFeatures.isDeferred = true;
+                gASVolumetricCloudApplyProgram.mFeatures.hasAmbientOcclusion = true;
+                gASVolumetricCloudApplyProgram.clearPermutations();
+                gASVolumetricCloudApplyProgram.mShaderFiles.clear();
+                gASVolumetricCloudApplyProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
+                gASVolumetricCloudApplyProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricCloudUtilF.glsl", GL_FRAGMENT_SHADER));
+                gASVolumetricCloudApplyProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricCloudApplyF.glsl", GL_FRAGMENT_SHADER));
+                gASVolumetricCloudApplyProgram.mShaderLevel = shader_level;
+                sCloudShadowLoaded = gASVolumetricCloudApplyProgram.createShader();
+            }
+            if (!sCloudShadowLoaded)
+            {
+                LL_WARNS("Volumetric") << "Cloud shadow shaders failed to load; Exact mode runs without clouds" << LL_ENDL;
+                gASVolumetricCloudShadowProgram.unload();
+                gASVolumetricCloudApplyProgram.unload();
+            }
+        }
     }
 
     return true; // failure here must not fail the whole deferred shader load
@@ -535,8 +613,11 @@ void ASVolumetricLighting::unloadShaders()
     gASVolumetricExactResolveProgram.unload();
     gASVolumetricExactAtlasVolumeProgram.unload();
     gASVolumetricExactAtlasResolveProgram.unload();
+    gASVolumetricCloudShadowProgram.unload();
+    gASVolumetricCloudApplyProgram.unload();
     sShadersLoaded = false;
     sExactShadersLoaded = false;
+    sCloudShadowLoaded = false;
 }
 
 void ASVolumetricLighting::allocateResources(U32 width, U32 height)
@@ -625,6 +706,8 @@ void ASVolumetricLighting::releaseResources()
     sTransparencyAtlas.release();
     sExactAccum.release();
     sExactAtlasAccum.release();
+    gCloudShadowMap.release();
+    gCloudShadowReady = false;
     if (sExactShadowSampler != 0)
     {
         glDeleteSamplers(1, &sExactShadowSampler);
@@ -723,6 +806,28 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
         // evaluates bounded scene extinction itself instead of consuming the
         // atlas alpha's sky fade. Other consumers optimize this uniform out.
         shader.uniform1f(LLStaticHashedString("asVolumetricSceneDensity"), sFrameSceneDensity);
+    }
+
+    // Cloud shadows for the surfaces that sample the sun shadow themselves
+    // (alpha, PBR alpha, alpha materials, water): asCloudShadow() in those
+    // shaders. On the unit after the atlas (asmacoit.cpp keeps it free).
+    // Without a unit, or with no clouds, the sampler still points at the
+    // atlas unit (also a sampler2D) for Apple's shared-unit rule.
+    static LLStaticHashedString cloud_sampler("as_cloud_map");
+    static LLStaticHashedString cloud_enabled("as_cloud_enabled");
+    if (shader.getUniformLocation(cloud_sampler) > -1)
+    {
+        const GLint cloud_channel = channel + 1;
+        const bool cloud_unit = channel >= 0 && cloud_channel < gGLManager.mNumTextureImageUnits;
+        const bool cloud_consumer = !gCubeSnapshot && !LLPipeline::sRenderingHUDs;
+        if (!(cloud_unit && cloud_consumer && applyCloudUniforms(shader, cloud_channel)))
+        {
+            if (has_unit)
+            {
+                shader.uniform1i(cloud_sampler, channel);
+            }
+            shader.uniform1i(cloud_enabled, 0);
+        }
     }
 }
 
@@ -1421,6 +1526,8 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
                                                       sExactAtlasAccum.getTexture(i));
         gGL.getTexUnit(first_channel + i)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
+    // Same cloud dimming of the shafts as the opaque resolve.
+    const bool clouds = applyCloudUniforms(program, first_channel + 4);
 
     const bool sun_source = isVolumetricSunSource();
     program.uniform2i(LLStaticHashedString("as_tile_size"), (S32)tile_width, (S32)tile_height);
@@ -1444,10 +1551,268 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
     {
         gGL.getTexUnit(first_channel + i)->unbind(LLTexUnit::TT_TEXTURE);
     }
+    if (clouds)
+    {
+        gGL.getTexUnit(first_channel + 4)->unbind(LLTexUnit::TT_TEXTURE);
+    }
     pipeline.unbindDeferredShader(program);
     sTransparencyAtlas.flush();
     sAtlasRange = (F32)range;
     return true;
+}
+
+bool ASVolumetricLighting::renderCloudShadow(LLPipeline& pipeline, bool sun_source)
+{
+    gCloudShadowReady = false;
+    if (!sCloudShadowLoaded)
+    {
+        return false;
+    }
+
+    // Same conditions under which LLDrawPoolWLSky::renderSkyCloudsDeferred()
+    // draws clouds (none with an HDRI sky, see use_hdri_sky() there).
+    LLEnvironment& environment = LLEnvironment::instance();
+    const LLSettingsSky::ptr_t sky = environment.getCurrentSky();
+    static LLCachedControl<F32> hdri_split(gSavedSettings, "RenderHDRISplitScreen", 1.f);
+    if (!sky || (gEXRImage.notNull() && hdri_split > 0.f) ||
+        !pipeline.canUseWindLightShaders() ||
+        !pipeline.hasRenderType(LLPipeline::RENDER_TYPE_CLOUDS) ||
+        !gSky.mVOSkyp || !gSky.mVOSkyp->getCloudNoiseTex() ||
+        sky->getCloudScale() < 0.001f)
+    {
+        return false;
+    }
+
+    // Lazy world anchor (global coordinates, so region changes do not move it).
+    const LLVector3 camera_agent = LLViewerCamera::getInstance()->getOrigin();
+    const LLVector3d camera_global = gAgent.getPosGlobalFromAgent(camera_agent);
+    if (!gCloudAnchorValid ||
+        (camera_global - gCloudAnchorGlobal).magVec() > CLOUD_ANCHOR_SNAP_OFFSET)
+    {
+        gCloudAnchorGlobal = camera_global;
+        gCloudAnchorValid = true;
+        gCloudAnchorSliding = false;
+    }
+    else
+    {
+        if ((camera_global - gCloudAnchorGlobal).magVec() > CLOUD_ANCHOR_MAX_OFFSET)
+        {
+            gCloudAnchorSliding = true;
+        }
+        if (gCloudAnchorSliding)
+        {
+            const F64 step = 1.0 - exp(-(F64)LLFrameTimer::getFrameDeltaTimeF32() /
+                                       (F64)CLOUD_ANCHOR_SLIDE_SECONDS);
+            gCloudAnchorGlobal += (camera_global - gCloudAnchorGlobal) * step;
+            gCloudAnchorSliding = (camera_global - gCloudAnchorGlobal).magVec() > 5.0;
+        }
+    }
+
+    // Sky dome space (LLEnvironment::toLightNorm(): agent (x, y, z) ->
+    // (y, z, x), Y up), the space of lightnorm and the dome UVs.
+    auto to_dome = [](const LLVector3& v) { return LLVector3(v.mV[VY], v.mV[VZ], v.mV[VX]); };
+    LLVector3 light = to_dome(sun_source ? environment.getSunDirection()
+                                         : environment.getMoonDirection());
+    light.normVec();
+    const LLVector3 helper = fabsf(light.mV[VY]) < 0.9f ? LLVector3(0.f, 1.f, 0.f)
+                                                        : LLVector3(1.f, 0.f, 0.f);
+    LLVector3 e1 = helper % light;
+    e1.normVec();
+    const LLVector3 e2 = light % e1;
+
+    if (!gCloudShadowMap.isComplete() &&
+        !gCloudShadowMap.allocate(CLOUD_SHADOW_MAP_SIZE, CLOUD_SHADOW_MAP_SIZE, GL_R16F, false,
+                                  LLTexUnit::TT_TEXTURE, LLTexUnit::TMG_AUTO))
+    {
+        return false;
+    }
+
+    LL_PROFILE_GPU_ZONE("AS volumetric cloud shadow");
+    LLGLSLShader& program = gASVolumetricCloudShadowProgram;
+    LLGLDisable blend(GL_BLEND);
+    gCloudShadowMap.bindTarget();
+
+    // Not in LLViewerShaderMgr's shader list: request the environment
+    // uniforms (SG_ANY + SG_SKY) on this bind.
+    program.mUniformsDirty = true;
+    program.bind();
+
+    // Noise textures and blend factor exactly as renderSkyCloudsDeferred().
+    LLPointer<LLViewerTexture> cloud_noise = gSky.mVOSkyp->getCloudNoiseTex();
+    LLPointer<LLViewerTexture> cloud_noise_next = gSky.mVOSkyp->getCloudNoiseTexNext();
+    F32 blend_factor = sky->getCloudScrollRate().isExactlyZero() ? 0.f : (F32)sky->getBlendFactor();
+    if (cloud_noise_next.isNull() || cloud_noise_next == cloud_noise)
+    {
+        program.bindTexture(LLShaderMgr::CLOUD_NOISE_MAP, cloud_noise, LLTexUnit::TT_TEXTURE);
+        program.bindTexture(LLShaderMgr::CLOUD_NOISE_MAP_NEXT, cloud_noise, LLTexUnit::TT_TEXTURE);
+        blend_factor = 0.f;
+    }
+    else
+    {
+        program.bindTexture(LLShaderMgr::CLOUD_NOISE_MAP, cloud_noise, LLTexUnit::TT_TEXTURE);
+        program.bindTexture(LLShaderMgr::CLOUD_NOISE_MAP_NEXT, cloud_noise_next, LLTexUnit::TT_TEXTURE);
+    }
+    program.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
+    program.uniform1f(LLShaderMgr::CLOUD_VARIANCE, (F32)sky->getCloudVariance());
+
+    // Dome sphere at physical scale: cap top CLOUD_CEILING_HEIGHT above the
+    // anchor, centre dome_offset radii below it.
+    const F32 dome_offset = llclamp(sky->getDomeOffset(), 0.f, 0.999f);
+    gCloudRadius = CLOUD_CEILING_HEIGHT / (1.f - dome_offset);
+    gCloudCentreDepth = gCloudRadius * dome_offset;
+    gCloudE1 = e1;
+    gCloudE2 = e2;
+    gCloudLight = light;
+
+    program.uniform3fv(LLStaticHashedString("as_cloud_e1"), 1, e1.mV);
+    program.uniform3fv(LLStaticHashedString("as_cloud_e2"), 1, e2.mV);
+    program.uniform3fv(LLStaticHashedString("as_cloud_light"), 1, light.mV);
+    program.uniform1f(LLStaticHashedString("as_cloud_radius"), gCloudRadius);
+    program.uniform1f(LLStaticHashedString("as_cloud_centre_depth"), gCloudCentreDepth);
+    program.uniform1f(LLStaticHashedString("as_cloud_extent"), CLOUD_MAP_EXTENT);
+    program.uniform1f(LLStaticHashedString("as_cam_height"), environment.getCamHeight());
+
+    pipeline.mScreenTriangleVB->setBuffer();
+    pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+
+    program.unbindTexture(LLShaderMgr::CLOUD_NOISE_MAP);
+    program.unbindTexture(LLShaderMgr::CLOUD_NOISE_MAP_NEXT);
+    program.unbind();
+    gCloudShadowMap.flush(); // TMG_AUTO: builds the mip chain the march samples
+
+    // View position -> anchor-relative dome position. View axes in agent
+    // space: +x = -left, +y = up, +z = -at; their dome images are the
+    // matrix columns, the camera offset from the anchor its translation.
+    const LLViewerCamera* camera = LLViewerCamera::getInstance();
+    const LLVector3 view_axes[3] = { to_dome(-camera->getLeftAxis()),
+                                     to_dome(camera->getUpAxis()),
+                                     to_dome(-camera->getAtAxis()) };
+    const LLVector3 offset = to_dome(camera_agent - gAgent.getPosAgentFromGlobal(gCloudAnchorGlobal));
+    gCloudFromView = glm::mat4(1.f);
+    for (S32 r = 0; r < 3; ++r)
+    {
+        for (S32 j = 0; j < 3; ++j)
+        {
+            gCloudFromView[j][r] = view_axes[j].mV[r];
+        }
+        gCloudFromView[3][r] = offset.mV[r];
+    }
+
+    gCloudShadowReady = true;
+    return true;
+}
+
+void ASVolumetricLighting::renderCloudShadows(LLPipeline& pipeline, LLRenderTarget& light_target)
+{
+    gCloudShadowReady = false;
+    if (!isEnabled() || !sShadersLoaded || !isExactMode() || gCubeSnapshot ||
+        LLPipeline::sRenderingHUDs)
+    {
+        return;
+    }
+    if (!renderCloudShadow(pipeline, isVolumetricSunSource()))
+    {
+        return;
+    }
+
+    // light_target.r is the sun shadow every lit surface reads (1 = lit):
+    // r = r * T + diffuse * (1 - T) * ao (blend ONE, SRC_ALPHA; the shader
+    // outputs (diffuse * (1 - T) * ao, 0, 0, T)), red channel only. See
+    // asVolumetricCloudApplyF.glsl.
+    LL_PROFILE_GPU_ZONE("AS volumetric cloud shadows");
+    LLGLSLShader& program = gASVolumetricCloudApplyProgram;
+    LLGLDepthTest depth(GL_FALSE, GL_FALSE);
+    LLGLDisable cull(GL_CULL_FACE);
+    light_target.bindTarget();
+    pipeline.bindDeferredShader(program);
+    program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
+
+    // Ambient occlusion of the through-cloud light, from the same source the
+    // lighting uses: GTAO (bound on the first appended unit) when effective,
+    // else the legacy SSAO (aoUtil.glsl, recomputed here: the sun pass's copy
+    // is in light_target.g, which is being written), else none.
+    S32 ao_source = 0;
+    const bool gtao = ASAmbientOcclusion::bindResult(program);
+    if (gtao)
+    {
+        ao_source = ASAmbientOcclusion::bentNormalsEffective() ? 3 : 2;
+    }
+    else if (LLPipeline::RenderDeferredSSAO)
+    {
+        ao_source = 1;
+    }
+    program.uniform1i(LLStaticHashedString("as_cloud_ao_source"), ao_source);
+
+    const S32 cloud_channel = program.mActiveTextureChannels + 1;
+    if (!gtao && cloud_channel < gGLManager.mNumTextureImageUnits)
+    {
+        // Unused: keep it off unit 0 (Apple shared-unit rule, both sampler2D).
+        program.uniform1i(LLStaticHashedString("gtao_visibility_map"), cloud_channel);
+    }
+    const bool clouds = applyCloudUniforms(program, cloud_channel);
+    if (clouds)
+    {
+        LLGLEnable blend(GL_BLEND);
+        gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA,
+                      LLRender::BF_ZERO, LLRender::BF_ONE);
+        gGL.setColorMask(true, false, false, false);
+        pipeline.mScreenTriangleVB->setBuffer();
+        pipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+        gGL.setColorMask(true, true);
+        gGL.setSceneBlendType(LLRender::BT_ALPHA);
+        gGL.getTexUnit(cloud_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    }
+    if (gtao)
+    {
+        ASAmbientOcclusion::unbindResult(program);
+    }
+    program.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+    pipeline.unbindDeferredShader(program);
+    light_target.flush();
+}
+
+bool ASVolumetricLighting::applyCloudUniforms(LLGLSLShader& program, S32 channel)
+{
+    // Cloud shadow map on its own appended unit (trilinear: the marches pick
+    // the mip matching their sample spacing). See asVolumetricCloudUtilF.glsl.
+    static LLStaticHashedString cloud_sampler("as_cloud_map");
+    const bool has_unit = channel >= 0 && channel < gGLManager.mNumTextureImageUnits;
+    const bool clouds = gCloudShadowReady && has_unit;
+    if (has_unit)
+    {
+        // Set even when unused: Apple's GL rejects draws with two sampler
+        // types on one unit (see bindTransparencyAtlas()).
+        program.uniform1i(cloud_sampler, channel);
+    }
+    if (clouds)
+    {
+        gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, gCloudShadowMap.getTexture(0));
+        gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
+        gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        program.uniformMatrix4fv(LLStaticHashedString("as_cloud_from_view"), 1, GL_FALSE,
+                                 glm::value_ptr(gCloudFromView));
+        program.uniform1f(LLStaticHashedString("as_cloud_texels_per_metre"),
+                          (F32)CLOUD_SHADOW_MAP_SIZE / (2.f * CLOUD_MAP_EXTENT));
+        program.uniform3fv(LLStaticHashedString("as_cloud_e1"), 1, gCloudE1.mV);
+        program.uniform3fv(LLStaticHashedString("as_cloud_e2"), 1, gCloudE2.mV);
+        program.uniform3fv(LLStaticHashedString("as_cloud_light"), 1, gCloudLight.mV);
+        program.uniform1f(LLStaticHashedString("as_cloud_radius"), gCloudRadius);
+        program.uniform1f(LLStaticHashedString("as_cloud_centre_depth"), gCloudCentreDepth);
+        program.uniform1f(LLStaticHashedString("as_cloud_extent"), CLOUD_MAP_EXTENT);
+        // Sunlight still diffused through an opaque cloud (no sun shadows).
+        // The setting is the optical thickness of a full overcast; the deck
+        // thickens with the coverage (Beer-Lambert): share =
+        // e^(-thickness * coverage), so thin broken clouds let much more
+        // through.
+        static LLCachedControl<F32> cloud_thickness(gSavedSettings,
+            "ASRenderVolumetricLightingCloudThickness", 6.9f);
+        const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+        const F32 coverage = sky ? llclamp(sky->getCloudShadow(), 0.f, 1.f) : 1.f;
+        program.uniform1f(LLStaticHashedString("as_cloud_diffuse"),
+                          expf(-llmax((F32)cloud_thickness, 0.f) * coverage));
+    }
+    program.uniform1i(LLStaticHashedString("as_cloud_enabled"), clouds ? 1 : 0);
+    return clouds;
 }
 
 void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode)
@@ -1466,6 +1831,17 @@ void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S
         gGL.getTexUnit(accum_channel)->bindManual(LLTexUnit::TT_TEXTURE, sExactAccum.getTexture(0));
         gGL.getTexUnit(accum_channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
+    const S32 cloud_channel = accum_channel + 1;
+    const bool clouds = accum_channel >= 0 && applyCloudUniforms(program, cloud_channel);
+    // Cloud rays: thin far medium, see asVolumetricExactResolveF.glsl.
+    static LLCachedControl<F32> cloud_ray_density_km(gSavedSettings,
+        "ASRenderVolumetricLightingCloudRayDensityKm", 0.2f);
+    static LLCachedControl<F32> cloud_ray_strength(gSavedSettings,
+        "ASRenderVolumetricLightingCloudRayStrength", 1.f);
+    program.uniform1f(LLStaticHashedString("as_cloud_ray_density"),
+                      llmax((F32)cloud_ray_density_km, 0.f) * 0.001f);
+    program.uniform1f(LLStaticHashedString("as_cloud_ray_strength"),
+                      llmax((F32)cloud_ray_strength, 0.f));
 
     program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));
@@ -1480,6 +1856,10 @@ void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S
     if (accum_channel >= 0 && accum_channel < gGLManager.mNumTextureImageUnits)
     {
         gGL.getTexUnit(accum_channel)->unbind(LLTexUnit::TT_TEXTURE);
+    }
+    if (clouds)
+    {
+        gGL.getTexUnit(cloud_channel)->unbind(LLTexUnit::TT_TEXTURE);
     }
     program.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
     pipeline.unbindDeferredShader(program);
@@ -1629,11 +2009,17 @@ void ASVolumetricLighting::renderPass(LLPipeline& pipeline, LLRenderTarget& scre
 #if AS_VOLUMETRIC_PERFORMANCE_LOGGING
         sDirectionalGpuTimer.begin();
 #endif
+        // The cloud shadow map was baked before the sun lighting
+        // (renderCloudShadows()).
         exact_ready = accumulateExactVolumes(pipeline);
     }
-    else if (sExactAccum.isComplete())
+    else
     {
-        sExactAccum.release();
+        gCloudShadowReady = false;
+        if (sExactAccum.isComplete())
+        {
+            sExactAccum.release();
+        }
     }
     if (!isExactMode() && sExactAtlasAccum.isComplete())
     {
