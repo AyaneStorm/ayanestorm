@@ -300,3 +300,82 @@ For each backend, measure after 60 warm-up frames over at least 200 frames at 10
 - 2026-09-22: Runtime comparison exposed visible screen-fixed Hilbert sampling grain at High quality with a 1.5 m radius even under the three-pass Soft denoiser. Kept Sharp at XeGTAO's reference beta and strengthened only Medium/Soft center weights (0.7/0.35) in both fragment and compute paths; filtering remains depth-edge-aware and spatially stable.
 - 2026-09-22: Added Ultra quality using XeGTAO's 9-slice × 3-step preset for both fragment and compute backends. Medium 2×2 and High 3×3 remain available.
 - 2026-09-22: Adopted the runtime-tuned GTAO defaults: Ultra, 1.70 m radius, 2.20 power, Soft denoise, irradiance maximum 0.180, irradiance scale 0.60, and effect 0.800. The last three already matched the shared AO defaults. Corrected both Phototools irradiance slider/spinner ranges from effectively integral on/off controls to fractional ranges appropriate to those values.
+
+## Abrupt avatar darkening investigation (2026-10-16)
+
+Author: chanayane@firestorm
+
+### Reproduction evidence
+
+GTAO abruptly darkens an avatar when the camera moves farther away; legacy
+SSAO does not. The white-material comparison also shows the change over the
+face and opaque clothing. This is a discrete change, not a gradual increase
+in contact occlusion. Screenshots inspected:
+`AyaneStormOS-Normal_7GCe9eHvL7.png`,
+`AyaneStormOS-Normal_adnxyvs9XA.png`,
+`AyaneStormOS-Normal_6vXfmIbtQz.jpg`, and
+`AyaneStormOS-Normal_njRFkphcBB.png`.
+
+### Scalar GTAO depth mip discontinuity
+
+The user confirmed that the abrupt darkening still occurs with Bent normals
+disabled, excluding directional bent-normal lighting as the required cause.
+
+`asGTAOCommonF.glsl` selected depth mips through `textureLod` while the module
+bound the texture with `GL_NEAREST_MIPMAP_NEAREST`. Camera distance changes the
+projected AO radius and the requested LOD; crossing a half-integer LOD replaced
+one occluder representation with another immediately. This is a concrete
+scalar visibility discontinuity. Legacy SSAO does not use this depth mip chain.
+The port also calculated LOD after rounding the pixel offset, introducing
+additional discrete changes absent from the reference ordering.
+
+A GPU regression fixture reproduced a visibility jump of 0.33557045 across
+LOD 0.49999 to 0.50001. It tested both an occluder versus a flat surface and a
+background sentinel versus an occluder. This establishes the mip-boundary bug;
+confirmation that it explains the original avatar reproduction requires the
+user's runtime test.
+
+### Shader fix and validation
+
+`asGTAOCommonF.glsl` now evaluates the valid, distance-weighted horizon at both
+adjacent mip levels and interpolates their occlusion contributions. It retains
+point depth sampling within each mip. Interpolating raw depth instead would
+invent intermediate surfaces and contaminate valid geometry with the 65504
+background sentinel. Clamping each level to its unoccluded horizon before
+interpolation also prevents a below-surface sample cancelling real occlusion.
+Integer LODs retain their previous result and need only one depth lookup.
+LOD is calculated from the unsnapped sample offset; the spatial lookup is then
+snapped to pixel centers as before.
+
+The change is shared by fragment and compute backends, all four quality levels,
+and scalar/bent-normal modes. No settings, C++, shader versions, or cache
+revision were changed. Fractional LOD samples require an additional depth read
+and horizon evaluation; runtime performance remains to be measured.
+
+Validation completed:
+
+- Khronos `.glslang/bin/glslang.exe`: the edited shared fragment source combined
+  with the main entry passes GLSL 4.10 in scalar and bent-normal modes. Compute
+  combinations pass GLSL 4.30, the version required by the compute backend;
+  glslang rejects a compute-stage input at 4.10 even with ARB extensions.
+- Mesa OpenGL 4.5 software GPU: all 16 main-pass quality/backend/bent-normal
+  permutations compile and link with shared and entry sources as separate
+  shader objects, matching the viewer's compilation-unit organization.
+- GPU regression fixture: both previously abrupt transitions change visibility
+  by only 0.00000674 after the fix. Integer-mip equivalence, continuity at
+  integer boundaries, and GL error checks pass.
+- Earlier scratch numerical checks of an unoccluded tilted plane at 3440x1328
+  around 2 m and 4 m did not reproduce broad darkening with either FP16 or
+  FP32 depth; depth precision was left unchanged.
+
+No viewer build or original-scene runtime test was performed. Runtime check:
+move across the original camera-distance boundary with GTAO Bent normals off,
+then on, including the white-material comparison.
+
+### Source references
+
+Reference implementations: online
+[XeGTAO shader source](https://github.com/GameTechDev/XeGTAO/blob/master/Source/Rendering/Shaders/XeGTAO.hlsli).
+The reference permits nearest or linear selection between depth mip levels.
+This fix blends their horizon contributions to handle silhouette and background
+discontinuities without interpolating artificial depth.
