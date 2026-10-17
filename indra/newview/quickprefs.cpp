@@ -1130,7 +1130,16 @@ void FloaterQuickPrefs::refreshSettings()
         if (mSpinnerGTAOEffectX) mSpinnerGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
         if (mSliderGTAOEffectX) mSliderGTAOEffectX->setValue(renderSSAOEffect.mV[VX]);
 
-        const bool gtao = gSavedSettings.getS32("RenderAOTechnique") == 1;
+        // GTAO (1) and VBAO (2) share the GTAO panel; only VBAO has thickness.
+        const S32 ao_technique = gSavedSettings.getS32("RenderAOTechnique");
+        const bool gtao = ao_technique != 0;
+        static const char* vbao_controls[] = {
+            "T_VBAO_Thickness", "VBAO_SB_Thickness", "VBAO_S_Thickness", "VBAO_Reset_Thickness"
+        };
+        for (const char* name : vbao_controls)
+        {
+            if (LLView* control = findChild<LLView>(name)) control->setVisible(ao_technique == 2);
+        }
         if (LLView* legacy_panel = findChild<LLView>("P_AO_Legacy"))
         {
             legacy_panel->setVisible(!gtao);

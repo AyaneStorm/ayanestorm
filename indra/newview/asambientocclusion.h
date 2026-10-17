@@ -18,7 +18,9 @@ namespace ASAmbientOcclusion
     enum Technique
     {
         LEGACY_SSAO = 0,
-        GTAO = 1
+        GTAO = 1,
+        // Visibility bitmask AO: GTAO pipeline with finite-thickness occluders.
+        VBAO = 2
     };
 
     enum Backend

@@ -543,11 +543,12 @@
         left="170"
         mouse_opaque="true"
         name="render_ambient_occlusion_technique"
-        tool_tip="Choose the existing SSAO renderer or the new ground-truth ambient occlusion renderer."
+        tool_tip="Choose the existing SSAO renderer, ground-truth ambient occlusion (GTAO), or visibility bitmask AO (VBAO), which lets light pass behind thin foreground objects."
         top="225"
         width="215">
         <combo_box.item label="Legacy SSAO" name="legacy_ssao" value="0" />
         <combo_box.item label="GTAO" name="gtao" value="1" />
+        <combo_box.item label="VBAO" name="vbao" value="2" />
       </combo_box>
 
       <check_box

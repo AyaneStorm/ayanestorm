@@ -88,6 +88,7 @@
                        follows="top|left" layout="topleft" left_pad="0" top_delta="-3" height="20" width="100">
                   <combo_box.item label="Legacy SSAO" name="legacy" value="0" />
                   <combo_box.item label="GTAO" name="gtao" value="1" />
+                  <combo_box.item label="VBAO" name="vbao" value="2" />
             </combo_box>
             <check_box name="AO_Debug_White" control_name="RenderAODebugWhite" enabled_control="RenderDeferredSSAO"
                        follows="top|left" layout="topleft" left_pad="4" top_delta="1" height="18" width="95"

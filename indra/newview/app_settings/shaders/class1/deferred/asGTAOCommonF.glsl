@@ -16,6 +16,8 @@ uniform float gtao_radius;
 uniform float gtao_power;
 uniform int gtao_orthographic_view;
 uniform float gtao_thin_occluder_compensation;
+uniform int gtao_bitmask;
+uniform float gtao_thickness;
 
 const float GTAO_PI = 3.14159265358979323846;
 const float GTAO_HALF_PI = 1.57079632679489661923;
@@ -82,6 +84,62 @@ vec3 gtao_rotate_from_minus_z(vec3 value, vec3 target)
     vec3 axis = cross(source, target);
     return value * cosine + cross(axis, value) +
         axis * (dot(axis, value) / max(1.0 + cosine, 1e-6));
+}
+
+// VBAO (visibility bitmask AO, Therrien, Levesque, Gilet 2023): each slice keeps
+// an occlusion bitmask over its hemisphere instead of GTAO's two horizons.
+// Sectors are equal in GTAO's slice measure cos(theta - n) * |sin(theta)|, the
+// one integrated by GTAO's arc formula, so an infinite thickness reproduces
+// GTAO up to sector quantization and both share radius/power calibration.
+const int GTAO_SECTORS = 32;
+
+// GTAO arc integral from 0 to theta, signed by side.
+float gtao_slice_cdf(float theta, float n, vec4 measure)
+{
+    float arc = (measure.w + 2.0 * theta * measure.z - cos(2.0 * theta - n)) * 0.25;
+    return theta >= 0.0 ? arc : -arc;
+}
+
+// x: integral at n - pi/2, y: total unoccluded measure, z: sin(n), w: cos(n).
+vec4 gtao_slice_measure(float n)
+{
+    vec4 measure = vec4(0.0, 0.0, sin(n), cos(n));
+    measure.x = gtao_slice_cdf(n - GTAO_HALF_PI, n, measure);
+    measure.y = max(measure.w + n * measure.z, 1e-6);
+    return measure;
+}
+
+// Slice angle -> normalized position [0, 1] in the measure.
+float gtao_slice_u(float theta, float n, vec4 measure)
+{
+    return clamp((gtao_slice_cdf(theta, n, measure) - measure.x) / measure.y, 0.0, 1.0);
+}
+
+// Inverse of gtao_slice_u by bisection; bent normals only.
+float gtao_slice_angle(float u, float n, vec4 measure)
+{
+    float lo = n - GTAO_HALF_PI;
+    float hi = n + GTAO_HALF_PI;
+    if (u <= 0.0) return lo;
+    if (u >= 1.0) return hi;
+    for (int i = 0; i < 8; ++i)
+    {
+        float mid = 0.5 * (lo + hi);
+        if (gtao_slice_u(mid, n, measure) < u) lo = mid; else hi = mid;
+    }
+    return 0.5 * (lo + hi);
+}
+
+// Sectors covered by [u0, u1]. Rounding both ends drops sub-half-sector spans,
+// so samples grazing the hemisphere edge on flat surfaces add no bias.
+uint gtao_sector_bits(float u0, float u1)
+{
+    int start = int(round(clamp(u0, 0.0, 1.0) * float(GTAO_SECTORS)));
+    int end = int(round(clamp(u1, 0.0, 1.0) * float(GTAO_SECTORS)));
+    int count = end - start;
+    if (count <= 0) return 0u;
+    if (count >= GTAO_SECTORS) return 0xFFFFFFFFu;
+    return ((1u << uint(count)) - 1u) << uint(start);
 }
 
 void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
@@ -155,6 +213,11 @@ void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
         float low_horizon_1 = cos(n - GTAO_HALF_PI);
         float horizon_0 = low_horizon_0;
         float horizon_1 = low_horizon_1;
+        // VBAO: slice hemisphere [n - pi/2, n + pi/2] and its GTAO measure.
+        float angle_lo = n - GTAO_HALF_PI;
+        float angle_hi = n + GTAO_HALF_PI;
+        vec4 slice_measure = gtao_slice_measure(n);
+        uint occluded_bits = 0u;
 
         for (int step_index = 0; step_index < 4; ++step_index)
         {
@@ -183,10 +246,12 @@ void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
             // to foreground samples only: stretching their depth separation
             // stops an object in front from acting as a wall over everything
             // behind it. Samples behind keep their weight for concave corners.
+            // VBAO's slab thickness supersedes the heuristic.
+            float compensation = gtao_bitmask != 0 ? 0.0 : gtao_thin_occluder_compensation;
             float falloff_base0 = length(vec3(delta0.xy, delta0.z *
-                (delta0.z < 0.0 ? 1.0 + gtao_thin_occluder_compensation : 1.0)));
+                (delta0.z < 0.0 ? 1.0 + compensation : 1.0)));
             float falloff_base1 = length(vec3(delta1.xy, delta1.z *
-                (delta1.z < 0.0 ? 1.0 + gtao_thin_occluder_compensation : 1.0)));
+                (delta1.z < 0.0 ? 1.0 + compensation : 1.0)));
             float weight0 = clamp(falloff_base0 * falloff_mul + falloff_add, 0.0, 1.0);
             float weight1 = clamp(falloff_base1 * falloff_mul + falloff_add, 0.0, 1.0);
             // Off-screen samples carry no information. Clamping them would
@@ -195,18 +260,65 @@ void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
             weight1 *= float(uv1 == uv1_raw);
             float sample_horizon_0 = dot(delta0 / distance0, view_vec);
             float sample_horizon_1 = dot(delta1 / distance1, view_vec);
-            sample_horizon_0 = mix(low_horizon_0, sample_horizon_0, weight0);
-            sample_horizon_1 = mix(low_horizon_1, sample_horizon_1, weight1);
-            horizon_0 = max(horizon_0, sample_horizon_0);
-            horizon_1 = max(horizon_1, sample_horizon_1);
+            if (gtao_bitmask != 0)
+            {
+                // Each sample is a slab: its front face at the sample, its back
+                // face gtao_thickness further from the camera. It occludes only
+                // the slice angles between them. Side 0 has positive angles,
+                // side 1 negative, as for GTAO's h1/h0.
+                float back_horizon_0 = dot(normalize(delta0 - view_vec * gtao_thickness), view_vec);
+                float back_horizon_1 = dot(normalize(delta1 - view_vec * gtao_thickness), view_vec);
+                float front_0 = clamp(gtao_fast_acos(sample_horizon_0), angle_lo, angle_hi);
+                float back_0 = clamp(gtao_fast_acos(back_horizon_0), angle_lo, angle_hi);
+                float front_1 = clamp(-gtao_fast_acos(sample_horizon_1), angle_lo, angle_hi);
+                float back_1 = clamp(-gtao_fast_acos(back_horizon_1), angle_lo, angle_hi);
+                float u_front_0 = gtao_slice_u(front_0, n, slice_measure);
+                float u_back_0 = gtao_slice_u(back_0, n, slice_measure);
+                float u_front_1 = gtao_slice_u(front_1, n, slice_measure);
+                float u_back_1 = gtao_slice_u(back_1, n, slice_measure);
+                // Falloff shrinks the occluded span toward its front face.
+                occluded_bits |= gtao_sector_bits(u_front_0,
+                    u_front_0 + (u_back_0 - u_front_0) * weight0);
+                occluded_bits |= gtao_sector_bits(
+                    u_front_1 - (u_front_1 - u_back_1) * weight1, u_front_1);
+            }
+            else
+            {
+                sample_horizon_0 = mix(low_horizon_0, sample_horizon_0, weight0);
+                sample_horizon_1 = mix(low_horizon_1, sample_horizon_1, weight1);
+                horizon_0 = max(horizon_0, sample_horizon_0);
+                horizon_1 = max(horizon_1, sample_horizon_1);
+            }
         }
 
         projected_length = mix(projected_length, 1.0, 0.05);
-        float h0 = -gtao_fast_acos(clamp(horizon_1, -1.0, 1.0));
-        float h1 = gtao_fast_acos(clamp(horizon_0, -1.0, 1.0));
-        float arc0 = (cos_normal + 2.0 * h0 * sin(n) - cos(2.0 * h0 - n)) * 0.25;
-        float arc1 = (cos_normal + 2.0 * h1 * sin(n) - cos(2.0 * h1 - n)) * 0.25;
-        visibility += projected_length * (arc0 + arc1);
+        float h0;
+        float h1;
+        if (gtao_bitmask != 0)
+        {
+            uint visible_bits = ~occluded_bits;
+            visibility += projected_length * slice_measure.y *
+                (1.0 - float(bitCount(occluded_bits)) / float(GTAO_SECTORS));
+            if (visible_bits == 0u)
+            {
+                // Fully occluded slice: no bent-normal contribution.
+                continue;
+            }
+            // Outermost visible sectors stand in for the horizons. Exact for a
+            // single visible gap, approximate when several gaps remain.
+            h0 = gtao_slice_angle(float(findLSB(visible_bits)) / float(GTAO_SECTORS),
+                                  n, slice_measure);
+            h1 = gtao_slice_angle(float(findMSB(visible_bits) + 1) / float(GTAO_SECTORS),
+                                  n, slice_measure);
+        }
+        else
+        {
+            h0 = -gtao_fast_acos(clamp(horizon_1, -1.0, 1.0));
+            h1 = gtao_fast_acos(clamp(horizon_0, -1.0, 1.0));
+            float arc0 = (cos_normal + 2.0 * h0 * sin(n) - cos(2.0 * h0 - n)) * 0.25;
+            float arc1 = (cos_normal + 2.0 * h1 * sin(n) - cos(2.0 * h1 - n)) * 0.25;
+            visibility += projected_length * (arc0 + arc1);
+        }
 
 #ifdef GTAO_BENT_NORMALS
         float t0 = (6.0 * sin(h0 - n) - sin(3.0 * h0 - n) +

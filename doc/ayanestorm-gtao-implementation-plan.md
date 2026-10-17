@@ -563,3 +563,9 @@ side. Requires replacing the horizon loop and visibility integral.
 
 Decision: keep the heuristic, runtime-tuned default 1.0 (full weight below
 0.48 m depth gap, none beyond 1.24 m). Bitmask GTAO not pursued for now.
+
+### Follow-up: VBAO
+
+The thickness limitation is addressed by a third technique, VBAO
+(`RenderAOTechnique = 2`), sharing the GTAO pipeline. See
+`doc/ayanestorm-vbao-implementation-plan.md`.

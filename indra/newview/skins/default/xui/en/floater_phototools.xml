@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 
+<!-- <AS:Chanayane> Height 620 -> 644 for the VBAO thickness row in the AO panel. -->
 <floater
  can_resize="false"
  can_close="true"
  can_minimize="true"
- height="620"
+ height="644"
  help_topic="phototools_menu_floater"
  layout="topleft"
  name="phototools"
@@ -18,7 +19,7 @@
 	<tab_container
 	 follows="all"
 	 halign="center"
-	 height="620"
+	 height="644"
 	 hide_scroll_arrows="true"
 	 layout="topleft"
 	 left="0"
@@ -1470,6 +1471,7 @@
 				 left_pad="0" top_delta="-3" height="20" width="105">
 					<combo_box.item label="Legacy SSAO" name="legacy" value="0"/>
 					<combo_box.item label="GTAO" name="gtao" value="1"/>
+					<combo_box.item label="VBAO" name="vbao" value="2"/>
 				</combo_box>
 				<check_box name="AO_Debug_White" control_name="RenderAODebugWhite"
 				 enabled_control="RenderDeferredSSAO" follows="top|left" layout="topleft"
@@ -1833,7 +1835,7 @@
 
 			<!-- <AS:Chanayane> GTAO controls overlap the seven-row legacy panel. -->
 			<panel name="P_AO_GTAO" follows="top|left" layout="topleft"
-			 top_delta="0" left="3" right="-3" height="216"
+			 top_delta="0" left="3" right="-3" height="240"
 			 border_visible="true" background_visible="true" visible="false">
 				<text name="T_GTAO_Quality" type="string" length="1" follows="top|left" layout="topleft" left="5" top="10" height="16" width="70"
 				 tool_tip="Higher quality evaluates more horizon slices and samples per pixel.">Quality</text>
@@ -1937,6 +1939,23 @@
 				 left="255" top="192" height="22" width="20" label="D"
 				 tool_tip="Reset to the default value.">
 					<button.commit_callback function="ResetControl" parameter="RenderGTAOBentNormalInfluence"/>
+				</button>
+
+				<text name="T_VBAO_Thickness" type="string" length="1" follows="top|left"
+				 layout="topleft" left="5" top="220" height="16" width="70"
+				 tool_tip="VBAO assumed occluder thickness in metres. Lower lets light pass behind thin foreground objects; higher approaches GTAO.">Thickness</text>
+				<slider_bar name="VBAO_SB_Thickness" control_name="ASVBAOThickness"
+				 enabled_control="RenderDeferredSSAO" follows="top|left" layout="topleft"
+				 left="75" top="218" height="16" width="127" min_val="0.01" max_val="2"
+				 increment="0.01"/>
+				<spinner name="VBAO_S_Thickness" control_name="ASVBAOThickness"
+				 enabled_control="RenderDeferredSSAO" follows="top|left" layout="topleft"
+				 left="202" top="215" width="53" min_val="0.01" max_val="5" increment="0.01"
+				 decimal_digits="2"/>
+				<button name="VBAO_Reset_Thickness" follows="left|top" layout="topleft"
+				 left="255" top="215" height="22" width="20" label="D"
+				 tool_tip="Reset to the default value.">
+					<button.commit_callback function="ResetControl" parameter="ASVBAOThickness"/>
 				</button>
 			</panel>
 			<!-- </AS:Chanayane> -->

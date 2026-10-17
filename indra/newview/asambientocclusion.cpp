@@ -96,6 +96,8 @@ namespace
     const LLStaticHashedString U_POWER("gtao_power");
     const LLStaticHashedString U_ORTHOGRAPHIC_VIEW("gtao_orthographic_view");
     const LLStaticHashedString U_THIN_OCCLUDER("gtao_thin_occluder_compensation");
+    const LLStaticHashedString U_BITMASK("gtao_bitmask");
+    const LLStaticHashedString U_THICKNESS("gtao_thickness");
     const LLStaticHashedString U_VIEWPORT("gtao_viewport");
     const LLStaticHashedString U_FINAL_PASS("gtao_final_pass");
     const LLStaticHashedString U_BLUR_BETA("gtao_blur_beta");
@@ -360,6 +362,11 @@ namespace
         shader.uniform1i(U_ORTHOGRAPHIC_VIEW, orthographic ? 1 : 0);
         shader.uniform1f(U_THIN_OCCLUDER,
             llclamp(gSavedSettings.getF32("ASGTAOThinOccluderCompensation"), 0.f, 10.f));
+        // VBAO selects the bitmask slice integration in the shared main pass.
+        shader.uniform1i(U_BITMASK,
+            ASAmbientOcclusion::requestedTechnique() == ASAmbientOcclusion::VBAO ? 1 : 0);
+        shader.uniform1f(U_THICKNESS,
+            llclamp(gSavedSettings.getF32("ASVBAOThickness"), 0.01f, 5.f));
     }
 
     bool renderFragment(LLRenderTarget& deferred_screen, LLVertexBuffer& triangle)
@@ -642,7 +649,8 @@ const char* ASAmbientOcclusion::shaderCacheRevision()
 
 ASAmbientOcclusion::Technique ASAmbientOcclusion::requestedTechnique()
 {
-    return gSavedSettings.getS32("RenderAOTechnique") == GTAO ? GTAO : LEGACY_SSAO;
+    const S32 technique = gSavedSettings.getS32("RenderAOTechnique");
+    return technique == GTAO ? GTAO : technique == VBAO ? VBAO : LEGACY_SSAO;
 }
 
 ASAmbientOcclusion::Technique ASAmbientOcclusion::effectiveTechnique()
@@ -900,8 +908,9 @@ void ASAmbientOcclusion::unloadShaders()
 
 void ASAmbientOcclusion::allocateResources(U32 width, U32 height)
 {
-    if (requestedTechnique() != GTAO || (!sFragmentShadersLoaded && !sComputeShadersLoaded) ||
-        width == 0 || height == 0)
+    // GTAO and VBAO share every resource.
+    if (requestedTechnique() == LEGACY_SSAO ||
+        (!sFragmentShadersLoaded && !sComputeShadersLoaded) || width == 0 || height == 0)
     {
         return;
     }
@@ -953,7 +962,8 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
     sEffectiveTechnique = LEGACY_SSAO;
     sEffectiveBackend = AUTO;
 
-    if (requestedTechnique() != GTAO || (!sFragmentShadersLoaded && !sComputeShadersLoaded))
+    if (requestedTechnique() == LEGACY_SSAO ||
+        (!sFragmentShadersLoaded && !sComputeShadersLoaded))
     {
         return false;
     }
@@ -1022,7 +1032,7 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
     gGL.getTexUnit(saved_active_unit)->activate();
     if (sFrameValid)
     {
-        sEffectiveTechnique = GTAO;
+        sEffectiveTechnique = requestedTechnique();
         sEffectiveBackend = rendered_with_compute ? COMPUTE : FRAGMENT;
         sFrameHasBentNormals = sResources.bent_normals;
         sWarnedRender = false;
@@ -1040,7 +1050,7 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
 
 bool ASAmbientOcclusion::bindResult(LLGLSLShader& shader)
 {
-    if (!sFrameValid || !sFinalVisibility || effectiveTechnique() != GTAO)
+    if (!sFrameValid || !sFinalVisibility || effectiveTechnique() == LEGACY_SSAO)
     {
         return false;
     }
@@ -1068,7 +1078,7 @@ void ASAmbientOcclusion::unbindResult(LLGLSLShader&)
 void ASAmbientOcclusion::visualizeResult(LLRenderTarget& destination,
                                         LLVertexBuffer& screen_triangle)
 {
-    if (!sFrameValid || !sFinalVisibility || effectiveTechnique() != GTAO)
+    if (!sFrameValid || !sFinalVisibility || effectiveTechnique() == LEGACY_SSAO)
     {
         return;
     }
@@ -1110,5 +1120,5 @@ void ASAmbientOcclusion::visualizeResult(LLRenderTarget& destination,
 
 bool ASAmbientOcclusion::bentNormalsEffective()
 {
-    return sFrameValid && sFrameHasBentNormals && effectiveTechnique() == GTAO;
+    return sFrameValid && sFrameHasBentNormals && effectiveTechnique() != LEGACY_SSAO;
 }

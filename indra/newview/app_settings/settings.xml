@@ -12839,7 +12839,7 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>RenderAOTechnique</key>
   <map>
     <key>Comment</key>
-    <string>Ambient occlusion technique: 0 legacy SSAO, 1 GTAO.</string>
+    <string>Ambient occlusion technique: 0 legacy SSAO, 1 GTAO, 2 VBAO (visibility bitmask).</string>
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>S32</string>
     <key>Value</key><integer>0</integer>
@@ -12857,6 +12857,13 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>F32</string>
     <key>Value</key><real>1.70</real>
+  </map>
+  <key>ASVBAOThickness</key>
+  <map>
+    <key>Comment</key><string>VBAO assumed occluder thickness in metres. Light passes behind occluders thinner than their distance to the shaded surface. Larger values approach GTAO.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>F32</string>
+    <key>Value</key><real>0.6</real>
   </map>
   <key>ASGTAOThinOccluderCompensation</key>
   <map>
