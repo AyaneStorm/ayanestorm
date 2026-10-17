@@ -9430,6 +9430,11 @@ void LLPipeline::renderFinalize()
             }
             break;
         }
+        // <AS:Chanayane> Inspect GTAO visibility independently of scene lighting.
+        case 7:
+            ASAmbientOcclusion::visualizeResult(*sourceBuffer, *mScreenTriangleVB);
+            break;
+        // </AS:Chanayane>
         default:
             break;
         }

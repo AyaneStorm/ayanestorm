@@ -18,6 +18,7 @@
 #include "llrendertarget.h"
 #include "llvertexbuffer.h"
 #include "llviewercontrol.h"
+#include "llviewershadermgr.h"
 
 namespace
 {
@@ -94,6 +95,7 @@ namespace
     const LLStaticHashedString U_NDC_ADD("gtao_ndc_to_view_add");
     const LLStaticHashedString U_POWER("gtao_power");
     const LLStaticHashedString U_ORTHOGRAPHIC_VIEW("gtao_orthographic_view");
+    const LLStaticHashedString U_THIN_OCCLUDER("gtao_thin_occluder_compensation");
     const LLStaticHashedString U_VIEWPORT("gtao_viewport");
     const LLStaticHashedString U_FINAL_PASS("gtao_final_pass");
     const LLStaticHashedString U_BLUR_BETA("gtao_blur_beta");
@@ -289,9 +291,14 @@ namespace
                         S32 channel, GLuint texture, bool has_mips = false)
     {
         shader.uniform1i(uniform, channel);
-        gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, texture, has_mips);
-        gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-        gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+        LLTexUnit* unit = gGL.getTexUnit(channel);
+        // Cached bindManual calls neither activate the unit nor update its mip
+        // flag. Filtering must never change the previously active texture.
+        unit->activate();
+        unit->bindManual(LLTexUnit::TT_TEXTURE, texture, has_mips);
+        unit->setHasMipMaps(has_mips);
+        unit->setTextureFilteringOption(LLTexUnit::TFO_POINT);
+        unit->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
     }
 
     void unbindRawSampler(S32 channel)
@@ -351,6 +358,8 @@ namespace
         shader.uniform1f(U_RADIUS, radius);
         shader.uniform1f(U_POWER, power);
         shader.uniform1i(U_ORTHOGRAPHIC_VIEW, orthographic ? 1 : 0);
+        shader.uniform1f(U_THIN_OCCLUDER,
+            llclamp(gSavedSettings.getF32("ASGTAOThinOccluderCompensation"), 0.f, 10.f));
     }
 
     bool renderFragment(LLRenderTarget& deferred_screen, LLVertexBuffer& triangle)
@@ -975,12 +984,12 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
         return false;
     }
     const U32 saved_active_unit = gGL.getCurrentTexUnitIndex();
-    std::array<U32, 3> saved_textures;
-    std::array<LLTexUnit::eTextureType, 3> saved_types;
+    // Snapshot the whole unit cache, including its protected mip-map flag.
+    // Restoring only texture/type through bindManual defaults that flag to false.
+    std::array<LLTexUnit, 3> saved_units;
     for (S32 channel = 0; channel < 3; ++channel)
     {
-        saved_textures[channel] = gGL.getTexUnit(channel)->getCurrTexture();
-        saved_types[channel] = gGL.getTexUnit(channel)->getCurrType();
+        saved_units[channel] = *gGL.getTexUnit(channel);
     }
 
     bool rendered_with_compute = use_compute;
@@ -997,14 +1006,18 @@ bool ASAmbientOcclusion::render(LLRenderTarget& deferred_screen,
     }
     for (S32 channel = 0; channel < 3; ++channel)
     {
-        if (saved_textures[channel])
+        LLTexUnit* unit = gGL.getTexUnit(channel);
+        LLTexUnit& saved = saved_units[channel];
+        if (saved.getCurrTexture())
         {
-            gGL.getTexUnit(channel)->bindManual(saved_types[channel], saved_textures[channel]);
+            unit->bindManual(saved.getCurrType(), saved.getCurrTexture());
         }
         else
         {
-            gGL.getTexUnit(channel)->unbind(LLTexUnit::TT_TEXTURE);
+            unit->unbind(LLTexUnit::TT_TEXTURE);
         }
+        // Restore the cache after the GL bind, including on a binding cache hit.
+        *unit = saved;
     }
     gGL.getTexUnit(saved_active_unit)->activate();
     if (sFrameValid)
@@ -1038,10 +1051,8 @@ bool ASAmbientOcclusion::bindResult(LLGLSLShader& shader)
         sBoundResultChannel = -1;
         return false;
     }
-    shader.uniform1i(U_RESULT, sBoundResultChannel);
-    gGL.getTexUnit(sBoundResultChannel)->bindManual(LLTexUnit::TT_TEXTURE, sFinalVisibility);
-    gGL.getTexUnit(sBoundResultChannel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
-    gGL.getTexUnit(sBoundResultChannel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
+    // Use the same cache-safe binding path as the GTAO input textures.
+    bindRawSampler(shader, U_RESULT, sBoundResultChannel, sFinalVisibility);
     return true;
 }
 
@@ -1052,6 +1063,49 @@ void ASAmbientOcclusion::unbindResult(LLGLSLShader&)
         gGL.getTexUnit(sBoundResultChannel)->unbind(LLTexUnit::TT_TEXTURE);
         sBoundResultChannel = -1;
     }
+}
+
+void ASAmbientOcclusion::visualizeResult(LLRenderTarget& destination,
+                                        LLVertexBuffer& screen_triangle)
+{
+    if (!sFrameValid || !sFinalVisibility || effectiveTechnique() != GTAO)
+    {
+        return;
+    }
+
+    LLGLDepthTest depth_state(GL_FALSE, GL_FALSE);
+    LLGLDisable blend_state(GL_BLEND);
+    const U32 saved_active_unit = gGL.getCurrentTexUnitIndex();
+    LLTexUnit* unit = gGL.getTexUnit(0);
+    LLTexUnit saved_unit = *unit;
+    destination.bindTarget();
+    gDeferredBufferVisualProgram.bind();
+    bindRawSampler(gDeferredBufferVisualProgram, LLStaticHashedString("diffuseRect"),
+                   0, sFinalVisibility);
+
+    // Reuse the buffer viewer without a new shader: R8 stores visibility in R,
+    // bent-normal RGBA8 stores it in A. Restore swizzles before normal rendering.
+    GLint saved_swizzle[4];
+    glGetTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, saved_swizzle);
+    const GLint component = sFrameHasBentNormals ? GL_ALPHA : GL_RED;
+    const GLint swizzle[4] = { component, component, component, GL_ONE };
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swizzle);
+    gDeferredBufferVisualProgram.uniform1f(LLStaticHashedString("mipLevel"), 0.f);
+    drawTriangle(screen_triangle);
+    glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, saved_swizzle);
+    gDeferredBufferVisualProgram.unbind();
+    destination.flush();
+
+    if (saved_unit.getCurrTexture())
+    {
+        unit->bindManual(saved_unit.getCurrType(), saved_unit.getCurrTexture());
+    }
+    else
+    {
+        unit->unbind(LLTexUnit::TT_TEXTURE);
+    }
+    *unit = saved_unit;
+    gGL.getTexUnit(saved_active_unit)->activate();
 }
 
 bool ASAmbientOcclusion::bentNormalsEffective()

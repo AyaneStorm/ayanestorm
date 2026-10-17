@@ -316,7 +316,7 @@ in contact occlusion. Screenshots inspected:
 `AyaneStormOS-Normal_6vXfmIbtQz.jpg`, and
 `AyaneStormOS-Normal_njRFkphcBB.png`.
 
-### Scalar GTAO depth mip discontinuity
+### Initial depth mip hypothesis (runtime test failed)
 
 The user confirmed that the abrupt darkening still occurs with Bent normals
 disabled, excluding directional bent-normal lighting as the required cause.
@@ -335,10 +335,10 @@ background sentinel versus an occluder. This establishes the mip-boundary bug;
 confirmation that it explains the original avatar reproduction requires the
 user's runtime test.
 
-### Shader fix and validation
+### Initial mip-blending patch and validation (superseded)
 
-`asGTAOCommonF.glsl` now evaluates the valid, distance-weighted horizon at both
-adjacent mip levels and interpolates their occlusion contributions. It retains
+The initial patch evaluated the valid, distance-weighted horizon at both
+adjacent mip levels and interpolated their occlusion contributions. It retained
 point depth sampling within each mip. Interpolating raw depth instead would
 invent intermediate surfaces and contaminate valid geometry with the 65504
 background sentinel. Clamping each level to its unoccluded horizon before
@@ -379,3 +379,187 @@ Reference implementations: online
 The reference permits nearest or linear selection between depth mip levels.
 This fix blends their horizon contributions to handle silhouette and background
 discontinuities without interpolating artificial depth.
+
+### Follow-up: cached texture binding and mip-state corruption
+
+The user reported that the initial mip-blending patch did not fix the avatar
+switch. New screenshots `AyaneStormOS-Normal_anemK0hTOM.png` and
+`AyaneStormOS-Normal_bHpkHfEFW6.png` show the change across opaque clothing and
+the skirt, with comparatively stable pavement. The switch also persists with
+`RenderGTAOBackend = 1` (Fragment). Bent normals and a compute-only failure are
+therefore excluded as necessary causes.
+
+`LLTexUnit::bindManual()` activates the intended texture unit and updates
+`mHasMipMaps` only when the texture ID changes. On a binding cache hit it does
+neither. `LLTexUnit::setTextureFilteringOption()` does not activate its unit;
+it applies `glTexParameteri` to whichever unit is currently active.
+`setTextureAddressMode()` activates its unit, but GTAO previously called that
+only after changing the filter.
+
+Consequently, if GTAO binds its mipmapped depth texture on unit 0 and the normal
+texture is already bound on unit 1, setting unit 1's non-mipmapped point filter
+can change the depth texture's minification filter from
+`GL_NEAREST_MIPMAP_NEAREST` to `GL_NEAREST`. Even explicit `textureLod()` then
+samples the base level, abruptly changing occlusion. Initial texture bindings
+can depend on preceding scene draws; camera distance itself is not a condition
+inside this defective helper. Establishing which draws trigger this in the
+reported scene still requires runtime verification.
+
+A second state defect existed in restoration: GTAO saved texture IDs and types,
+but restored them through `bindManual()` without its `hasMips` argument. This
+lost the original texture unit's cached mip-map flag.
+
+#### Correction
+
+- `asambientocclusion.cpp::bindRawSampler()` explicitly activates the intended
+  unit and sets its mip flag even when `bindManual()` hits the binding cache.
+- `bindResult()` uses that same helper, removing its duplicate unsafe sequence.
+- The module snapshots the three complete `LLTexUnit` cache objects. It restores
+  the actual GL bindings through the existing API, then restores each cache
+  object, including its mip flag. `LLTexUnit` contains only its unit index,
+  texture ID/type and mip flag; this needs no new shared renderer API.
+- The unsuccessful horizon-blending functions and additional depth reads were
+  removed. The reference ordering which calculates LOD before snapping the
+  sample offset remains. Shader/cache versions are unchanged.
+
+#### Validation and remaining runtime check
+
+A Mesa OpenGL GPU regression reproduces the old cached-bind path: changing only
+whether the normal texture is already bound changes the depth minification
+filter and lowers visibility from 1.0 to 0.66442955. Explicit activation keeps
+the filter and visibility identical for both cached and uncached bindings.
+This proves the state-dependent rendering defect, independently of the original
+camera-distance reproduction.
+
+All 16 actual main-pass quality/backend/bent-normal permutations compile and
+link as separate shared and entry shader objects. Khronos validation passes for
+the edited shared shader combined with the main entry in scalar and bent-normal
+modes: GLSL 4.10 fragment and GLSL 4.30 compute. No viewer build was attempted.
+The user must still verify the original camera transition; do not report that
+scene as fixed until this runtime result is available.
+
+### Binding correction runtime result: original issue persists
+
+The user confirmed that the binding correction also did not fix the reported
+camera-distance switch. Screenshots `AyaneStormOS-Normal_fV76HEnMN5.png` and
+`AyaneStormOS-Normal_ANF02R0ARL.png` show the difference in white-material mode.
+The user further described the effect as their own avatar's shadow falling on
+another avatar, and said that viewing the other, unshadowed side shows no issue.
+Nearby geometry can contribute to GTAO within the configured world-space
+radius (default effective search radius: 1.70 * 1.457 = 2.4769 m), but the
+screenshots do not establish whether this is scalar AO, directional shadows,
+or their final lighting combination. Neither earlier isolated GPU regression
+established the cause of this particular scene.
+
+The saved configuration also enables Exact volumetric lighting and cloud
+shadows, whose through-cloud fill consumes GTAO. Disabling directional shadows
+also disables that volumetric path, so such a test alone cannot distinguish
+those two lighting stages. A requested runtime comparison with
+`RenderShadowDetail = 0` is pending; GTAO remains enabled for that comparison.
+
+### Raw GTAO visibility diagnostic: RenderBufferVisualization = 7
+
+Added `ASAmbientOcclusion::visualizeResult()` and a minimal tagged pipeline
+switch case. After the normal tonemapping/postprocessing, this draws the final
+GTAO visibility texture through the existing deferred buffer-view shader.
+White is unoccluded (1); black is occluded (0). It selects R for scalar R8 or A
+for bent-normal RGBA8 and temporarily replicates that component into RGB via
+texture swizzles. The swizzles, texture-unit cache and active unit are restored.
+No new shader, shader version, cache revision or persistent setting is needed.
+The diagnostic is inactive for the default `RenderBufferVisualization = -1`.
+
+After the user's next build:
+
+1. Keep GTAO enabled and set Debug Setting `RenderBufferVisualization` to `7`.
+2. Capture the same camera positions immediately before and after the switch.
+3. Restore `RenderBufferVisualization` to `-1`.
+
+If raw AO jumps too, investigate its depth/normal inputs and sampling. If raw AO
+stays stable while the lit image jumps, investigate directional/cloud shadows
+and the lighting composite. The white-material view still includes lighting
+and shadows and cannot make this distinction.
+
+Validation: the actual existing buffer-view fragment shader compiles and links
+on the software OpenGL GPU. R8 and RGBA8 cases display the correct black, grey
+and white visibility values; original texture swizzles and sampled values are
+restored afterward, and GL errors remain zero. No shader file was edited for
+this diagnostic. No viewer build was attempted. This is diagnostic work, not a
+claimed fix for the user's reproduction.
+
+### Hypothesis: off-screen samples clamped to the screen border (2026-10-17)
+
+`gtao_main_pass()` clamps sample UVs to `[0, 1]`
+(`uv0 = clamp(uv + sample_offset, 0, 1)`). Off-screen samples therefore read
+the depth of the border pixel instead of being discarded.
+
+The screen-space radius is large at portrait distances. Effective radius is
+1.70 * 1.457 = 2.477 m. At 3440x1328 with SL's default 60 degree vertical FOV,
+one pixel at depth d covers about d * 0.000869 m, so
+`screen_radius ~= 2850 / d` px: about 1425 px at 2 m, against a 664 px half
+height. Most outer steps land outside the screen and collapse onto the border.
+
+Any object at the border that is closer to the camera and within 2.477 m of
+the shaded surface then raises the horizon for nearly every pixel of the
+subject at once: another avatar's hand or body, the user's own avatar, or the
+near pavement at the bottom edge. Zooming or rotating moves the frame edge
+across such objects, so visibility changes for the whole avatar in one frame.
+This matches: broad uniform darkening, camera-angle dependence, a nearby avatar
+as the apparent source, no effect from the other side, and no effect with
+legacy SSAO, whose kernel stays small. Both screenshots show another avatar's
+hand at the right edge.
+
+Proposed fix: give off-screen samples zero falloff weight, so they keep the
+unoccluded low horizon. Screen-space AO has no information outside the screen.
+
+Zero-build runtime check: lower `RenderGTAORadius` to about 0.3 m and repeat
+the zoom. A smaller screen radius keeps samples on screen, so the switch should
+disappear. `RenderBufferVisualization = 7` shows whether raw AO switches.
+
+Runtime result: radius 0.3 m removed the switch, confirming the cause. The
+user keeps 1.7 m for its overall look.
+
+Fix applied in `asGTAOCommonF.glsl`: the clamped UV is still used for the
+fetch, but `weight0/1 *= float(uv == uv_raw)` zeroes off-screen samples, which
+then keep the low horizon. Shared by fragment and compute backends and both
+scalar and bent-normal modes. glslang passes (GLSL 4.10 scalar/bent-normal,
+4.30). No shader version or cache revision change. Pending build and runtime
+test.
+
+Runtime result: the transition is now progressive. Remaining artifact: an
+avatar in front of another darkens the one behind (screen-space AO has no
+thickness; a foreground surface within 2.477 m acts as an infinite wall).
+
+### Thickness heuristic: ASGTAOThinOccluderCompensation
+
+XeGTAO's thin occluder compensation computes the falloff distance as
+`length(vec3(delta.xy, delta.z * (1 + k)))`. AyaneStorm applies the stretch to
+foreground samples only (`delta.z < 0`, nearer the camera than the shaded
+pixel). Samples behind keep their weight, preserving concave corners such as a
+floor meeting a back wall. Example: hair 0.6 m in front, k = 2, gives a 1.8 m
+falloff distance instead of 0.6 m, mostly outside the 0.95-2.48 m falloff.
+
+- Setting `ASGTAOThinOccluderCompensation`, F32, default 2.0, clamped 0-10,
+  read every frame (live tuning). 0 restores the previous behavior.
+- Uniform `gtao_thin_occluder_compensation` set in `applyMainUniforms()`;
+  shared by fragment/compute and scalar/bent-normal.
+- glslang passes for main fragment (4.10) and compute (4.30) entries, scalar
+  and bent-normal. No UI yet. Pending build and runtime test.
+
+Runtime result: raising the setting looks about like lowering the radius on all
+objects, not only avatars behind other avatars. This is inherent to the
+heuristic. A sample raises the horizon only when it lies toward the camera
+(`dot(delta, view_vec) > 0`), so nearly every real occluder is a foreground
+sample. Restricting the stretch to `delta.z < 0` therefore changes little, and
+the concave-corner argument above is weak. The heuristic is a depth-only radius
+cut: lateral reach stays, depth reach shrinks to about
+`0.95 m / (1 + k)` full weight and `2.48 m / (1 + k)` zero weight. It cannot
+tell a 0.6 m gap behind thin hair from a 0.6 m deep solid occluder.
+
+Proper alternative: visibility bitmask GTAO (Therrien, Levesque, Gilet 2023,
+"Screen Space Indirect Lighting with Visibility Bitmask"). Each sample is a
+slab of assumed thickness that occludes only its own sector of the hemisphere,
+so light passes behind thin foreground objects instead of one max horizon per
+side. Requires replacing the horizon loop and visibility integral.
+
+Decision: keep the heuristic, runtime-tuned default 1.0 (full weight below
+0.48 m depth gap, none beyond 1.24 m). Bitmask GTAO not pursued for now.

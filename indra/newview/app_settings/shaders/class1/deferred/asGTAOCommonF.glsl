@@ -15,6 +15,7 @@ uniform vec2 gtao_ndc_to_view_add;
 uniform float gtao_radius;
 uniform float gtao_power;
 uniform int gtao_orthographic_view;
+uniform float gtao_thin_occluder_compensation;
 
 const float GTAO_PI = 3.14159265358979323846;
 const float GTAO_HALF_PI = 1.57079632679489661923;
@@ -61,33 +62,6 @@ vec3 gtao_view_position(vec2 uv, float depth)
 {
     vec2 xy = gtao_ndc_to_view_mul * uv + gtao_ndc_to_view_add;
     return vec3(gtao_orthographic_view != 0 ? xy : xy * depth, depth);
-}
-
-float gtao_horizon_at_mip(vec2 uv, float mip, vec3 center_pos, vec3 view_vec,
-                           float low_horizon, vec2 falloff)
-{
-    float depth = textureLod(gtao_depth, uv, mip).r;
-    vec3 delta = gtao_view_position(uv, depth) - center_pos;
-    float distance_to_sample = max(length(delta), 1e-6);
-    float weight = clamp(distance_to_sample * falloff.x + falloff.y, 0.0, 1.0);
-    return max(low_horizon, mix(low_horizon,
-        dot(delta / distance_to_sample, view_vec), weight));
-}
-
-float gtao_sample_horizon(vec2 uv, float mip, vec3 center_pos, vec3 view_vec,
-                           float low_horizon, vec2 falloff)
-{
-    // Blend occlusion between mips instead of switching the horizon abruptly
-    // with camera distance. Blending depth would invent surfaces at silhouettes
-    // and mix the background sentinel into valid geometry.
-    float lower_mip = floor(mip);
-    float lower_horizon = gtao_horizon_at_mip(uv, lower_mip, center_pos,
-        view_vec, low_horizon, falloff);
-    float mip_fraction = fract(mip);
-    if (mip_fraction == 0.0) return lower_horizon;
-    float upper_horizon = gtao_horizon_at_mip(uv, min(lower_mip + 1.0, 4.0),
-        center_pos, view_vec, low_horizon, falloff);
-    return mix(lower_horizon, upper_horizon, mip_fraction);
 }
 
 vec2 gtao_noise(ivec2 pixel)
@@ -195,12 +169,34 @@ void gtao_main_pass(ivec2 pixel, int slice_count, int steps_per_slice,
             // Keep LOD continuous; only snap the spatial lookup to pixel centers.
             vec2 sample_offset = round(sample_offset_pixels) * gtao_pixel_size;
 
-            vec2 uv0 = clamp(uv + sample_offset, vec2(0.0), vec2(1.0));
-            vec2 uv1 = clamp(uv - sample_offset, vec2(0.0), vec2(1.0));
-            float sample_horizon_0 = gtao_sample_horizon(uv0, mip, center_pos,
-                view_vec, low_horizon_0, vec2(falloff_mul, falloff_add));
-            float sample_horizon_1 = gtao_sample_horizon(uv1, mip, center_pos,
-                view_vec, low_horizon_1, vec2(falloff_mul, falloff_add));
+            vec2 uv0_raw = uv + sample_offset;
+            vec2 uv1_raw = uv - sample_offset;
+            vec2 uv0 = clamp(uv0_raw, vec2(0.0), vec2(1.0));
+            vec2 uv1 = clamp(uv1_raw, vec2(0.0), vec2(1.0));
+            float depth0 = textureLod(gtao_depth, uv0, mip).r;
+            float depth1 = textureLod(gtao_depth, uv1, mip).r;
+            vec3 delta0 = gtao_view_position(uv0, depth0) - center_pos;
+            vec3 delta1 = gtao_view_position(uv1, depth1) - center_pos;
+            float distance0 = max(length(delta0), 1e-6);
+            float distance1 = max(length(delta1), 1e-6);
+            // Thickness heuristic (XeGTAO thin occluder compensation), applied
+            // to foreground samples only: stretching their depth separation
+            // stops an object in front from acting as a wall over everything
+            // behind it. Samples behind keep their weight for concave corners.
+            float falloff_base0 = length(vec3(delta0.xy, delta0.z *
+                (delta0.z < 0.0 ? 1.0 + gtao_thin_occluder_compensation : 1.0)));
+            float falloff_base1 = length(vec3(delta1.xy, delta1.z *
+                (delta1.z < 0.0 ? 1.0 + gtao_thin_occluder_compensation : 1.0)));
+            float weight0 = clamp(falloff_base0 * falloff_mul + falloff_add, 0.0, 1.0);
+            float weight1 = clamp(falloff_base1 * falloff_mul + falloff_add, 0.0, 1.0);
+            // Off-screen samples carry no information. Clamping them would
+            // read border pixels and let edge objects occlude the whole view.
+            weight0 *= float(uv0 == uv0_raw);
+            weight1 *= float(uv1 == uv1_raw);
+            float sample_horizon_0 = dot(delta0 / distance0, view_vec);
+            float sample_horizon_1 = dot(delta1 / distance1, view_vec);
+            sample_horizon_0 = mix(low_horizon_0, sample_horizon_0, weight0);
+            sample_horizon_1 = mix(low_horizon_1, sample_horizon_1, weight1);
             horizon_0 = max(horizon_0, sample_horizon_0);
             horizon_1 = max(horizon_1, sample_horizon_1);
         }

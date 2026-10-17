@@ -43,6 +43,9 @@ namespace ASAmbientOcclusion
     bool bindResult(LLGLSLShader& shader);
     void unbindResult(LLGLSLShader& shader);
 
+    // Raw visibility after tonemapping, selected by RenderBufferVisualization=7.
+    void visualizeResult(LLRenderTarget& destination, LLVertexBuffer& screen_triangle);
+
     Technique requestedTechnique();
     Technique effectiveTechnique();
     Backend requestedBackend();
