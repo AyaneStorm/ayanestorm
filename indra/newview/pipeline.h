@@ -879,6 +879,9 @@ protected:
     // <AS:Chanayane> Let the isolated volumetric module snapshot nearby local lights without exposing upstream light internals.
     friend class ASVolumetricLighting;
     // </AS:Chanayane>
+    // <AS:KS> Let the subject-based light priority module order mNearbyLights.
+    friend class ASLocalLightSort;
+    // </AS:KS>
     bool                    mRenderTypeEnabled[NUM_RENDER_TYPES];
     std::stack<std::string> mRenderTypeEnableStack;
 

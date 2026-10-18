@@ -73,6 +73,9 @@
 // <AS:Chanayane> Optional viewer-object-free My Lights backend.
 #include "aslightrigrenderer.h"
 // </AS:Chanayane>
+// <AS:KS> Optional subject-based local light priority.
+#include "aslocallightsort.h"
+// </AS:KS>
 
 #include "pipeline.h"
 
@@ -10078,15 +10081,35 @@ void LLPipeline::renderDeferredLighting()
                 // It is calculated from mLights
                 // mNearbyLights also provides fade value to gracefully fade-out out of range lights
                 S32 count = 0;
-                for (light_set_t::iterator iter = mNearbyLights.begin(); iter != mNearbyLights.end(); ++iter)
+                // <AS:KS> Optional subject-based priority (aslocallightsort.h).
+                // Subject sort counts only lights that pass the off-screen and dark checks.
+                // for (light_set_t::iterator iter = mNearbyLights.begin(); iter != mNearbyLights.end(); ++iter)
+                std::vector<const Light*> ordered_lights;
+                ASLocalLightSort::order(mNearbyLights, ordered_lights);
+                const bool count_drawn_only = ASLocalLightSort::enabled();
+                for (const Light* lightp : ordered_lights)
+                // </AS:KS>
                 {
-                    count++;
-                    if (count > local_light_count)
-                    { //stop collecting lights once we hit the limit
-                        break;
+                    // <AS:KS> Counted after the checks below in subject sort.
+                    // count++;
+                    // if (count > local_light_count)
+                    // { //stop collecting lights once we hit the limit
+                    //     break;
+                    // }
+                    if (!count_drawn_only)
+                    {
+                        count++;
+                        if (count > local_light_count)
+                        { //stop collecting lights once we hit the limit
+                            break;
+                        }
                     }
+                    // </AS:KS>
 
-                    LLDrawable * drawablep = iter->drawable;
+                    // <AS:KS> Iterate the ordered list.
+                    // LLDrawable * drawablep = iter->drawable;
+                    LLDrawable * drawablep = lightp->drawable;
+                    // </AS:KS>
                     LLVOVolume * volume = drawablep->getVOVolume();
                     if (!volume)
                     {
@@ -10131,6 +10154,17 @@ void LLPipeline::renderDeferredLighting()
                     {
                         continue;
                     }
+
+                    // <AS:KS> Subject sort: count only lights that will be drawn.
+                    if (count_drawn_only)
+                    {
+                        count++;
+                        if (count > local_light_count)
+                        {
+                            break;
+                        }
+                    }
+                    // </AS:KS>
 
                     sVisibleLightCount++;
 
