@@ -41,8 +41,16 @@ ASLightRig::ASLightRig()
     mRadius(5.f),
     mFalloff(1.f),
     mColor(1.f, 1.f, 1.f),
+    mSpot(false),
+    mAimJoint("mNeck"),
+    mAimYaw(0.f),
+    mAimPitch(0.f),
+    mSpotFOV(F_PI * 0.5f),      // LLLightImageParams default
+    mSpotFocus(0.f),
+    mSpotAmbiance(0.f),
     mEnabled(true),
-    mPositionAgent(LLVector3::zero)
+    mPositionAgent(LLVector3::zero),
+    mAimDirection(-LLVector3::z_axis)
 {
 }
 
@@ -161,6 +169,13 @@ void ASLightRig::updateTransform()
 
     mPositionAgent = joint_pos + offset;
 
+    LLQuaternion spot_rot;
+    if (mSpot)
+    {
+        spot_rot = computeSpotRotation(joint_pos);
+        mAimDirection = LLVector3(0.f, 0.f, -1.f) * spot_rot;
+    }
+
     if (ASLightRigRenderer::usesShaderBackend())
     {
         return;
@@ -178,6 +193,48 @@ void ASLightRig::updateTransform()
     }
 
     mObject->setPositionAgent(mPositionAgent);
+    if (mSpot)
+    {
+        // Spot lights project along the object's -Z (LLPipeline::setupSpotLight).
+        mObject->setRotation(spot_rot);
+    }
+}
+
+LLQuaternion ASLightRig::computeSpotRotation(const LLVector3& anchor_pos)
+{
+    // Aim at the chosen joint; fall back to the anchor joint if it is
+    // missing or sits on the light itself.
+    LLVector3 forward;
+    LLJoint* aim_joint = gAgentAvatarp->getJoint(mAimJoint);
+    if (aim_joint)
+    {
+        forward = aim_joint->getWorldPosition() - mPositionAgent;
+    }
+    if (!aim_joint || forward.magVecSquared() < 1.e-6f)
+    {
+        forward = anchor_pos - mPositionAgent; // non-zero: mDistance >= 0.05
+    }
+    forward.normalize();
+
+    // Keep the projector image upright: its up axis follows world up,
+    // except when the light points almost straight up or down.
+    LLVector3 up = LLVector3::z_axis;
+    if (llabs(forward * up) > 0.99f)
+    {
+        up = LLVector3::x_axis;
+    }
+    const LLVector3 z_axis = -forward;
+    LLVector3 x_axis = up % z_axis;
+    x_axis.normalize();
+    const LLVector3 y_axis = z_axis % x_axis;
+    const LLQuaternion base(x_axis, y_axis, z_axis);
+
+    // Offsets in the light's own frame: pitch about its X (right) axis,
+    // then yaw about its Y (up) axis, so yaw stays level with the horizon.
+    const LLQuaternion offset =
+        LLQuaternion(mAimPitch * DEG_TO_RAD, LLVector3::x_axis) *
+        LLQuaternion(mAimYaw * DEG_TO_RAD, LLVector3::y_axis);
+    return offset * base;
 }
 
 LLVector3 ASLightRig::getObjectPositionAgent() const
@@ -201,6 +258,18 @@ void ASLightRig::applyParams()
     mObject->setLightIntensity(mIntensity);
     mObject->setLightRadius(mRadius);
     mObject->setLightFalloff(mFalloff);
+
+    // A projector image is what makes an LLVOVolume light a spot
+    // (LLLightImageParams::isLightSpotlight()); clearing it restores a point.
+    if (mSpot)
+    {
+        mObject->setLightTextureID(mSpotTexture.notNull() ? mSpotTexture : IMG_WHITE);
+        mObject->setSpotLightParams(LLVector3(mSpotFOV, mSpotFocus, mSpotAmbiance));
+    }
+    else
+    {
+        mObject->setLightTextureID(LLUUID::null);
+    }
 }
 
 void ASLightRig::setEnabled(bool enabled)
@@ -224,6 +293,14 @@ LLSD ASLightRig::toLLSD() const
     data["radius"] = mRadius;
     data["falloff"] = mFalloff;
     data["color"] = mColor.getValue();
+    data["spot"] = mSpot;
+    data["aim_joint"] = mAimJoint;
+    data["aim_yaw"] = mAimYaw;
+    data["aim_pitch"] = mAimPitch;
+    data["spot_fov"] = mSpotFOV;
+    data["spot_focus"] = mSpotFocus;
+    data["spot_ambiance"] = mSpotAmbiance;
+    data["spot_texture"] = mSpotTexture;
     return data;
 }
 
@@ -238,4 +315,14 @@ void ASLightRig::fromLLSD(const LLSD& data)
     mRadius = (F32)data["radius"].asReal();
     mFalloff = (F32)data["falloff"].asReal();
     mColor.setValue(data["color"]);
+
+    // Spot keys are absent from older presets: keep the defaults then.
+    if (data.has("spot"))          mSpot = data["spot"].asBoolean();
+    if (data.has("aim_joint"))     mAimJoint = data["aim_joint"].asString();
+    if (data.has("aim_yaw"))       mAimYaw = (F32)data["aim_yaw"].asReal();
+    if (data.has("aim_pitch"))     mAimPitch = (F32)data["aim_pitch"].asReal();
+    if (data.has("spot_fov"))      mSpotFOV = (F32)data["spot_fov"].asReal();
+    if (data.has("spot_focus"))    mSpotFocus = (F32)data["spot_focus"].asReal();
+    if (data.has("spot_ambiance")) mSpotAmbiance = (F32)data["spot_ambiance"].asReal();
+    if (data.has("spot_texture"))  mSpotTexture = data["spot_texture"].asUUID();
 }

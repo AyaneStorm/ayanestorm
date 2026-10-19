@@ -27,6 +27,7 @@
 #include "llscrolllistctrl.h"
 #include "llscrolllistitem.h"
 #include "llsdserialize.h"
+#include "lltexturectrl.h"
 #include "lluictrl.h"
 #include "llviewercontrol.h"
 #include "llfloaterreg.h"
@@ -51,6 +52,14 @@ ASFloaterMyLights::ASFloaterMyLights(const LLSD& key)
     mRadiusSlider(nullptr),
     mFalloffSlider(nullptr),
     mColorSwatch(nullptr),
+    mSpotCheck(nullptr),
+    mAimJointCombo(nullptr),
+    mAimYawSlider(nullptr),
+    mAimPitchSlider(nullptr),
+    mSpotFOVSlider(nullptr),
+    mSpotFocusSlider(nullptr),
+    mSpotAmbianceSlider(nullptr),
+    mSpotTexturePicker(nullptr),
     mMasterEnabledCheck(nullptr),
     mRenderBackendCombo(nullptr),
     mBackgroundCombo(nullptr),
@@ -60,7 +69,9 @@ ASFloaterMyLights::ASFloaterMyLights(const LLSD& key)
     mBeaconCheck(nullptr),
     mPresetNameEditor(nullptr),
     mPresetCombo(nullptr),
-    mUpdatingControls(false)
+    mUpdatingControls(false),
+    mFullHeight(0),
+    mCollapsedHeight(0)
 {
 }
 
@@ -80,6 +91,14 @@ bool ASFloaterMyLights::postBuild()
     mRadiusSlider = getChild<LLUICtrl>("as_light_radius");
     mFalloffSlider = getChild<LLUICtrl>("as_light_falloff");
     mColorSwatch = getChild<LLColorSwatchCtrl>("as_light_color");
+    mSpotCheck = getChild<LLCheckBoxCtrl>("as_light_spot");
+    mAimJointCombo = getChild<LLComboBox>("as_light_aim_joint");
+    mAimYawSlider = getChild<LLUICtrl>("as_light_aim_yaw");
+    mAimPitchSlider = getChild<LLUICtrl>("as_light_aim_pitch");
+    mSpotFOVSlider = getChild<LLUICtrl>("as_light_spot_fov");
+    mSpotFocusSlider = getChild<LLUICtrl>("as_light_spot_focus");
+    mSpotAmbianceSlider = getChild<LLUICtrl>("as_light_spot_ambiance");
+    mSpotTexturePicker = getChild<LLTextureCtrl>("as_light_spot_texture");
     mMasterEnabledCheck = getChild<LLCheckBoxCtrl>("as_light_master_enabled");
     mRenderBackendCombo = getChild<LLComboBox>("as_light_render_backend");
     mBackgroundCombo = getChild<LLComboBox>("as_light_background");
@@ -103,6 +122,16 @@ bool ASFloaterMyLights::postBuild()
     mRadiusSlider->setCommitCallback([this](LLUICtrl*, const LLSD&) { onRadiusChanged(); });
     mFalloffSlider->setCommitCallback([this](LLUICtrl*, const LLSD&) { onFalloffChanged(); });
     mColorSwatch->setCommitCallback([this](LLUICtrl*, const LLSD&) { onColorChanged(); });
+
+    for (LLUICtrl* ctrl : { (LLUICtrl*)mSpotCheck, (LLUICtrl*)mAimJointCombo, mAimYawSlider, mAimPitchSlider,
+                            mSpotFOVSlider, mSpotFocusSlider, mSpotAmbianceSlider })
+    {
+        ctrl->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSpotChanged(); });
+    }
+    // The picker applies immediately; "None"/cancel arrive through the cancel callback.
+    mSpotTexturePicker->setCommitCallback([this](LLUICtrl*, const LLSD&) { onSpotTextureChanged(); });
+    mSpotTexturePicker->setOnCancelCallback([this](LLUICtrl*, const LLSD&) { onSpotTextureChanged(); });
+    mSpotTexturePicker->setOnSelectCallback([this](LLUICtrl*, const LLSD&) { onSpotTextureChanged(); });
 
     getChild<LLUICtrl>("as_light_preset_head")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onPresetHead(); });
     getChild<LLUICtrl>("as_light_preset_chest")->setCommitCallback([this](LLUICtrl*, const LLSD&) { onPresetChest(); });
@@ -129,6 +158,13 @@ bool ASFloaterMyLights::postBuild()
     getChild<LLUICtrl>("as_light_no_eye_specular")->setEnabled(ASLightRigRenderer::usesShaderBackend());
     mShowOtherAvatarsCheck->setValue(gSavedSettings.getBOOL("ASLightRigShowOtherAvatars"));
 
+    // The spot section is the bottom band of the XUI, starting at its header;
+    // collapsing keeps everything above it plus the same bottom margin.
+    mFullHeight = getRect().getHeight();
+    const S32 SPOT_SECTION_MARGIN = 22;
+    mCollapsedHeight = mFullHeight - getChild<LLView>("as_light_spot_label")->getRect().mTop + SPOT_SECTION_MARGIN;
+    updateSpotSectionVisibility();
+
     setControlsEnabled(false);
     refreshPresetList();
     loadLightsFromFile(getAutosaveFilename());
@@ -136,6 +172,13 @@ bool ASFloaterMyLights::postBuild()
     gIdleCallbacks.addFunction(onIdle, this);
 
     return true;
+}
+
+void ASFloaterMyLights::onOpen(const LLSD& key)
+{
+    LLFloater::onOpen(key);
+    // A saved rect may come from the other backend's height.
+    updateSpotSectionVisibility();
 }
 
 void ASFloaterMyLights::onClose(bool app_quitting)
@@ -215,6 +258,13 @@ void ASFloaterMyLights::renderAllLightBeacons()
         gGL.vertex3f(pos.mV[VX], pos.mV[VY] + ARM_LENGTH, pos.mV[VZ]);
         gGL.vertex3f(pos.mV[VX], pos.mV[VY], pos.mV[VZ] - ARM_LENGTH);
         gGL.vertex3f(pos.mV[VX], pos.mV[VY], pos.mV[VZ] + ARM_LENGTH);
+        if (rig->mSpot && !ASLightRigRenderer::usesShaderBackend())
+        {
+            // Spot: one longer arm along the projection direction.
+            const LLVector3 tip = pos + rig->getAimDirection() * (ARM_LENGTH * 3.f);
+            gGL.vertex3fv(pos.mV);
+            gGL.vertex3fv(tip.mV);
+        }
     }
     gGL.end();
 }
@@ -414,6 +464,23 @@ void ASFloaterMyLights::setControlsEnabled(bool enabled)
     getChild<LLUICtrl>("as_light_preset_chest")->setEnabled(enabled);
     getChild<LLUICtrl>("as_light_preset_back")->setEnabled(enabled);
     getChild<LLUICtrl>("as_light_delete")->setEnabled(enabled);
+    updateSpotControlsEnabled();
+}
+
+void ASFloaterMyLights::updateSpotControlsEnabled()
+{
+    // Spots exist only as LLVOVolume projectors; the shader backend is point-only.
+    const ASLightRig* rig = getSelectedLight();
+    const bool can_spot = rig && !ASLightRigRenderer::usesShaderBackend();
+    const bool spot_on = can_spot && rig->mSpot;
+    mSpotCheck->setEnabled(can_spot);
+    mAimJointCombo->setEnabled(spot_on);
+    mAimYawSlider->setEnabled(spot_on);
+    mAimPitchSlider->setEnabled(spot_on);
+    mSpotFOVSlider->setEnabled(spot_on);
+    mSpotFocusSlider->setEnabled(spot_on);
+    mSpotAmbianceSlider->setEnabled(spot_on);
+    mSpotTexturePicker->setEnabled(spot_on);
 }
 
 void ASFloaterMyLights::refreshControlsFromSelectedLight()
@@ -436,7 +503,42 @@ void ASFloaterMyLights::refreshControlsFromSelectedLight()
     mRadiusSlider->setValue(rig->mRadius);
     mFalloffSlider->setValue(rig->mFalloff);
     mColorSwatch->set(LLColor4(rig->mColor));
+    mSpotCheck->setValue(rig->mSpot);
+    mAimJointCombo->setValue(rig->mAimJoint);
+    mAimYawSlider->setValue(rig->mAimYaw);
+    mAimPitchSlider->setValue(rig->mAimPitch);
+    mSpotFOVSlider->setValue(rig->mSpotFOV * RAD_TO_DEG);
+    mSpotFocusSlider->setValue(rig->mSpotFocus);
+    mSpotAmbianceSlider->setValue(rig->mSpotAmbiance);
+    mSpotTexturePicker->setImageAssetID(rig->mSpotTexture);
     mUpdatingControls = false;
+    updateSpotControlsEnabled();
+}
+
+void ASFloaterMyLights::onSpotChanged()
+{
+    if (mUpdatingControls) return;
+    ASLightRig* rig = getSelectedLight();
+    if (!rig) return;
+    rig->mSpot = mSpotCheck->get();
+    rig->mAimJoint = mAimJointCombo->getValue().asString();
+    rig->mAimYaw = (F32)mAimYawSlider->getValue().asReal();
+    rig->mAimPitch = (F32)mAimPitchSlider->getValue().asReal();
+    rig->mSpotFOV = (F32)mSpotFOVSlider->getValue().asReal() * DEG_TO_RAD;
+    rig->mSpotFocus = (F32)mSpotFocusSlider->getValue().asReal();
+    rig->mSpotAmbiance = (F32)mSpotAmbianceSlider->getValue().asReal();
+    rig->applyParams();
+    rig->updateTransform();
+    updateSpotControlsEnabled();
+}
+
+void ASFloaterMyLights::onSpotTextureChanged()
+{
+    if (mUpdatingControls) return;
+    ASLightRig* rig = getSelectedLight();
+    if (!rig) return;
+    rig->mSpotTexture = mSpotTexturePicker->getImageAssetID(); // null = plain white
+    rig->applyParams();
 }
 
 void ASFloaterMyLights::onDistanceChanged()
@@ -557,6 +659,31 @@ void ASFloaterMyLights::onRenderBackendChanged()
     gSavedSettings.setString("ASLightRigRenderBackend", mRenderBackendCombo->getValue().asString());
     getChild<LLUICtrl>("as_light_no_eye_specular")->setEnabled(ASLightRigRenderer::usesShaderBackend());
     updateLights();
+    updateSpotSectionVisibility();
+    updateSpotControlsEnabled();
+}
+
+void ASFloaterMyLights::updateSpotSectionVisibility()
+{
+    static const char* const SPOT_CONTROLS[] = {
+        "as_light_spot_label", "as_light_spot", "as_light_aim_joint_label", "as_light_aim_joint",
+        "as_light_aim_yaw", "as_light_aim_pitch", "as_light_spot_fov", "as_light_spot_focus",
+        "as_light_spot_ambiance", "as_light_spot_texture_label", "as_light_spot_texture" };
+
+    const bool show = !ASLightRigRenderer::usesShaderBackend();
+    for (const char* name : SPOT_CONTROLS)
+    {
+        getChild<LLView>(name)->setVisible(show);
+    }
+
+    // Keep the top edge in place: children follow left|top.
+    const S32 height = show ? mFullHeight : mCollapsedHeight;
+    LLRect rect = getRect();
+    if (height > 0 && rect.getHeight() != height)
+    {
+        rect.mBottom = rect.mTop - height;
+        setShape(rect);
+    }
 }
 
 void ASFloaterMyLights::onBackgroundModeChanged()

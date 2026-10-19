@@ -24,6 +24,7 @@ class LLScrollListCtrl;
 class LLLineEditor;
 class LLComboBox;
 class LLCheckBoxCtrl;
+class LLTextureCtrl;
 
 class ASFloaterMyLights : public LLFloater
 {
@@ -32,6 +33,7 @@ public:
     virtual ~ASFloaterMyLights();
 
     bool postBuild() override;
+    void onOpen(const LLSD& key) override;
     void onClose(bool app_quitting) override;
 
     // Called from a tag-wrapped call-out near render_hud_elements()'s stock
@@ -70,6 +72,14 @@ private:
     void refreshControlsFromSelectedLight();
     void setControlsEnabled(bool enabled);
 
+    // Spot light controls (LLVOVolume backend only)
+    void onSpotChanged();
+    void onSpotTextureChanged();
+    void updateSpotControlsEnabled();
+    // Shows the spot section only with the LLVOVolume backend and resizes
+    // the floater so the hidden section leaves no gap.
+    void updateSpotSectionVisibility();
+
     // Master switch, background, freeze animations, beacon, poser
     void onMasterEnabledChanged();
     void onRenderBackendChanged();
@@ -106,6 +116,14 @@ private:
     LLUICtrl* mRadiusSlider;
     LLUICtrl* mFalloffSlider;
     LLColorSwatchCtrl* mColorSwatch;
+    LLCheckBoxCtrl* mSpotCheck;
+    LLComboBox* mAimJointCombo;
+    LLUICtrl* mAimYawSlider;
+    LLUICtrl* mAimPitchSlider;
+    LLUICtrl* mSpotFOVSlider;
+    LLUICtrl* mSpotFocusSlider;
+    LLUICtrl* mSpotAmbianceSlider;
+    LLTextureCtrl* mSpotTexturePicker;
     LLCheckBoxCtrl* mMasterEnabledCheck;
     LLComboBox* mRenderBackendCombo;
     LLComboBox* mBackgroundCombo;
@@ -117,6 +135,8 @@ private:
     LLComboBox* mPresetCombo;
 
     bool mUpdatingControls;
+    S32 mFullHeight;        // XUI height, spot section included
+    S32 mCollapsedHeight;   // height without the spot section
 };
 
 #endif // AS_FLOATERMYLIGHTS_H

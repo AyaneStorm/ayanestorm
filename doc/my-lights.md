@@ -165,6 +165,66 @@ Shader backend, a light in front of the face, close-up camera. Toggle the
 checkbox: the eye highlight disappears, skin and eye diffuse remain. Check a
 snapshot. Test with system eyes, and with legacy and Bento mesh eyes.
 
+## Spot lights (LLVOVolume backend)
+
+### Behavior
+
+Each light has a **Spotlight** checkbox. A spotlight aims automatically at a
+chosen avatar joint (**Aim at**, default `mNeck`) and follows it every frame.
+Optional **Aim yaw** / **Aim pitch** offsets (degrees) turn the aim away from
+the joint: positive yaw turns left as seen from the light, positive pitch tilts
+up. **Field of view** (degrees in the UI, radians in `LLLightImageParams`),
+**Focus**, **Ambiance**, and an optional **Projector image** match the build
+floater's projector controls. With no image the cone is plain white
+(`IMG_WHITE`).
+
+The Shader backend stays point-only. With it selected the spot section is
+hidden and the floater shrinks to its pre-spot height
+(`updateSpotSectionVisibility()`, which computes the height from the section
+header and keeps the top edge fixed). Spot settings are kept but ignored.
+
+### Implementation
+
+- In SL a light becomes a spot (projector) when it has a light image:
+  `LLLightImageParams::isLightSpotlight()` is `mLightTexture.notNull()`.
+  `ASLightRig::applyParams()` calls `setLightTextureID()` with the chosen image
+  or `IMG_WHITE`, then `setSpotLightParams(fov, focus, ambiance)`. Turning the
+  spot off clears the image, which restores a point light.
+- `LLPipeline::setupSpotLight()` projects along the object's -Z axis using
+  `getRenderRotation()`. Every frame, `ASLightRig::updateTransform()` computes
+  that rotation in `computeSpotRotation()` and applies it with `setRotation()`:
+  - -Z points from the light to the aim joint. If the joint is missing or sits
+    on the light, it falls back to the anchor joint.
+  - Image up follows world up, or world X when the aim is near vertical.
+  - The pitch offset is applied about the light's X axis, then the yaw offset
+    about its Y axis.
+- The projector frustum also uses the object's scale. The light object is
+  0.01 m, so the cone apex is effectively at the light position, like a tiny
+  in-world projector prim.
+- Spots are ordinary entries in `mNearbyLights`. They share the
+  `RenderLocalLightCount` budget, go through the deferred projector pass, and
+  with `RenderShadowDetail` 2 can be chosen as one of the two shadow-casting
+  projectors.
+- The light beacon draws an extra arm along the aim direction for spots.
+- Presets and autosave gain `spot`, `aim_joint`, `aim_yaw`, `aim_pitch`,
+  `spot_fov`, `spot_focus`, `spot_ambiance`, and `spot_texture`. Older files
+  without them load as point lights aimed at `mNeck`.
+- Like the existing light setters, the image setters call
+  `parameterChanged(..., local_origin=true)`, which sends an
+  `ObjectExtraParams` for local id 0. The region ignores it.
+
+### Runtime verification
+
+LLVOVolume backend, beacons on. Add a light in front of the chest and enable
+**Spotlight**: the beacon's aim arm should point at the neck, and a cone should
+light the neck and face. Walk and animate; the cone should follow. Try other
+**Aim at** joints, the yaw/pitch offsets, FOV, Focus, and Ambiance, and a
+projector image. Then try None. Save and reload a preset, and relog to check
+autosave. Load an older preset and confirm its lights are points. Switch to the
+Shader backend: the spot section disappears, the floater shrinks with its top
+edge fixed, and the lights become points. Switch back: the section and height
+return. Close and reopen the floater in each backend to check the saved size.
+
 ## Teleport / region-change recovery (LLVOVolume backend)
 
 ### Symptom
