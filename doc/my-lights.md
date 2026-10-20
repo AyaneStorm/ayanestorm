@@ -165,6 +165,163 @@ Shader backend, a light in front of the face, close-up camera. Toggle the
 checkbox: the eye highlight disappears, skin and eye diffuse remain. Check a
 snapshot. Test with system eyes, and with legacy and Bento mesh eyes.
 
+## Spot lights (LLVOVolume backend)
+
+### Behavior
+
+Each light has a **Spotlight** checkbox. A spotlight aims automatically at a
+chosen avatar joint (**Aim at**, default `mNeck`) and follows it every frame.
+Optional **Aim yaw** / **Aim pitch** offsets (degrees) turn the aim away from
+the joint: positive yaw turns left as seen from the light, positive pitch tilts
+up. **Field of view** (degrees in the UI, radians in `LLLightImageParams`),
+**Focus**, **Ambiance**, and an optional **Projector image** match the build
+floater's projector controls. With no image the cone is plain white
+(`IMG_WHITE`).
+
+The Shader backend stays point-only. With it selected the spot section is
+hidden and the floater shrinks to its pre-spot height
+(`updateSpotSectionVisibility()`, which computes the height from the section
+header and keeps the top edge fixed). Spot settings are kept but ignored.
+
+### Implementation
+
+- In SL a light becomes a spot (projector) when it has a light image:
+  `LLLightImageParams::isLightSpotlight()` is `mLightTexture.notNull()`.
+  `ASLightRig::applyParams()` calls `setLightTextureID()` with the chosen image
+  or `IMG_WHITE`, then `setSpotLightParams(fov, focus, ambiance)`. Turning the
+  spot off clears the image, which restores a point light.
+- `LLPipeline::setupSpotLight()` projects along the object's -Z axis using
+  `getRenderRotation()`. Every frame, `ASLightRig::updateTransform()` computes
+  that rotation in `computeSpotRotation()` and applies it with `setRotation()`:
+  - -Z points from the light to the aim joint. If the joint is missing or sits
+    on the light, it falls back to the anchor joint.
+  - Image up follows world up, or world X when the aim is near vertical.
+  - The pitch offset is applied about the light's X axis, then the yaw offset
+    about its Y axis.
+- The projector frustum also uses the object's scale. The light object is
+  0.01 m, so the cone apex is effectively at the light position, like a tiny
+  in-world projector prim.
+- Spots are ordinary entries in `mNearbyLights`. They share the
+  `RenderLocalLightCount` budget, go through the deferred projector pass, and
+  with `RenderShadowDetail` 2 can be chosen as one of the two shadow-casting
+  projectors.
+- The light beacon draws an extra arm along the aim direction for spots. Its
+  length is `0.4 + radius * intensity / 20` m, so it hints at the light's
+  strength.
+- Presets and autosave gain `spot`, `aim_joint`, `aim_yaw`, `aim_pitch`,
+  `spot_fov`, `spot_focus`, `spot_ambiance`, and `spot_texture`. Older files
+  without them load as point lights aimed at `mNeck`.
+- Like the existing light setters, the image setters call
+  `parameterChanged(..., local_origin=true)`, which sends an
+  `ObjectExtraParams` for local id 0. The region ignores it.
+
+### Runtime verification
+
+LLVOVolume backend, beacons on. Add a light in front of the chest and enable
+**Spotlight**: the beacon's aim arm should point at the neck, and a cone should
+light the neck and face. Walk and animate; the cone should follow. Try other
+**Aim at** joints, the yaw/pitch offsets, FOV, Focus, and Ambiance, and a
+projector image. Then try None. Save and reload a preset, and relog to check
+autosave. Load an older preset and confirm its lights are points. Switch to the
+Shader backend: the spot section disappears, the floater shrinks with its top
+edge fixed, and the lights become points. Switch back: the section and height
+return. Close and reopen the floater in each backend to check the saved size.
+
+## Fixed (placed) lights, per-light On, autosave on change
+
+### Behavior
+
+- **Placement** per light: **Follow avatar** keeps the original behavior (head,
+  chest and back presets plus distance, height and azimuth). **Fixed** keeps the
+  light at a world position, and the editor then shows:
+  - **Place at camera**: the camera position.
+  - **Place at camera focus**: `gAgentCamera.getFocusGlobal()`. After an
+    Alt-click on an object this is the `calcFocusOffset()` point near the
+    object's middle, not the surface hit. Without an Alt-click it is at the
+    avatar. (The exact ray hit is on the `feat-local-light-subject-sort`
+    branch.)
+  - Placing does nothing when no loaded region contains the point
+    (`LLWorld::getRegionFromPosGlobal()` matches region bounds only).
+  - **Offset X/Y/Z**: meters from the placed (base) location along world
+    east/north/up, -10 to +10, centered at 0. Placing again sets a new base
+    and resets the offsets to 0. The home region is always the base's region,
+    even if an offset reaches over a border. Saved as `fixed_offset`.
+  - The home region name, with "(away)" while that region is not loaded.
+
+  Switching a light from Follow to Fixed freezes it where it currently is. A
+  light that was never positioned goes to the camera instead. There is no
+  "place at avatar" for fixed lights.
+- A fixed light belongs to its home region: grid id
+  (`LLGridManager::getGridId()`), region name and global position.
+  - It is **dormant** while that region is not loaded (teleported away,
+    beyond draw distance): no object, no light, no beacon, nothing submitted
+    to the Shader backend.
+  - It is recreated in its region when the region loads again.
+  - It only wakes in a region with the expected name on the expected grid,
+    so global coordinates reused by another grid or a moved region never
+    light the wrong place.
+  - Crossing into a neighbour does not make it dormant. Its agent position
+    is recomputed from the global position every frame.
+- This gives one set of fixed lights per region with no extra mechanism. Each
+  region's set wakes when you arrive. Following lights come with you everywhere.
+- **On** (per light, saved as `on`) switches a single light without changing
+  its settings. **Enable My Lights** stays a global override: a light emits
+  only when both are on (`ASLightRig::isEnabled()`), and the master no longer
+  overwrites the per-light state.
+- **Lights list filter**: **Active here** lists worn (following) lights and
+  fixed lights placed in the agent's region. Fixed lights in loaded neighbours
+  still shine but are listed only under **All lights**, which shows every light,
+  with dormant ones tagged "(away: Region)". "(off)" marks lights switched
+  off. The list refreshes when the agent's region changes, including walking
+  across a border, and when any light's dormancy changes.
+- **After a teleport** (`LLAgent::getTeleportState()` returning to
+  `TELEPORT_NONE`), the filter switches to **Active here**, the list is
+  rebuilt for the arrival region, and its first light (if any) is selected.
+- **Clear region** deletes the fixed lights placed in the agent's region.
+  **Clear away** deletes all dormant lights. Both ask for confirmation first
+  (`GenericAlertYesCancel`).
+- **This region only** preset: saves `{region, grid, lights}` holding the
+  current region's fixed lights. Loading it replaces only that region's fixed
+  lights. A normal preset (an array) still replaces every light. A region preset
+  loaded elsewhere adds dormant lights that wake in their region.
+- **Autosave on change**: every edit marks the rig dirty, and `updateLights()`
+  writes the per-account autosave after 2 s without further changes. Quit
+  still saves too. A crash no longer loses edits made during the session.
+
+### Implementation notes
+
+- `ASLightRig::getTargetRegion()`: the agent's region when following, the home
+  region when fixed. `create()` and the recreate check in `updateTransform()`
+  both use it, so a fixed light's object lives in its own region even while
+  the agent stands in a neighbour.
+- Dormancy is evaluated before the enabled check, so switched-off fixed
+  lights still show the right away state.
+- New LLSD keys: `on`, `placement` (`follow`/`fixed`), `pos_global`, `region`,
+  `grid`. Older files load as following lights that are on.
+- Spot lights work in both placements. A fixed spot still aims at a joint of
+  your avatar, which makes it a stand light that tracks you.
+
+### Runtime verification
+
+1. Add a light, set Fixed, and use **Place at camera** and **Place at camera
+   focus**. Then nudge it with Offset X/Y/Z (0 = placed spot, +/-10 m), and
+   place it again to check the offsets reset to 0.
+2. Set the filter to All lights and teleport away: the light disappears, the
+   filter switches to Active here, and the list shows only worn lights and
+   lights placed in the arrival region, with the first one selected. Under
+   All lights the placed light shows "(away: Region)". Teleport back: it
+   returns.
+3. Place a second set in another region and teleport between them: each set
+   should wake only in its own region.
+4. Toggle **On** for one light, then toggle **Enable My Lights**: the light
+   that was off stays off.
+5. Try **Clear region** and **Clear away**, both cancelling and confirming.
+6. Save a **This region only** preset, delete the region's lights, and load it.
+   Lights in other regions should be untouched.
+7. Edit a light, wait a few seconds, and kill the viewer: after relogging, the
+   edit is kept.
+8. Repeat steps 1–2 with the Shader backend.
+
 ## Teleport / region-change recovery (LLVOVolume backend)
 
 ### Symptom
