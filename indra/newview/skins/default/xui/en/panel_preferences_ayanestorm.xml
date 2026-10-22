@@ -128,7 +128,7 @@
           name="ayastorm"
           value="3" />
         <combo_box.item
-          label="Mac OIT (experimental)"
+          label="Mac OIT"
           name="mac_oit"
           value="4" />
       </combo_box>
