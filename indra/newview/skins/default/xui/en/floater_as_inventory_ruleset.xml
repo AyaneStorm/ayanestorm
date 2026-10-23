@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Rules of one inventory ruleset. -->
+<floater
+ can_close="true"
+ can_resize="true"
+ height="420"
+ layout="topleft"
+ min_height="260"
+ min_width="480"
+ name="floater_as_inventory_ruleset"
+ positioning="cascading"
+ reuse_instance="true"
+ save_rect="true"
+ single_instance="true"
+ title="Inventory Ruleset"
+ width="560">
+  <string name="no_items">No rules yet. Click New Rule to create one.</string>
+  <text
+   follows="left|top"
+   height="16"
+   layout="topleft"
+   left="10"
+   name="ruleset_name_label"
+   top="10"
+   width="60">
+    Name
+  </text>
+  <line_editor
+   follows="left|right|top"
+   height="20"
+   layout="topleft"
+   left="70"
+   max_length_chars="63"
+   name="ruleset_name"
+   right="-10"
+   tool_tip="Ruleset name. Saved when you press Enter or leave the field."
+   top="8" />
+  <flat_list_view
+   allow_select="false"
+   follows="all"
+   item_pad="2"
+   layout="topleft"
+   left="10"
+   name="list"
+   right="-10"
+   top="36"
+   bottom="-84" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="New Rule"
+   layout="topleft"
+   left="10"
+   name="new_btn"
+   tool_tip="Create a new rule in this ruleset"
+   top="344"
+   width="100" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Execute All"
+   layout="topleft"
+   left="118"
+   name="execute_all_btn"
+   tool_tip="Run every rule of this ruleset in list order"
+   top="344"
+   width="110" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Stop"
+   layout="topleft"
+   left="236"
+   name="stop_btn"
+   tool_tip="Stop after the batch in progress is confirmed"
+   top="344"
+   width="80" />
+  <progress_bar
+   follows="left|right|bottom"
+   height="10"
+   layout="topleft"
+   left="10"
+   name="progress_bar"
+   right="-10"
+   top="374" />
+  <text
+   follows="left|right|bottom"
+   height="30"
+   layout="topleft"
+   left="10"
+   name="status_text"
+   right="-10"
+   top="388"
+   word_wrap="true" />
+</floater>

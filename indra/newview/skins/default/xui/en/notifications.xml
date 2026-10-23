@@ -10665,6 +10665,44 @@ Future invitations to this conference will be declined automatically. You can un
   </notification>
   <!-- </AS:Chanayane> -->
 
+  <!-- <AS:Chanayane> User-defined inventory rules. -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRulePurgeConfirm"
+   type="alertmodal">
+These rules delete permanently, without going through the Trash: [RULES]
+
+Deleted items cannot be recovered. Continue?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete Permanently"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleDeleteConfirm"
+   type="alertmodal">
+Delete the inventory rule '[NAME]'?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRulesetDeleteConfirm"
+   type="alertmodal">
+Delete the inventory ruleset '[NAME]' and all its rules?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
+
   <notification
    icon="alertmodal.tga"
    name="ConfirmMuteAll"

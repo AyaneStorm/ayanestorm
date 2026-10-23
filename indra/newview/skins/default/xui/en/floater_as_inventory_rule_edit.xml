@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Inventory rule editor with live preview. -->
+<floater
+ can_close="true"
+ can_resize="true"
+ height="460"
+ layout="topleft"
+ min_height="460"
+ min_width="920"
+ name="floater_as_inventory_rule_edit"
+ positioning="cascading"
+ reuse_instance="true"
+ save_rect="true"
+ single_instance="true"
+ title="Inventory Rule"
+ width="920">
+  <string name="enter_search">Enter a search text.</string>
+  <string name="match_count">[COUNT] match(es).</string>
+  <string name="match_count_limited">[COUNT] matches (showing the first [LIMIT]).</string>
+  <string name="inventory_loading">Inventory is still loading, results may be incomplete.</string>
+  <string name="destination_created">Destination folder will be created.</string>
+  <string name="destination_missing">Destination folder not found.</string>
+  <string name="status_ok">OK</string>
+  <string name="unsaved_rule">Unsaved rule</string>
+  <string name="ruleset_missing">Cannot save: this rule's ruleset no longer exists.</string>
+
+  <!-- Rule fields -->
+  <text follows="left|top" height="16" layout="topleft" left="10" name="rule_name_label" top="12" width="85">Name</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="63" name="rule_name" top="10" width="335" />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="search_text_label" top="40" width="85">Search</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="255" name="search_text" top="38" width="335" tool_tip="Text compared with each item or folder name, using Search type.&#10;Several terms: separate them with ';', any term can match (not for Regex: use '|').&#10;A term containing '/' is compared with the full path from My Inventory instead of the name.&#10;&#10;Examples:&#10;  Contains: demo;sample;test&#10;  Starts with: [DEMO]&#10;  Ends with: (copy)&#10;  Exact: Old Shoes v2&#10;  Starts with: /Objects/Old/  (everything inside /Objects/Old)&#10;  Regex: ^demo|demo$&#10;  Regex: /Objects/.*demo.*  (demo anywhere inside /Objects)&#10;  Regex: \bv[0-9]+$  (names ending with a version like v2)" />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="search_type_label" top="70" width="85">Search type</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="search_type" top="66" width="150" tool_tip="How the Search text is compared:&#10;  Contains: anywhere in the name (or path)&#10;  Starts with / Ends with: at the beginning / end&#10;  Regex: regular expression, found anywhere (use ^ and $ to anchor)&#10;  Exact: the whole name (or path)">
+    <combo_box.item label="Contains" name="contains" value="contains" />
+    <combo_box.item label="Starts with" name="starts_with" value="starts_with" />
+    <combo_box.item label="Ends with" name="ends_with" value="ends_with" />
+    <combo_box.item label="Regex" name="regex" value="regex" />
+    <combo_box.item label="Exact" name="exact" value="exact" />
+  </combo_box>
+  <check_box follows="left|top" height="16" label="Match case" layout="topleft" left="265" name="match_case" top="69" width="150" />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="except_label" top="100" width="85">Except</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="1024" name="except_text" top="98" width="335" tool_tip="Items and folders to ignore, using Except type. An ignored folder is ignored with everything inside it.&#10;Same syntax as Search: ';' separates terms (not for Regex: use '|'), a term containing '/' is compared with the full path.&#10;&#10;Examples:&#10;  Exact: /Clothing/Demos;/Objects/Keep  (skip these two folders)&#10;  Contains: keep;fav  (skip anything named with keep or fav)&#10;  Starts with: /Outfits/  (skip everything inside Outfits)&#10;  Regex: ^#|^~  (skip names starting with # or ~)" />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="except_type_label" top="130" width="85">Except type</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="except_type" top="126" width="150" tool_tip="How the Except text is compared, same choices as Search type.">
+    <combo_box.item label="Contains" name="contains" value="contains" />
+    <combo_box.item label="Starts with" name="starts_with" value="starts_with" />
+    <combo_box.item label="Ends with" name="ends_with" value="ends_with" />
+    <combo_box.item label="Regex" name="regex" value="regex" />
+    <combo_box.item label="Exact" name="exact" value="exact" />
+  </combo_box>
+  <check_box follows="left|top" height="16" label="Match case" layout="topleft" left="265" name="except_match_case" top="129" width="150" />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="match_type_label" top="160" width="85">Match</text>
+  <radio_group follows="left|top" height="16" layout="topleft" left="100" name="match_type" top="160" width="335">
+    <radio_item height="16" label="Item" layout="topleft" left="0" name="item" top="0" value="item" width="70" tool_tip="Select the matching items" />
+    <radio_item height="16" label="Folder" layout="topleft" left="80" name="folder" top="0" value="folder" width="80" tool_tip="Select the matching folders, with everything inside them" />
+    <radio_item height="16" label="Containing folder" layout="topleft" left="170" name="containing_folder" top="0" value="containing_folder" width="160" tool_tip="Search items, but select the folder that directly contains a matching item, with everything inside it. System folders (Objects, Clothing...) are never selected." />
+  </radio_group>
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="action_label" top="190" width="85">Action</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="action" top="186" width="150">
+    <combo_box.item label="None" name="none" value="none" />
+    <combo_box.item label="Move" name="move" value="move" />
+    <combo_box.item label="Delete" name="delete" value="delete" />
+  </combo_box>
+
+  <radio_group follows="left|top" height="16" layout="topleft" left="100" name="delete_mode" top="220" width="335">
+    <radio_item height="16" label="Move to Trash" layout="topleft" left="0" name="trash" top="0" value="trash" width="130" />
+    <radio_item height="16" label="Delete permanently" layout="topleft" left="140" name="purge" top="0" value="purge" width="170" />
+  </radio_group>
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="destination_label" top="220" width="85">Move to</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="1024" name="destination" top="218" width="335" tool_tip="Destination folder path from My Inventory. Example: /Clothing/Demos" />
+  <check_box follows="left|top" height="16" label="Create destination folder if not exist" layout="topleft" left="100" name="create_destination" top="244" width="335" />
+
+  <text follows="left|top" height="80" layout="topleft" left="10" name="rules_notes" text_color="LtGray_50" top="280" width="425" word_wrap="true">
+Links are ignored. Worn items can be moved but are never deleted. Trash, Current Outfit, My Outfits, Marketplace Listings and protected folders are never searched. A matching folder is moved or deleted with all its contents.
+  </text>
+
+  <button follows="left|bottom" height="23" label="Save" layout="topleft" left="10" name="save_btn" tool_tip="Save this rule in the rules list" top="380" width="100" />
+  <button follows="left|bottom" height="23" label="Execute Now" layout="topleft" left="118" name="execute_btn" tool_tip="Run this rule now with the values above, saved or not" top="380" width="110" />
+  <button follows="left|bottom" height="23" label="Stop" layout="topleft" left="236" name="stop_btn" tool_tip="Stop after the batch in progress is confirmed" top="380" width="80" />
+  <progress_bar follows="left|bottom" height="10" layout="topleft" left="10" name="progress_bar" top="410" width="425" />
+  <text follows="left|bottom" height="30" layout="topleft" left="10" name="status_text" top="424" width="425" word_wrap="true" />
+
+  <!-- Preview -->
+  <text follows="left|top" font="SansSerifSmallBold" height="16" layout="topleft" left="455" name="preview_label" top="12" width="200">Preview</text>
+  <text follows="left|right|top" height="32" layout="topleft" left="455" name="preview_count" right="-10" top="30" word_wrap="true" />
+  <scroll_list
+   bottom="-10"
+   draw_heading="true"
+   draw_stripes="true"
+   follows="all"
+   layout="topleft"
+   left="455"
+   multi_select="false"
+   name="preview_list"
+   right="-10"
+   tool_tip="Double-click a row to show it in My Inventory. Right-click for more."
+   top="64">
+    <scroll_list.columns label="Name" name="name" dynamic_width="true" />
+    <scroll_list.columns label="Folder" name="path" width="170" />
+    <scroll_list.columns label="Status" name="status" width="120" />
+  </scroll_list>
+</floater>

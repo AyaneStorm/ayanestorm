@@ -6575,6 +6575,20 @@
       </menu_item_check>
       <!-- </AS:Chanayane> -->
 
+      <!-- <AS:Chanayane> User-defined inventory rules. -->
+      <menu_item_check
+         label="Inventory Rules"
+         name="Inventory Rules"
+         use_mac_ctrl="true">
+         <menu_item_check.on_check
+            function="Floater.Visible"
+            parameter="as_inventory_rules" />
+         <menu_item_check.on_click
+            function="Floater.Toggle"
+            parameter="as_inventory_rules" />
+      </menu_item_check>
+      <!-- </AS:Chanayane> -->
+
       <menu_item_separator />
 
       <menu

@@ -98,6 +98,10 @@ set(viewer_SOURCE_FILES
     asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> User-defined inventory rules.
+    asinventoryrules.cpp
+    asfloaterinventoryrules.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.cpp
     # </AS:Chanayane>
@@ -1043,6 +1047,10 @@ set(viewer_HEADER_FILES
     asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> User-defined inventory rules.
+    asinventoryrules.h
+    asfloaterinventoryrules.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.h
     # </AS:Chanayane>

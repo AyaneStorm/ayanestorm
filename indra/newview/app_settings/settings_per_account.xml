@@ -26,6 +26,19 @@
       <array/>
     </map>
     <!-- </AS:Chanayane> -->
+    <!-- <AS:Chanayane> User-defined inventory rules. -->
+    <key>ASInventoryRulesets</key>
+    <map>
+      <key>Comment</key>
+      <string>Inventory Rules floater: saved rulesets, each an ordered list of rules (search, match, action, destination).</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>LLSD</string>
+      <key>Value</key>
+      <array/>
+    </map>
+    <!-- </AS:Chanayane> -->
     <key>AvatarHoverOffsetZ</key>
     <map>
       <key>Comment</key>
