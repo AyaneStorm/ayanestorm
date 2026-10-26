@@ -44,6 +44,9 @@
 #include "lltrans.h"
 #include "llvoavatarself.h"
 #include "lltabcontainer.h"
+// <AS:Chanayane> Move to top / bottom of the layer stack.
+#include "asoutfitreorder.h"
+// </AS:Chanayane>
 
 static LLPanelInjector<LLCOFWearables> t_cof_wearables("cof_wearables");
 
@@ -572,6 +575,10 @@ LLPanelClothingListItem* LLCOFWearables::buildClothingListItem(LLViewerInventory
     LLPanelClothingListItem* item_panel = LLPanelClothingListItem::create(item);
     if (!item_panel) return NULL;
 
+    // <AS:Chanayane> COF link id for move to top / bottom.
+    const LLUUID link_id = item->getUUID();
+    // </AS:Chanayane>
+
     //updating verbs
     //we don't need to use permissions of a link but of an actual/linked item
     if (item->getLinkedItem()) item = item->getLinkedItem();
@@ -583,14 +590,30 @@ LLPanelClothingListItem* LLCOFWearables::buildClothingListItem(LLViewerInventory
     item_panel->setShowLockButton(!allow_modify);
     item_panel->setShowEditButton(allow_modify);
 
-    item_panel->setShowMoveUpButton(!first);
-    item_panel->setShowMoveDownButton(!last);
+    // <AS:Chanayane> Keep every move button in place (no shifting under rapid clicks):
+    // show all four when the type has several layers, dim the ones at the edges.
+    //item_panel->setShowMoveUpButton(!first);
+    //item_panel->setShowMoveDownButton(!last);
+    const bool several_layers = !(first && last);
+    item_panel->setShowMoveUpButton(several_layers);
+    item_panel->setShowMoveDownButton(several_layers);
+    item_panel->setShowMoveTopButton(several_layers);
+    item_panel->setShowMoveBottomButton(several_layers);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_up", first);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_top", first);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_down", last);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_bottom", last);
+    // </AS:Chanayane>
 
     //setting callbacks
     //*TODO move that item panel's inner structure disclosing stuff into the panels
     item_panel->childSetAction("btn_delete", boost::bind(mCOFCallbacks.mDeleteWearable));
     item_panel->childSetAction("btn_move_up", boost::bind(mCOFCallbacks.mMoveWearableFurther));
     item_panel->childSetAction("btn_move_down", boost::bind(mCOFCallbacks.mMoveWearableCloser));
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    item_panel->childSetAction("btn_move_top", [link_id](LLUICtrl*, const LLSD&) { ASOutfitReorder::moveWearableToTop(link_id); });
+    item_panel->childSetAction("btn_move_bottom", [link_id](LLUICtrl*, const LLSD&) { ASOutfitReorder::moveWearableToBottom(link_id); });
+    // </AS:Chanayane>
     item_panel->childSetAction("btn_edit", boost::bind(mCOFCallbacks.mEditWearable));
 
     //turning on gray separator line for the last item in the items group of the same wearable type

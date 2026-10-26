@@ -273,6 +273,10 @@ LLPanelClothingListItem::Params::Params()
 :   up_btn("up_btn"),
     down_btn("down_btn"),
     edit_btn("edit_btn"),
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    top_btn("top_btn"),
+    bottom_btn("bottom_btn"),
+    // </AS:Chanayane>
     lock_panel("lock_panel"),
     edit_panel("edit_panel"),
     lock_icon("lock_icon")
@@ -302,6 +306,16 @@ LLPanelClothingListItem::LLPanelClothingListItem(LLViewerInventoryItem* item, co
     button_params = params.down_btn;
     applyXUILayout(button_params, this);
     addChild(LLUICtrlFactory::create<LLButton>(button_params));
+
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    button_params = params.top_btn;
+    applyXUILayout(button_params, this);
+    addChild(LLUICtrlFactory::create<LLButton>(button_params));
+
+    button_params = params.bottom_btn;
+    applyXUILayout(button_params, this);
+    addChild(LLUICtrlFactory::create<LLButton>(button_params));
+    // </AS:Chanayane>
 
     LLPanel::Params panel_params = params.lock_panel;
     applyXUILayout(panel_params, this);
@@ -338,6 +352,10 @@ bool LLPanelClothingListItem::postBuild()
 {
     LLPanelDeletableWearableListItem::postBuild();
 
+    // <AS:Chanayane> Top / bottom added left of up / down, which keep their original place.
+    addWidgetToRightSide("btn_move_top");
+    addWidgetToRightSide("btn_move_bottom");
+    // </AS:Chanayane>
     addWidgetToRightSide("btn_move_up");
     addWidgetToRightSide("btn_move_down");
     addWidgetToRightSide("btn_lock");

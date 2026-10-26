@@ -105,6 +105,9 @@ set(viewer_SOURCE_FILES
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.cpp
     # </AS:Chanayane>
+    # <AS:Chanayane> Edit Outfit clothing layer reordering.
+    asoutfitreorder.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.cpp
     ascolorgrading.cpp
@@ -1053,6 +1056,9 @@ set(viewer_HEADER_FILES
     # </AS:Chanayane>
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Edit Outfit clothing layer reordering.
+    asoutfitreorder.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.h

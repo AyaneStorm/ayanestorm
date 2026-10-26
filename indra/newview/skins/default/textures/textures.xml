@@ -968,6 +968,10 @@ with the same filename but different name
   <texture name="Unread_Chiclet" file_name="bottomtray/Unread_Chiclet.png" preload="false" />
 
   <texture name="UpArrow_Off" file_name="icons/UpArrow_Off.png" preload="false" />
+  <!-- <AS:Chanayane> Edit Outfit move to top / bottom icons. -->
+  <texture name="AS_MoveTop_Off" file_name="as/move_top_off.png" preload="false" />
+  <texture name="AS_MoveBottom_Off" file_name="as/move_bottom_off.png" preload="false" />
+  <!-- </AS:Chanayane> -->
 
   <texture name="Video_URL_Off" file_name="icons/Video_URL_Off.png" preload="true" />
   
