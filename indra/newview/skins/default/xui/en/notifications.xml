@@ -10701,6 +10701,44 @@ Delete the inventory ruleset '[NAME]' and all its rules?
      notext="Cancel"
      yestext="Delete"/>
   </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleExecuteConfirm"
+   type="alertmodal">
+Inventory rules move or delete many items and folders at once, and nothing can be undone.
+
+A rule that is not exactly right can wreck your inventory in seconds: a search that matches more than you expect, a wrong destination, or a folder match that takes whole folders with everything inside them. Moved items must be found and put back by hand, one by one. Items deleted permanently are gone forever.
+
+Before executing, check every rule's preview, or click Dry Run to see the full list of what would be moved or deleted.[PURGE]
+    <tag>confirm</tag>
+    <form name="form">
+      <button
+       default="true"
+       index="0"
+       name="Cancel"
+       text="Cancel"/>
+      <button
+       index="1"
+       name="DryRun"
+       text="Dry Run"/>
+      <button
+       index="2"
+       name="Execute"
+       text="Execute Now"/>
+      <ignore name="ignore"
+       text="Executing inventory rules"/>
+    </form>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleTransferError"
+   type="alertmodal">
+[MESSAGE]
+    <tag>fail</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
   <!-- </AS:Chanayane> -->
 
   <notification

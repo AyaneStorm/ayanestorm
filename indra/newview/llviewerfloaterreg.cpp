@@ -756,6 +756,7 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("as_inventory_rules", "floater_as_inventory_rules.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterInventoryRules>);
     LLFloaterReg::add("as_inventory_ruleset", "floater_as_inventory_ruleset.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterInventoryRuleset>);
     LLFloaterReg::add("as_inventory_rule_edit", "floater_as_inventory_rule_edit.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterInventoryRuleEdit>);
+    LLFloaterReg::add("as_inventory_rule_dry_run", "floater_as_inventory_rule_dry_run.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ASFloaterInventoryRuleDryRun>);
 // </AS:Chanayane>
     LLFloaterReg::add("fs_radar", "floater_fs_radar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterRadar>);
     LLFloaterReg::add("fs_splash_screen_settings", "floater_fs_splash_screen_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FSFloaterSplashScreenSettings>);

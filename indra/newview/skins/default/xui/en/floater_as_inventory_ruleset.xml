@@ -6,14 +6,14 @@
  height="420"
  layout="topleft"
  min_height="260"
- min_width="480"
+ min_width="620"
  name="floater_as_inventory_ruleset"
  positioning="cascading"
  reuse_instance="true"
  save_rect="true"
  single_instance="true"
  title="Inventory Ruleset"
- width="560">
+ width="620">
   <string name="no_items">No rules yet. Click New Rule to create one.</string>
   <text
    follows="left|top"
@@ -68,13 +68,49 @@
   <button
    follows="left|bottom"
    height="23"
-   label="Stop"
+   label="Dry Run"
    layout="topleft"
    left="236"
+   name="dry_run_btn"
+   tool_tip="List what the rules of this ruleset would do, without changing anything"
+   top="344"
+   width="80" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Stop"
+   layout="topleft"
+   left="324"
    name="stop_btn"
    tool_tip="Stop after the batch in progress is confirmed"
    top="344"
    width="80" />
+  <flyout_button
+   follows="left|bottom"
+   height="23"
+   label="Export"
+   layout="topleft"
+   left="412"
+   name="export_btn"
+   tool_tip="Copy this ruleset with its rules to the clipboard as JSON. The arrow also offers a file."
+   top="344"
+   width="96">
+    <flyout_button.item label="Export to clipboard" name="clipboard" value="clipboard" />
+    <flyout_button.item label="Export to file..." name="file" value="file" />
+  </flyout_button>
+  <flyout_button
+   follows="left|bottom"
+   height="23"
+   label="Import"
+   layout="topleft"
+   left="514"
+   name="import_btn"
+   tool_tip="Add rules from JSON in the clipboard (one rule, or the rules of a ruleset), at the end of this ruleset. Nothing is replaced or executed. The arrow also offers a file."
+   top="344"
+   width="96">
+    <flyout_button.item label="Import from clipboard" name="clipboard" value="clipboard" />
+    <flyout_button.item label="Import from file..." name="file" value="file" />
+  </flyout_button>
   <progress_bar
    follows="left|right|bottom"
    height="10"

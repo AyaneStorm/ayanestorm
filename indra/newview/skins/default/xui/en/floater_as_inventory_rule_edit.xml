@@ -3,9 +3,9 @@
 <floater
  can_close="true"
  can_resize="true"
- height="460"
+ height="546"
  layout="topleft"
- min_height="460"
+ min_height="546"
  min_width="920"
  name="floater_as_inventory_rule_edit"
  positioning="cascading"
@@ -18,6 +18,7 @@
   <string name="match_count">[COUNT] match(es).</string>
   <string name="match_count_limited">[COUNT] matches (showing the first [LIMIT]).</string>
   <string name="inventory_loading">Inventory is still loading, results may be incomplete.</string>
+  <string name="names_loading">Loading [NAMES] creator name(s), their items are not matched yet.</string>
   <string name="destination_created">Destination folder will be created.</string>
   <string name="destination_missing">Destination folder not found.</string>
   <string name="status_ok">OK</string>
@@ -26,7 +27,11 @@
 
   <!-- Rule fields -->
   <text follows="left|top" height="16" layout="topleft" left="10" name="rule_name_label" top="12" width="85">Name</text>
-  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="63" name="rule_name" top="10" width="335" />
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="63" name="rule_name" top="10" width="243" />
+  <flyout_button follows="left|top" height="23" label="Export" layout="topleft" left="351" name="export_btn" tool_tip="Copy this rule (current values, saved or not) to the clipboard as JSON. The arrow also offers a file." top="8" width="84">
+    <flyout_button.item label="Export to clipboard" name="clipboard" value="clipboard" />
+    <flyout_button.item label="Export to file..." name="file" value="file" />
+  </flyout_button>
 
   <text follows="left|top" height="16" layout="topleft" left="10" name="search_text_label" top="40" width="85">Search</text>
   <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="255" name="search_text" top="38" width="335" tool_tip="Text compared with each item or folder name, using Search type.&#10;Several terms: separate them with ';', any term can match (not for Regex: use '|').&#10;A term containing '/' is compared with the full path from My Inventory instead of the name.&#10;&#10;Examples:&#10;  Contains: demo;sample;test&#10;  Starts with: [DEMO]&#10;  Ends with: (copy)&#10;  Exact: Old Shoes v2&#10;  Starts with: /Objects/Old/  (everything inside /Objects/Old)&#10;  Regex: ^demo|demo$&#10;  Regex: /Objects/.*demo.*  (demo anywhere inside /Objects)&#10;  Regex: \bv[0-9]+$  (names ending with a version like v2)" />
@@ -57,35 +62,96 @@
   <text follows="left|top" height="16" layout="topleft" left="10" name="match_type_label" top="160" width="85">Match</text>
   <radio_group follows="left|top" height="16" layout="topleft" left="100" name="match_type" top="160" width="335">
     <radio_item height="16" label="Item" layout="topleft" left="0" name="item" top="0" value="item" width="70" tool_tip="Select the matching items" />
-    <radio_item height="16" label="Folder" layout="topleft" left="80" name="folder" top="0" value="folder" width="80" tool_tip="Select the matching folders, with everything inside them" />
+    <radio_item height="16" label="Folder" layout="topleft" left="80" name="folder" top="0" value="folder" width="80" tool_tip="Select the matching folders, with everything inside them. Type, Age, Created by and Permissions do not apply." />
     <radio_item height="16" label="Containing folder" layout="topleft" left="170" name="containing_folder" top="0" value="containing_folder" width="160" tool_tip="Search items, but select the folder that directly contains a matching item, with everything inside it. System folders (Objects, Clothing...) are never selected." />
   </radio_group>
 
-  <text follows="left|top" height="16" layout="topleft" left="10" name="action_label" top="190" width="85">Action</text>
-  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="action" top="186" width="150">
+  <!-- Item filters (Match: Item or Containing folder) -->
+  <text follows="left|top" height="16" layout="topleft" left="10" name="item_type_label" top="190" width="85">Type</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="item_type" top="186" width="150" tool_tip="Only items of this type match.">
+    <combo_box.item label="Any type" name="any" value="any" />
+    <combo_box.item label="Animation" name="animation" value="animation" />
+    <combo_box.item label="Body part" name="bodypart" value="bodypart" />
+    <combo_box.item label="Calling card" name="callingcard" value="callingcard" />
+    <combo_box.item label="Clothing" name="clothing" value="clothing" />
+    <combo_box.item label="Gesture" name="gesture" value="gesture" />
+    <combo_box.item label="Landmark" name="landmark" value="landmark" />
+    <combo_box.item label="Material" name="material" value="material" />
+    <combo_box.item label="Notecard" name="notecard" value="notecard" />
+    <combo_box.item label="Object" name="object" value="object" />
+    <combo_box.item label="Script" name="script" value="script" />
+    <combo_box.item label="Settings" name="settings" value="settings" />
+    <combo_box.item label="Snapshot" name="snapshot" value="snapshot" />
+    <combo_box.item label="Sound" name="sound" value="sound" />
+    <combo_box.item label="Texture" name="texture" value="texture" />
+  </combo_box>
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="age_label" top="220" width="85">Age</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="age" top="216" width="110" tool_tip="Compared with the item creation date. Items with an unknown creation date never match an age condition.">
+    <combo_box.item label="Any age" name="any" value="any" />
+    <combo_box.item label="Newer than" name="newer" value="newer" />
+    <combo_box.item label="Older than" name="older" value="older" />
+  </combo_box>
+  <spinner decimal_digits="0" follows="left|top" height="20" increment="1" initial_value="0" layout="topleft" left="216" max_val="10000" min_val="0" name="age_days" top="218" width="56" />
+  <text follows="left|top" height="16" layout="topleft" left="276" name="age_days_label" top="220" width="34">days</text>
+  <spinner decimal_digits="0" follows="left|top" height="20" increment="1" initial_value="0" layout="topleft" left="312" max_val="23" min_val="0" name="age_hours" top="218" width="46" />
+  <text follows="left|top" height="16" layout="topleft" left="362" name="age_hours_label" top="220" width="40">hours</text>
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="creator_label" top="250" width="85">Created by</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="creator" top="246" width="110">
+    <combo_box.item label="Anyone" name="anyone" value="anyone" />
+    <combo_box.item label="Me" name="me" value="me" />
+    <combo_box.item label="Others" name="others" value="others" />
+    <combo_box.item label="Specific person" name="specific" value="specific" />
+  </combo_box>
+  <line_editor follows="left|top" height="20" layout="topleft" left="216" max_length_chars="63" name="creator_name" top="248" width="219" tool_tip="User name (john.doe, John Doe, jane) or avatar UUID. Display names are not used. Names load in the background; until a creator's name is loaded, that creator's items do not match." />
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="perms_label" top="280" width="85">Permissions</text>
+  <text follows="left|top" height="16" layout="topleft" left="100" name="perm_copy_label" top="280" width="32">Copy</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="132" name="perm_copy" top="276" width="58" tool_tip="Your (owner) copy permission: any, allowed (Yes) or not allowed (No).">
+    <combo_box.item label="Any" name="any" value="any" />
+    <combo_box.item label="Yes" name="yes" value="yes" />
+    <combo_box.item label="No" name="no" value="no" />
+  </combo_box>
+  <text follows="left|top" height="16" layout="topleft" left="198" name="perm_modify_label" top="280" width="30">Mod</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="228" name="perm_modify" top="276" width="58" tool_tip="Your (owner) modify permission: any, allowed (Yes) or not allowed (No).">
+    <combo_box.item label="Any" name="any" value="any" />
+    <combo_box.item label="Yes" name="yes" value="yes" />
+    <combo_box.item label="No" name="no" value="no" />
+  </combo_box>
+  <text follows="left|top" height="16" layout="topleft" left="294" name="perm_transfer_label" top="280" width="80">Transfer</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="350" name="perm_transfer" top="276" width="58" tool_tip="Your (owner) transfer permission: any, allowed (Yes) or not allowed (No).">
+    <combo_box.item label="Any" name="any" value="any" />
+    <combo_box.item label="Yes" name="yes" value="yes" />
+    <combo_box.item label="No" name="no" value="no" />
+  </combo_box>
+
+  <text follows="left|top" height="16" layout="topleft" left="10" name="action_label" top="310" width="85">Action</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="100" name="action" top="306" width="150">
     <combo_box.item label="None" name="none" value="none" />
     <combo_box.item label="Move" name="move" value="move" />
     <combo_box.item label="Delete" name="delete" value="delete" />
   </combo_box>
 
-  <radio_group follows="left|top" height="16" layout="topleft" left="100" name="delete_mode" top="220" width="335">
+  <radio_group follows="left|top" height="16" layout="topleft" left="100" name="delete_mode" top="340" width="335">
     <radio_item height="16" label="Move to Trash" layout="topleft" left="0" name="trash" top="0" value="trash" width="130" />
     <radio_item height="16" label="Delete permanently" layout="topleft" left="140" name="purge" top="0" value="purge" width="170" />
   </radio_group>
 
-  <text follows="left|top" height="16" layout="topleft" left="10" name="destination_label" top="220" width="85">Move to</text>
-  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="1024" name="destination" top="218" width="335" tool_tip="Destination folder path from My Inventory. Example: /Clothing/Demos" />
-  <check_box follows="left|top" height="16" label="Create destination folder if not exist" layout="topleft" left="100" name="create_destination" top="244" width="335" />
+  <text follows="left|top" height="16" layout="topleft" left="10" name="destination_label" top="340" width="85">Move to</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="1024" name="destination" top="338" width="335" tool_tip="Destination folder path from My Inventory. Example: /Clothing/Demos" />
+  <check_box follows="left|top" height="16" label="Create destination folder if not exist" layout="topleft" left="100" name="create_destination" top="364" width="335" />
 
-  <text follows="left|top" height="80" layout="topleft" left="10" name="rules_notes" text_color="LtGray_50" top="280" width="425" word_wrap="true">
+  <text follows="left|top" height="66" layout="topleft" left="10" name="rules_notes" text_color="LtGray_50" top="392" width="425" word_wrap="true">
 Links are ignored. Worn items can be moved but are never deleted. Trash, Current Outfit, My Outfits, Marketplace Listings and protected folders are never searched. A matching folder is moved or deleted with all its contents.
   </text>
 
-  <button follows="left|bottom" height="23" label="Save" layout="topleft" left="10" name="save_btn" tool_tip="Save this rule in the rules list" top="380" width="100" />
-  <button follows="left|bottom" height="23" label="Execute Now" layout="topleft" left="118" name="execute_btn" tool_tip="Run this rule now with the values above, saved or not" top="380" width="110" />
-  <button follows="left|bottom" height="23" label="Stop" layout="topleft" left="236" name="stop_btn" tool_tip="Stop after the batch in progress is confirmed" top="380" width="80" />
-  <progress_bar follows="left|bottom" height="10" layout="topleft" left="10" name="progress_bar" top="410" width="425" />
-  <text follows="left|bottom" height="30" layout="topleft" left="10" name="status_text" top="424" width="425" word_wrap="true" />
+  <button follows="left|bottom" height="23" label="Save" layout="topleft" left="10" name="save_btn" tool_tip="Save this rule in the rules list" top="468" width="100" />
+  <button follows="left|bottom" height="23" label="Execute Now" layout="topleft" left="118" name="execute_btn" tool_tip="Run this rule now with the values above, saved or not" top="468" width="110" />
+  <button follows="left|bottom" height="23" label="Dry Run" layout="topleft" left="236" name="dry_run_btn" tool_tip="List what this rule would do, without changing anything" top="468" width="80" />
+  <button follows="left|bottom" height="23" label="Stop" layout="topleft" left="324" name="stop_btn" tool_tip="Stop after the batch in progress is confirmed" top="468" width="80" />
+  <progress_bar follows="left|bottom" height="10" layout="topleft" left="10" name="progress_bar" top="500" width="425" />
+  <text follows="left|bottom" height="30" layout="topleft" left="10" name="status_text" top="514" width="425" word_wrap="true" />
 
   <!-- Preview -->
   <text follows="left|top" font="SansSerifSmallBold" height="16" layout="topleft" left="455" name="preview_label" top="12" width="200">Preview</text>

@@ -28,6 +28,7 @@
 
 #include "llagent.h"
 #include "llapp.h"
+#include "llavatarnamecache.h"
 #include "lleventtimer.h"
 #include "llframetimer.h"
 #include "llgesturemgr.h"
@@ -35,11 +36,14 @@
 #include "llinventorymodel.h"
 #include "llinventorymodelbackgroundfetch.h"
 #include "llregex.h"
+#include "llsdjson.h"
 #include "llviewercontrol.h"
 #include "llviewerinventory.h"
 #include "llviewerregion.h"
 #include "message.h"
 
+#include <algorithm>
+#include <iterator>
 #include <set>
 
 namespace
@@ -53,11 +57,68 @@ constexpr F32 TICK_PERIOD = 0.1f;
 constexpr F64 BATCH_PAUSE = 0.5;
 constexpr F64 BATCH_TIMEOUT = 60.0;
 constexpr F64 CREATE_TIMEOUT = 60.0;
+// Creator names are re-checked every NAMES_RETRY seconds; after NAMES_TIMEOUT the rule runs without the missing ones.
+constexpr F64 NAMES_RETRY = 1.0;
+constexpr F64 NAMES_TIMEOUT = 30.0;
 
 const char* const SEARCH_TYPE_NAMES[] = { "contains", "starts_with", "ends_with", "regex", "exact" };
 const char* const MATCH_TYPE_NAMES[] = { "item", "folder", "containing_folder" };
 const char* const ACTION_NAMES[] = { "none", "move", "delete" };
 const char* const DELETE_MODE_NAMES[] = { "trash", "purge" };
+const char* const ITEM_TYPE_NAMES[] = { "any", "animation", "bodypart", "callingcard", "clothing", "gesture",
+                                        "landmark", "material", "notecard", "object", "script", "settings",
+                                        "snapshot", "sound", "texture" };
+const char* const ITEM_TYPE_LABELS[] = { "any", "animation", "body part", "calling card", "clothing", "gesture",
+                                         "landmark", "material", "notecard", "object", "script", "settings",
+                                         "snapshot", "sound", "texture" };
+// Asset type of each EItemType; snapshots and textures are told apart by inventory type.
+const LLAssetType::EType ITEM_ASSET_TYPES[] = { LLAssetType::AT_NONE, LLAssetType::AT_ANIMATION, LLAssetType::AT_BODYPART,
+                                                LLAssetType::AT_CALLINGCARD, LLAssetType::AT_CLOTHING, LLAssetType::AT_GESTURE,
+                                                LLAssetType::AT_LANDMARK, LLAssetType::AT_MATERIAL, LLAssetType::AT_NOTECARD,
+                                                LLAssetType::AT_OBJECT, LLAssetType::AT_LSL_TEXT, LLAssetType::AT_SETTINGS,
+                                                LLAssetType::AT_TEXTURE, LLAssetType::AT_SOUND, LLAssetType::AT_TEXTURE };
+const char* const AGE_NAMES[] = { "any", "newer", "older" };
+const char* const CREATOR_NAMES[] = { "anyone", "me", "others", "specific" };
+const char* const PERMISSION_NAMES[] = { "any", "yes", "no" };
+
+// JSON exports.
+constexpr const char* EXPORT_FORMAT = "ayanestorm-inventory-rules";
+const char* const EXPORT_TYPE_NAMES[] = { "rule", "ruleset", "rulesets" };
+constexpr size_t IMPORT_MAX_SIZE = 4 * 1024 * 1024;
+
+// Rule keys of the stored and exported LLSD, in export order, with what an import accepts.
+enum EFieldKind { FIELD_STRING, FIELD_BOOL, FIELD_INT, FIELD_ENUM };
+struct RuleField
+{
+    const char* mKey;
+    EFieldKind mKind;
+    const char* const* mNames = nullptr;    // FIELD_ENUM
+    size_t mCount = 0;
+    S32 mMax = 0;                           // FIELD_INT, minimum 0
+};
+const RuleField RULE_FIELDS[] = {
+    { "name", FIELD_STRING },
+    { "search", FIELD_STRING },
+    { "search_type", FIELD_ENUM, SEARCH_TYPE_NAMES, std::size(SEARCH_TYPE_NAMES) },
+    { "match_case", FIELD_BOOL },
+    { "except", FIELD_STRING },
+    { "except_type", FIELD_ENUM, SEARCH_TYPE_NAMES, std::size(SEARCH_TYPE_NAMES) },
+    { "except_match_case", FIELD_BOOL },
+    { "match", FIELD_ENUM, MATCH_TYPE_NAMES, std::size(MATCH_TYPE_NAMES) },
+    { "item_type", FIELD_ENUM, ITEM_TYPE_NAMES, std::size(ITEM_TYPE_NAMES) },
+    { "age", FIELD_ENUM, AGE_NAMES, std::size(AGE_NAMES) },
+    { "age_days", FIELD_INT, nullptr, 0, 10000 },
+    { "age_hours", FIELD_INT, nullptr, 0, 23 },
+    { "creator", FIELD_ENUM, CREATOR_NAMES, std::size(CREATOR_NAMES) },
+    { "creator_name", FIELD_STRING },
+    { "perm_copy", FIELD_ENUM, PERMISSION_NAMES, std::size(PERMISSION_NAMES) },
+    { "perm_modify", FIELD_ENUM, PERMISSION_NAMES, std::size(PERMISSION_NAMES) },
+    { "perm_transfer", FIELD_ENUM, PERMISSION_NAMES, std::size(PERMISSION_NAMES) },
+    { "action", FIELD_ENUM, ACTION_NAMES, std::size(ACTION_NAMES) },
+    { "delete_mode", FIELD_ENUM, DELETE_MODE_NAMES, std::size(DELETE_MODE_NAMES) },
+    { "destination", FIELD_STRING },
+    { "create_destination", FIELD_BOOL },
+};
 
 F64 nowSeconds()
 {
@@ -85,25 +146,18 @@ std::string lowered(const std::string& text)
     return wstring_to_utf8str(wtext);
 }
 
-LLUUID findChildFolder(const LLUUID& parent_id, const std::string& name)
+// "John.Doe", "john doe" and "Jane Resident" compare as "john doe" and "jane".
+std::string normalizedName(const std::string& name)
 {
-    LLInventoryModel::cat_array_t* cats = nullptr;
-    LLInventoryModel::item_array_t* items = nullptr;
-    gInventory.getDirectDescendentsOf(parent_id, cats, items);
-    if (!cats)
+    std::string text = lowered(name);
+    LLStringUtil::replaceChar(text, '.', ' ');
+    LLStringUtil::trim(text);
+    const std::string suffix = " resident";
+    if (text.size() > suffix.size() && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0)
     {
-        return LLUUID::null;
+        text.erase(text.size() - suffix.size());
     }
-
-    const std::string wanted = lowered(name);
-    for (const LLPointer<LLViewerInventoryCategory>& cat : *cats)
-    {
-        if (cat && lowered(cat->getName()) == wanted)
-        {
-            return cat->getUUID();
-        }
-    }
-    return LLUUID::null;
+    return text;
 }
 
 // Deleted gestures must not stay active (same as LLInventoryModel::removeCategory).
@@ -190,6 +244,15 @@ LLSD ASInventoryRule::asLLSD() const
     sd["delete_mode"] = DELETE_MODE_NAMES[mDeleteMode];
     sd["destination"] = mDestination;
     sd["create_destination"] = mCreateDestination;
+    sd["item_type"] = ITEM_TYPE_NAMES[mItemType];
+    sd["age"] = AGE_NAMES[mAge];
+    sd["age_days"] = (S32)mAgeDays;
+    sd["age_hours"] = (S32)mAgeHours;
+    sd["creator"] = CREATOR_NAMES[mCreator];
+    sd["creator_name"] = mCreatorName;
+    sd["perm_copy"] = PERMISSION_NAMES[mPermCopy];
+    sd["perm_modify"] = PERMISSION_NAMES[mPermModify];
+    sd["perm_transfer"] = PERMISSION_NAMES[mPermTransfer];
     return sd;
 }
 
@@ -209,6 +272,16 @@ ASInventoryRule ASInventoryRule::fromLLSD(const LLSD& sd)
     rule.mDeleteMode = (EDeleteMode)lookupName(sd["delete_mode"].asString(), DELETE_MODE_NAMES, DELETE_TRASH);
     rule.mDestination = sd["destination"].asString();
     rule.mCreateDestination = sd["create_destination"].asBoolean();
+    rule.mItemType = (EItemType)lookupName(sd["item_type"].asString(), ITEM_TYPE_NAMES, ITEM_ANY);
+    rule.mAge = (EAge)lookupName(sd["age"].asString(), AGE_NAMES, AGE_ANY);
+    rule.mAgeDays = (U32)llmax(0, sd["age_days"].asInteger());
+    rule.mAgeHours = (U32)llmax(0, sd["age_hours"].asInteger());
+    rule.mCreator = (ECreator)lookupName(sd["creator"].asString(), CREATOR_NAMES, CREATOR_ANYONE);
+    rule.mCreatorName = sd["creator_name"].asString();
+    LLStringUtil::trim(rule.mCreatorName);
+    rule.mPermCopy = (EPermission)lookupName(sd["perm_copy"].asString(), PERMISSION_NAMES, PERMISSION_ANY);
+    rule.mPermModify = (EPermission)lookupName(sd["perm_modify"].asString(), PERMISSION_NAMES, PERMISSION_ANY);
+    rule.mPermTransfer = (EPermission)lookupName(sd["perm_transfer"].asString(), PERMISSION_NAMES, PERMISSION_ANY);
     return rule;
 }
 
@@ -230,6 +303,41 @@ std::string ASInventoryRule::getSummary() const
         if (mExceptMatchCase)
         {
             summary += " (match case)";
+        }
+    }
+
+    if (usesItemFilters())
+    {
+        if (mItemType != ITEM_ANY)
+        {
+            summary += ", type " + std::string(ITEM_TYPE_LABELS[mItemType]);
+        }
+        if (mAge != AGE_ANY)
+        {
+            summary += llformat(", %s than %ud %uh", mAge == AGE_NEWER ? "newer" : "older", mAgeDays, mAgeHours);
+        }
+        switch (mCreator)
+        {
+        case CREATOR_ME:
+            summary += ", created by me";
+            break;
+        case CREATOR_OTHERS:
+            summary += ", created by others";
+            break;
+        case CREATOR_SPECIFIC:
+            summary += ", created by " + mCreatorName;
+            break;
+        default:
+            break;
+        }
+        const EPermission perms[] = { mPermCopy, mPermModify, mPermTransfer };
+        const char* const perm_labels[] = { "copy", "mod", "transfer" };
+        for (size_t i = 0; i < 3; ++i)
+        {
+            if (perms[i] != PERMISSION_ANY)
+            {
+                summary += std::string(perms[i] == PERMISSION_NO ? ", no " : ", ") + perm_labels[i];
+            }
         }
     }
 
@@ -310,13 +418,237 @@ bool ASInventoryRuleset::hasAction() const
 }
 
 //-----------------------------------------------------------------------------
+// ASInventoryRuleSimulation
+//-----------------------------------------------------------------------------
+
+const ASInventoryRuleSimulation& ASInventoryRuleSimulation::real()
+{
+    static const ASInventoryRuleSimulation sReal;
+    return sReal;
+}
+
+void ASInventoryRuleSimulation::getChildren(const LLUUID& folder_id, cat_list_t& cats, item_list_t& items) const
+{
+    cats.clear();
+    items.clear();
+
+    // Real children, minus those moved elsewhere.
+    LLInventoryModel::cat_array_t* real_cats = nullptr;
+    LLInventoryModel::item_array_t* real_items = nullptr;
+    gInventory.getDirectDescendentsOf(folder_id, real_cats, real_items);
+    if (real_cats)
+    {
+        for (const LLPointer<LLViewerInventoryCategory>& cat : *real_cats)
+        {
+            if (cat && !mParents.count(cat->getUUID()))
+            {
+                cats.push_back(cat.get());
+            }
+        }
+    }
+    if (real_items)
+    {
+        for (const LLPointer<LLViewerInventoryItem>& item : *real_items)
+        {
+            if (item && !mParents.count(item->getUUID()))
+            {
+                items.push_back(item.get());
+            }
+        }
+    }
+
+    // Objects moved in, and folders created here.
+    auto added = mAdded.find(folder_id);
+    if (added != mAdded.end())
+    {
+        for (const LLUUID& id : added->second)
+        {
+            if (LLViewerInventoryCategory* cat = getCategory(id))
+            {
+                cats.push_back(cat);
+            }
+            else if (LLViewerInventoryItem* item = gInventory.getItem(id))
+            {
+                items.push_back(item);
+            }
+        }
+    }
+}
+
+LLViewerInventoryCategory* ASInventoryRuleSimulation::getCategory(const LLUUID& id) const
+{
+    auto it = mVirtual.find(id);
+    return it != mVirtual.end() ? it->second.get() : gInventory.getCategory(id);
+}
+
+bool ASInventoryRuleSimulation::exists(const LLUUID& id) const
+{
+    return isVirtual(id) || gInventory.getObject(id) != nullptr;
+}
+
+LLUUID ASInventoryRuleSimulation::getParent(const LLUUID& id) const
+{
+    auto it = mParents.find(id);
+    if (it != mParents.end())
+    {
+        return it->second;
+    }
+    const LLInventoryObject* obj = gInventory.getObject(id);
+    return obj ? obj->getParentUUID() : LLUUID::null;
+}
+
+std::string ASInventoryRuleSimulation::getName(const LLUUID& id) const
+{
+    if (const LLViewerInventoryCategory* cat = getCategory(id))
+    {
+        return cat->getName();
+    }
+    const LLInventoryObject* obj = gInventory.getObject(id);
+    return obj ? obj->getName() : std::string();
+}
+
+bool ASInventoryRuleSimulation::isDescendentOf(const LLUUID& id, const LLUUID& ancestor_id) const
+{
+    for (LLUUID current = getParent(id); current.notNull(); current = getParent(current))
+    {
+        if (current == ancestor_id)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+LLUUID ASInventoryRuleSimulation::findChildFolder(const LLUUID& parent_id, const std::string& name) const
+{
+    cat_list_t cats;
+    item_list_t items;
+    getChildren(parent_id, cats, items);
+    const std::string wanted = lowered(name);
+    for (const LLViewerInventoryCategory* cat : cats)
+    {
+        if (lowered(cat->getName()) == wanted)
+        {
+            return cat->getUUID();
+        }
+    }
+    return LLUUID::null;
+}
+
+LLUUID ASInventoryRuleSimulation::findFolderByPath(const std::string& path) const
+{
+    const std::vector<std::string> segments = ASInventoryRules::splitPath(path);
+    if (segments.empty())
+    {
+        return LLUUID::null;
+    }
+
+    LLUUID folder_id = gInventory.getRootFolderID();
+    for (const std::string& segment : segments)
+    {
+        folder_id = findChildFolder(folder_id, segment);
+        if (folder_id.isNull())
+        {
+            break;
+        }
+    }
+    return folder_id;
+}
+
+std::string ASInventoryRuleSimulation::getPath(const LLUUID& id) const
+{
+    const LLUUID& root_id = gInventory.getRootFolderID();
+    std::vector<std::string> names;
+    for (LLUUID current = id; current.notNull() && current != root_id; current = getParent(current))
+    {
+        if (!exists(current))
+        {
+            break;
+        }
+        names.push_back(getName(current));
+    }
+
+    std::string path;
+    for (auto it = names.rbegin(); it != names.rend(); ++it)
+    {
+        path += "/" + *it;
+    }
+    return path.empty() ? std::string("/") : path;
+}
+
+void ASInventoryRuleSimulation::move(const LLUUID& id, const LLUUID& new_parent_id)
+{
+    auto added = mAdded.find(getParent(id));
+    if (added != mAdded.end())
+    {
+        added->second.erase(std::remove(added->second.begin(), added->second.end(), id), added->second.end());
+    }
+
+    // Back in its real folder: the real children list has it again.
+    const LLInventoryObject* obj = gInventory.getObject(id);
+    if (obj && obj->getParentUUID() == new_parent_id)
+    {
+        mParents.erase(id);
+        return;
+    }
+    mParents[id] = new_parent_id;
+    if (new_parent_id.notNull())
+    {
+        mAdded[new_parent_id].push_back(id);
+    }
+}
+
+LLUUID ASInventoryRuleSimulation::createFolder(const LLUUID& parent_id, const std::string& name)
+{
+    LLUUID id;
+    id.generate();
+    mVirtual[id] = new LLViewerInventoryCategory(id, parent_id, LLFolderType::FT_NONE, name, gAgent.getID());
+    mParents[id] = parent_id;
+    mAdded[parent_id].push_back(id);
+    return id;
+}
+
+//-----------------------------------------------------------------------------
 // Storage and path helpers
 //-----------------------------------------------------------------------------
 
+namespace
+{
+std::string sStorageError;
+
+// Upgrades data of an older format version in place, one version at a time. data is the list of
+// rulesets, one ruleset or one rule (type). Version 1 is the first format: each version bump adds
+// a step here converting from the previous version (if (version == 1) { ... }).
+void migrate(LLSD& /*data*/, ASInventoryRules::EExportType /*type*/, S32 version)
+{
+    for (; version < ASInventoryRules::FORMAT_VERSION; ++version)
+    {
+    }
+}
+}
+
 ASInventoryRules::ruleset_list_t ASInventoryRules::load()
 {
+    sStorageError.clear();
     ruleset_list_t rulesets;
-    const LLSD entries = gSavedPerAccountSettings.getLLSD(SETTING_RULESETS);
+
+    // Version 1 stored the bare array, later versions {version, rulesets}.
+    const LLSD stored = gSavedPerAccountSettings.getLLSD(SETTING_RULESETS);
+    S32 version = 1;
+    LLSD entries = stored;
+    if (stored.isMap())
+    {
+        version = llmax(1, stored["version"].asInteger());
+        entries = stored["rulesets"];
+    }
+    if (version > FORMAT_VERSION)
+    {
+        sStorageError = llformat("Your inventory rules were saved by a newer viewer (format version %d, this viewer reads up to %d). "
+                                 "They are kept unchanged, but cannot be shown or changed here.", version, FORMAT_VERSION);
+        return rulesets;
+    }
+    migrate(entries, EXPORT_RULESETS, version);
+
     if (entries.isArray())
     {
         for (LLSD::array_const_iterator it = entries.beginArray(); it != entries.endArray(); ++it)
@@ -327,14 +659,438 @@ ASInventoryRules::ruleset_list_t ASInventoryRules::load()
     return rulesets;
 }
 
-void ASInventoryRules::save(const ruleset_list_t& rulesets)
+bool ASInventoryRules::save(const ruleset_list_t& rulesets)
 {
+    // Never overwrite what a newer viewer saved.
+    if (!sStorageError.empty())
+    {
+        LL_WARNS("InventoryRules") << "Not saving: " << sStorageError << LL_ENDL;
+        return false;
+    }
+
     LLSD entries = LLSD::emptyArray();
     for (const ASInventoryRuleset& ruleset : rulesets)
     {
         entries.append(ruleset.asLLSD());
     }
-    gSavedPerAccountSettings.setLLSD(SETTING_RULESETS, entries);
+    LLSD stored;
+    stored["version"] = FORMAT_VERSION;
+    stored["rulesets"] = entries;
+    gSavedPerAccountSettings.setLLSD(SETTING_RULESETS, stored);
+    return true;
+}
+
+const std::string& ASInventoryRules::getStorageError()
+{
+    return sStorageError;
+}
+
+//-----------------------------------------------------------------------------
+// JSON import/export
+//-----------------------------------------------------------------------------
+
+namespace
+{
+// Exported keys come in this order, other keys alphabetically after them.
+size_t keyRank(const std::string& key)
+{
+    static const std::vector<std::string> order = []()
+        {
+            std::vector<std::string> keys = { "format", "version", "type", "data" };
+            for (const RuleField& field : RULE_FIELDS)
+            {
+                keys.push_back(field.mKey);
+            }
+            keys.push_back("rules");
+            return keys;
+        }();
+    return (size_t)(std::find(order.begin(), order.end(), key) - order.begin());
+}
+
+// Indented JSON, easier to read and edit by hand than boost::json::serialize.
+void writeJson(std::string& out, const LLSD& sd, const std::string& indent)
+{
+    const std::string inner = indent + "  ";
+    if (sd.isMap())
+    {
+        std::vector<std::string> keys;
+        for (LLSD::map_const_iterator it = sd.beginMap(); it != sd.endMap(); ++it)
+        {
+            keys.push_back(it->first);
+        }
+        if (keys.empty())
+        {
+            out += "{}";
+            return;
+        }
+        // Map keys come sorted, so equal ranks stay alphabetical.
+        std::stable_sort(keys.begin(), keys.end(),
+                         [](const std::string& a, const std::string& b) { return keyRank(a) < keyRank(b); });
+        out += "{\n";
+        for (size_t i = 0; i < keys.size(); ++i)
+        {
+            out += inner + boost::json::serialize(boost::json::value(boost::json::string_view(keys[i]))) + ": ";
+            writeJson(out, sd[keys[i]], inner);
+            out += (i + 1 < keys.size()) ? ",\n" : "\n";
+        }
+        out += indent + "}";
+    }
+    else if (sd.isArray())
+    {
+        if (sd.size() == 0)
+        {
+            out += "[]";
+            return;
+        }
+        out += "[\n";
+        for (size_t i = 0; i < sd.size(); ++i)
+        {
+            out += inner;
+            writeJson(out, sd[i], inner);
+            out += (i + 1 < sd.size()) ? ",\n" : "\n";
+        }
+        out += indent + "]";
+    }
+    else
+    {
+        out += boost::json::serialize(LlsdToJson(sd));
+    }
+}
+
+std::string writeExport(ASInventoryRules::EExportType type, const LLSD& data)
+{
+    LLSD sd;
+    sd["format"] = EXPORT_FORMAT;
+    sd["version"] = ASInventoryRules::FORMAT_VERSION;
+    sd["type"] = EXPORT_TYPE_NAMES[type];
+    sd["data"] = data;
+    std::string out;
+    writeJson(out, sd, std::string());
+    return out + "\n";
+}
+
+LLSD ruleExportLLSD(const ASInventoryRule& rule)
+{
+    LLSD sd = rule.asLLSD();
+    sd.erase("id");
+    return sd;
+}
+
+LLSD rulesetExportLLSD(const ASInventoryRuleset& ruleset)
+{
+    LLSD sd;
+    sd["name"] = ruleset.mName;
+    sd["rules"] = LLSD::emptyArray();
+    for (const ASInventoryRule& rule : ruleset.mRules)
+    {
+        sd["rules"].append(ruleExportLLSD(rule));
+    }
+    return sd;
+}
+
+std::string quotedText(const std::string& text)
+{
+    return "'" + text + "'";
+}
+
+// Errors name the rule as label, its name, context: "Rule 2 ('Hats') of ruleset 1 ('Demos')".
+// Every field is checked; missing fields take their default.
+bool importRule(const LLSD& sd, const std::string& label, const std::string& context, ASInventoryRule& rule, std::string& error)
+{
+    std::string where = label;
+    if (sd.isMap() && sd["name"].isString() && !sd["name"].asString().empty())
+    {
+        where += " (" + quotedText(sd["name"].asString()) + ")";
+    }
+    where += context;
+    if (!sd.isMap())
+    {
+        error = where + " is not a rule (expected { ... }).";
+        return false;
+    }
+
+    for (LLSD::map_const_iterator it = sd.beginMap(); it != sd.endMap(); ++it)
+    {
+        // Rules copied from the stored setting carry an id; a new one is generated anyway.
+        if (it->first == "id")
+        {
+            continue;
+        }
+        const RuleField* field = nullptr;
+        for (const RuleField& candidate : RULE_FIELDS)
+        {
+            if (it->first == candidate.mKey)
+            {
+                field = &candidate;
+                break;
+            }
+        }
+        const std::string prefix = where + ", field " + quotedText(it->first) + ": ";
+        if (!field)
+        {
+            error = prefix + "unknown field.";
+            return false;
+        }
+
+        const LLSD& value = it->second;
+        switch (field->mKind)
+        {
+        case FIELD_STRING:
+            if (!value.isString())
+            {
+                error = prefix + "must be text in double quotes.";
+                return false;
+            }
+            break;
+        case FIELD_BOOL:
+            if (!value.isBoolean())
+            {
+                error = prefix + "must be true or false.";
+                return false;
+            }
+            break;
+        case FIELD_INT:
+            if (!value.isInteger() || value.asInteger() < 0 || value.asInteger() > field->mMax)
+            {
+                error = prefix + llformat("must be a whole number from 0 to %d.", field->mMax);
+                return false;
+            }
+            break;
+        case FIELD_ENUM:
+        {
+            bool known = false;
+            std::string names;
+            for (size_t i = 0; i < field->mCount; ++i)
+            {
+                known = known || (value.isString() && value.asString() == field->mNames[i]);
+                names += (i ? ", " : "") + std::string(field->mNames[i]);
+            }
+            if (!known)
+            {
+                error = prefix + "must be one of " + names + ".";
+                return false;
+            }
+            break;
+        }
+        }
+    }
+
+    rule = ASInventoryRule::fromLLSD(sd);
+    rule.mID.generate();
+    LLStringUtil::trim(rule.mName);
+    if (rule.mName.empty())
+    {
+        rule.mName = rule.mSearch.empty() ? "Imported rule" : rule.mSearch;
+    }
+
+    if (rule.mAction == ASInventoryRule::ACTION_MOVE && ASInventoryRules::splitPath(rule.mDestination).empty())
+    {
+        error = where + ", field 'destination': a folder path is required when action is move.";
+        return false;
+    }
+    // Same check as a run, so a bad regex is reported now rather than when executing.
+    const std::pair<const std::string*, ASInventoryRule::ESearchType> texts[] = {
+        { &rule.mSearch, rule.mSearchType }, { &rule.mExcept, rule.mExceptType } };
+    for (size_t i = 0; i < 2; ++i)
+    {
+        if (texts[i].second == ASInventoryRule::SEARCH_REGEX && !texts[i].first->empty())
+        {
+            ASInventoryRuleMatcher matcher;
+            std::string regex_error;
+            if (!matcher.init(*texts[i].first, ASInventoryRule::SEARCH_REGEX, true, regex_error))
+            {
+                error = where + ", field " + quotedText(i ? "except" : "search") + ": " + regex_error;
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool importRuleset(const LLSD& sd, std::string where, ASInventoryRuleset& ruleset, std::string& error)
+{
+    if (!sd.isMap())
+    {
+        error = where + " is not a ruleset (expected { \"name\": ..., \"rules\": [ ... ] }).";
+        return false;
+    }
+    for (LLSD::map_const_iterator it = sd.beginMap(); it != sd.endMap(); ++it)
+    {
+        if (it->first != "name" && it->first != "rules" && it->first != "id")
+        {
+            error = where + ", field " + quotedText(it->first) + ": unknown field.";
+            return false;
+        }
+    }
+    if (sd.has("name") && !sd["name"].isString())
+    {
+        error = where + ", field 'name': must be text in double quotes.";
+        return false;
+    }
+    if (sd.has("rules") && !sd["rules"].isArray())
+    {
+        error = where + ", field 'rules': must be a list of rules ([ ... ]).";
+        return false;
+    }
+
+    ruleset.mID.generate();
+    ruleset.mName = sd["name"].asString();
+    LLStringUtil::trim(ruleset.mName);
+    if (ruleset.mName.empty())
+    {
+        ruleset.mName = "Imported ruleset";
+    }
+    else
+    {
+        where += " (" + quotedText(ruleset.mName) + ")";
+    }
+
+    const LLSD& rules = sd["rules"];
+    for (size_t i = 0; i < rules.size(); ++i)
+    {
+        ASInventoryRule rule;
+        if (!importRule(rules[i], llformat("Rule %u", (U32)i + 1), " of " + lowered(where.substr(0, 1)) + where.substr(1), rule, error))
+        {
+            return false;
+        }
+        ruleset.mRules.push_back(rule);
+    }
+    return true;
+}
+}
+
+std::string ASInventoryRules::exportJson(const ASInventoryRule& rule)
+{
+    return writeExport(EXPORT_RULE, ruleExportLLSD(rule));
+}
+
+std::string ASInventoryRules::exportJson(const ASInventoryRuleset& ruleset)
+{
+    return writeExport(EXPORT_RULESET, rulesetExportLLSD(ruleset));
+}
+
+std::string ASInventoryRules::exportJson(const ruleset_list_t& rulesets)
+{
+    LLSD data = LLSD::emptyArray();
+    for (const ASInventoryRuleset& ruleset : rulesets)
+    {
+        data.append(rulesetExportLLSD(ruleset));
+    }
+    return writeExport(EXPORT_RULESETS, data);
+}
+
+bool ASInventoryRules::importJson(const std::string& input, EExportType& type, ruleset_list_t& rulesets, std::string& error)
+{
+    rulesets.clear();
+    if (input.size() > IMPORT_MAX_SIZE)
+    {
+        error = "The text is too large to be inventory rules.";
+        return false;
+    }
+    std::string text = input;
+    // Some editors start files with a byte order mark.
+    if (text.compare(0, 3, "\xEF\xBB\xBF") == 0)
+    {
+        text.erase(0, 3);
+    }
+    LLStringUtil::trim(text);
+    if (text.empty())
+    {
+        error = "Nothing to import: the text is empty.";
+        return false;
+    }
+
+    boost::system::error_code ec;
+    const boost::json::value json = boost::json::parse(text, ec);
+    if (ec)
+    {
+        error = "This is not valid JSON: " + ec.message() + ".";
+        return false;
+    }
+    const LLSD sd = LlsdFromJson(json);
+    if (!sd.isMap() || sd["format"].asString() != EXPORT_FORMAT)
+    {
+        error = "This is not an AyaneStorm inventory rules export (its 'format' must be '" + std::string(EXPORT_FORMAT) + "').";
+        return false;
+    }
+    for (LLSD::map_const_iterator it = sd.beginMap(); it != sd.endMap(); ++it)
+    {
+        if (it->first != "format" && it->first != "version" && it->first != "type" && it->first != "data")
+        {
+            error = "Unknown field " + quotedText(it->first) + " (expected format, version, type and data).";
+            return false;
+        }
+    }
+
+    const LLSD& version_sd = sd["version"];
+    if (!version_sd.isInteger() || version_sd.asInteger() < 1)
+    {
+        error = "The field 'version' is missing or is not a whole number.";
+        return false;
+    }
+    const S32 version = version_sd.asInteger();
+    if (version > FORMAT_VERSION)
+    {
+        error = llformat("These rules come from a newer viewer (format version %d). This viewer reads up to version %d: "
+                         "update it to import them.", version, FORMAT_VERSION);
+        return false;
+    }
+
+    const S32 type_index = lookupName(sd["type"].asString(), EXPORT_TYPE_NAMES, -1);
+    if (type_index < 0)
+    {
+        error = "The field 'type' must be rule, ruleset or rulesets.";
+        return false;
+    }
+    type = (EExportType)type_index;
+
+    LLSD data = sd["data"];
+    migrate(data, type, version);
+
+    switch (type)
+    {
+    case EXPORT_RULE:
+    {
+        ASInventoryRuleset holder;
+        holder.mID.generate();
+        ASInventoryRule rule;
+        if (!importRule(data, "The rule", std::string(), rule, error))
+        {
+            return false;
+        }
+        holder.mRules.push_back(rule);
+        rulesets.push_back(holder);
+        break;
+    }
+    case EXPORT_RULESET:
+    {
+        ASInventoryRuleset ruleset;
+        if (!importRuleset(data, "The ruleset", ruleset, error))
+        {
+            return false;
+        }
+        rulesets.push_back(ruleset);
+        break;
+    }
+    case EXPORT_RULESETS:
+        if (!data.isArray())
+        {
+            error = "The field 'data' must be a list of rulesets ([ ... ]).";
+            return false;
+        }
+        for (size_t i = 0; i < data.size(); ++i)
+        {
+            ASInventoryRuleset ruleset;
+            if (!importRuleset(data[i], llformat("Ruleset %u", (U32)i + 1), ruleset, error))
+            {
+                rulesets.clear();
+                return false;
+            }
+            rulesets.push_back(ruleset);
+        }
+        break;
+    }
+    return true;
 }
 
 S32 ASInventoryRules::findRuleset(const ruleset_list_t& rulesets, const LLUUID& id)
@@ -385,70 +1141,38 @@ std::vector<std::string> ASInventoryRules::splitPath(const std::string& path)
 
 LLUUID ASInventoryRules::findFolderByPath(const std::string& path)
 {
-    const std::vector<std::string> segments = splitPath(path);
-    if (segments.empty())
-    {
-        return LLUUID::null;
-    }
-
-    LLUUID folder_id = gInventory.getRootFolderID();
-    for (const std::string& segment : segments)
-    {
-        folder_id = findChildFolder(folder_id, segment);
-        if (folder_id.isNull())
-        {
-            break;
-        }
-    }
-    return folder_id;
+    return ASInventoryRuleSimulation::real().findFolderByPath(path);
 }
 
 std::string ASInventoryRules::getPath(const LLUUID& id)
 {
-    const LLUUID& root_id = gInventory.getRootFolderID();
-    std::vector<std::string> names;
-    LLUUID current = id;
-    while (current.notNull() && current != root_id)
-    {
-        const LLInventoryObject* obj = gInventory.getObject(current);
-        if (!obj)
-        {
-            break;
-        }
-        names.push_back(obj->getName());
-        current = obj->getParentUUID();
-    }
-
-    std::string path;
-    for (auto it = names.rbegin(); it != names.rend(); ++it)
-    {
-        path += "/" + *it;
-    }
-    return path.empty() ? std::string("/") : path;
+    return ASInventoryRuleSimulation::real().getPath(id);
 }
 
-std::string ASInventoryRules::getSkipReason(const ASInventoryRule& rule, const LLUUID& id, const LLUUID& dest_id)
+std::string ASInventoryRules::getSkipReason(const ASInventoryRule& rule, const LLUUID& id, const LLUUID& dest_id,
+                                            const ASInventoryRuleSimulation& sim)
 {
-    const LLInventoryObject* obj = gInventory.getObject(id);
-    if (!obj)
+    if (!sim.exists(id))
     {
         return "No longer exists";
     }
-    const bool is_folder = gInventory.getCategory(id) != nullptr;
+    // A folder a dry run would create is new, so nothing protects it.
+    const bool is_virtual = sim.isVirtual(id);
+    const bool is_folder = sim.getCategory(id) != nullptr;
 
     if (rule.mAction == ASInventoryRule::ACTION_MOVE)
     {
-        if (dest_id.notNull() && obj->getParentUUID() == dest_id)
+        if (dest_id.notNull() && sim.getParent(id) == dest_id)
         {
             return "Already in destination";
         }
         if (is_folder)
         {
-            if (dest_id.notNull() && (dest_id == id || gInventory.isObjectDescendentOf(dest_id, id)))
+            if (dest_id.notNull() && (dest_id == id || sim.isDescendentOf(dest_id, id)))
             {
                 return "Contains the destination";
             }
-            if (!get_is_category_removable(&gInventory, id))
+            if (!is_virtual && !get_is_category_removable(&gInventory, id))
             {
                 return "Protected or locked";
             }
@@ -463,7 +1187,7 @@ std::string ASInventoryRules::getSkipReason(const ASInventoryRule& rule, const L
         // Worn items may be moved but never deleted.
         if (is_folder)
         {
-            if (!get_is_category_and_children_removable(&gInventory, id, true))
+            if (!is_virtual && !get_is_category_and_children_removable(&gInventory, id, true))
             {
                 return "Protected, locked or contains worn items";
             }
@@ -601,11 +1325,141 @@ bool anyMatches(const matcher_list_t& matchers, const std::string& name, const s
     }
     return false;
 }
+
+bool matchesPermission(ASInventoryRule::EPermission filter, bool allowed)
+{
+    return filter == ASInventoryRule::PERMISSION_ANY || allowed == (filter == ASInventoryRule::PERMISSION_YES);
 }
 
-bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& dest_id, uuid_vec_t& matches, std::string& error)
+// Type, age, permission and creator conditions on items.
+class ASInventoryRuleItemFilter
+{
+public:
+    explicit ASInventoryRuleItemFilter(const ASInventoryRule& rule) : mRule(rule) {}
+
+    bool init(std::string& error)
+    {
+        const time_t age = ((time_t)mRule.mAgeDays * 24 + mRule.mAgeHours) * 3600;
+        mAgeLimit = time_corrected() - age;
+        if (mRule.mCreator == ASInventoryRule::CREATOR_SPECIFIC)
+        {
+            if (mRule.mCreatorName.empty())
+            {
+                error = "Enter the creator's user name or UUID.";
+                return false;
+            }
+            if (LLUUID::validate(mRule.mCreatorName))
+            {
+                mCreatorID.set(mRule.mCreatorName);
+            }
+            else
+            {
+                mCreatorName = normalizedName(mRule.mCreatorName);
+            }
+        }
+        return true;
+    }
+
+    bool matches(const LLViewerInventoryItem* item)
+    {
+        if (mRule.mItemType == ASInventoryRule::ITEM_SNAPSHOT || mRule.mItemType == ASInventoryRule::ITEM_TEXTURE)
+        {
+            const bool is_snapshot = item->getInventoryType() == LLInventoryType::IT_SNAPSHOT;
+            if (item->getType() != LLAssetType::AT_TEXTURE || is_snapshot != (mRule.mItemType == ASInventoryRule::ITEM_SNAPSHOT))
+            {
+                return false;
+            }
+        }
+        else if (mRule.mItemType != ASInventoryRule::ITEM_ANY && item->getType() != ITEM_ASSET_TYPES[mRule.mItemType])
+        {
+            return false;
+        }
+
+        if (mRule.mAge != ASInventoryRule::AGE_ANY)
+        {
+            // An unknown creation date never matches an age condition.
+            const time_t created = item->getCreationDate();
+            if (created <= 0 || (mRule.mAge == ASInventoryRule::AGE_NEWER) != (created >= mAgeLimit))
+            {
+                return false;
+            }
+        }
+
+        const PermissionMask mask = item->getPermissions().getMaskOwner();
+        if (!matchesPermission(mRule.mPermCopy, (mask & PERM_COPY) != 0)
+            || !matchesPermission(mRule.mPermModify, (mask & PERM_MODIFY) != 0)
+            || !matchesPermission(mRule.mPermTransfer, (mask & PERM_TRANSFER) != 0))
+        {
+            return false;
+        }
+
+        // Last: it may request names.
+        return matchesCreator(item->getCreatorUUID());
+    }
+
+    U32 getPendingNames() const { return mPendingNames; }
+
+private:
+    bool matchesCreator(const LLUUID& creator_id)
+    {
+        switch (mRule.mCreator)
+        {
+        case ASInventoryRule::CREATOR_ME:
+            return creator_id == gAgent.getID();
+        case ASInventoryRule::CREATOR_OTHERS:
+            return creator_id != gAgent.getID();
+        case ASInventoryRule::CREATOR_SPECIFIC:
+            break;
+        default:
+            return true;
+        }
+        // An item without a creator never matches a specific person.
+        if (creator_id.isNull())
+        {
+            return false;
+        }
+        if (mCreatorID.notNull())
+        {
+            return creator_id == mCreatorID;
+        }
+
+        // One name lookup per creator. A name not cached yet is requested and does not match.
+        auto it = mCreatorMatches.find(creator_id);
+        if (it == mCreatorMatches.end())
+        {
+            LLAvatarName av_name;
+            bool match = false;
+            if (LLAvatarNameCache::get(creator_id, &av_name))
+            {
+                match = normalizedName(av_name.getLegacyName()) == mCreatorName
+                        || normalizedName(av_name.getAccountName()) == mCreatorName;
+            }
+            else
+            {
+                ++mPendingNames;
+            }
+            it = mCreatorMatches.emplace(creator_id, match).first;
+        }
+        return it->second;
+    }
+
+    const ASInventoryRule& mRule;
+    time_t mAgeLimit = 0;           // newer: created at or after this time
+    LLUUID mCreatorID;
+    std::string mCreatorName;       // normalized
+    std::map<LLUUID, bool> mCreatorMatches;
+    U32 mPendingNames = 0;
+};
+}
+
+bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& dest_id, uuid_vec_t& matches, std::string& error,
+                                  const ASInventoryRuleSimulation& sim, U32* pending_names)
 {
     matches.clear();
+    if (pending_names)
+    {
+        *pending_names = 0;
+    }
 
     matcher_list_t search_matchers;
     if (!buildMatchers(rule.mSearch, rule.mSearchType, rule.mMatchCase, search_matchers, error))
@@ -624,6 +1478,19 @@ bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& des
         error = "Except: " + error;
         return false;
     }
+
+    ASInventoryRuleItemFilter filter(rule);
+    if (rule.usesItemFilters() && !filter.init(error))
+    {
+        return false;
+    }
+    // Name and item filters together.
+    auto item_matches = [&](const LLViewerInventoryItem* item, const std::string& path)
+    {
+        return anyMatches(search_matchers, item->getName(), path)
+            && !anyMatches(except_matchers, item->getName(), path)
+            && filter.matches(item);
+    };
 
     const LLUUID& root_id = gInventory.getRootFolderID();
     if (root_id.isNull())
@@ -645,30 +1512,23 @@ bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& des
     // children are pushed in reverse so results come out top-down.
     typedef std::pair<LLUUID, std::string> folder_entry_t;
     std::vector<folder_entry_t> stack(1, folder_entry_t(root_id, std::string()));
+    ASInventoryRuleSimulation::cat_list_t cats;
+    ASInventoryRuleSimulation::item_list_t items;
     while (!stack.empty())
     {
         const folder_entry_t folder = stack.back();
         stack.pop_back();
+        sim.getChildren(folder.first, cats, items);
 
-        LLInventoryModel::cat_array_t* cats = nullptr;
-        LLInventoryModel::item_array_t* items = nullptr;
-        gInventory.getDirectDescendentsOf(folder.first, cats, items);
-
-        if (items && rule.mMatchType == ASInventoryRule::MATCH_CONTAINING_FOLDER && folder.first != root_id)
+        if (rule.mMatchType == ASInventoryRule::MATCH_CONTAINING_FOLDER && folder.first != root_id)
         {
-            const LLViewerInventoryCategory* folder_cat = gInventory.getCategory(folder.first);
+            const LLViewerInventoryCategory* folder_cat = sim.getCategory(folder.first);
             if (folder_cat && !LLFolderType::lookupIsProtectedType(folder_cat->getPreferredType()))
             {
                 bool has_match = false;
-                for (const LLPointer<LLViewerInventoryItem>& item : *items)
+                for (const LLViewerInventoryItem* item : items)
                 {
-                    if (!item || item->getIsLinkType())
-                    {
-                        continue;
-                    }
-                    const std::string path = folder.second + "/" + item->getName();
-                    if (anyMatches(search_matchers, item->getName(), path)
-                        && !anyMatches(except_matchers, item->getName(), path))
+                    if (!item->getIsLinkType() && item_matches(item, folder.second + "/" + item->getName()))
                     {
                         has_match = true;
                         break;
@@ -683,52 +1543,140 @@ bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& des
             }
         }
 
-        if (items && rule.mMatchType == ASInventoryRule::MATCH_ITEM)
+        if (rule.mMatchType == ASInventoryRule::MATCH_ITEM)
         {
-            for (const LLPointer<LLViewerInventoryItem>& item : *items)
+            for (const LLViewerInventoryItem* item : items)
             {
-                if (!item || item->getIsLinkType())
-                {
-                    continue;
-                }
-                const std::string path = folder.second + "/" + item->getName();
-                if (anyMatches(search_matchers, item->getName(), path)
-                    && !anyMatches(except_matchers, item->getName(), path))
+                if (!item->getIsLinkType() && item_matches(item, folder.second + "/" + item->getName()))
                 {
                     matches.push_back(item->getUUID());
                 }
             }
         }
 
-        if (cats)
+        std::vector<folder_entry_t> children;
+        for (const LLViewerInventoryCategory* cat : cats)
         {
-            std::vector<folder_entry_t> children;
-            for (const LLPointer<LLViewerInventoryCategory>& cat : *cats)
+            if (skipped.count(cat->getUUID()))
             {
-                if (!cat || skipped.count(cat->getUUID()))
-                {
-                    continue;
-                }
-                const std::string path = folder.second + "/" + cat->getName();
-                // An excepted folder is ignored with everything inside it.
-                if (anyMatches(except_matchers, cat->getName(), path))
-                {
-                    continue;
-                }
-                // A matching folder is taken whole; its contents are not scanned.
-                if (rule.mMatchType == ASInventoryRule::MATCH_FOLDER
-                    && !LLFolderType::lookupIsProtectedType(cat->getPreferredType())
-                    && anyMatches(search_matchers, cat->getName(), path))
-                {
-                    matches.push_back(cat->getUUID());
-                    continue;
-                }
-                children.push_back(folder_entry_t(cat->getUUID(), path));
+                continue;
             }
-            stack.insert(stack.end(), children.rbegin(), children.rend());
+            const std::string path = folder.second + "/" + cat->getName();
+            // An excepted folder is ignored with everything inside it.
+            if (anyMatches(except_matchers, cat->getName(), path))
+            {
+                continue;
+            }
+            // A matching folder is taken whole; its contents are not scanned.
+            if (rule.mMatchType == ASInventoryRule::MATCH_FOLDER
+                && !LLFolderType::lookupIsProtectedType(cat->getPreferredType())
+                && anyMatches(search_matchers, cat->getName(), path))
+            {
+                matches.push_back(cat->getUUID());
+                continue;
+            }
+            children.push_back(folder_entry_t(cat->getUUID(), path));
         }
+        stack.insert(stack.end(), children.rbegin(), children.rend());
+    }
+
+    if (pending_names)
+    {
+        *pending_names = filter.getPendingNames();
     }
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// ASInventoryRuleDryRun
+//-----------------------------------------------------------------------------
+
+void ASInventoryRuleDryRun::run(const ASInventoryRules::rule_list_t& rules)
+{
+    mRules.clear();
+    mPendingNames = 0;
+    ASInventoryRuleSimulation sim;
+    const LLUUID trash_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_TRASH);
+
+    for (const ASInventoryRule& rule : rules)
+    {
+        if (rule.mAction == ASInventoryRule::ACTION_NONE)
+        {
+            continue;
+        }
+        mRules.emplace_back();
+        Rule& result = mRules.back();
+        result.mName = rule.mName;
+
+        // Destination, resolved and created like ASInventoryRuleRunner::continueResolve.
+        LLUUID dest_id;
+        if (rule.mAction == ASInventoryRule::ACTION_MOVE)
+        {
+            result.mAction = "Move to " + rule.mDestination;
+            const std::vector<std::string> segments = ASInventoryRules::splitPath(rule.mDestination);
+            if (segments.empty())
+            {
+                result.mNote = "No destination folder.";
+                continue;
+            }
+            dest_id = gInventory.getRootFolderID();
+            for (const std::string& segment : segments)
+            {
+                LLUUID child_id = sim.findChildFolder(dest_id, segment);
+                if (child_id.isNull() && rule.mCreateDestination)
+                {
+                    child_id = sim.createFolder(dest_id, segment);
+                    result.mNote = "Destination folder would be created.";
+                }
+                dest_id = child_id;
+                if (dest_id.isNull())
+                {
+                    break;
+                }
+            }
+            if (dest_id.isNull())
+            {
+                result.mNote = "Destination folder not found: " + rule.mDestination;
+                continue;
+            }
+        }
+        else
+        {
+            result.mAction = rule.isPurge() ? "Delete permanently" : "Move to Trash";
+        }
+
+        uuid_vec_t matches;
+        std::string error;
+        U32 pending_names = 0;
+        if (!ASInventoryRuleScanner::scan(rule, dest_id, matches, error, sim, &pending_names))
+        {
+            result.mNote = error;
+            continue;
+        }
+        mPendingNames += pending_names;
+
+        // Applied one by one, as the runner re-checks each object right before acting.
+        const LLUUID new_parent = (rule.mAction == ASInventoryRule::ACTION_MOVE) ? dest_id
+                                  : rule.isPurge() ? LLUUID::null : trash_id;
+        for (const LLUUID& id : matches)
+        {
+            Entry entry;
+            entry.mID = id;
+            entry.mName = sim.getName(id);
+            entry.mFolder = sim.getPath(sim.getParent(id));
+            entry.mSkipReason = ASInventoryRules::getSkipReason(rule, id, dest_id, sim);
+            if (entry.mSkipReason.empty())
+            {
+                ++result.mApplied;
+                sim.move(id, new_parent);
+            }
+            else
+            {
+                ++result.mSkipped;
+            }
+            result.mEntries.push_back(entry);
+        }
+    }
 }
 
 //-----------------------------------------------------------------------------
@@ -743,6 +1691,9 @@ ASInventoryRuleRunner::ASInventoryRuleRunner()
       mDestSegment(0),
       mCreateKey(0),
       mCreateDeadline(0.0),
+      mPendingNames(0),
+      mNamesDeadline(0.0),
+      mNextNamesCheck(0.0),
       mNext(0),
       mNextKey(0),
       mBatchDeadline(0.0),
@@ -872,6 +1823,17 @@ bool ASInventoryRuleRunner::onTick()
         }
         break;
 
+    case STATE_NAMES:
+        if (mStopRequested)
+        {
+            finishRun("Stopped.");
+        }
+        else if (now >= mNextNamesCheck)
+        {
+            beginApply();
+        }
+        break;
+
     case STATE_APPLYING:
         if (!mPending.empty())
         {
@@ -928,6 +1890,8 @@ void ASInventoryRuleRunner::beginRule()
     mNext = 0;
     mDestID.setNull();
     mTrashUsed = false;
+    mPendingNames = 0;
+    mNamesDeadline = 0.0;
     LL_INFOS("InventoryRules") << "Rule '" << rule.mName << "': " << rule.getSummary() << LL_ENDL;
 
     if (rule.mAction == ASInventoryRule::ACTION_MOVE)
@@ -955,7 +1919,7 @@ void ASInventoryRuleRunner::continueResolve()
     const ASInventoryRule& rule = mRules[mRuleIndex];
     while (mDestSegment < mDestSegments.size())
     {
-        const LLUUID child_id = findChildFolder(mDestID, mDestSegments[mDestSegment]);
+        const LLUUID child_id = ASInventoryRuleSimulation::real().findChildFolder(mDestID, mDestSegments[mDestSegment]);
         if (child_id.notNull())
         {
             mDestID = child_id;
@@ -1008,15 +1972,34 @@ void ASInventoryRuleRunner::beginApply()
 {
     const ASInventoryRule& rule = mRules[mRuleIndex];
     std::string error;
-    if (!ASInventoryRuleScanner::scan(rule, mDestID, mMatches, error))
+    if (!ASInventoryRuleScanner::scan(rule, mDestID, mMatches, error, ASInventoryRuleSimulation::real(), &mPendingNames))
     {
         finishRule(error);
         return;
     }
+
+    // Creator names still loading: scan again later, up to NAMES_TIMEOUT. Their items do not match.
+    const F64 now = nowSeconds();
+    if (mPendingNames)
+    {
+        if (mNamesDeadline == 0.0)
+        {
+            mNamesDeadline = now + NAMES_TIMEOUT;
+        }
+        if (now < mNamesDeadline)
+        {
+            mMatches.clear();
+            mNextNamesCheck = now + NAMES_RETRY;
+            mState = STATE_NAMES;
+            updateStatus();
+            return;
+        }
+        LL_WARNS("InventoryRules") << mPendingNames << " creator name(s) did not load; their items are not matched" << LL_ENDL;
+    }
     LL_INFOS("InventoryRules") << mMatches.size() << " match(es)" << LL_ENDL;
 
     mNext = 0;
-    mNextBatchTime = nowSeconds();
+    mNextBatchTime = now;
     mState = STATE_APPLYING;
     updateStatus();
 }
@@ -1278,6 +2261,10 @@ void ASInventoryRuleRunner::updateStatus()
     if (mState == STATE_RESOLVING)
     {
         status += "preparing destination folder...";
+    }
+    else if (mState == STATE_NAMES)
+    {
+        status += llformat("loading %u creator name(s)...", mPendingNames);
     }
     else if (mState == STATE_APPLYING)
     {

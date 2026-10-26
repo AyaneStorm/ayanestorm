@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. What executing inventory rules would do. -->
+<floater
+ can_close="true"
+ can_resize="true"
+ height="460"
+ layout="topleft"
+ min_height="300"
+ min_width="600"
+ name="floater_as_inventory_rule_dry_run"
+ positioning="cascading"
+ reuse_instance="true"
+ save_rect="true"
+ single_instance="true"
+ title="Inventory Rules Dry Run"
+ width="760">
+  <string name="no_rules">No rule with an action to execute.</string>
+  <string name="summary_text">Dry run: nothing was changed. [RULES] rule(s) would act on [APPLIED] object(s) and skip [SKIPPED]. Each rule sees the result of the rules before it.</string>
+  <string name="limited">Only the first [LIMIT] objects are listed.</string>
+  <string name="inventory_loading">Inventory is still loading, results may be incomplete.</string>
+  <string name="names_loading">Loading [NAMES] creator name(s), their items are not matched yet.</string>
+  <string name="rule_header">[NAME]: [ACTION]</string>
+  <string name="rule_counts">[APPLIED] to do, [SKIPPED] skipped</string>
+  <text
+   follows="left|right|top"
+   height="32"
+   layout="topleft"
+   left="10"
+   name="summary"
+   right="-10"
+   top="8"
+   word_wrap="true" />
+  <scroll_list
+   bottom="-84"
+   draw_heading="true"
+   draw_stripes="true"
+   follows="all"
+   layout="topleft"
+   left="10"
+   multi_select="false"
+   name="result_list"
+   right="-10"
+   tool_tip="Double-click a row to show it in My Inventory."
+   top="42">
+    <scroll_list.columns label="Name" name="name" dynamic_width="true" />
+    <scroll_list.columns label="Folder" name="path" width="220" />
+    <scroll_list.columns label="Result" name="result" width="220" />
+  </scroll_list>
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Execute Now"
+   layout="topleft"
+   left="10"
+   name="execute_btn"
+   tool_tip="Run these rules now. The result can differ if the inventory changes meanwhile."
+   top="384"
+   width="110" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Stop"
+   layout="topleft"
+   left="128"
+   name="stop_btn"
+   tool_tip="Stop after the batch in progress is confirmed"
+   top="384"
+   width="80" />
+  <progress_bar
+   follows="left|right|bottom"
+   height="10"
+   layout="topleft"
+   left="10"
+   name="progress_bar"
+   right="-10"
+   top="414" />
+  <text
+   follows="left|right|bottom"
+   height="30"
+   layout="topleft"
+   left="10"
+   name="status_text"
+   right="-10"
+   top="428"
+   word_wrap="true" />
+</floater>
