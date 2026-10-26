@@ -6,14 +6,14 @@
  height="420"
  layout="topleft"
  min_height="260"
- min_width="620"
+ min_width="712"
  name="floater_as_inventory_rules"
  positioning="cascading"
  reuse_instance="true"
  save_rect="true"
  single_instance="true"
  title="Inventory Rules"
- width="620">
+ width="712">
   <string name="no_items">No rulesets yet. Click New Ruleset to create one.</string>
   <string name="new_ruleset">New ruleset</string>
   <text
@@ -29,6 +29,7 @@
   </text>
   <flat_list_view
    allow_select="false"
+   color="White_05"
    follows="all"
    item_pad="2"
    layout="topleft"
@@ -103,6 +104,16 @@
     <flyout_button.item label="Import from clipboard" name="clipboard" value="clipboard" />
     <flyout_button.item label="Import from file..." name="file" value="file" />
   </flyout_button>
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Revert..."
+   layout="topleft"
+   left="616"
+   name="revert_btn"
+   tool_tip="Undo a past run, by the run ID that ends its log notecard name in /logs"
+   top="344"
+   width="86" />
   <progress_bar
    follows="left|right|bottom"
    height="10"

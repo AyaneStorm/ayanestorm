@@ -37,9 +37,10 @@ User-defined rules that find inventory items or folders by name and move them, m
   - Age: any / newer than / older than N days + M hours, against `getCreationDate()` and `time_corrected()` (as the inventory filter). Unknown creation date (0) never matches an age condition.
   - Created by: anyone / me / others / specific person (user name or UUID). Names compare with `LLAvatarNameCache` legacy and account names, normalized (lower case, `.` = space, trailing ` resident` dropped), so `john.doe`, `John Doe`, `jane`, `Jane Resident` work; display names are not used. Uncached names are requested (`LLAvatarNameCache::get` queues them) and their items do not match yet. One lookup per creator per scan.
   - Permissions: copy / mod / transfer, each any / yes / no, on the owner mask.
-- Action: none / move / delete.
+- Action combo: None / Move / Move to Trash / Delete permanently.
   - Move: destination path, "Create destination folder if not exist".
-  - Delete: Move to Trash (default) or Delete permanently.
+  - Stored as before (no format change): Move to Trash = `action: delete, delete_mode: trash`, Delete permanently = `action: delete, delete_mode: purge`. The editor maps the combo values `trash` / `delete` in `getRuleFromFields` / `setFields`.
+  - Delete permanently shows the red `delete_warning` text, and choosing it in the combo opens notification `ASInventoryRuleDeleteWarning` (unrecoverable, Revert cannot restore it).
 
 ### Scan
 - Depth-first from My Inventory root. Links ignored.
@@ -59,6 +60,32 @@ User-defined rules that find inventory items or folders by name and move them, m
 - A batch not confirmed within 60 s aborts the run. A failed move triggers a refetch of the source and destination folders so the local view resyncs.
 - Stop: no new batch is sent; the in-flight batch is still accounted, then the run ends.
 - Permanent delete asks for confirmation.
+- Move to Trash: the first such rule of a run creates the root folder `Trashed by inventory rules #RUNID` (state `STATE_RESOLVING`, `mCreatingRunTrash`, resumes in `onFolderCreated`); objects are moved into it without restamp (they keep their date); later rules never scan it (`scan` `skip_id`). `finishRun`, however the run ended, moves the folder to the Trash (`changeCategoryParent`, restamped) and checks Trash overflow, so the run's trashed objects sit together in one folder named with the run ID. A revert does not use this: its created-folders step trashes directly. Undo records keep `to` = the run's trash folder, so a revert finds the objects still inside it (wherever the folder is) and moves them back; the emptied folder stays in the Trash.
+
+### Run log notecard
+- Every run that reached its first rule (finished, stopped or aborted) writes a notecard `Inventory rules YYYY-MM-DD HH:MM:SS #RUNID` (local start time; run ID = 6 upper-case hex digits, `newRunID`, unused by any log notecard) in the root folder `/logs`, created when missing (existing folder matched case-insensitively). Description: `Inventory rules run log`, or `Revert of inventory rules run #X`.
+- One new notecard per run. Content: start/end time, final status, then lines all starting with `'<rule name>' | `: rule summary, created destination folders, missing creator names, match count, errors, per-rule counters, and one line per object: `'rule' | type | name | from <folder> | to <destination> | status`.
+  - type: `folder` or the rule editor item type label (`texture`, `body part`...), else `LLAssetType::lookupHumanReadable`.
+  - from: parent folder path taken before the operation. to: destination path, `Trash` or `(deleted permanently)`.
+  - status: `done`, `skipped: <reason>`, `failed: could not be sent`, `failed: not confirmed by the server`.
+- Lines collected in `ASInventoryRuleRunner::mLog`; written by `finishRun` via `create_inventory_item` (AT_NOTECARD) then `LLBufferedAssetUploadInfo` to cap `UpdateNotecardAgentInventory`.
+- No preview: with `ShowNewInventory`, `LLOpenTaskOffer` (llviewermessage.cpp) opens every notecard created through the `CreateInventoryItem` message (mask ADD|CREATE|UPDATE_CREATE). It runs inside `messageUpdateCore`'s `notifyObservers`, before `gInventoryCallbacks.fire`, so the creation callback closes `preview_notecard` for the new item before it is drawn. With `ShowInInventory` the same observer may still select the notecard in the inventory window.
+- Over 60000 bytes the log is split at line ends into `name (i of n)` notecards (`LLNotecard::MAX_SIZE` is 65536).
+- Undo section, at the end after `Undo data, read by Revert (do not edit):`: `@run RUNID`, then one line per confirmed operation `@kind seq type id from to name` (`ASInventoryRuleRunner::recordUndo`, `mUndo`).
+  - kind: `move`, `trash`, `purge` (to = null), `folder` (destination folder created by the run; from = its parent, to = null).
+  - Signature: last line `@sig <hex>` = HMAC-SHA256 (OpenSSL, as `exoflickr.cpp`) over agent id + `\n` + the `@run` and operation lines exactly as written, keyed with per-account setting `ASInventoryRulesLogKey` (32 `RAND_bytes`, hex; created on first use and saved to the per-account file at once). `parseUndo` rebuilds the signed text from the `@` lines in part order (except `@sig`) and refuses a missing or wrong signature. Only this account on this computer can sign, so a notecard made by a scripted product (e.g. OpenSim `osMakeNotecard`, where the creator check alone could be fooled), another avatar, or an edit never drives a revert. Trade-off: logs of another computer, or after the per-account settings are lost, cannot be reverted.
+  - type: log type label with `_` for spaces. id / from / to: inventory item and folder UUIDs, never asset UUIDs (asset UUIDs of no-mod objects must not be shown; inventory ids give no access to the content). name: rest of the line.
+
+### Revert
+- Floater `Revert...` button (rulesets window) → notification `ASInventoryRuleRevertPrompt` (text input `message`) → `ASInventoryRuleRevert::start(run_id)` (`#` optional, case-insensitive).
+- Loader: requires full inventory fetch. `findLogParts` scans `/logs` and its subfolders only, and only notecards whose creator is the agent (a notecard given by someone else keeps its creator, so crafted undo data cannot drive a revert even when dropped in `/logs`), for notecards named `^Inventory rules .* #ID( \(i of n\))?$`; every part 1..n must exist and have an asset. Parts are loaded with `gAssetStorage->getInvItemAsset`, decoded with `LLNotecard::importStream`, parsed by `parseUndo` (any `@` line of any part; no `@run ID` line = no undo data).
+- `ASInventoryRuleRunner::startRevert`: operations sorted newest first (seq descending), then up to two steps run as rules with precomputed plans (`mPlans`, no scan, no destination resolution):
+  1. `Revert #ID: objects` (ACTION_MOVE): each object moved back to its `from` folder (per-object `mDestID`). Skipped when: permanently deleted (reported), no longer exists (`Trash emptied?` for trash ops), already back in its original folder (not reported as a problem), not where the run put it (`moved after the run`), original folder gone or in Trash, or the usual `getSkipReason` checks.
+  2. `Revert #ID: created folders` (ACTION_DELETE, trash): folders the run created go to Trash when empty, newest first (nested created folders empty out in order). Skipped when gone, already in Trash, not empty.
+- A revert never deletes permanently: its steps only move (back, or empty created folders to the Trash), `@purge` records are only reported, and `sendPurge` refuses any purge while `isRevert()`.
+- The revert is a normal run: batching, Stop, progress, status, and its own log notecard with its own run ID and undo data (a revert can be reverted).
+- End: notification `ASInventoryRuleRevertResult` with the status, at most 30 lines of what was not reverted and why (`mRevertProblems`), and the log notecard name for the full list. A revert that did not reach its end says to execute it again; already reverted objects are then skipped silently.
+- Limits: purged objects cannot be restored; trash moves restamped the date, which a revert cannot restore; failed (unconfirmed) operations of the run are not recorded.
 
 ### Execute warning
 - Every Execute button (row Execute, Execute All, editor Execute Now) shows notification `ASInventoryRuleExecuteConfirm`: Cancel (default) / Dry Run / Execute Now, with the standard "don't show again" checkbox. One notification name, so dismissing it once turns it off for every Execute button. Re-enabled from Preferences popup list ("Executing inventory rules").

@@ -10705,9 +10705,9 @@ Delete the inventory ruleset '[NAME]' and all its rules?
    icon="alertmodal.tga"
    name="ASInventoryRuleExecuteConfirm"
    type="alertmodal">
-Inventory rules move or delete many items and folders at once, and nothing can be undone.
+Inventory rules move or delete many items and folders at once.
 
-A rule that is not exactly right can wreck your inventory in seconds: a search that matches more than you expect, a wrong destination, or a folder match that takes whole folders with everything inside them. Moved items must be found and put back by hand, one by one. Items deleted permanently are gone forever.
+A rule that is not exactly right can wreck your inventory in seconds: a search that matches more than you expect, a wrong destination, or a folder match that takes whole folders with everything inside them. Revert, with the run ID of the log notecard saved in /logs, can only put back what was not moved or deleted since. Items deleted permanently are gone forever.
 
 Before executing, check every rule's preview, or click Dry Run to see the full list of what would be moved or deleted.[PURGE]
     <tag>confirm</tag>
@@ -10735,6 +10735,50 @@ Before executing, check every rule's preview, or click Dry Run to see the full l
    type="alertmodal">
 [MESSAGE]
     <tag>fail</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleDeleteWarning"
+   type="alertmodal">
+Delete permanently does not go through the Trash: the objects and folders this rule matches will be gone forever. They cannot be recovered, and Revert cannot restore them.
+
+To keep a way back, choose Move to Trash instead.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   label="Revert a run"
+   name="ASInventoryRuleRevertPrompt"
+   type="alertmodal">
+Enter the run ID that ends the name of the run's log notecard (in /logs), for example #A1B2C3.
+
+Objects go back to the folder they came from, unless they were moved or deleted since. Then the folders the run created go to the Trash, if they are empty. Items deleted permanently cannot be restored. At the end you get the list of what could not be reverted, and why.
+    <tag>confirm</tag>
+    <form name="form">
+      <input name="message" type="text">
+      </input>
+      <button
+       default="true"
+       index="0"
+       name="Revert"
+       text="Revert"/>
+      <button
+       index="1"
+       name="Cancel"
+       text="Cancel"/>
+    </form>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleRevertResult"
+   type="alertmodal">
+[MESSAGE]
     <usetemplate
      name="okbutton"
      yestext="OK"/>

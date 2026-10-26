@@ -440,6 +440,27 @@ ASFloaterInventoryRules::ASFloaterInventoryRules(const LLSD& key)
 {
 }
 
+bool ASFloaterInventoryRules::postBuild()
+{
+    if (!ASFloaterInventoryRuleList::postBuild())
+    {
+        return false;
+    }
+    // Asks the run ID; ASInventoryRuleRevert reports errors and the result.
+    getChild<LLButton>("revert_btn")->setCommitCallback([](LLUICtrl*, const LLSD&)
+        {
+            LLNotificationsUtil::add("ASInventoryRuleRevertPrompt", LLSD(), LLSD(),
+                [](const LLSD& notification, const LLSD& response)
+                {
+                    if (LLNotificationsUtil::getSelectedOption(notification, response) == 0)
+                    {
+                        ASInventoryRuleRevert::start(response["message"].asString());
+                    }
+                });
+        });
+    return true;
+}
+
 void ASFloaterInventoryRules::onOpen(const LLSD& key)
 {
     refreshList();
@@ -801,7 +822,7 @@ ASFloaterInventoryRuleEdit::ASFloaterInventoryRuleEdit(const LLSD& key)
       mExceptMatchCaseCheck(nullptr),
       mMatchTypeRadio(nullptr),
       mActionCombo(nullptr),
-      mDeleteModeRadio(nullptr),
+      mDeleteWarning(nullptr),
       mDestinationLabel(nullptr),
       mDestinationEditor(nullptr),
       mCreateDestinationCheck(nullptr),
@@ -840,7 +861,7 @@ bool ASFloaterInventoryRuleEdit::postBuild()
     mExceptMatchCaseCheck = getChild<LLCheckBoxCtrl>("except_match_case");
     mMatchTypeRadio = getChild<LLRadioGroup>("match_type");
     mActionCombo = getChild<LLComboBox>("action");
-    mDeleteModeRadio = getChild<LLRadioGroup>("delete_mode");
+    mDeleteWarning = getChild<LLTextBox>("delete_warning");
     mDestinationLabel = getChild<LLTextBox>("destination_label");
     mDestinationEditor = getChild<LLLineEditor>("destination");
     mCreateDestinationCheck = getChild<LLCheckBoxCtrl>("create_destination");
@@ -869,8 +890,15 @@ bool ASFloaterInventoryRuleEdit::postBuild()
     mExceptMatchCaseCheck->setCommitCallback(on_commit);
     mMatchCaseCheck->setCommitCallback(on_commit);
     mMatchTypeRadio->setCommitCallback(on_commit);
-    mActionCombo->setCommitCallback(on_commit);
-    mDeleteModeRadio->setCommitCallback(on_commit);
+    // Choosing a permanent delete warns once more than the red text.
+    mActionCombo->setCommitCallback([this](LLUICtrl*, const LLSD&)
+        {
+            if (mActionCombo->getValue().asString() == "delete")
+            {
+                LLNotificationsUtil::add("ASInventoryRuleDeleteWarning");
+            }
+            onFieldChanged();
+        });
     mCreateDestinationCheck->setCommitCallback(on_commit);
     mItemTypeCombo->setCommitCallback(on_commit);
     mAgeCombo->setCommitCallback(on_commit);
@@ -1004,7 +1032,10 @@ void ASFloaterInventoryRuleEdit::draw()
 
 ASInventoryRule ASFloaterInventoryRuleEdit::getRuleFromFields() const
 {
-    // The controls hold the same value strings as the stored LLSD.
+    // The controls hold the same value strings as the stored LLSD, except the action combo:
+    // "trash" and "delete" are the delete action in its two modes.
+    const std::string action = mActionCombo->getValue().asString();
+    const bool is_delete = action == "trash" || action == "delete";
     LLSD sd;
     sd["name"] = mNameEditor->getText();
     sd["search"] = mSearchEditor->getText();
@@ -1014,8 +1045,8 @@ ASInventoryRule ASFloaterInventoryRuleEdit::getRuleFromFields() const
     sd["except_type"] = mExceptTypeCombo->getValue();
     sd["except_match_case"] = mExceptMatchCaseCheck->getValue().asBoolean();
     sd["match"] = mMatchTypeRadio->getValue();
-    sd["action"] = mActionCombo->getValue();
-    sd["delete_mode"] = mDeleteModeRadio->getValue();
+    sd["action"] = is_delete ? std::string("delete") : action;
+    sd["delete_mode"] = action == "delete" ? "purge" : "trash";
     sd["destination"] = mDestinationEditor->getText();
     sd["create_destination"] = mCreateDestinationCheck->getValue().asBoolean();
     sd["item_type"] = mItemTypeCombo->getValue();
@@ -1044,8 +1075,8 @@ void ASFloaterInventoryRuleEdit::setFields(const ASInventoryRule& rule)
     mExceptTypeCombo->setValue(sd["except_type"]);
     mExceptMatchCaseCheck->setValue(rule.mExceptMatchCase);
     mMatchTypeRadio->setValue(sd["match"]);
-    mActionCombo->setValue(sd["action"]);
-    mDeleteModeRadio->setValue(sd["delete_mode"]);
+    mActionCombo->setValue(rule.mAction != ASInventoryRule::ACTION_DELETE ? sd["action"]
+                           : LLSD(rule.isPurge() ? "delete" : "trash"));
     mDestinationEditor->setText(rule.mDestination);
     mCreateDestinationCheck->setValue(rule.mCreateDestination);
     mItemTypeCombo->setValue(sd["item_type"]);
@@ -1064,7 +1095,7 @@ void ASFloaterInventoryRuleEdit::onFieldChanged()
 {
     const std::string action = mActionCombo->getValue().asString();
     const bool is_move = action == "move";
-    mDeleteModeRadio->setVisible(action == "delete");
+    mDeleteWarning->setVisible(action == "delete");
     mDestinationLabel->setVisible(is_move);
     mDestinationEditor->setVisible(is_move);
     mCreateDestinationCheck->setVisible(is_move);

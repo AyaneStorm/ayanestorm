@@ -38,6 +38,17 @@
       <key>Value</key>
       <array/>
     </map>
+    <key>ASInventoryRulesLogKey</key>
+    <map>
+      <key>Comment</key>
+      <string>Inventory Rules: secret key signing the undo data of run log notecards, so Revert only accepts logs this account wrote on this computer. Created on first run; never shared.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string></string>
+    </map>
     <!-- </AS:Chanayane> -->
     <key>AvatarHoverOffsetZ</key>
     <map>

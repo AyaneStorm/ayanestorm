@@ -130,13 +130,11 @@
   <combo_box follows="left|top" height="23" layout="topleft" left="100" name="action" top="306" width="150">
     <combo_box.item label="None" name="none" value="none" />
     <combo_box.item label="Move" name="move" value="move" />
-    <combo_box.item label="Delete" name="delete" value="delete" />
+    <combo_box.item label="Move to Trash" name="trash" value="trash" />
+    <combo_box.item label="Delete permanently" name="delete" value="delete" />
   </combo_box>
 
-  <radio_group follows="left|top" height="16" layout="topleft" left="100" name="delete_mode" top="340" width="335">
-    <radio_item height="16" label="Move to Trash" layout="topleft" left="0" name="trash" top="0" value="trash" width="130" />
-    <radio_item height="16" label="Delete permanently" layout="topleft" left="140" name="purge" top="0" value="purge" width="170" />
-  </radio_group>
+  <text follows="left|top" height="32" layout="topleft" left="100" name="delete_warning" text_color="Red" top="340" width="335" word_wrap="true">Matching objects and folders are deleted permanently, without going through the Trash. They cannot be recovered or reverted.</text>
 
   <text follows="left|top" height="16" layout="topleft" left="10" name="destination_label" top="340" width="85">Move to</text>
   <line_editor follows="left|top" height="20" layout="topleft" left="100" max_length_chars="1024" name="destination" top="338" width="335" tool_tip="Destination folder path from My Inventory. Example: /Clothing/Demos" />

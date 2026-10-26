@@ -37,6 +37,7 @@
    top="8" />
   <flat_list_view
    allow_select="false"
+   color="White_05"
    follows="all"
    item_pad="2"
    layout="topleft"

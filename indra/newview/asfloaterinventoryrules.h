@@ -109,6 +109,7 @@ class ASFloaterInventoryRules : public ASFloaterInventoryRuleList
 public:
     ASFloaterInventoryRules(const LLSD& key);
 
+    bool postBuild() override;
     void onOpen(const LLSD& key) override;
 
 protected:
@@ -197,7 +198,7 @@ private:
     LLCheckBoxCtrl* mExceptMatchCaseCheck;
     LLRadioGroup* mMatchTypeRadio;
     LLComboBox* mActionCombo;
-    LLRadioGroup* mDeleteModeRadio;
+    LLTextBox* mDeleteWarning;
     LLTextBox* mDestinationLabel;
     LLLineEditor* mDestinationEditor;
     LLCheckBoxCtrl* mCreateDestinationCheck;

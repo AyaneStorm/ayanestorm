@@ -28,27 +28,41 @@
 
 #include "llagent.h"
 #include "llapp.h"
+#include "llassetstorage.h"
 #include "llavatarnamecache.h"
 #include "lleventtimer.h"
+#include "llfilesystem.h"
+#include "llfloaterperms.h"
+#include "llfloaterreg.h"
 #include "llframetimer.h"
 #include "llgesturemgr.h"
 #include "llinventoryfunctions.h"
 #include "llinventorymodel.h"
 #include "llinventorymodelbackgroundfetch.h"
+#include "llnotecard.h"
+#include "llnotificationsutil.h"
 #include "llregex.h"
 #include "llsdjson.h"
+#include "llviewerassetupload.h"
 #include "llviewercontrol.h"
 #include "llviewerinventory.h"
 #include "llviewerregion.h"
 #include "message.h"
 
 #include <algorithm>
+#include <ctime>
 #include <iterator>
 #include <set>
+#include <sstream>
+
+#include <openssl/evp.h>
+#include <openssl/hmac.h>
+#include <openssl/rand.h>
 
 namespace
 {
 constexpr const char* SETTING_RULESETS = "ASInventoryRulesets";
+constexpr const char* SETTING_LOG_KEY = "ASInventoryRulesLogKey";
 
 // Server pacing. Operations go out BATCH_SIZE at a time; the next batch waits for every
 // confirmation of the current one, then BATCH_PAUSE more seconds.
@@ -60,6 +74,18 @@ constexpr F64 CREATE_TIMEOUT = 60.0;
 // Creator names are re-checked every NAMES_RETRY seconds; after NAMES_TIMEOUT the rule runs without the missing ones.
 constexpr F64 NAMES_RETRY = 1.0;
 constexpr F64 NAMES_TIMEOUT = 30.0;
+
+// Run logs: notecards in this root folder, split in parts of at most LOG_PART_SIZE bytes
+// (below LLNotecard::MAX_SIZE).
+constexpr const char* LOG_FOLDER = "logs";
+constexpr size_t LOG_PART_SIZE = 60000;
+constexpr const char* LOG_NAME_PREFIX = "Inventory rules ";
+// Starts the undo section; its lines are "@kind seq type id from to name".
+constexpr const char* UNDO_HEADER = "Undo data, read by Revert (do not edit):";
+// Revert result notification: at most this many lines of what was not reverted.
+constexpr size_t REVERT_REPORT_LINES = 30;
+// Skip reason of an object a revert finds already reverted; not reported as a problem.
+constexpr const char* REVERT_ALREADY_DONE = "already back in its original folder";
 
 const char* const SEARCH_TYPE_NAMES[] = { "contains", "starts_with", "ends_with", "regex", "exact" };
 const char* const MATCH_TYPE_NAMES[] = { "item", "folder", "containing_folder" };
@@ -1453,7 +1479,7 @@ private:
 }
 
 bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& dest_id, uuid_vec_t& matches, std::string& error,
-                                  const ASInventoryRuleSimulation& sim, U32* pending_names)
+                                  const ASInventoryRuleSimulation& sim, U32* pending_names, const LLUUID& skip_id)
 {
     matches.clear();
     if (pending_names)
@@ -1506,6 +1532,7 @@ bool ASInventoryRuleScanner::scan(const ASInventoryRule& rule, const LLUUID& des
     skipped.insert(gInventory.findCategoryUUIDForType(LLFolderType::FT_MY_OUTFITS));
     skipped.insert(gInventory.findCategoryUUIDForType(LLFolderType::FT_MARKETPLACE_LISTINGS));
     skipped.insert(dest_id);
+    skipped.insert(skip_id);
     skipped.erase(LLUUID::null);
 
     // Depth-first walk carrying each folder's path ("" for the root, "/Objects/Box" below it);
@@ -1680,6 +1707,446 @@ void ASInventoryRuleDryRun::run(const ASInventoryRules::rule_list_t& rules)
 }
 
 //-----------------------------------------------------------------------------
+// Run log notecards
+//-----------------------------------------------------------------------------
+
+namespace
+{
+std::string localTimeText(time_t time)
+{
+    char buffer[32] = "";
+    if (const std::tm* local = std::localtime(&time))
+    {
+        std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", local);
+    }
+    return buffer;
+}
+
+// "folder", or the item type as named in the rule editor ("texture", "body part"...).
+std::string objectTypeLabel(const LLUUID& id)
+{
+    if (gInventory.getCategory(id))
+    {
+        return "folder";
+    }
+    const LLViewerInventoryItem* item = gInventory.getItem(id);
+    if (!item)
+    {
+        return "unknown";
+    }
+    if (item->getInventoryType() == LLInventoryType::IT_SNAPSHOT)
+    {
+        return ITEM_TYPE_LABELS[ASInventoryRule::ITEM_SNAPSHOT];
+    }
+    for (size_t i = ASInventoryRule::ITEM_ANY + 1; i < std::size(ITEM_ASSET_TYPES); ++i)
+    {
+        if (i != (size_t)ASInventoryRule::ITEM_SNAPSHOT && item->getType() == ITEM_ASSET_TYPES[i])
+        {
+            return ITEM_TYPE_LABELS[i];
+        }
+    }
+    return LLAssetType::lookupHumanReadable(item->getType());
+}
+
+// Undo lines are space-separated, so the type label travels with '_' for spaces.
+std::string typeToken(const std::string& label)
+{
+    std::string token = label;
+    LLStringUtil::replaceChar(token, ' ', '_');
+    return token;
+}
+
+// Log notecards of a run, by part number (1 when not split), in /logs and its subfolders.
+// total is the part count their names give. Only notecards this account created are taken, so a
+// notecard given by someone else cannot drive a revert, even if it is put in /logs.
+typedef std::map<U32, LLViewerInventoryItem*> log_parts_t;
+void findLogParts(const std::string& run_id, log_parts_t& parts, U32& total)
+{
+    parts.clear();
+    total = 0;
+    const LLUUID folder_id = ASInventoryRuleSimulation::real().findChildFolder(gInventory.getRootFolderID(), LOG_FOLDER);
+    if (folder_id.isNull())
+    {
+        return;
+    }
+    static const boost::regex name_regex("^Inventory rules .* #([0-9A-F]{6})(?: \\((\\d{1,4}) of (\\d{1,4})\\))?$");
+    LLInventoryModel::cat_array_t cats;
+    LLInventoryModel::item_array_t items;
+    gInventory.collectDescendents(folder_id, cats, items, LLInventoryModel::EXCLUDE_TRASH);
+    for (const LLPointer<LLViewerInventoryItem>& item : items)
+    {
+        boost::smatch match;
+        if (!item || item->getIsLinkType() || item->getType() != LLAssetType::AT_NOTECARD
+            || item->getCreatorUUID() != gAgent.getID()
+            || !ll_regex_match(item->getName(), match, name_regex) || match[1] != run_id)
+        {
+            continue;
+        }
+        const U32 index = match[2].matched ? (U32)std::stoul(match[2].str()) : 1;
+        total = llmax(total, match[3].matched ? (U32)std::stoul(match[3].str()) : 1);
+        // Of copies of a part, the first one found is used.
+        parts.emplace(index, item.get());
+    }
+}
+
+std::string hexText(const U8* bytes, size_t count)
+{
+    std::string text;
+    for (size_t i = 0; i < count; ++i)
+    {
+        text += llformat("%02x", bytes[i]);
+    }
+    return text;
+}
+
+// This account's secret on this computer, created on first use and saved at once, so a crash
+// cannot lose the key of logs already written. Empty when no random bytes could be had.
+std::string logKey()
+{
+    std::string key = gSavedPerAccountSettings.getString(SETTING_LOG_KEY);
+    if (key.empty())
+    {
+        U8 bytes[32];
+        if (RAND_bytes(bytes, sizeof(bytes)) != 1)
+        {
+            LL_WARNS("InventoryRules") << "No random bytes for the log key" << LL_ENDL;
+            return std::string();
+        }
+        key = hexText(bytes, sizeof(bytes));
+        gSavedPerAccountSettings.setString(SETTING_LOG_KEY, key);
+        gSavedPerAccountSettings.saveToFile(gSavedSettings.getString("PerAccountSettingsFile"), true);
+    }
+    return key;
+}
+
+// HMAC-SHA256 of the undo section ("@run" line and operation lines, as written) with the account's key,
+// and the account id. Only this account on this computer can produce it, so a notecard made by anyone
+// or anything else (a scripted product, a copy from another avatar) never passes. Empty without a key.
+std::string undoSignature(const std::string& undo_text)
+{
+    const std::string key = logKey();
+    if (key.empty())
+    {
+        return std::string();
+    }
+    const std::string data = gAgent.getID().asString() + "\n" + undo_text;
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int length = 0;
+    if (!HMAC(EVP_sha256(), key.data(), (int)key.size(), reinterpret_cast<const unsigned char*>(data.data()), data.size(),
+              digest, &length))
+    {
+        return std::string();
+    }
+    return hexText(digest, length);
+}
+
+// 6 hex digits no log notecard uses yet.
+std::string newRunID()
+{
+    while (true)
+    {
+        LLUUID id;
+        id.generate();
+        std::string run_id = id.asString().substr(0, 6);
+        LLStringUtil::toUpper(run_id);
+        log_parts_t parts;
+        U32 total = 0;
+        findLogParts(run_id, parts, total);
+        if (parts.empty())
+        {
+            return run_id;
+        }
+    }
+}
+
+// Uploads text as the notecard item's content.
+void uploadLogNotecard(const LLUUID& item_id, const std::string& text)
+{
+    const std::string url = gAgent.getRegionCapability("UpdateNotecardAgentInventory");
+    if (item_id.isNull() || url.empty())
+    {
+        LL_WARNS("InventoryRules") << "Could not save the run log notecard" << LL_ENDL;
+        return;
+    }
+    LLNotecard notecard;
+    notecard.setText(text);
+    std::ostringstream stream;
+    notecard.exportStream(stream);
+    LLViewerAssetUpload::EnqueueInventoryUpload(url,
+        std::make_shared<LLBufferedAssetUploadInfo>(item_id, LLAssetType::AT_NOTECARD, stream.str(), nullptr, nullptr));
+}
+
+// One notecard per part, cut at line ends; parts are named "name (2 of 3)".
+void createLogNotecards(const LLUUID& folder_id, const std::string& name, const std::string& desc, const std::string& text)
+{
+    std::vector<std::string> parts(1);
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t end = text.find('\n', start);
+        end = (end == std::string::npos) ? text.size() : end + 1;
+        const std::string line = text.substr(start, llmin(end - start, LOG_PART_SIZE));
+        if (!parts.back().empty() && parts.back().size() + line.size() > LOG_PART_SIZE)
+        {
+            parts.emplace_back();
+        }
+        parts.back() += line;
+        start = end;
+    }
+
+    const U32 perms = LLFloaterPerms::getNextOwnerPerms("Notecards");
+    for (size_t i = 0; i < parts.size(); ++i)
+    {
+        const std::string part_name = parts.size() > 1 ? name + llformat(" (%u of %u)", (U32)i + 1, (U32)parts.size()) : name;
+        const std::string part = parts[i];
+        create_inventory_item(gAgent.getID(), gAgent.getSessionID(), folder_id, LLTransactionID::tnull, part_name,
+                              desc, LLAssetType::AT_NOTECARD, LLInventoryType::IT_NOTECARD,
+                              NO_INV_SUBTYPE, perms,
+                              new LLBoostFuncInventoryCallback([part](const LLUUID& item_id)
+                                  {
+                                      // With ShowNewInventory, LLOpenTaskOffer opened the new, still empty notecard
+                                      // just before this callback: close it before it is drawn.
+                                      if (LLFloater* preview = LLFloaterReg::findInstance("preview_notecard", LLSD(item_id)))
+                                      {
+                                          preview->closeFloater();
+                                      }
+                                      uploadLogNotecard(item_id, part);
+                                  }));
+    }
+}
+
+// Saves text to notecards in /logs, creating the folder when missing.
+void writeLogNotecards(const std::string& name, const std::string& desc, const std::string& text)
+{
+    const LLUUID& root_id = gInventory.getRootFolderID();
+    if (root_id.isNull())
+    {
+        return;
+    }
+    const LLUUID folder_id = ASInventoryRuleSimulation::real().findChildFolder(root_id, LOG_FOLDER);
+    if (folder_id.notNull())
+    {
+        createLogNotecards(folder_id, name, desc, text);
+        return;
+    }
+    gInventory.createNewCategory(root_id, LLFolderType::FT_NONE, LOG_FOLDER,
+        [name, desc, text](const LLUUID& new_id)
+        {
+            if (new_id.isNull())
+            {
+                LL_WARNS("InventoryRules") << "Could not create the /" << LOG_FOLDER << " folder for the run log" << LL_ENDL;
+                return;
+            }
+            createLogNotecards(new_id, name, desc, text);
+        });
+}
+
+void showRevertMessage(const std::string& message)
+{
+    LLSD args;
+    args["MESSAGE"] = message;
+    LLNotificationsUtil::add("ASInventoryRuleRevertResult", args);
+}
+
+// Reads the undo section lines of the parts, in part order. Returns false with error when a line is
+// damaged, the log has no undo section, or its signature is not this account's (see undoSignature).
+bool parseUndo(const std::vector<std::string>& texts, const std::string& run_id,
+               std::vector<ASInventoryRuleUndoOp>& ops, std::string& error)
+{
+    static const std::map<std::string, ASInventoryRuleUndoOp::EKind> kinds = {
+        { "@move", ASInventoryRuleUndoOp::UNDO_MOVE }, { "@trash", ASInventoryRuleUndoOp::UNDO_TRASH },
+        { "@purge", ASInventoryRuleUndoOp::UNDO_PURGE }, { "@folder", ASInventoryRuleUndoOp::UNDO_FOLDER } };
+
+    bool has_undo = false;
+    std::string undo_text;          // signed lines, as written
+    std::string signature;
+    for (size_t part = 0; part < texts.size(); ++part)
+    {
+        std::istringstream lines(texts[part]);
+        std::string line;
+        for (U32 line_number = 1; std::getline(lines, line); ++line_number)
+        {
+            if (line.empty() || line[0] != '@')
+            {
+                continue;
+            }
+            std::istringstream fields(line);
+            std::string kind;
+            fields >> kind;
+            if (kind == "@sig")
+            {
+                fields >> signature;
+                continue;
+            }
+            undo_text += line + "\n";
+            if (kind == "@run")
+            {
+                std::string id;
+                fields >> id;
+                has_undo = has_undo || id == run_id;
+                continue;
+            }
+
+            ASInventoryRuleUndoOp op;
+            std::string id, from, to;
+            const auto found = kinds.find(kind);
+            fields >> op.mSeq >> op.mType >> id >> from >> to;
+            if (found == kinds.end() || !fields || !LLUUID::validate(id) || !LLUUID::validate(from) || !LLUUID::validate(to))
+            {
+                error = llformat("The log of run #%s is damaged: line %u of part %u is not valid undo data.",
+                                 run_id.c_str(), line_number, (U32)part + 1);
+                return false;
+            }
+            op.mKind = found->second;
+            LLStringUtil::replaceChar(op.mType, '_', ' ');
+            op.mID.set(id);
+            op.mFrom.set(from);
+            op.mTo.set(to);
+            std::getline(fields, op.mName);
+            LLStringUtil::trim(op.mName);
+            ops.push_back(op);
+        }
+    }
+    if (!has_undo)
+    {
+        error = "The log of run #" + run_id + " has no undo data: it was made before Revert existed, or was edited.";
+        return false;
+    }
+    const std::string expected = undoSignature(undo_text);
+    if (signature.empty() || expected.empty() || signature != expected)
+    {
+        ops.clear();
+        error = "The log of run #" + run_id + " cannot be reverted: it was not written by this account on this computer, "
+                "or it was edited. Only logs your own viewer signed are used.";
+        return false;
+    }
+    return true;
+}
+
+// Log parts being loaded for a revert.
+struct RevertLoad
+{
+    std::string mRunID;
+    std::vector<std::string> mTexts;
+    size_t mPending = 0;
+    std::string mError;
+};
+struct RevertPartRequest
+{
+    std::shared_ptr<RevertLoad> mLoad;
+    size_t mIndex;
+};
+
+void onRevertPartLoaded(const LLUUID& asset_id, LLAssetType::EType type, void* user_data, S32 status, LLExtStat)
+{
+    std::unique_ptr<RevertPartRequest> request(static_cast<RevertPartRequest*>(user_data));
+    RevertLoad& load = *request->mLoad;
+    if (status == 0)
+    {
+        LLFileSystem file(asset_id, type, LLFileSystem::READ);
+        std::string raw(file.getSize(), '\0');
+        if (!raw.empty())
+        {
+            file.read(reinterpret_cast<U8*>(&raw[0]), (S32)raw.size());
+        }
+        std::istringstream stream(raw);
+        LLNotecard notecard;
+        if (notecard.importStream(stream))
+        {
+            load.mTexts[request->mIndex] = notecard.getText();
+        }
+        else if (load.mError.empty())
+        {
+            load.mError = llformat("Part %u of the log of run #%s could not be read.", (U32)request->mIndex + 1, load.mRunID.c_str());
+        }
+    }
+    else if (load.mError.empty())
+    {
+        load.mError = llformat("Part %u of the log of run #%s could not be loaded (asset error %d).",
+                               (U32)request->mIndex + 1, load.mRunID.c_str(), status);
+    }
+
+    if (--load.mPending)
+    {
+        return;
+    }
+    std::vector<ASInventoryRuleUndoOp> ops;
+    std::string error = load.mError;
+    if (error.empty() && parseUndo(load.mTexts, load.mRunID, ops, error)
+        && ASInventoryRuleRunner::instance().startRevert(load.mRunID, ops, error))
+    {
+        return;
+    }
+    showRevertMessage(error);
+}
+}
+
+void ASInventoryRuleRevert::start(const std::string& input)
+{
+    std::string run_id = input;
+    LLStringUtil::trim(run_id);
+    if (!run_id.empty() && run_id[0] == '#')
+    {
+        run_id.erase(0, 1);
+    }
+    LLStringUtil::toUpper(run_id);
+    static const boost::regex id_regex("^[0-9A-F]{6}$");
+    if (!ll_regex_match(run_id, id_regex))
+    {
+        showRevertMessage("Enter the run ID that ends the log notecard name: 6 characters, for example #A1B2C3.");
+        return;
+    }
+    if (ASInventoryRuleRunner::instance().isRunning())
+    {
+        showRevertMessage("Wait for the current run to end before reverting.");
+        return;
+    }
+    LLInventoryModelBackgroundFetch& fetch = LLInventoryModelBackgroundFetch::instance();
+    if (!fetch.isEverythingFetched() || !gAssetStorage)
+    {
+        fetch.start();
+        showRevertMessage("Your inventory is still loading. Try again in a moment.");
+        return;
+    }
+
+    log_parts_t parts;
+    U32 total = 0;
+    findLogParts(run_id, parts, total);
+    if (parts.empty())
+    {
+        showRevertMessage("No log notecard of run #" + run_id + " was found in /" + std::string(LOG_FOLDER)
+                          + ". Only notecards you created there are used: put the log back in /" + LOG_FOLDER + " if you moved it.");
+        return;
+    }
+    for (U32 index = 1; index <= total; ++index)
+    {
+        auto part = parts.find(index);
+        if (part == parts.end())
+        {
+            showRevertMessage(llformat("Part %u of %u of the log of run #%s is missing.", index, total, run_id.c_str()));
+            return;
+        }
+        if (part->second->getAssetUUID().isNull())
+        {
+            showRevertMessage("The log notecard '" + part->second->getName() + "' is not saved yet. Try again in a moment.");
+            return;
+        }
+    }
+
+    auto load = std::make_shared<RevertLoad>();
+    load->mRunID = run_id;
+    load->mTexts.resize(total);
+    load->mPending = total;
+    for (U32 index = 1; index <= total; ++index)
+    {
+        const LLViewerInventoryItem* item = parts[index];
+        gAssetStorage->getInvItemAsset(LLHost(), gAgent.getID(), gAgent.getSessionID(), item->getPermissions().getOwner(),
+                                       LLUUID::null, item->getUUID(), item->getAssetUUID(), LLAssetType::AT_NOTECARD,
+                                       &onRevertPartLoaded, new RevertPartRequest{ load, index - 1 }, true);
+    }
+}
+
+//-----------------------------------------------------------------------------
 // ASInventoryRuleRunner
 //-----------------------------------------------------------------------------
 
@@ -1700,7 +2167,10 @@ ASInventoryRuleRunner::ASInventoryRuleRunner()
       mNextBatchTime(0.0),
       mTrashUsed(false),
       mDone(0), mSkipped(0), mFailed(0),
-      mTotalDone(0), mTotalSkipped(0), mTotalFailed(0)
+      mTotalDone(0), mTotalSkipped(0), mTotalFailed(0),
+      mStartTime(0),
+      mCreatingRunTrash(false),
+      mUndoSeq(0)
 {
 }
 
@@ -1731,6 +2201,81 @@ bool ASInventoryRuleRunner::start(const ASInventoryRules::rule_list_t& rules)
         return false;
     }
 
+    mPlans.clear();
+    mRevertOf.clear();
+    beginRun();
+    LL_INFOS("InventoryRules") << "Starting " << mRules.size() << " rule(s), run #" << mRunID << LL_ENDL;
+    return true;
+}
+
+bool ASInventoryRuleRunner::startRevert(const std::string& run_id, std::vector<ASInventoryRuleUndoOp> ops, std::string& error)
+{
+    if (isRunning())
+    {
+        error = "Wait for the current run to end before reverting.";
+        return false;
+    }
+
+    // Newest operation first, so an object moved by several rules goes back step by step.
+    std::sort(ops.begin(), ops.end(),
+              [](const ASInventoryRuleUndoOp& a, const ASInventoryRuleUndoOp& b) { return a.mSeq > b.mSeq; });
+    Plan objects;
+    objects.mSummary = "move each object back to the folder it came from, if it is still where the run put it";
+    Plan folders;
+    folders.mSummary = "move the folders the run created to the Trash, if they are empty";
+    for (const ASInventoryRuleUndoOp& op : ops)
+    {
+        PlannedOp planned;
+        planned.mKind = op.mKind;
+        planned.mID = op.mID;
+        planned.mType = op.mType;
+        planned.mName = op.mName;
+        if (op.mKind == ASInventoryRuleUndoOp::UNDO_FOLDER)
+        {
+            folders.mOps.push_back(planned);
+            continue;
+        }
+        // Permanent deletes stay in the list, to be reported as not reverted.
+        planned.mTarget = op.mFrom;
+        planned.mExpectedParent = op.mTo;
+        objects.mOps.push_back(planned);
+    }
+    if (objects.mOps.empty() && folders.mOps.empty())
+    {
+        error = "Run #" + run_id + " has nothing to revert: it did not move or delete anything.";
+        return false;
+    }
+
+    // Each step is a rule whose action gives the operation and the protection checks.
+    mRules.clear();
+    mPlans.clear();
+    if (!objects.mOps.empty())
+    {
+        ASInventoryRule rule;
+        rule.mName = "Revert #" + run_id + ": objects";
+        rule.mAction = ASInventoryRule::ACTION_MOVE;
+        mRules.push_back(rule);
+        mPlans.push_back(objects);
+    }
+    if (!folders.mOps.empty())
+    {
+        ASInventoryRule rule;
+        rule.mName = "Revert #" + run_id + ": created folders";
+        // To the Trash, never permanently (sendPurge also refuses it during a revert).
+        rule.mAction = ASInventoryRule::ACTION_DELETE;
+        rule.mDeleteMode = ASInventoryRule::DELETE_TRASH;
+        mRules.push_back(rule);
+        mPlans.push_back(folders);
+    }
+    mRevertOf = run_id;
+    mRevertProblems.clear();
+    beginRun();
+    LL_INFOS("InventoryRules") << "Reverting run #" << run_id << " (" << ops.size() << " operation(s)), run #" << mRunID << LL_ENDL;
+    return true;
+}
+
+void ASInventoryRuleRunner::beginRun()
+{
     mRuleIndex = 0;
     mStopRequested = false;
     mPending.clear();
@@ -1739,6 +2284,13 @@ bool ASInventoryRuleRunner::start(const ASInventoryRules::rule_list_t& rules)
     mDone = mSkipped = mFailed = 0;
     mTotalDone = mTotalSkipped = mTotalFailed = 0;
     mRuleErrors.clear();
+    mLog.clear();
+    mUndo.clear();
+    mUndoSeq = 0;
+    mStartTime = time(nullptr);
+    mRunID = newRunID();
+    mRunTrashID.setNull();
+    mCreatingRunTrash = false;
 
     // Rules must see the whole inventory, not only the folders opened so far.
     mState = STATE_FETCHING;
@@ -1753,8 +2305,6 @@ bool ASInventoryRuleRunner::start(const ASInventoryRules::rule_list_t& rules)
     {
         mTimer = new ASInventoryRuleTimer();
     }
-    LL_INFOS("InventoryRules") << "Starting " << mRules.size() << " rule(s)" << LL_ENDL;
-    return true;
 }
 
 void ASInventoryRuleRunner::clearStatus()
@@ -1819,7 +2369,8 @@ bool ASInventoryRuleRunner::onTick()
         else if (mCreateKey && now > mCreateDeadline)
         {
             mCreateKey = 0;
-            finishRule("Destination folder creation timed out.");
+            mCreatingRunTrash = false;
+            finishRule("Folder creation timed out.");
         }
         break;
 
@@ -1840,6 +2391,10 @@ bool ASInventoryRuleRunner::onTick()
             if (now > mBatchDeadline)
             {
                 // Something is wrong with the connection or the inventory service: do not keep sending.
+                for (const auto& pending : mPending)
+                {
+                    logObject(pending.second, "failed: not confirmed by the server");
+                }
                 mFailed += (U32)mPending.size();
                 mPending.clear();
                 finishRun("Aborted: the server did not confirm a batch within 60 seconds.");
@@ -1892,7 +2447,25 @@ void ASInventoryRuleRunner::beginRule()
     mTrashUsed = false;
     mPendingNames = 0;
     mNamesDeadline = 0.0;
-    LL_INFOS("InventoryRules") << "Rule '" << rule.mName << "': " << rule.getSummary() << LL_ENDL;
+    const std::string summary = isRevert() ? mPlans[mRuleIndex].mSummary : rule.getSummary();
+    LL_INFOS("InventoryRules") << "Rule '" << rule.mName << "': " << summary << LL_ENDL;
+    mLog += "\n";
+    logRule(llformat("rule %u/%u: ", (U32)mRuleIndex + 1, (U32)mRules.size()) + summary);
+
+    // A revert step has its objects already: no destination to resolve, no scan.
+    if (isRevert())
+    {
+        for (const PlannedOp& planned : mPlans[mRuleIndex].mOps)
+        {
+            mMatches.push_back(planned.mID);
+        }
+        logRule(llformat("%u object(s)", (U32)mMatches.size()));
+        mLogDestination = "Trash";
+        mNextBatchTime = nowSeconds();
+        mState = STATE_APPLYING;
+        updateStatus();
+        return;
+    }
 
     if (rule.mAction == ASInventoryRule::ACTION_MOVE)
     {
@@ -1907,6 +2480,24 @@ void ASInventoryRuleRunner::beginRule()
         mState = STATE_RESOLVING;
         updateStatus();
         continueResolve();
+    }
+    else if (!rule.isPurge() && mRunTrashID.isNull())
+    {
+        // The run's trash folder, created on its first Move to Trash rule; resumes in onFolderCreated.
+        mCreatingRunTrash = true;
+        mCreateKey = ++mNextKey;
+        mCreateDeadline = nowSeconds() + CREATE_TIMEOUT;
+        const U32 key = mCreateKey;
+        mState = STATE_RESOLVING;
+        updateStatus();
+        gInventory.createNewCategory(gInventory.getRootFolderID(), LLFolderType::FT_NONE, getRunTrashName(),
+            [key](const LLUUID& new_id)
+            {
+                if (ASInventoryRuleRunner::instanceExists())
+                {
+                    ASInventoryRuleRunner::instance().onFolderCreated(key, new_id);
+                }
+            });
     }
     else
     {
@@ -1958,13 +2549,28 @@ void ASInventoryRuleRunner::onFolderCreated(U32 key, const LLUUID& new_id)
         return;
     }
     mCreateKey = 0;
+    if (mCreatingRunTrash)
+    {
+        mCreatingRunTrash = false;
+        if (new_id.isNull())
+        {
+            finishRule("Could not create the folder for the trashed objects.");
+            return;
+        }
+        mRunTrashID = new_id;
+        logRule("created folder " + ASInventoryRules::getPath(new_id) + ", moved to the Trash when the run ends");
+        beginApply();
+        return;
+    }
     if (new_id.isNull())
     {
         finishRule("Could not create destination folder: " + mRules[mRuleIndex].mDestination);
         return;
     }
+    recordUndo("folder", "folder", new_id, mDestID, LLUUID::null, mDestSegments[mDestSegment]);
     mDestID = new_id;
     ++mDestSegment;
+    logRule("created folder " + ASInventoryRules::getPath(new_id));
     continueResolve();
 }
 
@@ -1972,7 +2578,9 @@ void ASInventoryRuleRunner::beginApply()
 {
     const ASInventoryRule& rule = mRules[mRuleIndex];
     std::string error;
-    if (!ASInventoryRuleScanner::scan(rule, mDestID, mMatches, error, ASInventoryRuleSimulation::real(), &mPendingNames))
+    // The run's trash folder already holds objects trashed by earlier rules: never match them again.
+    if (!ASInventoryRuleScanner::scan(rule, mDestID, mMatches, error, ASInventoryRuleSimulation::real(), &mPendingNames,
+                                      mRunTrashID))
     {
         finishRule(error);
         return;
@@ -1995,8 +2603,12 @@ void ASInventoryRuleRunner::beginApply()
             return;
         }
         LL_WARNS("InventoryRules") << mPendingNames << " creator name(s) did not load; their items are not matched" << LL_ENDL;
+        logRule(llformat("%u creator name(s) did not load; their items were not matched", mPendingNames));
     }
     LL_INFOS("InventoryRules") << mMatches.size() << " match(es)" << LL_ENDL;
+    logRule(llformat("%u match(es)", (U32)mMatches.size()));
+    mLogDestination = (rule.mAction == ASInventoryRule::ACTION_MOVE) ? ASInventoryRules::getPath(mDestID)
+                      : rule.isPurge() ? "(deleted permanently)" : "Trash/" + getRunTrashName();
 
     mNext = 0;
     mNextBatchTime = now;
@@ -2010,13 +2622,34 @@ void ASInventoryRuleRunner::sendBatch()
     size_t sent = 0;
     while (sent < BATCH_SIZE && mNext < mMatches.size())
     {
+        const PlannedOp* planned = isRevert() ? &mPlans[mRuleIndex].mOps[mNext] : nullptr;
         const LLUUID id = mMatches[mNext++];
+        // A revert moves each object to its own folder.
+        if (planned && rule.mAction == ASInventoryRule::ACTION_MOVE)
+        {
+            mDestID = planned->mTarget;
+            mLogDestination = gInventory.getCategory(mDestID) ? ASInventoryRules::getPath(mDestID) : std::string("(missing folder)");
+        }
+        // For skip and failure lines; an object that no longer exists keeps its logged name and type.
+        auto describe = [&](PendingOp& op)
+        {
+            describeObject(id, op);
+            if (planned && !gInventory.getObject(id))
+            {
+                op.mType = planned->mType;
+                op.mName = planned->mName;
+                op.mFolder = "(gone)";
+            }
+        };
         // Re-check right before acting: the inventory may have changed since the scan.
-        const std::string reason = ASInventoryRules::getSkipReason(rule, id, mDestID);
+        const std::string reason = planned ? getRevertSkipReason(*planned) : ASInventoryRules::getSkipReason(rule, id, mDestID);
         if (!reason.empty())
         {
             ++mSkipped;
             LL_INFOS("InventoryRules") << "Skipped " << ASInventoryRules::getPath(id) << ": " << reason << LL_ENDL;
+            PendingOp op;
+            describe(op);
+            logObject(op, "skipped: " + reason);
             continue;
         }
         if (sendOperation(id))
@@ -2027,6 +2660,9 @@ void ASInventoryRuleRunner::sendBatch()
         {
             ++mFailed;
             LL_WARNS("InventoryRules") << "Could not send operation for " << ASInventoryRules::getPath(id) << LL_ENDL;
+            PendingOp op;
+            describe(op);
+            logObject(op, "failed: could not be sent");
         }
     }
 
@@ -2051,6 +2687,11 @@ bool ASInventoryRuleRunner::sendOperation(const LLUUID& id)
     if (rule.mDeleteMode == ASInventoryRule::DELETE_PURGE)
     {
         return sendPurge(id);
+    }
+    // A run moves to its trash folder, without restamping, so items keep their date.
+    if (!isRevert() && mRunTrashID.notNull())
+    {
+        return sendMove(id, mRunTrashID, false);
     }
 
     const LLUUID trash_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_TRASH);
@@ -2077,6 +2718,8 @@ bool ASInventoryRuleRunner::sendMove(const LLUUID& id, const LLUUID& new_parent,
     const U32 key = ++mNextKey;
     PendingOp op;
     op.mID = id;
+    op.mNewParent = new_parent;
+    describeObject(id, op);
     LLPointer<LLViewerInventoryItem> new_item;
     LLPointer<LLViewerInventoryCategory> new_cat;
 
@@ -2137,6 +2780,13 @@ bool ASInventoryRuleRunner::sendMove(const LLUUID& id, const LLUUID& new_parent,
 
 bool ASInventoryRuleRunner::sendPurge(const LLUUID& id)
 {
+    // Every permanent delete goes through here. A revert only puts things back: it never purges,
+    // whatever its undo data says.
+    if (isRevert())
+    {
+        LL_WARNS("InventoryRules") << "Refused a permanent delete during a revert: " << id << LL_ENDL;
+        return false;
+    }
     const LLInventoryObject* obj = gInventory.getObject(id);
     if (!obj)
     {
@@ -2147,6 +2797,7 @@ bool ASInventoryRuleRunner::sendPurge(const LLUUID& id)
     PendingOp op;
     op.mID = id;
     op.mOldParent = obj->getParentUUID();
+    describeObject(id, op);
     op.mIsPurge = true;
     mPending[key] = op;
     remove_inventory_object(id, new ASInventoryRulePurgeCallback(key));
@@ -2169,10 +2820,14 @@ void ASInventoryRuleRunner::onOperationDone(U32 key, bool success)
         // AIS removes the object from the local model on success.
         success = gInventory.getObject(op.mID) == nullptr;
     }
+    logObject(op, success ? "done" : "failed: not confirmed by the server");
 
     if (success)
     {
         ++mDone;
+        const char* kind = op.mIsPurge ? "purge"
+                           : mRules[mRuleIndex].mAction == ASInventoryRule::ACTION_MOVE ? "move" : "trash";
+        recordUndo(kind, op.mType, op.mID, op.mOldParent, op.mNewParent, op.mName);
     }
     else
     {
@@ -2197,6 +2852,95 @@ void ASInventoryRuleRunner::onOperationDone(U32 key, bool success)
     updateStatus();
 }
 
+void ASInventoryRuleRunner::describeObject(const LLUUID& id, PendingOp& op) const
+{
+    const ASInventoryRuleSimulation& real = ASInventoryRuleSimulation::real();
+    op.mType = objectTypeLabel(id);
+    op.mName = real.getName(id);
+    op.mFolder = real.getPath(real.getParent(id));
+    op.mTo = mLogDestination;
+}
+
+// Why a revert leaves this object (or created folder) as it is; empty when it can be reverted.
+std::string ASInventoryRuleRunner::getRevertSkipReason(const PlannedOp& planned) const
+{
+    if (planned.mKind == ASInventoryRuleUndoOp::UNDO_PURGE)
+    {
+        return "deleted permanently by the run, cannot be restored";
+    }
+    const LLInventoryObject* obj = gInventory.getObject(planned.mID);
+    if (!obj)
+    {
+        return planned.mKind == ASInventoryRuleUndoOp::UNDO_TRASH ? "no longer exists (the Trash was emptied?)" : "no longer exists";
+    }
+    const ASInventoryRule& rule = mRules[mRuleIndex];
+    const LLUUID trash_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_TRASH);
+
+    if (planned.mKind == ASInventoryRuleUndoOp::UNDO_FOLDER)
+    {
+        if (gInventory.isObjectDescendentOf(planned.mID, trash_id))
+        {
+            return "already in the Trash";
+        }
+        LLInventoryModel::cat_array_t* cats = nullptr;
+        LLInventoryModel::item_array_t* items = nullptr;
+        gInventory.getDirectDescendentsOf(planned.mID, cats, items);
+        if ((cats && !cats->empty()) || (items && !items->empty()))
+        {
+            return "not empty";
+        }
+        return ASInventoryRules::getSkipReason(rule, planned.mID, LLUUID::null);
+    }
+
+    // Already reverted, by an earlier revert that did not reach its end for example.
+    if (obj->getParentUUID() == planned.mTarget)
+    {
+        return REVERT_ALREADY_DONE;
+    }
+    if (obj->getParentUUID() != planned.mExpectedParent)
+    {
+        return "moved after the run";
+    }
+    if (!gInventory.getCategory(planned.mTarget))
+    {
+        return "its original folder no longer exists";
+    }
+    if (gInventory.isObjectDescendentOf(planned.mTarget, trash_id))
+    {
+        return "its original folder is in the Trash";
+    }
+    return ASInventoryRules::getSkipReason(rule, planned.mID, planned.mTarget);
+}
+
+// "@kind seq type id from to name", read back by parseUndo.
+void ASInventoryRuleRunner::recordUndo(const char* kind, const std::string& type, const LLUUID& id, const LLUUID& from,
+                                       const LLUUID& to, const std::string& name)
+{
+    mUndo += llformat("@%s %u ", kind, ++mUndoSeq) + typeToken(type) + " " + id.asString() + " " + from.asString()
+             + " " + to.asString() + " " + name + "\n";
+}
+
+// Every line starts with the rule name, so the log can be filtered by rule.
+void ASInventoryRuleRunner::logRule(const std::string& text)
+{
+    mLog += "'" + mRules[mRuleIndex].mName + "' | " + text + "\n";
+}
+
+// rule | type | name | from | to | status. A revert also keeps what it could not do, for its report.
+void ASInventoryRuleRunner::logObject(const PendingOp& op, const std::string& status)
+{
+    logRule(op.mType + " | " + op.mName + " | from " + op.mFolder + " | to " + op.mTo + " | " + status);
+    if (isRevert() && status != "done" && status != std::string("skipped: ") + REVERT_ALREADY_DONE)
+    {
+        mRevertProblems.push_back(op.mType + " '" + op.mName + "': " + status);
+    }
+}
+
+void ASInventoryRuleRunner::logRuleCounters()
+{
+    logRule(llformat("done %u, skipped %u, failed %u", mDone, mSkipped, mFailed));
+}
+
 void ASInventoryRuleRunner::foldRuleCounters()
 {
     mTotalDone += mDone;
@@ -2212,12 +2956,14 @@ void ASInventoryRuleRunner::finishRule(const std::string& error)
     {
         LL_WARNS("InventoryRules") << "Rule '" << rule.mName << "': " << error << LL_ENDL;
         mRuleErrors += " Rule '" + rule.mName + "': " + error;
+        logRule("error: " + error);
     }
     if (mTrashUsed)
     {
         gInventory.checkTrashOverflow();
         mTrashUsed = false;
     }
+    logRuleCounters();
     foldRuleCounters();
 
     ++mRuleIndex;
@@ -2226,10 +2972,27 @@ void ASInventoryRuleRunner::finishRule(const std::string& error)
 
 void ASInventoryRuleRunner::finishRun(const std::string& status)
 {
+    // The run's trash folder goes to the Trash with everything moved into it, however the run ended.
+    if (mRunTrashID.notNull())
+    {
+        LLViewerInventoryCategory* cat = gInventory.getCategory(mRunTrashID);
+        const LLUUID trash_id = gInventory.findCategoryUUIDForType(LLFolderType::FT_TRASH);
+        if (cat && trash_id.notNull() && !gInventory.isObjectDescendentOf(mRunTrashID, trash_id))
+        {
+            gInventory.changeCategoryParent(cat, trash_id, true);
+            mTrashUsed = true;
+        }
+        mRunTrashID.setNull();
+    }
     if (mTrashUsed)
     {
         gInventory.checkTrashOverflow();
         mTrashUsed = false;
+    }
+    // A rule interrupted by a stop or an abort.
+    if (mState != STATE_FETCHING && mRuleIndex < mRules.size())
+    {
+        logRuleCounters();
     }
     foldRuleCounters();
     mPending.clear();
@@ -2239,8 +3002,62 @@ void ASInventoryRuleRunner::finishRun(const std::string& status)
     mStopRequested = false;
 
     mStatus = llformat("%s Done %u, skipped %u, failed %u.", status.c_str(), mTotalDone, mTotalSkipped, mTotalFailed);
+    LL_INFOS("InventoryRules") << mStatus << mRuleErrors << LL_ENDL;
+
+    // Nothing to log when the run stopped before its first rule.
+    std::string log_name;
+    if (!mLog.empty())
+    {
+        log_name = LOG_NAME_PREFIX + localTimeText(mStartTime) + " #" + mRunID;
+        const std::string title = isRevert() ? "AyaneStorm inventory rules revert of run #" + mRevertOf
+                                             : std::string("AyaneStorm inventory rules run");
+        const std::string desc = isRevert() ? "Revert of inventory rules run #" + mRevertOf : std::string("Inventory rules run log");
+        // Signed, so Revert only accepts logs this account wrote here.
+        const std::string undo_text = "@run " + mRunID + "\n" + mUndo;
+        const std::string signature = undoSignature(undo_text);
+        writeLogNotecards(log_name, desc, title + " #" + mRunID + "\nStarted " + localTimeText(mStartTime)
+                                          + ", ended " + localTimeText(time(nullptr)) + "\n" + mStatus + "\n"
+                                          + "Object lines: rule | type | name | from | to | status\n" + mLog
+                                          + "\n" + UNDO_HEADER + "\n" + undo_text
+                                          + (signature.empty() ? std::string() : "@sig " + signature + "\n"));
+        mStatus += " Log saved to /" + std::string(LOG_FOLDER) + "/" + log_name + ".";
+        mLog.clear();
+        mUndo.clear();
+    }
+
+    // What the revert could not do, the first lines in a notification, all of them in the log.
+    if (isRevert())
+    {
+        std::string report = "Revert of run #" + mRevertOf + ": " + mStatus;
+        if (status != "Finished.")
+        {
+            report += "\n\nThe revert did not reach its end: execute it again to continue.";
+        }
+        else if (mRevertProblems.empty())
+        {
+            report += "\n\nEverything was reverted.";
+        }
+        if (!mRevertProblems.empty())
+        {
+            report += llformat("\n\nNot reverted (%u):", (U32)mRevertProblems.size());
+            for (size_t i = 0; i < mRevertProblems.size() && i < REVERT_REPORT_LINES; ++i)
+            {
+                report += "\n- " + mRevertProblems[i];
+            }
+            if (mRevertProblems.size() > REVERT_REPORT_LINES)
+            {
+                report += llformat("\n... and %u more.", (U32)(mRevertProblems.size() - REVERT_REPORT_LINES));
+            }
+            if (!log_name.empty())
+            {
+                report += "\n\nThe full list is in the notecard /" + std::string(LOG_FOLDER) + "/" + log_name + ".";
+            }
+        }
+        showRevertMessage(report + mRuleErrors);
+        mPlans.clear();
+        mRevertProblems.clear();
+    }
     mStatus += mRuleErrors;
-    LL_INFOS("InventoryRules") << mStatus << LL_ENDL;
 }
 
 void ASInventoryRuleRunner::updateStatus()

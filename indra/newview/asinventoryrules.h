@@ -201,10 +201,11 @@ private:
 // Walks My Inventory and collects the objects a rule matches.
 namespace ASInventoryRuleScanner
 {
-    // dest_id (may be null) is skipped with its subtree. pending_names (optional) receives the number
-    // of creator names still loading; their items do not match yet.
+    // dest_id and skip_id (may be null) are skipped with their subtree. pending_names (optional) receives
+    // the number of creator names still loading; their items do not match yet.
     bool scan(const ASInventoryRule& rule, const LLUUID& dest_id, uuid_vec_t& matches, std::string& error,
-              const ASInventoryRuleSimulation& sim = ASInventoryRuleSimulation::real(), U32* pending_names = nullptr);
+              const ASInventoryRuleSimulation& sim = ASInventoryRuleSimulation::real(), U32* pending_names = nullptr,
+              const LLUUID& skip_id = LLUUID::null);
 }
 
 // What executing rules would do, computed without changing anything.
@@ -234,8 +235,32 @@ struct ASInventoryRuleDryRun
     U32 mPendingNames = 0;
 };
 
+// One operation of a run, as recorded in the undo section of its log notecard.
+struct ASInventoryRuleUndoOp
+{
+    enum EKind { UNDO_MOVE, UNDO_TRASH, UNDO_PURGE, UNDO_FOLDER };
+
+    EKind mKind = UNDO_MOVE;
+    U32 mSeq = 0;                   // order of the operations in the run
+    std::string mType;              // log type label ("texture", "folder"...)
+    LLUUID mID;
+    LLUUID mFrom;                   // parent before the operation; UNDO_FOLDER: parent it was created in
+    LLUUID mTo;                     // parent after it; null for UNDO_PURGE and UNDO_FOLDER
+    std::string mName;
+};
+
+// Revert of a run from its log notecards (named "... #RUNID", created by this account, in /logs).
+namespace ASInventoryRuleRevert
+{
+    // Finds and reads the log of run_id ("A1B2C3" or "#A1B2C3"), then starts the runner on its revert.
+    // Errors, and at the end what could not be reverted, are shown as notifications.
+    void start(const std::string& run_id);
+}
+
 // Runs rules one after another. Operations are sent in batches of BATCH_SIZE; the next
 // batch is only sent when the server confirmed every operation of the current one.
+// Each run that reached a rule leaves a notecard log of what was done in the /logs folder,
+// named with the run ID and ending with the undo data a revert reads.
 class ASInventoryRuleRunner : public LLSingleton<ASInventoryRuleRunner>
 {
     LLSINGLETON(ASInventoryRuleRunner);
@@ -244,6 +269,10 @@ class ASInventoryRuleRunner : public LLSingleton<ASInventoryRuleRunner>
 public:
     // Returns false when a run is already active.
     bool start(const ASInventoryRules::rule_list_t& rules);
+    // Reverts run_id: objects go back, newest operation first, to the folder they came from when they
+    // are still where the run put them; then the folders the run created go to the Trash when empty.
+    // Returns false with error when there is nothing to revert or a run is active.
+    bool startRevert(const std::string& run_id, std::vector<ASInventoryRuleUndoOp> ops, std::string& error);
     void stop();
 
     bool isRunning() const { return mState != STATE_IDLE; }
@@ -269,8 +298,36 @@ private:
     {
         LLUUID mID;
         LLUUID mOldParent;
+        LLUUID mNewParent;
+        // For the log, taken before the operation.
+        std::string mType;
+        std::string mName;
+        std::string mFolder;
+        std::string mTo;
         bool mIsPurge = false;
     };
+
+    // Revert work of one step, instead of a scan: each object and the folder it goes back to.
+    struct PlannedOp
+    {
+        ASInventoryRuleUndoOp::EKind mKind;
+        LLUUID mID;
+        LLUUID mTarget;             // original folder (null for the folder step: Trash)
+        LLUUID mExpectedParent;     // where the run put it
+        std::string mType;
+        std::string mName;
+    };
+    struct Plan
+    {
+        std::string mSummary;
+        std::vector<PlannedOp> mOps;
+    };
+
+    void beginRun();
+    bool isRevert() const { return !mPlans.empty(); }
+    std::string getRevertSkipReason(const PlannedOp& planned) const;
+    void recordUndo(const char* kind, const std::string& type, const LLUUID& id, const LLUUID& from,
+                    const LLUUID& to, const std::string& name);
 
     void beginRule();
     void continueResolve();
@@ -283,6 +340,10 @@ private:
     void finishRun(const std::string& status);
     void foldRuleCounters();
     void updateStatus();
+    void describeObject(const LLUUID& id, PendingOp& op) const;
+    void logRule(const std::string& text);
+    void logObject(const PendingOp& op, const std::string& status);
+    void logRuleCounters();
 
     EState mState;
     bool mStopRequested;
@@ -317,6 +378,26 @@ private:
     U32 mTotalDone, mTotalSkipped, mTotalFailed;
     std::string mStatus;
     std::string mRuleErrors;
+
+    // Run log, one line per rule event and per object; empty until the first rule begins.
+    std::string mLog;
+    std::string mLogDestination;    // "to" column of the next operations
+    time_t mStartTime;
+    std::string mRunID;             // 6 hex digits, in the log notecard name
+
+    // Rules moving to Trash fill one folder named with the run ID, created at the root on the first
+    // such rule and moved to the Trash when the run ends, so the user finds the run's items together.
+    // A revert trashes directly.
+    std::string getRunTrashName() const { return "Trashed by inventory rules #" + mRunID; }
+    LLUUID mRunTrashID;
+    bool mCreatingRunTrash;
+    std::string mUndo;              // undo section lines
+    U32 mUndoSeq;
+
+    // Revert: one plan per step (rule), the run it reverts, and what was not reverted.
+    std::vector<Plan> mPlans;
+    std::string mRevertOf;
+    std::vector<std::string> mRevertProblems;
 };
 
 #endif // AS_INVENTORYRULES_H
