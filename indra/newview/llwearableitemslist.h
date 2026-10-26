@@ -201,6 +201,14 @@ public:
     inline void setShowLockButton(bool show) { setShowWidget("btn_lock", show); }
     inline void setShowEditButton(bool show) { setShowWidget("btn_edit_panel", show); }
 
+    // <AS:Chanayane> Drag and drop layer reordering (see asoutfitreorder).
+    /*virtual*/ void draw();
+    /*virtual*/ bool handleMouseDown(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleMouseUp(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleHover(S32 x, S32 y, MASK mask);
+    /*virtual*/ void onMouseCaptureLost();
+    // </AS:Chanayane>
+
 protected:
 
     LLPanelClothingListItem(LLViewerInventoryItem* item, const Params& params);

@@ -50,6 +50,9 @@
 #include "lltextbox.h"
 #include "llresmgr.h"
 #include "llviewerinventory.h"
+// <AS:Chanayane> Drag and drop layer reordering.
+#include "asoutfitreorder.h"
+// </AS:Chanayane>
 
 bool LLFindOutfitItems::operator()(LLInventoryCategory* cat,
                                    LLInventoryItem* item)
@@ -366,6 +369,48 @@ bool LLPanelClothingListItem::postBuild()
 
     return true;
 }
+
+// <AS:Chanayane> Drag and drop layer reordering (see asoutfitreorder).
+void LLPanelClothingListItem::draw()
+{
+    if (ASOutfitReorder::isDragGhost(this))
+    {
+        // Ghost of the start position while dragging.
+        LLViewDrawContext context(0.4f);
+        LLPanelDeletableWearableListItem::draw();
+    }
+    else
+    {
+        LLPanelDeletableWearableListItem::draw();
+    }
+    ASOutfitReorder::drawDropLine(this);
+}
+
+bool LLPanelClothingListItem::handleMouseDown(S32 x, S32 y, MASK mask)
+{
+    // Base first: it fires the list's selection callback.
+    bool handled = LLPanelDeletableWearableListItem::handleMouseDown(x, y, mask);
+    return ASOutfitReorder::rowMouseDown(this, x, y, mask) || handled;
+}
+
+bool LLPanelClothingListItem::handleMouseUp(S32 x, S32 y, MASK mask)
+{
+    if (ASOutfitReorder::rowMouseUp(this, x, y, mask)) return true;
+    return LLPanelDeletableWearableListItem::handleMouseUp(x, y, mask);
+}
+
+bool LLPanelClothingListItem::handleHover(S32 x, S32 y, MASK mask)
+{
+    if (ASOutfitReorder::rowHover(this, x, y, mask)) return true;
+    return LLPanelDeletableWearableListItem::handleHover(x, y, mask);
+}
+
+void LLPanelClothingListItem::onMouseCaptureLost()
+{
+    ASOutfitReorder::rowCaptureLost(this);
+    LLPanelDeletableWearableListItem::onMouseCaptureLost();
+}
+// </AS:Chanayane>
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////

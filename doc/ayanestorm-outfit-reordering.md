@@ -17,7 +17,18 @@ Edit Outfit panel ("edit outfit parts", `panel_outfit_edit.xml`), COF (Current O
 - Fixed button positions: `reshapeRightWidgets()` packs only visible widgets, and list items use the enabled state as "may be shown", so edge buttons are not hidden or disabled. All four show when the type has 2+ layers; edge ones are dimmed via overlay alpha (`ASOutfitReorder::setButtonDimmed()`) and their click is a no-op. Icons `AS_MoveTop_Off` / `AS_MoveBottom_Off` (`textures/as/move_top_off.png`, `move_bottom_off.png`, 18x18 LA, derived from `UpArrow_Off`).
 - Callbacks bound in `LLCOFWearables::buildClothingListItem()` with the row's COF link id (not the selection).
 
-## Drag and drop feasibility
+## Drag and drop (implemented, in-row mouse capture)
+
+- `LLPanelClothingListItem` tagged overrides `draw` / `handleMouseDown` / `handleMouseUp` / `handleHover` / `onMouseCaptureLost` forward to `ASOutfitReorder::row*()`, `isDragGhost()`, `drawDropLine()`.
+- Draggable: clothing rows whose type has 2+ layers (same condition as the move buttons). No modifier keys (ctrl/shift stay multi-selection), and not on a button (`childFromPoint(x, y, true)`; the base handled flag is useless since mouse opaque icon / name count as handled). Base handler runs first so selection still happens.
+- Mouse down captures the mouse; drag starts past `DRAG_N_DROP_DISTANCE_THRESHOLD`.
+- Target: gaps between the visible rows of the same type, picked by row centers; a cursor beyond the type's rows snaps to the first / last gap. Gaps next to the dragged row are no-ops. New index = layer index of the row now in the dragged row's new slot; drop calls `moveWearableToIndex()`.
+- Feedback: dragged row drawn at 0.4 alpha (`LLViewDrawContext`) as the start position ghost; 2 px white line on the top edge of the row below the gap (bottom edge of the last row for the last gap); cursor `UI_CURSOR_ARROWDRAG`, or `UI_CURSOR_NO` outside the visible list.
+- Cancel: drop outside the list's visible area (point must be in the list and every ancestor's screen rect), or capture lost.
+- State held by `LLHandle`: a COF change rebuilds the list mid-drag and a destroyed captor gets no `onMouseCaptureLost()`.
+- Not done: autoscroll, a floating copy following the cursor.
+
+## Drag and drop feasibility (original study)
 
 Feasible, and `moveWearableToIndex()` already provides the drop action.
 
