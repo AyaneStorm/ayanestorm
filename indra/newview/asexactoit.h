@@ -27,6 +27,7 @@
 #ifndef AS_EXACT_OIT_H
 #define AS_EXACT_OIT_H
 
+#include <functional>
 #include <vector>
 
 #include "llglslshader.h"
@@ -43,8 +44,11 @@ class ASExactOIT
 {
 public:
     static const char* shaderCacheRevision();
-    static bool loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
-                            bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list);
+    // Appends the family's compiles as small steps, which ASOITShaderLoader
+    // runs in order across frames; finishLoad() receives their result.
+    static void appendLoadSteps(S32 shader_level, bool use_sun_shadow, bool gltf_enabled,
+                                std::vector<std::function<bool()>>& steps);
+    static void finishLoad(bool success);
     static void registerShaders(std::vector<LLGLSLShader*>& shader_list);
     static void unloadShaders();
     static void appendDiagnostics(LLSD& info);
@@ -107,8 +111,7 @@ private:
     static bool loadAlphaShaders(S32 shader_level, bool use_sun_shadow);
     static bool loadPBRAlphaShaders(S32 shader_level, bool use_sun_shadow);
     static bool loadFullbrightAlphaShaders(S32 shader_level);
-    static bool loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
-                                         std::vector<LLGLSLShader*>& shader_list);
+    static bool loadMaterialAlphaShader(U32 i, S32 shader_level, bool use_sun_shadow);
     static bool shadersReady();
     static void discardCapture();
     static void setVanillaFallback(bool active);

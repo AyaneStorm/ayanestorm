@@ -25,7 +25,8 @@ bool ASAVBOIT::supported() { return false; }
 bool ASAVBOIT::requested() { return false; }
 bool ASAVBOIT::available() { return false; }
 void ASAVBOIT::selectVirtualDomain() {}
-void ASAVBOIT::loadShaders(S32 shader_level) {}
+void ASAVBOIT::appendLoadSteps(S32 shader_level, std::vector<std::function<bool()>>& steps) {}
+void ASAVBOIT::finishLoad(bool success) {}
 void ASAVBOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
 void ASAVBOIT::unloadShaders() {}
 bool ASAVBOIT::shadersReady() { return false; }
@@ -477,13 +478,15 @@ bool ASAVBOIT::available()
         gASAVBOITVolumeProgram.mProgramObject && gASAVBOITResolveProgram.mProgramObject;
 }
 
-void ASAVBOIT::loadShaders(S32 shader_level)
+void ASAVBOIT::appendLoadSteps(S32 shader_level, std::vector<std::function<bool()>>& steps)
 {
     if (!supported())
     {
         return;
     }
 
+    // Configuration below makes no GL call and runs now; only the compiles
+    // are deferred into steps.
     // The domain must be selected before any shader is compiled: every AVBOIT
     // stage receives it as a compile-time define so the buffers, the depth
     // curve, the Z-bin table, and the prefix scan cannot disagree.
@@ -585,53 +588,71 @@ void ASAVBOIT::loadShaders(S32 shader_level)
     gASAVBOITSkinnedBoundsProgram.addPermutation("AVBOIT", "1");
     gASAVBOITSkinnedBoundsProgram.addPermutation("HAS_SKIN", "1");
 
-    bool success = gASAVBOITVolumeProgram.createShader() &&
-        gASAVBOITResolveProgram.createShader() &&
-        gASAVBOITEarlyDepthProgram.createShader() &&
-        gASAVBOITIsolateDepthProgram.createShader() &&
-        gASAVBOITCellDepthProgram.createShader() &&
-        gASAVBOITBoundsProgram.createShader() &&
-        gASAVBOITSkinnedBoundsProgram.createShader();
-    success = success && cloneCapturePair(
-        gASAVBOITAlphaProgram, gASAVBOITSkinnedAlphaProgram,
-        gDeferredAlphaProgram, "Deferred Alpha AVBOIT Shader",
-        "deferred/asAVBOITCaptureF.glsl");
-    success = success && cloneCapturePair(
-        gASAVBOITPBRAlphaProgram, gASAVBOITSkinnedPBRAlphaProgram,
-        gDeferredPBRAlphaProgram, "Deferred PBR Alpha AVBOIT Shader",
-        "deferred/asAVBOITCaptureF.glsl");
-    success = success && cloneCapturePair(
-        gASAVBOITFullbrightAlphaProgram, gASAVBOITSkinnedFullbrightAlphaProgram,
-        gDeferredFullbrightAlphaMaskAlphaProgram,
-        "Deferred Fullbright Alpha AVBOIT Shader",
-        "deferred/asAVBOITCaptureF.glsl");
-    success = success && cloneCapturePair(
-        gASAVBOITEmissiveProgram, gASAVBOITSkinnedEmissiveProgram,
-        gDeferredEmissiveProgram, "Deferred Emissive AVBOIT Shader",
-        "deferred/asAVBOITEmissiveF.glsl");
-    success = success && cloneCapturePair(
-        gASAVBOITPBRGlowProgram, gASAVBOITSkinnedPBRGlowProgram,
-        gPBRGlowProgram, "PBR Glow AVBOIT Shader",
-        "deferred/asAVBOITPbrGlowF.glsl");
+    for (LLGLSLShader* program : { &gASAVBOITVolumeProgram, &gASAVBOITResolveProgram,
+                                   &gASAVBOITEarlyDepthProgram, &gASAVBOITIsolateDepthProgram,
+                                   &gASAVBOITCellDepthProgram, &gASAVBOITBoundsProgram,
+                                   &gASAVBOITSkinnedBoundsProgram })
+    {
+        steps.emplace_back([program]() { return program->createShader(); });
+    }
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gASAVBOITAlphaProgram, gASAVBOITSkinnedAlphaProgram,
+            gDeferredAlphaProgram, "Deferred Alpha AVBOIT Shader",
+            "deferred/asAVBOITCaptureF.glsl");
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gASAVBOITPBRAlphaProgram, gASAVBOITSkinnedPBRAlphaProgram,
+            gDeferredPBRAlphaProgram, "Deferred PBR Alpha AVBOIT Shader",
+            "deferred/asAVBOITCaptureF.glsl");
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gASAVBOITFullbrightAlphaProgram, gASAVBOITSkinnedFullbrightAlphaProgram,
+            gDeferredFullbrightAlphaMaskAlphaProgram,
+            "Deferred Fullbright Alpha AVBOIT Shader",
+            "deferred/asAVBOITCaptureF.glsl");
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gASAVBOITEmissiveProgram, gASAVBOITSkinnedEmissiveProgram,
+            gDeferredEmissiveProgram, "Deferred Emissive AVBOIT Shader",
+            "deferred/asAVBOITEmissiveF.glsl");
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gASAVBOITPBRGlowProgram, gASAVBOITSkinnedPBRGlowProgram,
+            gPBRGlowProgram, "PBR Glow AVBOIT Shader",
+            "deferred/asAVBOITPbrGlowF.glsl");
+    });
 
-    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
     {
         if ((i & 0x3u) != LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
         {
             continue;
         }
-        success = cloneCaptureShader(
-            gASAVBOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
-            llformat("Material AVBOIT Shader %u", i),
-            "deferred/asAVBOITCaptureF.glsl");
-        if (i < LLMaterial::SHADER_COUNT)
+        steps.emplace_back([i]()
         {
-            gASAVBOITMaterialAlphaProgram[i].mRiggedVariant =
-                &gASAVBOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
-        }
+            const bool success = cloneCaptureShader(
+                gASAVBOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
+                llformat("Material AVBOIT Shader %u", i),
+                "deferred/asAVBOITCaptureF.glsl");
+            if (i < LLMaterial::SHADER_COUNT)
+            {
+                gASAVBOITMaterialAlphaProgram[i].mRiggedVariant =
+                    &gASAVBOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
+            }
+            return success;
+        });
     }
 
-    if (success)
     {
         gASAVBOITGLTFProgram.mName = "AVBOIT GLTF PBR Metallic Roughness Shader";
         gASAVBOITGLTFProgram.mFeatures = gGLTFPBRMetallicRoughnessProgram.mFeatures;
@@ -651,18 +672,22 @@ void ASAVBOIT::loadShaders(S32 shader_level)
         "AVBOIT_MAX_DIVIDER_VALUE", llformat("%u", avboitMaxDivider()));
         gASAVBOITGLTFProgram.mGLTFVariants.resize(
             gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size());
-        for (U32 i = 0;
-             i < gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() && success;
-             ++i)
+        for (U32 i = 0; i < gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size(); ++i)
         {
-            success = cloneCaptureShader(
-                gASAVBOITGLTFProgram.mGLTFVariants[i],
-                gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[i],
-                "AVBOIT GLTF PBR Metallic Roughness Variant",
-                "deferred/asAVBOITCaptureF.glsl");
+            steps.emplace_back([i]()
+            {
+                return cloneCaptureShader(
+                    gASAVBOITGLTFProgram.mGLTFVariants[i],
+                    gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[i],
+                    "AVBOIT GLTF PBR Metallic Roughness Variant",
+                    "deferred/asAVBOITCaptureF.glsl");
+            });
         }
     }
+}
 
+void ASAVBOIT::finishLoad(bool success)
+{
     if (!success)
     {
         unloadShaders();

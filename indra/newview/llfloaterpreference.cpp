@@ -36,6 +36,9 @@
 #include "llfloaterpreference.h"
 
 #include "message.h"
+// <AS:Chanayane> Settled quality slider changes.
+#include "asgraphicslevelapply.h"
+// </AS:Chanayane>
 #include "llfloaterautoreplacesettings.h"
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -2400,6 +2403,21 @@ void LLFloaterPreference::onCommitWindowedMode()
 
 void LLFloaterPreference::onChangeQuality(const LLSD& data)
 {
+    // <AS:Chanayane> The slider commits every drag step and each level change
+    // reloads every shader: apply only the settled value.
+    if (!ASGraphicsLevelApply::applying())
+    {
+        LLHandle<LLFloater> handle = getHandle();
+        ASGraphicsLevelApply::request([handle, data]()
+        {
+            if (LLFloaterPreference* floater = static_cast<LLFloaterPreference*>(handle.get()))
+            {
+                floater->onChangeQuality(data);
+            }
+        });
+        return;
+    }
+    // </AS:Chanayane>
     U32 level = (U32)(data.asReal());
     constexpr U32 LVL_HIGH = 4;
     if (level >= LVL_HIGH && mLastQualityLevel < level)

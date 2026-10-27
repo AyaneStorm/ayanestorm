@@ -25,6 +25,9 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "fsfloaterperformance.h"
+// <AS:Chanayane> Settled quality slider changes.
+#include "asgraphicslevelapply.h"
+// </AS:Chanayane>
 
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -893,6 +896,21 @@ void FSFloaterPerformance::detachItem(const LLUUID& item_id)
 
 void FSFloaterPerformance::onChangeQuality(const LLSD& data)
 {
+    // <AS:Chanayane> The slider commits every drag step and each level change
+    // reloads every shader: apply only the settled value.
+    if (!ASGraphicsLevelApply::applying())
+    {
+        LLHandle<LLFloater> handle = getHandle();
+        ASGraphicsLevelApply::request([handle, data]()
+        {
+            if (FSFloaterPerformance* floater = static_cast<FSFloaterPerformance*>(handle.get()))
+            {
+                floater->onChangeQuality(data);
+            }
+        });
+        return;
+    }
+    // </AS:Chanayane>
     U32 level = (U32)(data.asReal());
     LLFeatureManager::getInstance()->setGraphicsLevel(level, true);
     refresh();

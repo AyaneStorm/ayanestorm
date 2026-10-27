@@ -197,6 +197,9 @@ set(viewer_SOURCE_FILES
     asavboit.cpp
     asmacoit.cpp
     asoitdispatcher.cpp
+    asoitshaderloader.cpp
+    asgraphicslevelapply.cpp
+    asshaderreload.cpp
     asexactoit.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
@@ -1151,6 +1154,9 @@ set(viewer_HEADER_FILES
     asavboit.h
     asmacoit.h
     asoitdispatcher.h
+    asoitshaderloader.h
+    asgraphicslevelapply.h
+    asshaderreload.h
     asexactoit.h
     fsexportperms.h
     fsfloateraddtocontactset.h

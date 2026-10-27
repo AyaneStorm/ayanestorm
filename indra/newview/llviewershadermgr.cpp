@@ -70,6 +70,8 @@
 #include "asexactoit.h"
 #include "asavboit.h"
 #include "asmacoit.h"
+#include "asoitshaderloader.h"
+#include "asshaderreload.h"
 // </AS:Chanayane>
 // <AS:Chanayane> Optional volumetric lighting
 #include "asvolumetriclighting.h"
@@ -613,6 +615,14 @@ void LLViewerShaderMgr::setShaders()
         return;
     }
 
+    // <AS:Chanayane> Requests made while shaders are loaded merge into one
+    // reload at the next frame, with the final settings.
+    if (ASShaderReload::defer())
+    {
+        return;
+    }
+    // </AS:Chanayane>
+
     mShaderList.clear();
 
     if (!gGLManager.mHasRequirements)
@@ -831,6 +841,9 @@ void LLViewerShaderMgr::setShaders()
 
 void LLViewerShaderMgr::unloadShaders()
 {
+    // <AS:Chanayane> Stop pending OIT compiles: their source programs are going away.
+    ASOITShaderLoader::invalidate();
+    // </AS:Chanayane>
     while (!LLGLSLShader::sInstances.empty())
     {
         LLGLSLShader* shader = *(LLGLSLShader::sInstances.begin());
@@ -3264,13 +3277,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         success = gRlvSphereProgram.createShader();
     }
     // [/RLV:KB]
-// <AS:Chanayane> Load AVBOIT and Mac OIT from vanilla shaders, then load Exact OIT independently.
+// <AS:Chanayane> OIT families compile later, only those in use, a few programs
+// per frame (ASOITShaderLoader); compiling all three inline blocked ~13 s per reload.
+//  if (success)
+//  {
+//      ASAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+//      ASMacOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+//  }
+//  success = ASExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
     if (success)
     {
-        ASAVBOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
-        ASMacOIT::loadShaders(mShaderLevel[SHADER_DEFERRED]);
+        ASOITShaderLoader::reset(mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"));
     }
-    success = ASExactOIT::loadShaders(success, mShaderLevel[SHADER_DEFERRED], use_sun_shadow, gSavedSettings.getBOOL("GLTFEnabled"), mShaderList);
 // </AS:Chanayane>
 // <AS:Chanayane> Load optional volumetric lighting independently; a compile
 // failure here must not fail the whole deferred shader load.

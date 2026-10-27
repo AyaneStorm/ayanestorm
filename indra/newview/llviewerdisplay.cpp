@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
+#include "asshaderreload.h"
 #include "asdofrenderer.h"
 #include "asdofautofocus.h"
 // </AS:Chanayane>
@@ -601,6 +602,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     }
 
     gViewerWindow->checkSettings();
+    // <AS:Chanayane> Run the merged shader reload requested since the last frame.
+    ASShaderReload::flush();
+    // </AS:Chanayane>
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Picking");

@@ -37,6 +37,7 @@
 #include <unordered_map>
 
 #include "asbackgroundisolate.h"
+#include "asdoflive.h"
 #include "llframetimer.h"
 #include "llglslshader.h"
 #include "lldrawpoolalpha.h"
@@ -691,7 +692,15 @@ bool ASMacOIT::shadersReady()
         !sCapturePrograms.empty();
 }
 
-void ASMacOIT::loadShaders(S32 shader_level)
+bool ASMacOIT::shadersWanted()
+{
+    static LLCachedControl<S32> dof_mode(gSavedSettings, "ASDepthOfFieldMode", 0);
+    return requested() ||
+        (S32(dof_mode) == ASDoFLive::LIVE_MODE && LLPipeline::RenderDepthOfField &&
+         !sProbeFailed && supported());
+}
+
+void ASMacOIT::appendLoadSteps(S32 shader_level, std::vector<std::function<bool()>>& steps)
 {
     sCapturePrograms.clear();
     sCaptureProgramIndex.clear();
@@ -700,64 +709,97 @@ void ASMacOIT::loadShaders(S32 shader_level)
         return;
     }
 
-    bool success =
-        createFullscreenProgram(gMacOITDepthCopyProgram, "Mac OIT Depth Copy",
-                                "deferred/asMacOITDepthCopyF.glsl", shader_level) &&
-        createFullscreenProgram(gMacOITMergeProgram, "Mac OIT Merge",
-                                "deferred/asMacOITMergeF.glsl", shader_level,
-                                MOMENTS_LIBRARY) &&
-        createFullscreenProgram(gMacOITResolveProgram, "Mac OIT Resolve",
-                                "deferred/asMacOITResolveF.glsl", shader_level) &&
-        createFullscreenProgram(gMacOITProbeProgram, "Mac OIT Probe",
-                                "deferred/asMacOITProbeF.glsl", shader_level);
-    success = success && cloneCapturePair(
-        gMacOITAlphaProgram, gMacOITSkinnedAlphaProgram, gDeferredAlphaProgram,
-        "Deferred Alpha Mac OIT Shader", nullptr);
-    success = success && cloneCapturePair(
-        gMacOITPBRAlphaProgram, gMacOITSkinnedPBRAlphaProgram, gDeferredPBRAlphaProgram,
-        "Deferred PBR Alpha Mac OIT Shader", nullptr);
-    success = success && cloneCapturePair(
-        gMacOITFullbrightAlphaProgram, gMacOITSkinnedFullbrightAlphaProgram,
-        gDeferredFullbrightAlphaMaskAlphaProgram,
-        "Deferred Fullbright Alpha Mac OIT Shader", nullptr);
-    success = success && cloneCapturePair(
-        gMacOITEmissiveProgram, gMacOITSkinnedEmissiveProgram, gDeferredEmissiveProgram,
-        "Deferred Emissive Mac OIT Shader", EMISSIVE_TERMINAL);
-    success = success && cloneCapturePair(
-        gMacOITPBRGlowProgram, gMacOITSkinnedPBRGlowProgram, gPBRGlowProgram,
-        "PBR Glow Mac OIT Shader", PBR_GLOW_TERMINAL);
+    steps.emplace_back([shader_level]()
+    {
+        return createFullscreenProgram(gMacOITDepthCopyProgram, "Mac OIT Depth Copy",
+                                       "deferred/asMacOITDepthCopyF.glsl", shader_level);
+    });
+    steps.emplace_back([shader_level]()
+    {
+        return createFullscreenProgram(gMacOITMergeProgram, "Mac OIT Merge",
+                                       "deferred/asMacOITMergeF.glsl", shader_level,
+                                       MOMENTS_LIBRARY);
+    });
+    steps.emplace_back([shader_level]()
+    {
+        return createFullscreenProgram(gMacOITResolveProgram, "Mac OIT Resolve",
+                                       "deferred/asMacOITResolveF.glsl", shader_level);
+    });
+    steps.emplace_back([shader_level]()
+    {
+        return createFullscreenProgram(gMacOITProbeProgram, "Mac OIT Probe",
+                                       "deferred/asMacOITProbeF.glsl", shader_level);
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gMacOITAlphaProgram, gMacOITSkinnedAlphaProgram, gDeferredAlphaProgram,
+            "Deferred Alpha Mac OIT Shader", nullptr);
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gMacOITPBRAlphaProgram, gMacOITSkinnedPBRAlphaProgram, gDeferredPBRAlphaProgram,
+            "Deferred PBR Alpha Mac OIT Shader", nullptr);
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gMacOITFullbrightAlphaProgram, gMacOITSkinnedFullbrightAlphaProgram,
+            gDeferredFullbrightAlphaMaskAlphaProgram,
+            "Deferred Fullbright Alpha Mac OIT Shader", nullptr);
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gMacOITEmissiveProgram, gMacOITSkinnedEmissiveProgram, gDeferredEmissiveProgram,
+            "Deferred Emissive Mac OIT Shader", EMISSIVE_TERMINAL);
+    });
+    steps.emplace_back([]()
+    {
+        return cloneCapturePair(
+            gMacOITPBRGlowProgram, gMacOITSkinnedPBRGlowProgram, gPBRGlowProgram,
+            "PBR Glow Mac OIT Shader", PBR_GLOW_TERMINAL);
+    });
 
-    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
     {
         if ((i & 0x3u) != LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
         {
             continue;
         }
-        success = cloneCaptureProgram(
-            gMacOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
-            llformat("Material Mac OIT Shader %u", i), nullptr);
-        if (i < LLMaterial::SHADER_COUNT)
+        steps.emplace_back([i]()
         {
-            gMacOITMaterialAlphaProgram[i].mRiggedVariant =
-                &gMacOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
-        }
+            const bool success = cloneCaptureProgram(
+                gMacOITMaterialAlphaProgram[i], gDeferredMaterialProgram[i],
+                llformat("Material Mac OIT Shader %u", i), nullptr);
+            if (i < LLMaterial::SHADER_COUNT)
+            {
+                gMacOITMaterialAlphaProgram[i].mRiggedVariant =
+                    &gMacOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
+            }
+            return success;
+        });
     }
 
-    if (success)
+    gMacOITGLTFProgram.mName = "Mac OIT GLTF PBR Metallic Roughness Shader";
+    gMacOITGLTFProgram.mGLTFVariants.resize(
+        gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size());
+    for (U32 i = 0; i < gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size(); ++i)
     {
-        gMacOITGLTFProgram.mName = "Mac OIT GLTF PBR Metallic Roughness Shader";
-        gMacOITGLTFProgram.mGLTFVariants.resize(
-            gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size());
-        for (U32 i = 0; i < gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size() && success; ++i)
+        steps.emplace_back([i]()
         {
-            success = cloneCaptureProgram(
+            return cloneCaptureProgram(
                 gMacOITGLTFProgram.mGLTFVariants[i],
                 gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[i],
                 "Mac OIT GLTF PBR Metallic Roughness Variant", nullptr,
                 (i & LLGLSLShader::GLTFVariant::ALPHA_BLEND) != 0);
-        }
+        });
     }
+}
 
+void ASMacOIT::finishLoad(bool success)
+{
     if (success)
     {
         indexCapturePrograms();
