@@ -248,6 +248,11 @@
 		<text name="text_box_scripting_font" width="140">
 			Schrift für Skript-Editor:
 		</text>
+		<check_box label="WebSocket-Synchronisierung aktivieren" name="websocket_sync_enable"/>
+		<text name="websocket_tip">
+			WebSocket Listen-Port:
+		</text>
+		<check_box label="Skriptfehler und Debug-Meldungen an WebSocket-Clients weiterleiten" name="websocket_forward_debug"/>
 		<combo_box name="FSScriptingFontName" tool_tip="Name der Schrift, die für den Skript-Editor verwendet wird">
 			<combo_item name="Monospace" label="Monospace"/>
 			<combo_item name="Scripting" label="Scripting"/>
@@ -275,6 +280,7 @@
 			Externer Editor:
 		</text>
 		<button label="Durchsuchen" label_selected="Durchsuchen" name="SetExternalEditor"/>
+		<check_box label="Enge VS Code Integration" name="tight_integration"/>
 	</panel>
 
 	<!--Uploads-->

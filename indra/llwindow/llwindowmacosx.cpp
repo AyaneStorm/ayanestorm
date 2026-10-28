@@ -44,7 +44,7 @@
 #include <CoreGraphics/CGDisplayConfiguration.h>
 
 #include <IOKit/IOCFPlugIn.h>
-#include <IOKit/IOKitLib.h>
+#include "llwindowmacosx_iokit.h"
 #include <IOKit/IOMessage.h>
 #include <IOKit/hid/IOHIDUsageTables.h>
 #include <IOKit/hid/IOHIDLib.h>
@@ -172,6 +172,7 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
     // Route them to a dummy callback structure until the end of constructor.
     LLWindowCallbacks null_callbacks;
     mCallbacks = &null_callbacks;
+    mIsConstructing = true;
 
     // Voodoo for calling cocoa from carbon (see llwindowmacosx-objc.mm).
     setupCocoa();
@@ -244,9 +245,8 @@ LLWindowMacOSX::LLWindowMacOSX(LLWindowCallbacks* callbacks,
     }
 
     mCallbacks = callbacks;
+    mIsConstructing = false;
     stop_glerror();
-
-
 }
 
 // These functions are used as wrappers for our internal event handling callbacks.
@@ -417,6 +417,14 @@ void callResize(unsigned int width, unsigned int height)
     if (gWindowImplementation && gWindowImplementation->getCallbacks())
     {
         gWindowImplementation->getCallbacks()->handleResize(gWindowImplementation, width, height);
+    }
+}
+
+void callRequestResolutionUpdate()
+{
+    if (gWindowImplementation && gWindowImplementation->getCallbacks())
+    {
+        gWindowImplementation->getCallbacks()->handleRequestResolutionUpdate(gWindowImplementation);
     }
 }
 
@@ -711,6 +719,11 @@ void getPreeditLocation(float *location, unsigned int length)
         location[0] = c[0];
         location[1] = c[1];
     }
+}
+
+bool windowCallbacksReady()
+{
+    return gWindowImplementation && !gWindowImplementation->isConstructing();
 }
 
 void LLWindowMacOSX::updateMouseDeltas(float* deltas)
@@ -2413,7 +2426,7 @@ bool LLWindowMacOSX::getInputDevices(U32 device_type_filter,
     io_iterator_t io_iter = 0;
 
     // create an IO object iterator
-    result = IOServiceGetMatchingServices( kIOMasterPortDefault, device_dict_ref, &io_iter );
+    result = IOServiceGetMatchingServices( kLLIOMainPort, device_dict_ref, &io_iter );
     if ( kIOReturnSuccess != result )
     {
         LL_WARNS("Joystick") << "IOServiceGetMatchingServices failed" << LL_ENDL;
@@ -2680,6 +2693,12 @@ std::vector<std::string> LLWindowMacOSX::getDynamicFallbackFontList()
 {
     // Fonts previously in getFontListSans() have moved to fonts.xml.
     return std::vector<std::string>();
+}
+
+LLFontFallbackMatch LLWindowMacOSX::findFallbackFontForChar(llwchar wch)
+{
+    // Not implemented on macOS; would use CoreText (CTFontCreateForString).
+    return LLFontFallbackMatch();
 }
 
 // static

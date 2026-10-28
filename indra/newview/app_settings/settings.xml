@@ -2928,6 +2928,61 @@
         <key>Value</key>
         <integer>1</integer>
     </map>
+    <key>BuyCurrencyHTML</key>
+    <map>
+      <key>Comment</key>
+      <string>Use HTML based L$ packs floater instead of legacy XUI version</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>BuyCurrencyPacksURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL for the L$ packs purchase floater</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://accounts.secondlife.com/packs/floater?lang=[LANGUAGE]&amp;shortfall=[SHORTFALL]</string>
+    </map>
+    <key>BuyCurrencyAddPaymentURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL the viewer probes at login; a 200 means the L$ packs floater handles residents without a payment method</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://accounts.secondlife.com/packs/floater/add-payment-enabled</string>
+    </map>
+    <key>PaymentMethodURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL for adding a payment method</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://secondlife.com/my/lindex/buy.php?associate_for_viewer=1</string>
+    </map>
+    <key>PaymentMethodStagingURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL for adding a payment method on the Damballah</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://secondlife-staging.com/my/lindex/buy.php?associate_for_viewer=1</string>
+    </map>
     <key>EnableButtonFlashing</key>
     <map>
       <key>Comment</key>
@@ -6223,17 +6278,6 @@
       <string>https://search.[GRID]/viewer/?query_term=[QUERY]&amp;search_type=[TYPE][COLLECTION]&amp;maturity=[MATURITY]&amp;lang=[LANGUAGE]&amp;g=[GODLIKE]&amp;sid=[SESSION_ID]&amp;rid=[REGION_ID]&amp;pid=[PARCEL_ID]&amp;channel=[CHANNEL]&amp;version=[VERSION]&amp;major=[VERSION_MAJOR]&amp;minor=[VERSION_MINOR]&amp;patch=[VERSION_PATCH]&amp;build=[VERSION_BUILD]</string>
 	  -->
     </map>
-    <key>GuidebookURL</key>
-    <map>
-      <key>Comment</key>
-      <string>URL for Guidebook content</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>String</string>
-      <key>Value</key>
-      <string>http://guidebooks.secondlife.io/welcome/index.html</string>
-    </map>
     <key>HighResSnapshot</key>
     <map>
       <key>Comment</key>
@@ -8149,6 +8193,28 @@
     <key>Value</key>
     <integer>0</integer>
     <key>Backup</key>
+    <integer>0</integer>
+  </map>
+  <key>MediaPluginPipeWireVolumeCatcher</key>
+  <map>
+    <key>Comment</key>
+    <string>Use PipeWire instead of PulseAudio for controlling web media volume.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>MediaPluginForceVLC</key>
+  <map>
+    <key>Comment</key>
+    <string>Force use of VLC based media plugin. (Linux Only)</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
     <integer>0</integer>
   </map>
   <key>MediaControlFadeTime</key>
@@ -10737,7 +10803,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>QuickBuyCurrency</key>
     <map>
       <key>Comment</key>
-      <string>Toggle between HTML based currency purchase floater and legacy XUI version</string>
+      <string>(Deprecated) Use BuyCurrencyHTML instead</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -10893,13 +10959,24 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>RenderAnisotropic</key>
     <map>
       <key>Comment</key>
-      <string>Render textures using anisotropic filtering</string>
+      <string>[OBSOLETE] Render textures using anisotropic filtering</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
       <integer>0</integer>
+    </map>
+    <key>RenderAnisotropicLevel</key>
+    <map>
+      <key>Comment</key>
+      <string>Anisotropic filtering strength(0(Disable), 2x, 4x, 8x, 16x</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <real>0</real>
     </map>
     <key>RenderAppleUseMultGL</key>
     <map>
@@ -11121,7 +11198,7 @@ Change of this parameter will affect the layout of buttons in notification toast
    <key>RenderHiDPI</key>
   <map>
     <key>Comment</key>
-    <string>Enable support for HiDPI displays, like Retina (macOS ONLY, requires restart)</string>
+    <string>Enable support for HiDPI displays, like Retina (macOS and Linux ONLY, requires restart)</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
@@ -11627,6 +11704,17 @@ Change of this parameter will affect the layout of buttons in notification toast
   <map>
     <key>Comment</key>
     <string>If available free physical memory is below this value textures get agresively scaled down</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>512</integer>
+  </map>
+  <key>RenderMinFreeCommitMemoryThresholdMB</key>
+  <map>
+    <key>Comment</key>
+    <string>If available Windows commit memory is below this value textures get aggressively scaled down</string>
     <key>Persist</key>
     <integer>0</integer>
     <key>Type</key>
@@ -13477,6 +13565,17 @@ Change of this parameter will affect the layout of buttons in notification toast
         <key>Value</key>
         <integer>0</integer>
     </map>
+    <key>NametagOverWater</key>
+    <map>
+        <key>Comment</key>
+        <string>Render name tag over the transparent water while camera is above the water</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>1</integer>
+    </map>
     <key>RenderInitError</key>
     <map>
       <key>Comment</key>
@@ -14581,6 +14680,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>1</real>
   </map>
+  <key>CollectUIImageVertexBuffers</key>
+  <map>
+    <key>Comment</key>
+    <string>When enabled, images will cache vertex buffers and reuse them. When disabled, the general cache will be used with significant hash-lookup overhead, but vertices are regenerated each frame so they are always up to date.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <real>1</real>
+  </map>
   <key>ShowMyComplexityChanges</key>
   <map>
     <key>Comment</key>
@@ -14905,6 +15015,17 @@ Change of this parameter will affect the layout of buttons in notification toast
         <string>U32</string>
         <key>Value</key>
         <integer>1</integer>
+    </map>
+    <key>RenderHighPrecisionPostProcess</key>
+    <map>
+        <key>Comment</key>
+        <string>Use 16-bit floating point buffers for post process rendering</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>0</integer>
     </map>
     <key>ReplaySession</key>
     <map>
@@ -18491,6 +18612,17 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>SwitchToSharedEnvAfterTeleport</key>
+    <map>
+      <key>Comment</key>
+      <string>Switch to Shared Environment after teleport</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>WaterPresetName</key>
     <map>
       <key>Comment</key>
@@ -19332,7 +19464,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>WLSkyDetail</key>
     <map>
       <key>Comment</key>
-      <string>Controls vertex detail on the WindLight sky.  Lower numbers will give better performance and uglier skies.</string>
+      <string>[OBSOLETE]</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -19564,6 +19696,61 @@ Change of this parameter will affect the layout of buttons in notification toast
       <string>String</string>
       <key>Value</key>
       <string />
+    </map>
+    <key>ExternalWebsocketSyncEnable</key>
+    <map>
+        <key>Comment</key>
+        <string>Enables the Websocket JSONRPC server when doing external script editing.</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>1</integer>
+    </map>
+    <key>ExternalWebsocketSyncPort</key>
+    <map>
+        <key>Comment</key>
+        <string>Port that the JSONRPC server listens on when editing</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>S32</string>
+        <key>Value</key>
+        <integer>9020</integer>
+    </map>
+    <key>ExternalWebsocketSyncLocal</key>
+    <map>
+        <key>Comment</key>
+        <string>Should the JSONRPC server listen only for local connections.</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>1</integer>
+    </map>
+    <key>ExternalEditorTightIntegration</key>
+    <map>
+        <key>Comment</key>
+        <string>When true, Edit in External Editor launches VS Code via the code CLI with a vscode:// URI instead of using the configured external editor.</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>0</integer>
+    </map>
+    <key>ExternalWebsocketForwardDebug</key>
+    <map>
+        <key>Comment</key>
+        <string>Forward messages and runtime errors for a script to JSONRPC client.</string>
+        <key>Persist</key>
+        <integer>1</integer>
+        <key>Type</key>
+        <string>Boolean</string>
+        <key>Value</key>
+        <integer>1</integer>
     </map>
     <key>YawFromMousePosition</key>
     <map>
@@ -23343,6 +23530,17 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>CEFRemoteDebuggingPort</key>
+    <map>
+      <key>Comment</key>
+      <string>Enable CEF remote debugging on the specified base port (1024 to 65535, 0 to disable). Each new SLPlugin gets base+N.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
   <key>360CaptureJPEGEncodeQuality</key>
   <map>
     <key>Comment</key>
@@ -24864,7 +25062,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
-    <string>Boolean</string>
+    <string>U32</string>
     <key>Value</key>
     <integer>0</integer>
   </map>
@@ -25080,6 +25278,17 @@ Change of this parameter will affect the layout of buttons in notification toast
       <integer>0</integer>
     </map>
 
+  <key>ScriptEditorDisableSyntaxHighlight</key>
+  <map>
+    <key>Comment</key>
+    <string>Disable syntax highlighting in script editor for performance testing</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
   <key>FSNetMapPhantomOpacity</key>
   <map>
     <key>Comment</key>

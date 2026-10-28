@@ -45,6 +45,7 @@
 #include "llchicletbar.h"
 #include "llconsole.h"
 #include "lldonotdisturbnotificationstorage.h"
+#include "llenvironment.h"
 #include "llfirstuse.h"
 #include "llfloatercamera.h"
 #include "llfloaterimcontainer.h"
@@ -665,6 +666,9 @@ void LLAgent::setFirstLogin(bool b)
         {
             setFeatureVersion(UI_FEATURE_VERSION, UI_FEATURE_FLAGS);
         }
+
+        // Shared environment on teleport should only be enabled by default for new users;
+        gSavedSettings.setBOOL("SwitchToSharedEnvAfterTeleport", true);
     }
 }
 
@@ -1776,6 +1780,8 @@ void LLAgent::setAFK()
         setControlFlags(AGENT_CONTROL_AWAY | AGENT_CONTROL_STOP);
         gAwayTimer.start();
 
+        mAFKDurationTimer.start(); // <FS:Beq/> [FIRE-37058] Keep logout duration independent of activity confirmation.
+
         // <FS:AO> Gsit on away, antigrief protection
         if (gSavedSettings.getBOOL("AvatarSitOnAway"))
         {
@@ -1827,6 +1833,13 @@ bool LLAgent::getAFK() const
 {
     return (mControlFlags & AGENT_CONTROL_AWAY) != 0;
 }
+
+// <FS:Beq> [FIRE-37058] Return the duration of the current Away period only.
+F32 LLAgent::getAFKDuration() const
+{
+    return getAFK() ? mAFKDurationTimer.getElapsedTimeF32() : 0.f;
+}
+// </FS:Beq>
 
 //-----------------------------------------------------------------------------
 // setDoNotDisturb()
@@ -3275,7 +3288,7 @@ void LLAgent::onAnimStop(const LLUUID& id)
         const bool up_pos = (mControlFlags & AGENT_CONTROL_UP_POS) != 0;
         const F64 now = LLTimer::getTotalSeconds();
         const F64 elapsed = now - mLastJumpInputTime;
-        static LLCachedControl<F32> recent_jump_threshold_secs(gSavedSettings, "RecentJumpThresholdSecs");
+        static LLCachedControl<F32> recent_jump_threshold_secs(gSavedSettings, "RecentJumpThresholdSecs", 1.0);
         const bool recent_jump = (mLastJumpInputTime > 0.0) && (elapsed < recent_jump_threshold_secs);
         const bool suppress_finish = is_landing_anim && recent_jump;
 
@@ -4962,6 +4975,7 @@ void LLAgent::handleTeleportFinished()
     }
     clearTeleportRequest();
     mTeleportCanceled.reset();
+    LLVOAvatar::resetEarlyAppearanceList();
     if (mIsMaturityRatingChangingDuringTeleport)
     {
         // notify user that the maturity preference has been changed
@@ -4992,6 +5006,11 @@ void LLAgent::handleTeleportFinished()
                                   << LL_ENDL;
             mRegionp->setCapabilitiesReceivedCallback(boost::bind(&LLAgent::onCapabilitiesReceivedAfterTeleport));
         }
+    }
+    static LLCachedControl<bool> shared_env_on_teleport(gSavedSettings, "SwitchToSharedEnvAfterTeleport", true);
+    if (shared_env_on_teleport)
+    {
+        LLEnvironment::instance().setSharedEnvironment();
     }
     LLPerfStats::tunables.autoTuneTimeout = true;
 }

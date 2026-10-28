@@ -1847,13 +1847,57 @@
          tool_tip="When checked, editing a script directly from inventory and then saving it saves as Mono instead of LSL."
          name="FSSaveInventoryScriptsAsMono_toggle"
          control_name="FSSaveInventoryScriptsAsMono"/>
+        <check_box
+         control_name="ExternalWebsocketSyncEnable"
+         follows="top|left"
+         height="20"
+         label="Enable WebSocket Sync"
+         layout="topleft"
+         left="10"
+         name="websocket_sync_enable"
+         width="200" />
+        <text
+         enabled_control="ExternalWebsocketSyncEnable"
+         follows="top|left"
+         height="15"
+         layout="topleft"
+         left="25"
+         name="websocket_tip"
+         top_pad="5"
+         width="140"
+         wrap="false">
+         WebSocket Listen Port:
+        </text>
+        <line_editor
+         enabled_control="ExternalWebsocketSyncEnable"
+         control_name="ExternalWebsocketSyncPort"
+         follows="top|left"
+         height="23"
+         initial_value="9020"
+         layout="topleft"
+         left_pad="5"
+         name="websocket_port"
+         top_delta="-5"
+         value="9020"
+         width="120" />
+        <check_box
+         control_name="ExternalWebsocketForwardDebug"
+         enabled_control="ExternalWebsocketSyncEnable"
+         follows="top|left"
+         height="20"
+         label="Forward script errors and debug messages to WebSocket clients"
+         layout="topleft"
+         left="22"
+         name="websocket_forward_debug"
+         top_pad="0"
+         width="400" />
 
         <view_border
          bevel_style="none"
          border_thickness="1"
-         top_pad="15"
+         top_pad="10"
          follows="top|left"
-         height="155"
+         height="175"
          left="10"
          name="PreprocBox"
          width="515" />
@@ -1976,6 +2020,16 @@
          <button.commit_callback
           function="Pref.SetExternalEditor" />
         </button>
+        <check_box
+         control_name="ExternalEditorTightIntegration"
+         follows="top|left"
+         height="20"
+         label="VS Code Tight Integration"
+         layout="topleft"
+         left="17"
+         name="tight_integration"
+         top_pad="7"
+         width="256" />
     </panel>
 
     <!--Uploads-->

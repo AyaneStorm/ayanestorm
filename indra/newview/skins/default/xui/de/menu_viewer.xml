@@ -160,6 +160,7 @@
 			<menu_item_call label="Meine Umgebungen..." name="my_environs"/>
 			<menu_item_call label="Persönliche Beleuchtung..." name="adjustment_tool"/>
 			<menu_item_check label="Wolken pausieren" name="pause_clouds"/>
+			<menu_item_check label="Sound stummschalten/Stummschaltung aufheben" name="toggle_sound"/>
 			<menu label="Mehrfach-Import" name="WL Bulk Import">
 				<menu_item_call label="Tage..." name="WL Bulk Import Days"/>
 				<menu_item_call label="Himmel..." name="WL Bulk Import Skies"/>
@@ -220,12 +221,15 @@
 		<menu label="Skripte" name="Scripts">
 			<menu_item_call label="Skriptwarnungen/Fehler anzeigen" name="Script Debug"/>
 			<menu_item_call label="Skript-Info (Counter)" name="Script Info"/>
-			<menu_item_call label="Skripte rekompilieren (Mono)" name="Mono"/>
-			<menu_item_call label="Skripte rekompilieren (LSL)" name="LSL"/>
+			<menu_item_call label="LSL-Skripte rekompilieren (Mono)" name="Mono"/>
+			<menu_item_call label="LSL-Skripte rekompilieren (Altsystem LSL)" name="LSL"/>
+			<menu_item_call label="LSL Skripte rekompilieren (LSL auf Lua)" name="LSL on Luau"/>
+			<menu_item_call label="Lua-Skripte rekompilieren" name="Lua"/>
 			<menu_item_call label="Skripte zurücksetzen" name="Reset Scripts"/>
 			<menu_item_call label="Skripte auf ausführen einstellen" name="Set Scripts to Running"/>
 			<menu_item_call label="Skripte auf nicht ausführen einstellen" name="Set Scripts to Not Running"/>
 			<menu_item_call label="Skripte in Auswahl löschen" name="Remove Scripts From Selection"/>
+			<menu_item_check label="Skript-Editor-Server" name="Script Editor Server"/>
 		</menu>
 		<menu label="Pathfinding" name="Pathfinding">
 			<menu_item_call label="Regionsobjekte" name="pathfinding_linksets_menu_item"/>
@@ -296,7 +300,6 @@
 		<menu_item_call label="Firestorm Support-Gruppe beitreten" name="firestorm_support_group"/>
 		<menu_item_call label="Stundenplan Firestorm-Klassen" name="Firestorm Classes Schedule"/>
 		<menu_item_call label="Firestorm-Eventkalender" name="Firestorm Events Calendar"/>
-		<menu_item_check label="Anweisungen..." name="How To"/>
 		<menu_item_call label="[CURRENT_GRID]-Hilfe" name="current_grid_help"/>
 		<menu_item_call label="Über [CURRENT_GRID]" name="current_grid_about"/>
 		<menu_item_call label="Whitelist-Unterstützung" name="whitelist_folders"/>
@@ -480,6 +483,7 @@
 			<menu_item_call label="LLError erzwingen, Meldung anzeigen und abstürzen" name="Force LLError Message And Crash"/>
 			<menu_item_call label="Fehlerhaften Speicherzugriff erzwingen" name="Force Bad Memory Access"/>
 			<menu_item_call label="Fehlerhaften Speicherzugriff in Coroutine erzwingen" name="Force Bad Memory Access in Coroutine"/>
+			<menu_item_call label="Fehlerhafte Speicher-Allokation für Texturen erzwingen" name="Force Image Allocation Failure"/>
 			<menu_item_call label="Endlosschleife erzwingen" name="Force Infinite Loop"/>
 			<menu_item_call label="Treiber-Absturz erzwingen" name="Force Driver Carsh"/>
 			<menu_item_call label="Softwareausnahme erzwingen" name="Force Software Exception"/>
@@ -567,6 +571,7 @@
 			<menu_item_check label="Angehängte Partikel rendern" name="Render Attached Particles"/>
 			<menu_item_check label="Animierte Avatar-System-Kleidung rendern" name="Render Avatar Cloth"/>
 			<menu_item_check label="Sammeln von Vertex Buffern für Schrift aktivieren" name="Collect Font Vertex Buffers"/>
+			<menu_item_check label="Sammeln von Vertex Buffern für UI-Texturen aktivieren" name="Collect UI Image Vertex Buffers"/>
 			<menu_item_check label="Shader-Cache aktivieren" name="Enable Shader Cache"/>
 			<menu_item_call label="Shader-Cache bereinigen" name="Shader Cache Clear"/>
 		</menu>

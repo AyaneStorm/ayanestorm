@@ -166,10 +166,10 @@ LLControlVariable::LLControlVariable(const std::string& name, eControlType type,
     if ((persist != PERSIST_NO) && mComment.empty())
     {
         std::string error_string =
-            "Second Life failed to initialize settings. Setting " + mName + " is invalid. "
-            "Either settings' files were supplied incorrectly or default files were corrupted."
-            "\n\nPlease reinstall viewer from https://secondlife.com/support/downloads/ and "
-            "contact https://support.secondlife.com if issue persists after reinstall.";
+            "Firestorm failed to initialize settings. Setting " + mName + " is invalid. "
+            "Either settings files were supplied incorrectly or default files were corrupted."
+            "\n\nPlease reinstall viewer from https://www.firestormviewer.org/downloads and "
+            "contact https://www.firestormviewer.org/support if issue persists after reinstall.";
         LLError::LLUserWarningMsg::show(error_string);
         LL_ERRS() << "Must supply a comment for control " << mName << LL_ENDL;
     }
@@ -467,10 +467,11 @@ static bool compareRoutine(settings_pair_t lhs, settings_pair_t rhs)
 
 void LLControlGroup::cleanup()
 {
+    LL_PROFILE_ZONE_SCOPED;
     if(mSettingsProfile && getCount.size() != 0)
     {
         std::string file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, SETTINGS_PROFILE);
-        LLFILE* out = LLFile::fopen(file, "w"); /* Flawfinder: ignore */
+        LLFILE* out = LLFile::fopen(file, LLFILE_MODE("w")); /* Flawfinder: ignore */
         if(!out)
         {
             LL_WARNS("SettingsProfile") << "Error opening " << SETTINGS_PROFILE << LL_ENDL;
@@ -1071,6 +1072,7 @@ U32 LLControlGroup::loadFromFileLegacy(const std::string& filename, bool require
 
 U32 LLControlGroup::saveToFile(const std::string& filename, bool nondefault_only)
 {
+    LL_PROFILE_ZONE_SCOPED;
     LLSD settings;
     int num_saved = 0;
     for (ctrl_name_table_t::iterator iter = mNameTable.begin();

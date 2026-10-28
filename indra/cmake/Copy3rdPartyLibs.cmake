@@ -150,13 +150,14 @@ if(WINDOWS)
     # msvcp*.dll and msvcr*.dll. VS 2017 has msvcp*.dll and vcruntime*.dll.
     # Check each of them.
     foreach(release_msvc_file
+            concrt${MSVC_VER}.dll # <FS:Ansariel> Support for concurrency features
             msvcp${MSVC_VER}.dll
             msvcp${MSVC_VER}_1.dll
             msvcp${MSVC_VER}_2.dll
             msvcp${MSVC_VER}_atomic_wait.dll
             msvcp${MSVC_VER}_codecvt_ids.dll
             #msvcr${MSVC_VER}.dll # <FS:Ansariel> Can't build with older VS versions anyway - no need trying to copy this file
-            vccorlib${MSVC_VER}.dll
+            #vccorlib${MSVC_VER}.dll # <FS:Ansariel> Not needed (needed for UWP etc. - not packaged anyway)
             vcruntime${MSVC_VER}.dll
             vcruntime${MSVC_VER}_1.dll
             vcruntime${MSVC_VER}_threads.dll
@@ -248,13 +249,7 @@ elseif(LINUX)
     # have to deal with
     if (NOT USESYSTEMLIBS)
       set(release_files
-        #libdb-5.1.so
         libopenal.so
-        #libopenjp2.so
-        libuuid.so.16
-        libuuid.so.16.0.22
-        #libfontconfig.so.1.10.1 # <FS:PC> fontconfig and freetype should be taken from the
-        #libfontconfig.so.1      #         user's system, and not be packaged with the viewer
         libaprutil-1.so.0
         libapr-1.so.0
        )
@@ -266,16 +261,10 @@ elseif(LINUX)
 
      if( USE_AUTOBUILD_3P )
          list( APPEND release_files
-
-
-                 #libopenjp2.so
-                 libuuid.so.16
-                 libuuid.so.16.0.22
-
-
-                 libgmodule-2.0.a
-                 libgobject-2.0.a
-                 )
+                libSDL3.so
+                libSDL3.so.0
+                libSDL3.so.0.2.24
+                )
      endif()
 
     if (TARGET ll::fmodstudio)

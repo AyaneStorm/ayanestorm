@@ -1617,7 +1617,6 @@ Falls Sie [CURRENT_GRID] zum ersten Mal verwenden, müssen Sie zuerst ein Konto 
 		Ihr Avatar erscheint jeden Moment.
 
 Benutzen Sie die Pfeiltasten, um sich fortzubewegen.
-Drücken Sie F1 für Hilfe oder für weitere Informationen über [CURRENT_GRID].
 Bitte wählen Sie einen männlichen oder weiblichen Avatar.
 Sie können sich später noch umentscheiden.
 		<usetemplate name="okcancelbuttons" notext="Weiblich" yestext="Männlich"/>
@@ -2355,6 +2354,10 @@ Vollständige Informationen zu Alterseinstufungen finden Sie [https://community.
 		Wir konnten Ihre Einstellungen zur Anzeige von [PREFERRED_MATURITY]-Inhalten leider nicht ändern. Ihre Einstellungen wurden auf [ACTUAL_MATURITY]-Inhalte zurückgesetzt. Sie können erneut versuchen, Ihre Inhaltseinstellungen von der Menüleiste aus zu ändern („Avatar“ &gt; „Einstellungen“ &gt; „Allgemein“).
 		<usetemplate name="okbutton" yestext="OK"/>
 	</notification>
+	<notification name="RegionTPAccessBlocked_NotifyAdultsOnly">
+		Die Region, die Sie besuchen möchten, enthält [REGIONMATURITY_CAP]-Inhalte, die aufgrund Ihres Konto-Typs nicht verfügrbar sind.
+		<usetemplate name="okbutton" yestext="OK"/>
+  </notification>
 	<notification name="LandClaimAccessBlocked">
 		Die Alterseinstufung des Landes, das Sie in Besitz nehmen möchten, überschreitet Ihre aktuellen Einstellungen. Sie können Ihre Einstellungen unter „Avatar“ &gt; „Einstellungen“ &gt; „Allgemein“ ändern.
 
@@ -2886,6 +2889,15 @@ Die Einstellungen können nicht mit lokalen Texturen gespeichert werden.
 	</notification>
 	<notification name="SystemMessageTip">
 		[MESSAGE]
+	</notification>
+	<notification name="ExternalEditorServerStarted">
+		Externer Editor-Server auf Port [PORT] gestartet.
+	</notification>
+	<notification name="ExternalEditorServerFailed">
+		Externer Editor-Server auf Port [PORT] konnte nicht gestartet werden.
+	</notification>
+	<notification name="ExternalEditorServerStopped">
+		Externer Editor-Server gestoppt.
 	</notification>
 	<notification name="IMSystemMessageTip">
 		[MESSAGE]
@@ -5619,15 +5631,6 @@ Sollen die Skripte in den ausgewählten Objekten wirklich modifiziert werden?
 			notext="Abbrechen"
 			yestext="OK"/>
 	</notification>
-
-<!-- <FS:Zi> Add float LSL color entry widgets -->
-	<notification name="LSLColorCopiedToClipboard">
-Der LSL-Farbcode wurde in die Zwischenablage kopiert. Er kann jetzt in LSL-Skripte eingefügt und genutzt werden.
-		<form name="form">
-			<ignore name="ignore" text="Ein LSL-Farbcode wurde in die Zwischenablage kopiert."/>
-		</form>
-	</notification>
-<!-- <FS:Zi> Add float LSL color entry widgets -->
 
 	<notification name="FSBWTooHigh">
 Es wird empfohlen die Bandbreite nicht höher als 1500 kbit/s zu setzen! Bei einer höheren Bandbreite kann es zu Problemen kommen und die Leistung wird dadurch nicht verbessert.

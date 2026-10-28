@@ -600,7 +600,7 @@ void ParticleEditor::callbackReturned(const LLUUID& inventoryItemID)
     {
         std::string script = createScript();
 
-        LLResourceUploadInfo::ptr_t uploadInfo(std::make_shared<LLScriptAssetUpload>(mObject->getID(), inventoryItemID, LLScriptAssetUpload::MONO, true, LLUUID::null, script,
+        LLResourceUploadInfo::ptr_t uploadInfo(std::make_shared<LLScriptAssetUpload>(mObject->getID(), inventoryItemID, "mono", true, LLUUID::null, script,
             [this](LLUUID itemId, LLUUID, LLUUID, LLSD response) {
                 this->scriptInjectReturned();
             }, nullptr));
@@ -624,7 +624,7 @@ void ParticleEditor::scriptInjectReturned()
     // play it safe, because some time may have passed
     if (LLViewerObject* object = gObjectList.findObject(mObject->getID()); object && mObject&& !mObject->isDead())
     {
-        mObject->saveScript(mParticleScriptInventoryItem, true, false);
+        mObject->saveScript(mParticleScriptInventoryItem, true, false, LLUUID::null);
         LLNotificationsUtil::add("ParticleScriptInjected");
     }
     else

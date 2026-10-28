@@ -112,6 +112,7 @@
 #include "fsareasearch.h"
 #include "llglheaders.h"
 #include "llinventoryobserver.h"
+#include "llscripteditorws.h"
 #include "fscommon.h"
 
 LLViewerObject* getSelectedParentObject(LLViewerObject *object) ;
@@ -275,7 +276,6 @@ LLSelectMgr::LLSelectMgr()
 LLSelectMgr::~LLSelectMgr()
 {
     clearSelections();
-    mSlectionLodModChangedConnection.disconnect();
 }
 
 void LLSelectMgr::clearSelections()
@@ -6390,6 +6390,14 @@ void LLSelectMgr::processObjectProperties(LLMessageSystem* msg, void** user_data
             LLSelectMgr::instance().firePropertyReceived( node );
             // </FS:ND>
         }
+
+        // Published objects need property updates even when not selected.
+        LLScriptEditorWSServer::ptr_t ws_server = LLScriptEditorWSServer::getServer();
+        if (ws_server)
+        {
+            ws_server->onObjectPropertyChanged(id, name, desc, inv_serial);
+            ws_server->onObjectPermissionsReceived(id, owner_id, owner_mask, next_owner_mask);
+        }
     }
 
     dialog_refresh_all();
@@ -6485,6 +6493,12 @@ void LLSelectMgr::processObjectPropertiesFamily(LLMessageSystem* msg, void** use
     }
 
     dialog_refresh_all();
+
+    if (auto ws_server = LLScriptEditorWSServer::getServer())
+    {
+        ws_server->onObjectPropertyChanged(id, name, desc);
+        ws_server->onObjectPermissionsReceived(id, owner_id, owner_mask, next_owner_mask);
+    }
 }
 
 
@@ -6910,7 +6924,7 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         gGL.popMatrix();
         gGL.popMatrix();
 
-        gGL.setLineWidth(1.f); // <FS> Line width OGL core profile fix by Rye Mutt
+        gGL.setLineWidth(1.f);
         glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
         if (shader)

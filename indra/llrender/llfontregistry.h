@@ -29,6 +29,7 @@
 #define LL_LLFONTREGISTRY_H
 
 #include "llpointer.h"
+#include <functional>
 
 class LLFontGL;
 
@@ -105,6 +106,15 @@ public:
 
     const U8 getStyle() const { return mStyle; }
     void setStyle(U8 style) { mStyle = style; }
+
+    // <FS:Ansariel> font functors with UI control access
+    using is_using_bw_emoji_callback_t = std::function<bool()>;
+    static void setIsUsingBWEmojiFunction(const is_using_bw_emoji_callback_t& func)
+    {
+        sIsUsingBWEmojiFunction = func;
+    }
+    static is_using_bw_emoji_callback_t sIsUsingBWEmojiFunction;
+    // </FS:Ansariel>
 
     // <FS:Ansariel> Optional tabular numeric font rendering
     bool isTabnum() const { return mTabnum; }

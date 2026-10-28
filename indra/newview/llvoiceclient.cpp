@@ -30,9 +30,12 @@
 #include "llvoicevivox.h"
 #endif
 // </FS:TJ>
+#ifndef DISABLE_WEBRTC
 #include "llvoicewebrtc.h"
+#endif
 #include "llviewernetwork.h"
 #include "llviewercontrol.h"
+#include "llviewerregion.h"
 #include "llcommandhandler.h"
 #include "lldir.h"
 #include "llhttpnode.h"
@@ -44,6 +47,7 @@
 #include "lltrans.h"
 #include "lluiusage.h"
 #include "llnearbyvoicemoderation.h"
+#include "llmutelist.h"
 
 const F32 LLVoiceClient::OVERDRIVEN_POWER_LEVEL = 0.7f;
 
@@ -138,11 +142,13 @@ LLVoiceModuleInterface *getVoiceModule(const std::string &voice_server_type)
     else
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     if (voice_server_type == WEBRTC_VOICE_SERVER_TYPE || voice_server_type.empty())
     {
         return (LLVoiceModuleInterface *) LLWebRTCVoiceClient::getInstance();
     }
     else
+#endif
     {
         LLNotificationsUtil::add("VoiceVersionMismatch");
         return nullptr;
@@ -183,7 +189,9 @@ void LLVoiceClient::init(LLPumpIO *pump)
 {
     // Initialize all of the voice modules
     m_servicePump = pump;
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->init(pump);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->init(pump);
@@ -198,7 +206,9 @@ void LLVoiceClient::userAuthorized(const std::string& user_id, const LLUUID &age
         mRegionChangedCallbackSlot.disconnect();
     }
     mRegionChangedCallbackSlot = gAgent.addRegionChangedCallback(boost::bind(&LLVoiceClient::onRegionChanged, this));
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->userAuthorized(user_id, agentID);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->userAuthorized(user_id, agentID);
@@ -209,17 +219,26 @@ void LLVoiceClient::userAuthorized(const std::string& user_id, const LLUUID &age
 void LLVoiceClient::handleSimulatorFeaturesReceived(const LLSD &simulatorFeatures)
 {
     std::string voiceServerType = simulatorFeatures["VoiceServerType"].asString();
+//#ifndef DISABLE_WEBRTC // <FS:TJ/> Keep Vivox only for OpenSim viewers
     if (voiceServerType.empty())
     {
         // <FS:TJ> Keep Vivox only for OpenSim viewers
+        //voiceServerType = WEBRTC_VOICE_SERVER_TYPE;
     #ifdef OPENSIM
         if (!LLGridManager::getInstance()->isInSecondLife())
+        {
             voiceServerType = VIVOX_VOICE_SERVER_TYPE;
+        }
         else
     #endif
+        {
+    #ifndef DISABLE_WEBRTC
+            voiceServerType = WEBRTC_VOICE_SERVER_TYPE;
+    #endif
+        }
         // </FS:TJ>
-        voiceServerType = WEBRTC_VOICE_SERVER_TYPE;
     }
+//#endif // <FS:TJ/> Keep Vivox only for OpenSim viewers
 
     if (mSpatialVoiceModule && !mNonSpatialVoiceModule)
     {
@@ -320,22 +339,27 @@ void LLVoiceClient::setHidden(bool hidden)
 {
     LL_INFOS("Voice") << "( " << (hidden ? "true" : "false") << " )" << LL_ENDL;
     // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //LLWebRTCVoiceClient::getInstance()->setHidden(hidden);
 #ifdef OPENSIM
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setHidden(hidden && LLGridManager::getInstance()->isInSecondLife());
+#endif
     LLVivoxVoiceClient::getInstance()->setHidden(hidden && LLGridManager::getInstance()->isInSecondLife());
 #else
+    // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setHidden(hidden);
 #endif
-    // </FS:TJ>
+#endif // <FS:TJ/> Keep Vivox only for OpenSim viewers
 }
 
 void LLVoiceClient::terminate()
 {
+#ifndef DISABLE_WEBRTC
     if (LLWebRTCVoiceClient::instanceExists())
     {
         LLWebRTCVoiceClient::getInstance()->terminate();
     }
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     if (LLVivoxVoiceClient::instanceExists())
@@ -378,7 +402,9 @@ void LLVoiceClient::updateSettings()
 
     updateMicMuteLogic();
 
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->updateSettings();
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->updateSettings();
@@ -391,7 +417,9 @@ void LLVoiceClient::updateSettings()
 
 void LLVoiceClient::tuningStart()
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->tuningStart();
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->tuningStart();
@@ -401,7 +429,9 @@ void LLVoiceClient::tuningStart()
 
 void LLVoiceClient::tuningStop()
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->tuningStop();
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->tuningStop();
@@ -411,22 +441,34 @@ void LLVoiceClient::tuningStop()
 
 bool LLVoiceClient::inTuningMode()
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->inTuningMode();
+#else
+    return false;
+#endif
 }
 
 void LLVoiceClient::tuningSetMicVolume(float volume)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->tuningSetMicVolume(volume);
+#endif
 }
 
 void LLVoiceClient::tuningSetSpeakerVolume(float volume)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->tuningSetSpeakerVolume(volume);
+#endif
 }
 
 float LLVoiceClient::tuningGetEnergy(void)
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->tuningGetEnergy();
+#else
+    return 0.f;
+#endif
 }
 
 //------------------------------------------------
@@ -434,17 +476,27 @@ float LLVoiceClient::tuningGetEnergy(void)
 
 bool LLVoiceClient::deviceSettingsAvailable()
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->deviceSettingsAvailable();
+#else
+    return false;
+#endif
 }
 
 bool LLVoiceClient::deviceSettingsUpdated()
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->deviceSettingsUpdated();
+#else
+    return false;
+#endif
 }
 
 void LLVoiceClient::refreshDeviceLists(bool clearCurrentList)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->refreshDeviceLists(clearCurrentList);
+#endif
 }
 
 void LLVoiceClient::setCaptureDevice(const std::string& name)
@@ -454,7 +506,9 @@ void LLVoiceClient::setCaptureDevice(const std::string& name)
     LLVivoxVoiceClient::getInstance()->setCaptureDevice(name);
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setCaptureDevice(name);
+#endif
 }
 
 void LLVoiceClient::setRenderDevice(const std::string& name)
@@ -464,18 +518,30 @@ void LLVoiceClient::setRenderDevice(const std::string& name)
     LLVivoxVoiceClient::getInstance()->setRenderDevice(name);
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setRenderDevice(name);
+#endif
 }
 
 const LLVoiceDeviceList& LLVoiceClient::getCaptureDevices()
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->getCaptureDevices();
+#else
+    static LLVoiceDeviceList dummy_device_list;
+    return dummy_device_list;
+#endif
 }
 
 
 const LLVoiceDeviceList& LLVoiceClient::getRenderDevices()
 {
+#ifndef DISABLE_WEBRTC
     return LLWebRTCVoiceClient::getInstance()->getRenderDevices();
+#else
+    static LLVoiceDeviceList dummy_device_list;
+    return dummy_device_list;
+#endif
 }
 
 
@@ -484,7 +550,9 @@ const LLVoiceDeviceList& LLVoiceClient::getRenderDevices()
 
 void LLVoiceClient::getParticipantList(std::set<LLUUID> &participants) const
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->getParticipantList(participants);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->getParticipantList(participants);
@@ -494,15 +562,21 @@ void LLVoiceClient::getParticipantList(std::set<LLUUID> &participants) const
 
 bool LLVoiceClient::isParticipant(const LLUUID &speaker_id) const
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->isParticipant(speaker_id);
-#ifdef OPENSIM
-    return LLWebRTCVoiceClient::getInstance()->isParticipant(speaker_id) ||
-           LLVivoxVoiceClient::getInstance()->isParticipant(speaker_id);
-#else
-    return LLWebRTCVoiceClient::getInstance()->isParticipant(speaker_id);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->isParticipant(speaker_id);
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->isParticipant(speaker_id);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->isParticipant(speaker_id);
+#endif
+    return result;
+// </FS:TJ>
 }
 
 
@@ -594,28 +668,40 @@ void LLVoiceClient::activateSpatialChannel(bool activate)
 
 bool LLVoiceClient::isCurrentChannel(const LLSD& channelInfo)
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->isCurrentChannel(channelInfo);
-#ifdef OPENSIM
-    return LLWebRTCVoiceClient::getInstance()->isCurrentChannel(channelInfo) ||
-           LLVivoxVoiceClient::getInstance()->isCurrentChannel(channelInfo);
-#else
-    return LLWebRTCVoiceClient::getInstance()->isCurrentChannel(channelInfo);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->isCurrentChannel(channelInfo);
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->isCurrentChannel(channelInfo);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->isCurrentChannel(channelInfo);
+#endif
+    return result;
+// </FS:TJ>
 }
 
 bool LLVoiceClient::compareChannels(const LLSD &channelInfo1, const LLSD &channelInfo2)
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
-#ifdef OPENSIM
-    return LLWebRTCVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2) ||
-           LLVivoxVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
-#else
-    return LLWebRTCVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->compareChannels(channelInfo1, channelInfo2);
+#endif
+    return result;
+// </FS:TJ>
 }
 
 LLVoiceP2PIncomingCallInterfacePtr LLVoiceClient::getIncomingCallInterface(const LLSD& voice_call_info)
@@ -640,19 +726,28 @@ LLVoiceP2POutgoingCallInterface *LLVoiceClient::getOutgoingCallInterface(const L
         LLVoiceVersionInfo versionInfo = LLVoiceClient::getInstance()->getVersion();
         voice_server_type = versionInfo.internalVoiceServerType;
     }
+//#ifndef DISABLE_WEBRTC // <FS:TJ/> Keep Vivox only for OpenSim viewers
     if (voiceChannelInfo.has("voice_server_type") && voiceChannelInfo["voice_server_type"] != voice_server_type)
     {
         // there's a mismatch between what the peer is offering and what our server
         // can handle, so default to webrtc
         // <FS:TJ> Keep Vivox only for OpenSim viewers
+        //voice_server_type = WEBRTC_VOICE_SERVER_TYPE;
     #ifdef OPENSIM
         if (!LLGridManager::getInstance()->isInSecondLife())
+        {
             voice_server_type = VIVOX_VOICE_SERVER_TYPE;
+        }
         else
     #endif
+        {
+    #ifndef DISABLE_WEBRTC
+            voice_server_type = WEBRTC_VOICE_SERVER_TYPE;
+    #endif
+        }
         // </FS:TJ>
-        voice_server_type = WEBRTC_VOICE_SERVER_TYPE;
     }
+//#endif // <FS:TJ/> Keep Vivox only for OpenSim viewers
     LLVoiceModuleInterface *module = getVoiceModule(voice_server_type);
     return dynamic_cast<LLVoiceP2POutgoingCallInterface *>(module);
 }
@@ -663,7 +758,9 @@ LLVoiceP2POutgoingCallInterface *LLVoiceClient::getOutgoingCallInterface(const L
 
 void LLVoiceClient::setVoiceVolume(F32 volume)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setVoiceVolume(volume);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->setVoiceVolume(volume);
@@ -673,7 +770,9 @@ void LLVoiceClient::setVoiceVolume(F32 volume)
 
 void LLVoiceClient::setMicGain(F32 gain)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setMicGain(gain);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->setMicGain(gain);
@@ -732,10 +831,12 @@ bool LLVoiceClient::voiceEnabled(bool no_cache)
 
 void LLVoiceClient::setVoiceEnabled(bool enabled)
 {
+#ifndef DISABLE_WEBRTC
     if (LLWebRTCVoiceClient::instanceExists())
     {
         LLWebRTCVoiceClient::getInstance()->setVoiceEnabled(enabled);
     }
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     if (LLVivoxVoiceClient::instanceExists())
@@ -771,7 +872,9 @@ void LLVoiceClient::updateMicMuteLogic()
         // Either of these always overrides any other PTT setting.
         new_mic_mute = true;
     }
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setMuteMic(new_mic_mute);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->setMuteMic(new_mic_mute);
@@ -875,29 +978,42 @@ bool LLVoiceClient::getVoiceEnabled(const LLUUID& id) const
 
 std::string LLVoiceClient::getDisplayName(const LLUUID& id) const
 {
-    std::string result = LLWebRTCVoiceClient::getInstance()->getDisplayName(id);
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    std::string result = LLWebRTCVoiceClient::getInstance()->getDisplayName(id);
+//#else
+//    std::string result;
+//#endif
+//    return result;
+    std::string result;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->getDisplayName(id);
+#endif
 #ifdef OPENSIM
     if (result.empty())
-    {
         result = LLVivoxVoiceClient::getInstance()->getDisplayName(id);
-    }
 #endif
-    // </FS:TJ>
     return result;
+// </FS:TJ>
 }
 
 bool LLVoiceClient::isVoiceWorking() const
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->isVoiceWorking();
-#ifdef OPENSIM
-    return LLVivoxVoiceClient::getInstance()->isVoiceWorking() ||
-           LLWebRTCVoiceClient::getInstance()->isVoiceWorking();
-#else
-    return LLWebRTCVoiceClient::getInstance()->isVoiceWorking();
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->isVoiceWorking();
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->isVoiceWorking();
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->isVoiceWorking();
+#endif
+    return result;
+// </FS:TJ>
 }
 
 bool LLVoiceClient::isParticipantAvatar(const LLUUID& id)
@@ -912,43 +1028,61 @@ bool LLVoiceClient::isOnlineSIP(const LLUUID& id)
 
 bool LLVoiceClient::getIsSpeaking(const LLUUID& id)
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->getIsSpeaking(id);
-#ifdef OPENSIM
-    return LLWebRTCVoiceClient::getInstance()->getIsSpeaking(id) ||
-           LLVivoxVoiceClient::getInstance()->getIsSpeaking(id);
-#else
-    return LLWebRTCVoiceClient::getInstance()->getIsSpeaking(id);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->getIsSpeaking(id);
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->getIsSpeaking(id);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->getIsSpeaking(id);
+#endif
+    return result;
+// </FS:TJ>
 }
 
 bool LLVoiceClient::getIsModeratorMuted(const LLUUID& id)
 {
     // don't bother worrying about p2p calls, as
     // p2p calls don't have mute.
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->getIsModeratorMuted(id);
-#ifdef OPENSIM
-    return LLWebRTCVoiceClient::getInstance()->getIsModeratorMuted(id) ||
-           LLVivoxVoiceClient::getInstance()->getIsModeratorMuted(id);
-#else
-    return LLWebRTCVoiceClient::getInstance()->getIsModeratorMuted(id);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->getIsModeratorMuted(id);
+//#else
+//    return false;
+//#endif
+    bool result = false;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->getIsModeratorMuted(id);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = result || LLVivoxVoiceClient::getInstance()->getIsModeratorMuted(id);
+#endif
+    return result;
+// </FS:TJ>
 }
 
 F32 LLVoiceClient::getCurrentPower(const LLUUID& id)
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->getCurrentPower(id);
-#ifdef OPENSIM
-    return std::fmax(LLVivoxVoiceClient::getInstance()->getCurrentPower(id),
-                     LLWebRTCVoiceClient::getInstance()->getCurrentPower(id));
-#else
-    return LLWebRTCVoiceClient::getInstance()->getCurrentPower(id);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->getCurrentPower(id);
+//#else
+//    return 0.f;
+//#endif
+    F32 result = 0.f;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->getCurrentPower(id);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = std::fmax(result, LLVivoxVoiceClient::getInstance()->getCurrentPower(id));
+#endif
+    return result;
+// </FS:TJ>
 }
 
 bool LLVoiceClient::getOnMuteList(const LLUUID& id)
@@ -960,19 +1094,28 @@ bool LLVoiceClient::getOnMuteList(const LLUUID& id)
 
 F32 LLVoiceClient::getUserVolume(const LLUUID& id)
 {
-    // <FS:TJ> Keep Vivox only for OpenSim viewers
-    //return LLWebRTCVoiceClient::getInstance()->getUserVolume(id);
-#ifdef OPENSIM
-    return std::fmax(LLVivoxVoiceClient::getInstance()->getUserVolume(id), LLWebRTCVoiceClient::getInstance()->getUserVolume(id));
-#else
-    return LLWebRTCVoiceClient::getInstance()->getUserVolume(id);
+// <FS:TJ> Keep Vivox only for OpenSim viewers
+//#ifndef DISABLE_WEBRTC
+//    return LLWebRTCVoiceClient::getInstance()->getUserVolume(id);
+//#else
+//    return 0.f;
+//#endif
+    F32 result = 0.f;
+#ifndef DISABLE_WEBRTC
+    result = LLWebRTCVoiceClient::getInstance()->getUserVolume(id);
 #endif
-    // </FS:TJ>
+#ifdef OPENSIM
+    result = std::fmax(result, LLVivoxVoiceClient::getInstance()->getUserVolume(id));
+#endif
+    return result;
+// </FS:TJ>
 }
 
 void LLVoiceClient::setUserVolume(const LLUUID& id, F32 volume)
 {
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->setUserVolume(id, volume);
+#endif
     // <FS:TJ> Keep Vivox only for OpenSim viewers
 #ifdef OPENSIM
     LLVivoxVoiceClient::getInstance()->setUserVolume(id, volume);
@@ -1030,7 +1173,9 @@ void LLVoiceClient::addObserver(LLVoiceClientStatusObserver* observer)
     LLVivoxVoiceClient::getInstance()->addObserver(observer);
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->addObserver(observer);
+#endif
 }
 
 void LLVoiceClient::removeObserver(LLVoiceClientStatusObserver* observer)
@@ -1043,10 +1188,12 @@ void LLVoiceClient::removeObserver(LLVoiceClientStatusObserver* observer)
     }
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     if (LLWebRTCVoiceClient::instanceExists())
     {
         LLWebRTCVoiceClient::getInstance()->removeObserver(observer);
     }
+#endif
 }
 
 void LLVoiceClient::addObserver(LLFriendObserver* observer)
@@ -1056,7 +1203,9 @@ void LLVoiceClient::addObserver(LLFriendObserver* observer)
     LLVivoxVoiceClient::getInstance()->addObserver(observer);
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->addObserver(observer);
+#endif
 }
 
 void LLVoiceClient::removeObserver(LLFriendObserver* observer)
@@ -1069,10 +1218,12 @@ void LLVoiceClient::removeObserver(LLFriendObserver* observer)
     }
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     if (LLWebRTCVoiceClient::instanceExists())
     {
         LLWebRTCVoiceClient::getInstance()->removeObserver(observer);
     }
+#endif
 }
 
 void LLVoiceClient::addObserver(LLVoiceClientParticipantObserver* observer)
@@ -1082,7 +1233,9 @@ void LLVoiceClient::addObserver(LLVoiceClientParticipantObserver* observer)
     LLVivoxVoiceClient::getInstance()->addObserver(observer);
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     LLWebRTCVoiceClient::getInstance()->addObserver(observer);
+#endif
 }
 
 void LLVoiceClient::removeObserver(LLVoiceClientParticipantObserver* observer)
@@ -1095,10 +1248,12 @@ void LLVoiceClient::removeObserver(LLVoiceClientParticipantObserver* observer)
     }
 #endif
     // </FS:TJ>
+#ifndef DISABLE_WEBRTC
     if (LLWebRTCVoiceClient::instanceExists())
     {
         LLWebRTCVoiceClient::getInstance()->removeObserver(observer);
     }
+#endif
 }
 
     // <FS:TJ> Keep Vivox only for OpenSim viewers
@@ -1176,11 +1331,13 @@ class LLViewerRequiredVoiceVersion : public LLHTTPNode
         else
     #endif
         // </FS:TJ>
+#ifndef DISABLE_WEBRTC
         if (voice_server_type == WEBRTC_VOICE_SERVER_TYPE || voice_server_type.empty())
         {
             voiceModule = (LLVoiceModuleInterface *) LLWebRTCVoiceClient::getInstance();
         }
         else
+#endif
         {
             LL_WARNS("Voice") << "Unknown voice server type " << voice_server_type << LL_ENDL;
             if (!sAlertedUser)

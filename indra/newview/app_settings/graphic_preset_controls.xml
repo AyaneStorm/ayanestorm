@@ -21,6 +21,7 @@
 		<string>FSRenderVignette</string>
 		<string>FullScreen</string>
 		<string>RenderAnisotropic</string>
+        <string>RenderAnisotropicLevel</string>
 		<string>RenderAttachedLights</string>
 		<string>RenderAttachedParticles</string>
 		<string>RenderAutoMaskAlphaDeferred</string>
@@ -59,6 +60,7 @@
 		<string>RenderHeroProbeDistance</string>
 		<string>RenderHeroProbeUpdateRate</string>
 		<string>RenderHeroProbeConservativeUpdateMultiplier</string>
+		<string>RenderHighPrecisionPostProcess</string>
 		<string>RenderLocalLightCount</string>
 		<string>RenderMaxPartCount</string>
 		<string>RenderMaxTextureResolution</string>
@@ -116,6 +118,5 @@
 		<string>TextureDiscardLevel</string>
 		<string>TextureDiscardBackgroundedTime</string>
 		<string>TextureDiscardMinimizedTime</string>
-		<string>WLSkyDetail</string>
 	</array>
 </llsd>

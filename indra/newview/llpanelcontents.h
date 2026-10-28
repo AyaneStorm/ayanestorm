@@ -33,7 +33,9 @@
 #include "lluuid.h"
 #include "llviewerobject.h"
 #include "llvoinventorylistener.h"
+#include "llscripteditorws.h"
 #include "v3math.h"
+#include <boost/signals2/connection.hpp>
 
 class LLButton;
 class LLPanelObjectInventory;
@@ -51,16 +53,20 @@ public:
     void            refresh();
     void            clearContents();
 
-    // <FS:mjr> [FIRE-36685] - Toolbox Window - Add new notecard button to Content tab
-    void onClickAddItemToObject(); // Adds the actual item to the object's Content Inventory.
-    void onFinishCreateItem();
-    // </FS:mjr> [FIRE-36685]
 
-    static void     onClickNewScript(void*);
-    static void     onClickNewNotecard(void*); // <FS:mjr> [FIRE-36685] - Toolbox Window - Add new notecard button to Content tab
+    void            onNewScriptFlyoutCommit(LLUICtrl* ctrl);
+    void            onNewNotecardCommit();
     static void     onClickPermissions(void*);
+    void            onClickPublish();
     static void     onClickResetScripts(void*); // <FS> Script reset in edit floater
     static void     onClickRefresh(void*);
+
+    void            createTaskInventoryItemHelper(LLViewerObject* object,
+                        LLAssetType::EType asset_type,
+                        LLInventoryType::EType inventory_type,
+                        U8 sub_type,
+                        const std::string& name,
+                        const LLSD& params);
 
     // Key suffix for "tentative" fields
     static const char* TENTATIVE_SUFFIX;
@@ -76,13 +82,19 @@ public:
 protected:
     void getState(LLViewerObject *object);
     void onFilterEdit();
+    void onSimulatorFeaturesReceived(const LLUUID& region_id);
 
     bool mDirtyFilter { false };
+    LLUUID mLastScriptObjectID;
+    bool mLastLuaRegion { false };
+    bool mNewScriptIsLua { false };
+    boost::signals2::connection mSimulatorFeaturesConnection;
 
 public:
     class LLFilterEditor* mFilterEditor;
     LLSaveFolderState mSavedFolderState;
     LLPanelObjectInventory* mPanelInventoryObject;
+    LLButton* mPublishButton { nullptr };
 };
 
 #endif // LL_LLPANELCONTENTS_H

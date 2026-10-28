@@ -42,6 +42,8 @@
 #include "llimagedxt.h"
 #include "llmemory.h"
 
+#include <cerrno> // <FS:Beq/> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+
 #include <boost/preprocessor.hpp>
 
 //..................................................................................
@@ -619,8 +621,29 @@ void LLImage::setLastError(const std::string& message)
 // LLImageBase
 //---------------------------------------------------------------------------
 
-// <FS:ND> Report amount of failed buffer allocations
+// <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
 U32 LLImageBase::sAllocationErrors;
+std::atomic<LLImageBase::allocation_failure_callback_t> LLImageBase::sAllocationFailureCallback{nullptr};
+thread_local bool LLImageBase::sForceAllocationFailureForTesting = false;
+std::atomic<U64> LLImageBase::sNonFatalAllocationFailureCount{0};
+
+// static
+void LLImageBase::setAllocationFailureCallback(allocation_failure_callback_t callback)
+{
+    sAllocationFailureCallback.store(callback, std::memory_order_release);
+}
+
+// static
+void LLImageBase::forceNextAllocationFailureForTesting()
+{
+    sForceAllocationFailureForTesting = true;
+}
+// static
+U64 LLImageBase::getNonFatalAllocationFailureCount()
+{
+    return sNonFatalAllocationFailureCount.load(std::memory_order_relaxed);
+}
+// </FS:Beq>
 
 LLImageBase::LLImageBase()
 :   mData(NULL),
@@ -711,12 +734,30 @@ U8* LLImageBase::allocateData(S32 size)
     if (!mBadBufferAllocation && (!mData || size != mDataSize))
     {
         deleteData(); // virtual
-        mData = (U8*)ll_aligned_malloc_16(size);
+        // <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+        // mData = (U8*)ll_aligned_malloc_16(size);
+        if (sForceAllocationFailureForTesting) [[unlikely]]
+        {
+            sForceAllocationFailureForTesting = false;
+            errno = ENOMEM;
+            mData = nullptr;
+        }
+        else [[likely]]
+        {
+            errno = 0;
+            mData = static_cast<U8*>(ll_aligned_malloc_16(size));
+        }
+        const S32 alloc_errno = errno;
+        // </FS:Beq>
         if (!mData)
         {
-            constexpr S32 MAX_TOLERANCE = 1024 * 1024 * 4; // 4 MB
-            if (size > MAX_TOLERANCE)
+            // <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+            // constexpr S32 MAX_TOLERANCE = 1024 * 1024 * 4; // 4 MB
+            // if (size > MAX_TOLERANCE)
+            if (size > MAX_FATAL_ALLOCATION_SIZE)
             {
+                sNonFatalAllocationFailureCount.fetch_add(1, std::memory_order_relaxed);
+                // </FS:Beq>
                 // If a big image failed to allocate, tollerate it for now.
                 // It's insightfull when crash logs without obvious cause are being analyzed,
                 // so a crash in a random location that normally is a mystery can get proper handling.
@@ -724,6 +765,26 @@ U8* LLImageBase::allocateData(S32 size)
             }
             else
             {
+                // <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+                if (const auto callback = sAllocationFailureCallback.load(std::memory_order_acquire))
+                {
+                    const LLImageAllocationFailureInfo failure_info =
+                    {
+                        .mRequestedSize = size,
+                        .mWidth = mWidth,
+                        .mHeight = mHeight,
+                        .mComponents = mComponents,
+                        .mErrno = alloc_errno
+                    };
+                    try
+                    {
+                        callback(failure_info);
+                    }
+                    catch (...) // Diagnostics must not replace the original allocation failure.
+                    {
+                    }
+                }
+                // </FS:Beq>
                 // We are too far gone if we can't allocate a small buffer.
                 LLError::LLUserWarningMsg::showOutOfMemory();
                 LL_ERRS() << "Failed to allocate image data size [" << size << "]" << LL_ENDL;
@@ -753,6 +814,12 @@ U8* LLImageBase::reallocateData(S32 size)
     U8 *new_datap = (U8*)ll_aligned_malloc_16(size);
     if (!new_datap)
     {
+        // <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+        if (size > MAX_FATAL_ALLOCATION_SIZE)
+        {
+            sNonFatalAllocationFailureCount.fetch_add(1, std::memory_order_relaxed);
+        }
+        // </FS:Beq>
         LL_WARNS() << "Out of memory in LLImageBase::reallocateData, size: " << size << LL_ENDL;
         return 0;
     }
@@ -2092,6 +2159,25 @@ file_extensions[] =
     { "png", IMG_CODEC_PNG },
     { "webp", IMG_CODEC_WEBP }
 };
+
+static struct
+{
+    const wchar_t* exten;
+    EImageCodec codec;
+}
+wide_file_extensions[] =
+{
+    { L"bmp", IMG_CODEC_BMP },
+    { L"tga", IMG_CODEC_TGA },
+    { L"j2c", IMG_CODEC_J2C },
+    { L"jp2", IMG_CODEC_J2C },
+    { L"texture", IMG_CODEC_J2C },
+    { L"jpg", IMG_CODEC_JPEG },
+    { L"jpeg", IMG_CODEC_JPEG },
+    { L"mip", IMG_CODEC_DXT },
+    { L"dxt", IMG_CODEC_DXT },
+    { L"png", IMG_CODEC_PNG }
+};
 #define NUM_FILE_EXTENSIONS LL_ARRAY_SIZE(file_extensions)
 #if 0
 static std::string find_file(std::string &name, S8 *codec)
@@ -2112,7 +2198,8 @@ static std::string find_file(std::string &name, S8 *codec)
     return std::string("");
 }
 #endif
-EImageCodec LLImageBase::getCodecFromExtension(const std::string& exten)
+
+EImageCodec LLImageBase::getCodecFromExtension(std::string_view exten)
 {
     if (!exten.empty())
     {
@@ -2124,6 +2211,20 @@ EImageCodec LLImageBase::getCodecFromExtension(const std::string& exten)
     }
     return IMG_CODEC_INVALID;
 }
+
+EImageCodec LLImageBase::getCodecFromExtension(std::wstring_view exten)
+{
+    if (!exten.empty())
+    {
+        for (int i = 0; i < (int)(NUM_FILE_EXTENSIONS); i++)
+        {
+            if (exten == wide_file_extensions[i].exten)
+                return wide_file_extensions[i].codec;
+        }
+    }
+    return IMG_CODEC_INVALID;
+}
+
 #if 0
 bool LLImageRaw::createFromFile(const std::string &filename, bool j2c_lowest_mip_only)
 {

@@ -27,22 +27,16 @@
 // linden headers
 #include "llviewerprecompiledheaders.h"
 
+#include "fsyspath.h"
 #include "llcallbacklist.h"
 #include "lleventtimer.h"
-#include "llsdutil.h"
-#include "llviewerobjectlist.h"
-#include "llvovolume.h"
 #include "llmeshrepository.h"
-#include "llvolumemgr.h"
-#include "pipeline.h"
+#include "llsdutil.h"
 #include "llviewercontrol.h"
-#include "llmodelpreview.h"
-
-// STL headers
-#include <chrono>
-// boost headers
-#include "fix_macros.h"
-#include <boost/filesystem.hpp>
+#include "llviewerobjectlist.h"
+#include "llvolumemgr.h"
+#include "llvovolume.h"
+#include "pipeline.h"
 
 // local mesh headers
 #include "vjlocalmesh.h"
@@ -478,7 +472,7 @@ LLLocalMeshFile::LLLocalMeshFile(const std::string& filename, bool try_lods)
     for (size_t lod_iter = 0; lod_iter < LOCAL_NUM_LODS; ++lod_iter)
     {
         mFilenames[lod_iter].clear();
-        mLastModified[lod_iter].clear();
+        mLastModified[lod_iter] = 0LL;
         mLoadedSuccessfully[lod_iter] = false;
     }
 
@@ -492,14 +486,15 @@ LLLocalMeshFile::LLLocalMeshFile(const std::string& filename, bool try_lods)
     mLoadedObjectList.clear();
     mSavedObjectBindings.clear();
 
-    mShortName = std::string(boost::filesystem::path(filename).stem().string());
+    auto path = std::filesystem::path(fsyspath(filename));
+    mShortName = path.stem().string();
     std::string stripSuffix(std::string);
     auto base_lod_filename {stripSuffix(mShortName)};
     pushLog("LLLocalMeshFile", "Initializing with base filename: " + base_lod_filename);
 
     // check if main filename exists, just in case
-    boost::system::error_code ec;
-    if (!boost::filesystem::exists(filename, ec) || ec.failed())
+    std::error_code ec;
+    if (!std::filesystem::exists(filename, ec) || ec)
     {
         // filename provided doesn't exist, just stop.
         mLocalMeshFileStatus = LLLocalMeshFileStatus::STATUS_ERROR;
@@ -511,13 +506,14 @@ LLLocalMeshFile::LLLocalMeshFile(const std::string& filename, bool try_lods)
     mFilenames[LOCAL_LOD_HIGH] = filename;
 
     // check if we have a valid extension, can't switch with string can we?
-    auto path = boost::filesystem::path(filename);
-    if (std::string exten_str = path.extension().string(); boost::iequals(exten_str, ".dae"))
+    auto extension = path.extension().string();
+    LLStringUtil::toLower(extension);
+    if (extension == ".dae")
     {
         mExtension = LLLocalMeshFileExtension::EXTEN_DAE;
         pushLog("LLLocalMeshFile", "Extension found: COLLADA");
     }
-    else if (boost::iequals(exten_str, ".gltf") || boost::iequals(exten_str, ".glb"))
+    else if (extension == ".gltf" || extension == ".glb")
     {
         mExtension = LLLocalMeshFileExtension::EXTEN_GLTF;
         pushLog("LLLocalMeshFile", "Extension found: GLTF");
@@ -562,17 +558,17 @@ void LLLocalMeshFile::reloadLocalMeshObjects(bool initial_load, bool force_reloa
     std::array<std::string, LOCAL_NUM_LODS> reload_filenames = mFilenames;
     discoverLodFilenames(mFilenames, reload_filenames);
 
-    std::array<LLSD, LOCAL_NUM_LODS> reload_last_modified;
+    std::array<std::time_t, LOCAL_NUM_LODS> reload_last_modified;
     for (S32 lod_idx = LOCAL_LOD_LOWEST; lod_idx < LOCAL_NUM_LODS; ++lod_idx)
     {
         if (!readLastModified(reload_filenames[lod_idx], reload_last_modified[lod_idx]))
         {
-            reload_last_modified[lod_idx].clear();
+            reload_last_modified[lod_idx] = 0LL;
         }
     }
 
     const bool has_active_reload_target = !mLoadedObjectList.empty() && mLoadedSuccessfully[LOCAL_LOD_HIGH];
-    if (reload_filenames[LOCAL_LOD_HIGH].empty() || reload_last_modified[LOCAL_LOD_HIGH].asString().empty())
+    if (reload_filenames[LOCAL_LOD_HIGH].empty() || reload_last_modified[LOCAL_LOD_HIGH] == 0)
     {
         const std::string warning = "Couldn't find filename: " + mFilenames[LOCAL_LOD_HIGH];
         if (has_active_reload_target)
@@ -838,27 +834,22 @@ void LLLocalMeshFile::reloadLocalMeshObjectsCallback()
     mLocalMeshFileNeedsUIUpdate = true;
 }
 
-bool LLLocalMeshFile::readLastModified(const std::string& filename, LLSD& last_modified) const
+bool LLLocalMeshFile::readLastModified(const std::string& filename, std::time_t& last_modified) const
 {
-    last_modified.clear();
+    last_modified = 0LL;
     if (filename.empty())
     {
         return false;
     }
 
-    boost::system::error_code ec;
- #ifndef LL_WINDOWS
-    const std::time_t temp_time = boost::filesystem::last_write_time(boost::filesystem::path(filename), ec);
- #else
-    const std::time_t temp_time = boost::filesystem::last_write_time(boost::filesystem::path(ll_convert<std::wstring>(filename)), ec);
- #endif
-
-    if (ec.failed())
+    std::error_code ec;
+    auto file_time = std::filesystem::last_write_time(std::filesystem::path(fsyspath(filename)), ec);
+    if (ec)
     {
         return false;
     }
 
-    last_modified = std::to_string(static_cast<long long>(temp_time));
+    last_modified = std::chrono::system_clock::to_time_t(std::chrono::clock_cast<std::chrono::system_clock>(file_time));
     return true;
 }
 
@@ -886,7 +877,7 @@ void LLLocalMeshFile::discoverLodFilenames(const std::array<std::string, LOCAL_N
         return;
     }
 
-    const auto high_path = boost::filesystem::path(seed_filenames[LOCAL_LOD_HIGH]);
+    const auto high_path = std::filesystem::path(fsyspath(seed_filenames[LOCAL_LOD_HIGH]));
     const auto filepath = high_path.parent_path();
     const auto extension = high_path.extension();
 
@@ -896,8 +887,8 @@ void LLLocalMeshFile::discoverLodFilenames(const std::array<std::string, LOCAL_N
         const auto lod_suffix = getLodSuffix(lod_iter);
         const auto current_lod_filename = filepath / (mShortName + lod_suffix + extension.string());
 
-        boost::system::error_code ec;
-        if (boost::filesystem::exists(current_lod_filename, ec) && !ec.failed())
+        std::error_code ec;
+        if (std::filesystem::exists(current_lod_filename, ec) && !ec)
         {
             discovered_filenames[lod_iter] = current_lod_filename.string();
         }
@@ -909,7 +900,7 @@ void LLLocalMeshFile::discoverLodFilenames(const std::array<std::string, LOCAL_N
 }
 
 bool LLLocalMeshFile::detectReloadChanges(const std::array<std::string, LOCAL_NUM_LODS>& candidate_filenames,
-                                          const std::array<LLSD, LOCAL_NUM_LODS>& candidate_last_modified,
+                                          const std::array<std::time_t, LOCAL_NUM_LODS>& candidate_last_modified,
                                           std::array<bool, LOCAL_NUM_LODS>& changed_lods) const
 {
     bool reload_required = false;
@@ -918,7 +909,7 @@ bool LLLocalMeshFile::detectReloadChanges(const std::array<std::string, LOCAL_NU
     for (S32 lod_idx = LOCAL_LOD_LOWEST; lod_idx < LOCAL_NUM_LODS; ++lod_idx)
     {
         const bool filename_changed = candidate_filenames[lod_idx] != mFilenames[lod_idx];
-        const bool timestamp_changed = candidate_last_modified[lod_idx].asString() != mLastModified[lod_idx].asString();
+        const bool timestamp_changed = candidate_last_modified[lod_idx] != mLastModified[lod_idx];
 
         if (filename_changed || timestamp_changed)
         {
@@ -1040,12 +1031,12 @@ bool LLLocalMeshFile::needsReload() const
     std::array<std::string, LOCAL_NUM_LODS> candidate_filenames = mFilenames;
     discoverLodFilenames(mFilenames, candidate_filenames);
 
-    std::array<LLSD, LOCAL_NUM_LODS> candidate_last_modified;
+    std::array<std::time_t, LOCAL_NUM_LODS> candidate_last_modified;
     for (S32 lod_idx = LOCAL_LOD_LOWEST; lod_idx < LOCAL_NUM_LODS; ++lod_idx)
     {
         if (!readLastModified(candidate_filenames[lod_idx], candidate_last_modified[lod_idx]))
         {
-            candidate_last_modified[lod_idx].clear();
+            candidate_last_modified[lod_idx] = 0LL;
         }
     }
 

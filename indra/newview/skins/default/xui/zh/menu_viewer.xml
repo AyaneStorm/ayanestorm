@@ -284,7 +284,6 @@
 		<menu_item_call label="加入 Firestorm 支援小組" name="firestorm_support_group" />
 		<menu_item_call label="Firestorm 課程" name="Firestorm Classes Schedule" />
 		<menu_item_call label="Firestorm 活動日曆" name="Firestorm Events Calendar" />
-		<menu_item_check label="指南" name="How To" />
 		<menu_item_call label="[CURRENT_GRID] 幫助" name="current_grid_help" />
 		<menu_item_call label="關於 [CURRENT_GRID]" name="current_grid_about" />
 		<menu_item_call name="whitelist_folders" label="白名單顧問" />
@@ -447,6 +446,7 @@
 			<menu_item_call label="強制產生LLError、資訊和崩潰" name="Force LLError Message And Crash" />
 			<menu_item_call label="強制讀取錯誤記憶體" name="Force Bad Memory Access" />
 			<menu_item_call label="強制讀取協程中的錯誤記憶體" name="Force Bad Memory Access in Coroutine" />
+			<menu_item_call label="強制觸發圖像配置失敗" name="Force Image Allocation Failure"/>
 			<menu_item_call label="強制無限循環" name="Force Infinite Loop" />
 			<menu_item_call label="強制驅動程式崩潰" name="Force Driver Carsh" />
 			<menu_item_call label="強制軟體異常" name="Force Software Exception" />

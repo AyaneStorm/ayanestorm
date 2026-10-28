@@ -277,7 +277,7 @@ void LLScriptRecoverQueue::onCreateScript(const LLUUID& idItem)
         if (0 == LLFile::stat(strFilePath, &stat) && stat.st_size > 0)
         {
             buffer.resize(stat.st_size);
-            LLFILE *pFile = LLFile::fopen(strFileName, "rb");
+            LLFILE *pFile = LLFile::fopen(strFileName, LLFILE_MODE("rb"));
 
             if (pFile)
             {
@@ -301,7 +301,7 @@ void LLScriptRecoverQueue::onCreateScript(const LLUUID& idItem)
         }
 
         LLBufferedAssetUploadInfo::taskUploadFinish_f proc = boost::bind(&LLScriptRecoverQueue::onSavedScript, this, _1, _2, _3, _4);
-        LLResourceUploadInfo::ptr_t uploadInfo(new LLScriptAssetUpload(idItem, buffer, proc, nullptr));
+        LLResourceUploadInfo::ptr_t uploadInfo(new LLScriptAssetUpload(idItem, "mono", buffer, proc, nullptr)); /// TODO LUA-SCRIPT: See if we can make this stuff work for LUA scripts too...
         LLViewerAssetUpload::EnqueueInventoryUpload(strCapsUrl, uploadInfo);
     }
     else

@@ -61,6 +61,10 @@ add_library (llinventory ${llinventory_SOURCE_FILES})
 target_link_libraries( llinventory llcommon llmath llmessage llxml )
 target_include_directories( llinventory  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})
 
+if (USE_PRECOMPILED_HEADERS)
+    target_precompile_headers(llinventory REUSE_FROM llprecompiled)
+endif ()
+
 #add unit tests
 if (LL_TESTS)
     INCLUDE(LLAddBuildTest)
@@ -73,4 +77,7 @@ if (LL_TESTS)
     set(test_libs llinventory llmath llcorehttp llfilesystem )
     LL_ADD_INTEGRATION_TEST(inventorymisc "" "${test_libs}")
     LL_ADD_INTEGRATION_TEST(llparcel "" "${test_libs}")
+    LL_ADD_INTEGRATION_TEST(llpermissions "" "${test_libs}")
+    LL_ADD_INTEGRATION_TEST(llsaleinfo "" "${test_libs}")
+    LL_ADD_INTEGRATION_TEST(lluserrelations "" "${test_libs}")
 endif (LL_TESTS)

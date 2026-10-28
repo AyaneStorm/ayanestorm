@@ -1651,7 +1651,7 @@ void FloaterQuickPrefs::onEditModeChanged()
     // Write the resulting XML to file
     if (!output_node->isNull())
     {
-        if (LLFILE* fp = LLFile::fopen(settings_path, "w"))
+        if (LLFILE* fp = LLFile::fopen(settings_path, LLFILE_MODE("w")))
         {
             LLXMLNode::writeHeaderToFile(fp);
             output_node->writeToFile(fp);

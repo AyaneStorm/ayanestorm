@@ -43,6 +43,7 @@
 #include "llpanelavatar.h"
 #include "llpanelprofile.h"
 #include "llparcel.h"
+#include "llregionhandle.h"
 #include "llstartup.h"
 #include "lltabcontainer.h"
 #include "lltextbox.h"
@@ -51,6 +52,7 @@
 #include "lltexturectrl.h"
 #include "lltrans.h"
 #include "llviewergenericmessage.h" // send_generic_message
+#include "llviewernetwork.h" // <FS/> Access to GridManager
 #include "llviewerparcelmgr.h"
 #include "llviewerregion.h"
 
@@ -246,7 +248,7 @@ bool LLPanelProfilePicks::postBuild()
     mDeleteButton->setCommitCallback(boost::bind(&LLPanelProfilePicks::onClickDelete, this));
 
     // <FS:Ansariel> FIRE-15556: Picks can circumvent RLVa @showloc restriction
-    mRlvBehaviorCallbackConnection = gRlvHandler.setBehaviourCallback(boost::bind(&LLPanelProfilePicks::updateRlvRestrictions, this, _1, _2));
+    mRlvBehaviorCallbackConnection = gRlvHandler.setBehaviourCallback(boost::bind(&LLPanelProfilePicks::updateRlvRestrictions, this, _1));
 
     // <FS:Ansariel> Replace hardcoded "Second Life" with grid label
     LLTextBox* intro_txt = getChild<LLTextBox>("header_text");
@@ -538,7 +540,7 @@ void LLPanelProfilePicks::commitUnsavedChanges()
 }
 
 // <FS:Ansariel> FIRE-15556: Picks can circumvent RLVa @showloc restriction
-void LLPanelProfilePicks::updateRlvRestrictions(ERlvBehaviour behavior, ERlvParamType type)
+void LLPanelProfilePicks::updateRlvRestrictions(ERlvBehaviour behavior)
 {
     if (behavior == RLV_BHVR_SHOWLOC)
     {
@@ -578,6 +580,7 @@ LLPanelProfilePick::LLPanelProfilePick()
  , mIsEditing(false)
  , mRegionCallbackConnection()
  , mParcelCallbackConnection()
+ , mRlvBehaviorCallbackConnection() //<FS:Trish/> RLVa showloc
 // <AS:Chanayane> Preview button
  , mPreview(false)
 // </AS:Chanayane>
@@ -607,6 +610,12 @@ LLPanelProfilePick::~LLPanelProfilePick()
     {
         mParcelCallbackConnection.disconnect();
     }
+    //<FS:Trish> RLVa showloc
+    if (mRlvBehaviorCallbackConnection.connected())
+    {
+        mRlvBehaviorCallbackConnection.disconnect();
+    }
+    //</FS:Trish>
 }
 
 void LLPanelProfilePick::setAvatarId(const LLUUID& avatar_id)
@@ -669,7 +678,9 @@ void LLPanelProfilePick::setAvatarId(const LLUUID& avatar_id)
     {
         mPickName->setEnabled(true);
         mPickDescription->setEnabled(true);
-        mSetCurrentLocationButton->setVisible(true);
+        //<FS:Trish> RLVa showloc
+        updateButtons();
+        //</FS:Trish>
     }
     else
     {
@@ -682,6 +693,7 @@ bool LLPanelProfilePick::postBuild()
 {
     mPickName = getChild<LLLineEditor>("pick_name");
     mPickDescription = getChild<LLTextEditor>("pick_desc");
+    mPickLocation = getChild<LLLineEditor>("pick_location");
     mSaveButton = getChild<LLButton>("save_changes_btn");
     mCreateButton = getChild<LLButton>("create_changes_btn");
     mCancelButton = getChild<LLButton>("cancel_changes_btn");
@@ -702,6 +714,10 @@ bool LLPanelProfilePick::postBuild()
     mCancelButton->setCommitCallback(boost::bind(&LLPanelProfilePick::onClickCancel, this));
     mSetCurrentLocationButton->setCommitCallback(boost::bind(&LLPanelProfilePick::onClickSetLocation, this));
 
+    //<FS:Trish> RLVa showloc
+    mRlvBehaviorCallbackConnection = gRlvHandler.setBehaviourCallback(boost::bind(&LLPanelProfilePick::updateRlvRestrictions, this, _1));
+    //</FS:Trish>
+
     // <AS:Chanayane> Preview button
     mPreviewButton->setCommitCallback(boost::bind(&LLPanelProfilePick::onClickPreview, this));
     // </AS:Chanayane>
@@ -712,9 +728,18 @@ bool LLPanelProfilePick::postBuild()
     mPickDescription->setKeystrokeCallback(boost::bind(&LLPanelProfilePick::onPickChanged, this, _1));
     mPickDescription->setFocusReceivedCallback(boost::bind(&LLPanelProfilePick::onDescriptionFocusReceived, this));
 
-    getChild<LLUICtrl>("pick_location")->setEnabled(false);
+    mPickLocation->setEnabled(false);
 
     return true;
+}
+
+void LLPanelProfilePick::reshape(S32 width, S32 height, bool called_from_parent)
+{
+    LLPanelProfilePropertiesProcessorTab::reshape(width, height, called_from_parent);
+    if (mPickLocation)
+    {
+        mPickLocation->setCursor(0);
+    }
 }
 
 void LLPanelProfilePick::onDescriptionFocusReceived()
@@ -831,7 +856,14 @@ void LLPanelProfilePick::reparseDescription(const std::string& desc)
 
 void LLPanelProfilePick::setPickLocation(const std::string& location)
 {
-    getChild<LLUICtrl>("pick_location")->setValue(location);
+    mPickLocation->setValue(location);
+    // Pick location can be set with a long 'substitute' value or
+    // just a long value.
+    // If user sets cursor at the end, application of the substitute
+    // value can shift text from visible are to the left. When text
+    // gets restored or set, text position isn't, so just drop cursor
+    // position.
+    mPickLocation->setCursor(0);
     mPickLocationStr = location;
     mLastRequestTimer.reset();
 }
@@ -908,6 +940,13 @@ bool LLPanelProfilePick::isDirty() const
 
 void LLPanelProfilePick::onClickSetLocation()
 {
+    //<FS:Trish> RLVa showloc
+    if (gRlvHandler.hasBehaviour(RLV_BHVR_SHOWLOC))
+    {
+        return;
+    }
+    //</FS:Trish>
+
     // Save location for later use.
     setPosGlobal(gAgent.getPositionGlobal());
 
@@ -1006,6 +1045,27 @@ void LLPanelProfilePick::sendParcelInfoRequest()
 
 void LLPanelProfilePick::processParcelInfo(const LLParcelData& parcel_data)
 {
+    // Region might have moved since the pick was saved; refresh the stored global position
+    // using the parcel info so map/teleport use the current location.
+    // <FS:TJ> Fix pick locations only in SL as OS VarRegions and HyperGridding complicate checking if a region has moved
+    if (LLGridManager::getInstance()->isInSecondLife())
+    {
+    // </FS:TJ>
+        LLVector3d parcel_pos(parcel_data.global_x, parcel_data.global_y, parcel_data.global_z);
+        U64 old_region_handle = to_region_handle(getPosGlobal());
+        U64 new_region_handle = to_region_handle(parcel_pos);
+        if (old_region_handle != new_region_handle)
+        {
+            F32 old_origin_x, old_origin_y;
+            from_region_handle(old_region_handle, &old_origin_x, &old_origin_y);
+            LLVector3d local_offset = getPosGlobal() - LLVector3d(old_origin_x, old_origin_y, 0.0);
+
+            F32 new_origin_x, new_origin_y;
+            from_region_handle(new_region_handle, &new_origin_x, &new_origin_y);
+            setPosGlobal(LLVector3d(new_origin_x, new_origin_y, 0.0) + local_offset);
+        }
+    } // <FS:TJ/>
+
     setPickLocation(createLocationText(LLStringUtil::null, parcel_data.name, parcel_data.sim_name, getPosGlobal()));
 
     // We have received parcel info for the requested ID so clear it now.
@@ -1022,6 +1082,22 @@ void LLPanelProfilePick::addLocationChangedCallbacks()
     mRegionCallbackConnection = gAgent.addRegionChangedCallback([this]() { onClickSetLocation(); });
     mParcelCallbackConnection = gAgent.addParcelChangedCallback([this]() { onClickSetLocation(); });
 }
+
+//<FS:Trish> RLVa showloc
+void LLPanelProfilePick::updateButtons()
+{
+    mSetCurrentLocationButton->setVisible(getSelfProfile());
+    mSetCurrentLocationButton->setEnabled(getSelfProfile() && !gRlvHandler.hasBehaviour(RLV_BHVR_SHOWLOC));
+}
+
+void LLPanelProfilePick::updateRlvRestrictions(ERlvBehaviour behavior)
+{
+    if (behavior == RLV_BHVR_SHOWLOC)
+    {
+        updateButtons();
+    }
+}
+//</FS:Trish> RLVa showloc
 
 void LLPanelProfilePick::setParcelID(const LLUUID& parcel_id)
 {

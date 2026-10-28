@@ -632,6 +632,8 @@ bool LLVOAvatar::sLimitNonImpostors = false; // True unless RenderAvatarMaxNonIm
 F32 LLVOAvatar::sRenderDistance = 256.f;
 S32 LLVOAvatar::sNumVisibleAvatars = 0;
 S32 LLVOAvatar::sNumLODChangesThisFrame = 0;
+bool LLVOAvatar::sAvatarCullNeedsUpdate = true;
+F64 LLVOAvatar::sLastCullUpdateTime = 0.0;
 
 // const LLUUID LLVOAvatar::sStepSoundOnLand("e8af4a28-aa83-4310-a7c4-c047e15ea0df"); - <FS:PP> Commented out for FIRE-3169: Option to change the default footsteps sound
 const LLUUID LLVOAvatar::sStepSounds[LL_MCODE_END] =
@@ -644,6 +646,8 @@ const LLUUID LLVOAvatar::sStepSounds[LL_MCODE_END] =
     SND_RUBBER_PLASTIC,
     SND_RUBBER_RUBBER
 };
+
+uuid_list_t LLVOAvatar::sEarlyAppearanceList;
 
 S32 LLVOAvatar::sRenderName = RENDER_NAME_ALWAYS;
 S32 LLVOAvatar::sRenderGroupTitles = RENDER_GROUP_TITLE_ALWAYS;
@@ -696,6 +700,7 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mLastAppearanceBlendTime(0.f),
     mAppearanceAnimating(false),
     mNameIsSet(false),
+    mNameIsTemporary(false), // <FS:TJ/> Re-request names if any are temporary/placeholder names such as (???).(???)
     // <FS:Ansariel> FIRE-13414: Avatar name isn't updated when the simulator sends a new name
     mNameFirstname(),
     mNameLastname(),
@@ -737,7 +742,6 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mVisualComplexity(VISUAL_COMPLEXITY_UNKNOWN),
     mLoadedCallbacksPaused(false),
     mLoadedCallbackTextures(0),
-    mRenderUnloadedAvatar(LLCachedControl<bool>(gSavedSettings, "RenderUnloadedAvatar", false)),
     mLastRezzedStatus(-1),
     mIsEditingAppearance(false),
     mUseLocalAppearance(false),
@@ -824,6 +828,20 @@ LLVOAvatar::LLVOAvatar(const LLUUID& id,
     mVisuallyMuteSetting = FSAvatarRenderPersistence::instance().getAvatarRenderSettings(id);
 
     sInstances.push_back(this);
+
+    uuid_list_t::iterator it = sEarlyAppearanceList.find(id);
+    if (it != sEarlyAppearanceList.end())
+    {
+        // Note: aside from LLVOAvatar::resetEarlyAppearanceList() (called on
+        // teleport), this is the only place where we remove from
+        // sEarlyAppearanceList, which means any agent who receives an
+        // AvatarAppearance message but is never actually instantiated will
+        // remain on the list until the next teleport. This is a resource leak
+        // but we expect it to be small enough per-session to not cause problems.
+        sEarlyAppearanceList.erase(it);
+        LL_INFOS("Avatar") << "Re-requesting AvatarAppearance for new avatar " << id << LL_ENDL;
+        LLAvatarPropertiesProcessor::getInstance()->sendAvatarTexturesRequest(getID());
+    }
 }
 
 //<FS:Beq> BOM constrain number of bake requests when BOM not supported
@@ -3211,6 +3229,28 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
     // force immediate pixel area update on avatars using last frames data (before drawable or camera updates)
     setPixelAreaAndAngle(gAgent);
 
+    if (!isSelf())
+    {
+        F32 current_pixel_area = getPixelArea();
+        if (mLastCulledPixelArea >= 0.f)
+        {
+            // Avoid rapidly switching two avatars back and forth between ranks.
+            // And update frequency reduction
+            F32 pixel_area_change = fabsf(current_pixel_area - mLastCulledPixelArea) / mLastCulledPixelArea;
+            if (pixel_area_change > 0.1f) // 10% threshold
+            {
+                sAvatarCullNeedsUpdate = true;
+                mLastCulledPixelArea = current_pixel_area;
+            }
+        }
+        else
+        {
+            // First frame
+            sAvatarCullNeedsUpdate = true;
+            mLastCulledPixelArea = current_pixel_area;
+        }
+    }
+
     // force asynchronous drawable update
     if(mDrawable.notNull())
     {
@@ -3545,7 +3585,7 @@ void LLVOAvatar::idleUpdateMisc(bool detailed_update)
 
     if (isImpostor() && !mNeedsImpostorUpdate)
     {
-        LL_ALIGN_16(LLVector4a ext[2]);
+        LLVector4a ext[2];
         F32 distance;
         LLVector3 angle;
 
@@ -4147,6 +4187,17 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
     }
     // </FS:Ansariel>
 
+    // <FS:TJ> Re-request names if any are temporary/placeholder names such as (???).(???)
+    if (mNameIsSet && mNameIsTemporary && LLAvatarNameCache::getInstance()->hasNameLookupURL())
+    {
+        LLAvatarName cached_name;
+        if (LLAvatarNameCache::get(getID(), &cached_name) && cached_name.isValidName())
+        {
+            new_name = true;
+        }
+    }
+    // </FS:TJ>
+
     // Rebuild name tag if state change detected
     if (!mNameIsSet
         || new_name
@@ -4268,6 +4319,8 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
                 // Note: do not connect a callback on idle().
                 clearNameTag();
             }
+
+            mNameIsTemporary = !av_name.isValidName(); // <FS:TJ/> Re-request names if any are temporary/placeholder names such as (???).(???)
 
 // [RLVa:KB] - Checked: RLVa-1.2.2
             if ( (fRlvShowAvName) || (isSelf()) )
@@ -4825,9 +4878,15 @@ bool LLVOAvatar::isRlvSilhouette() const
     if (!RlvActions::hasBehaviour(RLV_BHVR_SETCAM_AVDIST))
         return false;
 
-    // <FS> FIRE-34340-2 RLV silhouette should not override the user's complexity settings
-    if (isSelf() || isTooComplex() || isTooSlowWithoutShadows())
+    // <FS> FIRE-34340-2 Your own avatar and attached animesh shouldn't be a silhouette
+    if (isSelf())
         return false;
+
+    if (const LLVOAvatar* wearer = getAttachedAvatar())
+    {
+        if (wearer->isSelf())
+            return false;
+    }
     // </FS>
 
     static RlvCachedBehaviourModifier<float> s_nSetCamAvDist(RLV_MODIFIER_SETCAM_AVDIST);
@@ -6089,9 +6148,11 @@ void LLVOAvatar::updateVisibility()
         LL_DEBUGS("AvatarRender") << "visible was " << mVisible << " now " << visible << LL_ENDL;
     }
 
+    if (mVisible != visible)
+    {
+        setCullNeedsUpdate();
+    }
     mVisible = visible;
-
-    mVisibilityPreference = visible ? getPixelArea() : 0;
 }
 
 // private
@@ -6403,7 +6464,7 @@ U32 LLVOAvatar::renderImpostor(LLColor4U color, S32 diffuse_channel)
         gGL.begin(LLRender::LINES);
         gGL.color4f(1.f,1.f,1.f,1.f);
         F32 thickness = llmax(F32(5.0f-5.0f*(gFrameTimeSeconds-mLastImpostorUpdateFrameTime)),1.0f);
-        gGL.setLineWidth(thickness); // <FS> Line width OGL core profile fix by Rye Mutt
+        gGL.setLineWidth(thickness);
         gGL.vertex3fv((pos+left-up).mV);
         gGL.vertex3fv((pos-left-up).mV);
         gGL.vertex3fv((pos-left-up).mV);
@@ -9791,7 +9852,8 @@ bool LLVOAvatar::processFullyLoadedChange(bool loading)
 
 bool LLVOAvatar::isFullyLoaded() const
 {
-    return (mRenderUnloadedAvatar && !isSelf()) || mFullyLoaded;
+    static LLCachedControl<bool> render_unloaded_avatar(gSavedSettings, "RenderUnloadedAvatar", false);
+    return (render_unloaded_avatar && !isSelf()) || mFullyLoaded;
 }
 
 bool LLVOAvatar::hasFirstFullAttachmentData() const
@@ -9802,6 +9864,12 @@ bool LLVOAvatar::hasFirstFullAttachmentData() const
 
 bool LLVOAvatar::isTooComplex() const
 {
+    // [RLVa] FIRE-35778 @camavdist:1=n RLVa command turns avatars invisible instead of a silhouette (fix from Ellie Sable)
+    if (isRlvSilhouette())
+    {
+        return true;
+    }
+    // [/RLVa]
     bool too_complex;
     static LLCachedControl<S32> complexity_render_mode(gSavedSettings, "RenderAvatarComplexityMode");
     bool render_friend =  (isBuddy() && complexity_render_mode > AV_RENDER_LIMIT_BY_COMPLEXITY);
@@ -11234,7 +11302,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
         if (visualParamWeightsAreDefault() && mRuthTimer.getElapsedTimeF32() > LOADING_TIMEOUT_SECONDS)
         {
             // re-request appearance, hoping that it comes back with a shape next time
-            LL_INFOS() << "Re-requesting AvatarAppearance for object: "  << getID() << LL_ENDL;
+            LL_INFOS() << "Re-requesting AvatarAppearance for agent: "  << getID() << LL_ENDL;
             LLAvatarPropertiesProcessor::getInstance()->sendAvatarTexturesRequest(getID());
             mRuthTimer.reset();
         }
@@ -11264,7 +11332,7 @@ void LLVOAvatar::applyParsedAppearanceMessage(LLAppearanceMessageContents& conte
     setCompositeUpdatesEnabled( true );
 
     // If all of the avatars are completely baked, release the global image caches to conserve memory.
-    cullAvatarsByPixelArea();
+    setCullNeedsUpdate();
 
     if (isSelf())
     {
@@ -11945,39 +12013,71 @@ S32 LLVOAvatar::getUnbakedPixelAreaRank()
     return 0;
 }
 
-// static
+// static, gets called once per frame from updateApparentAngles.
 void LLVOAvatar::cullAvatarsByPixelArea()
 {
-    LLCharacter::sInstances.sort([](LLCharacter* lhs, LLCharacter* rhs)
+    F64 current_time = LLFrameTimer::getElapsedSeconds();
+    bool needs_resort = sAvatarCullNeedsUpdate || ((current_time - sLastCullUpdateTime) >= 1.0);
+
+    if (needs_resort)
+    {
+        LLCharacter::sInstances.sort([](LLCharacter* lhs, LLCharacter* rhs)
         {
-            return ((LLVOAvatar*)lhs)->mVisibilityPreference > ((LLVOAvatar*)rhs)->mVisibilityPreference;
+            LLVOAvatar* lhs_av = (LLVOAvatar*)lhs;
+            LLVOAvatar* rhs_av = (LLVOAvatar*)rhs;
+            if (lhs_av->mVisible != rhs_av->mVisible)
+            {
+                return lhs_av->mVisible;
+            }
+            // Sort by pixel area in descending order (larger pixel area = higher priority)
+            return lhs_av->getPixelArea() > rhs_av->getPixelArea();
         });
 
-    // Update the avatars that have changed status
-    U32 rank = 2; // Rank 1 is reserved for self.
-    for (LLCharacter* character : LLCharacter::sInstances)
+        // Update the avatars that have changed status
+        U32 rank = 2; // Rank 1 is reserved for self.
+        for (LLCharacter* character : LLCharacter::sInstances)
+        {
+            LLVOAvatar* inst = (LLVOAvatar*)character;
+            bool culled = !inst->isSelf() && !inst->isFullyBaked();
+
+            if (inst->mCulled != culled)
+            {
+                inst->mCulled = culled;
+                LL_DEBUGS() << "avatar " << inst->getID() << (culled ? " start culled" : " start not culled" ) << LL_ENDL;
+                inst->updateMeshTextures();
+            }
+
+            if (inst->isSelf())
+            {
+                inst->setVisibilityRank(1);
+            }
+            else if (inst->mDrawable.notNull() && inst->mDrawable->isVisible())
+            {
+                inst->setVisibilityRank(rank++);
+            }
+            else
+            {
+                inst->setVisibilityRank(sMaxNonImpostors * 5);
+            }
+            inst->mLastCulledPixelArea = inst->getPixelArea();
+        }
+        sAvatarCullNeedsUpdate = false;
+        sLastCullUpdateTime = current_time;
+    }
+    else
     {
-        LLVOAvatar* inst = (LLVOAvatar*)character;
-        bool culled = !inst->isSelf() && !inst->isFullyBaked();
+        for (LLCharacter* character : LLCharacter::sInstances)
+        {
+            // Todo: this can be optimized by tracking baked's callbacks
+            LLVOAvatar* inst = (LLVOAvatar*)character;
+            bool culled = !inst->isSelf() && !inst->isFullyBaked();
 
-        if (inst->mCulled != culled)
-        {
-            inst->mCulled = culled;
-            LL_DEBUGS() << "avatar " << inst->getID() << (culled ? " start culled" : " start not culled" ) << LL_ENDL;
-            inst->updateMeshTextures();
-        }
-
-        if (inst->isSelf())
-        {
-            inst->setVisibilityRank(1);
-        }
-        else if (inst->mDrawable.notNull() && inst->mDrawable->isVisible())
-        {
-            inst->setVisibilityRank(rank++);
-        }
-        else
-        {
-            inst->setVisibilityRank(sMaxNonImpostors * 5);
+            if (inst->mCulled != culled)
+            {
+                inst->mCulled = culled;
+                LL_DEBUGS() << "avatar " << inst->getID() << (culled ? " start culled" : " start not culled") << LL_ENDL;
+                inst->updateMeshTextures();
+            }
         }
     }
 
@@ -12261,6 +12361,13 @@ bool LLVOAvatar::isImpostor()
     // <FS:minerjr> [FIRE-35735] Imposter/Impostor Avatar Exclusions
     static LLCachedControl<U32> impostor_avatar_exclude(gSavedSettings,"FSImpostorAvatarExclude", 0);
 
+    // <FS> FIRE-34340-2 RLV silhouettes must be impostored
+    if (isRlvSilhouette())
+    {
+        return true;
+    }
+    // </FS>
+
     // Store the result of is visually muted as used in possibly 2 places
     bool is_visual_muted = isVisuallyMuted();
 
@@ -12275,9 +12382,6 @@ bool LLVOAvatar::isImpostor()
             // isVisuallyMuted() ||
             is_visual_muted || // Save from calling isVisuallyMuted a second time
             // </FS:minerjr> [FIRE-35735]
-            // <FS> FIRE-34340-2 RLV silhouettes must be impostored
-            isRlvSilhouette() ||
-            // </FS>
             isTooSlowWithoutShadows() ||
             (sLimitNonImpostors && (mUpdatePeriod > 1) )
     );
@@ -13274,6 +13378,12 @@ LLVOAvatar::AvatarOverallAppearance LLVOAvatar::getOverallAppearance() const
         {
             result = AOA_INVISIBLE;
         }
+        // <FS> FIRE-34340-2 RLV silhouettes take priority over Always Render
+        else if (isRlvSilhouette() && (!isControlAvatar() || getAttachedAvatar()))
+        {
+            result = AOA_JELLYDOLL;
+        }
+        // </FS>
         else if (mVisuallyMuteSetting == AV_ALWAYS_RENDER)
         {
             result = AOA_NORMAL;

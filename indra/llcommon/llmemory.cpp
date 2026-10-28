@@ -146,9 +146,6 @@ void LLMemory::updateMemoryInfo()
         LL_WARNS() << "task_info failed" << LL_ENDL;
     }
 #elif defined(LL_LINUX)
-    // Use sysinfo() to get the total physical memory.
-    struct sysinfo info;
-    sysinfo(&info);
     sAllocatedMemInKB = U32Kilobytes::convert(U64Bytes(LLMemory::getCurrentRSS())); // represents the RAM allocated by this process only (in line with the windows implementation)
 #else
     //not valid for other systems for now.
@@ -303,6 +300,13 @@ U32Kilobytes LLMemory::getMaxMemKB()
 {
     return sMaxPhysicalMemInKB ;
 }
+// <FS:Beq> [FIRE-36494] Small memory allocation fail bugsplat reporting improvement
+//static
+U32Kilobytes LLMemory::getMaxHeapSizeKB()
+{
+    return sMaxHeapSizeInKB;
+}
+// </FS:Beq>
 
 //static
 U32Kilobytes LLMemory::getAllocatedMemKB()
