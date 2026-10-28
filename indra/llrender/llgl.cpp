@@ -1643,18 +1643,15 @@ void LLGLManager::initExtensions()
     // 4.60; some drivers don't list core functionality in the extension
     // string, so accept the version alone too (same pattern as mHasAnisotropic
     // above).
-    // ExtensionExists includes a trailing semicolon on LL_SDL, so evaluate it
-    // as its own statement before using the result in the compound check.
-    // mHasShaderSubgroup =
-    //     (mGLSLVersionMajor > 4 || (mGLSLVersionMajor == 4 && mGLSLVersionMinor >= 50)) &&
-    //     (mGLVersion >= 4.59f ||
-    //      (gGLHExts.mSysExts && ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts)));
-    bool has_shader_subgroup_extension = false;
-    if (mGLVersion < 4.59f && gGLHExts.mSysExts)
-    {
-        has_shader_subgroup_extension =
-            ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts);
-    }
+    // Upstream replaced gGLHExts/ExtensionExists with mGLExtensions.
+    // bool has_shader_subgroup_extension = false;
+    // if (mGLVersion < 4.59f && gGLHExts.mSysExts)
+    // {
+    //     has_shader_subgroup_extension =
+    //         ExtensionExists("GL_KHR_shader_subgroup", gGLHExts.mSysExts);
+    // }
+    bool has_shader_subgroup_extension =
+        mGLVersion < 4.59f && mGLExtensions.contains("GL_KHR_shader_subgroup");
     // The extension string (or GL 4.6 core) only promises the API exists
     // somewhere; GL_KHR_shader_subgroup explicitly allows a driver to support
     // it in some stages but not others (e.g. compute only). Our capture

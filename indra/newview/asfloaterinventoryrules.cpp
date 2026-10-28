@@ -137,7 +137,7 @@ void readImportText(bool from_file, text_callback_t on_text)
                 showTransferError("Cannot read " + filenames[0] + ".");
                 return;
             }
-            if (llifstream_size(in) > IMPORT_FILE_MAX_SIZE)
+            if (LLFile::size(filenames[0]) > IMPORT_FILE_MAX_SIZE)
             {
                 showTransferError(filenames[0] + " is too large to be inventory rules.");
                 return;

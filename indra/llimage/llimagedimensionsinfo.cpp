@@ -169,12 +169,18 @@ bool LLImageDimensionsInfo::getImageDimensionsWebP()
         return false;
     }
 
-    auto image_size = LLAPRFile::size(mSrcFilename);
+    // <AS:Chanayane> Upstream removed the static LLAPRFile::size(); LLFile::size() replaces it.
+    // auto image_size = LLAPRFile::size(mSrcFilename);
+    auto image_size = LLFile::size(mSrcFilename);
+    // </AS:Chanayane>
     if(image_size > 0)
     {
         auto image_buf = std::make_unique<U8[]>(image_size);
 
-        mInfile.read(image_buf.get(), image_size);
+        // <AS:Chanayane> LLFile::size() returns S64; LLAPRFile::read() takes S32.
+        // mInfile.read(image_buf.get(), image_size);
+        mInfile.read(image_buf.get(), (S32)image_size);
+        // </AS:Chanayane>
 
         WebPBitstreamFeatures features;
         // Decode the WebP data and extract sizing information
