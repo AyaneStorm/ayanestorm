@@ -38,6 +38,8 @@
 //   by the cloud shadow map. Its density ramps in where the exact medium
 //   fades out, up to the scene or the cloud layer, and it is not dimmed by
 //   the near medium (as the composite stops attenuating the scene there).
+//   Only its excess over the local mean (map blurred ~3 km) is added, so
+//   the lit bands stand out instead of the whole sky brightening.
 //   Added light only: SL's sky, clouds and haze are left as they are.
 
 /*[EXTRA_CODE_HERE]*/
@@ -60,7 +62,8 @@ uniform vec2  as_disc_sin_cos; // x = sin(radius), y = cos(radius)
 uniform float as_cloud_ray_density;  // far medium extinction (per metre)
 uniform float as_cloud_ray_strength; // far medium brightness multiplier
 // 2: occlusion, 3: visibility, 4: cloud shadow, 5: near shaft dimming,
-// 6: cloud-ray light (lit share of the far medium).
+// 6: cloud-ray light (lit share of the far medium), 7: cloud-ray excess
+// share (what is actually added, x4).
 uniform int   debug_mode;
 
 vec4 getPositionWithDepth(vec2 pos_screen, float depth);
@@ -71,7 +74,7 @@ float cloudTransmittance(vec3 view_pos, float lod);
 float meanCloudTransmittance(vec3 ray_dir, float t_end, float sigma, int steps);
 float cloudLayerDistance(vec3 ray_dir);
 float cloudRayLength(vec3 ray_dir, float t0, float t1, float sigma, float ramp_len,
-                     int steps, out float lit_share);
+                     int steps, out float lit_share, out float base_length);
 float cloudSkyDebug(vec3 ray_dir);
 
 const int SHAFT_CLOUD_STEPS = 8;
@@ -143,19 +146,32 @@ void main()
 
     // Cloud rays: the far medium from the start of the exact fade to the
     // scene (or the cloud layer for the sky).
+    // Only the excess over the local mean (far_lit - far_base) is added:
+    // shadowed and average directions keep SL's sky exactly, only the lit
+    // bands brighten. Stands in for the darkening of the shadowed air, which
+    // would mean modulating SL's sky (ruled out: it breaks windlights).
     float far_lit = 0.0;
+    float far_base = 0.0;
     float far_share = 1.0;
     if (cloudsEnabled())
     {
         float far_end = min(depth < 1.0 ? scene_dist : cloudLayerDistance(ray_dir),
                             CLOUD_RAY_MAX_DISTANCE);
         far_lit = cloudRayLength(ray_dir, as_fade_start, far_end, as_cloud_ray_density,
-                                 as_fade_end - as_fade_start, CLOUD_RAY_STEPS, far_share);
+                                 as_fade_end - as_fade_start, CLOUD_RAY_STEPS, far_share,
+                                 far_base);
     }
+    float far_excess = max(far_lit - far_base, 0.0);
 
-    if (debug_mode == 6)
+    if (debug_mode == 6 || debug_mode == 7)
     {
-        frag_color = vec4(vec3(far_share), 1.0);
+        // 6: lit share; 7: excess share (x4 to be visible).
+        float value = far_share;
+        if (debug_mode == 7)
+        {
+            value = far_lit > 0.0 ? 4.0 * far_share * far_excess / far_lit : 0.0;
+        }
+        frag_color = vec4(vec3(value), 1.0);
         return;
     }
 
@@ -172,7 +188,7 @@ void main()
     float far_phase = phaseHG(cos_theta, CLOUD_RAY_ASYMMETRY);
     float scatter = scatter_albedo *
                     (phase * scatter_density * lit * cloud +
-                     far_phase * as_cloud_ray_strength * as_cloud_ray_density * far_lit);
+                     far_phase * as_cloud_ray_strength * as_cloud_ray_density * far_excess);
 
     frag_color = vec4(as_active_light_color * scatter, 0.0);
 }

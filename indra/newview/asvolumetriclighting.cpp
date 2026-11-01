@@ -29,6 +29,7 @@
 
 #include "asambientocclusion.h"
 #include "asbackgroundisolate.h"
+#include "asworldclouds.h"
 #include "llcontrol.h"
 #include "lluictrl.h"
 #include "ascelestialtwilight.h"
@@ -66,7 +67,6 @@
 
 extern bool gCubeSnapshot;
 extern U32 gFrameCount;
-extern LLPointer<LLImageGL> gEXRImage;
 
 namespace
 {
@@ -85,21 +85,20 @@ LLGLSLShader gASVolumetricCloudApplyProgram;
 // a sphere whose centre lies getDomeOffset() (0.96) radii below the camera
 // (LLEnvironment::getCamHeight()), so they form a shallow cap above the
 // viewer; drawing only uses directions, so the dome has no physical size.
-// Here the same sphere is scaled so the cap top lies CLOUD_CEILING_HEIGHT
-// above a lazy world anchor: fixed in the world so the shadows stay still
-// while the camera moves, re-centred on the camera (with a smooth slide)
-// only when it gets CLOUD_ANCHOR_MAX_OFFSET away. The mismatch with the
-// drawn, camera-attached clouds is about offset / ceiling height.
-constexpr F32 CLOUD_CEILING_HEIGHT = 2000.f;
+// Here the same sphere is scaled so the cap top lies
+// ASWorldClouds::layerHeight() above the anchor. ASWorldClouds keeps the
+// drawn clouds fixed in the world, and the bake applies the same offset
+// (ASWorldClouds::offsetAt(anchor)), so the map content is world-fixed
+// wherever the anchor is. The anchor is the camera snapped to a global grid
+// of CLOUD_ANCHOR_GRID_PER_HEIGHT * layer height: the map's texel grid stays
+// still while walking (no edge shimmer), and a re-centre only changes the
+// sphere height under the camera by ~ offset^2 / (2 R): with R = 25 H and an
+// offset up to 0.35 H, ~0.25% of the layer height at any height.
 constexpr F32 CLOUD_MAP_EXTENT = 25000.f;        // map half extent: low suns reach far
-constexpr F64 CLOUD_ANCHOR_MAX_OFFSET = 100.0;   // <= 5% mismatch
-constexpr F64 CLOUD_ANCHOR_SNAP_OFFSET = 5000.0; // teleports: no slide
-constexpr F32 CLOUD_ANCHOR_SLIDE_SECONDS = 1.5f; // exponential time constant
+constexpr F64 CLOUD_ANCHOR_GRID_PER_HEIGHT = 0.5;
 constexpr U32 CLOUD_SHADOW_MAP_SIZE = 2048;
 LLRenderTarget gCloudShadowMap;
 LLVector3d gCloudAnchorGlobal;
-bool gCloudAnchorValid = false;
-bool gCloudAnchorSliding = false;
 bool gCloudShadowReady = false;   // gCloudShadowMap valid for this frame
 glm::mat4 gCloudFromView(1.f);    // view -> anchor-relative dome position
 LLVector3 gCloudE1;               // map plane basis and light (dome space)
@@ -792,6 +791,9 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
         {
             gGL.getTexUnit(channel)->bindManual(sTransparencyAtlas.getUsage(),
                                                 sTransparencyAtlas.getTexture(0));
+            // Filter on this unit's texture, not the active one (see
+            // applyCloudUniforms()).
+            gGL.getTexUnit(channel)->activate();
             gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_BILINEAR);
             gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         }
@@ -1524,6 +1526,7 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
         program.uniform1i(slice_samplers[i], first_channel + i);
         gGL.getTexUnit(first_channel + i)->bindManual(LLTexUnit::TT_TEXTURE,
                                                       sExactAtlasAccum.getTexture(i));
+        gGL.getTexUnit(first_channel + i)->activate(); // see applyCloudUniforms()
         gGL.getTexUnit(first_channel + i)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
     // Same cloud dimming of the shafts as the opaque resolve.
@@ -1569,44 +1572,23 @@ bool ASVolumetricLighting::renderCloudShadow(LLPipeline& pipeline, bool sun_sour
         return false;
     }
 
-    // Same conditions under which LLDrawPoolWLSky::renderSkyCloudsDeferred()
-    // draws clouds (none with an HDRI sky, see use_hdri_sky() there).
     LLEnvironment& environment = LLEnvironment::instance();
     const LLSettingsSky::ptr_t sky = environment.getCurrentSky();
-    static LLCachedControl<F32> hdri_split(gSavedSettings, "RenderHDRISplitScreen", 1.f);
-    if (!sky || (gEXRImage.notNull() && hdri_split > 0.f) ||
-        !pipeline.canUseWindLightShaders() ||
-        !pipeline.hasRenderType(LLPipeline::RENDER_TYPE_CLOUDS) ||
-        !gSky.mVOSkyp || !gSky.mVOSkyp->getCloudNoiseTex() ||
-        sky->getCloudScale() < 0.001f)
+    if (!ASWorldClouds::skyHasClouds(pipeline))
     {
         return false;
     }
 
-    // Lazy world anchor (global coordinates, so region changes do not move it).
+    // Anchor: the camera snapped to a global grid (horizontal only; the
+    // height stays the camera's, as the drawn dome).
     const LLVector3 camera_agent = LLViewerCamera::getInstance()->getOrigin();
     const LLVector3d camera_global = gAgent.getPosGlobalFromAgent(camera_agent);
-    if (!gCloudAnchorValid ||
-        (camera_global - gCloudAnchorGlobal).magVec() > CLOUD_ANCHOR_SNAP_OFFSET)
-    {
-        gCloudAnchorGlobal = camera_global;
-        gCloudAnchorValid = true;
-        gCloudAnchorSliding = false;
-    }
-    else
-    {
-        if ((camera_global - gCloudAnchorGlobal).magVec() > CLOUD_ANCHOR_MAX_OFFSET)
-        {
-            gCloudAnchorSliding = true;
-        }
-        if (gCloudAnchorSliding)
-        {
-            const F64 step = 1.0 - exp(-(F64)LLFrameTimer::getFrameDeltaTimeF32() /
-                                       (F64)CLOUD_ANCHOR_SLIDE_SECONDS);
-            gCloudAnchorGlobal += (camera_global - gCloudAnchorGlobal) * step;
-            gCloudAnchorSliding = (camera_global - gCloudAnchorGlobal).magVec() > 5.0;
-        }
-    }
+    gCloudAnchorGlobal = camera_global;
+    const F64 anchor_grid = CLOUD_ANCHOR_GRID_PER_HEIGHT * (F64)ASWorldClouds::layerHeight();
+    gCloudAnchorGlobal.mdV[VX] = (floor(camera_global.mdV[VX] / anchor_grid) + 0.5) *
+                                 anchor_grid;
+    gCloudAnchorGlobal.mdV[VY] = (floor(camera_global.mdV[VY] / anchor_grid) + 0.5) *
+                                 anchor_grid;
 
     // Sky dome space (LLEnvironment::toLightNorm(): agent (x, y, z) ->
     // (y, z, x), Y up), the space of lightnorm and the dome UVs.
@@ -1655,11 +1637,15 @@ bool ASVolumetricLighting::renderCloudShadow(LLPipeline& pipeline, bool sun_sour
     program.uniform1f(LLShaderMgr::BLEND_FACTOR, blend_factor);
     program.uniform1f(LLShaderMgr::CLOUD_VARIANCE, (F32)sky->getCloudVariance());
 
-    // Dome sphere at physical scale: cap top CLOUD_CEILING_HEIGHT above the
-    // anchor, centre dome_offset radii below it.
+    // Dome sphere at physical scale: cap top ASWorldClouds::layerHeight()
+    // above the anchor, centre dome_offset radii below it.
     const F32 dome_offset = llclamp(sky->getDomeOffset(), 0.f, 0.999f);
-    gCloudRadius = CLOUD_CEILING_HEIGHT / (1.f - dome_offset);
+    gCloudRadius = ASWorldClouds::radius(*sky);
     gCloudCentreDepth = gCloudRadius * dome_offset;
+    // Same world-fixed cloud offset as the drawn clouds, seen from the anchor.
+    const LLVector2 world_offset = ASWorldClouds::offsetAt(gCloudAnchorGlobal);
+    program.uniform2f(LLStaticHashedString("as_cloud_world_offset"),
+                      world_offset.mV[VX], world_offset.mV[VY]);
     gCloudE1 = e1;
     gCloudE2 = e2;
     gCloudLight = light;
@@ -1786,7 +1772,16 @@ bool ASVolumetricLighting::applyCloudUniforms(LLGLSLShader& program, S32 channel
     }
     if (clouds)
     {
-        gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, gCloudShadowMap.getTexture(0));
+        // hasMips = true: otherwise setTextureFilteringOption() sets a
+        // non-mipmapped GL_LINEAR min filter and every textureLod() reads
+        // level 0 (no prefilter, no blurred base for the cloud rays).
+        gGL.getTexUnit(channel)->bindManual(LLTexUnit::TT_TEXTURE, gCloudShadowMap.getTexture(0), true);
+        // setTextureFilteringOption() does not activate its unit and
+        // bindManual() only does when the texture changes: without this, a
+        // rebind per alpha draw set the trilinear min filter on the active
+        // unit's texture (the alpha surface's own), which turned textures
+        // without a full mip chain incomplete (black).
+        gGL.getTexUnit(channel)->activate();
         gGL.getTexUnit(channel)->setTextureFilteringOption(LLTexUnit::TFO_TRILINEAR);
         gGL.getTexUnit(channel)->setTextureAddressMode(LLTexUnit::TAM_CLAMP);
         program.uniformMatrix4fv(LLStaticHashedString("as_cloud_from_view"), 1, GL_FALSE,
@@ -1829,6 +1824,7 @@ void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S
     {
         program.uniform1i(accum_sampler, accum_channel);
         gGL.getTexUnit(accum_channel)->bindManual(LLTexUnit::TT_TEXTURE, sExactAccum.getTexture(0));
+        gGL.getTexUnit(accum_channel)->activate(); // see applyCloudUniforms()
         gGL.getTexUnit(accum_channel)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
     const S32 cloud_channel = accum_channel + 1;

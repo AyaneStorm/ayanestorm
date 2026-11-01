@@ -771,7 +771,9 @@ sunset sky. The Debug Settings field also rounds to 3 decimals (0.0005 ->
 multiplier `ASRenderVolumetricLightingCloudRayStrength` (default 1 =
 physical) on the far scatter.
 
-Built result: user does not want SL's sky touched again (additive only).
+Built result: user does not want SL's sky touched again (additive only):
+modulating it broke most windlights. Confirmed again 2026-11-01, applies to
+cloud rays too.
 With Strength raised, debug 0 shows no beams, only the clouds around the
 sun getting brighter: the far medium used the near shafts' strongly
 forward phase (user asymmetry), so its light piled up around the sun,
@@ -781,6 +783,147 @@ brightest top centre). Fix (unbuilt): far medium uses its own broad phase
 
 Built result: no visible cloud beams in debug 0 (only foliage/avatar
 shafts). Cloud rays left as they are; moving on to cloud shadows.
+
+### Cloud rays: contrast, not brightness (2026-11-01)
+
+Runtime (frozen clouds, debug 0): Strength 10 and 50 only brighten the sky,
+no streaks. Only debug 2 shows rays, and those are the near geometry shafts
+(it returns before any cloud code). So the far lit share has no angular
+contrast; brightness is not the issue.
+
+Suspect: the prefilter mip in `cloudRayLength()` is isotropic and sized by
+the importance spacing along the ray. At 90 deg from the light
+(0.041 texel/m, 24 m texels, 20 km horizon ray, sigma 0.0002/m) the first
+sample reads lod ~3.6 (~300 m) and the last lod ~8 (~6 km). It blurs across
+neighbouring view rays as much as along the ray, while the correct cross-ray
+footprint is a few metres, so streaks average out.
+
+Diagnostic (unbuilt): debug 7 = reference lit share,
+`cloudRayLitShareReference()`, 256 uniform steps in t, same weight
+e^(-sigma (t - t0)) * ramp, mip sized by the step only. Streaks in 7 but not
+in 6 confirm the blur.
+
+Built result: debug 7 looks like a blurred debug 6. Same broad shapes
+(lit share ~0.35..0.75), no thin shafts in either. The extra texture in 6
+is 16-sample undersampling, not detail the mip removed: the true integral
+is even smoother. Blur hypothesis rejected; the fix below is dropped. The
+softness comes from the integral itself (soft cloud map averaged over
+kilometres), so the cloud map's sharpness (debug 4) and the view direction
+relative to the light decide whether shafts can exist.
+
+Sun position (user): top of the frame, at the end of the broad white band.
+So the band is a real cloud ray, where physics puts it: near the sun a
+view ray runs along the light and reads one map spot (the clouds
+themselves), farther out a gap stretches into a band toward the sun. Rays
+exist but are wide and soft (SL clouds are big soft blobs), and the far
+light is a few percent of SL's sky with only ~2:1 lit-share contrast, so a
+band changes the sky by ~1%. Strength scales the whole far term, dim
+directions included: the whole sky brightens.
+
+### Cloud rays: excess over the local mean (unbuilt)
+
+Real rays show mostly because shadowed air is darker than the sky around
+it; that would modulate SL's sky (ruled out). Additive stand-in: add only
+the light above a local mean.
+- `cloudRayLength()` also returns `base_length`: the same integral over the
+  map at mip max(lod, `CLOUD_RAY_BASE_LOD` = 7, ~3 km, wider than a cloud
+  or gap). 16 extra coarse taps.
+- Far scatter uses max(far_lit - base, 0): shadowed and average directions
+  keep SL's sky exactly, only lit bands brighten, so
+  `ASRenderVolumetricLightingCloudRayStrength` now brightens the rays, not
+  the sky.
+- Not a global mean (the map's last mip): for a low sun half the map is
+  above the cloud layer and stores 1.
+- Debug 7 now shows the excess share (lit - base) / weight, x4; the
+  reference march is removed.
+
+Built result: debug 7 black everywhere. Cause, a bug since the start of
+phase 4: `applyCloudUniforms()` bound the map with
+`bindManual(TT_TEXTURE, tex)`, hasMips defaulting to false, so
+`setTextureFilteringOption(TFO_TRILINEAR)` set a non-mipmapped GL_LINEAR
+min filter and every `textureLod()` read level 0. Base == lit, excess 0.
+It also means no cloud lookup was ever prefiltered: debug 6's texture was
+aliasing (hence the smoother 256-step reference), and the cloud shadows'
+"mip 1, ~50 m soft edge" was really level 0. Fix (unbuilt): hasMips = true.
+Side effect: cloud shadow edges on the scene and on alpha get the intended
+mip 1 softening, and the near-shaft and far-ray marches get their
+prefilter.
+
+Check: frozen clouds, debug 7 shows bright bands only between clouds, black
+elsewhere; debug 0 with Strength raised (10..50) shows bands, not an even
+brightening.
+
+### World-fixed clouds (bokt, 2026-11-01)
+
+Built result: clouds frozen over the sun, camera moved away: lit areas
+appear where the drawn clouds no longer cover the sun. World-fixed clouds
+and shadows match. ASCloudLayerHeight: 500 judged better by the user (at
+2000 the lit/shaded patches are too large to see); default changed to 500
+(unbuilt). The anchor grid now scales with the height (0.5 H: 250 m at
+500 m) so the re-centre curvature error stays ~0.25% of H (a fixed 1 km
+grid would be ~4% at 500 m). Still to check: region crossing, cloud rays
+(debug 7, debug 0).
+
+User: clouds look the same wherever the camera goes, the whole world is
+lit at once, shadows follow the user. Cause: SL's dome is camera-attached
+and the shadow anchor slid after the camera (100 m) to match it. Also the
+cloud size: at a 2 km layer one main noise tile spans
+50 * height * cloud_scale (~42 km at scale 0.42), so blobs are km wide.
+
+Fix (plan: `doc/ayanestorm-world-fixed-clouds-plan.md`), active only while
+Exact volumetric is on (user choice):
+- `asworldclouds.cpp/.h`: per frame, uv1 offset D += (d east, -d north) /
+  (2 R cloud_scale) from the main camera's motion
+  (`gAgentCamera.getCameraPositionGlobal()`; LLViewerCamera moves to the
+  probe in probe passes), F64, wrapped mod 16 (every cloudsF lookup repeats
+  at 16), jumps > 5 km not accumulated. Incremental, not global
+  position / (2 R s): cloud_scale blends would make clouds race.
+- `cloudsV.glsl` (tagged) and `asHorizonCloudTintV.glsl`:
+  `vary_texcoord0 += as_cloud_world_offset`, set in
+  `renderSkyCloudsDeferred()` (tagged one-liner).
+- Bake: same offset seen from the anchor (`offsetAt(anchor)`); anchor = the
+  camera snapped to a 1 km global grid (no slide, texel grid still while
+  walking; re-centre only changes curvature by a few metres).
+- `ASCloudLayerHeight` (default 2000, 250..4000) replaces
+  `CLOUD_CEILING_HEIGHT`: sets cloud size, parallax and shadow speed.
+- `skyHasClouds()` shared by the bake and the offset.
+
+Check: frozen clouds, walk east, overhead clouds slide west (else a sign is
+off); region crossing no jump; debug 4 shadows stay put; cloud in front of
+the sun matches the user's shadow after 1 km; height 500 vs 2000.
+
+### Black alpha plants after the mip fix (bokt, 2026-11-01)
+
+Built result (mip fix + world-fixed build): some distant alpha plants
+render as if the sun were behind a cloud (direct sun gone, ambient kept),
+depending on the camera angle; not before this build. Not the cloud shadow
+(thickness 0 no change), not cloud-ray strength. Most likely victim: a sun
+shadow map (bound last by `bindDeferredShaderFast()`, so often the active
+unit): no mips, so the stray mipmapped min filter made it incomplete,
+`sampleDirectionalShadow()` read 0.
+
+Cause: `LLTexUnit::setTextureFilteringOption()` does not call `activate()`
+(`setTextureAddressMode()` does), and `bindManual()` only activates when
+the texture changes. `bindTransparencyAtlas()` rebinds the cloud map per
+alpha draw; when already bound, the trilinear filter landed on the active
+unit's texture (the alpha surface's own diffuse), using the cloud unit's
+`mHasMipMaps`. Before the mip fix that flag was false (GL_LINEAR on a
+foreign texture: lost mipmapping, unnoticed); with hasMips = true it set
+GL_LINEAR_MIPMAP_LINEAR on textures without a full mip chain: incomplete,
+sampled black. Draw order decides the active unit, hence camera
+dependence. Same latent pattern for the atlas (bilinear), exact slices and
+exact accum (point).
+
+Fix: `activate()` before each `setTextureFilteringOption()` in
+asvolumetriclighting.cpp (as asambientocclusion.cpp already does).
+
+Dropped fix (kept for reference): exact box means along the ray. Every pixel on one
+great circle through the light walks the same straight line on the map,
+from the camera's map point. A polar prefix-sum texture of the map around
+that point (angle x radius, R32F, Hillis-Steele log-step passes, GL 4.1
+fragment only) gives each importance segment's exact mean T with two taps
+and no cross-ray blur (epipolar / Yusov idea). Segments shorter than ~2
+texels (rays toward the light) read the map directly at lod 0.
 
 ### Cloud shadows on the scene (unbuilt)
 

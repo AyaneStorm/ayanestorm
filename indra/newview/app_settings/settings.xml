@@ -13858,6 +13858,19 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>ASCloudLayerHeight</key>
+    <map>
+      <key>Comment</key>
+      <string>Exact volumetric mode: height of the cloud layer above the viewer, in metres (250 to 4000). Sets the clouds' physical size, their parallax when the camera moves and the speed of their shadows on the ground. Lower gives smaller clouds and narrower light rays.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>500.0</real>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
     <key>ASRenderVolumetricLightingCloudRayDensityKm</key>
     <map>
       <key>Comment</key>
@@ -13887,7 +13900,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASRenderVolumetricLightingCloudRayStrength</key>
     <map>
       <key>Comment</key>
-      <string>Exact volumetric mode: brightness multiplier of the cloud light rays (far air beyond the light shaft range). 1 is physical single scattering, which is faint against SL's bright sky.</string>
+      <string>Exact volumetric mode: brightness multiplier of the cloud light rays (far air beyond the light shaft range). Only the light above the local mean is added (lit bands between clouds), at 1 with physical single scattering, which is faint against SL's bright sky.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>

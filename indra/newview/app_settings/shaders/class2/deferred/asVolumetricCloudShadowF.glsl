@@ -60,6 +60,7 @@ uniform float as_cloud_radius;       // sphere radius (metres)
 uniform float as_cloud_centre_depth; // sphere centre below the anchor (metres)
 uniform float as_cloud_extent;       // map half extent (metres)
 uniform float as_cam_height;         // LLEnvironment::getCamHeight(), as camPosLocal.y
+uniform vec2 as_cloud_world_offset;  // ASWorldClouds::offsetAt(anchor), as cloudsV.glsl
 
 // LLVOWLSky::buildStripsBuffer() dome radius (LLSettingsSky::DOME_RADIUS);
 // cloudsV.glsl measures altitude on the unscaled dome vertices.
@@ -84,6 +85,7 @@ float cloudAlpha(vec3 dir)
     uv1 -= 0.5;
     uv1 /= cloud_scale;
     uv1 += 0.5;
+    uv1 += as_cloud_world_offset; // world-fixed clouds, as seen from the anchor
     vec2 uv2 = uv1 + vec2(lightnorm.x, lightnorm.z) * 0.0125;
     vec2 uv3 = uv1 * 16.;
     vec2 uv4 = uv2 * 16.;

@@ -130,6 +130,11 @@ float cloudLayerDistance(vec3 ray_dir)
     return max(-b + sqrt(max(b * b - c, 0.0)), 0.0);
 }
 
+// Mip of the local mean for cloud rays: 2^7 texels of 24.4 m (2048 texels
+// over 50 km, CLOUD_SHADOW_MAP_SIZE / CLOUD_MAP_EXTENT) ~ 3 km, wider than a
+// cloud or a gap, so only the lit bands rise above it.
+const float CLOUD_RAY_BASE_LOD = 7.0;
+
 // Cloud rays: the cloud-lit in-scatter length of the thin far medium (its
 // own extinction sigma, starting at t0; not dimmed by the near medium),
 //   integral over [t0, t1] of e^(-sigma (t - t0)) * ramp(t) * T_cloud(t) dt,
@@ -137,10 +142,13 @@ float cloudLayerDistance(vec3 ray_dir)
 // exact medium fades out). Importance-spaced in e^(-sigma (t - t0)) (relative
 // to t0: no underflow at any distance), prefiltered like
 // meanCloudTransmittance(). lit_share = ramp-weighted mean T_cloud.
+// base_length: the same integral over the map blurred to CLOUD_RAY_BASE_LOD,
+// the local mean the rays stand out from (see asVolumetricExactResolveF.glsl).
 float cloudRayLength(vec3 ray_dir, float t0, float t1, float sigma, float ramp_len,
-                     int steps, out float lit_share)
+                     int steps, out float lit_share, out float base_length)
 {
     lit_share = 1.0;
+    base_length = 0.0;
     if (!cloudsEnabled() || t1 <= t0)
     {
         return 0.0;
@@ -152,6 +160,7 @@ float cloudRayLength(vec3 ray_dir, float t0, float t1, float sigma, float ramp_l
     bool uniform_spacing = sigma * span < 1e-3;
     float path_length = uniform_spacing ? span : u_total / sigma;
     float lit = 0.0;
+    float base = 0.0;
     float weight = 0.0;
     for (int i = 0; i < steps; ++i)
     {
@@ -172,9 +181,11 @@ float cloudRayLength(vec3 ray_dir, float t0, float t1, float sigma, float ramp_l
         float ramp = clamp((t - t0) * ramp_inv, 0.0, 1.0);
         float lod = log2(max(spacing * texels_per_metre, 1.0));
         lit += ramp * cloudTransmittance(ray_dir * t, lod);
+        base += ramp * cloudTransmittance(ray_dir * t, max(lod, CLOUD_RAY_BASE_LOD));
         weight += ramp;
     }
     lit_share = weight > 0.0 ? lit / weight : 1.0;
+    base_length = path_length * base / float(steps);
     return path_length * lit / float(steps);
 }
 

@@ -43,6 +43,10 @@ out vec2 vary_texcoord3;
 // Inputs
 uniform vec3 lightnorm;
 uniform float cloud_scale;
+// <AS:Chanayane> World-fixed clouds (asworldclouds.cpp): uv1 offset by the
+// camera's motion, 0 when inactive.
+uniform vec2 as_cloud_world_offset;
+// </AS:Chanayane>
 
 // NOTE: Keep these in sync!
 //       indra\newview\app_settings\shaders\class1\deferred\skyV.glsl
@@ -63,6 +67,9 @@ void main()
     vary_texcoord0.xy -= 0.5;
     vary_texcoord0.xy /= cloud_scale;
     vary_texcoord0.xy += 0.5;
+    // <AS:Chanayane> World-fixed clouds: shifts uv1..uv4 together.
+    vary_texcoord0.xy += as_cloud_world_offset;
+    // </AS:Chanayane>
 
     vary_texcoord1 = vary_texcoord0;
     vary_texcoord1.x += lightnorm.x * 0.0125;

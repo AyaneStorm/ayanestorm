@@ -167,6 +167,9 @@ set(viewer_SOURCE_FILES
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     asvolumetriclighting.cpp
+    # <AS:Chanayane> World-fixed clouds (Exact volumetric).
+    asworldclouds.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.cpp
     aslightrigrenderer.cpp
@@ -1124,6 +1127,9 @@ set(viewer_HEADER_FILES
     aspanelprefsayanestorm.h
     asstreamkeeper.h
     asvolumetriclighting.h
+    # <AS:Chanayane> World-fixed clouds (Exact volumetric).
+    asworldclouds.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.h
     aslightrigrenderer.h
