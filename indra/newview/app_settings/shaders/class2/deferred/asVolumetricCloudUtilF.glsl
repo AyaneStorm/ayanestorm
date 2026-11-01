@@ -189,6 +189,40 @@ float cloudRayLength(vec3 ray_dir, float t0, float t1, float sigma, float ramp_l
     return path_length * lit / float(steps);
 }
 
+// Cloud rays, shared by the opaque resolve and the transparency atlas
+// (asVolumetricExactResolveF.glsl, asVolumetricExactAtlasResolveF.glsl), so
+// alpha surfaces get the same far light as the opaque scene. Uniforms set by
+// ASVolumetricLighting::applyCloudRayUniforms().
+uniform float as_cloud_ray_density;  // far medium extinction (per metre)
+uniform float as_cloud_ray_strength; // far medium brightness multiplier
+
+const int CLOUD_RAY_STEPS = 16;
+// Far medium phase asymmetry: broad, so the rays show across the sky
+// instead of piling up as a glow around the sun (the near shafts keep the
+// user's strongly forward scatter_asymmetry).
+const float CLOUD_RAY_ASYMMETRY = 0.2;
+
+// Far medium scatter over [t0, t1] (times albedo and light colour by the
+// caller): only its excess over the local mean (cloudRayLength()'s
+// base_length) is added. Shadowed and average directions keep SL's sky
+// exactly, only the lit bands brighten; stands in for the darkening of the
+// shadowed air, which would mean modulating SL's sky (ruled out: it breaks
+// windlights). lit_share / excess_share: debug 6 / 7.
+float cloudRayScatter(vec3 ray_dir, float cos_theta, float t0, float t1, float ramp_len,
+                      out float lit_share, out float excess_share)
+{
+    float base_length;
+    float lit = cloudRayLength(ray_dir, t0, t1, as_cloud_ray_density, ramp_len,
+                               CLOUD_RAY_STEPS, lit_share, base_length);
+    float excess = max(lit - base_length, 0.0);
+    excess_share = lit > 0.0 ? lit_share * excess / lit : 0.0;
+
+    float g2 = CLOUD_RAY_ASYMMETRY * CLOUD_RAY_ASYMMETRY;
+    float denom = 1.0 + g2 - 2.0 * CLOUD_RAY_ASYMMETRY * cos_theta;
+    float phase = (1.0 - g2) / (4.0 * 3.14159265 * pow(max(denom, 1e-4), 1.5));
+    return phase * as_cloud_ray_strength * as_cloud_ray_density * excess;
+}
+
 // Debug: the baked map seen from the camera along a sky view direction, where
 // the view ray meets the cloud layer (reproduces the drawn clouds toward the
 // light), 0.5 on the half sky facing away from it or beyond the map.

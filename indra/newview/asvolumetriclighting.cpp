@@ -107,6 +107,20 @@ LLVector3 gCloudLight;
 F32 gCloudRadius = 1.f;           // sphere radius and centre depth below the anchor
 F32 gCloudCentreDepth = 0.f;
 
+// Cloud rays (cloudRayScatter() in asVolumetricCloudUtilF.glsl), for the
+// opaque resolve and the transparency atlas resolve alike.
+static void apply_cloud_ray_uniforms(LLGLSLShader& program)
+{
+    static LLCachedControl<F32> cloud_ray_density_km(gSavedSettings,
+        "ASRenderVolumetricLightingCloudRayDensityKm", 0.2f);
+    static LLCachedControl<F32> cloud_ray_strength(gSavedSettings,
+        "ASRenderVolumetricLightingCloudRayStrength", 1.f);
+    program.uniform1f(LLStaticHashedString("as_cloud_ray_density"),
+                      llmax((F32)cloud_ray_density_km, 0.f) * 0.001f);
+    program.uniform1f(LLStaticHashedString("as_cloud_ray_strength"),
+                      llmax((F32)cloud_ray_strength, 0.f));
+}
+
 // Raymarch ray range and composite sky fade (MAX_MARCH_DISTANCE in
 // asVolumetricLightF.glsl / asVolumetricAtlasF.glsl).
 constexpr F32 RAYMARCH_MAX_DISTANCE = 128.f;
@@ -828,6 +842,12 @@ void ASVolumetricLighting::bindTransparencyAtlas(LLGLSLShader& shader)
             {
                 shader.uniform1i(cloud_sampler, channel);
             }
+            else if (cloud_unit)
+            {
+                // No atlas sampler (GLTF): its own unit, never shared
+                // with another sampler type (Apple).
+                shader.uniform1i(cloud_sampler, cloud_channel);
+            }
             shader.uniform1i(cloud_enabled, 0);
         }
     }
@@ -1529,8 +1549,9 @@ bool ASVolumetricLighting::renderExactAtlas(LLPipeline& pipeline, F32 attenuate_
         gGL.getTexUnit(first_channel + i)->activate(); // see applyCloudUniforms()
         gGL.getTexUnit(first_channel + i)->setTextureFilteringOption(LLTexUnit::TFO_POINT);
     }
-    // Same cloud dimming of the shafts as the opaque resolve.
+    // Same cloud dimming of the shafts and cloud rays as the opaque resolve.
     const bool clouds = applyCloudUniforms(program, first_channel + 4);
+    apply_cloud_ray_uniforms(program);
 
     const bool sun_source = isVolumetricSunSource();
     program.uniform2i(LLStaticHashedString("as_tile_size"), (S32)tile_width, (S32)tile_height);
@@ -1763,7 +1784,10 @@ bool ASVolumetricLighting::applyCloudUniforms(LLGLSLShader& program, S32 channel
     // the mip matching their sample spacing). See asVolumetricCloudUtilF.glsl.
     static LLStaticHashedString cloud_sampler("as_cloud_map");
     const bool has_unit = channel >= 0 && channel < gGLManager.mNumTextureImageUnits;
-    const bool clouds = gCloudShadowReady && has_unit;
+    // isEnabled()/isExactMode(): renderCloudShadows(), which clears
+    // gCloudShadowReady, is skipped by the pipeline with shadows and SSAO
+    // off, so the flag alone can be stale.
+    const bool clouds = gCloudShadowReady && has_unit && isEnabled() && isExactMode();
     if (has_unit)
     {
         // Set even when unused: Apple's GL rejects draws with two sampler
@@ -1829,15 +1853,7 @@ void ASVolumetricLighting::resolveExact(LLPipeline& pipeline, bool sun_source, S
     }
     const S32 cloud_channel = accum_channel + 1;
     const bool clouds = accum_channel >= 0 && applyCloudUniforms(program, cloud_channel);
-    // Cloud rays: thin far medium, see asVolumetricExactResolveF.glsl.
-    static LLCachedControl<F32> cloud_ray_density_km(gSavedSettings,
-        "ASRenderVolumetricLightingCloudRayDensityKm", 0.2f);
-    static LLCachedControl<F32> cloud_ray_strength(gSavedSettings,
-        "ASRenderVolumetricLightingCloudRayStrength", 1.f);
-    program.uniform1f(LLStaticHashedString("as_cloud_ray_density"),
-                      llmax((F32)cloud_ray_density_km, 0.f) * 0.001f);
-    program.uniform1f(LLStaticHashedString("as_cloud_ray_strength"),
-                      llmax((F32)cloud_ray_strength, 0.f));
+    apply_cloud_ray_uniforms(program);
 
     program.uniform1f(LLStaticHashedString("scatter_albedo"), getScatterAlbedo());
     program.uniform1f(LLStaticHashedString("scatter_asymmetry"), getScatterAsymmetry(sun_source));

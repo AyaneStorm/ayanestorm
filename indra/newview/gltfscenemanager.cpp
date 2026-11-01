@@ -29,6 +29,7 @@
 // <AS:Chanayane> Independent OIT selection and neutral-material AO diagnostic.
 #include "asambientocclusion.h"
 #include "asoitdispatcher.h"
+#include "asvolumetriclighting.h"
 extern bool gCubeSnapshot;
 // </AS:Chanayane>
 
@@ -706,6 +707,9 @@ void GLTFSceneManager::render(Asset& asset, U8 variant)
 // <AS:Chanayane> Select through gltf_program for OIT capture.
                     // gPipeline.bindDeferredShader(gGLTFPBRMetallicRoughnessProgram.mGLTFVariants[variant]);
                     gPipeline.bindDeferredShader(gltf_program.mGLTFVariants[variant]);
+                    // Cloud shadow uniforms (and the volumetric atlas) as
+                    // the other alpha pools, for asCloudSunShadow().
+                    ASVolumetricLighting::bindTransparencyAtlas(gltf_program.mGLTFVariants[variant]);
                     if (ASOITDispatcher::captureActive())
                     {
                         LLGLSLShader& shader = gltf_program.mGLTFVariants[variant];

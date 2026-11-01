@@ -861,8 +861,9 @@ and shadows match. ASCloudLayerHeight: 500 judged better by the user (at
 2000 the lit/shaded patches are too large to see); default changed to 500
 (unbuilt). The anchor grid now scales with the height (0.5 H: 250 m at
 500 m) so the re-centre curvature error stays ~0.25% of H (a fixed 1 km
-grid would be ~4% at 500 m). Still to check: region crossing, cloud rays
-(debug 7, debug 0).
+grid would be ~4% at 500 m). Region crossing: no jump (bokt). Debug 7:
+white patches that move with the clouds (excess where the lit share beats
+the local mean). Still to check: debug 0 with Strength raised.
 
 User: clouds look the same wherever the camera goes, the whole world is
 lit at once, shadows follow the user. Cause: SL's dome is camera-attached
@@ -891,6 +892,23 @@ Exact volumetric is on (user choice):
 Check: frozen clouds, walk east, overhead clouds slide west (else a sign is
 off); region crossing no jump; debug 4 shadows stay put; cloud in front of
 the sun matches the user's shadow after 1 km; height 500 vs 2000.
+
+### Cloud loose ends (bokt, 2026-11-02)
+
+- `applyCloudUniforms()` also requires `isEnabled() && isExactMode()`:
+  `renderCloudShadows()` (which clears `gCloudShadowReady`) is skipped by
+  pipeline.cpp with shadows and SSAO off, so the flag alone could be stale.
+- GLTF alpha: `pbrmetallicroughnessF.glsl` (tagged) wraps
+  `sampleDirectionalShadow()` in `asCloudSunShadow()`;
+  `gltfscenemanager.cpp` (tagged) calls `bindTransparencyAtlas()` after
+  binding the alpha variant (OIT GLTF variants share the files and path).
+  No atlas sampler there: `bindTransparencyAtlas()` now points the cloud
+  sampler at its own unit when clouds are off (Apple shared-unit rule).
+- Cloud rays on alpha: `cloudRayScatter()` in asVolumetricCloudUtilF.glsl
+  (far medium, excess, phase g 0.2, density/strength uniforms) shared by the
+  opaque resolve and the atlas resolve, which adds it per slice over
+  [fade start, slice end]. `apply_cloud_ray_uniforms()` sets both programs.
+  Alpha beyond the atlas range reads the last slice (misses the rest).
 
 ### Black alpha plants after the mip fix (bokt, 2026-11-01)
 

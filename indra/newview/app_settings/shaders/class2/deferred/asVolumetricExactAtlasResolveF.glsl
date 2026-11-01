@@ -60,6 +60,9 @@ vec3 getPositionWithNDC(vec3 ndc);
 // asVolumetricCloudUtilF.glsl: shafts dim under clouds exactly as in
 // asVolumetricExactResolveF.glsl, so alpha surfaces match opaque ones.
 float meanCloudTransmittance(vec3 ray_dir, float t_end, float sigma, int steps);
+bool cloudsEnabled();
+float cloudRayScatter(vec3 ray_dir, float cos_theta, float t0, float t1, float ramp_len,
+                      out float lit_share, out float excess_share);
 const int SHAFT_CLOUD_STEPS = 8;
 
 const float ATLAS_SLICES = 16.0;
@@ -120,6 +123,17 @@ void main()
 
     float scatter = scatter_density * scatter_albedo * phase * lit *
         meanCloudTransmittance(ray_dir, slice_end, scatter_density, SHAFT_CLOUD_STEPS);
+
+    // Cloud rays up to the slice end, as the opaque resolve up to the scene:
+    // alpha surfaces get the same far light as their opaque neighbours.
+    if (cloudsEnabled() && slice_end > as_fade_start)
+    {
+        float far_share;
+        float far_excess_share;
+        scatter += scatter_albedo *
+            cloudRayScatter(ray_dir, cos_theta, as_fade_start, slice_end,
+                            as_fade_end - as_fade_start, far_share, far_excess_share);
+    }
 
     // Scene transmittance, as asVolumetricAtlasF.glsl (view-depth metric,
     // smooth optical-depth ceiling) with the composite's Exact sky fade
