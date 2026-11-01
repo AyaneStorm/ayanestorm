@@ -893,6 +893,12 @@ Check: frozen clouds, walk east, overhead clouds slide west (else a sign is
 off); region crossing no jump; debug 4 shadows stay put; cloud in front of
 the sun matches the user's shadow after 1 km; height 500 vs 2000.
 
+### Cloud ray strength default (2026-11-02)
+
+User: `ASRenderVolumetricLightingCloudRayStrength` default 25 (was 1). The
+rays stay subtle at any strength: soft SL clouds averaged over kilometres
+give low angular contrast (see the debug 6 / 7 notes above). Accepted as is.
+
 ### Cloud loose ends (bokt, 2026-11-02)
 
 - `applyCloudUniforms()` also requires `isEnabled() && isExactMode()`:

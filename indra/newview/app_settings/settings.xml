@@ -13900,13 +13900,13 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>ASRenderVolumetricLightingCloudRayStrength</key>
     <map>
       <key>Comment</key>
-      <string>Exact volumetric mode: brightness multiplier of the cloud light rays (far air beyond the light shaft range). Only the light above the local mean is added (lit bands between clouds), at 1 with physical single scattering, which is faint against SL's bright sky.</string>
+      <string>Exact volumetric mode: brightness multiplier of the cloud light rays (far air beyond the light shaft range). Only the light above the local mean is added (lit bands between clouds), 1 is physical single scattering, too faint against SL's bright sky; default 25.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>F32</string>
       <key>Value</key>
-      <real>1.0</real>
+      <real>25.0</real>
       <key>Backup</key>
       <integer>0</integer>
     </map>

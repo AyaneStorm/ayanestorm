@@ -114,7 +114,7 @@ static void apply_cloud_ray_uniforms(LLGLSLShader& program)
     static LLCachedControl<F32> cloud_ray_density_km(gSavedSettings,
         "ASRenderVolumetricLightingCloudRayDensityKm", 0.2f);
     static LLCachedControl<F32> cloud_ray_strength(gSavedSettings,
-        "ASRenderVolumetricLightingCloudRayStrength", 1.f);
+        "ASRenderVolumetricLightingCloudRayStrength", 25.f);
     program.uniform1f(LLStaticHashedString("as_cloud_ray_density"),
                       llmax((F32)cloud_ray_density_km, 0.f) * 0.001f);
     program.uniform1f(LLStaticHashedString("as_cloud_ray_strength"),
