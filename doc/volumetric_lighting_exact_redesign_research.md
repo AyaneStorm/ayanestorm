@@ -1021,6 +1021,37 @@ drift with the cloud scroll and line up with the gaps seen toward the
 light; shadows stay still while walking/orbiting; no clouds -> all white;
 fps cost vs build without clouds.
 
+## Phase 5 (speed): safe candidates (not started, 2026-11-02)
+
+Known limits (10-10 profile, RTX 3080 Ti, 4 cascades 3456x1344): opaque
+volume pass ~12 ms, fill bound (~50 crossing layers per pixel, mostly
+behind the scene, cancelling in pairs); atlas volume pass ~5.5 ms,
+triangle-setup bound (37 M primitives, same mesh at tile resolution).
+Flat tiles, GPU tile compaction and slab clipping were tried and reverted
+(see "Exact speedups"). The atlas pass is already skipped when no alpha
+surface consumed it (`sAtlasUnusedFrames`).
+
+Candidates, in order:
+1. Measure (no visual change). Extend the GPU timers behind
+   `AS_VOLUMETRIC_PERFORMANCE_LOGGING` to every exact and cloud pass: exact
+   volumes, atlas volumes, cloud bake (+ mip generation), cloud apply, exact
+   resolve, atlas resolve. Log per-pass averages. The cloud passes added in
+   phase 4 have never been timed. Decide 2 and 3 from these numbers.
+2. Skip the cloud bake when nothing changed (identical output): clouds
+   frozen, same light direction, same anchor cell, same world offset, same
+   cloud settings -> reuse last frame's map and mips. Only pays in static
+   scenes; worth it only if 1 shows the bake costs something.
+3. Coarser mesh for the atlas pass only (opt-in setting, default off):
+   build the atlas light-volume mesh from every other shadow-map texel
+   (still a closed, exact volume of a half-resolution occluder). 4x fewer
+   primitives in a setup-bound pass, maybe 3-4 ms. Only alpha surfaces see
+   it (slightly blockier shafts; the atlas is 430x166 per slice anyway); the
+   opaque scene is untouched.
+
+Avoid: anything removing crossings from the opaque pass, depth-testing the
+volumes, or lowering accumulation precision (R32F cancellation). These
+broke exactness before (seam sparkles).
+
 ## Switch
 
 New setting e.g. `RenderVolumetricLightingMode` (0 = current raymarch,
