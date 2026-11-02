@@ -12937,7 +12937,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>GTAO quality: 1 Medium, 2 High, 3 Ultra, 4 Cinematic.</string>
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>S32</string>
-    <key>Value</key><integer>3</integer>
+    <key>Value</key><integer>4</integer>
   </map>
   <key>RenderGTAORadius</key>
   <map>
@@ -12972,7 +12972,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Comment</key><string>GTAO denoise: 0 Disabled, 1 Sharp, 2 Medium, 3 Soft.</string>
     <key>Persist</key><integer>1</integer>
     <key>Type</key><string>S32</string>
-    <key>Value</key><integer>3</integer>
+    <key>Value</key><integer>2</integer>
   </map>
   <key>RenderGTAOBentNormals</key>
   <map>
@@ -26955,7 +26955,7 @@ Change of this parameter will affect the layout of buttons in notification toast
     <map>
       <key>Comment</key><string>Overall intensity of screen-space celestial lens flare ghosts</string>
       <key>Persist</key><integer>1</integer><key>Type</key><string>F32</string>
-      <key>Value</key><real>0.35</real><key>Backup</key><integer>0</integer>
+      <key>Value</key><real>0.50</real><key>Backup</key><integer>0</integer>
     </map>
     <key>ASLensFlareSaturation</key>
     <map>
