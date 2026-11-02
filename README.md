@@ -14,7 +14,7 @@ Available for the following platforms:
 - MacOS (a .dmg version is provided)
 
 ## Features (so far ; some features might get merged in official Firestorm)
-- **My Lights** floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons and rig presets), accessible from AyaneStorm > My Lights
+- **My Lights** floater: manage a list of viewer-local lights that follow your avatar (with position presets, isolate-avatar background modes, an animation freeze toggle, light beacons, rig presets and an option to keep the lights out of eye reflections), accessible from AyaneStorm > My Lights
 - **Advanced Shape Deformer**: edit avatar-joint positions and scales with live previews, comparison bypasses, undo/redo, notecard import/export, worn-deformer loading and optional persistent mesh baking
 - **Environment Effects panel** gathering viewer-local photographic effects in one place
 - **Depth of Field** with a new noise-free **Live** mode that looks the same on Windows and macOS, plus an **aperture-sampled** mode for still images with shaped bokeh, lens effects and autofocus (see below)
@@ -22,13 +22,20 @@ Available for the following platforms:
 - **Viewer-local color grading** with exposure, white balance, tonal controls, vibrance, an eight-band color mixer, Colorize, split toning, grain, Negative color inversion and reusable presets
 - **Importable 1D and 3D `.cube` LUTs** with automatic naming, alphabetical selection, Previous/Next navigation and adjustable strength
 - **Selectable transparency rendering**: standard alpha blending, AYAstorm unified alpha ordering, lossless Exact OIT, AVBOIT, and the new **Mac OIT**, an order-independent transparency mode built on OpenGL 4.1 that finally brings correct transparency sorting to macOS (also available on Windows and Linux; Exact OIT and AVBOIT remain unavailable on macOS)
-- **Volumetric sun and moon god rays**, with optional volumetric local lights
+- **Volumetric sun and moon god rays**, with optional volumetric local lights, and a new noise-free **Exact** mode with rays through the clouds and cloud shadows (see below)
+- **GTAO and VBAO ambient occlusion**: much better alternatives to SSAO, with a cinematic quality and directional ambient lighting, selectable in Phototools
+- **Camera motion blur** with adjustable strength, maximum length and quality (Preferences > AyaneStorm)
 - **Procedural sunrise** and sunset horizon lighting, including colored clouds, sky haze and water-horizon fog
 - **Procedural sunset sun** with configurable color, edge feathering, shimmer and halo
 - **Advanced moon rendering** with phases, earthshine, terminator relief, horizon tint and halo
 - **Procedural animated auroras** with configurable appearance and quality
 - **Viewer-local snow** with adjustable flakes, fall speed and distance; flakes react to EEP lighting and briefly settle on solid surfaces
-- **Camera effects** including sun and moon lens flares, a configurable vignette and chromatic aberration
+- **Camera effects** including sun and moon lens flares, a configurable vignette, chromatic aberration and bright-surface bloom
+- **Sun and moon position sliders** in the Environment Effects panel
+- **Inventory Rules**: rulesets that find inventory items or folders by name and move them, send them to Trash or delete them, with a dry run to preview the result (AyaneStorm > Inventory Rules)
+- **Edit Outfit reordering**: move clothing layers to the top or bottom, or drag and drop them
+- **Strong avatar reset** (menu and toolbar button): stops animation control and rebuilds your avatar skeleton, plus a **Restart avatar physics** command
+- **Japanese font support** with Noto Sans JP
 - **Avatar thumbnails** in the Conversations panel, with typing indicators on thumbnails and tab names
 - **Conference blocker**: leave and persistently block an ad-hoc conference so later text, immediate and voice invitations to it are declined automatically; manage blocked conferences from Comm > Blocked Conferences
 - **Nearby Chat range counter**: optionally show how many other avatars are inside the currently selected Whisper, Say or Shout range, with an optional friends count
@@ -94,6 +101,14 @@ Open **Star Settings** (from the toolbar, the menus, or the **Stars** tab of the
 - Untick **Enable AyaneStorm stars** to get the stock sky back.
 
 Star data: Celestial Data (Frohn & Hernangómez, BSD 3-Clause). Milky Way: NASA/Goddard Space Flight Center Scientific Visualization Studio; Gaia DR2: ESA/Gaia/DPAC.
+
+### Volumetric lighting
+
+Open the **Volumetric Lighting** floater and choose a mode:
+
+- **Raymarch**: samples the shadow maps along each view ray, with adjustable ray quality.
+- **Exact (light volumes)**: computes the lit part of each ray from the sun shadow maps, per pixel at full resolution, with no sampling noise or patterns. It reaches out to the last shadow cascade and keeps HDR brightness.
+- In Exact mode, clouds stay fixed in the world instead of following the camera. They cast matching shadows on the ground and on alpha surfaces, and sun rays shine through the gaps between them. Indoors, light through the clouds is scaled by how much sky is visible, so the sun does not leak through roofs.
 
 ## Quick build instructions (for Windows):
 
