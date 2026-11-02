@@ -596,6 +596,8 @@ bool ASVolumetricLighting::loadShaders(S32 shader_level)
                 gASVolumetricCloudApplyProgram.mName = "AS Volumetric Cloud Shadow Apply Shader";
                 gASVolumetricCloudApplyProgram.mFeatures.isDeferred = true;
                 gASVolumetricCloudApplyProgram.mFeatures.hasAmbientOcclusion = true;
+                // shadowUtil + asCloudShadowUtilF: asSkyOpenness().
+                gASVolumetricCloudApplyProgram.mFeatures.hasShadows = true;
                 gASVolumetricCloudApplyProgram.clearPermutations();
                 gASVolumetricCloudApplyProgram.mShaderFiles.clear();
                 gASVolumetricCloudApplyProgram.mShaderFiles.push_back(std::make_pair("deferred/asVolumetricLightV.glsl", GL_VERTEX_SHADER));
@@ -1733,6 +1735,8 @@ void ASVolumetricLighting::renderCloudShadows(LLPipeline& pipeline, LLRenderTarg
     light_target.bindTarget();
     pipeline.bindDeferredShader(program);
     program.bindTexture(LLShaderMgr::DEFERRED_DEPTH, &pipeline.mRT->deferredScreen, true);
+    // asSkyOpenness() orients its disc on the shadow-casting light.
+    program.uniform1i(LLShaderMgr::SUN_UP_FACTOR, isVolumetricSunSource() ? 1 : 0);
 
     // Ambient occlusion of the through-cloud light, from the same source the
     // lighting uses: GTAO (bound on the first appended unit) when effective,
@@ -1749,6 +1753,9 @@ void ASVolumetricLighting::renderCloudShadows(LLPipeline& pipeline, LLRenderTarg
         ao_source = 1;
     }
     program.uniform1i(LLStaticHashedString("as_cloud_ao_source"), ao_source);
+    static LLCachedControl<bool> openness_debug(gSavedSettings,
+        "ASRenderVolumetricLightingCloudOpennessDebug", false);
+    program.uniform1i(LLStaticHashedString("as_cloud_openness_debug"), openness_debug ? 1 : 0);
 
     const S32 cloud_channel = program.mActiveTextureChannels + 1;
     if (!gtao && cloud_channel < gGLManager.mNumTextureImageUnits)

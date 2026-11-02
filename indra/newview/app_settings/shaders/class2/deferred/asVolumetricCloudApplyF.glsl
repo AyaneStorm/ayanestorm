@@ -48,6 +48,9 @@ uniform float as_cloud_diffuse; // sunlight diffused through a full cloud
 // normals (a), as softenLightF.glsl reads it.
 uniform int as_cloud_ao_source;
 uniform sampler2D gtao_visibility_map;
+// ASRenderVolumetricLightingCloudOpennessDebug: write asSkyOpenness() as
+// the sun shadow (opaque surfaces only).
+uniform int as_cloud_openness_debug;
 
 vec4 getPositionWithDepth(vec2 pos_screen, float depth);
 vec4 getNorm(vec2 pos_screen);
@@ -55,6 +58,9 @@ float calcAmbientOcclusion(vec4 pos, vec3 norm, vec2 pos_screen);
 
 // asVolumetricCloudUtilF.glsl
 float cloudTransmittance(vec3 view_pos, float lod);
+// asCloudShadowUtilF.glsl (hasShadows): the through-cloud light stops at
+// roofs (screen-space AO cannot see them).
+float asSkyOpenness(vec3 view_pos);
 
 // Map mip for the shadow edge: ~2 texels (~50 m) of softening, cloud
 // shadows are much less defined than geometry shadows.
@@ -70,6 +76,12 @@ void main()
     }
     vec2 pos_screen = gl_FragCoord.xy / screen_res;
     vec4 pos = getPositionWithDepth(pos_screen, depth);
+    if (as_cloud_openness_debug != 0)
+    {
+        // Debug: the sun shadow becomes the sky openness (lit = open).
+        frag_color = vec4(asSkyOpenness(pos.xyz), 0.0, 0.0, 0.0);
+        return;
+    }
     float transmittance = cloudTransmittance(pos.xyz, CLOUD_SHADOW_LOD);
     if (transmittance >= 1.0)
     {
@@ -87,6 +99,7 @@ void main()
         vec4 gtao = texture(gtao_visibility_map, pos_screen);
         ao = as_cloud_ao_source == 3 ? gtao.a : gtao.r;
     }
-    frag_color = vec4(as_cloud_diffuse * (1.0 - transmittance) * clamp(ao, 0.0, 1.0),
+    frag_color = vec4(as_cloud_diffuse * (1.0 - transmittance) * clamp(ao, 0.0, 1.0) *
+                      asSkyOpenness(pos.xyz),
                       0.0, 0.0, transmittance);
 }

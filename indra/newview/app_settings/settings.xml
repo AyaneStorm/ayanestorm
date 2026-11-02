@@ -13858,6 +13858,19 @@ Change of this parameter will affect the layout of buttons in notification toast
       <key>Backup</key>
       <integer>0</integer>
     </map>
+    <key>ASRenderVolumetricLightingCloudOpennessDebug</key>
+    <map>
+      <key>Comment</key>
+      <string>Exact volumetric mode, development aid: replaces the sun shadow of opaque surfaces with the sky openness that limits the light through clouds (lit = open to the sky, dark = covered). Needs clouds in the sky.</string>
+      <key>Persist</key>
+      <integer>0</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+      <key>Backup</key>
+      <integer>0</integer>
+    </map>
     <key>ASCloudLayerHeight</key>
     <map>
       <key>Comment</key>

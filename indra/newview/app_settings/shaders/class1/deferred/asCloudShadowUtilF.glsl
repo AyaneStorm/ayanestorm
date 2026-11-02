@@ -64,12 +64,79 @@ float asCloudTransmittance(vec3 view_pos)
     return textureLod(as_cloud_map, uv, AS_CLOUD_SHADOW_LOD).r;
 }
 
+// shadowUtil.glsl (always attached with this file, hasShadows).
+float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
+uniform vec3 sun_dir;
+uniform vec3 moon_dir;
+uniform int sun_up_factor;
+uniform vec2 screen_res;
+uniform mat4 shadow_matrix[6];
+uniform vec4 shadow_clip;
+
+// A sun cascade covers this view position: in front of the camera, before
+// the last split, inside the selected cascade's map. Outside, the lookup
+// returns "lit" whatever is there (camera close to a wall or an avatar
+// indoors: openness points behind the camera or off screen).
+bool asSunShadowCovered(vec3 view_pos)
+{
+    if (view_pos.z >= 0.0 || view_pos.z <= -shadow_clip.w)
+    {
+        return false;
+    }
+    int cascade = view_pos.z > -shadow_clip.x ? 0 :
+                  view_pos.z > -shadow_clip.y ? 1 :
+                  view_pos.z > -shadow_clip.z ? 2 : 3;
+    vec4 lpos = shadow_matrix[cascade] * vec4(view_pos, 1.0);
+    vec2 uv = lpos.xy / lpos.w;
+    return all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)));
+}
+
+// Radius (metres) of the disc whose sun visibility stands for how open a
+// point is to the cloud-lit sky: wider than an avatar's or a branch's
+// shadow, smaller than a room.
+const float AS_SKY_OPENNESS_RADIUS = 3.0;
+
+// Mean sun visibility over a disc around view_pos, perpendicular to the
+// light (8 points on two rings, the point itself excluded). Under a roof or
+// a dense canopy the whole disc is shadowed (0); on open ground a small
+// shadow covers little of it (~1). norm = light: no normal offset. Points
+// no cascade covers are skipped; none covered: the point's own shadow.
+float asSkyOpenness(vec3 view_pos)
+{
+    vec3 light = normalize(sun_up_factor == 1 ? sun_dir : moon_dir);
+    vec3 helper = abs(light.y) < 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+    vec3 axis_a = normalize(cross(light, helper));
+    vec3 axis_b = cross(light, axis_a);
+    vec2 pos_screen = gl_FragCoord.xy / screen_res;
+    float sum = 0.0;
+    float count = 0.0;
+    for (int i = 0; i < 8; ++i)
+    {
+        float angle = float(i) * 0.78539816;
+        float radius = (i & 1) == 0 ? AS_SKY_OPENNESS_RADIUS : 0.5 * AS_SKY_OPENNESS_RADIUS;
+        vec3 sample_pos = view_pos + radius * (cos(angle) * axis_a + sin(angle) * axis_b);
+        if (asSunShadowCovered(sample_pos))
+        {
+            sum += sampleDirectionalShadow(sample_pos, light, pos_screen);
+            count += 1.0;
+        }
+    }
+    return count > 0.0 ? sum / count : sampleDirectionalShadow(view_pos, light, pos_screen);
+}
+
 // Sun shadow under the clouds: a cloud dims the direct sun like a sun
 // shadow; the light it still lets through (as_cloud_diffuse) comes from the
-// whole cloud and ignores the sun shadow. The opaque scene also occludes it
-// with ambient occlusion (asVolumetricCloudApplyF.glsl); these forward
-// surfaces have none, so ao = 1.
+// whole cloud and ignores the sun shadow, but not a roof: it is scaled by
+// asSkyOpenness() (indoors it relit everything with direct sun). The opaque
+// scene also occludes it with ambient occlusion
+// (asVolumetricCloudApplyF.glsl); these forward surfaces have none.
 float asCloudSunShadow(float shadow, vec3 view_pos)
 {
-    return mix(as_cloud_diffuse, shadow, asCloudTransmittance(view_pos));
+    float transmittance = asCloudTransmittance(view_pos);
+    if (transmittance >= 1.0)
+    {
+        return shadow;
+    }
+    return shadow * transmittance +
+           as_cloud_diffuse * (1.0 - transmittance) * asSkyOpenness(view_pos);
 }

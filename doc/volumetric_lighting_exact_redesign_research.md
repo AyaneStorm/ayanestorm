@@ -893,6 +893,37 @@ Check: frozen clouds, walk east, overhead clouds slide west (else a sign is
 off); region crossing no jump; debug 4 shadows stay put; cloud in front of
 the sun matches the user's shadow after 1 km; height 500 vs 2000.
 
+### Indoor sun leak under clouds (unbuilt fix, 2026-11-02)
+
+User: indoors, with clouds over the sun, avatars get harsh sun highlights
+and a hard lit/unlit split (not local lights). Gone with
+ASRenderVolumetricLightingCloudThickness 50 (diffuse ~0) or no cloud over
+the sun. Cause: the through-cloud light d (1 - T) ignores the sun shadow by
+design (overcast: shadows vanish on open ground) and was only occluded by
+screen-space AO (opaque) or nothing (forward alpha, e.g. alpha-blended
+mesh bodies), neither of which sees a roof, so it relit interiors with
+direct sun (d ~ 0.5 at coverage 0.1).
+
+Fix: sky openness, `asSkyOpenness()` in asCloudShadowUtilF.glsl = mean
+`sampleDirectionalShadow()` over 8 points on two rings (3 m and 1.5 m) in
+the disc perpendicular to the light, point itself excluded, norm = light
+(no normal offset). Roof or dense canopy: ~0; open ground with an avatar
+or branch shadow: ~1. The through-cloud term is scaled by it in
+`asCloudSunShadow()` (forward) and asVolumetricCloudApplyF.glsl (opaque;
+the apply program now has hasShadows, and gets sun_up_factor). Only for
+pixels under a cloud (T < 1). Cost there: 8 directional shadow lookups.
+
+Built result: indoor leak still there sometimes (gone with volumetric
+off). Outdoors the harsh shadows are vanilla (same with volumetric off).
+Suspect: ring points no cascade covers (behind the camera with a close
+indoor camera, off screen, beyond the last split) read "lit"
+(`sampleDirectionalShadow()` outside the map). Fix (unbuilt):
+`asSunShadowCovered()` (view z in (-shadow_clip.w, 0), selected cascade's
+uv in [0, 1]); uncovered points skipped, none covered -> the point's own
+shadow. Diagnostic: `ASRenderVolumetricLightingCloudOpennessDebug`
+(persist 0) writes the openness as the sun shadow of opaque surfaces (lit =
+open). Needs clouds in the sky.
+
 ### Cloud ray strength default (2026-11-02)
 
 User: `ASRenderVolumetricLightingCloudRayStrength` default 25 (was 1). The
