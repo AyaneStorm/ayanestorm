@@ -70,10 +70,16 @@ public:
         /*virtual*/ bool processRequest();
         /*virtual*/ void finishRequest(bool completed);
         /*virtual*/ void deleteRequest();
+        // <AS:Chanayane> authored by Trish (trish-sl): per worker retry delay
+        /*virtual*/ U32 getRetryDelayMs() const { return mRetryDelayMs; }
+        // </AS:Chanayane>
 
     private:
         LLWorkerClass* mWorkerClass;
         S32 mParam;
+        // <AS:Chanayane> authored by Trish (trish-sl): captured in processRequest(), while the worker is known to be alive
+        U32 mRetryDelayMs = 16;
+        // </AS:Chanayane>
     };
 
 protected:
@@ -139,6 +145,10 @@ public:
 
     // pure virtual, called from WORKER THREAD, returns true if done
     virtual bool doWork(S32 param)=0; // Called from WorkRequest::processRequest()
+    // <AS:Chanayane> authored by Trish (trish-sl): virtual, how long to wait before calling doWork()
+    // again after it returned false. Called from WorkRequest::processRequest() (WORK THREAD), right after doWork().
+    virtual U32 getRetryDelayMs() { return 16; }
+    // </AS:Chanayane>
     // virtual, called from finishRequest() after completed or aborted
     virtual void finishWork(S32 param, bool completed); // called from finishRequest() (WORK THREAD)
     // virtual, returns true if safe to delete the worker

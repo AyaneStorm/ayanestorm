@@ -385,6 +385,9 @@ public:
 
     // Threads:  Ttf
     /*virtual*/ void finishWork(S32 param, bool completed); // called from finishRequest() (WORK THREAD)
+    // <AS:Chanayane> authored by Trish (trish-sl): workers that are only waiting ask to be polled less often
+    /*virtual*/ U32 getRetryDelayMs(); // called from processRequest() (WORK THREAD)
+    // </AS:Chanayane>
 
     // Threads:  Tmain
     /*virtual*/ bool deleteOK(); // called from update()
@@ -465,6 +468,14 @@ private:
     // Locks:  Mw
     void resetFormattedData();
 
+    // <AS:Chanayane> authored by Trish (trish-sl): a worker can retain an HTTP slot while
+    // re-resolving its texture capability after a region change. Release it while the capability
+    // is unavailable; WAIT_HTTP_RESOURCE will reacquire one before the retry.
+    // Threads: Ttf
+    // Locks: Mw
+    void releaseHttpSemaphoreForCapabilityWait();
+    // </AS:Chanayane>
+
     // get the relative priority of this worker (should map to max virtual size)
     F32 getImagePriority() const;
 
@@ -526,6 +537,14 @@ private:
     void releaseHttpSemaphore()
         {
             llassert(mHttpHasResource);
+            // <AS:Chanayane> authored by Trish (trish-sl): releasing a slot this worker does not
+            // hold would undercount every other worker's and eventually trip the assert below.
+            // Debug builds still flag it.
+            if (!mHttpHasResource)
+            {
+                return;
+            }
+            // </AS:Chanayane>
             mHttpHasResource = false;
             mFetcher->mHttpSemaphore--;
             llassert_always(mFetcher->mHttpSemaphore >= 0);
@@ -1125,6 +1144,56 @@ F32 LLTextureFetchWorker::getImagePriority() const
     return mImagePriority;
 }
 
+// <AS:Chanayane> authored by Trish (trish-sl)
+// Threads:  Ttf
+//
+// Every incomplete worker is re-run on a timer. At the default 16 ms, the thousands of requests
+// parked after a teleport each ran ~60 times a second just to find nothing had changed, and they
+// share a time-ordered queue with commonUpdate() -- which delivers the HTTP completions and
+// releases the waiters everyone is waiting on. Workers that are only waiting ask for less.
+U32 LLTextureFetchWorker::getRetryDelayMs()
+{
+    static const U32 DEFAULT_DELAY_MS = 16;
+    // Moved on only by releaseHttpWaiters(); the HTTP layer holds a few requests of buffer
+    // beyond what it runs, so this much latency on the hand-off does not idle a connection.
+    static const U32 HTTP_RESOURCE_WAIT_DELAY_MS = 50;
+    // Capability waits are measured in seconds.
+    static const U32 TIMED_WAIT_MAX_DELAY_MS = 250;
+
+    LLMutexLock lock(&mWorkMutex);                                      // +Mw
+
+    if (mState == WAIT_HTTP_RESOURCE2)
+    {
+        return HTTP_RESOURCE_WAIT_DELAY_MS;
+    }
+
+    if (mState > CACHE_POST && !mCanUseCapability && mCanUseHTTP && !mRegionRetryTimer.hasExpired())
+    {
+        return TIMED_WAIT_MAX_DELAY_MS;
+    }
+
+    return DEFAULT_DELAY_MS;
+}
+
+// Threads: Ttf
+// Locks: Mw
+void LLTextureFetchWorker::releaseHttpSemaphoreForCapabilityWait()
+{
+    if (!mHttpHasResource)
+    {
+        return;
+    }
+
+    // Capability resolution happens after a completed request has returned to
+    // LOAD_FROM_NETWORK. Never release a slot that belongs to a live request.
+    llassert(!mHttpActive);
+    if (!mHttpActive)
+    {
+        releaseHttpSemaphore();
+    }
+}
+// </AS:Chanayane>
+
 // Threads:  Tmain
 void LLTextureFetchWorker::startWork(S32 param)
 {
@@ -1156,13 +1225,41 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
     if (mImagePriority < F_ALMOST_ZERO)
     {
-        // <FS:Ansariel> OpenSim compatibility
-        //if (mState == INIT || mState == LOAD_FROM_NETWORK)
-        if (mState == INIT || mState == LOAD_FROM_NETWORK || mState == LOAD_FROM_SIMULATOR)
-        // </FS:Ansariel>
+        // <AS:Chanayane> authored by Trish (trish-sl): a texture can lose all visible interest while
+        // it is waiting for an HTTP slot. Leaving it in WAIT_HTTP_RESOURCE2 keeps it in the global
+        // fetch map and lets a departed region's requests accumulate behind the HTTP high-water mark.
+        // Do not abort an active HTTP request here. Its callback still owns this worker and will
+        // release the slot when it completes.
+        //// <FS:Ansariel> OpenSim compatibility
+        ////if (mState == INIT || mState == LOAD_FROM_NETWORK)
+        //if (mState == INIT || mState == LOAD_FROM_NETWORK || mState == LOAD_FROM_SIMULATOR)
+        //// </FS:Ansariel>
+        if (mState == INIT || mState == LOAD_FROM_NETWORK || mState == LOAD_FROM_SIMULATOR ||
+            mState == WAIT_HTTP_RESOURCE || mState == WAIT_HTTP_RESOURCE2 ||
+            mState == SEND_HTTP_REQ)
+        // </AS:Chanayane>
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - priority < 0"); //<FS:Beq/> fix incorrect category
             LL_DEBUGS(LOG_TXT) << mID << " abort: mImagePriority < F_ALMOST_ZERO" << LL_ENDL;
+            // <AS:Chanayane> authored by Trish (trish-sl): give back the waiter entry and the slot.
+            // Returning true ends the work item but leaves mState where it was. If demand comes
+            // back, createRequest()/setDesiredDiscard() re-add work without resetting a mid-HTTP
+            // state, so the worker would resume in WAIT_HTTP_RESOURCE2 without being in the
+            // waiter set (idle forever), or in SEND_HTTP_REQ without a slot. Rewind to the point
+            // that re-acquires both.
+            if (mState == WAIT_HTTP_RESOURCE2)
+            {
+                mFetcher->removeHttpWaiter(mID);
+            }
+            if (mHttpHasResource && !mHttpActive)
+            {
+                releaseHttpSemaphore();
+            }
+            if (mState == WAIT_HTTP_RESOURCE || mState == WAIT_HTTP_RESOURCE2 || mState == SEND_HTTP_REQ)
+            {
+                setState(LOAD_FROM_NETWORK);
+            }
+            // </AS:Chanayane>
             return true; // abort
         }
     }
@@ -1421,6 +1518,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 else
                 {
                     mCanUseCapability = false;
+                    releaseHttpSemaphoreForCapabilityWait(); // <AS:Chanayane/> authored by Trish (trish-sl): no slot held during capability wait
                     if (gDisconnected || LLAppViewer::isExiting())
                     {
                         // We lost connection or are shutting down.
@@ -1439,6 +1537,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
             else
             {
                 mCanUseCapability = false;
+                releaseHttpSemaphoreForCapabilityWait(); // <AS:Chanayane/> authored by Trish (trish-sl): no slot held during capability wait
                 if (gDisconnected || LLAppViewer::isExiting())
                 {
                     // We lost connection or are shutting down.
@@ -1568,6 +1667,15 @@ bool LLTextureFetchWorker::doWork(S32 param)
     if (mState == WAIT_HTTP_RESOURCE2)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - WAIT_HTTP_RESOURCE2"); //<FS:Beq/> fix incorrect category
+        // <AS:Chanayane> authored by Trish (trish-sl): only releaseHttpWaiters() moves a worker on
+        // from here, and it only looks at the waiter set. A worker that reached this state any other
+        // way would idle forever, holding its texture in mIsFetching; send it back to queue properly.
+        if (!mFetcher->isHttpWaiter(mID))
+        {
+            setState(WAIT_HTTP_RESOURCE);
+            return false;
+        }
+        // </AS:Chanayane>
         // Just idle it if we make it to the head...
         return false;
     }
@@ -1577,6 +1685,16 @@ bool LLTextureFetchWorker::doWork(S32 param)
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("tfwdw - SEND_HTTP_REQ"); //<FS:Beq/> fix incorrect category
         // Also used in llmeshrepository
         static LLCachedControl<bool> disable_range_req(gSavedSettings, "HttpRangeRequestsDisable", false);
+
+        // <AS:Chanayane> authored by Trish (trish-sl): every legitimate way here holds a slot
+        // (WAIT_HTTP_RESOURCE acquires one, and releaseHttpWaiters() acquires before advancing).
+        // Without one, queue for it rather than oversubscribe.
+        if (!mHttpHasResource)
+        {
+            setState(WAIT_HTTP_RESOURCE);
+            return false;
+        }
+        // </AS:Chanayane>
 
         if (! mCanUseHTTP)
         {
@@ -1739,6 +1857,12 @@ bool LLTextureFetchWorker::doWork(S32 param)
                             mUrl.clear();
                             ++mRetryAttempt;
                             mLastRegionId.setNull();
+                            // <AS:Chanayane> authored by Trish (trish-sl): give the slot back for the
+                            // trip through INIT: the cache read that follows needs none, and may
+                            // satisfy the request outright, in which case the slot was held until this
+                            // worker was destroyed. WAIT_HTTP_RESOURCE acquires a fresh one if needed.
+                            releaseHttpSemaphore();
+                            // </AS:Chanayane>
                             setState(INIT);
                             return false;
                         }
@@ -1773,6 +1897,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                             mUrl.clear();
                             ++mRetryAttempt;
                             mLastRegionId.setNull();
+                            releaseHttpSemaphore(); // <AS:Chanayane/> authored by Trish (trish-sl): see the 404 case above
                             setState(INIT);
                             return false;
                         }
@@ -4008,8 +4133,16 @@ void LLTextureFetch::releaseHttpWaiters()
     LL_PROFILE_ZONE_SCOPED;
     // Use mHttpSemaphore rather than mHTTPTextureQueue.size()
     // to avoid a lock.
-    if (mHttpSemaphore >= mHttpLowWater)
+    // <AS:Chanayane> authored by Trish (trish-sl): refill once an eighth of the slots are free
+    // rather than waiting for usage to fall below the low-water mark. This runs once per update,
+    // so the old gate let up to half the pipe sit idle between refills -- most visible right after
+    // a teleport. A small batch threshold still keeps the sort below from running for one slot.
+    //if (mHttpSemaphore >= mHttpLowWater)
+    //    return;
+    const S32 refill_batch = llmax(4, mHttpHighWater / 8);
+    if (mHttpHighWater - mHttpSemaphore < refill_batch)
         return;
+    // </AS:Chanayane>
     S32 needed(mHttpHighWater - mHttpSemaphore);
     if (needed <= 0)
     {
@@ -4040,7 +4173,12 @@ void LLTextureFetch::releaseHttpWaiters()
     // ordering assumption of std::set, std::map, etc. so we
     // don't use those containers.  We use a vector and an explicit
     // sort to keep the containers valid later.
-    typedef std::vector<LLTextureFetchWorker *> worker_list_t;
+    // <AS:Chanayane> authored by Trish (trish-sl): the main thread can change priorities while we
+    // sort. Snapshot each one under its worker lock so the comparator has a stable ordering.
+    //typedef std::vector<LLTextureFetchWorker *> worker_list_t;
+    typedef std::pair<F32, LLTextureFetchWorker*> prioritized_worker_t;
+    typedef std::vector<prioritized_worker_t> worker_list_t;
+    // </AS:Chanayane>
     worker_list_t tids2;
 
     tids2.reserve(tids.size());
@@ -4051,7 +4189,12 @@ void LLTextureFetch::releaseHttpWaiters()
         LLTextureFetchWorker * worker(getWorker(* iter));
         if (worker)
         {
-            tids2.push_back(worker);
+            // <AS:Chanayane> authored by Trish (trish-sl): priority snapshot
+            //tids2.push_back(worker);
+            worker->lockWorkMutex();
+            tids2.emplace_back(worker->mImagePriority, worker);
+            worker->unlockWorkMutex();
+            // </AS:Chanayane>
         }
         else
         {
@@ -4068,7 +4211,13 @@ void LLTextureFetch::releaseHttpWaiters()
     // Sort into priority order, if necessary and only as much as needed
     if (tids2.size() > needed)
     {
-        LLTextureFetchWorker::Compare compare;
+        // <AS:Chanayane> authored by Trish (trish-sl): sort on the priority snapshot
+        //LLTextureFetchWorker::Compare compare;
+        auto compare = [](const prioritized_worker_t& lhs, const prioritized_worker_t& rhs)
+        {
+            return lhs.first > rhs.first;
+        };
+        // </AS:Chanayane>
         std::partial_sort(tids2.begin(), tids2.begin() + needed, tids2.end(), compare);
     }
 
@@ -4079,9 +4228,20 @@ void LLTextureFetch::releaseHttpWaiters()
     // has moved any worker state around....
     for (worker_list_t::iterator iter2(tids2.begin()); tids2.end() != iter2; ++iter2)
     {
-        LLTextureFetchWorker * worker(* iter2);
+        // <AS:Chanayane> authored by Trish (trish-sl): priority snapshot
+        //LLTextureFetchWorker * worker(* iter2);
+        LLTextureFetchWorker* worker = iter2->second;
+        // </AS:Chanayane>
 
         worker->lockWorkMutex();                                        // +Mw
+        // <AS:Chanayane> authored by Trish (trish-sl): let doWork take its low-interest abort path
+        // without allocating a network slot in the meantime.
+        if (worker->mImagePriority < F_ALMOST_ZERO)
+        {
+            worker->unlockWorkMutex();
+            continue;
+        }
+        // </AS:Chanayane>
         if (LLTextureFetchWorker::WAIT_HTTP_RESOURCE2 != worker->mState)
         {
             // Not in expected state, remove it, try the next one

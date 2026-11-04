@@ -62,6 +62,10 @@
 #include "llviewerdisplay.h"
 #include "llviewerwindow.h"
 #include "llprogressview.h"
+// <AS:Chanayane> authored by Trish (trish-sl): animated texture resolution
+#include "llviewertextureanim.h"
+#include "llvovolume.h"
+// </AS:Chanayane>
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -989,6 +993,18 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                     LLViewerObject* objp = face->getViewerObject();
                     const LLTextureEntry* te = (te_offset < 0 || te_offset >= objp->getNumTEs()) ? nullptr : objp->getTE(te_offset);
                     F32 min_scale = te ? llmin(fabsf(te->getScaleS()), fabsf(te->getScaleT())) : 1.f;
+                    // <AS:Chanayane> authored by Trish (trish-sl): a flipbook texture animation shows one
+                    // frame at a time, its frame size replaces the face repeats for resolution
+                    if (te && objp->getPCode() == LL_PCODE_VOLUME)
+                    {
+                        const LLViewerTextureAnim* anim = static_cast<LLVOVolume*>(objp)->mTextureAnimp;
+                        if (anim && (anim->mMode & LLTextureAnim::ON) && !(anim->mMode & (LLTextureAnim::ROTATE | LLTextureAnim::SCALE))
+                            && anim->mSizeX && anim->mSizeY && (anim->mFace < 0 || anim->mFace == te_offset))
+                        {
+                            min_scale = llmin(1.f / anim->mSizeX, 1.f / anim->mSizeY);
+                        }
+                    }
+                    // </AS:Chanayane>
                     min_scale = llclamp(min_scale * min_scale, texture_scale_min(), texture_scale_max());
                     vsize /= min_scale;
 

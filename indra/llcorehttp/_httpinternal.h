@@ -131,7 +131,11 @@ constexpr int HTTP_RETRY_COUNT_DEFAULT = 5;
 constexpr int HTTP_RETRY_COUNT_MIN = 0;
 constexpr int HTTP_RETRY_COUNT_MAX = 100;
 constexpr HttpTime HTTP_RETRY_BACKOFF_MIN_DEFAULT = 1000000UL; // 1 sec
-constexpr HttpTime HTTP_RETRY_BACKOFF_MAX_DEFAULT = 50000006UL; // 5 sec
+// <AS:Chanayane> authored by Trish (trish-sl): a digit slipped in the constexpr conversion of 5E6L,
+// making it 50 s, clamped to 20 s.
+//constexpr HttpTime HTTP_RETRY_BACKOFF_MAX_DEFAULT = 50000006UL; // 5 sec
+constexpr HttpTime HTTP_RETRY_BACKOFF_MAX_DEFAULT = 5000000UL; // 5 sec
+// </AS:Chanayane>
 constexpr HttpTime HTTP_RETRY_BACKOFF_MAX = 20000000UL; // 20 sec
 
 constexpr int HTTP_REDIRECTS_DEFAULT = 10;

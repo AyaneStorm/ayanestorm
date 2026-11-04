@@ -34,6 +34,8 @@
 
 #include "llworkerthread.h"
 
+#include <unordered_map> // <AS:Chanayane/> authored by Trish (trish-sl)
+
 class LLImageFormatted;
 class LLTextureCacheWorker;
 class LLImageRaw;
@@ -173,6 +175,11 @@ private:
     S32 openAndReadEntry(const LLUUID& id, Entry& entry, bool create);
     bool updateEntry(S32& idx, Entry& entry, S32 new_image_size, S32 new_body_size);
     void updateEntryTimeStamp(S32 idx, Entry& entry) ;
+    // <AS:Chanayane> authored by Trish (trish-sl): in-memory entry time and image size
+    void setEntryTime(S32 idx, U32 time);
+    void setEntryInfo(S32 idx, const Entry& entry);
+    bool getEntryInfo(const LLUUID& id, S32 idx, Entry& entry);
+    // </AS:Chanayane>
     U32 openAndReadEntries(std::vector<Entry>& entries);
     void writeEntriesAndClose(const std::vector<Entry>& entries);
     void readEntryFromHeaderImmediately(S32& idx, Entry& entry) ;
@@ -227,7 +234,10 @@ private:
     EntriesInfo mHeaderEntriesInfo;
     std::set<S32> mFreeList; // deleted entries
     std::set<LLUUID> mLRU;
-    typedef std::map<LLUUID, S32> id_map_t;
+    // <AS:Chanayane> authored by Trish (trish-sl): hashed lookup, order is never relied on
+    //typedef std::map<LLUUID, S32> id_map_t;
+    typedef std::unordered_map<LLUUID, S32> id_map_t;
+    // </AS:Chanayane>
     id_map_t mHeaderIDMap;
 
     LLAPRFile*   mFastCachep;
@@ -236,13 +246,25 @@ private:
 
     // BODIES (TEXTURES minus headers)
     std::string mTexturesDirName;
-    typedef std::map<LLUUID,S32> size_map_t;
+    // <AS:Chanayane> authored by Trish (trish-sl): hashed lookup, order is never relied on
+    //typedef std::map<LLUUID,S32> size_map_t;
+    typedef std::unordered_map<LLUUID, S32> size_map_t;
+    // </AS:Chanayane>
     size_map_t mTexturesSizeMap;
     S64 mTexturesSizeTotal;
     LLAtomicBool mDoPurge;
 
     typedef std::map<S32, Entry> idx_entry_map_t;
     idx_entry_map_t mUpdatedEntryMap;
+    // <AS:Chanayane> authored by Trish (trish-sl): Entry::mTime and Entry::mImageSize by header
+    // index, to avoid reading the entries file for every cache lookup. Guarded by mHeaderMutex.
+    struct EntryInfo
+    {
+        U32 mTime = 0;
+        S32 mImageSize = -1; // unknown, read the entry from the file
+    };
+    std::vector<EntryInfo> mEntryInfos;
+    // </AS:Chanayane>
     typedef std::vector<std::pair<S32, Entry> > idx_entry_vector_t;
     idx_entry_vector_t mPurgeEntryList;
 

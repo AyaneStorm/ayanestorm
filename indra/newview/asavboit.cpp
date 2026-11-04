@@ -737,18 +737,53 @@ void ASAVBOIT::unloadShaders()
     unloadMaterialShaders();
 }
 
+// Requires the complete family. The loader compiles it over several frames, and
+// capture must not start while any member is missing: a compiled static material
+// program already points mRiggedVariant at its rigged twin, and binding that
+// uncompiled twin (or an uncompiled GLTF variant) asserts in LLGLSLShader::bind.
 bool ASAVBOIT::shadersReady()
 {
-    return gASAVBOITVolumeProgram.mProgramObject &&
-        gASAVBOITResolveProgram.mProgramObject &&
-        gASAVBOITEarlyDepthProgram.mProgramObject &&
-        gASAVBOITBoundsProgram.mProgramObject &&
-        gASAVBOITSkinnedBoundsProgram.mProgramObject &&
-        gASAVBOITAlphaProgram.mProgramObject &&
-        gASAVBOITPBRAlphaProgram.mProgramObject &&
-        gASAVBOITFullbrightAlphaProgram.mProgramObject &&
-        gASAVBOITEmissiveProgram.mProgramObject &&
-        gASAVBOITPBRGlowProgram.mProgramObject;
+    if (!(gASAVBOITVolumeProgram.mProgramObject &&
+          gASAVBOITResolveProgram.mProgramObject &&
+          gASAVBOITEarlyDepthProgram.mProgramObject &&
+          gASAVBOITIsolateDepthProgram.mProgramObject &&
+          gASAVBOITCellDepthProgram.mProgramObject &&
+          gASAVBOITBoundsProgram.mProgramObject &&
+          gASAVBOITSkinnedBoundsProgram.mProgramObject &&
+          gASAVBOITAlphaProgram.mProgramObject &&
+          gASAVBOITSkinnedAlphaProgram.mProgramObject &&
+          gASAVBOITPBRAlphaProgram.mProgramObject &&
+          gASAVBOITSkinnedPBRAlphaProgram.mProgramObject &&
+          gASAVBOITFullbrightAlphaProgram.mProgramObject &&
+          gASAVBOITSkinnedFullbrightAlphaProgram.mProgramObject &&
+          gASAVBOITEmissiveProgram.mProgramObject &&
+          gASAVBOITSkinnedEmissiveProgram.mProgramObject &&
+          gASAVBOITPBRGlowProgram.mProgramObject &&
+          gASAVBOITSkinnedPBRGlowProgram.mProgramObject))
+    {
+        return false;
+    }
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
+    {
+        if ((i & 0x3u) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND &&
+            !gASAVBOITMaterialAlphaProgram[i].mProgramObject)
+        {
+            return false;
+        }
+    }
+    if (gASAVBOITGLTFProgram.mGLTFVariants.size() !=
+        gGLTFPBRMetallicRoughnessProgram.mGLTFVariants.size())
+    {
+        return false;
+    }
+    for (const LLGLSLShader& variant : gASAVBOITGLTFProgram.mGLTFVariants)
+    {
+        if (!variant.mProgramObject)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 void ASAVBOIT::beginFrame()

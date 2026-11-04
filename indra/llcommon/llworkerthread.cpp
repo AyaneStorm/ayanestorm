@@ -183,6 +183,13 @@ bool LLWorkerThread::WorkRequest::processRequest()
     LLWorkerClass* workerclass = getWorkerClass();
     workerclass->setWorking(true);
     bool complete = workerclass->doWork(getParam());
+    // <AS:Chanayane> authored by Trish (trish-sl): ask for the retry delay before clearing the
+    // working flag, once it is clear the worker may be deleted.
+    if (!complete)
+    {
+        mRetryDelayMs = workerclass->getRetryDelayMs();
+    }
+    // </AS:Chanayane>
     workerclass->setWorking(false);
     return complete;
 }
