@@ -5,6 +5,8 @@ Goal: an **optional** Vulkan renderer in AyaneStorm, OpenGL renderer kept as def
 
 **Decision 2026-10-17: deferred.** Slipstream is still in very active development; revisit once it stabilizes (commit rate drops, tagged releases, no more large refactors). Re-check the facts below against their tree at that time.
 
+**Decision 2026-11-05: AyaneStorm's own renderer.** Slipstream will not be imported: it is too slow for the goal and has no macOS support. The new renderer is AyaneStorm's own code, stays optional beside OpenGL so Firestorm merges keep working, and must run on macOS. Keep the LGPL licence, FMOD and Kakadu.
+
 ## 1. What Slipstream did
 
 - Base: Alchemy (LL viewer + SDL3 windowing on all platforms). Linux-first; Windows is cross-compiled with clang-cl + xwin.
