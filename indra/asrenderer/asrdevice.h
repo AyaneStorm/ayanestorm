@@ -1,14 +1,17 @@
 /**
  * asrdevice.h
  * The renderer's connection to the GPU: one interface, with a Vulkan backend on
- * Windows and a native Metal backend on macOS. For now it only draws the test
- * triangle. P2 grows it into the full backend layer of section 2 of
+ * Windows and a native Metal backend on macOS. It draws the UI and the test
+ * triangle so far, and grows into the full backend layer of section 2 of
  * doc/ayanestorm-new-renderer-plan.md. Create it on one thread and use it on
- * another if needed, but only one thread may use it at a time.
+ * another if needed, but only one thread may use it at a time, apart from
+ * textures().
  */
 #pragma once
 
 #include "asrmemorybudget.h"
+#include "asrtexturequeue.h"
+#include "asruilist.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -49,6 +52,16 @@ struct ProbeResult
     DeviceInfo info;
 };
 
+// One frame's work.
+struct FrameInput
+{
+    uint32_t width = 0; // in pixels; a change of size recreates what depends on it
+    uint32_t height = 0;
+    float seconds = 0.f;
+    bool testTriangle = false;
+    const UIList* ui = nullptr; // drawn on top; stays valid during the call
+};
+
 class Device
 {
 public:
@@ -71,10 +84,12 @@ public:
     // follows what other applications are using.
     virtual void refreshMemoryBudget() = 0;
 
-    // Draws and presents one frame. Sizes are in pixels; a change of size
-    // recreates what depends on it. Returns false on an unrecoverable error,
+    // The one part of a device the main thread may use while the render thread runs.
+    TextureQueue& textures() { return mTextures; }
+
+    // Draws and presents one frame. Returns false on an unrecoverable error,
     // described by lastError().
-    virtual bool renderTestFrame(uint32_t width, uint32_t height, float seconds) = 0;
+    virtual bool renderFrame(const FrameInput& input) = 0;
 
     virtual const std::string& lastError() const = 0;
 
@@ -88,6 +103,7 @@ protected:
     }
 
     MemoryBudget mMemoryBudget;
+    TextureQueue mTextures;
     uint64_t mMemoryCapBytes = 0;
 };
 

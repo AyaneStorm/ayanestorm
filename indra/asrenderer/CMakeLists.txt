@@ -18,15 +18,16 @@ set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
 # --- Portable code, built on every platform. ---------------------------------
 find_package(Threads REQUIRED)
-add_library(asrenderer STATIC asrmemorybudget.cpp asrrenderthread.cpp asrscenefile.cpp)
+add_library(asrenderer STATIC asrmemorybudget.cpp asrrenderthread.cpp asrscenefile.cpp
+    asrtexturequeue.cpp asruilist.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(asrenderer PUBLIC Threads::Threads)
 
 # --- Graphics backend. Linux gets its surface code with the P8 Linux pass. ---
 if(WIN32)
-    target_sources(asrenderer PRIVATE asrdevicevulkan.cpp ${ASR_THIRD_PARTY}/volk/volk.c)
+    target_sources(asrenderer PRIVATE asrdevicevulkan.cpp asrvma.cpp ${ASR_THIRD_PARTY}/volk/volk.c)
     target_include_directories(asrenderer PRIVATE
-        ${ASR_THIRD_PARTY}/volk ${ASR_THIRD_PARTY}/vulkan-headers/include)
+        ${ASR_THIRD_PARTY}/volk ${ASR_THIRD_PARTY}/vma ${ASR_THIRD_PARTY}/vulkan-headers/include)
     target_compile_definitions(asrenderer PRIVATE VK_USE_PLATFORM_WIN32_KHR ASR_HAS_DEVICE)
 elseif(APPLE)
     target_sources(asrenderer PRIVATE asrdevicemetal.mm)
@@ -92,7 +93,7 @@ function(asr_add_shader source outputs_var)
 endfunction()
 
 set(ASR_SHADER_OUTPUTS)
-foreach(shader asrTestTriangleV asrTestTriangleF)
+foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})

@@ -53,6 +53,12 @@ void RenderThread::publishState()
     mState.publish();
 }
 
+void RenderThread::publishUI()
+{
+    mUI.writeSlot().generation = ++mUIGeneration;
+    mUI.publish();
+}
+
 FrameStats RenderThread::takeStats()
 {
     FrameStats stats;
@@ -80,8 +86,13 @@ void RenderThread::run()
         }
 
         const Clock::time_point frameStart = Clock::now();
-        const float seconds = std::chrono::duration<float>(frameStart - start).count();
-        if (!mDevice.renderTestFrame(state.width, state.height, seconds))
+        FrameInput input;
+        input.width = state.width;
+        input.height = state.height;
+        input.seconds = std::chrono::duration<float>(frameStart - start).count();
+        input.testTriangle = state.testTriangle;
+        input.ui = &mUI.read();
+        if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();
             mFailed.store(true, std::memory_order_release);

@@ -19,12 +19,13 @@
 namespace asr
 {
 
-// What the main thread hands over. Later phases add the camera, motion and UI.
+// What the main thread hands over. Later phases add the camera and motion.
 struct FrameState
 {
     std::chrono::steady_clock::time_point published{};
     uint32_t width = 0; // drawable size in pixels
     uint32_t height = 0;
+    bool testTriangle = false;
 };
 
 struct FrameStats
@@ -50,6 +51,15 @@ public:
     FrameState& state() { return mState.writeSlot(); }
     void publishState();
 
+    // Main thread: clear ui(), fill it, then publish it. The UI goes on drawing
+    // from the last published list for as long as no new one arrives.
+    UIList& ui() { return mUI.writeSlot(); }
+    void publishUI();
+
+    // Main thread: the generation the list being filled will get. Passed to
+    // TextureQueue::destroy(), because that list may already use the texture.
+    uint64_t currentUIGeneration() const { return mUIGeneration + 1; }
+
     // Main thread: stats since the previous call.
     FrameStats takeStats();
 
@@ -64,6 +74,8 @@ private:
 
     Device& mDevice;
     LatestValue<FrameState> mState;
+    LatestValue<UIList> mUI;
+    uint64_t mUIGeneration = 0;
     std::thread mThread;
     std::atomic<bool> mStop{ false };
     std::atomic<bool> mFailed{ false };

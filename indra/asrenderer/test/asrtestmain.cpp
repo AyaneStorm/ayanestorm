@@ -4,6 +4,7 @@
  *
  *   asrenderer_test --selftest           portable checks, no window
  *   asrenderer_test [--seconds N]        draw the test triangle for N seconds (default 10)
+ *                   [--ui]               also draw a busy test UI, rebuilt on the main thread
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
  *                   [--memory-cap-mb N]  lower the video memory budget
  *                   [--validate]         turn on the Vulkan validation layers
@@ -15,6 +16,8 @@
 #include "asrlatestvalue.h"
 #include "asrmemorybudget.h"
 #include "asrscenefile.h"
+#include "asrtexturequeue.h"
+#include "asruilist.h"
 
 #ifdef ASR_HAS_DEVICE
 #include "asrdevice.h"
@@ -25,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -308,6 +312,167 @@ void testMemoryBudget()
     expect(budget.used(Category::Staging) == 0 && budget.totalUsed() == 0, "threads racing leave the count exact");
 }
 
+asr::UIVertex uiVertex(float x, float y, uint32_t texture)
+{
+    asr::UIVertex vertex{};
+    vertex.position[0] = x;
+    vertex.position[1] = y;
+    vertex.position[3] = 1.f;
+    vertex.color = 0xFFFFFFFF;
+    vertex.texture = texture;
+    return vertex;
+}
+
+void testUIList()
+{
+    using asr::UIGeometry;
+    asr::UIList list;
+    const asr::UIVertex quad[4] = { uiVertex(0, 0, 1), uiVertex(1, 0, 1), uiVertex(0, 1, 2), uiVertex(1, 1, 2) };
+
+    list.append(UIGeometry::TriangleStrip, quad, 4);
+    list.append(UIGeometry::TriangleStrip, quad, 4);
+    expect(list.draws().size() == 1, "a texture change does not split a draw");
+    expect(list.vertices().size() == 12, "a strip of 4 becomes 6 triangle vertices, twice");
+    expect(list.vertices()[3].position[0] == 1.f && list.vertices()[5].position[0] == 1.f && list.vertices()[5].position[1] == 1.f,
+           "strip triangles keep their vertices");
+
+    list.clear();
+    list.append(UIGeometry::TriangleFan, quad, 4);
+    expect(list.vertices().size() == 6 && list.vertices()[3].position[1] == 0.f && list.vertices()[3].position[0] == 0.f,
+           "fan triangles all start at the first vertex");
+
+    list.clear();
+    list.append(UIGeometry::LineLoop, quad, 3);
+    expect(list.vertices().size() == 6 && list.draws()[0].primitive == asr::UIPrimitive::Lines, "a loop becomes closed lines");
+    expect(list.vertices()[5].position[0] == 0.f && list.vertices()[5].position[1] == 0.f, "the loop ends on its first vertex");
+
+    list.clear();
+    list.append(UIGeometry::TriangleStrip, quad, 2);
+    list.append(UIGeometry::Triangles, quad, 4);
+    list.append(UIGeometry::Lines, quad, 3);
+    expect(list.vertices().size() == 5, "incomplete primitives are dropped, as GL does");
+
+    list.clear();
+    expect(list.draws().empty() && list.vertices().empty(), "clear empties the list");
+    asr::UIBlend additive;
+    additive.colorDest = asr::UIBlendFactor::One;
+    list.setBlend(asr::UIBlend());
+    list.append(UIGeometry::Triangles, quad, 3);
+    list.setBlend(additive);
+    list.append(UIGeometry::Triangles, quad, 3);
+    list.setBlend(asr::UIBlend());
+    list.append(UIGeometry::Triangles, quad, 3);
+    expect(list.draws().size() == 3, "a blend change splits a draw");
+    expect(list.blends().size() == 2 && list.draws()[2].blend == 0, "a blend used twice is stored once");
+
+    asr::UIScissor scissor;
+    scissor.enabled = true;
+    scissor.width = 10;
+    scissor.height = 10;
+    list.setScissor(scissor);
+    list.append(UIGeometry::Triangles, quad, 3);
+    list.append(UIGeometry::Triangles, quad, 3);
+    expect(list.draws().size() == 4 && list.draws()[3].vertexCount == 6, "the same scissor keeps merging");
+
+    // Doubles X, moves Y by 3.
+    const float matrix[16] = { 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1 };
+    const float uvMatrix[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5f, 0, 0, 1 };
+    const float positions[8] = { 1, 1, 0, 0, 2, 2, 0, 0 };
+    const float uvs[4] = { 0.25f, 0.5f, 0.75f, 1.f };
+    asr::UIStreams streams;
+    streams.positions = positions;
+    streams.uvs = uvs;
+    streams.matrix = matrix;
+    streams.singleColor = 0x11223344;
+    streams.texture = asr::uiTextureBits(7, asr::UISampler::NearestWrap, true);
+    list.clear();
+    list.append(UIGeometry::Lines, streams, 2);
+    const asr::UIVertex& second = list.vertices()[1];
+    expect(second.position[0] == 4.f && second.position[1] == 5.f && second.position[3] == 1.f, "positions are transformed");
+    expect(second.uv[0] == 0.75f && second.color == 0x11223344, "without a texture matrix the UV is kept");
+    expect((second.texture & asr::UI_TEXTURE_SLOT_MASK) == 7 && (second.texture & asr::UI_SOLID_COLOR_BIT),
+           "the texture bits are stored");
+    streams.uvMatrix = uvMatrix;
+    list.clear();
+    list.append(UIGeometry::Lines, streams, 2);
+    expect(list.vertices()[1].uv[0] == 1.25f, "the texture matrix is applied");
+
+    asr::UIRect rect;
+    asr::UIScissor test;
+    expect(asr::resolveScissor(test, 100, 50, rect) && rect.width == 100 && rect.height == 50, "no scissor means the whole target");
+    test.enabled = true;
+    test.x = 10;
+    test.y = 5;
+    test.width = 20;
+    test.height = 15;
+    expect(asr::resolveScissor(test, 100, 50, rect) && rect.x == 10 && rect.y == 30 && rect.width == 20 && rect.height == 15,
+           "the scissor origin moves to the top left");
+    test.x = -10;
+    test.y = 40;
+    test.width = 1000;
+    test.height = 1000;
+    expect(asr::resolveScissor(test, 100, 50, rect) && rect.x == 0 && rect.y == 0 && rect.width == 100 && rect.height == 10,
+           "a scissor past the edges is clamped");
+    test.x = 200;
+    expect(!asr::resolveScissor(test, 100, 50, rect), "a scissor outside the target draws nothing");
+}
+
+void testTextureQueue()
+{
+    using Type = asr::TextureCommand::Type;
+    asr::TextureQueue queue;
+    std::vector<asr::TextureCommand> commands;
+
+    queue.take(commands);
+    expect(commands.size() == 2 && commands[0].slot == 0 && commands[0].type == Type::Create && commands[1].type == Type::Upload,
+           "slot 0 starts as a queued white pixel");
+    commands.clear();
+
+    asr::TextureDesc desc;
+    desc.width = 8;
+    desc.height = 4;
+    desc.mipLevels = 4;
+    expect(asr::textureBytes(desc) == (32 + 8 + 2 + 1) * 4, "memory counts every mip");
+
+    const uint8_t pixels[4] = { 1, 2, 3, 4 };
+    const uint32_t first = queue.create(desc);
+    const uint32_t second = queue.create(desc);
+    expect(first == 1 && second == 2, "slots are handed out in order");
+    queue.upload(first, 1, 2, 3, 1, 1, pixels, 4);
+    queue.destroy(second, 9);
+    queue.upload(0, 0, 0, 0, 1, 1, pixels, 4);
+    queue.destroy(0, 9);
+    queue.take(commands);
+    expect(commands.size() == 4, "the white pixel cannot be changed or destroyed");
+    expect(commands[2].type == Type::Upload && commands[2].level == 1 && commands[2].pixels[3] == 4, "upload keeps its own pixels");
+    expect(commands[3].type == Type::Destroy && commands[3].lastList == 9, "destroy says which list may still use it");
+
+    expect(queue.create(desc) == 3, "a slot is not reused before it is released");
+    queue.releaseSlot(second);
+    expect(queue.create(desc) == second, "a released slot is reused");
+
+    for (uint32_t i = 4; i < asr::MAX_TEXTURES; ++i)
+    {
+        queue.create(desc);
+    }
+    expect(queue.create(desc) == 0, "with no slot left, a texture falls back to white");
+
+    asr::RetiredTextures retired;
+    std::vector<uint32_t> destroyed;
+    const auto run = [&](uint64_t list, uint64_t frame)
+    {
+        retired.run(list, frame, 2, [&](uint32_t slot) { destroyed.push_back(slot); });
+    };
+    retired.add(5, 10);
+    run(10, 100);
+    expect(destroyed.empty(), "a texture stays while the list that may use it is drawn");
+    run(11, 101);
+    run(11, 103);
+    expect(destroyed.empty(), "it stays until frames using that list have finished");
+    run(11, 104);
+    expect(destroyed.size() == 1 && destroyed[0] == 5 && retired.size() == 0, "then it goes, once");
+}
+
 #ifdef ASR_HAS_DEVICE
 void printStats(const char* name, const asr::FrameStats& stats, double seconds)
 {
@@ -327,7 +492,134 @@ void printMemory(asr::MemoryBudget& budget)
     }
 }
 
-int drawTriangle(double seconds, double stallSeconds, const asr::DeviceOptions& options)
+// A UI with the habits of the real one: many small textured quads, text in an
+// alpha-only texture, a clipped panel, and an additive overlay.
+class TestUI
+{
+public:
+    explicit TestUI(asr::TextureQueue& textures) : mTextures(textures)
+    {
+        constexpr uint32_t SIZE = 16;
+        asr::TextureDesc desc;
+        desc.width = SIZE;
+        desc.height = SIZE;
+        for (uint32_t i = 0; i < TEXTURES; ++i)
+        {
+            std::vector<uint32_t> pixels(SIZE * SIZE);
+            const uint32_t tint = 0xFF000000 | ((i * 37 + 64) & 0xFF) | ((i * 91 + 64) & 0xFF) << 8 | ((i * 53 + 64) & 0xFF) << 16;
+            for (uint32_t y = 0; y < SIZE; ++y)
+            {
+                for (uint32_t x = 0; x < SIZE; ++x)
+                {
+                    pixels[y * SIZE + x] = ((x / 4 + y / 4) & 1) ? tint : 0xFFFFFFFF;
+                }
+            }
+            mSlots[i] = textures.create(desc);
+            textures.upload(mSlots[i], 0, 0, 0, SIZE, SIZE, pixels.data(), pixels.size() * sizeof(uint32_t));
+        }
+
+        desc.format = asr::TextureFormat::R8;
+        desc.swizzle = asr::TextureSwizzle::AlphaOnly;
+        std::vector<uint8_t> glyph(SIZE * SIZE);
+        for (uint32_t y = 0; y < SIZE; ++y)
+        {
+            for (uint32_t x = 0; x < SIZE; ++x)
+            {
+                glyph[y * SIZE + x] = (x == 8 || y == 8) ? 255 : 0;
+            }
+        }
+        mGlyph = textures.create(desc);
+        textures.upload(mGlyph, 0, 0, 0, SIZE, SIZE, glyph.data(), glyph.size());
+    }
+
+    void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration)
+    {
+        list.clear();
+        mFlushes = 0;
+
+        // Pixels to GL clip space, as the viewer's 2D setup does.
+        const float matrix[16] = { 2.f / width, 0, 0, 0, 0, 2.f / height, 0, 0, 0, 0, -1, 0, -1, -1, 0, 1 };
+
+        const int columns = 120;
+        const int rows = 60;
+        const float size = 9.f;
+        for (int row = 0; row < rows; ++row)
+        {
+            for (int column = 0; column < columns; ++column)
+            {
+                const float x = 20.f + column * 10.f + 4.f * sinf(seconds * 2.f + row * 0.3f);
+                const float y = 20.f + row * 10.f;
+                const uint32_t slot = mSlots[(row + column) % TEXTURES];
+                quad(list, x, y, size, size, asr::uiTextureBits(slot), 0xFFFFFFFF, matrix);
+            }
+        }
+
+        asr::UIScissor scissor;
+        scissor.enabled = true;
+        scissor.x = 100;
+        scissor.y = 100;
+        scissor.width = 300;
+        scissor.height = 200;
+        list.setScissor(scissor);
+        for (int i = 0; i < 400; ++i)
+        {
+            const float x = 40.f + (i % 40) * 12.f + 60.f * sinf(seconds);
+            const float y = 80.f + (i / 40) * 24.f;
+            quad(list, x, y, 12.f, 16.f, asr::uiTextureBits(mGlyph, asr::UISampler::NearestClamp), 0xFF40F0FF, matrix);
+        }
+        list.setScissor(asr::UIScissor());
+
+        asr::UIBlend additive;
+        additive.colorDest = asr::UIBlendFactor::One;
+        list.setBlend(additive);
+        quad(list, 500.f, 300.f, 300.f, 150.f, asr::uiTextureBits(0), 0x60202040, matrix);
+        list.setBlend(asr::UIBlend());
+        quad(list, 40.f, 500.f, 300.f, 60.f, asr::uiTextureBits(mGlyph, asr::UISampler::LinearClamp, true), 0xFF3040F0, matrix);
+
+        // A texture replaced now and then, so destruction runs under a live list.
+        if (++mBuilds % 30 == 0)
+        {
+            const uint32_t index = (mBuilds / 30) % TEXTURES;
+            mTextures.destroy(mSlots[index], listGeneration);
+            asr::TextureDesc desc;
+            desc.width = 16;
+            desc.height = 16;
+            mSlots[index] = mTextures.create(desc);
+            const std::vector<uint32_t> pixels(16 * 16, 0xFF00C0FF);
+            mTextures.upload(mSlots[index], 0, 0, 0, 16, 16, pixels.data(), pixels.size() * sizeof(uint32_t));
+            ++mReplaced;
+        }
+    }
+
+    uint32_t flushes() const { return mFlushes; } // the draws GL would have made
+    uint32_t replaced() const { return mReplaced; }
+
+private:
+    static constexpr uint32_t TEXTURES = 64;
+
+    void quad(asr::UIList& list, float x, float y, float width, float height, uint32_t texture, uint32_t color, const float* matrix)
+    {
+        const float positions[16] = { x, y, 0, 0, x + width, y, 0, 0, x, y + height, 0, 0, x + width, y + height, 0, 0 };
+        const float uvs[8] = { 0, 0, 1, 0, 0, 1, 1, 1 };
+        asr::UIStreams streams;
+        streams.positions = positions;
+        streams.uvs = uvs;
+        streams.singleColor = color;
+        streams.matrix = matrix;
+        streams.texture = texture;
+        list.append(asr::UIGeometry::TriangleStrip, streams, 4);
+        ++mFlushes;
+    }
+
+    asr::TextureQueue& mTextures;
+    uint32_t mSlots[TEXTURES]{};
+    uint32_t mGlyph = 0;
+    uint32_t mFlushes = 0;
+    uint32_t mBuilds = 0;
+    uint32_t mReplaced = 0;
+};
+
+int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::DeviceOptions& options)
 {
     const asr::ProbeResult probe = asr::Device::probe();
     printf("probe before any window: %s\n", probe.supported ? probe.info.name.c_str() : probe.reason.c_str());
@@ -361,9 +653,38 @@ int drawTriangle(double seconds, double stallSeconds, const asr::DeviceOptions& 
     {
         asr::FrameState& state = renderThread.state();
         window.pixelSize(state.width, state.height);
+        state.testTriangle = true;
         renderThread.publishState();
     };
     publishWindowSize();
+
+    TestUI testUI(device->textures());
+    const Clock::time_point uiStart = Clock::now();
+    Clock::time_point lastUI = uiStart - std::chrono::seconds(1);
+    double worstBuildSeconds = 0.0;
+    uint32_t uiBuilds = 0;
+    uint32_t lastDraws = 0;
+    uint32_t lastVertices = 0;
+    const auto buildUI = [&]()
+    {
+        // The capped UI rate of section 1 of the plan, here fixed at 60 Hz.
+        if (!drawUI || secondsSince(lastUI) < 1.0 / 60.0)
+        {
+            return;
+        }
+        lastUI = Clock::now();
+        uint32_t width = 0;
+        uint32_t height = 0;
+        window.pixelSize(width, height);
+        asr::UIList& list = renderThread.ui();
+        testUI.build(list, width, height, float(secondsSince(uiStart)), renderThread.currentUIGeneration());
+        lastDraws = uint32_t(list.draws().size());
+        lastVertices = uint32_t(list.vertices().size());
+        renderThread.publishUI();
+        worstBuildSeconds = std::max(worstBuildSeconds, secondsSince(lastUI));
+        ++uiBuilds;
+    };
+    buildUI();
     renderThread.start();
 
     // Runs the main thread normally for a while. False if the test must stop.
@@ -382,6 +703,7 @@ int drawTriangle(double seconds, double stallSeconds, const asr::DeviceOptions& 
                 return false;
             }
             publishWindowSize();
+            buildUI();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         return true;
@@ -414,6 +736,14 @@ int drawTriangle(double seconds, double stallSeconds, const asr::DeviceOptions& 
     window.resize(900, 600);
     ran = ran && runMainThread(restSeconds);
 
+    if (drawUI)
+    {
+        printf("UI: %u lists built, worst %.2f ms, %u vertices, %u flushes merged into %u draws, %u textures replaced\n",
+               uiBuilds, worstBuildSeconds * 1000.0, lastVertices, testUI.flushes(), lastDraws, testUI.replaced());
+        expect(lastDraws <= 4, "UI flushes merge into a few draws");
+        expect(testUI.replaced() > 0, "textures were replaced while lists were drawing");
+    }
+
     printMemory(device->memoryBudget());
     const bool countsSwapchain = device->memoryBudget().used(asr::MemoryCategory::RenderTargets) > 0;
     renderThread.stop();
@@ -437,6 +767,7 @@ int main(int argc, char** argv)
     double seconds = 10.0;
 #ifdef ASR_HAS_DEVICE
     double stallSeconds = 2.0;
+    bool drawUI = false;
     asr::DeviceOptions options;
     options.shaderDir = ASR_SHADER_DIR;
 #endif
@@ -455,6 +786,10 @@ int main(int argc, char** argv)
         else if (arg == "--stall" && i + 1 < argc)
         {
             stallSeconds = atof(argv[++i]);
+        }
+        else if (arg == "--ui")
+        {
+            drawUI = true;
         }
         else if (arg == "--memory-cap-mb" && i + 1 < argc)
         {
@@ -485,11 +820,13 @@ int main(int argc, char** argv)
         testSceneFile("asrenderer_test_scene.tmp");
         testLatestValue();
         testMemoryBudget();
+        testUIList();
+        testTextureQueue();
     }
     else
     {
 #ifdef ASR_HAS_DEVICE
-        if (drawTriangle(seconds, stallSeconds, options) != 0)
+        if (drawTriangle(seconds, stallSeconds, drawUI, options) != 0)
         {
             return 1;
         }

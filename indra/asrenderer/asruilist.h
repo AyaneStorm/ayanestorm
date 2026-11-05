@@ -1,0 +1,183 @@
+/**
+ * asruilist.h
+ * One finished frame of UI: every vertex in one array, and as few draws as the
+ * state changes allow. The main thread fills it and the render thread replays it,
+ * so nothing here touches a GPU API.
+ *
+ * Draws merge because everything that would split them in GL lives in the vertex:
+ * positions are transformed before they are stored, strips and fans become plain
+ * triangles, and each vertex names its own texture. Only a change of primitive,
+ * blend or scissor starts a new draw.
+ */
+#pragma once
+
+#include <cstdint>
+#include <vector>
+
+namespace asr
+{
+
+// Also the size of the texture array in asrUIF.glsl.
+constexpr uint32_t MAX_TEXTURES = 65536;
+
+// How UIVertex::texture packs its fields.
+constexpr uint32_t UI_TEXTURE_SLOT_MASK = 0xFFFFF;
+constexpr uint32_t UI_SAMPLER_SHIFT = 28;
+constexpr uint32_t UI_SOLID_COLOR_BIT = 1u << 31; // keep the vertex color, take alpha from the texture
+
+enum class UISampler : uint32_t
+{
+    LinearClamp,
+    LinearWrap,
+    NearestClamp,
+    NearestWrap,
+    Count
+};
+
+inline uint32_t uiTextureBits(uint32_t slot, UISampler sampler = UISampler::LinearClamp, bool solidColor = false)
+{
+    return slot | (uint32_t(sampler) << UI_SAMPLER_SHIFT) | (solidColor ? UI_SOLID_COLOR_BIT : 0);
+}
+
+struct UIVertex
+{
+    float position[4]; // already in clip space, with GL's axes
+    float uv[2];
+    uint32_t color;    // RGBA8
+    uint32_t texture;  // see uiTextureBits()
+};
+static_assert(sizeof(UIVertex) == 32, "the pipelines describe this layout");
+
+// In the order of LLRender::eGeomModes.
+enum class UIGeometry : uint8_t
+{
+    Triangles,
+    TriangleStrip,
+    TriangleFan,
+    Points,
+    Lines,
+    LineStrip,
+    LineLoop
+};
+
+// What the GPU draws: UIGeometry after strips, fans and loops are expanded.
+enum class UIPrimitive : uint8_t
+{
+    Triangles,
+    Lines,
+    Points,
+    Count
+};
+
+// In the order of LLRender::eBlendFactor.
+enum class UIBlendFactor : uint8_t
+{
+    One,
+    Zero,
+    DestColor,
+    SourceColor,
+    OneMinusDestColor,
+    OneMinusSourceColor,
+    DestAlpha,
+    SourceAlpha,
+    OneMinusDestAlpha,
+    OneMinusSourceAlpha
+};
+
+struct UIBlend
+{
+    UIBlendFactor colorSource = UIBlendFactor::SourceAlpha;
+    UIBlendFactor colorDest = UIBlendFactor::OneMinusSourceAlpha;
+    UIBlendFactor alphaSource = UIBlendFactor::One;
+    UIBlendFactor alphaDest = UIBlendFactor::OneMinusSourceAlpha;
+
+    uint32_t key() const
+    {
+        return uint32_t(colorSource) | uint32_t(colorDest) << 4 | uint32_t(alphaSource) << 8 | uint32_t(alphaDest) << 12;
+    }
+};
+
+// In pixels, with GL's origin at the bottom left.
+struct UIScissor
+{
+    bool enabled = false;
+    int32_t x = 0;
+    int32_t y = 0;
+    int32_t width = 0;
+    int32_t height = 0;
+
+    bool operator==(const UIScissor& other) const
+    {
+        return enabled == other.enabled && x == other.x && y == other.y && width == other.width && height == other.height;
+    }
+};
+
+// A scissor as GPU APIs want it: inside the target, with the origin at the top left.
+struct UIRect
+{
+    uint32_t x = 0;
+    uint32_t y = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
+};
+
+// Returns false when nothing of the target remains, and the draw is skipped.
+bool resolveScissor(const UIScissor& scissor, uint32_t targetWidth, uint32_t targetHeight, UIRect& rect);
+
+struct UIDraw
+{
+    uint32_t firstVertex = 0;
+    uint32_t vertexCount = 0;
+    UIScissor scissor;
+    uint16_t blend = 0; // index into UIList::blends()
+    UIPrimitive primitive = UIPrimitive::Triangles;
+};
+
+// The vertices LLRender holds at a flush: separate arrays, not yet transformed.
+struct UIStreams
+{
+    const float* positions = nullptr;    // x, y, z per vertex
+    uint32_t positionStride = 16;        // bytes
+    const float* uvs = nullptr;          // two floats per vertex
+    const uint32_t* colors = nullptr;    // RGBA8 per vertex; null uses singleColor
+    uint32_t singleColor = 0xFFFFFFFF;
+    const float* matrix = nullptr;       // column-major 4x4, to clip space
+    const float* uvMatrix = nullptr;     // column-major 4x4; null means none
+    uint32_t texture = 0;                // see uiTextureBits()
+};
+
+class UIList
+{
+public:
+    // Keeps the memory, so a list reused every frame stops allocating.
+    void clear();
+
+    void setBlend(const UIBlend& blend);
+    void setScissor(const UIScissor& scissor);
+
+    // Adds vertices that are already final.
+    void append(UIGeometry geometry, const UIVertex* vertices, uint32_t count);
+
+    // Transforms and adds.
+    void append(UIGeometry geometry, const UIStreams& streams, uint32_t count);
+
+    const std::vector<UIVertex>& vertices() const { return mVertices; }
+    const std::vector<UIDraw>& draws() const { return mDraws; }
+    const std::vector<UIBlend>& blends() const { return mBlends; }
+
+    // Tells lists apart: the render thread copies a list only once per generation.
+    uint64_t generation = 0;
+
+private:
+    // The draw new vertices go into, started anew when the state differs.
+    UIDraw& drawFor(UIPrimitive primitive);
+
+    std::vector<UIVertex> mVertices;
+    std::vector<UIVertex> mTransformed;
+    std::vector<UIDraw> mDraws;
+    std::vector<UIBlend> mBlends;
+    UIScissor mScissor;
+    uint16_t mBlend = 0;
+};
+
+} // namespace asr
