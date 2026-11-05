@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerdisplay.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "asrviewer.h" // <AS:Chanayane/>
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
@@ -213,11 +214,15 @@ void display_startup()
 
     if (gViewerWindow)
     gViewerWindow->setup2DRender();
-    ASRViewer::beginUI(); // <AS:Chanayane/>
+    // <AS:Chanayane> False only in the new renderer, when no new UI frame is due.
+    if (ASRViewer::beginUI())
+    {
+    // </AS:Chanayane>
     if (gViewerWindow)
     gViewerWindow->draw();
     gGL.flush();
     ASRViewer::publishUI(); // <AS:Chanayane/>
+    } // <AS:Chanayane/>
 
     LLVertexBuffer::unbind();
 
@@ -228,6 +233,45 @@ void display_startup()
 
     glClear(GL_DEPTH_BUFFER_BIT);
 }
+
+// <AS:Chanayane> The new renderer has no world to draw yet. This keeps alive what
+// the minimized branch of display() keeps alive, so the session stays healthy with
+// nothing culled or built, and then draws the UI.
+static void display_native(bool rebuild)
+{
+    if (rebuild)
+    {
+        gPipeline.rebuildPools();
+    }
+    LLHUDObject::renderAllForTimer();
+
+    LLViewerTexture::updateClass();
+    gBumpImageList.updateImages();
+    gTextureList.updateImages(llclamp(0.050f * gFrameIntervalSeconds.value(), 0.002f, 0.005f));
+    gGLTFMaterialList.flushMaterials();
+
+    if (LLApp::isExiting() || !ASRViewer::beginUI())
+    {
+        return;
+    }
+
+    LLGLSUIDefault gls_ui;
+    gPipeline.disableLights();
+    gViewerWindow->setup2DRender();
+    if (gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI))
+    {
+        if (gDisconnected)
+        {
+            render_disconnected_background();
+        }
+        gViewerWindow->draw();
+    }
+    gViewerWindow->updateDebugText();
+    gViewerWindow->drawDebugText();
+    gGL.flush();
+    ASRViewer::publishUI();
+}
+// </AS:Chanayane>
 
 void display_update_camera()
 {
@@ -805,6 +849,19 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     // clear the next buffer
     // (must follow dynamic texture writing since that uses the frame buffer)
     //
+
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        display_native(rebuild);
+        LLAppViewer::instance()->pingMainloopTimeout("Display:FrameStats");
+        display_stats();
+        LLAppViewer::instance()->pingMainloopTimeout("Display:Done");
+        gShiftFrame = false;
+        gShaderProfileFrame = false; // there is nothing to profile
+        return;
+    }
+    // </AS:Chanayane>
 
     if (gDisconnected)
     {

@@ -28,6 +28,7 @@
 #include "llviewerwindow.h"
 // <AS:Chanayane> Aperture DoF capture: Esc stop.
 #include "asdofrenderer.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "asrviewer.h" // <AS:Chanayane/>
 // </AS:Chanayane>
 
@@ -6277,6 +6278,14 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     {
         return false;
     }
+
+    // <AS:Chanayane> The new renderer has nothing to read back yet. Failing here
+    // also keeps the logout snapshot from replacing the saved login image.
+    if (ASR::active())
+    {
+        return false;
+    }
+    // </AS:Chanayane>
 
     //check if there is enough memory for the snapshot image
     if(image_width * image_height > (1 << 22)) //if snapshot image is larger than 2K by 2K

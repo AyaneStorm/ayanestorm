@@ -400,22 +400,29 @@ void testUIList()
 
     asr::UIRect rect;
     asr::UIScissor test;
-    expect(asr::resolveScissor(test, 100, 50, rect) && rect.width == 100 && rect.height == 50, "no scissor means the whole target");
+    expect(asr::resolveScissor(test, 100, 50, 100, 50, rect) && rect.width == 100 && rect.height == 50, "no scissor means the whole target");
+    expect(asr::resolveScissor(test, 100, 50, 200, 40, rect) && rect.width == 100 && rect.height == 40,
+           "no scissor covers what the list and the target share");
     test.enabled = true;
     test.x = 10;
     test.y = 5;
     test.width = 20;
     test.height = 15;
-    expect(asr::resolveScissor(test, 100, 50, rect) && rect.x == 10 && rect.y == 30 && rect.width == 20 && rect.height == 15,
+    expect(asr::resolveScissor(test, 100, 50, 100, 50, rect) && rect.x == 10 && rect.y == 30 && rect.width == 20 && rect.height == 15,
            "the scissor origin moves to the top left");
+    expect(asr::resolveScissor(test, 100, 50, 300, 200, rect) && rect.x == 10 && rect.y == 30 && rect.width == 20 && rect.height == 15,
+           "a window grown since the list was made leaves the scissor where it was");
+    expect(asr::resolveScissor(test, 100, 50, 25, 40, rect) && rect.x == 10 && rect.y == 30 && rect.width == 15 && rect.height == 10,
+           "a window shrunk since the list was made cuts the scissor");
+    expect(!asr::resolveScissor(test, 100, 50, 25, 30, rect), "a scissor past a shrunk window draws nothing");
     test.x = -10;
     test.y = 40;
     test.width = 1000;
     test.height = 1000;
-    expect(asr::resolveScissor(test, 100, 50, rect) && rect.x == 0 && rect.y == 0 && rect.width == 100 && rect.height == 10,
+    expect(asr::resolveScissor(test, 100, 50, 100, 50, rect) && rect.x == 0 && rect.y == 0 && rect.width == 100 && rect.height == 10,
            "a scissor past the edges is clamped");
     test.x = 200;
-    expect(!asr::resolveScissor(test, 100, 50, rect), "a scissor outside the target draws nothing");
+    expect(!asr::resolveScissor(test, 100, 50, 100, 50, rect), "a scissor outside the target draws nothing");
 }
 
 void testTextureQueue()
@@ -570,6 +577,7 @@ public:
     void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration)
     {
         list.clear();
+        list.setSize(width, height);
         mFlushes = 0;
 
         // Pixels to GL clip space, as the viewer's 2D setup does.
@@ -713,6 +721,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
         uint32_t width = 0;
         uint32_t height = 0;
         window.pixelSize(width, height);
+        // Lists larger and smaller than the window in turn, as during a resize that
+        // the main thread has not caught up with.
+        const uint32_t phase = (uiBuilds / 60) % 3;
+        width = phase == 1 ? width + 200 : phase == 2 ? width / 2 : width;
+        height = phase == 1 ? height + 100 : phase == 2 ? height / 2 : height;
         asr::UIList& list = renderThread.ui();
         testUI.build(list, width, height, float(secondsSince(uiStart)), renderThread.currentUIGeneration());
         lastDraws = uint32_t(list.draws().size());

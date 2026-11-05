@@ -11929,6 +11929,28 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>0</integer>
   </map>
+  <key>ASRendererUIHz</key>
+  <map>
+    <key>Comment</key>
+    <string>How many times per second the new renderer rebuilds the UI. 0 rebuilds it every main-thread frame. The last UI goes on being drawn at the full render rate.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>60</integer>
+  </map>
+  <key>ASRendererStallTestAt</key>
+  <map>
+    <key>Comment</key>
+    <string>Test: this many seconds after the new renderer starts, stops the main thread for 5 s and logs the render rate. Goes back to 0 once done. 0 is off.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0</real>
+  </map>
   <!-- <AS:Chanayane> Exact per-pixel OIT. Default 0: ASRenderOITMode's own
        default (-1) migrates a fresh profile by reading this value, so this
        must match ASRenderAVBOIT's default (0) for a new install to resolve

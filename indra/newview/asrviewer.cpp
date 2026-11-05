@@ -11,6 +11,7 @@
 #include "llappviewer.h"
 #include "llcoord.h"
 #include "lldir.h"
+#include "lltimer.h"
 #include "llviewercontrol.h"
 #include "llwindow.h"
 
@@ -24,6 +25,8 @@
 #define ASR_VIEWER_SUPPORTED 0
 #endif
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <memory>
 #include <utility>
@@ -40,9 +43,56 @@ bool sFellBack = false;
 
 #if ASR_VIEWER_SUPPORTED
 
+using Clock = std::chrono::steady_clock;
+
+constexpr char STALL_SETTING[] = "ASRendererStallTestAt";
+constexpr F64 STALL_SECONDS = 5.0; // well short of the 30 s that would log the agent out
+constexpr auto STATS_PERIOD = std::chrono::seconds(60);
+
 std::unique_ptr<asr::Device> sDevice;
 std::unique_ptr<asr::RenderThread> sRenderThread;
-void* sPlatformWindow = nullptr;
+Clock::time_point sStarted;
+Clock::time_point sStatsLogged;
+Clock::time_point sNextUI;
+U32 sWidth = 0;
+U32 sHeight = 0;
+U32 sUIWidth = 0; // the size of the newest UI list
+U32 sUIHeight = 0;
+
+F64 secondsSince(Clock::time_point start)
+{
+    return std::chrono::duration<F64>(Clock::now() - start).count();
+}
+
+// True once, when the seconds in this setting have passed since the renderer
+// started. Setting it later than that, in a running viewer, fires it at once.
+bool dueOnce(LLCachedControl<F32>& at, const char* setting)
+{
+    if (at() <= 0.f || secondsSince(sStarted) < at())
+    {
+        return false;
+    }
+    gSavedSettings.setF32(setting, 0.f);
+    return true;
+}
+
+void logFrameStats(const char* what, const asr::FrameStats& stats)
+{
+    LL_INFOS("ASRenderer") << what << ": " << stats.frames << " frames, worst frame " << stats.worstFrameSeconds * 1000.0
+                           << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms" << LL_ENDL;
+}
+
+// The P2 gate: a stopped main thread must not reach the render rate.
+void runStallTest()
+{
+    logFrameStats("before the stall", sRenderThread->takeStats());
+    const Clock::time_point start = Clock::now();
+    ms_sleep(U32(STALL_SECONDS * 1000.0));
+    const F64 seconds = secondsSince(start);
+    const asr::FrameStats stats = sRenderThread->takeStats();
+    logFrameStats("during the stall", stats);
+    LL_INFOS("ASRenderer") << "main thread stopped for " << seconds << " s, render rate " << stats.frames / seconds << " fps" << LL_ENDL;
+}
 
 U32 sourcePixelBytes(ASR::PixelLayout layout)
 {
@@ -151,6 +201,7 @@ public:
     {
         mList = &sRenderThread->ui();
         mList->clear();
+        mList->setSize(sWidth, sHeight);
     }
 
     void setUIBlend(const U8 factors[4]) override
@@ -243,9 +294,10 @@ std::string startRenderer(LLWindow* window)
         return error;
     }
 
-    sPlatformWindow = target.nativeWindow;
     sRenderThread = std::make_unique<asr::RenderThread>(*sDevice);
     sRenderThread->start();
+    sStarted = Clock::now();
+    sStatsLogged = sStarted;
     ASR::setRendererLink(&sViewerLink);
     LL_INFOS("ASRenderer") << "running on " << sDevice->info().backend << ", " << sDevice->info().name << ", budget "
                            << sDevice->memoryBudget().budget() / (1024 * 1024) << " MB" << LL_ENDL;
@@ -258,15 +310,11 @@ void stopRenderer()
     if (sRenderThread)
     {
         sRenderThread->stop();
-        const asr::FrameStats stats = sRenderThread->takeStats();
-        LL_INFOS("ASRenderer") << "stopped after " << stats.frames << " frames, worst frame "
-                               << stats.worstFrameSeconds * 1000.0 << " ms, oldest state "
-                               << stats.worstStateAgeSeconds * 1000.0 << " ms, "
-                               << sDevice->validationErrors() << " validation errors" << LL_ENDL;
+        logFrameStats("last period", sRenderThread->takeStats());
+        LL_INFOS("ASRenderer") << "stopped with " << sDevice->validationErrors() << " validation errors" << LL_ENDL;
     }
     sRenderThread.reset();
     sDevice.reset();
-    sPlatformWindow = nullptr;
 }
 
 #endif // ASR_VIEWER_SUPPORTED
@@ -328,30 +376,50 @@ void ASRViewer::publishFrame(LLWindow* window)
         failAndQuit(sRenderThread->error());
     }
 
-    // Going fullscreen or back makes a new native window, which needs a new
-    // surface. This is the only time the main thread waits on the renderer.
-    if (window->getPlatformWindow() != sPlatformWindow)
-    {
-        stopRenderer();
-        const std::string error = startRenderer(window);
-        if (!error.empty())
-        {
-            failAndQuit(error);
-        }
-    }
-
     LLCoordWindow size;
     window->getSize(&size);
+    sWidth = U32(llmax(size.mX, 0));
+    sHeight = U32(llmax(size.mY, 0));
     asr::FrameState& state = sRenderThread->state();
-    state.width = U32(llmax(size.mX, 0));
-    state.height = U32(llmax(size.mY, 0));
+    state.width = sWidth;
+    state.height = sHeight;
     sRenderThread->publishState();
+
+    if (Clock::now() - sStatsLogged >= STATS_PERIOD)
+    {
+        sStatsLogged = Clock::now();
+        logFrameStats("last minute", sRenderThread->takeStats());
+    }
+
+    static LLCachedControl<F32> stall_at(gSavedSettings, STALL_SETTING, 0.f);
+    if (dueOnce(stall_at, STALL_SETTING))
+    {
+        runStallTest();
+    }
 #endif
 }
 
-void ASRViewer::beginUI()
+bool ASRViewer::beginUI()
 {
+#if ASR_VIEWER_SUPPORTED
+    static LLCachedControl<U32> ui_hz(gSavedSettings, "ASRendererUIHz", 60);
+    // A list of the wrong size leaves part of the window black, so it does not wait.
+    const bool resized = sWidth != sUIWidth || sHeight != sUIHeight;
+    if (ASR::active() && ui_hz() != 0 && !resized)
+    {
+        const Clock::time_point now = Clock::now();
+        if (now < sNextUI)
+        {
+            return false;
+        }
+        const auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<F64>(1.0 / ui_hz()));
+        sNextUI = std::max(sNextUI + period, now);
+    }
+    sUIWidth = sWidth;
+    sUIHeight = sHeight;
+#endif
     ASR::beginUI();
+    return true;
 }
 
 void ASRViewer::publishUI()

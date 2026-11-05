@@ -20,6 +20,12 @@ namespace asr
 // Also the size of the texture array in asrUIF.glsl.
 constexpr uint32_t MAX_TEXTURES = 65536;
 
+// How far down the UI viewport sits, in pixels. At a fractional UI scale a horizontal
+// edge can land exactly on a pixel centre, and GL then keeps that row at the bottom
+// of a shape where GPU APIs keep it at the top. This small step decides every such
+// tie the way GL does. It is above the 1/256 pixel GPUs snap to, and too small to see.
+constexpr float UI_EDGE_NUDGE = 1.f / 128.f;
+
 // How UIVertex::texture packs its fields.
 constexpr uint32_t UI_TEXTURE_SLOT_MASK = 0xFFFFF;
 constexpr uint32_t UI_SAMPLER_SHIFT = 28;
@@ -121,8 +127,11 @@ struct UIRect
     uint32_t height = 0;
 };
 
-// Returns false when nothing of the target remains, and the draw is skipped.
-bool resolveScissor(const UIScissor& scissor, uint32_t targetWidth, uint32_t targetHeight, UIRect& rect);
+// The scissor belongs to the list's size, and the target can differ from it while
+// the window is being resized. Returns false when nothing of the target remains, and
+// the draw is skipped.
+bool resolveScissor(const UIScissor& scissor, uint32_t listWidth, uint32_t listHeight,
+                    uint32_t targetWidth, uint32_t targetHeight, UIRect& rect);
 
 struct UIDraw
 {
@@ -152,6 +161,17 @@ public:
     // Keeps the memory, so a list reused every frame stops allocating.
     void clear();
 
+    // The window size in pixels this list is recorded for. It is drawn at that size
+    // from the top left corner, whatever the window has become since, so a list that
+    // outlives a resize stays sharp and correct until the next one arrives.
+    void setSize(uint32_t width, uint32_t height)
+    {
+        mWidth = width;
+        mHeight = height;
+    }
+    uint32_t width() const { return mWidth; }
+    uint32_t height() const { return mHeight; }
+
     void setBlend(const UIBlend& blend);
     void setScissor(const UIScissor& scissor);
 
@@ -178,6 +198,8 @@ private:
     std::vector<UIBlend> mBlends;
     UIScissor mScissor;
     uint16_t mBlend = 0;
+    uint32_t mWidth = 0;
+    uint32_t mHeight = 0;
 };
 
 } // namespace asr

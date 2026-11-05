@@ -26,8 +26,9 @@ namespace ASRViewer
     void publishFrame(LLWindow* window);
 
     // What is drawn between these two calls is one finished frame of UI. The render
-    // thread goes on showing the last one until the next one is published.
-    void beginUI();
+    // thread goes on showing the last one until the next one is published. False
+    // means ASRendererUIHz has no new frame due: draw nothing, and publish nothing.
+    bool beginUI();
     void publishUI();
 
     // Stops the render thread and frees the device, before the window goes.

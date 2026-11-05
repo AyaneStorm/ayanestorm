@@ -29,21 +29,25 @@ UIPrimitive primitiveOf(UIGeometry geometry)
 
 } // namespace
 
-bool resolveScissor(const UIScissor& scissor, uint32_t targetWidth, uint32_t targetHeight, UIRect& rect)
+bool resolveScissor(const UIScissor& scissor, uint32_t listWidth, uint32_t listHeight,
+                    uint32_t targetWidth, uint32_t targetHeight, UIRect& rect)
 {
+    // What both the list and the target cover.
+    const uint32_t visibleWidth = std::min(listWidth, targetWidth);
+    const uint32_t visibleHeight = std::min(listHeight, targetHeight);
     if (!scissor.enabled)
     {
-        rect = { 0, 0, targetWidth, targetHeight };
-        return targetWidth != 0 && targetHeight != 0;
+        rect = { 0, 0, visibleWidth, visibleHeight };
+        return visibleWidth != 0 && visibleHeight != 0;
     }
 
     // In 64 bits, because GL lets a rectangle reach far past the window.
-    const int64_t width = targetWidth;
-    const int64_t height = targetHeight;
+    const int64_t width = visibleWidth;
+    const int64_t height = visibleHeight;
     const int64_t left = std::clamp<int64_t>(scissor.x, 0, width);
     const int64_t right = std::clamp<int64_t>(int64_t(scissor.x) + scissor.width, 0, width);
-    const int64_t top = std::clamp<int64_t>(height - (int64_t(scissor.y) + scissor.height), 0, height);
-    const int64_t bottom = std::clamp<int64_t>(height - scissor.y, 0, height);
+    const int64_t top = std::clamp<int64_t>(int64_t(listHeight) - (int64_t(scissor.y) + scissor.height), 0, height);
+    const int64_t bottom = std::clamp<int64_t>(int64_t(listHeight) - scissor.y, 0, height);
     rect = { uint32_t(left), uint32_t(top), uint32_t(right - left), uint32_t(bottom - top) };
     return rect.width != 0 && rect.height != 0;
 }

@@ -1157,12 +1157,14 @@ private:
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commands, 0, 1, &mUIBuffers[slot].buffer, &offset);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mUIPipelineLayout, 0, 1, &mUISet, 0, nullptr);
+        const VkViewport viewport{ 0.f, UI_EDGE_NUDGE, float(ui.width()), float(ui.height()), 0.f, 1.f };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
 
         VkPipeline bound = VK_NULL_HANDLE;
         for (const UIDraw& draw : ui.draws())
         {
             UIRect rect;
-            if (!resolveScissor(draw.scissor, mExtent.width, mExtent.height, rect))
+            if (!resolveScissor(draw.scissor, ui.width(), ui.height(), mExtent.width, mExtent.height, rect))
             {
                 continue;
             }

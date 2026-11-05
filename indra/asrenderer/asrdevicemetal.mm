@@ -363,12 +363,13 @@ private:
     {
         [encoder setVertexBuffer:mUIBuffers[slot] offset:0 atIndex:UI_VERTEX_BUFFER];
         [encoder setFragmentBuffer:mArguments offset:0 atIndex:0];
+        [encoder setViewport:MTLViewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 }];
 
         id<MTLRenderPipelineState> bound = nil;
         for (const UIDraw& draw : ui.draws())
         {
             UIRect rect;
-            if (!resolveScissor(draw.scissor, width, height, rect))
+            if (!resolveScissor(draw.scissor, ui.width(), ui.height(), width, height, rect))
             {
                 continue;
             }
