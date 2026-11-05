@@ -4,7 +4,18 @@
 
 `doc/ayanestorm-new-renderer-requirements.md` asks for an optional renderer beside OpenGL: at least 5x the OpenGL frame rate in a 16,000-object scene, matching image quality, on Windows and Linux (Vulkan) and Apple Silicon (native), with few `ll*`/`fs*` edits.
 
-**Test machine: RTX 3080 Ti, 12 GB.** The 68 and 340 fps figures in the requirements came from an RTX 4090 and are not valid here. The target is 5x a fresh OpenGL baseline on the 3080 Ti.
+**Test hardware:**
+
+- **Windows: RTX 3080 Ti, 12 GB.** Main machine. The 68 and 340 fps figures in the requirements came from an RTX 4090 and are not valid here. The target is 5x a fresh OpenGL baseline on the 3080 Ti.
+- **macOS: Mac Mini M4, 16 GB unified memory.** The modest-Mac test case. CPU, GPU and the system share that memory, so `ASRMemoryBudget` must use Metal's reported working set, and the 5x target is measured against a separate OpenGL baseline on this machine.
+- **Linux: NAS with a GeForce GT 1030.** Use is kept to a minimum: batched smoke tests in P8, plus any earlier check the user agrees to. Its result proves Linux works, not Linux performance.
+
+**Frame rate rules, set by the user:**
+
+- **No built-in cap.** Speed has no ceiling; the 5x figure is a minimum, not a goal. Users can still cap FPS as today: the render thread applies the existing `FSLimitFramerate`, `FramePerSecondLimit` and `RenderVSyncEnable` settings.
+- **Floor: 60 fps at all times with everything rendered correctly,** on the 3080 Ti, in the busiest places, with crowds and features on, at full quality. It is judged on worst frames, not on averages. Lowering quality to reach it is not allowed.
+- **Goal:** the fastest and most beautiful engine for Second Life. No compromise on either side.
+- **Real render only.** See the real render rule in section 0.
 
 **GPU memory is a hard design constraint.** Target users have 12, 8, 6 or 4 GB. Smoothness may drop at 4 GB; failing, crashing or spilling out of video memory may not.
 
@@ -41,10 +52,16 @@ This is the core rule. No render-thread frame ever waits for the main thread.
 
 - **Two loops:** the main thread runs network, agent logic, `idle()` and UI at its own pace and publishes versioned state snapshots. The render thread renders from the newest snapshot and never blocks on it. A main-thread stall cannot freeze the view.
 - **Every frame is new:** each one has a fresh camera and fresh motion, not a repeated image.
+- **Real render rule:** every presented frame is fully rendered by the GPU: all visible geometry, lighting, shadows and effects. Banned: frame generation, reprojected or interpolated images, skipping frames, and updating any visible pass or effect every 2 or 3 frames to gain speed. Reusing data that has not changed is allowed, such as static geometry or a static shadow layer, as long as the frame's result is correct.
+- **Inherited skipping removed in new mode:** distant avatars animate every frame, not every `mUpdatePeriod` frames. Exact OIT's skip-frames on overflow are replaced by the budgeted OIT storage in section 5.
 - **Camera:** the newest main-thread camera plus prediction from raw input and agent velocity, sampled on the render thread and corrected smoothly. LLAgentCamera logic stays as it is.
 - **Motion:** object transforms and joint rotations are interpolated on the GPU between snapshots, so objects and avatars move at render rate.
-- **Target:** the 5x measure counts these frames.
-- **Main-thread rate:** `ASRendererSimHz` caps it, with a default at or above the server update rate, so interpolation delay stays small. Tuned on real movement in P3b.
+- **Target:** the 5x minimum and 60 fps floor count only frames that follow the real render rule.
+- **No laggy world:** high FPS must mean a live world, never the same state drawn many times. Camera, animation and motion must feel at least as responsive as a high-FPS OpenGL session.
+- **Main-thread rate:** not artificially low. It runs as fast as it can by default, with `ASRendererSimHz` only as an optional cap, because each main-thread step sets how fresh animation and motion are.
+- **Camera:** input is sampled on the render thread right before each frame, so camera lag is lower than today.
+- **Animation and motion:** use the newest state and extrapolate forward from velocity, instead of waiting for the next snapshot and interpolating behind. Interpolation is used only to smooth corrections. If the main thread stalls, the camera keeps moving, and motion extrapolates briefly before holding.
+- **Freshness gate:** each frame records the age of its camera input and its animation state. Reported as worst values in the frame statistics, and judged together with FPS.
 - **Fidelity of moved work:** GPU particles, flexi and morphs run against the CPU versions in a fixed-seed comparison mode until they match. The CPU path stays available in new mode for this test.
 
 **Moved off the CPU in new mode, each main-thread path gets a tagged early-out:**
@@ -74,7 +91,7 @@ With the new renderer on, the process creates no GL context. OpenGL stays compil
 - **Recording:** draws on the main thread record into command lists; nothing talks to a GPU API there. The render thread replays them.
 - **UI:** LLUI code does not change. It re-records at a capped rate (`ASRendererUIHz`), and the last list is replayed at world rate.
 - **Previews, morphs, bakes, dynamic textures:** run unmodified through `LLRenderTarget` and `LLVertexBuffer` into offscreen native passes. Their programs are compiled at build time and matched by name.
-- **Avatar impostors:** rendered by the native world path instead of `generateImpostor`.
+- **Avatar impostors:** not used in new mode; impostors are redrawn only every so many frames. Every visible avatar is real geometry with a GPU-selected LOD. `generateImpostor` output needed by UI, such as profile and preview images, comes from the native world path.
 - **3D tools:** highlights, beacons, build tools and debug displays use the same backend, depth-testing against world depth.
 - **Unmapped programs:** log an error once, so gaps are visible.
 - **Stray GL:** direct calls in reachable code get small tagged edits, from the P1 audit. In new mode GL entry points that the viewer loads are stubbed to log once, so a call added by an upstream merge reports itself; P1 confirms how far stubbing can reach on each platform.
@@ -107,9 +124,10 @@ Compute culling (frustum, two-phase Hi-Z, LOD) -> indirect visibility buffer -> 
 - **Visibility buffer from the start:** geometry writes only triangle and instance IDs, so hidden and tiny triangles cost almost no shading. Each visible pixel is shaded once.
 - **Same G-buffer layout:** the resolve writes the GL layout, so reused effects and parity work unchanged.
 - **Async compute:** effects run on the async compute queue where the hardware has one, overlapping geometry work.
-- **Temporal reuse:** expensive effects (volumetrics, GTAO, DoF gather) may reuse history with reprojection. Each one must pass side-by-side captures in live and snapshot, and snapshots never depend on history they have not converged.
-- **Shadows:** culled the same way. Static content is cached at every memory tier, at lower resolution when the budget is tight. Far cascades update on a staggered schedule.
-- **Probes:** time-sliced, a few faces per frame, using the visibility path.
+- **No temporal shortcuts:** every effect is computed every frame. Effect cost is cut by better algorithms: compute instead of full-screen fragment work, tile classification that skips pixels with nothing to do, and native features.
+- **Shadows:** culled the same way, with every cascade correct every frame. Unchanged static content is cached at every memory tier, at lower resolution when the budget is tight, and moving content is drawn over it each frame.
+- **Probes:** must beat the OpenGL renderer, which updates one at a time. Unchanged content is cached. Probes affected by a change in sun, environment or nearby moving objects refresh in the same frame, using multi-view rendering through the visibility path. The cost is measured in P4.
+- **No quality scaling for speed:** nothing lowers samples or resolution at runtime to hold the frame rate. If a scene misses the floor at full quality, that is a defect to fix in the engine.
 - **Alpha:** alpha-masked content uses the visibility path. Blended content is culled against Hi-Z and depth-bounded per tile, so empty pixels cost nothing. OIT layer storage comes from the budget, with a stated per-pixel limit and no silent drop in quality above it.
 
 ### 6. Textures
@@ -167,6 +185,21 @@ CMake and autobuild stay. There is no new build system, because upstream changes
 - **Optional no-LTO development build:** a separate build directory with `USE_LTO=OFF`, an existing switch. Official builds keep LTO. Link time is measured before relying on it.
 - **Limit:** real UI, networking, teleports and live region loading still need the full viewer.
 
+## P0 baseline results
+
+Busy place, RTX 3080 Ti, OpenGL renderer, frame cap off. First informal reading; resolution, VRAM and the CPU/GPU split are still to be recorded.
+
+| Setup | OpenGL | Frame time | 5x target | Target frame time |
+|---|---|---|---|---|
+| Most AyaneStorm features on | 23 fps | 43.5 ms | 115 fps | 8.7 ms |
+| AyaneStorm features off | 30 fps | 33.3 ms | 150 fps | 6.7 ms |
+
+The features add about 10.2 ms per frame, more than the whole 8.7 ms target frame. Hitting 5x with them on means reducing their own cost, not only removing the base overhead.
+
+A later reading at the same place, features on, was about 15 fps (66.7 ms), and frame rate depends heavily on the people nearby. The real floor is 60 fps in that condition: 16.7 ms, a 4x gain over that reading, with no cap above it. A live busy place is therefore not a stable baseline. Every reading must record the nearby avatar count, and the comparison above is only indicative because the crowd may have changed between readings.
+
+Same place and camera, avatars hidden with Rendering Types > Avatars: features on 42 fps (23.8 ms), features off 60 fps (16.7 ms). Features cost about 7 ms without avatars. Avatars cost about 17 ms with features off (30 to 60 fps), and 20 to 43 ms with features on (from 23 or 15 fps to 42), though those readings were not taken together. The 60 fps reading is not a cap: much higher rates appear with the camera pointed at the sky, at the same place. Camera on the sky at the same place: features on 96 fps (10.4 ms), features off 106 fps (9.4 ms). So work independent of the view, including `idle()`, UI and present, costs at most about 9.4 ms, which alone would cap OpenGL at about 106 fps and rules out the 150 fps target without the section 0 decoupling. Features cost about 1 ms with nothing in view, so almost all their cost scales with scene content. With features off, the rough split is about 9 ms view-independent, 7 ms world, 17 ms avatars. Hiding avatars may leave their CPU animation running, so their full cost may be higher.
+
 ## Phases
 
 Each phase ends with a user build and test. From P1b on, renderer work is tested in `asrenderer_test` with captured scenes wherever possible, and full viewer builds are saved for seam, UI and live-world changes. Edits are batched to keep rebuilds few. A count of changed `ll*`/`fs*` files is reported every phase.
@@ -178,10 +211,10 @@ Each phase ends with a user build and test. From P1b on, renderer work is tested
 | **P1b Fast iteration** | `asrenderer` library, `ASRenderer.cmake`, shader build step, `asrenderer_test`, scene capture format; time a no-LTO viewer link | Test program builds and opens a window without the viewer; a shader edit rebuilds only that shader; upstream CMake edits are tagged lines only |
 | **P2 Skeleton and UI** | Module, setting, probe, device, fallback, free-running render thread, state snapshots, `ASRMemoryBudget`, `ASRBackend`, window without GL | Login, all floaters, resize work with no GL context over an empty world; render rate unaffected by an artificial main-thread stall; OpenGL mode unchanged |
 | **P3 Scene and speed proof** | Prims, mesh, textures with the lossless path, compression under pressure, avatars, culling, visibility buffer and material resolve, unlit G-buffer view, tiled snapshot path with overlap | Target scene geometry pass measured; stop and review if 5x is out of reach. VRAM at or below OpenGL at the same spot. Runs in budget at 8, 6 and 4 GB caps |
-| **P3b CPU to GPU** | Everything in the section 0 table: camera prediction, GPU motion and palettes, compute skinning, morphs, flexi, particles, feedback-driven LOD and textures, parallel avatar motion, main-thread early-outs | Full target scene with moving avatars and objects holds render rate during main-thread stalls; main-thread cost compared with P0; particles, flexi and morphs match in comparison mode |
+| **P3b CPU to GPU** | Everything in the section 0 table: camera prediction, GPU motion and palettes, compute skinning, morphs, flexi, particles, feedback-driven LOD and textures, parallel avatar motion, main-thread early-outs | Busy place with a crowd holds at least 60 fps on worst frames, including during main-thread stalls; main-thread cost compared with P0; particles, flexi and morphs match in comparison mode |
 | **P4 Lighting parity** | Sun, moon, shadows, probes, EEP sky, clouds, water, terrain, local lights, projectors | Side-by-side captures |
 | **P5 Alpha and tools** | Alpha modes, redesigned OIT modes, particles, glow, HUD, highlights, beacons, build tools, debug displays, media, previews, morphs, bakes, impostors | Alpha-heavy avatar test; every preview floater works |
-| **P6 Effects** | GTAO/VBAO, colour grading, LUTs, bloom, flares, vignette, chromatic aberration, motion blur, volumetrics, night sky, sun, moon, auroras, snow, My Lights | Each one in live and snapshot, with no tile seams, and GPU cost reported against P0 with all effects on |
+| **P6 Effects** | GTAO/VBAO, colour grading, LUTs, bloom, flares, vignette, chromatic aberration, motion blur, volumetrics, night sky, sun, moon, auroras, snow, My Lights | Each one in live and snapshot, computed every frame, with no tile seams, and GPU cost reported against P0 with all effects on. Busy place holds 60 fps at full quality |
 | **P7 DoF** | Aperture-sampled, then Live, autofocus, tracking; snapshot first | Snapshot quality matches |
 | **P8 Hardening** | Linux pass, device loss, previews, stats, acceptance suite | Requirements acceptance list passes, including at 8, 6 and 4 GB caps |
 
@@ -189,8 +222,8 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 
 ## Main risks
 
-0. **GPU-limited scenes.** Pixel work costs the same in any API. The visibility buffer, async compute and temporal reuse reduce it, but if the target scene is GPU-limited with all effects on, 5x is not guaranteed. P0 shows where the baseline stands, and P6 reports the result with all effects on.
-1. **Prediction and interpolation artefacts.** Camera prediction can overshoot on sudden stops, and interpolation adds up to one snapshot of delay to object motion. Corrections are blended, and `ASRendererSimHz` sets the trade-off. Judged on real movement in P3b.
+0. **GPU-limited scenes.** Pixel work costs the same in any API, and the real render rule removes temporal shortcuts. The visibility buffer, async compute and better effect algorithms reduce it, but the 60 fps floor at full quality is unproven until measured. A miss is reported to the user with the cause and a proposed engine fix, and quality is never lowered instead. P3, P3b and P6 are the checkpoints.
+1. **Prediction artefacts.** Extrapolated camera, joints and objects can overshoot on sudden stops or direction changes. Corrections are blended, and the freshness numbers and real movement are judged in P3b.
 1a. **Parallel avatar motion.** `llcharacter` and `LLVOAvatar` assume one thread, and upstream edits them. Shared caches need a P3b audit, and it is the most merge-exposed item here.
 2. **Merge surface.** About 10 `llrender` files, 3 `llwindow` files and the stray-GL list carry tagged edits, so the `ll*`/`fs*` count is higher than a GL-keeping design. Conflicts should stay low: one-line insertions in files upstream rarely changes. P1 estimates it before work starts; if it is too high, that is the point to stop.
 3. **Silent upstream drift.** Upstream can add a GL call or a shader that new mode does not handle. OpenGL mode is unaffected. Stubs and unmapped-program logs expose it; a post-merge check lists new direct GL calls.
@@ -210,7 +243,9 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 - Every shared `as*.glsl` still validates at `#version 410 core`.
 - Confirmed in new mode: no GL context is created. Stub logs stay empty across the test set.
 - Render rate logged while the main thread is deliberately stalled, and during teleport and region arrival. A frame counts only if its camera or motion state is new.
-- FPS measured with AyaneStorm effects off and all on, and in an alpha-heavy scene.
+- FPS measured with AyaneStorm effects off and all on, and in an alpha-heavy scene, each reading with its nearby avatar count.
+- Worst camera-input age and animation-state age logged with FPS, in crowds and during main-thread stalls.
+- Worst-frame log (minimum, 1% low) against the 60 fps floor, in crowds, on teleport and on region arrival, with presented frames matched one to one against fully rendered frames.
 - Snapshot tile-seam test on every effect. Live view watched during a capture at the 4 GB cap.
 - `ll*`/`fs*` changed-file count, and a trial upstream merge, reported at each phase.
 - Fixed-scene side-by-side captures, live and snapshot.
