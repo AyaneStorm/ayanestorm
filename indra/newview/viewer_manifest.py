@@ -987,6 +987,13 @@ class Windows_x86_64_Manifest(ViewerManifest):
         
 
     def package_finish(self):
+        # <AS:Chanayane> Dev builds: stage the whole viewer, but build no installer.
+        if os.environ.get('AS_SKIP_INSTALLER'):
+            print("AS_SKIP_INSTALLER is set: viewer staged, no installer built")
+            self.package_file = "copied_deps"
+            return
+        # </AS:Chanayane>
+
         # Check if we should use Velopack instead of NSIS
         # Note: as of 2026.01's release, we will be building with Velopack's one click install.
         # We maintain the legacy NSIS packaging mainly for TPVs at this point.
