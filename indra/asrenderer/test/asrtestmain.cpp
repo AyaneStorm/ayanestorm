@@ -4,27 +4,43 @@
  *
  *   asrenderer_test --selftest           portable checks, no window
  *   asrenderer_test [--seconds N]        draw the test triangle for N seconds (default 10)
+ *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
+ *                   [--memory-cap-mb N]  lower the video memory budget
  *                   [--validate]         turn on the Vulkan validation layers
  *                   [--vsync]            wait for the display
  *                   [--shaders DIR]      compiled shader folder
  *
  * Exit code 0 means every check passed.
  */
+#include "asrlatestvalue.h"
+#include "asrmemorybudget.h"
 #include "asrscenefile.h"
 
 #ifdef ASR_HAS_DEVICE
 #include "asrdevice.h"
+#include "asrrenderthread.h"
 #include "asrtestwindow.h"
 #endif
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
+#include <vector>
 
 namespace
 {
+
+using Clock = std::chrono::steady_clock;
+
+double secondsSince(Clock::time_point start)
+{
+    return std::chrono::duration<double>(Clock::now() - start).count();
+}
 
 int sFailures = 0;
 
@@ -143,9 +159,180 @@ void testSceneFile(const std::string& path)
     expect(!loaded.load(path, error), "missing file is refused");
 }
 
-#ifdef ASR_HAS_DEVICE
-int drawTriangle(double seconds, const asr::DeviceOptions& options)
+// The fields only match if a value is never read while it is being written.
+struct LatestValueTestData
 {
+    uint64_t a = 0;
+    uint64_t padding[6] = {};
+    uint64_t b = 0;
+};
+
+void testLatestValue()
+{
+    asr::LatestValue<LatestValueTestData> latest;
+    expect(latest.read().a == 0, "reads a default value before the first publish");
+
+    latest.writeSlot().a = 1;
+    latest.writeSlot().b = 1;
+    expect(latest.read().a == 0, "unpublished value stays hidden");
+    latest.publish();
+    expect(latest.read().a == 1, "published value arrives");
+    expect(latest.read().a == 1, "newest value can be read again");
+
+    for (uint64_t i = 2; i <= 5; ++i)
+    {
+        latest.writeSlot().a = i;
+        latest.writeSlot().b = i;
+        latest.publish();
+    }
+    expect(latest.read().a == 5, "a slow reader skips to the newest value");
+
+    std::atomic<bool> stop{ false };
+    uint64_t published = 5;
+    std::thread writer([&]()
+    {
+        while (!stop.load(std::memory_order_relaxed))
+        {
+            ++published;
+            LatestValueTestData& slot = latest.writeSlot();
+            slot.a = published;
+            slot.b = published;
+            latest.publish();
+        }
+    });
+
+    uint64_t reads = 0;
+    uint64_t previous = 0;
+    uint64_t changes = 0;
+    bool torn = false;
+    bool backwards = false;
+    const Clock::time_point start = Clock::now();
+    while (secondsSince(start) < 0.5)
+    {
+        const LatestValueTestData& value = latest.read();
+        torn = torn || value.a != value.b;
+        backwards = backwards || value.a < previous;
+        changes += value.a != previous ? 1 : 0;
+        previous = value.a;
+        ++reads;
+    }
+    stop.store(true, std::memory_order_relaxed);
+    writer.join();
+
+    printf("      %llu reads, %llu new values, %llu published\n", (unsigned long long)reads,
+           (unsigned long long)changes, (unsigned long long)published);
+    expect(!torn, "no value is read half written, across threads");
+    expect(!backwards, "values never go back in time");
+    expect(changes > 100, "the reader keeps seeing new values");
+}
+
+void testMemoryBudget()
+{
+    using Category = asr::MemoryCategory;
+    constexpr uint64_t GB = 1024ull * 1024 * 1024;
+
+    asr::MemoryBudget budget;
+    expect(!budget.reserve(Category::Textures, 1), "nothing fits before a budget is set");
+
+    budget.setBudget(4 * GB);
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < uint32_t(Category::Count); ++i)
+    {
+        total += budget.limit(Category(i));
+    }
+    expect(total == 4 * GB, "category limits add up to the budget exactly");
+    expect(budget.limit(Category::Textures) > budget.limit(Category::RenderTargets), "textures take what is left");
+
+    expect(budget.reserve(Category::UI, 1024), "a small reservation fits");
+    expect(budget.used(Category::UI) == 1024 && budget.totalUsed() == 1024, "reservation is counted");
+    expect(!budget.reserve(Category::UI, budget.limit(Category::UI)), "reservation past the limit is refused");
+    expect(budget.used(Category::UI) == 1024, "a refused reservation changes nothing");
+    expect(!budget.reserve(Category::UI, ~0ull), "huge reservation does not wrap around");
+    budget.release(Category::UI, 1024);
+    expect(budget.used(Category::UI) == 0 && budget.totalUsed() == 0, "release gives the memory back");
+    expect(budget.reserve(Category::UI, budget.limit(Category::UI)), "a category can use all of its limit");
+    budget.release(Category::UI, budget.limit(Category::UI));
+
+    // One category cannot reach 85% of the total, so fill all of them equally.
+    const auto fill = [&](uint64_t percent)
+    {
+        for (uint32_t i = 0; i < uint32_t(Category::Count); ++i)
+        {
+            budget.reserve(Category(i), budget.limit(Category(i)) / 100 * percent);
+        }
+    };
+    const auto empty = [&](uint64_t percent)
+    {
+        for (uint32_t i = 0; i < uint32_t(Category::Count); ++i)
+        {
+            budget.release(Category(i), budget.limit(Category(i)) / 100 * percent);
+        }
+    };
+    expect(budget.pressure() == asr::MemoryPressure::None, "no pressure when empty");
+    fill(90);
+    expect(budget.pressure() == asr::MemoryPressure::LowerMips, "lowers mips at 90%");
+    empty(90);
+    fill(96);
+    expect(budget.pressure() == asr::MemoryPressure::HoldLoads, "holds loads at 96%");
+    empty(96);
+    expect(budget.totalUsed() == 0, "budget is empty again");
+
+    constexpr int THREADS = 4;
+    constexpr int ROUNDS = 100000;
+    const uint64_t limit = budget.limit(Category::Staging);
+    std::atomic<bool> overLimit{ false };
+    std::vector<std::thread> threads;
+    for (int t = 0; t < THREADS; ++t)
+    {
+        threads.emplace_back([&]()
+        {
+            const uint64_t size = limit / 3;
+            for (int i = 0; i < ROUNDS; ++i)
+            {
+                if (budget.reserve(Category::Staging, size))
+                {
+                    if (budget.used(Category::Staging) > limit)
+                    {
+                        overLimit.store(true);
+                    }
+                    budget.release(Category::Staging, size);
+                }
+            }
+        });
+    }
+    for (std::thread& thread : threads)
+    {
+        thread.join();
+    }
+    expect(!overLimit.load(), "threads racing for memory never pass the limit");
+    expect(budget.used(Category::Staging) == 0 && budget.totalUsed() == 0, "threads racing leave the count exact");
+}
+
+#ifdef ASR_HAS_DEVICE
+void printStats(const char* name, const asr::FrameStats& stats, double seconds)
+{
+    printf("%s: %.0f fps, worst frame %.1f ms, oldest state %.1f ms\n", name, stats.frames / seconds,
+           stats.worstFrameSeconds * 1000.0, stats.worstStateAgeSeconds * 1000.0);
+}
+
+void printMemory(asr::MemoryBudget& budget)
+{
+    printf("memory budget %.2f GB, used %.1f MB\n", budget.budget() / (1024.0 * 1024.0 * 1024.0),
+           budget.totalUsed() / (1024.0 * 1024.0));
+    for (uint32_t i = 0; i < uint32_t(asr::MemoryCategory::Count); ++i)
+    {
+        const asr::MemoryCategory category = asr::MemoryCategory(i);
+        printf("  %-15s %8.1f MB of %8.1f MB\n", asr::memoryCategoryName(category),
+               budget.used(category) / (1024.0 * 1024.0), budget.limit(category) / (1024.0 * 1024.0));
+    }
+}
+
+int drawTriangle(double seconds, double stallSeconds, const asr::DeviceOptions& options)
+{
+    const asr::ProbeResult probe = asr::Device::probe();
+    printf("probe before any window: %s\n", probe.supported ? probe.info.name.c_str() : probe.reason.c_str());
+    expect(probe.supported, "probe accepts this machine");
+
     asrtest::TestWindow window;
     if (!window.create(1280, 720, "asrenderer_test"))
     {
@@ -163,31 +350,76 @@ int drawTriangle(double seconds, const asr::DeviceOptions& options)
     printf("backend %s, device %s, memory %.1f GB\n", device->info().backend.c_str(), device->info().name.c_str(),
            device->info().memoryBudgetBytes / (1024.0 * 1024.0 * 1024.0));
     expect(!asrtest::glContextIsCurrent(), "no GL context after device creation");
-
-    using Clock = std::chrono::steady_clock;
-    const Clock::time_point start = Clock::now();
-    long frames = 0;
-    bool resized = false;
-    double elapsed = 0.0;
-    while (window.pumpEvents() && elapsed < seconds)
+    expect(probe.info.name == device->info().name, "probe and device agree on the GPU");
+    if (options.memoryCapBytes != 0)
     {
-        uint32_t width, height;
-        window.pixelSize(width, height);
-        if (!device->renderTestFrame(width, height, float(elapsed)))
-        {
-            printf("FAIL  frame %ld: %s\n", frames, device->lastError().c_str());
-            return 1;
-        }
-        ++frames;
-        elapsed = std::chrono::duration<double>(Clock::now() - start).count();
-        if (!resized && elapsed > seconds / 2.0)
-        {
-            resized = true;
-            window.resize(900, 600);
-        }
+        expect(device->memoryBudget().budget() <= options.memoryCapBytes, "memory cap lowers the budget");
     }
 
-    printf("frames %ld in %.2f s = %.0f fps\n", frames, elapsed, frames / elapsed);
+    asr::RenderThread renderThread(*device);
+    const auto publishWindowSize = [&]()
+    {
+        asr::FrameState& state = renderThread.state();
+        window.pixelSize(state.width, state.height);
+        renderThread.publishState();
+    };
+    publishWindowSize();
+    renderThread.start();
+
+    // Runs the main thread normally for a while. False if the test must stop.
+    const auto runMainThread = [&](double duration)
+    {
+        const Clock::time_point start = Clock::now();
+        while (secondsSince(start) < duration)
+        {
+            if (!window.pumpEvents())
+            {
+                return false;
+            }
+            if (renderThread.failed())
+            {
+                printf("FAIL  render thread: %s\n", renderThread.error().c_str());
+                return false;
+            }
+            publishWindowSize();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return true;
+    };
+
+    constexpr double WARM_UP_SECONDS = 1.0;
+    const double normalSeconds = std::max(stallSeconds, 1.0);
+    const double restSeconds = std::max(seconds - WARM_UP_SECONDS - normalSeconds - stallSeconds, 1.0);
+
+    bool ran = runMainThread(WARM_UP_SECONDS);
+    renderThread.takeStats();
+
+    ran = ran && runMainThread(normalSeconds);
+    const asr::FrameStats normal = renderThread.takeStats();
+    printStats("main thread running", normal, normalSeconds);
+
+    if (ran && stallSeconds > 0.0)
+    {
+        std::this_thread::sleep_for(std::chrono::duration<double>(stallSeconds));
+        const asr::FrameStats stalled = renderThread.takeStats();
+        printStats("main thread stalled", stalled, stallSeconds);
+
+        const double normalFps = normal.frames / normalSeconds;
+        const double stalledFps = stalled.frames / stallSeconds;
+        expect(stalled.worstStateAgeSeconds >= stallSeconds * 0.9, "render thread really ran on old state");
+        expect(stalledFps >= normalFps * 0.8, "render rate holds during the stall");
+        expect(stalled.worstFrameSeconds < 0.1, "no frame took 100 ms during the stall");
+    }
+
+    window.resize(900, 600);
+    ran = ran && runMainThread(restSeconds);
+
+    printMemory(device->memoryBudget());
+    const bool countsSwapchain = device->memoryBudget().used(asr::MemoryCategory::RenderTargets) > 0;
+    renderThread.stop();
+
+    expect(ran, "ran to the end");
+    expect(countsSwapchain, "budget counts the window's images");
     expect(!asrtest::glContextIsCurrent(), "no GL context after rendering");
     expect(device->validationErrors() == 0, "no validation errors");
     device.reset();
@@ -204,6 +436,7 @@ int main(int argc, char** argv)
     bool selftest = false;
     double seconds = 10.0;
 #ifdef ASR_HAS_DEVICE
+    double stallSeconds = 2.0;
     asr::DeviceOptions options;
     options.shaderDir = ASR_SHADER_DIR;
 #endif
@@ -219,6 +452,14 @@ int main(int argc, char** argv)
             seconds = atof(argv[++i]);
         }
 #ifdef ASR_HAS_DEVICE
+        else if (arg == "--stall" && i + 1 < argc)
+        {
+            stallSeconds = atof(argv[++i]);
+        }
+        else if (arg == "--memory-cap-mb" && i + 1 < argc)
+        {
+            options.memoryCapBytes = uint64_t(atof(argv[++i])) * 1024 * 1024;
+        }
         else if (arg == "--validate")
         {
             options.validation = true;
@@ -242,11 +483,13 @@ int main(int argc, char** argv)
     if (selftest)
     {
         testSceneFile("asrenderer_test_scene.tmp");
+        testLatestValue();
+        testMemoryBudget();
     }
     else
     {
 #ifdef ASR_HAS_DEVICE
-        if (drawTriangle(seconds, options) != 0)
+        if (drawTriangle(seconds, stallSeconds, options) != 0)
         {
             return 1;
         }

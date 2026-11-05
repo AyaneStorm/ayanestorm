@@ -16,9 +16,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(ASR_THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
-# --- Scene files: portable, so built on every platform. ---------------------
-add_library(asrenderer STATIC asrscenefile.cpp)
+# --- Portable code, built on every platform. ---------------------------------
+find_package(Threads REQUIRED)
+add_library(asrenderer STATIC asrmemorybudget.cpp asrrenderthread.cpp asrscenefile.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(asrenderer PUBLIC Threads::Threads)
 
 # --- Graphics backend. Linux gets its surface code with the P8 Linux pass. ---
 if(WIN32)

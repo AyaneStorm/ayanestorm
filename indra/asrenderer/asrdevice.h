@@ -1,12 +1,16 @@
 /**
  * asrdevice.h
  * The renderer's connection to the GPU: one interface, with a Vulkan backend on
- * Windows and a native Metal backend on macOS. This first version only draws the
- * test triangle. P2 grows it into the full backend layer of section 2 of
- * doc/ayanestorm-new-renderer-plan.md.
+ * Windows and a native Metal backend on macOS. For now it only draws the test
+ * triangle. P2 grows it into the full backend layer of section 2 of
+ * doc/ayanestorm-new-renderer-plan.md. Create it on one thread and use it on
+ * another if needed, but only one thread may use it at a time.
  */
 #pragma once
 
+#include "asrmemorybudget.h"
+
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -26,6 +30,7 @@ struct DeviceOptions
     std::string shaderDir;   // folder holding the compiled shaders
     bool validation = false; // Vulkan validation layers, when installed
     bool vsync = false;      // off by default: the renderer has no built-in cap
+    uint64_t memoryCapBytes = 0; // lowers the memory budget; 0 means no cap
 };
 
 struct DeviceInfo
@@ -35,9 +40,21 @@ struct DeviceInfo
     uint64_t memoryBudgetBytes = 0; // Vulkan device-local heap, or Metal working set
 };
 
+// Whether this machine can run the renderer, known before any window exists.
+struct ProbeResult
+{
+    bool supported = false;
+    std::string reason; // why not, when supported is false
+    DeviceInfo info;
+};
+
 class Device
 {
 public:
+    // Needs no window, and leaves nothing behind. The viewer calls it before
+    // creating its window, to choose between this renderer and OpenGL.
+    static ProbeResult probe();
+
     // Returns null and sets error when the device cannot be created, so the
     // caller can fall back to OpenGL.
     static std::unique_ptr<Device> create(const SurfaceTarget& target, const DeviceOptions& options,
@@ -46,6 +63,12 @@ public:
     virtual ~Device() = default;
 
     virtual const DeviceInfo& info() const = 0;
+
+    MemoryBudget& memoryBudget() { return mMemoryBudget; }
+
+    // Reads the driver's current figure into memoryBudget(), so the budget
+    // follows what other applications are using.
+    virtual void refreshMemoryBudget() = 0;
 
     // Draws and presents one frame. Sizes are in pixels; a change of size
     // recreates what depends on it. Returns false on an unrecoverable error,
@@ -56,6 +79,15 @@ public:
 
     // Errors reported by the validation layers. Always 0 on Metal.
     virtual uint32_t validationErrors() const = 0;
+
+protected:
+    void setDriverBudget(uint64_t bytes)
+    {
+        mMemoryBudget.setBudget(mMemoryCapBytes ? std::min(bytes, mMemoryCapBytes) : bytes);
+    }
+
+    MemoryBudget mMemoryBudget;
+    uint64_t mMemoryCapBytes = 0;
 };
 
 } // namespace asr

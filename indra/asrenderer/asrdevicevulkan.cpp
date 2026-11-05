@@ -13,6 +13,7 @@
 #include "volk.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -26,6 +27,86 @@ namespace
 
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 
+// The features section 2 of the plan requires.
+bool hasRequiredFeatures(VkPhysicalDevice gpu)
+{
+    VkPhysicalDeviceVulkan13Features v13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
+    VkPhysicalDeviceVulkan12Features v12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v13 };
+    VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
+    vkGetPhysicalDeviceFeatures2(gpu, &features);
+    return v13.dynamicRendering && v13.synchronization2 && v12.timelineSemaphore &&
+           v12.descriptorIndexing && v12.bufferDeviceAddress;
+}
+
+struct GpuChoice
+{
+    VkPhysicalDevice gpu = VK_NULL_HANDLE;
+    uint32_t queueFamily = 0;
+    uint32_t memoryHeap = 0; // the largest device-local heap
+    DeviceInfo info;
+};
+
+// Takes the best GPU that has Vulkan 1.3, the required features, and a queue that
+// can both draw and present. Discrete GPUs win. canPresent(gpu, family) decides
+// the last part, so probing and device creation apply one rule.
+template <class CanPresent>
+GpuChoice chooseGpu(VkInstance instance, CanPresent canPresent)
+{
+    uint32_t count = 0;
+    vkEnumeratePhysicalDevices(instance, &count, nullptr);
+    std::vector<VkPhysicalDevice> gpus(count);
+    vkEnumeratePhysicalDevices(instance, &count, gpus.data());
+
+    GpuChoice choice;
+    int bestScore = 0;
+    for (VkPhysicalDevice gpu : gpus)
+    {
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(gpu, &properties);
+        if (properties.apiVersion < VK_API_VERSION_1_3 || !hasRequiredFeatures(gpu))
+        {
+            continue;
+        }
+
+        uint32_t queueCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, nullptr);
+        std::vector<VkQueueFamilyProperties> queues(queueCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, queues.data());
+        for (uint32_t i = 0; i < queueCount; ++i)
+        {
+            if ((queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && canPresent(gpu, i))
+            {
+                const int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 2 : 1;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    choice.gpu = gpu;
+                    choice.queueFamily = i;
+                    choice.info.name = properties.deviceName;
+                }
+                break;
+            }
+        }
+    }
+
+    if (choice.gpu != VK_NULL_HANDLE)
+    {
+        choice.info.backend = "Vulkan";
+        VkPhysicalDeviceMemoryProperties memory;
+        vkGetPhysicalDeviceMemoryProperties(choice.gpu, &memory);
+        for (uint32_t i = 0; i < memory.memoryHeapCount; ++i)
+        {
+            if ((memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) &&
+                memory.memoryHeaps[i].size > choice.info.memoryBudgetBytes)
+            {
+                choice.info.memoryBudgetBytes = memory.memoryHeaps[i].size;
+                choice.memoryHeap = i;
+            }
+        }
+    }
+    return choice;
+}
+
 class DeviceVulkan final : public Device
 {
 public:
@@ -34,6 +115,7 @@ public:
     bool init(const SurfaceTarget& target, const DeviceOptions& options, std::string& error)
     {
         mOptions = options;
+        mMemoryCapBytes = options.memoryCapBytes;
         mWindow = static_cast<HWND>(target.nativeWindow);
 
         if (volkInitialize() != VK_SUCCESS)
@@ -47,7 +129,23 @@ public:
 
     const DeviceInfo& info() const override { return mInfo; }
     const std::string& lastError() const override { return mError; }
-    uint32_t validationErrors() const override { return mValidationErrors; }
+    uint32_t validationErrors() const override { return mValidationErrors.load(std::memory_order_relaxed); }
+
+    void refreshMemoryBudget() override
+    {
+        uint64_t bytes = mInfo.memoryBudgetBytes;
+        if (mHasMemoryBudgetExtension)
+        {
+            VkPhysicalDeviceMemoryBudgetPropertiesEXT budget{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT };
+            VkPhysicalDeviceMemoryProperties2 memory{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2, &budget };
+            vkGetPhysicalDeviceMemoryProperties2(mGpu, &memory);
+            if (budget.heapBudget[mMemoryHeap] != 0)
+            {
+                bytes = budget.heapBudget[mMemoryHeap];
+            }
+        }
+        setDriverBudget(bytes);
+    }
 
     bool renderTestFrame(uint32_t width, uint32_t height, float seconds) override
     {
@@ -55,8 +153,13 @@ public:
         {
             return true; // minimized
         }
-        if (mSwapchain == VK_NULL_HANDLE || mNeedSwapchain || width != mExtent.width || height != mExtent.height)
+        // The size can lag behind the real window, because it comes from the main
+        // thread, and the surface then decides the size. So compare with what was
+        // last asked for: comparing with mExtent would rebuild every frame.
+        if (mSwapchain == VK_NULL_HANDLE || mNeedSwapchain || width != mRequestedWidth || height != mRequestedHeight)
         {
+            mRequestedWidth = width;
+            mRequestedHeight = height;
             if (!createSwapchain(width, height))
             {
                 return false;
@@ -149,7 +252,7 @@ private:
     {
         if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         {
-            ++static_cast<DeviceVulkan*>(user)->mValidationErrors;
+            static_cast<DeviceVulkan*>(user)->mValidationErrors.fetch_add(1, std::memory_order_relaxed);
             fprintf(stderr, "VALIDATION: %s\n", data->pMessage);
         }
         return VK_FALSE;
@@ -229,75 +332,40 @@ private:
         return true;
     }
 
-    // Takes the best GPU that has Vulkan 1.3, the required features, and a queue
-    // that can both draw and present to this window. Discrete GPUs win.
     bool pickGpu(std::string& error)
     {
-        uint32_t count = 0;
-        vkEnumeratePhysicalDevices(mInstance, &count, nullptr);
-        std::vector<VkPhysicalDevice> gpus(count);
-        vkEnumeratePhysicalDevices(mInstance, &count, gpus.data());
-
-        int bestScore = 0;
-        for (VkPhysicalDevice gpu : gpus)
+        const GpuChoice choice = chooseGpu(mInstance, [this](VkPhysicalDevice gpu, uint32_t family)
         {
-            VkPhysicalDeviceProperties properties;
-            vkGetPhysicalDeviceProperties(gpu, &properties);
-            if (properties.apiVersion < VK_API_VERSION_1_3 || !hasRequiredFeatures(gpu))
-            {
-                continue;
-            }
-
-            uint32_t queueCount = 0;
-            vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, nullptr);
-            std::vector<VkQueueFamilyProperties> queues(queueCount);
-            vkGetPhysicalDeviceQueueFamilyProperties(gpu, &queueCount, queues.data());
-            for (uint32_t i = 0; i < queueCount; ++i)
-            {
-                VkBool32 canPresent = VK_FALSE;
-                vkGetPhysicalDeviceSurfaceSupportKHR(gpu, i, mSurface, &canPresent);
-                if (canPresent && (queues[i].queueFlags & VK_QUEUE_GRAPHICS_BIT))
-                {
-                    const int score = properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 2 : 1;
-                    if (score > bestScore)
-                    {
-                        bestScore = score;
-                        mGpu = gpu;
-                        mQueueFamily = i;
-                        mInfo.name = properties.deviceName;
-                    }
-                    break;
-                }
-            }
-        }
-        if (mGpu == VK_NULL_HANDLE)
+            VkBool32 canPresent = VK_FALSE;
+            vkGetPhysicalDeviceSurfaceSupportKHR(gpu, family, mSurface, &canPresent);
+            return canPresent == VK_TRUE;
+        });
+        if (choice.gpu == VK_NULL_HANDLE)
         {
             error = "no Vulkan 1.3 GPU with the required features can present to this window";
             return false;
         }
-
-        mInfo.backend = "Vulkan";
-        VkPhysicalDeviceMemoryProperties memory;
-        vkGetPhysicalDeviceMemoryProperties(mGpu, &memory);
-        for (uint32_t i = 0; i < memory.memoryHeapCount; ++i)
-        {
-            if (memory.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)
-            {
-                mInfo.memoryBudgetBytes = std::max(mInfo.memoryBudgetBytes, uint64_t(memory.memoryHeaps[i].size));
-            }
-        }
+        mGpu = choice.gpu;
+        mQueueFamily = choice.queueFamily;
+        mMemoryHeap = choice.memoryHeap;
+        mInfo = choice.info;
         return true;
     }
 
-    // The features section 2 of the plan requires.
-    static bool hasRequiredFeatures(VkPhysicalDevice gpu)
+    bool hasDeviceExtension(const char* name) const
     {
-        VkPhysicalDeviceVulkan13Features v13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
-        VkPhysicalDeviceVulkan12Features v12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v13 };
-        VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
-        vkGetPhysicalDeviceFeatures2(gpu, &features);
-        return v13.dynamicRendering && v13.synchronization2 && v12.timelineSemaphore &&
-               v12.descriptorIndexing && v12.bufferDeviceAddress;
+        uint32_t count = 0;
+        vkEnumerateDeviceExtensionProperties(mGpu, nullptr, &count, nullptr);
+        std::vector<VkExtensionProperties> extensions(count);
+        vkEnumerateDeviceExtensionProperties(mGpu, nullptr, &count, extensions.data());
+        for (const VkExtensionProperties& extension : extensions)
+        {
+            if (strcmp(extension.extensionName, name) == 0)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     bool createLogicalDevice(std::string& error)
@@ -316,12 +384,18 @@ private:
         queue.queueCount = 1;
         queue.pQueuePriorities = &priority;
 
-        const char* extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+        std::vector<const char*> extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+        mHasMemoryBudgetExtension = hasDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        if (mHasMemoryBudgetExtension)
+        {
+            extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        }
+
         VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &v12 };
         create.queueCreateInfoCount = 1;
         create.pQueueCreateInfos = &queue;
-        create.enabledExtensionCount = 1;
-        create.ppEnabledExtensionNames = &extension;
+        create.enabledExtensionCount = uint32_t(extensions.size());
+        create.ppEnabledExtensionNames = extensions.data();
         const VkResult result = vkCreateDevice(mGpu, &create, nullptr, &mDevice);
         if (result != VK_SUCCESS)
         {
@@ -330,6 +404,7 @@ private:
         }
         volkLoadDevice(mDevice);
         vkGetDeviceQueue(mDevice, mQueueFamily, 0, &mQueue);
+        refreshMemoryBudget();
 
         // Picked once and kept, so the pipeline never depends on the swapchain's life.
         uint32_t count = 0;
@@ -573,6 +648,17 @@ private:
         vkGetSwapchainImagesKHR(mDevice, mSwapchain, &count, mImages.data());
         mViews.resize(count, VK_NULL_HANDLE);
         mRenderDone.resize(count, VK_NULL_HANDLE);
+
+        // The driver allocates these, so this is an estimate at 4 bytes per pixel.
+        mMemoryBudget.release(MemoryCategory::RenderTargets, mSwapchainBytes);
+        mSwapchainBytes = uint64_t(extent.width) * extent.height * 4 * count;
+        if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, mSwapchainBytes))
+        {
+            mSwapchainBytes = 0;
+            mError = "the swapchain does not fit in the render target budget";
+            return false;
+        }
+
         for (uint32_t i = 0; i < count; ++i)
         {
             VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
@@ -705,7 +791,7 @@ private:
     DeviceOptions mOptions;
     DeviceInfo mInfo;
     std::string mError;
-    uint32_t mValidationErrors = 0;
+    std::atomic<uint32_t> mValidationErrors{ 0 };
     HWND mWindow = nullptr;
 
     VkInstance mInstance = VK_NULL_HANDLE;
@@ -713,12 +799,17 @@ private:
     VkSurfaceKHR mSurface = VK_NULL_HANDLE;
     VkPhysicalDevice mGpu = VK_NULL_HANDLE;
     uint32_t mQueueFamily = 0;
+    uint32_t mMemoryHeap = 0;
+    bool mHasMemoryBudgetExtension = false;
     VkDevice mDevice = VK_NULL_HANDLE;
     VkQueue mQueue = VK_NULL_HANDLE;
 
     VkSurfaceFormatKHR mSurfaceFormat{};
     VkSwapchainKHR mSwapchain = VK_NULL_HANDLE;
     VkExtent2D mExtent{};
+    uint32_t mRequestedWidth = 0;
+    uint32_t mRequestedHeight = 0;
+    uint64_t mSwapchainBytes = 0;
     bool mNeedSwapchain = false;
     std::vector<VkImage> mImages;
     std::vector<VkImageView> mViews;
@@ -734,6 +825,54 @@ private:
 };
 
 } // namespace
+
+ProbeResult Device::probe()
+{
+    ProbeResult result;
+    if (volkInitialize() != VK_SUCCESS)
+    {
+        result.reason = "Vulkan is not installed";
+        return result;
+    }
+    if (volkGetInstanceVersion() < VK_API_VERSION_1_3)
+    {
+        result.reason = "Vulkan 1.3 is not available";
+        return result;
+    }
+
+    VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    app.pApplicationName = "AyaneStorm";
+    app.apiVersion = VK_API_VERSION_1_3;
+    const char* const extensions[] = { VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_WIN32_SURFACE_EXTENSION_NAME };
+    VkInstanceCreateInfo create{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+    create.pApplicationInfo = &app;
+    create.enabledExtensionCount = 2;
+    create.ppEnabledExtensionNames = extensions;
+    VkInstance instance = VK_NULL_HANDLE;
+    const VkResult created = vkCreateInstance(&create, nullptr, &instance);
+    if (created != VK_SUCCESS)
+    {
+        result.reason = "vkCreateInstance failed: VkResult " + std::to_string(int(created));
+        return result;
+    }
+    volkLoadInstance(instance);
+
+    // There is no window yet, so ask whether the queue can present to any window.
+    const GpuChoice choice = chooseGpu(instance, [](VkPhysicalDevice gpu, uint32_t family)
+    {
+        return vkGetPhysicalDeviceWin32PresentationSupportKHR(gpu, family) == VK_TRUE;
+    });
+    vkDestroyInstance(instance, nullptr);
+
+    if (choice.gpu == VK_NULL_HANDLE)
+    {
+        result.reason = "no Vulkan 1.3 GPU with the required features";
+        return result;
+    }
+    result.supported = true;
+    result.info = choice.info;
+    return result;
+}
 
 std::unique_ptr<Device> Device::create(const SurfaceTarget& target, const DeviceOptions& options, std::string& error)
 {

@@ -344,4 +344,16 @@ The NAS has no `nvidia_icd.json` in `/etc/vulkan/icd.d` or `/usr/share/vulkan/ic
 
 P0 is closed for design purposes: the readings above set the priorities, and no further measurement blocks work. Further numbers are taken only when a specific decision needs them, or once for the final comparison in P8, and no more are requested before then.
 
-Next: P2.
+Next: P2, ordered below so that the viewer is built as rarely as possible.
+
+| P2 step | Work | State |
+|---|---|---|
+| **a. Library** | `LatestValue`, `RenderThread`, `MemoryBudget`, `Device::probe` | Done on Windows and Mac |
+| **b. Viewer start** | `AS_RENDERER` in the viewer, `ASRendererBackend`, probe before the window, window without GL, one viewer build | To do |
+| **c. Seam** | `ASRBackend`, `ASRGLTable`, early-outs under `llrender` | To do |
+| **d. UI** | Recorded UI lists replayed at world rate; login, floaters, resize | To do |
+
+- **P2a result:** `asrenderer_test` now renders on its own thread, and the test freezes the main thread for 2 s. On the 3080 Ti: 4852 fps running against 4937 fps stalled, with Vulkan validation on and 0 errors. The worst stalled frame took 1.7 ms, and the newest state was 2002 ms old, which proves nothing from the main thread reached those frames. On the M4: 120 fps in both, against the inactive-screen cap. The test triangle is the only load, so this proves the thread design, not world rendering.
+- **Memory budget:** the 11.05 GB on the 3080 Ti comes from `VK_EXT_memory_budget`, against 11.8 GB of heap. Metal's figure is fixed per device, so on the Mac the budget does not react to other applications, as section 6a assumed it would. Category shares are starting values until the tiers exist.
+- **Swapchain size:** Vulkan now compares the requested size with the last requested one. Comparing with the real size would rebuild the swapchain every frame when the main thread's size lags behind the window.
+- **For P2b:** Windows marks a window as not responding after about 5 s without message handling, and shows a frozen copy instead of the rendered frames. The stall gate needs `DisableProcessWindowsGhosting` or similar, tested with a stall over 5 s.

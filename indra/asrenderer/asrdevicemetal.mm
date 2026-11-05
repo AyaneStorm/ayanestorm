@@ -35,6 +35,8 @@ public:
         mInfo.backend = "Metal";
         mInfo.name = mDevice.name.UTF8String;
         mInfo.memoryBudgetBytes = mDevice.recommendedMaxWorkingSetSize;
+        mMemoryCapBytes = options.memoryCapBytes;
+        refreshMemoryBudget();
 
         NSView* view = (__bridge NSView*)target.nativeWindow;
         mLayer = [CAMetalLayer layer];
@@ -73,6 +75,10 @@ public:
     const std::string& lastError() const override { return mError; }
     uint32_t validationErrors() const override { return 0; }
 
+    // Apple's figure is fixed for the device, so unlike Vulkan it does not move
+    // with what other applications use.
+    void refreshMemoryBudget() override { setDriverBudget(mDevice.recommendedMaxWorkingSetSize); }
+
     bool renderTestFrame(uint32_t width, uint32_t height, float seconds) override
     {
         @autoreleasepool
@@ -85,6 +91,16 @@ public:
             if (!CGSizeEqualToSize(mLayer.drawableSize, size))
             {
                 mLayer.drawableSize = size;
+
+                // An estimate at 4 bytes per pixel, for each image the layer can hold.
+                mMemoryBudget.release(MemoryCategory::RenderTargets, mDrawableBytes);
+                mDrawableBytes = uint64_t(width) * height * 4 * mLayer.maximumDrawableCount;
+                if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, mDrawableBytes))
+                {
+                    mDrawableBytes = 0;
+                    mError = "the drawables do not fit in the render target budget";
+                    return false;
+                }
             }
 
             id<CAMetalDrawable> drawable = [mLayer nextDrawable];
@@ -138,9 +154,35 @@ private:
     CAMetalLayer* mLayer = nil;
     DeviceInfo mInfo;
     std::string mError;
+    uint64_t mDrawableBytes = 0;
 };
 
 } // namespace
+
+ProbeResult Device::probe()
+{
+    ProbeResult result;
+    @autoreleasepool
+    {
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        if (!device)
+        {
+            result.reason = "no Metal device";
+        }
+        else if (![device supportsFamily:MTLGPUFamilyApple7])
+        {
+            result.reason = "this GPU is older than Apple family 7";
+        }
+        else
+        {
+            result.supported = true;
+            result.info.backend = "Metal";
+            result.info.name = device.name.UTF8String;
+            result.info.memoryBudgetBytes = device.recommendedMaxWorkingSetSize;
+        }
+    }
+    return result;
+}
 
 std::unique_ptr<Device> Device::create(const SurfaceTarget& target, const DeviceOptions& options, std::string& error)
 {

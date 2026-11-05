@@ -1,0 +1,64 @@
+/**
+ * asrmemorybudget.h
+ * Owns the video memory total and splits it into fixed categories (section 6a of
+ * the renderer plan). All allocations reserve here first. Any thread can call it,
+ * and it takes no lock.
+ */
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+
+namespace asr
+{
+
+enum class MemoryCategory : uint32_t
+{
+    RenderTargets,
+    Shadows,
+    Probes,
+    Geometry,
+    Textures, // takes what the other categories leave
+    OIT,
+    UI,
+    Staging,
+    Count
+};
+
+enum class MemoryPressure
+{
+    None,
+    LowerMips, // at 85% of the budget: textures drop mips, far and unseen first
+    HoldLoads  // at 95% of the budget: new loads wait
+};
+
+const char* memoryCategoryName(MemoryCategory category);
+
+class MemoryBudget
+{
+public:
+    // Sets the total, and from it each category's limit. Called again whenever
+    // the driver reports a new figure.
+    void setBudget(uint64_t bytes);
+    uint64_t budget() const { return mBudget.load(std::memory_order_relaxed); }
+
+    uint64_t limit(MemoryCategory category) const;
+    uint64_t used(MemoryCategory category) const;
+    uint64_t totalUsed() const { return mTotalUsed.load(std::memory_order_relaxed); }
+
+    // Returns false, and changes nothing, if the category has no room left.
+    bool reserve(MemoryCategory category, uint64_t bytes);
+    void release(MemoryCategory category, uint64_t bytes);
+
+    MemoryPressure pressure() const;
+
+private:
+    static constexpr uint32_t COUNT = uint32_t(MemoryCategory::Count);
+
+    std::atomic<uint64_t> mBudget{ 0 };
+    std::atomic<uint64_t> mTotalUsed{ 0 };
+    std::atomic<uint64_t> mLimit[COUNT]{};
+    std::atomic<uint64_t> mUsed[COUNT]{};
+};
+
+} // namespace asr
