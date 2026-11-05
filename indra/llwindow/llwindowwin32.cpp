@@ -41,6 +41,7 @@
 #include "llexception.h"
 #include "llfasttimer.h"
 #include "llgl.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llstring.h"
 #include "lldir.h"
 #include "llsdutil.h"
@@ -1441,6 +1442,11 @@ bool LLWindowWin32::switchContext(bool fullscreen, const LLCoordScreen& size, bo
 
     LL_INFOS("Window") << "Device context retrieved." << LL_ENDL ;
 
+    // <AS:Chanayane> The new renderer creates no GL context: skip all of this,
+    // down to gGLManager.initGL(), which ASRGLTable answers.
+    if (!ASR::active())
+    {
+    // </AS:Chanayane>
     try
     {
         // Looks like ChoosePixelFormat can crash in case of faulty driver
@@ -1802,6 +1808,9 @@ const   S32   max_format  = (S32)num_formats - 1;
     }
 
     gGLManager.initWGL(); // Reinit WGL functions once we have our full context
+    // <AS:Chanayane>
+    }
+    // </AS:Chanayane>
 
     if (!gGLManager.initGL())
     {
@@ -1965,6 +1974,13 @@ void LLWindowWin32::recreateWindow(RECT window_rect, DWORD dw_ex_style, DWORD dw
 
 void* LLWindowWin32::createSharedContext()
 {
+    // <AS:Chanayane> No GL context in the new renderer. Callers only need a token.
+    if (ASR::active())
+    {
+        return this;
+    }
+    // </AS:Chanayane>
+
     mMaxGLVersion = llclamp(mMaxGLVersion, 3.f, 4.6f);
 
     S32 version_major = llfloor(mMaxGLVersion);
@@ -2021,12 +2037,26 @@ void* LLWindowWin32::createSharedContext()
 
 void LLWindowWin32::makeContextCurrent(void* contextPtr)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
+
     wglMakeCurrent(mhDC, (HGLRC) contextPtr);
 
 }
 
 void LLWindowWin32::destroySharedContext(void* contextPtr)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
+
     wglDeleteContext((HGLRC)contextPtr);
 }
 
@@ -4227,6 +4257,13 @@ bool LLWindowWin32::resetDisplayResolution()
 
 void LLWindowWin32::swapBuffers()
 {
+    // <AS:Chanayane> The render thread presents in the new renderer.
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
+
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_WIN32;
         SwapBuffers(mhDC);

@@ -58,7 +58,11 @@
 #  define LL_GET_PROC_ADDRESS(func) SDL_GL_GetProcAddress(func)
 #elif LL_WINDOWS
 #  include "llwindowwin32.h"
-#  define LL_GET_PROC_ADDRESS(func) LLWindowWin32::getProcAddress(func)
+// <AS:Chanayane> With the new renderer on, every GL function comes from ASRGLTable.
+#  include "asrgltable.h"
+// #  define LL_GET_PROC_ADDRESS(func) LLWindowWin32::getProcAddress(func)
+#  define LL_GET_PROC_ADDRESS(func) (ASR::active() ? (PROC)ASRGLTable::get(func) : LLWindowWin32::getProcAddress(func))
+// </AS:Chanayane>
 #endif
 
 #if LL_WINDOWS

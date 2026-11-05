@@ -10,6 +10,7 @@ include(LLImage)
 include(LLWindow)
 
 set(llrender_SOURCE_FILES
+    asrgltable.cpp # <AS:Chanayane/>
     llcubemap.cpp
     llcubemaparray.cpp
     llfontbitmapcache.cpp
@@ -38,6 +39,7 @@ set(llrender_SOURCE_FILES
 set(llrender_HEADER_FILES
     CMakeLists.txt
 
+    asrgltable.h # <AS:Chanayane/>
     llcubemap.h
     llcubemaparray.h
     llfontgl.h

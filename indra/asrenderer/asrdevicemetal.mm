@@ -33,6 +33,7 @@ public:
         }
 
         mInfo.backend = "Metal";
+        mInfo.vendor = "Apple";
         mInfo.name = mDevice.name.UTF8String;
         mInfo.memoryBudgetBytes = mDevice.recommendedMaxWorkingSetSize;
         mMemoryCapBytes = options.memoryCapBytes;
@@ -177,6 +178,7 @@ ProbeResult Device::probe()
         {
             result.supported = true;
             result.info.backend = "Metal";
+            result.info.vendor = "Apple";
             result.info.name = device.name.UTF8String;
             result.info.memoryBudgetBytes = device.recommendedMaxWorkingSetSize;
         }

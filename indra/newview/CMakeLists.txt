@@ -2521,6 +2521,10 @@ if (WINDOWS)
   list(APPEND viewer_SOURCE_FILES ${viewer_INSTALLER_FILES})
 endif (WINDOWS)
 
+# <AS:Chanayane> AyaneStorm renderer sources
+include(${CMAKE_CURRENT_SOURCE_DIR}/asr_sources.cmake)
+# </AS:Chanayane>
+
 list(APPEND viewer_SOURCE_FILES ${viewer_HEADER_FILES})
 
 add_executable(${VIEWER_BINARY_NAME}
@@ -2528,6 +2532,7 @@ add_executable(${VIEWER_BINARY_NAME}
     MACOSX_BUNDLE
     ${viewer_SOURCE_FILES}
     )
+asr_link_viewer(${VIEWER_BINARY_NAME}) # <AS:Chanayane/>
 
 target_include_directories(${VIEWER_BINARY_NAME} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 

@@ -2061,6 +2061,17 @@ Graphics Quality can be raised in Preferences &gt; Graphics.
   <tag>fail</tag>
   </notification>
 
+  <!-- <AS:Chanayane> -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASRendererFallback"
+   type="alertmodal">
+The new renderer cannot run on this computer, so [APP_NAME] started with OpenGL.
+Details are in the log file.
+  <tag>fail</tag>
+  </notification>
+  <!-- </AS:Chanayane> -->
+
   <notification
    icon="alertmodal.tga"
    name="AutoFPSConfirmDisable"

@@ -36,6 +36,7 @@ struct DeviceOptions
 struct DeviceInfo
 {
     std::string backend;
+    std::string vendor; // named as GL drivers name it, which the viewer's GPU checks expect
     std::string name;
     uint64_t memoryBudgetBytes = 0; // Vulkan device-local heap, or Metal working set
 };

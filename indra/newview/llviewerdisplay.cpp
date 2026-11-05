@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerdisplay.h"
+#include "asrviewer.h" // <AS:Chanayane/>
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
@@ -499,6 +500,8 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
     LLPerfStats::RecordSceneTime T (LLPerfStats::StatType_t::RENDER_DISPLAY); // render time capture - This is the main stat for overall rendering.
 
     LLViewerCamera& camera = LLViewerCamera::instance(); // <FS:Ansariel> Factor out calls to getInstance
+
+    ASRViewer::publishFrame(gViewerWindow->getWindow()); // <AS:Chanayane/>
 
     if (gWindowResized)
     { //skip render on frames where window has been resized

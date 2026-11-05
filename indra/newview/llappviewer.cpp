@@ -31,6 +31,7 @@
 #include "asavboit.h"
 #include "asmacoit.h"
 #include "asdofrenderer.h" // aperture DoF capture world freeze
+#include "asrviewer.h"
 // </AS:Chanayane>
 
 #include "llappviewer.h"
@@ -2481,6 +2482,7 @@ bool LLAppViewer::cleanup()
     // Shut down OpenGL
     if (gViewerWindow)
     {
+        ASRViewer::stop(); // <AS:Chanayane/>
         gViewerWindow->shutdownGL();
 
         // Destroy window, and make sure we're not fullscreen
@@ -3981,7 +3983,11 @@ bool LLAppViewer::initWindow()
         .ignore_pixel_depth(ignorePixelDepth)
         .first_run(mIsFirstRun);
 
+    ASRViewer::selectBackend(); // <AS:Chanayane/>
+
     gViewerWindow = new LLViewerWindow(window_params);
+
+    ASRViewer::start(gViewerWindow->getWindow()); // <AS:Chanayane/>
 
     LL_INFOS("AppInit") << "gViewerwindow created." << LL_ENDL;
 

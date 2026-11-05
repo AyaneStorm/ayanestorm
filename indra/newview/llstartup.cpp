@@ -92,6 +92,7 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include "asrviewer.h" // <AS:Chanayane/>
 #include "llappviewer.h"
 #include "llstartup.h"
 
@@ -888,6 +889,13 @@ bool idle_startup()
         {
             LLNotificationsUtil::add(gViewerWindow->getInitAlert());
         }
+
+        // <AS:Chanayane> Tell the user when the chosen renderer could not start.
+        if (ASRViewer::fellBackToOpenGL())
+        {
+            LLNotificationsUtil::add("ASRendererFallback");
+        }
+        // </AS:Chanayane>
 
         //-------------------------------------------------
         // Init the SOCKS 5 proxy if the user has configured

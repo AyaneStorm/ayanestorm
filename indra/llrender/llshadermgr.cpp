@@ -27,6 +27,7 @@
 #include "linden_common.h"
 #include "llshadermgr.h"
 #include "llrender.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llfile.h"
 #include "lldir.h"
 #include "llsdutil.h"
@@ -1052,7 +1053,11 @@ void LLShaderMgr::initShaderCache(bool enabled, const LLUUID& old_cache_version,
     LL_PROFILE_ZONE_SCOPED;
     LL_INFOS("ShaderMgr") << "Initializing shader cache" << LL_ENDL;
 
-    mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled;
+    // <AS:Chanayane> The new renderer has no GL programs, and must leave the
+    // OpenGL mode's cache untouched.
+    // mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled;
+    mShaderCacheEnabled = gGLManager.mGLVersion >= 4.09 && enabled && !ASR::active();
+    // </AS:Chanayane>
 
     if(!mShaderCacheEnabled || mShaderCacheVersion.notNull())
         return;

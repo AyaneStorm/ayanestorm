@@ -7,8 +7,12 @@
  */
 #include "asrdevice.h"
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 #include "volk.h"
 
@@ -36,6 +40,17 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
     vkGetPhysicalDeviceFeatures2(gpu, &features);
     return v13.dynamicRendering && v13.synchronization2 && v12.timelineSemaphore &&
            v12.descriptorIndexing && v12.bufferDeviceAddress;
+}
+
+const char* vendorName(uint32_t pciVendorId)
+{
+    switch (pciVendorId)
+    {
+        case 0x10DE: return "NVIDIA Corporation";
+        case 0x1002: return "ATI Technologies Inc.";
+        case 0x8086: return "Intel";
+        default:     return "Unknown";
+    }
 }
 
 struct GpuChoice
@@ -83,6 +98,7 @@ GpuChoice chooseGpu(VkInstance instance, CanPresent canPresent)
                     choice.gpu = gpu;
                     choice.queueFamily = i;
                     choice.info.name = properties.deviceName;
+                    choice.info.vendor = vendorName(properties.vendorID);
                 }
                 break;
             }

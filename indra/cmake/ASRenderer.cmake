@@ -1,8 +1,9 @@
 # -*- cmake -*-
-# AyaneStorm renderer. All its build logic stays in this file and in
-# indra/asrenderer/CMakeLists.txt, so upstream's CMake files need a single line
-# and merges stay clean. It is off until the viewer uses it in P2, which leaves
-# the OpenGL viewer build unchanged. See doc/ayanestorm-new-renderer-plan.md.
+# AyaneStorm renderer. All its build logic stays in this file, in
+# indra/asrenderer/CMakeLists.txt and in indra/newview/asr_sources.cmake, so
+# upstream's CMake files need only a few lines and merges stay clean. It is off
+# by default, which leaves the OpenGL viewer build unchanged. build_nolto.cmd
+# turns it on. See doc/ayanestorm-new-renderer-plan.md.
 option(AS_RENDERER "Build the AyaneStorm renderer library" OFF)
 
 if(AS_RENDERER)

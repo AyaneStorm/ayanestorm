@@ -32,6 +32,7 @@
 #include <boost/regex.hpp>
 
 #include "llfeaturemanager.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "lldir.h"
 
 #include "llsys.h"
@@ -531,7 +532,10 @@ bool LLFeatureManager::loadGPUClass()
         gSavedSettings.setBOOL("UseOcclusion", false);
     }
 
-    if (!gSavedSettings.getBOOL("SkipBenchmark"))
+    // <AS:Chanayane> The benchmark measures GL, which the new renderer does not have.
+    // if (!gSavedSettings.getBOOL("SkipBenchmark"))
+    if (!ASR::active() && !gSavedSettings.getBOOL("SkipBenchmark"))
+    // </AS:Chanayane>
     {
         F32 class1_gbps = gSavedSettings.getF32("RenderClass1MemoryBandwidth");
         //get memory bandwidth from benchmark
@@ -653,7 +657,12 @@ bool LLFeatureManager::loadGPUClass()
     }
 
     // defaults
-    mGPUString = gGLManager.getRawGLString();
+    // <AS:Chanayane> Keep the saved GPU string in the new renderer. Its own string
+    // differs from the OpenGL one, and would count as a new GPU, which resets the
+    // user's graphics settings each time the renderer is switched.
+    // mGPUString = gGLManager.getRawGLString();
+    mGPUString = ASR::active() ? gSavedSettings.getString("LastGPUString") : gGLManager.getRawGLString();
+    // </AS:Chanayane>
     mGPUSupported = true;
 
     return true; // indicates that a gpu value was established

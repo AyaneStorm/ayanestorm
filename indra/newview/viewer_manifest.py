@@ -78,6 +78,13 @@ class ViewerManifest(LLManifest,FSViewerManifest):
         with self.prefix(src=pkgdir, dst="app_settings"):
             self.path("dictionaries")
 
+        # <AS:Chanayane> Compiled shaders of the new renderer, in builds that have it.
+        native_shaders = os.path.join(self.args['build'], os.pardir, 'asrenderer', 'shaders')
+        if os.path.isdir(native_shaders):
+            with self.prefix(src=native_shaders, dst="app_settings/shaders_native"):
+                self.path("*.spv")
+        # </AS:Chanayane>
+
         # <FS:Ansariel> Copy 360 snapshot JavaScripts
         with self.prefix(src=pkgdir, dst="skins/default/html/common/equirectangular"):
             self.path("js")

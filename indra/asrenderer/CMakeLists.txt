@@ -97,5 +97,8 @@ foreach(shader asrTestTriangleV asrTestTriangleF)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})
 
-# --- Standalone test program: its builds never link the viewer. --------------
-add_subdirectory(test)
+# --- Standalone test program: its builds never link the viewer. It is left out
+#     of viewer builds, which do not need it. --------------------------------
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    add_subdirectory(test)
+endif()
