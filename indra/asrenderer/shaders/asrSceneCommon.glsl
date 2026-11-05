@@ -7,11 +7,17 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-const uint BUCKETS = 4;
+const uint LISTS = 16;
+const uint PYRAMID_LEVELS = 16;
+
+const uint INSTANCE_FLIPPED = 1u;
+const uint INSTANCE_DOUBLE_SIDED = 2u;
+const uint INSTANCE_MASKED = 4u;
 
 struct Instance
 {
     vec4 rows[3];
+    vec4 lod; // xyz is what LOD measures from, and w the object's size
     uint geometry;
     uint material;
     uint flags;
@@ -24,8 +30,8 @@ struct Geometry
     float radius;
     uint firstCluster;
     uint clusterCount;
-    uint unused0;
-    uint unused1;
+    uint coarser;
+    float coarserAt;
 };
 
 struct Cluster
@@ -45,10 +51,10 @@ struct Material
     vec3 uvRow0;
     uint texture;
     vec3 uvRow1;
-    uint flags;
+    float alphaCutoff;
 };
 
-struct VisibleCluster
+struct ListEntry
 {
     uint instance;
     uint cluster;
@@ -60,15 +66,21 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     vec4 camera;
     vec4 planes[5];
     vec4 pixelSize;
-    uint bucketBase[BUCKETS];
+    vec4 viewRows[3];
+    vec4 previousRows[3];
+    vec4 projection;
+    vec4 previousProjection;
+    uint listBase[LISTS];
+    uint pyramidOffset[PYRAMID_LEVELS];
     uint instanceEnd;
+    uint pyramidLevels;
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };
 layout(buffer_reference, std430) readonly buffer GeometriesRef { Geometry items[]; };
 layout(buffer_reference, std430) readonly buffer ClustersRef { Cluster items[]; };
 layout(buffer_reference, std430) readonly buffer MaterialsRef { Material items[]; };
-layout(buffer_reference, std430) readonly buffer VisibleRef { VisibleCluster items[]; };
+layout(buffer_reference, std430) readonly buffer ListRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer WordsRef { uint words[]; };
 
 layout(push_constant) uniform ScenePush
@@ -80,7 +92,10 @@ layout(push_constant) uniform ScenePush
     uint64_t materials;
     uint64_t visible;
     uint64_t output_counts; // the indirect draws
-    uint bucket;
+    uint64_t retest;
+    uint64_t pyramid;
+    uint list;
+    uint phase;
 } push;
 
 // One vertex index of a cluster: indices are 16 bits, read through 32-bit words.
@@ -101,4 +116,9 @@ vec3 packedPosition(uint64_t positions, uint vertex)
 vec3 transformPoint(vec4 rows[3], vec3 p)
 {
     return vec3(dot(rows[0], vec4(p, 1.0)), dot(rows[1], vec4(p, 1.0)), dot(rows[2], vec4(p, 1.0)));
+}
+
+uint pyramidLevelSize(uint pixels, uint level)
+{
+    return (pixels + (1u << level) - 1u) >> level;
 }

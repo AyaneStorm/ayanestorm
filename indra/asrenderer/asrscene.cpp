@@ -206,7 +206,7 @@ void appendBytes(std::vector<uint8_t>& blob, const std::vector<T>& values)
 
 } // namespace
 
-GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount)
+GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount, const GeometryBox* box)
 {
     GeometryData geometry;
     const uint32_t triangleCount = indexCount / 3;
@@ -225,9 +225,9 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
         low = { std::min(low.x, p.x), std::min(low.y, p.y), std::min(low.z, p.z) };
         high = { std::max(high.x, p.x), std::max(high.y, p.y), std::max(high.z, p.z) };
     }
-    const Vec3 center = (low + high) * 0.5f;
     const Vec3 extent = (high - low) * 0.5f;
-    const float scale = std::max({ extent.x, extent.y, extent.z, 1e-6f });
+    const Vec3 center = box ? Vec3{ box->center[0], box->center[1], box->center[2] } : (low + high) * 0.5f;
+    const float scale = box ? box->scale : std::max({ extent.x, extent.y, extent.z, 1e-6f });
     geometry.center[0] = center.x;
     geometry.center[1] = center.y;
     geometry.center[2] = center.z;
@@ -349,20 +349,75 @@ SceneCamera3D makeCamera(const float eye[3], const float target[3], float vertic
         m[c * 4 + 1] = -view[1] * focal;
         m[c * 4 + 2] = view[3] * nearClip;
         m[c * 4 + 3] = -view[2];
+        for (int row = 0; row < 3; ++row)
+        {
+            camera.viewRows[row][c] = view[row];
+        }
     }
     camera.position[0] = eye[0];
     camera.position[1] = eye[1];
     camera.position[2] = eye[2];
+    camera.focal[0] = focal / aspect;
+    camera.focal[1] = focal;
+    camera.nearClip = nearClip;
+    camera.lodScale = 1.f;
     return camera;
 }
 
-void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, uint32_t width, uint32_t height)
+GpuSceneCounts sceneCountsTemplate()
+{
+    GpuSceneCounts counts{};
+    for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+    {
+        const uint32_t vertices = CLUSTER_BUCKET_TRIANGLES[list % CLUSTER_BUCKETS] * 3;
+        counts.early[list].vertexCount = vertices;
+        counts.late[list].vertexCount = vertices;
+    }
+    counts.retestGroups[1] = 1;
+    counts.retestGroups[2] = 1;
+    return counts;
+}
+
+uint32_t pyramidLayout(uint32_t width, uint32_t height, uint32_t offsets[PYRAMID_MAX_LEVELS], uint32_t& levels)
+{
+    uint32_t total = 0;
+    levels = 0;
+    for (uint32_t level = 1; level <= PYRAMID_MAX_LEVELS; ++level)
+    {
+        const uint32_t levelWidth = pyramidLevelSize(width, level);
+        const uint32_t levelHeight = pyramidLevelSize(height, level);
+        offsets[level - 1] = total;
+        total += levelWidth * levelHeight;
+        levels = level;
+        if (levelWidth == 1 && levelHeight == 1)
+        {
+            break;
+        }
+    }
+    return total;
+}
+
+void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneCamera3D* previous, uint32_t width, uint32_t height)
 {
     memcpy(view.viewProjection, camera.viewProjection, sizeof(view.viewProjection));
     view.camera[0] = camera.position[0];
     view.camera[1] = camera.position[1];
     view.camera[2] = camera.position[2];
     view.camera[3] = 1.f;
+    memcpy(view.viewRows, camera.viewRows, sizeof(view.viewRows));
+    view.projection[0] = camera.focal[0];
+    view.projection[1] = camera.focal[1];
+    view.projection[2] = camera.nearClip;
+    view.projection[3] = camera.lodScale;
+    if (previous)
+    {
+        memcpy(view.previousRows, previous->viewRows, sizeof(view.previousRows));
+        view.previousProjection[0] = previous->focal[0];
+        view.previousProjection[1] = previous->focal[1];
+        view.previousProjection[2] = previous->nearClip;
+        view.previousProjection[3] = 1.f;
+    }
+    pyramidLayout(width, height, view.pyramidOffset, view.pyramidLevels);
 
     // Each plane comes from the clip rule it stands for, as a sum over the matrix rows.
     const float* m = camera.viewProjection;
@@ -402,10 +457,12 @@ void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, uint32_t wid
 
 SceneQueue::SceneQueue() = default;
 
-uint32_t SceneQueue::addGeometry(GeometryData&& data)
+uint32_t SceneQueue::addGeometry(GeometryData&& data, uint32_t coarser, float coarserAt)
 {
     GeometryCommand command;
     command.data = std::move(data);
+    command.coarser = coarser;
+    command.coarserAt = coarserAt;
 
     std::lock_guard<std::mutex> lock(mMutex);
     if (!mFreeGeometries.empty())

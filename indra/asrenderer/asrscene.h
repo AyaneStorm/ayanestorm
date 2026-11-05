@@ -7,6 +7,7 @@
  * GPU culls and draws. A geometry is one face of one volume at one LOD, and is shared
  * by every instance that shows it, so a moved object updates one transform and nothing
  * else. Ids exist at once, as with textures, and the render thread does the real work.
+ * Each geometry can name a coarser one, and the GPU walks that chain to pick an LOD.
  *
  * The Gpu* structs and the constants are mirrored in shaders/asrSceneCommon.glsl.
  */
@@ -32,7 +33,40 @@ constexpr uint32_t CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS] = { 2, 8, 32, 64 };
 constexpr uint32_t MAX_VISIBLE_CLUSTERS = 1u << 26;
 constexpr uint32_t VISIBILITY_EMPTY = 0xFFFFFFFFu;
 
-constexpr uint32_t INSTANCE_FLIPPED = 1u; // a negative scale: winding is reversed
+constexpr uint32_t INSTANCE_FLIPPED = 1u;      // a negative scale: winding is reversed
+constexpr uint32_t INSTANCE_DOUBLE_SIDED = 2u; // drawn from both sides
+constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alpha
+constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED;
+
+// Each kind of surface has its own draw state, so each has its own lists: double-sided
+// is bit 0 of the kind, and masked is bit 1. The list a cluster goes in comes from its
+// instance's kind and its own size.
+constexpr uint32_t SCENE_KINDS = 4;
+constexpr uint32_t SCENE_LISTS = SCENE_KINDS * CLUSTER_BUCKETS;
+
+constexpr uint32_t sceneKind(uint32_t instanceFlags)
+{
+    return (instanceFlags >> 1) & (SCENE_KINDS - 1);
+}
+
+constexpr uint32_t sceneList(uint32_t kind, uint32_t bucket)
+{
+    return kind * CLUSTER_BUCKETS + bucket;
+}
+
+constexpr uint32_t MAX_LODS = 4;           // the longest chain of coarser geometries the GPU walks
+constexpr uint32_t PYRAMID_MAX_LEVELS = 16;
+constexpr uint32_t RETEST_WHOLE_INSTANCE = 0xFFFFFFFFu; // in GpuListEntry::cluster
+
+constexpr uint32_t CULL_GROUP_SIZE = 64;
+constexpr uint32_t PYRAMID_GROUP_SIZE = 16;
+constexpr uint32_t PYRAMID_LEVELS_PER_DISPATCH = 3;
+constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
+
+// Which job the cull shader does.
+constexpr uint32_t CULL_EARLY = 0;
+constexpr uint32_t CULL_LATE = 1;
+constexpr uint32_t CULL_AUDIT = 2; // everything in view, with no occlusion test
 
 // What a volume face provides.
 struct SceneVertex
@@ -76,19 +110,22 @@ struct GpuGeometry
     float radius;
     uint32_t firstCluster;
     uint32_t clusterCount; // 0 until its data has reached the GPU
-    uint32_t unused[2];
+    uint32_t coarser;      // the next LOD, or 0
+    float coarserAt;       // distance / object size from which that LOD is used
 };
 static_assert(sizeof(GpuGeometry) == 32, "shaders read this layout");
 
 struct GpuInstance
 {
     float rows[3][4]; // three rows of the matrix from packed positions to world
+    float lodCenter[3]; // what LOD measures from: the same for every face of an object
+    float lodSize;      // 0 means this instance's own bounding sphere
     uint32_t geometry;
     uint32_t material;
     uint32_t flags;
     uint32_t unused;
 };
-static_assert(sizeof(GpuInstance) == 64, "shaders read this layout");
+static_assert(sizeof(GpuInstance) == 80, "shaders read this layout");
 
 struct GpuMaterial
 {
@@ -96,9 +133,57 @@ struct GpuMaterial
     float uvRow0[3];  // 2x3 matrix from face UVs to texture UVs
     uint32_t texture; // see uiTextureBits()
     float uvRow1[3];
-    uint32_t flags;
+    float alphaCutoff; // masked instances keep pixels at or above this alpha
 };
 static_assert(sizeof(GpuMaterial) == 48, "shaders read this layout");
+
+// A VkDrawIndirectCommand, and also Metal's MTLDrawPrimitivesIndirectArguments.
+struct GpuDrawArguments
+{
+    uint32_t vertexCount;
+    uint32_t instanceCount;
+    uint32_t firstVertex;
+    uint32_t firstInstance;
+};
+static_assert(sizeof(GpuDrawArguments) == 16, "APIs read this layout");
+
+// What culling fills in. The late lists continue where the early ones ended.
+struct GpuSceneCounts
+{
+    GpuDrawArguments early[SCENE_LISTS];
+    GpuDrawArguments late[SCENE_LISTS];
+    uint32_t retestGroups[3]; // arguments of the indirect dispatch of the late cull
+    uint32_t retestCount;
+};
+static_assert(sizeof(GpuSceneCounts) == 528, "shaders read this layout");
+
+// How the counts start each frame: only the draws' sizes are set.
+GpuSceneCounts sceneCountsTemplate();
+
+// An entry of the visible list and of the retest list.
+struct GpuListEntry
+{
+    uint32_t instance;
+    uint32_t cluster;
+};
+static_assert(sizeof(GpuListEntry) == 8, "shaders read this layout");
+
+// Push constants of every scene shader.
+struct ScenePush
+{
+    uint64_t view;
+    uint64_t instances;
+    uint64_t geometries;
+    uint64_t clusters;
+    uint64_t materials;
+    uint64_t visible;
+    uint64_t counts;
+    uint64_t retest;
+    uint64_t pyramid;
+    uint32_t list;
+    uint32_t phase; // one of CULL_*, or the pyramid level being read
+};
+static_assert(sizeof(ScenePush) == 80, "shaders read this layout");
 
 // One cluster of a built geometry. Offsets count from the start of GeometryData::blob.
 struct ClusterData
@@ -123,14 +208,28 @@ struct GeometryData
     float radius = 0.f;                  // in packed units, around the packed origin
 };
 
+// A box to pack into. The LODs of one face must share one, because an instance's
+// matrix holds it and the GPU picks the LOD after that.
+struct GeometryBox
+{
+    float center[3];
+    float scale;
+};
+
 // Cuts a face into clusters and packs it. Takes about a hundred nanoseconds per triangle,
 // so it belongs on a worker. Triangles are reordered, and vertices stay where they are.
-GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount);
+// With no box given, the face's own bounds are used.
+GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount,
+                           const GeometryBox* box = nullptr);
 
 struct SceneCamera3D
 {
-    float viewProjection[16]; // column-major, Y down, reversed depth; see makeViewProjection()
+    float viewProjection[16]; // column-major, Y down, reversed depth; see makeCamera()
     float position[3];
+    float viewRows[3][4];     // world to camera, looking down -Z
+    float focal[2];           // the projection's x and y scales
+    float nearClip;
+    float lodScale;           // distances count this much more: above 1 lowers detail
 };
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
@@ -145,20 +244,41 @@ struct GpuSceneView
     float camera[4];
     float planes[5][4];       // pointing inwards: left, right, top, bottom, near
     float pixelSize[4];       // width, height, 1 / width, 1 / height
-    uint32_t bucketBase[CLUSTER_BUCKETS]; // where each bucket's list starts
+    float viewRows[3][4];
+    float previousRows[3][4]; // the view the depth pyramid was made from
+    float projection[4];      // focal x, focal y, near, LOD scale
+    float previousProjection[4]; // focal x, focal y, near, and 0 when the pyramid cannot be used
+    uint32_t listBase[SCENE_LISTS]; // where each list starts in the visible list
+    uint32_t pyramidOffset[PYRAMID_MAX_LEVELS]; // where each level starts, in floats; level 1 is first
     uint32_t instanceEnd;
-    uint32_t unused[3];
+    uint32_t pyramidLevels;
+    uint32_t unused[2];
 };
-static_assert(sizeof(GpuSceneView) == 208, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 448, "shaders read this layout");
 
-void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, uint32_t width, uint32_t height);
+// previous is the camera of the frame that left the depth pyramid, or null when there is none.
+void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneCamera3D* previous, uint32_t width, uint32_t height);
+
+// A depth pyramid is a plain array of floats. Level L holds, for each block of 2^L by 2^L
+// pixels, the farthest depth in it. Level 0 is the depth buffer itself. Sizes round up,
+// so a texel always covers exactly its 2x2 below, and no level needs filtering. Fills
+// in where each level starts, and returns the number of floats.
+uint32_t pyramidLayout(uint32_t width, uint32_t height, uint32_t offsets[PYRAMID_MAX_LEVELS], uint32_t& levels);
+
+inline uint32_t pyramidLevelSize(uint32_t pixels, uint32_t level)
+{
+    return (pixels + (1u << level) - 1) >> level;
+}
 
 // Instances: which geometry and material, and where.
 struct InstanceDesc
 {
     uint32_t geometry = 0;
     uint32_t material = 0;
+    uint32_t flags = 0;      // INSTANCE_DOUBLE_SIDED, INSTANCE_MASKED
     float objectToWorld[12]; // three rows
+    float lodCenter[3] = { 0.f, 0.f, 0.f }; // shared by an object's faces, so they agree on an LOD
+    float lodSize = 0.f;     // 0 uses the instance's own bounding sphere
 };
 
 struct MaterialDesc
@@ -167,13 +287,15 @@ struct MaterialDesc
     float uvRow0[3] = { 1.f, 0.f, 0.f };
     float uvRow1[3] = { 0.f, 1.f, 0.f };
     uint32_t texture = 0;
-    uint32_t flags = 0;
+    float alphaCutoff = 0.5f;
 };
 
 struct GeometryCommand
 {
     uint32_t id = 0;
     GeometryData data;
+    uint32_t coarser = 0;
+    float coarserAt = 0.f;
 };
 
 struct InstanceCommand
@@ -215,7 +337,11 @@ class SceneQueue
 public:
     SceneQueue();
 
-    uint32_t addGeometry(GeometryData&& data);
+    // coarser is a geometry added earlier, packed in the same box, that takes over
+    // once distance / object size passes coarserAt. Instances name the finest LOD.
+    uint32_t addGeometry(GeometryData&& data, uint32_t coarser = 0, float coarserAt = 0.f);
+
+    // Takes effect once no instance, and no finer LOD, still uses it.
     void removeGeometry(uint32_t id);
 
     uint32_t addMaterial(const MaterialDesc& desc);

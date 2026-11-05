@@ -6,6 +6,9 @@
  *   asrenderer_test [--seconds N]        draw the test triangle for N seconds (default 10)
  *                   [--ui]               also draw a busy test UI, rebuilt on the main thread
  *                   [--scene]            draw a city of 16,000 objects instead of the triangle
+ *                   [--street]           walk through it at street level
+ *                   [--audit]            count pixels occlusion culling should have kept
+ *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
  *                   [--size W H]         window size (default 1280 720)
  *                   [--keep-size]        skip the resize during the run, for speed readings
@@ -18,8 +21,10 @@
  */
 #include "asrlatestvalue.h"
 #include "asrmemorybudget.h"
+#include "asrframegraph.h"
 #include "asrscene.h"
 #include "asrscenefile.h"
+#include "asrscenegraph.h"
 #include "asrscenestore.h"
 #include "asrtexturequeue.h"
 #include "asruilist.h"
@@ -628,6 +633,57 @@ void testSceneStore()
     expect(store.freeChunkBytes() > freeBefore, "freed geometry comes back");
     expect(queue.addGeometry(asrtest::build(mesh)) == geometry, "a freed id is reused");
 
+    // LODs: lists keep room for every LOD an instance could show, and a coarse LOD
+    // stays for as long as a finer one names it.
+    asr::SceneQueue lodQueue;
+    asr::SceneStore lods(2);
+    const asr::GeometryBox box{ { 0.f, 0.f, 0.f }, 1.f };
+    const asrtest::Mesh fine = asrtest::makeSphere(32, 64);
+    const asrtest::Mesh rough = asrtest::makeSphere(8, 16);
+    const uint32_t roughId = lodQueue.addGeometry(asrtest::build(rough, &box));
+    const uint32_t fineId = lodQueue.addGeometry(asrtest::build(fine, &box), roughId, 10.f);
+    const asr::GeometryBox otherBox{ { 0.25f, 0.f, 0.f }, 2.f };
+    const uint32_t otherBoxId = lodQueue.addGeometry(asrtest::build(fine, &otherBox), roughId, 10.f);
+    desc.geometry = fineId;
+    desc.flags = asr::INSTANCE_MASKED;
+    const uint32_t lodInstance = lodQueue.addInstance(desc);
+    lods.update(lodQueue, chunks, 1, LIMIT);
+    expect(lods.triangles() == fine.indices.size() / 3, "only the finest LOD counts as the object's triangles");
+    uint64_t fineRoom = 0;
+    for (uint32_t bucket = 0; bucket < asr::CLUSTER_BUCKETS; ++bucket)
+    {
+        fineRoom += lods.listCapacity(asr::sceneList(asr::sceneKind(asr::INSTANCE_MASKED), bucket));
+    }
+    expect(fineRoom >= asrtest::build(fine, &box).clusters.size() + asrtest::build(rough, &box).clusters.size(), "lists of the instance's kind hold both LODs");
+
+    bool sawChain = false;
+    bool otherBoxLinked = false;
+    for (const asr::SceneWrite& write : lods.writes())
+    {
+        if (write.table == asr::SceneTable::Geometries)
+        {
+            const asr::GpuGeometry* entry = reinterpret_cast<const asr::GpuGeometry*>(lods.tableBytes().data() + write.source);
+            const uint32_t id = uint32_t(write.offset / sizeof(asr::GpuGeometry));
+            sawChain = sawChain || (id == fineId && entry->coarser == roughId && entry->coarserAt == 10.f && entry->clusterCount != 0);
+            otherBoxLinked = otherBoxLinked || (id == otherBoxId && entry->coarser != 0);
+        }
+    }
+    expect(sawChain, "the GPU sees the chain");
+    expect(!otherBoxLinked, "an LOD in another box is not linked");
+
+    lodQueue.removeGeometry(roughId);
+    lods.update(lodQueue, chunks, 2, LIMIT);
+    lods.update(lodQueue, chunks, 10, LIMIT);
+    const uint64_t freeWithRough = lods.freeChunkBytes();
+    lodQueue.removeInstance(lodInstance);
+    lodQueue.removeGeometry(otherBoxId);
+    lodQueue.removeGeometry(fineId);
+    lods.update(lodQueue, chunks, 11, LIMIT);
+    lods.update(lodQueue, chunks, 20, LIMIT);
+    expect(lods.freeChunkBytes() > freeWithRough, "the coarse LOD went with its last user");
+    expect(lods.triangles() == 0, "nothing is left of the chain");
+    desc.flags = 0;
+
     // Out of memory: geometry waits, instances can already name it, and nothing is lost.
     chunks.limit = 0;
     asr::SceneQueue tightQueue;
@@ -676,6 +732,142 @@ void testSceneStore()
         expect(budget.uploadBytesPerFrame(3) * 3 * 2 <= budget.limit(asr::MemoryCategory::Staging), "uploads fit in the staging budget");
         expect(budget.uploadBytesPerFrame(3) >= 8 * 1024 * 1024, "uploads keep a working size");
     }
+}
+
+void testFrameGraph()
+{
+    using namespace asr::GraphAccess;
+
+    std::vector<std::string> ran;
+    const auto body = [&ran](const char* name) { return [&ran, name]() { ran.push_back(name); return true; }; };
+    std::string error;
+
+    // A -> B -> sink, with C making something nobody reads.
+    asr::FrameGraph graph;
+    const asr::ResultId a = graph.addResult("a", asr::ResultScope::Frame);
+    const asr::ResultId b = graph.addResult("b", asr::ResultScope::Frame);
+    const asr::ResultId unused = graph.addResult("unused", asr::ResultScope::Frame);
+    const asr::PassId makeA = graph.addPass("make a", { { a, ComputeWrite } });
+    const asr::PassId makeB = graph.addPass("make b", { { a, ComputeRead }, { b, ComputeWrite } });
+    const asr::PassId makeUnused = graph.addPass("make unused", { { b, ComputeRead }, { unused, ComputeWrite } });
+    graph.setBody(makeA, body("a"));
+    graph.setBody(makeB, body("b"));
+    graph.setBody(makeUnused, body("unused"));
+    graph.setSink(b, FragmentRead, true);
+    expect(graph.compile(error), "a graph compiles");
+    expect(graph.passCount() == 2 && !graph.isRunning(makeUnused), "a pass nothing needs does not run");
+
+    graph.setSink(unused, CopyRead, true);
+    expect(graph.compile(error) && graph.isRunning(makeUnused), "asking for its result brings it back");
+    graph.setSink(unused, CopyRead, false);
+
+    // The barrier into a pass says what it waits for.
+    expect(graph.compile(error), "it compiles again");
+    uint32_t count = 0;
+    const asr::GraphTransition* transitions = graph.transitions(1, count);
+    const bool sawWait = std::any_of(transitions, transitions + count, [a](const asr::GraphTransition& t)
+                                     { return t.result == a && t.source == ComputeWrite && t.destination == ComputeRead && !t.discard; });
+    expect(sawWait, "a read waits for the write before it");
+    transitions = graph.transitions(0, count);
+    expect(count == 1 && transitions[0].discard, "a result made fresh does not keep its old contents");
+    expect((transitions[0].source & ComputeRead) != 0, "and it still waits for the last frame's use of it");
+
+    // Overrides: the replaced pass stops, additions run in order, and readers are unchanged.
+    const asr::PassId better = graph.replace(makeA, "better a", { { a, ComputeWrite } });
+    const asr::PassId first = graph.insertAfter(better, "first addition", { { a, ComputeWrite | Keep } });
+    const asr::PassId second = graph.insertAfter(better, "second addition", { { a, ComputeWrite | Keep } });
+    graph.setBody(better, body("better"));
+    graph.setBody(first, body("first"));
+    graph.setBody(second, body("second"));
+    expect(graph.compile(error), "overrides compile");
+    for (uint32_t i = 0; i < graph.passCount(); ++i)
+    {
+        expect(graph.run(i), "passes run");
+    }
+    const std::vector<std::string> wanted = { "better", "first", "second", "b" };
+    expect(ran == wanted, "a replaced pass stops, and additions stack in order");
+
+    // A result with two producers is an error, and so is one with none.
+    asr::FrameGraph doubled;
+    const asr::ResultId twice = doubled.addResult("twice", asr::ResultScope::Frame);
+    const asr::ResultId between = doubled.addResult("between", asr::ResultScope::Frame);
+    const asr::ResultId end = doubled.addResult("end", asr::ResultScope::Frame);
+    doubled.addPass("one", { { twice, ComputeWrite } });
+    doubled.addPass("reader", { { twice, ComputeRead }, { between, ComputeWrite } });
+    doubled.addPass("two", { { twice, ComputeWrite } });
+    doubled.addPass("finish", { { twice, ComputeRead }, { between, ComputeRead }, { end, ComputeWrite } });
+    doubled.setSink(end, CopyRead, true);
+    expect(!doubled.compile(error), "two producers of one result are refused");
+
+    asr::FrameGraph orphan;
+    const asr::ResultId missing = orphan.addResult("missing", asr::ResultScope::Frame);
+    const asr::ResultId made = orphan.addResult("made", asr::ResultScope::Frame);
+    orphan.addPass("reader", { { missing, ComputeRead }, { made, ComputeWrite } });
+    orphan.setSink(made, CopyRead, true);
+    expect(!orphan.compile(error), "reading what nothing makes is refused");
+
+    // What only the next frame reads is still made, and the reader's wait comes from it.
+    asr::FrameGraph loop;
+    const asr::ResultId kept = loop.addResult("kept", asr::ResultScope::Persistent);
+    const asr::ResultId shown = loop.addResult("shown", asr::ResultScope::Frame);
+    loop.addPass("use last frame", { { kept, ComputeRead | PreviousFrame }, { shown, ComputeWrite } });
+    const asr::PassId keep = loop.addPass("make for next frame", { { shown, ComputeRead }, { kept, ComputeWrite } });
+    loop.setSink(shown, FragmentRead, true);
+    expect(loop.compile(error) && loop.isRunning(keep), "a result for the next frame is made");
+    transitions = loop.transitions(0, count);
+    const bool sawLoop = std::any_of(transitions, transitions + count, [kept](const asr::GraphTransition& t)
+                                     { return t.result == kept && t.source == ComputeWrite; });
+    expect(sawLoop, "the first pass waits for the last frame's write");
+
+    // A kept result is made once, until something changes it.
+    asr::FrameGraph cached;
+    const asr::ResultId shadow = cached.addResult("shadow", asr::ResultScope::UntilChanged);
+    const asr::ResultId lit = cached.addResult("lit", asr::ResultScope::Frame);
+    const asr::PassId drawShadow = cached.addPass("shadow", { { shadow, ComputeWrite } });
+    const asr::PassId light = cached.addPass("light", { { shadow, ComputeRead }, { lit, ComputeWrite } });
+    uint32_t shadowRuns = 0;
+    uint32_t lightRuns = 0;
+    cached.setBody(drawShadow, [&shadowRuns]() { ++shadowRuns; return true; });
+    cached.setBody(light, [&lightRuns]() { ++lightRuns; return true; });
+    cached.setSink(lit, FragmentRead, true);
+    expect(cached.compile(error), "a graph with a kept result compiles");
+    const auto frame = [&cached]()
+    {
+        for (uint32_t i = 0; i < cached.passCount(); ++i)
+        {
+            cached.run(i);
+        }
+    };
+    frame();
+    frame();
+    expect(shadowRuns == 1 && lightRuns == 2, "a kept result is not made again");
+    cached.invalidate(shadow);
+    frame();
+    expect(shadowRuns == 2, "until it changes");
+
+    // Scene passes as declared: a normal frame leaves the audit out, and asking brings it in.
+    asr::FrameGraph scene;
+    asr::declareSceneGraph(scene);
+    expect(scene.compile(error), "the scene graph compiles");
+    if (!error.empty())
+    {
+        printf("      %s\n", error.c_str());
+    }
+    expect(scene.isRunning(asr::PassPyramidFinal), "the final pyramid runs, for the next frame");
+    expect(!scene.isRunning(asr::PassAuditDraw), "the audit costs nothing unless asked for");
+    scene.setSink(asr::ResultAuditPixels, CopyRead, true);
+    expect(scene.compile(error) && scene.isRunning(asr::PassAuditDraw), "asking for the audit runs it");
+    expect(scene.passCount() <= asr::MAX_SCENE_PASSES, "every scene pass can be timed");
+}
+
+void testPyramidLayout()
+{
+    uint32_t offsets[asr::PYRAMID_MAX_LEVELS];
+    uint32_t levels = 0;
+    expect(asr::pyramidLayout(5, 3, offsets, levels) == 6 + 2 + 1 && levels == 3, "pyramid sizes round up to one texel");
+    expect(offsets[1] == 6 && offsets[2] == 8, "levels follow each other");
+    expect(asr::pyramidLevelSize(5, 1) == 3 && asr::pyramidLevelSize(5, 3) == 1 && asr::pyramidLevelSize(1440, 4) == 90, "level sizes are exact");
+    expect(asr::pyramidLayout(11500, 11500, offsets, levels) > 0 && levels == 14, "the largest snapshot fits");
 }
 
 #ifdef ASR_HAS_DEVICE
@@ -849,7 +1041,7 @@ private:
     uint32_t mReplaced = 0;
 };
 
-int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScene, bool keepSize, uint32_t windowWidth, uint32_t windowHeight,
+int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScene, bool street, bool audit, bool keepSize, uint32_t windowWidth, uint32_t windowHeight,
                  const asr::DeviceOptions& options)
 {
     const asr::ProbeResult probe = asr::Device::probe();
@@ -891,12 +1083,13 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         {
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
+            state.audit = audit;
         }
         renderThread.publishState();
     };
     if (drawScene)
     {
-        city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures());
+        city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
         printf("city: %u objects, %u instances, built in %.0f ms\n", city->objects(), city->instances(), secondsSince(sceneStart) * 1000.0);
     }
     publishWindowSize();
@@ -1011,13 +1204,32 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     if (city)
     {
         const asr::SceneStats stats = device->sceneStats();
-        printf("scene: %u instances, %.1f M triangles, %llu visible clusters, %u chunks, %llu geometries waiting\n", stats.instances,
-               stats.triangles / 1e6, (unsigned long long)stats.visibleClusters, stats.chunks, (unsigned long long)stats.pendingGeometries);
-        printf("GPU: cull %.2f ms, visibility %.2f ms, resolve %.2f ms\n", stats.cullMilliseconds, stats.visibilityMilliseconds, stats.resolveMilliseconds);
+        printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, %llu retested, %u chunks, %llu geometries waiting\n", stats.instances,
+               stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters, (unsigned long long)stats.retestEntries,
+               stats.chunks, (unsigned long long)stats.pendingGeometries);
+        double total = 0.0;
+        for (uint32_t i = 0; i < stats.passCount; ++i)
+        {
+            const asr::PassTime& pass = stats.passes[i];
+            printf("  %-16s %6.2f ms", pass.name, pass.milliseconds);
+            if (pass.vertexMilliseconds > 0.0)
+            {
+                printf("  (vertices %.2f ms)", pass.vertexMilliseconds);
+            }
+            printf("\n");
+            total += pass.milliseconds;
+        }
+        printf("  %-16s %6.2f ms\n", "GPU total", total);
         printf("moved %u objects, replaced %u geometries\n", city->moved(), city->replaced());
-        expect(stats.visibleClusters > 0, "the camera sees part of the scene");
+        expect(stats.earlyClusters > 0, "the camera sees part of the scene");
         expect(stats.pendingGeometries == 0, "all geometry reached the GPU");
         expect(city->replaced() > 0, "geometry was replaced while drawing");
+        if (audit)
+        {
+            printf("audit: %llu frames, %llu pixels lost\n", (unsigned long long)stats.auditedFrames, (unsigned long long)stats.auditErrorPixels);
+            expect(stats.auditedFrames > 0, "the audit ran");
+            expect(stats.auditErrorPixels == 0, "occlusion culling lost nothing");
+        }
     }
 
     printMemory(device->memoryBudget());
@@ -1045,6 +1257,8 @@ int main(int argc, char** argv)
     double stallSeconds = 2.0;
     bool drawUI = false;
     bool drawScene = false;
+    bool street = false;
+    bool audit = false;
     bool keepSize = false;
     uint32_t windowWidth = 1280;
     uint32_t windowHeight = 720;
@@ -1074,6 +1288,18 @@ int main(int argc, char** argv)
         else if (arg == "--scene")
         {
             drawScene = true;
+        }
+        else if (arg == "--street")
+        {
+            street = true;
+        }
+        else if (arg == "--audit")
+        {
+            audit = true;
+        }
+        else if (arg == "--no-occlusion")
+        {
+            options.occlusion = false;
         }
         else if (arg == "--keep-size")
         {
@@ -1118,11 +1344,13 @@ int main(int argc, char** argv)
         testSceneGeometry();
         testRangeAllocator();
         testSceneStore();
+        testFrameGraph();
+        testPyramidLayout();
     }
     else
     {
 #ifdef ASR_HAS_DEVICE
-        if (drawTriangle(seconds, stallSeconds, drawUI, drawScene, keepSize, windowWidth, windowHeight, options) != 0)
+        if (drawTriangle(seconds, stallSeconds, drawUI, drawScene, street, audit, keepSize, windowWidth, windowHeight, options) != 0)
         {
             return 1;
         }

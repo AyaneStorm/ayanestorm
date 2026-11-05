@@ -99,8 +99,9 @@ public:
     // One past the highest instance in use.
     uint32_t instanceEnd() const { return mInstanceEnd; }
 
-    // The room each cluster bucket needs if every cluster of every instance is seen.
-    uint32_t bucketCapacity(uint32_t bucket) const;
+    // The room each list needs if every cluster of every instance is seen.
+    uint32_t listCapacity(uint32_t list) const;
+    uint64_t visibleCapacity() const; // of all lists together
 
     // Geometries waiting for upload room or for memory.
     size_t pendingGeometries() const { return mPending.size(); }
@@ -115,7 +116,11 @@ private:
     struct Geometry
     {
         GeometryData data;     // emptied once it has been uploaded
-        uint32_t instances = 0;
+        uint32_t instances[SCENE_KINDS]{}; // that can reach it, through finer LODs too
+        uint32_t direct = 0;   // instances that name this one
+        uint32_t finer = 0;    // LODs that name this one as coarser
+        uint32_t coarser = 0;
+        float coarserAt = 0.f;
         uint32_t firstCluster = 0;
         uint32_t clusterCount = 0;
         uint32_t chunk = 0;
@@ -126,6 +131,13 @@ private:
         float center[3]{};
         float scale = 1.f;
         bool uploaded = false;
+        bool removing = false; // asked to go, and waiting for its last user
+    };
+
+    struct InstanceUse
+    {
+        uint32_t geometry = 0; // 0 means free
+        uint32_t kind = 0;
     };
 
     struct Chunk
@@ -160,6 +172,7 @@ private:
     void applyGeometry(GeometryCommand& command);
     void applyInstance(const InstanceCommand& command, uint64_t frame);
     void removeGeometry(uint32_t id, uint64_t frame);
+    void removeIfUnused(uint32_t id, uint64_t frame);
     bool upload(uint32_t id, SceneChunks& chunks);
     void runRetired(SceneQueue& queue, uint64_t frame);
 
@@ -170,13 +183,14 @@ private:
     void writeEntry(SceneTable table, uint32_t index, const void* data, uint64_t bytes);
 
     void ensureTable(SceneTable table, uint64_t entries);
-    void countInstance(const Geometry& geometry, int sign);
+    void countClusters(const Geometry& geometry, uint32_t kind, int64_t instances);
+    void countInstance(uint32_t id, uint32_t kind, int sign);
 
     uint32_t mFreeDelay;
     SceneCommands mCommands;
     size_t mInstancesDone = 0; // how far into mCommands.instances this take has got
     std::vector<Geometry> mGeometries;
-    std::vector<uint32_t> mInstanceGeometry; // by instance; 0 means free
+    std::vector<InstanceUse> mInstanceUses;
     std::deque<uint32_t> mPending;
     std::vector<Chunk> mChunks;
     RangeAllocator mClusterRanges;
@@ -185,10 +199,10 @@ private:
     std::vector<uint8_t> mTableBytes;
     std::vector<std::vector<uint8_t>> mWrittenBlobs; // alive until the next update
     std::vector<GpuCluster> mClusterScratch;
-    std::vector<EntryMark> mEntryMarks[2]; // instances, materials
+    std::vector<EntryMark> mEntryMarks[3]; // instances, materials, geometries
     uint64_t mUpdate = 0;
     uint64_t mTableCapacity[SCENE_TABLES]{};
-    uint64_t mBucketTotals[CLUSTER_BUCKETS]{};
+    uint64_t mListTotals[SCENE_LISTS]{};
     uint64_t mTriangles = 0;
     uint32_t mInstanceEnd = 0;
     bool mStarted = false;

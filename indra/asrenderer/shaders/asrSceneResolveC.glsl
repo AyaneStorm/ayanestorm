@@ -81,7 +81,7 @@ void main()
     }
 
     const uint triangle = id & 63u;
-    const VisibleCluster visible = VisibleRef(push.visible).items[id >> 6];
+    const ListEntry visible = ListRef(push.visible).items[id >> 6];
     const Cluster cluster = ClustersRef(push.clusters).items[visible.cluster];
     const Instance instance = InstancesRef(push.instances).items[visible.instance];
     const Material material = MaterialsRef(push.materials).items[instance.material];
@@ -128,7 +128,21 @@ void main()
     const vec3 row1 = instance.rows[1].xyz;
     const vec3 row2 = instance.rows[2].xyz;
     const mat3 cofactor = mat3(cross(row1, row2), cross(row2, row0), cross(row0, row1));
-    const vec3 worldNormal = normalize(cofactor * objectNormal);
+    vec3 worldNormal = normalize(cofactor * objectNormal);
+
+    // The back of a two-sided surface faces the other way. In this space the front
+    // of a triangle turns clockwise, and a flipped instance swaps the two.
+    if ((instance.flags & INSTANCE_DOUBLE_SIDED) != 0u)
+    {
+        const vec2 ndc0 = p0.xy / p0.w;
+        const vec2 ndc1 = p1.xy / p1.w;
+        const vec2 ndc2 = p2.xy / p2.w;
+        const bool clockwise = determinant(mat2(ndc1 - ndc0, ndc2 - ndc0)) < 0.0;
+        if (clockwise == ((instance.flags & INSTANCE_FLIPPED) != 0u))
+        {
+            worldNormal = -worldNormal;
+        }
+    }
 
     imageStore(albedo, pixel, vec4((material.color * texel).rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));

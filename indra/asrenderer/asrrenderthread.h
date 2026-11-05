@@ -28,6 +28,7 @@ struct FrameState
     bool testTriangle = false;
     bool hasCamera = false; // the scene is drawn from this camera when set
     SceneCamera3D camera{};
+    bool audit = false;     // see FrameInput
 };
 
 struct FrameStats

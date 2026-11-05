@@ -51,7 +51,7 @@ int main(int argc, char** argv)
         compiler.add_discrete_descriptor_set(1);
         for (spv::ExecutionModel stage : { spv::ExecutionModelVertex, spv::ExecutionModelFragment, spv::ExecutionModelGLCompute })
         {
-            for (uint32_t binding = 0; binding < 3; ++binding)
+            for (uint32_t binding = 0; binding < 4; ++binding)
             {
                 spirv_cross::MSLResourceBinding image;
                 image.stage = stage;

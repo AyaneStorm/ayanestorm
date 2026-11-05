@@ -36,6 +36,7 @@ struct DeviceOptions
     bool validation = false; // Vulkan validation layers, when installed
     bool vsync = false;      // off by default: the renderer has no built-in cap
     uint64_t memoryCapBytes = 0; // lowers the memory budget; 0 means no cap
+    bool occlusion = true;   // off: for measuring what occlusion culling saves
 };
 
 struct DeviceInfo
@@ -63,19 +64,36 @@ struct FrameInput
     bool testTriangle = false;
     const UIList* ui = nullptr; // drawn on top; stays valid during the call
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
+    bool audit = false; // also looks for clusters occlusion culling lost
 };
 
-// The newest figures the scene has reported. GPU times are 0 where the backend has none.
+constexpr uint32_t MAX_TIMED_PASSES = 16;
+
+// One pass of the frame graph. On Vulkan it runs from the end of the last pass to its
+// own end, so barriers count too and the passes add up to the frame's GPU time. On Metal
+// it is the pass's own span, and passes can overlap, because a tile GPU splits vertices
+// and fragments and each runs when it can.
+struct PassTime
+{
+    const char* name = nullptr;
+    double milliseconds = 0.0;
+    double vertexMilliseconds = 0.0; // Metal draws: the part before fragments start
+};
+
+// The newest figures the scene has reported.
 struct SceneStats
 {
     uint32_t instances = 0;           // instance slots the culling walks
     uint64_t triangles = 0;           // in all instances, before culling
-    uint64_t visibleClusters = 0;
+    uint64_t earlyClusters = 0;       // drawn by the first phase
+    uint64_t lateClusters = 0;        // found by the second
+    uint64_t retestEntries = 0;       // what the first phase left for the second
+    uint64_t auditErrorPixels = 0;    // pixels that a wrongly hidden cluster should have covered
+    uint64_t auditedFrames = 0;
     uint64_t pendingGeometries = 0;
     uint32_t chunks = 0;              // geometry chunks in use
-    double cullMilliseconds = 0.0;
-    double visibilityMilliseconds = 0.0;
-    double resolveMilliseconds = 0.0;
+    uint32_t passCount = 0;
+    PassTime passes[MAX_TIMED_PASSES];
 };
 
 class Device
@@ -123,6 +141,22 @@ protected:
     void setDriverBudget(uint64_t bytes)
     {
         mMemoryBudget.setBudget(mMemoryCapBytes ? std::min(bytes, mMemoryCapBytes) : bytes);
+    }
+
+    // Passes vary from frame to frame, so one frame's time says little. A pass that
+    // comes or goes when the graph changes starts again from its own figure.
+    static void recordPassTime(PassTime& pass, const char* name, double milliseconds, double vertexMilliseconds)
+    {
+        constexpr double NEW_WEIGHT = 1.0 / 64.0;
+        if (pass.name != name)
+        {
+            pass.name = name;
+            pass.milliseconds = milliseconds;
+            pass.vertexMilliseconds = vertexMilliseconds;
+            return;
+        }
+        pass.milliseconds += (milliseconds - pass.milliseconds) * NEW_WEIGHT;
+        pass.vertexMilliseconds += (vertexMilliseconds - pass.vertexMilliseconds) * NEW_WEIGHT;
     }
 
     void publishSceneStats(const SceneStats& stats)

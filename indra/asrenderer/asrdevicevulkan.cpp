@@ -7,6 +7,7 @@
  * blend, and the test triangle. See asrdevice.h.
  */
 #include "asrdevice.h"
+#include "asrscenegraph.h"
 #include "asrscenestore.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -47,29 +48,9 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 
-constexpr uint32_t CULL_GROUP_SIZE = 64;
-constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
-
-// Scene timing points in one frame: start, culled, drawn, resolved.
-constexpr uint32_t SCENE_TIMESTAMPS = 4;
-
 constexpr VkShaderStageFlags SCENE_PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
-// Mirrors the push constants of asrSceneCommon.glsl.
-struct ScenePush
-{
-    uint64_t view;
-    uint64_t instances;
-    uint64_t geometries;
-    uint64_t clusters;
-    uint64_t materials;
-    uint64_t visible;
-    uint64_t counts;
-    uint32_t bucket;
-};
-
-// One bucket's draw: a VkDrawIndirectCommand that culling counts into.
-constexpr uint64_t SCENE_COUNTS_BYTES = sizeof(VkDrawIndirectCommand) * CLUSTER_BUCKETS;
+static_assert(sizeof(GpuDrawArguments) == sizeof(VkDrawIndirectCommand), "culling counts into these");
 
 // The features section 2 of the plan requires.
 bool hasRequiredFeatures(VkPhysicalDevice gpu)
@@ -88,7 +69,7 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
     VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &limits };
     vkGetPhysicalDeviceProperties2(gpu, &properties);
 
-    return v13.dynamicRendering && v13.synchronization2 && v12.timelineSemaphore &&
+    return v13.dynamicRendering && v13.synchronization2 && v13.shaderDemoteToHelperInvocation && v12.timelineSemaphore &&
            v12.descriptorIndexing && v12.bufferDeviceAddress && v12.descriptorBindingPartiallyBound &&
            v12.descriptorBindingSampledImageUpdateAfterBind && v12.shaderSampledImageArrayNonUniformIndexing &&
            limits.maxPerStageDescriptorUpdateAfterBindSampledImages >= MAX_TEXTURES &&
@@ -240,6 +221,7 @@ public:
     {
         mOptions = options;
         mMemoryCapBytes = options.memoryCapBytes;
+        mOcclusion = options.occlusion;
         mWindow = static_cast<HWND>(target.nativeWindow);
 
         if (volkInitialize() != VK_SUCCESS)
@@ -504,6 +486,7 @@ private:
         VkPhysicalDeviceVulkan13Features v13{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         v13.dynamicRendering = VK_TRUE;
         v13.synchronization2 = VK_TRUE;
+        v13.shaderDemoteToHelperInvocation = VK_TRUE;
         VkPhysicalDeviceVulkan12Features v12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v13 };
         v12.timelineSemaphore = VK_TRUE;
         v12.descriptorIndexing = VK_TRUE;
@@ -795,9 +778,9 @@ private:
 
     // --- Scene setup ----------------------------------------------------------
 
-    bool createBufferObject(GpuBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, const char* what)
+    bool createBufferObject(GpuBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, const char* what, MemoryCategory category = MemoryCategory::Geometry)
     {
-        if (!mMemoryBudget.reserve(MemoryCategory::Geometry, bytes))
+        if (!mMemoryBudget.reserve(category, bytes))
         {
             mError = std::string(what) + " does not fit in its memory budget";
             return false;
@@ -809,7 +792,7 @@ private:
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         if (!check(vmaCreateBuffer(mAllocator, &create, &allocation, &buffer.buffer, &buffer.allocation, nullptr), what))
         {
-            mMemoryBudget.release(MemoryCategory::Geometry, bytes);
+            mMemoryBudget.release(category, bytes);
             return false;
         }
         VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
@@ -819,12 +802,12 @@ private:
         return true;
     }
 
-    void destroyBufferObject(GpuBuffer& buffer)
+    void destroyBufferObject(GpuBuffer& buffer, MemoryCategory category = MemoryCategory::Geometry)
     {
         if (buffer.buffer != VK_NULL_HANDLE)
         {
             vmaDestroyBuffer(mAllocator, buffer.buffer, buffer.allocation);
-            mMemoryBudget.release(MemoryCategory::Geometry, buffer.size);
+            mMemoryBudget.release(category, buffer.size);
         }
         buffer = GpuBuffer();
     }
@@ -901,9 +884,10 @@ private:
             VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
             blend.attachmentCount = 1;
             blend.pAttachments = &attachment;
-            const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+            // Double-sided lists turn culling off, with no pipelines just for that.
+            const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
             VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-            dynamic.dynamicStateCount = 2;
+            dynamic.dynamicStateCount = depth ? 3 : 2;
             dynamic.pDynamicStates = dynamics;
             VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
             rendering.colorAttachmentCount = 1;
@@ -940,23 +924,24 @@ private:
 
     bool createScene(std::string& error)
     {
-        VkDescriptorSetLayoutBinding bindings[3]{};
-        for (uint32_t i = 0; i < 3; ++i)
+        // Visibility, albedo and normals, then depth, which the pyramid reads.
+        VkDescriptorSetLayoutBinding bindings[4]{};
+        for (uint32_t i = 0; i < 4; ++i)
         {
             bindings[i].binding = i;
-            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             bindings[i].descriptorCount = 1;
             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        layout.bindingCount = 3;
+        layout.bindingCount = 4;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize size{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 };
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 }, { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
-        pool.poolSizeCount = 1;
-        pool.pPoolSizes = &size;
+        pool.poolSizeCount = 2;
+        pool.pPoolSizes = sizes;
 
         if (vkCreateDescriptorSetLayout(mDevice, &layout, nullptr, &mSceneSetLayout) != VK_SUCCESS ||
             vkCreateDescriptorPool(mDevice, &pool, nullptr, &mScenePool) != VK_SUCCESS)
@@ -984,17 +969,26 @@ private:
         }
 
         mCullPipeline = createComputePipeline("asrSceneCullC", error);
-        mResolvePipeline = mCullPipeline ? createComputePipeline("asrSceneResolveC", error) : VK_NULL_HANDLE;
+        mPyramidPipeline = mCullPipeline ? createComputePipeline("asrScenePyramidC", error) : VK_NULL_HANDLE;
+        mResolvePipeline = mPyramidPipeline ? createComputePipeline("asrSceneResolveC", error) : VK_NULL_HANDLE;
         mVisibilityPipeline = mResolvePipeline ? createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
-        mCompositePipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
+        mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
+        mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
         if (!mCompositePipeline)
         {
             return false;
         }
 
+        declareSceneGraph(mGraph);
+        setPassBodies();
+        mResultImages[ResultVisibility] = &mVisibilityImage;
+        mResultImages[ResultDepth] = &mDepthImage;
+        mResultImages[ResultAlbedo] = &mAlbedoImage;
+        mResultImages[ResultNormals] = &mNormalImage;
+
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        queries.queryCount = SCENE_TIMESTAMPS * FRAMES_IN_FLIGHT;
+        queries.queryCount = (MAX_TIMED_PASSES + 1) * FRAMES_IN_FLIGHT;
         if (vkCreateQueryPool(mDevice, &queries, nullptr, &mSceneQueries) != VK_SUCCESS)
         {
             error = "cannot create the scene timers";
@@ -1008,27 +1002,23 @@ private:
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
             if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView), viewUsage, MemoryCategory::Staging, "scene view") ||
-                !growBuffer(mSceneReadback[i], SCENE_COUNTS_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback"))
+                !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback"))
             {
                 error = mError;
                 return false;
             }
         }
-        if (!growBuffer(mSceneCountsTemplate, SCENE_COUNTS_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene draw template") ||
-            !createBufferObject(mSceneCounts, SCENE_COUNTS_BYTES,
+        if (!growBuffer(mSceneCountsTemplate, sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene draw template") ||
+            !createBufferObject(mSceneCounts, sizeof(GpuSceneCounts),
                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                                 "scene draw counts"))
         {
             error = mError;
             return false;
         }
-        VkDrawIndirectCommand draws[CLUSTER_BUCKETS]{};
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
-        {
-            draws[bucket].vertexCount = CLUSTER_BUCKET_TRIANGLES[bucket] * 3;
-        }
-        memcpy(mSceneCountsTemplate.mapped, draws, sizeof(draws));
-        vmaFlushAllocation(mAllocator, mSceneCountsTemplate.allocation, 0, sizeof(draws));
+        const GpuSceneCounts counts = sceneCountsTemplate();
+        memcpy(mSceneCountsTemplate.mapped, &counts, sizeof(counts));
+        vmaFlushAllocation(mAllocator, mSceneCountsTemplate.allocation, 0, sizeof(counts));
         return true;
     }
 
@@ -1096,6 +1086,13 @@ private:
         destroyTarget(mDepthImage);
         destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
+        destroyTarget(mAuditImage);
+        destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
+        for (bool& written : mAuditWritten)
+        {
+            written = false;
+        }
+        mHasPyramid = false;
         mSceneExtent = mExtent;
 
         if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
@@ -1106,21 +1103,29 @@ private:
             return false;
         }
 
-        const VkImageView views[3] = { mVisibilityImage.view, mAlbedoImage.view, mNormalImage.view };
-        VkDescriptorImageInfo images[3]{};
-        VkWriteDescriptorSet writes[3]{};
-        for (uint32_t i = 0; i < 3; ++i)
+        uint32_t offsets[PYRAMID_MAX_LEVELS];
+        uint32_t levels = 0;
+        const uint64_t pyramidBytes = uint64_t(pyramidLayout(mSceneExtent.width, mSceneExtent.height, offsets, levels)) * sizeof(float);
+        if (!createBufferObject(mScenePyramid, pyramidBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "depth pyramid", MemoryCategory::RenderTargets))
+        {
+            return false;
+        }
+
+        const VkImageView views[4] = { mVisibilityImage.view, mAlbedoImage.view, mNormalImage.view, mDepthImage.view };
+        VkDescriptorImageInfo images[4]{};
+        VkWriteDescriptorSet writes[4]{};
+        for (uint32_t i = 0; i < 4; ++i)
         {
             images[i].imageView = views[i];
-            images[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            images[i].imageLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
             writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             writes[i].dstSet = mSceneSet;
             writes[i].dstBinding = i;
             writes[i].descriptorCount = 1;
-            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[i].pImageInfo = &images[i];
         }
-        vkUpdateDescriptorSets(mDevice, 3, writes, 0, nullptr);
+        vkUpdateDescriptorSets(mDevice, 4, writes, 0, nullptr);
         return true;
     }
 
@@ -1141,19 +1146,23 @@ private:
         }
         mRetiredBuffers.clear();
         destroyBufferObject(mSceneVisible);
+        destroyBufferObject(mSceneRetest);
         destroyBufferObject(mSceneCounts);
+        destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         destroyBuffer(mSceneCountsTemplate, MemoryCategory::Staging);
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
             destroyBuffer(mSceneViews[i], MemoryCategory::Staging);
             destroyBuffer(mSceneStaging[i], MemoryCategory::Staging);
             destroyBuffer(mSceneReadback[i], MemoryCategory::Staging);
+            destroyBuffer(mAuditReadback[i], MemoryCategory::Staging);
         }
         destroyTarget(mVisibilityImage);
         destroyTarget(mDepthImage);
         destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
-        for (VkPipeline pipeline : { mCullPipeline, mVisibilityPipeline, mResolvePipeline, mCompositePipeline })
+        destroyTarget(mAuditImage);
+        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -1660,24 +1669,146 @@ private:
         vkCmdPipelineBarrier2(commands, &dependency);
     }
 
-    static void targetBarrier(VkCommandBuffer commands, VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
-                              VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+    static VkPipelineStageFlags2 stagesOf(uint32_t uses)
     {
-        VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
-        barrier.srcStageMask = srcStage;
-        barrier.srcAccessMask = srcAccess;
-        barrier.dstStageMask = dstStage;
-        barrier.dstAccessMask = dstAccess;
-        barrier.oldLayout = from;
-        barrier.newLayout = to;
-        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        barrier.image = image;
-        barrier.subresourceRange = { aspect, 0, 1, 0, 1 };
+        VkPipelineStageFlags2 stages = 0;
+        if (uses & (GraphAccess::CopyRead | GraphAccess::CopyWrite))
+        {
+            stages |= VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT;
+        }
+        if (uses & GraphAccess::Indirect)
+        {
+            stages |= VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
+        }
+        if (uses & GraphAccess::VertexRead)
+        {
+            stages |= VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+        }
+        if (uses & GraphAccess::FragmentRead)
+        {
+            stages |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        }
+        if (uses & (GraphAccess::ComputeRead | GraphAccess::ComputeWrite))
+        {
+            stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+        }
+        if (uses & GraphAccess::ColorTarget)
+        {
+            stages |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        }
+        if (uses & GraphAccess::DepthTarget)
+        {
+            stages |= VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        }
+        return stages;
+    }
+
+    static VkAccessFlags2 writeAccessOf(uint32_t uses)
+    {
+        VkAccessFlags2 access = 0;
+        if (uses & GraphAccess::CopyWrite)
+        {
+            access |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        }
+        if (uses & GraphAccess::ComputeWrite)
+        {
+            access |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+        }
+        if (uses & GraphAccess::ColorTarget)
+        {
+            access |= VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        }
+        if (uses & GraphAccess::DepthTarget)
+        {
+            access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        }
+        return access;
+    }
+
+    static VkAccessFlags2 accessOf(uint32_t uses)
+    {
+        VkAccessFlags2 access = writeAccessOf(uses);
+        if (uses & GraphAccess::CopyRead)
+        {
+            access |= VK_ACCESS_2_TRANSFER_READ_BIT;
+        }
+        if (uses & GraphAccess::Indirect)
+        {
+            access |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
+        }
+        if (uses & (GraphAccess::VertexRead | GraphAccess::FragmentRead | GraphAccess::ComputeRead | GraphAccess::ComputeWrite))
+        {
+            access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+        }
+        if (uses & GraphAccess::ColorTarget)
+        {
+            access |= VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
+        }
+        if (uses & GraphAccess::DepthTarget)
+        {
+            access |= VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT;
+        }
+        return access;
+    }
+
+    static VkImageLayout layoutOf(uint32_t uses, VkImageAspectFlags aspect)
+    {
+        if (uses & GraphAccess::ColorTarget)
+        {
+            return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        }
+        if (uses & GraphAccess::DepthTarget)
+        {
+            return VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        }
+        if (uses & GraphAccess::CopyRead)
+        {
+            return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        }
+        return aspect == VK_IMAGE_ASPECT_DEPTH_BIT ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+    }
+
+    // One barrier call per pass, whatever it needs: buffers share one memory barrier.
+    void applyTransitions(VkCommandBuffer commands, const GraphTransition* transitions, uint32_t count)
+    {
+        VkMemoryBarrier2 memory{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        VkImageMemoryBarrier2 images[ResultCount];
+        uint32_t imageCount = 0;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const GraphTransition& transition = transitions[i];
+            const TargetImage* target = mResultImages[transition.result];
+            if (!target)
+            {
+                memory.srcStageMask |= stagesOf(transition.source);
+                memory.srcAccessMask |= writeAccessOf(transition.source);
+                memory.dstStageMask |= stagesOf(transition.destination);
+                memory.dstAccessMask |= accessOf(transition.destination);
+                continue;
+            }
+            const VkImageAspectFlags aspect = target == &mDepthImage ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            VkImageMemoryBarrier2& barrier = images[imageCount++];
+            barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            barrier.srcStageMask = stagesOf(transition.source);
+            barrier.srcAccessMask = writeAccessOf(transition.source);
+            barrier.dstStageMask = stagesOf(transition.destination);
+            barrier.dstAccessMask = accessOf(transition.destination);
+            barrier.oldLayout = transition.discard ? VK_IMAGE_LAYOUT_UNDEFINED : layoutOf(transition.previous, aspect);
+            barrier.newLayout = layoutOf(transition.destination, aspect);
+            barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            barrier.image = target->image;
+            barrier.subresourceRange = { aspect, 0, 1, 0, 1 };
+        }
         VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
-        dependency.imageMemoryBarrierCount = 1;
-        dependency.pImageMemoryBarriers = &barrier;
-        vkCmdPipelineBarrier2(commands, &dependency);
+        dependency.memoryBarrierCount = memory.dstStageMask != 0 ? 1 : 0;
+        dependency.pMemoryBarriers = &memory;
+        dependency.imageMemoryBarrierCount = imageCount;
+        dependency.pImageMemoryBarriers = images;
+        if (dependency.memoryBarrierCount + imageCount != 0)
+        {
+            vkCmdPipelineBarrier2(commands, &dependency);
+        }
     }
 
     // Frames still running may read the old table, so it stays until they are done.
@@ -1710,9 +1841,25 @@ private:
         }
     }
 
-    // Applies this frame's scene changes on the GPU.
-    bool updateScene(VkCommandBuffer commands, uint32_t slot)
+    bool growList(GpuBuffer& list, uint64_t bytes, const char* what)
     {
+        if (bytes <= list.size)
+        {
+            return true;
+        }
+        if (list.buffer != VK_NULL_HANDLE)
+        {
+            mRetiredBuffers.push_back({ list, mFrame + FRAMES_IN_FLIGHT + 1 });
+            list = GpuBuffer();
+        }
+        return createBufferObject(list, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, what);
+    }
+
+    // Applies this frame's scene changes on the GPU, and fills in the view.
+    bool passUpload()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        const uint32_t slot = mRecordSlot;
         while (!mRetiredBuffers.empty() && mRetiredBuffers.front().frame <= mFrame)
         {
             destroyBufferObject(mRetiredBuffers.front().buffer);
@@ -1720,10 +1867,6 @@ private:
         }
 
         mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
-
-        // Earlier frames' reads, and their counts, finish before anything here writes.
-        memoryBarrier(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
 
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
@@ -1734,23 +1877,11 @@ private:
             }
         }
 
-        uint64_t visibleEntries = 0;
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        const uint64_t visibleBytes = mSceneStore.visibleCapacity() * sizeof(GpuListEntry);
+        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
+        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list"))
         {
-            visibleEntries += mSceneStore.bucketCapacity(bucket);
-        }
-        const uint64_t visibleBytes = visibleEntries * sizeof(uint32_t) * 2;
-        if (visibleBytes > mSceneVisible.size)
-        {
-            if (mSceneVisible.buffer != VK_NULL_HANDLE)
-            {
-                mRetiredBuffers.push_back({ mSceneVisible, mFrame + FRAMES_IN_FLIGHT + 1 });
-                mSceneVisible = GpuBuffer();
-            }
-            if (!createBufferObject(mSceneVisible, visibleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "visible cluster list"))
-            {
-                return false;
-            }
+            return false;
         }
 
         uint64_t stagingBytes = 0;
@@ -1783,101 +1914,73 @@ private:
             vmaFlushAllocation(mAllocator, mSceneStaging[slot].allocation, 0, offset);
         }
 
-        const VkBufferCopy reset{ 0, 0, SCENE_COUNTS_BYTES };
+        const VkBufferCopy reset{ 0, 0, sizeof(GpuSceneCounts) };
         vkCmdCopyBuffer(commands, mSceneCountsTemplate.buffer, mSceneCounts.buffer, 1, &reset);
-        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
-        return true;
-    }
-
-    void readSceneResults(uint32_t slot)
-    {
-        if (!mSceneQueriesWritten[slot])
-        {
-            return;
-        }
-        uint64_t times[SCENE_TIMESTAMPS];
-        if (vkGetQueryPoolResults(mDevice, mSceneQueries, slot * SCENE_TIMESTAMPS, SCENE_TIMESTAMPS, sizeof(times), times,
-                                  sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
-        {
-            mSceneFrameStats.cullMilliseconds = double(times[1] - times[0]) * mTimestampMilliseconds;
-            mSceneFrameStats.visibilityMilliseconds = double(times[2] - times[1]) * mTimestampMilliseconds;
-            mSceneFrameStats.resolveMilliseconds = double(times[3] - times[2]) * mTimestampMilliseconds;
-        }
-        vmaInvalidateAllocation(mAllocator, mSceneReadback[slot].allocation, 0, SCENE_COUNTS_BYTES);
-        VkDrawIndirectCommand draws[CLUSTER_BUCKETS];
-        memcpy(draws, mSceneReadback[slot].mapped, sizeof(draws));
-        mSceneFrameStats.visibleClusters = 0;
-        for (const VkDrawIndirectCommand& draw : draws)
-        {
-            mSceneFrameStats.visibleClusters += draw.instanceCount;
-        }
-    }
-
-    // Culls, draws the visibility buffer, and resolves it to the G-buffer.
-    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera)
-    {
-        readSceneResults(slot);
-        const uint32_t firstQuery = slot * SCENE_TIMESTAMPS;
-        vkCmdResetQueryPool(commands, mSceneQueries, firstQuery, SCENE_TIMESTAMPS);
-        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, mSceneQueries, firstQuery);
-
-        if (!updateScene(commands, slot))
-        {
-            return false;
-        }
 
         GpuSceneView view{};
-        fillSceneView(view, camera, mSceneExtent.width, mSceneExtent.height);
+        fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneExtent.width, mSceneExtent.height);
         uint32_t base = 0;
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        for (uint32_t list = 0; list < SCENE_LISTS; ++list)
         {
-            view.bucketBase[bucket] = base;
-            base += mSceneStore.bucketCapacity(bucket);
+            view.listBase[list] = base;
+            base += mSceneStore.listCapacity(list);
         }
         view.instanceEnd = mSceneStore.instanceEnd();
+        mSceneInstanceEnd = view.instanceEnd;
+        mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
         vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view));
 
         VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
         address.buffer = mSceneViews[slot].buffer;
+        mScenePush = ScenePush{};
+        mScenePush.view = vkGetBufferDeviceAddress(mDevice, &address);
+        mScenePush.instances = mSceneTables[uint32_t(SceneTable::Instances)].address;
+        mScenePush.geometries = mSceneTables[uint32_t(SceneTable::Geometries)].address;
+        mScenePush.clusters = mSceneTables[uint32_t(SceneTable::Clusters)].address;
+        mScenePush.materials = mSceneTables[uint32_t(SceneTable::Materials)].address;
+        mScenePush.visible = mSceneVisible.address;
+        mScenePush.counts = mSceneCounts.address;
+        mScenePush.retest = mSceneRetest.address;
+        mScenePush.pyramid = mScenePyramid.address;
+        return true;
+    }
 
-        ScenePush push{};
-        push.view = vkGetBufferDeviceAddress(mDevice, &address);
-        push.instances = mSceneTables[uint32_t(SceneTable::Instances)].address;
-        push.geometries = mSceneTables[uint32_t(SceneTable::Geometries)].address;
-        push.clusters = mSceneTables[uint32_t(SceneTable::Clusters)].address;
-        push.materials = mSceneTables[uint32_t(SceneTable::Materials)].address;
-        push.visible = mSceneVisible.address;
-        push.counts = mSceneCounts.address;
+    void pushScene(VkCommandBuffer commands)
+    {
+        vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(mScenePush), &mScenePush);
+    }
 
+    bool passCull(uint32_t phase)
+    {
+        VkCommandBuffer commands = mRecordCommands;
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mCullPipeline);
-        vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
-        vkCmdDispatch(commands, (view.instanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
-        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 1);
+        mScenePush.phase = phase;
+        pushScene(commands);
+        if (phase == CULL_LATE)
+        {
+            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, retestGroups));
+        }
+        else
+        {
+            vkCmdDispatch(commands, (mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
+        }
+        return true;
+    }
 
-        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT,
-                      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
-        const VkBufferCopy readback{ 0, 0, SCENE_COUNTS_BYTES };
-        vkCmdCopyBuffer(commands, mSceneCounts.buffer, mSceneReadback[slot].buffer, 1, &readback);
-
-        targetBarrier(commands, mVisibilityImage.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
-        targetBarrier(commands, mDepthImage.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
-                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-
+    bool passDraw(VkImageView colorView, uint64_t argumentsOffset, bool loadColor, bool loadDepth)
+    {
+        VkCommandBuffer commands = mRecordCommands;
         VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-        color.imageView = mVisibilityImage.view;
+        color.imageView = colorView;
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.loadOp = loadColor ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         color.clearValue.color.uint32[0] = VISIBILITY_EMPTY;
         VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
         depth.imageView = mDepthImage.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.loadOp = loadDepth ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
         depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depth.clearValue.depthStencil = { 0.f, 0 }; // reversed depth: 0 is far away
         VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
@@ -1892,39 +1995,190 @@ private:
         const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
         vkCmdSetViewport(commands, 0, 1, &viewport);
         vkCmdSetScissor(commands, 0, 1, &scissor);
-        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mVisibilityPipeline);
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 1, &mUISet, 0, nullptr);
+        pushScene(commands);
+        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
         {
-            push.bucket = bucket;
-            vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
-            vkCmdDrawIndirect(commands, mSceneCounts.buffer, bucket * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, (kind & 2) ? mMaskedPipeline : mVisibilityPipeline);
+            vkCmdSetCullMode(commands, (kind & 1) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                const uint32_t list = sceneList(kind, bucket);
+                vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
+                vkCmdDrawIndirect(commands, mSceneCounts.buffer, argumentsOffset + list * sizeof(GpuDrawArguments), 1, sizeof(GpuDrawArguments));
+            }
         }
         vkCmdEndRendering(commands);
+        return true;
+    }
 
-        targetBarrier(commands, mVisibilityImage.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
-                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
-        for (VkImage image : { mAlbedoImage.image, mNormalImage.image })
+    bool passPyramid()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mPyramidPipeline);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        for (uint32_t source = 0; source < mPyramidLevels; source += PYRAMID_LEVELS_PER_DISPATCH)
         {
-            targetBarrier(commands, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            if (source != 0)
+            {
+                memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            }
+            mScenePush.phase = source;
+            pushScene(commands);
+            const uint32_t coarsest = source + PYRAMID_LEVELS_PER_DISPATCH;
+            vkCmdDispatch(commands, (pyramidLevelSize(mSceneExtent.width, coarsest) + PYRAMID_GROUP_SIZE - 1) / PYRAMID_GROUP_SIZE,
+                          (pyramidLevelSize(mSceneExtent.height, coarsest) + PYRAMID_GROUP_SIZE - 1) / PYRAMID_GROUP_SIZE, 1);
         }
-        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 2);
+        return true;
+    }
 
+    bool passResolve()
+    {
+        VkCommandBuffer commands = mRecordCommands;
         const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mResolvePipeline);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
-        vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+        pushScene(commands);
         vkCmdDispatch(commands, (mSceneExtent.width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE,
                       (mSceneExtent.height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1);
+        return true;
+    }
 
-        // After the barrier: a timestamp alone does not make the GPU finish a dispatch.
-        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
-                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
-        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 3);
-        mSceneQueriesWritten[slot] = true;
+    bool passReadCounts()
+    {
+        const VkBufferCopy readback{ 0, 0, sizeof(GpuSceneCounts) };
+        vkCmdCopyBuffer(mRecordCommands, mSceneCounts.buffer, mSceneReadback[mRecordSlot].buffer, 1, &readback);
+        return true;
+    }
 
-        mSceneFrameStats.instances = view.instanceEnd;
+    bool passAuditReset()
+    {
+        const VkBufferCopy reset{ 0, 0, sizeof(GpuSceneCounts) };
+        vkCmdCopyBuffer(mRecordCommands, mSceneCountsTemplate.buffer, mSceneCounts.buffer, 1, &reset);
+        return true;
+    }
+
+    bool passAuditRead()
+    {
+        VkBufferImageCopy region{};
+        region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+        region.imageExtent = { mSceneExtent.width, mSceneExtent.height, 1 };
+        vkCmdCopyImageToBuffer(mRecordCommands, mAuditImage.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, mAuditReadback[mRecordSlot].buffer, 1, &region);
+        mAuditWritten[mRecordSlot] = true;
+        return true;
+    }
+
+    void setPassBodies()
+    {
+        mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
+        mGraph.setBody(PassDrawEarly, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, early), false, false); });
+        mGraph.setBody(PassPyramidEarly, [this]() { return passPyramid(); });
+        mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
+        mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, late), true, true); });
+        mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
+        mGraph.setBody(PassResolve, [this]() { return passResolve(); });
+        mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
+        mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
+        mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
+        mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditImage.view, offsetof(GpuSceneCounts, early), false, true); });
+        mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
+    }
+
+    // What this slot's earlier frame left behind. It has finished: its fence was waited on.
+    void readSceneResults(uint32_t slot)
+    {
+        const uint32_t timed = mTimedPasses[slot];
+        if (timed != 0)
+        {
+            uint64_t times[MAX_TIMED_PASSES + 1];
+            if (vkGetQueryPoolResults(mDevice, mSceneQueries, slot * (MAX_TIMED_PASSES + 1), timed + 1, sizeof(times), times,
+                                      sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+            {
+                mSceneFrameStats.passCount = timed;
+                for (uint32_t i = 0; i < timed; ++i)
+                {
+                    recordPassTime(mSceneFrameStats.passes[i], mTimedNames[slot][i], double(times[i + 1] - times[i]) * mTimestampMilliseconds, 0.0);
+                }
+            }
+            vmaInvalidateAllocation(mAllocator, mSceneReadback[slot].allocation, 0, sizeof(GpuSceneCounts));
+            const GpuSceneCounts* counts = static_cast<const GpuSceneCounts*>(mSceneReadback[slot].mapped);
+            mSceneFrameStats.earlyClusters = 0;
+            mSceneFrameStats.lateClusters = 0;
+            for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+            {
+                mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
+                mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
+            }
+            mSceneFrameStats.retestEntries = counts->retestCount;
+        }
+        if (mAuditWritten[slot])
+        {
+            mAuditWritten[slot] = false;
+            const uint64_t pixels = uint64_t(mSceneExtent.width) * mSceneExtent.height;
+            vmaInvalidateAllocation(mAllocator, mAuditReadback[slot].allocation, 0, pixels * sizeof(uint32_t));
+            const uint32_t* words = static_cast<const uint32_t*>(mAuditReadback[slot].mapped);
+            mSceneFrameStats.auditErrorPixels += uint64_t(pixels - std::count(words, words + pixels, VISIBILITY_EMPTY));
+            ++mSceneFrameStats.auditedFrames;
+        }
+    }
+
+    bool ensureAuditTargets(uint32_t slot)
+    {
+        if (mAuditImage.image == VK_NULL_HANDLE &&
+            !createTarget(mAuditImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "audit target"))
+        {
+            return false;
+        }
+        const uint64_t bytes = uint64_t(mSceneExtent.width) * mSceneExtent.height * sizeof(uint32_t);
+        return growBuffer(mAuditReadback[slot], bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "audit readback");
+    }
+
+    // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
+    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit)
+    {
+        readSceneResults(slot);
+        mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
+        if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
+        {
+            return false;
+        }
+        mResultImages[ResultAuditVisibility] = audit ? &mAuditImage : nullptr;
+
+        mRecordCommands = commands;
+        mRecordSlot = slot;
+        mRecordCamera = &camera;
+
+        const uint32_t firstQuery = slot * (MAX_TIMED_PASSES + 1);
+        const uint32_t passes = std::min(mGraph.passCount(), MAX_TIMED_PASSES);
+        vkCmdResetQueryPool(commands, mSceneQueries, firstQuery, MAX_TIMED_PASSES + 1);
+        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery);
+        for (uint32_t i = 0; i < mGraph.passCount(); ++i)
+        {
+            uint32_t count = 0;
+            const GraphTransition* transitions = mGraph.transitions(i, count);
+            applyTransitions(commands, transitions, count);
+            if (!mGraph.run(i))
+            {
+                return false;
+            }
+            if (i < passes)
+            {
+                vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + i + 1);
+                mTimedNames[slot][i] = mGraph.passName(i);
+            }
+        }
+        mTimedPasses[slot] = passes;
+        uint32_t finalCount = 0;
+        const GraphTransition* finalTransitions = mGraph.finalTransitions(finalCount);
+        applyTransitions(commands, finalTransitions, finalCount);
+
+        mPyramidCamera = camera;
+        mHasPyramid = mOcclusion;
+
+        mSceneFrameStats.instances = mSceneInstanceEnd;
         mSceneFrameStats.triangles = mSceneStore.triangles();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
@@ -2092,7 +2346,7 @@ private:
         {
             return false;
         }
-        if (input.camera && !recordScene(commands, slot, *input.camera))
+        if (input.camera && !recordScene(commands, slot, *input.camera, input.audit))
         {
             return false;
         }
@@ -2298,11 +2552,15 @@ private:
     std::vector<GpuBuffer> mSceneChunks;
     GpuBuffer mSceneTables[SCENE_TABLES];
     GpuBuffer mSceneVisible;
+    GpuBuffer mSceneRetest;
     GpuBuffer mSceneCounts;
+    GpuBuffer mScenePyramid;
     MappedBuffer mSceneCountsTemplate;
     MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneReadback[FRAMES_IN_FLIGHT];
+    MappedBuffer mAuditReadback[FRAMES_IN_FLIGHT];
+    bool mAuditWritten[FRAMES_IN_FLIGHT]{};
     std::deque<RetiredBuffer> mRetiredBuffers;
     std::vector<VkBufferCopy> mSceneRegions;
     VkDescriptorSetLayout mSceneSetLayout = VK_NULL_HANDLE;
@@ -2310,18 +2568,37 @@ private:
     VkDescriptorSet mSceneSet = VK_NULL_HANDLE;
     VkPipelineLayout mScenePipelineLayout = VK_NULL_HANDLE;
     VkPipeline mCullPipeline = VK_NULL_HANDLE;
+    VkPipeline mPyramidPipeline = VK_NULL_HANDLE;
     VkPipeline mVisibilityPipeline = VK_NULL_HANDLE;
+    VkPipeline mMaskedPipeline = VK_NULL_HANDLE;
     VkPipeline mResolvePipeline = VK_NULL_HANDLE;
     VkPipeline mCompositePipeline = VK_NULL_HANDLE;
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;
     TargetImage mAlbedoImage;
     TargetImage mNormalImage;
+    TargetImage mAuditImage;
     VkExtent2D mSceneExtent{};
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
-    bool mSceneQueriesWritten[FRAMES_IN_FLIGHT]{};
     float mTimestampMilliseconds = 0.f;
     SceneStats mSceneFrameStats;
+
+    FrameGraph mGraph;
+    const TargetImage* mResultImages[ResultCount]{}; // null for results that are buffers
+    uint32_t mTimedPasses[FRAMES_IN_FLIGHT]{};
+    const char* mTimedNames[FRAMES_IN_FLIGHT][MAX_TIMED_PASSES]{};
+
+    // What pass bodies work with, during one recordScene().
+    VkCommandBuffer mRecordCommands = VK_NULL_HANDLE;
+    uint32_t mRecordSlot = 0;
+    const SceneCamera3D* mRecordCamera = nullptr;
+    ScenePush mScenePush{};
+    uint32_t mSceneInstanceEnd = 0;
+    uint32_t mPyramidLevels = 0;
+
+    SceneCamera3D mPyramidCamera{}; // the view the pyramid holds
+    bool mHasPyramid = false;
+    bool mOcclusion = true;
 };
 
 } // namespace

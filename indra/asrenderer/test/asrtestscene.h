@@ -141,9 +141,9 @@ inline Mesh makeBoxFace(int axis, float sign)
     return mesh;
 }
 
-inline asr::GeometryData build(const Mesh& mesh)
+inline asr::GeometryData build(const Mesh& mesh, const asr::GeometryBox* box = nullptr)
 {
-    return asr::buildGeometry(mesh.vertices.data(), uint32_t(mesh.vertices.size()), mesh.indices.data(), uint32_t(mesh.indices.size()));
+    return asr::buildGeometry(mesh.vertices.data(), uint32_t(mesh.vertices.size()), mesh.indices.data(), uint32_t(mesh.indices.size()), box);
 }
 
 } // namespace asrtest
@@ -160,16 +160,27 @@ namespace asrtest
 class TestCity
 {
 public:
-    TestCity(asr::SceneQueue& scene, asr::TextureQueue& textures) : mScene(scene)
+    TestCity(asr::SceneQueue& scene, asr::TextureQueue& textures, bool street) : mScene(scene), mStreet(street)
     {
         for (int axis = 0; axis < 3; ++axis)
         {
             mBoxFaces[axis * 2] = scene.addGeometry(build(makeBoxFace(axis, 1.f)));
             mBoxFaces[axis * 2 + 1] = scene.addGeometry(build(makeBoxFace(axis, -1.f)));
         }
-        mSphere = scene.addGeometry(build(makeSphere(24, 48)));
+
+        // Three LODs each, coarsest first, all packed in one box.
+        const asr::GeometryBox unitBox{ { 0.f, 0.f, 0.f }, 1.f };
+        uint32_t coarser = scene.addGeometry(build(makeSphere(6, 12), &unitBox));
+        coarser = scene.addGeometry(build(makeSphere(12, 24), &unitBox), coarser, 40.f);
+        mSphere = scene.addGeometry(build(makeSphere(24, 48), &unitBox), coarser, 14.f);
         mKnotMesh = makeKnot(180, 28);
-        mKnot = scene.addGeometry(build(mKnotMesh));
+        coarser = scene.addGeometry(build(makeKnot(45, 8), &unitBox));
+        coarser = scene.addGeometry(build(makeKnot(90, 14), &unitBox), coarser, 40.f);
+        mKnot = scene.addGeometry(build(mKnotMesh, &unitBox), coarser, 14.f);
+
+        asr::MaterialDesc fence;
+        fence.texture = checker(textures, 0, 256, 0x00FFFFFFu);
+        mFence = scene.addMaterial(fence);
 
         for (uint32_t i = 0; i < MATERIALS; ++i)
         {
@@ -177,7 +188,7 @@ public:
             material.color[0] = 0.55f + 0.45f * std::sin(i * 1.3f);
             material.color[1] = 0.55f + 0.45f * std::sin(i * 2.1f + 1.f);
             material.color[2] = 0.55f + 0.45f * std::sin(i * 0.7f + 2.f);
-            material.texture = checker(textures, i, i == 1 ? 4096 : 256);
+            material.texture = checker(textures, i, i == 1 ? 4096 : 256, 0xFFA0A0A0u);
             material.uvRow0[0] = 1.f + float(i % 3);
             material.uvRow1[1] = 1.f + float(i % 3);
             mMaterials[i] = scene.addMaterial(material);
@@ -195,7 +206,16 @@ public:
             const float y = (float(i / side) / side - 0.5f) * EXTENT * 2.f + next() * 3.f;
             const uint32_t material = mMaterials[i % MATERIALS];
             const float kind = next();
-            if (kind < 0.8f)
+            if (kind < 0.04f)
+            {
+                // A standing sheet: seen from both sides, and every other one has holes.
+                const bool holes = kind < 0.02f;
+                const float width = 2.f + next() * 6.f;
+                const float height = 2.f + next() * 6.f;
+                place(mBoxFaces[0], holes ? mFence : material, x, y, height * 0.5f + 0.5f, 1.f, width, height, false,
+                      asr::INSTANCE_DOUBLE_SIDED | (holes ? asr::INSTANCE_MASKED : 0));
+            }
+            else if (kind < 0.8f)
             {
                 const float height = 0.5f + next() * next() * 18.f;
                 const float width = 0.5f + next() * 3.f;
@@ -230,10 +250,19 @@ public:
 
     asr::SceneCamera3D camera(float seconds, uint32_t width, uint32_t height) const
     {
+        const float aspect = float(width) / float(std::max(height, 1u));
+        if (mStreet)
+        {
+            // Walking between the buildings, where nearly everything hides something.
+            const float walk = seconds * 0.05f;
+            const float eye[3] = { std::cos(walk) * 70.f, std::sin(walk) * 70.f, 1.8f };
+            const float target[3] = { std::cos(walk + 0.2f) * 70.f, std::sin(walk + 0.2f) * 70.f, 2.5f };
+            return asr::makeCamera(eye, target, 1.05f, aspect, 0.1f);
+        }
         const float angle = seconds * 0.12f;
         const float eye[3] = { std::cos(angle) * 120.f, std::sin(angle) * 120.f, 40.f + 20.f * std::sin(seconds * 0.3f) };
         const float target[3] = { std::cos(angle + 0.8f) * 30.f, std::sin(angle + 0.8f) * 30.f, 6.f };
-        return asr::makeCamera(eye, target, 1.05f, float(width) / float(std::max(height, 1u)), 0.1f);
+        return asr::makeCamera(eye, target, 1.05f, aspect, 0.1f);
     }
 
     void update(float seconds)
@@ -279,7 +308,7 @@ private:
     };
 
     // One texture is large enough to span several frames of uploads.
-    static uint32_t checker(asr::TextureQueue& textures, uint32_t index, uint32_t SIZE)
+    static uint32_t checker(asr::TextureQueue& textures, uint32_t index, uint32_t SIZE, uint32_t dark)
     {
         asr::TextureDesc desc;
         desc.width = SIZE;
@@ -295,7 +324,7 @@ private:
         {
             for (uint32_t x = 0; x < SIZE; ++x)
             {
-                pixels[y * SIZE + x] = ((x / cell + y / cell) & 1) ? 0xFFFFFFFFu : 0xFFA0A0A0u;
+                pixels[y * SIZE + x] = ((x / cell + y / cell) & 1) ? 0xFFFFFFFFu : dark;
             }
         }
         const uint32_t slot = textures.create(desc);
@@ -304,23 +333,26 @@ private:
         return slot;
     }
 
-    static asr::InstanceDesc instanceDesc(uint32_t geometry, uint32_t material, float x, float y, float z, float sx, float sy, float sz)
+    static asr::InstanceDesc instanceDesc(uint32_t geometry, uint32_t material, float x, float y, float z, float sx, float sy, float sz, uint32_t flags = 0)
     {
         asr::InstanceDesc desc;
         desc.geometry = geometry;
         desc.material = material;
+        desc.flags = flags;
         const float rows[12] = { sx, 0.f, 0.f, x, 0.f, sy, 0.f, y, 0.f, 0.f, sz, z };
         std::copy(rows, rows + 12, desc.objectToWorld);
         return desc;
     }
 
-    uint32_t place(uint32_t geometry, uint32_t material, float x, float y, float z, float sx, float sy, float sz, bool)
+    uint32_t place(uint32_t geometry, uint32_t material, float x, float y, float z, float sx, float sy, float sz, bool, uint32_t flags = 0)
     {
         ++mInstances;
-        return mScene.addInstance(instanceDesc(geometry, material, x, y, z, sx, sy, sz));
+        return mScene.addInstance(instanceDesc(geometry, material, x, y, z, sx, sy, sz, flags));
     }
 
     asr::SceneQueue& mScene;
+    bool mStreet;
+    uint32_t mFence = 0;
     uint32_t mBoxFaces[6]{};
     uint32_t mSphere = 0;
     uint32_t mKnot = 0;

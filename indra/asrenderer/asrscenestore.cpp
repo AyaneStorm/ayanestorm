@@ -15,7 +15,7 @@ namespace
 {
 
 constexpr uint64_t BLOB_ALIGNMENT = 16;
-constexpr uint32_t MINIMUM_BUCKET_CAPACITY = 1024;
+constexpr uint32_t MINIMUM_LIST_CAPACITY = 1024;
 
 uint32_t bucketOf(uint32_t triangles)
 {
@@ -135,7 +135,7 @@ void SceneStore::writeTable(SceneTable table, uint32_t index, const void* data, 
 
 void SceneStore::writeEntry(SceneTable table, uint32_t index, const void* data, uint64_t bytes)
 {
-    std::vector<EntryMark>& marks = mEntryMarks[table == SceneTable::Instances ? 0 : 1];
+    std::vector<EntryMark>& marks = mEntryMarks[table == SceneTable::Instances ? 0 : table == SceneTable::Materials ? 1 : 2];
     if (marks.size() <= index)
     {
         marks.resize(size_t(index) + 1);
@@ -151,27 +151,56 @@ void SceneStore::writeEntry(SceneTable table, uint32_t index, const void* data, 
     writeTable(table, index, data, bytes);
 }
 
-void SceneStore::countInstance(const Geometry& geometry, int sign)
+void SceneStore::countClusters(const Geometry& geometry, uint32_t kind, int64_t instances)
 {
-    if (geometry.uploaded)
+    for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
     {
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
-        {
-            mBucketTotals[bucket] += uint64_t(int64_t(sign) * int64_t(geometry.buckets[bucket]));
-        }
-        mTriangles += uint64_t(int64_t(sign) * int64_t(geometry.triangles));
+        mListTotals[sceneList(kind, bucket)] += uint64_t(instances * int64_t(geometry.buckets[bucket]));
     }
 }
 
-uint32_t SceneStore::bucketCapacity(uint32_t bucket) const
+// An instance can draw any LOD of its chain, so every LOD keeps room for it. That is a
+// little more than the largest one alone, and the GPU can never run out.
+void SceneStore::countInstance(uint32_t id, uint32_t kind, int sign)
+{
+    Geometry& finest = mGeometries[id];
+    finest.direct = uint32_t(int64_t(finest.direct) + sign);
+    if (finest.uploaded)
+    {
+        mTriangles += uint64_t(int64_t(sign) * int64_t(finest.triangles));
+    }
+    uint32_t at = id;
+    for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
+    {
+        Geometry& geometry = mGeometries[at];
+        geometry.instances[kind] = uint32_t(int64_t(geometry.instances[kind]) + sign);
+        if (geometry.uploaded)
+        {
+            countClusters(geometry, kind, sign);
+        }
+        at = geometry.coarser;
+    }
+}
+
+uint32_t SceneStore::listCapacity(uint32_t list) const
 {
     // Doubling steps, so the list is not recreated for every instance that arrives.
-    uint64_t capacity = MINIMUM_BUCKET_CAPACITY;
-    while (capacity < mBucketTotals[bucket])
+    uint64_t capacity = MINIMUM_LIST_CAPACITY;
+    while (capacity < mListTotals[list])
     {
         capacity *= 2;
     }
-    return uint32_t(std::min<uint64_t>(capacity, MAX_VISIBLE_CLUSTERS / CLUSTER_BUCKETS));
+    return uint32_t(std::min<uint64_t>(capacity, MAX_VISIBLE_CLUSTERS / SCENE_LISTS));
+}
+
+uint64_t SceneStore::visibleCapacity() const
+{
+    uint64_t total = 0;
+    for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+    {
+        total += listCapacity(list);
+    }
+    return total;
 }
 
 uint64_t SceneStore::freeChunkBytes() const
@@ -191,7 +220,7 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     memcpy(material.uvRow0, command.desc.uvRow0, sizeof(material.uvRow0));
     memcpy(material.uvRow1, command.desc.uvRow1, sizeof(material.uvRow1));
     material.texture = command.desc.texture;
-    material.flags = command.desc.flags;
+    material.alphaCutoff = command.desc.alphaCutoff;
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));
 }
 
@@ -207,21 +236,45 @@ void SceneStore::applyGeometry(GeometryCommand& command)
     geometry.scale = command.data.scale;
     geometry.data = std::move(command.data);
     mPending.push_back(command.id);
+
+    // Instances hold the box they were packed in, so an LOD in another box cannot be used.
+    if (command.coarser != 0 && command.coarser < mGeometries.size())
+    {
+        Geometry& coarser = mGeometries[command.coarser];
+        if (memcmp(coarser.center, geometry.center, sizeof(geometry.center)) == 0 && coarser.scale == geometry.scale)
+        {
+            geometry.coarser = command.coarser;
+            geometry.coarserAt = command.coarserAt;
+            ++coarser.finer;
+
+            // Instances on this one can already show the coarser one while it waits.
+            GpuGeometry entry{};
+            entry.coarser = geometry.coarser;
+            entry.coarserAt = geometry.coarserAt;
+            writeEntry(SceneTable::Geometries, command.id, &entry, sizeof(entry));
+        }
+    }
 }
 
 void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
 {
-    if (mInstanceGeometry.size() <= command.id)
+    if (mInstanceUses.size() <= command.id)
     {
-        mInstanceGeometry.resize(size_t(command.id) + 1, 0);
+        mInstanceUses.resize(size_t(command.id) + 1);
     }
-    uint32_t& current = mInstanceGeometry[command.id];
-    if (current != 0)
+    InstanceUse& current = mInstanceUses[command.id];
+    if (current.geometry != 0)
     {
-        Geometry& old = mGeometries[current];
-        countInstance(old, -1);
-        --old.instances;
-        current = 0;
+        const uint32_t old = current.geometry;
+        countInstance(old, current.kind, -1);
+        current.geometry = 0;
+        uint32_t at = old;
+        for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
+        {
+            const uint32_t next = mGeometries[at].coarser;
+            removeIfUnused(at, frame);
+            at = next;
+        }
     }
 
     GpuInstance instance{};
@@ -250,13 +303,15 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
         const float* m = desc.objectToWorld;
         const float determinant = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[1] * (m[4] * m[10] - m[6] * m[8]) +
                                   m[2] * (m[4] * m[9] - m[5] * m[8]);
-        instance.flags = determinant < 0.f ? INSTANCE_FLIPPED : 0;
+        instance.flags = (determinant < 0.f ? INSTANCE_FLIPPED : 0) | (desc.flags & INSTANCE_DESC_FLAGS);
         instance.geometry = desc.geometry;
         instance.material = desc.material;
+        memcpy(instance.lodCenter, desc.lodCenter, sizeof(instance.lodCenter));
+        instance.lodSize = desc.lodSize;
 
-        current = desc.geometry;
-        ++geometry.instances;
-        countInstance(geometry, 1);
+        current.geometry = desc.geometry;
+        current.kind = sceneKind(instance.flags);
+        countInstance(current.geometry, current.kind, 1);
     }
     writeEntry(SceneTable::Instances, command.id, &instance, sizeof(instance));
     mInstanceEnd = std::max(mInstanceEnd, command.id + 1);
@@ -264,31 +319,47 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
 
 void SceneStore::removeGeometry(uint32_t id, uint64_t frame)
 {
-    if (id >= mGeometries.size())
+    if (id != 0 && id < mGeometries.size())
+    {
+        mGeometries[id].removing = true;
+        removeIfUnused(id, frame);
+    }
+}
+
+void SceneStore::removeIfUnused(uint32_t id, uint64_t frame)
+{
+    Geometry& geometry = mGeometries[id];
+    const bool used = geometry.finer != 0 ||
+                      std::any_of(std::begin(geometry.instances), std::end(geometry.instances), [](uint32_t count) { return count != 0; });
+    if (!geometry.removing || used)
     {
         return;
     }
-    Geometry& geometry = mGeometries[id];
+    geometry.removing = false;
+
     const auto pending = std::find(mPending.begin(), mPending.end(), id);
     if (pending != mPending.end())
     {
         mPending.erase(pending);
     }
+    const GpuGeometry empty{};
+    writeEntry(SceneTable::Geometries, id, &empty, sizeof(empty));
     if (geometry.uploaded)
     {
-        // Instances left on it stop being counted, and draw nothing from the next frame.
-        for (uint32_t i = 0; i < geometry.instances; ++i)
-        {
-            countInstance(geometry, -1);
-        }
-        const GpuGeometry empty{};
-        writeTable(SceneTable::Geometries, id, &empty, sizeof(empty));
         mRetired.push_back({ Retired::Type::Clusters, 0, geometry.firstCluster, geometry.clusterCount, frame + mFreeDelay });
         mRetired.push_back({ Retired::Type::Chunk, geometry.chunk, geometry.chunkOffset, geometry.blobBytes, frame + mFreeDelay });
     }
     geometry.uploaded = false;
     geometry.data = GeometryData();
     mRetired.push_back({ Retired::Type::GeometryId, id, 0, 0, frame + mFreeDelay });
+
+    if (geometry.coarser != 0)
+    {
+        const uint32_t coarser = geometry.coarser;
+        geometry.coarser = 0;
+        --mGeometries[coarser].finer;
+        removeIfUnused(coarser, frame);
+    }
 }
 
 bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
@@ -360,7 +431,9 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     entry.radius = data.radius;
     entry.firstCluster = uint32_t(firstCluster);
     entry.clusterCount = uint32_t(clusterCount);
-    writeTable(SceneTable::Geometries, id, &entry, sizeof(entry));
+    entry.coarser = geometry.coarser;
+    entry.coarserAt = geometry.coarserAt;
+    writeEntry(SceneTable::Geometries, id, &entry, sizeof(entry));
 
     SceneWrite write;
     write.chunk = chunkIndex;
@@ -377,10 +450,11 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     geometry.clusterCount = uint32_t(clusterCount);
     geometry.uploaded = true;
     geometry.data = GeometryData();
-    for (uint32_t i = 0; i < geometry.instances; ++i)
+    for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
     {
-        countInstance(geometry, 1);
+        countClusters(geometry, kind, geometry.instances[kind]);
     }
+    mTriangles += geometry.direct * geometry.triangles;
     return true;
 }
 

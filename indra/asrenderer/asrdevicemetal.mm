@@ -7,6 +7,7 @@
  * texture cost nothing per frame. See asrdevice.h.
  */
 #include "asrdevice.h"
+#include "asrscenegraph.h"
 #include "asrscenestore.h"
 
 #import <Cocoa/Cocoa.h>
@@ -34,31 +35,10 @@ constexpr NSUInteger PUSH_CONSTANT_BUFFER = 8;
 
 constexpr uint64_t UPLOAD_ALIGNMENT = 16;
 
-constexpr uint32_t CULL_GROUP_SIZE = 64;
-constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
+// One pass's timestamps: start, end, and for a draw the end of vertices and start of fragments.
+constexpr uint32_t SAMPLES_PER_PASS = 4;
 
-// Mirrors the push constants of asrSceneCommon.glsl.
-struct ScenePush
-{
-    uint64_t view;
-    uint64_t instances;
-    uint64_t geometries;
-    uint64_t clusters;
-    uint64_t materials;
-    uint64_t visible;
-    uint64_t counts;
-    uint32_t bucket;
-};
-
-// One bucket's draw, in the layout of MTLDrawPrimitivesIndirectArguments.
-struct DrawArguments
-{
-    uint32_t vertexCount;
-    uint32_t instanceCount;
-    uint32_t vertexStart;
-    uint32_t baseInstance;
-};
-constexpr uint64_t SCENE_COUNTS_BYTES = sizeof(DrawArguments) * CLUSTER_BUCKETS;
+static_assert(sizeof(GpuDrawArguments) == sizeof(MTLDrawPrimitivesIndirectArguments), "culling counts into these");
 
 const char* const NEEDS_MACOS_15 = "the renderer needs macOS 15 or later";
 
@@ -120,6 +100,7 @@ public:
         mInfo.name = mDevice.name.UTF8String;
         mInfo.memoryBudgetBytes = mDevice.recommendedMaxWorkingSetSize;
         mMemoryCapBytes = options.memoryCapBytes;
+        mOcclusion = options.occlusion;
         refreshMemoryBudget();
         mUploadBytesPerFrame = mMemoryBudget.uploadBytesPerFrame(FRAMES_IN_FLIGHT);
 
@@ -212,7 +193,7 @@ public:
             }
 
             id<MTLCommandBuffer> commands = [mQueue commandBuffer];
-            if (input.camera && !recordScene(commands, slot, *input.camera, width, height))
+            if (input.camera && !recordScene(commands, slot, *input.camera, width, height, input.audit))
             {
                 dispatch_semaphore_signal(mFrameSlots);
                 return false;
@@ -381,36 +362,51 @@ private:
         return pipeline;
     }
 
+    id<MTLRenderPipelineState> createVisibilityPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, std::string& error)
+    {
+        MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = vertex;
+        descriptor.fragmentFunction = fragment;
+        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatR32Uint;
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        NSError* failure = nil;
+        id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        if (!pipeline)
+        {
+            error = std::string("visibility pipeline: ") + failure.localizedDescription.UTF8String;
+        }
+        return pipeline;
+    }
+
     bool createScene(const std::string& shaderDir, std::string& error)
     {
         mCullPipeline = createComputePipeline(shaderDir, "asrSceneCullC", error);
+        mPyramidPipeline = createComputePipeline(shaderDir, "asrScenePyramidC", error);
         mResolvePipeline = createComputePipeline(shaderDir, "asrSceneResolveC", error);
         id<MTLFunction> visibilityVertex = loadFunction(shaderDir, "asrSceneVisibilityV", error);
         id<MTLFunction> visibilityFragment = loadFunction(shaderDir, "asrSceneVisibilityF", error);
+        id<MTLFunction> maskedVertex = loadFunction(shaderDir, "asrSceneMaskedV", error);
+        id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrSceneMaskedF", error);
         id<MTLFunction> compositeVertex = loadFunction(shaderDir, "asrSceneCompositeV", error);
         id<MTLFunction> compositeFragment = loadFunction(shaderDir, "asrSceneCompositeF", error);
-        if (!mCullPipeline || !mResolvePipeline || !visibilityVertex || !visibilityFragment || !compositeVertex || !compositeFragment)
+        if (!mCullPipeline || !mPyramidPipeline || !mResolvePipeline || !visibilityVertex || !visibilityFragment || !maskedVertex || !maskedFragment ||
+            !compositeVertex || !compositeFragment)
+        {
+            return false;
+        }
+
+        mVisibilityPipeline = createVisibilityPipeline(visibilityVertex, visibilityFragment, error);
+        mMaskedPipeline = createVisibilityPipeline(maskedVertex, maskedFragment, error);
+        if (!mVisibilityPipeline || !mMaskedPipeline)
         {
             return false;
         }
 
         MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
-        descriptor.vertexFunction = visibilityVertex;
-        descriptor.fragmentFunction = visibilityFragment;
-        descriptor.colorAttachments[0].pixelFormat = MTLPixelFormatR32Uint;
-        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-        NSError* failure = nil;
-        mVisibilityPipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
-        if (!mVisibilityPipeline)
-        {
-            error = std::string("visibility pipeline: ") + failure.localizedDescription.UTF8String;
-            return false;
-        }
-
-        descriptor = [MTLRenderPipelineDescriptor new];
         descriptor.vertexFunction = compositeVertex;
         descriptor.fragmentFunction = compositeFragment;
         descriptor.colorAttachments[0].pixelFormat = mLayer.pixelFormat;
+        NSError* failure = nil;
         mCompositePipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
         if (!mCompositePipeline)
         {
@@ -427,26 +423,81 @@ private:
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
             mSceneViews[i] = createSceneBuffer(sizeof(GpuSceneView), MemoryCategory::Staging, "scene view");
-            mSceneReadback[i] = createSceneBuffer(SCENE_COUNTS_BYTES, MemoryCategory::Staging, "scene readback");
+            mSceneReadback[i] = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Staging, "scene readback");
             if (!mSceneViews[i] || !mSceneReadback[i])
             {
                 error = mError;
                 return false;
             }
         }
-        mSceneCounts = createSceneBuffer(SCENE_COUNTS_BYTES, MemoryCategory::Geometry, "scene draw counts");
-        mSceneCountsTemplate = createSceneBuffer(SCENE_COUNTS_BYTES, MemoryCategory::Staging, "scene draw template");
+        mSceneCounts = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Geometry, "scene draw counts");
+        mSceneCountsTemplate = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Staging, "scene draw template");
         if (!mSceneCounts || !mSceneCountsTemplate)
         {
             error = mError;
             return false;
         }
-        DrawArguments* draws = static_cast<DrawArguments*>(mSceneCountsTemplate.contents);
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
-        {
-            draws[bucket] = { CLUSTER_BUCKET_TRIANGLES[bucket] * 3, 0, 0, 0 };
-        }
+        *static_cast<GpuSceneCounts*>(mSceneCountsTemplate.contents) = sceneCountsTemplate();
+
+        declareSceneGraph(mGraph);
+        setPassBodies();
+        createPassTimers();
         return true;
+    }
+
+    // Timestamps at the edges of encoders, which is what Apple GPUs can sample. A pass's
+    // vertex and fragment work run apart on them, so a draw gets four samples.
+    void createPassTimers()
+    {
+        if (![mDevice supportsCounterSampling:MTLCounterSamplingPointAtStageBoundary])
+        {
+            return;
+        }
+        for (id<MTLCounterSet> set in mDevice.counterSets)
+        {
+            if ([set.name isEqualToString:MTLCommonCounterSetTimestamp])
+            {
+                MTLCounterSampleBufferDescriptor* descriptor = [MTLCounterSampleBufferDescriptor new];
+                descriptor.counterSet = set;
+                descriptor.storageMode = MTLStorageModeShared;
+                descriptor.sampleCount = SAMPLES_PER_PASS * MAX_TIMED_PASSES * FRAMES_IN_FLIGHT;
+                mPassSamples = [mDevice newCounterSampleBufferWithDescriptor:descriptor error:nil];
+            }
+        }
+        [mDevice sampleTimestamps:&mClockStartCpu gpuTimestamp:&mClockStartGpu];
+    }
+
+    NSUInteger passSample(uint32_t sample) const
+    {
+        return NSUInteger(mRecordSlot * MAX_TIMED_PASSES + mRecordPass) * SAMPLES_PER_PASS + sample;
+    }
+
+    id<MTLComputeCommandEncoder> beginCompute()
+    {
+        MTLComputePassDescriptor* pass = [MTLComputePassDescriptor computePassDescriptor];
+        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
+        {
+            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
+            pass.sampleBufferAttachments[0].startOfEncoderSampleIndex = passSample(0);
+            pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = passSample(1);
+        }
+        id<MTLComputeCommandEncoder> encoder = [mRecordCommands computeCommandEncoderWithDescriptor:pass];
+        [encoder waitForFence:mSceneFence];
+        return encoder;
+    }
+
+    id<MTLBlitCommandEncoder> beginBlit()
+    {
+        MTLBlitPassDescriptor* pass = [MTLBlitPassDescriptor blitPassDescriptor];
+        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
+        {
+            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
+            pass.sampleBufferAttachments[0].startOfEncoderSampleIndex = passSample(0);
+            pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = passSample(1);
+        }
+        id<MTLBlitCommandEncoder> encoder = [mRecordCommands blitCommandEncoderWithDescriptor:pass];
+        [encoder waitForFence:mSceneFence];
+        return encoder;
     }
 
     id<MTLTexture> createTarget(MTLPixelFormat format, MTLTextureUsage usage, uint32_t width, uint32_t height, uint32_t pixelBytes, const char* what)
@@ -480,11 +531,26 @@ private:
         mSceneTargetBytes = 0;
         mSceneWidth = width;
         mSceneHeight = height;
+        mHasPyramid = false;
+        mAuditTarget = nil;
+        for (bool& written : mAuditWritten)
+        {
+            written = false;
+        }
         mVisibilityTarget = createTarget(MTLPixelFormatR32Uint, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "visibility buffer");
         mDepthTarget = createTarget(MTLPixelFormatDepth32Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "depth buffer");
         mAlbedoTarget = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 4, "albedo target");
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
-        return mVisibilityTarget && mDepthTarget && mAlbedoTarget && mNormalTarget;
+
+        if (mScenePyramid)
+        {
+            mRetiredBuffers.push_back({ mScenePyramid, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::RenderTargets });
+        }
+        uint32_t offsets[PYRAMID_MAX_LEVELS];
+        uint32_t levels = 0;
+        const uint64_t pyramidBytes = uint64_t(pyramidLayout(width, height, offsets, levels)) * sizeof(float);
+        mScenePyramid = createSceneBuffer(pyramidBytes, MemoryCategory::RenderTargets, "depth pyramid");
+        return mVisibilityTarget && mDepthTarget && mAlbedoTarget && mNormalTarget && mScenePyramid;
     }
 
     // Frames still running may read the old table, so it stays until they are done.
@@ -499,25 +565,39 @@ private:
         if (mSceneTables[table])
         {
             [blit copyFromBuffer:mSceneTables[table] sourceOffset:0 toBuffer:grown destinationOffset:0 size:mSceneTables[table].length];
-            mRetiredBuffers.push_back({ mSceneTables[table], mFrame + FRAMES_IN_FLIGHT + 1 });
+            mRetiredBuffers.push_back({ mSceneTables[table], mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::Geometry });
         }
         mSceneTables[table] = grown;
         return true;
     }
 
-    // Applies this frame's scene changes, in a blit pass that runs before everything else.
-    bool updateScene(id<MTLCommandBuffer> commands, uint32_t slot)
+    bool growList(id<MTLBuffer> __strong& list, uint64_t bytes, const char* what)
     {
+        if (bytes <= list.length)
+        {
+            return true;
+        }
+        if (list)
+        {
+            mRetiredBuffers.push_back({ list, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::Geometry });
+        }
+        list = createSceneBuffer(bytes, MemoryCategory::Geometry, what);
+        return list != nil;
+    }
+
+    // Applies this frame's scene changes, and fills in the view.
+    bool passUpload()
+    {
+        const uint32_t slot = mRecordSlot;
         while (!mRetiredBuffers.empty() && mRetiredBuffers.front().frame <= mFrame)
         {
-            releaseSceneBuffer(mRetiredBuffers.front().buffer, MemoryCategory::Geometry);
+            releaseSceneBuffer(mRetiredBuffers.front().buffer, mRetiredBuffers.front().category);
             mRetiredBuffers.pop_front();
         }
 
         mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
 
-        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-        [blit waitForFence:mSceneFence];
+        id<MTLBlitCommandEncoder> blit = beginBlit();
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
             const uint64_t bytes = mSceneStore.tableCapacity(SceneTable(i));
@@ -528,24 +608,12 @@ private:
             }
         }
 
-        uint64_t visibleEntries = 0;
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        const uint64_t visibleBytes = mSceneStore.visibleCapacity() * sizeof(GpuListEntry);
+        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
+        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list"))
         {
-            visibleEntries += mSceneStore.bucketCapacity(bucket);
-        }
-        const uint64_t visibleBytes = visibleEntries * sizeof(uint32_t) * 2;
-        if (visibleBytes > mSceneVisible.length)
-        {
-            if (mSceneVisible)
-            {
-                mRetiredBuffers.push_back({ mSceneVisible, mFrame + FRAMES_IN_FLIGHT + 1 });
-            }
-            mSceneVisible = createSceneBuffer(visibleBytes, MemoryCategory::Geometry, "visible cluster list");
-            if (!mSceneVisible)
-            {
-                [blit endEncoding];
-                return false;
-            }
+            [blit endEncoding];
+            return false;
         }
 
         uint64_t stagingBytes = 0;
@@ -579,102 +647,288 @@ private:
             offset += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
         }
 
-        [blit copyFromBuffer:mSceneCountsTemplate sourceOffset:0 toBuffer:mSceneCounts destinationOffset:0 size:SCENE_COUNTS_BYTES];
+        [blit copyFromBuffer:mSceneCountsTemplate sourceOffset:0 toBuffer:mSceneCounts destinationOffset:0 size:sizeof(GpuSceneCounts)];
+        [blit updateFence:mSceneFence];
+        [blit endEncoding];
+
+        GpuSceneView view{};
+        fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneWidth, mSceneHeight);
+        uint32_t base = 0;
+        for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+        {
+            view.listBase[list] = base;
+            base += mSceneStore.listCapacity(list);
+        }
+        view.instanceEnd = mSceneStore.instanceEnd();
+        mSceneInstanceEnd = view.instanceEnd;
+        mPyramidLevels = view.pyramidLevels;
+        memcpy(mSceneViews[slot].contents, &view, sizeof(view));
+
+        mScenePush = ScenePush{};
+        mScenePush.view = addressOf(mSceneViews[slot]);
+        mScenePush.instances = addressOf(mSceneTables[uint32_t(SceneTable::Instances)]);
+        mScenePush.geometries = addressOf(mSceneTables[uint32_t(SceneTable::Geometries)]);
+        mScenePush.clusters = addressOf(mSceneTables[uint32_t(SceneTable::Clusters)]);
+        mScenePush.materials = addressOf(mSceneTables[uint32_t(SceneTable::Materials)]);
+        mScenePush.visible = addressOf(mSceneVisible);
+        mScenePush.counts = addressOf(mSceneCounts);
+        mScenePush.retest = addressOf(mSceneRetest);
+        mScenePush.pyramid = addressOf(mScenePyramid);
+        return true;
+    }
+
+    bool passCull(uint32_t phase)
+    {
+        id<MTLComputeCommandEncoder> cull = beginCompute();
+        [cull setComputePipelineState:mCullPipeline];
+        mScenePush.phase = phase;
+        [cull setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        if (phase == CULL_LATE)
+        {
+            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, retestGroups)
+                                   threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        else
+        {
+            [cull dispatchThreadgroups:MTLSizeMake((mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1)
+                 threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        [cull updateFence:mSceneFence];
+        [cull endEncoding];
+        return true;
+    }
+
+    bool passDraw(id<MTLTexture> color, uint64_t argumentsOffset, bool loadColor, bool loadDepth)
+    {
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = color;
+        pass.colorAttachments[0].loadAction = loadColor ? MTLLoadActionLoad : MTLLoadActionClear;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(double(VISIBILITY_EMPTY), 0.0, 0.0, 0.0);
+        pass.depthAttachment.texture = mDepthTarget;
+        pass.depthAttachment.loadAction = loadDepth ? MTLLoadActionLoad : MTLLoadActionClear;
+        pass.depthAttachment.storeAction = MTLStoreActionStore;
+        pass.depthAttachment.clearDepth = 0.0; // reversed depth: 0 is far away
+        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
+        {
+            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
+            pass.sampleBufferAttachments[0].startOfVertexSampleIndex = passSample(0);
+            pass.sampleBufferAttachments[0].endOfVertexSampleIndex = passSample(2);
+            pass.sampleBufferAttachments[0].startOfFragmentSampleIndex = passSample(3);
+            pass.sampleBufferAttachments[0].endOfFragmentSampleIndex = passSample(1);
+        }
+
+        id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
+        [draw setDepthStencilState:mDepthState];
+        [draw setFrontFacingWinding:MTLWindingCounterClockwise];
+        [draw setFragmentBuffer:mArguments offset:0 atIndex:0];
+        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
+        {
+            [draw setRenderPipelineState:(kind & 2) ? mMaskedPipeline : mVisibilityPipeline];
+            [draw setCullMode:(kind & 1) ? MTLCullModeNone : MTLCullModeBack];
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                mScenePush.list = sceneList(kind, bucket);
+                [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts
+                  indirectBufferOffset:argumentsOffset + mScenePush.list * sizeof(GpuDrawArguments)];
+            }
+        }
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
+    }
+
+    bool passPyramid()
+    {
+        id<MTLComputeCommandEncoder> encoder = beginCompute();
+        [encoder setComputePipelineState:mPyramidPipeline];
+        [encoder setTexture:mDepthTarget atIndex:3];
+        for (uint32_t source = 0; source < mPyramidLevels; source += PYRAMID_LEVELS_PER_DISPATCH)
+        {
+            if (source != 0)
+            {
+                [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
+            }
+            mScenePush.phase = source;
+            [encoder setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+            const uint32_t coarsest = source + PYRAMID_LEVELS_PER_DISPATCH;
+            [encoder dispatchThreadgroups:MTLSizeMake((pyramidLevelSize(mSceneWidth, coarsest) + PYRAMID_GROUP_SIZE - 1) / PYRAMID_GROUP_SIZE,
+                                                      (pyramidLevelSize(mSceneHeight, coarsest) + PYRAMID_GROUP_SIZE - 1) / PYRAMID_GROUP_SIZE, 1)
+                    threadsPerThreadgroup:MTLSizeMake(PYRAMID_GROUP_SIZE, PYRAMID_GROUP_SIZE, 1)];
+        }
+        [encoder updateFence:mSceneFence];
+        [encoder endEncoding];
+        return true;
+    }
+
+    bool passResolve()
+    {
+        id<MTLComputeCommandEncoder> resolve = beginCompute();
+        [resolve setComputePipelineState:mResolvePipeline];
+        [resolve setBuffer:mArguments offset:0 atIndex:0];
+        [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [resolve setTexture:mVisibilityTarget atIndex:0];
+        [resolve setTexture:mAlbedoTarget atIndex:1];
+        [resolve setTexture:mNormalTarget atIndex:2];
+        [resolve dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
+                threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        [resolve updateFence:mSceneFence];
+        [resolve endEncoding];
+        return true;
+    }
+
+    bool passReadCounts()
+    {
+        id<MTLBlitCommandEncoder> readback = beginBlit();
+        [readback copyFromBuffer:mSceneCounts sourceOffset:0 toBuffer:mSceneReadback[mRecordSlot] destinationOffset:0 size:sizeof(GpuSceneCounts)];
+        [readback updateFence:mSceneFence];
+        [readback endEncoding];
+        return true;
+    }
+
+    bool passAuditReset()
+    {
+        id<MTLBlitCommandEncoder> blit = beginBlit();
+        [blit copyFromBuffer:mSceneCountsTemplate sourceOffset:0 toBuffer:mSceneCounts destinationOffset:0 size:sizeof(GpuSceneCounts)];
         [blit updateFence:mSceneFence];
         [blit endEncoding];
         return true;
     }
 
-    // Culls, draws the visibility buffer, and resolves it to the G-buffer.
-    bool recordScene(id<MTLCommandBuffer> commands, uint32_t slot, const SceneCamera3D& camera, uint32_t width, uint32_t height)
+    bool passAuditRead()
     {
-        // What this slot's earlier frame counted. That frame has finished.
-        const DrawArguments* counts = static_cast<const DrawArguments*>(mSceneReadback[slot].contents);
-        mSceneFrameStats.visibleClusters = 0;
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
-        {
-            mSceneFrameStats.visibleClusters += counts[bucket].instanceCount;
-        }
+        id<MTLBlitCommandEncoder> blit = beginBlit();
+        [blit copyFromTexture:mAuditTarget sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:MTLSizeMake(mSceneWidth, mSceneHeight, 1)
+                     toBuffer:mAuditReadback[mRecordSlot] destinationOffset:0 destinationBytesPerRow:mSceneWidth * 4 destinationBytesPerImage:uint64_t(mSceneWidth) * mSceneHeight * 4];
+        [blit updateFence:mSceneFence];
+        [blit endEncoding];
+        mAuditWritten[mRecordSlot] = true;
+        return true;
+    }
 
-        if (!ensureSceneTargets(width, height) || !updateScene(commands, slot))
+    void setPassBodies()
+    {
+        mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
+        mGraph.setBody(PassDrawEarly, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, early), false, false); });
+        mGraph.setBody(PassPyramidEarly, [this]() { return passPyramid(); });
+        mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
+        mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, late), true, true); });
+        mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
+        mGraph.setBody(PassResolve, [this]() { return passResolve(); });
+        mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
+        mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
+        mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
+        mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditTarget, offsetof(GpuSceneCounts, early), false, true); });
+        mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
+    }
+
+    // What this slot's earlier frame left behind. That frame has finished.
+    void readSceneResults(uint32_t slot)
+    {
+        const uint32_t timed = mTimedPasses[slot];
+        if (timed != 0 && mPassSamples)
+        {
+            // The two clocks are compared over as long a span as there is.
+            MTLTimestamp cpu = 0;
+            MTLTimestamp gpu = 0;
+            [mDevice sampleTimestamps:&cpu gpuTimestamp:&gpu];
+            const double millisecondsPerTick = gpu > mClockStartGpu ? double(cpu - mClockStartCpu) / double(gpu - mClockStartGpu) * 1e-6 : 0.0;
+
+            NSData* data = [mPassSamples resolveCounterRange:NSMakeRange(slot * MAX_TIMED_PASSES * SAMPLES_PER_PASS, timed * SAMPLES_PER_PASS)];
+            const MTLCounterResultTimestamp* samples = data ? static_cast<const MTLCounterResultTimestamp*>(data.bytes) : nullptr;
+            if (samples && millisecondsPerTick > 0.0)
+            {
+                mSceneFrameStats.passCount = timed;
+                for (uint32_t i = 0; i < timed; ++i)
+                {
+                    const MTLCounterResultTimestamp* pass = samples + i * SAMPLES_PER_PASS;
+                    const bool isDraw = pass[2].timestamp != MTLCounterErrorValue && pass[2].timestamp != 0;
+                    const double milliseconds = double(pass[1].timestamp - pass[0].timestamp) * millisecondsPerTick;
+                    const double vertices = isDraw ? double(pass[2].timestamp - pass[0].timestamp) * millisecondsPerTick : 0.0;
+                    recordPassTime(mSceneFrameStats.passes[i], mTimedNames[slot][i], milliseconds, vertices);
+                }
+            }
+        }
+        if (timed != 0)
+        {
+            const GpuSceneCounts* counts = static_cast<const GpuSceneCounts*>(mSceneReadback[slot].contents);
+            mSceneFrameStats.earlyClusters = 0;
+            mSceneFrameStats.lateClusters = 0;
+            for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+            {
+                mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
+                mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
+            }
+            mSceneFrameStats.retestEntries = counts->retestCount;
+        }
+        if (mAuditWritten[slot])
+        {
+            mAuditWritten[slot] = false;
+            const uint64_t pixels = uint64_t(mSceneWidth) * mSceneHeight;
+            const uint32_t* words = static_cast<const uint32_t*>(mAuditReadback[slot].contents);
+            mSceneFrameStats.auditErrorPixels += uint64_t(pixels - std::count(words, words + pixels, VISIBILITY_EMPTY));
+            ++mSceneFrameStats.auditedFrames;
+        }
+    }
+
+    bool ensureAuditTargets(uint32_t slot)
+    {
+        if (!mAuditTarget)
+        {
+            mAuditTarget = createTarget(MTLPixelFormatR32Uint, MTLTextureUsageRenderTarget, mSceneWidth, mSceneHeight, 4, "audit target");
+        }
+        const uint64_t bytes = uint64_t(mSceneWidth) * mSceneHeight * sizeof(uint32_t);
+        if (mAuditTarget && mAuditReadback[slot].length < bytes)
+        {
+            if (mAuditReadback[slot])
+            {
+                releaseSceneBuffer(mAuditReadback[slot], MemoryCategory::Staging);
+            }
+            mAuditReadback[slot] = createSceneBuffer(bytes, MemoryCategory::Staging, "audit readback");
+        }
+        return mAuditTarget && mAuditReadback[slot];
+    }
+
+    // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
+    // Metal orders the passes by mSceneFence, so the graph's transitions are not needed here.
+    bool recordScene(id<MTLCommandBuffer> commands, uint32_t slot, const SceneCamera3D& camera, uint32_t width, uint32_t height, bool audit)
+    {
+        readSceneResults(slot);
+        if (!ensureSceneTargets(width, height))
+        {
+            return false;
+        }
+        mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
+        if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
             return false;
         }
 
-        GpuSceneView view{};
-        fillSceneView(view, camera, width, height);
-        uint32_t base = 0;
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        mRecordCommands = commands;
+        mRecordSlot = slot;
+        mRecordCamera = &camera;
+        for (uint32_t i = 0; i < mGraph.passCount(); ++i)
         {
-            view.bucketBase[bucket] = base;
-            base += mSceneStore.bucketCapacity(bucket);
+            mRecordPass = i;
+            if (!mGraph.run(i))
+            {
+                return false;
+            }
+            if (i < MAX_TIMED_PASSES)
+            {
+                mTimedNames[slot][i] = mGraph.passName(i);
+            }
         }
-        view.instanceEnd = mSceneStore.instanceEnd();
-        memcpy(mSceneViews[slot].contents, &view, sizeof(view));
+        mTimedPasses[slot] = std::min(mGraph.passCount(), MAX_TIMED_PASSES);
+        mRecordCommands = nil;
 
-        ScenePush push{};
-        push.view = addressOf(mSceneViews[slot]);
-        push.instances = addressOf(mSceneTables[uint32_t(SceneTable::Instances)]);
-        push.geometries = addressOf(mSceneTables[uint32_t(SceneTable::Geometries)]);
-        push.clusters = addressOf(mSceneTables[uint32_t(SceneTable::Clusters)]);
-        push.materials = addressOf(mSceneTables[uint32_t(SceneTable::Materials)]);
-        push.visible = addressOf(mSceneVisible);
-        push.counts = addressOf(mSceneCounts);
+        mPyramidCamera = camera;
+        mHasPyramid = mOcclusion;
 
-        id<MTLComputeCommandEncoder> cull = [commands computeCommandEncoder];
-        [cull waitForFence:mSceneFence];
-        [cull setComputePipelineState:mCullPipeline];
-        [cull setBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
-        [cull dispatchThreadgroups:MTLSizeMake((view.instanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1)
-             threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
-        [cull updateFence:mSceneFence];
-        [cull endEncoding];
-
-        id<MTLBlitCommandEncoder> readback = [commands blitCommandEncoder];
-        [readback waitForFence:mSceneFence];
-        [readback copyFromBuffer:mSceneCounts sourceOffset:0 toBuffer:mSceneReadback[slot] destinationOffset:0 size:SCENE_COUNTS_BYTES];
-        [readback updateFence:mSceneFence];
-        [readback endEncoding];
-
-        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
-        pass.colorAttachments[0].texture = mVisibilityTarget;
-        pass.colorAttachments[0].loadAction = MTLLoadActionClear;
-        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-        pass.colorAttachments[0].clearColor = MTLClearColorMake(double(VISIBILITY_EMPTY), 0.0, 0.0, 0.0);
-        pass.depthAttachment.texture = mDepthTarget;
-        pass.depthAttachment.loadAction = MTLLoadActionClear;
-        pass.depthAttachment.storeAction = MTLStoreActionStore;
-        pass.depthAttachment.clearDepth = 0.0; // reversed depth: 0 is far away
-
-        id<MTLRenderCommandEncoder> draw = [commands renderCommandEncoderWithDescriptor:pass];
-        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
-        [draw setRenderPipelineState:mVisibilityPipeline];
-        [draw setDepthStencilState:mDepthState];
-        [draw setCullMode:MTLCullModeBack];
-        [draw setFrontFacingWinding:MTLWindingCounterClockwise];
-        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
-        {
-            push.bucket = bucket;
-            [draw setVertexBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
-            [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts indirectBufferOffset:bucket * sizeof(DrawArguments)];
-        }
-        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
-        [draw endEncoding];
-
-        id<MTLComputeCommandEncoder> resolve = [commands computeCommandEncoder];
-        [resolve waitForFence:mSceneFence];
-        [resolve setComputePipelineState:mResolvePipeline];
-        [resolve setBuffer:mArguments offset:0 atIndex:0];
-        [resolve setBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
-        [resolve setTexture:mVisibilityTarget atIndex:0];
-        [resolve setTexture:mAlbedoTarget atIndex:1];
-        [resolve setTexture:mNormalTarget atIndex:2];
-        [resolve dispatchThreadgroups:MTLSizeMake((width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
-                threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
-        [resolve updateFence:mSceneFence];
-        [resolve endEncoding];
-
-        mSceneFrameStats.instances = view.instanceEnd;
+        mSceneFrameStats.instances = mSceneInstanceEnd;
         mSceneFrameStats.triangles = mSceneStore.triangles();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
@@ -1022,21 +1276,28 @@ private:
     {
         id<MTLBuffer> buffer;
         uint64_t frame; // released from this frame on
+        MemoryCategory category;
     };
 
     SceneStore mSceneStore{ FRAMES_IN_FLIGHT };
     std::vector<id<MTLBuffer>> mSceneChunks;
     id<MTLBuffer> mSceneTables[SCENE_TABLES];
     id<MTLBuffer> mSceneVisible = nil;
+    id<MTLBuffer> mSceneRetest = nil;
     id<MTLBuffer> mSceneCounts = nil;
+    id<MTLBuffer> mScenePyramid = nil;
     id<MTLBuffer> mSceneCountsTemplate = nil;
     id<MTLBuffer> mSceneViews[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneReadback[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneStaging[FRAMES_IN_FLIGHT];
+    id<MTLBuffer> mAuditReadback[FRAMES_IN_FLIGHT];
+    bool mAuditWritten[FRAMES_IN_FLIGHT]{};
     std::deque<RetiredBuffer> mRetiredBuffers;
     id<MTLComputePipelineState> mCullPipeline = nil;
+    id<MTLComputePipelineState> mPyramidPipeline = nil;
     id<MTLComputePipelineState> mResolvePipeline = nil;
     id<MTLRenderPipelineState> mVisibilityPipeline = nil;
+    id<MTLRenderPipelineState> mMaskedPipeline = nil;
     id<MTLRenderPipelineState> mCompositePipeline = nil;
     id<MTLDepthStencilState> mDepthState = nil;
     id<MTLFence> mSceneFence = nil;
@@ -1044,10 +1305,31 @@ private:
     id<MTLTexture> mDepthTarget = nil;
     id<MTLTexture> mAlbedoTarget = nil;
     id<MTLTexture> mNormalTarget = nil;
+    id<MTLTexture> mAuditTarget = nil;
     uint64_t mSceneTargetBytes = 0;
     uint32_t mSceneWidth = 0;
     uint32_t mSceneHeight = 0;
     SceneStats mSceneFrameStats;
+
+    FrameGraph mGraph;
+    id<MTLCounterSampleBuffer> mPassSamples = nil;
+    MTLTimestamp mClockStartCpu = 0;
+    MTLTimestamp mClockStartGpu = 0;
+    uint32_t mTimedPasses[FRAMES_IN_FLIGHT]{};
+    const char* mTimedNames[FRAMES_IN_FLIGHT][MAX_TIMED_PASSES]{};
+
+    // What pass bodies work with, during one recordScene().
+    id<MTLCommandBuffer> mRecordCommands = nil;
+    uint32_t mRecordSlot = 0;
+    uint32_t mRecordPass = 0;
+    const SceneCamera3D* mRecordCamera = nullptr;
+    ScenePush mScenePush{};
+    uint32_t mSceneInstanceEnd = 0;
+    uint32_t mPyramidLevels = 0;
+
+    SceneCamera3D mPyramidCamera{}; // the view the pyramid holds
+    bool mHasPyramid = false;
+    bool mOcclusion = true;
 };
 
 } // namespace

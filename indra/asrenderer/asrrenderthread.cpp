@@ -93,6 +93,7 @@ void RenderThread::run()
         input.testTriangle = state.testTriangle;
         input.ui = &mUI.read();
         input.camera = state.hasCamera ? &state.camera : nullptr;
+        input.audit = state.audit;
         if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();
