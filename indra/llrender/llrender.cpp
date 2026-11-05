@@ -37,6 +37,10 @@
 #include "llshadermgr.h"
 #include "hbxxh.h"
 #include "glm/gtc/type_ptr.hpp"
+// <AS:Chanayane>
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 
 #if GL_ARB_debug_output
 #ifndef APIENTRY
@@ -469,6 +473,13 @@ void LLTexUnit::setTextureAddressMode(eTextureAddressMode mode)
 
 void LLTexUnit::setTextureAddressModeFast(eTextureAddressMode mode, eTextureType tex_type)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        ASR::setTextureWrap(mCurrTexture, mode != TAM_CLAMP);
+        return;
+    }
+    // </AS:Chanayane>
     glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_S, sGLAddressMode[mode]);
     glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_WRAP_T, sGLAddressMode[mode]);
     if (tex_type == TT_CUBE_MAP || tex_type == TT_CUBE_MAP_ARRAY || tex_type == TT_TEXTURE_3D)
@@ -488,6 +499,13 @@ void LLTexUnit::setTextureFilteringOption(LLTexUnit::eTextureFilterOptions optio
 
 void LLTexUnit::setTextureFilteringOptionFast(LLTexUnit::eTextureFilterOptions option, eTextureType tex_type)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        ASR::setTextureFilter(mCurrTexture, option != TFO_POINT);
+        return;
+    }
+    // </AS:Chanayane>
     if (option == TFO_POINT)
     {
         glTexParameteri(sGLTextureType[tex_type], GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -1533,6 +1551,25 @@ void LLRender::flush()
         }
 
         mCount = 0;
+
+        // <AS:Chanayane> The new renderer merges these vertices into one list, so
+        // none of the buffer handling below applies to it.
+        if (ASR::active())
+        {
+            const glm::mat4& modelview = mMatrix[MM_MODELVIEW][mMatIdx[MM_MODELVIEW]];
+            const glm::mat4& projection = mMatrix[MM_PROJECTION][mMatIdx[MM_PROJECTION]];
+            const glm::mat4& texture = mMatrix[MM_TEXTURE0][mMatIdx[MM_TEXTURE0]];
+            if (mBufferDataList)
+            {
+                mBufferDataList->emplace_back(genBuffer(LLGLSLShader::sCurBoundShaderPtr->mAttributeMask, count), mMode, count,
+                                              gGL.getTexUnit(0)->mCurrTexture, modelview, projection, texture);
+            }
+            ASR::drawUI(U8(mMode), reinterpret_cast<const F32*>(mVerticesp.get()), reinterpret_cast<const F32*>(mTexcoordsp.get()),
+                        reinterpret_cast<const U32*>(mColorsp.get()), count, modelview, projection, texture);
+            resetStriders(count);
+            return;
+        }
+        // </AS:Chanayane>
 
         if (mBuffer)
         {

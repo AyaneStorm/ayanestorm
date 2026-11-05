@@ -213,9 +213,11 @@ void display_startup()
 
     if (gViewerWindow)
     gViewerWindow->setup2DRender();
+    ASRViewer::beginUI(); // <AS:Chanayane/>
     if (gViewerWindow)
     gViewerWindow->draw();
     gGL.flush();
+    ASRViewer::publishUI(); // <AS:Chanayane/>
 
     LLVertexBuffer::unbind();
 

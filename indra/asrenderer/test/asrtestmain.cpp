@@ -32,6 +32,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <utility>
 #include <string>
 #include <thread>
 #include <vector>
@@ -447,6 +448,18 @@ void testTextureQueue()
     expect(commands[2].type == Type::Upload && commands[2].level == 1 && commands[2].pixels[3] == 4, "upload keeps its own pixels");
     expect(commands[3].type == Type::Destroy && commands[3].lastList == 9, "destroy says which list may still use it");
 
+    commands.clear();
+    std::vector<uint8_t> owned = { 9, 8, 7, 6 };
+    const uint8_t* const ownedData = owned.data();
+    queue.upload(first, 0, 0, 0, 1, 1, std::move(owned));
+    queue.generateMips(first);
+    queue.generateMips(0);
+    queue.take(commands);
+    expect(commands.size() == 2 && commands[0].pixels.data() == ownedData, "pixels built for an upload are moved, not copied");
+    expect(commands[1].type == Type::GenerateMips && commands[1].slot == first, "mips are queued after the pixels they come from");
+
+    expect(asr::textureBytesPerPixel(asr::TextureFormat::BGRA8) == 4, "BGRA takes four bytes");
+
     expect(queue.create(desc) == 3, "a slot is not reused before it is released");
     queue.releaseSlot(second);
     expect(queue.create(desc) == second, "a released slot is reused");
@@ -530,6 +543,28 @@ public:
         }
         mGlyph = textures.create(desc);
         textures.upload(mGlyph, 0, 0, 0, SIZE, SIZE, glyph.data(), glyph.size());
+
+        // Red in BGRA byte order, in one-pixel stripes with black. Drawn small with
+        // working mips it looks evenly dark red, with broken mips it shimmers.
+        constexpr uint32_t MIPPED_SIZE = 64;
+        asr::TextureDesc mippedDesc;
+        mippedDesc.width = MIPPED_SIZE;
+        mippedDesc.height = MIPPED_SIZE;
+        mippedDesc.mipLevels = 7;
+        mippedDesc.format = asr::TextureFormat::BGRA8;
+        std::vector<uint8_t> stripes(MIPPED_SIZE * MIPPED_SIZE * 4);
+        for (uint32_t y = 0; y < MIPPED_SIZE; ++y)
+        {
+            for (uint32_t x = 0; x < MIPPED_SIZE; ++x)
+            {
+                uint8_t* pixel = &stripes[(y * MIPPED_SIZE + x) * 4];
+                pixel[2] = (x & 1) ? 255 : 0;
+                pixel[3] = 255;
+            }
+        }
+        mMipped = textures.create(mippedDesc);
+        textures.upload(mMipped, 0, 0, 0, MIPPED_SIZE, MIPPED_SIZE, std::move(stripes));
+        textures.generateMips(mMipped);
     }
 
     void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration)
@@ -575,6 +610,7 @@ public:
         quad(list, 500.f, 300.f, 300.f, 150.f, asr::uiTextureBits(0), 0x60202040, matrix);
         list.setBlend(asr::UIBlend());
         quad(list, 40.f, 500.f, 300.f, 60.f, asr::uiTextureBits(mGlyph, asr::UISampler::LinearClamp, true), 0xFF3040F0, matrix);
+        quad(list, 400.f, 500.f, 16.f + 8.f * sinf(seconds), 60.f, asr::uiTextureBits(mMipped), 0xFFFFFFFF, matrix);
 
         // A texture replaced now and then, so destruction runs under a live list.
         if (++mBuilds % 30 == 0)
@@ -614,6 +650,7 @@ private:
     asr::TextureQueue& mTextures;
     uint32_t mSlots[TEXTURES]{};
     uint32_t mGlyph = 0;
+    uint32_t mMipped = 0;
     uint32_t mFlushes = 0;
     uint32_t mBuilds = 0;
     uint32_t mReplaced = 0;

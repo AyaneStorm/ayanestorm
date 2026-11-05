@@ -1,0 +1,97 @@
+/**
+ * @file asrbridge.h
+ * @brief What llrender hands to the new renderer, without linking to it.
+ *
+ * llrender is built with or without AS_RENDERER, and the renderer library links to
+ * the viewer only. So llrender talks to the RendererLink interface, which
+ * asrviewer.cpp fills in. Only .cpp files include this header, so changing it never
+ * rebuilds the viewer.
+ *
+ * UI geometry and textures go through here as what they are. This is not GL
+ * emulation: see section 1 of doc/ayanestorm-new-renderer-plan.md.
+ */
+#ifndef ASR_BRIDGE_H
+#define ASR_BRIDGE_H
+
+#include "stdtypes.h"
+
+#include <glm/fwd.hpp>
+
+namespace ASR
+{
+    // How a texture's pixels arrive. Every layout has 8 bits per channel.
+    enum class PixelLayout : U8
+    {
+        RGBA,
+        BGRA,
+        RGB,
+        BGR,
+        Red,
+        RG,
+        Alpha,
+        Luminance,
+        LuminanceAlpha
+    };
+
+    struct UIDrawData
+    {
+        const F32* positions = nullptr; // x, y, z, and one unused float per vertex
+        const F32* uvs = nullptr;       // two floats per vertex
+        const U32* colors = nullptr;    // RGBA8 per vertex
+        const F32* matrix = nullptr;    // to clip space
+        const F32* uvMatrix = nullptr;  // null when it is the identity
+        U32 count = 0;
+        U32 slot = 0;                   // where the texture is, 0 being white
+        U8 mode = 0;                    // LLRender::eGeomModes
+        U8 sampler = 0;                 // in the order of asr::UISampler
+        bool solidColor = false;        // gSolidColorProgram, not gUIProgram
+    };
+
+    class RendererLink
+    {
+    public:
+        virtual ~RendererLink() = default;
+
+        virtual U32 createTexture(U32 width, U32 height, U32 mipLevels, PixelLayout layout) = 0;
+        // rowPixels is the width of the data that pixels points into.
+        virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
+                                   const void* pixels, U32 rowPixels) = 0;
+        virtual void generateMips(U32 slot) = 0;
+        virtual void destroyTexture(U32 slot) = 0;
+
+        virtual void beginUI() = 0;
+        virtual void setUIBlend(const U8 factors[4]) = 0; // colour source, colour dest, alpha source, alpha dest, as LLRender::eBlendFactor
+        virtual void setUIScissor(bool enabled, S32 x, S32 y, S32 width, S32 height) = 0;
+        virtual void drawUI(const UIDrawData& data) = 0;
+        virtual void publishUI() = 0;
+    };
+
+    // Set while the renderer runs, null otherwise.
+    void setRendererLink(RendererLink* link);
+
+    // Everything drawn between these two calls is one finished frame of UI.
+    void beginUI();
+    void endUI();
+
+    // Adds to the UI being recorded. Geometry that is not UI is left out, and each
+    // program this happens with is logged once.
+    void drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* colors, U32 count,
+                const glm::mat4& modelview, const glm::mat4& projection, const glm::mat4& texture);
+
+    // Textures, named by the name LLImageGL holds. A new image for a name replaces
+    // the old one, in the same call, if its size or layout changes.
+    void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips);
+    void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
+    void setTextureWrap(U32 name, bool wrap);
+    void setTextureFilter(U32 name, bool linear);
+
+    // For the GL table, which hands over what the viewer sets through GL.
+    void genTextureNames(S32 count, U32* names);
+    void deleteTextureNames(S32 count, const U32* names);
+    void setBlendEnabled(bool enabled);
+    void setBlendFactors(U8 colorSource, U8 colorDest, U8 alphaSource, U8 alphaDest);
+    void setScissorEnabled(bool enabled);
+    void setScissorRect(S32 x, S32 y, S32 width, S32 height);
+}
+
+#endif // ASR_BRIDGE_H

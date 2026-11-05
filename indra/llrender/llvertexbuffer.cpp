@@ -37,6 +37,10 @@
 #include "llglslshader.h"
 #include "llmemory.h"
 #include <glm/gtc/type_ptr.hpp>
+// <AS:Chanayane>
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 
 //Next Highest Power Of Two
 //helper function, returns first number > v that is a power of 2, or v if v is already a power of 2
@@ -610,6 +614,18 @@ public:
 
 static LLVBOPool* sVBOPool = nullptr;
 
+// <AS:Chanayane> A recorded buffer replayed through the new renderer. Its vertices
+// live in mMappedData, because flush_vbo keeps them there in that mode.
+static void asr_draw_recorded(const LLVertexBuffer& vb, U8 mode, U32 count, const glm::mat4& modelview, const glm::mat4& projection, const glm::mat4& texture)
+{
+    const U8* data = vb.getMappedData();
+    ASR::drawUI(mode, reinterpret_cast<const F32*>(data + vb.getOffset(LLVertexBuffer::TYPE_VERTEX)),
+                reinterpret_cast<const F32*>(data + vb.getOffset(LLVertexBuffer::TYPE_TEXCOORD0)),
+                reinterpret_cast<const U32*>(data + vb.getOffset(LLVertexBuffer::TYPE_COLOR)),
+                count, modelview, projection, texture);
+}
+// </AS:Chanayane>
+
 void LLVertexBufferData::drawWithMatrix()
 {
     if (!mVB)
@@ -627,6 +643,14 @@ void LLVertexBufferData::drawWithMatrix()
     {
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     }
+
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        asr_draw_recorded(*mVB, mMode, mCount, mModelView, mProjection, mTexture0);
+        return;
+    }
+    // </AS:Chanayane>
 
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
@@ -665,6 +689,14 @@ void LLVertexBufferData::draw()
     {
         gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
     }
+
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        asr_draw_recorded(*mVB, mMode, mCount, gGL.getModelviewMatrix(), gGL.getProjectionMatrix(), mTexture0);
+        return;
+    }
+    // </AS:Chanayane>
 
     mVB->setBuffer();
     mVB->drawArrays(mMode, 0, mCount);
@@ -1383,6 +1415,17 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
 //  dst -- mMappedData or mMappedIndexData
 void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8* dst)
 {
+    // <AS:Chanayane> No GL buffer exists with the new renderer: the mapped copy is
+    // the only copy, and replaying a recorded buffer reads it.
+    if (ASR::active())
+    {
+        if (end != 0 && data != dst + start)
+        {
+            memcpy(dst + start, data, end - start + 1);
+        }
+        return;
+    }
+    // </AS:Chanayane>
 #if LL_DARWIN || LL_ARM64
     if (gGLManager.mIsApple)
     {

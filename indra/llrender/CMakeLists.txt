@@ -10,6 +10,7 @@ include(LLImage)
 include(LLWindow)
 
 set(llrender_SOURCE_FILES
+    asrbridge.cpp # <AS:Chanayane/>
     asrgltable.cpp # <AS:Chanayane/>
     llcubemap.cpp
     llcubemaparray.cpp
@@ -39,6 +40,7 @@ set(llrender_SOURCE_FILES
 set(llrender_HEADER_FILES
     CMakeLists.txt
 
+    asrbridge.h # <AS:Chanayane/>
     asrgltable.h # <AS:Chanayane/>
     llcubemap.h
     llcubemaparray.h

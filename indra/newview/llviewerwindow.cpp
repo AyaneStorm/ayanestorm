@@ -28,6 +28,7 @@
 #include "llviewerwindow.h"
 // <AS:Chanayane> Aperture DoF capture: Esc stop.
 #include "asdofrenderer.h"
+#include "asrviewer.h" // <AS:Chanayane/>
 // </AS:Chanayane>
 
 
@@ -2102,7 +2103,13 @@ LLViewerWindow::LLViewerWindow(const Params& p)
                 << LL_ENDL;
         LLAppViewer::instance()->fastQuit(1);
     }
-    else if (!LLViewerShaderMgr::sInitialized)
+
+    // <AS:Chanayane> Here, and not after this constructor, because it loads the UI
+    // images, and those go to the renderer as they are created.
+    ASRViewer::start(mWindow);
+    // </AS:Chanayane>
+
+    if (mWindow && !LLViewerShaderMgr::sInitialized) // <AS:Chanayane/> was: else if (!LLViewerShaderMgr::sInitialized)
     {
         //immediately initialize shaders
         LLViewerShaderMgr::sInitialized = true;

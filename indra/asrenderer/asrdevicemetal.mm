@@ -180,7 +180,7 @@ public:
             pass.colorAttachments[0].texture = drawable.texture;
             pass.colorAttachments[0].loadAction = MTLLoadActionClear;
             pass.colorAttachments[0].storeAction = MTLStoreActionStore;
-            pass.colorAttachments[0].clearColor = MTLClearColorMake(0.02, 0.02, 0.05, 1.0);
+            pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0); // what the viewer clears to, and transparent UI shows it
 
             id<MTLCommandBuffer> commands = [mQueue commandBuffer];
             id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
@@ -402,9 +402,10 @@ private:
         }
 
         const TextureDesc& desc = command.desc;
-        const MTLPixelFormat format = desc.format == TextureFormat::R8  ? MTLPixelFormatR8Unorm
-                                    : desc.format == TextureFormat::RG8 ? MTLPixelFormatRG8Unorm
-                                                                        : MTLPixelFormatRGBA8Unorm;
+        const MTLPixelFormat format = desc.format == TextureFormat::R8    ? MTLPixelFormatR8Unorm
+                                    : desc.format == TextureFormat::RG8   ? MTLPixelFormatRG8Unorm
+                                    : desc.format == TextureFormat::BGRA8 ? MTLPixelFormatBGRA8Unorm
+                                                                          : MTLPixelFormatRGBA8Unorm;
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
                                                                                               width:desc.width
                                                                                              height:desc.height
@@ -483,6 +484,7 @@ private:
         }
 
         bool created = false;
+        std::vector<id<MTLTexture>> needMips;
         for (TextureCommand& command : mTextureCommands)
         {
             switch (command.type)
@@ -503,6 +505,15 @@ private:
                     }
                     break;
                 }
+                case TextureCommand::Type::GenerateMips:
+                {
+                    const Texture& texture = mTextureObjects[command.slot];
+                    if (texture.texture && texture.texture.mipmapLevelCount > 1)
+                    {
+                        needMips.push_back(texture.texture);
+                    }
+                    break;
+                }
                 case TextureCommand::Type::Destroy:
                     mRetiredTextures.add(command.slot, command.lastList);
                     break;
@@ -516,6 +527,19 @@ private:
             {
                 [(id<MTLResidencySet>)mResidency commit];
             }
+        }
+
+        // Committed before the frame's own commands, so the frame sees the mips.
+        if (!needMips.empty())
+        {
+            id<MTLCommandBuffer> commands = [mQueue commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+            for (id<MTLTexture> texture : needMips)
+            {
+                [blit generateMipmapsForTexture:texture];
+            }
+            [blit endEncoding];
+            [commands commit];
         }
         return true;
     }

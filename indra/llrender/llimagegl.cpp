@@ -42,6 +42,10 @@
 #include "llwindow.h"
 #include "llframetimer.h"
 #include <unordered_set>
+// <AS:Chanayane>
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 
 extern LL_COMMON_API bool on_main_thread();
 
@@ -249,6 +253,15 @@ void LLImageGL::initClass(LLWindow* window, S32 num_catagories, bool skip_analyz
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     sSkipAnalyzeAlpha = skip_analyze_alpha;
+
+    // <AS:Chanayane> Uploads only queue a copy with the new renderer, so these threads
+    // would have nothing to do, and they need a GL context.
+    if (ASR::active())
+    {
+        thread_texture_loads = false;
+        thread_media_updates = false;
+    }
+    // </AS:Chanayane>
 
     if (sScratchPBO == 0)
     {
@@ -767,6 +780,23 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
     gGL.getTexUnit(0)->bind(this, false, false, usename);
 
+    // <AS:Chanayane> The new renderer takes level 0, and the GPU makes the smaller mips.
+    if (ASR::active())
+    {
+        const S32 w = getWidth();
+        const S32 h = getHeight();
+        mMipLevels = mUseMipMaps ? wpo2(llmax(w, h)) : 0;
+        ASR::setTextureImage(usename ? usename : mTexName, w, h, mFormatPrimary, mFormatType, data_in, mUseMipMaps);
+        if (data_in && !is_compressed)
+        {
+            analyzeAlpha(data_in, w, h);
+            updatePickMask(w, h, data_in);
+        }
+        mGLTextureCreated = true;
+        return true;
+    }
+    // </AS:Chanayane>
+
     if (data_in == nullptr)
     {
         S32 w = getWidth();
@@ -1180,6 +1210,14 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
                    << LL_ENDL;
         }
 
+        // <AS:Chanayane>
+        if (ASR::active())
+        {
+            ASR::setTextureSubImage(tex_name, x_pos, y_pos, width, height, datap + (y_pos * data_width + x_pos) * getComponents(), data_width);
+            mGLTextureCreated = true;
+            return true;
+        }
+        // </AS:Chanayane>
 
         glPixelStorei(GL_UNPACK_ROW_LENGTH, data_width);
         stop_glerror();
@@ -1314,6 +1352,13 @@ void LLImageGL::deleteTextures(S32 numTextures, const U32 *textures)
 void LLImageGL::setManualImage(U32 target, S32 miplevel, S32 intformat, S32 width, S32 height, U32 pixformat, U32 pixtype, const void* pixels, bool allow_compression)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    // <AS:Chanayane> LLImageGL::setImage() has already handed its images over. What
+    // comes here directly is render targets and world data, which come later.
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     if (LLRender::sGLCoreProfile)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;

@@ -174,6 +174,8 @@ struct Texture
     VkImageView view = VK_NULL_HANDLE;
     uint64_t bytes = 0;
     uint32_t mipLevels = 1;
+    uint32_t width = 1;
+    uint32_t height = 1;
 };
 
 class DeviceVulkan final : public Device
@@ -900,7 +902,7 @@ private:
 
     static void textureBarrier(VkCommandBuffer commands, VkImage image, uint32_t mipLevels, VkImageLayout from, VkImageLayout to,
                                VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
-                               VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+                               VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess, uint32_t firstLevel = 0)
     {
         VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
         barrier.srcStageMask = srcStage;
@@ -912,7 +914,7 @@ private:
         barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = image;
-        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, mipLevels, 0, 1 };
+        barrier.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, firstLevel, mipLevels, 0, 1 };
         VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
         dependency.imageMemoryBarrierCount = 1;
         dependency.pImageMemoryBarriers = &barrier;
@@ -952,6 +954,7 @@ private:
         image.imageType = VK_IMAGE_TYPE_2D;
         image.format = command.desc.format == TextureFormat::R8    ? VK_FORMAT_R8_UNORM
                      : command.desc.format == TextureFormat::RG8   ? VK_FORMAT_R8G8_UNORM
+                     : command.desc.format == TextureFormat::BGRA8 ? VK_FORMAT_B8G8R8A8_UNORM
                                                                    : VK_FORMAT_R8G8B8A8_UNORM;
         image.extent = { command.desc.width, command.desc.height, 1 };
         image.mipLevels = command.desc.mipLevels;
@@ -959,6 +962,10 @@ private:
         image.samples = VK_SAMPLE_COUNT_1_BIT;
         image.tiling = VK_IMAGE_TILING_OPTIMAL;
         image.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        if (command.desc.mipLevels > 1)
+        {
+            image.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT; // each mip is made from the one before it
+        }
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
         if (!check(vmaCreateImage(mAllocator, &image, &allocation, &texture.image, &texture.allocation, nullptr), "create texture"))
@@ -968,6 +975,8 @@ private:
         }
         texture.bytes = bytes;
         texture.mipLevels = command.desc.mipLevels;
+        texture.width = command.desc.width;
+        texture.height = command.desc.height;
 
         VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         view.image = texture.image;
@@ -1030,6 +1039,45 @@ private:
         stagingOffset += (command.pixels.size() + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
     }
 
+    void generateMips(VkCommandBuffer commands, uint32_t slot)
+    {
+        const Texture& texture = mTextureObjects[slot];
+        if (texture.image == VK_NULL_HANDLE || texture.mipLevels < 2)
+        {
+            return;
+        }
+
+        constexpr VkPipelineStageFlags2 SHADER = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr VkPipelineStageFlags2 BLIT = VK_PIPELINE_STAGE_2_BLIT_BIT;
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+
+        int32_t width = int32_t(texture.width);
+        int32_t height = int32_t(texture.height);
+        for (uint32_t level = 1; level < texture.mipLevels; ++level)
+        {
+            textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, BLIT, VK_ACCESS_2_TRANSFER_READ_BIT, level - 1);
+
+            const int32_t nextWidth = std::max(width / 2, 1);
+            const int32_t nextHeight = std::max(height / 2, 1);
+            VkImageBlit blit{};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level - 1, 0, 1 };
+            blit.srcOffsets[1] = { width, height, 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+            blit.dstOffsets[1] = { nextWidth, nextHeight, 1 };
+            vkCmdBlitImage(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           1, &blit, VK_FILTER_LINEAR);
+            width = nextWidth;
+            height = nextHeight;
+        }
+
+        textureBarrier(commands, texture.image, texture.mipLevels - 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       BLIT, VK_ACCESS_2_TRANSFER_READ_BIT, SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, texture.mipLevels - 1);
+    }
+
     void destroyTexture(uint32_t slot)
     {
         Texture& texture = mTextureObjects[slot];
@@ -1087,6 +1135,9 @@ private:
                     break;
                 case TextureCommand::Type::Upload:
                     uploadTexture(commands, command, frameSlot, stagingOffset);
+                    break;
+                case TextureCommand::Type::GenerateMips:
+                    generateMips(commands, command.slot);
                     break;
                 case TextureCommand::Type::Destroy:
                     mRetiredTextures.add(command.slot, command.lastList);
@@ -1296,7 +1347,7 @@ private:
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-        color.clearValue.color = { { 0.02f, 0.02f, 0.05f, 1.f } };
+        color.clearValue.color = { { 0.f, 0.f, 0.f, 1.f } }; // what the viewer clears to, and transparent UI shows it
         VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
         rendering.renderArea = { { 0, 0 }, mExtent };
         rendering.layerCount = 1;

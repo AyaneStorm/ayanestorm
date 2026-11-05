@@ -18,11 +18,17 @@ namespace ASRViewer
     // exists. If the machine cannot run the new renderer, OpenGL is used.
     void selectBackend();
 
-    // Creates the device and starts the render thread, once the window exists.
+    // Creates the device and starts the render thread, once the window exists and
+    // before the first texture does.
     void start(LLWindow* window);
 
     // Hands the render thread the newest state. Called from display(). Never waits.
     void publishFrame(LLWindow* window);
+
+    // What is drawn between these two calls is one finished frame of UI. The render
+    // thread goes on showing the last one until the next one is published.
+    void beginUI();
+    void publishUI();
 
     // Stops the render thread and frees the device, before the window goes.
     void stop();

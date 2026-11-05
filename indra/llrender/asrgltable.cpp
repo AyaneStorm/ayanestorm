@@ -6,6 +6,7 @@
 
 #include "asrgltable.h"
 
+#include "asrbridge.h"
 #include "llglheaders.h"
 
 #include <atomic>
@@ -163,6 +164,75 @@ void APIENTRY asrGetQueryObject64(GLuint, GLenum, GLuint64* value)
     *value = 1;
 }
 
+void APIENTRY asrGenTextures(GLsizei count, GLuint* names)
+{
+    ASR::genTextureNames(count, names);
+}
+
+void APIENTRY asrDeleteTextures(GLsizei count, const GLuint* names)
+{
+    ASR::deleteTextureNames(count, names);
+}
+
+// --- State handed over to the UI ------------------------------------------------
+// LLGLState and LLRender already flush before they change any of this, and change
+// it only when it differs, so these calls are rare.
+
+void setCapability(GLenum capability, bool enabled)
+{
+    if (capability == GL_BLEND)
+    {
+        ASR::setBlendEnabled(enabled);
+    }
+    else if (capability == GL_SCISSOR_TEST)
+    {
+        ASR::setScissorEnabled(enabled);
+    }
+}
+
+void APIENTRY asrEnable(GLenum capability)
+{
+    setCapability(capability, true);
+}
+
+void APIENTRY asrDisable(GLenum capability)
+{
+    setCapability(capability, false);
+}
+
+void APIENTRY asrScissor(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    ASR::setScissorRect(x, y, width, height);
+}
+
+// In the order of LLRender::eBlendFactor.
+U8 blendFactor(GLenum factor)
+{
+    switch (factor)
+    {
+        case GL_ONE:                 return 0;
+        case GL_ZERO:                return 1;
+        case GL_DST_COLOR:           return 2;
+        case GL_SRC_COLOR:           return 3;
+        case GL_ONE_MINUS_DST_COLOR: return 4;
+        case GL_ONE_MINUS_SRC_COLOR: return 5;
+        case GL_DST_ALPHA:           return 6;
+        case GL_SRC_ALPHA:           return 7;
+        case GL_ONE_MINUS_DST_ALPHA: return 8;
+        default:                     return 9; // GL_ONE_MINUS_SRC_ALPHA
+    }
+}
+
+void APIENTRY asrBlendFunc(GLenum source, GLenum dest)
+{
+    ASR::setBlendFactors(blendFactor(source), blendFactor(dest), blendFactor(source), blendFactor(dest));
+}
+
+void APIENTRY asrBlendFuncSeparate(GLenum colorSource, GLenum colorDest, GLenum alphaSource, GLenum alphaDest)
+{
+    ASR::setBlendFactors(blendFactor(colorSource), blendFactor(colorDest), blendFactor(alphaSource), blendFactor(alphaDest));
+}
+
 // --- Stubs --------------------------------------------------------------------
 
 // Every GL function the viewer loads gets its own stub, so each can log its own
@@ -240,7 +310,13 @@ void* ASRGLTable::get(const char* name)
         { "glGetBooleanv",             answer(asrGetBooleanv) },
         { "glGetFloatv",               answer(asrGetFloatv) },
         { "glGetDoublev",              answer(asrGetDoublev) },
-        { "glGenTextures",             answer(asrGenNames) },
+        { "glGenTextures",             answer(asrGenTextures) },
+        { "glDeleteTextures",          answer(asrDeleteTextures) },
+        { "glEnable",                  answer(asrEnable) },
+        { "glDisable",                 answer(asrDisable) },
+        { "glScissor",                 answer(asrScissor) },
+        { "glBlendFunc",               answer(asrBlendFunc) },
+        { "glBlendFuncSeparate",       answer(asrBlendFuncSeparate) },
         { "glGenBuffers",              answer(asrGenNames) },
         { "glGenFramebuffers",         answer(asrGenNames) },
         { "glGenRenderbuffers",        answer(asrGenNames) },

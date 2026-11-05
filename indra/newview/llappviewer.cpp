@@ -3987,8 +3987,6 @@ bool LLAppViewer::initWindow()
 
     gViewerWindow = new LLViewerWindow(window_params);
 
-    ASRViewer::start(gViewerWindow->getWindow()); // <AS:Chanayane/>
-
     LL_INFOS("AppInit") << "gViewerwindow created." << LL_ENDL;
 
     // Need to load feature table before cheking to start watchdog.

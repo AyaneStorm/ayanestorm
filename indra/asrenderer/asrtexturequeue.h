@@ -21,6 +21,7 @@ namespace asr
 enum class TextureFormat : uint8_t
 {
     RGBA8,
+    BGRA8, // web and media pages arrive like this, and need no conversion
     RG8,
     R8
 };
@@ -54,6 +55,7 @@ struct TextureCommand
     {
         Create,
         Upload,
+        GenerateMips,
         Destroy
     };
 
@@ -80,6 +82,13 @@ public:
     // Main thread. Copies the pixels, so the caller can free them at once.
     void upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                 const void* pixels, size_t bytes);
+
+    // Main thread. For pixels built for this upload, which then are not copied again.
+    void upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                std::vector<uint8_t>&& pixels);
+
+    // Main thread. Makes every smaller mip from level 0, on the GPU.
+    void generateMips(uint32_t slot);
 
     // Main thread. lastList is the newest list recorded so far, including the one
     // being recorded now: the texture is freed only once no list can draw it.

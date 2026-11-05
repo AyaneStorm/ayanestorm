@@ -36,6 +36,7 @@
 
 #include "hbxxh.h"
 #include "llsdserialize.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 
 #if LL_DARWIN
 #include "OpenGL/OpenGL.h"
@@ -440,6 +441,19 @@ bool LLGLSLShader::createShader()
         unloadInternal();
         return false;
     }
+
+    // <AS:Chanayane> The new renderer has its own shaders, so nothing here is compiled.
+    // A program stays as an object the viewer can bind. Every program reports a colour
+    // attribute, which makes gGL.color4f() fill the vertex for gSolidColorProgram too,
+    // and that is where the native UI reads it.
+    if (ASR::active())
+    {
+        mAttributeMask = LLVertexBuffer::MAP_VERTEX | LLVertexBuffer::MAP_TEXCOORD0 | LLVertexBuffer::MAP_COLOR;
+        mUniform.assign(LLShaderMgr::instance()->mReservedUniforms.size(), -1);
+        mTexture.assign(LLShaderMgr::instance()->mReservedUniforms.size(), -1);
+        return true;
+    }
+    // </AS:Chanayane>
 
     bool success = true;
 

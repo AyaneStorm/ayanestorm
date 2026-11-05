@@ -75,6 +75,18 @@ void TextureQueue::upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y,
     {
         return;
     }
+    std::vector<uint8_t> copy(bytes);
+    memcpy(copy.data(), pixels, bytes);
+    upload(slot, level, x, y, width, height, std::move(copy));
+}
+
+void TextureQueue::upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
+                          std::vector<uint8_t>&& pixels)
+{
+    if (slot == 0)
+    {
+        return;
+    }
     TextureCommand command;
     command.type = TextureCommand::Type::Upload;
     command.slot = slot;
@@ -83,8 +95,21 @@ void TextureQueue::upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y,
     command.y = y;
     command.width = width;
     command.height = height;
-    command.pixels.resize(bytes);
-    memcpy(command.pixels.data(), pixels, bytes);
+    command.pixels = std::move(pixels);
+
+    std::lock_guard<std::mutex> lock(mMutex);
+    mCommands.push_back(std::move(command));
+}
+
+void TextureQueue::generateMips(uint32_t slot)
+{
+    if (slot == 0)
+    {
+        return;
+    }
+    TextureCommand command;
+    command.type = TextureCommand::Type::GenerateMips;
+    command.slot = slot;
 
     std::lock_guard<std::mutex> lock(mMutex);
     mCommands.push_back(std::move(command));
