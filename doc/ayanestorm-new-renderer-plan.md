@@ -94,7 +94,8 @@ With the new renderer on, the process creates no GL context. OpenGL stays compil
 - **Avatar impostors:** not used in new mode; impostors are redrawn only every so many frames. Every visible avatar is real geometry with a GPU-selected LOD. `generateImpostor` output needed by UI, such as profile and preview images, comes from the native world path.
 - **3D tools:** highlights, beacons, build tools and debug displays use the same backend, depth-testing against world depth.
 - **Unmapped programs:** log an error once, so gaps are visible.
-- **Stray GL:** direct calls in reachable code get small tagged edits, from the P1 audit. In new mode GL entry points that the viewer loads are stubbed to log once, so a call added by an upstream merge reports itself; P1 confirms how far stubbing can reach on each platform.
+- **Stray GL:** direct `gl*` call sites are not edited. On Windows and Linux they already go through the 652 function pointers in `llgl.cpp` (`LL_GL_FUNC_POINTER`). In new mode those pointers are filled by `ASRGLTable`: state and readback calls that reachable code uses go to `ASRBackend`, and everything else is a stub that logs once, so a call added by an upstream merge reports itself. macOS links `<OpenGL/gl3.h>` directly, so one tagged block in `llglheaders.h` remaps the same names to the same table there.
+- **GL object names:** `getTexName()` and similar keep returning `GLuint` values. In new mode they are native handles, so callers such as `bindManual` need no edits.
 - **Window:** `LLWindowWin32`, `LLWindowSDL` and `LLWindowMacOSX` skip context creation in new mode. The swapchain uses the window directly; macOS gets a `CAMetalLayer` view. These are small tagged edits.
 - **Startup:** the native device is probed before the window is created. `LLGLManager` fields are filled from it, so `LLFeatureManager` keeps working.
 
@@ -200,6 +201,52 @@ A later reading at the same place, features on, was about 15 fps (66.7 ms), and 
 
 Same place and camera, avatars hidden with Rendering Types > Avatars: features on 42 fps (23.8 ms), features off 60 fps (16.7 ms). Features cost about 7 ms without avatars. Avatars cost about 17 ms with features off (30 to 60 fps), and 20 to 43 ms with features on (from 23 or 15 fps to 42), though those readings were not taken together. The 60 fps reading is not a cap: much higher rates appear with the camera pointed at the sky, at the same place. Camera on the sky at the same place: features on 96 fps (10.4 ms), features off 106 fps (9.4 ms). So work independent of the view, including `idle()`, UI and present, costs at most about 9.4 ms, which alone would cap OpenGL at about 106 fps and rules out the 150 fps target without the section 0 decoupling. Features cost about 1 ms with nothing in view, so almost all their cost scales with scene content. With features off, the rough split is about 9 ms view-independent, 7 ms world, 17 ms avatars. Hiding avatars may leave their CPU animation running, so their full cost may be higher.
 
+## P1 audit results
+
+Read-only audit of this tree. The window and SPIRV-Cross spikes in P1 are still to do.
+
+### Stray GL reachable in new mode
+Excluding `as*` GL modules (619 lines in 11 files) and GL world paths, which do not run in new mode, direct calls fall into these groups:
+
+| Group | Calls | Files |
+|---|---|---|
+| Frame and target state | `glClear`, `glClearColor`, `glViewport`, `glColorMask` | `llviewerdisplay`, `lldynamictexture`, `llviewercamera`, previews |
+| Raster state | `glPolygonMode`, `glPolygonOffset`, `glCullFace`, `glPointSize`, `glScissor` | `llselectmgr`, `llviewerwindow`, `llmodelpreview`, `llmanipscale`, `llmaniptranslate`, `llviewerjoint`, `lllocalcliprect` |
+| Stencil | `glStencilFunc`, `glStencilOp`, `glStencilMask` | `llmaniptranslate` |
+| Readback | `glReadPixels`, `glGetTexImage`, `glGetTexLevelParameteriv` | `llviewerwindow`, `llviewertexlayer`, `llfasttimerview`, `lltexlayer` |
+| Info | `glGetString`, `glGetFloatv` | `llappviewer`, `llsnapshotlivepreview` |
+| Scene monitor | Queries, framebuffer copies | `llscenemonitor` needs its own path |
+
+All are simple state or readback calls that `ASRGLTable` can serve, so call-site edits are not needed. `llscenemonitor` (the interest-list scene-loading monitor) is the exception and gets a small native replacement.
+
+### Programs reachable in new mode
+Of 125 programs, outside world code: `gUIProgram`, `gDebugProgram`, `gObjectPreviewProgram`, `gPhysicsPreviewProgram`, `gCopyProgram`, `gOneTextureFilterProgram`, `gTwoTextureCompareProgram`, `gDeferredPBRAlphaProgram`, `gDeferredPostNoDoFProgram`, `gPBRTerrainBakeProgram`, `gClipProgram`, `gBenchmarkProgram`, `gOcclusionProgram`, `gNormalDebugProgram`, `gFXAAProgram`, `gSMAAEdgeDetectProgram`. The last few are likely debug or GL-world only and are confirmed in P2. This list is a text search; the unmapped-program log is the real check.
+
+### `llrender` seam size
+About 340 declared functions across the 10 headers by a rough count, including many trivial getters. Most need no dispatch. Estimate: 100 to 200 one-line tagged early-outs.
+
+Semantics to imitate exactly: `LLGLState::sStateMap` tracking, `LLGLSLShader` uniform caching, `LLVertexBuffer` map and flush timing, `setSubImageFromFrameBuffer`, `LLGLSyncFence`. Blocking readbacks (`glReadPixels` in bakes) must not stall the render thread: the main thread waits, the render thread never does.
+
+### Third-party GL
+`llmodelpreview` calls GLOD (`glodInit`, `glodBuildObject`), a prebuilt library that may need a GL context. To check on real mesh upload in P5. If it does, its LOD generation needs a replacement in new mode, with meshoptimizer as the candidate. `llplugin`, `media_plugins`, `llwebrtc` and `llkdu` contain no texture GL calls.
+
+### Why avatars are expensive
+Confirmed from code; the cost split still needs Tracy.
+
+- **Every shadow view repeats the work:** `LLPipeline::renderShadow` runs `updateCull` and `stateSort` per shadow camera, and rigged passes are drawn in each. That is up to 4 sun cascades plus 2 projector maps.
+- **Per-skin palette upload:** `pushRiggedBatches` calls `uploadMatrixPalette` when avatar or skin changes, with `glUniformMatrix3x4fv` each time. Mesh avatars have many attachments, each with its own skin.
+- **Many fragmented draws:** rigged content has its own pass per material type (simple, bump, fullbright, alpha mask and more), so each avatar is drawn in many small batches.
+- **Alpha through OIT:** with OIT on, rigged alpha goes through capture (`configureCapturedDrawIfActive`, merged traversal), and Exact OIT adds `ceil(log2(max list))` full-screen sort passes set by the deepest pixel on screen. Layered avatars deepen that, which fits avatars costing more with features on.
+
+The plan targets all four: one skin pass per frame shared by all views, one palette buffer, indirect draws with no per-material batches, and a redesigned native OIT.
+
+### Merge estimate
+About 29 upstream-owned files get tagged edits: 11 `llrender`, 4 `llwindow`, 2 `llappearance`, 10 `newview`, 2 CMake. `lllocalcliprect.cpp` drops off the list thanks to `ASRGLTable`.
+
+Upstream commits touching them, 2025-11-05 to 2026-04-08 (674 non-merge commits in total): `llappviewer` 50, `newview/CMakeLists.txt` 33, `llviewerwindow` 20, `llvovolume` 14, `pipeline` 13, `llviewerobject` 8, `llvoavatar` 7, `llwindowwin32` 6, `llviewerdisplay` 3, all others 0 to 2. `llimagegl`, `llvertexbuffer`, `llrendertarget`, `llgl.cpp`, `llflexibleobject`, `llpolymorph` and `llwindowsdl` had none.
+
+The seam sits almost entirely in files with no upstream changes in that window. Busy files such as `llappviewer` get only a few tagged lines, so a conflict needs upstream to change those exact lines. The local upstream ref ends 2026-04-08, so later churn is not counted. A trial merge is still required in each phase.
+
 ## Phases
 
 Each phase ends with a user build and test. From P1b on, renderer work is tested in `asrenderer_test` with captured scenes wherever possible, and full viewer builds are saved for seam, UI and live-world changes. Edits are batched to keep rebuilds few. A count of changed `ll*`/`fs*` files is reported every phase.
@@ -225,7 +272,7 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 0. **GPU-limited scenes.** Pixel work costs the same in any API, and the real render rule removes temporal shortcuts. The visibility buffer, async compute and better effect algorithms reduce it, but the 60 fps floor at full quality is unproven until measured. A miss is reported to the user with the cause and a proposed engine fix, and quality is never lowered instead. P3, P3b and P6 are the checkpoints.
 1. **Prediction artefacts.** Extrapolated camera, joints and objects can overshoot on sudden stops or direction changes. Corrections are blended, and the freshness numbers and real movement are judged in P3b.
 1a. **Parallel avatar motion.** `llcharacter` and `LLVOAvatar` assume one thread, and upstream edits them. Shared caches need a P3b audit, and it is the most merge-exposed item here.
-2. **Merge surface.** About 10 `llrender` files, 3 `llwindow` files and the stray-GL list carry tagged edits, so the `ll*`/`fs*` count is higher than a GL-keeping design. Conflicts should stay low: one-line insertions in files upstream rarely changes. P1 estimates it before work starts; if it is too high, that is the point to stop.
+2. **Merge surface.** About 29 upstream-owned files carry tagged edits (see the P1 audit), most of them in files upstream rarely changes. Conflicts should stay low because edits are one-line insertions, and stray GL needs no call-site edits. This is an estimate until trial merges confirm it.
 3. **Silent upstream drift.** Upstream can add a GL call or a shader that new mode does not handle. OpenGL mode is unaffected. Stubs and unmapped-program logs expose it; a post-merge check lists new direct GL calls.
 4. **VRAM.** Heavy AyaneStorm effects could exceed 4 and 6 GB. Limited by section 6a and tested with budget caps on the 3080 Ti; no real 4 GB card is in the test set, so a cap does not prove the driver's behaviour on one.
 5. **`llrender` API semantics.** Some callers may rely on GL behaviour the backend must imitate exactly, such as bind state, sync readback or mapped-buffer timing. Found in the P1 audit and P2.
@@ -252,6 +299,22 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 - Login, teleport, snapshot, alpha-heavy avatar and resize tests on all three platforms.
 - OpenGL mode regression check each phase.
 
-## Housekeeping after approval
+## Status and next steps
 
-Copy this file to `doc/ayanestorm-new-renderer-plan.md`; later notes go in that one file. Update the two stale lines in `MEMORY.md`, and record the test machine and memory constraint in memory.
+This file is the single living document for the project. It supersedes the approved plan file, and later notes go here. No renderer code exists yet.
+
+Status at end of 2026-11-05:
+
+- **P0:** closed. Windows FPS readings are recorded above.
+- **P1:** read-only audit done. Spikes not started.
+- **Answered by the user:** quality is never lowered to hold FPS; interpolation and prediction are acceptable only if the world feels live, not laggy.
+- **Confirmed by default, not stated outright:** the 60 fps floor is judged on the 3080 Ti; the Mac and smaller cards get as close as they can.
+
+Waiting on the user:
+
+1. Choose how P1 gets its libraries: install the Vulkan SDK on the Windows machine, or vendor volk, VMA and SPIRV-Cross in `indra/asrenderer`. `VULKAN_SDK` is not set in the shell today.
+2. Approve writing the P1 spikes: a native window with no GL on Windows and on the M4, and all 63 shaders through SPIRV-Cross and the Metal compiler.
+
+P0 is closed for design purposes: the readings above set the priorities, and no further measurement blocks work. Further numbers are taken only when a specific decision needs them, or once for the final comparison in P8, and no more are requested before then.
+
+Then, in order: P1 spikes, P1b fast-iteration setup, P2.
