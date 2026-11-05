@@ -4937,12 +4937,6 @@ Sifariş yerləşdir düyməsini basın. Ödəniş zamanı
 			<button name="Cancel" text="Ləğv et"/>
 		</form>
 	</notification>
-	<notification name="LSLColorCopiedToClipboard">
-		LSL rəngi buferə köçürüldü. İndi istifadə etmək üçün onu skriptə yapışdıra bilərsiniz.
-		<form name="form">
-			<ignore name="ignore" text="LSL rəngi buferə köçürüldü."/>
-		</form>
-	</notification>
 	<notification name="FSBWTooHigh">
 		Biz sizə kanal genişliyini 1500 KBPS-dən yuxarı təyin etməməyi tövsiyə edirik. Bunun yaxşı işləməsi ehtimalı azdır və performansınızı demək olar ki, yaxşılaşdırmayacaq.
 	</notification>
@@ -5166,7 +5160,7 @@ hansı nişandan istifadə etmək istərdiniz?
 	<notification name="PickLimitReached">
 		Seçilmişin yaradılması uğursuz oldu, çünki seçilmişlərin artıq maksimum sayı yaradılıb.
 	</notification>
-	<notification name="GlobalOnlineStatusToggle">
+	<notification name="GlobalOnlineStatusToggleInfo">
 		Server yükü olduğu səbəbindən onlayn statusun görünməsinin kütləvi şəkildə dəyişdirilməsinin effektiv olması bir müddət çəkə bilər. Zəhmət olmasa, səbr edin.
 		<usetemplate ignoretext="Mənə bildirin ki, onlayn statusun görünməsinə keçid bir qədər vaxt apara bilər" name="okignore" yestext="Bəli"/>
 	</notification>

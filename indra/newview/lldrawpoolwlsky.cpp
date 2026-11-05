@@ -38,6 +38,7 @@
 #include "asproceduralsun.h"
 #include "asmilkyway.h"
 #include "asstars.h"
+#include "asworldclouds.h"
 // </AS:Chanayane>
 
 #include "llerror.h"
@@ -346,6 +347,9 @@ void LLDrawPoolWLSky::renderSkyCloudsDeferred(const LLVector3& camPosLocal, F32 
         LLGLSPipelineBlendSkyBox pipeline(true, true);
 
         cloudshader->bind();
+        // <AS:Chanayane> World-fixed clouds while Exact volumetric is on.
+        ASWorldClouds::applyUniforms(*cloudshader);
+        // </AS:Chanayane>
 
         LLPointer<LLViewerTexture> cloud_noise      = gSky.mVOSkyp->getCloudNoiseTex();
         LLPointer<LLViewerTexture> cloud_noise_next = gSky.mVOSkyp->getCloudNoiseTexNext();

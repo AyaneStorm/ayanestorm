@@ -14,6 +14,7 @@
 
 #include "llgl.h"
 
+#include <functional>
 #include <vector>
 
 class LLDrawInfo;
@@ -56,7 +57,12 @@ public:
     static const char* shaderCacheRevision();
     // User intent (ASRenderOITMode 4) and hardware support.
     static bool requested();
-    static void loadShaders(S32 shader_level);
+    // requested(), or Live DoF needing the transparency bins in another mode.
+    static bool shadersWanted();
+    // Appends the family's compiles as small steps, which ASOITShaderLoader
+    // runs in order across frames; finishLoad() receives their result.
+    static void appendLoadSteps(S32 shader_level, std::vector<std::function<bool()>>& steps);
+    static void finishLoad(bool success);
     static void registerShaders(std::vector<LLGLSLShader*>& shader_list);
     static void unloadShaders();
 

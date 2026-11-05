@@ -45,7 +45,15 @@ LLAudioEngine_OpenAL::LLAudioEngine_OpenAL()
     mWindBufSamples(0),
     mWindBufBytes(0),
     mWindSource(AL_NONE),
-    mNumEmptyWindALBuffers(MAX_NUM_WIND_BUFFERS)
+    mNumEmptyWindALBuffers(MAX_NUM_WIND_BUFFERS),
+    mALDevice(NULL),
+    mHasReopenExt(false),
+    mReopenDeviceSOFT(NULL),
+    mHasSystemEventsExt(false),
+    mHasEnumerateAllExt(false), // <FS:Ansariel> Output device selection
+    mEventControlSOFT(NULL),
+    mEventCallbackSOFT(NULL),
+    mDefaultDeviceChanged(false)
 {
 }
 
@@ -80,9 +88,9 @@ bool LLAudioEngine_OpenAL::init(void* userdata, const std::string &app_title)
     LL_INFOS() << "ALUT version: " << major << "." << minor << LL_ENDL;
 
     // <FS:Ansariel> Output device selection
-    mCurrentDevice = alcOpenDevice(nullptr);
-    mCurrentContext = alcCreateContext(mCurrentDevice, nullptr);
-    alcMakeContextCurrent(mCurrentContext);
+    mALDevice = alcOpenDevice(nullptr);
+    mALContext = alcCreateContext(mALDevice, nullptr);
+    alcMakeContextCurrent(mALContext);
     // </FS:Ansariel>
 
     ALCdevice *device = alcGetContextsDevice(alcGetCurrentContext());
@@ -97,7 +105,51 @@ bool LLAudioEngine_OpenAL::init(void* userdata, const std::string &app_title)
         << LL_ENDL;
 
     // <FS:Ansariel> Output device selection
-    setupDeviceEvents(device);
+    //mALDevice = device;
+
+    mHasReopenExt = alcIsExtensionPresent(mALDevice, "ALC_SOFT_reopen_device");
+    if (mHasReopenExt)
+    {
+        mReopenDeviceSOFT = (LPALCREOPENDEVICESOFT)alcGetProcAddress(mALDevice, "alcReopenDeviceSOFT");
+        mHasReopenExt = (mReopenDeviceSOFT != NULL);
+    }
+    LL_INFOS() << "ALC_SOFT_reopen_device " << (mHasReopenExt ? "supported" : "NOT supported") << LL_ENDL;
+
+    mHasSystemEventsExt = alcIsExtensionPresent(mALDevice, "ALC_SOFT_system_events");
+    if (mHasSystemEventsExt)
+    {
+        mEventControlSOFT = (LPALCEVENTCONTROLSOFT)alcGetProcAddress(mALDevice, "alcEventControlSOFT");
+        mEventCallbackSOFT = (LPALCEVENTCALLBACKSOFT)alcGetProcAddress(mALDevice, "alcEventCallbackSOFT");
+        mHasSystemEventsExt = (mEventControlSOFT != NULL && mEventCallbackSOFT != NULL);
+    }
+    LL_INFOS() << "ALC_SOFT_system_events " << (mHasSystemEventsExt ? "supported" : "NOT supported") << LL_ENDL;
+
+    // <FS:Ansariel> Output device selection
+    mHasEnumerateAllExt = alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT");
+    LL_INFOS() << "ALC_ENUMERATE_ALL_EXT " << (mHasEnumerateAllExt ? "supported" : "NOT supported") << LL_ENDL;
+    // </FS:Ansariel>
+
+    if (mHasReopenExt && mHasSystemEventsExt)
+    {
+        mEventCallbackSOFT(&LLAudioEngine_OpenAL::onDeviceEventSOFT, this);
+        // <FS:Ansariel> Output device selection
+        //ALCenum events[] = { ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT };
+        //mEventControlSOFT(1, events, ALC_TRUE);
+        //LL_INFOS() << "Registered for ALC default-device-change notifications" << LL_ENDL;
+        ALCenum events[] = {
+            ALC_EVENT_TYPE_DEVICE_ADDED_SOFT,
+            ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT,
+            ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT
+        };
+        mEventControlSOFT(3, events, ALC_TRUE);
+        LL_INFOS() << "Registered for ALC device notifications" << LL_ENDL;
+        // </FS:Ansariel>
+    }
+    else
+    {
+        LL_INFOS() << "Dynamic OS default output device following is not available; "
+            << "a viewer restart will be needed to pick up default device changes" << LL_ENDL;
+    }
 
     return true;
 }
@@ -142,9 +194,101 @@ void LLAudioEngine_OpenAL::allocateListener()
 }
 
 // virtual
+void LLAudioEngine_OpenAL::idle()
+{
+    LLAudioEngine::idle();
+
+    if (mDefaultDeviceChanged)
+    {
+        mDefaultDeviceChanged = false;
+        // <FS:Ansariel> Output device selection
+        //reopenOnDefaultDevice();
+        changeDevice();
+        OnOutputDeviceListChanged(getDevices());
+        // </FS:Ansariel>
+    }
+}
+
+// static
+void ALC_APIENTRY LLAudioEngine_OpenAL::onDeviceEventSOFT(ALCenum eventType, ALCenum deviceType,
+                                                            ALCdevice* /*device*/, ALCsizei /*length*/,
+                                                            const ALCchar* /*message*/, void* userParam) noexcept
+{
+    // <FS:Ansariel> Output device selection
+    if (eventType == ALC_EVENT_TYPE_DEVICE_ADDED_SOFT || eventType == ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT)
+    {
+        if (deviceType == ALC_PLAYBACK_DEVICE_SOFT)
+        {
+            LLAudioEngine_OpenAL* self = static_cast<LLAudioEngine_OpenAL*>(userParam);
+            if (self)
+            {
+                LL_INFOS() << "LLAudioEngine_OpenAL:: Playback device list changed" << LL_ENDL;
+                self->mDefaultDeviceChanged = true;
+                return;
+            }
+        }
+    }
+    // </FS:Ansariel>
+
+    // This may run on OpenAL's internal thread, so just flip the mDefaultDeviceChanged flag
+    // and handle device change in idle().
+    if (eventType == ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT)
+    {
+        LLAudioEngine_OpenAL* self = static_cast<LLAudioEngine_OpenAL*>(userParam);
+        if (self)
+        {
+            LL_INFOS() << "LLAudioEngine_OpenAL:: Default playback device changed" << LL_ENDL;
+            self->mDefaultDeviceChanged = true;
+        }
+    }
+}
+
+void LLAudioEngine_OpenAL::reopenOnDefaultDevice()
+{
+    if (!mHasReopenExt || !mReopenDeviceSOFT || !mALDevice)
+    {
+        return;
+    }
+
+    std::string old_name = ll_safe_string(alcGetString(mALDevice, ALC_DEVICE_SPECIFIER));
+    LL_INFOS() << "OS default audio device changed; reopening OpenAL device (was: "
+        << old_name << ")" << LL_ENDL;
+
+    // Clear any prior device error state so failures below report accurately.
+    (void)alcGetError(mALDevice);
+
+    if (mReopenDeviceSOFT(mALDevice, NULL, NULL))
+    {
+        LL_INFOS() << "OpenAL device reopened successfully, now on: "
+            << ll_safe_string(alcGetString(mALDevice, ALC_DEVICE_SPECIFIER)) << LL_ENDL;
+    }
+    else
+    {
+        ALCenum error = alcGetError(mALDevice);
+        LL_WARNS() << "alcReopenDeviceSOFT() failed: alc error " << error << LL_ENDL;
+    }
+}
+
+// virtual
 void LLAudioEngine_OpenAL::shutdown()
 {
     LL_INFOS() << "About to LLAudioEngine::shutdown()" << LL_ENDL;
+
+    if (mHasSystemEventsExt && mEventControlSOFT && mEventCallbackSOFT)
+    {
+        // <FS:Ansariel> Output device selection
+        //ALCenum events[] = { ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT };
+        //mEventControlSOFT(1, events, ALC_FALSE);
+        ALCenum events[] = {
+            ALC_EVENT_TYPE_DEVICE_ADDED_SOFT,
+            ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT,
+            ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT
+        };
+        mEventControlSOFT(3, events, ALC_FALSE);
+        // </FS:Ansariel>
+        mEventCallbackSOFT(NULL, NULL);
+    }
+
     LLAudioEngine::shutdown();
 
     // If a subsequent error occurs while there is still an error recorded
@@ -596,67 +740,10 @@ static LLUUID generate_uuid_from_string(const std::string& str)
     return LLUUID(boost::uuids::to_string(deterministic_uuid));
 }
 
-static void ALC_APIENTRY device_change_callback(ALCenum eventType, ALCenum deviceType, ALCdevice* device, ALCsizei length, const ALCchar* message, void* userParam) noexcept
-{
-    LLAudioEngine_OpenAL* audio_engine = (LLAudioEngine_OpenAL*)userParam;
-
-    if (!audio_engine)
-        return;
-
-    if (eventType == ALC_EVENT_TYPE_DEVICE_ADDED_SOFT || eventType == ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT)
-    {
-        if (deviceType == ALC_PLAYBACK_DEVICE_SOFT)
-        {
-            LL_INFOS() << "LLAudioEngine_OpenAL:: Playback device list changed" << LL_ENDL;
-            audio_engine->mDeviceListChanged = true;
-            return;
-        }
-    }
-
-    if (eventType == ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT)
-    {
-        LL_INFOS() << "LLAudioEngine_OpenAL:: Default playback device changed" << LL_ENDL;
-        audio_engine->mDeviceListChanged = true;
-    }
-}
-
-void LLAudioEngine_OpenAL::setupDeviceEvents(ALCdevice* device)
-{
-    if (!alcIsExtensionPresent(device, "ALC_SOFT_system_events"))
-    {
-        LL_WARNS() << "LLAudioEngine_OpenAL:: ALC_SOFT_system_events not supported by backend" << LL_ENDL;
-        return;
-    }
-
-    auto alcEventCallbackSOFT = (LPALCEVENTCALLBACKSOFT)alcGetProcAddress(device, "alcEventCallbackSOFT");
-    auto alcEventControlSOFT = (LPALCEVENTCONTROLSOFT)alcGetProcAddress(device, "alcEventControlSOFT");
-    if (!alcEventCallbackSOFT || !alcEventControlSOFT)
-    {
-        LL_WARNS() << "LLAudioEngine_OpenAL:: ALC_SOFT_system_events functions not available" << LL_ENDL;
-        return;
-    }
-
-    // Register the callback function
-    alcEventCallbackSOFT(device_change_callback, this);
-
-    // Define which events we want to listen to
-    ALCenum events[] = {
-        ALC_EVENT_TYPE_DEVICE_ADDED_SOFT,
-        ALC_EVENT_TYPE_DEVICE_REMOVED_SOFT,
-        ALC_EVENT_TYPE_DEFAULT_DEVICE_CHANGED_SOFT
-    };
-
-    // Enable events
-    alcEventControlSOFT(3, events, AL_TRUE);
-}
-
 void LLAudioEngine_OpenAL::changeDevice()
 {
-    LPALCREOPENDEVICESOFT alcReopenDeviceSOFT = (LPALCREOPENDEVICESOFT)alcGetProcAddress(mCurrentDevice, "alcReopenDeviceSOFT");
-
-    if (!alcReopenDeviceSOFT || !alcIsExtensionPresent(mCurrentDevice, "ALC_SOFT_reopen_device"))
+    if (!mHasReopenExt || !mReopenDeviceSOFT || !mALDevice || !mALContext)
     {
-        LL_WARNS() << "LLAudioEngine_OpenAL::setDevice(): Cannot change output device - OpenAL ALC_SOFT_reopen_device extension missing" << LL_ENDL;
         return;
     }
 
@@ -684,9 +771,9 @@ void LLAudioEngine_OpenAL::changeDevice()
         }
     }
 
-    if (alcReopenDeviceSOFT(mCurrentDevice, device_name.has_value() ? device_name.value().c_str() : nullptr, nullptr))
+    if (mReopenDeviceSOFT(mALDevice, device_name.has_value() ? device_name.value().c_str() : nullptr, nullptr))
     {
-        alcMakeContextCurrent(mCurrentContext);
+        alcMakeContextCurrent(mALContext);
     }
     else
     {
@@ -696,11 +783,8 @@ void LLAudioEngine_OpenAL::changeDevice()
 
 LLAudioEngine_OpenAL::output_device_map_t LLAudioEngine_OpenAL::getDevices()
 {
-    if (!alcIsExtensionPresent(nullptr, "ALC_ENUMERATE_ALL_EXT"))
-    {
-        LL_WARNS() << "LLAudioEngine_OpenAL::getDevices(): Cannot determine playback devices - OpenAL ALC_ENUMERATE_ALL_EXT extension missing" << LL_ENDL;
+    if (!mHasEnumerateAllExt)
         return{};
-    }
 
     const ALCchar* deviceList = alcGetString(nullptr, ALC_ALL_DEVICES_SPECIFIER);
 
@@ -722,16 +806,4 @@ void LLAudioEngine_OpenAL::setDevice(const LLUUID& device_uuid)
 {
     mSelectedDeviceUUID = device_uuid;
     changeDevice();
-}
-
-void LLAudioEngine_OpenAL::idle()
-{
-    if (mDeviceListChanged)
-    {
-        mDeviceListChanged = false;
-        changeDevice();
-        OnOutputDeviceListChanged(getDevices());
-    }
-
-    LLAudioEngine::idle();
 }

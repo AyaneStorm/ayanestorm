@@ -73,6 +73,7 @@ uniform vec2 screen_res;
 // <AS:Chanayane> Cumulative foreground scatter for alpha transparency.
 uniform sampler2D asVolumetricAtlas;
 uniform int asVolumetricEnabled;
+uniform float asVolumetricAtlasRange; // last slice end distance (metres)
 uniform int sun_up_factor;
 uniform vec4 light_position[8];
 uniform vec3 light_direction[8];
@@ -86,7 +87,7 @@ vec3 asVolumetricForeground(vec3 view_position)
         return vec3(0.0);
     }
 
-    const float max_distance = 128.0;
+    float max_distance = asVolumetricAtlasRange;
     float coordinate = sqrt(clamp(length(view_position) / max_distance, 0.0, 1.0)) * 16.0;
     float upper = clamp(floor(coordinate), 0.0, 15.0);
     float blend_weight = fract(coordinate);
@@ -125,7 +126,7 @@ float asVolumetricTransmittance(vec3 view_position)
         return 1.0;
     }
 
-    const float max_distance = 128.0;
+    float max_distance = asVolumetricAtlasRange;
     float coordinate = sqrt(clamp(length(view_position) / max_distance, 0.0, 1.0)) * 16.0;
     float upper = clamp(floor(coordinate), 0.0, 15.0);
     float blend_weight = fract(coordinate);
@@ -150,6 +151,10 @@ float asVolumetricTransmittance(vec3 view_position)
     float lower_value = texture(asVolumetricAtlas, (lower_tile + screen_uv) * 0.25).a;
     return mix(lower_value, upper_value, blend_weight);
 }
+// </AS:Chanayane>
+
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
 // </AS:Chanayane>
 
 void waterClip(vec3 pos);
@@ -346,7 +351,8 @@ void main()
 //     shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
 // #endif
 #ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    // shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    shadow = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, frag), pos.xyz);
 #endif
 // </AS:Chanayane>
 
@@ -362,8 +368,8 @@ void main()
     vec3 amblit_linear = amblit;
 
     vec3 irradiance = amblit;
-    vec3 glossenv;
-    vec3 legacyenv;
+    vec3 glossenv = vec3(0.0);
+    vec3 legacyenv = vec3(0.0);
     sampleReflectionProbesLegacy(irradiance, glossenv, legacyenv, frag, pos.xyz, norm.xyz, 0.0, 0.0, true, amblit_linear);
 
 

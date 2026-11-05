@@ -73,12 +73,23 @@ public:
     // No-ops internally when !isEnabled() or during cube snapshots.
     static void renderPass(LLPipeline& pipeline, LLRenderTarget& screen);
 
+    // Exact mode cloud shadows. Call from LLPipeline::renderDeferredLighting()
+    // right after the sun shadow pass (light_target flushed, not bound):
+    // bakes this frame's cloud shadow map and multiplies the sun shadow
+    // channel (r) of light_target by the cloud transmittance, so a cloud
+    // shadow is exactly a sun shadow. No-op otherwise.
+    static void renderCloudShadows(LLPipeline& pipeline, LLRenderTarget& light_target);
+
     // Bind the cumulative depth atlas used by transparent material shaders.
     static void bindTransparencyAtlas(LLGLSLShader& shader);
 
     // 0 Normal, 1 High, 2 Very High, 3 Ultra (RenderVolumetricLightingQuality).
     static S32 getQualityTier();
-    // True for High/Very High/Ultra (full-resolution target); false for Normal.
+    // True when RenderVolumetricLightingMode selects the exact light-volume
+    // implementation and its shaders loaded; quality tiers do not apply.
+    static bool isExactMode();
+    // True for Exact mode and High/Very High/Ultra (full-resolution target);
+    // false for Normal.
     static bool isFullResolution();
     static S32 getSampleCount();
     static S32 getEdgeSampleMultiplier();
@@ -101,14 +112,64 @@ private:
     static void applyDirectionalInvariants(LLGLSLShader& shader, LLPipeline& pipeline,
                                            bool sun_source);
     static void renderLocalLights(LLPipeline& pipeline);
+
+    // Exact mode range: far plane of the last sun cascade, in metres. The
+    // medium density fades to zero over its last quarter.
+    static F32 getExactRange(LLPipeline& pipeline);
+    // Sets as_fade_start / as_fade_end (exact shaders' fadedLength()).
+    static void applyExactRange(LLGLSLShader& shader, LLPipeline& pipeline);
+
+    // Exact mode directional pass, step 1: rasterizes each sun cascade's
+    // closed shadow volume into sExactAccum (signed, additive). Returns false
+    // when it cannot run, so the caller falls back to the raymarch.
+    // See doc/volumetric_lighting_exact_redesign_research.md.
+    static bool accumulateExactVolumes(LLPipeline& pipeline);
+    // Shared by both exact accumulation passes: with `program` already bound
+    // and its pass-specific uniforms set, binds `target`, clears it and
+    // additively rasterizes every valid cascade's closed shadow volume.
+    static bool drawExactVolumes(LLPipeline& pipeline, LLGLSLShader& program,
+                                 LLRenderTarget& target);
+    // Exact transparency atlas: accumulates the light-volume crossings for
+    // all 16 slice end distances at tile resolution (sExactAtlasAccum), then
+    // resolves them into sTransparencyAtlas with the same layout and meaning
+    // as the sampled renderTransparencyAtlas(). No dither.
+    static bool renderExactAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
+    // Exact mode clouds: updates the lazy cloud anchor and bakes the cloud
+    // shadow map (sphere model, see asVolumetricCloudShadowF.glsl) for the
+    // active light. Returns false (no clouds this frame) when SL draws no
+    // clouds or the shader is unavailable.
+    static bool renderCloudShadow(LLPipeline& pipeline, bool sun_source);
+    // Binds this frame's cloud shadow map on `channel` and sets the
+    // asVolumetricCloudUtilF.glsl uniforms of the bound `program`; returns
+    // false (as_cloud_enabled = 0) when there are no clouds this frame.
+    static bool applyCloudUniforms(LLGLSLShader& program, S32 channel);
+    // Step 2: converts sExactAccum into scatter in the currently bound
+    // sVolumetricTarget (same brightness formula as the raymarch), dimmed
+    // under clouds, plus the cloud rays of the medium beyond the exact range.
+    static void resolveExact(LLPipeline& pipeline, bool sun_source, S32 debug_mode);
     static bool renderTransparencyAtlas(LLPipeline& pipeline, F32 attenuate_scene_strength);
     static void releaseAtlasIntegralAttachments();
 
     static bool sSupportChecked;
     static bool sSupported;
     static bool sShadersLoaded;
+    static bool sExactShadersLoaded;
+    static bool sCloudShadowLoaded;
 
     static LLRenderTarget sVolumetricTarget;
+
+    // Exact mode: full-resolution R32F signed accumulation of the shadowed,
+    // transmittance-weighted ray length (R32F is required: +/- pairs cancel,
+    // 16-bit float loses ~1 m at a few hundred metres). Allocated only while
+    // Exact mode runs.
+    static LLRenderTarget sExactAccum;
+    // Exact atlas: 4 RGBA32F attachments at atlas tile resolution, slice k in
+    // attachment k / 4, channel k % 4.
+    static LLRenderTarget sExactAtlasAccum;
+    // Sampler object with depth comparison disabled, so the light-volume
+    // vertex shader can texelFetch raw depth from the comparing sun shadow
+    // maps without changing their texture state.
+    static U32 sExactShadowSampler;
     static LLRenderTarget sTransparencyAtlas;
 
     // The atlas is built one tile (slice) per draw call instead of all 16 in
@@ -138,6 +199,10 @@ private:
     static bool sAtlasConsumerSeen;
     static bool sAtlasProducedThisFrame;
     static U32 sAtlasUnusedFrames;
+    // Distance spanned by the atlas slices produced this frame (128 m for the
+    // sampled atlas, the exact range for the exact atlas); consumers read it
+    // as asVolumetricAtlasRange.
+    static F32 sAtlasRange;
 
     // Per-frame cache for bindTransparencyAtlas(), refreshed once per frame
     // (gFrameCount-guarded) inside bindTransparencyAtlas() itself instead of

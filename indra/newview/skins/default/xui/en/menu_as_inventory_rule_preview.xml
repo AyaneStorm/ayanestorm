@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Inventory rule preview row context menu. -->
+<context_menu
+ layout="topleft"
+ name="as_inventory_rule_preview_menu">
+  <menu_item_call
+   label="Show in Inventory"
+   layout="topleft"
+   name="show_in_inventory">
+    <menu_item_call.on_click
+     function="ASInventoryRules.ShowInInventory" />
+  </menu_item_call>
+</context_menu>

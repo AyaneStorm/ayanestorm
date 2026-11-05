@@ -35,8 +35,9 @@
 #include "fscorehttputil.h"
 #include "fsassetblacklist.h"
 
-#include <boost/filesystem.hpp>
-
+#include "fsyspath.h"
+// LLDate stores Unix/system time, not leap-second-adjusted UTC time.
+#include "fsfiletime.h"
 #include "llappviewer.h"
 #include "llagent.h"
 #include "llagentui.h"
@@ -789,13 +790,9 @@ void FSData::saveLLSD(const LLSD& data, const std::string& filename, const LLDat
     }
     file.close();
 
-    const std::time_t new_time = (std::time_t)last_modified.secondsSinceEpoch();
-
-#ifdef LL_WINDOWS
-    boost::filesystem::last_write_time(boost::filesystem::path(ll_convert<std::wstring>(filename)), new_time);
-#else
-    boost::filesystem::last_write_time(boost::filesystem::path(filename), new_time);
-#endif
+    // Share the portable conversion used by local mesh reloading.
+    const auto new_time = fs_file_time_from_time_t(static_cast<std::time_t>(last_modified.secondsSinceEpoch()));
+    std::filesystem::last_write_time(fsyspath(filename), new_time);
 }
 
 S32 FSData::getAgentFlags(const LLUUID& avatar_id) const

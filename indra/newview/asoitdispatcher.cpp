@@ -12,6 +12,7 @@
 #include "asdoflive.h"
 #include "asexactoit.h"
 #include "asmacoit.h"
+#include "asoitshaderloader.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolwater.h"
 #include "llspatialpartition.h"
@@ -189,12 +190,18 @@ static bool sOrderIndependentAlpha = false;
 
 void ASOITDispatcher::refreshOrderIndependentAlphaState()
 {
+    // Runs once per frame before culling, outside rendering: the point where
+    // pending OIT shader compiles may take their per-frame slice.
+    ASOITShaderLoader::update();
+
     // Both accessors are user intent AND hardware support. Deliberately not
     // ASAVBOIT::available(), which additionally requires allocated resources:
     // those are created lazily at the first alpha pass, after culling, so it
-    // would read false on the frame the mode is enabled.
-    sOrderIndependentAlpha = ASExactOIT::isEnabled() || ASAVBOIT::requested() ||
-        ASMacOIT::requested();
+    // would read false on the frame the mode is enabled. While shaders still
+    // compile, transparency renders through the vanilla path, which needs the
+    // vanilla ordering.
+    sOrderIndependentAlpha = !ASOITShaderLoader::loading() &&
+        (ASExactOIT::isEnabled() || ASAVBOIT::requested() || ASMacOIT::requested());
 }
 
 bool ASOITDispatcher::orderIndependentAlphaActive()

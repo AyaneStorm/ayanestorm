@@ -86,7 +86,7 @@ private:
 
     // <FS:Ansariel> FIRE-15556: Picks can circumvent RLVa @showloc restriction
     boost::signals2::connection mRlvBehaviorCallbackConnection;
-    void updateRlvRestrictions(ERlvBehaviour behavior, ERlvParamType type);
+    void updateRlvRestrictions(ERlvBehaviour behavior);
     // </FS:Ansariel>
 
     bool canAddNewPick();
@@ -119,6 +119,8 @@ public:
 
     void setAvatarId(const LLUUID& avatar_id) override;
 
+    void reshape(S32 width, S32 height, bool called_from_parent = true) override;
+
     void setPickId(const LLUUID& id) { mPickId = id; }
     virtual LLUUID& getPickId() { return mPickId; }
 
@@ -149,6 +151,10 @@ public:
     void setErrorStatus(S32 status, const std::string& reason) override {};
 
     void addLocationChangedCallbacks();
+
+    //<FS:Trish> RLVa showloc
+    void updateButtons();
+    //</FS:Trish>
 
   protected:
 
@@ -245,13 +251,14 @@ public:
 
 protected:
 
-    LLTextureCtrl*      mSnapshotCtrl;
-    LLLineEditor*       mPickName;
-    LLTextEditor*       mPickDescription;
-    LLButton*           mSetCurrentLocationButton;
-    LLButton*           mSaveButton;
-    LLButton*           mCreateButton;
-    LLButton*           mCancelButton;
+    LLTextureCtrl*      mSnapshotCtrl = nullptr;
+    LLLineEditor*       mPickName = nullptr;
+    LLTextEditor*       mPickDescription = nullptr;
+    LLLineEditor*       mPickLocation = nullptr;
+    LLButton*           mSetCurrentLocationButton = nullptr;
+    LLButton*           mSaveButton = nullptr;
+    LLButton*           mCreateButton = nullptr;
+    LLButton*           mCancelButton = nullptr;
     LLButton*           mPreviewButton; // <AS:Chanayane> Preview button
 
     LLVector3d mPosGlobal;
@@ -264,6 +271,11 @@ protected:
 
     boost::signals2::connection mRegionCallbackConnection;
     boost::signals2::connection mParcelCallbackConnection;
+
+    //<FS:Trish> RLVa showloc
+    boost::signals2::connection mRlvBehaviorCallbackConnection;
+    void updateRlvRestrictions(ERlvBehaviour behavior);
+    //</FS:Trish>
 
     bool mLocationChanged;
     bool mNewPick;

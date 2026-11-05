@@ -49,11 +49,9 @@ ASExactOIT::Resources ASExactOIT::sResources;
 const char* ASExactOIT::shaderCacheRevision() { return "exact-oit-unsupported"; }
 bool ASExactOIT::isSupported() { return false; }
 bool ASExactOIT::isEnabled() { return false; }
-bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
-                             bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list)
-{
-    return success;
-}
+void ASExactOIT::appendLoadSteps(S32 shader_level, bool use_sun_shadow, bool gltf_enabled,
+                                 std::vector<std::function<bool()>>& steps) {}
+void ASExactOIT::finishLoad(bool success) {}
 void ASExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list) {}
 void ASExactOIT::unloadShaders() {}
 void ASExactOIT::appendDiagnostics(LLSD& info) {}
@@ -103,6 +101,7 @@ void ASExactOIT::allocateResources(U32 width, U32 height) {}
 #include <utility>
 
 #include "asbackgroundisolate.h"
+#include "asoitshaderloader.h"
 #include "llgl.h"
 #include "lldrawpoolalpha.h"
 #include "llrender.h"
@@ -348,13 +347,13 @@ bool ASExactOIT::isEnabled()
     return gSavedSettings.getBOOL("ASRenderExactOIT") && isSupported();
 }
 
-// Loads the complete Exact OIT shader family and propagates the aggregate success state.
-bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow,
-                             bool gltf_enabled, std::vector<LLGLSLShader*>& shader_list)
+// Appends the complete Exact OIT shader family as loader steps.
+void ASExactOIT::appendLoadSteps(S32 shader_level, bool use_sun_shadow, bool gltf_enabled,
+                                 std::vector<std::function<bool()>>& steps)
 {
-    if (!isSupported() || !success)
+    if (!isSupported())
     {
-        return success;
+        return;
     }
 
     // Viewer-wide reloads unload individual programs directly, bypassing our
@@ -375,15 +374,34 @@ bool ASExactOIT::loadShaders(bool success, S32 shader_level, bool use_sun_shadow
                          << (gGLManager.mHasShaderSubgroup ? "active" : "unavailable, using per-fragment atomics")
                          << LL_ENDL;
 
-    if (gltf_enabled) success = loadGLTFShaders(shader_level, use_sun_shadow);
-    if (success) success = loadPBRGlowShaders(shader_level);
-    if (success) success = loadAlphaShaders(shader_level, use_sun_shadow);
-    if (success) success = loadPBRAlphaShaders(shader_level, use_sun_shadow);
-    if (success) success = loadFullbrightAlphaShaders(shader_level);
-    if (success) success = loadMaterialAlphaShaders(shader_level, use_sun_shadow, shader_list);
-    if (success) success = loadEmissiveShaders(shader_level);
-    if (success) success = loadCompositeShader(shader_level);
-    return success;
+    if (gltf_enabled)
+    {
+        steps.emplace_back([=]() { return loadGLTFShaders(shader_level, use_sun_shadow); });
+    }
+    steps.emplace_back([=]() { return loadPBRGlowShaders(shader_level); });
+    steps.emplace_back([=]() { return loadAlphaShaders(shader_level, use_sun_shadow); });
+    steps.emplace_back([=]() { return loadPBRAlphaShaders(shader_level, use_sun_shadow); });
+    steps.emplace_back([=]() { return loadFullbrightAlphaShaders(shader_level); });
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2; ++i)
+    {
+        if ((i & 0x3) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
+        {
+            steps.emplace_back([=]() { return loadMaterialAlphaShader(i, shader_level, use_sun_shadow); });
+        }
+    }
+    steps.emplace_back([=]() { return loadEmissiveShaders(shader_level); });
+    steps.emplace_back([=]() { return loadCompositeShader(shader_level); });
+}
+
+// Releases a partially loaded family; its renderer then reports itself unavailable.
+void ASExactOIT::finishLoad(bool success)
+{
+    if (!success)
+    {
+        unloadShaders();
+        LL_WARNS("ExactOIT") << "Exact OIT shaders unavailable; dispatcher fallback remains active"
+                             << LL_ENDL;
+    }
 }
 
 // Adds all persistent Exact OIT program objects to the viewer shader registry.
@@ -401,6 +419,13 @@ void ASExactOIT::registerShaders(std::vector<LLGLSLShader*>& shader_list)
     shader_list.push_back(&gASExactOITSkinnedEmissiveProgram);
     shader_list.push_back(&gASExactOITPBRGlowProgram);
     shader_list.push_back(&gASExactOITSkinnedPBRGlowProgram);
+    for (U32 i = 0; i < LLMaterial::SHADER_COUNT; ++i)
+    {
+        if ((i & 0x3) == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
+        {
+            shader_list.push_back(&gASExactOITMaterialAlphaProgram[i]);
+        }
+    }
 }
 
 // Unloads every Exact OIT shader and rigged or material variant.
@@ -667,74 +692,59 @@ bool ASExactOIT::loadFullbrightAlphaShaders(S32 shader_level)
     return success;
 }
 
-// Creates every supported material capture permutation and returns aggregate success.
-bool ASExactOIT::loadMaterialAlphaShaders(S32 shader_level, bool use_sun_shadow,
-                                          std::vector<LLGLSLShader*>& shader_list)
+// Creates one blend-mode material capture permutation (index into
+// gASExactOITMaterialAlphaProgram); the static ones are in registerShaders().
+bool ASExactOIT::loadMaterialAlphaShader(U32 i, S32 shader_level, bool use_sun_shadow)
 {
-    bool success = true;
+    const U32 alpha_mode = i & 0x3;
+    const bool has_skin = i >= LLMaterial::SHADER_COUNT;
+    const U32 idx = i & 0xf;
+    LLGLSLShader& shader = gASExactOITMaterialAlphaProgram[i];
 
-    for (U32 i = 0; i < LLMaterial::SHADER_COUNT * 2 && success; ++i)
+    shader.mName = llformat("Material Exact OIT Shader %d", i);
+    shader.mFeatures.hasSrgb = true;
+    shader.mFeatures.calculatesAtmospherics = true;
+    shader.mFeatures.hasAtmospherics = true;
+    shader.mFeatures.hasGamma = true;
+    shader.mFeatures.hasShadows = use_sun_shadow;
+    shader.mFeatures.hasReflectionProbes = true;
+    if (has_skin)
     {
-        const U32 alpha_mode = i & 0x3;
-        if (alpha_mode != LLMaterial::DIFFUSE_ALPHA_MODE_BLEND)
-        {
-            continue;
-        }
-
-        const bool has_skin = i >= LLMaterial::SHADER_COUNT;
-        const U32 idx = i & 0xf;
-        LLGLSLShader& shader = gASExactOITMaterialAlphaProgram[i];
-
-        if (!has_skin)
-        {
-            shader_list.push_back(&shader);
-        }
-        shader.mName = llformat("Material Exact OIT Shader %d", i);
-        shader.mFeatures.hasSrgb = true;
-        shader.mFeatures.calculatesAtmospherics = true;
-        shader.mFeatures.hasAtmospherics = true;
-        shader.mFeatures.hasGamma = true;
-        shader.mFeatures.hasShadows = use_sun_shadow;
-        shader.mFeatures.hasReflectionProbes = true;
-        if (has_skin)
-        {
-            shader.mFeatures.hasObjectSkinning = true;
-        }
-        shader.mShaderFiles.clear();
-        shader.mShaderFiles.emplace_back("deferred/materialV.glsl", GL_VERTEX_SHADER);
-        shader.mShaderFiles.emplace_back("deferred/materialF.glsl", GL_FRAGMENT_SHADER);
-        addCaptureFragment(shader);
-        shader.mShaderLevel = shader_level;
-        shader.clearPermutations();
-        if (idx & 0x8)
-        {
-            shader.addPermutation("HAS_NORMAL_MAP", "1");
-        }
-        if (idx & 0x4)
-        {
-            shader.addPermutation("HAS_SPECULAR_MAP", "1");
-        }
-        shader.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
-        shader.addPermutation("HAS_ALPHA_MASK", "1");
-        addExactOITPermutations(shader);
-        if (use_sun_shadow)
-        {
-            shader.addPermutation("HAS_SUN_SHADOW", "1");
-        }
-        addCommonPermutations(shader);
-        if (has_skin)
-        {
-            shader.addPermutation("HAS_SKIN", "1");
-        }
-        else
-        {
-            shader.mRiggedVariant = &gASExactOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
-        }
-        success = shader.createShader();
-        llassert(success);
-        shader.mFeatures.hasLighting = true;
+        shader.mFeatures.hasObjectSkinning = true;
     }
-
+    shader.mShaderFiles.clear();
+    shader.mShaderFiles.emplace_back("deferred/materialV.glsl", GL_VERTEX_SHADER);
+    shader.mShaderFiles.emplace_back("deferred/materialF.glsl", GL_FRAGMENT_SHADER);
+    addCaptureFragment(shader);
+    shader.mShaderLevel = shader_level;
+    shader.clearPermutations();
+    if (idx & 0x8)
+    {
+        shader.addPermutation("HAS_NORMAL_MAP", "1");
+    }
+    if (idx & 0x4)
+    {
+        shader.addPermutation("HAS_SPECULAR_MAP", "1");
+    }
+    shader.addPermutation("DIFFUSE_ALPHA_MODE", llformat("%d", alpha_mode));
+    shader.addPermutation("HAS_ALPHA_MASK", "1");
+    addExactOITPermutations(shader);
+    if (use_sun_shadow)
+    {
+        shader.addPermutation("HAS_SUN_SHADOW", "1");
+    }
+    addCommonPermutations(shader);
+    if (has_skin)
+    {
+        shader.addPermutation("HAS_SKIN", "1");
+    }
+    else
+    {
+        shader.mRiggedVariant = &gASExactOITMaterialAlphaProgram[i + LLMaterial::SHADER_COUNT];
+    }
+    const bool success = shader.createShader();
+    llassert(success);
+    shader.mFeatures.hasLighting = true;
     return success;
 }
 
@@ -1004,7 +1014,8 @@ bool ASExactOIT::shadersReady()
         }
     }
 
-    if (!missing.empty() && isEnabled())
+    // Still compiling is not incomplete: the loader fills the family over frames.
+    if (!missing.empty() && isEnabled() && !ASOITShaderLoader::loading())
     {
         static bool logged = false;
         if (!logged)

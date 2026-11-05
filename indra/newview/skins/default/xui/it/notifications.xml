@@ -1440,7 +1440,6 @@ Controlla la tua connessione e riprova fra qualche minuto, oppure clicca su Aiut
 		Il tuo avatar apparirà fra un attimo.
 
 Usa le frecce per muoverti.
-Premi F1 in qualunque momento per la guida o per apprendere altre cose su [CURRENT_GRID].
 Scegli un avatar maschile o femminile. Puoi sempre cambiare idea più tardi.
 		<usetemplate name="okcancelbuttons" notext="Femminile" yestext="Maschile"/>
 	</notification>
@@ -4941,12 +4940,6 @@ aggiungere un metodo di pagamento al checkout.
 			<button name="Cancel" text="Annulla" />
 		</form>
 	</notification>
-	<notification name="LSLColorCopiedToClipboard">
-		Il codice colore LSL è stato copiato negli appunti. Ora può essere incollato nello script.it.
-		<form name="form">
-			<ignore name="ignore" text="Un codice colore LSL è stato copiato negli appunti"/>
-		</form>
-	</notification>
 	<notification name="FSBWTooHigh">
 		Raccomandiamo vivamente di non impostare la larghezza di banda a più di 1500 KBPS. E' improbabile che funzioni bene e quasi certamente non migliora le prestazioni.
 	</notification>
@@ -5158,7 +5151,7 @@ per la regione &quot;[REGION]&quot;
 	<notification name="PickLimitReached">
 		E' stato raggiunto il numero massimo di preferiti. Non se ne possono aggiungere altri.
 	</notification>
-	<notification name="GlobalOnlineStatusToggle">
+	<notification name="GlobalOnlineStatusToggleInfo">
 		A causa del carico sul server, la modifica collettiva dello stato di visibilità può impiegare tempo per diventare efficace. Ci vuole pazienza.
 		<usetemplate ignoretext="Informa che la modifica dello stato di visibilità può essere ritardata" name="okignore" />
 	</notification>

@@ -18,7 +18,9 @@ namespace ASAmbientOcclusion
     enum Technique
     {
         LEGACY_SSAO = 0,
-        GTAO = 1
+        GTAO = 1,
+        // Visibility bitmask AO: GTAO pipeline with finite-thickness occluders.
+        VBAO = 2
     };
 
     enum Backend
@@ -42,6 +44,9 @@ namespace ASAmbientOcclusion
     // Called while the deferred composite shader is bound.
     bool bindResult(LLGLSLShader& shader);
     void unbindResult(LLGLSLShader& shader);
+
+    // Raw visibility after tonemapping, selected by RenderBufferVisualization=7.
+    void visualizeResult(LLRenderTarget& destination, LLVertexBuffer& screen_triangle);
 
     Technique requestedTechnique();
     Technique effectiveTechnique();

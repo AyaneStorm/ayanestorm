@@ -52,6 +52,7 @@
 //#include "imdebug.h"
 #include "llfontbitmapcache.h"
 #include "llgl.h"
+#include "llwindow.h"
 
 #define ENABLE_OT_SVG_SUPPORT
 
@@ -193,7 +194,7 @@ bool LLFontFreetype::loadFace(const std::string & filename, F32 point_size, F32 
         return false;
 
     openArgs.flags = FT_OPEN_MEMORY;
-    int error = FT_Open_Face( gFTLibrary, &openArgs, 0, &mFTFace );
+    int error = FT_Open_Face( gFTLibrary, &openArgs, face_n, &mFTFace );
 
     if (error)
         return false;
@@ -202,6 +203,9 @@ bool LLFontFreetype::loadFace(const std::string & filename, F32 point_size, F32 
     mHinting = hinting;
     mFontFlags = flags;
     mWeight = weight;
+    mFaceIndex = face_n;
+    mVertDPI = vert_dpi;
+    mHorzDPI = horz_dpi;
     mTabnum = tabnum; // <FS:Ansariel> Optional tabular numeric font rendering
 
     bool variable_font = false;
@@ -320,7 +324,7 @@ S32 LLFontFreetype::getNumFaces(const std::string& filename)
 }
 
 void LLFontFreetype::addFallbackFont(const LLPointer<LLFontFreetype>& fallback_font,
-                                     const char_functor_t& functor)
+                                     const char_functor_t& functor) const
 {
     mFallbackFonts.emplace_back(fallback_font, functor);
 }
@@ -462,6 +466,18 @@ bool LLFontFreetype::hasGlyph(llwchar wch) const
     return(mCharGlyphInfoMap.find(wch) != mCharGlyphInfoMap.end());
 }
 
+bool LLFontFreetype::hasFallbackPath(const std::string& path) const
+{
+    for (const fallback_font_t& pair : mFallbackFonts)
+    {
+        if (pair.first->getName() == path)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 LLFontGlyphInfo* LLFontFreetype::addGlyph(llwchar wch, EFontGlyphType glyph_type) const
 {
     if (!mFTFace)
@@ -542,6 +558,33 @@ LLFontGlyphInfo* LLFontFreetype::addGlyph(llwchar wch, EFontGlyphType glyph_type
             {
                 return addGlyphFromFont(pair.first, wch, glyph_index,
                                         glyph_type);
+            }
+        }
+
+        // Nothing above covers this char: ask the OS for a font that does,
+        // load it and attach it.
+        if (mAttemptedFallbackChars.insert(wch).second)
+        {
+            LLFontFallbackMatch match = LLWindow::findFallbackFontForChar(wch);
+            if (!match.mPath.empty() && !hasFallbackPath(match.mPath))
+            {
+                LLPointer<LLFontFreetype> fallback = new LLFontFreetype;
+                if (fallback->loadFace(match.mPath, mPointSize, mVertDPI, mHorzDPI,
+                                       /*weight*/ -1, /*is_fallback*/ true,
+                                       // <FS:Ansariel> Optional tabular numeric font rendering
+                                       //match.mFaceIndex, mHinting, mFontFlags))
+                                       match.mFaceIndex, mHinting, mFontFlags, mTabnum))
+                {
+                    glyph_index = FT_Get_Char_Index(fallback->mFTFace, wch);
+                    if (glyph_index)
+                    {
+                        LL_DEBUGS("Font") << "Lazy OS fallback for U+" << std::hex << (U32)wch << std::dec
+                                          << ": " << match.mPath << " (face " << match.mFaceIndex << ")" << LL_ENDL;
+                        addFallbackFont(fallback, nullptr);
+                        return addGlyphFromFont(fallback, wch, glyph_index, glyph_type);
+                    }
+                    // Matched font doesn't actually cover wch: discard it.
+                }
             }
         }
     }
@@ -783,7 +826,50 @@ void LLFontFreetype::renderGlyph(EFontGlyphType bitmap_type, U32 glyph_index, ll
         llassert_always_msg(FT_Err_Ok == error, message.c_str());
     }
 
-    llassert_always(! FT_Render_Glyph(mFTFace->glyph, gFontRenderMode) );
+    // TODO: Make this more sturdy, make asserts/ll_errs conditional
+    // to non-critical characters.
+    // Temporarily leaving them for data gathering, but unicode chars
+    // like emojis should not cause the app to crash and should either
+    // fallback to some predetermined bitmap or simply return.
+
+    // Verify glyph slot is valid
+    if (!mFTFace->glyph)
+    {
+        LL_ERRS() << "FT_Load_Glyph succeeded but glyph slot is null for wchar " << llformat("U+%xu", U32(wch)) << LL_ENDL;
+        return;
+    }
+
+    // Check if bitmap buffer is already allocated
+    // It can potentially be preallocated for:
+    // 1. SVG/color glyphs rendered by FreeType's SVG_RendererHooks
+    // 2. Embedded bitmap fonts
+    // 3. Some Color emoji that use FT_LOAD_COLOR
+    if (!mFTFace->glyph->bitmap.buffer)
+    {
+        error = FT_Render_Glyph(mFTFace->glyph, gFontRenderMode);
+        if (error != FT_Err_Ok)
+        {
+            std::string render_message = llformat(
+                "Error %d (%s) rendering wchar %u glyph %u: format=%lu, pixel_mode=%d, render_mode=%d",
+                error, FT_Error_String(error), wch, glyph_index,
+                (unsigned long)mFTFace->glyph->format, mFTFace->glyph->bitmap.pixel_mode, gFontRenderMode);
+
+            // Try with FT_RENDER_MODE_NORMAL as fallback
+            if (gFontRenderMode != FT_RENDER_MODE_NORMAL)
+            {
+                LL_WARNS_ONCE() << render_message << LL_ENDL;
+                error = FT_Render_Glyph(mFTFace->glyph, FT_RENDER_MODE_NORMAL);
+                if (error != FT_Err_Ok)
+                {
+                    LL_ERRS() << "Fallback to FT_RENDER_MODE_NORMAL failed. " << render_message << LL_ENDL;
+                }
+            }
+            else
+            {
+                LL_ERRS() << render_message << LL_ENDL;
+            }
+        }
+    }
 
     mRenderGlyphCount++;
 }
@@ -792,8 +878,8 @@ void LLFontFreetype::reset(F32 vert_dpi, F32 horz_dpi)
 {
     resetBitmapCache();
     // <FS:Ansariel> Optional tabular numeric font rendering
-    //loadFace(mName, mPointSize, vert_dpi ,horz_dpi, mWeight, mIsFallback, 0, mHinting, mFontFlags);
-    loadFace(mName, mPointSize, vert_dpi, horz_dpi, mWeight, mIsFallback, 0, mHinting, mFontFlags, mTabnum);
+    //loadFace(mName, mPointSize, vert_dpi ,horz_dpi, mWeight, mIsFallback, mFaceIndex, mHinting, mFontFlags);
+    loadFace(mName, mPointSize, vert_dpi, horz_dpi, mWeight, mIsFallback, mFaceIndex, mHinting, mFontFlags, mTabnum);
     if (!mIsFallback)
     {
         // This is the head of the list - need to rebuild ourself and all fallbacks.

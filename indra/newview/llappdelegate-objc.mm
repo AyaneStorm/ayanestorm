@@ -26,7 +26,7 @@
 
 #import "llappdelegate-objc.h"
 #if defined(LL_BUGSPLAT)
-#include <boost/filesystem.hpp>
+#include <filesystem>
 #include <vector>
 @import CrashReporter;
 @import HockeySDK;
@@ -38,6 +38,8 @@
 #include "llwindowmacosx-objc.h"
 #include "llappviewermacosx-for-objc.h"
 #include <Carbon/Carbon.h> // Used for Text Input Services ("Safe" API - it's supported)
+
+#include "llversioninfovars.h"
 
 // <FS:TJ> Launch new instance option from macOS dock
 #include <unordered_map>
@@ -108,8 +110,12 @@
     {
         // Set up recurring calls to oneFrame (repeating timer with timeout 0)
         // until applicationShouldTerminate.
-        frameTimer = [NSTimer scheduledTimerWithTimeInterval:0.0 target:self
-                              selector:@selector(oneFrame) userInfo:nil repeats:YES];
+        // <FS:TJ> Fix double release on frameTimer
+        //frameTimer = [NSTimer scheduledTimerWithTimeInterval:0.0 target:self
+        //                      selector:@selector(oneFrame) userInfo:nil repeats:YES];
+        frameTimer = [[NSTimer scheduledTimerWithTimeInterval:0.0 target:self
+                              selector:@selector(oneFrame) userInfo:nil repeats:YES] retain];
+        // </FS:TJ>
 
     // <FS:TJ> Launch new instance option from macOS dock
     dispatch_async(dispatch_get_main_queue(), ^{
@@ -198,6 +204,7 @@
         return NSTerminateCancel;
     } else {
         // pumpMainLoop() returned true: it's done. Okay, done with frameTimer.
+        [frameTimer invalidate]; // <FS:TJ/> Fix double release on frameTimer
         [frameTimer release];
         cleanupViewer();
         return NSTerminateNow;
@@ -211,7 +218,7 @@
     {
         // Once pumpMainLoop() reports that we're done, cancel frameTimer:
         // stop the repetitive calls.
-        [frameTimer release];
+        //[frameTimer release]; // <FS:TJ/> Fix double release on frameTimer
         [[LLApplication sharedApplication] terminate:self];
     }
 }
@@ -296,7 +303,7 @@
 
     if(!secondLogPath.empty())
     {
-        boost::filesystem::remove(secondLogPath);
+        std::filesystem::remove(secondLogPath);
     }
     clearDumpLogsDir();
 }
@@ -370,7 +377,7 @@ struct AttachmentInfo
 {
     AttachmentInfo(const std::string& path, const std::string& type):
         pathname(path),
-        basename(boost::filesystem::path(path).filename().string()),
+        basename(std::filesystem::path(path).filename().string()),
         mimetype(type)
     {}
 
@@ -406,7 +413,7 @@ struct AttachmentInfo
     // the log data to a browser, so take this opportunity to rename the file
     // from <base>.crash to <base>_log.txt
     // info[0].basename =
-    //     boost::filesystem::path(info[0].pathname).stem().string() + "_log.txt";
+    //     std::filesystem::path(info[0].pathname).stem().string() + "_log.txt";
     // infos("attachmentsForBugsplatStartupManager attaching log " + info[0].basename);
 
     NSMutableArray *attachments = [[NSMutableArray alloc] init];

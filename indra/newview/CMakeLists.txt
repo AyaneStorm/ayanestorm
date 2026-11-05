@@ -10,6 +10,9 @@ include(Linking)
 include(Boost)
 include(bugsplat)
 include(BuildPackagesInfo)
+# Luau isn't an autobuild package, so stage its license separately.
+file(MAKE_DIRECTORY "${AUTOBUILD_INSTALL_DIR}/LICENSES")
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/luau.txt" "${AUTOBUILD_INSTALL_DIR}/LICENSES/luau.txt" COPYONLY)
 include(BuildVersion)
 include(CMakeCopyIfDifferent)
 include(CubemapToEquirectangularJS)
@@ -49,7 +52,6 @@ include(Velopack)
 include(ViewerMiscLibs)
 #include(ViewerManager) # <FS:Ansariel> Remove VMP
 include(VisualLeakDetector)
-include(VulkanGltf)
 include(ZLIBNG)
 include(LLPrimitive)
 include(Growl)
@@ -85,6 +87,8 @@ if (HAVOK)
    endif()
 endif ()
 
+configure_file(llversioninfovars.h.in llversioninfovars.h @ONLY)
+
 set(viewer_SOURCE_FILES
 # <Add FS includes below this line>
     alfloaterregiontracker.cpp
@@ -98,8 +102,15 @@ set(viewer_SOURCE_FILES
     asconferenceblocklist.cpp
     asfloaterfavoritestreams.cpp
     asfloaterrecentpeople.cpp
+    # <AS:Chanayane> User-defined inventory rules.
+    asinventoryrules.cpp
+    asfloaterinventoryrules.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.cpp
+    # </AS:Chanayane>
+    # <AS:Chanayane> Edit Outfit clothing layer reordering.
+    asoutfitreorder.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.cpp
@@ -156,6 +167,9 @@ set(viewer_SOURCE_FILES
     aspanelprefsayanestorm.cpp
     asstreamkeeper.cpp
     asvolumetriclighting.cpp
+    # <AS:Chanayane> World-fixed clouds (Exact volumetric).
+    asworldclouds.cpp
+    # </AS:Chanayane>
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.cpp
     aslightrigrenderer.cpp
@@ -190,6 +204,9 @@ set(viewer_SOURCE_FILES
     asavboit.cpp
     asmacoit.cpp
     asoitdispatcher.cpp
+    asoitshaderloader.cpp
+    asgraphicslevelapply.cpp
+    asshaderreload.cpp
     asexactoit.cpp
     fsexportperms.cpp
     fsfloateraddtocontactset.cpp
@@ -240,7 +257,6 @@ set(viewer_SOURCE_FILES
     fsnearbychatcontrol.cpp
     fsnearbychathub.cpp
     fsnearbychatvoicemonitor.cpp
-    fsnewitemctrl.cpp
     fspanelblocklist.cpp
     fspanelcontactsets.cpp
     fspanelface.cpp
@@ -398,7 +414,6 @@ set(viewer_SOURCE_FILES
     llfloaterabout.cpp
     llfloateravatarwelcomepack.cpp
     llfloaterbvhpreview.cpp
-    llfloateraddpaymentmethod.cpp
     llfloaterauction.cpp
     llfloaterautoreplacesettings.cpp
     llfloateravatarpicker.cpp
@@ -442,6 +457,7 @@ set(viewer_SOURCE_FILES
     llfloaterfonttest.cpp
     llfloaterforgetuser.cpp
     llfloatergesture.cpp
+    llfloatergestureautocompletepicker.cpp
     llfloatergltfasseteditor.cpp
     llfloatergodtools.cpp
     llfloatergotoline.cpp
@@ -452,7 +468,6 @@ set(viewer_SOURCE_FILES
     llfloaterhandler.cpp
     llfloaterhelpbrowser.cpp
     llfloaterhoverheight.cpp
-    llfloaterhowto.cpp
     llfloaterhud.cpp
     llfloaterimagepreview.cpp
     llfloaterimsessiontab.cpp
@@ -469,6 +484,7 @@ set(viewer_SOURCE_FILES
     llfloaterloadprefpreset.cpp
     llfloatermarketplacelistings.cpp
     llfloatermap.cpp
+    llfloatermaturitydialog.cpp
     llfloatermediasettings.cpp
     llfloatermemleak.cpp
     llfloatermodelpreview.cpp
@@ -507,6 +523,7 @@ set(viewer_SOURCE_FILES
     llfloatersceneloadstats.cpp
     llfloaterscriptdebug.cpp
     llfloaterscriptedprefs.cpp
+    llfloaterscripting.cpp
     llfloaterscriptlimits.cpp
     llfloaterscriptrecover.cpp
     llfloatersearch.cpp
@@ -745,6 +762,7 @@ set(viewer_SOURCE_FILES
     llpathfindingobjectlist.cpp
     llpathfindingpathtool.cpp
     llpbrterrainfeatures.cpp
+    llperfstats.cpp
     llpersistentnotificationstorage.cpp
     llphysicsmotion.cpp
     llphysicsshapebuilderutil.cpp
@@ -758,6 +776,7 @@ set(viewer_SOURCE_FILES
     llpreview.cpp
     llpreviewanim.cpp
     llpreviewgesture.cpp
+    llpublishedobjectmgr.cpp
     llpreviewnotecard.cpp
     llpreviewscript.cpp
     llpreviewsound.cpp
@@ -777,6 +796,7 @@ set(viewer_SOURCE_FILES
     llsceneview.cpp
     llscreenchannel.cpp
     llscripteditor.cpp
+    llscripteditorws.cpp
     llscriptfloater.cpp
     llscrollingpanelparam.cpp
     llscrollingpanelparambase.cpp
@@ -940,7 +960,6 @@ set(viewer_SOURCE_FILES
     llvoicechannel.cpp
     llvoiceclient.cpp
     llvoicevisualizer.cpp
-    llvoicewebrtc.cpp
     llvoinventorylistener.cpp
     llvopartgroup.cpp
     llvosky.cpp
@@ -1043,8 +1062,15 @@ set(viewer_HEADER_FILES
     asconferenceblocklist.h
     asfloaterfavoritestreams.h
     asfloaterrecentpeople.h
+    # <AS:Chanayane> User-defined inventory rules.
+    asinventoryrules.h
+    asfloaterinventoryrules.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Optional nearby-chat range population counter.
     asnearbychatrangecounter.h
+    # </AS:Chanayane>
+    # <AS:Chanayane> Edit Outfit clothing layer reordering.
+    asoutfitreorder.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local photographic color grading.
     ascolorslider.h
@@ -1101,6 +1127,9 @@ set(viewer_HEADER_FILES
     aspanelprefsayanestorm.h
     asstreamkeeper.h
     asvolumetriclighting.h
+    # <AS:Chanayane> World-fixed clouds (Exact volumetric).
+    asworldclouds.h
+    # </AS:Chanayane>
     # <AS:Chanayane> Self-lighting floater (viewer-local photography lights).
     aslightrig.h
     aslightrigrenderer.h
@@ -1137,6 +1166,9 @@ set(viewer_HEADER_FILES
     asavboit.h
     asmacoit.h
     asoitdispatcher.h
+    asoitshaderloader.h
+    asgraphicslevelapply.h
+    asshaderreload.h
     asexactoit.h
     fsexportperms.h
     fsfloateraddtocontactset.h
@@ -1179,6 +1211,7 @@ set(viewer_HEADER_FILES
     fslslbridge.h
     fslslbridgerequest.h
     fslslpreproc.h
+    fslslpreprocpath.h # <FS:Beq> Extended non-ASCII path test coverage. </FS:Beq>
     fslslpreprocviewer.h
     fsmoneytracker.h
     fsmaniprotatejoint.h
@@ -1188,7 +1221,6 @@ set(viewer_HEADER_FILES
     fsnearbychatcontrol.h
     fsnearbychathub.h
     fsnearbychatvoicemonitor.h
-    fsnewitemctrl.h
     fspanelblocklist.h
     fspanelcontactsets.h
     fspanelface.h
@@ -1349,7 +1381,6 @@ set(viewer_HEADER_FILES
     llfloaterabout.h
     llfloateravatarwelcomepack.h
     llfloaterbvhpreview.h
-    llfloateraddpaymentmethod.h
     llfloaterauction.h
     llfloaterautoreplacesettings.h
     llfloateravatarpicker.h
@@ -1393,6 +1424,7 @@ set(viewer_HEADER_FILES
     llfloaterfonttest.h
     llfloaterforgetuser.h
     llfloatergesture.h
+    llfloatergestureautocompletepicker.h
     llfloatergltfasseteditor.h
     llfloatergodtools.h
     llfloatergotoline.h
@@ -1403,7 +1435,6 @@ set(viewer_HEADER_FILES
     llfloaterhandler.h
     llfloaterhelpbrowser.h
     llfloaterhoverheight.h
-    llfloaterhowto.h
     llfloaterhud.h
     llfloaterimagepreview.h
     llfloaterimnearbychat.h
@@ -1424,6 +1455,7 @@ set(viewer_HEADER_FILES
     llfloatermap.h
     llfloatermarketplace.h
     llfloatermarketplacelistings.h
+    llfloatermaturitydialog.h
     llfloatermediasettings.h
     llfloatermemleak.h
     llfloatermodelpreview.h
@@ -1462,6 +1494,7 @@ set(viewer_HEADER_FILES
     llfloatersceneloadstats.h
     llfloaterscriptdebug.h
     llfloaterscriptedprefs.h
+    llfloaterscripting.h
     llfloaterscriptlimits.h
     llfloaterscriptrecover.h
     llfloatersearch.h
@@ -1683,6 +1716,7 @@ set(viewer_HEADER_FILES
     llpathfindingobject.h
     llpathfindingobjectlist.h
     llpathfindingpathtool.h
+    llperfstats.h
     llpbrterrainfeatures.h
     llpersistentnotificationstorage.h
     llphysicsmotion.h
@@ -1697,6 +1731,7 @@ set(viewer_HEADER_FILES
     llpreview.h
     llpreviewanim.h
     llpreviewgesture.h
+    llpublishedobjectmgr.h
     llpreviewnotecard.h
     llpreviewscript.h
     llpreviewsound.h
@@ -1717,6 +1752,7 @@ set(viewer_HEADER_FILES
     llsceneview.h
     llscreenchannel.h
     llscripteditor.h
+    llscripteditorws.h
     llscriptfloater.h
     llscriptruntimeperms.h
     llscrollingpanelparam.h
@@ -1883,7 +1919,6 @@ set(viewer_HEADER_FILES
     llvoicechannel.h
     llvoiceclient.h
     llvoicevisualizer.h
-    llvoicewebrtc.h
     llvoinventorylistener.h
     llvopartgroup.h
     llvosky.h
@@ -1933,8 +1968,6 @@ set(viewer_HEADER_FILES
     sanitycheck.h
     streamtitledisplay.h
     utilitybar.h
-    VertexCache.h
-    VorbisFramework.h
     NACLantispam.h
     NACLfloaterexploresounds.h
     )
@@ -1946,9 +1979,6 @@ if (OPENSIM)
         )
 endif ()
 # </FS:TJ>
-
-  list(APPEND viewer_SOURCE_FILES llperfstats.cpp)
-  list(APPEND viewer_HEADER_FILES llperfstats.h)
 
 # <FS:Ansariel> Group GLTF files into their subfolders
 set(viewer_GLTF_HEADER_FILES
@@ -1973,7 +2003,7 @@ if (USE_BUGSPLAT)
         )
 endif (USE_BUGSPLAT)
 
-# <FS:Ansariel> Flickr / Discord keys and fsversionvalues headers are generated in here
+# <FS:Ansariel> Flickr / Discord keys headers are generated in here
 include_directories( ${CMAKE_CURRENT_BINARY_DIR} )
 
 # <exodus>
@@ -1997,15 +2027,6 @@ LIST(APPEND viewer_HEADER_FILES fsfloaterdiscord.h fsdiscordconnect.h)
 LIST(APPEND viewer_SOURCE_FILES fsfloaterdiscord.cpp fsdiscordconnect.cpp)
 #</FS:LO>
 
-# <FS:TS> Generate the version information header file.
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/fsversionvalues.h.in
-    ${CMAKE_CURRENT_BINARY_DIR}/fsversionvalues.h
-    @ONLY
-)
-list(APPEND viewer_HEADER_FILES ${CMAKE_CURRENT_BINARY_DIR}/fsversionvalues.h)
-# </FS:TS>
-
 source_group("CMake Rules" FILES ViewerInstall.cmake)
 
 #build_data.json creation moved to viewer_manifest.py MAINT-6413
@@ -2013,15 +2034,10 @@ source_group("CMake Rules" FILES ViewerInstall.cmake)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/viewer_version.txt"
            "${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}\n")
 
-set_source_files_properties(
-   llversioninfo.cpp tests/llversioninfo_test.cpp
-   PROPERTIES
-# <FS:TS> The next line causes a full rebuild of the entire newview
-#         directory every time the Mercurial revision number changes.
-#         Instead of doing that, we use the configure tool to build
-#         fsversionstrings.h with the right numbers in it.
-#   COMPILE_DEFINITIONS "${VIEWER_CHANNEL_VERSION_DEFINES}" # see BuildVersion.cmake
-   )
+if (NOT DISABLE_WEBRTC)
+  LIST(APPEND viewer_SOURCE_FILES llvoicewebrtc.cpp)
+  LIST(APPEND viewer_HEADER_FILES llvoicewebrtc.h)
+endif()
 
 if (DARWIN)
   LIST(APPEND viewer_SOURCE_FILES llappviewermacosx.cpp)
@@ -2050,7 +2066,6 @@ if (DARWIN)
     llappdelegate-objc.mm
     PROPERTIES
     SKIP_PRECOMPILE_HEADERS TRUE
-    COMPILE_DEFINITIONS "${VIEWER_CHANNEL_VERSION_DEFINES}"
     # BugsplatMac is a module, imported with @import. That language feature
     # demands these -f switches.
     # Xcode 10.2 requires that Objective-C++ headers declare nullability of
@@ -2089,24 +2104,44 @@ if (DARWIN)
   list(APPEND viewer_SOURCE_FILES ${viewer_RESOURCE_FILES})
 endif (DARWIN)
 
+# Platform-specific files for IDE visibility (excluded from build on other platforms)
+set(macosx_viewer_SOURCE_FILES
+    llappviewermacosx.cpp
+    llappviewermacosx-objc.mm
+    llfilepicker_mac.mm
+    llappdelegate-objc.mm
+    )
+
+set(macosx_viewer_HEADER_FILES
+    llappviewermacosx.h
+    llappviewermacosx-objc.h
+    llfilepicker_mac.h
+    )
+
+set(linux_viewer_SOURCE_FILES
+    llappviewerlinux.cpp
+    )
+
+set(linux_viewer_HEADER_FILES
+    )
+
+set(windows_viewer_SOURCE_FILES
+    llappviewerwin32.cpp
+    llwindebug.cpp
+    )
+
+set(windows_viewer_HEADER_FILES
+    llappviewerwin32.h
+    llwindebug.h
+    )
+
 if (LINUX)
     LIST(APPEND viewer_SOURCE_FILES llappviewerlinux.cpp)
-    set_source_files_properties(
-      llappviewerlinux.cpp
-      PROPERTIES
-# <FS:TS> The next line causes a full rebuild of the entire newview
-#         directory every time the Mercurial revision number changes.
-#         Instead of doing that, we use the configure tool to build
-#         fsversionstrings.h with the right numbers in it.
-#      COMPILE_DEFINITIONS "${VIEWER_CHANNEL_VERSION_DEFINES}"
-      )
+
 # [FS] Growl support
     LIST(APPEND viewer_HEADER_FILES desktopnotifierlinux.h growlmanager.h)
     LIST(APPEND viewer_SOURCE_FILES desktopnotifierlinux.cpp growlmanager.cpp)
 # [FS] Growl support
-
-    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--as-needed")
-
 
     # <FS:ND> Enable user to create a ctags database via using -DND_CTAGS=On
     if( ND_CTAGS )
@@ -2157,12 +2192,6 @@ if (WINDOWS)
          llvelopack.cpp
          llwindebug.cpp
          )
-    set_source_files_properties(
-      llappviewerwin32.cpp
-      llvelopack.cpp
-      PROPERTIES
-      COMPILE_DEFINITIONS "${VIEWER_CHANNEL_VERSION_DEFINES}"
-      )
 
     set_source_files_properties( llappviewer.cpp llviewermenu.cpp PROPERTIES COMPILE_FLAGS /bigobj )
 
@@ -2317,6 +2346,45 @@ if (WINDOWS)
 
 endif (WINDOWS)
 
+# Add all platform-specific files to the target for IDE visibility
+# Collect non-platform files for IDE visibility only
+set(ide_visibility_files "")
+if (NOT DARWIN)
+  list(APPEND ide_visibility_files ${macosx_viewer_SOURCE_FILES} ${macosx_viewer_HEADER_FILES})
+endif()
+if (NOT LINUX)
+  list(APPEND ide_visibility_files ${linux_viewer_SOURCE_FILES} ${linux_viewer_HEADER_FILES})
+endif()
+if (NOT WINDOWS)
+  list(APPEND ide_visibility_files ${windows_viewer_SOURCE_FILES} ${windows_viewer_HEADER_FILES})
+endif()
+
+list(APPEND viewer_SOURCE_FILES ${ide_visibility_files})
+
+# Mark non-platform files as excluded from build
+if (WINDOWS)
+  set_source_files_properties(
+    ${macosx_viewer_SOURCE_FILES}
+    ${linux_viewer_SOURCE_FILES}
+    PROPERTIES
+    HEADER_FILE_ONLY TRUE
+    )
+elseif (DARWIN)
+  set_source_files_properties(
+    ${windows_viewer_SOURCE_FILES}
+    ${linux_viewer_SOURCE_FILES}
+    PROPERTIES
+    HEADER_FILE_ONLY TRUE
+    )
+elseif (LINUX)
+  set_source_files_properties(
+    ${macosx_viewer_SOURCE_FILES}
+    ${windows_viewer_SOURCE_FILES}
+    PROPERTIES
+    HEADER_FILE_ONLY TRUE
+    )
+endif()
+
 # Add the xui files. This is handy for searching for xui elements
 # from within the IDE.
 file(GLOB_RECURSE viewer_XUI_FILES LIST_DIRECTORIES FALSE
@@ -2334,7 +2402,8 @@ set_source_files_properties(${viewer_SHADER_FILES}
                             PROPERTIES HEADER_FILE_ONLY TRUE)
 list(APPEND viewer_SOURCE_FILES ${viewer_SHADER_FILES})
 
-
+# note that the scripts which publish these files are sensitive to the file 
+# extensions. Be cautious about adding new file types here.
 set(viewer_APPSETTINGS_FILES
     app_settings/anim.ini
     app_settings/autoreplace.xml
@@ -2351,7 +2420,6 @@ set(viewer_APPSETTINGS_FILES
     app_settings/ignorable_dialogs.xml
     app_settings/key_bindings.xml
     app_settings/keywords.ini
-    app_settings/keywords_lsl_default.xml
     app_settings/logcontrol.xml
     app_settings/posestand.xml
     app_settings/quick_preferences.xml
@@ -2405,6 +2473,15 @@ set_source_files_properties(${viewer_CHARACTER_FILES}
                             PROPERTIES HEADER_FILE_ONLY TRUE)
 list(APPEND viewer_SOURCE_FILES ${viewer_CHARACTER_FILES})
 
+set(viewer_MISC_FILES
+    viewer_manifest.py
+    )
+
+set_source_files_properties(${viewer_MISC_FILES}
+                            PROPERTIES HEADER_FILE_ONLY TRUE)
+
+list(APPEND viewer_SOURCE_FILES ${viewer_MISC_FILES})
+
 # <FS:Ansariel> Add Firestorm folders
 file(GLOB viewer_FONT_FILES fonts/*.xml)
 source_group("Fonts" FILES ${viewer_FONT_FILES})
@@ -2444,16 +2521,6 @@ if (WINDOWS)
   list(APPEND viewer_SOURCE_FILES ${viewer_INSTALLER_FILES})
 endif (WINDOWS)
 
-if( DEFINED LLSTARTUP_COMPILE_FLAGS )
-   # progress view disables/enables icons based on available packages
-   set_source_files_properties(llprogressview.cpp PROPERTIES COMPILE_FLAGS "${LLSTARTUP_COMPILE_FLAGS}")
-
-   set_source_files_properties(llstartup.cpp PROPERTIES COMPILE_FLAGS "${LLSTARTUP_COMPILE_FLAGS}")
-  # <FS:Ansariel> Output device selection
-  set_source_files_properties(llfloaterpreference.cpp PROPERTIES COMPILE_FLAGS "${LLSTARTUP_COMPILE_FLAGS}")
-  # </FS:Ansariel>
-endif()
-
 list(APPEND viewer_SOURCE_FILES ${viewer_HEADER_FILES})
 
 add_executable(${VIEWER_BINARY_NAME}
@@ -2461,6 +2528,8 @@ add_executable(${VIEWER_BINARY_NAME}
     MACOSX_BUNDLE
     ${viewer_SOURCE_FILES}
     )
+
+target_include_directories(${VIEWER_BINARY_NAME} PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
 
 # add package files
 file(GLOB EVENT_HOST_SCRIPT_GLOB_LIST
@@ -2751,11 +2820,13 @@ elseif (DARWIN)
       target_link_libraries(${VIEWER_BINARY_NAME} llphysicsextensionsos)
     endif()
 else (WINDOWS)
-        # Linux
-    set_target_properties(${VIEWER_BINARY_NAME}
-        PROPERTIES
-        LINK_FLAGS_RELEASE "${LINK_FLAGS_RELEASE} -Wl,--Map=${VIEWER_BINARY_NAME}.MAP"
-        )
+    if (HAVOK OR HAVOK_TPV)
+    	# Linux
+    	set_target_properties(${VIEWER_BINARY_NAME}
+        	PROPERTIES
+        	LINK_FLAGS_RELEASE "${LINK_FLAGS_RELEASE} -no-pie -Wl,--Map=${VIEWER_BINARY_NAME}.MAP"
+        	)
+    endif ()
 endif (WINDOWS)
 
 # *NOTE: - this list is very sensitive to ordering, test carefully on all
@@ -2803,7 +2874,6 @@ target_link_libraries(${VIEWER_BINARY_NAME}
         llcorehttp
         llcommon
         llmeshoptimizer
-        llwebrtc
         lllogin
         llprimitive
         llappearance
@@ -2816,8 +2886,12 @@ target_link_libraries(${VIEWER_BINARY_NAME}
         fs::discord # <FS:Ansariel> Discord  support
         )
 
+if (NOT DISABLE_WEBRTC)
+    target_link_libraries(${VIEWER_BINARY_NAME} llwebrtc )
+endif()
+
 if (USE_DISCORD)
-   target_link_libraries(${VIEWER_BINARY_NAME} ll::discord_sdk )
+    target_link_libraries(${VIEWER_BINARY_NAME} ll::discord_sdk )
 endif ()
 
 if (TARGET ll::velopack)
@@ -2825,7 +2899,7 @@ if (TARGET ll::velopack)
 endif ()
 
 if( TARGET ll::intel_memops )
-   target_link_libraries(${VIEWER_BINARY_NAME} ll::intel_memops )
+    target_link_libraries(${VIEWER_BINARY_NAME} ll::intel_memops )
 endif()
 
 if (USE_BUGSPLAT)
@@ -2841,7 +2915,7 @@ endif (WINDOWS OR DARWIN)
 # </FS:Ansariel>
 
 if( TARGET ll::nvapi )
-   target_link_libraries(${VIEWER_BINARY_NAME} ll::nvapi )
+    target_link_libraries(${VIEWER_BINARY_NAME} ll::nvapi )
 endif()
 
 if ( TARGET llconvexdecomposition )
@@ -2897,12 +2971,12 @@ if (LINUX)
     SLPlugin
     media_plugin_cef
     media_plugin_gstreamer10
-    llcommon
+    media_plugin_libvlc
+    media_plugin_example
+    llwebrtc
     linux-crash-logger
     )
 
-  add_dependencies(${VIEWER_BINARY_NAME} SLPlugin media_plugin_gstreamer10 media_plugin_cef linux-crash-logger)
-  
   add_custom_command(
       OUTPUT ${product}.tar.xz
       COMMAND ${PYTHON_EXECUTABLE}
@@ -2915,7 +2989,7 @@ if (LINUX)
         "--fmodstudio=${USE_FMODSTUDIO}"
         "--openal=${USE_OPENAL}"
         "--tracy=${USE_TRACY}"
-        "--avx2=${USE_AVX2_OPTIMIZATION}"        
+        "--avx2=${USE_AVX2_OPTIMIZATION}"
         --build=${CMAKE_CURRENT_BINARY_DIR}
         --buildtype=${CMAKE_BUILD_TYPE}
         "--channel=${VIEWER_CHANNEL}"
@@ -2944,7 +3018,7 @@ if (LINUX)
       "--fmodstudio=${USE_FMODSTUDIO}"
       "--openal=${USE_OPENAL}"
       "--tracy=${USE_TRACY}"
-      "--avx2=${USE_AVX2_OPTIMIZATION}"      
+      "--avx2=${USE_AVX2_OPTIMIZATION}"
       --build=${CMAKE_CURRENT_BINARY_DIR}
       --buildtype=${CMAKE_BUILD_TYPE}
       "--channel=${VIEWER_CHANNEL}"
@@ -3192,7 +3266,7 @@ if (LL_TESTS)
     lldateutil.cpp
 #    llmediadataclient.cpp
     lllogininstance.cpp
-#    llremoteparcelrequest.cpp
+    llremoteparcelrequest.cpp
     llviewerhelputil.cpp
     llversioninfo.cpp
 #    llvocache.cpp
@@ -3217,31 +3291,50 @@ if (LL_TESTS)
 #  )
 
   set(test_libs
-          llcommon
-          llfilesystem
-          llxml
-          llmessage
-          llcharacter
-          llui
-          lllogin
-          llplugin
-          llappearance
-    )
+    llfilesystem
+    llmath
+    llcommon
+    llmessage
+    llcorehttp
+    llxml
+    llui
+    llplugin
+    llappearance
+    llprimitive
+    lllogin
+  )
 
-  set_source_files_properties(
+  # <FS:Beq> Fixtures need viewer header paths, but the real UI/appearance/login
+  # implementations belong to the viewer. Linking them into standalone tests
+  # pulls in RLVa callbacks and settings services already supplied by fixtures.
+  set(test_header_libs ${test_libs})
+  list(REMOVE_ITEM test_libs llui llplugin llappearance llprimitive lllogin)
+  # </FS:Beq>
+
+  set_property(SOURCE
+    ${viewer_TEST_SOURCE_FILES}
+    PROPERTY
+    LL_TEST_ADDITIONAL_LIBRARIES 
+    ${test_libs}
+  )
+
+  # <FS:Beq> These unit tests provide their own viewer/UI/message-service doubles.
+  # Linking the real service libraries duplicates those definitions under LTO
+  # and brings the viewer-owned RLVa name service into otherwise isolated tests.
+  set_property(SOURCE
+    lllogininstance.cpp
+    llremoteparcelrequest.cpp
+    llviewerhelputil.cpp
     llworldmap.cpp
     llworldmipmap.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES 
-    tests/llviewertexture_stub.cpp
-    #llviewertexturelist.cpp
-  )
-
-  set_source_files_properties(
-    llmediadataclient.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_LIBRARIES "${test_libs}"
-  )
+    PROPERTY LL_TEST_ADDITIONAL_LIBRARIES "")
+  # Parcel lookup uses the real coroutine HTTP adapter, but mocks legacy
+  # message-system and UI entry points. Do not bring llui into this link.
+  # Repeat llmessage after llcorehttp to resolve the HTTP adapter's LLProxy
+  # references when linking static archives (also used by the SL grid tests).
+  set_property(SOURCE llremoteparcelrequest.cpp PROPERTY
+    LL_TEST_ADDITIONAL_LIBRARIES llmessage llcorehttp llmessage)
+  # </FS:Beq>
 
   set_source_files_properties(
     llworldmap.cpp
@@ -3252,68 +3345,77 @@ if (LL_TESTS)
   )
 
   set_source_files_properties(
-    llmediadataclient.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_LIBRARIES llprimitive
-  )
-
-  set_source_files_properties(
     lllogininstance.cpp
     PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES llversioninfo.cpp
-  )
-
-  set_property( SOURCE
-          ${viewer_TEST_SOURCE_FILES}
-          PROPERTY
-          LL_TEST_ADDITIONAL_LIBRARIES ${test_libs}
+    LL_TEST_ADDITIONAL_SOURCE_FILES
+    llversioninfo.cpp
   )
 
   LL_ADD_PROJECT_UNIT_TESTS(${VIEWER_BINARY_NAME} "${viewer_TEST_SOURCE_FILES}")
 
   #set(TEST_DEBUG on)
-
-  set(test_libs
-          llfilesystem
-          llmath
-          llcommon
-          llmessage
-          llcorehttp
-          llxml
-          llui
-          llplugin
-          llappearance
-          lllogin
-          llprimitive
-          lllogin
-          )
-
   LL_ADD_INTEGRATION_TEST(cppfeatures
     ""
     "${test_libs}"
-    )
+  )
+  # <FS:Beq> Extended non-ASCII path test coverage for the production LSL basename helper.
+  LL_ADD_INTEGRATION_TEST(fslslpreprocpath "" "llcommon")
+  set_tests_properties(INTEGRATION_TEST_RUNNER_fslslpreprocpath PROPERTIES TIMEOUT 30 LABELS "nonascii")
+  # </FS:Beq>
 
   LL_ADD_INTEGRATION_TEST(llsechandler_basic
     llsechandler_basic.cpp
-    "${test_libs}"
-    )
+    "llfilesystem;llxml;llmessage;ll::openssl" # <FS:Beq/> Use the real XOR cipher; settings/credentials are mocked. Do not link llui.
+  )
 
   LL_ADD_INTEGRATION_TEST(llsecapi
-     llsecapi.cpp
-    "${test_libs}"
-    )
+    llsecapi.cpp
+    "llcommon;ll::openssl" # <FS:Beq/> Settings/handler are mocked; initialization uses real OpenSSL.
+  )
+  # <FS:Beq> Exercise the appropriate SLURL implementation with offline OpenSim fixtures.
+  # if (NOT OPENSIM)#<FS:AW optional opensim support>
+  #   set(llslurl_test_sources
+  #       llslurl.cpp
+  #       llviewernetwork.cpp
+  #   )
+  # endif (NOT OPENSIM)#<FS:AW optional opensim support>
+  #
+  # set(llslurl_test_sources
+  #   llslurl.cpp
+  #   llviewernetwork.cpp
+  # )
+  #
+  # LL_ADD_INTEGRATION_TEST(llslurl
+  #   "${llslurl_test_sources}"
+  #   "${test_libs}"
+  # )
   if (NOT OPENSIM)#<FS:AW optional opensim support>
     set(llslurl_test_sources
         llslurl.cpp
         llviewernetwork.cpp
     )
+    LL_ADD_INTEGRATION_TEST(llslurl
+      "${llslurl_test_sources}"
+      "llfilesystem;llmessage;llcorehttp;llmessage;llxml"
+    )
+  else ()
+    # Exercise the production Firestorm implementations using offline viewer
+    # service boundaries and a fake HTTP transport.
+    set(opensim_grid_test_sources
+      fsgridhandler.cpp
+      tests/opensim_test_support.cpp
+    )
+    # <FS:Beq> Grid selection uses the real material table, and the login-state
+    # fixture owns a login pointer whose destructor is supplied by lllogin.
+    set(opensim_grid_test_libs ${test_libs} llprimitive lllogin)
+    # </FS:Beq>
+    LL_ADD_INTEGRATION_TEST(fsslurl
+      "fsslurl.cpp;${opensim_grid_test_sources}"
+      "${opensim_grid_test_libs}"
+    )
+    target_include_directories(INTEGRATION_TEST_fsslurl PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   endif (NOT OPENSIM)#<FS:AW optional opensim support>
-
-# RLVa - incompatible
-#  LL_ADD_INTEGRATION_TEST(llslurl
-#     "${llslurl_test_sources}"
-#    "${test_libs}"
-#    )
+  # </FS:Beq>
 
   set(llviewercontrollistener_test_sources
     llviewercontrollistener.cpp
@@ -3321,31 +3423,63 @@ if (LL_TESTS)
     ../llxml/llxmltree.cpp
     ../llxml/llxmlparser.cpp
     ../llcommon/commoncontrol.cpp
-    )
+  )
 
   LL_ADD_INTEGRATION_TEST(llviewercontrollistener
     "${llviewercontrollistener_test_sources}"
     "${test_libs}"
-    )
+  )
 
-  LL_ADD_INTEGRATION_TEST(llviewernetwork
-     llviewernetwork.cpp
-    "${test_libs}"
+  # <FS:Beq> Test the production grid manager for each build configuration.
+  # LL_ADD_INTEGRATION_TEST(llviewernetwork
+  #   llviewernetwork.cpp
+  #   "${test_libs}"
+  # )
+  if (NOT OPENSIM)
+    LL_ADD_INTEGRATION_TEST(llviewernetwork
+      llviewernetwork.cpp
+      "llfilesystem;llmessage;llcorehttp;llmessage;llxml"
     )
+  else ()
+    LL_ADD_INTEGRATION_TEST(fsgridhandler
+      "${opensim_grid_test_sources}"
+      "${opensim_grid_test_libs}"
+    )
+    target_include_directories(INTEGRATION_TEST_fsgridhandler PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  endif ()
+  # </FS:Beq>
 
   LL_ADD_INTEGRATION_TEST(llviewerassetstats
     llviewerassetstats.cpp
     "${test_libs}"
-    )
+  )
 
-# LL_ADD_INTEGRATION_TEST(llhttpretrypolicy "llhttpretrypolicy.cpp" "${test_libs}")
+  LL_ADD_INTEGRATION_TEST(llhttpretrypolicy "llhttpretrypolicy.cpp" "${test_libs}")
+  LL_ADD_INTEGRATION_TEST(lltexturematrix "" "${test_libs}") # </FS:Beq> Texture-animation matrix lifetime regression coverage.
 
-  #ADD_VIEWER_BUILD_TEST(llmemoryview viewer)
-  #ADD_VIEWER_BUILD_TEST(llagentaccess viewer)
-  #ADD_VIEWER_BUILD_TEST(lltextureinfo viewer)
-  #ADD_VIEWER_BUILD_TEST(lltextureinfodetails viewer)
+  set(lltextureinfo_test_sources
+    lltextureinfo.cpp
+    ../llxml/llcontrol.cpp
+    ../llxml/llxmltree.cpp
+    ../llxml/llxmlparser.cpp
+    ../llcommon/commoncontrol.cpp
+  )
+  LL_ADD_INTEGRATION_TEST(lltextureinfo "${lltextureinfo_test_sources}" "${test_libs}")
+  #LL_ADD_INTEGRATION_TEST(lltextureinfodetails "" "${test_libs}") test cases currently empty
 
-
+  # <FS:Beq> Supply headers independently of link dependencies to every viewer
+  # test, including newly added fixtures. No viewer-owned service is linked
+  # solely to make its include directories available.
+  get_property(viewer_test_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+  foreach(viewer_test IN LISTS viewer_test_targets)
+    if(viewer_test MATCHES "^(PROJECT_.*_TEST_|INTEGRATION_TEST_)")
+      foreach(test_library IN LISTS test_header_libs)
+        target_include_directories(${viewer_test} PRIVATE
+          "$<TARGET_PROPERTY:${test_library},INTERFACE_INCLUDE_DIRECTORIES>")
+      endforeach()
+    endif()
+  endforeach()
+  # </FS:Beq>
 endif (LL_TESTS)
 
 check_message_template(${VIEWER_BINARY_NAME})

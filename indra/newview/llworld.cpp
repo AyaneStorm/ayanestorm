@@ -103,12 +103,41 @@ F32 LLWorld::mWidthInMeters = mWidth * mScale;
 
 // allocate the stack
 LLWorld::LLWorld() :
+    // <AW: opensim-limits>
+    mRegionMaxHeight(SL_MAX_OBJECT_Z),
+    mRegionMinPrimScale(SL_MIN_PRIM_SCALE),
+    mRegionMaxPrimScale(SL_DEFAULT_MAX_PRIM_SCALE),
+    mRegionMaxPrimScaleNoMesh(SL_DEFAULT_MAX_PRIM_SCALE_NO_MESH),
+    mRegionMaxHollowSize(SL_OBJECT_MAX_HOLLOW_SIZE),
+    mRegionMinHoleSize(SL_OBJECT_MIN_HOLE_SIZE),
+    mMaxLinkedPrims(MAX_CHILDREN_PER_TASK),
+    mMaxPhysLinkedPrims(MAX_CHILDREN_PER_PHYSICAL_TASK),
+    mMaxInventoryItemsTransfer(42),
+    mAllowRenderName(2),
+    mAllowMinimap(true),
+    mAllowPhysicalPrims(true),
+    mAllowRenderWater(true),
+    mMaxPrimXPos(256.f),
+    mMaxPrimYPos(256.f),
+    mMaxPrimZPos(SL_MAX_OBJECT_Z),
+    mMinPrimXPos(0.f),
+    mMinPrimYPos(0.f),
+    mMinPrimZPos(SL_MIN_OBJECT_Z),
+    mMaxDragDistance(10000.f),
+    mMaxPhysPrimScale(SL_DEFAULT_MAX_PRIM_SCALE),
+    mAllowParcelWindLight(false),
+    mEnableTeenMode(false),
+    mEnforceMaxBuild(false),
+    mLockedDrawDistance(false),
+    mDrawDistance(-1.f),
+    mTerrainDetailScale(-1.f),
+    mLimitsNeedRefresh(true),
+    // </AW: opensim-limits>
     mLandFarClip(DEFAULT_FAR_PLANE),
     mLastPacketsIn(0),
     mLastPacketsOut(0),
     mLastPacketsLost(0),
-    mSpaceTimeUSec(0),
-    mLimitsNeedRefresh(true)// <AW: opensim-limits>
+    mSpaceTimeUSec(0)
 {
     for (S32 i = 0; i < EDGE_WATER_OBJECTS_COUNT; i++)
     {
@@ -1233,10 +1262,10 @@ void LLWorld::updateNetStats()
 
     S32 packets_in = gMessageSystem->mPacketsIn - mLastPacketsIn;
     S32 packets_out = gMessageSystem->mPacketsOut - mLastPacketsOut;
-    S32 packets_lost = gMessageSystem->mDroppedPackets - mLastPacketsLost;
+    S32 packets_lost = gMessageSystem->mLostPackets - mLastPacketsLost;
 
-    F64Bits actual_in_bits(gMessageSystem->mPacketRing.getAndResetActualInBits());
-    F64Bits actual_out_bits(gMessageSystem->mPacketRing.getAndResetActualOutBits());
+    F64Bits actual_in_bits(gMessageSystem->getAndResetActualInBits());
+    F64Bits actual_out_bits(gMessageSystem->getAndResetActualOutBits());
 
     add(LLStatViewer::MESSAGE_SYSTEM_DATA_IN, actual_in_bits);
     add(LLStatViewer::MESSAGE_SYSTEM_DATA_OUT, actual_out_bits);
@@ -1245,16 +1274,17 @@ void LLWorld::updateNetStats()
     add(LLStatViewer::PACKETS_OUT, packets_out);
     add(LLStatViewer::PACKETS_LOST, packets_lost);
 
-    F32 total_packets_in = (F32)LLViewerStats::instance().getRecording().getSum(LLStatViewer::PACKETS_IN);
+    LLTrace::Recording& recording = LLViewerStats::instance().getRecording();
+    F32 total_packets_in = (F32)recording.getSum(LLStatViewer::PACKETS_IN);
     if (total_packets_in > 0.f)
     {
-        F32 total_packets_lost = (F32)LLViewerStats::instance().getRecording().getSum(LLStatViewer::PACKETS_LOST);
+        F32 total_packets_lost = (F32)recording.getSum(LLStatViewer::PACKETS_LOST);
         sample(LLStatViewer::PACKETS_LOST_PERCENT, LLUnits::Ratio::fromValue((F32)total_packets_lost/(F32)total_packets_in));
     }
 
     mLastPacketsIn = gMessageSystem->mPacketsIn;
     mLastPacketsOut = gMessageSystem->mPacketsOut;
-    mLastPacketsLost = gMessageSystem->mDroppedPackets;
+    mLastPacketsLost = gMessageSystem->mLostPackets;
 }
 
 
@@ -1277,7 +1307,7 @@ void LLWorld::printPacketsLost()
                     << " packets lost: " << cdp->getPacketsLost() << LL_ENDL;
         }
     }
-    LL_INFOS() << "Packets dropped by Packet Ring: " << gMessageSystem->mPacketRing.getNumDroppedPackets() << LL_ENDL;
+    LL_INFOS() << "Packets dropped by Packet Ring: " << gMessageSystem->getTotalNumDroppedPackets() << LL_ENDL;
 }
 
 void LLWorld::processCoarseUpdate(LLMessageSystem* msg, void** user_data)

@@ -50,6 +50,9 @@
 #include "lltextbox.h"
 #include "llresmgr.h"
 #include "llviewerinventory.h"
+// <AS:Chanayane> Drag and drop layer reordering.
+#include "asoutfitreorder.h"
+// </AS:Chanayane>
 
 bool LLFindOutfitItems::operator()(LLInventoryCategory* cat,
                                    LLInventoryItem* item)
@@ -273,6 +276,10 @@ LLPanelClothingListItem::Params::Params()
 :   up_btn("up_btn"),
     down_btn("down_btn"),
     edit_btn("edit_btn"),
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    top_btn("top_btn"),
+    bottom_btn("bottom_btn"),
+    // </AS:Chanayane>
     lock_panel("lock_panel"),
     edit_panel("edit_panel"),
     lock_icon("lock_icon")
@@ -302,6 +309,16 @@ LLPanelClothingListItem::LLPanelClothingListItem(LLViewerInventoryItem* item, co
     button_params = params.down_btn;
     applyXUILayout(button_params, this);
     addChild(LLUICtrlFactory::create<LLButton>(button_params));
+
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    button_params = params.top_btn;
+    applyXUILayout(button_params, this);
+    addChild(LLUICtrlFactory::create<LLButton>(button_params));
+
+    button_params = params.bottom_btn;
+    applyXUILayout(button_params, this);
+    addChild(LLUICtrlFactory::create<LLButton>(button_params));
+    // </AS:Chanayane>
 
     LLPanel::Params panel_params = params.lock_panel;
     applyXUILayout(panel_params, this);
@@ -338,6 +355,10 @@ bool LLPanelClothingListItem::postBuild()
 {
     LLPanelDeletableWearableListItem::postBuild();
 
+    // <AS:Chanayane> Top / bottom added left of up / down, which keep their original place.
+    addWidgetToRightSide("btn_move_top");
+    addWidgetToRightSide("btn_move_bottom");
+    // </AS:Chanayane>
     addWidgetToRightSide("btn_move_up");
     addWidgetToRightSide("btn_move_down");
     addWidgetToRightSide("btn_lock");
@@ -348,6 +369,48 @@ bool LLPanelClothingListItem::postBuild()
 
     return true;
 }
+
+// <AS:Chanayane> Drag and drop layer reordering (see asoutfitreorder).
+void LLPanelClothingListItem::draw()
+{
+    if (ASOutfitReorder::isDragGhost(this))
+    {
+        // Ghost of the start position while dragging.
+        LLViewDrawContext context(0.4f);
+        LLPanelDeletableWearableListItem::draw();
+    }
+    else
+    {
+        LLPanelDeletableWearableListItem::draw();
+    }
+    ASOutfitReorder::drawDropLine(this);
+}
+
+bool LLPanelClothingListItem::handleMouseDown(S32 x, S32 y, MASK mask)
+{
+    // Base first: it fires the list's selection callback.
+    bool handled = LLPanelDeletableWearableListItem::handleMouseDown(x, y, mask);
+    return ASOutfitReorder::rowMouseDown(this, x, y, mask) || handled;
+}
+
+bool LLPanelClothingListItem::handleMouseUp(S32 x, S32 y, MASK mask)
+{
+    if (ASOutfitReorder::rowMouseUp(this, x, y, mask)) return true;
+    return LLPanelDeletableWearableListItem::handleMouseUp(x, y, mask);
+}
+
+bool LLPanelClothingListItem::handleHover(S32 x, S32 y, MASK mask)
+{
+    if (ASOutfitReorder::rowHover(this, x, y, mask)) return true;
+    return LLPanelDeletableWearableListItem::handleHover(x, y, mask);
+}
+
+void LLPanelClothingListItem::onMouseCaptureLost()
+{
+    ASOutfitReorder::rowCaptureLost(this);
+    LLPanelDeletableWearableListItem::onMouseCaptureLost();
+}
+// </AS:Chanayane>
 
 //////////////////////////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////

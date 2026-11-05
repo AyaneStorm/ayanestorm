@@ -4,7 +4,7 @@
  *
  * $LicenseInfo:firstyear=2007&license=viewerlgpl$
  * Second Life Viewer Source Code
- * Copyright (C) 2010, Linden Research, Inc.
+ * Copyright (C) 2026, Linden Research, Inc.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -41,6 +41,7 @@
 
 #include <fcntl.h>      //_O_APPEND
 #include <io.h>         //_open_osfhandle()
+#include <psapi.h> // <FS:Beq/> [FIRE-36494] Image allocation failure telemetry
 #include <WERAPI.H>     // for WerAddExcludedApplication()
 #include <process.h>    // _spawnl()
 #include <tchar.h>      // For TCHAR support
@@ -55,6 +56,13 @@
 
 #include "llweb.h"
 
+// <FS:Beq> [FIRE-36494] Pagefile usage telemetry
+#include <algorithm>
+#include <chrono>
+#include <utility>
+#include <vector>
+// </FS:Beq>
+#include <cstdint> // <FS:Beq/> Add reliable telemetry for memory alloc pressure tracking in bugsplat
 #include "llnotificationsutil.h" // <FS:TJ/> Detect and notify if the viewer is trying to run as admin on Windows
 #include "llviewernetwork.h"
 #include "llmd5.h"
@@ -78,12 +86,14 @@
 #if LL_VELOPACK
 #include "llvelopack.h"
 #endif
+#include "llversioninfovars.h"
 
 // Bugsplat (http://bugsplat.com) crash reporting tool
 #ifdef LL_BUGSPLAT
 #include "bugsplatattributes.h"
 #include "BugSplat.h"
 #include "boost/json.hpp"                 // Boost.Json
+#include "llimage.h" // <FS:Beq/> [FIRE-36494] Image allocation failure telemetry
 #include "llagent.h"                // for agent location
 #include "llmemory.h"
 #include "llstartup.h"
@@ -100,6 +110,271 @@ namespace FS
 
 namespace
 {
+    // <FS:Beq> [FIRE-36494] Image allocation failures, pagefile usage and system commit telemetry
+    constexpr U32 IMAGE_ALLOC_TELEMETRY_ERRNO = 1 << 0;
+    constexpr U32 IMAGE_ALLOC_TELEMETRY_MEMORY_STATUS = 1 << 1;
+    constexpr U32 IMAGE_ALLOC_TELEMETRY_COMMIT = 1 << 2;
+    constexpr U32 IMAGE_ALLOC_TELEMETRY_PROCESS_MEMORY = 1 << 3;
+    constexpr U32 IMAGE_ALLOC_TELEMETRY_VIRTUAL_ADDRESS = 1 << 4;
+
+    constexpr S64 UNKNOWN_MEMORY_VALUE = -1;
+
+    S64 bytesToKB(ULONGLONG bytes)
+    {
+        return static_cast<S64>(bytes / 1024);
+    }
+
+    S64 pagesToKB(SIZE_T pages, SIZE_T page_size)
+    {
+        return static_cast<S64>((static_cast<ULONGLONG>(pages) * static_cast<ULONGLONG>(page_size)) / 1024);
+    }
+
+    using Clock = std::chrono::steady_clock;
+
+    std::int64_t elapsedMS(Clock::time_point start)
+    { return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start).count(); }
+
+    struct PageFileInfo
+    {
+        std::wstring  name;
+        std::uint64_t allocated_mb = 0;
+        std::uint64_t current_mb   = 0;
+        std::uint64_t peak_mb      = 0;
+    };
+
+    struct PageFilesInfo
+    {
+        bool                      success    = false;
+        unsigned long             error      = 0; // GetLastError(), zero on success
+        std::int64_t              elapsed_ms = -1;
+        std::vector<PageFileInfo> files;
+    };
+
+    struct PageFileContext
+    {
+        std::vector<PageFileInfo> files;
+        DWORD                     page_size         = 0;
+        bool                      allocation_failed = false;
+    };
+
+    BOOL CALLBACK collectPageFile(LPVOID context, PENUM_PAGE_FILE_INFORMATION info, LPCWSTR name) noexcept
+    {
+        auto& result = *static_cast<PageFileContext*>(context);
+        // Never let a C++ exception escape through the Windows callback.
+        try
+        {
+            const auto toMB = [&](SIZE_T pages)
+            {
+                return static_cast<std::uint64_t>(pages) * result.page_size / (1024 * 1024);
+            };
+            result.files.push_back({ name ? name : L"", toMB(info->TotalSize), toMB(info->TotalInUse), toMB(info->PeakUsage) });
+            return TRUE;
+        }
+        catch (...)
+        {
+            result.allocation_failed = true;
+            return FALSE;
+        }
+    }
+
+    PageFilesInfo getPageFiles()
+    {
+        const auto  start       = Clock::now();
+        SYSTEM_INFO system_info = {};
+        GetSystemInfo(&system_info);
+        PageFileContext context{ {}, system_info.dwPageSize };
+        PageFilesInfo   result;
+        if (EnumPageFilesW(collectPageFile, &context) && !context.allocation_failed)
+        {
+            result.success = true;
+            std::ranges::sort(context.files, {}, &PageFileInfo::name);
+            result.files = std::move(context.files);
+        }
+        else
+        {
+            // A failed or interrupted enumeration is not evidence of zero pagefiles.
+            result.error = context.allocation_failed ? ERROR_NOT_ENOUGH_MEMORY : GetLastError();
+        }
+        result.elapsed_ms = elapsedMS(start);
+        return result;
+    }
+
+    void recordPageFileAttributes(BugSplatAttributes& attributes) noexcept
+    {
+        try
+        {
+            const auto info = getPageFiles();
+            attributes.setAttribute("Pagefile Query Succeeded", info.success);
+            attributes.setAttribute("Pagefile Query Error", info.error);
+            attributes.setAttribute("Pagefile Query Duration MS", info.elapsed_ms);
+            attributes.setAttribute("Pagefile Count", info.success ? static_cast<S64>(info.files.size()) : UNKNOWN_MEMORY_VALUE);
+
+            boost::json::array files;
+            S64                allocated_mb = 0;
+            S64                current_mb   = 0;
+            for (const auto& file : info.files)
+            {
+                files.push_back(boost::json::object{ { "Name", ll_convert_wide_to_string(file.name) },
+                                                     { "AllocatedBaseSize_MB", file.allocated_mb },
+                                                     { "CurrentUsage_MB", file.current_mb },
+                                                     { "PeakUsage_MB", file.peak_mb } });
+                allocated_mb += static_cast<S64>(file.allocated_mb);
+                current_mb += static_cast<S64>(file.current_mb);
+            }
+            // One array replaces the previous snapshot, including when pagefiles
+            // disappear. Unknown must be distinct from a successful empty array.
+            attributes.setAttribute("Pagefile Details", info.success ? boost::json::serialize(files) : std::string("unknown"));
+            attributes.setAttribute("Pagefile Allocated MB", info.success ? allocated_mb : UNKNOWN_MEMORY_VALUE);
+            attributes.setAttribute("Pagefile Current Usage MB", info.success ? current_mb : UNKNOWN_MEMORY_VALUE);
+        }
+        catch (...) // Diagnostics must not replace a crash or an allocation failure.
+        {
+            // Avoid leaving a previous successful snapshot looking current.
+            try
+            {
+                attributes.setAttribute("Pagefile Query Succeeded", false);
+                attributes.setAttribute("Pagefile Count", UNKNOWN_MEMORY_VALUE);
+                attributes.setAttribute("Pagefile Details", "unknown");
+                attributes.setAttribute("Pagefile Allocated MB", UNKNOWN_MEMORY_VALUE);
+                attributes.setAttribute("Pagefile Current Usage MB", UNKNOWN_MEMORY_VALUE);
+                attributes.setAttribute("Pagefile Query Error", ERROR_NOT_ENOUGH_MEMORY);
+                attributes.setAttribute("Pagefile Query Duration MS", UNKNOWN_MEMORY_VALUE);
+            }
+            catch (...)
+            {
+            }
+        }
+    }
+
+    bool getLargestFreeVirtualAddressRegionKB(S64& largest_free_region_kb)
+    {
+        largest_free_region_kb = UNKNOWN_MEMORY_VALUE;
+
+        SIZE_T largest_free_region = 0;
+        std::uintptr_t address = 0;
+        MEMORY_BASIC_INFORMATION mbi = {};
+        bool queried_region = false;
+
+        while (VirtualQuery(reinterpret_cast<LPCVOID>(address), &mbi, sizeof(mbi)) == sizeof(mbi))
+        {
+            queried_region = true;
+            if (mbi.State == MEM_FREE && mbi.RegionSize > largest_free_region)
+            {
+                largest_free_region = mbi.RegionSize;
+            }
+
+            const auto base = reinterpret_cast<std::uintptr_t>(mbi.BaseAddress);
+            const auto next = base + mbi.RegionSize;
+            if (next <= address)
+            {
+                break;
+            }
+            address = next;
+        }
+
+        if (!queried_region)
+        {
+            return false;
+        }
+
+        largest_free_region_kb = bytesToKB(static_cast<ULONGLONG>(largest_free_region));
+        return true;
+    }
+
+    void recordImageAllocationFailure(const LLImageAllocationFailureInfo& info)
+    {
+        try
+        {
+            U32 telemetry_flags = IMAGE_ALLOC_TELEMETRY_ERRNO;
+
+            S64 avail_phys_kb = UNKNOWN_MEMORY_VALUE;
+            S64 memory_load_pct = UNKNOWN_MEMORY_VALUE;
+            S64 avail_process_commit_kb = UNKNOWN_MEMORY_VALUE;
+            MEMORYSTATUSEX memory_status = {};
+            memory_status.dwLength = sizeof(memory_status);
+            if (GlobalMemoryStatusEx(&memory_status))
+            {
+                telemetry_flags |= IMAGE_ALLOC_TELEMETRY_MEMORY_STATUS;
+                avail_phys_kb = bytesToKB(memory_status.ullAvailPhys);
+                memory_load_pct = memory_status.dwMemoryLoad;
+                avail_process_commit_kb = bytesToKB(memory_status.ullAvailPageFile);
+            }
+
+            S64 avail_system_commit_kb = UNKNOWN_MEMORY_VALUE;
+            S64 system_commit_limit_kb = UNKNOWN_MEMORY_VALUE;
+            S64 system_commit_total_kb = UNKNOWN_MEMORY_VALUE;
+            PERFORMANCE_INFORMATION performance_info = {};
+            performance_info.cb = sizeof(performance_info);
+            if (GetPerformanceInfo(&performance_info, sizeof(performance_info))
+                && performance_info.PageSize > 0
+                && performance_info.CommitLimit >= performance_info.CommitTotal)
+            {
+                telemetry_flags |= IMAGE_ALLOC_TELEMETRY_COMMIT;
+                system_commit_limit_kb = pagesToKB(performance_info.CommitLimit, performance_info.PageSize);
+                system_commit_total_kb = pagesToKB(performance_info.CommitTotal, performance_info.PageSize);
+                avail_system_commit_kb = pagesToKB(performance_info.CommitLimit - performance_info.CommitTotal, performance_info.PageSize);
+            }
+
+            S64 process_private_kb = UNKNOWN_MEMORY_VALUE;
+            S64 process_working_set_kb = UNKNOWN_MEMORY_VALUE;
+            PROCESS_MEMORY_COUNTERS_EX process_memory = {};
+            process_memory.cb = sizeof(process_memory);
+            if (GetProcessMemoryInfo(GetCurrentProcess(),
+                                     reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&process_memory),
+                                     sizeof(process_memory)))
+            {
+                telemetry_flags |= IMAGE_ALLOC_TELEMETRY_PROCESS_MEMORY;
+                process_private_kb = bytesToKB(static_cast<ULONGLONG>(process_memory.PrivateUsage));
+                process_working_set_kb = bytesToKB(static_cast<ULONGLONG>(process_memory.WorkingSetSize));
+            }
+
+            const U32 heap_cap = LLMemory::getMaxHeapSizeKB().value();
+            const S64 heap_cap_kb = heap_cap == U32_MAX ? UNKNOWN_MEMORY_VALUE : static_cast<S64>(heap_cap);
+            const S64 heap_budget_headroom_kb = heap_cap_kb != UNKNOWN_MEMORY_VALUE
+                && process_working_set_kb != UNKNOWN_MEMORY_VALUE
+                ? heap_cap_kb - process_working_set_kb : UNKNOWN_MEMORY_VALUE;
+
+            S64 largest_free_va_kb = UNKNOWN_MEMORY_VALUE;
+            if (getLargestFreeVirtualAddressRegionKB(largest_free_va_kb))
+            {
+                telemetry_flags |= IMAGE_ALLOC_TELEMETRY_VIRTUAL_ADDRESS;
+            }
+
+            auto& attributes = BugSplatAttributes::instance();
+            attributes.setAttribute("Viewer Working Set Budget KB", heap_cap_kb);
+            attributes.setAttribute("MemAvailCommitMB", avail_process_commit_kb == UNKNOWN_MEMORY_VALUE
+                ? UNKNOWN_MEMORY_VALUE : avail_process_commit_kb / 1024);
+            attributes.setAttribute("Non-Fatal Img Alloc Failures", LLImageBase::getNonFatalAllocationFailureCount());
+            attributes.setAttribute("ImageAlloc Diag Version", 3);
+            attributes.setAttribute("ImageAlloc Requested Bytes", info.mRequestedSize);
+            attributes.setAttribute("ImageAlloc Width", info.mWidth);
+            attributes.setAttribute("ImageAlloc Height", info.mHeight);
+            attributes.setAttribute("ImageAlloc Components", info.mComponents);
+            attributes.setAttribute("ImageAlloc Errno", info.mErrno);
+            attributes.setAttribute("ImageAlloc Telemetry Flags", telemetry_flags);
+            attributes.setAttribute("ImageAlloc Avail Phys KB", avail_phys_kb);
+            attributes.setAttribute("ImageAlloc Memory Load Pct", memory_load_pct);
+            attributes.setAttribute("ImageAlloc Avail System Commit KB", avail_system_commit_kb);
+            attributes.setAttribute("ImageAlloc System Commit Limit KB", system_commit_limit_kb);
+            attributes.setAttribute("ImageAlloc System Commit Total KB", system_commit_total_kb);
+            attributes.setAttribute("ImageAlloc Avail Process Commit KB", avail_process_commit_kb);
+            attributes.setAttribute("ImageAlloc Process Private KB", process_private_kb);
+            attributes.setAttribute("ImageAlloc Process Working Set KB", process_working_set_kb);
+            attributes.setAttribute("ImageAlloc Working Set Budget Headroom KB", heap_budget_headroom_kb);
+            attributes.setAttribute("ImageAlloc Largest Free VA KB", largest_free_va_kb);
+
+            const std::string& crash_context_file = BugSplatAttributes::getCrashContextFileName();
+            if (!crash_context_file.empty())
+            {
+                attributes.writeToFile(crash_context_file);
+            }
+        }
+        catch (...) // Diagnostics must not replace the original allocation failure.
+        {
+        }
+    }
+    // </FS:Beq>
+
     // MiniDmpSender's constructor is defined to accept __wchar_t* instead of
     // plain wchar_t*. That said, wunder() returns std::basic_string<__wchar_t>,
     // NOT plain __wchar_t*, despite the apparent convenience. Calling
@@ -229,22 +504,36 @@ namespace
             // sBugSplatSender->setAttribute(WCSTR(L"VRAM"), WCSTR(STRINGIZE(gGLManager.mVRAM)));
             // sBugSplatSender->setAttribute(WCSTR(L"RAM"), WCSTR(STRINGIZE(gSysMemory.getPhysicalMemoryKB().value())));
 
+            // const U32 avail_kb = LLMemory::getAvailableMemKB().value();
+            // if (avail_kb != U32_MAX) // filter out initial values, if one is not set, all are not set
+            // {
+            //     // Memory usage at crash time (can be 1s obsolete)
+            //     sBugSplatSender->setAttribute(WCSTR(L"MemAllocatedKB"), WCSTR(std::to_string(LLMemory::getAllocatedMemKB().value())));
+            //     sBugSplatSender->setAttribute(WCSTR(L"MemAvailableKB"), WCSTR(std::to_string(LLMemory::getAvailableMemKB().value())));
+            //     sBugSplatSender->setAttribute(WCSTR(L"MemMaxPhysicalKB"), WCSTR(std::to_string(LLMemory::getMaxMemKB().value())));
+            //     sBugSplatSender->setAttribute(WCSTR(L"MemAvailCommitMB"), WCSTR(std::to_string(LLMemory::getAvailableCommitMemMB().value())));
+            // }
             auto fatal_message = LLError::getFatalMessage();
-            sBugSplatSender->setDefaultUserDescription(WCSTR(fatal_message));
+            if (!sBugsplatDescriptionField.empty())
+            {
+                // Can be set by watchdog or other code that detects a problem
+                // and wants to add some context to the crash report.
+                // Will be visible in the BugSplat web UI.
+                sBugSplatSender->setDefaultUserDescription(WCSTR(sBugsplatDescriptionField));
+                // This type of crash is not necessarily a crash, or final.
+                // Prepare for the next one.
+                sBugsplatDescriptionField.clear();
+            }
+            else
+            {
+                // LL_ERRS message, when there is one
+                sBugSplatSender->setDefaultUserDescription(WCSTR(fatal_message));
+            }
             BugSplatAttributes::instance().setAttribute("FatalMessage", fatal_message); // <FS:Beq/> Store this additionally as an attribute in case user overwrites.
             // App state
             BugSplatAttributes::instance().setAttribute("AppState", LLStartUp::getStartupStateString());
             // Location
             // </FS:Beq>
-            const U32 avail_kb = LLMemory::getAvailableMemKB().value();
-            if (avail_kb != U32_MAX) // filter out initial values, if one is not set, all are not set
-            {
-                // Memory usage at crash time (can be 1s obsolete)
-                sBugSplatSender->setAttribute(WCSTR(L"MemAllocatedKB"), WCSTR(std::to_string(LLMemory::getAllocatedMemKB().value())));
-                sBugSplatSender->setAttribute(WCSTR(L"MemAvailableKB"), WCSTR(std::to_string(LLMemory::getAvailableMemKB().value())));
-                sBugSplatSender->setAttribute(WCSTR(L"MemMaxPhysicalKB"), WCSTR(std::to_string(LLMemory::getMaxMemKB().value())));
-                sBugSplatSender->setAttribute(WCSTR(L"MemAvailCommitMB"), WCSTR(std::to_string(LLMemory::getAvailableCommitMemMB().value())));
-            }
 
             if (gAgent.getRegion())
             {
@@ -273,6 +562,13 @@ namespace
 
             LLAppViewer* app = LLAppViewer::instance();
 
+            // Include mainloop watchdog state if available
+            std::string watchdog_state = app->getMainloopWatchdogState();
+            if (!watchdog_state.empty())
+            {
+                sBugSplatSender->setAttribute(WCSTR(L"WatchdogState"), WCSTR(watchdog_state));
+            }
+
             if (!app->isSecondInstance() && !app->errorMarkerExists())
             {
                 // If marker doesn't exist, create a marker with 'other' or 'logout' code for next launch
@@ -293,6 +589,8 @@ namespace
     }
 }
 #endif // LL_BUGSPLAT
+
+extern bool gGPUBenchmarkMode;
 
 namespace
 {
@@ -576,12 +874,21 @@ int APIENTRY WINMAIN(HINSTANCE hInstance,
     gIconResource = MAKEINTRESOURCE(IDI_LL_ICON);
     gIconSmallResource = MAKEINTRESOURCE(IDI_LL_ICON_SMALL);
 
+    // Benchmark subprocess mode before full init for LLFeatureManager::loadGPUClass().
+    {
+        std::wstring cmdLineStr(pCmdLine ? pCmdLine : L"");
+        if (cmdLineStr.find(L"--gpubenchmark") != std::wstring::npos)
+        {
+            gGPUBenchmarkMode = true;
+        }
+    }
+
     LLAppViewerWin32* viewer_app_ptr = new LLAppViewerWin32(ll_convert_wide_to_string(pCmdLine).c_str());
 
     gOldTerminateHandler = std::set_terminate(exceptionTerminateHandler);
 
     // Set a debug info flag to indicate if multiple instances are running.
-    bool found_other_instance = !create_app_mutex();
+    bool found_other_instance = gGPUBenchmarkMode || !create_app_mutex();
     gDebugInfo["FoundOtherInstanceAtStartup"] = LLSD::Boolean(found_other_instance);
 
     bool ok = viewer_app_ptr->init();
@@ -708,12 +1015,35 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
     }
 }
 #endif
-// <FS:Beq> Use the Attributes API on Windows to enhance crash metadata
+// <FS:Beq> [FIRE-36494] Use the Attributes API on Windows for hardware and memory crash metadata
 void LLAppViewerWin32::bugsplatAddStaticAttributes(const LLSD& info)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_LOGGING;
 #ifdef LL_BUGSPLAT
     auto& bugSplatMap = BugSplatAttributes::instance();
+
+    // Startup WMI results arrive asynchronously, possibly after STATE_STARTED.
+    // Copy the cached result until complete; never query or wait for WMI here.
+    try
+    {
+        LLDXHardware::ComputerSystemInfo computer;
+        if (gDXHardware.getComputerSystemInfo(computer))
+        {
+            bugSplatMap.setAttribute("System Manufacturer", computer.manufacturer.empty() ? std::wstring(L"unknown") : computer.manufacturer);
+            bugSplatMap.setAttribute("System Model", computer.model.empty() ? std::wstring(L"unknown") : computer.model);
+            bugSplatMap.setAttribute("Automatic Managed Pagefile At Startup",
+                                     !computer.automatic_managed_pagefile.has_value() ? "unknown"
+                                     : *computer.automatic_managed_pagefile           ? "true"
+                                                                                      : "false");
+            bugSplatMap.setAttribute("Computer System Query Status", computer.status);
+            bugSplatMap.setAttribute("Computer System Query HRESULT", computer.error);
+            bugSplatMap.setAttribute("Computer System Query Duration MS", computer.elapsed_ms);
+        }
+    }
+    catch (...)
+    {
+    } // Even copying cached strings can fail under memory pressure.
+
     static bool write_once_after_startup = false;
     if (!write_once_after_startup )
     {
@@ -758,10 +1088,11 @@ void LLAppViewerWin32::bugsplatAddStaticAttributes(const LLSD& info)
     #if LL_DARWIN
         bugSplatMap.setAttribute("HiDPI", info["HIDPI"].asBoolean() ? "Enabled" : "Disabled");
     #endif
-        bugSplatMap.setAttribute("Max Texture Size", gSavedSettings.getU32("RenderMaxTextureResolution"));
     }
 
     // These attributes are potentially dynamic
+    bugSplatMap.setAttribute("Max Texture Size", gSavedSettings.getU32("RenderMaxTextureResolution"));
+    recordPageFileAttributes(bugSplatMap);
     bugSplatMap.setAttribute("Packets Lost", llformat("%.0f/%.0f (%.1f%%)", info["PACKETS_LOST"].asReal(), info["PACKETS_IN"].asReal(), info["PACKETS_PCT"].asReal()));
     bugSplatMap.setAttribute("Window Size", llformat("%sx%s px", info["WINDOW_WIDTH"].asString().c_str(), info["WINDOW_HEIGHT"].asString().c_str()));
     bugSplatMap.setAttribute("Draw Distance (m)", info["DRAW_DISTANCE"].asInteger());
@@ -774,6 +1105,11 @@ void LLAppViewerWin32::bugsplatAddStaticAttributes(const LLSD& info)
     LLMemory::updateMemoryInfo();
     bugSplatMap.setAttribute("Available RAM (KB)", LLMemory::getAvailableMemKB().value());
     bugSplatMap.setAttribute("Allocated RAM (KB)", LLMemory::getAllocatedMemKB().value());
+    const U32 heap_cap_kb = LLMemory::getMaxHeapSizeKB().value();
+    bugSplatMap.setAttribute("Viewer Working Set Budget KB", (heap_cap_kb == U32_MAX) ? UNKNOWN_MEMORY_VALUE : static_cast<S64>(heap_cap_kb));
+    const U32 avail_commit_mb = LLMemory::getAvailableCommitMemMB().value();
+    bugSplatMap.setAttribute("MemAvailCommitMB", (avail_commit_mb == U32_MAX) ? UNKNOWN_MEMORY_VALUE : static_cast<S64>(avail_commit_mb));
+    bugSplatMap.setAttribute("Non-Fatal Img Alloc Failures", LLImageBase::getNonFatalAllocationFailureCount());
     bugSplatMap.setAttribute("GPU VRAM (MB)", info["GRAPHICS_CARD_MEMORY"].asInteger());
 
 
@@ -1045,6 +1381,7 @@ bool LLAppViewerWin32::init()
                         dwFlags);
 
                     sBugSplatSender->setCallback(bugsplatSendLog);
+                    LLImageBase::setAllocationFailureCallback(recordImageAllocationFailure); // <FS:Beq/> [FIRE-36494] Image allocation failure telemetry
 
                     //LL_DEBUGS("BUGSPLAT");
                     //if (needs_log_file)
@@ -1078,6 +1415,15 @@ bool LLAppViewerWin32::init()
         detectRunningAsAdmin();
     // </FS:TJ>
 
+    // <FS:Beq> [FIRE-36494] Collect startup hardware without blocking viewer initialization
+#ifdef LL_BUGSPLAT
+    if (success)
+    {
+        gDXHardware.startComputerSystemQuery(gSavedSettings.getBOOL("FSDisableWMIProbing"));
+    }
+#endif
+    // </FS:Beq>
+
     return success;
 }
 
@@ -1086,17 +1432,12 @@ bool LLAppViewerWin32::cleanup()
     bool result = LLAppViewer::cleanup();
 
     gDXHardware.cleanup();
+    cleanupConsole();
 
     // <FS:minerjr> [FIRE-36022] - Removing my USB headset crashes entire viewer
     // Need to unilitialize connection to COM, otherwise it will be treated as a memroy leak.
     CoUninitialize();
     // </FS:minerjr> [FIRE-36022]
-
-    if (mIsConsoleAllocated)
-    {
-        FreeConsole();
-        mIsConsoleAllocated = false;
-    }
 
     return result;
 }
@@ -1189,8 +1530,20 @@ void LLAppViewerWin32::initLoggingAndGetLastDuration()
 void LLAppViewerWin32::initConsole()
 {
     // pop up debug console
-    mIsConsoleAllocated = create_console();
+    if (!gGPUBenchmarkMode)
+    {
+        mIsConsoleAllocated = create_console();
+    }
     return LLAppViewer::initConsole();
+}
+
+void LLAppViewerWin32::cleanupConsole()
+{
+    if (mIsConsoleAllocated)
+    {
+        FreeConsole();
+        mIsConsoleAllocated = false;
+    }
 }
 
 void write_debug_dx(const char* str)
@@ -1265,7 +1618,7 @@ bool LLAppViewerWin32::sendURLToOtherInstance(const std::string& url)
 
     if (other_window != NULL)
     {
-        LL_DEBUGS() << "Found other window with the name '" << getWindowTitle() << "'" << LL_ENDL;
+        LL_DEBUGS("AppInit") << "Found other window with the name '" << getWindowTitle() << "'" << LL_ENDL;
         COPYDATASTRUCT cds;
         const S32 SLURL_MESSAGE_TYPE = 0;
         cds.dwData = SLURL_MESSAGE_TYPE;
@@ -1273,11 +1626,229 @@ bool LLAppViewerWin32::sendURLToOtherInstance(const std::string& url)
         cds.lpData = (void*)url.c_str();
 
         LRESULT msg_result = SendMessage(other_window, WM_COPYDATA, NULL, (LPARAM)&cds);
-        LL_DEBUGS() << "SendMessage(WM_COPYDATA) to other window '"
+        LL_DEBUGS("AppInit") << "SendMessage(WM_COPYDATA) to other window '"
                  << getWindowTitle() << "' returned " << msg_result << LL_ENDL;
         return true;
     }
     return false;
+}
+
+bool LLAppViewerWin32::sendShutdownToOtherInstances(const std::wstring& install_dir)
+{
+    // Velopack installs viewer like this:
+    // %appdata%\Local\ChannelNameViewer\Update.exe // which is our uninstaller
+    // %appdata%\Local\ChannelNameViewer\SecondLifeViewer.exe // wrapper, redirects to main executable
+    // %appdata%\Local\ChannelNameViewer\current\SecondLifeViewer.exe // main executable
+    // For reliability don't expect install_dir to be actually in the base path, strip 'current'
+
+    const std::wstring current_suffix = L"\\current";
+    std::wstring normalized_path(install_dir);
+    if (normalized_path.length() >= current_suffix.length() &&
+        _wcsicmp(normalized_path.c_str() + normalized_path.length() - current_suffix.length(),
+            current_suffix.c_str()) == 0)
+    {
+        normalized_path.resize(normalized_path.length() - current_suffix.length());
+    }
+
+    wchar_t window_class[256]; // Assume max length < 255 chars.
+    mbstowcs(window_class, sWindowClass, 255);
+    window_class[255] = 0;
+
+    // Normalize the directory path
+    wchar_t our_dir_normalized[MAX_PATH];
+    wchar_t* file_part = nullptr;
+    DWORD result = GetFullPathNameW(normalized_path.c_str(), MAX_PATH, our_dir_normalized, &file_part);
+    if (result == 0 || result >= MAX_PATH)
+    {
+        LL_WARNS() << "Failed to normalize our executable path" << LL_ENDL;
+        return false;
+    }
+
+    // Remove trailing backslash if present
+    size_t dir_len = wcslen(our_dir_normalized);
+    if (dir_len > 0 && our_dir_normalized[dir_len - 1] == L'\\')
+    {
+        our_dir_normalized[dir_len - 1] = L'\0';
+        dir_len--;
+    }
+
+    // This message is meant for velopack, so we don't expect to have
+    // a window of our own, store any matching windows.
+    struct EnumData
+    {
+        const wchar_t* target_class;
+        const wchar_t* our_dir_normalized;
+        std::vector<HWND> found_windows;
+    };
+
+    EnumData enum_data;
+    enum_data.target_class = window_class;
+    enum_data.our_dir_normalized = our_dir_normalized;
+
+    // Callback function to find all matching windows
+    auto find_windows_callback = [](HWND hwnd, LPARAM lParam) -> BOOL
+    {
+        EnumData* data = reinterpret_cast<EnumData*>(lParam);
+        wchar_t class_name[256];
+
+        if (GetClassName(hwnd, class_name, 256) > 0)
+        {
+            if (wcscmp(class_name, data->target_class) == 0)
+            {
+                // Get the process ID for this window
+                DWORD process_id = 0;
+                GetWindowThreadProcessId(hwnd, &process_id);
+
+                // Open the process to query its executable path
+                HANDLE hProcess = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+                if (hProcess)
+                {
+                    wchar_t exe_path[MAX_PATH];
+                    DWORD size = MAX_PATH;
+                    if (QueryFullProcessImageNameW(hProcess, 0, exe_path, &size))
+                    {
+                        // Normalize the other process's path
+                        wchar_t other_dir_normalized[MAX_PATH];
+                        wchar_t* other_file_part = nullptr;
+                        DWORD result = GetFullPathNameW(exe_path, MAX_PATH, other_dir_normalized, &other_file_part);
+
+                        if (result > 0 && result < MAX_PATH)
+                        {
+                            // Remove the filename part to get just the directory
+                            // We are doing this to avoid incidents, like having
+                            // multiple viewer version exes in the same folder.
+                            if (other_file_part)
+                            {
+                                *other_file_part = L'\0';
+                            }
+
+                            // Remove trailing backslash if present
+                            size_t other_dir_len = wcslen(other_dir_normalized);
+                            if (other_dir_len > 0 && other_dir_normalized[other_dir_len - 1] == L'\\')
+                            {
+                                other_dir_normalized[other_dir_len - 1] = L'\0';
+                                other_dir_len--;
+                            }
+
+                            // Strip "\current" suffix if present to normalize comparison
+                            // This handles both release (with \current) and debug builds (without)
+                            const std::wstring current_suffix = L"\\current";
+                            if (other_dir_len >= current_suffix.length())
+                            {
+                                size_t offset = other_dir_len - current_suffix.length();
+                                if (_wcsicmp(other_dir_normalized + offset, current_suffix.c_str()) == 0)
+                                {
+                                    other_dir_normalized[offset] = L'\0';
+                                }
+                            }
+
+                            // Compare directories (case-insensitive)
+                            if (_wcsicmp(other_dir_normalized, data->our_dir_normalized) == 0)
+                            {
+                                data->found_windows.push_back(hwnd);
+                            }
+                        }
+                    }
+                    CloseHandle(hProcess);
+                }
+            }
+        }
+
+        return TRUE; // Continue enumeration
+    };
+
+    // Find all matching windows and send shutdown messages
+    EnumWindows(find_windows_callback, reinterpret_cast<LPARAM>(&enum_data));
+
+    if (enum_data.found_windows.empty())
+    {
+        LL_DEBUGS("AppInit") << "No other instances found" << LL_ENDL;
+        return false;
+    }
+
+    LL_INFOS("AppInit") << "Found " << (S32)(enum_data.found_windows.size()) << " other instance(s), sending shutdown messages" << LL_ENDL;
+
+    // Get our own process ID to include in the message
+    DWORD our_process_id = GetCurrentProcessId();
+
+    constexpr UINT timeout_ms = 2000; // 2s. Viewer's message thread is supposed to be fast.
+    for (HWND other_window : enum_data.found_windows)
+    {
+        if (IsWindow(other_window))
+        {
+            DWORD_PTR result = 0;
+            LRESULT send_result = SendMessageTimeout(
+                other_window,
+                WM_POST_UNINSTALL_,
+                static_cast<WPARAM>(our_process_id),
+                static_cast<LPARAM>(WM_POST_UNINSTALL_MSG_SHUTDOWN),
+                SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                timeout_ms,
+                &result
+            );
+
+            if (send_result == 0)
+            {
+                DWORD error = GetLastError();
+                if (error == ERROR_TIMEOUT)
+                {
+                    LL_WARNS("AppInit") << "Shutdown message timed out for window " << std::hex << other_window << std::dec << LL_ENDL;
+                }
+                else
+                {
+                    LL_WARNS("AppInit") << "Failed to send shutdown message to window " << std::hex << other_window
+                        << ", error: " << error << std::dec << LL_ENDL;
+                }
+
+                PostMessage(other_window, WM_CLOSE, 0, 0);
+            }
+            else
+            {
+                LL_DEBUGS("AppInit") << "Shutdown message sent successfully to window " << std::hex << other_window << std::dec << LL_ENDL;
+            }
+        }
+    }
+
+    // Poll for up to 30 seconds, checking every 5 seconds
+    const S32 MAX_WAIT_TIME_MS = 60000; // 30 seconds
+    const S32 POLL_INTERVAL_MS = 5000;  // 5 seconds
+    S32 elapsed_time_ms = 0;
+    size_t still_open_count = enum_data.found_windows.size();
+
+    while (elapsed_time_ms < MAX_WAIT_TIME_MS)
+    {
+        LL_INFOS("AppInit") << "Waiting for " << (S32)still_open_count << " instance(s) to close... ("
+            << (S32)(elapsed_time_ms / 1000) << "s elapsed)" << LL_ENDL;
+
+        ms_sleep(POLL_INTERVAL_MS);
+        elapsed_time_ms += POLL_INTERVAL_MS;
+
+        // Check if the specific windows we found still exist
+        // Don't enumerate all windows for new ones, assume that
+        // no instances were reused and assume user won't open
+        // the app again. For now just check our list.
+        still_open_count = 0;
+        for (HWND hwnd : enum_data.found_windows)
+        {
+            if (IsWindow(hwnd))
+            {
+                still_open_count++;
+            }
+        }
+
+        if (still_open_count == 0)
+        {
+            LL_INFOS("AppInit") << "All other instances have closed after " << (S32)(elapsed_time_ms / 1000) << " seconds" << LL_ENDL;
+            return false;
+        }
+    }
+
+    if (still_open_count != 0)
+    {
+        LL_WARNS("AppInit") << "Proceeding with uninstall with " << (S32)still_open_count << " instance(s) still open." << LL_ENDL;
+    }
+
+    return true;
 }
 
 
@@ -1405,14 +1976,14 @@ DWORD WINAPI purgeThread( LPVOID lpParameter )
     return 0;
 }
 
-void LLAppViewerWin32::startCachePurge()
+void LLAppViewerWin32::startCachePurge(const std::string& strCacheDir)
 {
     if( isSecondInstance() )
         return;
 
-    std::wstring strCacheDir = wstringize( gDirUtilp->getExpandedFilename( LL_PATH_CACHE, "" ) );
+    std::wstring wstrCacheDir = wstringize(strCacheDir);
 
-    HANDLE hThread = CreateThread( nullptr, 0, purgeThread, _wcsdup( strCacheDir.c_str() ), 0, nullptr );
+    HANDLE hThread = CreateThread( nullptr, 0, purgeThread, _wcsdup( wstrCacheDir.c_str() ), 0, nullptr );
 
     if( !hThread )
     {

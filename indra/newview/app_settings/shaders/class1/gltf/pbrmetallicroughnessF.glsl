@@ -131,6 +131,9 @@ uniform vec3 moon_dir;
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
 float calcLegacyDistanceAttenuation(float distance, float falloff);
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
 void sampleReflectionProbes(inout vec3 ambenv, inout vec3 glossenv,
         vec2 tc, vec3 pos, vec3 norm, float glossiness, bool transparent, vec3 amblit_linear);
 
@@ -316,7 +319,10 @@ void main()
     vec2 frag = vary_fragcoord.xy/vary_fragcoord.z*0.5+0.5;
 
 #ifdef HAS_SUN_SHADOW
-    scol = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    // <AS:Chanayane> Cloud shadows (Exact volumetric mode).
+    // scol = sampleDirectionalShadow(pos.xyz, norm.xyz, frag);
+    scol = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, frag), pos.xyz);
+    // </AS:Chanayane>
 #endif
 
     float perceptualRoughness = orm.g * roughnessFactor;

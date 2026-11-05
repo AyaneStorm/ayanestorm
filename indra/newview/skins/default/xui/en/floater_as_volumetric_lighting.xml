@@ -7,12 +7,12 @@
   save_rect="true"
   save_visibility="true"
   width="432"
-  height="352"
+  height="382"
   layout="topleft">
   <panel
     filename="panel_as_volumetric_lighting.xml"
     follows="all"
-    height="330"
+    height="360"
     layout="topleft"
     left="1"
     name="as_volumetric_lighting"

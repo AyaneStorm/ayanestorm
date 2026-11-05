@@ -61,6 +61,7 @@
 #include "lltooltip.h"
 #include "llmenugl.h"
 #include "llchatmentionhelper.h"
+#include "llgestureautocompletehelper.h"
 
 #include <queue>
 #include "llcombobox.h"
@@ -1806,36 +1807,33 @@ void LLTextEditor::pasteTextWithLinebreaks(LLWString & clean_string)
     std::basic_string<llwchar>::size_type start = 0;
     std::basic_string<llwchar>::size_type pos = clean_string.find('\n',start);
 
-    while((pos != -1) && (pos != clean_string.length() -1))
+    while (pos != std::basic_string<llwchar>::npos)
     {
-        if(pos!=start)
+        if (pos != start)
         {
             std::basic_string<llwchar> str = std::basic_string<llwchar>(clean_string,start,pos-start);
             setCursorPos(mCursorPos + insert(mCursorPos, str, true, LLTextSegmentPtr()));
         }
-        addLineBreakChar(true);         // Add a line break and group with the next addition.
+        const bool trailing_linebreak = (pos == clean_string.length() - 1);
+        addLineBreakChar(!trailing_linebreak);
 
         start = pos+1;
         pos = clean_string.find('\n',start);
     }
 
     // <FS:Ansariel> FIRE-4314: Paste from clipboard shows block character if last character is a linefeed
-    if (pos != start && pos == clean_string.length() - 1)
+    if (start < clean_string.length() && pos == clean_string.length() - 1)
     {
         std::basic_string<llwchar> str = std::basic_string<llwchar>(clean_string,start,clean_string.length()-start-1);
         setCursorPos(mCursorPos + insert(mCursorPos, str, true, LLTextSegmentPtr()));
         addLineBreakChar(false);
     }
-    else if (pos != start)
-    //if (pos != start)
+    else if (start < clean_string.length())
+    //if (start < clean_string.length())
     // </FS:Ansariel>
     {
         std::basic_string<llwchar> str = std::basic_string<llwchar>(clean_string,start,clean_string.length()-start);
         setCursorPos(mCursorPos + insert(mCursorPos, str, false, LLTextSegmentPtr()));
-    }
-    else
-    {
-        addLineBreakChar(false);        // Add a line break and end the grouping.
     }
 }
 
@@ -2143,7 +2141,8 @@ bool LLTextEditor::handleKeyHere(KEY key, MASK mask )
     // not handled and let the parent take care of field movement.
     if (KEY_TAB == key && mTabsToNextField)
     {
-        return mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask);
+        return (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask))
+            || LLGestureAutocompleteHelper::instance().handleKey(this, key, mask);
     }
 
     // <FS:Ansariel> FIRE-19933: Open context menu on context menu key press
@@ -2164,7 +2163,8 @@ bool LLTextEditor::handleKeyHere(KEY key, MASK mask )
         if (!mReadOnly)
         {
             if ((mShowEmojiHelper && LLEmojiHelper::instance().handleKey(this, key, mask)) ||
-                (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask)))
+                (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask)) ||
+                LLGestureAutocompleteHelper::instance().handleKey(this, key, mask))
             {
                 return true;
             }

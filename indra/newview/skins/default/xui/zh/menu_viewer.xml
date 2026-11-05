@@ -150,6 +150,7 @@
 			<menu_item_call label="我的環境" name="my_environs" />
 			<menu_item_call label="個人光照" name="adjustment_tool" />
 			<menu_item_check label="凍結雲層" name="pause_clouds" />
+			<menu_item_check label="靜音/取消靜音" name="toggle_sound" />
 			<menu label="批次匯入" name="WL Bulk Import">
 				<menu_item_call label="時間..." name="WL Bulk Import Days" />
 				<menu_item_call label="天空..." name="WL Bulk Import Skies" />
@@ -210,12 +211,15 @@
 		<menu label="指令碼" name="Scripts">
 			<menu_item_call label="指令碼警告/錯誤…" name="Script Debug" />
 			<menu_item_call label="指令碼資訊 (計數器)" name="Script Info" />
-			<menu_item_call label="重新編譯指令碼（Mono）" name="Mono" />
-			<menu_item_call label="重新編譯指令碼（LSL）" name="LSL" />
+			<menu_item_call label="重新編譯 LSL 指令碼（Mono）" name="Mono" />
+			<menu_item_call label="重新編譯 LSL 指令碼（傳統 LSL）" name="LSL" />
+			<menu_item_call label="重新編譯 LSL 指令碼（LSL on Lua）" name="LSL on Luau" />
+			<menu_item_call label="重新編譯 Lua 指令碼" name="Lua" />
 			<menu_item_call label="重設指令碼" name="Reset Scripts" />
 			<menu_item_call label="運行指令碼" name="Set Scripts to Running" />
 			<menu_item_call label="停止指令碼" name="Set Scripts to Not Running" />
 			<menu_item_call label="從選擇中移除指令碼" name="Remove Scripts From Selection" />
+			<menu_item_check label="指令碼編輯器伺服器" name="Script Editor Server" />
 		</menu>
 		<menu label="尋路" name="Pathfinding">
 			<menu_item_call label="區域物件" name="pathfinding_linksets_menu_item" />
@@ -284,7 +288,6 @@
 		<menu_item_call label="加入 Firestorm 支援小組" name="firestorm_support_group" />
 		<menu_item_call label="Firestorm 課程" name="Firestorm Classes Schedule" />
 		<menu_item_call label="Firestorm 活動日曆" name="Firestorm Events Calendar" />
-		<menu_item_check label="指南" name="How To" />
 		<menu_item_call label="[CURRENT_GRID] 幫助" name="current_grid_help" />
 		<menu_item_call label="關於 [CURRENT_GRID]" name="current_grid_about" />
 		<menu_item_call name="whitelist_folders" label="白名單顧問" />
@@ -447,6 +450,7 @@
 			<menu_item_call label="強制產生LLError、資訊和崩潰" name="Force LLError Message And Crash" />
 			<menu_item_call label="強制讀取錯誤記憶體" name="Force Bad Memory Access" />
 			<menu_item_call label="強制讀取協程中的錯誤記憶體" name="Force Bad Memory Access in Coroutine" />
+			<menu_item_call label="強制觸發圖像配置失敗" name="Force Image Allocation Failure"/>
 			<menu_item_call label="強制無限循環" name="Force Infinite Loop" />
 			<menu_item_call label="強制驅動程式崩潰" name="Force Driver Carsh" />
 			<menu_item_call label="強制軟體異常" name="Force Software Exception" />
@@ -534,6 +538,7 @@
 			<menu_item_check label="彩現帶動畫的化身系統服裝" name="Render Avatar Cloth"/>
 			<menu_item_check label="當視訊記憶體已滿時減少繪製距離" name="Reduce Draw Distance when VRAM is full" />
 			<menu_item_check label="收集字型頂點緩衝區" name="Collect Font Vertex Buffers"/>
+			<menu_item_check label="收集UI圖像頂點緩衝區" name="Collect UI Image Vertex Buffers" />
 			<menu_item_check label="啟用著色器快取" name="Enable Shader Cache" />
 			<menu_item_call label="清除著色器快取" name="Shader Cache Clear" />
 		</menu>

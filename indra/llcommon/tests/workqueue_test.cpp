@@ -236,4 +236,25 @@ namespace tut
         ensure_equals("didn't run coroutine", stored, "ran");
         ensure("void waitForResult() didn't return", done);
     }
+
+    // <AS:Chanayane> authored by Trish (trish-sl): LLQueuedThread relies on ready work not being
+    // held behind deferred retries in a WorkSchedule.
+    template<> template<>
+    void object::test<7>()
+    {
+        set_test_name("ready work bypasses deferred retries");
+        bool deferred_ran = false;
+        bool ready_ran = false;
+        const auto later = WorkSchedule::TimePoint::clock::now() + 1h;
+        for (int i = 0; i < 512; ++i)
+        {
+            queue.post([&deferred_ran]() { deferred_ran = true; }, later);
+        }
+        queue.post([&ready_ran]() { ready_ran = true; });
+        queue.runPending();
+        ensure("ready work was held behind retries", ready_ran);
+        ensure("deferred work ran before its deadline", !deferred_ran);
+        ensure_equals("deferred work was lost", queue.size(), size_t(512));
+    }
+    // </AS:Chanayane>
 } // namespace tut

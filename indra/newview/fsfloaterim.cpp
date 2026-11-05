@@ -2699,7 +2699,7 @@ F32 FSFloaterIM::onGetChatEditorOpacityCallback(ETypeTransparency type, F32 alph
     static LLCachedControl<F32> im_opacity(gSavedSettings, "FSIMOpacity", 1.0f);
     if (type != TT_ACTIVE)
     {
-        return llmin(im_opacity, alpha);
+        return llmin(im_opacity(), alpha);
     }
 
     return alpha;

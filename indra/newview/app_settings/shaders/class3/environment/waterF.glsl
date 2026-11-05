@@ -96,6 +96,7 @@ uniform sampler2D exclusionTex;
 uniform int asVolumetricEnabled;
 uniform vec2 screen_res;
 uniform sampler2D asVolumetricAtlas;
+uniform float asVolumetricAtlasRange; // last slice end distance (metres)
 uniform float asVolumetricSceneDensity;
 
 // Strength of the optional horizon-fog blend toward atmospheric haze color
@@ -110,7 +111,7 @@ uniform float as_horizon_fog_intensity;
 vec3 asVolumetricWaterForeground(vec3 view_position)
 {
     if (asVolumetricEnabled == 0) return vec3(0.0);
-    float coordinate = sqrt(clamp(length(view_position) / 128.0, 0.0, 1.0)) * 16.0;
+    float coordinate = sqrt(clamp(length(view_position) / asVolumetricAtlasRange, 0.0, 1.0)) * 16.0;
     float upper = clamp(floor(coordinate), 0.0, 15.0);
     float weight = fract(coordinate);
     if (coordinate >= 16.0) { upper = 15.0; weight = 1.0; }
@@ -190,6 +191,10 @@ float asVolumetricReflectionProtection(vec3 view_direction,
 }
 // </AS:Chanayane>
 
+// <AS:Chanayane> Cloud shadows (Exact volumetric mode), asCloudShadowUtilF.glsl.
+float asCloudSunShadow(float shadow, vec3 view_pos);
+// </AS:Chanayane>
+
 uniform int classic_mode;
 uniform vec3 lightDir;
 uniform vec3 specular;
@@ -222,9 +227,7 @@ vec3 atmosLighting(vec3 light);
 vec3 scaleSoftClip(vec3 light);
 vec3 toneMapNoExposure(vec3 color);
 
-vec3 vN, vT, vB;
-
-vec3 transform_normal(vec3 vNt)
+vec3 transform_normal(vec3 vN, vec3 vT, vec3 vB, vec3 vNt)
 {
     return normalize(vNt.x * vT + vNt.y * vB + vNt.z * vN);
 }
@@ -284,9 +287,9 @@ void main()
 {
     mirrorClip(vary_position);
 
-    vN = vary_normal;
-    vT = vary_tangent;
-    vB = cross(vN, vT);
+    vec3 vN = vary_normal;
+    vec3 vT = vary_tangent;
+    vec3 vB = cross(vN, vT);
 
     vec3 pos = vary_position.xyz;
     float linear_depth = 1 / -pos.z;
@@ -322,14 +325,14 @@ void main()
 
     vec3 waver = wavef*3;
 
-    vec3 up = transform_normal(vec3(0,0,1));
+    vec3 up = transform_normal(vN, vT, vB, vec3(0,0,1));
     float vdu = -dot(viewVec, up)*2;
 
     vec3 wave_ibl = wavef * normScale;
     wave_ibl.z *= 2.0;
-    wave_ibl = transform_normal(normalize(wave_ibl));
+    wave_ibl = transform_normal(vN, vT, vB, normalize(wave_ibl));
 
-    vec3 norm = transform_normal(normalize(wavef));
+    vec3 norm = transform_normal(vN, vT, vB, normalize(wavef));
 
     vdu = clamp(vdu, 0, 1);
     //wavef.z *= max(vdu*vdu*vdu, 0.1);
@@ -337,7 +340,7 @@ void main()
     wavef = normalize(wavef);
 
     //wavef = vec3(0, 0, 1);
-    wavef = transform_normal(wavef);
+    wavef = transform_normal(vN, vT, vB, wavef);
 
     float dist2 = dist;
     dist = max(dist, 5.0);
@@ -352,7 +355,10 @@ void main()
     float water_mask = texture(exclusionTex, distort).r;
 
 #ifdef HAS_SUN_SHADOW
-    shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, distort);
+    // <AS:Chanayane> Cloud shadows.
+    // shadow = sampleDirectionalShadow(pos.xyz, norm.xyz, distort);
+    shadow = asCloudSunShadow(sampleDirectionalShadow(pos.xyz, norm.xyz, distort), pos.xyz);
+    // </AS:Chanayane>
 #endif
 
     vec3 sunlit_linear = sunlit;
@@ -412,7 +418,7 @@ void main()
 
     vec3 colorEmissive = vec3(0);
     float ao = 1.0;
-    vec3 light_dir = transform_normal(lightDir);
+    vec3 light_dir = transform_normal(vN, vT, vB, lightDir);
 
     float NdotV = clamp(abs(dot(norm, v)), 0.001, 1.0);
 

@@ -171,6 +171,10 @@ public:
         Optional<LLButton::Params>      up_btn,
                                         down_btn,
                                         edit_btn;
+        // <AS:Chanayane> Move to top / bottom of the layer stack.
+        Optional<LLButton::Params>      top_btn,
+                                        bottom_btn;
+        // </AS:Chanayane>
         Optional<LLPanel::Params>       lock_panel,
                                         edit_panel;
         Optional<LLIconCtrl::Params>    lock_icon;
@@ -190,8 +194,20 @@ public:
     inline void setShowMoveUpButton(bool show) { setShowWidget("btn_move_up", show); }
 
     inline void setShowMoveDownButton(bool show) { setShowWidget("btn_move_down", show); }
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    inline void setShowMoveTopButton(bool show) { setShowWidget("btn_move_top", show); }
+    inline void setShowMoveBottomButton(bool show) { setShowWidget("btn_move_bottom", show); }
+    // </AS:Chanayane>
     inline void setShowLockButton(bool show) { setShowWidget("btn_lock", show); }
     inline void setShowEditButton(bool show) { setShowWidget("btn_edit_panel", show); }
+
+    // <AS:Chanayane> Drag and drop layer reordering (see asoutfitreorder).
+    /*virtual*/ void draw();
+    /*virtual*/ bool handleMouseDown(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleMouseUp(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleHover(S32 x, S32 y, MASK mask);
+    /*virtual*/ void onMouseCaptureLost();
+    // </AS:Chanayane>
 
 protected:
 

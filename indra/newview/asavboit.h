@@ -10,6 +10,7 @@
 #include "llgl.h"
 #include "llmaterial.h"
 
+#include <functional>
 #include <vector>
 
 class LLGLSLShader;
@@ -24,7 +25,10 @@ class ASAVBOIT
 public:
     static const char* shaderCacheRevision();
     static bool requested();
-    static void loadShaders(S32 shader_level);
+    // Appends the family's compiles as small steps, which ASOITShaderLoader
+    // runs in order across frames; finishLoad() receives their result.
+    static void appendLoadSteps(S32 shader_level, std::vector<std::function<bool()>>& steps);
+    static void finishLoad(bool success);
     static void registerShaders(std::vector<LLGLSLShader*>& shader_list);
     static void unloadShaders();
     static bool shadersReady();

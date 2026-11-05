@@ -167,15 +167,23 @@ void LLFloaterIMContainer::sessionIDUpdated(const LLUUID& old_session_id, const 
     // Note however that the LLFloaterIMSession has its session id updated through a call to sessionInitReplyReceived()
     // and do not need to be deleted and recreated (trying this creates loads of problems). We do need however to suppress
     // its related mSessions record as it's indexed with the wrong id.
-    // Grabbing the updated LLFloaterIMSession and readding it in mSessions will eventually be done by addConversationListItem().
     mSessions.erase(old_session_id);
 
-    // Delete the model and participants related to the old session
-    bool change_focus = removeConversationListItem(old_session_id);
+    // Remove the old conversation widget without changing focus - we'll immediately re-add with
+    // the new id and select it, avoiding an unnecessary focus switch to an adjacent conversation.
+    bool was_selected = removeConversationListItem(old_session_id, false);
 
     // Create a new conversation with the new id
-    addConversationListItem(new_session_id, change_focus);
+    addConversationListItem(new_session_id, was_selected);
     LLFloaterIMSessionTab::addToHost(new_session_id);
+
+    // addToHost is a no-op for already-hosted floaters, so mSessions won't be
+    // updated by addFloater. Re-register manually so message flash works.
+    LLFloaterIMSessionTab* conversp = LLFloaterIMSessionTab::findConversation(new_session_id);
+    if (conversp && mSessions.find(new_session_id) == mSessions.end())
+    {
+        mSessions[new_session_id] = conversp;
+    }
 
     if (was_active)
     {
@@ -1359,6 +1367,12 @@ void LLFloaterIMContainer::doToParticipants(const std::string& command, uuid_vec
         {
             banSelectedMember(userID);
         }
+        // <FS:PP> Ban from all groups
+        else if ("ban_from_all_groups" == command)
+        {
+            LLGroupActions::banFromAllGroups(userID);
+        }
+        // </FS:PP>
     }
     else if (selectedIDS.size() > 1)
     {
@@ -1674,6 +1688,12 @@ bool LLFloaterIMContainer::enableContextMenuItem(const std::string& item, uuid_v
     {
         return canBanSelectedMember(single_id);
     }
+    // <FS:PP> Ban from all groups
+    else if ("can_ban_from_all_groups" == item)
+    {
+        return is_single_select && LLGroupActions::canBanFromAnyGroup(single_id);
+    }
+    // </FS:PP>
     else if (is_moderator_option)
     {
         // *TODO : get that out of here...

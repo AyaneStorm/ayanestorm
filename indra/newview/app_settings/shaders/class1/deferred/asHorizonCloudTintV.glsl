@@ -71,6 +71,9 @@ uniform float sun_moon_glow_factor;
 uniform vec3 cloud_color;
 
 uniform float cloud_scale;
+// World-fixed clouds (asworldclouds.cpp): uv1 offset by the camera's
+// motion, 0 when inactive. Same as cloudsV.glsl.
+uniform vec2 as_cloud_world_offset;
 uniform vec3 as_horizon_sun_direction;
 
 // NOTE: Keep these in sync!
@@ -91,6 +94,7 @@ void main()
     vary_texcoord0.xy -= 0.5;
     vary_texcoord0.xy /= cloud_scale;
     vary_texcoord0.xy += 0.5;
+    vary_texcoord0.xy += as_cloud_world_offset; // world-fixed clouds
 
     vary_texcoord1 = vary_texcoord0;
     vary_texcoord1.x += lightnorm.x * 0.0125;

@@ -190,7 +190,7 @@ namespace tut
             // computation, so I don't mind calling it twice.) Then take the
             // basename.
             reader_module(LLProcess::basename(
-                              reader.getName().substr(0, reader.getName().length()-3))),
+                              reader.getPath().string().substr(0, reader.getPath().string().length()-3))),
             PYTHON(LLStringUtil::getenv("PYTHON"))
         {
             ensure("Set PYTHON to interpreter pathname", !PYTHON.empty());
@@ -212,9 +212,9 @@ namespace tut
                                 "time.sleep(1)\n");
         LLLeapVector instances;
         instances.push_back(LLLeap::create(get_test_name(),
-                                           StringVec{PYTHON, script.getName()})->getWeak());
+                                           StringVec{PYTHON, script.getPath().string()})->getWeak());
         instances.push_back(LLLeap::create(get_test_name(),
-                                           StringVec{PYTHON, script.getName()})->getWeak());
+                                           StringVec{PYTHON, script.getPath().string()})->getWeak());
         // In this case we're simply establishing that two LLLeap instances
         // can coexist without throwing exceptions or bombing in any other
         // way. Wait for them to terminate.
@@ -229,7 +229,7 @@ namespace tut
                                 "import sys\n"
                                 "sys.stderr.write('''Hello from Python!\n"
                                 "note partial line''')\n");
-        StringVec vcommand{ PYTHON, script.getName() };
+        StringVec vcommand{ PYTHON, script.getPath().string() };
         CaptureLog log(LLError::LEVEL_INFO);
         waitfor(LLLeap::create(get_test_name(), vcommand));
         log.messageWith("Hello from Python!");
@@ -244,7 +244,7 @@ namespace tut
                                 "print('Hello from Python!')\n");
         CaptureLog log(LLError::LEVEL_WARN);
         waitfor(LLLeap::create(get_test_name(),
-                               StringVec{PYTHON, script.getName()}));
+                               StringVec{PYTHON, script.getPath().string()}));
         ensure_contains("error log line",
                         log.messageWith("invalid protocol"), "Hello from Python!");
     }
@@ -259,7 +259,7 @@ namespace tut
                                 "sys.stdout.write('Hello from Python!')\n");
         CaptureLog log(LLError::LEVEL_WARN);
         waitfor(LLLeap::create(get_test_name(),
-                               StringVec{PYTHON, script.getName()}));
+                               StringVec{PYTHON, script.getPath().string()}));
         ensure_contains("error log line",
                         log.messageWith("Discarding"), "Hello from Python!");
     }
@@ -273,7 +273,7 @@ namespace tut
                                 "sys.stdout.write('5a2:something')\n");
         CaptureLog log(LLError::LEVEL_WARN);
         waitfor(LLLeap::create(get_test_name(),
-                               StringVec{PYTHON, script.getName()}));
+                               StringVec{PYTHON, script.getPath().string()}));
         ensure_contains("error log line",
                         log.messageWith("invalid protocol"), "5a2:");
     }
@@ -298,13 +298,19 @@ namespace tut
         std::string BADPYTHON(PYTHON.substr(0, PYTHON.length()-1) + "x");
         CaptureLog log;
         std::string threw = catch_what<LLLeap::Error>([&BADPYTHON](){
-                LLLeap::create("bad exe", BADPYTHON);
+                // <FS:Beq> The string overload takes a command line: quote paths with spaces.
+                // LLLeap::create("bad exe", BADPYTHON);
+                LLLeap::create("bad exe", "\"" + BADPYTHON + "\"");
+                // </FS:Beq>
             });
         ensure_contains("LLLeap::create() didn't throw", threw, "failed");
         log.messageWith("failed");
         log.messageWith(BADPYTHON);
         // try the suppress-exception variant
-        ensure("bad launch returned non-NULL", ! LLLeap::create("bad exe", BADPYTHON, false));
+        // <FS:Beq> Preserve the full executable path in the non-throwing case too.
+        // ensure("bad launch returned non-NULL", ! LLLeap::create("bad exe", BADPYTHON, false));
+        ensure("bad launch returned non-NULL", ! LLLeap::create("bad exe", "\"" + BADPYTHON + "\"", false));
+        // </FS:Beq>
     }
 
     // Generic self-contained listener: derive from this and override its
@@ -386,7 +392,7 @@ namespace tut
                                 "            else 'bad: ' + str(resp)\n"
                                 "send(pump='" << result.getName() << "', data=result)\n";});
         waitfor(LLLeap::create(get_test_name(),
-                               StringVec{PYTHON, script.getName()}));
+                               StringVec{PYTHON, script.getPath().string()}));
         result.ensure();
     }
 
@@ -445,7 +451,7 @@ namespace tut
                                 "        result = 'expected reqid=%s in %s' % (i, resp)\n"
                                 "        break\n"
                                 "send(pump='" << result.getName() << "', data=result)\n";});
-        waitfor(LLLeap::create(get_test_name(), StringVec{PYTHON, script.getName()}),
+        waitfor(LLLeap::create(get_test_name(), StringVec{PYTHON, script.getPath().string()}),
                 300);               // needs more realtime than most tests
         result.ensure();
     }
@@ -512,7 +518,7 @@ namespace tut
                                 "             (start, large[start:end], echoed[start:end]))\n"
                                 "sys.exit(1)\n";});
         waitfor(LLLeap::create(test_name,
-                               StringVec{PYTHON, script.getName(), stringize(size)}),
+                               StringVec{PYTHON, script.getPath().string(), stringize(size)}),
                 180);               // try a longer timeout
         result.ensure();
     }
@@ -657,4 +663,22 @@ namespace tut
         set_test_name("very large message");
         test_or_split(PYTHON, reader_module, get_test_name(), BUFFERED_LENGTH);
     }
+    // <FS:Beq> Exercise successful command-line parsing with quoted paths and arguments.
+    template<> template<>
+    void object::test<11>()
+    {
+        set_test_name("quoted command line");
+        NamedTempFile script("leap script with spaces ",
+                             "import sys\n"
+                             "print('quoted argument: ' + sys.argv[1], file=sys.stderr)\n",
+                             ".py");
+        // generic_string() avoids interpreting Windows path separators as escapes.
+        const std::string python = std::filesystem::path(PYTHON).generic_string();
+        const std::string command = "\"" + python + "\" \"" +
+                                    script.getPath().generic_string() + "\" \"argument with spaces\"";
+        CaptureLog log(LLError::LEVEL_INFO);
+        waitfor(LLLeap::create(get_test_name(), command));
+        log.messageWith("quoted argument: argument with spaces");
+    }
+    // </FS:Beq>
 } // namespace tut

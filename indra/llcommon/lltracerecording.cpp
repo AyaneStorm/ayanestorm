@@ -32,11 +32,6 @@
 #include "lltracethreadrecorder.h"
 #include "llthread.h"
 
-inline F64 lerp(F64 a, F64 b, F64 u)
-{
-    return a + ((b - a) * u);
-}
-
 namespace LLTrace
 {
 
@@ -122,10 +117,24 @@ void Recording::handleReset()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_STATS;
 #if LL_TRACE_ENABLED
+    // <FS:Beq> Flush the active partial recording before clearing its target.
+    // Otherwise getSum() adds the pre-reset partial samples back into the result.
+    const bool was_started = isStarted();
+    if (was_started)
+    {
+        handleStop();
+    }
+    // </FS:Beq>
     mBuffers.write()->reset();
 
     mElapsedSeconds = F64Seconds(0.0);
     mSamplingTimer.reset();
+    // <FS:Beq> Resume with fresh partial buffers while preserving the play state.
+    if (was_started)
+    {
+        handleStart();
+    }
+    // </FS:Beq>
 #endif
 }
 
@@ -302,7 +311,7 @@ F64 Recording::getMean( const StatType<SampleAccumulator>& stat )
         {
             t = (F64)active_accumulator->getSampleCount() / (F64)div;
         }
-        return lerp(accumulator.getMean(), active_accumulator->getMean(), t);
+        return std::lerp(accumulator.getMean(), active_accumulator->getMean(), t);
     }
     else
     {
@@ -388,7 +397,7 @@ F64 Recording::getMean( const StatType<EventAccumulator>& stat )
         {
             t = (F64)active_accumulator->getSampleCount() / (F64)div;
         }
-        return lerp(accumulator.getMean(), active_accumulator->getMean(), t);
+        return std::lerp(accumulator.getMean(), active_accumulator->getMean(), t);
     }
     else
     {

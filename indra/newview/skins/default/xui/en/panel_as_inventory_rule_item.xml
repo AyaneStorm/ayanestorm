@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. One row of the Inventory Rules rulesets or rules list. -->
+<panel
+ follows="top|left|right"
+ height="40"
+ layout="topleft"
+ left="0"
+ name="as_inventory_rule_item"
+ top="0"
+ width="520">
+  <text
+   follows="top|left|right"
+   font="SansSerifSmallBold"
+   height="16"
+   layout="topleft"
+   left="6"
+   name="row_name"
+   parse_urls="false"
+   right="-236"
+   top="3"
+   use_ellipses="true"
+   value="" />
+  <text
+   follows="top|left|right"
+   font="SansSerifSmall"
+   height="16"
+   layout="topleft"
+   left="6"
+   name="row_summary"
+   parse_urls="false"
+   right="-236"
+   text_color="LtGray_50"
+   top="21"
+   use_ellipses="true"
+   value="" />
+  <button
+   follows="top|right"
+   height="22"
+   image_overlay="Arrow_Up"
+   label=""
+   layout="topleft"
+   name="up_btn"
+   right="-230"
+   tab_stop="false"
+   tool_tip="Move up (Execute All runs in list order)"
+   top="9"
+   width="22" />
+  <button
+   follows="top|right"
+   height="22"
+   image_overlay="Arrow_Down"
+   label=""
+   layout="topleft"
+   name="down_btn"
+   right="-204"
+   tab_stop="false"
+   tool_tip="Move down (Execute All runs in list order)"
+   top="9"
+   width="22" />
+  <button
+   follows="top|right"
+   height="22"
+   label="Execute"
+   layout="topleft"
+   name="execute_btn"
+   right="-134"
+   tab_stop="false"
+   tool_tip="Run now"
+   top="9"
+   width="66" />
+  <button
+   follows="top|right"
+   height="22"
+   label="Edit"
+   layout="topleft"
+   name="edit_btn"
+   right="-70"
+   tab_stop="false"
+   tool_tip="Edit"
+   top="9"
+   width="60" />
+  <button
+   follows="top|right"
+   height="22"
+   label="Delete"
+   layout="topleft"
+   name="delete_btn"
+   right="-6"
+   tab_stop="false"
+   tool_tip="Delete"
+   top="9"
+   width="60" />
+</panel>

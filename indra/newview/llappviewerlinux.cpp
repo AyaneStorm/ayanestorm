@@ -34,34 +34,22 @@
 #include "llurldispatcher.h"        // SLURL from other app instance
 #include "llviewernetwork.h"
 #include "llviewercontrol.h"
-#include "llwindowsdl.h"
 #include "llmd5.h"
 #include "llfindlocale.h"
+#include "llversioninfo.h"
 
 #include <exception>
 
+#define SDL_MAIN_USE_CALLBACKS
+#include <SDL3/SDL_main.h>
+
+#include "SDL3/SDL.h"
+
+#include "llsdl.h"
+#include "llwindowsdl.h"
+
+#ifdef LL_GLIB
 #include <gio/gio.h>
-#include <resolv.h>
-
-#if (__GLIBC__*1000 + __GLIBC_MINOR__) >= 2034
-#pragma message "Compiling with libresolv stubs"
-extern "C"
-{
-  int __res_nquery(res_state statep,
-                   const char *dname, int qclass, int type,
-                   unsigned char *answer, int anslen)
-  {
-    return res_nquery( statep, dname, qclass, type, answer, anslen );
-  }
-
-  int __dn_expand(const unsigned char *msg,
-                  const unsigned char *eomorig,
-                  const unsigned char *comp_dn, char *exp_dn,
-                  int length)
-  {
-    return dn_expand( msg,eomorig,comp_dn,exp_dn,length);
-  }
-}
 #endif
 
 #if LL_SEND_CRASH_REPORTS
@@ -72,7 +60,12 @@ extern "C"
 #endif
 
 #include "boost/json.hpp"
-#include "fsversionvalues.h"
+// <FS:Beq> Persist Linux report metadata before a crash, never from its callback.
+#include "llagent.h"
+#include "llvoavatarself.h"
+#include "llprocess.h"
+#include <filesystem>
+// </FS:Beq>
 
 #define VIEWERAPI_SERVICE "com.secondlife.ViewerAppAPIService"
 #define VIEWERAPI_PATH "/com/secondlife/ViewerAppAPI"
@@ -97,10 +90,101 @@ namespace
 {
     int gArgC = 0;
     char **gArgV = NULL;
+    LLAppViewerLinux* gViewerAppPtr = NULL;
     void (*gOldTerminateHandler)() = NULL;
 }
 
+void check_vm_bloat()
+{
+#if LL_LINUX
+    // watch our own VM and RSS sizes, warn if we bloated rapidly
+    static const std::string STATS_FILE = "/proc/self/stat";
+    FILE *fp = fopen(STATS_FILE.c_str(), "r");
+    if (fp)
+    {
+        static long long last_vm_size = 0;
+        static long long last_rss_size = 0;
+        const long long significant_vm_difference = 250 * 1024*1024;
+        const long long significant_rss_difference = 50 * 1024*1024;
+        long long this_vm_size = 0;
+        long long this_rss_size = 0;
 
+        ssize_t res;
+        size_t dummy;
+        char *ptr = nullptr;
+        for (int i=0; i<22; ++i) // parse past the values we don't want
+        {
+            res = getdelim(&ptr, &dummy, ' ', fp);
+            if (-1 == res)
+            {
+                LL_WARNS() << "Unable to parse " << STATS_FILE << LL_ENDL;
+                goto finally;
+            }
+            free(ptr);
+            ptr = nullptr;
+        }
+        // 23rd space-delimited entry is vsize
+        res = getdelim(&ptr, &dummy, ' ', fp);
+        llassert(ptr);
+        if (-1 == res)
+        {
+            LL_WARNS() << "Unable to parse " << STATS_FILE << LL_ENDL;
+            goto finally;
+        }
+        this_vm_size = atoll(ptr);
+        free(ptr);
+        ptr = nullptr;
+        // 24th space-delimited entry is RSS
+        res = getdelim(&ptr, &dummy, ' ', fp);
+        llassert(ptr);
+        if (-1 == res)
+        {
+            LL_WARNS() << "Unable to parse " << STATS_FILE << LL_ENDL;
+            goto finally;
+        }
+        this_rss_size = getpagesize() * atoll(ptr);
+        free(ptr);
+        ptr = nullptr;
+
+        LL_INFOS() << "VM SIZE IS NOW " << (this_vm_size/(1024*1024)) << " MB, RSS SIZE IS NOW " << (this_rss_size/(1024*1024)) << " MB" << LL_ENDL;
+
+        if (llabs(last_vm_size - this_vm_size) > significant_vm_difference)
+        {
+            if (this_vm_size > last_vm_size)
+            {
+                LL_WARNS() << "VM size grew by " << (this_vm_size - last_vm_size)/(1024*1024) << " MB in last frame" << LL_ENDL;
+            }
+            else
+            {
+                LL_INFOS() << "VM size shrank by " << (last_vm_size - this_vm_size)/(1024*1024) << " MB in last frame" << LL_ENDL;
+            }
+        }
+
+        if (llabs(last_rss_size - this_rss_size) > significant_rss_difference)
+        {
+            if (this_rss_size > last_rss_size)
+            {
+                LL_WARNS() << "RSS size grew by " << (this_rss_size - last_rss_size)/(1024*1024) << " MB in last frame" << LL_ENDL;
+            }
+            else
+            {
+                LL_INFOS() << "RSS size shrank by " << (last_rss_size - this_rss_size)/(1024*1024) << " MB in last frame" << LL_ENDL;
+            }
+        }
+
+        last_rss_size = this_rss_size;
+        last_vm_size = this_vm_size;
+
+finally:
+        if (ptr)
+        {
+            free(ptr);
+            ptr = nullptr;
+        }
+        fclose(fp);
+    }
+#endif // LL_LINUX
+}
 static void exceptionTerminateHandler()
 {
     // reinstall default terminate() handler in case we re-terminate.
@@ -113,40 +197,91 @@ static void exceptionTerminateHandler()
     gOldTerminateHandler(); // call old terminate() handler
 }
 
-int main( int argc, char **argv )
+SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
     // Call Tracy first thing to have it allocate memory
     // https://github.com/wolfpld/tracy/issues/196
     LL_PROFILER_FRAME_END;
     LL_PROFILER_SET_THREAD_NAME("App");
 
+    gSDLMainHandled = true;
+
     gArgC = argc;
     gArgV = argv;
 
-    LLAppViewer* viewer_app_ptr = new LLAppViewerLinux();
+    gViewerAppPtr = new LLAppViewerLinux();
 
     // install unexpected exception handler
     gOldTerminateHandler = std::set_terminate(exceptionTerminateHandler);
 
     unsetenv( "LD_PRELOAD" ); // <FS:ND/> Get rid of any preloading, we do not want this to happen during startup of plugins.
 
-    bool ok = viewer_app_ptr->init();
+    // This needs to be set as early as possible
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_NAME_STRING, LLVersionInfo::getInstance()->getChannel().c_str());
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING, LLVersionInfo::getInstance()->getVersion().c_str());
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_IDENTIFIER_STRING, "org.firestormviewer.firestorm");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "The Phoenix Firestorm Project, Inc.");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "Copyright (c) 2025, The Phoenix Firestorm Project, Inc.");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_URL_STRING, "https://www.firestormviewer.org/");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_TYPE_STRING, "game");
+
+    bool ok = gViewerAppPtr->init();
     if(!ok)
     {
         // <FS:PP> FIRE-36191: A secondary helper process can intentionally quit after handing an external SLURL to the already-running viewer instance
         if (LLApp::isQuitting())
         {
-            return 0;
+            return SDL_APP_SUCCESS;
         }
         // </FS:PP>
         LL_WARNS() << "Application init failed." << LL_ENDL;
-        return -1;
+        return SDL_APP_FAILURE;
     }
 
-        // Run the application main loop
-    while (! viewer_app_ptr->frame())
-    {}
+    return SDL_APP_CONTINUE;
+}
 
+SDL_AppResult SDL_AppIterate(void *appstate)
+{
+    // Run the application main loop
+    if (!gViewerAppPtr->frame())
+    {
+#if LL_GLIB
+        // Pump until we've nothing left to do or passed 1/15th of a
+        // second pumping for this frame.
+        static LLTimer pump_timer;
+        pump_timer.reset();
+        pump_timer.setTimerExpirySec(1.0f / 15.0f);
+        do
+        {
+            g_main_context_iteration(g_main_context_default(), false);
+        } while( g_main_context_pending(g_main_context_default()) && !pump_timer.hasExpired());
+#endif
+
+        // hack - doesn't belong here - but this is just for debugging
+        if (getenv("LL_DEBUG_BLOAT"))
+        {
+            check_vm_bloat();
+        }
+
+        return SDL_APP_CONTINUE;
+    }
+
+    if(LLApp::isError())
+    {
+        return SDL_APP_FAILURE;
+    }
+
+    return SDL_APP_SUCCESS;
+}
+
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
+{
+    return LLWindowSDL::handleEvents(*event);
+}
+
+void SDL_AppQuit(void *appstate, SDL_AppResult result)
+{
     if (!LLApp::isError())
     {
         //
@@ -154,11 +289,11 @@ int main( int argc, char **argv )
         // the assumption is that the error handler is responsible for doing
         // app cleanup if there was a problem.
         //
-        viewer_app_ptr->cleanup();
+        gViewerAppPtr->cleanup();
     }
-    delete viewer_app_ptr;
-    viewer_app_ptr = NULL;
-    return 0;
+
+    delete gViewerAppPtr;
+    gViewerAppPtr = nullptr;
 }
 
 LLAppViewerLinux::LLAppViewerLinux()
@@ -177,8 +312,15 @@ std::string gCrashBehavior;
 
 static bool dumpCallback(const google_breakpad::MinidumpDescriptor& descriptor, void* context, bool succeeded)
 {
+    // <FS:Beq> Only exec the separate reporter after a successful dump. A failed
+    // exec must terminate the child, not resume the crashed viewer's callback.
+    if (!succeeded) return false;
     if( fork() == 0 )
+    {
         execl( gCrashLogger.c_str(), gCrashLogger.c_str(), descriptor.path(), gVersion.c_str(), gBugsplatDB.c_str(),  gCrashBehavior.c_str(), nullptr );
+        _exit(127);
+    }
+    // </FS:Beq>
     return succeeded;
 }
 
@@ -210,9 +352,9 @@ void setupBreakpad()
         return;
     }
 
-    gVersion = STRINGIZE(
-            LL_VIEWER_VERSION_MAJOR << '.' << LL_VIEWER_VERSION_MINOR << '.' << LL_VIEWER_VERSION_PATCH
-                                    << '.' << LL_VIEWER_VERSION_BUILD);
+    // <FS:Beq> Use the current version service; the legacy macros were removed.
+    gVersion = LLVersionInfo::instance().getVersion();
+    // </FS:Beq>
 
     boost::json::value BugSplat_DB = build_data.at("BugSplat DB");
     gBugsplatDB = boost::json::value_to<std::string>(BugSplat_DB);
@@ -226,11 +368,6 @@ void setupBreakpad()
 
 bool LLAppViewerLinux::init()
 {
-    // g_thread_init() must be called before *any* use of glib, *and*
-    // before any mutexes are held, *and* some of our third-party
-    // libraries likes to use glib functions; in short, do this here
-    // really early in app startup!
-
     bool success = LLAppViewer::init();
 
 #if LL_SEND_CRASH_REPORTS
@@ -244,11 +381,72 @@ bool LLAppViewerLinux::init()
         else
             gCrashBehavior = "send";
         setupBreakpad();
+        // <FS:Beq> Capture defaults now and reopen an unsent report in the
+        // standalone reporter when a previous dialog/upload could not finish.
+        bugsplatAddStaticAttributes(getViewerInfo());
+        LLProcess::Params retry;
+        retry.executable = gCrashLogger;
+        retry.args.add("--pending");
+        retry.args.add(gDirUtilp->getExpandedFilename(LL_PATH_LOGS, ""));
+        retry.autokill = false;
+        retry.attached = false;
+        LLProcess::create(retry);
+        // </FS:Beq>
     }
 #endif
 
     return success;
 }
+
+// <FS:Beq> This runs at initialization and when normal debug information is
+// refreshed (including login). The crash callback only forks/execs the helper.
+void LLAppViewerLinux::bugsplatAddStaticAttributes(const LLSD& info)
+{
+#if LL_SEND_CRASH_REPORTS
+    if (gCrashSettings.getS32("CrashSubmitBehavior") == CRASH_BEHAVIOR_NEVER_SEND) return;
+    try
+    {
+        boost::json::object system;
+        for (const auto* key : {"CPU", "OS_VERSION", "GRAPHICS_CARD", "GRAPHICS_DRIVER_VERSION", "MEMORY_MB"})
+            system[key] = info[key].asString();
+        boost::json::object report{
+            {"product", LLVersionInfo::instance().getChannel()},
+            {"version", LLVersionInfo::instance().getVersion()},
+            {"channel", LLVersionInfo::instance().getChannel()},
+            {"description", "Firestorm closed unexpectedly."},
+            {"system", system},
+            {"name", gCrashSettings.getBOOL("CrashSubmitName") && gAgentAvatarp
+                         ? gAgentAvatarp->getFullname() : std::string()},
+            {"include_settings", bool(gCrashSettings.getBOOL("CrashSubmitSettings"))},
+            {"debug_file", isSecondInstance() ? std::string() : *getStaticDebugFile()},
+            {"settings_file", gSavedSettings.getString("ClientSettingsFile")},
+            {"account_settings_file", gAgentAvatarp
+                         ? gDirUtilp->getExpandedFilename(LL_PATH_PER_SL_ACCOUNT, "settings_per_account.xml") : std::string()},
+            {"ca_file", gDirUtilp->getCAFile()}
+        };
+#ifdef OPENSIM
+        report["flavor"] = "oss";
+#else
+        report["flavor"] = "hvk";
+#endif
+        const auto path = gDirUtilp->getExpandedFilename(LL_PATH_DUMP, "report-context.json");
+        const auto temporary = path + ".tmp";
+        {
+            llofstream output(temporary, std::ios::trunc);
+            std::filesystem::permissions(temporary, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write);
+            output << boost::json::serialize(report) << '\n';
+            output.close();
+            if (!output) throw std::runtime_error("Cannot write Linux crash context");
+        }
+        std::filesystem::rename(temporary, path);
+    }
+    catch (const std::exception& error)
+    {
+        LL_WARNS("BUGSPLAT") << "Cannot snapshot crash report context: " << error.what() << LL_ENDL;
+    }
+#endif
+}
+// </FS:Beq>
 
 bool LLAppViewerLinux::restoreErrorTrap()
 {
@@ -264,8 +462,6 @@ typedef struct
 {
         GObjectClass parent_class;
 } ViewerAppAPIClass;
-
-///
 
 static void viewerappapi_init(ViewerAppAPI *server);
 static void viewerappapi_class_init(ViewerAppAPIClass *klass);
@@ -499,7 +695,7 @@ bool LLAppViewerLinux::beingDebugged()
                     base += 1;
                 }
 
-                if (strcmp(base, "gdb") == 0)
+                if (strcmp(base, "gdb") == 0 || strcmp(base, "lldb") == 0)
                 {
                     debugged = yes;
                 }
@@ -509,18 +705,6 @@ bool LLAppViewerLinux::beingDebugged()
     }
 
     return debugged == yes;
-}
-
-void LLAppViewerLinux::initLoggingAndGetLastDuration()
-{
-    // Remove the last stack trace, if any
-    // This file is no longer created, since the move to Google Breakpad
-    // The code is left here to clean out any old state in the log dir
-    std::string old_stack_file =
-        gDirUtilp->getExpandedFilename(LL_PATH_LOGS,"stack_trace.log");
-    LLFile::remove(old_stack_file);
-
-    LLAppViewer::initLoggingAndGetLastDuration();
 }
 
 bool LLAppViewerLinux::initParseCommandLine(LLCommandLineParser& clp)

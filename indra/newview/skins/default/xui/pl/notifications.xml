@@ -115,6 +115,9 @@ Inicjalizacja Marketplace nieudana z powodu błędu sieci lub systemu. Spróbuj 
 
 &apos;[ERROR_CODE]&apos;
 	</notification>
+	<notification name="CannotPasteFolderIntoSelf">
+		Nie można wkleić folderu do niego samego ani do żadnego z jego podfolderów.
+	</notification>
 	<notification name="InvalidKeystroke">
 		Naciśnięto nieprawidłowy klawisz.
 [REASON].
@@ -286,6 +289,35 @@ Jeśli nie chcesz, aby te przywileje były dłużej przypisane do tej roli, to w
 	<notification name="BanGroupMembersWarning">
 		Zamierzasz zbanować [COUNT] osób z grupy.
 		<usetemplate ignoretext="Potwierdź przed zbanowaniem z grupy kilku osób na raz" name="okcancelignore" notext="Anuluj" yestext="Banuj" />
+	</notification>
+	<notification name="FSBanFromAllGroups">
+		Zamierzasz zbanować [AVATAR_NAME] we wszystkich grupach, w których możesz zarządzać banami (liczba grup: [COUNT]):
+
+[GROUPS]
+		<usetemplate name="okcancelbuttons" notext="Anuluj" yestext="Banuj" />
+	</notification>
+	<notification name="FSUnbanFromAllGroups">
+		Zamierzasz odbanować [AVATAR_NAME] we wszystkich grupach, w których możesz zarządzać banami (liczba grup: [COUNT]):
+
+[GROUPS]
+		<usetemplate name="okcancelbuttons" notext="Anuluj" yestext="Odbanuj" />
+	</notification>
+	<notification name="FSBanFromAllGroupsStarted">
+		Aktualizowanie banów dla [AVATAR_NAME], grupa po grupie (liczba grup: [COUNT]). Raport pojawi się po zakończeniu.
+	</notification>
+	<notification name="FSBanFromAllGroupsReport">
+		Zbanowano [AVATAR_NAME] w [DONE] z [COUNT] grup.
+
+Zbanowano w: [SUCCEEDED]
+
+Nie udało się w: [FAILED]
+	</notification>
+	<notification name="FSUnbanFromAllGroupsReport">
+		Odbanowano [AVATAR_NAME] w [DONE] z [COUNT] grup.
+
+Odbanowano w: [SUCCEEDED]
+
+Nie udało się w: [FAILED]
 	</notification>
 	<notification name="GroupBanUserOnBanlist">
 		Niektórzy rezydenci nie dostali zaproszenia, ponieważ są zbanowani w grupie.
@@ -582,6 +614,10 @@ Czy chcesz zamknąć przeglądarkę i uruchomić ją ponownie, ręcznie, aby zas
 	</notification>
 	<notification name="SaveChanges">
 		Zapisać zmiany?
+		<usetemplate canceltext="Anuluj" name="yesnocancelbuttons" notext="Nie zapisuj" yestext="Zapisz"/>
+	</notification>
+	<notification name="SaveScriptChanges">
+		Zapisać zmiany w [NAME]?
 		<usetemplate canceltext="Anuluj" name="yesnocancelbuttons" notext="Nie zapisuj" yestext="Zapisz"/>
 	</notification>
 	<notification name="DeleteNotecard">
@@ -1540,7 +1576,6 @@ Możesz sprawdzić swoje połączenie z Internetem i spróbować ponownie za kil
 		Twoja postać pojawi się za moment.
 
 Używaj strzałek żeby się poruszać.
-Naciśnij F1 w dowolnej chwili po pomoc albo żeby dowiedzieć się więcej o [CURRENT_GRID].
 Wybierz awatara właściwej płci. Ten wybór będzie można później zmienić.
 		<usetemplate name="okcancelbuttons" notext="Kobieta" yestext="Mężczyzna"/>
 	</notification>
@@ -2238,6 +2273,9 @@ Pełne informacje na temat klasyfikacji treści można znaleźć [https://commun
 	<notification name="MaturityChangeError">
 		Nie można zmienić Twoich preferencji odnośnie treści [PREFERRED_MATURITY] w tej chwili. Twoje preferencje zostały zresetowane do oglądania treści [ACTUAL_MATURITY]. Możesz spróbować zmienić swoją preferencję treści ponownie używając Awatar &gt; Ustawienia &gt; Ogólne w pasku menu.
 	</notification>
+	<notification name="RegionTPAccessBlocked_NotifyAdultsOnly">
+		Region ma rating [REGIONMATURITY_CAP], niedostępny dla Twojego konta.
+	</notification>
 	<notification name="LandClaimAccessBlocked">
 		Ziemia, którą próbujesz odzyskać ma klasyfikację treści przekraczającą Twoje obecne preferencje treści. Możesz je zmienić używając Awatar &gt; Ustawienia &gt; Ogólne w pasku menu.
 
@@ -2815,6 +2853,15 @@ URL: [AUDIOURL]
 			<button name="WhitelistDomain" text="Biała lista"/>
 		</form>
 	</notification>
+	<notification name="ExternalEditorServerStarted">
+		Serwer edytora zewn. na porcie [PORT].
+	</notification>
+	<notification name="ExternalEditorServerFailed">
+		Nie uruchomiono serwera edytora na porcie [PORT].
+	</notification>
+	<notification name="ExternalEditorServerStopped">
+		Serwer edytora zewnętrznego zatrzymany.
+	</notification>
 	<notification name="Cancelled">
 		Anulowane.
 	</notification>
@@ -3053,7 +3100,7 @@ Nieprzekazywalne obiekty przekazane grupie zostały usunięte.
 	</notification>
 	<notification name="NotSafe">
 		Ta działka pozwala na uszkodzenia.
-Możesz doznać tutaj urazu. Jeżeli zginiesz nastąpi teleportacja do Twojego miejsca startu.
+Możesz doznać tutaj urazu. Jeżeli zginiesz może nastąpić teleportacja do Twojego miejsca startu.
 	</notification>
 	<notification name="NoFly">
 		Ta działka nie pozwala na latanie.
@@ -5135,12 +5182,6 @@ Będziesz mógł/a dodać metodę płatności w kasie.
 			<button name="Cancel" text="Anuluj" />
 		</form>
 	</notification>
-	<notification name="LSLColorCopiedToClipboard">
-		Ciąg koloru w formacie LSL został skopiowany do schowka. Możesz go teraz wkleić w swoim skrypcie i zacząć używać.
-		<form name="form">
-			<ignore name="ignore" text="Ciąg koloru w formacie LSL został skopiowany do schowka"/>
-		</form>
-	</notification>
 	<notification name="FSBWTooHigh">
 		Mocno zalecamy nie ustawiać przepustowości powyżej 1500 kbps. Jest mało prawdopodobne, aby takie ustawienie nie sprawiało problemów i prawie na pewno nie spowoduje wzrostu wydajności.
 	</notification>
@@ -5361,7 +5402,7 @@ Czy chcesz autoryzować [APP_NAME] do przesyłania zdjęć na Flickr?
 Ze względu na obciążenie serwera taka masowa zmiana może chwilę potrwać i tymczasowo powodować problemy z wyświetlaniem Twojego statusu online u niektórych znajomych.
 		<usetemplate name="okcancelbuttons" notext="Anuluj" />
 	</notification>
-	<notification name="GlobalOnlineStatusToggle">
+	<notification name="GlobalOnlineStatusToggleInfo">
 		Ze względu na obciążenie serwera masowa zmiana widoczności online może zająć trochę czasu. Prosimy o cierpliwość.
 		<usetemplate ignoretext="Informuj mnie, że masowa zmiana widoczności online może zająć trochę czasu" name="okignore" />
 	</notification>

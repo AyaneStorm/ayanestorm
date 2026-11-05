@@ -198,7 +198,7 @@
 			</panel>
 
 			<panel name="P_Amb_Occ_Settings">
-				<check_box label="Ativar Ambient Occlusion (percepção de profundidade)" name="UseSSAO" tool_tip="Ambient Occlusion simula sombras suaves em dobras, cantos e áreas onde objetos ficam próximos, aumentando profundidade e realismo ao reproduzir a oclusão natural da luz ambiente. Sozinho já é eficaz, mas as opções “Efeito” e “Suavização AO” ajudam a otimizar intensidade e suavidade do sombreamento. O efeito melhora o realismo em qualquer resolução, porém os detalhes finos ficam mais visíveis em resoluções maiores, como 2048 pixels ou mais."/>
+				<check_box label="Ambient Occlusion (percepção de profundidade)" name="UseSSAO" tool_tip="Ambient Occlusion simula sombras suaves em dobras, cantos e áreas onde objetos ficam próximos, aumentando profundidade e realismo ao reproduzir a oclusão natural da luz ambiente. Sozinho já é eficaz, mas as opções “Efeito” e “Suavização AO” ajudam a otimizar intensidade e suavidade do sombreamento. O efeito melhora o realismo em qualquer resolução, porém os detalhes finos ficam mais visíveis em resoluções maiores, como 2048 pixels ou mais."/>
 			</panel>
 
 			<panel name="P_Scale">
@@ -410,11 +410,6 @@
 					Det. árvores
 				</text>
 				<button name="Reset_Tree_Detail" label="S" tool_tip="Redefinir para o padrão."/>
-
-				<text name="T_Sky_Detail" tool_tip="Define o nível de detalhe do céu Windlight. Valores mais baixos melhoram desempenho, mas com céu menos bonito.">
-					Det. céu
-				</text>
-				<button name="Reset_Sky_Detail" label="S" tool_tip="Redefinir para o padrão."/>
 
 				<text name="T_Sharpening" tool_tip="Define a nitidez da imagem usando Contrast-Adaptive Sharpening (CAS).">
 					Nitidez

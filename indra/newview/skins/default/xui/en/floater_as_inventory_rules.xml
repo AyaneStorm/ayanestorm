@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<!-- AyaneStorm Viewer; author: chanayane@firestorm. Inventory rulesets. -->
+<floater
+ can_close="true"
+ can_resize="true"
+ height="420"
+ layout="topleft"
+ min_height="260"
+ min_width="712"
+ name="floater_as_inventory_rules"
+ positioning="cascading"
+ reuse_instance="true"
+ save_rect="true"
+ single_instance="true"
+ title="Inventory Rules"
+ width="712">
+  <string name="no_items">No rulesets yet. Click New Ruleset to create one.</string>
+  <string name="new_ruleset">New ruleset</string>
+  <text
+   follows="left|right|top"
+   height="18"
+   layout="topleft"
+   left="10"
+   name="explanation"
+   right="-10"
+   top="8"
+   word_wrap="true">
+    A ruleset is a list of rules that find items or folders and move or delete them.
+  </text>
+  <flat_list_view
+   allow_select="false"
+   color="White_05"
+   follows="all"
+   item_pad="2"
+   layout="topleft"
+   left="10"
+   name="list"
+   right="-10"
+   top="30"
+   bottom="-84" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="New Ruleset"
+   layout="topleft"
+   left="10"
+   name="new_btn"
+   tool_tip="Create a new ruleset"
+   top="344"
+   width="100" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Execute All"
+   layout="topleft"
+   left="118"
+   name="execute_all_btn"
+   tool_tip="Run every ruleset in list order"
+   top="344"
+   width="110" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Dry Run"
+   layout="topleft"
+   left="236"
+   name="dry_run_btn"
+   tool_tip="List what every ruleset would do, without changing anything"
+   top="344"
+   width="80" />
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Stop"
+   layout="topleft"
+   left="324"
+   name="stop_btn"
+   tool_tip="Stop after the batch in progress is confirmed"
+   top="344"
+   width="80" />
+  <flyout_button
+   follows="left|bottom"
+   height="23"
+   label="Export"
+   layout="topleft"
+   left="412"
+   name="export_btn"
+   tool_tip="Copy every ruleset with its rules to the clipboard as JSON (a backup). The arrow also offers a file."
+   top="344"
+   width="96">
+    <flyout_button.item label="Export to clipboard" name="clipboard" value="clipboard" />
+    <flyout_button.item label="Export to file..." name="file" value="file" />
+  </flyout_button>
+  <flyout_button
+   follows="left|bottom"
+   height="23"
+   label="Import"
+   layout="topleft"
+   left="514"
+   name="import_btn"
+   tool_tip="Add rulesets from JSON in the clipboard (one ruleset or a full export), at the end of the list. Nothing is replaced or executed. The arrow also offers a file."
+   top="344"
+   width="96">
+    <flyout_button.item label="Import from clipboard" name="clipboard" value="clipboard" />
+    <flyout_button.item label="Import from file..." name="file" value="file" />
+  </flyout_button>
+  <button
+   follows="left|bottom"
+   height="23"
+   label="Revert..."
+   layout="topleft"
+   left="616"
+   name="revert_btn"
+   tool_tip="Undo a past run, by the run ID that ends its log notecard name in /logs"
+   top="344"
+   width="86" />
+  <progress_bar
+   follows="left|right|bottom"
+   height="10"
+   layout="topleft"
+   left="10"
+   name="progress_bar"
+   right="-10"
+   top="374" />
+  <text
+   follows="left|right|bottom"
+   height="30"
+   layout="topleft"
+   left="10"
+   name="status_text"
+   right="-10"
+   top="388"
+   word_wrap="true" />
+</floater>

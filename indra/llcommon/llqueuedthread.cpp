@@ -222,6 +222,33 @@ void LLQueuedThread::waitOnPending()
     return;
 }
 
+void LLQueuedThread::waitOnPending(F32 max_time_sec)
+{
+    LLTimer wait_timer;
+    wait_timer.reset();
+    while (1)
+    {
+        update(0);
+
+        if (mIdleThread)
+        {
+            break;
+        }
+
+        if (wait_timer.getElapsedTimeF64() >= max_time_sec)
+        {
+            LL_WARNS() << "waitOnPending() timed out after " << max_time_sec
+                << " seconds in thread: " << mName << LL_ENDL;
+            break;
+        }
+
+        if (mThreaded)
+        {
+            yield();
+        }
+    }
+}
+
 // MAIN thread
 void LLQueuedThread::printQueueStats()
 {
@@ -441,29 +468,43 @@ void LLQueuedThread::processRequest(LLQueuedThread::QueuedRequest* req)
         // safe to access req.
         if (req)
         {
-            // <FS:Beq> Deferred retry requests
-            // Avoid loop when idle by restoring a sleep
-            // note that when there is nothing to do the thread still sleeps normally.
-            using namespace std::chrono_literals;
-
-            const auto throttle_time = 2ms;
-            if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
-            {
-                ms_sleep((U32)throttle_time.count());
-            }
-            // if we're still not ready to retry then requeue
-            if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
+            // <AS:Chanayane> authored by Trish (trish-sl): keep deferred work in the timed queue.
+            // Sleeping here would also delay ready requests and HTTP completion servicing.
+            //// <FS:Beq> Deferred retry requests
+            //// Avoid loop when idle by restoring a sleep
+            //// note that when there is nothing to do the thread still sleeps normally.
+            //using namespace std::chrono_literals;
+            //
+            //const auto throttle_time = 2ms;
+            //if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
+            //{
+            //    ms_sleep((U32)throttle_time.count());
+            //}
+            //// if we're still not ready to retry then requeue
+            //if (req->mDeferUntil > LL::WorkQueue::TimePoint::clock::now())
+            //{
+            //    LL_PROFILE_ZONE_NAMED("qtpr - defer requeue");
+            //
+            //    lockData();
+            //    req->setStatus(STATUS_QUEUED);
+            //    mRequestQueue.post([this, req]() { processRequest(req); });
+            //    unlockData();
+            //    mIdleThread = true;
+            //    return;
+            //}
+            //// </FS:Beq>
+            if (req->mDeferUntil > LL::WorkSchedule::TimePoint::clock::now())
             {
                 LL_PROFILE_ZONE_NAMED("qtpr - defer requeue");
 
                 lockData();
                 req->setStatus(STATUS_QUEUED);
-                mRequestQueue.post([this, req]() { processRequest(req); });
+                mRequestQueue.post([this, req]() { processRequest(req); }, req->mDeferUntil);
                 unlockData();
                 mIdleThread = true;
                 return;
             }
-            // </FS:Beq>
+            // </AS:Chanayane>
             // process request
             bool complete = req->processRequest();
 
@@ -526,11 +567,20 @@ void LLQueuedThread::processRequest(LLQueuedThread::QueuedRequest* req)
                 //         }
                 //         processRequest(req);
                 //     });
-                const auto retry_backoff = 16ms;
-                auto retry_time = LL::WorkQueue::TimePoint::clock::now() + retry_backoff; 
+                // <AS:Chanayane> authored by Trish (trish-sl): retry later without occupying the worker.
+                // Per request delay: a worker that is only waiting (for a slot, a capability, a retry
+                // timer) can ask to be polled less often than one that is mid-pipeline.
+                //const auto retry_backoff = 16ms;
+                //auto retry_time = LL::WorkQueue::TimePoint::clock::now() + retry_backoff;
+                //req->defer_until(retry_time);
+                //LL_PROFILE_ZONE_NAMED("processRequest - post deferred");
+                //mRequestQueue.post([this, req]() { processRequest(req); });
+                const auto retry_backoff = std::chrono::milliseconds(req->getRetryDelayMs());
+                auto retry_time = LL::WorkSchedule::TimePoint::clock::now() + retry_backoff;
                 req->defer_until(retry_time);
                 LL_PROFILE_ZONE_NAMED("processRequest - post deferred");
-                mRequestQueue.post([this, req]() { processRequest(req); });
+                mRequestQueue.post([this, req]() { processRequest(req); }, retry_time);
+                // </AS:Chanayane>
                 // </FS:Beq>
 #endif
 

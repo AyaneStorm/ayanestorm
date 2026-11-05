@@ -44,6 +44,9 @@
 #include "lltrans.h"
 #include "llvoavatarself.h"
 #include "lltabcontainer.h"
+// <AS:Chanayane> Move to top / bottom of the layer stack.
+#include "asoutfitreorder.h"
+// </AS:Chanayane>
 
 static LLPanelInjector<LLCOFWearables> t_cof_wearables("cof_wearables");
 
@@ -299,7 +302,8 @@ LLCOFWearables::LLCOFWearables() : LLPanel(),
     mBodyPartsTab(NULL),
     mLastSelectedTab(NULL),
     mAccordionCtrl(NULL),
-    mCOFVersion(-1)
+    mCOFVersion(-1),
+    mRefreshPending(false)
 {
     mClothingMenu = new CofClothingContextMenu(this);
     mAttachmentMenu = new CofAttachmentContextMenu(this);
@@ -332,6 +336,10 @@ bool LLCOFWearables::postBuild()
     mAttachments->setCommitOnSelectionChange(true);
     mClothing->setCommitOnSelectionChange(true);
     mBodyParts->setCommitOnSelectionChange(true);
+
+    mClothing->setReorderValidateCallback(boost::bind(&LLCOFWearables::canReorderClothing, this, _1, _2));
+    mClothing->setReorderCallback(boost::bind(&LLCOFWearables::onClothingReordered, this, _1, _2));
+    mClothing->setReorderEndedCallback(boost::bind(&LLCOFWearables::onReorderEnded, this));
 
     //clothing is sorted according to its position relatively to the body
     mAttachments->setComparator(&WEARABLE_NAME_COMPARATOR);
@@ -397,6 +405,50 @@ void LLCOFWearables::onSelectionChange(LLFlatListView* selected_list)
     onCommit();
 }
 
+bool LLCOFWearables::canReorderClothing(const LLSD& dragged_value, const LLSD& neighbour_value)
+{
+    LLViewerInventoryItem* dragged = gInventory.getItem(dragged_value.asUUID());
+    LLViewerInventoryItem* neighbour = gInventory.getItem(neighbour_value.asUUID());
+    if (!dragged || !neighbour) return false; // reject placeholder/dummy rows
+    if (!dragged->isWearableType() || !neighbour->isWearableType()) return false;
+
+    return dragged->getWearableType() == neighbour->getWearableType();
+}
+
+void LLCOFWearables::onClothingReordered(const LLSD& dragged_value, S32 /*new_index*/)
+{
+    LLViewerInventoryItem* item = gInventory.getItem(dragged_value.asUUID());
+    if (!item || !item->isWearableType()) return;
+
+    LLWearableType::EType type = item->getWearableType();
+
+    // Persist the affected type group's full order from the list's current order
+    // (furthest-to-closest), which covers both single- and multi-row drags.
+    uuid_vec_t ordered_link_ids;
+    std::vector<LLSD> values;
+    mClothing->getValues(values);
+    for (const LLSD& value : values)
+    {
+        LLViewerInventoryItem* other = gInventory.getItem(value.asUUID());
+        if (!other || !other->isWearableType() || other->getWearableType() != type) continue;
+
+        ordered_link_ids.push_back(value.asUUID());
+    }
+
+    if (ordered_link_ids.size() < 2) return;
+
+    LLAppearanceMgr::getInstance()->reorderWearableGroup(type, ordered_link_ids);
+}
+
+void LLCOFWearables::onReorderEnded()
+{
+    // Run a refresh that arrived (and was skipped) while the drag was active.
+    if (mRefreshPending)
+    {
+        refresh();
+    }
+}
+
 // <FS:Ansariel> Accordions replaced with tab panels
 //void LLCOFWearables::onAccordionTabStateChanged(LLUICtrl* ctrl, const LLSD& expanded)
 void LLCOFWearables::onSelectedTabChanged(const LLSD& param)
@@ -427,6 +479,15 @@ void LLCOFWearables::onSelectedTabChanged(const LLSD& param)
 
 void LLCOFWearables::refresh()
 {
+    // Don't rebuild mid-drag, clearing the list would cancel the active reorder.
+    // Remember it so onReorderEnded() can re-run the skipped refresh on release.
+    if (mClothing && mClothing->isReorderActive())
+    {
+        mRefreshPending = true;
+        return;
+    }
+    mRefreshPending = false;
+
     const LLUUID cof_id = LLAppearanceMgr::instance().getCOF();
     if (cof_id.isNull())
     {
@@ -572,6 +633,10 @@ LLPanelClothingListItem* LLCOFWearables::buildClothingListItem(LLViewerInventory
     LLPanelClothingListItem* item_panel = LLPanelClothingListItem::create(item);
     if (!item_panel) return NULL;
 
+    // <AS:Chanayane> COF link id for move to top / bottom.
+    const LLUUID link_id = item->getUUID();
+    // </AS:Chanayane>
+
     //updating verbs
     //we don't need to use permissions of a link but of an actual/linked item
     if (item->getLinkedItem()) item = item->getLinkedItem();
@@ -583,14 +648,36 @@ LLPanelClothingListItem* LLCOFWearables::buildClothingListItem(LLViewerInventory
     item_panel->setShowLockButton(!allow_modify);
     item_panel->setShowEditButton(allow_modify);
 
-    item_panel->setShowMoveUpButton(!first);
-    item_panel->setShowMoveDownButton(!last);
+    // <AS:Chanayane> Keep every move button in place (no shifting under rapid clicks):
+    // show all four when the type has several layers, dim the ones at the edges.
+    //item_panel->setShowMoveUpButton(!first);
+    //item_panel->setShowMoveDownButton(!last);
+    const bool several_layers = !(first && last);
+    item_panel->setShowMoveUpButton(several_layers);
+    item_panel->setShowMoveDownButton(several_layers);
+    item_panel->setShowMoveTopButton(several_layers);
+    item_panel->setShowMoveBottomButton(several_layers);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_up", first);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_top", first);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_down", last);
+    ASOutfitReorder::setButtonDimmed(item_panel, "btn_move_bottom", last);
+    // </AS:Chanayane>
+
+    // hint that rows in a multi-layer group can be dragged to reorder
+    if (!(first && last))
+    {
+        item_panel->setToolTip(LLTrans::getString("ReorderClothingTooltip"));
+    }
 
     //setting callbacks
     //*TODO move that item panel's inner structure disclosing stuff into the panels
     item_panel->childSetAction("btn_delete", boost::bind(mCOFCallbacks.mDeleteWearable));
     item_panel->childSetAction("btn_move_up", boost::bind(mCOFCallbacks.mMoveWearableFurther));
     item_panel->childSetAction("btn_move_down", boost::bind(mCOFCallbacks.mMoveWearableCloser));
+    // <AS:Chanayane> Move to top / bottom of the layer stack.
+    item_panel->childSetAction("btn_move_top", [link_id](LLUICtrl*, const LLSD&) { ASOutfitReorder::moveWearableToTop(link_id); });
+    item_panel->childSetAction("btn_move_bottom", [link_id](LLUICtrl*, const LLSD&) { ASOutfitReorder::moveWearableToBottom(link_id); });
+    // </AS:Chanayane>
     item_panel->childSetAction("btn_edit", boost::bind(mCOFCallbacks.mEditWearable));
 
     //turning on gray separator line for the last item in the items group of the same wearable type

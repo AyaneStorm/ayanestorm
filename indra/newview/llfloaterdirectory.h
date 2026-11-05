@@ -89,6 +89,6 @@ private:
     std::string mLastSearchURL; // <FS:TJ/> Always navigate if the SearchURL has changed
 };
 
-//extern BOOL gDisplayEventHack;
+//extern bool gDisplayEventHack;
 
 #endif  // LL_LLDIRECTORYFLOATER_H

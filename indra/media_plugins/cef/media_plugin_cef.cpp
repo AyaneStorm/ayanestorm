@@ -119,6 +119,7 @@ private:
     std::string mRootCachePath;
     std::string mCefLogFile;
     bool mCefLogVerbose;
+    U32 mCefRemoteDebuggingPort;
     std::vector<std::string> mPickedFiles;
 #if LL_VOLUME_CATCHER
     VolumeCatcher mVolumeCatcher;
@@ -162,6 +163,7 @@ MediaPluginBase(host_send_func, host_user_data)
     mCanSelectAll = false;
     mCefLogFile = "";
     mCefLogVerbose = false;
+    mCefRemoteDebuggingPort = 0;
     mPickedFiles.clear();
     mCurVolume = 0.0;
 
@@ -201,7 +203,18 @@ void MediaPluginCEF::onPageChangedCallback(const unsigned char* pixels, int x, i
     {
         if (mWidth == width && mHeight == height)
         {
-            memcpy(mPixels, pixels, mWidth * mHeight * mDepth);
+            // <AS:Chanayane> Flip vertically while copying instead of letting Dullahan
+            // do it (flip_pixels_y): its in-place row swap costs ~1.5 extra
+            // full-frame copies on every paint, this costs nothing more than the
+            // plain memcpy did.
+            const size_t stride = (size_t)mWidth * mDepth;
+            const unsigned char* src = pixels + (size_t)(mHeight - 1) * stride;
+            unsigned char* dst = mPixels;
+            for (int row = 0; row < mHeight; ++row, src -= stride, dst += stride)
+            {
+                memcpy(dst, src, stride);
+            }
+            // </AS:Chanayane>
         }
         else
         {
@@ -705,7 +718,7 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
                 settings.flash_enabled = false;
 
                 settings.flip_mouse_y = false;
-                settings.flip_pixels_y = true;
+                settings.flip_pixels_y = false; // <AS:Chanayane> flipped in onPageChangedCallback instead
                 settings.frame_rate = 60;
                 settings.force_wave_audio = true;
                 settings.initial_height = 1024;
@@ -718,6 +731,8 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
                 settings.webgl_enabled = true;
                 settings.log_file = mCefLogFile;
                 settings.log_verbose = mCefLogVerbose;
+                settings.enable_remote_debug = (mCefRemoteDebuggingPort != 0);
+                settings.remote_debugging_port = mCefRemoteDebuggingPort;
                 settings.autoplay_without_gesture = true;
 
                 std::vector<std::string> custom_schemes(1, "secondlife");
@@ -743,9 +758,14 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
                 message.setValueS32("default_width", 1024);
                 message.setValueS32("default_height", 1024);
                 message.setValueS32("depth", mDepth);
-                message.setValueU32("internalformat", GL_RGB);
+                // <AS:Chanayane> RGBA8 + BGRA + 8_8_8_8_REV is the driver fast path for
+                // uploads (the one Apple documents); GL_RGB storage can make the
+                // driver convert every frame on the CPU. Same bytes as before on
+                // little-endian, and CEF output is always opaque.
+                message.setValueU32("internalformat", GL_RGBA8);
                 message.setValueU32("format", GL_BGRA);
-                message.setValueU32("type", GL_UNSIGNED_BYTE);
+                message.setValueU32("type", GL_UNSIGNED_INT_8_8_8_8_REV);
+                // </AS:Chanayane>
                 message.setValueBoolean("coords_opengl", true);
                 sendMessage(message);
             }
@@ -782,6 +802,7 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
 
                 mCefLogFile = message_in.getValue("cef_log_file");
                 mCefLogVerbose = message_in.getValueBoolean("cef_verbose_log");
+                mCefRemoteDebuggingPort = message_in.getValueU32("cef_remote_debugging_port");
             }
             else if (message_name == "size_change")
             {
@@ -920,7 +941,6 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
 
                 keyEvent(key_event, native_key_data);
 
-//#elif LL_WINDOWS // <FS:ND/> Windows & Linux
 #else
                 std::string event = message_in.getValue("event");
                 LLSD native_key_data = message_in.getValueLLSD("native_key_data");
@@ -943,6 +963,13 @@ void MediaPluginCEF::receiveMessage(const char* message_string)
             {
                 mEnableMediaPluginDebugging = message_in.getValueBoolean("enable");
             }
+#if LL_LINUX
+            else if (message_name == "enable_pipewire_volume_catcher")
+            {
+                bool enable = message_in.getValueBoolean("enable");
+                mVolumeCatcher.onEnablePipeWireVolumeCatcher(enable);
+            }
+#endif
             if (message_name == "pick_file_response")
             {
                 LLSD file_list_llsd = message_in.getValueLLSD("file_list");
@@ -1106,7 +1133,6 @@ void MediaPluginCEF::keyEvent(dullahan::EKeyEvent key_event, LLSD native_key_dat
     mCEFLib->nativeKeyboardEventWin(msg, wparam, lparam);
 #endif
 
-// <FS:ND> Keyboard handling for Linux.
 #if LL_LINUX
 
     uint32_t native_virtual_key = (uint32_t)(native_key_data["virtual_key"].asInteger());       // this is actually the SDL event.key.keysym.sym;
@@ -1123,11 +1149,11 @@ void MediaPluginCEF::keyEvent(dullahan::EKeyEvent key_event, LLSD native_key_dat
             keypad = true;
         }
 
-        mCEFLib->nativeKeyboardEventSDL2(key_event, native_virtual_key_win, native_modifiers, keypad);
+        // yes, we send native_virtual_key_win twice because native_virtual_key breaks it
+        mCEFLib->nativeKeyboardEventSDL2(key_event, native_virtual_key, native_modifiers, keypad);
     }
 
 #endif // LL_LINUX
-// </FS:ND>
 };
 
 void MediaPluginCEF::unicodeInput(std::string event, LLSD native_key_data = LLSD::emptyMap())

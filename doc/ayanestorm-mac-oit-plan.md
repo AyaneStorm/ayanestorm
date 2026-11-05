@@ -235,3 +235,27 @@ Tagged edits inside existing `<AS:Chanayane>` blocks: `llglslshader.cpp`
    old AVBOIT hook discarded or near-zeroed it. After item 4 the capture trace
    shows about 1150 more weighted pixels than keyed pixels (glare-only
    fragments). Why Windows showed the lens before item 4 is not established.
+
+## Upstream Firestorm port (2026-10-20, unbuilt)
+
+Branch `pr-mac-oit` in `.phoenix-firestorm-master`. Mac OIT only, minimal:
+
+- Files renamed `as*` -> `fs*` (`fsmacoit`, `fsoitdispatcher`, `fsMacOIT*F.glsl`),
+  Firestorm license header (fsviewerlgpl, as the compass floater files), tags
+  `<FS:Chanayane>`.
+- Settings: `FSRenderOITMode` (0 Standard, 1 Mac OIT; no migration),
+  `FSRenderMacOITExactLayers`, `FSRenderMacOITMomentBias`. No debug mode.
+- Dispatcher kept, routing Standard / Mac OIT only (no Exact OIT, AVBOIT,
+  AYAstorm merged traversal).
+- Removed from the module: Live DoF bins, capture trace and debug views,
+  background-isolate depth write, About diagnostics, shader cache revision
+  (upstream cache key follows the viewer version).
+- Material shader hook is `MACOIT` only (`macoit_store()`, `macoitRasterPass`),
+  so no `#version` change in `llshadermgr.cpp`. alphaF samples the sun shadow
+  after the alpha-only early return, as in AyaneStorm.
+- Alpha re-sort skip ported: `llspatialpartition.cpp` (calcDistance),
+  `llviewerdisplay.cpp` (pre-cull refresh), and the dispatcher's
+  Standard-ordering invalidation on mode switch.
+- UI: combo in Preferences > Graphics > General under the mirror settings, and
+  a label + combo row in Phototools > Gen (`P_Render` 87 -> 110, floater
+  540 -> 563).

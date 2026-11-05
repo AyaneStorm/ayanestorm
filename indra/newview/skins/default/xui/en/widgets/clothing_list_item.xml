@@ -48,6 +48,30 @@
    height="23"
    width="23"
    tab_stop="false" />
+  <!-- <AS:Chanayane> Move to top / bottom of the layer stack. -->
+  <top_btn
+   name="btn_move_top"
+   layout="topleft"
+   follows="top|right"
+   image_overlay="AS_MoveTop_Off"
+   top="1"
+   left="0"
+   height="23"
+   width="23"
+   tab_stop="false"
+   tool_tip="Move to top (outermost layer)" />
+  <bottom_btn
+   name="btn_move_bottom"
+   layout="topleft"
+   follows="top|right"
+   image_overlay="AS_MoveBottom_Off"
+   top="1"
+   left="0"
+   height="23"
+   width="23"
+   tab_stop="false"
+   tool_tip="Move to bottom (innermost layer)" />
+  <!-- </AS:Chanayane> -->
   <lock_panel
    background_visible="false"
    name="btn_lock"

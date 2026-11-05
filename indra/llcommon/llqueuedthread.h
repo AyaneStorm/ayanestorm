@@ -103,6 +103,10 @@ public:
         }
 
         virtual bool processRequest() = 0; // Return true when request has completed
+        // <AS:Chanayane> authored by Trish (trish-sl): how long to wait before running an
+        // incomplete request again. Read right after processRequest() returns false, on the same thread.
+        virtual U32 getRetryDelayMs() const { return 16; }
+        // </AS:Chanayane>
         virtual void finishRequest(bool completed); // Always called from thread after request has completed or aborted
         virtual void deleteRequest(); // Only method to delete a request
 
@@ -146,6 +150,7 @@ public:
     size_t updateQueue(F32 max_time_ms);
 
     void waitOnPending();
+    void waitOnPending(F32 max_time_sec);
     void printQueueStats();
 
     virtual size_t getPending();
@@ -170,7 +175,11 @@ protected:
 
     //typedef std::set<QueuedRequest*, queued_request_less> request_queue_t;
     //request_queue_t mRequestQueue;
-    LL::WorkQueue mRequestQueue;
+    // <AS:Chanayane> authored by Trish (trish-sl): time-ordered queue, deferred retries wait in it
+    // without blocking ready work.
+    //LL::WorkQueue mRequestQueue;
+    LL::WorkSchedule mRequestQueue;
+    // </AS:Chanayane>
     LL::WorkQueue::weak_t mMainQueue;
 
     enum { REQUEST_HASH_SIZE = 512 }; // must be power of 2

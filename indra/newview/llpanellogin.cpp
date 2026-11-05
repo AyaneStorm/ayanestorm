@@ -207,7 +207,8 @@ LLPanelLogin::LLPanelLogin(const LLRect &rect,
     mPasswordLength(0),
     mLocationLength(0),
     mShowFavorites(false),
-    mAlertNotif(false)
+    mAlertNotif(false),
+    mLoginBtn(nullptr)
 {
     setBackgroundVisible(false);
     setBackgroundOpaque(true);
@@ -809,6 +810,8 @@ void LLPanelLogin::onUpdateStartSLURL(const LLSLURL& new_start_slurl)
     case LLSLURL::HOME_LOCATION:
         //location_combo->setCurrentByIndex(0); // home location
         break;
+    case LLSLURL::LAST_LOCATION:
+        break;
 
     default:
         LL_WARNS("AppInit")<<"invalid login slurl, using home"<<LL_ENDL;
@@ -1221,6 +1224,10 @@ void LLPanelLogin::updateServer()
 
 void LLPanelLogin::updateLoginButtons()
 {
+    if (!mLoginBtn)
+    {
+        return;
+    }
     mLoginBtn->setEnabled(mUsernameLength != 0 && mPasswordLength != 0 && !mAlertNotif);
 
     LLComboBox* user_combo = getChild<LLComboBox>("username_combo");

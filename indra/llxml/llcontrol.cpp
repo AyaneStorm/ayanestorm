@@ -166,10 +166,10 @@ LLControlVariable::LLControlVariable(const std::string& name, eControlType type,
     if ((persist != PERSIST_NO) && mComment.empty())
     {
         std::string error_string =
-            "Second Life failed to initialize settings. Setting " + mName + " is invalid. "
-            "Either settings' files were supplied incorrectly or default files were corrupted."
-            "\n\nPlease reinstall viewer from https://secondlife.com/support/downloads/ and "
-            "contact https://support.secondlife.com if issue persists after reinstall.";
+            "Firestorm failed to initialize settings. Setting " + mName + " is invalid. "
+            "Either settings files were supplied incorrectly or default files were corrupted."
+            "\n\nPlease reinstall viewer from https://www.firestormviewer.org/downloads and "
+            "contact https://www.firestormviewer.org/support if issue persists after reinstall.";
         LLError::LLUserWarningMsg::show(error_string);
         LL_ERRS() << "Must supply a comment for control " << mName << LL_ENDL;
     }
@@ -467,10 +467,11 @@ static bool compareRoutine(settings_pair_t lhs, settings_pair_t rhs)
 
 void LLControlGroup::cleanup()
 {
+    LL_PROFILE_ZONE_SCOPED;
     if(mSettingsProfile && getCount.size() != 0)
     {
         std::string file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, SETTINGS_PROFILE);
-        LLFILE* out = LLFile::fopen(file, "w"); /* Flawfinder: ignore */
+        LLFILE* out = LLFile::fopen(file, LLFILE_MODE("w")); /* Flawfinder: ignore */
         if(!out)
         {
             LL_WARNS("SettingsProfile") << "Error opening " << SETTINGS_PROFILE << LL_ENDL;
@@ -529,7 +530,10 @@ eControlType LLControlGroup::typeStringToEnum(const std::string& typestr)
     {
         if(mTypeString[i] == typestr) return (eControlType)i;
     }
-    return (eControlType)-1;
+    // <FS:Beq> Keep unknown types inside the enum's valid range for UBSan and optimizers.
+    // return (eControlType)-1;
+    return TYPE_COUNT;
+    // </FS:Beq>
 }
 
 eSanityType LLControlGroup::sanityTypeStringToEnum(const std::string& sanitystr)
@@ -543,6 +547,13 @@ eSanityType LLControlGroup::sanityTypeStringToEnum(const std::string& sanitystr)
 
 std::string LLControlGroup::typeEnumToString(eControlType typeenum)
 {
+    // <FS:Beq> Unknown serialized types map to TYPE_COUNT; never index outside the table.
+    if (typeenum >= TYPE_COUNT)
+    {
+        LL_WARNS("Settings") << "Invalid control type " << static_cast<int>(typeenum) << LL_ENDL;
+        return std::string();
+    }
+    // </FS:Beq>
     return mTypeString[typeenum];
 }
 
@@ -556,6 +567,13 @@ std::string LLControlGroup::sanityTypeEnumToString(eSanityType sanitytypeenum)
 LLControlVariable* LLControlGroup::declareControl(const std::string& name, eControlType type, const LLSD initial_val, const std::string& comment, eSanityType sanity_type, LLSD sanity_value, const std::string& sanity_comment, LLControlVariable::ePersist persist, bool can_backup, bool hidefromsettingseditor)
 // </FS:Zi>
 {
+    // <FS:Beq> Reject invalid declarations before they can reach settings saving.
+    if (type >= TYPE_COUNT)
+    {
+        LL_WARNS("Settings") << "Invalid type for control " << name << LL_ENDL;
+        return nullptr;
+    }
+    // </FS:Beq>
     LLControlVariable* existing_control = getControl(name);
     if (existing_control)
     {
@@ -1071,6 +1089,7 @@ U32 LLControlGroup::loadFromFileLegacy(const std::string& filename, bool require
 
 U32 LLControlGroup::saveToFile(const std::string& filename, bool nondefault_only)
 {
+    LL_PROFILE_ZONE_SCOPED;
     LLSD settings;
     int num_saved = 0;
     for (ctrl_name_table_t::iterator iter = mNameTable.begin();
@@ -1083,7 +1102,16 @@ U32 LLControlGroup::saveToFile(const std::string& filename, bool nondefault_only
         }
         else if( control->shouldSave(nondefault_only) )
         {
-            settings[iter->first]["Type"] = typeEnumToString(control->type());
+            // <FS:Beq> Do not serialize an invalid control or lose other settings.
+            // settings[iter->first]["Type"] = typeEnumToString(control->type());
+            const std::string type = typeEnumToString(control->type());
+            if (type.empty())
+            {
+                LL_WARNS("Settings") << "Skipping invalid control " << iter->first << LL_ENDL;
+                continue;
+            }
+            settings[iter->first]["Type"] = type;
+            // </FS:Beq>
             settings[iter->first]["Comment"] = control->getComment();
             settings[iter->first]["Value"] = control->getSaveValue();
             settings[iter->first]["Backup"] = control->isBackupable();      // <FS:Zi> Backup Settings
@@ -1163,6 +1191,20 @@ U32 LLControlGroup::loadFromFile(const std::string& filename, bool set_default_v
 
         // If the control exists just set the value from the input file.
         LLControlVariable* existing_control = getControl(name);
+        // <FS:Beq> Validate declarations, but retain user values for controls
+        // already declared with a valid type. Earlier invalid declarations may
+        // have serialized garbage Type strings into those user settings.
+        if (!existing_control || set_default_values)
+        {
+            const auto type = typeStringToEnum(control_map["Type"].asString());
+            if (type >= TYPE_COUNT)
+            {
+                LL_WARNS("Settings") << "Skipping control " << name
+                    << " with invalid Type in " << filename << LL_ENDL;
+                continue;
+            }
+        }
+        // </FS:Beq>
         if(existing_control)
         {
             // set_default_values is true when we're loading the initial,

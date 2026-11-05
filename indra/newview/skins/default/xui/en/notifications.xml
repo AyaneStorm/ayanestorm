@@ -425,6 +425,17 @@ Initialization with the Marketplace failed because of a system or network error.
     </notification>
 
     <notification
+        icon="alertmodal.tga"
+        name="CannotPasteFolderIntoSelf"
+        type="alertmodal">
+        You cannot paste a folder into itself or into one of its subfolders.
+        <tag>fail</tag>
+        <usetemplate
+          name="okbutton"
+          yestext="OK"/>
+    </notification>
+
+    <notification
      icon="notifytip.tga"
      name="InvalidKeystroke"
      type="notifytip">
@@ -898,6 +909,64 @@ If you no longer wish to have these abilities granted to this role, disable them
       name="okcancelignore"
       notext="Cancel"
       yestext="Ban"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="FSBanFromAllGroups"
+   type="alertmodal">
+You are about to ban [AVATAR_NAME] from all [COUNT] groups you can manage bans in:
+
+[GROUPS]
+    <tag>group</tag>
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Ban"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="FSUnbanFromAllGroups"
+   type="alertmodal">
+You are about to lift the ban on [AVATAR_NAME] in all [COUNT] groups you can manage bans in:
+
+[GROUPS]
+    <tag>group</tag>
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Unban"/>
+  </notification>
+  <notification
+   icon="notify.tga"
+   name="FSBanFromAllGroupsStarted"
+   type="notify">
+    Updating group bans for [AVATAR_NAME] in [COUNT] groups, one group at a time. A report will follow when done.
+    <tag>group</tag>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="FSBanFromAllGroupsReport"
+   type="alertmodal">
+[AVATAR_NAME] has been banned in [DONE] of [COUNT] groups.
+
+Banned in: [SUCCEEDED]
+
+Failed in: [FAILED]
+    <tag>group</tag>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="FSUnbanFromAllGroupsReport"
+   type="alertmodal">
+The ban on [AVATAR_NAME] has been lifted in [DONE] of [COUNT] groups.
+
+Lifted in: [SUCCEEDED]
+
+Failed in: [FAILED]
+    <tag>group</tag>
   </notification>
 
   <notification
@@ -1758,6 +1827,21 @@ Save Changes?
      notext="Don&apos;t Save"
      yestext="Save"/>
   </notification>
+
+  <!-- <FS:Trish> FIRE-32374: Say which script the prompt is about -->
+  <notification
+   icon="alertmodal.tga"
+   name="SaveScriptChanges"
+   type="alertmodal">
+Save changes to [NAME]?
+    <tag>confirm</tag>
+    <usetemplate
+     canceltext="Cancel"
+     name="yesnocancelbuttons"
+     notext="Don&apos;t Save"
+     yestext="Save"/>
+  </notification>
+  <!-- </FS:Trish> -->
 
   <notification
    icon="alertmodal.tga"
@@ -4117,7 +4201,6 @@ Local Data you are deleting is shared between multiple grids, are you sure you w
 Your character will appear in a moment.
 
 Use arrow keys to walk.
-Press the F1 key at any time for help or to learn more about [CURRENT_GRID].
 Please choose the male or female avatar. You can change your mind later.
     <usetemplate
      name="okcancelbuttons"
@@ -6008,6 +6091,17 @@ You won't receive any more notifications that you're about to visit a region wit
 
   <notification
    icon="alertmodal.tga"
+   name="RegionTPAccessBlocked_NotifyAdultsOnly"
+   type="alertmodal">
+    <tag>fail</tag>
+    The region you are trying to visit is rated [REGIONMATURITY_CAP], which is not available on your account type.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
    name="LandClaimAccessBlocked"
    type="alertmodal">
     The land you're trying to claim has a maturity rating exceeding your current preferences.  You can change your preferences using Avatar &gt; Preferences &gt; General.
@@ -7655,6 +7749,27 @@ URL: [AUDIOURL]
    type="notifytip">
 [MESSAGE]
   </notification>
+
+  <notification
+   icon="notifytip.tga"
+   name="ExternalEditorServerStarted"
+   type="notifytip">
+External editor server started on port [PORT].
+  </notification>
+
+  <notification
+   icon="notifytip.tga"
+   name="ExternalEditorServerFailed"
+   type="notifytip">
+Failed to start external editor server on port [PORT].
+  </notification>
+
+  <notification
+   icon="notifytip.tga"
+   name="ExternalEditorServerStopped"
+   type="notifytip">
+External editor server stopped.
+  </notification>
   
   <notification
    icon="notifytip.tga"
@@ -8315,7 +8430,7 @@ Message from [NAME]:
    type="notify">
     <unique/>
 This land has damage enabled.
-You can be hurt here. If you die, you will be teleported to your home location.
+You can be hurt here. If you die, you might be teleported to your home location, region telehub or parcel landing point.
   </notification>
 
   <notification
@@ -10662,6 +10777,126 @@ Future invitations to this conference will be declined automatically. You can un
      name="okcancelbuttons"
      notext="Cancel"
      yestext="Block and Leave"/>
+  </notification>
+  <!-- </AS:Chanayane> -->
+
+  <!-- <AS:Chanayane> User-defined inventory rules. -->
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRulePurgeConfirm"
+   type="alertmodal">
+These rules delete permanently, without going through the Trash: [RULES]
+
+Deleted items cannot be recovered. Continue?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete Permanently"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleDeleteConfirm"
+   type="alertmodal">
+Delete the inventory rule '[NAME]'?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRulesetDeleteConfirm"
+   type="alertmodal">
+Delete the inventory ruleset '[NAME]' and all its rules?
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Delete"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleExecuteConfirm"
+   type="alertmodal">
+Inventory rules move or delete many items and folders at once.
+
+A rule that is not exactly right can wreck your inventory in seconds: a search that matches more than you expect, a wrong destination, or a folder match that takes whole folders with everything inside them. Revert, with the run ID of the log notecard saved in /logs, can only put back what was not moved or deleted since. Items deleted permanently are gone forever.
+
+Before executing, check every rule's preview, or click Dry Run to see the full list of what would be moved or deleted.[PURGE]
+    <tag>confirm</tag>
+    <form name="form">
+      <button
+       default="true"
+       index="0"
+       name="Cancel"
+       text="Cancel"/>
+      <button
+       index="1"
+       name="DryRun"
+       text="Dry Run"/>
+      <button
+       index="2"
+       name="Execute"
+       text="Execute Now"/>
+      <ignore name="ignore"
+       text="Executing inventory rules"/>
+    </form>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleTransferError"
+   type="alertmodal">
+[MESSAGE]
+    <tag>fail</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleDeleteWarning"
+   type="alertmodal">
+Delete permanently does not go through the Trash: the objects and folders this rule matches will be gone forever. They cannot be recovered, and Revert cannot restore them.
+
+To keep a way back, choose Move to Trash instead.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   label="Revert a run"
+   name="ASInventoryRuleRevertPrompt"
+   type="alertmodal">
+Enter the run ID that ends the name of the run's log notecard (in /logs), for example #A1B2C3.
+
+Objects go back to the folder they came from, unless they were moved or deleted since. Then the folders the run created go to the Trash, if they are empty. Items deleted permanently cannot be restored. At the end you get the list of what could not be reverted, and why.
+    <tag>confirm</tag>
+    <form name="form">
+      <input name="message" type="text">
+      </input>
+      <button
+       default="true"
+       index="0"
+       name="Revert"
+       text="Revert"/>
+      <button
+       index="1"
+       name="Cancel"
+       text="Cancel"/>
+    </form>
+  </notification>
+  <notification
+   icon="alertmodal.tga"
+   name="ASInventoryRuleRevertResult"
+   type="alertmodal">
+[MESSAGE]
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
   </notification>
   <!-- </AS:Chanayane> -->
 
@@ -13954,19 +14189,6 @@ able to add a payment method at checkout.
        text="Cancel"/>
     </form>
   </notification>
-  
-<!-- <FS:Zi> Add float LSL color entry widgets -->
-  <notification
-   icon="notify.tga"
-   name="LSLColorCopiedToClipboard"
-   type="alertmodal">
-The LSL color string has been copied to your clipboard. You can now paste it into your script to use it.
-   <form name="form">
-      <ignore name="ignore"
-       text="An LSL color string was copied to my clipboard"/>
-    </form>
-  </notification>
-  <!-- <FS:Zi> Add float LSL color entry widgets -->
 
   <!-- <FS:HG> FIRE-6340, FIRE-6567 - Setting Bandwidth issues-->
   <!-- <FS:TS> FIRE-6795: Remove warning at every login -->
@@ -14576,7 +14798,7 @@ Due to server load, this mass change can take a while to become effective and ma
   </notification>
   <notification
    icon="alertmodal.tga"
-   name="GlobalOnlineStatusToggle"
+   name="GlobalOnlineStatusToggleInfo"
    type="alertmodal">
 Due to server load, mass toggling online status visibility can take a while to become effective. Please be patient.
     <usetemplate

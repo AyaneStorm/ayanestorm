@@ -90,9 +90,6 @@ public:
 
     bool hasInventory(){ return mHaveInventory; };
 
-    // <FS:mjr> [FIRE-36685] - Toolbox Window - Add new notecard button to Content tab
-    LLFolderViewItem* getItemByID(const LLUUID& id);
-
 protected:
     void reset();
     /*virtual*/ void inventoryChanged(LLViewerObject* object,
@@ -105,7 +102,7 @@ protected:
                                 LLInventoryObject* parent,
                                 LLFolderViewFolder* folder);
     void clearContents();
-    //LLFolderViewItem* getItemByID(const LLUUID& id); // <FS:mjr> [FIRE-36685] - Toolbox Window - Add new notecard button to Content tab
+    LLFolderViewItem* getItemByID(const LLUUID& id);
 
     void addItemID( const LLUUID& id, LLFolderViewItem*   itemp );
     void removeItemID(const LLUUID& id);
