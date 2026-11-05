@@ -83,6 +83,17 @@ This is the core rule. No render-thread frame ever waits for the main thread.
 
 Network handling, agent logic and UI logic stay on the main thread: they are not GPU work, and they no longer affect frame rate. Picking stays a CPU raycast on the main thread.
 
+### 0a. Compute once: the result registry
+Rule set by the user: nothing is computed twice, and nothing is duplicated. Any computed thing, expensive or cheap, that more than one consumer can use lives in one registry. Shadow maps, depth pyramid, skinned vertices, AO and light lists are examples.
+
+- **One producer:** each result has one producer. Consumers ask for the result by ID and never know who made it. No feature keeps a private copy or redoes the work. A result nothing needs is not computed.
+- **Scope chosen per result:** each result declares what suits it: per frame and view, per frame and shared by all views, or kept across frames until its inputs change. Reuse across frames follows the real render rule in section 0: the frame's result must stay correct. A snapshot tile is its own view.
+- **Overrides:** a new feature changes a result by overriding its producer, like a subclass overriding a virtual method, and consumers need no edits. An override either replaces the producer, or modifies the previous output.
+- **Modifying never recomputes from zero:** a modifying override receives the existing output and only adds its own work to it. Overrides of one result stack in a declared order. Replacing a producer must also stop the replaced one running, so its cost is not paid for nothing.
+- **Very fast lookup:** IDs are dense integers fixed at registration. Producers, consumers and scopes are declared at startup, and the frame graph resolves them when it compiles, so passes hold direct references and a normal frame does no lookups. Any lookup left at frame time is one array index and one stamp compare: no strings, hashing or locks.
+- **Recompile only on change:** the frame graph recompiles only when an override, setting or tier changes, never per frame.
+- **Reporting:** frame statistics show each result's cost, including every override, and flag any result computed more than once in its scope as a bug.
+
 ### 1. No GL in new mode
 With the new renderer on, the process creates no GL context. OpenGL stays compiled in, complete and default, and is selected at startup as today. Upstream code keeps calling the same `llrender` APIs in both modes.
 
@@ -301,20 +312,33 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 
 ## Status and next steps
 
-This file is the single living document for the project. It supersedes the approved plan file, and later notes go here. No renderer code exists yet.
+This file is the single living document for the project. It supersedes the approved plan file, and later notes go here. No renderer code is in the viewer yet.
 
 Status at end of 2026-11-05:
 
 - **P0:** closed. Windows FPS readings are recorded above.
-- **P1:** read-only audit done. Spikes not started.
+- **P1:** closed. Read-only audit, shader spike and window spike are all done, see below.
+- **P1b:** done except the no-LTO viewer link timing, which needs a viewer build. `indra/asrenderer` builds alone with `cmake -S indra/asrenderer -B <dir>`, and `asrenderer_test` draws a shader-driven triangle in a window on the 3080 Ti (Vulkan, 0 validation errors) and the M4 (Metal), with no GL context. `--selftest` checks the scene file format, including damaged files. A shader edit rebuilds only that shader, with no C++ compiled: under a second on Windows. `asr_add_shader` handles native shaders only: reusing the `as*` sources needs the header injection and libraries proven by the shader spike, which is P2 work. Only the camera chunk of the scene format has a fixed layout; the others are defined in P3. The viewer has one tagged line, `include(ASRenderer)` in `indra/CMakeLists.txt`, with `AS_RENDERER` off by default, and the viewer has not been reconfigured with it yet. Linux has not been built: `asrenderer` has no Linux device code until the P8 pass.
+- **P1 window spike result:** a native window was cleared and resized with no GL context on both platforms, and the user saw the Windows window on screen. Windows: Vulkan 1.3 through volk on the RTX 3080 Ti, 0 validation errors, about 10,000 fps with validation off and 5,000 with it on. M4: native Metal 3, Apple7 family, 11.8 GB working set, 119 fps. Code is in `E:\Dev\AyaneStorm\Vulkan\window-spike`, outside the repo.
+- **'No GL' means no GL context, not no GL library:** on Windows `opengl32.dll` appears in the process after device creation although the program never uses it, and NVIDIA's Vulkan driver is itself `nvoglv64.dll`. On macOS `OpenGL.framework` is loaded before `main` although the program does not link it. No context existed at any check point. The verification test must check for a context (`wglGetCurrentContext`, `CGLGetCurrentContext`), not for loaded modules.
+- **The Mac render loop is not capped at the display refresh:** with the screen active and low power mode off, the Metal window, seen working by the user, submitted 546 fps (10,911 frames in 20 s, `displaySyncEnabled = NO`). The display is set to 100 Hz in macOS, so it can only show 100 of those per second. The earlier 119 fps was with the screen inactive. With low power mode on, the user read 571 fps, so that mode makes no real difference here. What limits a bare clear at 546 fps is not known; it does not block anything.
+- **P1 shader spike result:** all 63 `as*.glsl` files went through glslang 16.6, SPIRV-Cross (`--msl-argument-buffers`, MSL 3.0) and Apple's `metal` compiler on the M4 with no failures and no shader source edits: 53 programs, plus 5 libraries linked through host shaders, and the other 5 libraries linked inside those programs. This proves compilation only: nothing has run yet, and only one variant per file was tested (GTAO High, AVBOIT 8192 slices). The build step must reproduce what `LLShaderMgr` injects: the stage define, G-buffer defines, `GBufferInfo`, permutations and shared libraries. It must also replace `diffuseLookup`, which the viewer generates at runtime. Test scripts are in `E:\Dev\AyaneStorm\Vulkan\shader-spike`, outside the repo.
 - **Answered by the user:** quality is never lowered to hold FPS; interpolation and prediction are acceptable only if the world feels live, not laggy.
 - **Confirmed by default, not stated outright:** the 60 fps floor is judged on the 3080 Ti; the Mac and smaller cards get as close as they can.
 
-Waiting on the user:
+Waiting on the user: nothing at present. The Vulkan SDK 1.4.363.0 is installed on Windows, and volk, VMA and SPIRV-Cross are vendored in `indra/asrenderer/third_party`. Test work goes in `E:\Dev\AyaneStorm\Vulkan` or a dotted project folder.
 
-1. Choose how P1 gets its libraries: install the Vulkan SDK on the Windows machine, or vendor volk, VMA and SPIRV-Cross in `indra/asrenderer`. `VULKAN_SDK` is not set in the shell today.
-2. Approve writing the P1 spikes: a native window with no GL on Windows and on the M4, and all 63 shaders through SPIRV-Cross and the Metal compiler.
+Test machine toolchains checked 2026-11-05, in login shells (a plain SSH command on the Mac has a shorter PATH and misses cmake):
+
+| Machine | OS | Present | Missing |
+|---|---|---|---|
+| Mac Mini M4 | macOS 26.6.2, Xcode | git, clang++, cmake 3.31.2, Metal Toolchain, ninja 1.13.2, glslang 16.6.0, SPIRV-Cross | Nothing |
+| Linux NAS, GT 1030 | Debian 13 | cmake, git, g++, NVIDIA driver, Vulkan loader 1.4.309, ninja 1.12.1, glslang 15.2.0, SPIRV-Cross | NVIDIA Vulkan ICD file, vulkaninfo, clang++ |
+
+Windows `.glslang` is 16.6, the same as the Mac. The NAS's 15.2.0 is older, so official SPIR-V output must not come from it.
+
+The NAS has no `nvidia_icd.json` in `/etc/vulkan/icd.d` or `/usr/share/vulkan/icd.d`, so Vulkan cannot reach the GT 1030 until that is fixed. This matters from the P8 Linux pass, not for the P1 spikes.
 
 P0 is closed for design purposes: the readings above set the priorities, and no further measurement blocks work. Further numbers are taken only when a specific decision needs them, or once for the final comparison in P8, and no more are requested before then.
 
-Then, in order: P1 spikes, P1b fast-iteration setup, P2.
+Next: P2, starting with the no-LTO link timing when the user next builds the viewer.

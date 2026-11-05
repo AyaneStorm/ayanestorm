@@ -182,6 +182,9 @@ add_subdirectory(${LIBS_OPEN_PREFIX}llfilesystem)
 add_subdirectory(${LIBS_OPEN_PREFIX}llwebrtc)
 add_subdirectory(${LIBS_OPEN_PREFIX}llwindow)
 add_subdirectory(${LIBS_OPEN_PREFIX}llxml)
+# <AS:Chanayane> AyaneStorm renderer, off by default until the viewer uses it.
+include(ASRenderer)
+# </AS:Chanayane>
 
 if (WINDOWS AND EXISTS ${LIBS_CLOSED_DIR}copy_win_scripts)
   add_subdirectory(${LIBS_CLOSED_PREFIX}copy_win_scripts)
