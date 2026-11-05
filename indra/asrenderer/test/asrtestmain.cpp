@@ -5,7 +5,10 @@
  *   asrenderer_test --selftest           portable checks, no window
  *   asrenderer_test [--seconds N]        draw the test triangle for N seconds (default 10)
  *                   [--ui]               also draw a busy test UI, rebuilt on the main thread
+ *                   [--scene]            draw a city of 16,000 objects instead of the triangle
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
+ *                   [--size W H]         window size (default 1280 720)
+ *                   [--keep-size]        skip the resize during the run, for speed readings
  *                   [--memory-cap-mb N]  lower the video memory budget
  *                   [--validate]         turn on the Vulkan validation layers
  *                   [--vsync]            wait for the display
@@ -15,7 +18,9 @@
  */
 #include "asrlatestvalue.h"
 #include "asrmemorybudget.h"
+#include "asrscene.h"
 #include "asrscenefile.h"
+#include "asrscenestore.h"
 #include "asrtexturequeue.h"
 #include "asruilist.h"
 
@@ -24,6 +29,7 @@
 #include "asrrenderthread.h"
 #include "asrtestwindow.h"
 #endif
+#include "asrtestscene.h"
 
 #include <algorithm>
 #include <atomic>
@@ -493,6 +499,185 @@ void testTextureQueue()
     expect(destroyed.size() == 1 && destroyed[0] == 5 && retired.size() == 0, "then it goes, once");
 }
 
+void testSceneGeometry()
+{
+    const asrtest::Mesh mesh = asrtest::makeSphere(40, 80);
+    const uint32_t triangles = uint32_t(mesh.indices.size() / 3);
+    const Clock::time_point start = Clock::now();
+    const asr::GeometryData geometry = asrtest::build(mesh);
+    printf("built %u triangles into %zu clusters in %.2f ms\n", triangles, geometry.clusters.size(), secondsSince(start) * 1000.0);
+
+    uint32_t total = 0;
+    uint32_t largest = 0;
+    bool insideSphere = true;
+    std::vector<uint8_t> seen(mesh.vertices.size(), 0);
+    const uint16_t* indices = reinterpret_cast<const uint16_t*>(geometry.blob.data());
+    const asr::PackedPosition* positions = reinterpret_cast<const asr::PackedPosition*>(geometry.blob.data() + geometry.positionsOffset);
+    for (const asr::ClusterData& cluster : geometry.clusters)
+    {
+        total += cluster.triangles;
+        largest = std::max(largest, cluster.triangles);
+        const uint16_t* first = indices + cluster.indexOffset / 2;
+        for (uint32_t i = 0; i < cluster.triangles * 3; ++i)
+        {
+            seen[first[i]] = 1;
+            const asr::PackedPosition& p = positions[first[i]];
+            const float dx = p.xyz[0] / 32767.f - cluster.center[0];
+            const float dy = p.xyz[1] / 32767.f - cluster.center[1];
+            const float dz = p.xyz[2] / 32767.f - cluster.center[2];
+            insideSphere = insideSphere && std::sqrt(dx * dx + dy * dy + dz * dz) <= cluster.radius;
+        }
+    }
+    expect(total == triangles, "clusters hold every triangle once");
+    expect(largest <= asr::CLUSTER_MAX_TRIANGLES, "no cluster is over 64 triangles");
+    expect(geometry.clusters.size() < size_t(triangles / asr::CLUSTER_MAX_TRIANGLES) * 3 / 2, "clusters are nearly full");
+    expect(std::find(seen.begin(), seen.end(), uint8_t(0)) == seen.end(), "every vertex is used");
+    expect(insideSphere, "bounding spheres hold their vertices");
+
+    const asr::GeometryData empty = asr::buildGeometry(nullptr, 0, nullptr, 0);
+    expect(empty.clusters.empty(), "an empty face builds to nothing");
+}
+
+void testRangeAllocator()
+{
+    asr::RangeAllocator ranges(100);
+    uint64_t a = 0, b = 0, c = 0, d = 0;
+    expect(ranges.allocate(30, 1, a) && ranges.allocate(30, 1, b) && ranges.allocate(30, 1, c), "ranges fit");
+    expect(!ranges.allocate(30, 1, d), "a full span refuses");
+    ranges.release(a, 30);
+    ranges.release(b, 30);
+    expect(ranges.allocate(50, 1, d) && d == 0, "freed neighbours merge");
+    uint64_t aligned = 0;
+    expect(ranges.allocate(4, 16, aligned) && aligned % 16 == 0, "alignment holds");
+    ranges.grow(200);
+    expect(ranges.allocate(100, 1, d), "a grown span has room");
+}
+
+class FakeChunks final : public asr::SceneChunks
+{
+public:
+    uint64_t createSceneChunk() override
+    {
+        if (limit == 0)
+        {
+            return 0;
+        }
+        --limit;
+        return next += asr::SCENE_CHUNK_BYTES;
+    }
+
+    uint32_t limit = 100;
+    uint64_t next = 0;
+};
+
+void testSceneStore()
+{
+    asr::SceneQueue queue;
+    asr::SceneStore store(2);
+    FakeChunks chunks;
+    constexpr uint64_t LIMIT = 1024 * 1024;
+
+    const asrtest::Mesh mesh = asrtest::makeSphere(16, 32);
+
+    asr::InstanceDesc desc;
+    memset(desc.objectToWorld, 0, sizeof(desc.objectToWorld));
+    desc.objectToWorld[0] = desc.objectToWorld[5] = desc.objectToWorld[10] = 2.f;
+    desc.objectToWorld[3] = 7.f;
+
+    const uint32_t geometry = queue.addGeometry(asrtest::build(mesh));
+    desc.geometry = geometry;
+    const uint32_t first = queue.addInstance(desc);
+    const uint32_t second = queue.addInstance(desc);
+    uint64_t frame = 10;
+    store.update(queue, chunks, frame, LIMIT);
+    expect(store.instanceEnd() == 2, "instances are counted");
+    expect(store.triangles() == 2 * mesh.indices.size() / 3, "both instances count their triangles");
+
+    bool sawChunkWrite = false;
+    bool sawInstance = false;
+    for (const asr::SceneWrite& write : store.writes())
+    {
+        sawChunkWrite = sawChunkWrite || (write.table == asr::SceneTable::Count && write.data != nullptr);
+        if (write.table == asr::SceneTable::Instances && write.offset == sizeof(asr::GpuInstance) * second)
+        {
+            const asr::GpuInstance* instance = reinterpret_cast<const asr::GpuInstance*>(store.tableBytes().data() + write.source);
+            sawInstance = instance->geometry == geometry && instance->rows[0][3] == 7.f;
+        }
+    }
+    expect(sawChunkWrite, "geometry goes into a chunk");
+    expect(sawInstance, "instances reach the table");
+
+    // A flipped object is told apart, and a move writes one entry.
+    desc.objectToWorld[0] = -2.f;
+    queue.setInstance(first, desc);
+    store.update(queue, chunks, ++frame, LIMIT);
+    expect(store.writes().size() == 1, "a moved object writes one entry and no geometry");
+    const asr::GpuInstance* moved = reinterpret_cast<const asr::GpuInstance*>(store.tableBytes().data());
+    expect((moved->flags & asr::INSTANCE_FLIPPED) != 0, "a negative scale flips the winding");
+
+    // Nothing is reused until frames in flight can no longer draw it.
+    queue.removeInstance(first);
+    queue.removeInstance(second);
+    queue.removeGeometry(geometry);
+    store.update(queue, chunks, ++frame, LIMIT);
+    expect(store.triangles() == 0, "removed instances stop counting");
+    const uint64_t freeBefore = store.freeChunkBytes();
+    store.update(queue, chunks, ++frame, LIMIT);
+    expect(store.freeChunkBytes() == freeBefore, "freed geometry waits for frames in flight");
+    store.update(queue, chunks, frame += 4, LIMIT);
+    expect(store.freeChunkBytes() > freeBefore, "freed geometry comes back");
+    expect(queue.addGeometry(asrtest::build(mesh)) == geometry, "a freed id is reused");
+
+    // Out of memory: geometry waits, instances can already name it, and nothing is lost.
+    chunks.limit = 0;
+    asr::SceneQueue tightQueue;
+    asr::SceneStore tight(2);
+    desc.geometry = tightQueue.addGeometry(asrtest::build(mesh));
+    tightQueue.addInstance(desc);
+    tight.update(tightQueue, chunks, 1, LIMIT);
+    expect(tight.pendingGeometries() == 1 && tight.triangles() == 0, "no memory: the geometry waits");
+    chunks.limit = 1;
+    tight.update(tightQueue, chunks, 2, LIMIT);
+    expect(tight.pendingGeometries() == 0 && tight.triangles() == mesh.indices.size() / 3, "it arrives when memory does");
+
+    // Upload limit: a burst spreads over several frames.
+    chunks.limit = 100;
+    asr::SceneQueue burstQueue;
+    asr::SceneStore burst(2);
+    for (int i = 0; i < 40; ++i)
+    {
+        burstQueue.addGeometry(asrtest::build(mesh));
+    }
+    burst.update(burstQueue, chunks, 1, 1);
+    expect(burst.pendingGeometries() == 39, "the upload limit holds the rest back");
+
+    // The same for instances: they wait in order, and the last value wins.
+    asr::SceneQueue manyQueue;
+    asr::SceneStore many(2);
+    constexpr uint32_t COUNT = 1000;
+    for (uint32_t i = 0; i < COUNT; ++i)
+    {
+        manyQueue.addInstance(desc);
+    }
+    many.update(manyQueue, chunks, 1, COUNT * sizeof(asr::GpuInstance) / 2);
+    expect(many.instanceEnd() == COUNT / 4, "a burst of instances spreads over frames");
+    for (uint64_t next = 2; next < 8; ++next)
+    {
+        many.update(manyQueue, chunks, next, COUNT * sizeof(asr::GpuInstance) / 2);
+    }
+    expect(many.instanceEnd() == COUNT, "all of them arrive");
+
+    // Every frame in flight can stage both kinds of upload inside the staging category.
+    asr::MemoryBudget budget;
+    constexpr uint64_t GIGABYTE = 1024ull * 1024 * 1024;
+    for (uint64_t gigabytes : { 12, 8, 6, 4 })
+    {
+        budget.setBudget(gigabytes * GIGABYTE);
+        expect(budget.uploadBytesPerFrame(3) * 3 * 2 <= budget.limit(asr::MemoryCategory::Staging), "uploads fit in the staging budget");
+        expect(budget.uploadBytesPerFrame(3) >= 8 * 1024 * 1024, "uploads keep a working size");
+    }
+}
+
 #ifdef ASR_HAS_DEVICE
 void printStats(const char* name, const asr::FrameStats& stats, double seconds)
 {
@@ -664,14 +849,15 @@ private:
     uint32_t mReplaced = 0;
 };
 
-int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::DeviceOptions& options)
+int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScene, bool keepSize, uint32_t windowWidth, uint32_t windowHeight,
+                 const asr::DeviceOptions& options)
 {
     const asr::ProbeResult probe = asr::Device::probe();
     printf("probe before any window: %s\n", probe.supported ? probe.info.name.c_str() : probe.reason.c_str());
     expect(probe.supported, "probe accepts this machine");
 
     asrtest::TestWindow window;
-    if (!window.create(1280, 720, "asrenderer_test"))
+    if (!window.create(windowWidth, windowHeight, "asrenderer_test"))
     {
         printf("FAIL  cannot open a window\n");
         return 1;
@@ -694,13 +880,25 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
     }
 
     asr::RenderThread renderThread(*device);
+    std::unique_ptr<asrtest::TestCity> city;
+    const Clock::time_point sceneStart = Clock::now();
     const auto publishWindowSize = [&]()
     {
         asr::FrameState& state = renderThread.state();
         window.pixelSize(state.width, state.height);
-        state.testTriangle = true;
+        state.testTriangle = !drawScene;
+        if (drawScene)
+        {
+            state.hasCamera = true;
+            state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
+        }
         renderThread.publishState();
     };
+    if (drawScene)
+    {
+        city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures());
+        printf("city: %u objects, %u instances, built in %.0f ms\n", city->objects(), city->instances(), secondsSince(sceneStart) * 1000.0);
+    }
     publishWindowSize();
 
     TestUI testUI(device->textures());
@@ -737,6 +935,14 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
     buildUI();
     renderThread.start();
 
+    // The first frame takes the whole scene at once, and is not what is being measured.
+    const Clock::time_point firstFrameStart = Clock::now();
+    while (drawScene && device->sceneStats().pendingGeometries + device->sceneStats().instances == 0 && secondsSince(firstFrameStart) < 60.0)
+    {
+        window.pumpEvents();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
     // Runs the main thread normally for a while. False if the test must stop.
     const auto runMainThread = [&](double duration)
     {
@@ -754,6 +960,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
             }
             publishWindowSize();
             buildUI();
+            if (city)
+            {
+                city->update(float(secondsSince(sceneStart)));
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
         return true;
@@ -783,7 +993,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
         expect(stalled.worstFrameSeconds < 0.1, "no frame took 100 ms during the stall");
     }
 
-    window.resize(900, 600);
+    // Proves resizing while drawing. A speed reading passes --keep-size, so it stays at one size.
+    if (!keepSize)
+    {
+        window.resize(900, 600);
+    }
     ran = ran && runMainThread(restSeconds);
 
     if (drawUI)
@@ -792,6 +1006,18 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, const asr::De
                uiBuilds, worstBuildSeconds * 1000.0, lastVertices, testUI.flushes(), lastDraws, testUI.replaced());
         expect(lastDraws <= 4, "UI flushes merge into a few draws");
         expect(testUI.replaced() > 0, "textures were replaced while lists were drawing");
+    }
+
+    if (city)
+    {
+        const asr::SceneStats stats = device->sceneStats();
+        printf("scene: %u instances, %.1f M triangles, %llu visible clusters, %u chunks, %llu geometries waiting\n", stats.instances,
+               stats.triangles / 1e6, (unsigned long long)stats.visibleClusters, stats.chunks, (unsigned long long)stats.pendingGeometries);
+        printf("GPU: cull %.2f ms, visibility %.2f ms, resolve %.2f ms\n", stats.cullMilliseconds, stats.visibilityMilliseconds, stats.resolveMilliseconds);
+        printf("moved %u objects, replaced %u geometries\n", city->moved(), city->replaced());
+        expect(stats.visibleClusters > 0, "the camera sees part of the scene");
+        expect(stats.pendingGeometries == 0, "all geometry reached the GPU");
+        expect(city->replaced() > 0, "geometry was replaced while drawing");
     }
 
     printMemory(device->memoryBudget());
@@ -818,6 +1044,10 @@ int main(int argc, char** argv)
 #ifdef ASR_HAS_DEVICE
     double stallSeconds = 2.0;
     bool drawUI = false;
+    bool drawScene = false;
+    bool keepSize = false;
+    uint32_t windowWidth = 1280;
+    uint32_t windowHeight = 720;
     asr::DeviceOptions options;
     options.shaderDir = ASR_SHADER_DIR;
 #endif
@@ -840,6 +1070,19 @@ int main(int argc, char** argv)
         else if (arg == "--ui")
         {
             drawUI = true;
+        }
+        else if (arg == "--scene")
+        {
+            drawScene = true;
+        }
+        else if (arg == "--keep-size")
+        {
+            keepSize = true;
+        }
+        else if (arg == "--size" && i + 2 < argc)
+        {
+            windowWidth = uint32_t(atoi(argv[++i]));
+            windowHeight = uint32_t(atoi(argv[++i]));
         }
         else if (arg == "--memory-cap-mb" && i + 1 < argc)
         {
@@ -872,11 +1115,14 @@ int main(int argc, char** argv)
         testMemoryBudget();
         testUIList();
         testTextureQueue();
+        testSceneGeometry();
+        testRangeAllocator();
+        testSceneStore();
     }
     else
     {
 #ifdef ASR_HAS_DEVICE
-        if (drawTriangle(seconds, stallSeconds, drawUI, options) != 0)
+        if (drawTriangle(seconds, stallSeconds, drawUI, drawScene, keepSize, windowWidth, windowHeight, options) != 0)
         {
             return 1;
         }

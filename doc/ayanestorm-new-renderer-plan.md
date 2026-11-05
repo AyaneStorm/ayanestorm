@@ -115,7 +115,8 @@ With the new renderer on, the process creates no GL context. OpenGL stays compil
 ### 2. Thin backend layer: Vulkan and native Metal
 - **Vulkan 1.3:** dynamic rendering, synchronization2, timeline semaphores, descriptor indexing, buffer device address. Uses volk and VMA.
 - **Metal 3:** Objective-C++ `.mm` files, Apple GPU family 7+ (M1 and later). No translation layer.
-- The layer exposes buffers, textures, pipelines, passes, dispatch, timestamps and `executeIndirect` (`vkCmdDrawIndexedIndirectCount` on Vulkan, compute-filled indirect command buffers on Metal). It covers these two backends only, nothing more general.
+- The layer exposes buffers, textures, pipelines, passes, dispatch, timestamps and indirect draws. It covers these two backends only, nothing more general.
+- **Geometry draws:** no per-object draws and no command lists. Compute culling appends visible clusters to lists, and each list is one instanced indirect draw (`vkCmdDrawIndirect`, `drawPrimitives:indirectBuffer:`) that reads its vertices from memory. See section 5. This replaces the earlier plan of `vkCmdDrawIndexedIndirectCount` and compute-filled indirect command buffers, which would have needed a hand-written Metal shader and could only cull whole faces.
 
 ### 3. Shaders
 Native shaders are GLSL 4.60, compiled at build time by glslang to SPIR-V, then SPIRV-Cross to MSL. Nothing compiles at runtime, and GLSL 4.60 never reaches a GL driver, so Apple's GL limit does not apply. The OpenGL renderer keeps its shaders and its GLSL 4.10 rule.
@@ -135,7 +136,9 @@ Native shaders are GLSL 4.60, compiled at build time by glslang to SPIR-V, then 
 ### 5. Frame
 Compute culling (frustum, two-phase Hi-Z, LOD) -> indirect visibility buffer -> compute material resolve into G-buffer -> clustered lighting -> transparency -> effects -> composite.
 
-- **Visibility buffer from the start:** geometry writes only triangle and instance IDs, so hidden and tiny triangles cost almost no shading. Each visible pixel is shaded once.
+- **Clusters are the unit of culling and drawing:** each face is cut into clusters of up to 64 triangles on a worker. The GPU rejects whole clusters that are outside the view, facing away or, from step b, hidden. So a body of 60,000 triangles only pays for the parts in sight, which face-level culling cannot do. Clusters of 2, 8, 32 and 64 triangles have their own list and draw, so a two-triangle prim face does not pay for 64.
+- **The known cost:** with no index buffer each triangle runs three vertices, against about 1.2 with reuse. Vertex work here is a few memory reads and a matrix, and fewer triangles reach the rasterizer, so this pays for itself on dense content. Mesh shaders could later replace the draw using the same cluster data, as an override, where a GPU has them.
+- **Visibility buffer from the start:** geometry writes only a 32-bit visible cluster and triangle number, so hidden and tiny triangles cost almost no shading. Each visible pixel is shaded once.
 - **Same G-buffer layout:** the resolve writes the GL layout, so reused effects and parity work unchanged.
 - **Async compute:** effects run on the async compute queue where the hardware has one, overlapping geometry work.
 - **No temporal shortcuts:** every effect is computed every frame. Effect cost is cut by better algorithms: compute instead of full-screen fragment work, tile classification that skips pixels with nothing to do, and native features.
@@ -346,7 +349,7 @@ The NAS has no `nvidia_icd.json` in `/etc/vulkan/icd.d` or `/usr/share/vulkan/ic
 
 P0 is closed for design purposes: the readings above set the priorities, and no further measurement blocks work. Further numbers are taken only when a specific decision needs them, or once for the final comparison in P8, and no more are requested before then.
 
-Next: P2, ordered below so that the viewer is built as rarely as possible.
+Next: P3, ordered below so that the viewer is built as rarely as possible.
 
 | P2 step | Work | State |
 |---|---|---|
@@ -356,6 +359,26 @@ Next: P2, ordered below so that the viewer is built as rarely as possible.
 | **c. Native UI, viewer** | Tagged `LLRender::flush` and `LLVertexBufferData` early-outs, texture hand-over, `createShader` skipped so the 10 s load goes | Done on Windows: login screen drawn with no GL context |
 | **d. UI complete** | Capped UI rate, last list replayed at world rate; logged in over an empty world; login, floaters, resize; viewer stall test; explain the one-row difference below | Done on Windows |
 
+P2 is done on Windows. The Mac and Linux viewer sides of P2 are still open: the user chose to start P3 first.
+
+| P3 step | Work | State |
+|---|---|---|
+| **a. Scene core, library** | Cluster builder, scene queue and store, chunks and tables, compute culling, visibility buffer, resolve to albedo and normals, unlit view, tested in `asrenderer_test --scene` | Done on Windows and Mac; the Mac picture is still to be seen, and its speed to be read with the machine idle |
+| **b. Hidden geometry, library** | Frame graph and result registry (section 0a), depth pyramid, two-phase Hi-Z culling, LOD selection on the GPU, alpha-masked and double-sided lists | To do |
+| **c. Viewer: prims** | Render camera from the viewer, `LLPipeline` hooks, workers extract `LLVolumeFace`, materials from texture entries, world textures through the same queue, viewer FPS reads the render thread | To do |
+| **d. Viewer: mesh and scene capture** | Mesh, sculpts, terrain as plain geometry, capture file for repeatable readings | To do |
+| **e. Avatars** | Joint palettes, compute skinning, system avatars, attachments, rigged mesh | To do |
+| **f. Textures under pressure** | Lossless path, compression and mip lowering from the budget, tests at 8, 6 and 4 GB | To do |
+| **g. Snapshots and the speed gate** | Tiled snapshot path with overlap, target scene measured against P0 | To do |
+
+- **P3a result on the 3080 Ti:** a made-up city of 16,000 objects, 80,332 face instances and 17.1 M triangles, with no occlusion culling yet, about 390 objects moving at 45 Hz and a 10,000-triangle mesh replaced twice a second. At 2560x1440 it ran at about 470 fps (2.1 ms), 467 fps with the main thread stopped, and worst frame 7.6 ms. About 200,000 clusters were drawn. Scene, UI and resize together gave 0 validation errors. A screenshot showed shapes, facing, textures and mips to be right.
+- **P3a result on the M4:** the same scene with Metal API and GPU validation on passed with no errors, and about the same number of clusters was drawn (202,000 against 201,000). The 26 and 67 fps seen there were taken during a viewer build, the first with validation on, so neither is a speed reading. Metal has no pass timers yet.
+- **Pass timers:** on Windows they show cull 0.16 ms and visibility 1.64 ms, and resolve 0.08 ms. The resolve figure is not believable at 3.7 M pixels, so the split between visibility and resolve must not be used yet. The total frame time is real. To be solved in step b, where passes get timed by the frame graph.
+- **Why addresses, not bindings:** tables and geometry are reached by device address from push constants, so a growing table needs no rebinding, and one GLSL source became valid Metal through SPIRV-Cross on the first try, including atomics and `textureGrad` in compute. Metal cannot see which buffers a shader reaches this way, so one `MTLFence` orders the passes by hand.
+- **Geometry memory:** 64 MB chunks that never move, so clusters can hold addresses. The city takes 77 MB of geometry. A moved object writes one 64-byte entry, and several moves between two frames are merged into one write.
+- **Uploads cannot stop the renderer:** the first version could: 64 MB of textures plus 64 MB of scene data per frame slot exceeds the staging budget even at 12 GB. Now one frame's upload share is fixed at startup from the staging budget, so every frame in flight fits. Instances that do not fit wait for the next frame, in order, and a large texture goes up in bands of rows over several frames. At a 4 GB cap the city and a 4096x4096 texture load normally. At 300 MB, far below the floor, geometry waits and nothing fails.
+- **Test options:** `--size W H` sets the window and `--keep-size` skips the resize the test does on purpose, so speed readings stay at one size.
+- **Mac viewer build:** `/Users/ayane/ayanestorm/vulkan/bn_nolto.sh` is `bn.sh` without LTO, with `AS_RENDERER` on and its own build folder, `build-darwin-universal-nolto`. `bn.sh` is untouched.
 - **P2a result:** `asrenderer_test` now renders on its own thread, and the test freezes the main thread for 2 s. On the 3080 Ti: 4852 fps running against 4937 fps stalled, with Vulkan validation on and 0 errors. The worst stalled frame took 1.7 ms, and the newest state was 2002 ms old, which proves nothing from the main thread reached those frames. On the M4: 120 fps in both, against the inactive-screen cap. The test triangle is the only load, so this proves the thread design, not world rendering.
 - **Memory budget:** the 11.05 GB on the 3080 Ti comes from `VK_EXT_memory_budget`, against 11.8 GB of heap. Metal's figure is fixed per device, so on the Mac the budget does not react to other applications, as section 6a assumed it would. Category shares are starting values until the tiers exist.
 - **Swapchain size:** Vulkan now compares the requested size with the last requested one. Comparing with the real size would rebuild the swapchain every frame when the main thread's size lags behind the window.

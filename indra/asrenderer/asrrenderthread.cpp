@@ -92,6 +92,7 @@ void RenderThread::run()
         input.seconds = std::chrono::duration<float>(frameStart - start).count();
         input.testTriangle = state.testTriangle;
         input.ui = &mUI.read();
+        input.camera = state.hasCamera ? &state.camera : nullptr;
         if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();

@@ -13,6 +13,11 @@ namespace
 // Share of the budget in thousandths. Starting values: the tiers of section 6a
 // replace them as each category gets real users, tested at 8, 6 and 4 GB.
 // Textures have no share, because they take what is left.
+// Uploads need a working minimum, however small the budget is.
+constexpr uint64_t MINIMUM_STAGING_BYTES = 48ull * 1024 * 1024;
+constexpr uint64_t MAXIMUM_UPLOAD_BYTES = 64ull * 1024 * 1024;
+constexpr uint64_t SMALL_STAGING_BYTES = 16ull * 1024 * 1024; // kept for per-frame views and readbacks
+
 constexpr uint64_t SHARE_PER_MILLE[] = {
     250, // RenderTargets
     100, // Shadows
@@ -42,7 +47,11 @@ void MemoryBudget::setBudget(uint64_t bytes)
     {
         if (i != uint32_t(MemoryCategory::Textures))
         {
-            const uint64_t share = bytes / 1000 * SHARE_PER_MILLE[i];
+            uint64_t share = bytes / 1000 * SHARE_PER_MILLE[i];
+            if (i == uint32_t(MemoryCategory::Staging) && share < MINIMUM_STAGING_BYTES)
+            {
+                share = bytes / 4 < MINIMUM_STAGING_BYTES ? bytes / 4 : MINIMUM_STAGING_BYTES;
+            }
             mLimit[i].store(share, std::memory_order_relaxed);
             left -= share;
         }
@@ -81,6 +90,12 @@ void MemoryBudget::release(MemoryCategory category, uint64_t bytes)
 {
     mUsed[uint32_t(category)].fetch_sub(bytes, std::memory_order_relaxed);
     mTotalUsed.fetch_sub(bytes, std::memory_order_relaxed);
+}
+
+uint64_t MemoryBudget::uploadBytesPerFrame(uint32_t framesInFlight) const
+{
+    const uint64_t share = (limit(MemoryCategory::Staging) - SMALL_STAGING_BYTES) / (uint64_t(framesInFlight) * 2);
+    return share < MAXIMUM_UPLOAD_BYTES ? share : MAXIMUM_UPLOAD_BYTES;
 }
 
 MemoryPressure MemoryBudget::pressure() const

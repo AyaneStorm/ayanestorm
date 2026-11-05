@@ -19,13 +19,15 @@
 namespace asr
 {
 
-// What the main thread hands over. Later phases add the camera and motion.
+// What the main thread hands over. Later phases add motion.
 struct FrameState
 {
     std::chrono::steady_clock::time_point published{};
     uint32_t width = 0; // drawable size in pixels
     uint32_t height = 0;
     bool testTriangle = false;
+    bool hasCamera = false; // the scene is drawn from this camera when set
+    SceneCamera3D camera{};
 };
 
 struct FrameStats

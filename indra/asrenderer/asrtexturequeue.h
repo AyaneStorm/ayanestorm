@@ -68,6 +68,7 @@ struct TextureCommand
     uint32_t width = 0;
     uint32_t height = 0;
     std::vector<uint8_t> pixels;   // Upload, tightly packed
+    uint32_t rowsDone = 0;         // Upload: rows already sent, when it spans several frames
     uint64_t lastList = 0;         // Destroy: the newest UI list that may still use it
 };
 

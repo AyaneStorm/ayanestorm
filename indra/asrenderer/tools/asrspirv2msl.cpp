@@ -45,6 +45,29 @@ int main(int argc, char** argv)
         msl.argument_buffers = true;
         compiler.set_msl_options(msl);
 
+        // Set 0 stays an argument buffer in buffer 0, the bindless textures. The scene's
+        // target images are bound directly, by binding number, and push constants have
+        // a fixed place, so the device code needs no per-shader table.
+        compiler.add_discrete_descriptor_set(1);
+        for (spv::ExecutionModel stage : { spv::ExecutionModelVertex, spv::ExecutionModelFragment, spv::ExecutionModelGLCompute })
+        {
+            for (uint32_t binding = 0; binding < 3; ++binding)
+            {
+                spirv_cross::MSLResourceBinding image;
+                image.stage = stage;
+                image.desc_set = 1;
+                image.binding = binding;
+                image.msl_texture = binding;
+                compiler.add_msl_resource_binding(image);
+            }
+            spirv_cross::MSLResourceBinding push;
+            push.stage = stage;
+            push.desc_set = spirv_cross::kPushConstDescSet;
+            push.binding = spirv_cross::kPushConstBinding;
+            push.msl_buffer = 8;
+            compiler.add_msl_resource_binding(push);
+        }
+
         // Vulkan's clip space has Y down and Metal's has Y up. Flipping here
         // keeps one GLSL source correct on both.
         spirv_cross::CompilerGLSL::Options common = compiler.get_common_options();

@@ -18,8 +18,8 @@ set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
 # --- Portable code, built on every platform. ---------------------------------
 find_package(Threads REQUIRED)
-add_library(asrenderer STATIC asrmemorybudget.cpp asrrenderthread.cpp asrscenefile.cpp
-    asrtexturequeue.cpp asruilist.cpp)
+add_library(asrenderer STATIC asrmemorybudget.cpp asrrenderthread.cpp asrscene.cpp asrscenefile.cpp
+    asrscenestore.cpp asrtexturequeue.cpp asruilist.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(asrenderer PUBLIC Threads::Threads)
 
@@ -73,8 +73,8 @@ function(asr_add_shader source outputs_var)
     set(spv ${ASR_SHADER_OUTPUT_DIR}/${stem}.spv)
     add_custom_command(OUTPUT ${spv}
         COMMAND ${CMAKE_COMMAND} -E make_directory ${ASR_SHADER_OUTPUT_DIR}
-        COMMAND ${ASR_GLSLANG} -V --target-env vulkan1.3 -S ${stage} -o ${spv} ${source}
-        DEPENDS ${source} VERBATIM)
+        COMMAND ${ASR_GLSLANG} -V --target-env vulkan1.3 -S ${stage} -I${CMAKE_CURRENT_SOURCE_DIR}/shaders -o ${spv} ${source}
+        DEPENDS ${source} ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneCommon.glsl VERBATIM)
     set(result ${spv})
 
     if(APPLE)
@@ -93,7 +93,8 @@ function(asr_add_shader source outputs_var)
 endfunction()
 
 set(ASR_SHADER_OUTPUTS)
-foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF)
+foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asrSceneVisibilityV
+        asrSceneVisibilityF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})

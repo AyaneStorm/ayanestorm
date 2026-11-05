@@ -2,10 +2,12 @@
  * asrdevicevulkan.cpp
  * Vulkan 1.3 backend: dynamic rendering, synchronization2 and no OpenGL. Vulkan
  * itself is loaded at runtime through volk, so a machine without it reaches
- * create() and gets an error, not a failure to start. Draws the UI through one
- * bindless pipeline per blend, and the test triangle. See asrdevice.h.
+ * create() and gets an error, not a failure to start. Draws the scene through
+ * compute culling and a visibility buffer, the UI through one bindless pipeline per
+ * blend, and the test triangle. See asrdevice.h.
  */
 #include "asrdevice.h"
+#include "asrscenestore.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -22,6 +24,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <fstream>
 #include <unordered_map>
 #include <vector>
@@ -34,11 +37,39 @@ namespace
 
 constexpr uint32_t FRAMES_IN_FLIGHT = 2;
 
-// The most texture data sent to the GPU in one frame, so a burst of loads spreads
-// over several frames and does not make one frame long. One larger upload still
-// goes through alone.
-constexpr uint64_t MAX_UPLOAD_BYTES_PER_FRAME = 64ull * 1024 * 1024;
 constexpr uint64_t UPLOAD_ALIGNMENT = 16;
+
+// The UI samples textures in fragment shaders, and the scene resolve in compute.
+constexpr VkPipelineStageFlags2 TEXTURE_READ_STAGES = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+
+constexpr VkFormat VISIBILITY_FORMAT = VK_FORMAT_R32_UINT;
+constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
+constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
+constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+constexpr uint32_t CULL_GROUP_SIZE = 64;
+constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
+
+// Scene timing points in one frame: start, culled, drawn, resolved.
+constexpr uint32_t SCENE_TIMESTAMPS = 4;
+
+constexpr VkShaderStageFlags SCENE_PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+
+// Mirrors the push constants of asrSceneCommon.glsl.
+struct ScenePush
+{
+    uint64_t view;
+    uint64_t instances;
+    uint64_t geometries;
+    uint64_t clusters;
+    uint64_t materials;
+    uint64_t visible;
+    uint64_t counts;
+    uint32_t bucket;
+};
+
+// One bucket's draw: a VkDrawIndirectCommand that culling counts into.
+constexpr uint64_t SCENE_COUNTS_BYTES = sizeof(VkDrawIndirectCommand) * CLUSTER_BUCKETS;
 
 // The features section 2 of the plan requires.
 bool hasRequiredFeatures(VkPhysicalDevice gpu)
@@ -47,6 +78,11 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
     VkPhysicalDeviceVulkan12Features v12{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES, &v13 };
     VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
     vkGetPhysicalDeviceFeatures2(gpu, &features);
+
+    if (!features.features.shaderInt64)
+    {
+        return false;
+    }
 
     VkPhysicalDeviceVulkan12Properties limits{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES };
     VkPhysicalDeviceProperties2 properties{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &limits };
@@ -167,6 +203,23 @@ struct MappedBuffer
     uint64_t size = 0;
 };
 
+// Device-local, reached by address from shaders.
+struct GpuBuffer
+{
+    VkBuffer buffer = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    uint64_t address = 0;
+    uint64_t size = 0;
+};
+
+struct TargetImage
+{
+    VkImage image = VK_NULL_HANDLE;
+    VmaAllocation allocation = VK_NULL_HANDLE;
+    VkImageView view = VK_NULL_HANDLE;
+    uint64_t bytes = 0;
+};
+
 struct Texture
 {
     VkImage image = VK_NULL_HANDLE;
@@ -178,7 +231,7 @@ struct Texture
     uint32_t height = 1;
 };
 
-class DeviceVulkan final : public Device
+class DeviceVulkan final : public Device, private SceneChunks
 {
 public:
     ~DeviceVulkan() override { shutdown(); }
@@ -195,7 +248,7 @@ public:
             return false;
         }
         return createInstance(error) && createSurface(target, error) && pickGpu(error) &&
-               createLogicalDevice(error) && createFrames(error) && createPipeline(error) && createUI(error);
+               createLogicalDevice(error) && createFrames(error) && createPipeline(error) && createUI(error) && createScene(error);
     }
 
     const DeviceInfo& info() const override { return mInfo; }
@@ -241,6 +294,11 @@ public:
             {
                 return true; // the surface has no size yet
             }
+        }
+
+        if (input.camera && !ensureSceneTargets())
+        {
+            return false;
         }
 
         const uint32_t slot = mFrame % FRAMES_IN_FLIGHT;
@@ -453,6 +511,8 @@ private:
         v12.descriptorBindingPartiallyBound = VK_TRUE;
         v12.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
         v12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+        VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
+        features.features.shaderInt64 = VK_TRUE;
 
         const float priority = 1.f;
         VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -467,7 +527,7 @@ private:
             extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         }
 
-        VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &v12 };
+        VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &features };
         create.queueCreateInfoCount = 1;
         create.pQueueCreateInfos = &queue;
         create.enabledExtensionCount = uint32_t(extensions.size());
@@ -505,6 +565,9 @@ private:
 
     bool createFrames(std::string& error)
     {
+        // Fixed here, so the budget moving later cannot strand a staging buffer.
+        mUploadBytesPerFrame = mMemoryBudget.uploadBytesPerFrame(FRAMES_IN_FLIGHT);
+
         VkCommandPoolCreateInfo pool{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
         pool.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         pool.queueFamilyIndex = mQueueFamily;
@@ -643,6 +706,7 @@ private:
         allocator.device = mDevice;
         allocator.instance = mInstance;
         allocator.vulkanApiVersion = VK_API_VERSION_1_3;
+        allocator.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
         allocator.pVulkanFunctions = &functions;
         if (vmaImportVulkanFunctionsFromVolk(&allocator, &functions) != VK_SUCCESS ||
             vmaCreateAllocator(&allocator, &mAllocator) != VK_SUCCESS)
@@ -675,11 +739,11 @@ private:
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         bindings[0].descriptorCount = MAX_TEXTURES;
-        bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         bindings[1].binding = 1;
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         bindings[1].descriptorCount = uint32_t(UISampler::Count);
-        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         bindings[1].pImmutableSamplers = mSamplers;
 
         // Partly bound: most slots hold nothing. Update after bind: a new texture
@@ -727,6 +791,391 @@ private:
         mUIVertexShader = loadShader("asrUIV", error);
         mUIFragmentShader = mUIVertexShader ? loadShader("asrUIF", error) : VK_NULL_HANDLE;
         return mUIVertexShader != VK_NULL_HANDLE && mUIFragmentShader != VK_NULL_HANDLE;
+    }
+
+    // --- Scene setup ----------------------------------------------------------
+
+    bool createBufferObject(GpuBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, const char* what)
+    {
+        if (!mMemoryBudget.reserve(MemoryCategory::Geometry, bytes))
+        {
+            mError = std::string(what) + " does not fit in its memory budget";
+            return false;
+        }
+        VkBufferCreateInfo create{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        create.size = bytes;
+        create.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        if (!check(vmaCreateBuffer(mAllocator, &create, &allocation, &buffer.buffer, &buffer.allocation, nullptr), what))
+        {
+            mMemoryBudget.release(MemoryCategory::Geometry, bytes);
+            return false;
+        }
+        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address.buffer = buffer.buffer;
+        buffer.address = vkGetBufferDeviceAddress(mDevice, &address);
+        buffer.size = bytes;
+        return true;
+    }
+
+    void destroyBufferObject(GpuBuffer& buffer)
+    {
+        if (buffer.buffer != VK_NULL_HANDLE)
+        {
+            vmaDestroyBuffer(mAllocator, buffer.buffer, buffer.allocation);
+            mMemoryBudget.release(MemoryCategory::Geometry, buffer.size);
+        }
+        buffer = GpuBuffer();
+    }
+
+    uint64_t createSceneChunk() override
+    {
+        GpuBuffer chunk;
+        if (!createBufferObject(chunk, SCENE_CHUNK_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "scene geometry chunk"))
+        {
+            return 0;
+        }
+        mSceneChunks.push_back(chunk);
+        return chunk.address;
+    }
+
+    VkPipeline createComputePipeline(const char* name, std::string& error)
+    {
+        VkShaderModule module = loadShader(name, error);
+        if (module == VK_NULL_HANDLE)
+        {
+            return VK_NULL_HANDLE;
+        }
+        VkComputePipelineCreateInfo create{ VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO };
+        create.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        create.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        create.stage.module = module;
+        create.stage.pName = "main";
+        create.layout = mScenePipelineLayout;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (vkCreateComputePipelines(mDevice, VK_NULL_HANDLE, 1, &create, nullptr, &pipeline) != VK_SUCCESS)
+        {
+            error = std::string("cannot create the pipeline of ") + name;
+        }
+        vkDestroyShaderModule(mDevice, module, nullptr);
+        return pipeline;
+    }
+
+    // Both scene raster pipelines: no vertex input, one color target, and depth on request.
+    VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
+    {
+        VkShaderModule vertex = loadShader(vertexName, error);
+        VkShaderModule fragment = vertex ? loadShader(fragmentName, error) : VK_NULL_HANDLE;
+        VkPipeline pipeline = VK_NULL_HANDLE;
+        if (fragment)
+        {
+            VkPipelineShaderStageCreateInfo stages[2] = { { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO },
+                                                          { VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO } };
+            stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+            stages[0].module = vertex;
+            stages[0].pName = "main";
+            stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+            stages[1].module = fragment;
+            stages[1].pName = "main";
+
+            VkPipelineVertexInputStateCreateInfo vertexInput{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+            VkPipelineInputAssemblyStateCreateInfo assembly{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+            assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            VkPipelineViewportStateCreateInfo viewport{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+            viewport.viewportCount = 1;
+            viewport.scissorCount = 1;
+            VkPipelineRasterizationStateCreateInfo raster{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+            raster.polygonMode = VK_POLYGON_MODE_FILL;
+            raster.cullMode = depth ? VK_CULL_MODE_BACK_BIT : VK_CULL_MODE_NONE;
+            raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+            raster.lineWidth = 1.f;
+            VkPipelineMultisampleStateCreateInfo multisample{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+            multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+            VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+            depthStencil.depthTestEnable = depth;
+            depthStencil.depthWriteEnable = depth;
+            depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER; // reversed depth: nearer is larger
+            VkPipelineColorBlendAttachmentState attachment{};
+            attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+            blend.attachmentCount = 1;
+            blend.pAttachments = &attachment;
+            const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+            VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
+            dynamic.dynamicStateCount = 2;
+            dynamic.pDynamicStates = dynamics;
+            VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+            rendering.colorAttachmentCount = 1;
+            rendering.pColorAttachmentFormats = &colorFormat;
+            rendering.depthAttachmentFormat = depth ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
+
+            VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
+            create.stageCount = 2;
+            create.pStages = stages;
+            create.pVertexInputState = &vertexInput;
+            create.pInputAssemblyState = &assembly;
+            create.pViewportState = &viewport;
+            create.pRasterizationState = &raster;
+            create.pMultisampleState = &multisample;
+            create.pDepthStencilState = &depthStencil;
+            create.pColorBlendState = &blend;
+            create.pDynamicState = &dynamic;
+            create.layout = mScenePipelineLayout;
+            if (vkCreateGraphicsPipelines(mDevice, VK_NULL_HANDLE, 1, &create, nullptr, &pipeline) != VK_SUCCESS)
+            {
+                error = std::string("cannot create the pipeline of ") + vertexName;
+            }
+        }
+        if (vertex)
+        {
+            vkDestroyShaderModule(mDevice, vertex, nullptr);
+        }
+        if (fragment)
+        {
+            vkDestroyShaderModule(mDevice, fragment, nullptr);
+        }
+        return pipeline;
+    }
+
+    bool createScene(std::string& error)
+    {
+        VkDescriptorSetLayoutBinding bindings[3]{};
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            bindings[i].binding = i;
+            bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[i].descriptorCount = 1;
+            bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+        layout.bindingCount = 3;
+        layout.pBindings = bindings;
+
+        const VkDescriptorPoolSize size{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 };
+        VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+        pool.maxSets = 1;
+        pool.poolSizeCount = 1;
+        pool.pPoolSizes = &size;
+
+        if (vkCreateDescriptorSetLayout(mDevice, &layout, nullptr, &mSceneSetLayout) != VK_SUCCESS ||
+            vkCreateDescriptorPool(mDevice, &pool, nullptr, &mScenePool) != VK_SUCCESS)
+        {
+            error = "cannot create the scene descriptors";
+            return false;
+        }
+
+        VkDescriptorSetAllocateInfo set{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+        set.descriptorPool = mScenePool;
+        set.descriptorSetCount = 1;
+        set.pSetLayouts = &mSceneSetLayout;
+        const VkDescriptorSetLayout sets[2] = { mUISetLayout, mSceneSetLayout };
+        const VkPushConstantRange push{ SCENE_PUSH_STAGES, 0, sizeof(ScenePush) };
+        VkPipelineLayoutCreateInfo pipelineLayout{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+        pipelineLayout.setLayoutCount = 2;
+        pipelineLayout.pSetLayouts = sets;
+        pipelineLayout.pushConstantRangeCount = 1;
+        pipelineLayout.pPushConstantRanges = &push;
+        if (vkAllocateDescriptorSets(mDevice, &set, &mSceneSet) != VK_SUCCESS ||
+            vkCreatePipelineLayout(mDevice, &pipelineLayout, nullptr, &mScenePipelineLayout) != VK_SUCCESS)
+        {
+            error = "cannot create the scene pipeline layout";
+            return false;
+        }
+
+        mCullPipeline = createComputePipeline("asrSceneCullC", error);
+        mResolvePipeline = mCullPipeline ? createComputePipeline("asrSceneResolveC", error) : VK_NULL_HANDLE;
+        mVisibilityPipeline = mResolvePipeline ? createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
+        mCompositePipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
+        if (!mCompositePipeline)
+        {
+            return false;
+        }
+
+        VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
+        queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        queries.queryCount = SCENE_TIMESTAMPS * FRAMES_IN_FLIGHT;
+        if (vkCreateQueryPool(mDevice, &queries, nullptr, &mSceneQueries) != VK_SUCCESS)
+        {
+            error = "cannot create the scene timers";
+            return false;
+        }
+        VkPhysicalDeviceProperties properties;
+        vkGetPhysicalDeviceProperties(mGpu, &properties);
+        mTimestampMilliseconds = properties.limits.timestampPeriod * 1e-6f;
+
+        const VkBufferUsageFlags viewUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView), viewUsage, MemoryCategory::Staging, "scene view") ||
+                !growBuffer(mSceneReadback[i], SCENE_COUNTS_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback"))
+            {
+                error = mError;
+                return false;
+            }
+        }
+        if (!growBuffer(mSceneCountsTemplate, SCENE_COUNTS_BYTES, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene draw template") ||
+            !createBufferObject(mSceneCounts, SCENE_COUNTS_BYTES,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+                                "scene draw counts"))
+        {
+            error = mError;
+            return false;
+        }
+        VkDrawIndirectCommand draws[CLUSTER_BUCKETS]{};
+        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        {
+            draws[bucket].vertexCount = CLUSTER_BUCKET_TRIANGLES[bucket] * 3;
+        }
+        memcpy(mSceneCountsTemplate.mapped, draws, sizeof(draws));
+        vmaFlushAllocation(mAllocator, mSceneCountsTemplate.allocation, 0, sizeof(draws));
+        return true;
+    }
+
+    bool createTarget(TargetImage& target, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t pixelBytes, const char* what)
+    {
+        const uint64_t bytes = uint64_t(mSceneExtent.width) * mSceneExtent.height * pixelBytes;
+        if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, bytes))
+        {
+            mError = std::string(what) + " does not fit in the render target budget";
+            return false;
+        }
+        VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        image.imageType = VK_IMAGE_TYPE_2D;
+        image.format = format;
+        image.extent = { mSceneExtent.width, mSceneExtent.height, 1 };
+        image.mipLevels = 1;
+        image.arrayLayers = 1;
+        image.samples = VK_SAMPLE_COUNT_1_BIT;
+        image.tiling = VK_IMAGE_TILING_OPTIMAL;
+        image.usage = usage;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        allocation.flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        if (!check(vmaCreateImage(mAllocator, &image, &allocation, &target.image, &target.allocation, nullptr), what))
+        {
+            mMemoryBudget.release(MemoryCategory::RenderTargets, bytes);
+            return false;
+        }
+        target.bytes = bytes;
+        VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+        view.image = target.image;
+        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.format = format;
+        view.subresourceRange = { aspect, 0, 1, 0, 1 };
+        return check(vkCreateImageView(mDevice, &view, nullptr, &target.view), what);
+    }
+
+    void destroyTarget(TargetImage& target)
+    {
+        if (target.view != VK_NULL_HANDLE)
+        {
+            vkDestroyImageView(mDevice, target.view, nullptr);
+        }
+        if (target.image != VK_NULL_HANDLE)
+        {
+            vmaDestroyImage(mAllocator, target.image, target.allocation);
+            mMemoryBudget.release(MemoryCategory::RenderTargets, target.bytes);
+        }
+        target = TargetImage();
+    }
+
+    // The set always names images of the current size, and frames using the old ones
+    // have finished by the time it changes.
+    bool ensureSceneTargets()
+    {
+        if (mSceneExtent.width == mExtent.width && mSceneExtent.height == mExtent.height)
+        {
+            return true;
+        }
+        if (!check(vkDeviceWaitIdle(mDevice), "wait for device"))
+        {
+            return false;
+        }
+        destroyTarget(mVisibilityImage);
+        destroyTarget(mDepthImage);
+        destroyTarget(mAlbedoImage);
+        destroyTarget(mNormalImage);
+        mSceneExtent = mExtent;
+
+        if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
+            !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
+            !createTarget(mAlbedoImage, ALBEDO_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "albedo target") ||
+            !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target"))
+        {
+            return false;
+        }
+
+        const VkImageView views[3] = { mVisibilityImage.view, mAlbedoImage.view, mNormalImage.view };
+        VkDescriptorImageInfo images[3]{};
+        VkWriteDescriptorSet writes[3]{};
+        for (uint32_t i = 0; i < 3; ++i)
+        {
+            images[i].imageView = views[i];
+            images[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = mSceneSet;
+            writes[i].dstBinding = i;
+            writes[i].descriptorCount = 1;
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i].pImageInfo = &images[i];
+        }
+        vkUpdateDescriptorSets(mDevice, 3, writes, 0, nullptr);
+        return true;
+    }
+
+    void destroyScene()
+    {
+        for (GpuBuffer& chunk : mSceneChunks)
+        {
+            destroyBufferObject(chunk);
+        }
+        mSceneChunks.clear();
+        for (GpuBuffer& table : mSceneTables)
+        {
+            destroyBufferObject(table);
+        }
+        for (RetiredBuffer& retired : mRetiredBuffers)
+        {
+            destroyBufferObject(retired.buffer);
+        }
+        mRetiredBuffers.clear();
+        destroyBufferObject(mSceneVisible);
+        destroyBufferObject(mSceneCounts);
+        destroyBuffer(mSceneCountsTemplate, MemoryCategory::Staging);
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            destroyBuffer(mSceneViews[i], MemoryCategory::Staging);
+            destroyBuffer(mSceneStaging[i], MemoryCategory::Staging);
+            destroyBuffer(mSceneReadback[i], MemoryCategory::Staging);
+        }
+        destroyTarget(mVisibilityImage);
+        destroyTarget(mDepthImage);
+        destroyTarget(mAlbedoImage);
+        destroyTarget(mNormalImage);
+        for (VkPipeline pipeline : { mCullPipeline, mVisibilityPipeline, mResolvePipeline, mCompositePipeline })
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice, pipeline, nullptr);
+            }
+        }
+        if (mSceneQueries != VK_NULL_HANDLE)
+        {
+            vkDestroyQueryPool(mDevice, mSceneQueries, nullptr);
+        }
+        if (mScenePipelineLayout != VK_NULL_HANDLE)
+        {
+            vkDestroyPipelineLayout(mDevice, mScenePipelineLayout, nullptr);
+        }
+        if (mScenePool != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorPool(mDevice, mScenePool, nullptr);
+        }
+        if (mSceneSetLayout != VK_NULL_HANDLE)
+        {
+            vkDestroyDescriptorSetLayout(mDevice, mSceneSetLayout, nullptr);
+        }
     }
 
     // Creating a pipeline is slow, so each is made once, on first use, and UI code
@@ -1008,35 +1457,38 @@ private:
         vkCmdClearColorImage(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &transparent, 1, &range);
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                        VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
         writeTextureDescriptor(command.slot, texture.view);
         return true;
     }
 
-    void uploadTexture(VkCommandBuffer commands, const TextureCommand& command, uint32_t frameSlot, uint64_t& stagingOffset)
+    // Sends the given rows of an upload, which may be a part of it.
+    void uploadTexture(VkCommandBuffer commands, const TextureCommand& command, uint32_t rows, uint32_t frameSlot, uint64_t& stagingOffset)
     {
         const Texture& texture = mTextureObjects[command.slot];
         if (texture.image == VK_NULL_HANDLE)
         {
             return; // did not fit in the budget
         }
-        memcpy(static_cast<char*>(mStaging[frameSlot].mapped) + stagingOffset, command.pixels.data(), command.pixels.size());
+        const uint64_t rowBytes = command.pixels.size() / command.height;
+        const uint64_t bytes = rowBytes * rows;
+        memcpy(static_cast<char*>(mStaging[frameSlot].mapped) + stagingOffset, command.pixels.data() + rowBytes * command.rowsDone, bytes);
 
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
+                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkBufferImageCopy copy{};
         copy.bufferOffset = stagingOffset;
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, command.level, 0, 1 };
-        copy.imageOffset = { int32_t(command.x), int32_t(command.y), 0 };
-        copy.imageExtent = { command.width, command.height, 1 };
+        copy.imageOffset = { int32_t(command.x), int32_t(command.y + command.rowsDone), 0 };
+        copy.imageExtent = { command.width, rows, 1 };
         vkCmdCopyBufferToImage(commands, mStaging[frameSlot].buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                       VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
-        stagingOffset += (command.pixels.size() + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
+        stagingOffset += (bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
     }
 
     void generateMips(VkCommandBuffer commands, uint32_t slot)
@@ -1047,7 +1499,7 @@ private:
             return;
         }
 
-        constexpr VkPipelineStageFlags2 SHADER = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+        constexpr VkPipelineStageFlags2 SHADER = TEXTURE_READ_STAGES;
         constexpr VkPipelineStageFlags2 BLIT = VK_PIPELINE_STAGE_2_BLIT_BIT;
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
@@ -1102,21 +1554,28 @@ private:
         // once something in it has been recorded.
         uint64_t stagingBytes = 0;
         size_t end = 0;
+        uint32_t lastRows = 0; // rows of the command at end, when only part of it fits
         for (; end < mTextureCommands.size(); ++end)
         {
             const TextureCommand& command = mTextureCommands[end];
             if (command.type == TextureCommand::Type::Upload)
             {
-                const uint64_t aligned = (command.pixels.size() + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
-                if (stagingBytes != 0 && stagingBytes + aligned > MAX_UPLOAD_BYTES_PER_FRAME)
+                // Whole rows that fit, leaving room for rounding up to the alignment.
+                const uint64_t rowBytes = command.pixels.size() / command.height;
+                const uint64_t room = mUploadBytesPerFrame - std::min(mUploadBytesPerFrame, stagingBytes + UPLOAD_ALIGNMENT);
+                const uint32_t remaining = command.height - command.rowsDone;
+                const uint32_t rows = uint32_t(std::min<uint64_t>(remaining, room / rowBytes));
+                if (rows < remaining)
                 {
+                    lastRows = rows;
+                    stagingBytes += (rows * rowBytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
                     break;
                 }
-                stagingBytes += aligned;
+                stagingBytes += (rows * rowBytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
             }
         }
         if (stagingBytes != 0 &&
-            !growBuffer(mStaging[frameSlot], stagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "texture staging buffer"))
+            !growBuffer(mStaging[frameSlot], mUploadBytesPerFrame, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "texture staging buffer"))
         {
             return false;
         }
@@ -1134,7 +1593,7 @@ private:
                     }
                     break;
                 case TextureCommand::Type::Upload:
-                    uploadTexture(commands, command, frameSlot, stagingOffset);
+                    uploadTexture(commands, command, command.height - command.rowsDone, frameSlot, stagingOffset);
                     break;
                 case TextureCommand::Type::GenerateMips:
                     generateMips(commands, command.slot);
@@ -1143,6 +1602,11 @@ private:
                     mRetiredTextures.add(command.slot, command.lastList);
                     break;
             }
+        }
+        if (lastRows != 0)
+        {
+            uploadTexture(commands, mTextureCommands[end], lastRows, frameSlot, stagingOffset);
+            mTextureCommands[end].rowsDone += lastRows;
         }
         if (stagingOffset != 0)
         {
@@ -1178,6 +1642,294 @@ private:
             vkCmdSetScissor(commands, 0, 1, &scissor);
             vkCmdDraw(commands, draw.vertexCount, 1, draw.firstVertex, 0);
         }
+    }
+
+    // --- Scene frame ----------------------------------------------------------
+
+    static void memoryBarrier(VkCommandBuffer commands, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                              VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+    {
+        VkMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 };
+        barrier.srcStageMask = srcStage;
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstStageMask = dstStage;
+        barrier.dstAccessMask = dstAccess;
+        VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dependency.memoryBarrierCount = 1;
+        dependency.pMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(commands, &dependency);
+    }
+
+    static void targetBarrier(VkCommandBuffer commands, VkImage image, VkImageAspectFlags aspect, VkImageLayout from, VkImageLayout to,
+                              VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess, VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess)
+    {
+        VkImageMemoryBarrier2 barrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+        barrier.srcStageMask = srcStage;
+        barrier.srcAccessMask = srcAccess;
+        barrier.dstStageMask = dstStage;
+        barrier.dstAccessMask = dstAccess;
+        barrier.oldLayout = from;
+        barrier.newLayout = to;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange = { aspect, 0, 1, 0, 1 };
+        VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dependency.imageMemoryBarrierCount = 1;
+        dependency.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(commands, &dependency);
+    }
+
+    // Frames still running may read the old table, so it stays until they are done.
+    bool growTable(VkCommandBuffer commands, GpuBuffer& table, uint64_t bytes)
+    {
+        GpuBuffer grown;
+        if (!createBufferObject(grown, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "scene table"))
+        {
+            return false;
+        }
+        vkCmdFillBuffer(commands, grown.buffer, 0, VK_WHOLE_SIZE, 0);
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (table.buffer != VK_NULL_HANDLE)
+        {
+            const VkBufferCopy copy{ 0, 0, table.size };
+            vkCmdCopyBuffer(commands, table.buffer, grown.buffer, 1, &copy);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            mRetiredBuffers.push_back({ table, mFrame + FRAMES_IN_FLIGHT + 1 });
+        }
+        table = grown;
+        return true;
+    }
+
+    void flushSceneRegions(VkCommandBuffer commands, uint32_t slot, VkBuffer target)
+    {
+        if (!mSceneRegions.empty())
+        {
+            vkCmdCopyBuffer(commands, mSceneStaging[slot].buffer, target, uint32_t(mSceneRegions.size()), mSceneRegions.data());
+            mSceneRegions.clear();
+        }
+    }
+
+    // Applies this frame's scene changes on the GPU.
+    bool updateScene(VkCommandBuffer commands, uint32_t slot)
+    {
+        while (!mRetiredBuffers.empty() && mRetiredBuffers.front().frame <= mFrame)
+        {
+            destroyBufferObject(mRetiredBuffers.front().buffer);
+            mRetiredBuffers.pop_front();
+        }
+
+        mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
+
+        // Earlier frames' reads, and their counts, finish before anything here writes.
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
+
+        for (uint32_t i = 0; i < SCENE_TABLES; ++i)
+        {
+            const uint64_t bytes = mSceneStore.tableCapacity(SceneTable(i));
+            if (bytes > mSceneTables[i].size && !growTable(commands, mSceneTables[i], bytes))
+            {
+                return false;
+            }
+        }
+
+        uint64_t visibleEntries = 0;
+        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        {
+            visibleEntries += mSceneStore.bucketCapacity(bucket);
+        }
+        const uint64_t visibleBytes = visibleEntries * sizeof(uint32_t) * 2;
+        if (visibleBytes > mSceneVisible.size)
+        {
+            if (mSceneVisible.buffer != VK_NULL_HANDLE)
+            {
+                mRetiredBuffers.push_back({ mSceneVisible, mFrame + FRAMES_IN_FLIGHT + 1 });
+                mSceneVisible = GpuBuffer();
+            }
+            if (!createBufferObject(mSceneVisible, visibleBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "visible cluster list"))
+            {
+                return false;
+            }
+        }
+
+        uint64_t stagingBytes = 0;
+        for (const SceneWrite& write : mSceneStore.writes())
+        {
+            stagingBytes += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
+        }
+        if (stagingBytes != 0)
+        {
+            if (!growBuffer(mSceneStaging[slot], std::max(stagingBytes, mUploadBytesPerFrame), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene staging buffer"))
+            {
+                return false;
+            }
+            uint64_t offset = 0;
+            VkBuffer target = VK_NULL_HANDLE;
+            const uint8_t* tableBytes = mSceneStore.tableBytes().data();
+            for (const SceneWrite& write : mSceneStore.writes())
+            {
+                const VkBuffer buffer = write.table != SceneTable::Count ? mSceneTables[uint32_t(write.table)].buffer : mSceneChunks[write.chunk].buffer;
+                if (buffer != target)
+                {
+                    flushSceneRegions(commands, slot, target);
+                    target = buffer;
+                }
+                memcpy(static_cast<char*>(mSceneStaging[slot].mapped) + offset, write.data ? write.data : tableBytes + write.source, write.bytes);
+                mSceneRegions.push_back({ offset, write.offset, write.bytes });
+                offset += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
+            }
+            flushSceneRegions(commands, slot, target);
+            vmaFlushAllocation(mAllocator, mSceneStaging[slot].allocation, 0, offset);
+        }
+
+        const VkBufferCopy reset{ 0, 0, SCENE_COUNTS_BYTES };
+        vkCmdCopyBuffer(commands, mSceneCountsTemplate.buffer, mSceneCounts.buffer, 1, &reset);
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+        return true;
+    }
+
+    void readSceneResults(uint32_t slot)
+    {
+        if (!mSceneQueriesWritten[slot])
+        {
+            return;
+        }
+        uint64_t times[SCENE_TIMESTAMPS];
+        if (vkGetQueryPoolResults(mDevice, mSceneQueries, slot * SCENE_TIMESTAMPS, SCENE_TIMESTAMPS, sizeof(times), times,
+                                  sizeof(uint64_t), VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+        {
+            mSceneFrameStats.cullMilliseconds = double(times[1] - times[0]) * mTimestampMilliseconds;
+            mSceneFrameStats.visibilityMilliseconds = double(times[2] - times[1]) * mTimestampMilliseconds;
+            mSceneFrameStats.resolveMilliseconds = double(times[3] - times[2]) * mTimestampMilliseconds;
+        }
+        vmaInvalidateAllocation(mAllocator, mSceneReadback[slot].allocation, 0, SCENE_COUNTS_BYTES);
+        VkDrawIndirectCommand draws[CLUSTER_BUCKETS];
+        memcpy(draws, mSceneReadback[slot].mapped, sizeof(draws));
+        mSceneFrameStats.visibleClusters = 0;
+        for (const VkDrawIndirectCommand& draw : draws)
+        {
+            mSceneFrameStats.visibleClusters += draw.instanceCount;
+        }
+    }
+
+    // Culls, draws the visibility buffer, and resolves it to the G-buffer.
+    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera)
+    {
+        readSceneResults(slot);
+        const uint32_t firstQuery = slot * SCENE_TIMESTAMPS;
+        vkCmdResetQueryPool(commands, mSceneQueries, firstQuery, SCENE_TIMESTAMPS);
+        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, mSceneQueries, firstQuery);
+
+        if (!updateScene(commands, slot))
+        {
+            return false;
+        }
+
+        GpuSceneView view{};
+        fillSceneView(view, camera, mSceneExtent.width, mSceneExtent.height);
+        uint32_t base = 0;
+        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        {
+            view.bucketBase[bucket] = base;
+            base += mSceneStore.bucketCapacity(bucket);
+        }
+        view.instanceEnd = mSceneStore.instanceEnd();
+        memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
+        vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view));
+
+        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address.buffer = mSceneViews[slot].buffer;
+
+        ScenePush push{};
+        push.view = vkGetBufferDeviceAddress(mDevice, &address);
+        push.instances = mSceneTables[uint32_t(SceneTable::Instances)].address;
+        push.geometries = mSceneTables[uint32_t(SceneTable::Geometries)].address;
+        push.clusters = mSceneTables[uint32_t(SceneTable::Clusters)].address;
+        push.materials = mSceneTables[uint32_t(SceneTable::Materials)].address;
+        push.visible = mSceneVisible.address;
+        push.counts = mSceneCounts.address;
+
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mCullPipeline);
+        vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+        vkCmdDispatch(commands, (view.instanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
+        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 1);
+
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_COPY_BIT,
+                      VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT);
+        const VkBufferCopy readback{ 0, 0, SCENE_COUNTS_BYTES };
+        vkCmdCopyBuffer(commands, mSceneCounts.buffer, mSceneReadback[slot].buffer, 1, &readback);
+
+        targetBarrier(commands, mVisibilityImage.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        targetBarrier(commands, mDepthImage.image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                      VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
+        VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        color.imageView = mVisibilityImage.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        color.clearValue.color.uint32[0] = VISIBILITY_EMPTY;
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mDepthImage.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = { 0.f, 0 }; // reversed depth: 0 is far away
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, mSceneExtent };
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+
+        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mVisibilityPipeline);
+        for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+        {
+            push.bucket = bucket;
+            vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+            vkCmdDrawIndirect(commands, mSceneCounts.buffer, bucket * sizeof(VkDrawIndirectCommand), 1, sizeof(VkDrawIndirectCommand));
+        }
+        vkCmdEndRendering(commands);
+
+        targetBarrier(commands, mVisibilityImage.image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL,
+                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        for (VkImage image : { mAlbedoImage.image, mNormalImage.image })
+        {
+            targetBarrier(commands, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
+                          VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, 0, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        }
+        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 2);
+
+        const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mResolvePipeline);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+        vkCmdDispatch(commands, (mSceneExtent.width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE,
+                      (mSceneExtent.height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1);
+
+        // After the barrier: a timestamp alone does not make the GPU finish a dispatch.
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + 3);
+        mSceneQueriesWritten[slot] = true;
+
+        mSceneFrameStats.instances = view.instanceEnd;
+        mSceneFrameStats.triangles = mSceneStore.triangles();
+        mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
+        mSceneFrameStats.chunks = mSceneStore.chunkCount();
+        publishSceneStats(mSceneFrameStats);
+        return true;
     }
 
     void destroySwapchainViews()
@@ -1340,6 +2092,10 @@ private:
         {
             return false;
         }
+        if (input.camera && !recordScene(commands, slot, *input.camera))
+        {
+            return false;
+        }
 
         imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
@@ -1361,6 +2117,12 @@ private:
         const VkRect2D scissor{ { 0, 0 }, mExtent };
         vkCmdSetViewport(commands, 0, 1, &viewport);
         vkCmdSetScissor(commands, 0, 1, &scissor);
+        if (input.camera)
+        {
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mCompositePipeline);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 1, 1, &mSceneSet, 0, nullptr);
+            vkCmdDraw(commands, 3, 1, 0, 0);
+        }
         if (input.testTriangle)
         {
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipeline);
@@ -1384,6 +2146,7 @@ private:
         {
             vkDeviceWaitIdle(mDevice);
             destroySwapchainViews();
+            destroyScene();
             for (uint32_t slot = 0; slot < mTextureObjects.size(); ++slot)
             {
                 destroyTexture(slot);
@@ -1520,9 +2283,45 @@ private:
     MappedBuffer mUIBuffers[FRAMES_IN_FLIGHT];
     uint64_t mUIBufferGeneration[FRAMES_IN_FLIGHT]{};
     MappedBuffer mStaging[FRAMES_IN_FLIGHT];
+    uint64_t mUploadBytesPerFrame = 0;
     std::vector<Texture> mTextureObjects;                   // by slot
     std::vector<TextureCommand> mTextureCommands;           // taken, not yet run
     RetiredTextures mRetiredTextures;
+
+    struct RetiredBuffer
+    {
+        GpuBuffer buffer;
+        uint64_t frame; // destroyed from this frame on
+    };
+
+    SceneStore mSceneStore{ FRAMES_IN_FLIGHT };
+    std::vector<GpuBuffer> mSceneChunks;
+    GpuBuffer mSceneTables[SCENE_TABLES];
+    GpuBuffer mSceneVisible;
+    GpuBuffer mSceneCounts;
+    MappedBuffer mSceneCountsTemplate;
+    MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
+    MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];
+    MappedBuffer mSceneReadback[FRAMES_IN_FLIGHT];
+    std::deque<RetiredBuffer> mRetiredBuffers;
+    std::vector<VkBufferCopy> mSceneRegions;
+    VkDescriptorSetLayout mSceneSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool mScenePool = VK_NULL_HANDLE;
+    VkDescriptorSet mSceneSet = VK_NULL_HANDLE;
+    VkPipelineLayout mScenePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline mCullPipeline = VK_NULL_HANDLE;
+    VkPipeline mVisibilityPipeline = VK_NULL_HANDLE;
+    VkPipeline mResolvePipeline = VK_NULL_HANDLE;
+    VkPipeline mCompositePipeline = VK_NULL_HANDLE;
+    TargetImage mVisibilityImage;
+    TargetImage mDepthImage;
+    TargetImage mAlbedoImage;
+    TargetImage mNormalImage;
+    VkExtent2D mSceneExtent{};
+    VkQueryPool mSceneQueries = VK_NULL_HANDLE;
+    bool mSceneQueriesWritten[FRAMES_IN_FLIGHT]{};
+    float mTimestampMilliseconds = 0.f;
+    SceneStats mSceneFrameStats;
 };
 
 } // namespace

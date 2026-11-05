@@ -52,6 +52,11 @@ public:
 
     MemoryPressure pressure() const;
 
+    // The most one frame may send to the GPU, in textures and in scene data each. It is
+    // set so that every frame in flight can stage both without leaving the staging
+    // category, so a burst of loads can only take longer, never fail.
+    uint64_t uploadBytesPerFrame(uint32_t framesInFlight) const;
+
 private:
     static constexpr uint32_t COUNT = uint32_t(MemoryCategory::Count);
 

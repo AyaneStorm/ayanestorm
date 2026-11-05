@@ -1,21 +1,23 @@
 /**
  * asrdevice.h
  * The renderer's connection to the GPU: one interface, with a Vulkan backend on
- * Windows and a native Metal backend on macOS. It draws the UI and the test
- * triangle so far, and grows into the full backend layer of section 2 of
+ * Windows and a native Metal backend on macOS. It draws the scene, the UI and the
+ * test triangle so far, and grows into the full backend layer of section 2 of
  * doc/ayanestorm-new-renderer-plan.md. Create it on one thread and use it on
  * another if needed, but only one thread may use it at a time, apart from
- * textures().
+ * textures(), scene() and sceneStats().
  */
 #pragma once
 
 #include "asrmemorybudget.h"
+#include "asrscene.h"
 #include "asrtexturequeue.h"
 #include "asruilist.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace asr
@@ -60,6 +62,20 @@ struct FrameInput
     float seconds = 0.f;
     bool testTriangle = false;
     const UIList* ui = nullptr; // drawn on top; stays valid during the call
+    const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
+};
+
+// The newest figures the scene has reported. GPU times are 0 where the backend has none.
+struct SceneStats
+{
+    uint32_t instances = 0;           // instance slots the culling walks
+    uint64_t triangles = 0;           // in all instances, before culling
+    uint64_t visibleClusters = 0;
+    uint64_t pendingGeometries = 0;
+    uint32_t chunks = 0;              // geometry chunks in use
+    double cullMilliseconds = 0.0;
+    double visibilityMilliseconds = 0.0;
+    double resolveMilliseconds = 0.0;
 };
 
 class Device
@@ -86,6 +102,13 @@ public:
 
     // The one part of a device the main thread may use while the render thread runs.
     TextureQueue& textures() { return mTextures; }
+    SceneQueue& scene() { return mScene; }
+
+    SceneStats sceneStats()
+    {
+        std::lock_guard<std::mutex> lock(mSceneStatsMutex);
+        return mSceneStats;
+    }
 
     // Draws and presents one frame. Returns false on an unrecoverable error,
     // described by lastError().
@@ -102,8 +125,17 @@ protected:
         mMemoryBudget.setBudget(mMemoryCapBytes ? std::min(bytes, mMemoryCapBytes) : bytes);
     }
 
+    void publishSceneStats(const SceneStats& stats)
+    {
+        std::lock_guard<std::mutex> lock(mSceneStatsMutex);
+        mSceneStats = stats;
+    }
+
     MemoryBudget mMemoryBudget;
     TextureQueue mTextures;
+    SceneQueue mScene;
+    std::mutex mSceneStatsMutex;
+    SceneStats mSceneStats;
     uint64_t mMemoryCapBytes = 0;
 };
 
