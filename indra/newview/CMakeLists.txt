@@ -174,6 +174,8 @@ set(viewer_SOURCE_FILES
     aslightrig.cpp
     aslightrigrenderer.cpp
     asfloatermylights.cpp
+    # Optional subject-based local light priority.
+    aslocallightsort.cpp
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
     asbonedeformerbaker.cpp
@@ -1134,6 +1136,8 @@ set(viewer_HEADER_FILES
     aslightrig.h
     aslightrigrenderer.h
     asfloatermylights.h
+    # Optional subject-based local light priority.
+    aslocallightsort.h
     # </AS:Chanayane>
     # <AS:Chanayane> Viewer-local per-joint shape deformer preview.
     asbonedeformerbaker.h
