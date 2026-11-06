@@ -13,6 +13,7 @@
 #include "v3color.h"
 #include "lluuid.h"
 #include "v3math.h"
+#include "llquaternion.h"
 #include "llsd.h"
 
 // One local light: its placement relative to an avatar joint, its light
@@ -40,6 +41,11 @@ public:
     // Current world position of the live object, for beacon rendering.
     // Also available in the shader backend, which has no live object.
     LLVector3 getObjectPositionAgent() const;
+
+    // Unit direction a spot light projects along (agent frame), for beacon
+    // rendering. Only meaningful while mSpot is set; computed every
+    // updateTransform() from the aim joint plus the yaw/pitch offsets.
+    LLVector3 getAimDirection() const { return mAimDirection; }
 
     // Recomputes this light's world position from its anchor joint's current
     // world transform plus mDistance/mHeight/mAzimuth, and pushes it to the
@@ -71,11 +77,29 @@ public:
     F32 mFalloff;
     LLColor3 mColor;
 
+    // Spot light (LLVOVolume backend only; the shader backend stays point).
+    // A spot is a light with a projector image: it projects along the
+    // object's -Z axis, which updateTransform() aims at mAimJoint.
+    bool mSpot;
+    std::string mAimJoint;      // joint the spot aims at, e.g. "mNeck"
+    F32 mAimYaw;                // degrees, positive turns the aim left
+    F32 mAimPitch;              // degrees, positive turns the aim up
+    F32 mSpotFOV;               // radians, as LLLightImageParams
+    F32 mSpotFocus;
+    F32 mSpotAmbiance;
+    LLUUID mSpotTexture;        // projector image; null = plain white
+
 private:
+    // Rotation whose -Z axis points from mPositionAgent at the aim joint
+    // (or at anchor_pos if that joint is missing), with the yaw/pitch
+    // offsets applied in the light's own frame.
+    LLQuaternion computeSpotRotation(const LLVector3& anchor_pos);
+
     bool mEnabled;
     // Cached independently of mObject so shader-only lights and beacons use
     // the same joint-derived position without creating viewer geometry.
     LLVector3 mPositionAgent;
+    LLVector3 mAimDirection;
     LLPointer<LLVOVolume> mObject;
 };
 

@@ -4,7 +4,7 @@
  positioning="cascading"
  can_close="true"
  can_resize="false"
- height="470"
+ height="630"
  layout="topleft"
  name="floater_as_my_lights"
  save_rect="true"
@@ -55,6 +55,34 @@
   <check_box follows="left|top" height="16" label="Freeze animations" layout="topleft" left="15" name="as_light_freeze_anim" top="388" width="250" tool_tip="Freezes all avatar animations in view (same as AyaneStorm &gt; Animation &gt; Freeze Animations)." />
 
   <button follows="left|top" height="23" layout="topleft" left="15" name="as_light_open_poser" top="414" width="150" label="Open Poser" />
+
+  <!-- Spotlight for the selected light (LLVOVolume backend only) -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_spot_label" top="448" width="300">Spotlight</text>
+  <check_box follows="left|top" height="16" label="Spotlight" layout="topleft" left="15" name="as_light_spot" top="468" width="150" tool_tip="Turns this light into a spotlight aimed at a joint of your avatar. LLVOVolume backend only; the Shader backend keeps it a point light." />
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="165" name="as_light_aim_joint_label" top="468" width="60">Aim at</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="225" name="as_light_aim_joint" top="464" width="180" tool_tip="Joint the spotlight points at. It follows the joint as you move and animate.">
+    <combo_box.item label="Neck" name="neck" value="mNeck" />
+    <combo_box.item label="Head" name="head" value="mHead" />
+    <combo_box.item label="Chest" name="chest" value="mChest" />
+    <combo_box.item label="Torso" name="torso" value="mTorso" />
+    <combo_box.item label="Pelvis" name="pelvis" value="mPelvis" />
+    <combo_box.item label="Left shoulder" name="shoulder_left" value="mShoulderLeft" />
+    <combo_box.item label="Right shoulder" name="shoulder_right" value="mShoulderRight" />
+    <combo_box.item label="Left hand" name="hand_left" value="mWristLeft" />
+    <combo_box.item label="Right hand" name="hand_right" value="mWristRight" />
+    <combo_box.item label="Left knee" name="knee_left" value="mKneeLeft" />
+    <combo_box.item label="Right knee" name="knee_right" value="mKneeRight" />
+    <combo_box.item label="Left foot" name="foot_left" value="mFootLeft" />
+    <combo_box.item label="Right foot" name="foot_right" value="mFootRight" />
+  </combo_box>
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Aim yaw (deg)" label_width="150" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="as_light_aim_yaw" show_text="true" text_width="50" top="494" width="390" tool_tip="Turns the aim away from the joint; positive turns left, as seen from the light." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Aim pitch (deg)" label_width="150" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="as_light_aim_pitch" show_text="true" text_width="50" top="518" width="390" tool_tip="Tilts the aim away from the joint; positive tilts up." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Field of view (deg)" label_width="150" layout="topleft" left="15" max_val="170.0" min_val="1.0" name="as_light_spot_fov" show_text="true" text_width="50" top="542" width="390" tool_tip="Cone angle of the spotlight." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="0.5" label="Focus" label_width="150" layout="topleft" left="15" max_val="20.0" min_val="-20.0" name="as_light_spot_focus" show_text="true" text_width="50" top="566" width="390" tool_tip="Sharpness of the projected image; same as the build floater's light Focus." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Ambiance" label_width="150" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="as_light_spot_ambiance" show_text="true" text_width="50" top="590" width="390" tool_tip="Light spilled outside the cone; same as the build floater's light Ambiance." />
+
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="420" name="as_light_spot_texture_label" top="448" width="205">Projector image</text>
+  <texture_picker allow_no_texture="true" can_apply_immediately="true" default_image_name="Default" follows="left|top" height="96" label="" layout="topleft" left="420" name="as_light_spot_texture" top="466" width="80" tool_tip="Image projected by the spotlight. None gives a plain white cone." />
 
   <!-- Right column: list of lights + presets -->
   <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_list_label" top="10" width="200">Lights</text>
