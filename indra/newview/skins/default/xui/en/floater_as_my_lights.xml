@@ -4,7 +4,7 @@
  positioning="cascading"
  can_close="true"
  can_resize="false"
- height="470"
+ height="630"
  layout="topleft"
  name="floater_as_my_lights"
  save_rect="true"
@@ -23,16 +23,29 @@
 
   <!-- Left column: editor for the selected light -->
   <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="15" name="as_light_name_label" top="36" width="60">Name</text>
-  <line_editor follows="left|top" height="20" layout="topleft" left="70" name="as_light_name" top="34" width="290" max_length_chars="63" />
+  <line_editor follows="left|top" height="20" layout="topleft" left="70" name="as_light_name" top="34" width="220" max_length_chars="63" />
+  <check_box follows="left|top" height="16" label="On" layout="topleft" left="300" name="as_light_on" top="36" width="60" value="true" tool_tip="Turns this light on or off, keeping its settings. Enable My Lights still switches every light at once." />
 
-  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_presets_label" top="64" width="300">Position presets</text>
-  <button follows="left|top" height="22" layout="topleft" left="15" name="as_light_preset_head" top="82" width="90" label="Head" />
-  <button follows="left|top" height="22" layout="topleft" left="115" name="as_light_preset_chest" top="82" width="90" label="Chest" />
-  <button follows="left|top" height="22" layout="topleft" left="215" name="as_light_preset_back" top="82" width="90" label="Back" />
+  <!-- Placement: Follow avatar (joint presets + offsets) or Fixed (camera placement + region position) -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_presets_label" top="62" width="70">Placement</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="85" name="as_light_placement" top="58" width="130" tool_tip="Follow avatar: the light moves with one of your joints. Fixed: the light stays where it is placed, in that region.">
+    <combo_box.item label="Follow avatar" name="follow" value="follow" />
+    <combo_box.item label="Fixed" name="fixed" value="fixed" />
+  </combo_box>
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="225" name="as_light_region" top="62" width="180" tool_tip="Region this fixed light is placed in. Away means that region is not loaded, so the light is off until you return." />
+
+  <button follows="left|top" height="22" layout="topleft" left="15" name="as_light_preset_head" top="84" width="90" label="Head" />
+  <button follows="left|top" height="22" layout="topleft" left="115" name="as_light_preset_chest" top="84" width="90" label="Chest" />
+  <button follows="left|top" height="22" layout="topleft" left="215" name="as_light_preset_back" top="84" width="90" label="Back" />
+  <button follows="left|top" height="22" layout="topleft" left="15" name="as_light_place_camera" top="84" width="140" label="Place at camera" tool_tip="Fixes the light at the camera's position, in the region there." />
+  <button follows="left|top" height="22" layout="topleft" left="165" name="as_light_place_focus" top="84" width="160" label="Place at camera focus" tool_tip="Fixes the light at the camera focus point. After an Alt-click on an object this is near the object's middle rather than on its surface; without one it is at your avatar." />
 
   <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Distance (m)" label_width="150" layout="topleft" left="15" max_val="3.0" min_val="0.05" name="as_light_distance" show_text="true" text_width="50" top="118" width="390" tool_tip="Distance from the anchor joint." />
-  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Height (m)" label_width="150" layout="topleft" left="15" max_val="2.0" min_val="-2.0" name="as_light_height" show_text="true" text_width="50" top="142" width="390" tool_tip="Vertical offset from the anchor joint." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Height (m)" label_width="150" layout="topleft" left="15" max_val="2.0" min_val="-2.0" name="as_light_height" show_text="true" text_width="50" top="142" width="390" tool_tip="Offset along the anchor joint's up axis." />
   <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Azimuth (deg)" label_width="150" layout="topleft" left="15" max_val="359.9" min_val="0.0" name="as_light_azimuth" show_text="true" text_width="50" top="166" width="390" tool_tip="Angle around the anchor joint; 0 is in front." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" initial_value="0.0" label="Offset X (m)" label_width="150" layout="topleft" left="15" max_val="10.0" min_val="-10.0" name="as_light_pos_x" show_text="true" text_width="50" top="118" width="390" tool_tip="East (+) / west (-) offset from where the light was placed. Placing again resets it to 0." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" initial_value="0.0" label="Offset Y (m)" label_width="150" layout="topleft" left="15" max_val="10.0" min_val="-10.0" name="as_light_pos_y" show_text="true" text_width="50" top="142" width="390" tool_tip="North (+) / south (-) offset from where the light was placed. Placing again resets it to 0." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" initial_value="0.0" label="Offset Z (m)" label_width="150" layout="topleft" left="15" max_val="10.0" min_val="-10.0" name="as_light_pos_z" show_text="true" text_width="50" top="166" width="390" tool_tip="Up (+) / down (-) offset from where the light was placed. Placing again resets it to 0." />
 
   <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Intensity" label_width="150" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="as_light_intensity" show_text="true" text_width="50" top="202" width="390" tool_tip="Light intensity, capped at 1.0 by the underlying light protocol. For a brighter effect, increase Radius or decrease Softness instead." />
   <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.1" label="Radius (m)" label_width="150" layout="topleft" left="15" max_val="20.0" min_val="0.1" name="as_light_radius" show_text="true" text_width="50" top="226" width="390" tool_tip="Light falloff distance." />
@@ -56,19 +69,54 @@
 
   <button follows="left|top" height="23" layout="topleft" left="15" name="as_light_open_poser" top="414" width="150" label="Open Poser" />
 
+  <!-- Spotlight for the selected light (LLVOVolume backend only) -->
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="15" name="as_light_spot_label" top="448" width="300">Spotlight</text>
+  <check_box follows="left|top" height="16" label="Spotlight" layout="topleft" left="15" name="as_light_spot" top="468" width="150" tool_tip="Turns this light into a spotlight aimed at a joint of your avatar. LLVOVolume backend only; the Shader backend keeps it a point light." />
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="165" name="as_light_aim_joint_label" top="468" width="60">Aim at</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="225" name="as_light_aim_joint" top="464" width="180" tool_tip="Joint the spotlight points at. It follows the joint as you move and animate.">
+    <combo_box.item label="Neck" name="neck" value="mNeck" />
+    <combo_box.item label="Head" name="head" value="mHead" />
+    <combo_box.item label="Chest" name="chest" value="mChest" />
+    <combo_box.item label="Torso" name="torso" value="mTorso" />
+    <combo_box.item label="Pelvis" name="pelvis" value="mPelvis" />
+    <combo_box.item label="Left shoulder" name="shoulder_left" value="mShoulderLeft" />
+    <combo_box.item label="Right shoulder" name="shoulder_right" value="mShoulderRight" />
+    <combo_box.item label="Left hand" name="hand_left" value="mWristLeft" />
+    <combo_box.item label="Right hand" name="hand_right" value="mWristRight" />
+    <combo_box.item label="Left knee" name="knee_left" value="mKneeLeft" />
+    <combo_box.item label="Right knee" name="knee_right" value="mKneeRight" />
+    <combo_box.item label="Left foot" name="foot_left" value="mFootLeft" />
+    <combo_box.item label="Right foot" name="foot_right" value="mFootRight" />
+  </combo_box>
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Aim yaw (deg)" label_width="150" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="as_light_aim_yaw" show_text="true" text_width="50" top="494" width="390" tool_tip="Turns the aim away from the joint; positive turns left, as seen from the light." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Aim pitch (deg)" label_width="150" layout="topleft" left="15" max_val="90.0" min_val="-90.0" name="as_light_aim_pitch" show_text="true" text_width="50" top="518" width="390" tool_tip="Tilts the aim away from the joint; positive tilts up." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="1.0" label="Field of view (deg)" label_width="150" layout="topleft" left="15" max_val="170.0" min_val="1.0" name="as_light_spot_fov" show_text="true" text_width="50" top="542" width="390" tool_tip="Cone angle of the spotlight." />
+  <slider can_edit_text="true" decimal_digits="1" follows="left|top" height="16" increment="0.5" label="Focus" label_width="150" layout="topleft" left="15" max_val="20.0" min_val="-20.0" name="as_light_spot_focus" show_text="true" text_width="50" top="566" width="390" tool_tip="Sharpness of the projected image; same as the build floater's light Focus." />
+  <slider can_edit_text="true" decimal_digits="2" follows="left|top" height="16" increment="0.05" label="Ambiance" label_width="150" layout="topleft" left="15" max_val="1.0" min_val="0.0" name="as_light_spot_ambiance" show_text="true" text_width="50" top="590" width="390" tool_tip="Light spilled outside the cone; same as the build floater's light Ambiance." />
+
+  <text type="string" length="1" follows="left|top" height="16" layout="topleft" left="420" name="as_light_spot_texture_label" top="448" width="205">Projector image</text>
+  <texture_picker allow_no_texture="true" can_apply_immediately="true" default_image_name="Default" follows="left|top" height="96" label="" layout="topleft" left="420" name="as_light_spot_texture" top="466" width="80" tool_tip="Image projected by the spotlight. None gives a plain white cone." />
+
   <!-- Right column: list of lights + presets -->
-  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_list_label" top="10" width="200">Lights</text>
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_list_label" top="10" width="50">Lights</text>
+  <combo_box follows="left|top" height="23" layout="topleft" left="475" name="as_light_list_filter" top="7" width="150" tool_tip="Active here: worn lights and fixed lights placed in this region. All lights: every light, including fixed lights in other regions. Switches to Active here after a teleport.">
+    <combo_box.item label="Active here" name="active" value="active" />
+    <combo_box.item label="All lights" name="all" value="all" />
+  </combo_box>
   <scroll_list draw_heading="false" follows="left|top" layout="topleft" left="420" top="28" height="170" width="205" name="as_light_list" draw_stripes="true" multi_select="false">
     <scroll_list.columns label="Name" name="name" dynamic_width="true" />
   </scroll_list>
   <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_add" top="202" width="98" label="Add Light" />
   <button follows="left|top" height="22" layout="topleft" left="527" name="as_light_delete" top="202" width="98" label="Delete Light" />
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_clear_region" top="228" width="98" label="Clear region" tool_tip="Deletes every fixed light placed in the region you are in, after confirmation." />
+  <button follows="left|top" height="22" layout="topleft" left="527" name="as_light_clear_away" top="228" width="98" label="Clear away" tool_tip="Deletes every fixed light in regions that are not loaded, after confirmation." />
 
-  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_presets_header" top="236" width="200">Rig presets</text>
-  <line_editor follows="left|top" height="20" layout="topleft" left="420" name="as_light_preset_name" top="254" width="205" max_length_chars="63" tool_tip="Name for Save preset." />
-  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_save_preset" top="278" width="98" label="Save preset..." />
-  <combo_box allow_text_entry="false" follows="left|top" height="23" layout="topleft" left="420" name="as_light_preset_combo" top="304" width="205" tool_tip="Presets saved to disk." />
-  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_load_preset" top="330" width="205" label="Load preset..." />
+  <text type="string" length="1" follows="left|top" font="SansSerifSmallBold" height="14" layout="topleft" left="420" name="as_light_presets_header" top="262" width="200">Rig presets</text>
+  <line_editor follows="left|top" height="20" layout="topleft" left="420" name="as_light_preset_name" top="280" width="205" max_length_chars="63" tool_tip="Name for Save preset." />
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_save_preset" top="304" width="98" label="Save preset..." />
+  <check_box follows="left|top" height="16" label="This region only" layout="topleft" left="527" name="as_light_preset_region_only" top="307" width="100" tool_tip="Save only the fixed lights placed in this region. Loading such a preset replaces only that region's fixed lights and leaves all other lights alone." />
+  <combo_box allow_text_entry="false" follows="left|top" height="23" layout="topleft" left="420" name="as_light_preset_combo" top="330" width="205" tool_tip="Presets saved to disk." />
+  <button follows="left|top" height="22" layout="topleft" left="420" name="as_light_load_preset" top="356" width="205" label="Load preset..." />
 
-  <check_box follows="left|top" height="16" label="No eye highlights" layout="topleft" left="420" name="as_light_no_eye_specular" top="366" width="205" control_name="ASLightRigNoEyeSpecular" tool_tip="Removes My Lights specular highlights (catchlights) from your avatar's eyes. Eyes still receive the light's diffuse illumination. Shader backend only." />
+  <check_box follows="left|top" height="16" label="No eye highlights" layout="topleft" left="420" name="as_light_no_eye_specular" top="392" width="205" control_name="ASLightRigNoEyeSpecular" tool_tip="Removes My Lights specular highlights (catchlights) from your avatar's eyes. Eyes still receive the light's diffuse illumination. Shader backend only." />
 </floater>
