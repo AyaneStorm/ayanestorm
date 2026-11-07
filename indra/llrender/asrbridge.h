@@ -64,6 +64,8 @@ namespace ASR
         virtual void destroyTexture(U32 slot) = 0;
         // Bytes that exist or have been asked for, and how much textures may take.
         virtual void getTextureMemory(U64& used, U64& limit) = 0;
+        // How many more textures can exist now.
+        virtual U32 freeTextureSlots() = 0;
 
         virtual void beginUI() = 0;
         virtual void setUIBlend(const U8 factors[4]) = 0; // colour source, colour dest, alpha source, alpha dest, as LLRender::eBlendFactor
@@ -85,7 +87,8 @@ namespace ASR
                 const glm::mat4& modelview, const glm::mat4& projection, const glm::mat4& texture);
 
     // Textures, named by the name LLImageGL holds. A new image for a name replaces
-    // the old one, in the same call, if its size or layout changes.
+    // the old one, in the same call, if its size or layout changes. With no slot free,
+    // the name keeps the image it has: callers make sure of a slot first, see freeTextureSlots().
     void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips);
     void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
     // Drops the given number of top mips, keeping what is left, with no decode. False
@@ -108,6 +111,8 @@ namespace ASR
     void getTextureMemory(U64& used, U64& limit);
     // Whether a new image of this size stays inside the limit.
     bool textureFits(S32 width, S32 height, S32 components, bool mips);
+    // How many more textures can exist now. Slots are a hard limit, unlike memory.
+    U32 freeTextureSlots();
 
     // Temporary: textures created with no pixels, and images replaced with pixels.
     void getTextureCounts(U32& created, U32& blank, U32& filled, U32& subImages);

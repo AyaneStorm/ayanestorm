@@ -275,6 +275,10 @@ std::chrono::steady_clock::time_point sLogged;
 LLDrawable* sShifted = nullptr;
 F32 sShift = 0.f;
 U32 sLostTextures = 0; // temporary: textures that lost their image with faces on them
+U32 sReleasedTextures = 0; // temporary: images given up by releaseTexture()
+
+// How long a texture may stay out of view before it gives up its image: see updateUnseenLimit().
+F32 sUnseenLimit = F32_MAX;
 
 // Workers: they touch only their own volumes and the scene queue.
 std::vector<std::thread> sWorkers;
@@ -1465,6 +1469,21 @@ void sweepObjects()
     visitSharperTextures();
 }
 
+// A texture costs a slot however small it is, and a busy place can show more textures than
+// there are slots. With slots to spare nothing goes, so turning around stays sharp. Past that
+// the time out of view allowed falls as slots run out, from minutes to seconds. It steers
+// itself: what has been out of view longest goes first, and only as much as is needed, as
+// each release moves this limit back up.
+void updateUnseenLimit()
+{
+    constexpr U32 SLOTS_TO_KEEP = 8192;
+    constexpr F32 LONGEST = 120.f;
+    constexpr F32 SHORTEST = 2.f;
+
+    const U32 free = ASR::freeTextureSlots();
+    sUnseenLimit = free >= SLOTS_TO_KEEP ? F32_MAX : LONGEST * powf(SHORTEST / LONGEST, 1.f - F32(free) / F32(SLOTS_TO_KEEP));
+}
+
 // Sharper versions of a texture arrive in a new slot, and an alpha channel can appear. A
 // new slot only touches the materials on that texture. An alpha channel can change how
 // its faces draw, so those go through applyObject() again.
@@ -1508,7 +1527,7 @@ void followTextures()
         if (slot != texture.slot)
         {
             ++texture.changes;
-            if (slot == 0 && ++sLostTextures <= 5)
+            if (slot == 0 && texture.image->getDiscardLevel() >= 0 && ++sLostTextures <= 5) // released ones have no discard level
             {
                 LL_INFOS("ASRenderer") << "texture lost its image: " << texture.image->getID() << " on " << texture.users.size() << " objects, discard "
                                        << texture.image->getDiscardLevel() << ", size " << texture.image->getMaxVirtualSize() << ", bias "
@@ -1636,7 +1655,9 @@ enum UpdatePart { PART_MESH, PART_CACHE, PART_SHAPES, PART_TEXTURES, PART_LOD, P
 constexpr const char* PART_NAMES[PART_COUNT] = { "mesh repository", "object cache", "finished shapes", "follow textures", "LOD queue", "sweep", "apply", "move" };
 F64 sPartSeconds[PART_COUNT] = {};
 F64 sPartWorst[PART_COUNT] = {};
-constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI" };
+constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI",
+                                                                                 "network", "idle callbacks", "window update", "object list", "cleanup", "move", "particles", "apparent angles",
+                                                                                 "input and coroutines", "idle() as a whole, counted again", "snapshots", "texture threads", "mesh update" };
 F64 sMainSeconds[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sMainWorst[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sWorstLoop = 0.0;
@@ -1681,12 +1702,12 @@ void logCounts()
         for (U32 i = 0; i < ASRWorld::MAIN_PART_COUNT; ++i)
         {
             mainParts << ", " << MAIN_PART_NAMES[i] << " " << sMainSeconds[i] * 1000.0 / llmax(sLoops, 1u) << "/" << sMainWorst[i] * 1000.0;
-            accounted += sMainSeconds[i];
+            accounted += i != ASRWorld::MAIN_IDLE_WHOLE ? sMainSeconds[i] : 0.0; // it holds parts counted already
             sMainSeconds[i] = 0.0;
             sMainWorst[i] = 0.0;
         }
         LL_INFOS("ASRenderer") << "main thread: " << sLoops / elapsed << " loops a second, worst loop " << sWorstLoop * 1000.0 << " ms, last log took " << sLastLogSeconds * 1000.0
-                               << " ms; update() average/worst ms" << parts.str() << "; display() average/worst ms" << mainParts.str() << "; everything else, mostly idle(), average ms "
+                               << " ms; update() average/worst ms" << parts.str() << "; display() and idle() average/worst ms" << mainParts.str() << "; everything else, average ms "
                                << (elapsed - accounted) * 1000.0 / llmax(sLoops, 1u) << LL_ENDL;
         sLoops = 0;
         sWorstLoop = 0.0;
@@ -1782,7 +1803,9 @@ void logCounts()
             }
         }
         LL_INFOS("ASRenderer") << "live textures " << live << ", " << liveBytes / (1024 * 1024) << " MB, on drawn faces about " << drawnBytes / (1024 * 1024)
-                               << " MB, shrunk so far " << shrunk << ", frozen " << LLViewerTexture::sFreezeImageUpdates << LL_ENDL;
+                               << " MB, shrunk so far " << shrunk << ", frozen " << LLViewerTexture::sFreezeImageUpdates << ", free slots " << ASR::freeTextureSlots()
+                               << ", unseen limit " << (sUnseenLimit < F32_MAX ? sUnseenLimit : -1.f) << " s, released so far " << sReleasedTextures
+                               << ", lost so far " << sLostTextures << LL_ENDL;
         for (size_t i = 0; i < shown; ++i)
         {
             LLViewerFetchedTexture* fetched = waiting[i].second;
@@ -1887,6 +1910,10 @@ void logCounts()
         U32 drawn = 0;
         U32 notDrawn[4] = {};      // diffuse, normal map, specular map, no face at all
         U64 notDrawnBytes[4] = {};
+        U32 sharpest = 0;          // drawn at discard 0, and how many of those were seen lately
+        U32 sharpestSeen = 0;
+        U64 sharpestBytes = 0;
+        U64 sharpestSeenBytes = 0;
         for (auto& image : gTextureList)
         {
             if (!image->hasGLTexture())
@@ -1903,6 +1930,15 @@ void logCounts()
             if (sTextures.count(image->getGLTexture()) != 0)
             {
                 ++drawn;
+                if (discard == 0)
+                {
+                    constexpr F32 LATELY = 10.f;
+                    const bool seen = gFrameTimeSeconds - image->mLastSeen < LATELY;
+                    ++sharpest;
+                    sharpestBytes += bytes;
+                    sharpestSeen += seen ? 1 : 0;
+                    sharpestSeenBytes += seen ? bytes : 0;
+                }
                 continue;
             }
             const U32 use = image->getNumFaces(LLRender::DIFFUSE_MAP) > 0 ? 0 : image->getNumFaces(LLRender::NORMAL_MAP) > 0 ? 1 : image->getNumFaces(LLRender::SPECULAR_MAP) > 0 ? 2 : 3;
@@ -1916,7 +1952,9 @@ void logCounts()
         }
         LL_INFOS("ASRenderer") << "by discard" << discards.str() << ", want sharper " << wantSharper << ", want smaller " << wantSmaller << "; on drawn faces " << drawn
                                << ", not drawn: diffuse " << notDrawn[0] << "/" << notDrawnBytes[0] / (1024 * 1024) << "MB, normal " << notDrawn[1] << "/" << notDrawnBytes[1] / (1024 * 1024)
-                               << "MB, specular " << notDrawn[2] << "/" << notDrawnBytes[2] / (1024 * 1024) << "MB, no face " << notDrawn[3] << "/" << notDrawnBytes[3] / (1024 * 1024) << "MB" << LL_ENDL;
+                               << "MB, specular " << notDrawn[2] << "/" << notDrawnBytes[2] / (1024 * 1024) << "MB, no face " << notDrawn[3] << "/" << notDrawnBytes[3] / (1024 * 1024)
+                               << "MB; drawn at discard 0: " << sharpest << "/" << sharpestBytes / (1024 * 1024) << "MB, in view lately " << sharpestSeen << "/"
+                               << sharpestSeenBytes / (1024 * 1024) << "MB" << LL_ENDL;
 
         // Temporary: where a frame's GPU time goes.
         std::ostringstream timings;
@@ -2088,12 +2126,49 @@ void ASRWorld::worldShifted(const LLVector3& offset)
     }
 }
 
+ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool inView)
+{
+    if (!sRunning)
+    {
+        return TextureUse::Wanted;
+    }
+
+    const bool drawn = sTextures.count(image->getGLTexture()) != 0;
+    if (drawn && inView)
+    {
+        image->mLastSeen = gFrameTimeSeconds;
+        return TextureUse::Wanted;
+    }
+    if (gFrameTimeSeconds - image->mLastSeen > sUnseenLimit)
+    {
+        return TextureUse::Release;
+    }
+    return drawn ? TextureUse::Wanted : TextureUse::NotDrawn;
+}
+
+void ASRWorld::releaseTexture(LLViewerFetchedTexture* image)
+{
+    if (image->hasGLTexture() && !image->isFetching() && !image->hasCallbacks())
+    {
+        image->destroyTexture(); // does nothing while a new image is on its way in
+        if (!image->hasGLTexture())
+        {
+            // destroyTexture() marks it deleted, and the texture list then skips its stats
+            // for good, so it would never ask for an image again, even back in view. It is
+            // only waiting for one, like a texture that has not loaded yet.
+            image->setActive();
+            ++sReleasedTextures;
+        }
+    }
+}
+
 void ASRWorld::update()
 {
     if (!sRunning)
     {
         return;
     }
+    updateUnseenLimit();
     timed(PART_MESH, []() { gMeshRepo.notifyLoadedMeshes(); }); // rebuildPriorityGroups() calls this, and it does not run here
     timed(PART_CACHE, cullObjectCache);
     timed(PART_SHAPES, applyFinishedShapes);
@@ -2125,6 +2200,8 @@ void ASRWorld::meshLoaded(const LLVolumeParams&, LLVolume*, S32) {}
 void ASRWorld::meshUnavailable(const LLVolumeParams&, S32) {}
 void ASRWorld::worldShifted(const LLVector3&) {}
 void ASRWorld::addMainTime(MainPart, F32) {}
+ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture*, bool) { return TextureUse::Wanted; }
+void ASRWorld::releaseTexture(LLViewerFetchedTexture*) {}
 void ASRWorld::update() {}
 
 #endif

@@ -88,6 +88,10 @@ public:
     // on the GPU. desc must be the size of that mip, with no more levels than it has left.
     uint32_t create(const TextureDesc& desc, uint32_t sourceSlot = 0, uint32_t sourceMip = 0);
 
+    // Main thread. How many create() calls can succeed now. A destroyed texture's slot
+    // comes back only once the frames that may draw it have finished.
+    uint32_t freeSlots();
+
     // Main thread. Copies the pixels, so the caller can free them at once.
     void upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                 const void* pixels, size_t bytes);

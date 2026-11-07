@@ -17,6 +17,7 @@
 
 class LLDrawable;
 class LLVector3;
+class LLViewerFetchedTexture;
 class LLVolume;
 class LLVolumeParams;
 
@@ -40,11 +41,25 @@ namespace ASRWorld
     // Agent space has a new origin: every position in it moved by this offset.
     void worldShifted(const LLVector3& offset);
 
+    // What a normal texture is for, now. Its faces say how large it would be wanted, but only
+    // what the renderer draws is worth memory, and every image takes one of a limited number of
+    // slots. Wanted keeps the size the faces gave, NotDrawn wants no size, and Release also
+    // gives up its image, which is reloaded from the cache if it comes back into view.
+    enum class TextureUse { Wanted, NotDrawn, Release };
+    TextureUse judgeTexture(LLViewerFetchedTexture* image, bool inView);
+    void releaseTexture(LLViewerFetchedTexture* image);
+
     // Applies everything reported since the last call. Main thread, once per frame.
     void update();
 
     // Temporary: the rest of the main thread loop, so the log can account for all of it.
-    enum MainPart { MAIN_TEXTURES, MAIN_CAMERA, MAIN_CREATE, MAIN_GEOMETRY, MAIN_UI, MAIN_PART_COUNT };
+    enum MainPart
+    {
+        MAIN_TEXTURES, MAIN_CAMERA, MAIN_CREATE, MAIN_GEOMETRY, MAIN_UI,
+        MAIN_NETWORK, MAIN_IDLE_CALLBACKS, MAIN_WINDOW, MAIN_OBJECT_LIST, MAIN_CLEANUP, MAIN_MOVE, MAIN_PARTICLES, MAIN_ANGLES,
+        MAIN_EVENTS, MAIN_IDLE_WHOLE, MAIN_SNAPSHOTS, MAIN_TEXTURE_THREADS, MAIN_MESH_UPDATE,
+        MAIN_PART_COUNT
+    };
     void addMainTime(MainPart part, F32 seconds);
 }
 

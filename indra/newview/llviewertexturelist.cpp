@@ -68,6 +68,7 @@
 // </AS:Chanayane>
 // <AS:Chanayane> The new renderer's texture memory.
 #include "asrgltable.h"
+#include "asrworld.h"
 #include "llviewercamera.h"
 // </AS:Chanayane>
 
@@ -939,6 +940,8 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     constexpr F32 BIAS_TRS_OUT_OF_SCREEN = 1.5f;
     constexpr F32 BIAS_TRS_ON_SCREEN = 1.f;
 
+    bool release_image = false; // <AS:Chanayane/> see ASRWorld::judgeTexture()
+
     if (imagep->getBoostLevel() < LLViewerFetchedTexture::BOOST_HIGH)  // don't bother checking face list for boosted textures
     {
         static LLCachedControl<F32> texture_scale_min(gSavedSettings, "TextureScaleMinAreaFactor", 0.0095f);
@@ -1063,6 +1066,20 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             max_vsize = MAX_IMAGE_AREA;
         }
 
+        // <AS:Chanayane> Faces only say how large a texture would show. The new renderer says
+        // whether it shows at all, and whether it can keep its image. No size means no fetch.
+        if (ASR::active() && imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        {
+            const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check);
+            if (use != ASRWorld::TextureUse::Wanted)
+            {
+                max_vsize = 0.f;
+                on_screen = false;
+                release_image = use == ASRWorld::TextureUse::Release;
+            }
+        }
+        // </AS:Chanayane>
+
         if (imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
         { // conditionally reset max virtual size for unboosted LOD_TEXTURES
           // this is an alternative to decaying mMaxVirtualSize over time
@@ -1151,6 +1168,13 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     }
 
     imagep->processTextureStats();
+
+    // <AS:Chanayane> Last, as the stats above leave it wanting nothing, so it stays released.
+    if (release_image)
+    {
+        ASRWorld::releaseTexture(imagep);
+    }
+    // </AS:Chanayane>
 }
 
 F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)

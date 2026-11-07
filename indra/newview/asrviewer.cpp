@@ -218,6 +218,11 @@ public:
         limit = budget.textureLimit();
     }
 
+    U32 freeTextureSlots() override
+    {
+        return sDevice->textures().freeSlots();
+    }
+
     void beginUI() override
     {
         mList = &sRenderThread->ui();

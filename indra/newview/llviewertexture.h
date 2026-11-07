@@ -427,6 +427,7 @@ public:
     bool mCreatePending = false;    // if true, this is in gTextureList.mCreateTextureList
     mutable bool mDownScalePending = false; // if true, this is in gTextureList.mDownScaleQueue
     F32 mSizeWindowStart = 0.f; // <AS:Chanayane/> when mMaxVirtualSize last started over
+    F32 mLastSeen = 0.f; // <AS:Chanayane/> when a drawn face last had it in view
 
     // <FS:Techwolf Lupindo> texture comment decoder
     std::map<std::string,std::string> mComment;

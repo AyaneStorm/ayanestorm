@@ -1744,6 +1744,14 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     {
         return false;
     }
+    // Slots are a hard limit, unlike memory, so this goes for first images too: with none
+    // made here, the texture still has no image and simply asks again. The last few slots
+    // are for boosted textures, and ASRWorld::judgeTexture() keeps this from being reached.
+    constexpr U32 SLOTS_FOR_BOOSTED = 1024;
+    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && ASR::freeTextureSlots() < SLOTS_FOR_BOOSTED)
+    {
+        return false;
+    }
     // </AS:Chanayane>
 
     bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);

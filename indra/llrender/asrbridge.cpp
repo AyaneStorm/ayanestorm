@@ -249,11 +249,19 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
 
     if (texture->slot == 0 || texture->width != width || texture->height != height || texture->layout != layout || texture->mips != mips)
     {
+        // The new slot comes first. Losing the old image with no new one would leave a
+        // texture that believes it has an image, and so never asks for one again.
+        const U32 slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout);
+        if (slot == 0)
+        {
+            LL_WARNS_ONCE("ASRenderer") << "no texture slot left for a new image" << LL_ENDL;
+            return;
+        }
         if (texture->slot != 0)
         {
             sLink->destroyTexture(texture->slot);
         }
-        texture->slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout);
+        texture->slot = slot;
         ++sCreated;
         sBlank += pixels ? 0 : 1;
         texture->width = width;
@@ -327,6 +335,11 @@ bool ASR::textureFits(S32 width, S32 height, S32 components, bool mips)
     U64 bytes = U64(width) * height * channels;
     bytes += mips ? bytes / 3 : 0;
     return used + bytes <= limit;
+}
+
+U32 ASR::freeTextureSlots()
+{
+    return sLink ? sLink->freeTextureSlots() : 0;
 }
 
 U32 ASR::textureSlot(U32 name)

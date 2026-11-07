@@ -518,12 +518,17 @@ void testTextureQueue()
     expect(queue.create(desc) == 3, "a slot is not reused before it is released");
     queue.releaseSlot(second);
     expect(queue.create(desc) == second, "a released slot is reused");
+    expect(queue.freeSlots() == asr::MAX_TEXTURES - 4, "free slots count what was never used");
 
     for (uint32_t i = 4; i < asr::MAX_TEXTURES; ++i)
     {
         queue.create(desc);
     }
+    expect(queue.freeSlots() == 0, "every slot is taken");
     expect(queue.create(desc) == 0, "with no slot left, a texture falls back to white");
+    queue.releaseSlot(second);
+    expect(queue.freeSlots() == 1, "free slots count what was given back");
+    expect(queue.create(desc) == second, "and that many creates succeed");
 
     asr::RetiredTextures retired;
     std::vector<uint32_t> destroyed;

@@ -32,6 +32,7 @@
 #include "asmacoit.h"
 #include "asdofrenderer.h" // aperture DoF capture world freeze
 #include "asrviewer.h"
+#include "asrworld.h" // <AS:Chanayane/> temporary: times the parts of idle()
 // </AS:Chanayane>
 
 #include "llappviewer.h"
@@ -1690,6 +1691,7 @@ bool LLAppViewer::doFrame()
     {
         {
             LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE); // ensure we have the entire top scope of frame covered (input event and coro)
+            LLTimer events_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
             LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df processMiscNativeEvents");
             pingMainloopTimeout("Main:MiscNativeWindowEvents");
 
@@ -1740,6 +1742,7 @@ bool LLAppViewer::doFrame()
                 // if one of our coroutines threw an uncaught exception, rethrow it now
                 LLCoros::instance().rethrow();
             }
+            ASRWorld::addMainTime(ASRWorld::MAIN_EVENTS, events_timer.getElapsedTimeF32()); // <AS:Chanayane/>
         }
 
         if (!LLApp::isExiting())
@@ -1787,7 +1790,9 @@ bool LLAppViewer::doFrame()
                 {
                     LLPerfStats::RecordSceneTime T (LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df idle");
+                    LLTimer idle_whole_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
                     idle();
+                    ASRWorld::addMainTime(ASRWorld::MAIN_IDLE_WHOLE, idle_whole_timer.getElapsedTimeF32()); // <AS:Chanayane/>
                 }
 
                 {
@@ -1831,11 +1836,13 @@ bool LLAppViewer::doFrame()
                     LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
                     pingMainloopTimeout("Main:Snapshot");
+                    LLTimer snapshots_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
                     gPipeline.mReflectionMapManager.update();
                     LLFloaterSnapshot::update(); // take snapshots
                     LLFloaterSimpleSnapshot::update();
                     LLFloaterFlickr::update(); // <FS:Beq/> FIRE-35002 - Flickr preview not updating whne opened directly from tool tray icon
                     FSFloaterPrimfeed::update(); // <FS:Beq/> Primfeed support
+                    ASRWorld::addMainTime(ASRWorld::MAIN_SNAPSHOTS, snapshots_timer.getElapsedTimeF32()); // <AS:Chanayane/>
                     gGLActive = false;
                 }
 
@@ -1918,7 +1925,9 @@ bool LLAppViewer::doFrame()
                 // <FS:Beq> instrument image decodes
                 {
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("updateTextureThreads");
+                LLTimer texture_threads_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
                 work_pending += updateTextureThreads(max_time);
+                ASRWorld::addMainTime(ASRWorld::MAIN_TEXTURE_THREADS, texture_threads_timer.getElapsedTimeF32()); // <AS:Chanayane/>
                 }   // <FS:Beq/> instrument image decodes
 
                 {
@@ -1938,7 +1947,9 @@ bool LLAppViewer::doFrame()
 
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df gMeshRepo");
+                LLTimer mesh_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
                 gMeshRepo.update() ;
+                ASRWorld::addMainTime(ASRWorld::MAIN_MESH_UPDATE, mesh_timer.getElapsedTimeF32()); // <AS:Chanayane/>
             }
 
             if(!total_work_pending) //pause texture fetching threads if nothing to process.
@@ -6197,6 +6208,7 @@ void LLAppViewer::idle()
 
     // Update frame timers
     static LLTimer idle_timer;
+    LLTimer part_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
 
     LLFrameTimer::updateFrameTime();
     LLFrameTimer::updateFrameCount();
@@ -6386,7 +6398,9 @@ void LLAppViewer::idle()
         // floating throughout the various object lists.
         //
         idleNameCache();
+        part_timer.reset(); // <AS:Chanayane/>
         idleNetwork();
+        ASRWorld::addMainTime(ASRWorld::MAIN_NETWORK, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
 
         // Check for away from keyboard, kick idle agents.
@@ -6412,7 +6426,9 @@ void LLAppViewer::idle()
         // Do event notifications if necessary.  Yes, we may want to move this elsewhere.
         gEventNotifier.update();
 
+        part_timer.reset(); // <AS:Chanayane/>
         gIdleCallbacks.callFunctions();
+        ASRWorld::addMainTime(ASRWorld::MAIN_IDLE_CALLBACKS, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
         gInventory.idleNotifyObservers();
         LLAvatarTracker::instance().idleNotifyObservers();
     }
@@ -6441,7 +6457,9 @@ void LLAppViewer::idle()
     // updateUI() needs to be called even in case viewer disconected
     // since related notification still needs handling and allows
     // opening chat.
+    part_timer.reset(); // <AS:Chanayane/>
     gViewerWindow->updateUI();
+    ASRWorld::addMainTime(ASRWorld::MAIN_WINDOW, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     if (gDisconnected)
     {
@@ -6500,10 +6518,14 @@ void LLAppViewer::idle()
         if (!(logoutRequestSent() && hasSavedFinalSnapshot()))
         {
             LLPerfStats::tunedAvatars=0; // <FS:Beq> reset the number of avatars that have been tweaked.
+            part_timer.reset(); // <AS:Chanayane/>
             gObjectList.update(gAgent);
+            ASRWorld::addMainTime(ASRWorld::MAIN_OBJECT_LIST, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
             LL::GLTFSceneManager::instance().update();
         }
     }
+
+    part_timer.reset(); // <AS:Chanayane/>
 
     //////////////////////////////////////
     //
@@ -6521,6 +6543,7 @@ void LLAppViewer::idle()
             LLDrawable::cleanupDeadDrawables();
         }
     }
+    ASRWorld::addMainTime(ASRWorld::MAIN_CLEANUP, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     //
     // After this point, in theory we should never see a dead object
@@ -6598,7 +6621,9 @@ void LLAppViewer::idle()
 
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("world update"); //LL_RECORD_BLOCK_TIME(FTM_WORLD_UPDATE);
+        part_timer.reset(); // <AS:Chanayane/>
         gPipeline.updateMove();
+        ASRWorld::addMainTime(ASRWorld::MAIN_MOVE, part_timer.getElapsedTimeAndResetF32()); // <AS:Chanayane/>
     }
 
     // <AS:Chanayane> Particles stay still during an aperture DoF capture.
@@ -6607,6 +6632,7 @@ void LLAppViewer::idle()
     {
         LLWorld::getInstance()->updateParticles();
     }
+    ASRWorld::addMainTime(ASRWorld::MAIN_PARTICLES, part_timer.getElapsedTimeF32()); // temporary
     // </AS:Chanayane>
 
     if (gAgentPilot.isPlaying() && gAgentPilot.getOverrideCamera())
@@ -6637,7 +6663,9 @@ void LLAppViewer::idle()
     // objects and camera should be in sync, do LOD calculations now
     {
         LL_RECORD_BLOCK_TIME(FTM_LOD_UPDATE);
+        part_timer.reset(); // <AS:Chanayane/>
         gObjectList.updateApparentAngles(gAgent);
+        ASRWorld::addMainTime(ASRWorld::MAIN_ANGLES, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
     }
 
     // Update AV render info

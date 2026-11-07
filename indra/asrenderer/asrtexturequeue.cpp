@@ -74,6 +74,12 @@ uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint
     return slot;
 }
 
+uint32_t TextureQueue::freeSlots()
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    return MAX_TEXTURES - mNextSlot + uint32_t(mFreeSlots.size());
+}
+
 void TextureQueue::upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                           const void* pixels, size_t bytes)
 {
