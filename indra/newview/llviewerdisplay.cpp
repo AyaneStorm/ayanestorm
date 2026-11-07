@@ -29,6 +29,7 @@
 #include "llviewerdisplay.h"
 #include "asrgltable.h" // <AS:Chanayane/>
 #include "asrviewer.h" // <AS:Chanayane/>
+#include "asrworld.h" // <AS:Chanayane/>
 
 // <AS:Chanayane> AyaneStorm OIT ownership names.
 #include "asoitdispatcher.h"
@@ -234,9 +235,11 @@ void display_startup()
     glClear(GL_DEPTH_BUFFER_BIT);
 }
 
-// <AS:Chanayane> The new renderer has no world to draw yet. This keeps alive what
-// the minimized branch of display() keeps alive, so the session stays healthy with
-// nothing culled or built, and then draws the UI.
+// <AS:Chanayane> The new renderer draws the world on its own thread. This keeps alive
+// what the minimized branch of display() keeps alive, gets objects built, hands over
+// what changed, and then draws the UI. Nothing is culled or sorted here.
+void display_update_camera();
+
 static void display_native(bool rebuild)
 {
     if (rebuild)
@@ -249,6 +252,15 @@ static void display_native(bool rebuild)
     gBumpImageList.updateImages();
     gTextureList.updateImages(llclamp(0.050f * gFrameIntervalSeconds.value(), 0.002f, 0.005f));
     gGLTFMaterialList.flushMaterials();
+
+    display_update_camera();
+
+    const F32 max_geom_update_time = 0.005f * 10.f * gFrameIntervalSeconds.value(); // 50 ms/second update time
+    gPipeline.createObjects(max_geom_update_time);
+    gPipeline.processPartitionQ();
+    gPipeline.updateGeom(max_geom_update_time);
+    ASRWorld::update();
+    ASRViewer::publishFrame(gViewerWindow->getWindow());
 
     if (LLApp::isExiting() || !ASRViewer::beginUI())
     {

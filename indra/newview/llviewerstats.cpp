@@ -37,6 +37,7 @@
 #include "llappviewer.h"
 
 #include "pipeline.h"
+#include "asrviewer.h" // <AS:Chanayane/>
 #include "lltexturefetch.h"
 #include "llviewerobjectlist.h"
 #include "llviewertexturelist.h"
@@ -527,7 +528,10 @@ void update_statistics()
     {
         sample(LLStatViewer::FPS_SAMPLE, LLTrace::get_frame_recording().getPeriodMeanPerSec(LLStatViewer::FPS));
     }
-    add(LLStatViewer::FPS, 1);
+    // <AS:Chanayane> The render thread's frames, which are not the main thread's.
+    // add(LLStatViewer::FPS, 1);
+    add(LLStatViewer::FPS, ASRViewer::takeShownFrames());
+    // </AS:Chanayane>
 
     F64Bits layer_bits = gVLManager.getLandBits() + gVLManager.getWindBits() + gVLManager.getCloudBits();
     add(LLStatViewer::LAYERS_NETWORK_DATA_RECEIVED, layer_bits);

@@ -13,6 +13,8 @@ const uint PYRAMID_LEVELS = 16;
 const uint INSTANCE_FLIPPED = 1u;
 const uint INSTANCE_DOUBLE_SIDED = 2u;
 const uint INSTANCE_MASKED = 4u;
+const uint INSTANCE_RANK_SHIFT = 8u;
+const uint INSTANCE_RANK_MAX = 7u;
 
 struct Instance
 {
@@ -52,6 +54,10 @@ struct Material
     uint texture;
     vec3 uvRow1;
     float alphaCutoff;
+    vec3 planarScale;
+    uint planar;
+    vec3 planarOffset;
+    uint unused;
 };
 
 struct ListEntry
@@ -64,7 +70,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
 {
     mat4 viewProjection;
     vec4 camera;
-    vec4 planes[5];
+    vec4 planes[6];
     vec4 pixelSize;
     vec4 viewRows[3];
     vec4 previousRows[3];
@@ -74,6 +80,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint pyramidOffset[PYRAMID_LEVELS];
     uint instanceEnd;
     uint pyramidLevels;
+    float farClip;
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };

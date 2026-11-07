@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include "asrmemorybudget.h"
 #include "asruilist.h"
 
 #include <cstdint>
@@ -62,6 +63,8 @@ struct TextureCommand
     Type type = Type::Create;
     uint32_t slot = 0;
     TextureDesc desc;              // Create
+    uint32_t sourceSlot = 0;       // Create: the texture to take mips from, 0 to start cleared
+    uint32_t sourceMip = 0;        // Create: which of its mips becomes level 0 here
     uint32_t level = 0;            // Upload
     uint32_t x = 0;
     uint32_t y = 0;
@@ -75,10 +78,15 @@ struct TextureCommand
 class TextureQueue
 {
 public:
-    TextureQueue();
+    // Memory is counted here, as the texture is asked for, so the main thread always
+    // knows the real figure. With no budget nothing is counted, which is for tests.
+    explicit TextureQueue(MemoryBudget* budget = nullptr);
 
-    // Main thread. Returns slot 0 when every slot is taken.
-    uint32_t create(const TextureDesc& desc);
+    // Main thread. Returns slot 0 when every slot is taken. Whether a texture should
+    // exist is the caller's call: memory is counted even past the limit.
+    // With a sourceSlot, the new texture is that one's mips from sourceMip down, copied
+    // on the GPU. desc must be the size of that mip, with no more levels than it has left.
+    uint32_t create(const TextureDesc& desc, uint32_t sourceSlot = 0, uint32_t sourceMip = 0);
 
     // Main thread. Copies the pixels, so the caller can free them at once.
     void upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
@@ -102,6 +110,7 @@ public:
     void releaseSlot(uint32_t slot);
 
 private:
+    MemoryBudget* mBudget;
     std::mutex mMutex; // held only to move a command, so neither thread really waits
     std::vector<TextureCommand> mCommands;
     std::vector<uint32_t> mFreeSlots;

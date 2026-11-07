@@ -166,7 +166,7 @@ protected:
     }
 
     MemoryBudget mMemoryBudget;
-    TextureQueue mTextures;
+    TextureQueue mTextures{ &mMemoryBudget };
     SceneQueue mScene;
     std::mutex mSceneStatsMutex;
     SceneStats mSceneStats;

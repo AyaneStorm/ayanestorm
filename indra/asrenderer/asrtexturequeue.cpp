@@ -31,7 +31,7 @@ uint64_t textureBytes(const TextureDesc& desc)
     return total;
 }
 
-TextureQueue::TextureQueue()
+TextureQueue::TextureQueue(MemoryBudget* budget) : mBudget(budget)
 {
     const uint32_t white = create(TextureDesc());
     TextureCommand fill;
@@ -43,11 +43,13 @@ TextureQueue::TextureQueue()
     mCommands.push_back(std::move(fill));
 }
 
-uint32_t TextureQueue::create(const TextureDesc& desc)
+uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint32_t sourceMip)
 {
     TextureCommand command;
     command.type = TextureCommand::Type::Create;
     command.desc = desc;
+    command.sourceSlot = sourceSlot;
+    command.sourceMip = sourceMip;
 
     std::lock_guard<std::mutex> lock(mMutex);
     if (!mFreeSlots.empty())
@@ -62,6 +64,10 @@ uint32_t TextureQueue::create(const TextureDesc& desc)
     else
     {
         return 0;
+    }
+    if (mBudget)
+    {
+        mBudget->reserveAnyway(MemoryCategory::Textures, textureBytes(desc));
     }
     const uint32_t slot = command.slot;
     mCommands.push_back(std::move(command));

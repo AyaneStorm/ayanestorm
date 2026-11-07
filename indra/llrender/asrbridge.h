@@ -17,6 +17,8 @@
 
 #include <glm/fwd.hpp>
 
+#include <vector>
+
 namespace ASR
 {
     // How a texture's pixels arrive. Every layout has 8 bits per channel.
@@ -57,7 +59,11 @@ namespace ASR
         virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
                                    const void* pixels, U32 rowPixels) = 0;
         virtual void generateMips(U32 slot) = 0;
+        // A new texture of the given size, made on the GPU from sourceSlot's mips from sourceMip down.
+        virtual U32 createSmallerTexture(U32 sourceSlot, U32 sourceMip, U32 width, U32 height, U32 mipLevels, PixelLayout layout) = 0;
         virtual void destroyTexture(U32 slot) = 0;
+        // Bytes that exist or have been asked for, and how much textures may take.
+        virtual void getTextureMemory(U64& used, U64& limit) = 0;
 
         virtual void beginUI() = 0;
         virtual void setUIBlend(const U8 factors[4]) = 0; // colour source, colour dest, alpha source, alpha dest, as LLRender::eBlendFactor
@@ -82,8 +88,31 @@ namespace ASR
     // the old one, in the same call, if its size or layout changes.
     void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips);
     void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
+    // Drops the given number of top mips, keeping what is left, with no decode. False
+    // when the texture has no such mips, and then nothing has changed.
+    bool shrinkTexture(U32 name, S32 mips);
     void setTextureWrap(U32 name, bool wrap);
     void setTextureFilter(U32 name, bool linear);
+
+    // Where a texture is now, 0 being white. It moves when a new size replaces it.
+    U32 textureSlot(U32 name);
+
+    // Who follows slots hears of changes here, instead of asking about every texture.
+    // LLImageGL reports itself when its image is replaced or deleted. The list holds
+    // repeats, and pointers only meant to be compared: some may be gone by then.
+    void watchImages(bool watch);
+    void imageChanged(const void* image);
+    void takeChangedImages(std::vector<const void*>& images);
+
+    // What the viewer's texture budget steers by, in bytes.
+    void getTextureMemory(U64& used, U64& limit);
+    // Whether a new image of this size stays inside the limit.
+    bool textureFits(S32 width, S32 height, S32 components, bool mips);
+
+    // Temporary: textures created with no pixels, and images replaced with pixels.
+    void getTextureCounts(U32& created, U32& blank, U32& filled, U32& subImages);
+    // Temporary: textures alive now, their bytes, and how many were shrunk so far.
+    void getLiveTextures(U32& count, U64& bytes, U32& shrunk);
 
     // For the GL table, which hands over what the viewer sets through GL.
     void genTextureNames(S32 count, U32* names);

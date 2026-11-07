@@ -36,7 +36,12 @@ constexpr uint32_t VISIBILITY_EMPTY = 0xFFFFFFFFu;
 constexpr uint32_t INSTANCE_FLIPPED = 1u;      // a negative scale: winding is reversed
 constexpr uint32_t INSTANCE_DOUBLE_SIDED = 2u; // drawn from both sides
 constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alpha
-constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED;
+
+// Masked surfaces only: exact copies in one place would tie in depth, and the order
+// of a list changes every frame. Each rank sits a fixed step nearer, see the vertex shader.
+constexpr uint32_t INSTANCE_RANK_SHIFT = 8;
+constexpr uint32_t INSTANCE_RANK_MAX = 7;
+constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
 
 // Each kind of surface has its own draw state, so each has its own lists: double-sided
 // is bit 0 of the kind, and masked is bit 1. The list a cluster goes in comes from its
@@ -134,8 +139,12 @@ struct GpuMaterial
     uint32_t texture; // see uiTextureBits()
     float uvRow1[3];
     float alphaCutoff; // masked instances keep pixels at or above this alpha
+    float planarScale[3];  // planar mapping: packed position to scaled object position
+    uint32_t planar;       // 1 when UVs come from position and normal, not from the face
+    float planarOffset[3];
+    uint32_t unused;
 };
-static_assert(sizeof(GpuMaterial) == 48, "shaders read this layout");
+static_assert(sizeof(GpuMaterial) == 80, "shaders read this layout");
 
 // A VkDrawIndirectCommand, and also Metal's MTLDrawPrimitivesIndirectArguments.
 struct GpuDrawArguments
@@ -230,6 +239,7 @@ struct SceneCamera3D
     float focal[2];           // the projection's x and y scales
     float nearClip;
     float lodScale;           // distances count this much more: above 1 lowers detail
+    float farClip;            // nothing past this is drawn; 0 means no limit
 };
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
@@ -237,12 +247,16 @@ struct SceneCamera3D
 // that back for Metal, so one matrix suits both.
 SceneCamera3D makeCamera(const float eye[3], const float target[3], float verticalFovRadians, float aspect, float nearClip);
 
+// The same from the camera's own axes, for a camera that can roll. Both are unit length.
+SceneCamera3D makeCameraFromAxes(const float eye[3], const float forward[3], const float up[3], float verticalFovRadians, float aspect,
+                                 float nearClip, float farClip);
+
 // Per view constants read by every scene shader.
 struct GpuSceneView
 {
     float viewProjection[16];
     float camera[4];
-    float planes[5][4];       // pointing inwards: left, right, top, bottom, near
+    float planes[6][4];       // pointing inwards: left, right, top, bottom, near, and one nothing fails
     float pixelSize[4];       // width, height, 1 / width, 1 / height
     float viewRows[3][4];
     float previousRows[3][4]; // the view the depth pyramid was made from
@@ -252,9 +266,10 @@ struct GpuSceneView
     uint32_t pyramidOffset[PYRAMID_MAX_LEVELS]; // where each level starts, in floats; level 1 is first
     uint32_t instanceEnd;
     uint32_t pyramidLevels;
-    uint32_t unused[2];
+    float farClip;            // a true distance from the camera, so turning changes nothing; 0 is no limit
+    uint32_t unused;
 };
-static_assert(sizeof(GpuSceneView) == 448, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 464, "shaders read this layout");
 
 // previous is the camera of the frame that left the depth pyramid, or null when there is none.
 void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneCamera3D* previous, uint32_t width, uint32_t height);
@@ -275,7 +290,7 @@ struct InstanceDesc
 {
     uint32_t geometry = 0;
     uint32_t material = 0;
-    uint32_t flags = 0;      // INSTANCE_DOUBLE_SIDED, INSTANCE_MASKED
+    uint32_t flags = 0;      // INSTANCE_DOUBLE_SIDED, INSTANCE_MASKED, a rank
     float objectToWorld[12]; // three rows
     float lodCenter[3] = { 0.f, 0.f, 0.f }; // shared by an object's faces, so they agree on an LOD
     float lodSize = 0.f;     // 0 uses the instance's own bounding sphere
@@ -288,6 +303,9 @@ struct MaterialDesc
     float uvRow1[3] = { 0.f, 1.f, 0.f };
     uint32_t texture = 0;
     float alphaCutoff = 0.5f;
+    bool planar = false;
+    float planarScale[3] = { 0.f, 0.f, 0.f };
+    float planarOffset[3] = { 0.f, 0.f, 0.f };
 };
 
 struct GeometryCommand
@@ -323,10 +341,11 @@ struct SceneCommands
     std::vector<GeometryCommand> geometries;
     std::vector<InstanceCommand> instances;
     std::vector<uint32_t> removedGeometries;
+    std::vector<uint32_t> removedMaterials;
 
     bool empty() const
     {
-        return materials.empty() && geometries.empty() && instances.empty() && removedGeometries.empty();
+        return materials.empty() && geometries.empty() && instances.empty() && removedGeometries.empty() && removedMaterials.empty();
     }
 };
 
@@ -346,6 +365,7 @@ public:
 
     uint32_t addMaterial(const MaterialDesc& desc);
     void setMaterial(uint32_t id, const MaterialDesc& desc);
+    void removeMaterial(uint32_t id);
 
     uint32_t addInstance(const InstanceDesc& desc);
     void setInstance(uint32_t id, const InstanceDesc& desc);
@@ -355,12 +375,14 @@ public:
     void take(SceneCommands& commands);
     void releaseGeometry(uint32_t id);
     void releaseInstance(uint32_t id);
+    void releaseMaterial(uint32_t id);
 
 private:
     std::mutex mMutex; // held only to move a command, so neither thread really waits
     SceneCommands mCommands;
     std::vector<uint32_t> mFreeGeometries;
     std::vector<uint32_t> mFreeInstances;
+    std::vector<uint32_t> mFreeMaterials;
     uint32_t mNextGeometry = 1; // 0 is the empty geometry
     uint32_t mNextInstance = 0;
     uint32_t mNextMaterial = 1; // 0 is plain white

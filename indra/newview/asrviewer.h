@@ -12,6 +12,12 @@
 
 class LLWindow;
 
+namespace asr
+{
+    class Device;
+    struct SceneCamera3D;
+}
+
 namespace ASRViewer
 {
     // Reads ASRendererBackend and probes the machine. Must run before the window
@@ -33,6 +39,16 @@ namespace ASRViewer
 
     // Stops the render thread and frees the device, before the window goes.
     void stop();
+
+    // Null while the renderer is not running.
+    asr::Device* device();
+
+    // The world is drawn from this camera from now on.
+    void setCamera(const asr::SceneCamera3D& camera);
+
+    // Frames shown since the last call, which is what the viewer's FPS counts. With
+    // OpenGL that is the one frame display() has just drawn.
+    U32 takeShownFrames();
 
     // True if the new renderer was asked for but could not be used.
     bool fellBackToOpenGL();

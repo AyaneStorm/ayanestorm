@@ -47,6 +47,9 @@ std::vector<Texture> sTextures;
 std::vector<U32> sFreeNames;
 const Texture sNoTexture;
 
+bool sWatchingImages = false;
+std::vector<const void*> sChangedImages;
+
 // GL's defaults: blending off, and factors that replace the target.
 bool sBlendEnabled = false;
 U8 sBlendFactors[4] = { 0, 1, 0, 1 };
@@ -194,6 +197,31 @@ void ASR::drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* color
     sLink->drawUI(data);
 }
 
+namespace
+{
+U32 sCreated = 0;
+U32 sBlank = 0;
+U32 sFilled = 0;
+U32 sSubImages = 0;
+U32 sShrunk = 0;
+
+U64 pixelBytes(PixelLayout layout)
+{
+    switch (layout)
+    {
+        case PixelLayout::Red:
+        case PixelLayout::Alpha:
+        case PixelLayout::Luminance:
+            return 1;
+        case PixelLayout::RG:
+        case PixelLayout::LuminanceAlpha:
+            return 2;
+        default:
+            return 4; // GPUs have no three-channel format
+    }
+}
+}
+
 void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips)
 {
     if (!sLink)
@@ -226,6 +254,8 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
             sLink->destroyTexture(texture->slot);
         }
         texture->slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout);
+        ++sCreated;
+        sBlank += pixels ? 0 : 1;
         texture->width = width;
         texture->height = height;
         texture->layout = layout;
@@ -234,6 +264,7 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
 
     if (pixels)
     {
+        ++sFilled;
         sLink->uploadTexture(texture->slot, 0, 0, width, height, layout, pixels, width);
         if (mips)
         {
@@ -247,7 +278,103 @@ void ASR::setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, cons
     const Texture& texture = findTexture(name);
     if (sLink && texture.slot != 0)
     {
+        ++sSubImages;
         sLink->uploadTexture(texture.slot, x, y, width, height, texture.layout, pixels, rowPixels);
+    }
+}
+
+bool ASR::shrinkTexture(U32 name, S32 mips)
+{
+    Texture* texture = changeTexture(name);
+    if (!sLink || !texture || texture->slot == 0 || !texture->mips || mips <= 0)
+    {
+        return false;
+    }
+
+    const S32 width = llmax(texture->width >> mips, 1);
+    const S32 height = llmax(texture->height >> mips, 1);
+    const U32 slot = sLink->createSmallerTexture(texture->slot, mips, width, height, fullMipCount(width, height), texture->layout);
+    if (slot == 0)
+    {
+        return false;
+    }
+
+    // Queued after the copy, so the old image is there for it.
+    sLink->destroyTexture(texture->slot);
+    texture->slot = slot;
+    texture->width = width;
+    texture->height = height;
+    ++sShrunk;
+    return true;
+}
+
+void ASR::getTextureMemory(U64& used, U64& limit)
+{
+    used = 0;
+    limit = 0;
+    if (sLink)
+    {
+        sLink->getTextureMemory(used, limit);
+    }
+}
+
+bool ASR::textureFits(S32 width, S32 height, S32 components, bool mips)
+{
+    U64 used = 0;
+    U64 limit = 0;
+    getTextureMemory(used, limit);
+    const U64 channels = components == 3 ? 4 : components;
+    U64 bytes = U64(width) * height * channels;
+    bytes += mips ? bytes / 3 : 0;
+    return used + bytes <= limit;
+}
+
+U32 ASR::textureSlot(U32 name)
+{
+    return findTexture(name).slot;
+}
+
+void ASR::watchImages(bool watch)
+{
+    sWatchingImages = watch;
+    sChangedImages.clear();
+}
+
+void ASR::imageChanged(const void* image)
+{
+    if (sWatchingImages)
+    {
+        sChangedImages.push_back(image);
+    }
+}
+
+void ASR::takeChangedImages(std::vector<const void*>& images)
+{
+    images.clear();
+    images.swap(sChangedImages);
+}
+
+void ASR::getTextureCounts(U32& created, U32& blank, U32& filled, U32& subImages)
+{
+    created = sCreated;
+    blank = sBlank;
+    filled = sFilled;
+    subImages = sSubImages;
+}
+
+void ASR::getLiveTextures(U32& count, U64& bytes, U32& shrunk)
+{
+    count = 0;
+    bytes = 0;
+    shrunk = sShrunk;
+    for (const Texture& texture : sTextures)
+    {
+        if (texture.slot != 0)
+        {
+            const U64 base = U64(texture.width) * texture.height * pixelBytes(texture.layout);
+            ++count;
+            bytes += texture.mips ? base + base / 3 : base;
+        }
     }
 }
 

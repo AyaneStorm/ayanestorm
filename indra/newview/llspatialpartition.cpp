@@ -47,6 +47,7 @@
 #include "llviewerregion.h"
 #include "llcamera.h"
 #include "pipeline.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llmeshrepository.h"
 #include "llrender.h"
 #include "lldrawpool.h"
@@ -3965,7 +3966,10 @@ public:
     {
         LLDrawable* drawable = (LLDrawable*)entry->getDrawable();
 
-        if (!drawable || !gPipeline.hasRenderType(drawable->getRenderType()) || !drawable->isVisible())
+        // <AS:Chanayane> The new renderer culls on the GPU, so nothing is marked visible here.
+        // if (!drawable || !gPipeline.hasRenderType(drawable->getRenderType()) || !drawable->isVisible())
+        if (!drawable || !gPipeline.hasRenderType(drawable->getRenderType()) || (!drawable->isVisible() && !ASR::active()))
+        // </AS:Chanayane>
         {
             return false;
         }

@@ -45,6 +45,11 @@ void main()
     gl_Position = view.viewProjection * vec4(world, 1.0);
 
 #ifdef MASKED
+    // Reversed depth, so a larger z is nearer. Each rank is a few steps of the depth
+    // buffer at any distance: under 0.4 mm at 256 m. Opaque surfaces never pay for this.
+    const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
+    gl_Position.z *= 1.0 + float(rank) / 1048576.0;
+
     const Material material = MaterialsRef(push.materials).items[instance.material];
     WordsRef attributes = WordsRef(cluster.attributes);
     const vec3 faceUV = vec3(uintBitsToFloat(attributes.words[vertex * 4u + 2u]), uintBitsToFloat(attributes.words[vertex * 4u + 3u]), 1.0);

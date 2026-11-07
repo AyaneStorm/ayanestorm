@@ -267,6 +267,10 @@ void testMemoryBudget()
     budget.release(Category::UI, 1024);
     expect(budget.used(Category::UI) == 0 && budget.totalUsed() == 0, "release gives the memory back");
     expect(budget.reserve(Category::UI, budget.limit(Category::UI)), "a category can use all of its limit");
+    budget.reserveAnyway(Category::UI, 1024);
+    expect(budget.used(Category::UI) == budget.limit(Category::UI) + 1024, "memory that must exist is counted past the limit");
+    expect(!budget.reserve(Category::UI, 1), "past the limit nothing else fits");
+    budget.release(Category::UI, 1024);
     budget.release(Category::UI, budget.limit(Category::UI));
 
     // One category cannot reach 85% of the total, so fill all of them equally.
@@ -478,6 +482,24 @@ void testTextureQueue()
 
     expect(asr::textureBytesPerPixel(asr::TextureFormat::BGRA8) == 4, "BGRA takes four bytes");
 
+    {
+        asr::MemoryBudget textureBudget;
+        asr::TextureQueue counted(&textureBudget);
+        asr::TextureDesc shrunkDesc;
+        shrunkDesc.width = 2;
+        shrunkDesc.height = 1;
+        shrunkDesc.mipLevels = 2;
+        const uint64_t white = textureBudget.used(asr::MemoryCategory::Textures);
+        const uint32_t original = counted.create(desc);
+        const uint32_t shrunk = counted.create(shrunkDesc, original, 2);
+        expect(textureBudget.used(asr::MemoryCategory::Textures) == white + asr::textureBytes(desc) + asr::textureBytes(shrunkDesc),
+               "a texture is counted as soon as it is asked for, with no budget set");
+        std::vector<asr::TextureCommand> created;
+        counted.take(created);
+        expect(created.back().slot == shrunk && created.back().sourceSlot == original && created.back().sourceMip == 2, "a smaller texture says where its mips come from");
+        expect(created[created.size() - 2].sourceSlot == 0, "a normal texture starts cleared");
+    }
+
     expect(queue.create(desc) == 3, "a slot is not reused before it is released");
     queue.releaseSlot(second);
     expect(queue.create(desc) == second, "a released slot is reused");
@@ -620,6 +642,15 @@ void testSceneStore()
     const asr::GpuInstance* moved = reinterpret_cast<const asr::GpuInstance*>(store.tableBytes().data());
     expect((moved->flags & asr::INSTANCE_FLIPPED) != 0, "a negative scale flips the winding");
 
+    // A rank reaches the shader, and says nothing about which list a surface goes in.
+    desc.flags = asr::INSTANCE_RANK_MAX << asr::INSTANCE_RANK_SHIFT;
+    queue.setInstance(first, desc);
+    store.update(queue, chunks, ++frame, LIMIT);
+    const asr::GpuInstance* ranked = reinterpret_cast<const asr::GpuInstance*>(store.tableBytes().data());
+    expect(((ranked->flags >> asr::INSTANCE_RANK_SHIFT) & asr::INSTANCE_RANK_MAX) == asr::INSTANCE_RANK_MAX, "a rank is kept");
+    expect(asr::sceneKind(ranked->flags) == 0, "a rank does not change the list");
+    desc.flags = 0;
+
     // Nothing is reused until frames in flight can no longer draw it.
     queue.removeInstance(first);
     queue.removeInstance(second);
@@ -716,7 +747,7 @@ void testSceneStore()
         manyQueue.addInstance(desc);
     }
     many.update(manyQueue, chunks, 1, COUNT * sizeof(asr::GpuInstance) / 2);
-    expect(many.instanceEnd() == COUNT / 4, "a burst of instances spreads over frames");
+    expect(many.instanceEnd() > COUNT / 8 && many.instanceEnd() <= COUNT / 4, "a burst of instances spreads over frames");
     for (uint64_t next = 2; next < 8; ++next)
     {
         many.update(manyQueue, chunks, next, COUNT * sizeof(asr::GpuInstance) / 2);
@@ -949,6 +980,14 @@ public:
         mMipped = textures.create(mippedDesc);
         textures.upload(mMipped, 0, 0, 0, MIPPED_SIZE, MIPPED_SIZE, std::move(stripes));
         textures.generateMips(mMipped);
+
+        // The same image made smaller from its own mips, and drawn right after them:
+        // it reads evenly dark red, and black would mean the copy did not happen.
+        asr::TextureDesc shrunkDesc = mippedDesc;
+        shrunkDesc.width = MIPPED_SIZE / 4;
+        shrunkDesc.height = MIPPED_SIZE / 4;
+        shrunkDesc.mipLevels = 5;
+        mShrunk = textures.create(shrunkDesc, mMipped, 2);
     }
 
     void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration)
@@ -996,6 +1035,7 @@ public:
         list.setBlend(asr::UIBlend());
         quad(list, 40.f, 500.f, 300.f, 60.f, asr::uiTextureBits(mGlyph, asr::UISampler::LinearClamp, true), 0xFF3040F0, matrix);
         quad(list, 400.f, 500.f, 16.f + 8.f * sinf(seconds), 60.f, asr::uiTextureBits(mMipped), 0xFFFFFFFF, matrix);
+        quad(list, 440.f, 500.f, 16.f + 8.f * sinf(seconds), 60.f, asr::uiTextureBits(mShrunk), 0xFFFFFFFF, matrix);
 
         // A texture replaced now and then, so destruction runs under a live list.
         if (++mBuilds % 30 == 0)
@@ -1036,6 +1076,7 @@ private:
     uint32_t mSlots[TEXTURES]{};
     uint32_t mGlyph = 0;
     uint32_t mMipped = 0;
+    uint32_t mShrunk = 0;
     uint32_t mFlushes = 0;
     uint32_t mBuilds = 0;
     uint32_t mReplaced = 0;

@@ -48,6 +48,9 @@ public:
 
     // Returns false, and changes nothing, if the category has no room left.
     bool reserve(MemoryCategory category, uint64_t bytes);
+    // Counts the memory even past the limit. For a caller whose own policy decides,
+    // and for what has to work when memory is short, such as shrinking a texture.
+    void reserveAnyway(MemoryCategory category, uint64_t bytes);
     void release(MemoryCategory category, uint64_t bytes);
 
     MemoryPressure pressure() const;

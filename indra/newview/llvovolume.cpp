@@ -68,6 +68,7 @@
 #include "llworld.h"
 #include "llselectmgr.h"
 #include "pipeline.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -908,7 +909,10 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
     if(!forced)
     {
-        if(!isVisible())
+        // <AS:Chanayane> The new renderer culls on the GPU, so nothing is marked visible here.
+        // if(!isVisible())
+        if(!isVisible() && !ASR::active())
+        // </AS:Chanayane>
         { //don't load textures for non-visible faces
             const S32 num_faces = mDrawable->getNumFaces();
             for (S32 i = 0; i < num_faces; i++)

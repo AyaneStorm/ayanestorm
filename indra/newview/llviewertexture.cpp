@@ -55,6 +55,10 @@
 #include "llappviewer.h"
 #include "llface.h"
 #include "llviewercamera.h"
+// <AS:Chanayane> The new renderer's texture memory.
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 #include "lltextureentry.h"
 #include "lltexturemanagerbridge.h"
 #include "llmediaentry.h"
@@ -540,6 +544,21 @@ void LLViewerTexture::updateClass()
     // can negatively impact performance, so leave 20% of a breathing room for
     // 'bias' calculation to kick in.
     F32 target = llmax(llmin(budget - 512.f, budget * 0.8f), MIN_VRAM_BUDGET);
+
+    // <AS:Chanayane> The new renderer knows its real usage, so no estimate is needed. Bias
+    // starts rising at 85% of what textures may take, so the limit itself is rarely met.
+    F32 native_limit = 0.f;
+    if (ASR::active())
+    {
+        U64 used_bytes = 0;
+        U64 limit_bytes = 0;
+        ASR::getTextureMemory(used_bytes, limit_bytes);
+        used = (F32)(used_bytes / (1024 * 1024));
+        native_limit = llmax((F32)(limit_bytes / (1024 * 1024)), 1.f);
+        target = native_limit * 0.85f;
+    }
+    // </AS:Chanayane>
+
     sFreeVRAMMegabytes = llmax(target - used, 0.f);
 
     F32 over_pct = (used - target) / target;
@@ -667,6 +686,13 @@ void LLViewerTexture::updateClass()
     }
 
     LLViewerTexture::sFreezeImageUpdates = false;
+
+    // <AS:Chanayane> At the limit, asking for sharper images would only waste decodes.
+    if (ASR::active())
+    {
+        LLViewerTexture::sFreezeImageUpdates = used >= native_limit;
+    }
+    // </AS:Chanayane>
 }
 
 //static
@@ -1708,6 +1734,15 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     {
         return false;
     }
+
+    // <AS:Chanayane> At the limit a normal texture keeps the image it has, at its discard
+    // level, while bias makes room. Boosted ones, such as the UI, always get in.
+    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH
+        && !ASR::textureFits(mRawImage->getWidth(), mRawImage->getHeight(), mRawImage->getComponents(), mUseMipMaps))
+    {
+        return false;
+    }
+    // </AS:Chanayane>
 
     bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
 

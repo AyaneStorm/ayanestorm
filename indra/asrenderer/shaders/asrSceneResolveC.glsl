@@ -63,6 +63,23 @@ vec3 octahedralDecode(float x, float y)
     return normalize(n);
 }
 
+// The viewer's planar mapping: the texture lies flat on the surface, at a size that
+// follows the object's scale, not stretched over the face. position is scaled.
+vec2 planarUV(vec3 normal, vec3 position)
+{
+    vec3 binormal;
+    if (abs(normal.x) >= 0.5)
+    {
+        binormal = vec3(0.0, normal.x < 0.0 ? -1.0 : 1.0, 0.0);
+    }
+    else
+    {
+        binormal = vec3(normal.y > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+    }
+    const vec3 tangent = cross(binormal, normal);
+    return vec2(1.0 + dot(binormal, position) * 2.0 - 0.5, -(dot(tangent, position) * 2.0 - 0.5));
+}
+
 void main()
 {
     const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -101,9 +118,21 @@ void main()
     // An attribute is four words: normal, tangent, u, v.
     WordsRef attributes = WordsRef(cluster.attributes);
     const uvec3 base = uvec3(i0, i1, i2) * 4u;
-    const vec2 uv0 = vec2(uintBitsToFloat(attributes.words[base.x + 2u]), uintBitsToFloat(attributes.words[base.x + 3u]));
-    const vec2 uv1 = vec2(uintBitsToFloat(attributes.words[base.y + 2u]), uintBitsToFloat(attributes.words[base.y + 3u]));
-    const vec2 uv2 = vec2(uintBitsToFloat(attributes.words[base.z + 2u]), uintBitsToFloat(attributes.words[base.z + 3u]));
+    vec2 uv0 = vec2(uintBitsToFloat(attributes.words[base.x + 2u]), uintBitsToFloat(attributes.words[base.x + 3u]));
+    vec2 uv1 = vec2(uintBitsToFloat(attributes.words[base.y + 2u]), uintBitsToFloat(attributes.words[base.y + 3u]));
+    vec2 uv2 = vec2(uintBitsToFloat(attributes.words[base.z + 2u]), uintBitsToFloat(attributes.words[base.z + 3u]));
+
+    const uvec3 normalWords = uvec3(attributes.words[base.x], attributes.words[base.y], attributes.words[base.z]);
+    const vec3 n0 = octahedralDecode(float(int(normalWords.x << 16) >> 16) / 32767.0, float(int(normalWords.x) >> 16) / 32767.0);
+    const vec3 n1 = octahedralDecode(float(int(normalWords.y << 16) >> 16) / 32767.0, float(int(normalWords.y) >> 16) / 32767.0);
+    const vec3 n2 = octahedralDecode(float(int(normalWords.z << 16) >> 16) / 32767.0, float(int(normalWords.z) >> 16) / 32767.0);
+
+    if (material.planar != 0u)
+    {
+        uv0 = planarUV(n0, packedPosition(cluster.positions, i0) * material.planarScale + material.planarOffset);
+        uv1 = planarUV(n1, packedPosition(cluster.positions, i1) * material.planarScale + material.planarOffset);
+        uv2 = planarUV(n2, packedPosition(cluster.positions, i2) * material.planarScale + material.planarOffset);
+    }
     const mat3x2 uvs = mat3x2(uv0, uv1, uv2);
 
     const vec2 faceUV = uvs * bary.weights;
@@ -117,10 +146,6 @@ void main()
     const uint sampler_index = (material.texture >> 28) & 3u;
     const vec4 texel = textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), uv, uvDx, uvDy);
 
-    const uvec3 normalWords = uvec3(attributes.words[base.x], attributes.words[base.y], attributes.words[base.z]);
-    const vec3 n0 = octahedralDecode(float(int(normalWords.x << 16) >> 16) / 32767.0, float(int(normalWords.x) >> 16) / 32767.0);
-    const vec3 n1 = octahedralDecode(float(int(normalWords.y << 16) >> 16) / 32767.0, float(int(normalWords.y) >> 16) / 32767.0);
-    const vec3 n2 = octahedralDecode(float(int(normalWords.z << 16) >> 16) / 32767.0, float(int(normalWords.z) >> 16) / 32767.0);
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
 
     // Normals follow the cofactor matrix, which stays right under any stretch.

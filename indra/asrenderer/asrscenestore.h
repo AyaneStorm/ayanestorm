@@ -159,7 +159,8 @@ private:
             Chunk,
             Clusters,
             GeometryId,
-            InstanceId
+            InstanceId,
+            MaterialId
         };
         Type type;
         uint32_t index;   // chunk, or the id

@@ -221,6 +221,9 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     memcpy(material.uvRow1, command.desc.uvRow1, sizeof(material.uvRow1));
     material.texture = command.desc.texture;
     material.alphaCutoff = command.desc.alphaCutoff;
+    material.planar = command.desc.planar ? 1 : 0;
+    memcpy(material.planarScale, command.desc.planarScale, sizeof(material.planarScale));
+    memcpy(material.planarOffset, command.desc.planarOffset, sizeof(material.planarOffset));
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));
 }
 
@@ -478,6 +481,9 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
             case Retired::Type::InstanceId:
                 queue.releaseInstance(retired.index);
                 break;
+            case Retired::Type::MaterialId:
+                queue.releaseMaterial(retired.index);
+                break;
         }
     }
 }
@@ -530,6 +536,11 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             removeGeometry(id, frame);
         }
         mCommands.removedGeometries.clear();
+        for (uint32_t id : mCommands.removedMaterials)
+        {
+            mRetired.push_back({ Retired::Type::MaterialId, id, 0, 0, frame + mFreeDelay });
+        }
+        mCommands.removedMaterials.clear();
     }
 
     uint64_t uploaded = 0;

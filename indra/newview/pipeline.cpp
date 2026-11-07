@@ -75,6 +75,8 @@
 // </AS:Chanayane>
 
 #include "pipeline.h"
+#include "asrgltable.h" // <AS:Chanayane/>
+#include "asrworld.h" // <AS:Chanayane/>
 
 // <AS:Chanayane> Smooth scale-aware sun and moon influence below the horizon.
 #include "ascelestialtwilight.h"
@@ -2136,6 +2138,8 @@ void LLPipeline::unlinkDrawable(LLDrawable *drawable)
 
     LLPointer<LLDrawable> drawablep = drawable; // make sure this doesn't get deleted before we are done
 
+    ASRWorld::objectRemoved(drawable); // <AS:Chanayane/>
+
     // Based on flags, remove the drawable from the queues that it's on.
     if (drawablep->isState(LLDrawable::ON_MOVE_LIST))
     {
@@ -2390,6 +2394,7 @@ void LLPipeline::updateMovedList(LLDrawable::drawable_vector_t& moved_list)
         if (!drawablep->isDead() && (!drawablep->isState(LLDrawable::EARLY_MOVE)))
         {
             done = drawablep->updateMove();
+            ASRWorld::objectMoved(drawablep); // <AS:Chanayane/>
         }
         drawablep->clearState(LLDrawable::EARLY_MOVE | LLDrawable::MOVE_UNDAMPED);
         if (done)
@@ -2432,6 +2437,7 @@ void LLPipeline::updateMove()
         if (drawablep && !drawablep->isDead())
         {
             drawablep->updateTexture();
+            ASRWorld::objectChanged(drawablep); // <AS:Chanayane/>
         }
     }
     mRetexturedList.clear();
@@ -3012,7 +3018,16 @@ void LLPipeline::doOcclusion(LLCamera& camera)
 
 bool LLPipeline::updateDrawableGeom(LLDrawable* drawablep)
 {
-    bool update_complete = drawablep->updateGeometry();
+    // <AS:Chanayane> With the new renderer only volumes build anything here so far:
+    // the rest would fill vertex buffers nothing draws. It reports the volumes too.
+    // bool update_complete = drawablep->updateGeometry();
+    const bool skip = ASR::active() && drawablep->getVObj().notNull() && drawablep->getVObj()->getPCode() != LL_PCODE_VOLUME;
+    bool update_complete = skip || drawablep->updateGeometry();
+    if (update_complete)
+    {
+        ASRWorld::objectChanged(drawablep);
+    }
+    // </AS:Chanayane>
     if (update_complete && assertInitialized())
     {
         drawablep->setState(LLDrawable::BUILT);
@@ -3339,6 +3354,8 @@ void LLPipeline::shiftObjects(const LLVector3 &offset)
     }
 
     mReflectionMapManager.shift(offseta);
+
+    ASRWorld::worldShifted(); // <AS:Chanayane/>
 
     LLHUDText::shiftAll(offset);
     LLHUDNameTag::shiftAll(offset);

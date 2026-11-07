@@ -66,6 +66,9 @@ public:
     // Main thread: stats since the previous call.
     FrameStats takeStats();
 
+    // Any thread: every frame presented so far.
+    uint64_t presentedFrames() const { return mPresented.load(std::memory_order_relaxed); }
+
     // True once rendering has stopped on an unrecoverable error.
     bool failed() const { return mFailed.load(std::memory_order_acquire); }
 
@@ -85,6 +88,7 @@ private:
     std::string mError;
 
     std::atomic<uint64_t> mFrames{ 0 };
+    std::atomic<uint64_t> mPresented{ 0 };
     std::atomic<uint64_t> mWorstFrameMicros{ 0 };
     std::atomic<uint64_t> mWorstAgeMicros{ 0 };
 };

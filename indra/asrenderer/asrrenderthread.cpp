@@ -106,6 +106,7 @@ void RenderThread::run()
         raiseTo(mWorstAgeMicros, micros(frameStart - state.published));
         previousFrame = frameEnd;
         mFrames.fetch_add(1, std::memory_order_relaxed);
+        mPresented.fetch_add(1, std::memory_order_relaxed);
 
         if (frameEnd - lastMemoryRefresh >= MEMORY_REFRESH_PERIOD)
         {

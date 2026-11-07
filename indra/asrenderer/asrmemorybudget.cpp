@@ -86,6 +86,12 @@ bool MemoryBudget::reserve(MemoryCategory category, uint64_t bytes)
     return true;
 }
 
+void MemoryBudget::reserveAnyway(MemoryCategory category, uint64_t bytes)
+{
+    mUsed[uint32_t(category)].fetch_add(bytes, std::memory_order_relaxed);
+    mTotalUsed.fetch_add(bytes, std::memory_order_relaxed);
+}
+
 void MemoryBudget::release(MemoryCategory category, uint64_t bytes)
 {
     mUsed[uint32_t(category)].fetch_sub(bytes, std::memory_order_relaxed);

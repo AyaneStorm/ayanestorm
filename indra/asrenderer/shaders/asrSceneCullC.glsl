@@ -52,14 +52,14 @@ bool testOcclusion;
 
 bool insideView(ViewRef view, vec3 center, float radius)
 {
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
     {
         if (dot(view.planes[i], vec4(center, 1.0)) < -radius)
         {
             return false;
         }
     }
-    return true;
+    return view.farClip <= 0.0 || distance(center, view.camera.xyz) - radius <= view.farClip;
 }
 
 // True when every pixel the sphere covers already shows something nearer. The screen

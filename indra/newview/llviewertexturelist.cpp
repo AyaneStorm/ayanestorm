@@ -66,6 +66,10 @@
 #include "llviewertextureanim.h"
 #include "llvovolume.h"
 // </AS:Chanayane>
+// <AS:Chanayane> The new renderer's texture memory.
+#include "asrgltable.h"
+#include "llviewercamera.h"
+// </AS:Chanayane>
 
 ////////////////////////////////////////////////////////////////////////////
 
@@ -974,6 +978,19 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
                         // this helps eliminate redundant calls to calcPixelArea for faces that have multiple textures
                         // assigned to them, such as is the case with GLTF materials or Blinn-Phong materials
                         face->mInFrustum = face->calcPixelArea(cos_angle_to_view_dir, radius);
+                        // <AS:Chanayane> calcPixelArea only tests media. Nothing is culled on the
+                        // CPU in the new renderer, so this is what makes off screen faces go first.
+                        if (ASR::active() && face->mInFrustum)
+                        {
+                            LLVector4a center;
+                            LLVector4a half_size;
+                            center.setAdd(face->mExtents[1], face->mExtents[0]);
+                            center.mul(0.5f);
+                            half_size.setSub(face->mExtents[1], face->mExtents[0]);
+                            half_size.mul(0.5f);
+                            face->mInFrustum = LLViewerCamera::getInstance()->AABBInFrustum(center, half_size) != 0;
+                        }
+                        // </AS:Chanayane>
                         face->mLastTextureUpdate = gFrameCount;
                     }
 
@@ -1056,6 +1073,15 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
             {
                 imagep->mMaxVirtualSize = 0.f;
             }
+            // <AS:Chanayane> At any bias, the wanted size follows what is in use now and
+            // not the largest it ever was, so small things far away do not stay sharp.
+            // Going up is immediate. Going down waits, so a glance does not cause a reload.
+            else if (ASR::active() && gFrameTimeSeconds - imagep->mSizeWindowStart > 5.f)
+            {
+                imagep->mMaxVirtualSize = 0.f;
+                imagep->mSizeWindowStart = gFrameTimeSeconds;
+            }
+            // </AS:Chanayane>
         }
 
         imagep->addTextureStats(max_vsize);
@@ -1182,6 +1208,30 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
             break;
         }
     }
+
+    // <AS:Chanayane> The new renderer has no mDownResMap and needs none: LLImageGL::scaleDown
+    // only queues a copy of mips the GPU already holds. Same limits as below.
+    if (ASR::active())
+    {
+        S32 min_count = (S32)mCreateTextureList.size() / 20 + 5;
+        create_timer.reset();
+        while (!mDownScaleQueue.empty())
+        {
+            LLViewerFetchedTexture* image = mDownScaleQueue.front();
+            LLImageGL* img = image->getGLTexture();
+            if (img && img->getHasGLTexture())
+            {
+                img->scaleDown(image->getDesiredDiscardLevel());
+            }
+            image->mDownScalePending = false;
+            mDownScaleQueue.pop();
+            if (create_timer.getElapsedTimeF32() > max_time && --min_count <= 0)
+            {
+                break;
+            }
+        }
+    }
+    // </AS:Chanayane>
 
     if (!mDownScaleQueue.empty() && gPipeline.mDownResMap.isComplete())
     {

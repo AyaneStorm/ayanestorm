@@ -11940,6 +11940,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>60</integer>
   </map>
+  <key>ASRendererLocalShift</key>
+  <map>
+    <key>Comment</key>
+    <string>Test: lifts the last clicked object by this many metres in the new renderer only, to show what sits behind it. The server and other viewers see no change. 0 puts it back.</string>
+    <key>Persist</key>
+    <integer>0</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0</real>
+  </map>
   <key>ASRendererStallTestAt</key>
   <map>
     <key>Comment</key>

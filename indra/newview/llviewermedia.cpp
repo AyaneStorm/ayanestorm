@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewermedia.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -3137,6 +3138,15 @@ void LLViewerMediaImpl::doMediaTexUpdate(LLViewerMediaTexture* media_tex, U8* da
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MEDIA;
     LLCoros::LockType lock(mLock); // don't allow media source tear-down during update
+
+    // <AS:Chanayane> The fresh texture below works around a GL driver stall. The new
+    // renderer has no such stall, and a fresh image would lose all but the dirty rect.
+    if (ASR::active() && media_tex->getGLTexture()->getHasGLTexture())
+    {
+        media_tex->setSubImage(data, data_width, data_height, x_pos, y_pos, width, height);
+        return;
+    }
+    // </AS:Chanayane>
 
     // wrap "data" in an LLImageRaw but do NOT make a copy
     LLPointer<LLImageRaw> raw = new LLImageRaw(data, media_tex->getWidth(), media_tex->getHeight(), media_tex->getComponents(), true);

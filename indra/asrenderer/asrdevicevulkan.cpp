@@ -1002,7 +1002,7 @@ private:
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
             if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView), viewUsage, MemoryCategory::Staging, "scene view") ||
-                !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback"))
+                !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback", true))
             {
                 error = mError;
                 return false;
@@ -1276,8 +1276,10 @@ private:
     }
 
     // Makes the buffer hold at least bytes. The frame using it has finished, so
-    // the old buffer can go at once.
-    bool growBuffer(MappedBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, MemoryCategory category, const char* what)
+    // the old buffer can go at once. cpuReads asks for memory the CPU reads quickly:
+    // the default is video memory it writes directly, where a read can cost hundreds of
+    // milliseconds for one full-screen image.
+    bool growBuffer(MappedBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, MemoryCategory category, const char* what, bool cpuReads = false)
     {
         if (buffer.buffer != VK_NULL_HANDLE && buffer.size >= bytes)
         {
@@ -1295,8 +1297,9 @@ private:
         create.size = size;
         create.usage = usage;
         VmaAllocationCreateInfo allocation{};
-        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        allocation.usage = cpuReads ? VMA_MEMORY_USAGE_AUTO_PREFER_HOST : VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        allocation.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT
+                         | (cpuReads ? VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT : VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
         VmaAllocationInfo info{};
         if (!check(vmaCreateBuffer(mAllocator, &create, &allocation, &buffer.buffer, &buffer.allocation, &info), what))
         {
@@ -1392,8 +1395,34 @@ private:
         vkUpdateDescriptorSets(mDevice, 1, &write, 0, nullptr);
     }
 
-    // A texture that does not fit in the budget shows as white and is not an error:
-    // the budget's pressure levels are what keep this from happening.
+    // Fills a new texture with the mips a larger one already has, with no pixels sent.
+    void copySmallerMips(VkCommandBuffer commands, const Texture& texture, const Texture& source, uint32_t sourceMip)
+    {
+        constexpr VkPipelineStageFlags2 COPY = VK_PIPELINE_STAGE_2_COPY_BIT;
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_NONE, 0, COPY, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        textureBarrier(commands, source.image, source.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, COPY, VK_ACCESS_2_TRANSFER_READ_BIT);
+
+        std::vector<VkImageCopy> copies(texture.mipLevels);
+        for (uint32_t level = 0; level < texture.mipLevels; ++level)
+        {
+            VkImageCopy& copy = copies[level];
+            copy.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, sourceMip + level, 0, 1 };
+            copy.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+            copy.extent = { std::max(texture.width >> level, 1u), std::max(texture.height >> level, 1u), 1 };
+        }
+        vkCmdCopyImage(commands, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       uint32_t(copies.size()), copies.data());
+
+        textureBarrier(commands, source.image, source.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       COPY, VK_ACCESS_2_TRANSFER_READ_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       COPY, VK_ACCESS_2_TRANSFER_WRITE_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+    }
+
+    // The memory was counted when the main thread asked for this texture. Video memory
+    // really running out shows as white and is not an error.
     bool createTexture(VkCommandBuffer commands, const TextureCommand& command)
     {
         if (mTextureObjects.size() <= command.slot)
@@ -1402,11 +1431,6 @@ private:
         }
         Texture& texture = mTextureObjects[command.slot];
         const uint64_t bytes = textureBytes(command.desc);
-        if (!mMemoryBudget.reserve(MemoryCategory::Textures, bytes))
-        {
-            writeTextureDescriptor(command.slot, mTextureObjects[0].view);
-            return true;
-        }
 
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         image.imageType = VK_IMAGE_TYPE_2D;
@@ -1426,10 +1450,12 @@ private:
         }
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-        if (!check(vmaCreateImage(mAllocator, &image, &allocation, &texture.image, &texture.allocation, nullptr), "create texture"))
+        if (vmaCreateImage(mAllocator, &image, &allocation, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
         {
+            texture.image = VK_NULL_HANDLE;
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
-            return false;
+            writeTextureDescriptor(command.slot, mTextureObjects[0].view);
+            return true;
         }
         texture.bytes = bytes;
         texture.mipLevels = command.desc.mipLevels;
@@ -1456,6 +1482,14 @@ private:
         if (!check(vkCreateImageView(mDevice, &view, nullptr, &texture.view), "create texture view"))
         {
             return false;
+        }
+
+        const Texture& source = mTextureObjects[command.sourceSlot];
+        if (command.sourceSlot != 0 && source.image != VK_NULL_HANDLE && source.mipLevels >= command.sourceMip + texture.mipLevels)
+        {
+            copySmallerMips(commands, texture, source, command.sourceMip);
+            writeTextureDescriptor(command.slot, texture.view);
+            return true;
         }
 
         // Cleared, because a list can draw this texture before its pixels arrive.
@@ -1552,6 +1586,12 @@ private:
             mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
         }
         texture = Texture();
+
+        // A material can still name this slot for a moment, and white is safe to read.
+        if (slot != 0 && !mShuttingDown && mTextureObjects[0].view != VK_NULL_HANDLE)
+        {
+            writeTextureDescriptor(slot, mTextureObjects[0].view);
+        }
     }
 
     // Runs what the main thread queued, in order, up to this frame's upload limit.
@@ -2133,7 +2173,7 @@ private:
             return false;
         }
         const uint64_t bytes = uint64_t(mSceneExtent.width) * mSceneExtent.height * sizeof(uint32_t);
-        return growBuffer(mAuditReadback[slot], bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "audit readback");
+        return growBuffer(mAuditReadback[slot], bytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "audit readback", true);
     }
 
     // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
@@ -2399,6 +2439,7 @@ private:
         if (mDevice != VK_NULL_HANDLE)
         {
             vkDeviceWaitIdle(mDevice);
+            mShuttingDown = true;
             destroySwapchainViews();
             destroyScene();
             for (uint32_t slot = 0; slot < mTextureObjects.size(); ++slot)
@@ -2583,6 +2624,7 @@ private:
     float mTimestampMilliseconds = 0.f;
     SceneStats mSceneFrameStats;
 
+    bool mShuttingDown = false;
     FrameGraph mGraph;
     const TargetImage* mResultImages[ResultCount]{}; // null for results that are buffers
     uint32_t mTimedPasses[FRAMES_IN_FLIGHT]{};

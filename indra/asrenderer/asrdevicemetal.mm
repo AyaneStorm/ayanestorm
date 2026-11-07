@@ -1062,8 +1062,8 @@ private:
         }
     }
 
-    // A texture that does not fit in the budget shows as white and is not an error:
-    // the budget's pressure levels are what keep this from happening.
+    // The memory was counted when the main thread asked for this texture. Video memory
+    // really running out shows as white and is not an error.
     void createTexture(const TextureCommand& command)
     {
         if (mTextureObjects.size() <= command.slot)
@@ -1071,11 +1071,6 @@ private:
             mTextureObjects.resize(command.slot + 1);
         }
         const uint64_t bytes = textureBytes(command.desc);
-        if (!mMemoryBudget.reserve(MemoryCategory::Textures, bytes))
-        {
-            [mArgumentEncoder setTexture:mTextureObjects[0].texture atIndex:command.slot];
-            return;
-        }
 
         const TextureDesc& desc = command.desc;
         const MTLPixelFormat format = desc.format == TextureFormat::R8    ? MTLPixelFormatR8Unorm
@@ -1113,17 +1108,26 @@ private:
             return;
         }
 
-        // Cleared, because a list can draw this texture before its pixels arrive.
         const uint32_t pixelBytes = textureBytesPerPixel(desc.format);
-        std::vector<uint8_t> zeros;
-        uint32_t width = desc.width;
-        uint32_t height = desc.height;
-        for (uint32_t level = 0; level < desc.mipLevels; ++level)
+        id<MTLTexture> source = mTextureObjects[command.sourceSlot].texture;
+        if (command.sourceSlot != 0 && source && source.mipmapLevelCount >= command.sourceMip + desc.mipLevels)
         {
-            zeros.assign(size_t(width) * height * pixelBytes, 0);
-            [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:level withBytes:zeros.data() bytesPerRow:width * pixelBytes];
-            width = std::max(width / 2, 1u);
-            height = std::max(height / 2, 1u);
+            // The blit waits for mips this frame makes, so runTextureCommands() does it.
+            mMipCopies.push_back({ source, texture, command.sourceMip });
+        }
+        else
+        {
+            // Cleared, because a list can draw this texture before its pixels arrive.
+            std::vector<uint8_t> zeros;
+            uint32_t width = desc.width;
+            uint32_t height = desc.height;
+            for (uint32_t level = 0; level < desc.mipLevels; ++level)
+            {
+                zeros.assign(size_t(width) * height * pixelBytes, 0);
+                [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:level withBytes:zeros.data() bytesPerRow:width * pixelBytes];
+                width = std::max(width / 2, 1u);
+                height = std::max(height / 2, 1u);
+            }
         }
 
         mTextureObjects[command.slot].texture = texture;
@@ -1149,6 +1153,12 @@ private:
             mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
         }
         texture = Texture();
+
+        // A material can still name this slot for a moment, and white is safe to read.
+        if (slot != 0 && mTextureObjects[0].texture)
+        {
+            [mArgumentEncoder setTexture:mTextureObjects[0].texture atIndex:slot];
+        }
     }
 
     bool runTextureCommands()
@@ -1206,7 +1216,7 @@ private:
         }
 
         // Committed before the frame's own commands, so the frame sees the mips.
-        if (!needMips.empty())
+        if (!needMips.empty() || !mMipCopies.empty())
         {
             id<MTLCommandBuffer> commands = [mQueue commandBuffer];
             id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
@@ -1214,6 +1224,24 @@ private:
             {
                 [blit generateMipmapsForTexture:texture];
             }
+            for (const MipCopy& copy : mMipCopies)
+            {
+                for (NSUInteger level = 0; level < copy.target.mipmapLevelCount; ++level)
+                {
+                    const MTLSize size = MTLSizeMake(std::max<NSUInteger>(copy.target.width >> level, 1),
+                                                     std::max<NSUInteger>(copy.target.height >> level, 1), 1);
+                    [blit copyFromTexture:copy.source
+                              sourceSlice:0
+                              sourceLevel:copy.sourceMip + level
+                             sourceOrigin:MTLOriginMake(0, 0, 0)
+                               sourceSize:size
+                                toTexture:copy.target
+                         destinationSlice:0
+                         destinationLevel:level
+                        destinationOrigin:MTLOriginMake(0, 0, 0)];
+                }
+            }
+            mMipCopies.clear();
             [blit endEncoding];
             [commands commit];
         }
@@ -1271,6 +1299,14 @@ private:
     std::vector<Texture> mTextureObjects;         // by slot
     std::vector<TextureCommand> mTextureCommands; // only held while they run
     RetiredTextures mRetiredTextures;
+
+    struct MipCopy
+    {
+        id<MTLTexture> source;
+        id<MTLTexture> target;
+        uint32_t sourceMip;
+    };
+    std::vector<MipCopy> mMipCopies; // waiting for this frame's texture blit
 
     struct RetiredBuffer
     {

@@ -8,6 +8,7 @@
 
 #include "asrbridge.h"
 #include "asrgltable.h"
+#include "asrworld.h"
 #include "llappviewer.h"
 #include "llcoord.h"
 #include "lldir.h"
@@ -58,6 +59,9 @@ U32 sWidth = 0;
 U32 sHeight = 0;
 U32 sUIWidth = 0; // the size of the newest UI list
 U32 sUIHeight = 0;
+asr::SceneCamera3D sCamera{};
+bool sHasCamera = false;
+uint64_t sShownFrames = 0;
 
 F64 secondsSince(Clock::time_point start)
 {
@@ -192,9 +196,21 @@ public:
         sDevice->textures().generateMips(slot);
     }
 
+    U32 createSmallerTexture(U32 sourceSlot, U32 sourceMip, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout) override
+    {
+        return sDevice->textures().create(textureDesc(width, height, mipLevels, layout), sourceSlot, sourceMip);
+    }
+
     void destroyTexture(U32 slot) override
     {
         sDevice->textures().destroy(slot, sRenderThread->currentUIGeneration());
+    }
+
+    void getTextureMemory(U64& used, U64& limit) override
+    {
+        const asr::MemoryBudget& budget = sDevice->memoryBudget();
+        used = budget.used(asr::MemoryCategory::Textures);
+        limit = budget.limit(asr::MemoryCategory::Textures);
     }
 
     void beginUI() override
@@ -299,6 +315,7 @@ std::string startRenderer(LLWindow* window)
     sStarted = Clock::now();
     sStatsLogged = sStarted;
     ASR::setRendererLink(&sViewerLink);
+    ASRWorld::start();
     LL_INFOS("ASRenderer") << "running on " << sDevice->info().backend << ", " << sDevice->info().name << ", budget "
                            << sDevice->memoryBudget().budget() / (1024 * 1024) << " MB" << LL_ENDL;
     return std::string();
@@ -306,6 +323,7 @@ std::string startRenderer(LLWindow* window)
 
 void stopRenderer()
 {
+    ASRWorld::stop();
     ASR::setRendererLink(nullptr);
     if (sRenderThread)
     {
@@ -383,6 +401,8 @@ void ASRViewer::publishFrame(LLWindow* window)
     asr::FrameState& state = sRenderThread->state();
     state.width = sWidth;
     state.height = sHeight;
+    state.hasCamera = sHasCamera;
+    state.camera = sCamera;
     sRenderThread->publishState();
 
     if (Clock::now() - sStatsLogged >= STATS_PERIOD)
@@ -441,4 +461,35 @@ void ASRViewer::stop()
 bool ASRViewer::fellBackToOpenGL()
 {
     return sFellBack;
+}
+
+asr::Device* ASRViewer::device()
+{
+#if ASR_VIEWER_SUPPORTED
+    return sDevice.get();
+#else
+    return nullptr;
+#endif
+}
+
+void ASRViewer::setCamera(const asr::SceneCamera3D& camera)
+{
+#if ASR_VIEWER_SUPPORTED
+    sCamera = camera;
+    sHasCamera = true;
+#endif
+}
+
+U32 ASRViewer::takeShownFrames()
+{
+#if ASR_VIEWER_SUPPORTED
+    if (ASR::active() && sRenderThread)
+    {
+        const uint64_t shown = sRenderThread->presentedFrames();
+        const U32 frames = U32(shown - sShownFrames);
+        sShownFrames = shown;
+        return frames;
+    }
+#endif
+    return 1;
 }

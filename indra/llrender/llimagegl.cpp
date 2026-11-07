@@ -787,6 +787,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         const S32 h = getHeight();
         mMipLevels = mUseMipMaps ? wpo2(llmax(w, h)) : 0;
         ASR::setTextureImage(usename ? usename : mTexName, w, h, mFormatPrimary, mFormatType, data_in, mUseMipMaps);
+        ASR::imageChanged(this);
         if (data_in && !is_compressed)
         {
             analyzeAlpha(data_in, w, h);
@@ -1555,6 +1556,7 @@ bool LLImageGL::createGLTexture()
     {
         LLImageGL::deleteTextures(1, (reinterpret_cast<GLuint*>(&mTexName))) ;
         mTexName = 0;
+        ASR::imageChanged(this); // <AS:Chanayane/>
     }
 
 
@@ -1995,6 +1997,7 @@ void LLImageGL::destroyGLTexture()
         mCurrentDiscardLevel = -1 ; //invalidate mCurrentDiscardLevel.
         mTexName = 0;
         mGLTextureCreated = false ;
+        ASR::imageChanged(this); // <AS:Chanayane/>
     }
 
     // Invalidate pending jobs
@@ -2607,6 +2610,22 @@ void LLImageGL::resetCurTexSizebar()
 bool LLImageGL::scaleDown(S32 desired_discard)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+
+    // <AS:Chanayane> The new renderer already holds the smaller mips, so they become
+    // the new image on the GPU, with no target or program involved.
+    if (ASR::active())
+    {
+        desired_discard = llmin(desired_discard, (S32)mMaxDiscardLevel);
+        if (desired_discard <= mCurrentDiscardLevel
+            || !ASR::shrinkTexture(mTexName, desired_discard - mCurrentDiscardLevel))
+        {
+            return false;
+        }
+        mCurrentDiscardLevel = desired_discard;
+        ASR::imageChanged(this);
+        return true;
+    }
+    // </AS:Chanayane>
 
     if (mTarget != GL_TEXTURE_2D
         || mFormatInternal == -1 // not initialized

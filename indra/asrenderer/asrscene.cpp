@@ -328,10 +328,21 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
 
 SceneCamera3D makeCamera(const float eye[3], const float target[3], float verticalFovRadians, float aspect, float nearClip)
 {
-    const Vec3 position{ eye[0], eye[1], eye[2] };
-    const Vec3 forward = normalized(Vec3{ target[0], target[1], target[2] } - position);
+    const Vec3 forward = normalized(Vec3{ target[0] - eye[0], target[1] - eye[1], target[2] - eye[2] });
     const Vec3 side = normalized(cross(forward, Vec3{ 0.f, 0.f, 1.f }));
     const Vec3 up = cross(side, forward);
+    const float forwardAxis[3] = { forward.x, forward.y, forward.z };
+    const float upAxis[3] = { up.x, up.y, up.z };
+    return makeCameraFromAxes(eye, forwardAxis, upAxis, verticalFovRadians, aspect, nearClip, 0.f);
+}
+
+SceneCamera3D makeCameraFromAxes(const float eye[3], const float forwardAxis[3], const float upAxis[3], float verticalFovRadians, float aspect,
+                                 float nearClip, float farClip)
+{
+    const Vec3 position{ eye[0], eye[1], eye[2] };
+    const Vec3 forward{ forwardAxis[0], forwardAxis[1], forwardAxis[2] };
+    const Vec3 up{ upAxis[0], upAxis[1], upAxis[2] };
+    const Vec3 side = cross(forward, up);
 
     const float focal = 1.f / std::tan(verticalFovRadians * 0.5f);
     // Columns of the view matrix: world axes and translation in camera space, looking down -Z.
@@ -361,6 +372,7 @@ SceneCamera3D makeCamera(const float eye[3], const float target[3], float vertic
     camera.focal[1] = focal;
     camera.nearClip = nearClip;
     camera.lodScale = 1.f;
+    camera.farClip = farClip;
     return camera;
 }
 
@@ -441,14 +453,20 @@ void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneC
         view.planes[3][c] = w[c] - y[c];
         view.planes[4][c] = w[c] - z[c]; // reversed depth: z <= w is the near plane
     }
-    for (auto& plane : view.planes)
+    for (int plane = 0; plane < 5; ++plane)
     {
-        const float size = std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]);
-        for (float& value : plane)
+        float* value = view.planes[plane];
+        const float size = std::sqrt(value[0] * value[0] + value[1] * value[1] + value[2] * value[2]);
+        for (int c = 0; c < 4; ++c)
         {
-            value /= size;
+            value[c] /= size;
         }
     }
+
+    // Reversed depth has no far plane of its own, and everything passes this one. The limit
+    // is farClip, a distance: a plane would reach further at the sides of a wide view.
+    view.planes[5][3] = 1.f;
+    view.farClip = camera.farClip;
     view.pixelSize[0] = float(width);
     view.pixelSize[1] = float(height);
     view.pixelSize[2] = 1.f / float(width);
@@ -491,7 +509,16 @@ void SceneQueue::removeGeometry(uint32_t id)
 uint32_t SceneQueue::addMaterial(const MaterialDesc& desc)
 {
     std::lock_guard<std::mutex> lock(mMutex);
-    const uint32_t id = mNextMaterial++;
+    uint32_t id = 0;
+    if (!mFreeMaterials.empty())
+    {
+        id = mFreeMaterials.back();
+        mFreeMaterials.pop_back();
+    }
+    else
+    {
+        id = mNextMaterial++;
+    }
     mCommands.materials.push_back({ id, desc });
     return id;
 }
@@ -500,6 +527,15 @@ void SceneQueue::setMaterial(uint32_t id, const MaterialDesc& desc)
 {
     std::lock_guard<std::mutex> lock(mMutex);
     mCommands.materials.push_back({ id, desc });
+}
+
+void SceneQueue::removeMaterial(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedMaterials.push_back(id);
+    }
 }
 
 uint32_t SceneQueue::addInstance(const InstanceDesc& desc)
@@ -558,6 +594,12 @@ void SceneQueue::releaseInstance(uint32_t id)
 {
     std::lock_guard<std::mutex> lock(mMutex);
     mFreeInstances.push_back(id);
+}
+
+void SceneQueue::releaseMaterial(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeMaterials.push_back(id);
 }
 
 } // namespace asr
