@@ -109,6 +109,11 @@ NSWindowRef createNSWindow(int x, int y, int width, int height);
 #include <OpenGL/OpenGL.h>
 
 GLViewRef createOpenGLView(NSWindowRef window, unsigned int samples, bool vsync);
+// <AS:Chanayane> The same view, for input, with no GL context, and a view on top of it that
+// the new renderer draws into.
+GLViewRef createViewWithoutOpenGL(NSWindowRef window);
+void* getRendererView(GLViewRef view);
+// </AS:Chanayane>
 void glSwapBuffers(void* context);
 CGLContextObj getCGLContextObj(GLViewRef view);
 unsigned long getVramSize(GLViewRef view);

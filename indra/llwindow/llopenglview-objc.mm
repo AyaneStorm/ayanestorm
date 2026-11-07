@@ -232,8 +232,50 @@ attributedStringInfo getSegments(NSAttributedString *str)
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];
+    [mRendererView release]; // <AS:Chanayane/>
     [super dealloc];
 }
+
+// <AS:Chanayane>
+- (id) initWithFrameWithoutOpenGL:(NSRect)frame
+{
+    self = [super initWithFrame:frame];
+    if (!self) { return self; }
+    mWithoutOpenGL = true;
+    [self registerForDraggedTypes:[NSArray arrayWithObject:NSPasteboardTypeURL]];
+
+    mRendererView = [[LLRendererView alloc] initWithFrame:[self bounds]];
+    [mRendererView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+    [self addSubview:mRendererView];
+    return self;
+}
+
+- (NSView*) rendererView
+{
+    return mRendererView;
+}
+
+#if LL_DARWIN
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
+// NSOpenGLView makes a context the first time anything asks for one, and its own backing
+// layer would ask. With the new renderer, nothing may: there is no GL in that session.
+- (NSOpenGLContext *) openGLContext
+{
+    return mWithoutOpenGL ? nil : [super openGLContext];
+}
+
+- (CALayer *) makeBackingLayer
+{
+    return mWithoutOpenGL ? [CALayer layer] : [super makeBackingLayer];
+}
+
+#if LL_DARWIN
+#pragma clang diagnostic pop
+#endif
+// </AS:Chanayane>
 
 - (id) init
 {
@@ -846,6 +888,34 @@ attributedStringInfo getSegments(NSAttributedString *str)
 }
 
 @end
+
+// <AS:Chanayane>
+@implementation LLRendererView
+
+// Input belongs to the LLOpenGLView under it.
+- (NSView *) hitTest:(NSPoint)point
+{
+    return nil;
+}
+
+- (BOOL) isOpaque
+{
+    return YES;
+}
+
+// The renderer gives its layer a drawable in pixels. Its scale must follow the screen the
+// window is on, or the picture would be stretched after a move to another display.
+- (void) viewDidChangeBackingProperties
+{
+    [super viewDidChangeBackingProperties];
+    if ([self window] && [self layer])
+    {
+        [[self layer] setContentsScale:[[self window] backingScaleFactor]];
+    }
+}
+
+@end
+// </AS:Chanayane>
 
 @implementation LLUserInputWindow
 

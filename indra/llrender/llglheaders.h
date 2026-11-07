@@ -63,12 +63,18 @@
 //----------------------------------------------------------------------------
 // LL_DARWIN
 
-#define GL_GLEXT_LEGACY 1
-#include <OpenGL/gl3.h>
-
-#define GL_EXT_separate_specular_color 1
-#define GL_GLEXT_PROTOTYPES 1
-#include "GL/glext.h"
+// <AS:Chanayane> GL functions are pointers here too, as on Windows and Linux, so the new
+// renderer can answer every call with no context: see ASRGLTable. OpenGL fills them from
+// Apple's framework, in LLGLManager::initGL().
+// #define GL_GLEXT_LEGACY 1
+// #include <OpenGL/gl3.h>
+//
+// #define GL_EXT_separate_specular_color 1
+// #define GL_GLEXT_PROTOTYPES 1
+// #include "GL/glext.h"
+#define LL_GL_FUNC_POINTER 1
+#include "GL/glcorearb.h"
+// </AS:Chanayane>
 
 #endif // LL_MESA_HEADLESS / LL_SDL_WINDOW // LL_LINUX / LL_WINDOWS / LL_DARWIN
 

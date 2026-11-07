@@ -106,6 +106,7 @@ public:
     bool dialogColorPicker(F32 *r, F32 *g, F32 *b) override;
 
     void *getPlatformWindow() override;
+    void* getRendererSurface() override; // <AS:Chanayane/>
     void bringToFront() override {};
 
     void allowLanguageTextInput(LLPreeditor *preeditor, bool b) override;

@@ -238,6 +238,20 @@ GLViewRef createOpenGLView(NSWindowRef window, unsigned int samples, bool vsync)
     return glview;
 }
 
+// <AS:Chanayane>
+GLViewRef createViewWithoutOpenGL(NSWindowRef window)
+{
+    LLOpenGLView *view = [[LLOpenGLView alloc] initWithFrameWithoutOpenGL:[(LLNSWindow*)window frame]];
+    [(LLNSWindow*)window setContentView:view];
+    return view;
+}
+
+void* getRendererView(GLViewRef view)
+{
+    return [(LLOpenGLView*)view rendererView];
+}
+// </AS:Chanayane>
+
 void glSwapBuffers(void* context)
 {
     [(NSOpenGLContext*)context flushBuffer];

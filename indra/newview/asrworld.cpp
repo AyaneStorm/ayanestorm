@@ -6,7 +6,7 @@
 
 #include "asrworld.h"
 
-#if defined(AS_RENDERER) && LL_WINDOWS
+#if defined(AS_RENDERER) && (LL_WINDOWS || LL_DARWIN) // as ASR_VIEWER_SUPPORTED in asrviewer.cpp
 
 #include "asrbridge.h"
 #include "asrdevice.h"

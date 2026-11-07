@@ -16,12 +16,16 @@
 #include "llviewercontrol.h"
 #include "llwindow.h"
 
-// The Mac and Linux windows are still to do, so those builds stay on OpenGL.
-#if defined(AS_RENDERER) && LL_WINDOWS
+// The Linux window is still to do, so that build stays on OpenGL.
+#if defined(AS_RENDERER) && (LL_WINDOWS || LL_DARWIN)
 #define ASR_VIEWER_SUPPORTED 1
 #include "asrdevice.h"
 #include "asrrenderthread.h"
+#if LL_WINDOWS
 #include "llwin32headers.h"
+#else
+#include <OpenGL/OpenGL.h>
+#endif
 #else
 #define ASR_VIEWER_SUPPORTED 0
 #endif
@@ -279,7 +283,12 @@ ViewerLink sViewerLink;
 // the Vulkan driver loads them too.
 void logGLContextCheck(const char* when)
 {
-    if (wglGetCurrentContext())
+#if LL_WINDOWS
+    const bool hasContext = wglGetCurrentContext() != nullptr;
+#else
+    const bool hasContext = CGLGetCurrentContext() != nullptr;
+#endif
+    if (hasContext)
     {
         LL_WARNS("ASRenderer") << "a GL context exists " << when << LL_ENDL;
     }
@@ -304,8 +313,14 @@ void logGLContextCheck(const char* when)
 std::string startRenderer(LLWindow* window)
 {
     asr::SurfaceTarget target;
-    target.nativeWindow = window->getPlatformWindow();
+    target.nativeWindow = window->getRendererSurface();
+#if LL_WINDOWS
     target.nativeInstance = GetModuleHandle(nullptr);
+#endif
+    if (!target.nativeWindow)
+    {
+        return "the window has no surface for the renderer";
+    }
 
     asr::DeviceOptions options;
     options.shaderDir = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders_native");

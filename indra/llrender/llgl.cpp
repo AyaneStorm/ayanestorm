@@ -63,6 +63,20 @@
 // #  define LL_GET_PROC_ADDRESS(func) LLWindowWin32::getProcAddress(func)
 #  define LL_GET_PROC_ADDRESS(func) (ASR::active() ? (PROC)ASRGLTable::get(func) : LLWindowWin32::getProcAddress(func))
 // </AS:Chanayane>
+// <AS:Chanayane> macOS reaches GL through pointers too: see llglheaders.h.
+#elif LL_DARWIN
+#  include "asrgltable.h"
+#  include <dlfcn.h>
+namespace
+{
+void* openGLFunction(const char* name)
+{
+    static void* const framework = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY | RTLD_LOCAL);
+    return framework ? dlsym(framework, name) : nullptr;
+}
+}
+#  define LL_GET_PROC_ADDRESS(func) (ASR::active() ? ASRGLTable::get(func) : openGLFunction(func))
+// </AS:Chanayane>
 #endif
 
 #if LL_WINDOWS

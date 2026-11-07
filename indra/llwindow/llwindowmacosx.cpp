@@ -34,6 +34,7 @@
 
 #include "llerror.h"
 #include "llgl.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llstring.h"
 #include "lldir.h"
 #include "indra_constants.h"
@@ -760,7 +761,15 @@ bool LLWindowMacOSX::createContext(int x, int y, int width, int height, int bits
         mWindow = getMainAppWindow();
     }
 
-    if(mContext == NULL)
+    // <AS:Chanayane> The new renderer creates no GL context, and needs no pixel format.
+    if (ASR::active() && mGLView == NULL)
+    {
+        mGLView = createViewWithoutOpenGL(mWindow);
+        gGLManager.mVRAM = getVramSize(mGLView);
+    }
+    // if(mContext == NULL)
+    else if(mContext == NULL && !ASR::active())
+    // </AS:Chanayane>
     {
         // Our OpenGL view is already defined within SecondLife.xib.
         // Get the view instead.
@@ -842,7 +851,10 @@ bool LLWindowMacOSX::switchContext(bool fullscreen, const LLCoordScreen &size, b
 
 void LLWindowMacOSX::destroyContext()
 {
-    if (!mContext)
+    // <AS:Chanayane> The new renderer has a view and a window, but no context.
+    // if (!mContext)
+    if (!mContext && !mGLView)
+    // </AS:Chanayane>
     {
         // We don't have a context
         return;
@@ -1114,13 +1126,32 @@ bool LLWindowMacOSX::setSizeImpl(const LLCoordWindow size)
 
 void LLWindowMacOSX::swapBuffers()
 {
+    // <AS:Chanayane> The render thread presents in the new renderer.
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     CGLFlushDrawable(mContext);
 }
 
 void LLWindowMacOSX::restoreGLContext()
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     CGLSetCurrentContext(mContext);
 }
+
+// <AS:Chanayane>
+void* LLWindowMacOSX::getRendererSurface()
+{
+    return mGLView ? getRendererView(mGLView) : nullptr;
+}
+// </AS:Chanayane>
 
 F32 LLWindowMacOSX::getGamma()
 {
@@ -2595,6 +2626,12 @@ public:
 
 void* LLWindowMacOSX::createSharedContext()
 {
+    // <AS:Chanayane> No GL context in the new renderer. Callers only need a token.
+    if (ASR::active())
+    {
+        return this;
+    }
+    // </AS:Chanayane>
     sharedContext* sc = new sharedContext();
     CGLCreateContext(mPixelFormat, mContext, &(sc->mContext));
 
@@ -2608,6 +2645,12 @@ void* LLWindowMacOSX::createSharedContext()
 
 void LLWindowMacOSX::makeContextCurrent(void* context)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     CGLSetCurrentContext(((sharedContext*)context)->mContext);
 
     //enable multi-threaded OpenGL
@@ -2632,6 +2675,12 @@ void LLWindowMacOSX::makeContextCurrent(void* context)
 
 void LLWindowMacOSX::destroySharedContext(void* context)
 {
+    // <AS:Chanayane>
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     sharedContext* sc = (sharedContext*)context;
 
     CGLDestroyContext(sc->mContext);
@@ -2651,6 +2700,12 @@ void LLWindowMacOSX::toggleVSync(bool enable_vsync)
         frames_per_swap = 1;
     }
 
+    // <AS:Chanayane> The new renderer's layer follows RenderVSyncEnable by itself.
+    if (ASR::active())
+    {
+        return;
+    }
+    // </AS:Chanayane>
     CGLSetParameter(mContext, kCGLCPSwapInterval, &frames_per_swap);
 }
 

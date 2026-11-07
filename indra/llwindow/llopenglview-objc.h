@@ -42,10 +42,19 @@
     unsigned int mMarkedTextLength;
     bool mMarkedTextAllowed;
     bool mSimulatedRightClick;
+    bool mWithoutOpenGL; // <AS:Chanayane/> see initWithFrameWithoutOpenGL
+    NSView* mRendererView; // <AS:Chanayane/>
 }
 - (id) initWithSamples:(NSUInteger)samples;
 - (id) initWithSamples:(NSUInteger)samples andVsync:(BOOL)vsync;
 - (id) initWithFrame:(NSRect)frame withSamples:(NSUInteger)samples andVsync:(BOOL)vsync;
+
+// <AS:Chanayane> For the new renderer: this view still takes all input, but has no GL context,
+// and the view returned by rendererView, which covers it and lets every event through,
+// holds what the renderer draws.
+- (id) initWithFrameWithoutOpenGL:(NSRect)frame;
+- (NSView*) rendererView;
+// </AS:Chanayane>
 
 - (void)commitCurrentPreedit;
 
@@ -67,6 +76,11 @@
 - (void) allowMarkedTextInput:(bool)allowed;
 
 @end
+
+// <AS:Chanayane> What the new renderer draws into. Events pass through it.
+@interface LLRendererView : NSView
+@end
+// </AS:Chanayane>
 
 @interface LLUserInputWindow : NSPanel
 

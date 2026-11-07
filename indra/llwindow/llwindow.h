@@ -185,6 +185,9 @@ public:
 
 // return a platform-specific window reference (HWND on Windows, WindowRef on the Mac, Gtk window on Linux)
     virtual void *getPlatformWindow() = 0;
+    // <AS:Chanayane> What the new renderer draws into: the HWND on Windows, a view on the Mac.
+    virtual void* getRendererSurface() { return getPlatformWindow(); }
+    // </AS:Chanayane>
 
     // control platform's Language Text Input mechanisms.
     virtual void allowLanguageTextInput(LLPreeditor *preeditor, bool b) {}

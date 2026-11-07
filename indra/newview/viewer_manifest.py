@@ -78,11 +78,14 @@ class ViewerManifest(LLManifest,FSViewerManifest):
         with self.prefix(src=pkgdir, dst="app_settings"):
             self.path("dictionaries")
 
-        # <AS:Chanayane> Compiled shaders of the new renderer, in builds that have it.
+        # <AS:Chanayane> Compiled shaders of the new renderer, in builds that have it: SPIR-V
+        # for Vulkan, and on the Mac the Metal libraries made from it as well.
         native_shaders = os.path.join(self.args['build'], os.pardir, 'asrenderer', 'shaders')
         if os.path.isdir(native_shaders):
             with self.prefix(src=native_shaders, dst="app_settings/shaders_native"):
                 self.path("*.spv")
+                if any(name.endswith(".metallib") for name in os.listdir(native_shaders)):
+                    self.path("*.metallib")
         # </AS:Chanayane>
 
         # <FS:Ansariel> Copy 360 snapshot JavaScripts
