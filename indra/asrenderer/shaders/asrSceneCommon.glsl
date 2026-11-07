@@ -14,7 +14,7 @@ const uint INSTANCE_FLIPPED = 1u;
 const uint INSTANCE_DOUBLE_SIDED = 2u;
 const uint INSTANCE_MASKED = 4u;
 const uint INSTANCE_RANK_SHIFT = 8u;
-const uint INSTANCE_RANK_MAX = 7u;
+const uint INSTANCE_RANK_MAX = 1023u;
 
 struct Instance
 {

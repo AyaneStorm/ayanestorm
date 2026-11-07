@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -283,14 +284,21 @@ public:
             return false;
         }
 
+        using Clock = std::chrono::steady_clock;
+        const auto seconds = [](Clock::time_point from, Clock::time_point to) { return std::chrono::duration<double>(to - from).count(); };
+        mFrameParts = {};
+        const Clock::time_point frameStart = Clock::now();
+
         const uint32_t slot = mFrame % FRAMES_IN_FLIGHT;
         if (!check(vkWaitForFences(mDevice, 1, &mFences[slot], VK_TRUE, UINT64_MAX), "wait for frame"))
         {
             return false;
         }
+        const Clock::time_point fenceDone = Clock::now();
 
         uint32_t image = 0;
         const VkResult acquired = vkAcquireNextImageKHR(mDevice, mSwapchain, UINT64_MAX, mImageReady[slot], VK_NULL_HANDLE, &image);
+        const Clock::time_point imageDone = Clock::now();
         if (acquired == VK_ERROR_OUT_OF_DATE_KHR)
         {
             mNeedSwapchain = true;
@@ -302,11 +310,16 @@ public:
         }
 
         // Reset only now: an early return above must leave the fence signalled.
-        if (!check(vkResetFences(mDevice, 1, &mFences[slot]), "reset fence") ||
-            !prepareUI(slot, input.ui) || !recordCommands(slot, image, input))
+        if (!check(vkResetFences(mDevice, 1, &mFences[slot]), "reset fence") || !prepareUI(slot, input.ui))
         {
             return false;
         }
+        const Clock::time_point uiDone = Clock::now();
+        if (!recordCommands(slot, image, input))
+        {
+            return false;
+        }
+        const Clock::time_point recordDone = Clock::now();
 
         VkSemaphoreSubmitInfo wait{ VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
         wait.semaphore = mImageReady[slot];
@@ -327,6 +340,7 @@ public:
         {
             return false;
         }
+        const Clock::time_point submitDone = Clock::now();
 
         VkPresentInfoKHR present{ VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
@@ -344,9 +358,17 @@ public:
             return false;
         }
 
+        mFrameParts.waitForGpu = seconds(frameStart, fenceDone);
+        mFrameParts.acquire = seconds(fenceDone, imageDone);
+        mFrameParts.prepareUI = seconds(imageDone, uiDone);
+        mFrameParts.record = seconds(uiDone, recordDone);
+        mFrameParts.submit = seconds(recordDone, submitDone);
+        mFrameParts.present = seconds(submitDone, Clock::now());
         ++mFrame;
         return true;
     }
+
+    FrameParts frameParts() const override { return mFrameParts; }
 
 private:
     bool check(VkResult result, const char* what)
@@ -1906,7 +1928,9 @@ private:
             mRetiredBuffers.pop_front();
         }
 
+        const auto updateStart = std::chrono::steady_clock::now();
         mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
+        mFrameParts.sceneUpdate = std::chrono::duration<double>(std::chrono::steady_clock::now() - updateStart).count();
 
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
@@ -2629,6 +2653,8 @@ private:
     const TargetImage* mResultImages[ResultCount]{}; // null for results that are buffers
     uint32_t mTimedPasses[FRAMES_IN_FLIGHT]{};
     const char* mTimedNames[FRAMES_IN_FLIGHT][MAX_TIMED_PASSES]{};
+
+    FrameParts mFrameParts;
 
     // What pass bodies work with, during one recordScene().
     VkCommandBuffer mRecordCommands = VK_NULL_HANDLE;

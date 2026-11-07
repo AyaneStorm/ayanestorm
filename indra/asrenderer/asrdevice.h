@@ -96,6 +96,19 @@ struct SceneStats
     PassTime passes[MAX_TIMED_PASSES];
 };
 
+// Where the render thread's time went inside one frame, in seconds. sceneUpdate is part of
+// record. Every figure stays 0 on a backend that does not report them.
+struct FrameParts
+{
+    double waitForGpu = 0.0;
+    double acquire = 0.0;
+    double prepareUI = 0.0;
+    double record = 0.0;
+    double sceneUpdate = 0.0;
+    double submit = 0.0;
+    double present = 0.0;
+};
+
 class Device
 {
 public:
@@ -131,6 +144,9 @@ public:
     // Draws and presents one frame. Returns false on an unrecoverable error,
     // described by lastError().
     virtual bool renderFrame(const FrameInput& input) = 0;
+
+    // Render thread: the parts of the frame renderFrame() just drew.
+    virtual FrameParts frameParts() const { return {}; }
 
     virtual const std::string& lastError() const = 0;
 

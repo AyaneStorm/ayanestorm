@@ -11,9 +11,14 @@
 #include "asrbridge.h"
 #include "asrdevice.h"
 #include "asrviewer.h"
+#include "llagent.h"
+#include "llappviewer.h"
 #include "lldrawable.h"
 #include "llfetchedgltfmaterial.h"
+#include "llgltfmateriallist.h"
+#include "llimage.h"
 #include "llmaterial.h"
+#include "llmeshrepository.h"
 #include "lltextureentry.h"
 #include "lltoolpie.h"
 #include "llviewercamera.h"
@@ -21,6 +26,7 @@
 #include "llviewerobject.h"
 #include "llviewerregion.h"
 #include "llviewertexture.h"
+#include "llviewertexturelist.h"
 #include "llviewerwindow.h"
 #include "llvoavatarself.h"
 #include "llvocache.h"
@@ -38,6 +44,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -53,6 +60,7 @@ constexpr U32 NO_INSTANCE = 0xFFFFFFFFu;
 constexpr U32 LODS = LLVolumeLODGroup::NUM_LODS;
 constexpr U32 MAX_WORKERS = 4;
 constexpr auto LOG_PERIOD = std::chrono::seconds(20);
+constexpr F32 LOD_SWEEP_SECONDS = 0.25f; // how long a pass over all objects takes
 
 static_assert(LODS == asr::MAX_LODS, "the GPU walks every LOD of a shape");
 
@@ -69,16 +77,64 @@ struct ShapeFace
     asr::GeometryBox box{};
 };
 
+// What makes geometry the same: a repeated mesh, a grass field say, is one shape however
+// many objects show it. A mesh is its asset alone, as the profile and path an object also
+// carries change nothing. A sculpt also depends on how sharp its map was.
+using ShapeKey = std::pair<LLVolumeParams, S32>;
+
+ShapeKey meshKey(const LLVolumeParams& params)
+{
+    LLVolumeParams asset;
+    asset.setSculptID(params.getSculptID(), LL_SCULPT_TYPE_MESH);
+    return ShapeKey(asset, 0);
+}
+
+bool isMeshKey(const ShapeKey& key)
+{
+    return (key.first.getSculptType() & LL_SCULPT_TYPE_MASK) == LL_SCULPT_TYPE_MESH;
+}
+
+ShapeKey shapeKey(const LLVolume& volume)
+{
+    const LLVolumeParams& params = volume.getParams();
+    const U8 type = params.getSculptType() & LL_SCULPT_TYPE_MASK;
+    if (type == LL_SCULPT_TYPE_MESH)
+    {
+        return meshKey(params);
+    }
+    return ShapeKey(params, type == LL_SCULPT_TYPE_NONE ? 0 : volume.getSculptLevel());
+}
+
 struct Shape
 {
-    explicit Shape(const LLVolumeParams& volumeParams) : params(volumeParams) {}
+    explicit Shape(const ShapeKey& shapeKey) : key(shapeKey) {}
 
-    LLVolumeParams params;
-    std::vector<ShapeFace> faces;
+    const ShapeKey key;
+    std::vector<ShapeFace> faces; // the main thread's: a worker fills a copy
     LLVector3 lodBias{ 1.f, 1.f, 1.f };
-    U32 users = 0;
-    bool ready = false;                      // set by the main thread, once a worker is done
-    std::unordered_set<LLDrawable*> waiting; // objects to apply once it is ready
+    std::unordered_set<LLDrawable*> users;
+    bool ready = false; // something has been built
+    bool busy = false;  // a worker has it
+
+    // A mesh's LODs come over the network one at a time, in any order. They are built
+    // coarsest first, so the GPU's chain only ever grows at its fine end and never has a
+    // hole, and whatever came too early waits here.
+    U32 nextLod = 0;
+    LLPointer<LLVolume> arrived[LODS];
+    bool gone[LODS] = { false, false, false, false }; // the server has no such LOD
+};
+
+// One piece of work for a worker. A mesh job adds one LOD, any other job builds all of them.
+struct ShapeJob
+{
+    Shape* shape = nullptr;
+    std::vector<ShapeFace> faces; // what the shape had, and what it has after this job
+    LLVector3 lodBias{ 1.f, 1.f, 1.f };
+    LLPointer<LLVolume> mesh;
+    U32 lod = 0;
+    bool sculpted = false;
+    LLPointer<LLImageRaw> sculptMap; // null when none is in memory
+    bool sculptMissing = false;      // the asset does not exist, so it draws a placeholder
 };
 
 struct SharedMaterial;
@@ -89,6 +145,7 @@ struct TrackedTexture
     LLPointer<LLViewerTexture> image;
     U32 slot = 0;
     S8 components = 0;
+    F32 visited = -1000.f; // see visitTextures()
     U32 changes = 0; // temporary: how often its slot changed
     std::unordered_map<LLDrawable*, U32> users; // how many of its faces use it
     std::vector<SharedMaterial*> materials;     // what a new slot has to be written to
@@ -119,6 +176,7 @@ struct ObjectFace
     SharedMaterial* material = nullptr;
     U32 flags = 0;
     U32 rank = 0;        // see resolveStack()
+    U32 tieRank = 0;     // see tieRankOf()
     bool hidden = false; // an exact copy of it is what shows
 };
 
@@ -137,9 +195,27 @@ static_assert(sizeof(StackKey) == 56, "compared and hashed as bytes, so it has n
 struct WorldObject
 {
     Shape* shape = nullptr;
+    Shape* next = nullptr; // what replaces shape once it is built, so nothing blinks out
     std::vector<ObjectFace> faces;
     Stack* stack = nullptr;
     StackKey stackKey{};
+    size_t sweepSlot = 0;         // in sSweep
+    F64 lodDue = F64_MAX;         // the camera travel at which its LOD is checked: see updateLods()
+    S32 askedLod = -1;            // the finest LOD this object has asked the mesh system for
+    bool askedWithHeader = false; // whether the mesh's header was known by then
+};
+
+struct SweepEntry
+{
+    LLDrawable* drawable;
+    WorldObject* object;
+};
+
+struct LodCheck
+{
+    F64 due;
+    LLDrawable* drawable; // may be gone: only compared, and looked up
+    bool operator<(const LodCheck& other) const { return due > other.due; } // soonest on top
 };
 
 struct StackMember
@@ -167,7 +243,7 @@ struct BytesHash
 asr::SceneQueue* sScene = nullptr;
 bool sRunning = false;
 
-std::map<LLVolumeParams, std::unique_ptr<Shape>> sShapes;
+std::map<ShapeKey, std::unique_ptr<Shape>> sShapes;
 std::unordered_map<const void*, TrackedTexture> sTextures; // by LLImageGL, which is what reports a change
 std::unordered_map<MaterialKey, SharedMaterial, BytesHash<MaterialKey>> sMaterials;
 std::unordered_map<LLDrawable*, WorldObject> sObjects;
@@ -175,6 +251,22 @@ std::unordered_map<StackKey, Stack, BytesHash<StackKey>> sStacks;
 std::unordered_map<LLDrawable*, const char*> sLeftOut; // what is not drawn yet, and why
 std::unordered_set<LLDrawable*> sChanged;
 std::unordered_set<LLDrawable*> sMoved;
+
+// Render space is agent space plus this. A region crossing moves agent space under every
+// object, but not render space: this takes up the difference, so nothing on the GPU changes.
+// Rewriting every transform takes several frames of uploads, and the camera would be ahead
+// of the world for those frames, which shows as a flash.
+LLVector3 sRenderOrigin;
+
+// How far the camera has moved, added up, and the objects whose LOD is next to change.
+std::priority_queue<LodCheck> sLodChecks;
+F64 sCameraTravel = 0.0;
+LLVector3 sLastEye;
+F32 sLastLodScale = 0.f;
+
+std::vector<SweepEntry> sSweep; // every object, walked a share per frame: see sweepObjects()
+size_t sSweepNext = 0;
+std::vector<TrackedTexture*> sSharper; // only within one sweepLods(), so never stale
 std::vector<const void*> sChangedImages;
 std::chrono::steady_clock::time_point sLogged;
 
@@ -188,9 +280,33 @@ U32 sLostTextures = 0; // temporary: textures that lost their image with faces o
 std::vector<std::thread> sWorkers;
 std::mutex sJobMutex;
 std::condition_variable sJobReady;
-std::deque<Shape*> sJobs;
-std::vector<Shape*> sFinished;
+std::deque<ShapeJob> sJobs;
+std::vector<ShapeJob> sFinished;
 bool sStopping = false;
+
+bool hasGeometry(const LLVolumeFace& face)
+{
+    return face.mNumVertices > 0 && face.mNumIndices >= 3;
+}
+
+// Adds one LOD to the fine end of a face's chain. Its box must already be set.
+void addFaceLod(ShapeFace& face, U32 lod, LLVolumeFace& volumeFace)
+{
+    volumeFace.createTangents();
+
+    std::vector<asr::SceneVertex> vertices(volumeFace.mNumVertices);
+    for (S32 i = 0; i < volumeFace.mNumVertices; ++i)
+    {
+        asr::SceneVertex& vertex = vertices[i];
+        memcpy(vertex.position, volumeFace.mPositions[i].getF32ptr(), sizeof(vertex.position));
+        memcpy(vertex.normal, volumeFace.mNormals[i].getF32ptr(), sizeof(vertex.normal));
+        memcpy(vertex.tangent, volumeFace.mTangents[i].getF32ptr(), sizeof(vertex.tangent));
+        memcpy(vertex.uv, volumeFace.mTexCoords[i].mV, sizeof(vertex.uv));
+    }
+    face.finest = sScene->addGeometry(asr::buildGeometry(vertices.data(), U32(vertices.size()), volumeFace.mIndices, U32(volumeFace.mNumIndices), &face.box),
+                                      face.finest, COARSER_AT[lod]);
+    face.geometries[lod] = face.finest;
+}
 
 void addFaceGeometry(ShapeFace& face, LLVolumeFace* lods[LODS])
 {
@@ -209,62 +325,72 @@ void addFaceGeometry(ShapeFace& face, LLVolumeFace* lods[LODS])
     face.box.center[2] = (low[2] + high[2]) * 0.5f;
     face.box.scale = llmax((high[0] - low[0]) * 0.5f, (high[1] - low[1]) * 0.5f, (high[2] - low[2]) * 0.5f, 1e-6f);
 
-    std::vector<asr::SceneVertex> vertices;
-    U32 coarser = 0;
     for (U32 lod = 0; lod < LODS; ++lod)
     {
-        LLVolumeFace* volumeFace = lods[lod];
-        if (!volumeFace)
+        if (lods[lod])
         {
-            continue;
+            addFaceLod(face, lod, *lods[lod]);
         }
-        volumeFace->createTangents();
-
-        vertices.resize(volumeFace->mNumVertices);
-        for (S32 i = 0; i < volumeFace->mNumVertices; ++i)
-        {
-            asr::SceneVertex& vertex = vertices[i];
-            memcpy(vertex.position, volumeFace->mPositions[i].getF32ptr(), sizeof(vertex.position));
-            memcpy(vertex.normal, volumeFace->mNormals[i].getF32ptr(), sizeof(vertex.normal));
-            memcpy(vertex.tangent, volumeFace->mTangents[i].getF32ptr(), sizeof(vertex.tangent));
-            memcpy(vertex.uv, volumeFace->mTexCoords[i].mV, sizeof(vertex.uv));
-        }
-        coarser = sScene->addGeometry(asr::buildGeometry(vertices.data(), U32(vertices.size()), volumeFace->mIndices, U32(volumeFace->mNumIndices), &face.box),
-                                      coarser, COARSER_AT[lod]);
-        face.geometries[lod] = coarser;
     }
-    face.finest = coarser;
 }
 
-void buildShape(Shape& shape)
+// Every LOD at once: a prim's are computed, and a sculpt's come from one map.
+void buildShape(ShapeJob& job)
 {
     LLPointer<LLVolume> volumes[LODS];
+    const LLVolumeParams& params = job.shape->key.first;
     for (U32 lod = 0; lod < LODS; ++lod)
     {
-        volumes[lod] = new LLVolume(shape.params, LLVolumeLODGroup::getVolumeScaleFromDetail(lod));
+        volumes[lod] = new LLVolume(params, LLVolumeLODGroup::getVolumeScaleFromDetail(lod));
+        if (job.sculptMap.notNull())
+        {
+            LLImageDataSharedLock lock(job.sculptMap);
+            volumes[lod]->sculpt(job.sculptMap->getWidth(), job.sculptMap->getHeight(), job.sculptMap->getComponents(), job.sculptMap->getData(),
+                                 job.shape->key.second, job.sculptMissing);
+        }
+        else if (job.sculpted)
+        {
+            volumes[lod]->sculpt(0, 0, 0, nullptr, job.shape->key.second, job.sculptMissing);
+        }
     }
 
-    shape.lodBias = volumes[LODS - 1]->mLODScaleBias;
-    shape.faces.resize(volumes[LODS - 1]->getNumVolumeFaces());
-    for (S32 index = 0; index < S32(shape.faces.size()); ++index)
+    job.lodBias = volumes[LODS - 1]->mLODScaleBias;
+    job.faces.resize(volumes[LODS - 1]->getNumVolumeFaces());
+    for (S32 index = 0; index < S32(job.faces.size()); ++index)
     {
         LLVolumeFace* lods[LODS] = {};
         bool any = false;
         for (U32 lod = 0; lod < LODS; ++lod)
         {
-            if (index < volumes[lod]->getNumVolumeFaces())
+            if (index < volumes[lod]->getNumVolumeFaces() && hasGeometry(volumes[lod]->getVolumeFace(index)))
             {
-                LLVolumeFace& volumeFace = volumes[lod]->getVolumeFace(index);
-                if (volumeFace.mNumVertices > 0 && volumeFace.mNumIndices >= 3)
-                {
-                    lods[lod] = &volumeFace;
-                    any = true;
-                }
+                lods[lod] = &volumes[lod]->getVolumeFace(index);
+                any = true;
             }
         }
         if (any)
         {
-            addFaceGeometry(shape.faces[index], lods);
+            addFaceGeometry(job.faces[index], lods);
+        }
+    }
+}
+
+// All LODs of a face must share one box, and a mesh's finer LODs are not known yet. Mesh is
+// made inside the object's unit cube, so that is the box. Every face then shares one grid
+// of positions too, so faces cannot crack apart along a seam. snorm16() clamps anything
+// outside it.
+void addMeshLod(ShapeJob& job)
+{
+    job.lodBias = job.mesh->mLODScaleBias;
+    job.faces.resize(llmax(job.faces.size(), size_t(job.mesh->getNumVolumeFaces())));
+    for (S32 index = 0; index < job.mesh->getNumVolumeFaces(); ++index)
+    {
+        LLVolumeFace& volumeFace = job.mesh->getVolumeFace(index);
+        if (hasGeometry(volumeFace))
+        {
+            ShapeFace& face = job.faces[index];
+            face.box.scale = 0.5f;
+            addFaceLod(face, job.lod, volumeFace);
         }
     }
 }
@@ -273,7 +399,7 @@ void workerLoop()
 {
     while (true)
     {
-        Shape* shape = nullptr;
+        ShapeJob job;
         {
             std::unique_lock<std::mutex> lock(sJobMutex);
             sJobReady.wait(lock, []() { return sStopping || !sJobs.empty(); });
@@ -281,26 +407,102 @@ void workerLoop()
             {
                 return;
             }
-            shape = sJobs.front();
+            job = std::move(sJobs.front());
             sJobs.pop_front();
         }
-        buildShape(*shape);
+        if (job.mesh.notNull())
+        {
+            addMeshLod(job);
+        }
+        else
+        {
+            buildShape(job);
+        }
         std::lock_guard<std::mutex> lock(sJobMutex);
-        sFinished.push_back(shape);
+        sFinished.push_back(std::move(job));
     }
 }
 
-Shape* useShape(const LLVolumeParams& params)
+void startJob(ShapeJob&& job)
 {
-    auto found = sShapes.find(params);
+    job.shape->busy = true;
+    std::lock_guard<std::mutex> lock(sJobMutex);
+    sJobs.push_back(std::move(job));
+    sJobReady.notify_one();
+}
+
+// A copy for the worker: the pixels of a texture can be replaced while it builds.
+void startSculpt(Shape& shape)
+{
+    const LLVolumeParams& params = shape.key.first;
+    ShapeJob job;
+    job.shape = &shape;
+    job.sculpted = true;
+    LLViewerFetchedTexture* map = gTextureList.findImage(params.getSculptID(), TEX_LIST_STANDARD);
+    if (map)
+    {
+        LLImageRaw* raw = map->getRawImage() ? map->getRawImage() : map->getSavedRawImage();
+        job.sculptMissing = map->isMissingAsset();
+        if (raw)
+        {
+            LLImageDataSharedLock lock(raw);
+            const LLImageRaw* source = raw;
+            job.sculptMap = new LLImageRaw(source->getData(), source->getWidth(), source->getHeight(), source->getComponents());
+        }
+    }
+    startJob(std::move(job));
+}
+
+void startNextMeshLod(Shape& shape)
+{
+    if (shape.busy)
+    {
+        return;
+    }
+    for (; shape.nextLod < LODS; ++shape.nextLod)
+    {
+        const U32 lod = shape.nextLod;
+        if (shape.arrived[lod].notNull())
+        {
+            ShapeJob job;
+            job.shape = &shape;
+            job.faces = shape.faces;
+            job.mesh = shape.arrived[lod];
+            job.lod = lod;
+            shape.arrived[lod] = nullptr;
+            ++shape.nextLod;
+            startJob(std::move(job));
+            return;
+        }
+
+        // A LOD the mesh does not have only shows once its header is here.
+        if (!shape.gone[lod] && gMeshRepo.getActualMeshLOD(shape.key.first, S32(lod)) == S32(lod))
+        {
+            return; // on its way, or nobody needs it yet
+        }
+    }
+}
+
+Shape* useShape(const ShapeKey& key, LLDrawable* drawable)
+{
+    auto found = sShapes.find(key);
     if (found == sShapes.end())
     {
-        found = sShapes.emplace(params, std::make_unique<Shape>(params)).first;
-        std::lock_guard<std::mutex> lock(sJobMutex);
-        sJobs.push_back(found->second.get());
-        sJobReady.notify_one();
+        found = sShapes.emplace(key, std::make_unique<Shape>(key)).first;
+        Shape& shape = *found->second;
+        if ((key.first.getSculptType() & LL_SCULPT_TYPE_MASK) == LL_SCULPT_TYPE_NONE)
+        {
+            ShapeJob job;
+            job.shape = &shape;
+            startJob(std::move(job));
+        }
+        else if (!isMeshKey(key))
+        {
+            startSculpt(shape);
+        }
+        // A mesh starts as its LODs come in: see ASRWorld::meshLoaded().
     }
-    ++found->second->users;
+    found->second->users.insert(drawable);
     return found->second.get();
 }
 
@@ -313,16 +515,55 @@ void forgetShape(Shape* shape)
             sScene->removeGeometry(geometry);
         }
     }
-    sShapes.erase(shape->params);
+    sShapes.erase(shape->key);
 }
 
 // A shape a worker still holds goes when it comes back: see applyFinishedShapes().
 void releaseShape(Shape* shape, LLDrawable* drawable)
 {
-    shape->waiting.erase(drawable);
-    if (--shape->users == 0 && shape->ready)
+    shape->users.erase(drawable);
+    if (shape->users.empty() && !shape->busy)
     {
         forgetShape(shape);
+    }
+}
+
+// Asks for every LOD up to the one this object needs, coarsest included, all at once. The
+// request stays alive for as long as one object wants it, and asking twice costs nothing.
+// Once the header is known the real LODs are known too: a request for one the mesh does
+// not have is dropped without a reply, so this runs again then.
+void wantMeshLods(WorldObject& object, LLVOVolume* volume)
+{
+    const Shape* latest = object.next ? object.next : object.shape;
+    const LLVolumeParams& params = volume->getVolume()->getParams();
+    if (!latest || !isMeshKey(latest->key) || params.getSculptID() != latest->key.first.getSculptID())
+    {
+        return; // it changes shape in applyObject(), and asks then
+    }
+
+    const S32 wanted = volume->getLOD();
+    if (wanted <= object.askedLod && object.askedWithHeader)
+    {
+        return; // the usual case, and it takes no lock
+    }
+    const bool header = gMeshRepo.hasHeader(params.getSculptID());
+    if (wanted <= object.askedLod && header == object.askedWithHeader)
+    {
+        return;
+    }
+    object.askedLod = llmax(wanted, object.askedLod);
+    object.askedWithHeader = header;
+
+    // The object's own params, not the shape's key: the viewer's copy of this volume, which
+    // picking reads, is looked up by them.
+    const Shape& shape = *latest;
+    for (S32 lod = 0; lod <= wanted; ++lod)
+    {
+        const S32 actual = gMeshRepo.getActualMeshLOD(params, lod);
+        if (actual >= 0 && U32(actual) >= shape.nextLod && shape.arrived[actual].isNull())
+        {
+            gMeshRepo.loadMesh(volume, params, actual);
+        }
     }
 }
 
@@ -478,6 +719,38 @@ void clearObject(LLDrawable* drawable, WorldObject& object)
     }
 }
 
+// Asks for a LOD check at this much camera travel, unless one is due sooner. An older check
+// stays in the queue, and is dropped when it comes up, because its due no longer matches.
+void scheduleLod(LLDrawable* drawable, WorldObject& object, F64 due)
+{
+    if (due < object.lodDue)
+    {
+        object.lodDue = due;
+        sLodChecks.push({ due, drawable });
+    }
+}
+
+// Removes an object for good. sweepSlot stays true as entries swap places.
+void dropObject(LLDrawable* drawable)
+{
+    auto found = sObjects.find(drawable);
+    if (found == sObjects.end())
+    {
+        return;
+    }
+
+    WorldObject& object = found->second;
+    clearObject(drawable, object);
+    if (object.next)
+    {
+        releaseShape(object.next, drawable);
+    }
+    sSweep[object.sweepSlot] = sSweep.back();
+    sSweep[object.sweepSlot].object->sweepSlot = object.sweepSlot;
+    sSweep.pop_back();
+    sObjects.erase(found);
+}
+
 void setUVTransform(asr::MaterialDesc& material, F32 c, F32 s, F32 scaleS, F32 scaleT, F32 offsetS, F32 offsetT)
 {
     // LLFace's xform() as a matrix: rotate about the centre, then scale, then offset.
@@ -591,6 +864,12 @@ void fillTransform(asr::InstanceDesc& desc, LLDrawable* drawable, LLVOVolume* vo
     LLMatrix4 matrix = volume->getRelativeXform();
     if (drawable->isState(LLDrawable::ANIMATED_CHILD))
     {
+        // A child moving against its parent, such as a part spun by llTargetOmega. Its world
+        // matrix already holds its place and rotation, so only its scale may be added: the
+        // relative matrix holds them too, and using it would apply them twice and swing the
+        // part around its link position. rebuildGeom() resets it for this, and does not run here.
+        const LLVector3& scale = drawable->getScale();
+        matrix.initRows(LLVector4(scale.mV[VX], 0.f, 0.f, 0.f), LLVector4(0.f, scale.mV[VY], 0.f, 0.f), LLVector4(0.f, 0.f, scale.mV[VZ], 0.f), LLVector4(0.f, 0.f, 0.f, 1.f));
         matrix *= drawable->getWorldMatrix();
     }
     else if (drawable->isActive())
@@ -609,6 +888,8 @@ void fillTransform(asr::InstanceDesc& desc, LLDrawable* drawable, LLVOVolume* vo
             desc.objectToWorld[row * 4 + column] = matrix.mMatrix[column][row]; // LLMatrix4 holds rows of a row-vector matrix
         }
         desc.lodCenter[row] = matrix.mMatrix[3][row];
+        desc.objectToWorld[row * 4 + 3] += sRenderOrigin.mV[row];
+        desc.lodCenter[row] += sRenderOrigin.mV[row];
     }
     if (drawable == sShifted)
     {
@@ -629,15 +910,25 @@ const char* whyLeftOut(LLDrawable* drawable, LLVOVolume* volume)
     {
         return "attached";
     }
-    if (volume->isMesh() || drawable->isState(LLDrawable::RIGGED))
+    if (volume->getAvatar())
     {
-        return "mesh";
+        return "animated"; // rigged to a control avatar, like attachments in step e
     }
-    if (volume->isSculpted())
+    if (volume->isFlexible())
     {
-        return "sculpt";
+        return "flexible";
     }
-    return volume->isFlexible() ? "flexible" : nullptr;
+
+    const U8 sculptType = volume->getVolume()->getParams().getSculptType() & LL_SCULPT_TYPE_MASK;
+    if (sculptType == LL_SCULPT_TYPE_GLTF)
+    {
+        return "gltf";
+    }
+    if (sculptType != LL_SCULPT_TYPE_NONE && sculptType != LL_SCULPT_TYPE_MESH && volume->getVolume()->getSculptLevel() < -1)
+    {
+        return "sculpt map"; // the object is told again once its map is in
+    }
+    return nullptr;
 }
 
 LLVOVolume* volumeOf(LLDrawable* drawable)
@@ -646,11 +937,22 @@ LLVOVolume* volumeOf(LLDrawable* drawable)
     return object && object->getPCode() == LL_PCODE_VOLUME ? static_cast<LLVOVolume*>(object) : nullptr;
 }
 
+// Two different surfaces in one plane tie in depth, and which one the GPU keeps would change
+// as the camera moves. This settles it for good: the object's ID picks a rank, so one face
+// always wins, for everyone, every session. Separate surfaces are not affected, as a rank is
+// far less than a surface would need to move to change what is really in front.
+constexpr U32 STACK_RANK_BITS = 3; // the low bits, for masked copies: see resolveStack()
+
+U32 tieRankOf(const LLUUID& object, size_t face)
+{
+    return (U32(object.mData[0]) + U32(face)) & (asr::INSTANCE_RANK_MAX >> STACK_RANK_BITS);
+}
+
 void writeFace(ObjectFace& face, const ShapeFace& shapeFace, asr::InstanceDesc& desc)
 {
     desc.geometry = face.hidden ? 0 : shapeFace.finest;
     desc.material = face.material->id;
-    desc.flags = face.flags | (face.rank << asr::INSTANCE_RANK_SHIFT);
+    desc.flags = face.flags | (((face.tieRank << STACK_RANK_BITS) | face.rank) << asr::INSTANCE_RANK_SHIFT);
     if (face.instance == NO_INSTANCE)
     {
         face.instance = sScene->addInstance(desc);
@@ -689,7 +991,7 @@ void resolveStack(Stack& stack)
             ObjectFace& face = objectFaces[i];
             const bool masked = (face.flags & asr::INSTANCE_MASKED) != 0;
             const bool hidden = !masked && covered;
-            const U32 faceRank = masked && stack.members.size() > 1 ? llmin(++rank, asr::INSTANCE_RANK_MAX) : 0;
+            const U32 faceRank = masked && stack.members.size() > 1 ? llmin(++rank, (1u << STACK_RANK_BITS) - 1) : 0;
             covered = covered || !masked;
             if (hidden != face.hidden || faceRank != face.rank)
             {
@@ -765,6 +1067,27 @@ void placeInStack(LLDrawable* drawable, WorldObject& object, const asr::Instance
     resolveStack(*object.stack);
 }
 
+// What rebuildGeom() does for every object it rebuilds, and it does not run here. Without it
+// a glTF material's textures are never looked up, so its faces draw white, and overrides
+// from the region's cache are never applied. Each of those that changes something, and each
+// material that finishes loading, marks the object for rebuild, which comes back here.
+void refreshGltfMaterials(LLVOVolume* volume)
+{
+    bool gltf = false;
+    for (U8 te = 0; te < volume->getNumTEs(); ++te)
+    {
+        if (volume->getRenderMaterialID(te).notNull())
+        {
+            volume->updateTEMaterialTextures(te);
+            gltf = true;
+        }
+    }
+    if (gltf)
+    {
+        gGLTFMaterialList.applyQueuedOverrides(volume);
+    }
+}
+
 void applyObject(LLDrawable* drawable)
 {
     LLVOVolume* volume = volumeOf(drawable);
@@ -779,30 +1102,51 @@ void applyObject(LLDrawable* drawable)
     }
     if (leftOut)
     {
-        auto found = sObjects.find(drawable);
-        if (found != sObjects.end())
-        {
-            clearObject(drawable, found->second);
-            sObjects.erase(found);
-        }
+        dropObject(drawable);
         return;
     }
 
-    WorldObject& object = sObjects[drawable];
-    const LLVolumeParams& params = volume->getVolume()->getParams();
-    if (object.shape && !(object.shape->params == params))
+    const auto entry = sObjects.try_emplace(drawable);
+    WorldObject& object = entry.first->second;
+    if (entry.second)
     {
+        object.sweepSlot = sSweep.size();
+        sSweep.push_back({ drawable, &object });
+    }
+    scheduleLod(drawable, object, sCameraTravel);
+
+    // The old shape stays in sight until the new one can take over, so a sculpt that
+    // sharpens does not blink out while a worker builds it.
+    const ShapeKey key = shapeKey(*volume->getVolume());
+    const Shape* latest = object.next ? object.next : object.shape;
+    if (!latest || !(latest->key == key))
+    {
+        if (object.next)
+        {
+            releaseShape(object.next, drawable);
+            object.next = nullptr;
+        }
+        if (!object.shape || !(object.shape->key == key))
+        {
+            object.next = useShape(key, drawable);
+            object.askedLod = -1;
+            object.askedWithHeader = false;
+        }
+    }
+    if (object.next && (object.next->ready || !object.shape || !object.shape->ready))
+    {
+        Shape* next = object.next;
+        object.next = nullptr;
         clearObject(drawable, object);
+        object.shape = next;
     }
-    if (!object.shape)
-    {
-        object.shape = useShape(params);
-    }
+
+    wantMeshLods(object, volume);
     if (!object.shape->ready)
     {
-        object.shape->waiting.insert(drawable);
         return;
     }
+    refreshGltfMaterials(volume);
 
     const Shape& shape = *object.shape;
     const size_t faces = llmin(size_t(volume->getNumTEs()), shape.faces.size());
@@ -831,6 +1175,7 @@ void applyObject(LLDrawable* drawable)
         SharedMaterial* previous = face.material;
         face.material = useMaterial(material, image, drawable);
         face.flags = flags;
+        face.tieRank = tieRankOf(drawable->getVObj()->getID(), i);
         writeFace(face, shape.faces[i], desc);
         if (previous)
         {
@@ -850,6 +1195,7 @@ void moveObject(LLDrawable* drawable)
     }
 
     WorldObject& object = found->second;
+    scheduleLod(drawable, object, sCameraTravel); // the camera is not all that changes distance
     asr::InstanceDesc desc;
     fillTransform(desc, drawable, volume, *object.shape);
     placeInStack(drawable, object, desc);
@@ -877,22 +1223,246 @@ void markMoved(LLViewerObject* object)
 
 void applyFinishedShapes()
 {
-    std::vector<Shape*> finished;
+    std::vector<ShapeJob> finished;
     {
         std::lock_guard<std::mutex> lock(sJobMutex);
         finished.swap(sFinished);
     }
-    for (Shape* shape : finished)
+    for (ShapeJob& job : finished)
     {
+        Shape* shape = job.shape;
+        const bool newFaces = !shape->ready || job.faces.size() != shape->faces.size();
+        shape->busy = false;
         shape->ready = true;
-        if (shape->users == 0)
+        shape->faces = std::move(job.faces);
+        shape->lodBias = job.lodBias;
+        if (shape->users.empty())
         {
             forgetShape(shape);
             continue;
         }
-        sChanged.insert(shape->waiting.begin(), shape->waiting.end());
-        shape->waiting.clear();
+        if (isMeshKey(shape->key))
+        {
+            startNextMeshLod(*shape);
+        }
+
+        // Instances name the finest LOD. A finer one changes only that, so a mesh repeated
+        // thousands of times does not go through all its materials again.
+        (newFaces ? sChanged : sMoved).insert(shape->users.begin(), shape->users.end());
     }
+}
+
+// Applying is the costly part of a burst, such as the first LOD of a mesh with thousands of
+// copies, so it gets a share of each frame and the rest waits for the next one.
+void applyChanges()
+{
+    constexpr auto BUDGET = std::chrono::milliseconds(4);
+    constexpr U32 CHECK_EVERY = 16; // reading the clock is not free either
+
+    const auto start = std::chrono::steady_clock::now();
+    U32 applied = 0;
+    for (auto next = sChanged.begin(); next != sChanged.end();)
+    {
+        LLDrawable* drawable = *next;
+        next = sChanged.erase(next);
+        sMoved.erase(drawable); // applying it writes its transform too
+        applyObject(drawable);
+        if (++applied % CHECK_EVERY == 0 && std::chrono::steady_clock::now() - start >= BUDGET)
+        {
+            return;
+        }
+    }
+}
+
+// The viewer walks all its textures in ID order, within a few milliseconds per loop, and
+// knows nothing about what is in view. With tens of thousands of them, what just came into
+// view waits up to half a minute for its turn. So textures in view get their turn here, as
+// often as the sweep comes round, however many textures the viewer holds.
+void visitTexture(TrackedTexture& texture)
+{
+    LLViewerFetchedTexture* fetched = LLViewerTextureManager::staticCastToFetchedTexture(texture.image.get());
+    if (fetched && fetched->getGLTexture())
+    {
+        gTextureList.updateImageDecodePriority(fetched, false);
+        fetched->updateFetch();
+    }
+}
+
+// A face with no image at all comes first, as a blurry surface beats an empty one. Textures
+// that only want to get sharper wait in sSharper for what is left of the sweep's time.
+void visitTextures(const WorldObject& object)
+{
+    for (const ObjectFace& face : object.faces)
+    {
+        TrackedTexture* texture = face.material && !face.hidden ? face.material->texture : nullptr;
+        if (!texture || gFrameTimeSeconds - texture->visited < LOD_SWEEP_SECONDS)
+        {
+            continue;
+        }
+        texture->visited = gFrameTimeSeconds;
+        if (texture->slot == 0)
+        {
+            visitTexture(*texture);
+        }
+        else
+        {
+            sSharper.push_back(texture);
+        }
+    }
+}
+
+// Largest on screen first. What does not fit is visited again by the next sweep.
+void visitSharperTextures()
+{
+    constexpr auto BUDGET = std::chrono::milliseconds(1);
+
+    std::sort(sSharper.begin(), sSharper.end(), [](TrackedTexture* a, TrackedTexture* b) { return a->image->getMaxVirtualSize() > b->image->getMaxVirtualSize(); });
+    const auto start = std::chrono::steady_clock::now();
+    for (TrackedTexture* texture : sSharper)
+    {
+        if (std::chrono::steady_clock::now() - start < BUDGET)
+        {
+            visitTexture(*texture);
+        }
+        else
+        {
+            texture->visited = -1000.f;
+        }
+    }
+    sSharper.clear();
+}
+
+// What calcLOD() does to distance and to the LOD factor, as one number: distance / object
+// size is multiplied by this before it is compared with COARSER_AT. Its boost very close up
+// is left out here, as that only ever chooses the finest LOD earlier.
+F32 lodScale()
+{
+    F32 factor = LLVOVolume::sLODFactor;
+    static LLCachedControl<bool> ignore_fov_zoom(gSavedSettings, "IgnoreFOVZoomForLODs");
+    if (!ignore_fov_zoom)
+    {
+        factor *= DEFAULT_FIELD_OF_VIEW / LLViewerCamera::getInstance()->getDefaultFOV();
+    }
+    return (F_PI / 3.f) * LLVOVolume::sDistanceFactor / llmax(factor, 0.001f);
+}
+
+// How far the camera must travel before this object's LOD can possibly change: the way to
+// the nearest distance where it would. Close up, calcLOD() bends distance, so it is simply
+// looked at again soon.
+F32 metresToNextLod(LLVOVolume* volume, F32 distance, F32 scale)
+{
+    constexpr F32 SMALLEST = 0.25f;
+    constexpr F32 CLOSE_UP_STEP = 0.5f;
+    if (distance * LLVOVolume::sDistanceFactor < LLVOVolume::sLODFactor * 2.f)
+    {
+        return CLOSE_UP_STEP;
+    }
+
+    const F32 radius = volume->getVolume() ? volume->getVolume()->mLODScaleBias.scaledVec(volume->getScale()).length() : volume->getScale().length();
+    F32 metres = F32_MAX;
+    for (U32 lod = 1; lod < LODS; ++lod)
+    {
+        metres = llmin(metres, fabsf(distance - COARSER_AT[lod] * radius / llmax(scale, 0.001f)));
+    }
+    return llmax(metres, SMALLEST);
+}
+
+// The viewer works out each object's LOD in updateCull(), which does not run here. For a
+// mesh that LOD is what gets loaded, and it is also what picking tests against. The GPU
+// picks what it draws by itself, from the same rule.
+//
+// An object's LOD can only change once the camera has come a known distance closer or
+// further, so each object waits in a queue for that much travel. A still camera costs nothing
+// here, however many objects there are, and what it costs in motion follows the motion. Objects
+// behind the camera are kept up to date too, so turning around shows them at the right LOD.
+void updateLods()
+{
+    constexpr auto BUDGET = std::chrono::milliseconds(1);
+    constexpr U32 CHECK_EVERY = 16;
+
+    const LLVector3 eye = LLViewerCamera::getInstance()->getOrigin();
+    const LLVector3 renderEye = eye + sRenderOrigin; // a crossing moves agent space, not the camera
+    sCameraTravel += (renderEye - sLastEye).length();
+    sLastEye = renderEye;
+
+    // A new LOD factor or field of view moves every object's limits.
+    const F32 scale = lodScale();
+    if (scale != sLastLodScale)
+    {
+        sLastLodScale = scale;
+        for (const SweepEntry& entry : sSweep)
+        {
+            scheduleLod(entry.drawable, *entry.object, sCameraTravel);
+        }
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    U32 checked = 0;
+    while (!sLodChecks.empty() && sLodChecks.top().due <= sCameraTravel)
+    {
+        const LodCheck check = sLodChecks.top();
+        sLodChecks.pop();
+        auto found = sObjects.find(check.drawable);
+        if (found == sObjects.end() || found->second.lodDue != check.due)
+        {
+            continue;
+        }
+
+        WorldObject& object = found->second;
+        object.lodDue = F64_MAX;
+        LLVOVolume* volume = volumeOf(check.drawable);
+        if (volume && !check.drawable->isDead())
+        {
+            const F32 distance = (check.drawable->getPositionAgent() - eye).length();
+            check.drawable->mDistanceWRTCamera = ll_round(distance, 0.01f);
+            volume->updateLOD();
+            scheduleLod(check.drawable, object, sCameraTravel + metresToNextLod(volume, distance, scale));
+        }
+        if (++checked % CHECK_EVERY == 0 && std::chrono::steady_clock::now() - start >= BUDGET)
+        {
+            return;
+        }
+    }
+}
+
+// What has to happen per object in view, or until it is settled.
+void sweepObjects()
+{
+    if (sSweep.empty())
+    {
+        return;
+    }
+
+    // A slow frame asks for a larger share, which is the worst time to spend it, so this
+    // has a limit of its own. The sweep then just takes longer to come round.
+    constexpr auto BUDGET = std::chrono::milliseconds(1);
+    constexpr size_t CHECK_EVERY = 16;
+
+    const LLViewerCamera* camera = LLViewerCamera::getInstance();
+    const size_t count = llclamp(size_t(F32(sSweep.size()) * gFrameIntervalSeconds.value() / LOD_SWEEP_SECONDS) + 1, size_t(1), sSweep.size());
+    const auto start = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < count; ++i)
+    {
+        if (i % CHECK_EVERY == CHECK_EVERY - 1 && std::chrono::steady_clock::now() - start >= BUDGET)
+        {
+            break;
+        }
+
+        sSweepNext = sSweepNext < sSweep.size() ? sSweepNext : 0;
+        const SweepEntry entry = sSweep[sSweepNext++];
+        LLVOVolume* volume = volumeOf(entry.drawable);
+        if (!volume || entry.drawable->isDead())
+        {
+            continue;
+        }
+
+        if (camera->sphereInFrustum(entry.drawable->getPositionAgent(), entry.drawable->getRadius()))
+        {
+            visitTextures(*entry.object);
+        }
+        wantMeshLods(*entry.object, volume);
+    }
+    visitSharperTextures();
 }
 
 // Sharper versions of a texture arrive in a new slot, and an alpha channel can appear. A
@@ -1023,18 +1593,11 @@ void updateLocalShift()
 void publishCamera()
 {
     const LLViewerCamera* camera = LLViewerCamera::getInstance();
-    asr::SceneCamera3D scene = asr::makeCameraFromAxes(camera->getOrigin().mV, camera->getAtAxis().mV, camera->getUpAxis().mV, camera->getView(),
+    const LLVector3 eye = camera->getOrigin() + sRenderOrigin;
+    asr::SceneCamera3D scene = asr::makeCameraFromAxes(eye.mV, camera->getAtAxis().mV, camera->getUpAxis().mV, camera->getView(),
                                                        camera->getAspect(), camera->getNear(), camera->getFar());
 
-    // What calcLOD() does to distance and to the LOD factor, apart from its boost very
-    // close up, which only ever chooses the finest LOD earlier.
-    F32 factor = LLVOVolume::sLODFactor;
-    static LLCachedControl<bool> ignore_fov_zoom(gSavedSettings, "IgnoreFOVZoomForLODs");
-    if (!ignore_fov_zoom)
-    {
-        factor *= DEFAULT_FIELD_OF_VIEW / camera->getDefaultFOV();
-    }
-    scene.lodScale = (F_PI / 3.f) * LLVOVolume::sDistanceFactor / llmax(factor, 0.001f);
+    scene.lodScale = lodScale();
     ASRViewer::setCamera(scene);
 }
 
@@ -1068,11 +1631,66 @@ void cullObjectCache()
     }
 }
 
+// Temporary: what update() and the whole main thread loop spend, since the last log.
+enum UpdatePart { PART_MESH, PART_CACHE, PART_SHAPES, PART_TEXTURES, PART_LOD, PART_SWEEP, PART_APPLY, PART_MOVE, PART_COUNT };
+constexpr const char* PART_NAMES[PART_COUNT] = { "mesh repository", "object cache", "finished shapes", "follow textures", "LOD queue", "sweep", "apply", "move" };
+F64 sPartSeconds[PART_COUNT] = {};
+F64 sPartWorst[PART_COUNT] = {};
+constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI" };
+F64 sMainSeconds[ASRWorld::MAIN_PART_COUNT] = {};
+F64 sMainWorst[ASRWorld::MAIN_PART_COUNT] = {};
+F64 sWorstLoop = 0.0;
+F64 sLastLogSeconds = 0.0;
+U32 sLoops = 0;
+std::chrono::steady_clock::time_point sLoopStart;
+
+template <typename Work>
+void timed(UpdatePart part, Work work)
+{
+    const auto start = std::chrono::steady_clock::now();
+    work();
+    const F64 seconds = std::chrono::duration<F64>(std::chrono::steady_clock::now() - start).count();
+    sPartSeconds[part] += seconds;
+    sPartWorst[part] = llmax(sPartWorst[part], seconds);
+}
+
 void logCounts()
 {
-    if (std::chrono::steady_clock::now() - sLogged >= LOG_PERIOD)
+    const auto now = std::chrono::steady_clock::now();
+    if (sLoops != 0)
     {
-        sLogged = std::chrono::steady_clock::now();
+        sWorstLoop = llmax(sWorstLoop, std::chrono::duration<F64>(now - sLoopStart).count());
+    }
+    sLoopStart = now;
+    ++sLoops;
+
+    if (now - sLogged >= LOG_PERIOD)
+    {
+        const F64 elapsed = std::chrono::duration<F64>(now - sLogged).count();
+        sLogged = now;
+        std::ostringstream parts;
+        F64 accounted = 0.0;
+        for (U32 i = 0; i < PART_COUNT; ++i)
+        {
+            parts << ", " << PART_NAMES[i] << " " << sPartSeconds[i] * 1000.0 / llmax(sLoops, 1u) << "/" << sPartWorst[i] * 1000.0;
+            accounted += sPartSeconds[i];
+            sPartSeconds[i] = 0.0;
+            sPartWorst[i] = 0.0;
+        }
+        std::ostringstream mainParts;
+        for (U32 i = 0; i < ASRWorld::MAIN_PART_COUNT; ++i)
+        {
+            mainParts << ", " << MAIN_PART_NAMES[i] << " " << sMainSeconds[i] * 1000.0 / llmax(sLoops, 1u) << "/" << sMainWorst[i] * 1000.0;
+            accounted += sMainSeconds[i];
+            sMainSeconds[i] = 0.0;
+            sMainWorst[i] = 0.0;
+        }
+        LL_INFOS("ASRenderer") << "main thread: " << sLoops / elapsed << " loops a second, worst loop " << sWorstLoop * 1000.0 << " ms, last log took " << sLastLogSeconds * 1000.0
+                               << " ms; update() average/worst ms" << parts.str() << "; display() average/worst ms" << mainParts.str() << "; everything else, mostly idle(), average ms "
+                               << (elapsed - accounted) * 1000.0 / llmax(sLoops, 1u) << LL_ENDL;
+        sLoops = 0;
+        sWorstLoop = 0.0;
+
         const asr::SceneStats stats = ASRViewer::device()->sceneStats();
         std::map<std::string, U32> leftOut;
         for (const auto& object : sLeftOut)
@@ -1092,7 +1710,7 @@ void logCounts()
             {
                 asr::InstanceDesc desc;
                 fillTransform(desc, entry.first, volume, *entry.second.shape);
-                const LLVector3 at(desc.lodCenter);
+                const LLVector3 at = LLVector3(desc.lodCenter) - sRenderOrigin;
                 active += entry.first->isActive() ? 1 : 0;
                 if ((at - eye).length() < nearest)
                 {
@@ -1147,7 +1765,7 @@ void logCounts()
         LL_INFOS("ASRenderer") << "no image: " << missing << " missing, " << fetching << " fetching, " << idle << " idle" << LL_ENDL;
         const asr::MemoryBudget& memory = ASRViewer::device()->memoryBudget();
         LL_INFOS("ASRenderer") << "texture memory " << memory.used(asr::MemoryCategory::Textures) / (1024 * 1024) << " of "
-                               << memory.limit(asr::MemoryCategory::Textures) / (1024 * 1024) << " MB" << LL_ENDL;
+                               << memory.textureLimit() / (1024 * 1024) << " MB" << LL_ENDL;
 
         // Temporary: live must match the memory above, or something leaks. Drawn says how
         // much of it faces we actually draw are using.
@@ -1234,6 +1852,82 @@ void logCounts()
             logShifted();
         }
 
+        // Temporary: how mesh is coming in, and how much repeating saves.
+        U32 meshes = 0;
+        U32 meshesWaiting = 0;
+        U32 meshLods[LODS + 1] = {};
+        U32 lodsHeld = 0;
+        size_t meshUsers = 0;
+        for (const auto& shape : sShapes)
+        {
+            if (isMeshKey(shape.first))
+            {
+                ++meshes;
+                meshesWaiting += shape.second->ready ? 0 : 1;
+                ++meshLods[shape.second->nextLod];
+                meshUsers += shape.second->users.size();
+                for (const LLPointer<LLVolume>& arrived : shape.second->arrived)
+                {
+                    lodsHeld += arrived.notNull() ? 1 : 0;
+                }
+            }
+        }
+        const asr::MemoryBudget& budget = ASRViewer::device()->memoryBudget();
+        LL_INFOS("ASRenderer") << meshes << " meshes shown by " << meshUsers << " objects, " << meshesWaiting << " with nothing yet, built up to LOD 0/1/2/3: " << meshLods[1] << "/"
+                               << meshLods[2] << "/" << meshLods[3] << "/" << meshLods[4] << ", " << lodsHeld << " LODs waiting for a coarser one, " << sChanged.size()
+                               << " objects left to apply, geometry memory " << budget.used(asr::MemoryCategory::Geometry) / (1024 * 1024) << " of "
+                               << budget.limit(asr::MemoryCategory::Geometry) / (1024 * 1024) << " MB" << LL_ENDL;
+
+        // Temporary: what fills texture memory, and whether anything still wants to change.
+        constexpr U32 DISCARDS = 7;
+        U32 atDiscard[DISCARDS] = {};
+        U64 bytesAtDiscard[DISCARDS] = {};
+        U32 wantSharper = 0;
+        U32 wantSmaller = 0;
+        U32 drawn = 0;
+        U32 notDrawn[4] = {};      // diffuse, normal map, specular map, no face at all
+        U64 notDrawnBytes[4] = {};
+        for (auto& image : gTextureList)
+        {
+            if (!image->hasGLTexture())
+            {
+                continue;
+            }
+            const U64 bytes = U64(image->getWidth()) * image->getHeight() * 4 * 4 / 3;
+            const U32 discard = U32(llclamp(image->getDiscardLevel(), 0, S32(DISCARDS) - 1));
+            ++atDiscard[discard];
+            bytesAtDiscard[discard] += bytes;
+            const S32 desired = const_cast<LLViewerFetchedTexture*>(image.get())->getDesiredDiscardLevel(); // not a const function
+            wantSharper += desired < image->getDiscardLevel() ? 1 : 0;
+            wantSmaller += desired > image->getDiscardLevel() ? 1 : 0;
+            if (sTextures.count(image->getGLTexture()) != 0)
+            {
+                ++drawn;
+                continue;
+            }
+            const U32 use = image->getNumFaces(LLRender::DIFFUSE_MAP) > 0 ? 0 : image->getNumFaces(LLRender::NORMAL_MAP) > 0 ? 1 : image->getNumFaces(LLRender::SPECULAR_MAP) > 0 ? 2 : 3;
+            ++notDrawn[use];
+            notDrawnBytes[use] += bytes;
+        }
+        std::ostringstream discards;
+        for (U32 i = 0; i < DISCARDS; ++i)
+        {
+            discards << " " << i << ":" << atDiscard[i] << "/" << bytesAtDiscard[i] / (1024 * 1024) << "MB";
+        }
+        LL_INFOS("ASRenderer") << "by discard" << discards.str() << ", want sharper " << wantSharper << ", want smaller " << wantSmaller << "; on drawn faces " << drawn
+                               << ", not drawn: diffuse " << notDrawn[0] << "/" << notDrawnBytes[0] / (1024 * 1024) << "MB, normal " << notDrawn[1] << "/" << notDrawnBytes[1] / (1024 * 1024)
+                               << "MB, specular " << notDrawn[2] << "/" << notDrawnBytes[2] / (1024 * 1024) << "MB, no face " << notDrawn[3] << "/" << notDrawnBytes[3] / (1024 * 1024) << "MB" << LL_ENDL;
+
+        // Temporary: where a frame's GPU time goes.
+        std::ostringstream timings;
+        double gpuTotal = 0.0;
+        for (U32 i = 0; i < stats.passCount; ++i)
+        {
+            timings << ", " << stats.passes[i].name << " " << stats.passes[i].milliseconds;
+            gpuTotal += stats.passes[i].milliseconds;
+        }
+        LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", retest entries " << stats.retestEntries << ", chunks " << stats.chunks << LL_ENDL;
+
         std::ostringstream reasons;
         for (const auto& reason : leftOut)
         {
@@ -1243,6 +1937,10 @@ void logCounts()
                                << stats.instances << " instances, " << stats.triangles << " triangles, " << stats.earlyClusters << " + " << stats.lateClusters
                                << " clusters drawn, " << stats.pendingGeometries << " geometries waiting, camera at " << LLViewerCamera::getInstance()->getOrigin()
                                << ", left out:" << reasons.str() << LL_ENDL;
+
+        // This log walks everything, so its own cost must not be read as a viewer stall.
+        sLastLogSeconds = std::chrono::duration<F64>(std::chrono::steady_clock::now() - now).count();
+        sLoopStart = std::chrono::steady_clock::now();
     }
 }
 
@@ -1286,6 +1984,10 @@ void ASRWorld::stop()
     sMoved.clear();
     sShifted = nullptr;
     sStacks.clear();
+    sSweep.clear();
+    sSweepNext = 0;
+    sLodChecks = {};
+    sCameraTravel = 0.0;
     sObjects.clear();
     sLeftOut.clear();
     sMaterials.clear();
@@ -1323,18 +2025,62 @@ void ASRWorld::objectRemoved(LLDrawable* drawable)
     {
         sShifted = nullptr;
     }
-    auto found = sObjects.find(drawable);
-    if (found != sObjects.end())
+    dropObject(drawable);
+}
+
+void ASRWorld::addMainTime(MainPart part, F32 seconds)
+{
+    sMainSeconds[part] += seconds;
+    sMainWorst[part] = llmax(sMainWorst[part], F64(seconds));
+}
+
+void ASRWorld::meshLoaded(const LLVolumeParams& params, LLVolume* volume, S32 lod)
+{
+    if (!sRunning || !volume)
     {
-        clearObject(drawable, found->second);
-        sObjects.erase(found);
+        return;
+    }
+
+    // With no shape nobody is waiting: a later object asks again, and that reads the disk.
+    auto found = sShapes.find(meshKey(params));
+    if (found != sShapes.end() && U32(lod) >= found->second->nextLod)
+    {
+        found->second->arrived[lod] = volume;
+        startNextMeshLod(*found->second);
     }
 }
 
-void ASRWorld::worldShifted()
+void ASRWorld::meshUnavailable(const LLVolumeParams& params, S32 lod)
 {
-    if (sRunning)
+    if (!sRunning)
     {
+        return;
+    }
+
+    auto found = sShapes.find(meshKey(params));
+    if (found != sShapes.end())
+    {
+        found->second->gone[lod] = true;
+        startNextMeshLod(*found->second);
+    }
+}
+
+void ASRWorld::worldShifted(const LLVector3& offset)
+{
+    if (!sRunning)
+    {
+        return;
+    }
+
+    // Floats lose metres of range to precision, so render space goes back to agent space when
+    // that costs nothing: a teleport, whose screen hides it and whose old objects are going
+    // anyway. 8 km is 32 regions on foot with no teleport, and a position there still has
+    // half a millimetre of precision.
+    constexpr F32 LARGEST_ORIGIN = 8192.f;
+    sRenderOrigin -= offset;
+    if (gAgent.getTeleportState() != LLAgent::TELEPORT_NONE || sRenderOrigin.length() > LARGEST_ORIGIN)
+    {
+        sRenderOrigin.clear();
         for (const auto& object : sObjects)
         {
             sMoved.insert(object.first);
@@ -1348,21 +2094,22 @@ void ASRWorld::update()
     {
         return;
     }
-    cullObjectCache();
-    applyFinishedShapes();
-    followTextures();
+    timed(PART_MESH, []() { gMeshRepo.notifyLoadedMeshes(); }); // rebuildPriorityGroups() calls this, and it does not run here
+    timed(PART_CACHE, cullObjectCache);
+    timed(PART_SHAPES, applyFinishedShapes);
+    timed(PART_TEXTURES, followTextures);
     updateLocalShift();
-    for (LLDrawable* drawable : sChanged)
+    timed(PART_LOD, updateLods);
+    timed(PART_SWEEP, sweepObjects);
+    timed(PART_APPLY, applyChanges);
+    timed(PART_MOVE, []()
     {
-        sMoved.erase(drawable); // applying it writes its transform too
-        applyObject(drawable);
-    }
-    sChanged.clear();
-    for (LLDrawable* drawable : sMoved)
-    {
-        moveObject(drawable);
-    }
-    sMoved.clear();
+        for (LLDrawable* drawable : sMoved)
+        {
+            moveObject(drawable);
+        }
+        sMoved.clear();
+    });
     publishCamera();
     logCounts();
 }
@@ -1374,7 +2121,10 @@ void ASRWorld::stop() {}
 void ASRWorld::objectChanged(LLDrawable*) {}
 void ASRWorld::objectMoved(LLDrawable*) {}
 void ASRWorld::objectRemoved(LLDrawable*) {}
-void ASRWorld::worldShifted() {}
+void ASRWorld::meshLoaded(const LLVolumeParams&, LLVolume*, S32) {}
+void ASRWorld::meshUnavailable(const LLVolumeParams&, S32) {}
+void ASRWorld::worldShifted(const LLVector3&) {}
+void ASRWorld::addMainTime(MainPart, F32) {}
 void ASRWorld::update() {}
 
 #endif

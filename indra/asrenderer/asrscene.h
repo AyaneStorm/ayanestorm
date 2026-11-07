@@ -37,10 +37,11 @@ constexpr uint32_t INSTANCE_FLIPPED = 1u;      // a negative scale: winding is r
 constexpr uint32_t INSTANCE_DOUBLE_SIDED = 2u; // drawn from both sides
 constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alpha
 
-// Masked surfaces only: exact copies in one place would tie in depth, and the order
-// of a list changes every frame. Each rank sits a fixed step nearer, see the vertex shader.
+// Surfaces in the same plane would tie in depth, and the order of a list changes from frame
+// to frame, so which one shows would flicker. Each rank sits a fixed share of its distance
+// nearer, see the vertex shader, so the higher one always wins, at any camera position.
 constexpr uint32_t INSTANCE_RANK_SHIFT = 8;
-constexpr uint32_t INSTANCE_RANK_MAX = 7;
+constexpr uint32_t INSTANCE_RANK_MAX = 1023;
 constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
 
 // Each kind of surface has its own draw state, so each has its own lists: double-sided

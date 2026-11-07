@@ -909,9 +909,12 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
     if(!forced)
     {
-        // <AS:Chanayane> The new renderer culls on the GPU, so nothing is marked visible here.
+        // <AS:Chanayane> The new renderer culls on the GPU, so nothing is marked visible here,
+        // and being in the view is what this can test on the CPU.
         // if(!isVisible())
-        if(!isVisible() && !ASR::active())
+        const bool in_view = ASR::active() ? isHUDAttachment() || LLViewerCamera::getInstance()->sphereInFrustum(mDrawable->getPositionAgent(), mDrawable->getRadius()) != 0
+                                           : isVisible();
+        if(!in_view)
         // </AS:Chanayane>
         { //don't load textures for non-visible faces
             const S32 num_faces = mDrawable->getNumFaces();

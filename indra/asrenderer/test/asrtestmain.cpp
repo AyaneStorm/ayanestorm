@@ -250,6 +250,21 @@ void testMemoryBudget()
     asr::MemoryBudget budget;
     expect(!budget.reserve(Category::Textures, 1), "nothing fits before a budget is set");
 
+    // Textures take what is really free, and hand it back as the others grow.
+    {
+        asr::MemoryBudget shared;
+        shared.setBudget(8 * GB);
+        const uint64_t share = shared.limit(Category::Textures);
+        const uint64_t idle = shared.textureLimit();
+        expect(idle > share && idle <= 6 * GB + 1024, "with nothing else in use, textures may pass their share, up to a reserve");
+        shared.reserveAnyway(Category::Textures, 3 * GB);
+        expect(shared.textureLimit() == idle, "their own use does not lower it");
+        shared.reserveAnyway(Category::RenderTargets, GB);
+        expect(shared.textureLimit() == idle - GB, "what others use comes off");
+        shared.reserveAnyway(Category::Shadows, 7 * GB);
+        expect(shared.textureLimit() == share, "and it never falls below their share");
+    }
+
     budget.setBudget(4 * GB);
     uint64_t total = 0;
     for (uint32_t i = 0; i < uint32_t(Category::Count); ++i)
@@ -578,6 +593,127 @@ void testRangeAllocator()
     expect(ranges.allocate(4, 16, aligned) && aligned % 16 == 0, "alignment holds");
     ranges.grow(200);
     expect(ranges.allocate(100, 1, d), "a grown span has room");
+
+    // What a teleport does: many small ranges freed apart, then everything merging back.
+    constexpr uint64_t PIECES = 20000;
+    asr::RangeAllocator many(PIECES * 16);
+    std::vector<uint64_t> offsets(PIECES);
+    bool fitted = true;
+    for (uint64_t& offset : offsets)
+    {
+        fitted = many.allocate(16, 16, offset) && fitted;
+    }
+    expect(fitted && many.freeSpace() == 0, "a span fills exactly");
+    for (size_t i = 0; i < PIECES; i += 2)
+    {
+        many.release(offsets[i], 16);
+    }
+    expect(many.freeSpace() == PIECES * 8, "freed pieces are counted");
+    uint64_t tooLarge = 0;
+    expect(!many.allocate(32, 16, tooLarge), "scattered pieces do not add up to one range");
+    for (size_t i = 1; i < PIECES; i += 2)
+    {
+        many.release(offsets[i], 16);
+    }
+    expect(many.allocate(PIECES * 16, 16, tooLarge) && tooLarge == 0, "all pieces merge back into one");
+}
+
+void testCameraPredictor()
+{
+    using Clock = asr::CameraPredictor::Clock;
+    const Clock::time_point start = Clock::now();
+    const auto at = [start](float seconds) { return start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(seconds)); };
+    const float forward[3] = { 1.f, 0.f, 0.f };
+    const float up[3] = { 0.f, 0.f, 1.f };
+    const auto cameraAt = [&](float x)
+    {
+        const float eye[3] = { x, 2.f, 3.f };
+        return asr::makeCameraFromAxes(eye, forward, up, 1.f, 1.5f, 0.1f, 200.f);
+    };
+    const auto close = [](float a, float b, float tolerance) { return std::fabs(a - b) < tolerance; };
+
+    // Moving at 10 m/s, with main-thread steps 100 ms apart.
+    asr::CameraPredictor moving;
+    asr::SceneCamera3D first = moving.predict(cameraAt(0.f), at(0.f), at(0.f));
+    expect(close(first.position[0], 0.f, 1e-5f), "the first camera is shown as it is");
+    moving.predict(cameraAt(1.f), at(0.1f), at(0.1f));
+    moving.predict(cameraAt(2.f), at(0.2f), at(0.2f));
+    moving.predict(cameraAt(2.f), at(0.2f), at(0.5f)); // lets the correction of the start fade
+    moving.predict(cameraAt(3.f), at(0.3f), at(0.3f));
+    asr::SceneCamera3D ahead = moving.predict(cameraAt(3.f), at(0.3f), at(0.35f));
+    expect(ahead.position[0] > 3.f, "between two steps the camera goes on moving");
+    expect(close(ahead.position[1], 2.f, 1e-3f) && close(ahead.position[2], 3.f, 1e-3f), "it moves along its own path");
+    asr::SceneCamera3D held = moving.predict(cameraAt(3.f), at(0.3f), at(5.f));
+    asr::SceneCamera3D heldLater = moving.predict(cameraAt(3.f), at(0.3f), at(6.f));
+    expect(close(held.position[0], heldLater.position[0], 1e-4f) && held.position[0] < 3.f + 10.f * 0.26f, "a stalled main thread leaves the camera held, not drifting");
+
+    // Stopping: what was predicted past the stop fades back, with no jump.
+    asr::SceneCamera3D stop = moving.predict(cameraAt(3.f), at(5.1f), at(5.1f));
+    expect(stop.position[0] > 3.f, "a correction starts from what was shown");
+    asr::SceneCamera3D settled = moving.predict(cameraAt(3.f), at(5.1f), at(7.f));
+    expect(close(settled.position[0], 3.f, 1e-3f), "a correction fades away");
+
+    // A cut, such as a teleport, is not motion.
+    asr::CameraPredictor cut;
+    cut.predict(cameraAt(0.f), at(0.f), at(0.f));
+    cut.predict(cameraAt(0.5f), at(0.1f), at(0.1f));
+    asr::SceneCamera3D teleported = cut.predict(cameraAt(5000.f), at(0.2f), at(0.25f));
+    expect(close(teleported.position[0], 5000.f, 1e-2f), "a cut lands at once, with nothing carried over");
+
+    // Turning a quarter of the way in two steps keeps a real, upright camera.
+    asr::CameraPredictor still;
+    const asr::SceneCamera3D same = cameraAt(7.f);
+    still.predict(same, at(0.f), at(0.f));
+    still.predict(same, at(0.1f), at(0.1f));
+    const asr::SceneCamera3D unchanged = still.predict(same, at(0.2f), at(0.3f));
+    expect(memcmp(&unchanged, &same, sizeof(same)) == 0, "a still camera comes through exactly");
+
+    asr::CameraPredictor turning;
+    const float turnedForward[3] = { std::cos(0.2f), std::sin(0.2f), 0.f };
+    const float turnedTwice[3] = { std::cos(0.4f), std::sin(0.4f), 0.f };
+    const float eye[3] = { 0.f, 0.f, 0.f };
+    turning.predict(asr::makeCameraFromAxes(eye, forward, up, 1.f, 1.5f, 0.1f, 200.f), at(0.f), at(0.f));
+    const asr::SceneCamera3D level = turning.predict(asr::makeCameraFromAxes(eye, forward, up, 1.f, 1.5f, 0.1f, 200.f), at(0.1f), at(0.1f));
+    turning.predict(asr::makeCameraFromAxes(eye, turnedForward, up, 1.f, 1.5f, 0.1f, 200.f), at(0.2f), at(0.2f));
+    turning.predict(asr::makeCameraFromAxes(eye, turnedTwice, up, 1.f, 1.5f, 0.1f, 200.f), at(0.3f), at(0.3f));
+    const asr::SceneCamera3D turned = turning.predict(asr::makeCameraFromAxes(eye, turnedTwice, up, 1.f, 1.5f, 0.1f, 200.f), at(0.3f), at(5.f));
+    expect(close(level.focal[1], turned.focal[1], 1e-4f) && close(level.farClip, turned.farClip, 1e-3f), "the lens stays the same");
+    const float lookX = -turned.viewRows[2][0];
+    const float lookY = -turned.viewRows[2][1];
+    const float lookZ = -turned.viewRows[2][2];
+    expect(close(lookX * lookX + lookY * lookY + lookZ * lookZ, 1.f, 1e-3f) && close(lookZ, 0.f, 1e-3f) && lookY > std::sin(0.4f), "a turn carries on in its own plane");
+
+    // A zoom eases out: each step is half the one before, ending at 2 m. It must never pass
+    // the end and come back, which is what a bump is.
+    asr::CameraPredictor zoom;
+    float position = 0.f;
+    float stepSize = 1.f;
+    float furthest = 0.f;
+    float previousShown = 0.f;
+    bool neverBack = true;
+    zoom.predict(cameraAt(0.f), at(0.f), at(0.f));
+    for (int step = 1; step <= 12; ++step)
+    {
+        position += stepSize;
+        stepSize *= 0.5f;
+        const asr::SceneCamera3D stepCamera = cameraAt(position);
+        for (int frame = 0; frame < 10; ++frame)
+        {
+            const float frameTime = 0.1f * float(step) + 0.01f * float(frame);
+            const float shown = zoom.predict(stepCamera, at(0.1f * float(step)), at(frameTime)).position[0];
+            furthest = std::max(furthest, shown);
+            neverBack = neverBack && shown >= previousShown - 0.01f;
+            previousShown = shown;
+        }
+    }
+    expect(furthest < 2.02f, "an easing camera does not pass where it is going");
+    expect(neverBack, "an easing camera does not go backwards");
+
+    // The first step of a motion has nothing to say it will go on.
+    asr::CameraPredictor starting;
+    starting.predict(cameraAt(0.f), at(0.f), at(0.f));
+    starting.predict(cameraAt(0.f), at(0.1f), at(0.1f));
+    expect(starting.predict(cameraAt(1.f), at(0.2f), at(0.29f)).position[0] < 1.01f, "a first step is not carried on");
 }
 
 class FakeChunks final : public asr::SceneChunks
@@ -1384,6 +1520,7 @@ int main(int argc, char** argv)
         testTextureQueue();
         testSceneGeometry();
         testRangeAllocator();
+        testCameraPredictor();
         testSceneStore();
         testFrameGraph();
         testPyramidLayout();

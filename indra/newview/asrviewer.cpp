@@ -83,7 +83,12 @@ bool dueOnce(LLCachedControl<F32>& at, const char* setting)
 void logFrameStats(const char* what, const asr::FrameStats& stats)
 {
     LL_INFOS("ASRenderer") << what << ": " << stats.frames << " frames, worst frame " << stats.worstFrameSeconds * 1000.0
-                           << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms" << LL_ENDL;
+                           << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms, average state " << stats.averageStateAgeSeconds * 1000.0
+                           << " ms, frames with a new state " << stats.newStates << LL_ENDL;
+    const asr::FrameParts& parts = stats.worstFrameParts;
+    LL_INFOS("ASRenderer") << "worst frame, ms: wait for GPU " << parts.waitForGpu * 1000.0 << ", acquire " << parts.acquire * 1000.0 << ", UI " << parts.prepareUI * 1000.0
+                           << ", record " << parts.record * 1000.0 << " of which scene update " << parts.sceneUpdate * 1000.0 << ", submit " << parts.submit * 1000.0
+                           << ", present " << parts.present * 1000.0 << "; worst memory refresh " << stats.worstRefreshSeconds * 1000.0 << LL_ENDL;
 }
 
 // The P2 gate: a stopped main thread must not reach the render rate.
@@ -210,7 +215,7 @@ public:
     {
         const asr::MemoryBudget& budget = sDevice->memoryBudget();
         used = budget.used(asr::MemoryCategory::Textures);
-        limit = budget.limit(asr::MemoryCategory::Textures);
+        limit = budget.textureLimit();
     }
 
     void beginUI() override
@@ -403,6 +408,8 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.height = sHeight;
     state.hasCamera = sHasCamera;
     state.camera = sCamera;
+    static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
+    state.predictCamera = predict_camera;
     sRenderThread->publishState();
 
     if (Clock::now() - sStatsLogged >= STATS_PERIOD)

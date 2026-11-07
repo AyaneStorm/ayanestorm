@@ -14,6 +14,9 @@
 
 #include <cstdint>
 #include <deque>
+#include <map>
+#include <set>
+#include <utility>
 #include <vector>
 
 namespace asr
@@ -40,20 +43,20 @@ public:
 
     void grow(uint64_t capacity);
     uint64_t capacity() const { return mEnd; }
-    uint64_t freeSpace() const;
+    uint64_t freeSpace() const { return mEnd - mBump + mFreeBytes; }
 
-    // Returns false when no range is large enough.
+    // Returns false when no range is large enough. Takes the smallest range that fits.
+    // Both cost log n: a teleport can leave tens of thousands of free ranges.
     bool allocate(uint64_t size, uint64_t alignment, uint64_t& offset);
     void release(uint64_t offset, uint64_t size);
 
 private:
-    struct Range
-    {
-        uint64_t offset;
-        uint64_t size;
-    };
+    void addFree(uint64_t offset, uint64_t size);
+    void removeFree(std::map<uint64_t, uint64_t>::iterator range);
 
-    std::vector<Range> mFree; // sorted by offset
+    std::map<uint64_t, uint64_t> mFreeByOffset;           // to merge neighbours
+    std::set<std::pair<uint64_t, uint64_t>> mFreeBySize;  // size, then offset
+    uint64_t mFreeBytes = 0;
     uint64_t mEnd = 0;
     uint64_t mBump = 0;       // everything past this has never been used
 };
@@ -104,7 +107,7 @@ public:
     uint64_t visibleCapacity() const; // of all lists together
 
     // Geometries waiting for upload room or for memory.
-    size_t pendingGeometries() const { return mPending.size(); }
+    size_t pendingGeometries() const { return mQueuedGeometries; }
 
     uint64_t triangles() const { return mTriangles; }   // in all instances
     uint32_t chunkCount() const { return uint32_t(mChunks.size()); }
@@ -132,6 +135,7 @@ private:
         float scale = 1.f;
         bool uploaded = false;
         bool removing = false; // asked to go, and waiting for its last user
+        bool queued = false;   // waiting in mPending to be uploaded
     };
 
     struct InstanceUse
@@ -193,6 +197,7 @@ private:
     std::vector<Geometry> mGeometries;
     std::vector<InstanceUse> mInstanceUses;
     std::deque<uint32_t> mPending;
+    size_t mQueuedGeometries = 0; // mPending can also hold entries of removed geometries
     std::vector<Chunk> mChunks;
     RangeAllocator mClusterRanges;
     std::deque<Retired> mRetired;

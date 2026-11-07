@@ -4,6 +4,9 @@
  */
 #include "asrrenderthread.h"
 
+#include <algorithm>
+#include <cmath>
+
 namespace asr
 {
 
@@ -30,7 +33,189 @@ void raiseTo(std::atomic<uint64_t>& worst, uint64_t value)
     }
 }
 
+constexpr float LONGEST_PREDICTION = 0.25f;    // seconds: past this the camera holds still
+constexpr float PREDICT_STEPS = 1.1f;          // as a share of the time between two steps
+constexpr float SLOWEST_STEP = 0.5f;           // seconds: with steps this far apart there is no motion to carry on
+constexpr float ERROR_HALF_LIFE = 0.06f;       // seconds
+constexpr float LARGEST_MOVE = 32.f;           // metres in one step: more is a cut, not motion
+constexpr float LARGEST_TURN = 1.6f;           // radians in one step, as above
+
 } // namespace
+
+// Rows of the view matrix are the camera's side, up and back axes in world space, which
+// makes them the columns of its rotation.
+CameraPredictor::Quat CameraPredictor::rotationOf(const SceneCamera3D& camera)
+{
+    const float (*m)[4] = camera.viewRows;
+    const float xx = m[0][0], xy = m[1][0], xz = m[2][0];
+    const float yx = m[0][1], yy = m[1][1], yz = m[2][1];
+    const float zx = m[0][2], zy = m[1][2], zz = m[2][2];
+
+    Quat q;
+    const float trace = xx + yy + zz;
+    if (trace > 0.f)
+    {
+        const float s = std::sqrt(trace + 1.f) * 2.f;
+        q = { s * 0.25f, (zy - yz) / s, (xz - zx) / s, (yx - xy) / s };
+    }
+    else if (xx > yy && xx > zz)
+    {
+        const float s = std::sqrt(1.f + xx - yy - zz) * 2.f;
+        q = { (zy - yz) / s, s * 0.25f, (xy + yx) / s, (xz + zx) / s };
+    }
+    else if (yy > zz)
+    {
+        const float s = std::sqrt(1.f + yy - xx - zz) * 2.f;
+        q = { (xz - zx) / s, (xy + yx) / s, s * 0.25f, (yz + zy) / s };
+    }
+    else
+    {
+        const float s = std::sqrt(1.f + zz - xx - yy) * 2.f;
+        q = { (yx - xy) / s, (xz + zx) / s, (yz + zy) / s, s * 0.25f };
+    }
+    return q;
+}
+
+CameraPredictor::Quat CameraPredictor::multiply(const Quat& a, const Quat& b)
+{
+    return { a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
+             a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+             a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+             a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w };
+}
+
+CameraPredictor::Quat CameraPredictor::fromVector(const Vec& rotation)
+{
+    const float angle = std::sqrt(rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z);
+    if (angle < 1e-7f)
+    {
+        return { 1.f, rotation.x * 0.5f, rotation.y * 0.5f, rotation.z * 0.5f };
+    }
+    const float scale = std::sin(angle * 0.5f) / angle;
+    return { std::cos(angle * 0.5f), rotation.x * scale, rotation.y * scale, rotation.z * scale };
+}
+
+CameraPredictor::Vec CameraPredictor::toVector(const Quat& rotation)
+{
+    const float sign = rotation.w < 0.f ? -1.f : 1.f; // the short way round
+    const float sine = std::sqrt(rotation.x * rotation.x + rotation.y * rotation.y + rotation.z * rotation.z);
+    if (sine < 1e-7f)
+    {
+        return { sign * rotation.x * 2.f, sign * rotation.y * 2.f, sign * rotation.z * 2.f };
+    }
+    const float scale = sign * 2.f * std::atan2(sine, sign * rotation.w) / sine;
+    return { rotation.x * scale, rotation.y * scale, rotation.z * scale };
+}
+
+SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_point published, Clock::time_point now)
+{
+    const auto seconds = [](Clock::duration duration) { return std::chrono::duration<float>(duration).count(); };
+    const Vec eye{ newest.position[0], newest.position[1], newest.position[2] };
+
+    const bool newStep = !mStarted || published != mPublished;
+    if (newStep)
+    {
+        const Quat rotation = rotationOf(newest);
+        const Quat conjugate{ mRotation.w, -mRotation.x, -mRotation.y, -mRotation.z };
+        const Vec turn = toVector(multiply(rotation, conjugate));
+        const Vec move{ eye.x - mEye.x, eye.y - mEye.y, eye.z - mEye.z };
+        const float step = seconds(published - mPublished);
+        const float moved = std::sqrt(move.x * move.x + move.y * move.y + move.z * move.z);
+        const float turned = std::sqrt(turn.x * turn.x + turn.y * turn.y + turn.z * turn.z);
+
+        if (!mStarted || moved > LARGEST_MOVE || turned > LARGEST_TURN)
+        {
+            // A cut: it lands at once, and the view has no motion to carry on.
+            mVelocity = {};
+            mSpin = {};
+            mStepSeconds = 0.f;
+            mSpeed = 0.f;
+            mSpinRate = 0.f;
+            mEyeError = {};
+            mRotationError = {};
+            mShownEye = eye;
+            mShownRotation = rotation;
+        }
+        else if (step <= 0.f || step > SLOWEST_STEP)
+        {
+            // After a stall nothing is known about the motion, but what is on screen still
+            // has to fade to the new step and not jump there.
+            mVelocity = {};
+            mSpin = {};
+            mStepSeconds = 0.f;
+            mSpeed = 0.f;
+            mSpinRate = 0.f;
+        }
+        else
+        {
+            // Only steady motion is worth carrying on. A camera easing in or out, as a zoom
+            // does, changes speed at every step, and carrying on the last speed would pass
+            // where it is going and then pull back, which shows as a bump. So the prediction
+            // is scaled by how alike the last two speeds are: 1 when steady, 0 on a first step.
+            const auto steadiness = [](float now, float before)
+            {
+                const float faster = std::max(now, before);
+                return faster > 0.f ? std::min(now, before) / faster : 1.f;
+            };
+            const float speed = moved / step;
+            const float spinRate = turned / step;
+            const float moveTrust = steadiness(speed, mSpeed);
+            const float turnTrust = steadiness(spinRate, mSpinRate);
+            mSpeed = speed;
+            mSpinRate = spinRate;
+            mVelocity = { moveTrust * move.x / step, moveTrust * move.y / step, moveTrust * move.z / step };
+            mSpin = { turnTrust * turn.x / step, turnTrust * turn.y / step, turnTrust * turn.z / step };
+            mStepSeconds = step;
+        }
+        mEye = eye;
+        mRotation = rotation;
+        mPublished = published;
+    }
+
+    const float frameSeconds = mStarted ? std::max(seconds(now - mLastFrame), 0.f) : 0.f;
+    const float ahead = std::clamp(seconds(now - published), 0.f, std::min(mStepSeconds * PREDICT_STEPS, LONGEST_PREDICTION));
+    const Vec predictedEye{ mEye.x + mVelocity.x * ahead, mEye.y + mVelocity.y * ahead, mEye.z + mVelocity.z * ahead };
+    const Quat predictedRotation = multiply(fromVector({ mSpin.x * ahead, mSpin.y * ahead, mSpin.z * ahead }), mRotation);
+    mStarted = true;
+    mLastFrame = now;
+
+    if (newStep)
+    {
+        // Whatever this new step corrects has to fade, not jump.
+        mEyeError = { mShownEye.x - predictedEye.x, mShownEye.y - predictedEye.y, mShownEye.z - predictedEye.z };
+        const Quat conjugate{ predictedRotation.w, -predictedRotation.x, -predictedRotation.y, -predictedRotation.z };
+        mRotationError = toVector(multiply(mShownRotation, conjugate));
+    }
+    const float fade = std::pow(0.5f, frameSeconds / ERROR_HALF_LIFE);
+    mEyeError = { mEyeError.x * fade, mEyeError.y * fade, mEyeError.z * fade };
+    mRotationError = { mRotationError.x * fade, mRotationError.y * fade, mRotationError.z * fade };
+
+    mShownEye = { predictedEye.x + mEyeError.x, predictedEye.y + mEyeError.y, predictedEye.z + mEyeError.z };
+    mShownRotation = multiply(fromVector(mRotationError), predictedRotation);
+
+    // A still camera comes through exactly as published, with nothing rebuilt.
+    const auto zero = [](const Vec& v) { return v.x == 0.f && v.y == 0.f && v.z == 0.f; };
+    if (zero(mVelocity) && zero(mSpin) && std::fabs(mEyeError.x) + std::fabs(mEyeError.y) + std::fabs(mEyeError.z) < 1e-5f
+        && std::fabs(mRotationError.x) + std::fabs(mRotationError.y) + std::fabs(mRotationError.z) < 1e-6f)
+    {
+        mEyeError = {};
+        mRotationError = {};
+        return newest;
+    }
+
+    // The rotation's matrix columns are the side, up and back axes.
+    const Quat& q = mShownRotation;
+    const float length = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    const float w = q.w / length, x = q.x / length, y = q.y / length, z = q.z / length;
+    const float up[3] = { 2.f * (x * y - w * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z + w * x) };
+    const float forward[3] = { -2.f * (x * z + w * y), -2.f * (y * z - w * x), -(1.f - 2.f * (x * x + y * y)) };
+    const float shownEye[3] = { mShownEye.x, mShownEye.y, mShownEye.z };
+
+    const float verticalFov = 2.f * std::atan(1.f / newest.focal[1]);
+    SceneCamera3D camera = makeCameraFromAxes(shownEye, forward, up, verticalFov, newest.focal[1] / newest.focal[0], newest.nearClip, newest.farClip);
+    camera.lodScale = newest.lodScale;
+    return camera;
+}
 
 void RenderThread::start()
 {
@@ -65,6 +250,12 @@ FrameStats RenderThread::takeStats()
     stats.frames = mFrames.exchange(0, std::memory_order_relaxed);
     stats.worstFrameSeconds = mWorstFrameMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
     stats.worstStateAgeSeconds = mWorstAgeMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
+    const uint64_t ageSum = mAgeSumMicros.exchange(0, std::memory_order_relaxed);
+    stats.averageStateAgeSeconds = stats.frames != 0 ? ageSum * 1e-6 / double(stats.frames) : 0.0;
+    stats.newStates = mNewStates.exchange(0, std::memory_order_relaxed);
+    stats.worstRefreshSeconds = mWorstRefreshMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
+    std::lock_guard<std::mutex> lock(mWorstPartsMutex);
+    stats.worstFrameParts = mWorstParts;
     return stats;
 }
 
@@ -73,6 +264,8 @@ void RenderThread::run()
     const Clock::time_point start = Clock::now();
     Clock::time_point previousFrame = start;
     Clock::time_point lastMemoryRefresh = start;
+    Clock::time_point lastState{};
+    CameraPredictor predictor;
 
     while (!mStop.load(std::memory_order_relaxed))
     {
@@ -92,7 +285,16 @@ void RenderThread::run()
         input.seconds = std::chrono::duration<float>(frameStart - start).count();
         input.testTriangle = state.testTriangle;
         input.ui = &mUI.read();
-        input.camera = state.hasCamera ? &state.camera : nullptr;
+        SceneCamera3D predicted;
+        if (state.hasCamera && state.predictCamera)
+        {
+            predicted = predictor.predict(state.camera, state.published, frameStart);
+            input.camera = &predicted;
+        }
+        else
+        {
+            input.camera = state.hasCamera ? &state.camera : nullptr;
+        }
         input.audit = state.audit;
         if (!mDevice.renderFrame(input))
         {
@@ -102,8 +304,21 @@ void RenderThread::run()
         }
 
         const Clock::time_point frameEnd = Clock::now();
-        raiseTo(mWorstFrameMicros, micros(frameEnd - previousFrame));
-        raiseTo(mWorstAgeMicros, micros(frameStart - state.published));
+        const uint64_t frameMicros = micros(frameEnd - previousFrame);
+        if (frameMicros > mWorstFrameMicros.load(std::memory_order_relaxed))
+        {
+            mWorstFrameMicros.store(frameMicros, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(mWorstPartsMutex);
+            mWorstParts = mDevice.frameParts();
+        }
+        const uint64_t ageMicros = micros(frameStart - state.published);
+        raiseTo(mWorstAgeMicros, ageMicros);
+        mAgeSumMicros.fetch_add(ageMicros, std::memory_order_relaxed);
+        if (state.published != lastState)
+        {
+            lastState = state.published;
+            mNewStates.fetch_add(1, std::memory_order_relaxed);
+        }
         previousFrame = frameEnd;
         mFrames.fetch_add(1, std::memory_order_relaxed);
         mPresented.fetch_add(1, std::memory_order_relaxed);
@@ -112,6 +327,7 @@ void RenderThread::run()
         {
             lastMemoryRefresh = frameEnd;
             mDevice.refreshMemoryBudget();
+            raiseTo(mWorstRefreshMicros, micros(Clock::now() - frameEnd));
         }
     }
 }

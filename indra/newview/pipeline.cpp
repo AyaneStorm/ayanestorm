@@ -3355,7 +3355,7 @@ void LLPipeline::shiftObjects(const LLVector3 &offset)
 
     mReflectionMapManager.shift(offseta);
 
-    ASRWorld::worldShifted(); // <AS:Chanayane/>
+    ASRWorld::worldShifted(offset); // <AS:Chanayane/>
 
     LLHUDText::shiftAll(offset);
     LLHUDNameTag::shiftAll(offset);

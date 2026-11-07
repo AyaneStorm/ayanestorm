@@ -33,6 +33,7 @@
 #include "llhttpconstants.h"
 #include "llmeshrepository.h"
 
+#include "asrworld.h" // <AS:Chanayane/>
 #include "llagent.h"
 #include "llappviewer.h"
 #include "llbufferstream.h"
@@ -5007,10 +5008,12 @@ void LLMeshRepository::notifyMeshLoaded(const LLVolumeParams& mesh_params, LLVol
 
         LLViewerStatsRecorder::instance().meshLoaded();
     }
+    ASRWorld::meshLoaded(mesh_params, volume, lod); // <AS:Chanayane/> last, as a worker then reads it
 }
 
 void LLMeshRepository::notifyMeshUnavailable(const LLVolumeParams& mesh_params, S32 request_lod, S32 volume_lod)
 { //called from main thread
+    ASRWorld::meshUnavailable(mesh_params, request_lod); // <AS:Chanayane/>
     //get list of objects waiting to be notified this mesh is loaded
     const auto& mesh_id = mesh_params.getSculptID();
     mesh_load_map::iterator obj_iter = mLoadingMeshes[request_lod].find(mesh_id);

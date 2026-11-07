@@ -34,45 +34,47 @@ void RangeAllocator::grow(uint64_t capacity)
     mEnd = std::max(mEnd, capacity);
 }
 
-uint64_t RangeAllocator::freeSpace() const
+void RangeAllocator::addFree(uint64_t offset, uint64_t size)
 {
-    uint64_t total = mEnd - mBump;
-    for (const Range& range : mFree)
-    {
-        total += range.size;
-    }
-    return total;
+    mFreeByOffset.emplace(offset, size);
+    mFreeBySize.emplace(size, offset);
+    mFreeBytes += size;
+}
+
+void RangeAllocator::removeFree(std::map<uint64_t, uint64_t>::iterator range)
+{
+    mFreeBytes -= range->second;
+    mFreeBySize.erase({ range->second, range->first });
+    mFreeByOffset.erase(range);
 }
 
 bool RangeAllocator::allocate(uint64_t size, uint64_t alignment, uint64_t& offset)
 {
     const auto aligned = [alignment](uint64_t value) { return (value + alignment - 1) / alignment * alignment; };
-    for (size_t i = 0; i < mFree.size(); ++i)
+
+    // The smallest range of this size usually fits. If aligning its start rules it out, a
+    // range this much larger always fits, so no search through ranges is ever needed.
+    auto found = mFreeBySize.lower_bound({ size, 0 });
+    if (found != mFreeBySize.end() && aligned(found->second) + size > found->second + found->first)
     {
-        const Range range = mFree[i];
-        const uint64_t start = aligned(range.offset);
-        if (start + size > range.offset + range.size)
+        found = mFreeBySize.lower_bound({ size + alignment - 1, 0 });
+    }
+    if (found != mFreeBySize.end())
+    {
+        const uint64_t rangeSize = found->first;
+        const uint64_t rangeOffset = found->second;
+        const uint64_t start = aligned(rangeOffset);
+        removeFree(mFreeByOffset.find(rangeOffset));
+        if (start != rangeOffset)
         {
-            continue;
+            addFree(rangeOffset, start - rangeOffset);
+        }
+        const uint64_t tail = rangeOffset + rangeSize - (start + size);
+        if (tail != 0)
+        {
+            addFree(start + size, tail);
         }
         offset = start;
-        const uint64_t tail = range.offset + range.size - (start + size);
-        if (start != range.offset)
-        {
-            mFree[i].size = start - range.offset;
-            if (tail != 0)
-            {
-                mFree.insert(mFree.begin() + i + 1, Range{ start + size, tail });
-            }
-        }
-        else if (tail != 0)
-        {
-            mFree[i] = Range{ start + size, tail };
-        }
-        else
-        {
-            mFree.erase(mFree.begin() + i);
-        }
         return true;
     }
 
@@ -92,20 +94,24 @@ bool RangeAllocator::allocate(uint64_t size, uint64_t alignment, uint64_t& offse
 
 void RangeAllocator::release(uint64_t offset, uint64_t size)
 {
-    const auto next = std::lower_bound(mFree.begin(), mFree.end(), offset,
-                                       [](const Range& range, uint64_t value) { return range.offset < value; });
-    size_t index = size_t(next - mFree.begin());
-    mFree.insert(next, Range{ offset, size });
-    if (index + 1 < mFree.size() && mFree[index].offset + mFree[index].size == mFree[index + 1].offset)
+    const auto next = mFreeByOffset.lower_bound(offset);
+    if (next != mFreeByOffset.end() && offset + size == next->first)
     {
-        mFree[index].size += mFree[index + 1].size;
-        mFree.erase(mFree.begin() + index + 1);
+        size += next->second;
+        removeFree(next);
     }
-    if (index > 0 && mFree[index - 1].offset + mFree[index - 1].size == mFree[index].offset)
+    auto previous = mFreeByOffset.lower_bound(offset);
+    if (previous != mFreeByOffset.begin())
     {
-        mFree[index - 1].size += mFree[index].size;
-        mFree.erase(mFree.begin() + index);
+        --previous;
+        if (previous->first + previous->second == offset)
+        {
+            offset = previous->first;
+            size += previous->second;
+            removeFree(previous);
+        }
     }
+    addFree(offset, size);
 }
 
 void SceneStore::ensureTable(SceneTable table, uint64_t entries)
@@ -238,6 +244,8 @@ void SceneStore::applyGeometry(GeometryCommand& command)
     memcpy(geometry.center, command.data.center, sizeof(geometry.center));
     geometry.scale = command.data.scale;
     geometry.data = std::move(command.data);
+    geometry.queued = true;
+    ++mQueuedGeometries;
     mPending.push_back(command.id);
 
     // Instances hold the box they were packed in, so an LOD in another box cannot be used.
@@ -340,10 +348,12 @@ void SceneStore::removeIfUnused(uint32_t id, uint64_t frame)
     }
     geometry.removing = false;
 
-    const auto pending = std::find(mPending.begin(), mPending.end(), id);
-    if (pending != mPending.end())
+    // Its entry in mPending is skipped when it reaches the front. Taking it out here would
+    // mean searching the queue, once for each of the thousands removed by a teleport.
+    if (geometry.queued)
     {
-        mPending.erase(pending);
+        geometry.queued = false;
+        --mQueuedGeometries;
     }
     const GpuGeometry empty{};
     writeEntry(SceneTable::Geometries, id, &empty, sizeof(empty));
@@ -547,6 +557,11 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     while (!mPending.empty())
     {
         const uint32_t id = mPending.front();
+        if (!mGeometries[id].queued)
+        {
+            mPending.pop_front(); // removed while it waited
+            continue;
+        }
         const GeometryData& data = mGeometries[id].data;
         const uint64_t bytes = data.blob.size() + data.clusters.size() * sizeof(GpuCluster);
         if ((uploaded != 0 && mTableBytes.size() + uploaded + bytes > uploadLimit) || !upload(id, chunks))
@@ -554,6 +569,8 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             break;
         }
         uploaded += bytes;
+        mGeometries[id].queued = false;
+        --mQueuedGeometries;
         mPending.pop_front();
     }
     ensureTable(SceneTable::Clusters, mClusterRanges.capacity());

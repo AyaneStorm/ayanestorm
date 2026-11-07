@@ -44,6 +44,12 @@ public:
 
     uint64_t limit(MemoryCategory category) const;
     uint64_t used(MemoryCategory category) const;
+
+    // What textures may take now, which is never below their limit(). Other categories
+    // leave their share unused until something needs it, so textures may use what is really
+    // free, less a reserve. As the others grow this falls by itself, and textures shrink to
+    // make room, so nothing depends on the size of the card.
+    uint64_t textureLimit() const;
     uint64_t totalUsed() const { return mTotalUsed.load(std::memory_order_relaxed); }
 
     // Returns false, and changes nothing, if the category has no room left.

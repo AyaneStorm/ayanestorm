@@ -242,6 +242,7 @@ void display_update_camera();
 
 static void display_native(bool rebuild)
 {
+    LLTimer part_timer; // temporary: see ASRWorld::addMainTime()
     if (rebuild)
     {
         gPipeline.rebuildPools();
@@ -252,14 +253,19 @@ static void display_native(bool rebuild)
     gBumpImageList.updateImages();
     gTextureList.updateImages(llclamp(0.050f * gFrameIntervalSeconds.value(), 0.002f, 0.005f));
     gGLTFMaterialList.flushMaterials();
+    ASRWorld::addMainTime(ASRWorld::MAIN_TEXTURES, part_timer.getElapsedTimeAndResetF32());
 
     display_update_camera();
+    ASRWorld::addMainTime(ASRWorld::MAIN_CAMERA, part_timer.getElapsedTimeAndResetF32());
 
     const F32 max_geom_update_time = 0.005f * 10.f * gFrameIntervalSeconds.value(); // 50 ms/second update time
     gPipeline.createObjects(max_geom_update_time);
     gPipeline.processPartitionQ();
+    ASRWorld::addMainTime(ASRWorld::MAIN_CREATE, part_timer.getElapsedTimeAndResetF32());
     gPipeline.updateGeom(max_geom_update_time);
+    ASRWorld::addMainTime(ASRWorld::MAIN_GEOMETRY, part_timer.getElapsedTimeAndResetF32());
     ASRWorld::update();
+    part_timer.reset();
     ASRViewer::publishFrame(gViewerWindow->getWindow());
 
     if (LLApp::isExiting() || !ASRViewer::beginUI())
@@ -282,6 +288,7 @@ static void display_native(bool rebuild)
     gViewerWindow->drawDebugText();
     gGL.flush();
     ASRViewer::publishUI();
+    ASRWorld::addMainTime(ASRWorld::MAIN_UI, part_timer.getElapsedTimeAndResetF32());
 }
 // </AS:Chanayane>
 

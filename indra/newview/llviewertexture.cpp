@@ -1736,8 +1736,10 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     }
 
     // <AS:Chanayane> At the limit a normal texture keeps the image it has, at its discard
-    // level, while bias makes room. Boosted ones, such as the UI, always get in.
-    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH
+    // level, while bias makes room. Boosted ones, such as the UI, always get in, and so does
+    // a first image: with none, a leaf card shows as a solid grey sheet, and being turned
+    // away would leave it so. While frozen these ask for a small image: see processTextureStats().
+    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && mGLTexturep->getHasGLTexture()
         && !ASR::textureFits(mRawImage->getWidth(), mRawImage->getHeight(), mRawImage->getComponents(), mUseMipMaps))
     {
         return false;
@@ -3248,6 +3250,14 @@ void LLViewerLODTexture::processTextureStats()
         // If the image has not been significantly visible in a while, we don't want it
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, (S8)(MAX_DISCARD_LEVEL + 1));
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
+        // <AS:Chanayane> Nothing shrinks in this branch, so a texture nothing shows keeps its
+        // full size until it is flushed 30 s later. After a teleport that is all of memory,
+        // and it holds back the new place. Here a shrink costs a copy of mips already held.
+        if (ASR::active() && getDiscardLevel() < mDesiredDiscardLevel && !mForceToSaveRawImage)
+        {
+            scaleDown();
+        }
+        // </AS:Chanayane>
     }
     else if (!mFullWidth  || !mFullHeight)
     {
@@ -3315,6 +3325,14 @@ void LLViewerLODTexture::processTextureStats()
             // stop requesting more
             mDesiredDiscardLevel = current_discard;
         }
+        // <AS:Chanayane> With no image yet, the condition above has nothing to hold on to. A
+        // first image at the limit is a small one: 128 pixels wide from a 1024 texture.
+        constexpr S32 FIRST_IMAGE_AT_LIMIT = 3;
+        if (ASR::active() && isUpdateFrozen() && mBoostLevel < BOOST_SCULPTED && current_discard < 0)
+        {
+            mDesiredDiscardLevel = llmax(mDesiredDiscardLevel, llmin(FIRST_IMAGE_AT_LIMIT, getMaxDiscardLevel()));
+        }
+        // </AS:Chanayane>
         mDesiredDiscardLevel = llmin(mDesiredDiscardLevel, (S32)mLoadedCallbackDesiredDiscardLevel);
     }
 

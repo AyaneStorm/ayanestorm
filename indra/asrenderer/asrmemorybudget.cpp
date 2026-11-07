@@ -18,6 +18,10 @@ constexpr uint64_t MINIMUM_STAGING_BYTES = 48ull * 1024 * 1024;
 constexpr uint64_t MAXIMUM_UPLOAD_BYTES = 64ull * 1024 * 1024;
 constexpr uint64_t SMALL_STAGING_BYTES = 16ull * 1024 * 1024; // kept for per-frame views and readbacks
 
+// Of the whole budget, kept out of textures' reach for what the others may need at short
+// notice. It keeps total use under the 85% of pressure(), which starts dropping mips.
+constexpr uint64_t TEXTURE_RESERVE_PERCENT = 25;
+
 constexpr uint64_t SHARE_PER_MILLE[] = {
     250, // RenderTargets
     100, // Shadows
@@ -68,6 +72,16 @@ uint64_t MemoryBudget::limit(MemoryCategory category) const
 uint64_t MemoryBudget::used(MemoryCategory category) const
 {
     return mUsed[uint32_t(category)].load(std::memory_order_relaxed);
+}
+
+uint64_t MemoryBudget::textureLimit() const
+{
+    const uint64_t total = budget();
+    const uint64_t others = totalUsed() - used(MemoryCategory::Textures);
+    const uint64_t kept = others + total / 100 * TEXTURE_RESERVE_PERCENT;
+    const uint64_t room = total > kept ? total - kept : 0;
+    const uint64_t share = limit(MemoryCategory::Textures);
+    return room > share ? room : share;
 }
 
 bool MemoryBudget::reserve(MemoryCategory category, uint64_t bytes)

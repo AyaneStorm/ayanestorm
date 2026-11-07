@@ -44,12 +44,13 @@ void main()
     const vec3 world = transformPoint(instance.rows, packedPosition(cluster.positions, vertex));
     gl_Position = view.viewProjection * vec4(world, 1.0);
 
-#ifdef MASKED
-    // Reversed depth, so a larger z is nearer. Each rank is a few steps of the depth
-    // buffer at any distance: under 0.4 mm at 256 m. Opaque surfaces never pay for this.
+    // Reversed depth, so a larger z is nearer, and depth is near / distance, so this moves a
+    // surface by the same share of its distance everywhere. One rank is a few steps of the
+    // depth buffer. The highest rank is 2.4 cm at 100 m, well under a pixel of real depth.
     const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
-    gl_Position.z *= 1.0 + float(rank) / 1048576.0;
+    gl_Position.z *= 1.0 + float(rank) / 4194304.0;
 
+#ifdef MASKED
     const Material material = MaterialsRef(push.materials).items[instance.material];
     WordsRef attributes = WordsRef(cluster.attributes);
     const vec3 faceUV = vec3(uintBitsToFloat(attributes.words[vertex * 4u + 2u]), uintBitsToFloat(attributes.words[vertex * 4u + 3u]), 1.0);
