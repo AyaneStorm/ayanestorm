@@ -581,8 +581,101 @@ void testSceneGeometry()
     expect(std::find(seen.begin(), seen.end(), uint8_t(0)) == seen.end(), "every vertex is used");
     expect(insideSphere, "bounding spheres hold their vertices");
 
+    const asr::GeometryData small = asrtest::build(asrtest::makeSphere(3, 4));
+    expect(small.clusters.size() <= asr::CLUSTERS_WITHOUT_GROUPS && small.groups.empty(), "a small face has no groups");
+
     const asr::GeometryData empty = asr::buildGeometry(nullptr, 0, nullptr, 0);
     expect(empty.clusters.empty(), "an empty face builds to nothing");
+}
+
+void testClusterGroups()
+{
+    // Dense enough that each group covers a small patch of the sphere, so its normals agree.
+    const asr::GeometryData geometry = asrtest::build(asrtest::makeSphere(120, 240));
+    const uint16_t* indices = reinterpret_cast<const uint16_t*>(geometry.blob.data());
+    const asr::PackedPosition* positions = reinterpret_cast<const asr::PackedPosition*>(geometry.blob.data() + geometry.positionsOffset);
+    printf("%zu clusters in %zu groups\n", geometry.clusters.size(), geometry.groups.size());
+
+    // Every cluster once, in order, with spheres around their clusters'.
+    uint32_t nextCluster = 0;
+    bool groupsFit = !geometry.groups.empty();
+    bool groupSpheresHold = true;
+    for (const asr::ClusterGroupData& group : geometry.groups)
+    {
+        groupsFit = groupsFit && group.firstCluster == nextCluster && group.clusterCount >= 1 && group.clusterCount <= asr::CLUSTER_GROUP_SIZE;
+        nextCluster += group.clusterCount;
+        for (uint32_t i = group.firstCluster; i < group.firstCluster + group.clusterCount && i < geometry.clusters.size(); ++i)
+        {
+            const asr::ClusterData& cluster = geometry.clusters[i];
+            const float dx = cluster.center[0] - group.center[0];
+            const float dy = cluster.center[1] - group.center[1];
+            const float dz = cluster.center[2] - group.center[2];
+            groupSpheresHold = groupSpheresHold && std::sqrt(dx * dx + dy * dy + dz * dz) + cluster.radius <= group.radius * 1.0001f;
+        }
+    }
+    expect(groupsFit && nextCluster == geometry.clusters.size(), "groups hold every cluster once, in order, 32 at most");
+    expect(groupSpheresHold, "a group's sphere holds its clusters' spheres");
+
+    // The GPU's test of a group's normal cone, from the shader. It may only drop a group
+    // whose every triangle faces away.
+    const auto facesAway = [](uint32_t cone, const float* center, float radius, const float* camera)
+    {
+        const float cutoff = float(int8_t(cone >> 24)) / 127.f;
+        if (cutoff >= 1.f)
+        {
+            return false;
+        }
+        const float axis[3] = { float(int8_t(cone)) / 127.f, float(int8_t(cone >> 8)) / 127.f, float(int8_t(cone >> 16)) / 127.f };
+        const float to[3] = { center[0] - camera[0], center[1] - camera[1], center[2] - camera[2] };
+        const float distance = std::sqrt(to[0] * to[0] + to[1] * to[1] + to[2] * to[2]);
+        return to[0] * axis[0] + to[1] * axis[1] + to[2] * axis[2] >= cutoff * distance + radius;
+    };
+    uint32_t dropped = 0;
+    bool dropsAreRight = true;
+    uint32_t seed = 12345;
+    const auto random = [&seed]() { seed = seed * 1664525u + 1013904223u; return float(seed >> 8) / float(1u << 24) * 2.f - 1.f; };
+    for (int view = 0; view < 500; ++view)
+    {
+        float camera[3] = { random(), random(), random() };
+        const float length = std::sqrt(camera[0] * camera[0] + camera[1] * camera[1] + camera[2] * camera[2]) + 1e-6f;
+        const float distance = 1.2f + 2.f * (random() * 0.5f + 0.5f);
+        for (float& value : camera)
+        {
+            value = value / length * distance;
+        }
+        for (const asr::ClusterGroupData& group : geometry.groups)
+        {
+            if (!facesAway(group.cone, group.center, group.radius, camera))
+            {
+                continue;
+            }
+            ++dropped;
+            for (uint32_t i = group.firstCluster; i < group.firstCluster + group.clusterCount; ++i)
+            {
+                const uint16_t* first = indices + geometry.clusters[i].indexOffset / 2;
+                for (uint32_t t = 0; t < geometry.clusters[i].triangles; ++t)
+                {
+                    float p[3][3];
+                    for (int corner = 0; corner < 3; ++corner)
+                    {
+                        for (int axis = 0; axis < 3; ++axis)
+                        {
+                            p[corner][axis] = positions[first[t * 3 + corner]].xyz[axis] / 32767.f;
+                        }
+                    }
+                    const float e1[3] = { p[1][0] - p[0][0], p[1][1] - p[0][1], p[1][2] - p[0][2] };
+                    const float e2[3] = { p[2][0] - p[0][0], p[2][1] - p[0][1], p[2][2] - p[0][2] };
+                    const float n[3] = { e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
+                    const float toCamera[3] = { camera[0] - p[0][0], camera[1] - p[0][1], camera[2] - p[0][2] };
+                    const float nLength = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                    const float facing = (n[0] * toCamera[0] + n[1] * toCamera[1] + n[2] * toCamera[2]) / (nLength + 1e-12f);
+                    dropsAreRight = dropsAreRight && facing <= 1e-3f;
+                }
+            }
+        }
+    }
+    expect(dropped > 0, "groups facing away are dropped");
+    expect(dropsAreRight, "a dropped group has no triangle facing the camera");
 }
 
 void testRangeAllocator()
@@ -1029,7 +1122,7 @@ void testFrameGraph()
     expect(!scene.isRunning(asr::PassAuditDraw), "the audit costs nothing unless asked for");
     scene.setSink(asr::ResultAuditPixels, CopyRead, true);
     expect(scene.compile(error) && scene.isRunning(asr::PassAuditDraw), "asking for the audit runs it");
-    expect(scene.passCount() <= asr::MAX_SCENE_PASSES, "every scene pass can be timed");
+    expect(scene.passCount() <= asr::MAX_TIMED_PASSES, "every scene pass can be timed");
 }
 
 void testPyramidLayout()
@@ -1386,9 +1479,9 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     if (city)
     {
         const asr::SceneStats stats = device->sceneStats();
-        printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, %llu retested, %u chunks, %llu geometries waiting\n", stats.instances,
-               stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters, (unsigned long long)stats.retestEntries,
-               stats.chunks, (unsigned long long)stats.pendingGeometries);
+        printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, %llu retested, %llu groups, %u chunks, %llu geometries waiting\n",
+               stats.instances, stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters,
+               (unsigned long long)stats.retestEntries, (unsigned long long)stats.groupEntries, stats.chunks, (unsigned long long)stats.pendingGeometries);
         double total = 0.0;
         for (uint32_t i = 0; i < stats.passCount; ++i)
         {
@@ -1524,6 +1617,7 @@ int main(int argc, char** argv)
         testUIList();
         testTextureQueue();
         testSceneGeometry();
+        testClusterGroups();
         testRangeAllocator();
         testCameraPredictor();
         testSceneStore();

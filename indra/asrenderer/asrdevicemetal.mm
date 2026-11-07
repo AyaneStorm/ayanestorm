@@ -609,8 +609,10 @@ private:
         }
 
         const uint64_t visibleBytes = mSceneStore.visibleCapacity() * sizeof(GpuListEntry);
-        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
-        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list"))
+        const uint64_t groupBytes = mSceneStore.groupCapacity() * sizeof(GpuListEntry);
+        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.groupCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
+        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list") ||
+            !growList(mSceneGroups, groupBytes, "group list"))
         {
             [blit endEncoding];
             return false;
@@ -674,6 +676,7 @@ private:
         mScenePush.counts = addressOf(mSceneCounts);
         mScenePush.retest = addressOf(mSceneRetest);
         mScenePush.pyramid = addressOf(mScenePyramid);
+        mScenePush.groups = addressOf(mSceneGroups);
         return true;
     }
 
@@ -685,7 +688,14 @@ private:
         [cull setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         if (phase == CULL_LATE)
         {
-            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, retestGroups)
+            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, retest)
+                                   threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        }
+        else if (phase >= CULL_GROUPS_EARLY)
+        {
+            const uint32_t work = phase == CULL_GROUPS_LATE ? 1 : 0;
+            [cull dispatchThreadgroupsWithIndirectBuffer:mSceneCounts
+                                    indirectBufferOffset:offsetof(GpuSceneCounts, groups) + work * sizeof(GpuWorkCount)
                                    threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
         }
         else
@@ -812,6 +822,9 @@ private:
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
+        mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
+        mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
+        mGraph.setBody(PassAuditGroups, [this]() { return passCull(CULL_GROUPS_AUDIT); });
         mGraph.setBody(PassDrawEarly, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, early), false, false); });
         mGraph.setBody(PassPyramidEarly, [this]() { return passPyramid(); });
         mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
@@ -862,7 +875,8 @@ private:
                 mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
                 mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
             }
-            mSceneFrameStats.retestEntries = counts->retestCount;
+            mSceneFrameStats.retestEntries = counts->retest.entries;
+            mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
         }
         if (mAuditWritten[slot])
         {
@@ -1320,6 +1334,7 @@ private:
     id<MTLBuffer> mSceneTables[SCENE_TABLES];
     id<MTLBuffer> mSceneVisible = nil;
     id<MTLBuffer> mSceneRetest = nil;
+    id<MTLBuffer> mSceneGroups = nil;
     id<MTLBuffer> mSceneCounts = nil;
     id<MTLBuffer> mScenePyramid = nil;
     id<MTLBuffer> mSceneCountsTemplate = nil;

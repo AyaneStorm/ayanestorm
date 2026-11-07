@@ -23,13 +23,23 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("scene counts", ResultScope::Frame);
     graph.addResult("audit visibility", ResultScope::Frame);
     graph.addResult("audit pixels", ResultScope::Frame);
+    graph.addResult("group list", ResultScope::Frame);
 
+    // The group passes read their dispatch size from the counts, so they take the draw
+    // arguments as Indirect too.
     graph.addPass("upload", { { ResultSceneData, CopyWrite | Keep }, { ResultDrawArguments, CopyWrite } });
     graph.addPass("cull early", { { ResultSceneData, ComputeRead },
                                   { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                   { ResultDrawArguments, ComputeWrite | Keep },
                                   { ResultVisibleClusters, ComputeWrite },
-                                  { ResultRetestList, ComputeWrite } });
+                                  { ResultRetestList, ComputeWrite },
+                                  { ResultGroupList, ComputeWrite } });
+    graph.addPass("groups early", { { ResultSceneData, ComputeRead },
+                                    { ResultDepthPyramid, ComputeRead | PreviousFrame },
+                                    { ResultGroupList, ComputeRead },
+                                    { ResultDrawArguments, Indirect | ComputeWrite | Keep },
+                                    { ResultVisibleClusters, ComputeWrite | Keep },
+                                    { ResultRetestList, ComputeWrite | Keep } });
     graph.addPass("draw early", { { ResultSceneData, VertexRead },
                                   { ResultDrawArguments, Indirect },
                                   { ResultVisibleClusters, VertexRead },
@@ -40,7 +50,13 @@ void declareSceneGraph(FrameGraph& graph)
                                  { ResultDepthPyramid, ComputeRead },
                                  { ResultRetestList, ComputeRead },
                                  { ResultDrawArguments, Indirect | ComputeWrite | Keep },
-                                 { ResultVisibleClusters, ComputeWrite | Keep } });
+                                 { ResultVisibleClusters, ComputeWrite | Keep },
+                                 { ResultGroupList, ComputeWrite | Keep } });
+    graph.addPass("groups late", { { ResultSceneData, ComputeRead },
+                                   { ResultDepthPyramid, ComputeRead },
+                                   { ResultGroupList, ComputeRead },
+                                   { ResultDrawArguments, Indirect | ComputeWrite | Keep },
+                                   { ResultVisibleClusters, ComputeWrite | Keep } });
     graph.addPass("draw late", { { ResultSceneData, VertexRead },
                                  { ResultDrawArguments, Indirect },
                                  { ResultVisibleClusters, VertexRead },
@@ -59,7 +75,12 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addPass("audit reset", { { ResultDrawArguments, CopyWrite | Keep } });
     graph.addPass("audit cull", { { ResultSceneData, ComputeRead },
                                   { ResultDrawArguments, ComputeWrite | Keep },
-                                  { ResultVisibleClusters, ComputeWrite | Keep } });
+                                  { ResultVisibleClusters, ComputeWrite | Keep },
+                                  { ResultGroupList, ComputeWrite | Keep } });
+    graph.addPass("audit groups", { { ResultSceneData, ComputeRead },
+                                    { ResultGroupList, ComputeRead },
+                                    { ResultDrawArguments, Indirect | ComputeWrite | Keep },
+                                    { ResultVisibleClusters, ComputeWrite | Keep } });
     graph.addPass("audit draw", { { ResultSceneData, VertexRead },
                                   { ResultDrawArguments, Indirect },
                                   { ResultVisibleClusters, VertexRead },

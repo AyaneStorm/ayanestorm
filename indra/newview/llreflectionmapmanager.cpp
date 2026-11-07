@@ -40,6 +40,7 @@
 #include "llstartup.h"
 #include "llviewermenufile.h"
 #include "llnotificationsutil.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 
 #if LL_WINDOWS
 #pragma warning (push)
@@ -205,7 +206,11 @@ static bool check_priority(LLReflectionMap* a, LLReflectionMap* b)
 // helper class to seed octree with probes
 void LLReflectionMapManager::update()
 {
-    if (!LLPipeline::sReflectionProbesEnabled || gTeleportDisplay || LLStartUp::getStartupState() < STATE_STARTED)
+    // <AS:Chanayane> The new renderer has no reflection probes yet, and this work is all for
+    // OpenGL's: it cost about 1.7 ms of every main loop there, for nothing on screen.
+    // if (!LLPipeline::sReflectionProbesEnabled || gTeleportDisplay || LLStartUp::getStartupState() < STATE_STARTED)
+    if (!LLPipeline::sReflectionProbesEnabled || gTeleportDisplay || LLStartUp::getStartupState() < STATE_STARTED || ASR::active())
+    // </AS:Chanayane>
     {
         return;
     }

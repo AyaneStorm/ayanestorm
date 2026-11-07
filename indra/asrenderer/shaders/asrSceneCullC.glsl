@@ -1,17 +1,22 @@
 /**
  * asrSceneCullC.glsl
  * Finds the clusters to draw. The draw counts are the list lengths, so the draws that
- * follow need nothing from the CPU. It does three jobs, chosen by push.phase:
+ * follow need nothing from the CPU. It does six jobs, chosen by push.phase:
  *
- * Early: one thread per instance. Picks an LOD, tests the instance against the view
- * and against last frame's depth pyramid, then does the same for each cluster, and also
- * tests whether the cluster faces away. What the pyramid hides goes on the retest list,
- * and the rest is drawn.
+ * Early: one thread per instance. Picks an LOD, and tests the instance against the view
+ * and against last frame's depth pyramid. A small geometry has its clusters tested right
+ * there, each also for facing away. A larger one has its groups tested the same way, and
+ * each group that passes goes on the group list. What the pyramid hides goes on the
+ * retest list, and the rest is drawn.
  *
- * Late: one thread per retest entry, tested against the pyramid of this frame's depth.
+ * Groups early: one thread per cluster of each group on the list, tested as above. So a
+ * dense mesh close up is spread over many threads, not walked by one.
  *
- * Audit: as early, but with no occlusion test: a test's way of finding what occlusion
- * got wrong.
+ * Late: one thread per retest entry, tested against the pyramid of this frame's depth. A
+ * group that passes goes on the late part of the group list, for groups late.
+ *
+ * Audit, and groups audit: as early, but with no occlusion test: a test's way of finding
+ * what occlusion got wrong.
  */
 #version 460
 #extension GL_GOOGLE_include_directive : require
@@ -22,9 +27,15 @@ layout(local_size_x = 64) in;
 const uint CULL_EARLY = 0u;
 const uint CULL_LATE = 1u;
 const uint CULL_AUDIT = 2u;
+const uint CULL_GROUPS_EARLY = 3u;
+const uint CULL_GROUPS_LATE = 4u;
+const uint CULL_GROUPS_AUDIT = 5u;
 
 const uint WHOLE_INSTANCE = 0xFFFFFFFFu;
+const uint RETEST_GROUP = 0x80000000u;
 const uint MAX_LODS = 4u;
+const uint CLUSTER_GROUP_SIZE = 32u;
+const uint GROUPS_PER_WORKGROUP = 2u; // 64 threads, one per cluster of a group
 
 struct DrawArguments
 {
@@ -34,12 +45,18 @@ struct DrawArguments
     uint firstInstance;
 };
 
+struct WorkCount
+{
+    uint groups[3]; // an indirect dispatch
+    uint entries;
+};
+
 layout(buffer_reference, std430) buffer CountsRef
 {
     DrawArguments early[LISTS];
     DrawArguments late[LISTS];
-    uint retestGroups[3];
-    uint retestCount;
+    WorkCount retest;
+    WorkCount groupWork[2]; // early, late
 };
 layout(buffer_reference, std430) writeonly buffer ListWriteRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer PyramidRef { float values[]; };
@@ -49,6 +66,16 @@ vec4 occluderRows[3];
 vec2 occluderFocal;
 float occluderNear;
 bool testOcclusion;
+
+bool latePhase()
+{
+    return push.phase == CULL_LATE || push.phase == CULL_GROUPS_LATE;
+}
+
+bool earlyPhase()
+{
+    return push.phase == CULL_EARLY || push.phase == CULL_GROUPS_EARLY;
+}
 
 bool insideView(ViewRef view, vec3 center, float radius)
 {
@@ -123,16 +150,17 @@ vec3 cameraInPacked(Instance instance, vec3 camera)
     return inverse(transpose(linear)) * offset;
 }
 
-bool facesAway(Cluster cluster, vec3 camera)
+// For a cluster or a group: true when every triangle inside the sphere faces away.
+bool facesAway(uint cone, vec3 center, float radius, vec3 camera)
 {
-    const float cutoff = float(int(cluster.cone) >> 24) / 127.0;
+    const float cutoff = float(int(cone) >> 24) / 127.0;
     if (cutoff >= 1.0)
     {
         return false;
     }
-    const vec3 axis = vec3(float(int(cluster.cone << 24) >> 24), float(int(cluster.cone << 16) >> 24), float(int(cluster.cone << 8) >> 24)) / 127.0;
-    const vec3 toCluster = cluster.center - camera;
-    return dot(toCluster, axis) >= cutoff * length(toCluster) + cluster.radius;
+    const vec3 axis = vec3(float(int(cone << 24) >> 24), float(int(cone << 16) >> 24), float(int(cone << 8) >> 24)) / 127.0;
+    const vec3 toSphere = center - camera;
+    return dot(toSphere, axis) >= cutoff * length(toSphere) + radius;
 }
 
 uint listOf(uint flags, uint triangles)
@@ -156,7 +184,7 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
     const uint list = listOf(instance.flags, triangles);
     CountsRef counts = CountsRef(push.output_counts);
     ListWriteRef visible = ListWriteRef(push.visible);
-    if (push.phase == CULL_LATE)
+    if (latePhase())
     {
         // The late list carries on where the early one ended, so a visibility pixel
         // numbers one entry of one list whichever draw made it.
@@ -178,12 +206,27 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
 void retest(uint instanceIndex, uint clusterId)
 {
     CountsRef counts = CountsRef(push.output_counts);
-    const uint slot = atomicAdd(counts.retestCount, 1u);
+    const uint slot = atomicAdd(counts.retest.entries, 1u);
     if ((slot & 63u) == 0u)
     {
-        atomicAdd(counts.retestGroups[0], 1u);
+        atomicAdd(counts.retest.groups[0], 1u);
     }
     ListWriteRef(push.retest).items[slot] = ListEntry(instanceIndex, clusterId);
+}
+
+// A group whose clusters are to be tested, by the groups job of the same phase. The late
+// part of the list carries on where the early part ended.
+void addGroup(uint instanceIndex, uint groupId)
+{
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint work = latePhase() ? 1u : 0u;
+    const uint slot = atomicAdd(counts.groupWork[work].entries, 1u);
+    if (slot % GROUPS_PER_WORKGROUP == 0u)
+    {
+        atomicAdd(counts.groupWork[work].groups[0], 1u);
+    }
+    const uint base = work == 1u ? counts.groupWork[0].entries : 0u;
+    ListWriteRef(push.groups).items[base + slot] = ListEntry(instanceIndex, groupId);
 }
 
 // From the finest LOD to the one wanted. An LOD still on its way is passed over.
@@ -218,33 +261,49 @@ uint chooseGeometry(ViewRef view, Instance instance, float scaleBound)
     return id;
 }
 
-void walkClusters(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry, float scaleBound)
+void testCluster(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, vec3 camera, float scaleBound)
 {
-    const bool twoSided = (instance.flags & INSTANCE_DOUBLE_SIDED) != 0u;
-    const vec3 camera = cameraInPacked(instance, view.camera.xyz);
-    ClustersRef clusters = ClustersRef(push.clusters);
-    for (uint i = 0u; i < geometry.clusterCount; ++i)
+    const Cluster cluster = ClustersRef(push.clusters).items[clusterId];
+    if ((instance.flags & INSTANCE_DOUBLE_SIDED) == 0u && facesAway(cluster.cone, cluster.center, cluster.radius, camera))
     {
-        const uint clusterId = geometry.firstCluster + i;
-        const Cluster cluster = clusters.items[clusterId];
-        if (!twoSided && facesAway(cluster, camera))
-        {
-            continue;
-        }
-        const vec3 center = transformPoint(instance.rows, cluster.center);
-        const float radius = cluster.radius * scaleBound;
-        if (!insideView(view, center, radius))
-        {
-            continue;
-        }
-        if (!hiddenByPyramid(view, center, radius))
-        {
-            draw(view, instance, instanceIndex, clusterId, cluster.triangles);
-        }
-        else if (push.phase == CULL_EARLY)
-        {
-            retest(instanceIndex, clusterId);
-        }
+        return;
+    }
+    const vec3 center = transformPoint(instance.rows, cluster.center);
+    const float radius = cluster.radius * scaleBound;
+    if (!insideView(view, center, radius))
+    {
+        return;
+    }
+    if (!hiddenByPyramid(view, center, radius))
+    {
+        draw(view, instance, instanceIndex, clusterId, cluster.triangles);
+    }
+    else if (earlyPhase())
+    {
+        retest(instanceIndex, clusterId);
+    }
+}
+
+void testGroup(ViewRef view, Instance instance, uint instanceIndex, uint groupId, vec3 camera, float scaleBound)
+{
+    const ClusterGroup group = ClusterGroupsRef(push.clusters).items[groupId];
+    if ((instance.flags & INSTANCE_DOUBLE_SIDED) == 0u && facesAway(group.cone, group.center, group.radius, camera))
+    {
+        return;
+    }
+    const vec3 center = transformPoint(instance.rows, group.center);
+    const float radius = group.radius * scaleBound;
+    if (!insideView(view, center, radius))
+    {
+        return;
+    }
+    if (!hiddenByPyramid(view, center, radius))
+    {
+        addGroup(instanceIndex, groupId);
+    }
+    else if (earlyPhase())
+    {
+        retest(instanceIndex, RETEST_GROUP | groupId);
     }
 }
 
@@ -264,31 +323,76 @@ void cullInstance(ViewRef view, uint instanceIndex)
     {
         return;
     }
-    if (!hiddenByPyramid(view, center, radius))
+    if (hiddenByPyramid(view, center, radius))
     {
-        walkClusters(view, instance, instanceIndex, geometry, scaleBound);
+        if (push.phase == CULL_EARLY)
+        {
+            retest(instanceIndex, WHOLE_INSTANCE);
+        }
+        return;
     }
-    else if (push.phase == CULL_EARLY)
+
+    const vec3 camera = cameraInPacked(instance, view.camera.xyz);
+    if (geometry.groupCount != 0u)
     {
-        retest(instanceIndex, WHOLE_INSTANCE);
+        for (uint i = 0u; i < geometry.groupCount; ++i)
+        {
+            testGroup(view, instance, instanceIndex, geometry.firstGroup + i, camera, scaleBound);
+        }
     }
+    else
+    {
+        for (uint i = 0u; i < geometry.clusterCount; ++i)
+        {
+            testCluster(view, instance, instanceIndex, geometry.firstCluster + i, camera, scaleBound);
+        }
+    }
+}
+
+// Groups jobs: each half of the workgroup takes one group, a thread per cluster.
+void cullGroupClusters(ViewRef view)
+{
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint work = push.phase == CULL_GROUPS_LATE ? 1u : 0u;
+    const uint entryIndex = gl_WorkGroupID.x * GROUPS_PER_WORKGROUP + gl_LocalInvocationID.x / CLUSTER_GROUP_SIZE;
+    if (entryIndex >= counts.groupWork[work].entries)
+    {
+        return;
+    }
+    const uint base = work == 1u ? counts.groupWork[0].entries : 0u;
+    const ListEntry entry = ListRef(push.groups).items[base + entryIndex];
+    const ClusterGroup group = ClusterGroupsRef(push.clusters).items[entry.cluster];
+    const uint lane = gl_LocalInvocationID.x % CLUSTER_GROUP_SIZE;
+    if (lane >= group.clusterCount)
+    {
+        return;
+    }
+    const Instance instance = InstancesRef(push.instances).items[entry.instance];
+    testCluster(view, instance, entry.instance, group.firstCluster + lane, cameraInPacked(instance, view.camera.xyz), scaleBoundOf(instance));
 }
 
 void main()
 {
     ViewRef view = ViewRef(push.view);
     const uint index = gl_GlobalInvocationID.x;
+    const bool late = latePhase();
+    occluderRows = late ? view.viewRows : view.previousRows;
+    occluderFocal = late ? view.projection.xy : view.previousProjection.xy;
+    occluderNear = late ? view.projection.z : view.previousProjection.z;
+    testOcclusion = late || (earlyPhase() && view.previousProjection.w != 0.0);
+
+    if (push.phase >= CULL_GROUPS_EARLY)
+    {
+        cullGroupClusters(view);
+        return;
+    }
+
     if (push.phase == CULL_LATE)
     {
-        if (index >= CountsRef(push.output_counts).retestCount)
+        if (index >= CountsRef(push.output_counts).retest.entries)
         {
             return;
         }
-        occluderRows = view.viewRows;
-        occluderFocal = view.projection.xy;
-        occluderNear = view.projection.z;
-        testOcclusion = true;
-
         const ListEntry entry = ListRef(push.retest).items[index];
         if (entry.cluster == WHOLE_INSTANCE)
         {
@@ -296,8 +400,20 @@ void main()
             return;
         }
         const Instance instance = InstancesRef(push.instances).items[entry.instance];
+        const float scaleBound = scaleBoundOf(instance);
+        if ((entry.cluster & RETEST_GROUP) != 0u)
+        {
+            // Facing and view were tested early, with this same camera.
+            const uint groupId = entry.cluster & ~RETEST_GROUP;
+            const ClusterGroup group = ClusterGroupsRef(push.clusters).items[groupId];
+            if (!hiddenByPyramid(view, transformPoint(instance.rows, group.center), group.radius * scaleBound))
+            {
+                addGroup(entry.instance, groupId);
+            }
+            return;
+        }
         const Cluster cluster = ClustersRef(push.clusters).items[entry.cluster];
-        if (!hiddenByPyramid(view, transformPoint(instance.rows, cluster.center), cluster.radius * scaleBoundOf(instance)))
+        if (!hiddenByPyramid(view, transformPoint(instance.rows, cluster.center), cluster.radius * scaleBound))
         {
             draw(view, instance, entry.instance, entry.cluster, cluster.triangles);
         }
@@ -306,10 +422,6 @@ void main()
 
     if (index < view.instanceEnd)
     {
-        occluderRows = view.previousRows;
-        occluderFocal = view.previousProjection.xy;
-        occluderNear = view.previousProjection.z;
-        testOcclusion = push.phase == CULL_EARLY && view.previousProjection.w != 0.0;
         cullInstance(view, index);
     }
 }

@@ -23,6 +23,14 @@ namespace asr
 
 constexpr uint32_t CLUSTER_MAX_TRIANGLES = 64;
 
+// Clusters near each other form a group, with bounds and a normal cone of its own, so one
+// test can drop them all. Culling tests an instance's groups, then gives every group that
+// passes one thread per cluster, so a dense mesh is not walked by a single thread. A face
+// is at most 65,535 vertices, so groups of an instance's geometry never number more than a
+// few dozen. A geometry this small or smaller has its clusters tested directly.
+constexpr uint32_t CLUSTER_GROUP_SIZE = 32;
+constexpr uint32_t CLUSTERS_WITHOUT_GROUPS = 4;
+
 // Clusters are drawn in instanced draws of a fixed size, which needs no index buffer,
 // no per-object draw and no command list, on either API. A cluster goes in the smallest
 // size that holds it, so a two-triangle prim face does not pay for 64.
@@ -63,16 +71,22 @@ constexpr uint32_t sceneList(uint32_t kind, uint32_t bucket)
 constexpr uint32_t MAX_LODS = 4;           // the longest chain of coarser geometries the GPU walks
 constexpr uint32_t PYRAMID_MAX_LEVELS = 16;
 constexpr uint32_t RETEST_WHOLE_INSTANCE = 0xFFFFFFFFu; // in GpuListEntry::cluster
+constexpr uint32_t RETEST_GROUP = 0x80000000u;          // in GpuListEntry::cluster: the rest is a group
 
 constexpr uint32_t CULL_GROUP_SIZE = 64;
 constexpr uint32_t PYRAMID_GROUP_SIZE = 16;
 constexpr uint32_t PYRAMID_LEVELS_PER_DISPATCH = 3;
 constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
 
-// Which job the cull shader does.
+// Which job the cull shader does. The first three cull instances, or retest entries; the
+// others test the clusters of the groups those passed, one thread per cluster.
 constexpr uint32_t CULL_EARLY = 0;
 constexpr uint32_t CULL_LATE = 1;
 constexpr uint32_t CULL_AUDIT = 2; // everything in view, with no occlusion test
+constexpr uint32_t CULL_GROUPS_EARLY = 3;
+constexpr uint32_t CULL_GROUPS_LATE = 4;
+constexpr uint32_t CULL_GROUPS_AUDIT = 5;
+constexpr uint32_t CULL_GROUPS_PER_WORKGROUP = CULL_GROUP_SIZE / CLUSTER_GROUP_SIZE;
 
 // What a volume face provides.
 struct SceneVertex
@@ -110,10 +124,25 @@ struct GpuCluster
 };
 static_assert(sizeof(GpuCluster) == 48, "shaders read this layout");
 
+// A geometry's groups sit in the cluster table just before its clusters, so they come and
+// go with them as one range.
+struct GpuClusterGroup
+{
+    float center[3]; // bounding sphere of its clusters, in the positions' own scale
+    float radius;
+    uint32_t cone;   // as a cluster's, holding the normals of all its triangles
+    uint32_t firstCluster;
+    uint32_t clusterCount;
+    uint32_t unused[5];
+};
+static_assert(sizeof(GpuClusterGroup) == sizeof(GpuCluster), "shares the cluster table");
+
 struct GpuGeometry
 {
-    float center[3]; // bounding sphere of the whole geometry
-    float radius;
+    uint32_t firstGroup;
+    uint32_t groupCount;   // 0 when its clusters are few enough to test directly
+    uint32_t unused;
+    float radius;          // bounding sphere around the packed origin
     uint32_t firstCluster;
     uint32_t clusterCount; // 0 until its data has reached the GPU
     uint32_t coarser;      // the next LOD, or 0
@@ -157,20 +186,29 @@ struct GpuDrawArguments
 };
 static_assert(sizeof(GpuDrawArguments) == 16, "APIs read this layout");
 
-// What culling fills in. The late lists continue where the early ones ended.
+// An indirect dispatch, and how many entries it has to cover.
+struct GpuWorkCount
+{
+    uint32_t groups[3];
+    uint32_t entries;
+};
+static_assert(sizeof(GpuWorkCount) == 16, "shaders read this layout");
+
+// What culling fills in. The late lists continue where the early ones ended, and so does
+// the late part of the group list.
 struct GpuSceneCounts
 {
     GpuDrawArguments early[SCENE_LISTS];
     GpuDrawArguments late[SCENE_LISTS];
-    uint32_t retestGroups[3]; // arguments of the indirect dispatch of the late cull
-    uint32_t retestCount;
+    GpuWorkCount retest;    // the late cull's entries
+    GpuWorkCount groups[2]; // groups whose clusters are tested, early and late
 };
-static_assert(sizeof(GpuSceneCounts) == 528, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 560, "shaders read this layout");
 
 // How the counts start each frame: only the draws' sizes are set.
 GpuSceneCounts sceneCountsTemplate();
 
-// An entry of the visible list and of the retest list.
+// An entry of the visible list, the retest list and the group list.
 struct GpuListEntry
 {
     uint32_t instance;
@@ -190,10 +228,11 @@ struct ScenePush
     uint64_t counts;
     uint64_t retest;
     uint64_t pyramid;
+    uint64_t groups; // the group list
     uint32_t list;
     uint32_t phase; // one of CULL_*, or the pyramid level being read
 };
-static_assert(sizeof(ScenePush) == 80, "shaders read this layout");
+static_assert(sizeof(ScenePush) == 88, "shaders read this layout");
 
 // One cluster of a built geometry. Offsets count from the start of GeometryData::blob.
 struct ClusterData
@@ -205,12 +244,23 @@ struct ClusterData
     uint32_t indexOffset; // in bytes, and four-byte aligned
 };
 
+// Clusters [firstCluster, firstCluster + clusterCount) of a built geometry.
+struct ClusterGroupData
+{
+    float center[3];
+    float radius;
+    uint32_t cone;
+    uint32_t firstCluster;
+    uint32_t clusterCount;
+};
+
 // A geometry ready for the GPU: built on any thread, and moved into the queue. The blob
 // is indices, then positions, then attributes, and goes up in one copy.
 struct GeometryData
 {
     std::vector<uint8_t> blob;
-    std::vector<ClusterData> clusters;
+    std::vector<ClusterData> clusters;   // in group order
+    std::vector<ClusterGroupData> groups; // empty when there are CLUSTERS_WITHOUT_GROUPS or fewer
     uint32_t positionsOffset = 0;
     uint32_t attributesOffset = 0;
     float center[3] = { 0.f, 0.f, 0.f }; // packed = (object - center) / scale

@@ -28,7 +28,9 @@ struct Instance
 
 struct Geometry
 {
-    vec3 center;
+    uint firstGroup;
+    uint groupCount; // 0 when its clusters are tested directly
+    uint unused;
     float radius;
     uint firstCluster;
     uint clusterCount;
@@ -45,6 +47,17 @@ struct Cluster
     uint64_t indices;
     uint64_t positions;
     uint64_t attributes;
+};
+
+// Stored in the cluster table, just before the clusters of its geometry.
+struct ClusterGroup
+{
+    vec3 center;
+    float radius;
+    uint cone;
+    uint firstCluster;
+    uint clusterCount;
+    uint unused[5];
 };
 
 struct Material
@@ -86,6 +99,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };
 layout(buffer_reference, std430) readonly buffer GeometriesRef { Geometry items[]; };
 layout(buffer_reference, std430) readonly buffer ClustersRef { Cluster items[]; };
+layout(buffer_reference, std430) readonly buffer ClusterGroupsRef { ClusterGroup items[]; }; // the cluster table too
 layout(buffer_reference, std430) readonly buffer MaterialsRef { Material items[]; };
 layout(buffer_reference, std430) readonly buffer ListRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer WordsRef { uint words[]; };
@@ -101,6 +115,7 @@ layout(push_constant) uniform ScenePush
     uint64_t output_counts; // the indirect draws
     uint64_t retest;
     uint64_t pyramid;
+    uint64_t groups; // the group list
     uint list;
     uint phase;
 } push;

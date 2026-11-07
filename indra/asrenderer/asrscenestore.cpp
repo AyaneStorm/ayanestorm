@@ -163,6 +163,7 @@ void SceneStore::countClusters(const Geometry& geometry, uint32_t kind, int64_t 
     {
         mListTotals[sceneList(kind, bucket)] += uint64_t(instances * int64_t(geometry.buckets[bucket]));
     }
+    mGroupTotal += uint64_t(instances * int64_t(geometry.groupCount));
 }
 
 // An instance can draw any LOD of its chain, so every LOD keeps room for it. That is a
@@ -207,6 +208,18 @@ uint64_t SceneStore::visibleCapacity() const
         total += listCapacity(list);
     }
     return total;
+}
+
+uint64_t SceneStore::groupCapacity() const
+{
+    // An instance's group goes in the list once, early or late, never both, as one that
+    // passes early is not retested. Doubling steps, as for the lists.
+    uint64_t capacity = MINIMUM_LIST_CAPACITY;
+    while (capacity < mGroupTotal)
+    {
+        capacity *= 2;
+    }
+    return capacity;
 }
 
 uint64_t SceneStore::freeChunkBytes() const
@@ -359,7 +372,7 @@ void SceneStore::removeIfUnused(uint32_t id, uint64_t frame)
     writeEntry(SceneTable::Geometries, id, &empty, sizeof(empty));
     if (geometry.uploaded)
     {
-        mRetired.push_back({ Retired::Type::Clusters, 0, geometry.firstCluster, geometry.clusterCount, frame + mFreeDelay });
+        mRetired.push_back({ Retired::Type::Clusters, 0, geometry.firstEntry, geometry.entryCount, frame + mFreeDelay });
         mRetired.push_back({ Retired::Type::Chunk, geometry.chunk, geometry.chunkOffset, geometry.blobBytes, frame + mFreeDelay });
     }
     geometry.uploaded = false;
@@ -413,11 +426,30 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
         mChunks.back().ranges.allocate(blobBytes, BLOB_ALIGNMENT, chunkOffset);
     }
 
-    uint64_t firstCluster = 0;
+    const uint64_t groupCount = data.groups.size();
     const uint64_t clusterCount = data.clusters.size();
-    while (!mClusterRanges.allocate(clusterCount, 1, firstCluster))
+    uint64_t firstEntry = 0;
+    while (!mClusterRanges.allocate(groupCount + clusterCount, 1, firstEntry))
     {
         mClusterRanges.grow(std::max<uint64_t>(mClusterRanges.capacity() * 2, 4096));
+    }
+    const uint64_t firstCluster = firstEntry + groupCount;
+
+    mGroupScratch.resize(groupCount);
+    for (size_t i = 0; i < groupCount; ++i)
+    {
+        const ClusterGroupData& from = data.groups[i];
+        GpuClusterGroup& to = mGroupScratch[i];
+        to = GpuClusterGroup{};
+        memcpy(to.center, from.center, sizeof(to.center));
+        to.radius = from.radius;
+        to.cone = from.cone;
+        to.firstCluster = uint32_t(firstCluster + from.firstCluster);
+        to.clusterCount = from.clusterCount;
+    }
+    if (groupCount != 0)
+    {
+        writeTable(SceneTable::Clusters, uint32_t(firstEntry), mGroupScratch.data(), groupCount * sizeof(GpuClusterGroup));
     }
 
     const uint64_t base = mChunks[chunkIndex].address + chunkOffset;
@@ -441,6 +473,8 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     writeTable(SceneTable::Clusters, uint32_t(firstCluster), mClusterScratch.data(), clusterCount * sizeof(GpuCluster));
 
     GpuGeometry entry{};
+    entry.firstGroup = uint32_t(firstEntry);
+    entry.groupCount = uint32_t(groupCount);
     entry.radius = data.radius;
     entry.firstCluster = uint32_t(firstCluster);
     entry.clusterCount = uint32_t(clusterCount);
@@ -459,8 +493,9 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     geometry.chunk = chunkIndex;
     geometry.chunkOffset = chunkOffset;
     geometry.blobBytes = blobBytes;
-    geometry.firstCluster = uint32_t(firstCluster);
-    geometry.clusterCount = uint32_t(clusterCount);
+    geometry.firstEntry = uint32_t(firstEntry);
+    geometry.entryCount = uint32_t(groupCount + clusterCount);
+    geometry.groupCount = uint32_t(groupCount);
     geometry.uploaded = true;
     geometry.data = GeometryData();
     for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
@@ -563,7 +598,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             continue;
         }
         const GeometryData& data = mGeometries[id].data;
-        const uint64_t bytes = data.blob.size() + data.clusters.size() * sizeof(GpuCluster);
+        const uint64_t bytes = data.blob.size() + (data.groups.size() + data.clusters.size()) * sizeof(GpuCluster);
         if ((uploaded != 0 && mTableBytes.size() + uploaded + bytes > uploadLimit) || !upload(id, chunks))
         {
             break;

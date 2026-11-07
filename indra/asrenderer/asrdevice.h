@@ -67,7 +67,7 @@ struct FrameInput
     bool audit = false; // also looks for clusters occlusion culling lost
 };
 
-constexpr uint32_t MAX_TIMED_PASSES = 16;
+constexpr uint32_t MAX_TIMED_PASSES = 20;
 
 // One pass of the frame graph. On Vulkan it runs from the end of the last pass to its
 // own end, so barriers count too and the passes add up to the frame's GPU time. On Metal
@@ -88,6 +88,7 @@ struct SceneStats
     uint64_t earlyClusters = 0;       // drawn by the first phase
     uint64_t lateClusters = 0;        // found by the second
     uint64_t retestEntries = 0;       // what the first phase left for the second
+    uint64_t groupEntries = 0;        // cluster groups tested a thread per cluster, both phases
     uint64_t auditErrorPixels = 0;    // pixels that a wrongly hidden cluster should have covered
     uint64_t auditedFrames = 0;
     uint64_t pendingGeometries = 0;

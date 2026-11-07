@@ -106,6 +106,9 @@ public:
     uint32_t listCapacity(uint32_t list) const;
     uint64_t visibleCapacity() const; // of all lists together
 
+    // The room the group list needs if every group of every instance passes.
+    uint64_t groupCapacity() const;
+
     // Geometries waiting for upload room or for memory.
     size_t pendingGeometries() const { return mQueuedGeometries; }
 
@@ -124,8 +127,9 @@ private:
         uint32_t finer = 0;    // LODs that name this one as coarser
         uint32_t coarser = 0;
         float coarserAt = 0.f;
-        uint32_t firstCluster = 0;
-        uint32_t clusterCount = 0;
+        uint32_t firstEntry = 0;  // in the cluster table: its groups, then its clusters
+        uint32_t entryCount = 0;
+        uint32_t groupCount = 0;
         uint32_t chunk = 0;
         uint64_t chunkOffset = 0;
         uint64_t blobBytes = 0;
@@ -168,7 +172,7 @@ private:
         };
         Type type;
         uint32_t index;   // chunk, or the id
-        uint64_t offset;  // inside the chunk, or the first cluster
+        uint64_t offset;  // inside the chunk, or the first entry of the cluster table
         uint64_t size;
         uint64_t frame;   // free from this frame on
     };
@@ -205,10 +209,12 @@ private:
     std::vector<uint8_t> mTableBytes;
     std::vector<std::vector<uint8_t>> mWrittenBlobs; // alive until the next update
     std::vector<GpuCluster> mClusterScratch;
+    std::vector<GpuClusterGroup> mGroupScratch;
     std::vector<EntryMark> mEntryMarks[3]; // instances, materials, geometries
     uint64_t mUpdate = 0;
     uint64_t mTableCapacity[SCENE_TABLES]{};
     uint64_t mListTotals[SCENE_LISTS]{};
+    uint64_t mGroupTotal = 0;
     uint64_t mTriangles = 0;
     uint32_t mInstanceEnd = 0;
     bool mStarted = false;

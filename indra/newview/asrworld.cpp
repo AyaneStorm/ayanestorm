@@ -1964,7 +1964,8 @@ void logCounts()
             timings << ", " << stats.passes[i].name << " " << stats.passes[i].milliseconds;
             gpuTotal += stats.passes[i].milliseconds;
         }
-        LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", retest entries " << stats.retestEntries << ", chunks " << stats.chunks << LL_ENDL;
+        LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", retest entries " << stats.retestEntries << ", groups " << stats.groupEntries
+                               << ", chunks " << stats.chunks << LL_ENDL;
 
         std::ostringstream reasons;
         for (const auto& reason : leftOut)

@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <utility>
 
@@ -66,6 +67,43 @@ uint32_t coneBits(const Vec3& axis, float cutoff)
     // One step per axis of rounding error in the packed axis, plus the cutoff's own.
     const float packedCutoff = std::min(1.f, cutoff + 4.f / 127.f);
     return byteOf(axis.x) | byteOf(axis.y) << 8 | byteOf(axis.z) << 16 | byteOf(packedCutoff) << 24;
+}
+
+// The narrowest cone around the average of these unit normals that holds them all.
+uint32_t normalCone(const std::vector<Vec3>& normals)
+{
+    Vec3 sum{ 0.f, 0.f, 0.f };
+    for (const Vec3& normal : normals)
+    {
+        sum = sum + normal;
+    }
+    const Vec3 axis = normalized(sum);
+    float cutoff = 1.f;
+    for (const Vec3& normal : normals)
+    {
+        cutoff = std::min(cutoff, dot(normal, axis));
+    }
+    // Cutoff here is the sine of how far normals stray past the plane: 1 turns the test off.
+    const float sine = cutoff <= 0.f || normals.empty() ? 1.f : std::sqrt(std::max(1.f - cutoff * cutoff, 0.f));
+    return coneBits(axis, sine);
+}
+
+// Spreads the low 10 bits of value so two zero bits follow each one.
+uint32_t spreadBits(uint32_t value)
+{
+    value &= 0x3FFu;
+    value = (value | (value << 16)) & 0x030000FFu;
+    value = (value | (value << 8)) & 0x0300F00Fu;
+    value = (value | (value << 4)) & 0x030C30C3u;
+    value = (value | (value << 2)) & 0x09249249u;
+    return value;
+}
+
+// Where a packed position falls on a curve that visits nearby places one after another.
+uint32_t mortonCode(const float center[3])
+{
+    const auto cell = [](float value) { return uint32_t(std::clamp((value + 1.f) * 512.f, 0.f, 1023.f)); };
+    return spreadBits(cell(center[0])) | spreadBits(cell(center[1])) << 1 | spreadBits(cell(center[2])) << 2;
 }
 
 // Triangles grow out from a seed through shared vertices, nearest first, and turning
@@ -238,6 +276,7 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
     ordered.reserve(size_t(indexCount) + triangleCount / CLUSTER_MAX_TRIANGLES + 1);
     Clusterizer clusterizer(vertices, vertexCount, indices, triangleCount);
     std::vector<uint32_t> triangles;
+    std::vector<std::vector<Vec3>> clusterNormals; // kept for the groups' cones
     while (clusterizer.next(triangles))
     {
         ClusterData cluster{};
@@ -264,7 +303,6 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
 
         const Vec3 middle = (boundLow + boundHigh) * 0.5f;
         float radius = 0.f;
-        Vec3 sum{ 0.f, 0.f, 0.f };
         std::vector<Vec3> normals;
         normals.reserve(triangles.size());
         for (uint32_t triangle : triangles)
@@ -277,26 +315,77 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
             if (dot(facing, facing) > 0.f)
             {
                 normals.push_back(normalized(facing));
-                sum = sum + normals.back();
             }
         }
         // Packing moves vertices a little, so the sphere gets a margin of that size.
         radius += 2.f / 32767.f;
 
-        const Vec3 axis = normalized(sum);
-        float cutoff = 1.f;
-        for (const Vec3& normal : normals)
-        {
-            cutoff = std::min(cutoff, dot(normal, axis));
-        }
         cluster.center[0] = middle.x;
         cluster.center[1] = middle.y;
         cluster.center[2] = middle.z;
         cluster.radius = radius;
-        // Cutoff here is the sine of how far normals stray past the plane: 1 turns the test off.
-        const float sine = cutoff <= 0.f || normals.empty() ? 1.f : std::sqrt(std::max(1.f - cutoff * cutoff, 0.f));
-        cluster.cone = coneBits(axis, sine);
+        cluster.cone = normalCone(normals);
         geometry.clusters.push_back(cluster);
+        clusterNormals.push_back(std::move(normals));
+    }
+
+    // Groups of clusters that lie near each other: clusters in curve order, cut in runs.
+    const size_t clusterCount = geometry.clusters.size();
+    if (clusterCount > CLUSTERS_WITHOUT_GROUPS)
+    {
+        std::vector<uint32_t> order(clusterCount);
+        std::vector<uint32_t> codes(clusterCount);
+        for (uint32_t i = 0; i < clusterCount; ++i)
+        {
+            order[i] = i;
+            codes[i] = mortonCode(geometry.clusters[i].center);
+        }
+        std::stable_sort(order.begin(), order.end(), [&codes](uint32_t a, uint32_t b) { return codes[a] < codes[b]; });
+        std::vector<ClusterData> sorted(clusterCount);
+        std::vector<std::vector<Vec3>> sortedNormals(clusterCount);
+        for (size_t i = 0; i < clusterCount; ++i)
+        {
+            sorted[i] = geometry.clusters[order[i]];
+            sortedNormals[i] = std::move(clusterNormals[order[i]]);
+        }
+        geometry.clusters = std::move(sorted);
+
+        std::vector<Vec3> groupNormals;
+        for (uint32_t first = 0; first < clusterCount; first += CLUSTER_GROUP_SIZE)
+        {
+            const uint32_t count = uint32_t(std::min<size_t>(CLUSTER_GROUP_SIZE, clusterCount - first));
+            Vec3 low{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+            Vec3 high = low * -1.f;
+            groupNormals.clear();
+            for (uint32_t i = first; i < first + count; ++i)
+            {
+                const ClusterData& cluster = geometry.clusters[i];
+                const Vec3 c{ cluster.center[0], cluster.center[1], cluster.center[2] };
+                const Vec3 r{ cluster.radius, cluster.radius, cluster.radius };
+                const Vec3 lowest = c - r;
+                const Vec3 highest = c + r;
+                low = { std::min(low.x, lowest.x), std::min(low.y, lowest.y), std::min(low.z, lowest.z) };
+                high = { std::max(high.x, highest.x), std::max(high.y, highest.y), std::max(high.z, highest.z) };
+                groupNormals.insert(groupNormals.end(), sortedNormals[i].begin(), sortedNormals[i].end());
+            }
+            const Vec3 middle = (low + high) * 0.5f;
+            float radius = 0.f;
+            for (uint32_t i = first; i < first + count; ++i)
+            {
+                const ClusterData& cluster = geometry.clusters[i];
+                radius = std::max(radius, length(Vec3{ cluster.center[0], cluster.center[1], cluster.center[2] } - middle) + cluster.radius);
+            }
+
+            ClusterGroupData group{};
+            group.center[0] = middle.x;
+            group.center[1] = middle.y;
+            group.center[2] = middle.z;
+            group.radius = radius;
+            group.cone = normalCone(groupNormals);
+            group.firstCluster = first;
+            group.clusterCount = count;
+            geometry.groups.push_back(group);
+        }
     }
 
     std::vector<PackedPosition> positions(vertexCount);
@@ -385,8 +474,11 @@ GpuSceneCounts sceneCountsTemplate()
         counts.early[list].vertexCount = vertices;
         counts.late[list].vertexCount = vertices;
     }
-    counts.retestGroups[1] = 1;
-    counts.retestGroups[2] = 1;
+    for (GpuWorkCount* work : { &counts.retest, &counts.groups[0], &counts.groups[1] })
+    {
+        work->groups[1] = 1;
+        work->groups[2] = 1;
+    }
     return counts;
 }
 

@@ -30,6 +30,7 @@ enum SceneResult : ResultId
     ResultSceneCounts,    // read back for statistics
     ResultAuditVisibility,
     ResultAuditPixels,
+    ResultGroupList,      // cluster groups whose clusters are tested next
     ResultCount
 };
 
@@ -37,15 +38,18 @@ enum ScenePass : PassId
 {
     PassUpload,
     PassCullEarly,
+    PassGroupsEarly,
     PassDrawEarly,
     PassPyramidEarly,
     PassCullLate,
+    PassGroupsLate,
     PassDrawLate,
     PassPyramidFinal,
     PassResolve,
     PassReadCounts,
     PassAuditReset,
     PassAuditCull,
+    PassAuditGroups,
     PassAuditDraw,
     PassAuditRead,
     PassCount

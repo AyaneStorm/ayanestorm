@@ -1169,6 +1169,7 @@ private:
         mRetiredBuffers.clear();
         destroyBufferObject(mSceneVisible);
         destroyBufferObject(mSceneRetest);
+        destroyBufferObject(mSceneGroups);
         destroyBufferObject(mSceneCounts);
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         destroyBuffer(mSceneCountsTemplate, MemoryCategory::Staging);
@@ -1942,8 +1943,10 @@ private:
         }
 
         const uint64_t visibleBytes = mSceneStore.visibleCapacity() * sizeof(GpuListEntry);
-        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
-        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list"))
+        const uint64_t groupBytes = mSceneStore.groupCapacity() * sizeof(GpuListEntry);
+        const uint64_t retestBytes = (mSceneStore.visibleCapacity() + mSceneStore.groupCapacity() + mSceneStore.instanceEnd()) * sizeof(GpuListEntry);
+        if (!growList(mSceneVisible, visibleBytes, "visible cluster list") || !growList(mSceneRetest, retestBytes, "retest list") ||
+            !growList(mSceneGroups, groupBytes, "group list"))
         {
             return false;
         }
@@ -2007,6 +2010,7 @@ private:
         mScenePush.counts = mSceneCounts.address;
         mScenePush.retest = mSceneRetest.address;
         mScenePush.pyramid = mScenePyramid.address;
+        mScenePush.groups = mSceneGroups.address;
         return true;
     }
 
@@ -2023,7 +2027,12 @@ private:
         pushScene(commands);
         if (phase == CULL_LATE)
         {
-            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, retestGroups));
+            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, retest));
+        }
+        else if (phase >= CULL_GROUPS_EARLY)
+        {
+            const uint32_t work = phase == CULL_GROUPS_LATE ? 1 : 0;
+            vkCmdDispatchIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, groups) + work * sizeof(GpuWorkCount));
         }
         else
         {
@@ -2138,6 +2147,9 @@ private:
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
+        mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
+        mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
+        mGraph.setBody(PassAuditGroups, [this]() { return passCull(CULL_GROUPS_AUDIT); });
         mGraph.setBody(PassDrawEarly, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, early), false, false); });
         mGraph.setBody(PassPyramidEarly, [this]() { return passPyramid(); });
         mGraph.setBody(PassCullLate, [this]() { return passCull(CULL_LATE); });
@@ -2176,7 +2188,8 @@ private:
                 mSceneFrameStats.earlyClusters += counts->early[list].instanceCount;
                 mSceneFrameStats.lateClusters += counts->late[list].instanceCount;
             }
-            mSceneFrameStats.retestEntries = counts->retestCount;
+            mSceneFrameStats.retestEntries = counts->retest.entries;
+            mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
         }
         if (mAuditWritten[slot])
         {
@@ -2618,6 +2631,7 @@ private:
     GpuBuffer mSceneTables[SCENE_TABLES];
     GpuBuffer mSceneVisible;
     GpuBuffer mSceneRetest;
+    GpuBuffer mSceneGroups;
     GpuBuffer mSceneCounts;
     GpuBuffer mScenePyramid;
     MappedBuffer mSceneCountsTemplate;
