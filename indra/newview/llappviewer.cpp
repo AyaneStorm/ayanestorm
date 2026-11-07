@@ -33,6 +33,7 @@
 #include "asdofrenderer.h" // aperture DoF capture world freeze
 #include "asrviewer.h"
 #include "asrworld.h" // <AS:Chanayane/> temporary: times the parts of idle()
+#include "asrgltable.h" // <AS:Chanayane/>
 // </AS:Chanayane>
 
 #include "llappviewer.h"
@@ -1829,7 +1830,9 @@ bool LLAppViewer::doFrame()
                 pingMainloopTimeout("Main:Display");
                 gGLActive = true;
 
+                LLTimer display_whole_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
                 display();
+                ASRWorld::addMainTime(ASRWorld::MAIN_DISPLAY_WHOLE, display_whole_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
                 if (LLStartUp::getStartupState() == STATE_STARTED) // <FS:Beq/> FIRE-34590 - Bugsplat caused by updating maps before world is loaded.
                 {
@@ -1864,6 +1867,7 @@ bool LLAppViewer::doFrame()
         {
             //LL_RECORD_BLOCK_TIME(SLEEP2);
             LL_PROFILE_ZONE_WARN("Sleep2");
+            LLTimer sleep_whole_timer; // <AS:Chanayane/> temporary: see ASRWorld::addMainTime()
 
             // yield some time to the os based on command line option
             static LLCachedControl<S32> yield_time(gSavedSettings, "YieldTime", -1);
@@ -1967,7 +1971,11 @@ bool LLAppViewer::doFrame()
             // <FS:Ansariel> FIRE-22297: FPS limiter not working properly on Mac/Linux
             static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit");
             static LLCachedControl<bool> fsLimitFramerate(gSavedSettings, "FSLimitFramerate");
-            if (fsLimitFramerate && LLStartUp::getStartupState() == STATE_STARTED && !gTeleportDisplay && !logoutRequestSent() && max_fps > F_APPROXIMATELY_ZERO)
+            // <AS:Chanayane> The new renderer's frame limit paces the frames it shows, on its own
+            // thread: see ASRViewer::publishFrame(). Here it would only slow the world and the camera.
+            // if (fsLimitFramerate && LLStartUp::getStartupState() == STATE_STARTED && !gTeleportDisplay && !logoutRequestSent() && max_fps > F_APPROXIMATELY_ZERO)
+            if (fsLimitFramerate && !ASR::active() && LLStartUp::getStartupState() == STATE_STARTED && !gTeleportDisplay && !logoutRequestSent() && max_fps > F_APPROXIMATELY_ZERO)
+            // </AS:Chanayane>
             {
                 // Sleep a while to limit frame rate.
                 LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_FPSLIMIT );
@@ -1985,6 +1993,7 @@ bool LLAppViewer::doFrame()
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df resumeMainloopTimeout");
                 resumeMainloopTimeout();
             }
+            ASRWorld::addMainTime(ASRWorld::MAIN_SLEEP_WHOLE, sleep_whole_timer.getElapsedTimeF32()); // <AS:Chanayane/>
             pingMainloopTimeout("Main:End");
         }
     }

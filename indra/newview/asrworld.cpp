@@ -1657,7 +1657,8 @@ F64 sPartSeconds[PART_COUNT] = {};
 F64 sPartWorst[PART_COUNT] = {};
 constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI",
                                                                                  "network", "idle callbacks", "window update", "object list", "cleanup", "move", "particles", "apparent angles",
-                                                                                 "input and coroutines", "idle() as a whole, counted again", "snapshots", "texture threads", "mesh update" };
+                                                                                 "input and coroutines", "idle() as a whole, counted again", "snapshots", "texture threads", "mesh update",
+                                                                                 "display() as a whole, counted again", "sleep and threads at the end, counted again" };
 F64 sMainSeconds[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sMainWorst[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sWorstLoop = 0.0;
@@ -1702,7 +1703,9 @@ void logCounts()
         for (U32 i = 0; i < ASRWorld::MAIN_PART_COUNT; ++i)
         {
             mainParts << ", " << MAIN_PART_NAMES[i] << " " << sMainSeconds[i] * 1000.0 / llmax(sLoops, 1u) << "/" << sMainWorst[i] * 1000.0;
-            accounted += i != ASRWorld::MAIN_IDLE_WHOLE ? sMainSeconds[i] : 0.0; // it holds parts counted already
+            // The wholes hold parts counted already.
+            const bool whole = i == ASRWorld::MAIN_IDLE_WHOLE || i == ASRWorld::MAIN_DISPLAY_WHOLE || i == ASRWorld::MAIN_SLEEP_WHOLE;
+            accounted += whole ? 0.0 : sMainSeconds[i];
             sMainSeconds[i] = 0.0;
             sMainWorst[i] = 0.0;
         }

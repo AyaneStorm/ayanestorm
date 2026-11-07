@@ -31,6 +31,7 @@ struct FrameState
     SceneCamera3D camera{};
     bool predictCamera = false; // see CameraPredictor
     bool audit = false;     // see FrameInput
+    float maxFramesPerSecond = 0.f; // the user's frame limit, which paces this thread; 0 is none
 };
 
 // Makes the camera move on every frame, not only on those that follow a main-thread step.

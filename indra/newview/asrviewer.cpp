@@ -430,6 +430,9 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.camera = sCamera;
     static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
     state.predictCamera = predict_camera;
+    static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
+    static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit", 0);
+    state.maxFramesPerSecond = limit_framerate() ? F32(max_fps()) : 0.f;
     sRenderThread->publishState();
 
     if (Clock::now() - sStatsLogged >= STATS_PERIOD)

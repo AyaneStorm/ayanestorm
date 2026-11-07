@@ -265,6 +265,7 @@ void RenderThread::run()
     Clock::time_point previousFrame = start;
     Clock::time_point lastMemoryRefresh = start;
     Clock::time_point lastState{};
+    Clock::time_point frameDue = start;
     CameraPredictor predictor;
 
     while (!mStop.load(std::memory_order_relaxed))
@@ -276,6 +277,18 @@ void RenderThread::run()
             std::this_thread::sleep_for(MINIMIZED_SLEEP);
             previousFrame = Clock::now();
             continue;
+        }
+
+        // A frame limit spaces frames from when each was due, so the rate holds without
+        // bursts. After a late frame the next one is due a full period on, not at once.
+        if (state.maxFramesPerSecond > 0.f)
+        {
+            if (frameDue > Clock::now())
+            {
+                std::this_thread::sleep_until(frameDue);
+            }
+            const auto period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / state.maxFramesPerSecond));
+            frameDue = std::max(frameDue + period, Clock::now());
         }
 
         const Clock::time_point frameStart = Clock::now();
