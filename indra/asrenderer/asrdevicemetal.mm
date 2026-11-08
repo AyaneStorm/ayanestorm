@@ -1319,6 +1319,15 @@ private:
         {
             [(id<MTLResidencySet>)mResidency addAllocation:texture];
         }
+        if (command.slot == 0)
+        {
+            // The main thread hands out a slot at once, so a material can name it before
+            // its texture is created here, and a slot never written holds no texture: a GPU
+            // page fault, 'null texture access'. White, the first texture made, fills every
+            // slot until then.
+            std::vector<id<MTLTexture>> whites(MAX_TEXTURES - 1, texture);
+            [mArgumentEncoder setTextures:whites.data() withRange:NSMakeRange(1, MAX_TEXTURES - 1)];
+        }
     }
 
     // A material can still name this slot for a moment, so the slot reads white from now

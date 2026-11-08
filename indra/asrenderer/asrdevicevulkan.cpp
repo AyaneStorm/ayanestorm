@@ -1574,7 +1574,28 @@ private:
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
         writeTextureDescriptor(command.slot, texture.view);
+        if (command.slot == 0)
+        {
+            pointEverySlotAtWhite();
+        }
         return true;
+    }
+
+    // The main thread hands out a slot at once, so a material can name it before its
+    // texture is created here, and a slot never written has no texture: on Metal that was
+    // a GPU page fault. White, the first texture made, fills every slot until then.
+    void pointEverySlotAtWhite()
+    {
+        const VkDescriptorImageInfo white{ VK_NULL_HANDLE, mTextureObjects[0].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        std::vector<VkDescriptorImageInfo> images(MAX_TEXTURES - 1, white);
+        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+        write.dstSet = mUISet;
+        write.dstBinding = 0;
+        write.dstArrayElement = 1;
+        write.descriptorCount = MAX_TEXTURES - 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+        write.pImageInfo = images.data();
+        vkUpdateDescriptorSets(mDevice, 1, &write, 0, nullptr);
     }
 
     // Copies one piece of an upload from the ring, where the main thread wrote it.
