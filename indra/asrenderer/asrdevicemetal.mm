@@ -141,6 +141,8 @@ public:
             return false;
         }
         memset(mZeros.contents, 0, ZERO_BYTES);
+        fprintf(stderr, "asrenderer: texture upload ring at 0x%llx to 0x%llx\n", (unsigned long long)addressOf(mUploadRing),
+                (unsigned long long)(addressOf(mUploadRing) + ringBytes));
         mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
         mTextures.setUploadRing(static_cast<uint8_t*>(mUploadRing.contents), ringBytes, mUploadPieceBytes);
 
@@ -318,6 +320,8 @@ private:
             return false;
         }
         [mArgumentEncoder setArgumentBuffer:mArguments offset:0];
+        fprintf(stderr, "asrenderer: texture array at 0x%llx to 0x%llx\n", (unsigned long long)addressOf(mArguments),
+                (unsigned long long)(addressOf(mArguments) + mArguments.length));
 
         for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
         {
@@ -375,11 +379,16 @@ private:
             [(id<MTLResidencySet>)mResidency addAllocation:buffer];
             [(id<MTLResidencySet>)mResidency commit];
         }
+        // Temporary: a GPU fault report gives the address read, and this says whose it was.
+        fprintf(stderr, "asrenderer: frame %llu, %s at 0x%llx to 0x%llx\n", (unsigned long long)mFrame, what,
+                (unsigned long long)addressOf(buffer), (unsigned long long)(addressOf(buffer) + bytes));
         return buffer;
     }
 
     void releaseSceneBuffer(id<MTLBuffer> buffer, MemoryCategory category)
     {
+        fprintf(stderr, "asrenderer: frame %llu, released 0x%llx to 0x%llx\n", (unsigned long long)mFrame,
+                (unsigned long long)addressOf(buffer), (unsigned long long)(addressOf(buffer) + buffer.length));
         if (@available(macOS 15.0, *))
         {
             [(id<MTLResidencySet>)mResidency removeAllocation:buffer];
@@ -588,12 +597,13 @@ private:
     void watchErrors(id<MTLCommandBuffer> commands, const char* what)
     {
         std::shared_ptr<GpuErrors> errors = mGpuErrors; // a handler can run after the device is gone
+        const unsigned long long frame = mFrame;
         [commands addCompletedHandler:^(id<MTLCommandBuffer> done) {
             if (done.status != MTLCommandBufferStatusError)
             {
                 return;
             }
-            NSMutableString* text = [NSMutableString stringWithFormat:@"%s command buffer failed: %@", what,
+            NSMutableString* text = [NSMutableString stringWithFormat:@"%s command buffer of frame %llu failed: %@", what, frame,
                                                                       done.error.localizedDescription];
             NSArray* encoders = done.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
             for (id<MTLCommandBufferEncoderInfo> info in encoders)
