@@ -742,7 +742,7 @@ private:
                                     indirectBufferOffset:offsetof(GpuSceneCounts, groups) + work * sizeof(GpuWorkCount)
                                    threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
         }
-        else
+        else if (mSceneInstanceEnd != 0) // an empty dispatch is an error to Metal's validation
         {
             [cull dispatchThreadgroups:MTLSizeMake((mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1)
                  threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
