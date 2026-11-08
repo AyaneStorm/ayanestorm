@@ -116,6 +116,7 @@ public:
 private:
     ECameraMode     mCameraMode;                    // Target mode after transition animation is done
     ECameraMode     mLastCameraMode;
+    friend class ASRCameraTurnAccess; // <AS:Chanayane/> reads how the camera is built, in asrcameraturn.cpp
 
     //--------------------------------------------------------------------
     // Preset

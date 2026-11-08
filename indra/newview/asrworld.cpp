@@ -9,7 +9,9 @@
 #if defined(AS_RENDERER) && (LL_WINDOWS || LL_DARWIN) // as ASR_VIEWER_SUPPORTED in asrviewer.cpp
 
 #include "asrbridge.h"
+#include "asrcameraturn.h"
 #include "asrdevice.h"
+#include "asrrenderthread.h"
 #include "asrviewer.h"
 #include "llagent.h"
 #include "llappviewer.h"
@@ -1617,7 +1619,9 @@ void publishCamera()
                                                        camera->getAspect(), camera->getNear(), camera->getFar());
 
     scene.lodScale = lodScale();
-    ASRViewer::setCamera(scene);
+    asr::CameraTurn turn;
+    ASRCameraTurn::publish(turn, sRenderOrigin);
+    ASRViewer::setCamera(scene, turn);
 }
 
 // Most of a region's objects sit in the object cache, and only become objects once the

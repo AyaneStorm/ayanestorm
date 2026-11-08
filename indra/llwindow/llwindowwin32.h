@@ -37,6 +37,7 @@
 #include "llthreadsafequeue.h"
 #include "llmutex.h"
 #include "workqueue.h"
+#include <atomic> // <AS:Chanayane/>
 
 // Hack for async host by name
 #define LL_WM_HOST_RESOLVED      (WM_APP + 1)
@@ -151,6 +152,10 @@ public:
 
     void initWatchdog() override;
 
+    // <AS:Chanayane> Called from WM_INPUT on the window thread, with the raw delta as it is added up.
+    bool setRawMouseMotionCallback(RawMouseMotionCallback callback) override;
+    // </AS:Chanayane>
+
 protected:
     LLWindowWin32(LLWindowCallbacks* callbacks,
         const std::string& title, const std::string& name, int x, int y, int width, int height, U32 flags,
@@ -231,6 +236,7 @@ protected:
     LLCoordWindow mLastCursorPosition; // mouse cursor position from previous frame
     LLCoordCommon mRawMouseDelta; // raw mouse delta according to window thread
     LLCoordCommon mMouseFrameDelta; // how much the mouse moved between the last two calls to gatherInput
+    std::atomic<RawMouseMotionCallback> mRawMotionCallback{ nullptr }; // <AS:Chanayane/>
 
     MASK        mMouseMask;
 

@@ -15,6 +15,7 @@ class LLWindow;
 namespace asr
 {
     class Device;
+    struct CameraTurn;
     struct SceneCamera3D;
 }
 
@@ -43,8 +44,8 @@ namespace ASRViewer
     // Null while the renderer is not running.
     asr::Device* device();
 
-    // The world is drawn from this camera from now on.
-    void setCamera(const asr::SceneCamera3D& camera);
+    // The world is drawn from this camera from now on, turned by the mouse as `turn` says.
+    void setCamera(const asr::SceneCamera3D& camera, const asr::CameraTurn& turn);
 
     // Frames shown since the last call, which is what the viewer's FPS counts. With
     // OpenGL that is the one frame display() has just drawn.

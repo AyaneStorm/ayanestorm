@@ -30,6 +30,7 @@
 #include "pipeline.h"
 
 #include "aoengine.h"           // ## Zi: Animation Overrider
+#include "asrcameraturn.h" // <AS:Chanayane/>
 #include "llagent.h"
 #include "llanimationstates.h"
 #include "llfloatercamera.h"
@@ -1578,7 +1579,11 @@ void LLAgentCamera::updateCamera()
         // Sitting on what you're manipulating can cause camera jitter with smoothing.
         // This turns off smoothing while editing. -MG
         bool in_build_mode = LLToolMgr::getInstance()->inBuildMode();
-        mCameraSmoothingStop = mCameraSmoothingStop || in_build_mode;
+        // <AS:Chanayane> Nor while the new renderer's thread turns the camera with the mouse: it
+        // adds the motion to this camera, and a smoothed one would pull back at every frame.
+        //mCameraSmoothingStop = mCameraSmoothingStop || in_build_mode;
+        mCameraSmoothingStop = mCameraSmoothingStop || in_build_mode || ASRCameraTurn::turning();
+        // </AS:Chanayane>
 
         if (cameraThirdPerson() && !mCameraSmoothingStop)
         {

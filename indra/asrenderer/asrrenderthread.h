@@ -9,6 +9,7 @@
 
 #include "asrdevice.h"
 #include "asrlatestvalue.h"
+#include "asrmousemotion.h"
 
 #include <atomic>
 #include <chrono>
@@ -20,6 +21,34 @@
 namespace asr
 {
 
+// How the published camera turns with the mouse, while the user turns it. The main
+// thread turned it by the motion up to `included`, and the render thread turns it by
+// the motion since, the same way, so a frame shows the hand's position of that moment
+// and the next main-thread camera agrees with it. The eye and the point looked at each
+// turn around a pivot of their own, as the third-person camera does, then the view
+// looks from one to the other. All in the camera's space, as SceneCamera3D.
+struct CameraTurn
+{
+    bool active = false;
+    MouseMotion::Total included = 0;
+    float yawPerUnit = 0.f;   // radians, of the motion's x and y
+    float pitchPerUnit = 0.f;
+    float yawAxis[3] = {};    // unit axes, turned about by the right-hand rule
+    float pitchAxis[3] = {};
+    float largestPitch = 0.f; // the pitch the main thread allows, as it limits it: a
+    float smallestPitch = 0.f; // pitch above 0 stops at the first, one below at the second
+    float eyePivot[3] = {};
+    float eyeArm[3] = {};     // from the pivot to the eye
+    float focusPivot[3] = {};
+    float focusArm[3] = {};
+    float up[3] = {};         // the up the view is built with
+    float roll = 0.f;         // then turned about its view axis by this, in radians
+};
+
+// The published camera, turned by the motion given, with both pivots moved by `shift`.
+// Exactly the published camera when there is neither.
+SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3]);
+
 // What the main thread hands over. Later phases add motion.
 struct FrameState
 {
@@ -29,7 +58,8 @@ struct FrameState
     bool testTriangle = false;
     bool hasCamera = false; // the scene is drawn from this camera when set
     SceneCamera3D camera{};
-    bool predictCamera = false; // see CameraPredictor
+    CameraTurn turn{};
+    bool predictCamera = false; // see CameraPredictor; while turning, only the pivots
     bool audit = false;     // see FrameInput
     float maxFramesPerSecond = 0.f; // the user's frame limit, which paces this thread; 0 is none
 };
@@ -48,6 +78,14 @@ public:
     // published at that time stamp.
     SceneCamera3D predict(const SceneCamera3D& newest, Clock::time_point published, Clock::time_point now);
 
+    // The same for a point alone, such as the pivot of a camera the mouse turns: the
+    // turn is known exactly, and only how the pivot moves needs predicting.
+    void predictPoint(const float newest[3], Clock::time_point published, Clock::time_point now, float shown[3]);
+
+    // Forgets all motion: the next camera lands as it is, as after a cut. For a switch
+    // between predicting cameras and predicting points.
+    void reset() { mStarted = false; }
+
 private:
     struct Vec
     {
@@ -57,6 +95,10 @@ private:
     {
         float w = 1.f, x = 0.f, y = 0.f, z = 0.f;
     };
+
+    // Moves the prediction on to `now` and leaves what to show in mShownEye and
+    // mShownRotation. True when nothing moves, and the newest step is shown as it is.
+    bool step(const Vec& eye, const Quat& rotation, Clock::time_point published, Clock::time_point now);
 
     static Quat rotationOf(const SceneCamera3D& camera);
     static Quat multiply(const Quat& a, const Quat& b);
@@ -89,12 +131,15 @@ struct FrameStats
                                        // these show the world moving, so judge this with frames
     FrameParts worstFrameParts;        // where the worst frame's time went
     double worstRefreshSeconds = 0.0;  // the memory budget refresh, between two frames
+    uint64_t turnedFrames = 0;         // frames the mouse turned, from motion the main
+                                       // thread had not seen yet
 };
 
 class RenderThread
 {
 public:
-    explicit RenderThread(Device& device) : mDevice(device) {}
+    // The mouse motion that CameraTurn counts in. Without it the camera never turns here.
+    RenderThread(Device& device, const MouseMotion* motion) : mDevice(device), mMotion(motion) {}
     ~RenderThread() { stop(); }
 
     RenderThread(const RenderThread&) = delete;
@@ -132,6 +177,7 @@ private:
     void run();
 
     Device& mDevice;
+    const MouseMotion* mMotion;
     LatestValue<FrameState> mState;
     LatestValue<UIList> mUI;
     uint64_t mUIGeneration = 0;
@@ -147,6 +193,7 @@ private:
     std::atomic<uint64_t> mAgeSumMicros{ 0 };
     std::atomic<uint64_t> mNewStates{ 0 };
     std::atomic<uint64_t> mWorstRefreshMicros{ 0 };
+    std::atomic<uint64_t> mTurnedFrames{ 0 };
 
     // Taken only when a frame is the worst so far, and by takeStats().
     std::mutex mWorstPartsMutex;

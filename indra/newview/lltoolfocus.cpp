@@ -55,6 +55,7 @@
 #include "llfloaterreg.h"
 #include "llfloatercamera.h"
 #include "llmenugl.h"
+#include "asrcameraturn.h" // <AS:Chanayane/>
 
 // Globals
 bool gCameraBtnZoom = true;
@@ -297,6 +298,8 @@ bool LLToolCamera::handleMouseUp(S32 x, S32 y, MASK mask)
     mMouseUpY = y;
     mMouseUpMask = mask;
 
+    ASRCameraTurn::endOrbit(); // <AS:Chanayane/>
+
     if (hasMouseCapture())
     {
         // Do not move camera if we haven't gotten a pick
@@ -355,6 +358,8 @@ bool LLToolCamera::handleHover(S32 x, S32 y, MASK mask)
     S32 dx = gViewerWindow->getCurrentMouseDX();
     S32 dy = gViewerWindow->getCurrentMouseDY();
 
+    ASRCameraTurn::takeOrbitMotion(hasMouseCapture(), dx, dy); // <AS:Chanayane/>
+
     if (hasMouseCapture() && mValidClickPoint)
     {
         mAccumX += llabs(dx);
@@ -386,6 +391,12 @@ bool LLToolCamera::handleHover(S32 x, S32 y, MASK mask)
             mask == (MASK_ALT | MASK_ORBIT))
         {
             // Orbit tool
+            // <AS:Chanayane> With the new renderer, by the mouse's own motion: see asrcameraturn.h.
+            if (hasMouseCapture() && ASRCameraTurn::orbit())
+            {
+            }
+            else
+            // </AS:Chanayane>
             if (hasMouseCapture())
             {
                 const F32 RADIANS_PER_PIXEL = 360.f * DEG_TO_RAD / gViewerWindow->getWorldViewWidthScaled();

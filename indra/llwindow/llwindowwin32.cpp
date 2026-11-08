@@ -3664,6 +3664,7 @@ LRESULT CALLBACK LLWindowWin32::mainWindowProc(HWND h_wnd, UINT u_msg, WPARAM w_
                 if (raw->header.dwType == RIM_TYPEMOUSE)
                 {
                     LLMutexLock lock(&window_imp->mRawMouseMutex);
+                    const LLCoordCommon delta_before = window_imp->mRawMouseDelta; // <AS:Chanayane/>
 
                     bool absolute_coordinates = (raw->data.mouse.usFlags & MOUSE_MOVE_ABSOLUTE);
 
@@ -3716,6 +3717,13 @@ LRESULT CALLBACK LLWindowWin32::mainWindowProc(HWND h_wnd, UINT u_msg, WPARAM w_
                         }
                         window_imp->mAbsoluteCursorPosition = false;
                     }
+
+                    // <AS:Chanayane> The same motion, as it comes, for the new renderer's camera.
+                    if (const RawMouseMotionCallback callback = window_imp->mRawMotionCallback.load(std::memory_order_acquire))
+                    {
+                        callback((F32)(window_imp->mRawMouseDelta.mX - delta_before.mX), (F32)(window_imp->mRawMouseDelta.mY - delta_before.mY));
+                    }
+                    // </AS:Chanayane>
                 }
             }
         }
@@ -5435,6 +5443,15 @@ void LLWindowWin32::initWatchdog()
     // No need to hold D3D11 context/device any more.
     clearHighPerformanceGPURequest();
 }
+
+// <AS:Chanayane> Raw input is already read on the window thread for getCursorDelta(), so it
+// feeds this too, with the same values. A second raw input target would take over the window's.
+bool LLWindowWin32::setRawMouseMotionCallback(RawMouseMotionCallback callback)
+{
+    mRawMotionCallback.store(callback, std::memory_order_release);
+    return true;
+}
+// </AS:Chanayane>
 
 F32 LLWindowWin32::getSystemUISize()
 {

@@ -7,6 +7,7 @@
 #include "asrviewer.h"
 
 #include "asrbridge.h"
+#include "asrcameraturn.h"
 #include "asrgltable.h"
 #include "asrworld.h"
 #include "llappviewer.h"
@@ -64,6 +65,7 @@ U32 sHeight = 0;
 U32 sUIWidth = 0; // the size of the newest UI list
 U32 sUIHeight = 0;
 asr::SceneCamera3D sCamera{};
+asr::CameraTurn sCameraTurn{};
 bool sHasCamera = false;
 uint64_t sShownFrames = 0;
 
@@ -88,7 +90,8 @@ void logFrameStats(const char* what, const asr::FrameStats& stats)
 {
     LL_INFOS("ASRenderer") << what << ": " << stats.frames << " frames, worst frame " << stats.worstFrameSeconds * 1000.0
                            << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms, average state " << stats.averageStateAgeSeconds * 1000.0
-                           << " ms, frames with a new state " << stats.newStates << LL_ENDL;
+                           << " ms, frames with a new state " << stats.newStates << ", frames the mouse turned ahead of the main thread "
+                           << stats.turnedFrames << LL_ENDL;
     const asr::FrameParts& parts = stats.worstFrameParts;
     LL_INFOS("ASRenderer") << "worst frame, ms: wait for GPU " << parts.waitForGpu * 1000.0 << ", acquire " << parts.acquire * 1000.0 << ", UI " << parts.prepareUI * 1000.0
                            << ", record " << parts.record * 1000.0 << " of which scene update " << parts.sceneUpdate * 1000.0 << ", submit " << parts.submit * 1000.0
@@ -335,8 +338,9 @@ std::string startRenderer(LLWindow* window)
         return error;
     }
 
-    sRenderThread = std::make_unique<asr::RenderThread>(*sDevice);
+    sRenderThread = std::make_unique<asr::RenderThread>(*sDevice, ASRCameraTurn::motion());
     sRenderThread->start();
+    ASRCameraTurn::start(window);
     sStarted = Clock::now();
     sStatsLogged = sStarted;
     ASR::setRendererLink(&sViewerLink);
@@ -348,6 +352,7 @@ std::string startRenderer(LLWindow* window)
 
 void stopRenderer()
 {
+    ASRCameraTurn::stop();
     ASRWorld::stop();
     ASR::setRendererLink(nullptr);
     if (sRenderThread)
@@ -428,6 +433,7 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.height = sHeight;
     state.hasCamera = sHasCamera;
     state.camera = sCamera;
+    state.turn = sCameraTurn;
     static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
     state.predictCamera = predict_camera;
     static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
@@ -502,10 +508,11 @@ asr::Device* ASRViewer::device()
 #endif
 }
 
-void ASRViewer::setCamera(const asr::SceneCamera3D& camera)
+void ASRViewer::setCamera(const asr::SceneCamera3D& camera, const asr::CameraTurn& turn)
 {
 #if ASR_VIEWER_SUPPORTED
     sCamera = camera;
+    sCameraTurn = turn;
     sHasCamera = true;
 #endif
 }

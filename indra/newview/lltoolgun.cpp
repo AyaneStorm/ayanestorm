@@ -28,6 +28,7 @@
 
 #include "lltoolgun.h"
 
+#include "asrcameraturn.h" // <AS:Chanayane/>
 #include "llviewerwindow.h"
 #include "llagent.h"
 #include "llagentcamera.h"
@@ -104,8 +105,13 @@ bool LLToolGun::handleHover(S32 x, S32 y, MASK mask)
         // ...move the view with the mouse
 
         // get mouse movement delta
-        S32 dx = -gViewerWindow->getCurrentMouseDX();
-        S32 dy = -gViewerWindow->getCurrentMouseDY();
+        // <AS:Chanayane> With the new renderer, the mouse's own motion: see asrcameraturn.h.
+        //S32 dx = -gViewerWindow->getCurrentMouseDX();
+        //S32 dy = -gViewerWindow->getCurrentMouseDY();
+        F32 dx = 0.f;
+        F32 dy = 0.f;
+        ASRCameraTurn::takeLookMotion(mouse_sensitivity, dx, dy);
+        // </AS:Chanayane>
 
         if (dx != 0 || dy != 0)
         {

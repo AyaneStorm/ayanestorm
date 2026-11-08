@@ -30,10 +30,10 @@ if(WIN32)
         ${ASR_THIRD_PARTY}/volk ${ASR_THIRD_PARTY}/vma ${ASR_THIRD_PARTY}/vulkan-headers/include)
     target_compile_definitions(asrenderer PRIVATE VK_USE_PLATFORM_WIN32_KHR ASR_HAS_DEVICE)
 elseif(APPLE)
-    target_sources(asrenderer PRIVATE asrdevicemetal.mm)
-    set_source_files_properties(asrdevicemetal.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+    target_sources(asrenderer PRIVATE asrdevicemetal.mm asrmousemac.mm)
+    set_source_files_properties(asrdevicemetal.mm asrmousemac.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
     target_compile_definitions(asrenderer PRIVATE ASR_HAS_DEVICE)
-    target_link_libraries(asrenderer PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Cocoa")
+    target_link_libraries(asrenderer PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Cocoa" "-framework GameController")
 endif()
 
 # --- Shader build step: one output per source, so editing a shader rebuilds

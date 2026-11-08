@@ -107,15 +107,13 @@ CameraPredictor::Vec CameraPredictor::toVector(const Quat& rotation)
     return { rotation.x * scale, rotation.y * scale, rotation.z * scale };
 }
 
-SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_point published, Clock::time_point now)
+bool CameraPredictor::step(const Vec& eye, const Quat& rotation, Clock::time_point published, Clock::time_point now)
 {
     const auto seconds = [](Clock::duration duration) { return std::chrono::duration<float>(duration).count(); };
-    const Vec eye{ newest.position[0], newest.position[1], newest.position[2] };
 
     const bool newStep = !mStarted || published != mPublished;
     if (newStep)
     {
-        const Quat rotation = rotationOf(newest);
         const Quat conjugate{ mRotation.w, -mRotation.x, -mRotation.y, -mRotation.z };
         const Vec turn = toVector(multiply(rotation, conjugate));
         const Vec move{ eye.x - mEye.x, eye.y - mEye.y, eye.z - mEye.z };
@@ -193,13 +191,22 @@ SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_
     mShownEye = { predictedEye.x + mEyeError.x, predictedEye.y + mEyeError.y, predictedEye.z + mEyeError.z };
     mShownRotation = multiply(fromVector(mRotationError), predictedRotation);
 
-    // A still camera comes through exactly as published, with nothing rebuilt.
+    // Something still comes through exactly as published, with nothing rebuilt.
     const auto zero = [](const Vec& v) { return v.x == 0.f && v.y == 0.f && v.z == 0.f; };
     if (zero(mVelocity) && zero(mSpin) && std::fabs(mEyeError.x) + std::fabs(mEyeError.y) + std::fabs(mEyeError.z) < 1e-5f
         && std::fabs(mRotationError.x) + std::fabs(mRotationError.y) + std::fabs(mRotationError.z) < 1e-6f)
     {
         mEyeError = {};
         mRotationError = {};
+        return true;
+    }
+    return false;
+}
+
+SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_point published, Clock::time_point now)
+{
+    if (step({ newest.position[0], newest.position[1], newest.position[2] }, rotationOf(newest), published, now))
+    {
         return newest;
     }
 
@@ -214,6 +221,105 @@ SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_
     const float verticalFov = 2.f * std::atan(1.f / newest.focal[1]);
     SceneCamera3D camera = makeCameraFromAxes(shownEye, forward, up, verticalFov, newest.focal[1] / newest.focal[0], newest.nearClip, newest.farClip);
     camera.lodScale = newest.lodScale;
+    return camera;
+}
+
+void CameraPredictor::predictPoint(const float newest[3], Clock::time_point published, Clock::time_point now, float shown[3])
+{
+    if (step({ newest[0], newest[1], newest[2] }, Quat{}, published, now))
+    {
+        std::copy(newest, newest + 3, shown);
+        return;
+    }
+    shown[0] = mShownEye.x;
+    shown[1] = mShownEye.y;
+    shown[2] = mShownEye.z;
+}
+
+namespace
+{
+
+void cross(const float a[3], const float b[3], float out[3])
+{
+    out[0] = a[1] * b[2] - a[2] * b[1];
+    out[1] = a[2] * b[0] - a[0] * b[2];
+    out[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+// False, leaving it, when it is too short to have a direction.
+bool normalize(float v[3])
+{
+    const float length = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (!(length > 1e-12f))
+    {
+        return false;
+    }
+    v[0] /= length;
+    v[1] /= length;
+    v[2] /= length;
+    return true;
+}
+
+// About a unit axis, by the right-hand rule.
+void rotate(const float v[3], const float axis[3], float angle, float out[3])
+{
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    const float along = (v[0] * axis[0] + v[1] * axis[1] + v[2] * axis[2]) * (1.f - c);
+    float side[3];
+    cross(axis, v, side);
+    for (int i = 0; i < 3; ++i)
+    {
+        out[i] = v[i] * c + side[i] * s + axis[i] * along;
+    }
+}
+
+} // namespace
+
+SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3])
+{
+    const float yaw = dx * turn.yawPerUnit;
+    float pitch = dy * turn.pitchPerUnit;
+    pitch = pitch > 0.f ? std::min(pitch, turn.largestPitch) : std::max(pitch, turn.smallestPitch);
+    const bool shifted = shift[0] != 0.f || shift[1] != 0.f || shift[2] != 0.f;
+    if (yaw == 0.f && pitch == 0.f && !shifted)
+    {
+        return published;
+    }
+
+    // Pitch about the published axis, then yaw: the main thread's order, up to terms
+    // too small to see between two of its steps.
+    float eye[3];
+    float focus[3];
+    float pitched[3];
+    rotate(turn.eyeArm, turn.pitchAxis, pitch, pitched);
+    rotate(pitched, turn.yawAxis, yaw, eye);
+    rotate(turn.focusArm, turn.pitchAxis, pitch, pitched);
+    rotate(pitched, turn.yawAxis, yaw, focus);
+    for (int i = 0; i < 3; ++i)
+    {
+        eye[i] += turn.eyePivot[i] + shift[i];
+        focus[i] += turn.focusPivot[i] + shift[i];
+    }
+
+    // As the viewer builds its view: left is up across forward, then up is made square.
+    float forward[3] = { focus[0] - eye[0], focus[1] - eye[1], focus[2] - eye[2] };
+    float left[3];
+    cross(turn.up, forward, left);
+    if (!normalize(forward) || !normalize(left))
+    {
+        return published;
+    }
+    float up[3];
+    cross(forward, left, up);
+    const float c = std::cos(turn.roll);
+    const float s = std::sin(turn.roll);
+    const float rolledUp[3] = { up[0] * c - left[0] * s, up[1] * c - left[1] * s, up[2] * c - left[2] * s };
+
+    const float verticalFov = 2.f * std::atan(1.f / published.focal[1]);
+    SceneCamera3D camera = makeCameraFromAxes(eye, forward, rolledUp, verticalFov, published.focal[1] / published.focal[0],
+                                              published.nearClip, published.farClip);
+    camera.lodScale = published.lodScale;
     return camera;
 }
 
@@ -254,6 +360,7 @@ FrameStats RenderThread::takeStats()
     stats.averageStateAgeSeconds = stats.frames != 0 ? ageSum * 1e-6 / double(stats.frames) : 0.0;
     stats.newStates = mNewStates.exchange(0, std::memory_order_relaxed);
     stats.worstRefreshSeconds = mWorstRefreshMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
+    stats.turnedFrames = mTurnedFrames.exchange(0, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(mWorstPartsMutex);
     stats.worstFrameParts = mWorstParts;
     return stats;
@@ -267,6 +374,7 @@ void RenderThread::run()
     Clock::time_point lastState{};
     Clock::time_point frameDue = start;
     CameraPredictor predictor;
+    bool wasTurning = false;
 
     while (!mStop.load(std::memory_order_relaxed))
     {
@@ -299,7 +407,37 @@ void RenderThread::run()
         input.testTriangle = state.testTriangle;
         input.ui = &mUI.read();
         SceneCamera3D predicted;
-        if (state.hasCamera && state.predictCamera)
+        const bool turning = state.hasCamera && state.turn.active && mMotion;
+        if (turning != wasTurning)
+        {
+            // What is predicted changes, from the camera to its pivot or back.
+            predictor.reset();
+            wasTurning = turning;
+        }
+        if (turning)
+        {
+            // The motion is read as late as it can be, just before the frame uses it.
+            float dx = 0.f;
+            float dy = 0.f;
+            MouseMotion::between(state.turn.included, mMotion->total(), dx, dy);
+            float shift[3] = {};
+            if (state.predictCamera)
+            {
+                float pivot[3];
+                predictor.predictPoint(state.turn.eyePivot, state.published, frameStart, pivot);
+                for (int i = 0; i < 3; ++i)
+                {
+                    shift[i] = pivot[i] - state.turn.eyePivot[i];
+                }
+            }
+            predicted = turnCamera(state.camera, state.turn, dx, dy, shift);
+            input.camera = &predicted;
+            if (dx != 0.f || dy != 0.f)
+            {
+                mTurnedFrames.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+        else if (state.hasCamera && state.predictCamera)
         {
             predicted = predictor.predict(state.camera, state.published, frameStart);
             input.camera = &predicted;

@@ -187,6 +187,14 @@ public:
     virtual void *getPlatformWindow() = 0;
     // <AS:Chanayane> What the new renderer draws into: the HWND on Windows, a view on the Mac.
     virtual void* getRendererSurface() { return getPlatformWindow(); }
+
+    // The mouse's own motion, with no pointer acceleration, reported as it arrives on
+    // a thread that is never the main thread, so a busy main thread does not hold it
+    // back. x is to the right and y up, in the units of getCursorDelta() on Windows.
+    // The callback has to be quick and safe on any thread. nullptr stops it. False
+    // if this platform has no such source.
+    using RawMouseMotionCallback = void (*)(float dx, float dy);
+    virtual bool setRawMouseMotionCallback(RawMouseMotionCallback callback) { return false; }
     // </AS:Chanayane>
 
     // control platform's Language Text Input mechanisms.

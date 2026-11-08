@@ -11932,13 +11932,24 @@ Change of this parameter will affect the layout of buttons in notification toast
   <key>ASRendererCameraPrediction</key>
   <map>
     <key>Comment</key>
-    <string>With the new renderer, carry the camera's motion on between main-thread steps, so every frame has its own camera. Off shows the newest main-thread camera, repeated until the next step.</string>
+    <string>With the new renderer, carry the camera's motion on between main-thread steps, so every frame has its own camera. Off shows the newest main-thread camera, repeated until the next step. While the mouse turns the camera, only how its pivot moves is carried on: the turn itself follows the mouse.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>
     <string>Boolean</string>
     <key>Value</key>
     <integer>1</integer>
+  </map>
+  <key>ASCameraOrbitSpeed</key>
+  <map>
+    <key>Comment</key>
+    <string>With the new renderer, how fast the camera tool orbits for a given mouse movement. It follows the mouse's own motion there, with no pointer acceleration, so its speed can differ from the cursor's.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>1.0</real>
   </map>
   <key>ASRendererUIHz</key>
   <map>

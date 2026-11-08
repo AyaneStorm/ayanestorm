@@ -814,6 +814,113 @@ void testCameraPredictor()
     expect(starting.predict(cameraAt(1.f), at(0.2f), at(0.29f)).position[0] < 1.01f, "a first step is not carried on");
 }
 
+void testMouseMotion()
+{
+    asr::MouseMotion motion;
+    const asr::MouseMotion::Total start = motion.total();
+    motion.add(1.5f, -2.25f);
+    float dx = 0.f;
+    float dy = 0.f;
+    asr::MouseMotion::between(start, motion.total(), dx, dy);
+    expect(dx == 1.5f && dy == -2.25f, "motion adds up on both axes");
+
+    asr::MouseMotion fractions;
+    for (int i = 0; i < 1000; ++i)
+    {
+        fractions.add(0.1f, -0.1f);
+    }
+    asr::MouseMotion::between(0, fractions.total(), dx, dy);
+    expect(std::fabs(dx - 100.f) < 0.02f && std::fabs(dy + 100.f) < 0.02f, "fractions of a unit do not get lost");
+
+    // Past 2^31 substeps the counts wrap, and the motion between two totals still holds.
+    asr::MouseMotion far;
+    far.add(40000000.f, -40000000.f);
+    const asr::MouseMotion::Total before = far.total();
+    far.add(3.f, 4.f);
+    asr::MouseMotion::between(before, far.total(), dx, dy);
+    expect(dx == 3.f && dy == 4.f, "motion across a wrap is right");
+}
+
+void testCameraTurn()
+{
+    const auto close = [](float a, float b, float tolerance) { return std::fabs(a - b) < tolerance; };
+    const auto forwardOf = [](const asr::SceneCamera3D& camera, float out[3])
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            out[i] = -camera.viewRows[2][i];
+        }
+    };
+    const float noShift[3] = {};
+    const float pi = 3.14159265f;
+
+    // Orbiting a point 10 m ahead, as the camera tool does.
+    const float eye[3] = { 0.f, 0.f, 0.f };
+    const float forward[3] = { 1.f, 0.f, 0.f };
+    const float up[3] = { 0.f, 0.f, 1.f };
+    const asr::SceneCamera3D published = asr::makeCameraFromAxes(eye, forward, up, 1.f, 1.5f, 0.1f, 200.f);
+    asr::CameraTurn orbit;
+    orbit.active = true;
+    orbit.yawPerUnit = 0.01f;
+    orbit.pitchPerUnit = 0.01f;
+    orbit.yawAxis[2] = 1.f;
+    orbit.pitchAxis[1] = 1.f; // the camera's left
+    orbit.largestPitch = 0.1f;
+    orbit.smallestPitch = -0.2f;
+    orbit.eyePivot[0] = 10.f;
+    orbit.eyeArm[0] = -10.f;
+    orbit.focusPivot[0] = 10.f;
+    orbit.up[2] = 1.f;
+
+    const asr::SceneCamera3D unturned = asr::turnCamera(published, orbit, 0.f, 0.f, noShift);
+    expect(memcmp(&unturned, &published, sizeof(published)) == 0, "with no motion the published camera comes through exactly");
+
+    const asr::SceneCamera3D quarter = asr::turnCamera(published, orbit, pi / 2.f / 0.01f, 0.f, noShift);
+    float look[3];
+    forwardOf(quarter, look);
+    expect(close(quarter.position[0], 10.f, 1e-3f) && close(quarter.position[1], -10.f, 1e-3f) && close(quarter.position[2], 0.f, 1e-3f),
+           "a quarter yaw takes the eye a quarter of the way round the pivot");
+    expect(close(look[0], 0.f, 1e-4f) && close(look[1], 1.f, 1e-4f) && close(look[2], 0.f, 1e-4f), "the turned eye still looks at the point");
+    expect(close(quarter.focal[1], published.focal[1], 1e-5f) && close(quarter.lodScale, published.lodScale, 1e-6f), "the lens stays the same");
+
+    // Pitch stops where the main thread would stop it, in both directions.
+    const asr::SceneCamera3D over = asr::turnCamera(published, orbit, 0.f, 100.f, noShift);
+    const asr::SceneCamera3D under = asr::turnCamera(published, orbit, 0.f, -1000.f, noShift);
+    // By the right-hand rule about the left axis, a positive pitch lifts an eye behind the pivot.
+    expect(close(std::atan2(over.position[2], 10.f - over.position[0]), 0.1f, 1e-4f), "pitch above 0 stops at the largest");
+    expect(close(std::atan2(under.position[2], 10.f - under.position[0]), -0.2f, 1e-4f), "pitch below 0 stops at the smallest");
+
+    // A full turn comes back to the published camera, roll included.
+    const float rollAngle = 0.3f;
+    const float rolledUp[3] = { 0.f, -std::sin(rollAngle), std::cos(rollAngle) };
+    const asr::SceneCamera3D rolled = asr::makeCameraFromAxes(eye, forward, rolledUp, 1.f, 1.5f, 0.1f, 200.f);
+    asr::CameraTurn rolling = orbit;
+    rolling.roll = rollAngle;
+    const asr::SceneCamera3D round = asr::turnCamera(rolled, rolling, 2.f * pi / 0.01f, 0.f, noShift);
+    bool same = true;
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int column = 0; column < 4; ++column)
+        {
+            same = same && close(round.viewRows[row][column], rolled.viewRows[row][column], 1e-3f);
+        }
+    }
+    expect(same, "a full turn comes back to the published view, rolled as it was");
+
+    // Mouselook turns the view about the eye, and a moved pivot moves the eye with it.
+    asr::CameraTurn look360 = orbit;
+    look360.eyePivot[0] = 0.f;
+    look360.eyeArm[0] = 0.f;
+    look360.focusPivot[0] = 0.f;
+    look360.focusArm[0] = 1.f;
+    const float shift[3] = { 1.f, 2.f, 3.f };
+    const asr::SceneCamera3D looked = asr::turnCamera(published, look360, pi / 2.f / 0.01f, 0.f, shift);
+    forwardOf(looked, look);
+    expect(close(looked.position[0], 1.f, 1e-4f) && close(looked.position[1], 2.f, 1e-4f) && close(looked.position[2], 3.f, 1e-4f),
+           "the eye only moves with its pivot");
+    expect(close(look[0], 0.f, 1e-4f) && close(look[1], 1.f, 1e-4f), "the view turns about the eye");
+}
+
 class FakeChunks final : public asr::SceneChunks
 {
 public:
@@ -1346,7 +1453,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         expect(device->memoryBudget().budget() <= options.memoryCapBytes, "memory cap lowers the budget");
     }
 
-    asr::RenderThread renderThread(*device);
+    asr::RenderThread renderThread(*device, nullptr);
     std::unique_ptr<asrtest::TestCity> city;
     const Clock::time_point sceneStart = Clock::now();
     const auto publishWindowSize = [&]()
@@ -1620,6 +1727,8 @@ int main(int argc, char** argv)
         testClusterGroups();
         testRangeAllocator();
         testCameraPredictor();
+        testMouseMotion();
+        testCameraTurn();
         testSceneStore();
         testFrameGraph();
         testPyramidLayout();
