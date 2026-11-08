@@ -2,7 +2,7 @@
  * @file asrcameraturn.h
  * @brief Lets the new renderer's thread turn the camera by the mouse, between main-thread frames.
  *
- * The camera tool's orbit, its zoom tool's orbit, and mouselook turn the camera by the mouse's own motion,
+ * The camera tool's orbit and mouselook turn the camera by the mouse's own motion,
  * which arrives off the main thread and both threads read. The main thread turns its
  * camera by the motion up to one total, and the render thread turns that camera by the
  * motion since, the same way, so the view follows the hand at the render rate and stops
@@ -46,13 +46,6 @@ namespace ASRCameraTurn
     // LLToolCamera's orbit: true when it orbited by the motion taken, for the render thread
     // to follow, and false when the tool orbits by the cursor, as before.
     bool orbit();
-
-    // LLToolCamera's zoom tool, the default one, which a plain Alt drag uses: true when it
-    // orbited around and zoomed by the motion taken, as it does by the cursor, and false when
-    // the tool goes by the cursor, as before. The drag up and down zooms once outside the slop,
-    // or orbits over with mouse steering. The render thread follows the orbits, not the drag's
-    // zoom, which shows at the main thread's rate.
-    bool zoomToolOrbit(bool mouse_steering, bool outside_slop_y);
 
     // LLToolCamera, on mouse up: the motion that came since the last hover, which the render
     // thread has shown, is orbited by too, so the view does not step back.
