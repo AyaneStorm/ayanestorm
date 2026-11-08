@@ -288,6 +288,7 @@ public:
         const auto seconds = [](Clock::time_point from, Clock::time_point to) { return std::chrono::duration<double>(to - from).count(); };
         mFrameParts = {};
         const Clock::time_point frameStart = Clock::now();
+        mFrameParts = FrameParts{}; // the parts inside record fill in as it runs
 
         const uint32_t slot = mFrame % FRAMES_IN_FLIGHT;
         if (!check(vkWaitForFences(mDevice, 1, &mFences[slot], VK_TRUE, UINT64_MAX), "wait for frame"))
@@ -1668,6 +1669,7 @@ private:
                     {
                         return false;
                     }
+                    ++mFrameParts.texturesCreated;
                     break;
                 case TextureCommand::Type::Upload:
                     uploadTexture(commands, command, command.height - command.rowsDone, frameSlot, stagingOffset);
@@ -1689,6 +1691,7 @@ private:
         {
             vmaFlushAllocation(mAllocator, mStaging[frameSlot].allocation, 0, stagingOffset);
         }
+        mFrameParts.textureUploadBytes = stagingOffset;
         mTextureCommands.erase(mTextureCommands.begin(), mTextureCommands.begin() + end);
         return true;
     }
@@ -1936,7 +1939,8 @@ private:
 
         const auto updateStart = std::chrono::steady_clock::now();
         mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
-        mFrameParts.sceneUpdate = std::chrono::duration<double>(std::chrono::steady_clock::now() - updateStart).count();
+        const auto growthStart = std::chrono::steady_clock::now();
+        mFrameParts.sceneUpdate = std::chrono::duration<double>(growthStart - updateStart).count();
 
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
@@ -1955,6 +1959,8 @@ private:
         {
             return false;
         }
+        const auto stagingStart = std::chrono::steady_clock::now();
+        mFrameParts.sceneGrowth = std::chrono::duration<double>(stagingStart - growthStart).count();
 
         uint64_t stagingBytes = 0;
         for (const SceneWrite& write : mSceneStore.writes())
@@ -1985,6 +1991,8 @@ private:
             flushSceneRegions(commands, slot, target);
             vmaFlushAllocation(mAllocator, mSceneStaging[slot].allocation, 0, offset);
         }
+        mFrameParts.sceneStaging = std::chrono::duration<double>(std::chrono::steady_clock::now() - stagingStart).count();
+        mFrameParts.sceneStagingBytes = stagingBytes;
 
         const VkBufferCopy reset{ 0, 0, sizeof(GpuSceneCounts) };
         vkCmdCopyBuffer(commands, mSceneCountsTemplate.buffer, mSceneCounts.buffer, 1, &reset);
@@ -2247,7 +2255,9 @@ private:
     // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
     bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit)
     {
+        const auto readStart = std::chrono::steady_clock::now();
         readSceneResults(slot);
+        mFrameParts.readResults = std::chrono::duration<double>(std::chrono::steady_clock::now() - readStart).count();
         const bool readFeedback = mFeedbackCollector.frame(std::chrono::steady_clock::now(), mFeedbackValue, mFeedbackEnding);
         mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
         mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
@@ -2447,15 +2457,20 @@ private:
             return false;
         }
 
+        const auto retireStart = std::chrono::steady_clock::now();
         mRetiredTextures.run(input.ui ? input.ui->generation : 0, mFrame, FRAMES_IN_FLIGHT, [this](uint32_t retired)
         {
             destroyTexture(retired);
             mTextures.releaseSlot(retired);
+            ++mFrameParts.texturesRetired;
         });
+        const auto commandsStart = std::chrono::steady_clock::now();
+        mFrameParts.retireTextures = std::chrono::duration<double>(commandsStart - retireStart).count();
         if (!runTextureCommands(commands, slot))
         {
             return false;
         }
+        mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
         if (input.camera && !recordScene(commands, slot, *input.camera, input.audit))
         {
             return false;

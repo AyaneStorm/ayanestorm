@@ -3391,6 +3391,12 @@ LRESULT CALLBACK LLWindowWin32::mainWindowProc(HWND h_wnd, UINT u_msg, WPARAM w_
             if (z_delta <= -WHEEL_DELTA || WHEEL_DELTA <= z_delta)
             {
                 short clicks = -z_delta / WHEEL_DELTA;
+                // <AS:Chanayane> The same clicks, as they are posted, for the new renderer's zoom.
+                if (const WheelClicksCallback callback = window_imp->mWheelClicksCallback.load(std::memory_order_acquire))
+                {
+                    callback(clicks);
+                }
+                // </AS:Chanayane>
                 WINDOW_IMP_POST(window_imp->mCallbacks->handleScrollWheel(window_imp, clicks));
                 z_delta = 0;
             }
@@ -5449,6 +5455,12 @@ void LLWindowWin32::initWatchdog()
 bool LLWindowWin32::setRawMouseMotionCallback(RawMouseMotionCallback callback)
 {
     mRawMotionCallback.store(callback, std::memory_order_release);
+    return true;
+}
+
+bool LLWindowWin32::setWheelClicksCallback(WheelClicksCallback callback)
+{
+    mWheelClicksCallback.store(callback, std::memory_order_release);
     return true;
 }
 // </AS:Chanayane>

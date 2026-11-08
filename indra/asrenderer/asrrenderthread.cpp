@@ -39,6 +39,8 @@ constexpr float SLOWEST_STEP = 0.5f;           // seconds: with steps this far a
 constexpr float ERROR_HALF_LIFE = 0.06f;       // seconds
 constexpr float LARGEST_MOVE = 32.f;           // metres in one step: more is a cut, not motion
 constexpr float LARGEST_TURN = 1.6f;           // radians in one step, as above
+constexpr float MIN_ZOOM_STEP = 0.001f;        // seconds: a zoom is stepped no finer than this
+constexpr std::chrono::seconds LONGEST_ZOOM(2); // past this every zoom has settled
 
 } // namespace
 
@@ -276,13 +278,14 @@ void rotate(const float v[3], const float axis[3], float angle, float out[3])
 
 } // namespace
 
-SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3])
+SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3],
+                         bool armChanged)
 {
     const float yaw = dx * turn.yawPerUnit;
     float pitch = dy * turn.pitchPerUnit;
     pitch = pitch > 0.f ? std::min(pitch, turn.largestPitch) : std::max(pitch, turn.smallestPitch);
     const bool shifted = shift[0] != 0.f || shift[1] != 0.f || shift[2] != 0.f;
-    if (yaw == 0.f && pitch == 0.f && !shifted)
+    if (yaw == 0.f && pitch == 0.f && !shifted && !armChanged)
     {
         return published;
     }
@@ -323,6 +326,110 @@ SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn,
     return camera;
 }
 
+void stepZoom(float eye[3], float shown[3], const float target[3], float seconds, float zoomHalfLife, float smoothingHalfLife)
+{
+    // LLSmoothInterpolation::getInterpolant(): a lerp by 1 - 2^(-step / half-life).
+    const float eyeKeeps = zoomHalfLife > 0.f ? std::pow(0.5f, seconds / zoomHalfLife) : 0.f;
+    const float shownKeeps = smoothingHalfLife > 0.f ? std::pow(0.5f, seconds / smoothingHalfLife) : 0.f;
+    for (int i = 0; i < 3; ++i)
+    {
+        eye[i] = target[i] + (eye[i] - target[i]) * eyeKeeps;
+        shown[i] = eye[i] + (shown[i] - eye[i]) * shownKeeps;
+    }
+}
+
+void ZoomFollower::step(const CameraZoom& zoom)
+{
+    std::copy(mTo, mTo + 3, mFrom);
+    stepZoom(mEye, mTo, mTarget, mStepSeconds, zoom.zoomHalfLife, zoom.smoothingHalfLife);
+}
+
+void ZoomFollower::retarget(const CameraTurn& turn, int32_t clicks)
+{
+    const CameraZoom& zoom = turn.zoom;
+    float scale = 1.f;
+    const int32_t unseen = zoom.followClicks ? MouseMotion::clicksBetween(zoom.included, clicks) : 0;
+    if (unseen != 0 && zoom.targetDistance > 0.f)
+    {
+        const float distance = std::clamp(zoom.targetDistance * std::pow(zoom.perClick, float(unseen)), zoom.nearest, zoom.farthest);
+        scale = distance / zoom.targetDistance;
+    }
+    for (int i = 0; i < 3; ++i)
+    {
+        const float origin = zoom.origin[i] - turn.eyePivot[i];
+        mTarget[i] = origin + (zoom.eyeTarget[i] - turn.eyePivot[i] - origin) * scale;
+    }
+    mClicks = clicks;
+}
+
+void ZoomFollower::follow(const CameraTurn& turn, const float publishedEye[3], int32_t clicks, Clock::time_point published,
+                          Clock::time_point now, float arm[3])
+{
+    const auto seconds = [](Clock::duration duration) { return std::max(std::chrono::duration<float>(duration).count(), 0.f); };
+    const CameraZoom& zoom = turn.zoom;
+    const bool newState = !mStarted || published != mPublished;
+    if (newState)
+    {
+        // Clicks it had not handled when it published, it handles in its next step.
+        for (int i = 0; i < 3; ++i)
+        {
+            mEye[i] = zoom.eyeNow[i] - turn.eyePivot[i];
+            mTo[i] = publishedEye[i] - turn.eyePivot[i];
+        }
+        retarget(turn, clicks);
+        mStepSeconds = std::max(zoom.stepSeconds, MIN_ZOOM_STEP);
+        mFromTime = published;
+        mPublished = published;
+        step(zoom);
+    }
+    else if (clicks != mClicks)
+    {
+        // A click that came after the main thread took its input: it handles it in the step
+        // after the next, which is the one this target starts.
+        retarget(turn, clicks);
+    }
+
+    // Take the steps that have passed, then show the point between the last and the next.
+    const auto stepLength = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float>(mStepSeconds));
+    if (now - mFromTime > LONGEST_ZOOM)
+    {
+        // Settled long since: nothing is left to step through.
+        std::copy(mTarget, mTarget + 3, mEye);
+        std::copy(mTarget, mTarget + 3, mTo);
+        std::copy(mTarget, mTarget + 3, mFrom);
+        mFromTime = now;
+    }
+    while (now >= mFromTime + stepLength)
+    {
+        mFromTime += stepLength;
+        step(zoom);
+    }
+    const float along = std::clamp(seconds(now - mFromTime) / mStepSeconds, 0.f, 1.f);
+    float shown[3];
+    for (int i = 0; i < 3; ++i)
+    {
+        shown[i] = mFrom[i] + (mTo[i] - mFrom[i]) * along;
+    }
+
+    const float frameSeconds = mStarted ? seconds(now - mLastFrame) : 0.f;
+    if (newState)
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            mError[i] = mStarted ? mArm[i] - shown[i] : 0.f;
+        }
+    }
+    const float fade = std::pow(0.5f, frameSeconds / ERROR_HALF_LIFE);
+    for (int i = 0; i < 3; ++i)
+    {
+        mError[i] *= fade;
+        arm[i] = shown[i] + mError[i];
+        mArm[i] = arm[i];
+    }
+    mLastFrame = now;
+    mStarted = true;
+}
+
 void RenderThread::start()
 {
     mStop.store(false, std::memory_order_relaxed);
@@ -361,6 +468,8 @@ FrameStats RenderThread::takeStats()
     stats.newStates = mNewStates.exchange(0, std::memory_order_relaxed);
     stats.worstRefreshSeconds = mWorstRefreshMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
     stats.turnedFrames = mTurnedFrames.exchange(0, std::memory_order_relaxed);
+    stats.zoomedFrames = mZoomedFrames.exchange(0, std::memory_order_relaxed);
+    stats.clickFrames = mClickFrames.exchange(0, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(mWorstPartsMutex);
     stats.worstFrameParts = mWorstParts;
     return stats;
@@ -374,7 +483,9 @@ void RenderThread::run()
     Clock::time_point lastState{};
     Clock::time_point frameDue = start;
     CameraPredictor predictor;
+    ZoomFollower zoomFollower;
     bool wasTurning = false;
+    bool wasZooming = false;
 
     while (!mStop.load(std::memory_order_relaxed))
     {
@@ -407,19 +518,42 @@ void RenderThread::run()
         input.testTriangle = state.testTriangle;
         input.ui = &mUI.read();
         SceneCamera3D predicted;
-        const bool turning = state.hasCamera && state.turn.active && mMotion;
+        const bool zooming = state.hasCamera && state.turn.zoom.active && mMotion;
+        const bool turning = state.hasCamera && (state.turn.active || zooming) && mMotion;
         if (turning != wasTurning)
         {
             // What is predicted changes, from the camera to its pivot or back.
             predictor.reset();
             wasTurning = turning;
         }
+        if (zooming != wasZooming)
+        {
+            zoomFollower.reset();
+            wasZooming = zooming;
+        }
         if (turning)
         {
             // The motion is read as late as it can be, just before the frame uses it.
             float dx = 0.f;
             float dy = 0.f;
-            MouseMotion::between(state.turn.included, mMotion->total(), dx, dy);
+            if (state.turn.active)
+            {
+                MouseMotion::between(state.turn.included, mMotion->total(), dx, dy);
+            }
+            CameraTurn zoomed;
+            const CameraTurn* turn = &state.turn;
+            if (zooming)
+            {
+                const int32_t clicks = mMotion->clicks();
+                zoomed = state.turn;
+                zoomFollower.follow(state.turn, state.camera.position, clicks, state.published, frameStart, zoomed.eyeArm);
+                turn = &zoomed;
+                mZoomedFrames.fetch_add(1, std::memory_order_relaxed);
+                if (state.turn.zoom.followClicks && clicks != state.turn.zoom.included)
+                {
+                    mClickFrames.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             float shift[3] = {};
             if (state.predictCamera)
             {
@@ -430,7 +564,7 @@ void RenderThread::run()
                     shift[i] = pivot[i] - state.turn.eyePivot[i];
                 }
             }
-            predicted = turnCamera(state.camera, state.turn, dx, dy, shift);
+            predicted = turnCamera(state.camera, *turn, dx, dy, shift, zooming);
             input.camera = &predicted;
             if (dx != 0.f || dy != 0.f)
             {

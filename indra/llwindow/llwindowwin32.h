@@ -154,6 +154,8 @@ public:
 
     // <AS:Chanayane> Called from WM_INPUT on the window thread, with the raw delta as it is added up.
     bool setRawMouseMotionCallback(RawMouseMotionCallback callback) override;
+    // And from WM_MOUSEWHEEL, with the clicks it posts.
+    bool setWheelClicksCallback(WheelClicksCallback callback) override;
     // </AS:Chanayane>
 
 protected:
@@ -237,6 +239,7 @@ protected:
     LLCoordCommon mRawMouseDelta; // raw mouse delta according to window thread
     LLCoordCommon mMouseFrameDelta; // how much the mouse moved between the last two calls to gatherInput
     std::atomic<RawMouseMotionCallback> mRawMotionCallback{ nullptr }; // <AS:Chanayane/>
+    std::atomic<WheelClicksCallback> mWheelClicksCallback{ nullptr }; // <AS:Chanayane/>
 
     MASK        mMouseMask;
 

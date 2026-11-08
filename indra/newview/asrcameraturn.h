@@ -11,6 +11,10 @@
  *
  * With OpenGL, or with no raw motion from the mouse, or with MouseSmooth on, which the
  * render thread could not follow, the tools turn by the cursor's delta, as before.
+ *
+ * The wheel's zoom eases on the render thread the same way: the main thread publishes
+ * how its camera eases, and on Windows the render thread also zooms by clicks the main
+ * thread has not handled yet.
  */
 #ifndef ASR_CAMERA_TURN_H
 #define ASR_CAMERA_TURN_H
@@ -51,12 +55,20 @@ namespace ASRCameraTurn
     // cursor's delta negated. The render thread follows it when it is the mouse's own motion.
     void takeLookMotion(F32 mouse_sensitivity, F32& dx, F32& dy);
 
+    // LLViewerWindow, for every wheel event from the window, wherever it goes: counts the
+    // clicks handled, so the render thread knows those still on their way.
+    void wheelHandled(S32 clicks);
+
+    // LLViewerWindow, when the wheel reached the camera's zoom: for a while, the render thread
+    // zooms by clicks the main thread has not handled yet, as they most likely zoom too.
+    void wheelZoomed();
+
     // True when a tool turned the camera this frame by the mouse's own motion. The camera then
     // follows it with no smoothing, as the render thread cannot smooth what it adds.
     bool turning();
 
-    // Fills in the turn to publish with this frame's camera, whose space is agent space moved
-    // by `origin`, and ends the frame. Once a frame, with the camera, after updateCamera().
+    // Fills in the turn and zoom to publish with this frame's camera, whose space is agent space
+    // moved by `origin`, and ends the frame. Once a frame, with the camera, after updateCamera().
     void publish(asr::CameraTurn& turn, const LLVector3& origin);
 }
 

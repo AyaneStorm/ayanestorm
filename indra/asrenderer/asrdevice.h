@@ -151,17 +151,26 @@ private:
 constexpr std::chrono::milliseconds FEEDBACK_WINDOW(100);
 constexpr uint64_t FEEDBACK_BYTES = uint64_t(MAX_TEXTURES) * sizeof(uint32_t);
 
-// Where the render thread's time went inside one frame, in seconds. sceneUpdate is part of
-// record. Every figure stays 0 on a backend that does not report them.
+// Where the render thread's time went inside one frame, in seconds. The parts between record
+// and submit are inside record. Every figure stays 0 on a backend that does not report them.
 struct FrameParts
 {
     double waitForGpu = 0.0;
     double acquire = 0.0;
     double prepareUI = 0.0;
     double record = 0.0;
+    double retireTextures = 0.0;  // images whose last frame is done, destroyed
+    double textureCommands = 0.0; // creates, uploads and mips from the texture queue
+    double readResults = 0.0;     // pass times, counts and texture feedback of a finished frame
     double sceneUpdate = 0.0;
+    double sceneGrowth = 0.0;     // scene tables and lists made larger
+    double sceneStaging = 0.0;    // scene writes copied to the staging buffer
     double submit = 0.0;
     double present = 0.0;
+    uint32_t texturesRetired = 0;
+    uint32_t texturesCreated = 0;
+    uint64_t textureUploadBytes = 0;
+    uint64_t sceneStagingBytes = 0;
 };
 
 class Device

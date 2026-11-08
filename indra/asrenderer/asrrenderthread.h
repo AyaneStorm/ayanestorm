@@ -21,12 +21,42 @@
 namespace asr
 {
 
+// How the published eye goes on moving while a zoom eases, so the render thread moves it
+// at its own rate and not in the main thread's steps. The main thread eases its eye in
+// two stages, each a lerp per step with a fixed half-life: an eye with no smoothing moves
+// from eyeNow towards eyeTarget, then the eye shown moves towards that one. The render
+// thread takes the same steps ahead of it, at the length of the last, and shows the
+// points between them, so the main thread's next camera lands where it already is. A
+// continuous ease would not: at 30 steps a second it misses by a third of a step.
+// All in the camera's space.
+struct CameraZoom
+{
+    bool active = false;
+    float eyeNow[3] = {};        // the eye before smoothing, as published
+    float eyeTarget[3] = {};     // where that eye eases to
+    float zoomHalfLife = 0.f;    // seconds; 0 when it is there at once
+    float smoothingHalfLife = 0.f; // seconds; 0 when the shown eye is that eye
+    float stepSeconds = 0.f;     // the main thread's last step, taken as its next
+    // The wheel: with followClicks, a click the main thread has not handled yet scales
+    // the target's distance from `origin` by perClick to its power, within the limits,
+    // as the main thread will. `included` is the click total it has handled.
+    bool followClicks = false;
+    int32_t included = 0;
+    float origin[3] = {};
+    float targetDistance = 0.f;  // of eyeTarget, in the units of the limits
+    float perClick = 1.f;
+    float nearest = 0.f;
+    float farthest = 0.f;
+};
+
 // How the published camera turns with the mouse, while the user turns it. The main
 // thread turned it by the motion up to `included`, and the render thread turns it by
 // the motion since, the same way, so a frame shows the hand's position of that moment
 // and the next main-thread camera agrees with it. The eye and the point looked at each
 // turn around a pivot of their own, as the third-person camera does, then the view
-// looks from one to the other. All in the camera's space, as SceneCamera3D.
+// looks from one to the other. All in the camera's space, as SceneCamera3D. The same
+// pivots and arms place the eye of a zoom, when zoom is active, and active is false
+// when only the zoom moves the camera.
 struct CameraTurn
 {
     bool active = false;
@@ -43,11 +73,49 @@ struct CameraTurn
     float focusArm[3] = {};
     float up[3] = {};         // the up the view is built with
     float roll = 0.f;         // then turned about its view axis by this, in radians
+    CameraZoom zoom;
 };
 
 // The published camera, turned by the motion given, with both pivots moved by `shift`.
-// Exactly the published camera when there is neither.
-SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3]);
+// Exactly the published camera when there is neither, and eyeArm is as published.
+SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn, float dx, float dy, const float shift[3],
+                         bool armChanged = false);
+
+// One of the main thread's zoom steps, as LLAgentCamera takes it: `eye`, the eye before
+// smoothing, lerps towards `target`, then `shown`, the eye after, towards the new eye.
+void stepZoom(float eye[3], float shown[3], const float target[3], float seconds, float zoomHalfLife, float smoothingHalfLife);
+
+// Follows a published zoom at the render thread's rate: where its eye is now, relative
+// to the turn's eye pivot, ready to be the turn's eyeArm. When a new state disagrees with
+// what was shown, the difference fades, as CameraPredictor's does.
+class ZoomFollower
+{
+public:
+    using Clock = std::chrono::steady_clock;
+
+    // `clicks` is the wheel's total now.
+    void follow(const CameraTurn& turn, const float publishedEye[3], int32_t clicks, Clock::time_point published,
+                Clock::time_point now, float arm[3]);
+
+    void reset() { mStarted = false; }
+
+private:
+    void retarget(const CameraTurn& turn, int32_t clicks);
+    void step(const CameraZoom& zoom);
+
+    Clock::time_point mPublished{};
+    Clock::time_point mFromTime{};  // when the step from mFrom to mTo starts
+    Clock::time_point mLastFrame{};
+    float mStepSeconds = 0.f;
+    float mFrom[3] = {};            // relative to the eye pivot, as everything here
+    float mTo[3] = {};              // the shown eye one step later
+    float mEye[3] = {};             // and the eye before smoothing, then
+    float mTarget[3] = {};          // for the steps after that one
+    int32_t mClicks = 0;            // what mTarget includes
+    float mError[3] = {};
+    float mArm[3] = {};             // the last arm given
+    bool mStarted = false;
+};
 
 // What the main thread hands over. Later phases add motion.
 struct FrameState
@@ -133,6 +201,9 @@ struct FrameStats
     double worstRefreshSeconds = 0.0;  // the memory budget refresh, between two frames
     uint64_t turnedFrames = 0;         // frames the mouse turned, from motion the main
                                        // thread had not seen yet
+    uint64_t zoomedFrames = 0;         // frames a zoom eased on from the published camera
+    uint64_t clickFrames = 0;          // of those, frames with wheel clicks the main
+                                       // thread had not handled yet
 };
 
 class RenderThread
@@ -194,6 +265,8 @@ private:
     std::atomic<uint64_t> mNewStates{ 0 };
     std::atomic<uint64_t> mWorstRefreshMicros{ 0 };
     std::atomic<uint64_t> mTurnedFrames{ 0 };
+    std::atomic<uint64_t> mZoomedFrames{ 0 };
+    std::atomic<uint64_t> mClickFrames{ 0 };
 
     // Taken only when a frame is the worst so far, and by takeStats().
     std::mutex mWorstPartsMutex;

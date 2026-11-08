@@ -28,6 +28,7 @@
 #include "llviewerwindow.h"
 // <AS:Chanayane> Aperture DoF capture: Esc stop.
 #include "asdofrenderer.h"
+#include "asrcameraturn.h" // <AS:Chanayane/>
 #include "asrgltable.h" // <AS:Chanayane/>
 #include "asrviewer.h" // <AS:Chanayane/>
 // </AS:Chanayane>
@@ -1879,6 +1880,7 @@ bool LLViewerWindow::handlePaint(LLWindow *window,  S32 x,  S32 y, S32 width,  S
 
 void LLViewerWindow::handleScrollWheel(LLWindow *window,  S32 clicks)
 {
+    ASRCameraTurn::wheelHandled(clicks); // <AS:Chanayane/> counts the window's clicks, wherever they go
     handleScrollWheel( clicks );
 }
 
@@ -3785,7 +3787,13 @@ void LLViewerWindow::handleScrollWheel(S32 clicks)
     if(top_ctrl == 0
         && getWorldViewRectScaled().pointInRect(mCurrentMousePoint.mX, mCurrentMousePoint.mY)
         && gAgentCamera.isInitialized())
+    // <AS:Chanayane> The new renderer's thread zooms by the next clicks too, until they stop.
+    //  gAgentCamera.handleScrollWheel(clicks);
+    {
         gAgentCamera.handleScrollWheel(clicks);
+        ASRCameraTurn::wheelZoomed();
+    }
+    // </AS:Chanayane>
 
     return;
 }

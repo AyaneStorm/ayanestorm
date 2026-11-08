@@ -94,10 +94,17 @@ void logFrameStats(const char* what, const asr::FrameStats& stats)
     LL_INFOS("ASRenderer") << what << ": " << stats.frames << " frames, worst frame " << stats.worstFrameSeconds * 1000.0
                            << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms, average state " << stats.averageStateAgeSeconds * 1000.0
                            << " ms, frames with a new state " << stats.newStates << ", frames the mouse turned ahead of the main thread "
-                           << stats.turnedFrames << LL_ENDL;
+                           << stats.turnedFrames << ", frames a zoom eased on " << stats.zoomedFrames << ", of which with clicks not handled yet "
+                           << stats.clickFrames << LL_ENDL;
     const asr::FrameParts& parts = stats.worstFrameParts;
+    const double recordParts = parts.retireTextures + parts.textureCommands + parts.readResults + parts.sceneUpdate + parts.sceneGrowth + parts.sceneStaging;
+    // Temporary through step d: finds what the render thread's record spikes are.
     LL_INFOS("ASRenderer") << "worst frame, ms: wait for GPU " << parts.waitForGpu * 1000.0 << ", acquire " << parts.acquire * 1000.0 << ", UI " << parts.prepareUI * 1000.0
-                           << ", record " << parts.record * 1000.0 << " of which scene update " << parts.sceneUpdate * 1000.0 << ", submit " << parts.submit * 1000.0
+                           << ", record " << parts.record * 1000.0 << " of which retire " << parts.texturesRetired << " textures " << parts.retireTextures * 1000.0
+                           << ", texture commands " << parts.textureCommands * 1000.0 << " (" << parts.texturesCreated << " created, " << parts.textureUploadBytes / 1024
+                           << " KB uploaded), read results " << parts.readResults * 1000.0 << ", scene update " << parts.sceneUpdate * 1000.0 << ", scene growth "
+                           << parts.sceneGrowth * 1000.0 << ", scene staging " << parts.sceneStaging * 1000.0 << " (" << parts.sceneStagingBytes / 1024
+                           << " KB), the rest " << std::max(0.0, parts.record - recordParts) * 1000.0 << ", submit " << parts.submit * 1000.0
                            << ", present " << parts.present * 1000.0 << "; worst memory refresh " << stats.worstRefreshSeconds * 1000.0 << LL_ENDL;
 }
 

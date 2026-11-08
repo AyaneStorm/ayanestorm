@@ -921,6 +921,90 @@ void testCameraTurn()
     expect(close(look[0], 0.f, 1e-4f) && close(look[1], 1.f, 1e-4f), "the view turns about the eye");
 }
 
+void testCameraZoom()
+{
+    using Clock = asr::ZoomFollower::Clock;
+    const auto close = [](float a, float b, float tolerance) { return std::fabs(a - b) < tolerance; };
+    const float target[3] = { 10.f, 0.f, 0.f };
+
+    // A step is LLAgentCamera's: the eye lerps first, then the shown eye towards the new eye.
+    float eyeA[3] = { 2.f, 0.f, 0.f };
+    float shownA[3] = { 1.f, 0.f, 0.f };
+    asr::stepZoom(eyeA, shownA, target, 0.07f, 0.07f, 0.035f);
+    expect(close(eyeA[0], 6.f, 1e-4f) && close(shownA[0], 6.f - 5.f * 0.25f, 1e-4f), "a zoom step lerps as the main thread does");
+
+    // No smoothing: the shown eye is the eye. No zoom ease: the eye is at the target at once.
+    float eyeD[3] = { 2.f, 0.f, 0.f };
+    float shownD[3] = { 2.f, 0.f, 0.f };
+    asr::stepZoom(eyeD, shownD, target, 0.07f, 0.07f, 0.f);
+    expect(close(eyeD[0], 6.f, 1e-4f) && shownD[0] == eyeD[0], "with no smoothing the eye halves its way in a half-life");
+    float eyeE[3] = { 2.f, 0.f, 0.f };
+    float shownE[3] = { 2.f, 0.f, 0.f };
+    asr::stepZoom(eyeE, shownE, target, 0.02f, 0.f, 0.02f);
+    expect(eyeE[0] == target[0] && close(shownE[0], 6.f, 1e-4f), "with no zoom ease only the smoothing eases");
+
+    // The follower: an eye 4 m behind a pivot at 10 m, zooming out to 8 m behind it, in
+    // main-thread steps of 70 ms.
+    asr::CameraTurn turn;
+    turn.eyePivot[0] = 10.f;
+    turn.zoom.active = true;
+    turn.zoom.eyeNow[0] = 6.f;
+    turn.zoom.eyeTarget[0] = 2.f;
+    turn.zoom.zoomHalfLife = 0.07f;
+    turn.zoom.stepSeconds = 0.07f;
+    turn.zoom.origin[0] = 10.f;
+    turn.zoom.targetDistance = 8.f;
+    turn.zoom.perClick = 2.f;
+    turn.zoom.nearest = 1.f;
+    turn.zoom.farthest = 20.f;
+    turn.zoom.included = 5;
+    const float publishedEye[3] = { 6.f, 0.f, 0.f };
+    const Clock::time_point start = Clock::now();
+    asr::ZoomFollower follower;
+    float arm[3];
+    follower.follow(turn, publishedEye, 5, start, start, arm);
+    expect(close(arm[0], -4.f, 1e-5f) && arm[1] == 0.f, "the follower starts at the published eye");
+    follower.follow(turn, publishedEye, 5, start, start + std::chrono::microseconds(35000), arm);
+    expect(close(arm[0], -5.f, 1e-3f), "half a step on, the follower is half way to the main thread's next eye");
+    follower.follow(turn, publishedEye, 5, start, start + std::chrono::microseconds(70000), arm);
+    expect(close(arm[0], -6.f, 1e-3f), "a step on, it is where the main thread's next eye will be");
+    follower.follow(turn, publishedEye, 5, start, start + std::chrono::microseconds(140000), arm);
+    expect(close(arm[0], -7.f, 1e-3f), "and so on, step by step");
+
+    // Clicks the main thread has not handled count only when the wheel zooms the world.
+    follower.follow(turn, publishedEye, 6, start, start + std::chrono::seconds(5), arm);
+    expect(close(arm[0], -8.f, 1e-3f), "clicks are ignored while the wheel does not zoom the world");
+    turn.zoom.followClicks = true;
+    asr::ZoomFollower clicking;
+    clicking.follow(turn, publishedEye, 6, start, start + std::chrono::seconds(5), arm);
+    expect(close(arm[0], -16.f, 1e-3f), "a click not yet handled scales the target");
+
+    // A click after the publish is handled by the main thread a step later than one before it.
+    asr::ZoomFollower later1;
+    later1.follow(turn, publishedEye, 5, start, start, arm);
+    later1.follow(turn, publishedEye, 6, start, start + std::chrono::microseconds(10000), arm);
+    later1.follow(turn, publishedEye, 6, start, start + std::chrono::microseconds(70000), arm);
+    const float firstStep = arm[0];
+    later1.follow(turn, publishedEye, 6, start, start + std::chrono::microseconds(140000), arm);
+    expect(close(firstStep, -6.f, 1e-3f) && close(arm[0], -6.f + (-16.f + 6.f) * 0.5f, 1e-3f),
+           "a click after the publish turns the ease from the step after the next");
+    clicking.reset();
+    clicking.follow(turn, publishedEye, 9, start, start + std::chrono::seconds(5), arm);
+    expect(close(arm[0], -20.f, 1e-3f), "the target stays within the limits");
+
+    // A new state that disagrees fades in, and does not jump.
+    asr::CameraTurn moved = turn;
+    moved.zoom.followClicks = false;
+    moved.zoom.eyeNow[0] = 0.f;
+    moved.zoom.eyeTarget[0] = 0.f;
+    const float movedEye[3] = { 0.f, 0.f, 0.f };
+    const Clock::time_point later = start + std::chrono::seconds(5); // published as the last frame was shown
+    clicking.follow(moved, movedEye, 9, later, later, arm);
+    expect(close(arm[0], -20.f, 1e-3f), "a new state's difference starts where the last frame was");
+    clicking.follow(moved, movedEye, 9, later, later + std::chrono::milliseconds(60), arm);
+    expect(close(arm[0], -15.f, 1e-2f), "and fades by half in its half-life");
+}
+
 void testTextureFeedback()
 {
     using Clock = asr::TextureFeedback::Clock;
@@ -1818,6 +1902,7 @@ int main(int argc, char** argv)
         testCameraPredictor();
         testMouseMotion();
         testCameraTurn();
+        testCameraZoom();
         testTextureFeedback();
         testSceneStore();
         testFrameGraph();

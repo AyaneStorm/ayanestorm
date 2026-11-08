@@ -195,6 +195,11 @@ public:
     // if this platform has no such source.
     using RawMouseMotionCallback = void (*)(float dx, float dy);
     virtual bool setRawMouseMotionCallback(RawMouseMotionCallback callback) { return false; }
+
+    // The wheel's clicks, off the main thread as they are handed to it, with the same
+    // values handleScrollWheel() gets. The same rules as above.
+    using WheelClicksCallback = void (*)(S32 clicks);
+    virtual bool setWheelClicksCallback(WheelClicksCallback callback) { return false; }
     // </AS:Chanayane>
 
     // control platform's Language Text Input mechanisms.

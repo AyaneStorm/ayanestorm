@@ -4,6 +4,7 @@
  * thread and the render thread can both read it and agree on it exactly. The main
  * thread turns its camera by the motion up to some total, publishes that total with
  * the camera, and the render thread turns the published camera by the motion since.
+ * The wheel's clicks are added up the same way, for the zoom.
  * See doc/ayanestorm-new-renderer-plan.md, 'Camera input on the render thread'.
  */
 #pragma once
@@ -45,8 +46,21 @@ public:
         dy = float(int32_t(uint32_t(to >> 32) - uint32_t(from >> 32))) / SUBSTEPS;
     }
 
+    // The wheel's clicks, in the window's sign, added as the window hands them to the main
+    // thread, so the clicks it has not handled yet are this total less those it handled.
+    // Only one thread at a time may add: the platform's window thread.
+    void addClicks(int32_t clicks)
+    {
+        mClicks.store(int32_t(uint32_t(mClicks.load(std::memory_order_relaxed)) + uint32_t(clicks)), std::memory_order_release);
+    }
+
+    // Any thread. Wraps; compare two totals with clicksBetween().
+    int32_t clicks() const { return mClicks.load(std::memory_order_acquire); }
+    static int32_t clicksBetween(int32_t from, int32_t to) { return int32_t(uint32_t(to) - uint32_t(from)); }
+
 private:
     std::atomic<Total> mTotal{ 0 };
+    std::atomic<int32_t> mClicks{ 0 };
     double mX = 0.0; // input thread only: the exact sums, so rounding never adds up
     double mY = 0.0;
 };
