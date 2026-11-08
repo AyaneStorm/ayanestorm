@@ -109,6 +109,119 @@ vec2 planarUV(vec3 normal, vec3 position)
     return vec2(1.0 + dot(binormal, position) * 2.0 - 0.5, -(dot(tangent, position) * 2.0 - 0.5));
 }
 
+// Texture feedback, from one pixel of each 4 by 4 block, at a place that moves every frame.
+// The samplers are not anisotropic, so the GPU picks its mip from the longer of the two
+// steps: the texels across that step makes one per pixel are what this pixel really needs.
+// Most pixels find a word already as large, and skip the atomic.
+void giveFeedback(ivec2 pixel, uint slot, vec2 uvDx, vec2 uvDy)
+{
+    const uint feedback = ViewRef(push.view).feedback;
+    if (feedback != 0u && slot != 0u && ((uint(pixel.x) & 3u) | ((uint(pixel.y) & 3u) << 2)) == (feedback & 15u))
+    {
+        const float step = max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)), 1e-30);
+        const uint level = uint(clamp(ceil(-0.5 * log2(step)), 0.0, float(FEEDBACK_MAX_LEVEL)));
+        const uint word = ((feedback >> 4) << FEEDBACK_LEVEL_BITS) | (level + 1u);
+        FeedbackRef seen = FeedbackRef(push.feedback);
+        if (seen.words[slot] < word)
+        {
+            atomicMax(seen.words[slot], word);
+        }
+    }
+}
+
+// A texture by its bits (see uiTextureBits()), with the steps of its UVs one pixel across and down.
+vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy)
+{
+    const uint slot = bits & 0xFFFFFu;
+    const uint sampler_index = (bits >> 28) & 3u;
+    giveFeedback(pixel, slot, uvDx, uvDy);
+    return textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), uv, uvDx, uvDy);
+}
+
+// A terrain layer through its matrix, from a pair of region coordinates and their steps.
+vec4 sampleLayer(ivec2 pixel, TerrainLayer layer, vec2 at, vec2 atDx, vec2 atDy)
+{
+    const vec2 uv = vec2(dot(layer.uvRow0, vec3(at, 1.0)), dot(layer.uvRow1, vec3(at, 1.0)));
+    const vec2 uvDx = vec2(dot(layer.uvRow0.xy, atDx), dot(layer.uvRow1.xy, atDx));
+    const vec2 uvDy = vec2(dot(layer.uvRow0.xy, atDy), dot(layer.uvRow1.xy, atDy));
+    return sampleBits(pixel, layer.texture, uv, uvDx, uvDy) * layer.color;
+}
+
+// As pbrterrainUtilF.glsl's triplanar sampling: each plane's coordinates, flipped on the
+// side facing away, weighted by the normal. A face looking down samples the corner texel,
+// as there.
+vec4 sampleLayerPlanes(ivec2 pixel, Terrain terrain, uint index, vec3 region, vec3 regionDx, vec3 regionDy, vec3 normal)
+{
+    const TerrainLayer layer = terrain.layers[index];
+    if (terrain.planes != 3u)
+    {
+        return sampleLayer(pixel, layer, region.xy, regionDx.xy, regionDy.xy);
+    }
+
+    const float TRIPLANAR_MIX_THRESHOLD = 0.01;
+    vec3 weight = pow(abs(normal), vec3(terrain.sharpness));
+    weight /= weight.x + weight.y + weight.z;
+    weight -= vec3(TRIPLANAR_MIX_THRESHOLD);
+    weight = max(weight, vec3(0.0));
+    weight /= weight.x + weight.y + weight.z;
+
+    vec4 color = vec4(0.0);
+    if (weight.x > 0.0)
+    {
+        const vec2 flip = normal.x > 0.0 ? vec2(1.0) : vec2(-1.0, 1.0);
+        color += weight.x * sampleLayer(pixel, layer, region.yz * flip, regionDx.yz * flip, regionDy.yz * flip);
+    }
+    if (weight.y > 0.0)
+    {
+        const vec2 flip = normal.y > 0.0 ? vec2(-1.0, 1.0) : vec2(1.0);
+        color += weight.y * sampleLayer(pixel, layer, region.xz * flip, regionDx.xz * flip, regionDy.xz * flip);
+    }
+    if (weight.z > 0.0)
+    {
+        if (normal.z > 0.0)
+        {
+            color += weight.z * sampleLayer(pixel, layer, region.xy, regionDx.xy, regionDy.xy);
+        }
+        else
+        {
+            const uint slot = layer.texture & 0xFFFFFu;
+            const uint sampler_index = (layer.texture >> 28) & 3u;
+            color += weight.z * textureLod(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), vec2(0.0), 0.0) * layer.color;
+        }
+    }
+    return color;
+}
+
+// The ground's colour, as terrainF.glsl and pbrterrainF.glsl blend it. A vertex's UV is its
+// composition, from 0 to 3, and a noise value; the alpha ramp turns them into how much each
+// layer shows. Only layers that show are sampled, which gives the same result.
+vec4 terrainColor(ivec2 pixel, Terrain terrain, vec3 region, vec3 regionDx, vec3 regionDy, vec2 blend, vec2 blendDx, vec2 blendDy, vec3 normal)
+{
+    const float alpha1 = sampleBits(pixel, terrain.ramp, blend, blendDx, blendDy).a;
+    const float alpha2 = sampleBits(pixel, terrain.ramp, blend - vec2(2.0, 0.0), blendDx, blendDy).a;
+    const float alphaFinal = sampleBits(pixel, terrain.ramp, blend - vec2(1.0, 0.0), blendDx, blendDy).a;
+    vec4 weights = vec4(alphaFinal * alpha1, alphaFinal * (1.0 - alpha1), (1.0 - alphaFinal) * alpha2, (1.0 - alphaFinal) * (1.0 - alpha2));
+
+    if (terrain.kind == TERRAIN_MATERIALS)
+    {
+        // get_terrain_mix_weights(): what is under the threshold drops out, and the rest
+        // is scaled back up to one.
+        const float RAMP_MIX_THRESHOLD = 0.1;
+        weights = max(weights - vec4(RAMP_MIX_THRESHOLD), vec4(0.0));
+        weights /= weights.x + weights.y + weights.z + weights.w;
+    }
+
+    vec4 color = vec4(0.0);
+    for (uint i = 0u; i < TERRAIN_LAYERS; ++i)
+    {
+        if (weights[i] > 0.0)
+        {
+            color += weights[i] * sampleLayerPlanes(pixel, terrain, i, region, regionDx, regionDy, normal);
+        }
+    }
+    return color;
+}
+
 void main()
 {
     const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
@@ -183,43 +296,38 @@ void main()
     const vec3 n1 = octahedralDecode(float(int(normalWords.y << 16) >> 16) / 32767.0, float(int(normalWords.y) >> 16) / 32767.0);
     const vec3 n2 = octahedralDecode(float(int(normalWords.z << 16) >> 16) / 32767.0, float(int(normalWords.z) >> 16) / 32767.0);
 
-    if (material.planar != 0u)
-    {
-        uv0 = planarUV(n0, packedPosition(cluster.positions, i0) * material.planarScale + material.planarOffset);
-        uv1 = planarUV(n1, packedPosition(cluster.positions, i1) * material.planarScale + material.planarOffset);
-        uv2 = planarUV(n2, packedPosition(cluster.positions, i2) * material.planarScale + material.planarOffset);
-    }
-    const mat3x2 uvs = mat3x2(uv0, uv1, uv2);
-
-    const vec2 faceUV = uvs * bary.weights;
-    const vec2 uv = vec2(dot(material.uvRow0, vec3(faceUV, 1.0)), dot(material.uvRow1, vec3(faceUV, 1.0)));
-    const vec2 faceDx = uvs * bary.ddx;
-    const vec2 faceDy = uvs * bary.ddy;
-    const vec2 uvDx = vec2(dot(material.uvRow0.xy, faceDx), dot(material.uvRow1.xy, faceDx));
-    const vec2 uvDy = vec2(dot(material.uvRow0.xy, faceDy), dot(material.uvRow1.xy, faceDy));
-
-    const uint slot = material.texture & 0xFFFFFu;
-    const uint sampler_index = (material.texture >> 28) & 3u;
-    const vec4 texel = textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), uv, uvDx, uvDy);
-
-    // Texture feedback, from one pixel of each 4 by 4 block, at a place that moves every
-    // frame. The samplers are not anisotropic, so the GPU picks its mip from the longer of
-    // the two steps: the texels across that step makes one per pixel are what this pixel
-    // really needs. Most pixels find a word already as large, and skip the atomic.
-    const uint feedback = view.feedback;
-    if (feedback != 0u && slot != 0u && ((uint(pixel.x) & 3u) | ((uint(pixel.y) & 3u) << 2)) == (feedback & 15u))
-    {
-        const float step = max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)), 1e-30);
-        const uint level = uint(clamp(ceil(-0.5 * log2(step)), 0.0, float(FEEDBACK_MAX_LEVEL)));
-        const uint word = ((feedback >> 4) << FEEDBACK_LEVEL_BITS) | (level + 1u);
-        FeedbackRef seen = FeedbackRef(push.feedback);
-        if (seen.words[slot] < word)
-        {
-            atomicMax(seen.words[slot], word);
-        }
-    }
-
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
+
+    vec4 color;
+    if (material.mapping == MATERIAL_TERRAIN)
+    {
+        // Ground: its position in region metres places the layers, and its UVs blend them.
+        const mat3 region = mat3(packedPosition(cluster.positions, i0) * material.planarScale + material.planarOffset,
+                                 packedPosition(cluster.positions, i1) * material.planarScale + material.planarOffset,
+                                 packedPosition(cluster.positions, i2) * material.planarScale + material.planarOffset);
+        const mat3x2 blends = mat3x2(uv0, uv1, uv2);
+        const Terrain terrain = TerrainsRef(push.terrains).items[material.texture];
+        color = terrainColor(pixel, terrain, region * bary.weights, region * bary.ddx, region * bary.ddy, blends * bary.weights, blends * bary.ddx,
+                             blends * bary.ddy, objectNormal);
+    }
+    else
+    {
+        if (material.mapping == MATERIAL_PLANAR)
+        {
+            uv0 = planarUV(n0, packedPosition(cluster.positions, i0) * material.planarScale + material.planarOffset);
+            uv1 = planarUV(n1, packedPosition(cluster.positions, i1) * material.planarScale + material.planarOffset);
+            uv2 = planarUV(n2, packedPosition(cluster.positions, i2) * material.planarScale + material.planarOffset);
+        }
+        const mat3x2 uvs = mat3x2(uv0, uv1, uv2);
+
+        const vec2 faceUV = uvs * bary.weights;
+        const vec2 uv = vec2(dot(material.uvRow0, vec3(faceUV, 1.0)), dot(material.uvRow1, vec3(faceUV, 1.0)));
+        const vec2 faceDx = uvs * bary.ddx;
+        const vec2 faceDy = uvs * bary.ddy;
+        const vec2 uvDx = vec2(dot(material.uvRow0.xy, faceDx), dot(material.uvRow1.xy, faceDx));
+        const vec2 uvDy = vec2(dot(material.uvRow0.xy, faceDy), dot(material.uvRow1.xy, faceDy));
+        color = material.color * sampleBits(pixel, material.texture, uv, uvDx, uvDy);
+    }
 
     // Normals follow the cofactor matrix, which stays right under any stretch.
     const vec3 row0 = instance.rows[0].xyz;
@@ -242,6 +350,6 @@ void main()
         }
     }
 
-    imageStore(albedo, pixel, vec4((material.color * texel).rgb, 1.0));
+    imageStore(albedo, pixel, vec4(color.rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
 }

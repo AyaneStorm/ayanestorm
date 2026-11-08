@@ -182,12 +182,43 @@ struct GpuMaterial
     uint32_t texture; // see uiTextureBits()
     float uvRow1[3];
     float alphaCutoff; // masked instances keep pixels at or above this alpha
-    float planarScale[3];  // planar mapping: packed position to scaled object position
-    uint32_t planar;       // 1 when UVs come from position and normal, not from the face
+    float planarScale[3];  // planar mapping: packed position to scaled object position; terrain: to region metres
+    uint32_t mapping;      // MATERIAL_*: where UVs come from
     float planarOffset[3];
     uint32_t unused;
 };
 static_assert(sizeof(GpuMaterial) == 80, "shaders read this layout");
+
+constexpr uint32_t MATERIAL_FACE_UV = 0; // the face's own UVs
+constexpr uint32_t MATERIAL_PLANAR = 1;  // from position and normal, as the viewer's planar mapping
+constexpr uint32_t MATERIAL_TERRAIN = 2; // texture is a terrain's id: its layers blend, from region metres
+
+// Ground blends four layers, as the viewer's terrain shaders do. A layer's UVs come from the
+// position in region metres, through its 2x3 matrix: from x and y, or with three planes also
+// from y and z and from x and z, weighted by the normal.
+constexpr uint32_t TERRAIN_LAYERS = 4;
+constexpr uint32_t TERRAIN_TEXTURES = 0;  // four detail textures, mixed through the alpha ramp
+constexpr uint32_t TERRAIN_MATERIALS = 1; // four PBR materials, weighted from the same ramp
+
+struct GpuTerrainLayer
+{
+    float uvRow0[3];
+    uint32_t texture; // see uiTextureBits()
+    float uvRow1[3];
+    uint32_t unused;
+    float color[4];   // the material's base colour factor; white for a texture
+};
+static_assert(sizeof(GpuTerrainLayer) == 48, "shaders read this layout");
+
+struct GpuTerrain
+{
+    GpuTerrainLayer layers[TERRAIN_LAYERS];
+    uint32_t ramp;    // the alpha ramp's texture bits, read at the composition and its noise
+    uint32_t kind;    // TERRAIN_TEXTURES or TERRAIN_MATERIALS
+    uint32_t planes;  // 1, or 3 for triplanar
+    float sharpness;  // triplanar: how sharply the planes give way to each other
+};
+static_assert(sizeof(GpuTerrain) == 208, "shaders read this layout");
 
 // A VkDrawIndirectCommand, and also Metal's MTLDrawPrimitivesIndirectArguments.
 struct GpuDrawArguments
@@ -260,10 +291,11 @@ struct ScenePush
     uint64_t pyramid;
     uint64_t groups; // the group list
     uint64_t feedback; // a word per texture slot: see FEEDBACK_SAMPLES
+    uint64_t terrains;
     uint32_t list;
     uint32_t phase; // one of CULL_*, or the pyramid level being read
 };
-static_assert(sizeof(ScenePush) == 96, "shaders read this layout");
+static_assert(sizeof(ScenePush) == 104, "shaders read this layout");
 
 // One cluster of a built geometry. Offsets count from the start of GeometryData::blob.
 struct ClusterData
@@ -312,6 +344,24 @@ struct GeometryBox
 // With no box given, the face's own bounds are used.
 GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount,
                            const GeometryBox* box = nullptr);
+
+// A square of ground: a grid of (size + 1) by (size + 1) points, row after row, x first.
+// size is a power of two.
+struct TerrainGrid
+{
+    uint32_t size = 16;
+    float origin[2] = { 0.f, 0.f }; // where the first point is, in region metres
+    float spacing = 1.f;            // metres between points
+    const float* heights = nullptr; // one per point
+    const float* normals = nullptr; // three per point
+    const float* blends = nullptr;  // two per point, the vertex UV: composition and noise
+};
+
+// One LOD of a patch of ground: every step-th point inside, and at every step all points of
+// its four edges, so patches next to each other share their edges exactly at any LODs and
+// never crack. A cell touching an edge fans out from its centre to the edge's points. Step 1
+// is the full grid; a larger step must divide size and leave at least two cells per side.
+void buildTerrainLod(const TerrainGrid& grid, uint32_t step, std::vector<SceneVertex>& vertices, std::vector<uint16_t>& indices);
 
 struct SceneCamera3D
 {
@@ -392,6 +442,34 @@ struct MaterialDesc
     bool planar = false;
     float planarScale[3] = { 0.f, 0.f, 0.f };
     float planarOffset[3] = { 0.f, 0.f, 0.f };
+
+    // Not 0: a terrain from addTerrain(), whose layers this blends, and texture is unused. The
+    // planar scale and offset then take packed positions to region metres, and a vertex's
+    // UV is its composition and noise.
+    uint32_t terrain = 0;
+};
+
+struct TerrainLayerDesc
+{
+    uint32_t texture = 0;
+    float uvRow0[3] = { 1.f, 0.f, 0.f };
+    float uvRow1[3] = { 0.f, 1.f, 0.f };
+    float color[4] = { 1.f, 1.f, 1.f, 1.f };
+};
+
+struct TerrainDesc
+{
+    TerrainLayerDesc layers[TERRAIN_LAYERS];
+    uint32_t ramp = 0;
+    uint32_t kind = TERRAIN_TEXTURES;
+    uint32_t planes = 1;
+    float sharpness = 8.f;
+};
+
+struct TerrainCommand
+{
+    uint32_t id = 0;
+    TerrainDesc desc;
 };
 
 struct GeometryCommand
@@ -423,15 +501,18 @@ struct MaterialCommand
 // Handed over in one piece by SceneQueue::take().
 struct SceneCommands
 {
+    std::vector<TerrainCommand> terrains;
     std::vector<MaterialCommand> materials;
     std::vector<GeometryCommand> geometries;
     std::vector<InstanceCommand> instances;
     std::vector<uint32_t> removedGeometries;
     std::vector<uint32_t> removedMaterials;
+    std::vector<uint32_t> removedTerrains;
 
     bool empty() const
     {
-        return materials.empty() && geometries.empty() && instances.empty() && removedGeometries.empty() && removedMaterials.empty();
+        return terrains.empty() && materials.empty() && geometries.empty() && instances.empty() && removedGeometries.empty() &&
+               removedMaterials.empty() && removedTerrains.empty();
     }
 };
 
@@ -453,6 +534,11 @@ public:
     void setMaterial(uint32_t id, const MaterialDesc& desc);
     void removeMaterial(uint32_t id);
 
+    // A ground blend, which materials name by MaterialDesc::terrain. Ids start at 1.
+    uint32_t addTerrain(const TerrainDesc& desc);
+    void setTerrain(uint32_t id, const TerrainDesc& desc);
+    void removeTerrain(uint32_t id);
+
     uint32_t addInstance(const InstanceDesc& desc);
     void setInstance(uint32_t id, const InstanceDesc& desc);
     void removeInstance(uint32_t id);
@@ -462,6 +548,7 @@ public:
     void releaseGeometry(uint32_t id);
     void releaseInstance(uint32_t id);
     void releaseMaterial(uint32_t id);
+    void releaseTerrain(uint32_t id);
 
 private:
     std::mutex mMutex; // held only to move a command, so neither thread really waits
@@ -469,9 +556,11 @@ private:
     std::vector<uint32_t> mFreeGeometries;
     std::vector<uint32_t> mFreeInstances;
     std::vector<uint32_t> mFreeMaterials;
+    std::vector<uint32_t> mFreeTerrains;
     uint32_t mNextGeometry = 1; // 0 is the empty geometry
     uint32_t mNextInstance = 0;
     uint32_t mNextMaterial = 1; // 0 is plain white
+    uint32_t mNextTerrain = 1;  // 0 means none
 };
 
 } // namespace asr

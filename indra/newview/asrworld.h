@@ -7,7 +7,7 @@
  * on worker threads, and all prims of that shape share it. See section 4 of
  * doc/ayanestorm-new-renderer-plan.md.
  *
- * Prims, sculpts and mesh are drawn so far. Flexible prims, attachments and rigged objects
+ * Prims, sculpts, mesh and terrain are drawn so far. Flexible prims, attachments and rigged objects
  * are left out until their own steps.
  */
 #ifndef ASR_WORLD_H
@@ -33,6 +33,11 @@ namespace ASRWorld
     void objectMoved(LLDrawable* drawable);
 
     void objectRemoved(LLDrawable* drawable);
+
+    // The native frame, in place of LLPipeline::updateGL(): runs the terrain patches' part of
+    // that queue, which is when the viewer has finished a patch's data, so it is rebuilt. The
+    // rest stays queued, as it would draw with GL.
+    void updateTerrainGL();
 
     // One LOD of a mesh came in, or the server has none. The volume is not changed after this.
     void meshLoaded(const LLVolumeParams& params, LLVolume* volume, S32 lod);

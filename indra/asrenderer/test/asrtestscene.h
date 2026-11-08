@@ -151,6 +151,7 @@ inline asr::GeometryData build(const Mesh& mesh, const asr::GeometryBox* box = n
 #ifdef ASR_HAS_DEVICE
 
 #include "asrtexturequeue.h"
+#include "asruilist.h"
 
 #include <algorithm>
 
@@ -200,6 +201,7 @@ public:
 
         // The ground.
         place(mBoxFaces[4], mMaterials[0], 0.f, 0.f, 0.f, EXTENT * 2.2f, EXTENT * 2.2f, 1.f, false);
+        addHills(scene, textures);
 
         uint32_t random = 12345;
         const auto next = [&random]() { random = random * 1664525u + 1013904223u; return (random >> 16) / 65536.f; };
@@ -335,6 +337,135 @@ private:
         const uint32_t slot = textures.create(desc);
         textures.upload(slot, 0, 0, 0, SIZE, SIZE, pixels.data(), pixels.size() * sizeof(uint32_t));
         textures.generateMips(slot);
+        return slot;
+    }
+
+    static float hillHeight(float x, float y)
+    {
+        return 12.f + 10.f * std::sin(x * 0.021f) * std::cos(y * 0.017f) + 4.f * std::sin(x * 0.11f + y * 0.07f);
+    }
+
+    // A region of ground east of the city, as the viewer's terrain arrives: 4 by 4 patches,
+    // each with four LODs that share their edges, packed in one box for the whole region.
+    // The west half blends four textures, the east half four materials in three planes.
+    void addHills(asr::SceneQueue& scene, asr::TextureQueue& textures)
+    {
+        constexpr uint32_t PATCHES = 4;
+        constexpr uint32_t SIZE = 16;
+        constexpr float SPACING = 4.f;
+        constexpr float WIDTH = PATCHES * SIZE * SPACING;
+        const float origin[3] = { EXTENT * 1.15f, -WIDTH * 0.5f, 0.f };
+
+        asr::TerrainDesc classic;
+        asr::TerrainDesc materials;
+        materials.kind = asr::TERRAIN_MATERIALS;
+        materials.planes = 3;
+        for (uint32_t i = 0; i < asr::TERRAIN_LAYERS; ++i)
+        {
+            const uint32_t bits = asr::uiTextureBits(checker(textures, i + 1, 128, 0xFF000000u | (0x3F << (i * 6 % 24))), asr::UISampler::LinearWrap);
+            classic.layers[i].texture = bits;
+            classic.layers[i].uvRow0[0] = 1.f / 12.f; // RenderTerrainScale
+            classic.layers[i].uvRow1[1] = 1.f / 12.f;
+            materials.layers[i].texture = bits;
+            materials.layers[i].uvRow0[0] = 1.f / 8.f; // RenderTerrainPBRScale, with no texture transform
+            materials.layers[i].uvRow1[1] = 1.f / 8.f;
+            materials.layers[i].color[i % 3] = 0.6f;
+        }
+        classic.ramp = materials.ramp = asr::uiTextureBits(ramp(textures), asr::UISampler::LinearClamp);
+        const uint32_t terrains[2] = { scene.addTerrain(classic), scene.addTerrain(materials) };
+
+        const asr::GeometryBox box{ { WIDTH * 0.5f, WIDTH * 0.5f, 20.f }, WIDTH * 0.5f };
+        uint32_t terrainMaterials[2];
+        for (uint32_t i = 0; i < 2; ++i)
+        {
+            asr::MaterialDesc material;
+            material.terrain = terrains[i];
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                material.planarScale[axis] = box.scale;
+                material.planarOffset[axis] = box.center[axis];
+            }
+            terrainMaterials[i] = scene.addMaterial(material);
+        }
+
+        constexpr uint32_t POINTS = SIZE + 1;
+        std::vector<float> heights(POINTS * POINTS);
+        std::vector<float> normals(POINTS * POINTS * 3);
+        std::vector<float> blends(POINTS * POINTS * 2);
+        std::vector<asr::SceneVertex> vertices;
+        std::vector<uint16_t> indices;
+        for (uint32_t py = 0; py < PATCHES; ++py)
+        {
+            for (uint32_t px = 0; px < PATCHES; ++px)
+            {
+                asr::TerrainGrid grid;
+                grid.size = SIZE;
+                grid.origin[0] = px * SIZE * SPACING;
+                grid.origin[1] = py * SIZE * SPACING;
+                grid.spacing = SPACING;
+                for (uint32_t y = 0; y < POINTS; ++y)
+                {
+                    for (uint32_t x = 0; x < POINTS; ++x)
+                    {
+                        const uint32_t at = y * POINTS + x;
+                        const float rx = grid.origin[0] + x * SPACING;
+                        const float ry = grid.origin[1] + y * SPACING;
+                        heights[at] = hillHeight(rx, ry);
+                        float n[3] = { hillHeight(rx - 1.f, ry) - hillHeight(rx + 1.f, ry), hillHeight(rx, ry - 1.f) - hillHeight(rx, ry + 1.f), 2.f };
+                        const float length = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+                        for (uint32_t axis = 0; axis < 3; ++axis)
+                        {
+                            normals[at * 3 + axis] = n[axis] / length;
+                        }
+                        blends[at * 2] = std::min(std::max((heights[at] - 2.f) / 24.f * 3.f + 0.4f * std::sin(rx * 0.3f), 0.f), 3.f);
+                        blends[at * 2 + 1] = 0.5f + 0.5f * std::sin(rx * 0.13f + ry * 0.29f);
+                    }
+                }
+                grid.heights = heights.data();
+                grid.normals = normals.data();
+                grid.blends = blends.data();
+
+                uint32_t coarser = 0;
+                const float coarserAt[4] = { 0.f, 3.f, 6.f, 12.f };
+                for (int lod = 3; lod >= 0; --lod)
+                {
+                    asr::buildTerrainLod(grid, 1u << lod, vertices, indices);
+                    coarser = scene.addGeometry(asr::buildGeometry(vertices.data(), uint32_t(vertices.size()), indices.data(), uint32_t(indices.size()), &box), coarser,
+                                                coarserAt[lod + 1 < 4 ? lod + 1 : 3]);
+                }
+
+                asr::InstanceDesc desc = instanceDesc(coarser, terrainMaterials[px < PATCHES / 2 ? 0 : 1], origin[0], origin[1], origin[2], 1.f, 1.f, 1.f);
+                const float half = SIZE * SPACING * 0.5f;
+                desc.lodCenter[0] = origin[0] + grid.origin[0] + half;
+                desc.lodCenter[1] = origin[1] + grid.origin[1] + half;
+                desc.lodCenter[2] = hillHeight(grid.origin[0] + half, grid.origin[1] + half);
+                desc.lodSize = half * 1.4142f;
+                ++mInstances;
+                scene.addInstance(desc);
+            }
+        }
+    }
+
+    // Like the viewer's alpha ramp: full at 0, gone at 1, along u.
+    static uint32_t ramp(asr::TextureQueue& textures)
+    {
+        constexpr uint32_t WIDTH = 64;
+        constexpr uint32_t HEIGHT = 4;
+        asr::TextureDesc desc;
+        desc.width = WIDTH;
+        desc.height = HEIGHT;
+        desc.mipLevels = 1;
+        std::vector<uint32_t> pixels(WIDTH * HEIGHT);
+        for (uint32_t y = 0; y < HEIGHT; ++y)
+        {
+            for (uint32_t x = 0; x < WIDTH; ++x)
+            {
+                const uint32_t alpha = 255u - x * 255u / (WIDTH - 1);
+                pixels[y * WIDTH + x] = (alpha << 24) | 0x00FFFFFFu;
+            }
+        }
+        const uint32_t slot = textures.create(desc);
+        textures.upload(slot, 0, 0, 0, WIDTH, HEIGHT, pixels.data(), pixels.size() * sizeof(uint32_t));
         return slot;
     }
 

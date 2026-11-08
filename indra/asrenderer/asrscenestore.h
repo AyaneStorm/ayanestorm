@@ -28,11 +28,12 @@ enum class SceneTable : uint32_t
     Geometries,
     Clusters,
     Materials,
+    Terrains,
     Count
 };
 
 constexpr uint32_t SCENE_TABLES = uint32_t(SceneTable::Count);
-constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial) };
+constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial), sizeof(GpuTerrain) };
 constexpr uint64_t SCENE_CHUNK_BYTES = 64ull * 1024 * 1024;
 
 // Hands out ranges of a span that can grow. First fit, and freed neighbours merge.
@@ -168,7 +169,8 @@ private:
             Clusters,
             GeometryId,
             InstanceId,
-            MaterialId
+            MaterialId,
+            TerrainId
         };
         Type type;
         uint32_t index;   // chunk, or the id
@@ -178,6 +180,7 @@ private:
     };
 
     void applyMaterial(const MaterialCommand& command);
+    void applyTerrain(const TerrainCommand& command);
     void applyGeometry(GeometryCommand& command);
     void applyInstance(const InstanceCommand& command, uint64_t frame);
     void removeGeometry(uint32_t id, uint64_t frame);
@@ -210,7 +213,7 @@ private:
     std::vector<std::vector<uint8_t>> mWrittenBlobs; // alive until the next update
     std::vector<GpuCluster> mClusterScratch;
     std::vector<GpuClusterGroup> mGroupScratch;
-    std::vector<EntryMark> mEntryMarks[3]; // instances, materials, geometries
+    std::vector<EntryMark> mEntryMarks[SCENE_TABLES]; // by table
     uint64_t mUpdate = 0;
     uint64_t mTableCapacity[SCENE_TABLES]{};
     uint64_t mListTotals[SCENE_LISTS]{};

@@ -141,7 +141,7 @@ void SceneStore::writeTable(SceneTable table, uint32_t index, const void* data, 
 
 void SceneStore::writeEntry(SceneTable table, uint32_t index, const void* data, uint64_t bytes)
 {
-    std::vector<EntryMark>& marks = mEntryMarks[table == SceneTable::Instances ? 0 : table == SceneTable::Materials ? 1 : 2];
+    std::vector<EntryMark>& marks = mEntryMarks[uint32_t(table)];
     if (marks.size() <= index)
     {
         marks.resize(size_t(index) + 1);
@@ -238,12 +238,31 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     memcpy(material.color, command.desc.color, sizeof(material.color));
     memcpy(material.uvRow0, command.desc.uvRow0, sizeof(material.uvRow0));
     memcpy(material.uvRow1, command.desc.uvRow1, sizeof(material.uvRow1));
-    material.texture = command.desc.texture;
+    material.texture = command.desc.terrain != 0 ? command.desc.terrain : command.desc.texture;
     material.alphaCutoff = command.desc.alphaCutoff;
-    material.planar = command.desc.planar ? 1 : 0;
+    material.mapping = command.desc.terrain != 0 ? MATERIAL_TERRAIN : command.desc.planar ? MATERIAL_PLANAR : MATERIAL_FACE_UV;
     memcpy(material.planarScale, command.desc.planarScale, sizeof(material.planarScale));
     memcpy(material.planarOffset, command.desc.planarOffset, sizeof(material.planarOffset));
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));
+}
+
+void SceneStore::applyTerrain(const TerrainCommand& command)
+{
+    GpuTerrain terrain{};
+    for (uint32_t i = 0; i < TERRAIN_LAYERS; ++i)
+    {
+        const TerrainLayerDesc& from = command.desc.layers[i];
+        GpuTerrainLayer& to = terrain.layers[i];
+        memcpy(to.uvRow0, from.uvRow0, sizeof(to.uvRow0));
+        memcpy(to.uvRow1, from.uvRow1, sizeof(to.uvRow1));
+        memcpy(to.color, from.color, sizeof(to.color));
+        to.texture = from.texture;
+    }
+    terrain.ramp = command.desc.ramp;
+    terrain.kind = command.desc.kind;
+    terrain.planes = command.desc.planes == 3 ? 3 : 1;
+    terrain.sharpness = command.desc.sharpness;
+    writeEntry(SceneTable::Terrains, command.id, &terrain, sizeof(terrain));
 }
 
 void SceneStore::applyGeometry(GeometryCommand& command)
@@ -529,6 +548,9 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
             case Retired::Type::MaterialId:
                 queue.releaseMaterial(retired.index);
                 break;
+            case Retired::Type::TerrainId:
+                queue.releaseTerrain(retired.index);
+                break;
         }
     }
 }
@@ -548,6 +570,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         ensureTable(SceneTable::Geometries, 1);
         ensureTable(SceneTable::Instances, 1);
         ensureTable(SceneTable::Clusters, 1);
+        ensureTable(SceneTable::Terrains, 1);
     }
 
     runRetired(queue, frame);
@@ -558,6 +581,10 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         mCommands.instances.clear();
         mInstancesDone = 0;
         queue.take(mCommands);
+        for (const TerrainCommand& command : mCommands.terrains)
+        {
+            applyTerrain(command);
+        }
         for (const MaterialCommand& command : mCommands.materials)
         {
             applyMaterial(command);
@@ -566,6 +593,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         {
             applyGeometry(command);
         }
+        mCommands.terrains.clear();
         mCommands.materials.clear();
         mCommands.geometries.clear();
     }
@@ -586,6 +614,11 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             mRetired.push_back({ Retired::Type::MaterialId, id, 0, 0, frame + mFreeDelay });
         }
         mCommands.removedMaterials.clear();
+        for (uint32_t id : mCommands.removedTerrains)
+        {
+            mRetired.push_back({ Retired::Type::TerrainId, id, 0, 0, frame + mFreeDelay });
+        }
+        mCommands.removedTerrains.clear();
     }
 
     uint64_t uploaded = 0;

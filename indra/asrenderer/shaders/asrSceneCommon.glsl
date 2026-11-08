@@ -68,9 +68,35 @@ struct Material
     vec3 uvRow1;
     float alphaCutoff;
     vec3 planarScale;
-    uint planar;
+    uint mapping; // MATERIAL_*
     vec3 planarOffset;
     uint unused;
+};
+
+const uint MATERIAL_FACE_UV = 0u;
+const uint MATERIAL_PLANAR = 1u;
+const uint MATERIAL_TERRAIN = 2u; // texture is a terrain's id
+
+struct TerrainLayer
+{
+    vec3 uvRow0;
+    uint texture;
+    vec3 uvRow1;
+    uint unused;
+    vec4 color;
+};
+
+const uint TERRAIN_LAYERS = 4u;
+const uint TERRAIN_TEXTURES = 0u;
+const uint TERRAIN_MATERIALS = 1u;
+
+struct Terrain
+{
+    TerrainLayer layers[TERRAIN_LAYERS];
+    uint ramp;
+    uint kind;
+    uint planes;
+    float sharpness;
 };
 
 struct ListEntry
@@ -106,6 +132,7 @@ layout(buffer_reference, std430) readonly buffer GeometriesRef { Geometry items[
 layout(buffer_reference, std430) readonly buffer ClustersRef { Cluster items[]; };
 layout(buffer_reference, std430) readonly buffer ClusterGroupsRef { ClusterGroup items[]; }; // the cluster table too
 layout(buffer_reference, std430) readonly buffer MaterialsRef { Material items[]; };
+layout(buffer_reference, std430) readonly buffer TerrainsRef { Terrain items[]; };
 layout(buffer_reference, std430) readonly buffer ListRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer WordsRef { uint words[]; };
 layout(buffer_reference, std430) buffer FeedbackRef { uint words[]; };
@@ -126,6 +153,7 @@ layout(push_constant) uniform ScenePush
     uint64_t pyramid;
     uint64_t groups; // the group list
     uint64_t feedback; // a word per texture slot
+    uint64_t terrains;
     uint list;
     uint phase;
 } push;

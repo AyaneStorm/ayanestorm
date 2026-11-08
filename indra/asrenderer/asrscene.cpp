@@ -415,6 +415,84 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
     return geometry;
 }
 
+void buildTerrainLod(const TerrainGrid& grid, uint32_t step, std::vector<SceneVertex>& vertices, std::vector<uint16_t>& indices)
+{
+    vertices.clear();
+    indices.clear();
+    const uint32_t points = grid.size + 1;
+    std::vector<int32_t> made(size_t(points) * points, -1);
+    const auto vertex = [&](uint32_t x, uint32_t y) -> uint16_t
+    {
+        const size_t at = size_t(y) * points + x;
+        if (made[at] < 0)
+        {
+            made[at] = int32_t(vertices.size());
+            SceneVertex v{};
+            v.position[0] = grid.origin[0] + float(x) * grid.spacing;
+            v.position[1] = grid.origin[1] + float(y) * grid.spacing;
+            v.position[2] = grid.heights[at];
+            memcpy(v.normal, grid.normals + at * 3, sizeof(v.normal));
+            v.tangent[0] = 1.f; // x runs east, as the ground's UVs
+            v.tangent[3] = 1.f;
+            v.uv[0] = grid.blends[at * 2];
+            v.uv[1] = grid.blends[at * 2 + 1];
+            vertices.push_back(v);
+        }
+        return uint16_t(made[at]);
+    };
+
+    // Counter-clockwise seen from above, as the front of an upward face.
+    const uint32_t cells = grid.size / step;
+    std::vector<uint16_t> ring;
+    for (uint32_t cy = 0; cy < cells; ++cy)
+    {
+        for (uint32_t cx = 0; cx < cells; ++cx)
+        {
+            const uint32_t x0 = cx * step;
+            const uint32_t y0 = cy * step;
+            const uint32_t x1 = x0 + step;
+            const uint32_t y1 = y0 + step;
+            const bool south = y0 == 0;
+            const bool east = x1 == grid.size;
+            const bool north = y1 == grid.size;
+            const bool west = x0 == 0;
+            if (step == 1 || !(south || east || north || west))
+            {
+                const uint16_t a = vertex(x0, y0);
+                const uint16_t b = vertex(x1, y0);
+                const uint16_t c = vertex(x0, y1);
+                const uint16_t d = vertex(x1, y1);
+                indices.insert(indices.end(), { a, b, c, b, d, c });
+                continue;
+            }
+
+            // Round the cell, with every point of the edges that lie on the patch's border.
+            ring.clear();
+            for (uint32_t x = x0; x < x1; x += south ? 1 : step)
+            {
+                ring.push_back(vertex(x, y0));
+            }
+            for (uint32_t y = y0; y < y1; y += east ? 1 : step)
+            {
+                ring.push_back(vertex(x1, y));
+            }
+            for (uint32_t x = x1; x > x0; x -= north ? 1 : step)
+            {
+                ring.push_back(vertex(x, y1));
+            }
+            for (uint32_t y = y1; y > y0; y -= west ? 1 : step)
+            {
+                ring.push_back(vertex(x0, y));
+            }
+            const uint16_t centre = vertex(x0 + step / 2, y0 + step / 2);
+            for (size_t i = 0; i < ring.size(); ++i)
+            {
+                indices.insert(indices.end(), { centre, ring[i], ring[(i + 1) % ring.size()] });
+            }
+        }
+    }
+}
+
 SceneCamera3D makeCamera(const float eye[3], const float target[3], float verticalFovRadians, float aspect, float nearClip)
 {
     const Vec3 forward = normalized(Vec3{ target[0] - eye[0], target[1] - eye[1], target[2] - eye[2] });
@@ -630,6 +708,38 @@ void SceneQueue::removeMaterial(uint32_t id)
     }
 }
 
+uint32_t SceneQueue::addTerrain(const TerrainDesc& desc)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    uint32_t id = 0;
+    if (!mFreeTerrains.empty())
+    {
+        id = mFreeTerrains.back();
+        mFreeTerrains.pop_back();
+    }
+    else
+    {
+        id = mNextTerrain++;
+    }
+    mCommands.terrains.push_back({ id, desc });
+    return id;
+}
+
+void SceneQueue::setTerrain(uint32_t id, const TerrainDesc& desc)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mCommands.terrains.push_back({ id, desc });
+}
+
+void SceneQueue::removeTerrain(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedTerrains.push_back(id);
+    }
+}
+
 uint32_t SceneQueue::addInstance(const InstanceDesc& desc)
 {
     InstanceCommand command;
@@ -692,6 +802,12 @@ void SceneQueue::releaseMaterial(uint32_t id)
 {
     std::lock_guard<std::mutex> lock(mMutex);
     mFreeMaterials.push_back(id);
+}
+
+void SceneQueue::releaseTerrain(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeTerrains.push_back(id);
 }
 
 } // namespace asr

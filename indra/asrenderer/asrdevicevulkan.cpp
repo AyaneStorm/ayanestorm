@@ -2183,6 +2183,7 @@ private:
         mScenePush.pyramid = mScenePyramid.address;
         mScenePush.groups = mSceneGroups.address;
         mScenePush.feedback = mTextureFeedback.address;
+        mScenePush.terrains = mSceneTables[uint32_t(SceneTable::Terrains)].address;
         return true;
     }
 

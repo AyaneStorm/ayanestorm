@@ -263,6 +263,7 @@ static void display_native(bool rebuild)
     gPipeline.processPartitionQ();
     ASRWorld::addMainTime(ASRWorld::MAIN_CREATE, part_timer.getElapsedTimeAndResetF32());
     gPipeline.updateGeom(max_geom_update_time);
+    ASRWorld::updateTerrainGL();
     ASRWorld::addMainTime(ASRWorld::MAIN_GEOMETRY, part_timer.getElapsedTimeAndResetF32());
     ASRWorld::update();
     part_timer.reset();

@@ -671,6 +671,79 @@ void testSceneGeometry()
     expect(empty.clusters.empty(), "an empty face builds to nothing");
 }
 
+// Every LOD of a ground patch keeps all points of its edges, so two patches side by side meet
+// exactly whichever LODs they show, and its triangles cover the square once, all facing up.
+void testTerrainLods()
+{
+    constexpr uint32_t SIZE = 16;
+    constexpr uint32_t POINTS = SIZE + 1;
+    std::vector<float> heights(POINTS * POINTS);
+    std::vector<float> normals(POINTS * POINTS * 3);
+    std::vector<float> blends(POINTS * POINTS * 2);
+    for (uint32_t y = 0; y < POINTS; ++y)
+    {
+        for (uint32_t x = 0; x < POINTS; ++x)
+        {
+            const uint32_t at = y * POINTS + x;
+            heights[at] = 20.f + 3.f * std::sin(x * 0.7f) * std::cos(y * 0.4f);
+            normals[at * 3 + 2] = 1.f;
+            blends[at * 2] = float(x) / SIZE * 3.f;
+            blends[at * 2 + 1] = float(y) / SIZE;
+        }
+    }
+    asr::TerrainGrid grid;
+    grid.size = SIZE;
+    grid.origin[0] = 32.f;
+    grid.origin[1] = 48.f;
+    grid.spacing = 1.f;
+    grid.heights = heights.data();
+    grid.normals = normals.data();
+    grid.blends = blends.data();
+
+    bool edgesWhole = true;
+    bool covered = true;
+    bool facingUp = true;
+    bool fewer = true;
+    size_t previousTriangles = 0;
+    std::vector<asr::SceneVertex> vertices;
+    std::vector<uint16_t> indices;
+    for (uint32_t step = 1; step <= 8; step *= 2)
+    {
+        asr::buildTerrainLod(grid, step, vertices, indices);
+        uint32_t edgePoints = 0;
+        for (const asr::SceneVertex& v : vertices)
+        {
+            const float x = v.position[0] - grid.origin[0];
+            const float y = v.position[1] - grid.origin[1];
+            if (x == 0.f || y == 0.f || x == float(SIZE) || y == float(SIZE))
+            {
+                ++edgePoints;
+                const uint32_t at = uint32_t(y) * POINTS + uint32_t(x);
+                edgesWhole = edgesWhole && v.position[2] == heights[at] && v.uv[0] == blends[at * 2];
+            }
+        }
+        edgesWhole = edgesWhole && edgePoints == SIZE * 4;
+
+        double area = 0.0;
+        for (size_t i = 0; i < indices.size(); i += 3)
+        {
+            const float* a = vertices[indices[i]].position;
+            const float* b = vertices[indices[i + 1]].position;
+            const float* c = vertices[indices[i + 2]].position;
+            const double up = double(b[0] - a[0]) * (c[1] - a[1]) - double(b[1] - a[1]) * (c[0] - a[0]);
+            facingUp = facingUp && up > 0.0;
+            area += up * 0.5;
+        }
+        covered = covered && std::fabs(area - double(SIZE * SIZE)) < 1e-3;
+        fewer = fewer && (step == 1 || indices.size() / 3 < previousTriangles);
+        previousTriangles = indices.size() / 3;
+    }
+    expect(edgesWhole, "every terrain LOD keeps each edge point, at its exact height");
+    expect(covered, "every terrain LOD covers its square once");
+    expect(facingUp, "terrain triangles face up");
+    expect(fewer, "coarser terrain LODs have fewer triangles");
+}
+
 void testClusterGroups()
 {
     // Dense enough that each group covers a small patch of the sphere, so its normals agree.
@@ -2015,6 +2088,7 @@ int main(int argc, char** argv)
         testUIList();
         testTextureQueue();
         testSceneGeometry();
+        testTerrainLods();
         testClusterGroups();
         testRangeAllocator();
         testCameraPredictor();

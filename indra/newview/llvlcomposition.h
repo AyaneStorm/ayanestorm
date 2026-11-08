@@ -50,6 +50,7 @@ class LLTerrainMaterials : public LLModifyRegion
 {
 public:
     friend class LLDrawPoolTerrain;
+    friend class ASRTerrainAccess; // <AS:Chanayane/> the new renderer reads the layers as the draw pool does
 
     LLTerrainMaterials() {}
     virtual ~LLTerrainMaterials();
