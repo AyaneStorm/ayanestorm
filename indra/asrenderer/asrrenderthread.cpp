@@ -468,6 +468,7 @@ FrameStats RenderThread::takeStats()
     stats.newStates = mNewStates.exchange(0, std::memory_order_relaxed);
     stats.worstRefreshSeconds = mWorstRefreshMicros.exchange(0, std::memory_order_relaxed) * 1e-6;
     stats.turnedFrames = mTurnedFrames.exchange(0, std::memory_order_relaxed);
+    stats.activeTurnFrames = mActiveTurnFrames.exchange(0, std::memory_order_relaxed);
     stats.zoomedFrames = mZoomedFrames.exchange(0, std::memory_order_relaxed);
     stats.clickFrames = mClickFrames.exchange(0, std::memory_order_relaxed);
     std::lock_guard<std::mutex> lock(mWorstPartsMutex);
@@ -539,6 +540,7 @@ void RenderThread::run()
             if (state.turn.active)
             {
                 MouseMotion::between(state.turn.included, mMotion->total(), dx, dy);
+                mActiveTurnFrames.fetch_add(1, std::memory_order_relaxed);
             }
             CameraTurn zoomed;
             const CameraTurn* turn = &state.turn;

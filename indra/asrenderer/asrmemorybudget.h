@@ -66,6 +66,12 @@ public:
     // category, so a burst of loads can only take longer, never fail.
     uint64_t uploadBytesPerFrame(uint32_t framesInFlight) const;
 
+    // The texture upload ring: the textures' half of that staging. One frame copies at
+    // most uploadRingPieceBytes() of it, so the main thread can write a frame's worth
+    // ahead while every frame in flight still holds its own.
+    uint64_t uploadRingBytes(uint32_t framesInFlight) const { return uploadBytesPerFrame(framesInFlight) * framesInFlight; }
+    uint64_t uploadRingPieceBytes(uint32_t framesInFlight) const { return uploadRingBytes(framesInFlight) / (framesInFlight + 1); }
+
 private:
     static constexpr uint32_t COUNT = uint32_t(MemoryCategory::Count);
 

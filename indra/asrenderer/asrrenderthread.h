@@ -201,6 +201,7 @@ struct FrameStats
     double worstRefreshSeconds = 0.0;  // the memory budget refresh, between two frames
     uint64_t turnedFrames = 0;         // frames the mouse turned, from motion the main
                                        // thread had not seen yet
+    uint64_t activeTurnFrames = 0;     // frames whose camera came with an active turn, moved or not
     uint64_t zoomedFrames = 0;         // frames a zoom eased on from the published camera
     uint64_t clickFrames = 0;          // of those, frames with wheel clicks the main
                                        // thread had not handled yet
@@ -265,6 +266,7 @@ private:
     std::atomic<uint64_t> mNewStates{ 0 };
     std::atomic<uint64_t> mWorstRefreshMicros{ 0 };
     std::atomic<uint64_t> mTurnedFrames{ 0 };
+    std::atomic<uint64_t> mActiveTurnFrames{ 0 };
     std::atomic<uint64_t> mZoomedFrames{ 0 };
     std::atomic<uint64_t> mClickFrames{ 0 };
 

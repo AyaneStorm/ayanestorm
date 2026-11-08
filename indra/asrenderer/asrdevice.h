@@ -170,6 +170,7 @@ struct FrameParts
     uint32_t texturesRetired = 0;
     uint32_t texturesCreated = 0;
     uint64_t textureUploadBytes = 0;
+    uint32_t textureCommandsLeft = 0; // for later frames, once this one's time or share of the ring ran out
     uint64_t sceneStagingBytes = 0;
 };
 

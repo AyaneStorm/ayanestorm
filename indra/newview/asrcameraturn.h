@@ -70,6 +70,10 @@ namespace ASRCameraTurn
     // Fills in the turn and zoom to publish with this frame's camera, whose space is agent space
     // moved by `origin`, and ends the frame. Once a frame, with the camera, after updateCamera().
     void publish(asr::CameraTurn& turn, const LLVector3& origin);
+
+    // Temporary: logs at which step turns stopped since the last call, as the Mac never
+    // turns a frame ahead of the main thread.
+    void logCounts();
 }
 
 #endif // ASR_CAMERA_TURN_H

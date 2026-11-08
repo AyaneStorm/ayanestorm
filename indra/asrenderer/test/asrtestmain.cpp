@@ -16,6 +16,7 @@
  *                   [--validate]         turn on the Vulkan validation layers
  *                   [--vsync]            wait for the display
  *                   [--shaders DIR]      compiled shader folder
+ *   asrenderer_test --mouse-probe [--seconds N]  Mac: does mouse motion arrive while the main thread reads no events
  *
  * Exit code 0 means every check passed.
  */
@@ -462,8 +463,16 @@ void testTextureQueue()
     std::vector<asr::TextureCommand> commands;
 
     queue.take(commands);
-    expect(commands.size() == 2 && commands[0].slot == 0 && commands[0].type == Type::Create && commands[1].type == Type::Upload,
-           "slot 0 starts as a queued white pixel");
+    expect(commands.size() == 1 && commands[0].slot == 0 && commands[0].type == Type::Create, "slot 0 is created at once");
+    expect(queue.waitingBytes() == 4, "its white pixel waits for the ring");
+    commands.clear();
+
+    std::vector<uint8_t> ring(256);
+    queue.setUploadRing(ring.data(), ring.size(), 64);
+    queue.take(commands);
+    expect(commands.size() == 1 && commands[0].type == Type::Upload && commands[0].ringOffset == 0 && commands[0].ringBytes == 4 &&
+               commands[0].ringEnd == 4 && ring[3] == 0xFF && queue.waitingBytes() == 0,
+           "the white pixel goes into the ring once there is one");
     commands.clear();
 
     asr::TextureDesc desc;
@@ -482,24 +491,80 @@ void testTextureQueue()
     queue.destroy(0, 9);
     queue.take(commands);
     expect(commands.size() == 4, "the white pixel cannot be changed or destroyed");
-    expect(commands[2].type == Type::Upload && commands[2].level == 1 && commands[2].pixels[3] == 4, "upload keeps its own pixels");
+    expect(commands[2].type == Type::Upload && commands[2].level == 1 && commands[2].x == 2 && commands[2].y == 3 &&
+               commands[2].ringOffset == asr::UPLOAD_RING_ALIGNMENT && ring[asr::UPLOAD_RING_ALIGNMENT + 3] == 4,
+           "an upload's pixels are written into the ring, aligned");
     expect(commands[3].type == Type::Destroy && commands[3].lastList == 9, "destroy says which list may still use it");
 
     commands.clear();
-    std::vector<uint8_t> owned = { 9, 8, 7, 6 };
-    const uint8_t* const ownedData = owned.data();
-    queue.upload(first, 0, 0, 0, 1, 1, std::move(owned));
+    queue.upload(first, 0, 0, 0, 1, 1, pixels, 4);
     queue.generateMips(first);
     queue.generateMips(0);
+    expect(queue.beginUpload(0, 0, 0, 0, 1, 1, 4) == nullptr, "slot 0 gives nowhere to write");
+    queue.finishUpload();
     queue.take(commands);
-    expect(commands.size() == 2 && commands[0].pixels.data() == ownedData, "pixels built for an upload are moved, not copied");
-    expect(commands[1].type == Type::GenerateMips && commands[1].slot == first, "mips are queued after the pixels they come from");
+    expect(commands.size() == 2 && commands[1].type == Type::GenerateMips && commands[1].slot == first, "mips are queued after the pixels they come from");
+
+    // A ring of 96 bytes, pieces of 32: an upload of 8 rows of 16 bytes cannot fit at
+    // once, so it goes in two rows at a time as the GPU frees room, with what follows it.
+    {
+        asr::TextureQueue small;
+        std::vector<uint8_t> memory(96);
+        small.setUploadRing(memory.data(), memory.size(), 32);
+        std::vector<asr::TextureCommand> taken;
+        small.take(taken);
+        small.releaseRing(taken.back().ringEnd);
+        taken.clear();
+
+        asr::TextureDesc rowsDesc;
+        rowsDesc.width = 16;
+        rowsDesc.height = 8;
+        rowsDesc.format = asr::TextureFormat::R8;
+        const uint32_t tall = small.create(rowsDesc);
+        std::vector<uint8_t> rows(16 * 8);
+        for (size_t i = 0; i < rows.size(); ++i)
+        {
+            rows[i] = uint8_t(i / 16);
+        }
+        small.upload(tall, 0, 0, 0, 16, 8, rows.data(), rows.size());
+        small.generateMips(tall);
+        small.take(taken);
+        expect(taken.size() == 3 && taken[1].type == Type::Upload && taken[1].y == 0 && taken[1].height == 2 && taken[1].ringOffset == 16 &&
+                   taken[2].y == 2 && taken[2].ringOffset == 48 && taken[2].ringEnd == 80,
+               "an upload goes in as pieces while there is room");
+        expect(small.waitingBytes() == 64, "the rest waits, and what follows it too");
+        taken.clear();
+
+        small.flush();
+        small.take(taken);
+        expect(taken.empty(), "nothing more goes in before the GPU frees room");
+
+        small.releaseRing(80);
+        small.flush();
+        small.take(taken);
+        expect(taken.size() == 3 && taken[0].y == 4 && taken[0].ringOffset == 0 && taken[0].ringEnd == 128 && memory[0] == 4 &&
+                   taken[1].y == 6 && taken[1].ringOffset == 32 && memory[32] == 6 && taken[2].type == Type::GenerateMips,
+               "a piece that would wrap starts the ring again, and the mips still come after the pixels");
+        expect(small.waitingBytes() == 0, "nothing waits once it has all gone in");
+        small.releaseRing(40);
+        small.releaseRing(160);
+        small.releaseRing(100); // an older end never moves the tail back
+        uint8_t* const direct = small.beginUpload(tall, 0, 0, 0, 16, 2, 16);
+        expect(direct == memory.data() + 64, "an upload with room goes straight into the ring, where the last one ended");
+        small.finishUpload();
+    }
+
+    expect(asr::textureCommandSeconds(0.0) == 0.001 && asr::textureCommandSeconds(1.0) == 0.004 &&
+               std::abs(asr::textureCommandSeconds(0.025) - 0.0025) < 1e-9,
+           "texture commands take a tenth of the frame, from 1 to 4 ms");
 
     expect(asr::textureBytesPerPixel(asr::TextureFormat::BGRA8) == 4, "BGRA takes four bytes");
 
     {
         asr::MemoryBudget textureBudget;
         asr::TextureQueue counted(&textureBudget);
+        std::vector<uint8_t> countedRing(64);
+        counted.setUploadRing(countedRing.data(), countedRing.size(), 64);
         asr::TextureDesc shrunkDesc;
         shrunkDesc.width = 2;
         shrunkDesc.height = 1;
@@ -1471,7 +1536,7 @@ public:
             }
         }
         mMipped = textures.create(mippedDesc);
-        textures.upload(mMipped, 0, 0, 0, MIPPED_SIZE, MIPPED_SIZE, std::move(stripes));
+        textures.upload(mMipped, 0, 0, 0, MIPPED_SIZE, MIPPED_SIZE, stripes.data(), stripes.size());
         textures.generateMips(mMipped);
 
         // The same image made smaller from its own mips, and drawn right after them:
@@ -1802,6 +1867,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
 
 } // namespace
 
+#ifdef __APPLE__
+int runMouseProbe(double seconds); // asrtestmouseprobe.mm
+#endif
+
 int main(int argc, char** argv)
 {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -1880,6 +1949,12 @@ int main(int argc, char** argv)
         else if (arg == "--shaders" && i + 1 < argc)
         {
             options.shaderDir = argv[++i];
+        }
+#endif
+#ifdef __APPLE__
+        else if (arg == "--mouse-probe")
+        {
+            return runMouseProbe(seconds);
         }
 #endif
         else

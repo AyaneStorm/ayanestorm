@@ -94,7 +94,7 @@ void logFrameStats(const char* what, const asr::FrameStats& stats)
     LL_INFOS("ASRenderer") << what << ": " << stats.frames << " frames, worst frame " << stats.worstFrameSeconds * 1000.0
                            << " ms, oldest state " << stats.worstStateAgeSeconds * 1000.0 << " ms, average state " << stats.averageStateAgeSeconds * 1000.0
                            << " ms, frames with a new state " << stats.newStates << ", frames the mouse turned ahead of the main thread "
-                           << stats.turnedFrames << ", frames a zoom eased on " << stats.zoomedFrames << ", of which with clicks not handled yet "
+                           << stats.turnedFrames << " of " << stats.activeTurnFrames << " with an active turn, frames a zoom eased on " << stats.zoomedFrames << ", of which with clicks not handled yet "
                            << stats.clickFrames << LL_ENDL;
     const asr::FrameParts& parts = stats.worstFrameParts;
     const double recordParts = parts.retireTextures + parts.textureCommands + parts.readResults + parts.sceneUpdate + parts.sceneGrowth + parts.sceneStaging;
@@ -102,10 +102,11 @@ void logFrameStats(const char* what, const asr::FrameStats& stats)
     LL_INFOS("ASRenderer") << "worst frame, ms: wait for GPU " << parts.waitForGpu * 1000.0 << ", acquire " << parts.acquire * 1000.0 << ", UI " << parts.prepareUI * 1000.0
                            << ", record " << parts.record * 1000.0 << " of which retire " << parts.texturesRetired << " textures " << parts.retireTextures * 1000.0
                            << ", texture commands " << parts.textureCommands * 1000.0 << " (" << parts.texturesCreated << " created, " << parts.textureUploadBytes / 1024
-                           << " KB uploaded), read results " << parts.readResults * 1000.0 << ", scene update " << parts.sceneUpdate * 1000.0 << ", scene growth "
+                           << " KB uploaded, " << parts.textureCommandsLeft << " left for later), read results " << parts.readResults * 1000.0 << ", scene update " << parts.sceneUpdate * 1000.0 << ", scene growth "
                            << parts.sceneGrowth * 1000.0 << ", scene staging " << parts.sceneStaging * 1000.0 << " (" << parts.sceneStagingBytes / 1024
                            << " KB), the rest " << std::max(0.0, parts.record - recordParts) * 1000.0 << ", submit " << parts.submit * 1000.0
-                           << ", present " << parts.present * 1000.0 << "; worst memory refresh " << stats.worstRefreshSeconds * 1000.0 << LL_ENDL;
+                           << ", present " << parts.present * 1000.0 << "; worst memory refresh " << stats.worstRefreshSeconds * 1000.0
+                           << "; uploads waiting for room in the ring now " << (sDevice ? sDevice->textures().waitingBytes() / 1024 : 0) << " KB" << LL_ENDL;
 }
 
 // The P2 gate: a stopped main thread must not reach the render rate.
@@ -188,10 +189,11 @@ public:
         const size_t sourceRow = size_t(rowPixels) * sourceBytes;
         const size_t targetRow = size_t(width) * targetBytes;
 
-        std::vector<uint8_t> copy(targetRow * height);
+        // Written once, usually straight into the memory the GPU copies from.
+        asr::TextureQueue& textures = sDevice->textures();
+        U8* target = textures.beginUpload(slot, 0, x, y, width, height, U32(targetRow));
         const U8* source = static_cast<const U8*>(pixels);
-        U8* target = copy.data();
-        for (U32 row = 0; row < height; ++row)
+        for (U32 row = 0; target && row < height; ++row)
         {
             if (sourceBytes == targetBytes)
             {
@@ -210,7 +212,7 @@ public:
             source += sourceRow;
             target += targetRow;
         }
-        sDevice->textures().upload(slot, 0, x, y, width, height, std::move(copy));
+        textures.finishUpload();
     }
 
     void generateMips(U32 slot) override
@@ -450,11 +452,13 @@ void ASRViewer::publishFrame(LLWindow* window)
     static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit", 0);
     state.maxFramesPerSecond = limit_framerate() ? F32(max_fps()) : 0.f;
     sRenderThread->publishState();
+    sDevice->textures().flush(); // uploads that found the ring full
 
     if (Clock::now() - sStatsLogged >= STATS_PERIOD)
     {
         sStatsLogged = Clock::now();
         logFrameStats("last minute", sRenderThread->takeStats());
+        ASRCameraTurn::logCounts();
     }
 
     static LLCachedControl<F32> stall_at(gSavedSettings, STALL_SETTING, 0.f);

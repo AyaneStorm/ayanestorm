@@ -60,7 +60,11 @@ static inline bool Check_FMOD_Error(FMOD_RESULT result, const char *string)
         return false;
     }
 
-    if (result != FMOD_ERR_INVALID_HANDLE)
+    // <AS:Chanayane> A channel FMOD gave to another sound is gone, as an invalid handle is,
+    // and stopping one is routine: as a warning it was logged up to 150 times a second.
+    //if (result != FMOD_ERR_INVALID_HANDLE)
+    if (result != FMOD_ERR_INVALID_HANDLE && result != FMOD_ERR_CHANNEL_STOLEN)
+    // </AS:Chanayane>
     {
         LL_WARNS("FMOD") << string << " Error: " << FMOD_ErrorString(result) << LL_ENDL;
     }

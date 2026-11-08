@@ -296,6 +296,13 @@ public:
             return false;
         }
         const Clock::time_point fenceDone = Clock::now();
+        if (mRingEnd[slot] != 0)
+        {
+            mTextures.releaseRing(mRingEnd[slot]); // that frame's copies have run
+            mRingEnd[slot] = 0;
+        }
+        mFrameSeconds = mFrame != 0 ? seconds(mPreviousFrameStart, frameStart) : 0.0;
+        mPreviousFrameStart = frameStart;
 
         uint32_t image = 0;
         const VkResult acquired = vkAcquireNextImageKHR(mDevice, mSwapchain, UINT64_MAX, mImageReady[slot], VK_NULL_HANDLE, &image);
@@ -704,6 +711,37 @@ private:
         return true;
     }
 
+    // Host memory that the main thread writes texture pixels into and the GPU copies
+    // from. Not video memory, so the window of it the CPU can reach is kept for what
+    // needs it, and the GPU reads the pixels once, as it copies them.
+    bool createUploadRing(std::string& error)
+    {
+        const uint64_t bytes = mMemoryBudget.uploadRingBytes(FRAMES_IN_FLIGHT);
+        if (!mMemoryBudget.reserve(MemoryCategory::Staging, bytes))
+        {
+            error = "the texture upload ring does not fit in its memory budget";
+            return false;
+        }
+        VkBufferCreateInfo create{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        create.size = bytes;
+        create.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VmaAllocationCreateInfo allocation{};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        allocation.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(mAllocator, &create, &allocation, &mUploadRing.buffer, &mUploadRing.allocation, &info) != VK_SUCCESS)
+        {
+            mMemoryBudget.release(MemoryCategory::Staging, bytes);
+            error = "cannot create the texture upload ring";
+            return false;
+        }
+        mUploadRing.mapped = info.pMappedData;
+        mUploadRing.size = bytes;
+        mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
+        mTextures.setUploadRing(static_cast<uint8_t*>(info.pMappedData), bytes, mUploadPieceBytes);
+        return true;
+    }
+
     bool createUI(std::string& error)
     {
         VmaVulkanFunctions functions{};
@@ -718,6 +756,10 @@ private:
             vmaCreateAllocator(&allocator, &mAllocator) != VK_SUCCESS)
         {
             error = "cannot create the memory allocator";
+            return false;
+        }
+        if (!createUploadRing(error))
+        {
             return false;
         }
 
@@ -1535,32 +1577,27 @@ private:
         return true;
     }
 
-    // Sends the given rows of an upload, which may be a part of it.
-    void uploadTexture(VkCommandBuffer commands, const TextureCommand& command, uint32_t rows, uint32_t frameSlot, uint64_t& stagingOffset)
+    // Copies one piece of an upload from the ring, where the main thread wrote it.
+    void uploadTexture(VkCommandBuffer commands, const TextureCommand& command)
     {
         const Texture& texture = mTextureObjects[command.slot];
         if (texture.image == VK_NULL_HANDLE)
         {
             return; // did not fit in the budget
         }
-        const uint64_t rowBytes = command.pixels.size() / command.height;
-        const uint64_t bytes = rowBytes * rows;
-        memcpy(static_cast<char*>(mStaging[frameSlot].mapped) + stagingOffset, command.pixels.data() + rowBytes * command.rowsDone, bytes);
 
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
         VkBufferImageCopy copy{};
-        copy.bufferOffset = stagingOffset;
+        copy.bufferOffset = command.ringOffset;
         copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, command.level, 0, 1 };
-        copy.imageOffset = { int32_t(command.x), int32_t(command.y + command.rowsDone), 0 };
-        copy.imageExtent = { command.width, rows, 1 };
-        vkCmdCopyBufferToImage(commands, mStaging[frameSlot].buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        copy.imageOffset = { int32_t(command.x), int32_t(command.y), 0 };
+        copy.imageExtent = { command.width, command.height, 1 };
+        vkCmdCopyBufferToImage(commands, mUploadRing.buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
-
-        stagingOffset += (bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
     }
 
     void generateMips(VkCommandBuffer commands, uint32_t slot)
@@ -1623,45 +1660,28 @@ private:
         }
     }
 
-    // Runs what the main thread queued, in order, up to this frame's upload limit.
+    // Runs what the main thread queued, in order, until this frame's time for it or
+    // its share of the ring runs out. The rest waits for the next frame.
     bool runTextureCommands(VkCommandBuffer commands, uint32_t frameSlot)
     {
         mTextures.take(mTextureCommands);
 
-        // Find how far this frame goes first, because the staging buffer cannot grow
-        // once something in it has been recorded.
-        uint64_t stagingBytes = 0;
-        size_t end = 0;
-        uint32_t lastRows = 0; // rows of the command at end, when only part of it fits
-        for (; end < mTextureCommands.size(); ++end)
-        {
-            const TextureCommand& command = mTextureCommands[end];
-            if (command.type == TextureCommand::Type::Upload)
-            {
-                // Whole rows that fit, leaving room for rounding up to the alignment.
-                const uint64_t rowBytes = command.pixels.size() / command.height;
-                const uint64_t room = mUploadBytesPerFrame - std::min(mUploadBytesPerFrame, stagingBytes + UPLOAD_ALIGNMENT);
-                const uint32_t remaining = command.height - command.rowsDone;
-                const uint32_t rows = uint32_t(std::min<uint64_t>(remaining, room / rowBytes));
-                if (rows < remaining)
-                {
-                    lastRows = rows;
-                    stagingBytes += (rows * rowBytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
-                    break;
-                }
-                stagingBytes += (rows * rowBytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
-            }
-        }
-        if (stagingBytes != 0 &&
-            !growBuffer(mStaging[frameSlot], mUploadBytesPerFrame, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "texture staging buffer"))
-        {
-            return false;
-        }
-
-        uint64_t stagingOffset = 0;
-        for (size_t i = 0; i < end; ++i)
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point start = Clock::now();
+        const auto limit = std::chrono::duration<double>(textureCommandSeconds(mFrameSeconds));
+        uint64_t uploaded = 0;
+        size_t i = mTextureCommandsDone;
+        for (; i < mTextureCommands.size(); ++i)
         {
             TextureCommand& command = mTextureCommands[i];
+            if (i != mTextureCommandsDone && Clock::now() - start > limit)
+            {
+                break;
+            }
+            if (command.type == TextureCommand::Type::Upload && uploaded != 0 && uploaded + command.ringBytes > mUploadPieceBytes)
+            {
+                break;
+            }
             switch (command.type)
             {
                 case TextureCommand::Type::Create:
@@ -1672,7 +1692,11 @@ private:
                     ++mFrameParts.texturesCreated;
                     break;
                 case TextureCommand::Type::Upload:
-                    uploadTexture(commands, command, command.height - command.rowsDone, frameSlot, stagingOffset);
+                    // A no-op on the coherent memory desktop GPUs give, needed on the rest.
+                    vmaFlushAllocation(mAllocator, mUploadRing.allocation, command.ringOffset, command.ringBytes);
+                    uploadTexture(commands, command);
+                    uploaded += command.ringBytes;
+                    mRingEnd[frameSlot] = command.ringEnd;
                     break;
                 case TextureCommand::Type::GenerateMips:
                     generateMips(commands, command.slot);
@@ -1682,17 +1706,21 @@ private:
                     break;
             }
         }
-        if (lastRows != 0)
+        mFrameParts.textureUploadBytes = uploaded;
+        mFrameParts.textureCommandsLeft = uint32_t(mTextureCommands.size() - i);
+
+        // Dropped from the front only now and then, as a teleport can leave thousands.
+        mTextureCommandsDone = i;
+        if (mTextureCommandsDone == mTextureCommands.size())
         {
-            uploadTexture(commands, mTextureCommands[end], lastRows, frameSlot, stagingOffset);
-            mTextureCommands[end].rowsDone += lastRows;
+            mTextureCommands.clear();
+            mTextureCommandsDone = 0;
         }
-        if (stagingOffset != 0)
+        else if (mTextureCommandsDone >= 1024 && mTextureCommandsDone * 2 >= mTextureCommands.size())
         {
-            vmaFlushAllocation(mAllocator, mStaging[frameSlot].allocation, 0, stagingOffset);
+            mTextureCommands.erase(mTextureCommands.begin(), mTextureCommands.begin() + mTextureCommandsDone);
+            mTextureCommandsDone = 0;
         }
-        mFrameParts.textureUploadBytes = stagingOffset;
-        mTextureCommands.erase(mTextureCommands.begin(), mTextureCommands.begin() + end);
         return true;
     }
 
@@ -2534,8 +2562,9 @@ private:
             for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
             {
                 destroyBuffer(mUIBuffers[i], MemoryCategory::UI);
-                destroyBuffer(mStaging[i], MemoryCategory::Staging);
             }
+            mTextures.setUploadRing(nullptr, 0, 0); // what comes later waits, and is never written
+            destroyBuffer(mUploadRing, MemoryCategory::Staging);
             for (const auto& pipeline : mUIPipelines)
             {
                 vkDestroyPipeline(mDevice, pipeline.second, nullptr);
@@ -2662,10 +2691,15 @@ private:
     uint64_t mUIPipelineGeneration = 0;
     MappedBuffer mUIBuffers[FRAMES_IN_FLIGHT];
     uint64_t mUIBufferGeneration[FRAMES_IN_FLIGHT]{};
-    MappedBuffer mStaging[FRAMES_IN_FLIGHT];
+    MappedBuffer mUploadRing;                               // texture pixels, written by the main thread
+    uint64_t mUploadPieceBytes = 0;                         // the most one frame copies from it
+    uint64_t mRingEnd[FRAMES_IN_FLIGHT]{};                  // how far each slot's frame read it, 0 for not at all
     uint64_t mUploadBytesPerFrame = 0;
     std::vector<Texture> mTextureObjects;                   // by slot
     std::vector<TextureCommand> mTextureCommands;           // taken, not yet run
+    size_t mTextureCommandsDone = 0;                        // the front of mTextureCommands already run
+    std::chrono::steady_clock::time_point mPreviousFrameStart{};
+    double mFrameSeconds = 0.0;                             // from the previous frame's start to this one's
     RetiredTextures mRetiredTextures;
 
     struct RetiredBuffer

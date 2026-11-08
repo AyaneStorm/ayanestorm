@@ -14,8 +14,11 @@
 #import <Metal/Metal.h>
 #import <QuartzCore/CAMetalLayer.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <deque>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -34,6 +37,9 @@ constexpr NSUInteger UI_VERTEX_BUFFER = 0;
 constexpr NSUInteger PUSH_CONSTANT_BUFFER = 8;
 
 constexpr uint64_t UPLOAD_ALIGNMENT = 16;
+
+// Zeros that new textures are cleared from, a run of rows at a time.
+constexpr NSUInteger ZERO_BYTES = 1024 * 1024;
 
 // One pass's timestamps: start, end, and for a draw the end of vertices and start of fragments.
 constexpr uint32_t SAMPLES_PER_PASS = 4;
@@ -74,6 +80,18 @@ public:
         {
             dispatch_semaphore_signal(mFrameSlots);
         }
+        // Texture copies tell the queue when they finish, so none may still be running.
+        if (mQueue)
+        {
+            id<MTLCommandBuffer> last = [mQueue commandBuffer];
+            [last commit];
+            [last waitUntilCompleted];
+        }
+        while (mRingHandlers.load(std::memory_order_acquire) != 0)
+        {
+            std::this_thread::yield();
+        }
+        mTextures.setUploadRing(nullptr, 0, 0);
     }
 
     bool init(const SurfaceTarget& target, const DeviceOptions& options, std::string& error)
@@ -103,6 +121,25 @@ public:
         mOcclusion = options.occlusion;
         refreshMemoryBudget();
         mUploadBytesPerFrame = mMemoryBudget.uploadBytesPerFrame(FRAMES_IN_FLIGHT);
+
+        // The main thread writes texture pixels here, and a blit copies them into
+        // textures only the GPU reaches, which it keeps compressed.
+        const uint64_t ringBytes = mMemoryBudget.uploadRingBytes(FRAMES_IN_FLIGHT);
+        if (!mMemoryBudget.reserve(MemoryCategory::Staging, ringBytes + ZERO_BYTES))
+        {
+            error = "the texture upload ring does not fit in its memory budget";
+            return false;
+        }
+        mUploadRing = [mDevice newBufferWithLength:ringBytes options:MTLResourceStorageModeShared | MTLResourceCPUCacheModeWriteCombined];
+        mZeros = [mDevice newBufferWithLength:ZERO_BYTES options:MTLResourceStorageModeShared];
+        if (!mUploadRing || !mZeros)
+        {
+            error = "cannot create the texture upload ring";
+            return false;
+        }
+        memset(mZeros.contents, 0, ZERO_BYTES);
+        mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
+        mTextures.setUploadRing(static_cast<uint8_t*>(mUploadRing.contents), ringBytes, mUploadPieceBytes);
 
         NSView* view = (__bridge NSView*)target.nativeWindow;
         mLayer = [CAMetalLayer layer];
@@ -181,6 +218,9 @@ public:
             // The buffers of this slot are free once its earlier frame has finished.
             dispatch_semaphore_wait(mFrameSlots, DISPATCH_TIME_FOREVER);
             const uint32_t slot = uint32_t(mFrame % FRAMES_IN_FLIGHT);
+            const std::chrono::steady_clock::time_point frameStart = std::chrono::steady_clock::now();
+            mFrameSeconds = mFrame != 0 ? std::chrono::duration<double>(frameStart - mPreviousFrameStart).count() : 0.0;
+            mPreviousFrameStart = frameStart;
             mRetiredTextures.run(input.ui ? input.ui->generation : 0, mFrame, FRAMES_IN_FLIGHT, [this](uint32_t retired)
             {
                 destroyTexture(retired);
@@ -1109,7 +1149,7 @@ private:
 
     // The memory was counted when the main thread asked for this texture. Video memory
     // really running out shows as white and is not an error.
-    void createTexture(const TextureCommand& command)
+    void createTexture(const TextureCommand& command, id<MTLBlitCommandEncoder> blit)
     {
         if (mTextureObjects.size() <= command.slot)
         {
@@ -1127,7 +1167,7 @@ private:
                                                                                              height:desc.height
                                                                                           mipmapped:NO];
         descriptor.mipmapLevelCount = desc.mipLevels;
-        descriptor.storageMode = MTLStorageModeShared; // on Apple GPUs the CPU writes it directly
+        descriptor.storageMode = MTLStorageModePrivate; // filled by blits, and kept compressed by the GPU
         descriptor.usage = MTLTextureUsageShaderRead;
         if (desc.swizzle == TextureSwizzle::AlphaOnly)
         {
@@ -1157,19 +1197,43 @@ private:
         id<MTLTexture> source = mTextureObjects[command.sourceSlot].texture;
         if (command.sourceSlot != 0 && source && source.mipmapLevelCount >= command.sourceMip + desc.mipLevels)
         {
-            // The blit waits for mips this frame makes, so runTextureCommands() does it.
-            mMipCopies.push_back({ source, texture, command.sourceMip });
+            // In command order, so after any mips made from the source just before.
+            for (NSUInteger level = 0; level < desc.mipLevels; ++level)
+            {
+                const MTLSize size = MTLSizeMake(std::max<NSUInteger>(desc.width >> level, 1), std::max<NSUInteger>(desc.height >> level, 1), 1);
+                [blit copyFromTexture:source
+                          sourceSlice:0
+                          sourceLevel:command.sourceMip + level
+                         sourceOrigin:MTLOriginMake(0, 0, 0)
+                           sourceSize:size
+                            toTexture:texture
+                     destinationSlice:0
+                     destinationLevel:level
+                    destinationOrigin:MTLOriginMake(0, 0, 0)];
+            }
         }
         else
         {
             // Cleared, because a list can draw this texture before its pixels arrive.
-            std::vector<uint8_t> zeros;
             uint32_t width = desc.width;
             uint32_t height = desc.height;
             for (uint32_t level = 0; level < desc.mipLevels; ++level)
             {
-                zeros.assign(size_t(width) * height * pixelBytes, 0);
-                [texture replaceRegion:MTLRegionMake2D(0, 0, width, height) mipmapLevel:level withBytes:zeros.data() bytesPerRow:width * pixelBytes];
+                const NSUInteger rowBytes = NSUInteger(width) * pixelBytes;
+                const uint32_t rowsPerCopy = uint32_t(std::max<NSUInteger>(ZERO_BYTES / rowBytes, 1));
+                for (uint32_t row = 0; row < height; row += rowsPerCopy)
+                {
+                    const uint32_t rows = std::min(rowsPerCopy, height - row);
+                    [blit copyFromBuffer:mZeros
+                               sourceOffset:0
+                          sourceBytesPerRow:rowBytes
+                        sourceBytesPerImage:rowBytes * rows
+                                 sourceSize:MTLSizeMake(width, rows, 1)
+                                  toTexture:texture
+                           destinationSlice:0
+                           destinationLevel:level
+                          destinationOrigin:MTLOriginMake(0, row, 0)];
+                }
                 width = std::max(width / 2, 1u);
                 height = std::max(height / 2, 1u);
             }
@@ -1206,51 +1270,74 @@ private:
         }
     }
 
+    // Runs what the main thread queued, in order, in one blit committed before the
+    // frame's own commands, until this frame's time for it or its share of the ring
+    // runs out. The rest waits for the next frame.
     bool runTextureCommands()
     {
         mTextures.take(mTextureCommands);
-        if (mTextureCommands.empty())
+        if (mTextureCommandsDone == mTextureCommands.size())
         {
             return true;
         }
 
+        using Clock = std::chrono::steady_clock;
+        const Clock::time_point start = Clock::now();
+        const auto limit = std::chrono::duration<double>(textureCommandSeconds(mFrameSeconds));
+        id<MTLCommandBuffer> commands = [mQueue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
         bool created = false;
-        std::vector<id<MTLTexture>> needMips;
-        for (TextureCommand& command : mTextureCommands)
+        uint64_t uploaded = 0;
+        uint64_t ringEnd = 0;
+        size_t i = mTextureCommandsDone;
+        for (; i < mTextureCommands.size(); ++i)
         {
+            const TextureCommand& command = mTextureCommands[i];
+            if (i != mTextureCommandsDone && Clock::now() - start > limit)
+            {
+                break;
+            }
+            if (command.type == TextureCommand::Type::Upload && uploaded != 0 && uploaded + command.ringBytes > mUploadPieceBytes)
+            {
+                break;
+            }
+            id<MTLTexture> texture = command.type != TextureCommand::Type::Create && command.slot < mTextureObjects.size()
+                                   ? mTextureObjects[command.slot].texture : nil;
             switch (command.type)
             {
                 case TextureCommand::Type::Create:
-                    createTexture(command);
+                    createTexture(command, blit);
                     created = true;
                     break;
                 case TextureCommand::Type::Upload:
-                {
-                    const Texture& texture = mTextureObjects[command.slot];
-                    if (texture.texture)
+                    if (texture)
                     {
-                        [texture.texture replaceRegion:MTLRegionMake2D(command.x, command.y, command.width, command.height)
-                                           mipmapLevel:command.level
-                                             withBytes:command.pixels.data()
-                                           bytesPerRow:command.width * texture.pixelBytes];
+                        const NSUInteger rowBytes = NSUInteger(command.width) * mTextureObjects[command.slot].pixelBytes;
+                        [blit copyFromBuffer:mUploadRing
+                                   sourceOffset:command.ringOffset
+                              sourceBytesPerRow:rowBytes
+                            sourceBytesPerImage:rowBytes * command.height
+                                     sourceSize:MTLSizeMake(command.width, command.height, 1)
+                                      toTexture:texture
+                               destinationSlice:0
+                               destinationLevel:command.level
+                              destinationOrigin:MTLOriginMake(command.x, command.y, 0)];
                     }
+                    uploaded += command.ringBytes;
+                    ringEnd = command.ringEnd;
                     break;
-                }
                 case TextureCommand::Type::GenerateMips:
-                {
-                    const Texture& texture = mTextureObjects[command.slot];
-                    if (texture.texture && texture.texture.mipmapLevelCount > 1)
+                    if (texture && texture.mipmapLevelCount > 1)
                     {
-                        needMips.push_back(texture.texture);
+                        [blit generateMipmapsForTexture:texture];
                     }
                     break;
-                }
                 case TextureCommand::Type::Destroy:
                     mRetiredTextures.add(command.slot, command.lastList);
                     break;
             }
         }
-        mTextureCommands.clear();
+        [blit endEncoding];
 
         if (created)
         {
@@ -1259,36 +1346,30 @@ private:
                 [(id<MTLResidencySet>)mResidency commit];
             }
         }
-
-        // Committed before the frame's own commands, so the frame sees the mips.
-        if (!needMips.empty() || !mMipCopies.empty())
+        if (ringEnd != 0)
         {
-            id<MTLCommandBuffer> commands = [mQueue commandBuffer];
-            id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
-            for (id<MTLTexture> texture : needMips)
-            {
-                [blit generateMipmapsForTexture:texture];
-            }
-            for (const MipCopy& copy : mMipCopies)
-            {
-                for (NSUInteger level = 0; level < copy.target.mipmapLevelCount; ++level)
-                {
-                    const MTLSize size = MTLSizeMake(std::max<NSUInteger>(copy.target.width >> level, 1),
-                                                     std::max<NSUInteger>(copy.target.height >> level, 1), 1);
-                    [blit copyFromTexture:copy.source
-                              sourceSlice:0
-                              sourceLevel:copy.sourceMip + level
-                             sourceOrigin:MTLOriginMake(0, 0, 0)
-                               sourceSize:size
-                                toTexture:copy.target
-                         destinationSlice:0
-                         destinationLevel:level
-                        destinationOrigin:MTLOriginMake(0, 0, 0)];
-                }
-            }
-            mMipCopies.clear();
-            [blit endEncoding];
-            [commands commit];
+            // The ring is written again only once these copies have run.
+            TextureQueue* textures = &mTextures;
+            std::atomic<uint32_t>* handlers = &mRingHandlers;
+            handlers->fetch_add(1, std::memory_order_relaxed);
+            [commands addCompletedHandler:^(id<MTLCommandBuffer>) {
+                textures->releaseRing(ringEnd);
+                handlers->fetch_sub(1, std::memory_order_release);
+            }];
+        }
+        [commands commit];
+
+        // Dropped from the front only now and then, as a teleport can leave thousands.
+        mTextureCommandsDone = i;
+        if (mTextureCommandsDone == mTextureCommands.size())
+        {
+            mTextureCommands.clear();
+            mTextureCommandsDone = 0;
+        }
+        else if (mTextureCommandsDone >= 1024 && mTextureCommandsDone * 2 >= mTextureCommands.size())
+        {
+            mTextureCommands.erase(mTextureCommands.begin(), mTextureCommands.begin() + mTextureCommandsDone);
+            mTextureCommandsDone = 0;
         }
         return true;
     }
@@ -1342,16 +1423,15 @@ private:
     id<MTLBuffer> mUIBuffers[FRAMES_IN_FLIGHT];
     uint64_t mUIBufferGeneration[FRAMES_IN_FLIGHT]{};
     std::vector<Texture> mTextureObjects;         // by slot
-    std::vector<TextureCommand> mTextureCommands; // only held while they run
+    std::vector<TextureCommand> mTextureCommands; // taken, not yet run
+    size_t mTextureCommandsDone = 0;              // the front of mTextureCommands already run
     RetiredTextures mRetiredTextures;
-
-    struct MipCopy
-    {
-        id<MTLTexture> source;
-        id<MTLTexture> target;
-        uint32_t sourceMip;
-    };
-    std::vector<MipCopy> mMipCopies; // waiting for this frame's texture blit
+    id<MTLBuffer> mUploadRing = nil;              // texture pixels, written by the main thread
+    uint64_t mUploadPieceBytes = 0;               // the most one frame copies from it
+    id<MTLBuffer> mZeros = nil;
+    std::atomic<uint32_t> mRingHandlers{ 0 };     // texture copies whose completion handler has not run yet
+    std::chrono::steady_clock::time_point mPreviousFrameStart{};
+    double mFrameSeconds = 0.0;
 
     struct RetiredBuffer
     {

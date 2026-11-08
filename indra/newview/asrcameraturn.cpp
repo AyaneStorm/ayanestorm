@@ -120,6 +120,21 @@ F32 sOrbitDx = 0.f;
 F32 sOrbitDy = 0.f;
 bool sRawOrbiting = false;
 
+// Temporary: the Mac never turns a frame ahead of the main thread, and these find at which
+// step the turn stops, counted since the last log.
+enum Refusal { REFUSE_ANIMATING, REFUSE_HUD, REFUSE_TOOL, REFUSE_NO_AVATAR, REFUSE_SIT, REFUSE_OTHER, REFUSAL_COUNT };
+struct TurnCounts
+{
+    U32 takes = 0;          // takeMotion() calls
+    U32 rawTakes = 0;       // of which with raw motion in them
+    U32 cursorTakes = 0;    // of which given the cursor instead
+    U32 turned = 0;         // a tool turned by raw motion
+    U32 turningPublishes = 0;
+    U32 activePublishes = 0;
+    U32 refused[REFUSAL_COUNT] = {};
+};
+TurnCounts sCounts;
+
 bool enabled()
 {
     static LLCachedControl<bool> mouse_smooth(gSavedSettings, "MouseSmooth", false);
@@ -156,9 +171,15 @@ bool takeMotion(S32 cursor_dx, S32 cursor_dy, F32& dx, F32& dy)
     }
     sTaken = total;
     sTakenFrame = sFrame;
+    ++sCounts.takes;
+    if (raw_dx != 0.f || raw_dy != 0.f)
+    {
+        ++sCounts.rawTakes;
+    }
 
     if ((cursor_dx != 0 || cursor_dy != 0) && now - sLastRawMotion > RAW_SILENCE_SECONDS)
     {
+        ++sCounts.cursorTakes;
         if (!sLoggedCursor)
         {
             sLoggedCursor = true;
@@ -176,6 +197,7 @@ bool takeMotion(S32 cursor_dx, S32 cursor_dy, F32& dx, F32& dy)
 void turned(Tool tool, F32 yaw_per_unit, F32 pitch_per_unit)
 {
     sTurnedFrame = sFrame;
+    ++sCounts.turned;
     sTool = tool;
     sYawPerUnit = yaw_per_unit;
     sPitchPerUnit = pitch_per_unit;
@@ -227,14 +249,22 @@ public:
     // pivots only place the zoom, if there is one, and turn.active stays false.
     static bool describe(LLAgentCamera& agent_camera, bool turning, asr::CameraTurn& turn)
     {
+        const auto refuse = [turning](Refusal why)
+        {
+            if (turning)
+            {
+                ++sCounts.refused[why];
+            }
+            return false;
+        };
         if (agent_camera.mCameraAnimating)
         {
-            return false;
+            return refuse(REFUSE_ANIMATING);
         }
         LLObjectSelectionHandle selection = LLSelectMgr::getInstance()->getSelection();
         if (selection->getObjectCount() && selection->getSelectType() == SELECT_TYPE_HUD)
         {
-            return false; // the orbit does nothing
+            return refuse(REFUSE_HUD); // the orbit does nothing
         }
 
         const LLViewerCamera* camera = LLViewerCamera::getInstance();
@@ -273,14 +303,14 @@ public:
         LLVector3 focus = gAgent.getPosAgentFromGlobal(agent_camera.mFocusGlobal);
         if (turning && (sTool == Tool::Mouselook) != (mode == CAMERA_MODE_MOUSELOOK))
         {
-            return false;
+            return refuse(REFUSE_TOOL);
         }
         bool zooms_about_head = false;
         if (mode == CAMERA_MODE_MOUSELOOK)
         {
             if (!turning || !isAgentAvatarValid())
             {
-                return false; // the wheel does not zoom in mouselook
+                return refuse(REFUSE_NO_AVATAR); // the wheel does not zoom in mouselook
             }
             // LLToolGun turns the view about the eye.
             LLViewerObject* root = (LLViewerObject*)gAgentAvatarp->getRoot();
@@ -294,7 +324,7 @@ public:
             if (agent_camera.mSitCameraEnabled && isAgentAvatarValid() && gAgentAvatarp->isSitting()
                 && agent_camera.mSitCameraReferenceObject.notNull())
             {
-                return false; // the sit camera does not turn
+                return refuse(REFUSE_SIT); // the sit camera does not turn
             }
             // cameraOrbitAround() and cameraOrbitOver() turn the agent, which the camera follows:
             // see calcCameraPositionTargetGlobal(), and the field of view correction in updateCamera().
@@ -326,7 +356,7 @@ public:
         }
         else
         {
-            return false;
+            return refuse(REFUSE_OTHER);
         }
 
         if (!turning)
@@ -582,6 +612,20 @@ bool ASRCameraTurn::turning()
 #endif
 }
 
+void ASRCameraTurn::logCounts()
+{
+#if ASR_TURN_SUPPORTED
+    const TurnCounts& c = sCounts;
+    LL_INFOS("ASRenderer") << "camera turn, since the last log: " << c.takes << " takes of motion, " << c.rawTakes << " with raw motion, "
+                           << c.cursorTakes << " given the cursor; " << c.turned << " turns by raw motion, " << c.turningPublishes
+                           << " cameras published while turning, " << c.activePublishes << " of them with an active turn; refused: animating "
+                           << c.refused[REFUSE_ANIMATING] << ", HUD selection " << c.refused[REFUSE_HUD] << ", tool and mode differ "
+                           << c.refused[REFUSE_TOOL] << ", no avatar " << c.refused[REFUSE_NO_AVATAR] << ", sit camera "
+                           << c.refused[REFUSE_SIT] << ", other camera " << c.refused[REFUSE_OTHER] << LL_ENDL;
+    sCounts = TurnCounts();
+#endif
+}
+
 void ASRCameraTurn::publish(asr::CameraTurn& turn, const LLVector3& origin)
 {
 #if ASR_TURN_SUPPORTED
@@ -591,9 +635,11 @@ void ASRCameraTurn::publish(asr::CameraTurn& turn, const LLVector3& origin)
         resyncClicks();
     }
     const bool turning = sTurnedFrame == sFrame;
+    sCounts.turningPublishes += turning ? 1 : 0;
     if ((turning || ASRCameraTurnAccess::mayZoom(gAgentCamera)) && ASRCameraTurnAccess::describe(gAgentCamera, turning, turn)
         && (turn.active || turn.zoom.active))
     {
+        sCounts.activePublishes += turn.active ? 1 : 0;
         turn.included = sTaken;
         for (int i = 0; i < 3; ++i)
         {
