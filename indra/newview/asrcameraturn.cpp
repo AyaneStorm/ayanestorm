@@ -6,7 +6,7 @@
 
 #include "asrcameraturn.h"
 
-#include "asrbridge.h"
+#include "asrgltable.h"
 #include "llagent.h"
 #include "llagentcamera.h"
 #include "llframetimer.h"
