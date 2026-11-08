@@ -95,6 +95,10 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint pyramidLevels;
     float farClip;
     uint feedback; // texture feedback: (window << 4) | the place sampled in each 4 by 4 block, 0 when off
+    uint visibleEnd; // entries of the visible list and of the two tables, for the resolve's checks
+    uint clusterEnd;
+    uint materialEnd;
+    uint unusedEnd;
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };

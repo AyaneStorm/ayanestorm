@@ -57,6 +57,7 @@ layout(buffer_reference, std430) buffer CountsRef
     DrawArguments late[LISTS];
     WorkCount retest;
     WorkCount groupWork[2]; // early, late
+    uint guard[4]; // the resolve's, see GpuSceneCounts::guard
 };
 layout(buffer_reference, std430) writeonly buffer ListWriteRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer PyramidRef { float values[]; };

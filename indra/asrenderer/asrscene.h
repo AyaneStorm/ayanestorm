@@ -215,8 +215,22 @@ struct GpuSceneCounts
     GpuDrawArguments late[SCENE_LISTS];
     GpuWorkCount retest;    // the late cull's entries
     GpuWorkCount groups[2]; // groups whose clusters are tested, early and late
+
+    // Temporary, while the Mac's GPU page faults in the resolve are found: which of its
+    // checks failed (GUARD_*), on how many pixels, and the largest bad value. A pixel that
+    // fails one is drawn magenta and read no further, so it cannot fault.
+    uint32_t guardBits;
+    uint32_t guardPixels;
+    uint32_t guardValue;
+    uint32_t unused;
 };
-static_assert(sizeof(GpuSceneCounts) == 560, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 576, "shaders read this layout");
+
+constexpr uint32_t GUARD_ENTRY = 1;     // a visibility pixel names an entry past the visible list
+constexpr uint32_t GUARD_INSTANCE = 2;  // an entry names an instance past instanceEnd
+constexpr uint32_t GUARD_CLUSTER = 4;   // an entry names a cluster past the cluster table
+constexpr uint32_t GUARD_MATERIAL = 8;  // an instance names a material past the material table
+constexpr uint32_t GUARD_ADDRESSES = 16; // a cluster's three addresses are not in one chunk, in order
 
 // How the counts start each frame: only the draws' sizes are set.
 GpuSceneCounts sceneCountsTemplate();
@@ -333,8 +347,12 @@ struct GpuSceneView
     uint32_t pyramidLevels;
     float farClip;            // a true distance from the camera, so turning changes nothing; 0 is no limit
     uint32_t feedback;        // the texture feedback window and place: see FEEDBACK_SAMPLES
+    uint32_t visibleEnd;      // entries in the visible list, and of the two tables, which the
+    uint32_t clusterEnd;      // resolve checks before it reads through them: see GpuSceneCounts::guard
+    uint32_t materialEnd;
+    uint32_t unused;
 };
-static_assert(sizeof(GpuSceneView) == 464, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 480, "shaders read this layout");
 
 // previous is the camera of the frame that left the depth pyramid, or null when there is none.
 void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneCamera3D* previous, uint32_t width, uint32_t height);

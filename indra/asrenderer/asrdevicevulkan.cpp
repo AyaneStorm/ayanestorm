@@ -794,8 +794,9 @@ private:
         bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         bindings[1].pImmutableSamplers = mSamplers;
 
-        // Partly bound: most slots hold nothing. Update after bind: a new texture
-        // can be added while earlier frames are still using the array.
+        // Partly bound: most slots hold nothing. Each frame in flight has its own set, changed
+        // only once its previous frame has finished: see TextureSlotCopies. Update after bind
+        // is what the device limits for an array this large are given for.
         const VkDescriptorBindingFlags bindingFlags[2] = {
             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT, 0 };
         VkDescriptorSetLayoutBindingFlagsCreateInfo flags{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO };
@@ -806,11 +807,11 @@ private:
         layout.bindingCount = 2;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, MAX_TEXTURES },
-                                                { VK_DESCRIPTOR_TYPE_SAMPLER, uint32_t(UISampler::Count) } };
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, MAX_TEXTURES * FRAMES_IN_FLIGHT },
+                                                { VK_DESCRIPTOR_TYPE_SAMPLER, uint32_t(UISampler::Count) * FRAMES_IN_FLIGHT } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-        pool.maxSets = 1;
+        pool.maxSets = FRAMES_IN_FLIGHT;
         pool.poolSizeCount = 2;
         pool.pPoolSizes = sizes;
 
@@ -826,13 +827,15 @@ private:
             return false;
         }
 
+        VkDescriptorSetLayout setLayouts[FRAMES_IN_FLIGHT];
+        std::fill(setLayouts, setLayouts + FRAMES_IN_FLIGHT, mUISetLayout);
         VkDescriptorSetAllocateInfo set{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         set.descriptorPool = mUIPool;
-        set.descriptorSetCount = 1;
-        set.pSetLayouts = &mUISetLayout;
-        if (vkAllocateDescriptorSets(mDevice, &set, &mUISet) != VK_SUCCESS)
+        set.descriptorSetCount = FRAMES_IN_FLIGHT;
+        set.pSetLayouts = setLayouts;
+        if (vkAllocateDescriptorSets(mDevice, &set, mUISets) != VK_SUCCESS)
         {
-            error = "cannot allocate the UI texture array";
+            error = "cannot allocate the texture arrays";
             return false;
         }
 
@@ -1453,17 +1456,56 @@ private:
         vkCmdPipelineBarrier2(commands, &dependency);
     }
 
-    void writeTextureDescriptor(uint32_t slot, VkImageView view)
+    // Brings this frame's texture array up to date, now that the frame that last used it has
+    // finished. A slot with no image reads white, the first texture made.
+    void bringSlots(uint32_t frameSlot)
     {
-        VkDescriptorImageInfo image{ VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        write.dstSet = mUISet;
-        write.dstBinding = 0;
-        write.dstArrayElement = slot;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        write.pImageInfo = &image;
-        vkUpdateDescriptorSets(mDevice, 1, &write, 0, nullptr);
+        if (mTextureObjects.empty() || mTextureObjects[0].view == VK_NULL_HANDLE)
+        {
+            return; // nothing is drawn with textures before white exists
+        }
+        const VkImageView white = mTextureObjects[0].view;
+        const auto imageOf = [&](uint32_t slot)
+        {
+            const VkImageView view = slot < mTextureObjects.size() && mTextureObjects[slot].view != VK_NULL_HANDLE ? mTextureObjects[slot].view : white;
+            return VkDescriptorImageInfo{ VK_NULL_HANDLE, view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+        };
+        mSlotImages.clear();
+        mSlotWrites.clear();
+        bool all = false;
+        mSlotCopies.bring(frameSlot,
+            [&](uint32_t slot)
+            {
+                mSlotImages.push_back(imageOf(slot));
+                VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                write.dstArrayElement = slot;
+                write.descriptorCount = 1;
+                mSlotWrites.push_back(write);
+            },
+            [&]()
+            {
+                all = true;
+                for (uint32_t slot = 0; slot < MAX_TEXTURES; ++slot)
+                {
+                    mSlotImages.push_back(imageOf(slot));
+                }
+                VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
+                write.dstArrayElement = 0;
+                write.descriptorCount = MAX_TEXTURES;
+                mSlotWrites.push_back(write);
+            });
+        for (size_t i = 0; i < mSlotWrites.size(); ++i)
+        {
+            VkWriteDescriptorSet& write = mSlotWrites[i];
+            write.dstSet = mUISets[frameSlot];
+            write.dstBinding = 0;
+            write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+            write.pImageInfo = all ? mSlotImages.data() : &mSlotImages[i];
+        }
+        if (!mSlotWrites.empty())
+        {
+            vkUpdateDescriptorSets(mDevice, uint32_t(mSlotWrites.size()), mSlotWrites.data(), 0, nullptr);
+        }
     }
 
     // Fills a new texture with the mips a larger one already has, with no pixels sent.
@@ -1525,7 +1567,7 @@ private:
         {
             texture.image = VK_NULL_HANDLE;
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
-            writeTextureDescriptor(command.slot, mTextureObjects[0].view);
+            mSlotCopies.changed(command.slot); // reads white
             return true;
         }
         texture.bytes = bytes;
@@ -1559,7 +1601,7 @@ private:
         if (command.sourceSlot != 0 && source.image != VK_NULL_HANDLE && source.mipLevels >= command.sourceMip + texture.mipLevels)
         {
             copySmallerMips(commands, texture, source, command.sourceMip);
-            writeTextureDescriptor(command.slot, texture.view);
+            mSlotCopies.changed(command.slot);
             return true;
         }
 
@@ -1573,29 +1615,18 @@ private:
                        VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
-        writeTextureDescriptor(command.slot, texture.view);
+        // The main thread hands out a slot at once, so a material can name it before its
+        // texture is created here, and a slot never written has no texture: on Metal that
+        // was a GPU page fault. White, the first texture made, fills every slot with none.
         if (command.slot == 0)
         {
-            pointEverySlotAtWhite();
+            mSlotCopies.changedAll();
+        }
+        else
+        {
+            mSlotCopies.changed(command.slot);
         }
         return true;
-    }
-
-    // The main thread hands out a slot at once, so a material can name it before its
-    // texture is created here, and a slot never written has no texture: on Metal that was
-    // a GPU page fault. White, the first texture made, fills every slot until then.
-    void pointEverySlotAtWhite()
-    {
-        const VkDescriptorImageInfo white{ VK_NULL_HANDLE, mTextureObjects[0].view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-        std::vector<VkDescriptorImageInfo> images(MAX_TEXTURES - 1, white);
-        VkWriteDescriptorSet write{ VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        write.dstSet = mUISet;
-        write.dstBinding = 0;
-        write.dstArrayElement = 1;
-        write.descriptorCount = MAX_TEXTURES - 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-        write.pImageInfo = images.data();
-        vkUpdateDescriptorSets(mDevice, 1, &write, 0, nullptr);
     }
 
     // Copies one piece of an upload from the ring, where the main thread wrote it.
@@ -1661,14 +1692,11 @@ private:
     }
 
     // A material can still name this slot for a moment, so the slot reads white from now
-    // on. The image itself goes later: frames already recorded may still sample it through
-    // the bindless array, and on Metal freeing it under them was a GPU page fault.
+    // on, in each frame's array as that frame starts. The image itself goes once every
+    // array has let go of it and the frames that used them have finished.
     void destroyTexture(uint32_t slot)
     {
-        if (slot != 0 && !mShuttingDown && mTextureObjects[0].view != VK_NULL_HANDLE)
-        {
-            writeTextureDescriptor(slot, mTextureObjects[0].view);
-        }
+        mSlotCopies.changed(slot);
         Texture& texture = mTextureObjects[slot];
         if (texture.image != VK_NULL_HANDLE || texture.view != VK_NULL_HANDLE)
         {
@@ -1768,7 +1796,7 @@ private:
     {
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commands, 0, 1, &mUIBuffers[slot].buffer, &offset);
-        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mUIPipelineLayout, 0, 1, &mUISet, 0, nullptr);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mUIPipelineLayout, 0, 1, &mUISets[slot], 0, nullptr);
         const VkViewport viewport{ 0.f, UI_EDGE_NUDGE, float(ui.width()), float(ui.height()), 0.f, 1.f };
         vkCmdSetViewport(commands, 0, 1, &viewport);
 
@@ -2074,6 +2102,9 @@ private:
             base += mSceneStore.listCapacity(list);
         }
         view.instanceEnd = mSceneStore.instanceEnd();
+        view.visibleEnd = base;
+        view.clusterEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
+        view.materialEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
         view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
@@ -2151,7 +2182,7 @@ private:
         const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
         vkCmdSetViewport(commands, 0, 1, &viewport);
         vkCmdSetScissor(commands, 0, 1, &scissor);
-        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 1, &mUISet, 0, nullptr);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 1, &mUISets[mRecordSlot], 0, nullptr);
         pushScene(commands);
         for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
         {
@@ -2171,7 +2202,7 @@ private:
     bool passPyramid()
     {
         VkCommandBuffer commands = mRecordCommands;
-        const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mPyramidPipeline);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
         for (uint32_t source = 0; source < mPyramidLevels; source += PYRAMID_LEVELS_PER_DISPATCH)
@@ -2193,7 +2224,7 @@ private:
     bool passResolve()
     {
         VkCommandBuffer commands = mRecordCommands;
-        const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
         if (mFeedbackCollector.takeClear())
         {
             // The graph's barrier before this pass is for the resolve, so the fill has its own.
@@ -2291,6 +2322,9 @@ private:
             }
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
+            mSceneFrameStats.guardBits |= counts->guardBits;
+            mSceneFrameStats.guardPixels += counts->guardPixels;
+            mSceneFrameStats.guardValue = std::max(mSceneFrameStats.guardValue, counts->guardValue);
         }
         if (mFeedbackRead[slot].number != 0)
         {
@@ -2539,6 +2573,7 @@ private:
         {
             return false;
         }
+        bringSlots(slot);
         mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
         if (input.camera && !recordScene(commands, slot, *input.camera, input.audit))
         {
@@ -2723,7 +2758,10 @@ private:
     VkSampler mSamplers[uint32_t(UISampler::Count)]{};
     VkDescriptorSetLayout mUISetLayout = VK_NULL_HANDLE;
     VkDescriptorPool mUIPool = VK_NULL_HANDLE;
-    VkDescriptorSet mUISet = VK_NULL_HANDLE;
+    VkDescriptorSet mUISets[FRAMES_IN_FLIGHT]{};     // the texture array of each frame in flight
+    TextureSlotCopies mSlotCopies{ FRAMES_IN_FLIGHT };
+    std::vector<VkDescriptorImageInfo> mSlotImages;    // kept between frames, to stop allocating
+    std::vector<VkWriteDescriptorSet> mSlotWrites;
     VkPipelineLayout mUIPipelineLayout = VK_NULL_HANDLE;
     VkShaderModule mUIVertexShader = VK_NULL_HANDLE;
     VkShaderModule mUIFragmentShader = VK_NULL_HANDLE;

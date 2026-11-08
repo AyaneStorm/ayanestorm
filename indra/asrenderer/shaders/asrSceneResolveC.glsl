@@ -51,6 +51,35 @@ Interpolator interpolator(vec4 p0, vec4 p1, vec4 p2, vec2 ndc, vec2 pixelStep)
     return result;
 }
 
+// Temporary, while the Mac's GPU page faults here are found: every index and address read
+// through is checked first, and a pixel that fails is drawn magenta and read no further.
+// The bits are GUARD_* of asrscene.h. They sit at the end of the counts, which are read back.
+const uint GUARD_ENTRY = 1u;
+const uint GUARD_INSTANCE = 2u;
+const uint GUARD_CLUSTER = 4u;
+const uint GUARD_MATERIAL = 8u;
+const uint GUARD_ADDRESSES = 16u;
+const uint64_t CHUNK_BYTES = 64ul * 1024ul * 1024ul; // SCENE_CHUNK_BYTES
+const uint64_t GUARD_OFFSET = 560ul;                  // offsetof(GpuSceneCounts, guardBits)
+
+layout(buffer_reference, std430) buffer GuardRef
+{
+    uint bits;
+    uint pixels;
+    uint value;
+    uint unused;
+};
+
+void reject(ivec2 pixel, uint bit, uint value)
+{
+    GuardRef guard = GuardRef(push.output_counts + GUARD_OFFSET);
+    atomicOr(guard.bits, bit);
+    atomicAdd(guard.pixels, 1u);
+    atomicMax(guard.value, value);
+    imageStore(albedo, pixel, vec4(1.0, 0.0, 1.0, 1.0));
+    imageStore(normals, pixel, vec4(0.0, 0.0, 1.0, 1.0));
+}
+
 vec3 octahedralDecode(float x, float y)
 {
     vec3 n = vec3(x, y, 1.0 - abs(x) - abs(y));
@@ -98,9 +127,36 @@ void main()
     }
 
     const uint triangle = id & 63u;
-    const ListEntry visible = ListRef(push.visible).items[id >> 6];
+    const uint entry = id >> 6;
+    if (entry >= view.visibleEnd)
+    {
+        reject(pixel, GUARD_ENTRY, entry);
+        return;
+    }
+    const ListEntry visible = ListRef(push.visible).items[entry];
+    if (visible.instance >= view.instanceEnd)
+    {
+        reject(pixel, GUARD_INSTANCE, visible.instance);
+        return;
+    }
+    if (visible.cluster >= view.clusterEnd)
+    {
+        reject(pixel, GUARD_CLUSTER, visible.cluster);
+        return;
+    }
     const Cluster cluster = ClustersRef(push.clusters).items[visible.cluster];
     const Instance instance = InstancesRef(push.instances).items[visible.instance];
+    if (instance.material >= view.materialEnd)
+    {
+        reject(pixel, GUARD_MATERIAL, instance.material);
+        return;
+    }
+    // One blob holds a cluster's indices, then positions, then attributes, in one chunk.
+    if (cluster.positions < cluster.indices || cluster.attributes < cluster.positions || cluster.attributes - cluster.indices >= CHUNK_BYTES)
+    {
+        reject(pixel, GUARD_ADDRESSES, uint(min((cluster.attributes - cluster.indices) >> 20, 0xFFFFFFFFul)));
+        return;
+    }
     const Material material = MaterialsRef(push.materials).items[instance.material];
 
     const uint i0 = clusterIndex(cluster.indices, triangle * 3u);

@@ -191,6 +191,57 @@ private:
     uint32_t mNextSlot = 0;
 };
 
+// Which slots each frame's own copy of the texture array has still to take. A frame's copy
+// changes only as that frame starts, after its previous use has finished, so no frame on
+// the GPU ever sees a slot change under it. With one shared array it did: a new texture
+// reached frames already committed, for which it was not resident, a GPU page fault on
+// Metal, and Vulkan does not allow descriptors in use to change. Render thread only.
+class TextureSlotCopies
+{
+public:
+    explicit TextureSlotCopies(uint32_t copies) : mPending(copies), mAll(copies, false) {}
+
+    void changed(uint32_t slot)
+    {
+        for (std::vector<uint32_t>& pending : mPending)
+        {
+            pending.push_back(slot);
+        }
+    }
+
+    void changedAll()
+    {
+        for (size_t i = 0; i < mPending.size(); ++i)
+        {
+            mAll[i] = true;
+            mPending[i].clear();
+        }
+    }
+
+    // Calls write(slot) for each slot the copy has to take, or writeAll() once instead.
+    template <class Write, class WriteAll>
+    void bring(uint32_t copy, Write write, WriteAll writeAll)
+    {
+        if (mAll[copy])
+        {
+            writeAll();
+            mAll[copy] = false;
+        }
+        else
+        {
+            for (uint32_t slot : mPending[copy])
+            {
+                write(slot);
+            }
+        }
+        mPending[copy].clear();
+    }
+
+private:
+    std::vector<std::vector<uint32_t>> mPending;
+    std::vector<bool> mAll;
+};
+
 // Textures on their way out. One stays until no list can draw it, then until the
 // frames that may have drawn it have finished. Render thread only.
 class RetiredTextures

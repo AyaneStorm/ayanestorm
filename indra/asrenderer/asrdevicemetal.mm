@@ -254,6 +254,7 @@ public:
                 dispatch_semaphore_signal(mFrameSlots);
                 return false;
             }
+            bringSlots(slot);
 
             id<MTLCommandBuffer> commands = newCommandBuffer();
             watchErrors(commands, "frame");
@@ -311,17 +312,18 @@ private:
         }
 
         // The texture array lives in a buffer: the shader reads a slot from it, so
-        // drawing with another texture changes no state.
+        // drawing with another texture changes no state. Each frame in flight has its own,
+        // see TextureSlotCopies.
         mArgumentEncoder = [mUIFragmentFunction newArgumentEncoderWithBufferIndex:0];
-        mArguments = [mDevice newBufferWithLength:mArgumentEncoder.encodedLength options:MTLResourceStorageModeShared];
-        if (!mArguments)
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
-            error = "cannot create the UI texture array";
-            return false;
+            mArguments[i] = [mDevice newBufferWithLength:mArgumentEncoder.encodedLength options:MTLResourceStorageModeShared];
+            if (!mArguments[i])
+            {
+                error = "cannot create the texture arrays";
+                return false;
+            }
         }
-        [mArgumentEncoder setArgumentBuffer:mArguments offset:0];
-        fprintf(stderr, "asrenderer: texture array at 0x%llx to 0x%llx\n", (unsigned long long)addressOf(mArguments),
-                (unsigned long long)(addressOf(mArguments) + mArguments.length));
 
         for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
         {
@@ -336,7 +338,11 @@ private:
             sampler.tAddressMode = sampler.sAddressMode;
             sampler.supportArgumentBuffers = YES;
             mSamplers[i] = [mDevice newSamplerStateWithDescriptor:sampler];
-            [mArgumentEncoder setSamplerState:mSamplers[i] atIndex:MAX_TEXTURES + i];
+            for (uint32_t copy = 0; copy < FRAMES_IN_FLIGHT; ++copy)
+            {
+                [mArgumentEncoder setArgumentBuffer:mArguments[copy] offset:0];
+                [mArgumentEncoder setSamplerState:mSamplers[i] atIndex:MAX_TEXTURES + i];
+            }
         }
 
         if (@available(macOS 15.0, *))
@@ -785,6 +791,9 @@ private:
             base += mSceneStore.listCapacity(list);
         }
         view.instanceEnd = mSceneStore.instanceEnd();
+        view.visibleEnd = base;
+        view.clusterEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
+        view.materialEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
         view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
@@ -858,7 +867,7 @@ private:
         [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
         [draw setDepthStencilState:mDepthState];
         [draw setFrontFacingWinding:MTLWindingCounterClockwise];
-        [draw setFragmentBuffer:mArguments offset:0 atIndex:0];
+        [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
         {
             [draw setRenderPipelineState:(kind & 2) ? mMaskedPipeline : mVisibilityPipeline];
@@ -912,7 +921,7 @@ private:
         }
         id<MTLComputeCommandEncoder> resolve = beginCompute();
         [resolve setComputePipelineState:mResolvePipeline];
-        [resolve setBuffer:mArguments offset:0 atIndex:0];
+        [resolve setBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mAlbedoTarget atIndex:1];
@@ -1023,6 +1032,9 @@ private:
             }
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
+            mSceneFrameStats.guardBits |= counts->guardBits;
+            mSceneFrameStats.guardPixels += counts->guardPixels;
+            mSceneFrameStats.guardValue = std::max(mSceneFrameStats.guardValue, counts->guardValue);
         }
         if (mFeedbackRead[slot].number != 0)
         {
@@ -1204,7 +1216,7 @@ private:
     void drawUI(id<MTLRenderCommandEncoder> encoder, uint32_t slot, const UIList& ui, uint32_t width, uint32_t height)
     {
         [encoder setVertexBuffer:mUIBuffers[slot] offset:0 atIndex:UI_VERTEX_BUFFER];
-        [encoder setFragmentBuffer:mArguments offset:0 atIndex:0];
+        [encoder setFragmentBuffer:mArguments[slot] offset:0 atIndex:0];
         [encoder setViewport:MTLViewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 }];
 
         id<MTLRenderPipelineState> bound = nil;
@@ -1271,7 +1283,7 @@ private:
         if (!texture)
         {
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
-            [mArgumentEncoder setTexture:mTextureObjects[0].texture atIndex:command.slot];
+            mSlotCopies.changed(command.slot); // reads white
             return;
         }
 
@@ -1324,32 +1336,58 @@ private:
         mTextureObjects[command.slot].texture = texture;
         mTextureObjects[command.slot].bytes = bytes;
         mTextureObjects[command.slot].pixelBytes = pixelBytes;
-        [mArgumentEncoder setTexture:texture atIndex:command.slot];
         if (@available(macOS 15.0, *))
         {
             [(id<MTLResidencySet>)mResidency addAllocation:texture];
         }
+        // The main thread hands out a slot at once, so a material can name it before its
+        // texture is created here, and a slot never written holds no texture: a GPU page
+        // fault, 'null texture access'. White, the first texture made, fills every slot
+        // that has none.
         if (command.slot == 0)
         {
-            // The main thread hands out a slot at once, so a material can name it before
-            // its texture is created here, and a slot never written holds no texture: a GPU
-            // page fault, 'null texture access'. White, the first texture made, fills every
-            // slot until then.
-            std::vector<id<MTLTexture>> whites(MAX_TEXTURES - 1, texture);
-            [mArgumentEncoder setTextures:whites.data() withRange:NSMakeRange(1, MAX_TEXTURES - 1)];
+            mSlotCopies.changedAll();
+        }
+        else
+        {
+            mSlotCopies.changed(command.slot);
         }
     }
 
+    // Brings this frame's texture array up to date, now that the frame that last used it
+    // has finished, and after this frame's new textures were made resident.
+    void bringSlots(uint32_t frameSlot)
+    {
+        id<MTLTexture> white = mTextureObjects.empty() ? nil : mTextureObjects[0].texture;
+        if (!white)
+        {
+            return; // nothing is drawn with textures before white exists
+        }
+        [mArgumentEncoder setArgumentBuffer:mArguments[frameSlot] offset:0];
+        const auto textureOf = [&](uint32_t slot) -> id<MTLTexture>
+        {
+            return slot < mTextureObjects.size() && mTextureObjects[slot].texture ? mTextureObjects[slot].texture : white;
+        };
+        mSlotCopies.bring(frameSlot,
+            [&](uint32_t slot) { [mArgumentEncoder setTexture:textureOf(slot) atIndex:slot]; },
+            [&]()
+            {
+                std::vector<id<MTLTexture>> textures(MAX_TEXTURES);
+                for (uint32_t slot = 0; slot < MAX_TEXTURES; ++slot)
+                {
+                    textures[slot] = textureOf(slot);
+                }
+                [mArgumentEncoder setTextures:textures.data() withRange:NSMakeRange(0, MAX_TEXTURES)];
+            });
+    }
+
     // A material can still name this slot for a moment, so the slot reads white from now
-    // on. The texture itself goes later: frames already recorded may still sample it
-    // through the argument buffer, which keeps nothing alive, and freeing it under them
-    // was a GPU page fault in the resolve pass.
+    // on, in each frame's array as that frame starts. The texture itself goes once every
+    // array has let go of it and the frames that used them have finished: the argument
+    // buffer keeps nothing alive, and freeing it under them was a GPU page fault.
     void destroyTexture(uint32_t slot)
     {
-        if (slot != 0 && mTextureObjects[0].texture)
-        {
-            [mArgumentEncoder setTexture:mTextureObjects[0].texture atIndex:slot];
-        }
+        mSlotCopies.changed(slot);
         Texture& texture = mTextureObjects[slot];
         if (texture.texture)
         {
@@ -1533,7 +1571,8 @@ private:
     id<MTLFunction> mUIVertexFunction = nil;
     id<MTLFunction> mUIFragmentFunction = nil;
     id<MTLArgumentEncoder> mArgumentEncoder = nil;
-    id<MTLBuffer> mArguments = nil;
+    id<MTLBuffer> mArguments[FRAMES_IN_FLIGHT];     // the texture array of each frame in flight
+    TextureSlotCopies mSlotCopies{ FRAMES_IN_FLIGHT };
     id<MTLSamplerState> mSamplers[uint32_t(UISampler::Count)];
     id mResidency = nil; // id<MTLResidencySet>, which needs macOS 15 to name
     std::unordered_map<uint32_t, id<MTLRenderPipelineState>> mUIPipelines; // every one made so far

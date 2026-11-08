@@ -1823,6 +1823,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         printf("scene: %u instances, %.1f M triangles, %llu clusters drawn early, %llu late, %llu retested, %llu groups, %u chunks, %llu geometries waiting\n",
                stats.instances, stats.triangles / 1e6, (unsigned long long)stats.earlyClusters, (unsigned long long)stats.lateClusters,
                (unsigned long long)stats.retestEntries, (unsigned long long)stats.groupEntries, stats.chunks, (unsigned long long)stats.pendingGeometries);
+        if (stats.guardPixels != 0)
+        {
+            printf("resolve guards: bits %u, %llu pixels, largest bad value %u\n", stats.guardBits, (unsigned long long)stats.guardPixels, stats.guardValue);
+        }
+        expect(stats.guardPixels == 0, "the resolve reads nothing out of place");
         double total = 0.0;
         for (uint32_t i = 0; i < stats.passCount; ++i)
         {

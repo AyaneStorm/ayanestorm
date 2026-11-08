@@ -2054,6 +2054,12 @@ void logCounts()
         }
         LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", retest entries " << stats.retestEntries << ", groups " << stats.groupEntries
                                << ", chunks " << stats.chunks << LL_ENDL;
+        if (stats.guardPixels != 0)
+        {
+            // Temporary: GUARD_* of asrscene.h, the resolve's checks that stopped a bad read.
+            LL_WARNS("ASRenderer") << "resolve guards since the start: bits " << stats.guardBits << " (1 entry, 2 instance, 4 cluster, 8 material, 16 addresses), "
+                                   << stats.guardPixels << " pixels, largest bad value " << stats.guardValue << LL_ENDL;
+        }
 
         std::ostringstream reasons;
         for (const auto& reason : leftOut)

@@ -91,6 +91,9 @@ struct SceneStats
     uint64_t lateClusters = 0;        // found by the second
     uint64_t retestEntries = 0;       // what the first phase left for the second
     uint64_t groupEntries = 0;        // cluster groups tested a thread per cluster, both phases
+    uint32_t guardBits = 0;           // temporary: the resolve's failed checks since the start, GUARD_*
+    uint64_t guardPixels = 0;         // pixels they stopped, since the start
+    uint32_t guardValue = 0;          // the largest bad value seen
     uint64_t auditErrorPixels = 0;    // pixels that a wrongly hidden cluster should have covered
     uint64_t auditedFrames = 0;
     uint64_t pendingGeometries = 0;
