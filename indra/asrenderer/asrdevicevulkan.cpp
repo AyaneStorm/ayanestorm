@@ -1542,7 +1542,18 @@ private:
         {
             mTextureObjects.resize(command.slot + 1);
         }
-        Texture& texture = mTextureObjects[command.slot];
+        if (command.replace)
+        {
+            // Replaced again before it was published: the unfinished one goes.
+            const auto pending = mPendingTextures.find(command.slot);
+            if (pending != mPendingTextures.end())
+            {
+                mFreedTextures.push_back({ pending->second, mFrame + FRAMES_IN_FLIGHT + 1 });
+                mPendingTextures.erase(pending);
+            }
+        }
+        // A replacement is built out of sight, and the slot keeps its image until publish.
+        Texture& texture = command.replace ? mPendingTextures[command.slot] : mTextureObjects[command.slot];
         const uint64_t bytes = textureBytes(command.desc);
 
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
@@ -1567,7 +1578,14 @@ private:
         {
             texture.image = VK_NULL_HANDLE;
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
-            mSlotCopies.changed(command.slot); // reads white
+            if (command.replace)
+            {
+                mPendingTextures.erase(command.slot); // the slot keeps its old image
+            }
+            else
+            {
+                mSlotCopies.changed(command.slot); // reads white
+            }
             return true;
         }
         texture.bytes = bytes;
@@ -1597,11 +1615,15 @@ private:
             return false;
         }
 
+        // For a replacement the source is the slot's own image, which is still showing.
         const Texture& source = mTextureObjects[command.sourceSlot];
         if (command.sourceSlot != 0 && source.image != VK_NULL_HANDLE && source.mipLevels >= command.sourceMip + texture.mipLevels)
         {
             copySmallerMips(commands, texture, source, command.sourceMip);
-            mSlotCopies.changed(command.slot);
+            if (!command.replace)
+            {
+                mSlotCopies.changed(command.slot);
+            }
             return true;
         }
 
@@ -1622,17 +1644,43 @@ private:
         {
             mSlotCopies.changedAll();
         }
-        else
+        else if (!command.replace)
         {
             mSlotCopies.changed(command.slot);
         }
         return true;
     }
 
+    // Where uploads and mips to a slot go: its replacement while one is being built.
+    Texture& textureFor(uint32_t slot)
+    {
+        const auto pending = mPendingTextures.find(slot);
+        return pending != mPendingTextures.end() ? pending->second : mTextureObjects[slot];
+    }
+
+    // The slot shows its replacement from this frame on, and the old image goes once
+    // every frame's array has let go of it.
+    void publishTexture(uint32_t slot)
+    {
+        const auto pending = mPendingTextures.find(slot);
+        if (pending == mPendingTextures.end())
+        {
+            return;
+        }
+        Texture& current = mTextureObjects[slot];
+        if (current.image != VK_NULL_HANDLE || current.view != VK_NULL_HANDLE)
+        {
+            mFreedTextures.push_back({ current, mFrame + FRAMES_IN_FLIGHT + 1 });
+        }
+        current = pending->second;
+        mPendingTextures.erase(pending);
+        mSlotCopies.changed(slot);
+    }
+
     // Copies one piece of an upload from the ring, where the main thread wrote it.
     void uploadTexture(VkCommandBuffer commands, const TextureCommand& command)
     {
-        const Texture& texture = mTextureObjects[command.slot];
+        const Texture& texture = textureFor(command.slot);
         if (texture.image == VK_NULL_HANDLE)
         {
             return; // did not fit in the budget
@@ -1654,7 +1702,7 @@ private:
 
     void generateMips(VkCommandBuffer commands, uint32_t slot)
     {
-        const Texture& texture = mTextureObjects[slot];
+        const Texture& texture = textureFor(slot);
         if (texture.image == VK_NULL_HANDLE || texture.mipLevels < 2)
         {
             return;
@@ -1697,6 +1745,12 @@ private:
     void destroyTexture(uint32_t slot)
     {
         mSlotCopies.changed(slot);
+        const auto pending = mPendingTextures.find(slot);
+        if (pending != mPendingTextures.end())
+        {
+            mFreedTextures.push_back({ pending->second, mFrame + FRAMES_IN_FLIGHT + 1 });
+            mPendingTextures.erase(pending);
+        }
         Texture& texture = mTextureObjects[slot];
         if (texture.image != VK_NULL_HANDLE || texture.view != VK_NULL_HANDLE)
         {
@@ -1768,6 +1822,9 @@ private:
                     break;
                 case TextureCommand::Type::GenerateMips:
                     generateMips(commands, command.slot);
+                    break;
+                case TextureCommand::Type::Publish:
+                    publishTexture(command.slot);
                     break;
                 case TextureCommand::Type::Destroy:
                     mRetiredTextures.add(command.slot, command.lastList);
@@ -2775,6 +2832,7 @@ private:
     uint64_t mRingEnd[FRAMES_IN_FLIGHT]{};                  // how far each slot's frame read it, 0 for not at all
     uint64_t mUploadBytesPerFrame = 0;
     std::vector<Texture> mTextureObjects;                   // by slot
+    std::unordered_map<uint32_t, Texture> mPendingTextures; // replacements being built, by slot
     std::vector<TextureCommand> mTextureCommands;           // taken, not yet run
     size_t mTextureCommandsDone = 0;                        // the front of mTextureCommands already run
     std::chrono::steady_clock::time_point mPreviousFrameStart{};

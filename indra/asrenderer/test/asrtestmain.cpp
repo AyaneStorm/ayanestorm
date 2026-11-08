@@ -505,6 +505,24 @@ void testTextureQueue()
     queue.take(commands);
     expect(commands.size() == 2 && commands[1].type == Type::GenerateMips && commands[1].slot == first, "mips are queued after the pixels they come from");
 
+    commands.clear();
+    asr::TextureDesc larger = desc;
+    larger.width = 16;
+    queue.replace(first, larger);
+    queue.upload(first, 0, 0, 0, 1, 1, pixels, 4);
+    queue.publish(first);
+    queue.replace(first, desc, 2);
+    queue.publish(first);
+    queue.replace(0, desc);
+    queue.publish(0);
+    queue.take(commands);
+    expect(commands.size() == 5 && commands[0].type == Type::Create && commands[0].replace && commands[0].slot == first &&
+               commands[0].desc.width == 16 && commands[1].type == Type::Upload && commands[2].type == Type::Publish &&
+               commands[2].slot == first,
+           "a replacement keeps its slot, takes the pixels sent before publish, and white cannot be replaced");
+    expect(commands[3].replace && commands[3].sourceSlot == first && commands[3].sourceMip == 2 && commands[4].type == Type::Publish,
+           "a smaller replacement is made from the slot's own mips");
+
     // A ring of 96 bytes, pieces of 32: an upload of 8 rows of 16 bytes cannot fit at
     // once, so it goes in two rows at a time as the GPU frees room, with what follows it.
     {
@@ -1595,17 +1613,30 @@ public:
         quad(list, 400.f, 500.f, 16.f + 8.f * sinf(seconds), 60.f, asr::uiTextureBits(mMipped), 0xFFFFFFFF, matrix);
         quad(list, 440.f, 500.f, 16.f + 8.f * sinf(seconds), 60.f, asr::uiTextureBits(mShrunk), 0xFFFFFFFF, matrix);
 
-        // A texture replaced now and then, so destruction runs under a live list.
+        // A texture replaced now and then, so destruction runs under a live list, and every
+        // other time in place, another size behind the same slot, as the viewer resizes.
         if (++mBuilds % 30 == 0)
         {
             const uint32_t index = (mBuilds / 30) % TEXTURES;
-            mTextures.destroy(mSlots[index], listGeneration);
+            const bool inPlace = (mBuilds / 30) % 2 == 1;
             asr::TextureDesc desc;
-            desc.width = 16;
-            desc.height = 16;
-            mSlots[index] = mTextures.create(desc);
-            const std::vector<uint32_t> pixels(16 * 16, 0xFF00C0FF);
-            mTextures.upload(mSlots[index], 0, 0, 0, 16, 16, pixels.data(), pixels.size() * sizeof(uint32_t));
+            desc.width = inPlace && (mBuilds / 60) % 2 == 0 ? 32 : 16;
+            desc.height = desc.width;
+            if (inPlace)
+            {
+                mTextures.replace(mSlots[index], desc);
+            }
+            else
+            {
+                mTextures.destroy(mSlots[index], listGeneration);
+                mSlots[index] = mTextures.create(desc);
+            }
+            const std::vector<uint32_t> pixels(desc.width * desc.height, 0xFF00C0FF);
+            mTextures.upload(mSlots[index], 0, 0, 0, desc.width, desc.height, pixels.data(), pixels.size() * sizeof(uint32_t));
+            if (inPlace)
+            {
+                mTextures.publish(mSlots[index]);
+            }
             ++mReplaced;
         }
     }

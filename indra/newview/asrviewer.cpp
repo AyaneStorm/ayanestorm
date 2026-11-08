@@ -225,9 +225,14 @@ public:
         sDevice->textures().generateMips(slot);
     }
 
-    U32 createSmallerTexture(U32 sourceSlot, U32 sourceMip, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout) override
+    void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U32 fromMip) override
     {
-        return sDevice->textures().create(textureDesc(width, height, mipLevels, layout), sourceSlot, sourceMip);
+        sDevice->textures().replace(slot, textureDesc(width, height, mipLevels, layout), fromMip);
+    }
+
+    void publishTexture(U32 slot) override
+    {
+        sDevice->textures().publish(slot);
     }
 
     void destroyTexture(U32 slot) override

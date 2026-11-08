@@ -59,8 +59,11 @@ namespace ASR
         virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
                                    const void* pixels, U32 rowPixels) = 0;
         virtual void generateMips(U32 slot) = 0;
-        // A new texture of the given size, made on the GPU from sourceSlot's mips from sourceMip down.
-        virtual U32 createSmallerTexture(U32 sourceSlot, U32 sourceMip, U32 width, U32 height, U32 mipLevels, PixelLayout layout) = 0;
+        // A new image for a slot in use, which keeps showing its old one until publishTexture(),
+        // so a resize never shows white. Uploads and mips go to the new image meanwhile. With
+        // fromMip > 0 it is made on the GPU from the old image's mips, from fromMip down.
+        virtual void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, PixelLayout layout, U32 fromMip) = 0;
+        virtual void publishTexture(U32 slot) = 0;
         virtual void destroyTexture(U32 slot) = 0;
         // Bytes that exist or have been asked for, and how much textures may take.
         virtual void getTextureMemory(U64& used, U64& limit) = 0;

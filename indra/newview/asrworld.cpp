@@ -1542,9 +1542,10 @@ void updateUnseenLimit()
     sUnseenLimit = free >= SLOTS_TO_KEEP ? F32_MAX : LONGEST * powf(SHORTEST / LONGEST, 1.f - F32(free) / F32(SLOTS_TO_KEEP));
 }
 
-// Sharper versions of a texture arrive in a new slot, and an alpha channel can appear. A
-// new slot only touches the materials on that texture. An alpha channel can change how
-// its faces draw, so those go through applyObject() again.
+// A texture keeps its slot when it is loaded sharper or shrunk: the renderer swaps the image
+// behind it once the new one is filled. A new slot, then, is a first image or a lost one,
+// and only touches the materials on that texture. An alpha channel can appear, which can
+// change how its faces draw, so those go through applyObject() again.
 void followTextures()
 {
     // Rare: the default image is one texture, and only moves if it is replaced.

@@ -1283,11 +1283,15 @@ private:
         if (!texture)
         {
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
-            mSlotCopies.changed(command.slot); // reads white
+            if (!command.replace)
+            {
+                mSlotCopies.changed(command.slot); // reads white; a replaced slot keeps its old image
+            }
             return;
         }
 
         const uint32_t pixelBytes = textureBytesPerPixel(desc.format);
+        // For a replacement the source is the slot's own image, which is still showing.
         id<MTLTexture> source = mTextureObjects[command.sourceSlot].texture;
         if (command.sourceSlot != 0 && source && source.mipmapLevelCount >= command.sourceMip + desc.mipLevels)
         {
@@ -1333,13 +1337,25 @@ private:
             }
         }
 
-        mTextureObjects[command.slot].texture = texture;
-        mTextureObjects[command.slot].bytes = bytes;
-        mTextureObjects[command.slot].pixelBytes = pixelBytes;
         if (@available(macOS 15.0, *))
         {
             [(id<MTLResidencySet>)mResidency addAllocation:texture];
         }
+        if (command.replace)
+        {
+            // Built out of sight: the slot keeps its image until publish. One replaced
+            // again before it was published goes.
+            const auto pending = mPendingTextures.find(command.slot);
+            if (pending != mPendingTextures.end())
+            {
+                mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
+            }
+            mPendingTextures[command.slot] = Texture{ texture, bytes, pixelBytes };
+            return;
+        }
+        mTextureObjects[command.slot].texture = texture;
+        mTextureObjects[command.slot].bytes = bytes;
+        mTextureObjects[command.slot].pixelBytes = pixelBytes;
         // The main thread hands out a slot at once, so a material can name it before its
         // texture is created here, and a slot never written holds no texture: a GPU page
         // fault, 'null texture access'. White, the first texture made, fills every slot
@@ -1352,6 +1368,35 @@ private:
         {
             mSlotCopies.changed(command.slot);
         }
+    }
+
+    struct Texture; // below, with the other members
+
+    // Where uploads and mips to a slot go: its replacement while one is being built.
+    const Texture& textureFor(uint32_t slot) const
+    {
+        static const Texture none;
+        const auto pending = mPendingTextures.find(slot);
+        return pending != mPendingTextures.end() ? pending->second : slot < mTextureObjects.size() ? mTextureObjects[slot] : none;
+    }
+
+    // The slot shows its replacement from this frame on, and the old image goes once
+    // every frame's array has let go of it.
+    void publishTexture(uint32_t slot)
+    {
+        const auto pending = mPendingTextures.find(slot);
+        if (pending == mPendingTextures.end())
+        {
+            return;
+        }
+        Texture& current = mTextureObjects[slot];
+        if (current.texture)
+        {
+            mFreedTextures.push_back({ current.texture, mFrame + FRAMES_IN_FLIGHT + 1, current.bytes });
+        }
+        current = pending->second;
+        mPendingTextures.erase(pending);
+        mSlotCopies.changed(slot);
     }
 
     // Brings this frame's texture array up to date, now that the frame that last used it
@@ -1388,6 +1433,12 @@ private:
     void destroyTexture(uint32_t slot)
     {
         mSlotCopies.changed(slot);
+        const auto pending = mPendingTextures.find(slot);
+        if (pending != mPendingTextures.end())
+        {
+            mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
+            mPendingTextures.erase(pending);
+        }
         Texture& texture = mTextureObjects[slot];
         if (texture.texture)
         {
@@ -1458,18 +1509,21 @@ private:
             {
                 break;
             }
-            id<MTLTexture> texture = command.type != TextureCommand::Type::Create && command.slot < mTextureObjects.size()
-                                   ? mTextureObjects[command.slot].texture : nil;
+            const Texture& target = textureFor(command.slot); // a replacement being built takes the uploads
+            id<MTLTexture> texture = command.type != TextureCommand::Type::Create ? target.texture : nil;
             switch (command.type)
             {
                 case TextureCommand::Type::Create:
                     createTexture(command, blit);
                     created = true;
                     break;
+                case TextureCommand::Type::Publish:
+                    publishTexture(command.slot);
+                    break;
                 case TextureCommand::Type::Upload:
                     if (texture)
                     {
-                        const NSUInteger rowBytes = NSUInteger(command.width) * mTextureObjects[command.slot].pixelBytes;
+                        const NSUInteger rowBytes = NSUInteger(command.width) * target.pixelBytes;
                         [blit copyFromBuffer:mUploadRing
                                    sourceOffset:command.ringOffset
                               sourceBytesPerRow:rowBytes
@@ -1581,6 +1635,7 @@ private:
     id<MTLBuffer> mUIBuffers[FRAMES_IN_FLIGHT];
     uint64_t mUIBufferGeneration[FRAMES_IN_FLIGHT]{};
     std::vector<Texture> mTextureObjects;         // by slot
+    std::unordered_map<uint32_t, Texture> mPendingTextures; // replacements being built, by slot
     std::vector<TextureCommand> mTextureCommands; // taken, not yet run
     size_t mTextureCommandsDone = 0;              // the front of mTextureCommands already run
     RetiredTextures mRetiredTextures;

@@ -81,6 +81,42 @@ uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint
     return slot;
 }
 
+void TextureQueue::replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip)
+{
+    if (slot == 0)
+    {
+        return;
+    }
+    TextureCommand command;
+    command.type = TextureCommand::Type::Create;
+    command.slot = slot;
+    command.replace = true;
+    command.desc = desc;
+    command.sourceSlot = fromMip != 0 ? slot : 0;
+    command.sourceMip = fromMip;
+
+    std::lock_guard<std::mutex> producer(mProducer);
+    if (mBudget)
+    {
+        mBudget->reserveAnyway(MemoryCategory::Textures, textureBytes(desc));
+    }
+    queue(std::move(command));
+}
+
+void TextureQueue::publish(uint32_t slot)
+{
+    if (slot == 0)
+    {
+        return;
+    }
+    TextureCommand command;
+    command.type = TextureCommand::Type::Publish;
+    command.slot = slot;
+
+    std::lock_guard<std::mutex> producer(mProducer);
+    queue(std::move(command));
+}
+
 void TextureQueue::queue(TextureCommand&& command)
 {
     if (!mWaiting.empty())

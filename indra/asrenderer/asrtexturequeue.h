@@ -77,11 +77,13 @@ struct TextureCommand
         Create,
         Upload,
         GenerateMips,
+        Publish, // a replacement made by Create with replace set takes the slot
         Destroy
     };
 
     Type type = Type::Create;
     uint32_t slot = 0;
+    bool replace = false;          // Create: build a new image for a slot that keeps showing its old one
     TextureDesc desc;              // Create
     uint32_t sourceSlot = 0;       // Create: the texture to take mips from, 0 to start cleared
     uint32_t sourceMip = 0;        // Create: which of its mips becomes level 0 here
@@ -108,6 +110,15 @@ public:
     // With a sourceSlot, the new texture is that one's mips from sourceMip down, copied
     // on the GPU. desc must be the size of that mip, with no more levels than it has left.
     uint32_t create(const TextureDesc& desc, uint32_t sourceSlot = 0, uint32_t sourceMip = 0);
+
+    // Main thread. A new image for a slot in use, of another size or format, which the
+    // slot keeps showing its old image until publish(). Uploads and mips to the slot go to
+    // the new image meanwhile. So a resize never shows white, and what names the slot
+    // never changes. fromMip > 0 fills it from the old image's mips, on the GPU.
+    void replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip = 0);
+
+    // Main thread. The replacement is complete: the slot shows it from the next frame.
+    void publish(uint32_t slot);
 
     // Main thread. How many create() calls can succeed now. A destroyed texture's slot
     // comes back only once the frames that may draw it have finished.
