@@ -1790,6 +1790,14 @@ class Darwin_x86_64_Manifest(ViewerManifest):
 # </FS:Ansariel> construct method VMP trampoline crazy VMP launcher juggling shamelessly replaced with old version
 
     def package_finish(self):
+        # <AS:Chanayane> Dev builds: the app is staged and runs from the build folder, with no
+        # disk image, as on Windows. It also lets a build finish over SSH, where hdiutil fails.
+        if os.environ.get('AS_SKIP_INSTALLER'):
+            print("AS_SKIP_INSTALLER is set: viewer staged, no disk image built")
+            self.package_file = "copied_deps"
+            return
+        # </AS:Chanayane>
+
         global CHANNEL_VENDOR_BASE
         # Check the installer resources before creating or mounting a disk image.
         dmg_template = self.fs_mac_dmg_template()
