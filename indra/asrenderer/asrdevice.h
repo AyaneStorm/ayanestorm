@@ -232,6 +232,10 @@ public:
     // Errors reported by the validation layers. Always 0 on Metal.
     virtual uint32_t validationErrors() const = 0;
 
+    // Any thread: GPU work that ended in error since the last call, with the first few
+    // word for word, or empty. Metal only: Vulkan loses the device instead, and says so.
+    virtual std::string takeGpuErrors() { return std::string(); }
+
 protected:
     void setDriverBudget(uint64_t bytes)
     {

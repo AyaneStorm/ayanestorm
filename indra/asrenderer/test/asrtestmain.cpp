@@ -1860,6 +1860,12 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     expect(countsSwapchain, "budget counts the window's images");
     expect(!asrtest::glContextIsCurrent(), "no GL context after rendering");
     expect(device->validationErrors() == 0, "no validation errors");
+    const std::string gpuErrors = device->takeGpuErrors();
+    if (!gpuErrors.empty())
+    {
+        printf("%s\n", gpuErrors.c_str());
+    }
+    expect(gpuErrors.empty(), "no GPU work ended in error");
     device.reset();
     return 0;
 }

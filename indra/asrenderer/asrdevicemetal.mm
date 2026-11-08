@@ -18,6 +18,9 @@
 #include <chrono>
 #include <cstring>
 #include <deque>
+#include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -179,6 +182,23 @@ public:
     const std::string& lastError() const override { return mError; }
     uint32_t validationErrors() const override { return 0; }
 
+    std::string takeGpuErrors() override
+    {
+        std::lock_guard<std::mutex> lock(mGpuErrors->mutex);
+        if (mGpuErrors->count == 0)
+        {
+            return std::string();
+        }
+        std::string text = std::to_string(mGpuErrors->count) + " GPU command buffers failed";
+        for (const std::string& error : mGpuErrors->first)
+        {
+            text += "\n  " + error;
+        }
+        mGpuErrors->count = 0;
+        mGpuErrors->first.clear();
+        return text;
+    }
+
     // Apple's figure is fixed for the device, so unlike Vulkan it does not move
     // with what other applications use.
     void refreshMemoryBudget() override { setDriverBudget(mDevice.recommendedMaxWorkingSetSize); }
@@ -232,7 +252,8 @@ public:
                 return false;
             }
 
-            id<MTLCommandBuffer> commands = [mQueue commandBuffer];
+            id<MTLCommandBuffer> commands = newCommandBuffer();
+            watchErrors(commands, "frame");
             if (input.camera && !recordScene(commands, slot, *input.camera, width, height, input.audit))
             {
                 dispatch_semaphore_signal(mFrameSlots);
@@ -524,6 +545,7 @@ private:
             pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = passSample(1);
         }
         id<MTLComputeCommandEncoder> encoder = [mRecordCommands computeCommandEncoderWithDescriptor:pass];
+        encoder.label = passLabel();
         [encoder waitForFence:mSceneFence];
         return encoder;
     }
@@ -538,8 +560,56 @@ private:
             pass.sampleBufferAttachments[0].endOfEncoderSampleIndex = passSample(1);
         }
         id<MTLBlitCommandEncoder> encoder = [mRecordCommands blitCommandEncoderWithDescriptor:pass];
+        encoder.label = passLabel();
         [encoder waitForFence:mSceneFence];
         return encoder;
+    }
+
+    // Command buffers that say which encoder an error happened in.
+    id<MTLCommandBuffer> newCommandBuffer()
+    {
+        MTLCommandBufferDescriptor* descriptor = [MTLCommandBufferDescriptor new];
+        descriptor.errorOptions = MTLCommandBufferErrorOptionEncoderExecutionStatus;
+        return [mQueue commandBufferWithDescriptor:descriptor];
+    }
+
+    // The pass being recorded, so a GPU error says where it happened.
+    NSString* passLabel() const
+    {
+        return [NSString stringWithUTF8String:mGraph.passName(mRecordPass)];
+    }
+
+    // Reports a command buffer that ended in error, with the encoder it failed in and what
+    // shader validation found, when it is on. Errors go to stderr at once, as the render
+    // thread has no log, and the first few are kept for the viewer's log. Without this an
+    // error went unseen: macOS stops running a process's GPU work after repeated faults,
+    // and every frame then 'finishes' at once with nothing drawn.
+    void watchErrors(id<MTLCommandBuffer> commands, const char* what)
+    {
+        std::shared_ptr<GpuErrors> errors = mGpuErrors; // a handler can run after the device is gone
+        [commands addCompletedHandler:^(id<MTLCommandBuffer> done) {
+            if (done.status != MTLCommandBufferStatusError)
+            {
+                return;
+            }
+            NSMutableString* text = [NSMutableString stringWithFormat:@"%s command buffer failed: %@", what,
+                                                                      done.error.localizedDescription];
+            NSArray* encoders = done.error.userInfo[MTLCommandBufferEncoderInfoErrorKey];
+            for (id<MTLCommandBufferEncoderInfo> info in encoders)
+            {
+                if (info.errorState == MTLCommandEncoderErrorStateFaulted || info.errorState == MTLCommandEncoderErrorStatePending)
+                {
+                    [text appendFormat:@"; encoder '%@' %s", info.label,
+                                       info.errorState == MTLCommandEncoderErrorStateFaulted ? "faulted" : "did not finish"];
+                }
+            }
+            for (id<MTLFunctionLog> log in done.logs)
+            {
+                [text appendFormat:@"; %@", log.description];
+            }
+            fprintf(stderr, "asrenderer: %s\n", text.UTF8String);
+            errors->add(text.UTF8String);
+        }];
     }
 
     id<MTLTexture> createTarget(MTLPixelFormat format, MTLTextureUsage usage, uint32_t width, uint32_t height, uint32_t pixelBytes, const char* what)
@@ -773,6 +843,7 @@ private:
         }
 
         id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        draw.label = passLabel();
         [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
         [draw setDepthStencilState:mDepthState];
         [draw setFrontFacingWinding:MTLWindingCounterClockwise];
@@ -1284,8 +1355,10 @@ private:
         using Clock = std::chrono::steady_clock;
         const Clock::time_point start = Clock::now();
         const auto limit = std::chrono::duration<double>(textureCommandSeconds(mFrameSeconds));
-        id<MTLCommandBuffer> commands = [mQueue commandBuffer];
+        id<MTLCommandBuffer> commands = newCommandBuffer();
+        watchErrors(commands, "texture");
         id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+        blit.label = @"texture commands";
         bool created = false;
         uint64_t uploaded = 0;
         uint64_t ringEnd = 0;
@@ -1430,6 +1503,25 @@ private:
     uint64_t mUploadPieceBytes = 0;               // the most one frame copies from it
     id<MTLBuffer> mZeros = nil;
     std::atomic<uint32_t> mRingHandlers{ 0 };     // texture copies whose completion handler has not run yet
+
+    // Command buffers that ended in error, from their completion handlers.
+    struct GpuErrors
+    {
+        std::mutex mutex;
+        uint64_t count = 0;
+        std::vector<std::string> first; // a few, word for word, since the last take
+
+        void add(const char* text)
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            ++count;
+            if (first.size() < 3)
+            {
+                first.push_back(text);
+            }
+        }
+    };
+    std::shared_ptr<GpuErrors> mGpuErrors = std::make_shared<GpuErrors>();
     std::chrono::steady_clock::time_point mPreviousFrameStart{};
     double mFrameSeconds = 0.0;
 

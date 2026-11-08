@@ -107,6 +107,11 @@ void logFrameStats(const char* what, const asr::FrameStats& stats)
                            << " KB), the rest " << std::max(0.0, parts.record - recordParts) * 1000.0 << ", submit " << parts.submit * 1000.0
                            << ", present " << parts.present * 1000.0 << "; worst memory refresh " << stats.worstRefreshSeconds * 1000.0
                            << "; uploads waiting for room in the ring now " << (sDevice ? sDevice->textures().waitingBytes() / 1024 : 0) << " KB" << LL_ENDL;
+    const std::string gpu_errors = sDevice ? sDevice->takeGpuErrors() : std::string();
+    if (!gpu_errors.empty())
+    {
+        LL_WARNS("ASRenderer") << gpu_errors << LL_ENDL;
+    }
 }
 
 // The P2 gate: a stopped main thread must not reach the render rate.
