@@ -47,9 +47,10 @@ namespace ASRViewer
     // The world is drawn from this camera from now on, turned by the mouse as `turn` says.
     void setCamera(const asr::SceneCamera3D& camera, const asr::CameraTurn& turn);
 
-    // Frames shown since the last call, which is what the viewer's FPS counts. With
-    // OpenGL that is the one frame display() has just drawn.
-    U32 takeShownFrames();
+    // Frames shown since the last call, which is what the viewer's FPS counts: the render
+    // rate times the time since, so every main loop reports the rate. With OpenGL that is
+    // the one frame display() has just drawn.
+    F64 takeShownFrames();
 
     // True if the new renderer was asked for but could not be used.
     bool fellBackToOpenGL();

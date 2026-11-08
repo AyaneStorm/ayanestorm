@@ -67,7 +67,10 @@ U32 sUIHeight = 0;
 asr::SceneCamera3D sCamera{};
 asr::CameraTurn sCameraTurn{};
 bool sHasCamera = false;
-uint64_t sShownFrames = 0;
+Clock::time_point sShownAt{};   // see takeShownFrames()
+Clock::time_point sRateStart{};
+uint64_t sRateFrames = 0;
+F64 sShownRate = 0.0;
 
 F64 secondsSince(Clock::time_point start)
 {
@@ -517,14 +520,32 @@ void ASRViewer::setCamera(const asr::SceneCamera3D& camera, const asr::CameraTur
 #endif
 }
 
-U32 ASRViewer::takeShownFrames()
+F64 ASRViewer::takeShownFrames()
 {
 #if ASR_VIEWER_SUPPORTED
     if (ASR::active() && sRenderThread)
     {
+        // The viewer shows the median of its loops' rates. With the render thread slower
+        // than the main loop, as under a frame limit, most loops would see no new frame and
+        // show 0. So each loop gets the render rate of the last quarter second, for its own
+        // length, and the sum still comes to the frames shown.
+        constexpr auto RATE_PERIOD = std::chrono::milliseconds(250);
+        const Clock::time_point now = Clock::now();
         const uint64_t shown = sRenderThread->presentedFrames();
-        const U32 frames = U32(shown - sShownFrames);
-        sShownFrames = shown;
+        if (sShownAt == Clock::time_point{})
+        {
+            sShownAt = now;
+            sRateStart = now;
+            sRateFrames = shown;
+        }
+        if (now - sRateStart >= RATE_PERIOD)
+        {
+            sShownRate = F64(shown - sRateFrames) / std::chrono::duration<F64>(now - sRateStart).count();
+            sRateStart = now;
+            sRateFrames = shown;
+        }
+        const F64 frames = sShownRate * std::chrono::duration<F64>(now - sShownAt).count();
+        sShownAt = now;
         return frames;
     }
 #endif

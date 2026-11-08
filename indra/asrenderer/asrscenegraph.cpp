@@ -24,6 +24,8 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("audit visibility", ResultScope::Frame);
     graph.addResult("audit pixels", ResultScope::Frame);
     graph.addResult("group list", ResultScope::Frame);
+    graph.addResult("texture feedback", ResultScope::Persistent);
+    graph.addResult("feedback readback", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -67,7 +69,8 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
                                { ResultAlbedo, ComputeWrite },
-                               { ResultNormals, ComputeWrite } });
+                               { ResultNormals, ComputeWrite },
+                               { ResultTextureFeedback, ComputeWrite | Keep } });
     graph.addPass("read counts", { { ResultDrawArguments, CopyRead }, { ResultSceneCounts, CopyWrite } });
 
     // The audit runs last, and reuses the lists: nothing after it reads them. All of it
@@ -87,6 +90,9 @@ void declareSceneGraph(FrameGraph& graph)
                                   { ResultDepth, DepthTarget | Keep },
                                   { ResultAuditVisibility, ColorTarget } });
     graph.addPass("audit read", { { ResultAuditVisibility, CopyRead }, { ResultAuditPixels, CopyWrite } });
+
+    // Only on the last frame of a feedback window, when its sink is on.
+    graph.addPass("read feedback", { { ResultTextureFeedback, CopyRead }, { ResultFeedbackReadback, CopyWrite } });
 
     graph.setSink(ResultAlbedo, FragmentRead, true);
     graph.setSink(ResultNormals, FragmentRead, true);

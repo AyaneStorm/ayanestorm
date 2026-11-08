@@ -78,6 +78,19 @@ constexpr uint32_t PYRAMID_GROUP_SIZE = 16;
 constexpr uint32_t PYRAMID_LEVELS_PER_DISPATCH = 3;
 constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
 
+// Texture feedback: the resolve pass records, for each texture slot, the sharpest size a
+// sampled pixel needed, as the GPU really sampled it: after occlusion, repeats and every
+// UV transform. It looks at one pixel in each block of 4 by 4, at a place that moves every
+// frame, so a window of 16 frames or more sees every pixel. A slot's word is
+// (window << FEEDBACK_LEVEL_BITS) | (level + 1): atomicMax makes a newer window win, so the
+// buffer is never cleared, and level is log2 of the texels across the texture needs. The
+// window number in GpuSceneView::feedback is (window << 4) | the place in the block, and
+// 0 there turns feedback off.
+constexpr uint32_t FEEDBACK_SAMPLES = 16;
+constexpr uint32_t FEEDBACK_LEVEL_BITS = 8;
+constexpr uint32_t FEEDBACK_WINDOW_LIMIT = 1u << (32 - FEEDBACK_LEVEL_BITS); // windows wrap here, and the buffer is cleared
+constexpr uint32_t FEEDBACK_MAX_LEVEL = 15; // 32,768 texels across
+
 // Which job the cull shader does. The first three cull instances, or retest entries; the
 // others test the clusters of the groups those passed, one thread per cluster.
 constexpr uint32_t CULL_EARLY = 0;
@@ -229,10 +242,11 @@ struct ScenePush
     uint64_t retest;
     uint64_t pyramid;
     uint64_t groups; // the group list
+    uint64_t feedback; // a word per texture slot: see FEEDBACK_SAMPLES
     uint32_t list;
     uint32_t phase; // one of CULL_*, or the pyramid level being read
 };
-static_assert(sizeof(ScenePush) == 88, "shaders read this layout");
+static_assert(sizeof(ScenePush) == 96, "shaders read this layout");
 
 // One cluster of a built geometry. Offsets count from the start of GeometryData::blob.
 struct ClusterData
@@ -318,7 +332,7 @@ struct GpuSceneView
     uint32_t instanceEnd;
     uint32_t pyramidLevels;
     float farClip;            // a true distance from the camera, so turning changes nothing; 0 is no limit
-    uint32_t unused;
+    uint32_t feedback;        // the texture feedback window and place: see FEEDBACK_SAMPLES
 };
 static_assert(sizeof(GpuSceneView) == 464, "shaders read this layout");
 

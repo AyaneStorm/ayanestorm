@@ -921,6 +921,74 @@ void testCameraTurn()
     expect(close(look[0], 0.f, 1e-4f) && close(look[1], 1.f, 1e-4f), "the view turns about the eye");
 }
 
+void testTextureFeedback()
+{
+    using Clock = asr::TextureFeedback::Clock;
+    const Clock::time_point start = Clock::now();
+    asr::TextureFeedback::Collector collector;
+    expect(collector.takeClear() && !collector.takeClear(), "the words are cleared once before first use");
+
+    uint32_t value = 0;
+    asr::TextureFeedback::Window ended;
+    uint32_t places = 0;
+    bool endedEarly = false;
+    bool firstIsOne = true;
+    for (uint32_t frame = 0; frame < asr::FEEDBACK_SAMPLES; ++frame)
+    {
+        // Long frames: only the frame count holds the window open.
+        const bool last = collector.frame(start + std::chrono::seconds(frame), value, ended);
+        endedEarly = endedEarly || (last && frame + 1 < asr::FEEDBACK_SAMPLES);
+        firstIsOne = firstIsOne && (value >> 4) == 1;
+        places |= 1u << (value & 15u);
+    }
+    expect(firstIsOne, "the first window is 1, as 0 means off");
+    expect(!endedEarly && ended.number == 1 && ended.start == start, "a window ends after its 16th frame and says which it was");
+    expect(places == 0xFFFFu, "a window samples every place in the block");
+
+    // The second window began with the 16th frame, at 15 s.
+    const Clock::time_point second = start + std::chrono::seconds(15);
+    bool endedShort = false;
+    for (uint32_t frame = 1; frame < 40; ++frame)
+    {
+        endedShort = endedShort || collector.frame(second + std::chrono::milliseconds(frame), value, ended);
+    }
+    expect((value >> 4) == 2, "the next window follows");
+    expect(!endedShort, "fast frames keep a window open for its whole time");
+    expect(collector.frame(second + std::chrono::milliseconds(150), value, ended) && ended.number == 2 && ended.start == second,
+           "and it ends once its time is up");
+
+    // Words from two windows: a slot keeps its largest level, and other windows' words do not count.
+    std::vector<uint32_t> words(asr::MAX_TEXTURES, 0);
+    const auto word = [](uint32_t window, uint32_t level) { return (window << asr::FEEDBACK_LEVEL_BITS) | (level + 1); };
+    words[0] = word(5, 3);  // the white texture
+    words[7] = word(5, 9);
+    words[8] = word(4, 12); // an older window
+    words[9] = word(5, 0);
+    asr::TextureFeedback feedback;
+    feedback.add(words.data(), { 5, start });
+    words[7] = word(6, 11);
+    words[9] = word(6, 0);
+    words[10] = word(6, 2);
+    feedback.add(words.data(), { 6, start + std::chrono::seconds(1) });
+    const auto levelOf = [&feedback](uint32_t slot) -> int
+    {
+        for (size_t i = 0; i < feedback.slots.size(); ++i)
+        {
+            if (feedback.slots[i] == slot)
+            {
+                return feedback.levels[i];
+            }
+        }
+        return -1;
+    };
+    expect(feedback.windows == 2 && feedback.since == start, "feedback counts its windows from the oldest");
+    expect(feedback.slots.size() == 3 && levelOf(7) == 11 && levelOf(9) == 0 && levelOf(10) == 2, "each slot is listed once, at its largest level");
+    expect(levelOf(0) < 0 && levelOf(8) < 0, "the white texture and other windows are left out");
+    feedback.clear();
+    feedback.add(words.data(), { 6, start });
+    expect(feedback.windows == 1 && feedback.slots.size() == 3, "a cleared feedback starts again");
+}
+
 class FakeChunks final : public asr::SceneChunks
 {
 public:
@@ -1518,6 +1586,13 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
+    // What texture feedback brought back, taken as the viewer takes it.
+    asr::TextureFeedback feedback;
+    uint32_t feedbackWindows = 0;
+    size_t mostSlotsSeen = 0;
+    uint32_t highestLevel = 0;
+    bool groundSeen = false;
+
     // Runs the main thread normally for a while. False if the test must stop.
     const auto runMainThread = [&](double duration)
     {
@@ -1538,6 +1613,16 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             if (city)
             {
                 city->update(float(secondsSince(sceneStart)));
+                if (device->takeTextureFeedback(feedback))
+                {
+                    feedbackWindows += feedback.windows;
+                    mostSlotsSeen = std::max(mostSlotsSeen, feedback.slots.size());
+                    for (size_t i = 0; i < feedback.slots.size(); ++i)
+                    {
+                        groundSeen = groundSeen || feedback.slots[i] == city->groundTexture();
+                        highestLevel = std::max(highestLevel, uint32_t(feedback.levels[i]));
+                    }
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -1603,6 +1688,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         }
         printf("  %-16s %6.2f ms\n", "GPU total", total);
         printf("moved %u objects, replaced %u geometries\n", city->moved(), city->replaced());
+        printf("texture feedback: %u windows, at most %zu textures seen at once, sharpest level %u\n", feedbackWindows, mostSlotsSeen, highestLevel);
+        expect(feedbackWindows > 0, "texture feedback comes back");
+        expect(groundSeen, "the ground's texture is seen");
+        expect(highestLevel <= asr::FEEDBACK_MAX_LEVEL, "feedback levels stay in range");
         expect(stats.earlyClusters > 0, "the camera sees part of the scene");
         expect(stats.pendingGeometries == 0, "all geometry reached the GPU");
         expect(city->replaced() > 0, "geometry was replaced while drawing");
@@ -1729,6 +1818,7 @@ int main(int argc, char** argv)
         testCameraPredictor();
         testMouseMotion();
         testCameraTurn();
+        testTextureFeedback();
         testSceneStore();
         testFrameGraph();
         testPyramidLayout();

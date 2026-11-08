@@ -146,6 +146,23 @@ void main()
     const uint sampler_index = (material.texture >> 28) & 3u;
     const vec4 texel = textureGrad(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(sampler_index)]), uv, uvDx, uvDy);
 
+    // Texture feedback, from one pixel of each 4 by 4 block, at a place that moves every
+    // frame. The samplers are not anisotropic, so the GPU picks its mip from the longer of
+    // the two steps: the texels across that step makes one per pixel are what this pixel
+    // really needs. Most pixels find a word already as large, and skip the atomic.
+    const uint feedback = view.feedback;
+    if (feedback != 0u && slot != 0u && ((uint(pixel.x) & 3u) | ((uint(pixel.y) & 3u) << 2)) == (feedback & 15u))
+    {
+        const float step = max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)), 1e-30);
+        const uint level = uint(clamp(ceil(-0.5 * log2(step)), 0.0, float(FEEDBACK_MAX_LEVEL)));
+        const uint word = ((feedback >> 4) << FEEDBACK_LEVEL_BITS) | (level + 1u);
+        FeedbackRef seen = FeedbackRef(push.feedback);
+        if (seen.words[slot] < word)
+        {
+            atomicMax(seen.words[slot], word);
+        }
+    }
+
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
 
     // Normals follow the cofactor matrix, which stays right under any stretch.

@@ -1067,10 +1067,12 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
 
         // <AS:Chanayane> Faces only say how large a texture would show. The new renderer says
-        // whether it shows at all, and whether it can keep its image. No size means no fetch.
+        // whether it shows at all, how large the GPU needed it, and whether it can keep its
+        // image. No size means no fetch.
         if (ASR::active() && imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
         {
-            const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check);
+            //const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check);
+            const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check, bias, max_vsize);
             if (use != ASRWorld::TextureUse::Wanted)
             {
                 max_vsize = 0.f;

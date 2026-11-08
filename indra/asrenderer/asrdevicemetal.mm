@@ -424,7 +424,8 @@ private:
         {
             mSceneViews[i] = createSceneBuffer(sizeof(GpuSceneView), MemoryCategory::Staging, "scene view");
             mSceneReadback[i] = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Staging, "scene readback");
-            if (!mSceneViews[i] || !mSceneReadback[i])
+            mFeedbackReadback[i] = createSceneBuffer(FEEDBACK_BYTES, MemoryCategory::Staging, "texture feedback readback");
+            if (!mSceneViews[i] || !mSceneReadback[i] || !mFeedbackReadback[i])
             {
                 error = mError;
                 return false;
@@ -432,7 +433,8 @@ private:
         }
         mSceneCounts = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Geometry, "scene draw counts");
         mSceneCountsTemplate = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Staging, "scene draw template");
-        if (!mSceneCounts || !mSceneCountsTemplate)
+        mTextureFeedback = createSceneBuffer(FEEDBACK_BYTES, MemoryCategory::Geometry, "texture feedback");
+        if (!mSceneCounts || !mSceneCountsTemplate || !mTextureFeedback)
         {
             error = mError;
             return false;
@@ -662,6 +664,7 @@ private:
             base += mSceneStore.listCapacity(list);
         }
         view.instanceEnd = mSceneStore.instanceEnd();
+        view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
@@ -677,6 +680,7 @@ private:
         mScenePush.retest = addressOf(mSceneRetest);
         mScenePush.pyramid = addressOf(mScenePyramid);
         mScenePush.groups = addressOf(mSceneGroups);
+        mScenePush.feedback = addressOf(mTextureFeedback);
         return true;
     }
 
@@ -775,6 +779,15 @@ private:
 
     bool passResolve()
     {
+        if (mFeedbackCollector.takeClear())
+        {
+            // Not timed: the pass's timer samples belong to the resolve.
+            id<MTLBlitCommandEncoder> clear = [mRecordCommands blitCommandEncoder];
+            [clear waitForFence:mSceneFence];
+            [clear fillBuffer:mTextureFeedback range:NSMakeRange(0, FEEDBACK_BYTES) value:0];
+            [clear updateFence:mSceneFence];
+            [clear endEncoding];
+        }
         id<MTLComputeCommandEncoder> resolve = beginCompute();
         [resolve setComputePipelineState:mResolvePipeline];
         [resolve setBuffer:mArguments offset:0 atIndex:0];
@@ -786,6 +799,16 @@ private:
                 threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
         [resolve updateFence:mSceneFence];
         [resolve endEncoding];
+        return true;
+    }
+
+    bool passReadFeedback()
+    {
+        id<MTLBlitCommandEncoder> readback = beginBlit();
+        [readback copyFromBuffer:mTextureFeedback sourceOffset:0 toBuffer:mFeedbackReadback[mRecordSlot] destinationOffset:0 size:FEEDBACK_BYTES];
+        [readback updateFence:mSceneFence];
+        [readback endEncoding];
+        mFeedbackRead[mRecordSlot] = mFeedbackEnding;
         return true;
     }
 
@@ -836,6 +859,7 @@ private:
         mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
         mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditTarget, offsetof(GpuSceneCounts, early), false, true); });
         mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
+        mGraph.setBody(PassReadFeedback, [this]() { return passReadFeedback(); });
     }
 
     // What this slot's earlier frame left behind. That frame has finished.
@@ -878,6 +902,11 @@ private:
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
         }
+        if (mFeedbackRead[slot].number != 0)
+        {
+            publishTextureFeedback(static_cast<const uint32_t*>(mFeedbackReadback[slot].contents), mFeedbackRead[slot]);
+            mFeedbackRead[slot] = {};
+        }
         if (mAuditWritten[slot])
         {
             mAuditWritten[slot] = false;
@@ -915,7 +944,9 @@ private:
         {
             return false;
         }
+        const bool readFeedback = mFeedbackCollector.frame(std::chrono::steady_clock::now(), mFeedbackValue, mFeedbackEnding);
         mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
+        mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
         if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
             return false;
@@ -1343,6 +1374,11 @@ private:
     id<MTLBuffer> mSceneStaging[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mAuditReadback[FRAMES_IN_FLIGHT];
     bool mAuditWritten[FRAMES_IN_FLIGHT]{};
+    id<MTLBuffer> mTextureFeedback = nil;
+    id<MTLBuffer> mFeedbackReadback[FRAMES_IN_FLIGHT];
+    TextureFeedback::Window mFeedbackRead[FRAMES_IN_FLIGHT]; // the window each slot's readback holds; 0 is none
+    TextureFeedback::Window mFeedbackEnding;                 // the window this frame ends, when it ends one
+    uint32_t mFeedbackValue = 0;                             // GpuSceneView::feedback for this frame
     std::deque<RetiredBuffer> mRetiredBuffers;
     id<MTLComputePipelineState> mCullPipeline = nil;
     id<MTLComputePipelineState> mPyramidPipeline = nil;

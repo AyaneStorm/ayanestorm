@@ -94,6 +94,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint instanceEnd;
     uint pyramidLevels;
     float farClip;
+    uint feedback; // texture feedback: (window << 4) | the place sampled in each 4 by 4 block, 0 when off
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };
@@ -103,6 +104,10 @@ layout(buffer_reference, std430) readonly buffer ClusterGroupsRef { ClusterGroup
 layout(buffer_reference, std430) readonly buffer MaterialsRef { Material items[]; };
 layout(buffer_reference, std430) readonly buffer ListRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer WordsRef { uint words[]; };
+layout(buffer_reference, std430) buffer FeedbackRef { uint words[]; };
+
+const uint FEEDBACK_LEVEL_BITS = 8;
+const uint FEEDBACK_MAX_LEVEL = 15;
 
 layout(push_constant) uniform ScenePush
 {
@@ -116,6 +121,7 @@ layout(push_constant) uniform ScenePush
     uint64_t retest;
     uint64_t pyramid;
     uint64_t groups; // the group list
+    uint64_t feedback; // a word per texture slot
     uint list;
     uint phase;
 } push;

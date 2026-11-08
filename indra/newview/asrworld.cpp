@@ -151,6 +151,12 @@ struct TrackedTexture
     U32 changes = 0; // temporary: how often its slot changed
     std::unordered_map<LLDrawable*, U32> users; // how many of its faces use it
     std::vector<SharedMaterial*> materials;     // what a new slot has to be written to
+
+    // Texture feedback: when it got its slot, as feedback from before then is another
+    // texture's, and what the GPU last saw of it.
+    asr::TextureFeedback::Clock::time_point slotSince{};
+    U8 gpuLevel = 0;         // log2 of the texels across it needed
+    F32 gpuSeenAt = -1000.f; // gFrameTimeSeconds
 };
 
 // What makes two materials one. The slot is not part of it: it follows the image.
@@ -247,6 +253,55 @@ bool sRunning = false;
 
 std::map<ShapeKey, std::unique_ptr<Shape>> sShapes;
 std::unordered_map<const void*, TrackedTexture> sTextures; // by LLImageGL, which is what reports a change
+
+// Texture feedback, from the GPU's slots back to textures. Slot 0 is the white texture, and
+// many share it, so it has no owner.
+std::vector<TrackedTexture*> sSlotOwners;
+asr::TextureFeedback sFeedback;
+F32 sLastFeedback = -1000.f; // when feedback last came, as gFrameTimeSeconds
+U32 sFeedbackWindows = 0;    // temporary: since the last log
+U32 sFeedbackSized = 0;      // temporary: textures sized by it, and judged hidden, since the last log
+U32 sFeedbackHidden = 0;
+
+// What the GPU saw since the last loop goes to the textures that hold those slots now.
+void takeTextureFeedback()
+{
+    asr::Device* device = ASRViewer::device();
+    if (!device || !device->takeTextureFeedback(sFeedback) || sSlotOwners.empty())
+    {
+        return;
+    }
+    sLastFeedback = gFrameTimeSeconds;
+    sFeedbackWindows += sFeedback.windows;
+    for (size_t i = 0; i < sFeedback.slots.size(); ++i)
+    {
+        TrackedTexture* owner = sSlotOwners[sFeedback.slots[i]];
+        if (owner && owner->slotSince <= sFeedback.since)
+        {
+            owner->gpuLevel = sFeedback.levels[i];
+            owner->gpuSeenAt = gFrameTimeSeconds;
+        }
+    }
+}
+
+void ownSlot(TrackedTexture& texture, U32 slot)
+{
+    if (sSlotOwners.empty())
+    {
+        sSlotOwners.assign(asr::MAX_TEXTURES, nullptr);
+    }
+    if (texture.slot != 0 && sSlotOwners[texture.slot] == &texture)
+    {
+        sSlotOwners[texture.slot] = nullptr;
+    }
+    // What the GPU saw stays: a new slot is the same texture at a new size.
+    texture.slot = slot;
+    texture.slotSince = asr::TextureFeedback::Clock::now();
+    if (slot != 0)
+    {
+        sSlotOwners[slot] = &texture;
+    }
+}
 std::unordered_map<MaterialKey, SharedMaterial, BytesHash<MaterialKey>> sMaterials;
 std::unordered_map<LLDrawable*, WorldObject> sObjects;
 std::unordered_map<StackKey, Stack, BytesHash<StackKey>> sStacks;
@@ -589,7 +644,7 @@ TrackedTexture* useTexture(LLViewerTexture* image, LLDrawable* drawable)
     {
         found = sTextures.emplace(imageOf(image), TrackedTexture()).first;
         found->second.image = image;
-        found->second.slot = ASR::textureSlot(image->getTexName());
+        ownSlot(found->second, ASR::textureSlot(image->getTexName()));
         found->second.components = image->getComponents();
     }
     ++found->second.users[drawable];
@@ -605,6 +660,7 @@ void releaseTexture(TrackedTexture* texture, LLDrawable* drawable)
     }
     if (texture->users.empty())
     {
+        ownSlot(*texture, 0);
         sTextures.erase(imageOf(texture->image.get()));
     }
 }
@@ -1535,7 +1591,7 @@ void followTextures()
                                        << texture.image->getDiscardLevel() << ", size " << texture.image->getMaxVirtualSize() << ", bias "
                                        << LLViewerTexture::sDesiredDiscardBias << LL_ENDL;
             }
-            texture.slot = slot;
+            ownSlot(texture, slot);
             writeMaterials(texture);
         }
     }
@@ -1814,6 +1870,30 @@ void logCounts()
                                << " MB, shrunk so far " << shrunk << ", frozen " << LLViewerTexture::sFreezeImageUpdates << ", free slots " << ASR::freeTextureSlots()
                                << ", unseen limit " << (sUnseenLimit < F32_MAX ? sUnseenLimit : -1.f) << " s, released so far " << sReleasedTextures
                                << ", lost so far " << sLostTextures << LL_ENDL;
+        U32 seenNow = 0;
+        U32 levels[asr::FEEDBACK_MAX_LEVEL + 1] = {};
+        for (const auto& tracked : sTextures)
+        {
+            if (gFrameTimeSeconds - tracked.second.gpuSeenAt < 0.5f)
+            {
+                ++seenNow;
+                ++levels[tracked.second.gpuLevel];
+            }
+        }
+        std::ostringstream levelCounts;
+        for (U32 level = 0; level <= asr::FEEDBACK_MAX_LEVEL; ++level)
+        {
+            if (levels[level] != 0)
+            {
+                levelCounts << " " << (1u << level) << ":" << levels[level];
+            }
+        }
+        LL_INFOS("ASRenderer") << "texture feedback: " << sFeedbackWindows << " windows since the last log, " << seenNow << " of " << sTextures.size()
+                               << " drawn textures seen now, judgements sized by it " << sFeedbackSized << ", hidden " << sFeedbackHidden
+                               << "; texels across needed, by count:" << levelCounts.str() << LL_ENDL;
+        sFeedbackWindows = 0;
+        sFeedbackSized = 0;
+        sFeedbackHidden = 0;
         for (size_t i = 0; i < shown; ++i)
         {
             LLViewerFetchedTexture* fetched = waiting[i].second;
@@ -2038,6 +2118,7 @@ void ASRWorld::stop()
     sObjects.clear();
     sLeftOut.clear();
     sMaterials.clear();
+    sSlotOwners.clear();
     sTextures.clear();
     sShapes.clear();
     sScene = nullptr;
@@ -2135,15 +2216,50 @@ void ASRWorld::worldShifted(const LLVector3& offset)
     }
 }
 
-ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool inView)
+ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool inView, F32 bias, F32& size)
 {
     if (!sRunning)
     {
         return TextureUse::Wanted;
     }
 
-    const bool drawn = sTextures.count(image->getGLTexture()) != 0;
-    if (drawn && inView)
+    // A window samples each pixel once, so a texture on a few pixels can miss one or two.
+    constexpr F32 SEEN_LATELY = 0.5f;     // seconds
+    constexpr F32 FEEDBACK_STALE = 1.f;   // without feedback this long, the faces decide alone
+    constexpr F32 HIDDEN_DIVISOR = 16.f;  // two levels coarser, so a corner turned shows something
+    constexpr F32 PRESSURE_BIAS = 1.9f;   // as the faces' loop: above this, sizes give way
+
+    const auto found = sTextures.find(image->getGLTexture());
+    const bool drawn = found != sTextures.end();
+    if (drawn && gFrameTimeSeconds - sLastFeedback < FEEDBACK_STALE)
+    {
+        const TrackedTexture& texture = found->second;
+        if (gFrameTimeSeconds - texture.gpuSeenAt < SEEN_LATELY)
+        {
+            // What the GPU needed, as the area it would cover at full size: the texels across
+            // its longer side, and as many down as its shape gives.
+            const F32 across = F32(1u << texture.gpuLevel);
+            const S32 width = image->getFullWidth();
+            const S32 height = image->getFullHeight();
+            const F32 longest = F32(llmax(width, height));
+            size = longest > 0.f ? across * across * F32(width) * F32(height) / (longest * longest) : across * across;
+            if (LLViewerTexture::sDesiredDiscardBias > PRESSURE_BIAS)
+            {
+                size /= bias;
+            }
+            image->mLastSeen = gFrameTimeSeconds;
+            ++sFeedbackSized;
+            return TextureUse::Wanted;
+        }
+        if (inView)
+        {
+            // Its faces are in view, but the GPU drew none of it: it is behind something, or
+            // too small to show. It is not seen, so under slot pressure it can go.
+            size /= HIDDEN_DIVISOR;
+            ++sFeedbackHidden;
+        }
+    }
+    else if (drawn && inView)
     {
         image->mLastSeen = gFrameTimeSeconds;
         return TextureUse::Wanted;
@@ -2178,6 +2294,7 @@ void ASRWorld::update()
         return;
     }
     updateUnseenLimit();
+    takeTextureFeedback();
     timed(PART_MESH, []() { gMeshRepo.notifyLoadedMeshes(); }); // rebuildPriorityGroups() calls this, and it does not run here
     timed(PART_CACHE, cullObjectCache);
     timed(PART_SHAPES, applyFinishedShapes);
@@ -2209,7 +2326,7 @@ void ASRWorld::meshLoaded(const LLVolumeParams&, LLVolume*, S32) {}
 void ASRWorld::meshUnavailable(const LLVolumeParams&, S32) {}
 void ASRWorld::worldShifted(const LLVector3&) {}
 void ASRWorld::addMainTime(MainPart, F32) {}
-ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture*, bool) { return TextureUse::Wanted; }
+ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture*, bool, F32, F32&) { return TextureUse::Wanted; }
 void ASRWorld::releaseTexture(LLViewerFetchedTexture*) {}
 void ASRWorld::update() {}
 

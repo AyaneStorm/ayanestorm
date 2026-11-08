@@ -189,6 +189,10 @@ public:
             material.color[1] = 0.55f + 0.45f * std::sin(i * 2.1f + 1.f);
             material.color[2] = 0.55f + 0.45f * std::sin(i * 0.7f + 2.f);
             material.texture = checker(textures, i, i == 1 ? 4096 : 256, 0xFFA0A0A0u);
+            if (i == 0)
+            {
+                mGroundTexture = material.texture;
+            }
             material.uvRow0[0] = 1.f + float(i % 3);
             material.uvRow1[1] = 1.f + float(i % 3);
             mMaterials[i] = scene.addMaterial(material);
@@ -293,6 +297,7 @@ public:
     uint32_t instances() const { return mInstances; }
     uint32_t moved() const { return mMoved; }
     uint32_t replaced() const { return mReplaced; }
+    uint32_t groundTexture() const { return mGroundTexture; } // a slot
 
 private:
     static constexpr uint32_t OBJECTS = 16000;
@@ -353,6 +358,7 @@ private:
     asr::SceneQueue& mScene;
     bool mStreet;
     uint32_t mFence = 0;
+    uint32_t mGroundTexture = 0;
     uint32_t mBoxFaces[6]{};
     uint32_t mSphere = 0;
     uint32_t mKnot = 0;

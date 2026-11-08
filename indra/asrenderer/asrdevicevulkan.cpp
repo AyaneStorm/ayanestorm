@@ -1024,7 +1024,8 @@ private:
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
             if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView), viewUsage, MemoryCategory::Staging, "scene view") ||
-                !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback", true))
+                !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback", true) ||
+                !growBuffer(mFeedbackReadback[i], FEEDBACK_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "texture feedback readback", true))
             {
                 error = mError;
                 return false;
@@ -1033,7 +1034,9 @@ private:
         if (!growBuffer(mSceneCountsTemplate, sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene draw template") ||
             !createBufferObject(mSceneCounts, sizeof(GpuSceneCounts),
                                 VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-                                "scene draw counts"))
+                                "scene draw counts") ||
+            !createBufferObject(mTextureFeedback, FEEDBACK_BYTES,
+                                VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "texture feedback"))
         {
             error = mError;
             return false;
@@ -1171,6 +1174,7 @@ private:
         destroyBufferObject(mSceneRetest);
         destroyBufferObject(mSceneGroups);
         destroyBufferObject(mSceneCounts);
+        destroyBufferObject(mTextureFeedback);
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         destroyBuffer(mSceneCountsTemplate, MemoryCategory::Staging);
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
@@ -1178,6 +1182,7 @@ private:
             destroyBuffer(mSceneViews[i], MemoryCategory::Staging);
             destroyBuffer(mSceneStaging[i], MemoryCategory::Staging);
             destroyBuffer(mSceneReadback[i], MemoryCategory::Staging);
+            destroyBuffer(mFeedbackReadback[i], MemoryCategory::Staging);
             destroyBuffer(mAuditReadback[i], MemoryCategory::Staging);
         }
         destroyTarget(mVisibilityImage);
@@ -1993,6 +1998,7 @@ private:
             base += mSceneStore.listCapacity(list);
         }
         view.instanceEnd = mSceneStore.instanceEnd();
+        view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
@@ -2011,6 +2017,7 @@ private:
         mScenePush.retest = mSceneRetest.address;
         mScenePush.pyramid = mScenePyramid.address;
         mScenePush.groups = mSceneGroups.address;
+        mScenePush.feedback = mTextureFeedback.address;
         return true;
     }
 
@@ -2111,11 +2118,28 @@ private:
     {
         VkCommandBuffer commands = mRecordCommands;
         const VkDescriptorSet sets[2] = { mUISet, mSceneSet };
+        if (mFeedbackCollector.takeClear())
+        {
+            // The graph's barrier before this pass is for the resolve, so the fill has its own.
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            vkCmdFillBuffer(commands, mTextureFeedback.buffer, 0, FEEDBACK_BYTES, 0);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        }
         vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mResolvePipeline);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
         pushScene(commands);
         vkCmdDispatch(commands, (mSceneExtent.width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE,
                       (mSceneExtent.height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1);
+        return true;
+    }
+
+    bool passReadFeedback()
+    {
+        const VkBufferCopy readback{ 0, 0, FEEDBACK_BYTES };
+        vkCmdCopyBuffer(mRecordCommands, mTextureFeedback.buffer, mFeedbackReadback[mRecordSlot].buffer, 1, &readback);
+        mFeedbackRead[mRecordSlot] = mFeedbackEnding;
         return true;
     }
 
@@ -2161,6 +2185,7 @@ private:
         mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
         mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditImage.view, offsetof(GpuSceneCounts, early), false, true); });
         mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
+        mGraph.setBody(PassReadFeedback, [this]() { return passReadFeedback(); });
     }
 
     // What this slot's earlier frame left behind. It has finished: its fence was waited on.
@@ -2191,6 +2216,12 @@ private:
             mSceneFrameStats.retestEntries = counts->retest.entries;
             mSceneFrameStats.groupEntries = uint64_t(counts->groups[0].entries) + counts->groups[1].entries;
         }
+        if (mFeedbackRead[slot].number != 0)
+        {
+            vmaInvalidateAllocation(mAllocator, mFeedbackReadback[slot].allocation, 0, FEEDBACK_BYTES);
+            publishTextureFeedback(static_cast<const uint32_t*>(mFeedbackReadback[slot].mapped), mFeedbackRead[slot]);
+            mFeedbackRead[slot] = {};
+        }
         if (mAuditWritten[slot])
         {
             mAuditWritten[slot] = false;
@@ -2217,7 +2248,9 @@ private:
     bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit)
     {
         readSceneResults(slot);
+        const bool readFeedback = mFeedbackCollector.frame(std::chrono::steady_clock::now(), mFeedbackValue, mFeedbackEnding);
         mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
+        mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
         if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
             return false;
@@ -2640,6 +2673,11 @@ private:
     MappedBuffer mSceneReadback[FRAMES_IN_FLIGHT];
     MappedBuffer mAuditReadback[FRAMES_IN_FLIGHT];
     bool mAuditWritten[FRAMES_IN_FLIGHT]{};
+    GpuBuffer mTextureFeedback;
+    MappedBuffer mFeedbackReadback[FRAMES_IN_FLIGHT];
+    TextureFeedback::Window mFeedbackRead[FRAMES_IN_FLIGHT]; // the window each slot's readback holds; 0 is none
+    TextureFeedback::Window mFeedbackEnding;                 // the window this frame ends, when it ends one
+    uint32_t mFeedbackValue = 0;                             // GpuSceneView::feedback for this frame
     std::deque<RetiredBuffer> mRetiredBuffers;
     std::vector<VkBufferCopy> mSceneRegions;
     VkDescriptorSetLayout mSceneSetLayout = VK_NULL_HANDLE;

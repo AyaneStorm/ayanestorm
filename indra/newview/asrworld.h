@@ -43,10 +43,13 @@ namespace ASRWorld
 
     // What a normal texture is for, now. Its faces say how large it would be wanted, but only
     // what the renderer draws is worth memory, and every image takes one of a limited number of
-    // slots. Wanted keeps the size the faces gave, NotDrawn wants no size, and Release also
-    // gives up its image, which is reloaded from the cache if it comes back into view.
+    // slots. Wanted keeps the size, NotDrawn wants no size, and Release also gives up its image,
+    // which is reloaded from the cache if it comes back into view.
+    // size is what the faces gave, as a virtual size, and bias the divisor they use under
+    // memory pressure. When the GPU saw the texture, size becomes what it really needed; when
+    // the faces are in view but the GPU drew none of it, it is hidden, and wants less.
     enum class TextureUse { Wanted, NotDrawn, Release };
-    TextureUse judgeTexture(LLViewerFetchedTexture* image, bool inView);
+    TextureUse judgeTexture(LLViewerFetchedTexture* image, bool inView, F32 bias, F32& size);
     void releaseTexture(LLViewerFetchedTexture* image);
 
     // Applies everything reported since the last call. Main thread, once per frame.

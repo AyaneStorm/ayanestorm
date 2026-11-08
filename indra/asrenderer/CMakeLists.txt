@@ -19,7 +19,7 @@ set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 # --- Portable code, built on every platform. ---------------------------------
 find_package(Threads REQUIRED)
 add_library(asrenderer STATIC asrframegraph.cpp asrmemorybudget.cpp asrrenderthread.cpp asrscene.cpp asrscenefile.cpp
-    asrscenegraph.cpp asrscenestore.cpp asrtexturequeue.cpp asruilist.cpp)
+    asrscenegraph.cpp asrscenestore.cpp asrtexturefeedback.cpp asrtexturequeue.cpp asruilist.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(asrenderer PUBLIC Threads::Threads)
 

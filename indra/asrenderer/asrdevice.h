@@ -15,10 +15,12 @@
 #include "asruilist.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace asr
 {
@@ -97,6 +99,58 @@ struct SceneStats
     PassTime passes[MAX_TIMED_PASSES];
 };
 
+// What the GPU saw of textures since the last take: for each slot seen, log2 of the texels
+// across it needed at its sharpest. See FEEDBACK_SAMPLES in asrscene.h.
+struct TextureFeedback
+{
+    using Clock = std::chrono::steady_clock;
+
+    Clock::time_point since{}; // when the oldest window in it began
+    std::vector<uint32_t> slots;
+    std::vector<uint8_t> levels; // one per slot
+    uint32_t windows = 0;        // how many windows it holds; 0 is none
+
+    struct Window
+    {
+        uint32_t number = 0;
+        Clock::time_point start{};
+    };
+
+    // Render thread: picks the windows. Shared by the backends.
+    class Collector
+    {
+    public:
+        // Once a frame with a scene: the value for GpuSceneView::feedback. True when this
+        // frame is the last of its window, given in `ended`, whose words are then read back
+        // after this frame's resolve.
+        bool frame(Clock::time_point now, uint32_t& value, Window& ended);
+
+        // True once each time the words have to be cleared before the next resolve: at
+        // the start, and when window numbers wrap.
+        bool takeClear();
+
+    private:
+        Window mWindow{ 1, {} };
+        uint32_t mFrames = 0;
+        bool mStarted = false;
+        bool mClear = true;
+    };
+
+    // Adds what one window saw, from all MAX_TEXTURES words read back: a word belongs to
+    // the window when its upper part is the window's number. A slot seen in several
+    // windows keeps its largest level.
+    void add(const uint32_t* words, const Window& window);
+
+    void clear();
+
+private:
+    std::vector<uint32_t> mPosition; // per slot: its index in slots, plus 1, or 0
+};
+
+// A window lasts this long, and at least FEEDBACK_SAMPLES frames, so every pixel is seen.
+constexpr std::chrono::milliseconds FEEDBACK_WINDOW(100);
+constexpr uint64_t FEEDBACK_BYTES = uint64_t(MAX_TEXTURES) * sizeof(uint32_t);
+
 // Where the render thread's time went inside one frame, in seconds. sceneUpdate is part of
 // record. Every figure stays 0 on a backend that does not report them.
 struct FrameParts
@@ -142,6 +196,20 @@ public:
         return mSceneStats;
     }
 
+    // Main thread: what the GPU saw of textures since the last call. False when nothing
+    // new came. The vectors are reused, so pass the same one each time.
+    bool takeTextureFeedback(TextureFeedback& feedback)
+    {
+        std::lock_guard<std::mutex> lock(mFeedbackMutex);
+        if (mFeedback.windows == 0)
+        {
+            return false;
+        }
+        std::swap(feedback, mFeedback);
+        mFeedback.clear();
+        return true;
+    }
+
     // Draws and presents one frame. Returns false on an unrecoverable error,
     // described by lastError().
     virtual bool renderFrame(const FrameInput& input) = 0;
@@ -182,11 +250,22 @@ protected:
         mSceneStats = stats;
     }
 
+    // Render thread: a window's words have come back.
+    void publishTextureFeedback(const uint32_t* words, const TextureFeedback::Window& window)
+    {
+        std::lock_guard<std::mutex> lock(mFeedbackMutex);
+        mFeedback.add(words, window);
+    }
+
+    TextureFeedback::Collector mFeedbackCollector;
+
     MemoryBudget mMemoryBudget;
     TextureQueue mTextures{ &mMemoryBudget };
     SceneQueue mScene;
     std::mutex mSceneStatsMutex;
     SceneStats mSceneStats;
+    std::mutex mFeedbackMutex;
+    TextureFeedback mFeedback;
     uint64_t mMemoryCapBytes = 0;
 };
 

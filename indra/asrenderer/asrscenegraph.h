@@ -31,6 +31,8 @@ enum SceneResult : ResultId
     ResultAuditVisibility,
     ResultAuditPixels,
     ResultGroupList,      // cluster groups whose clusters are tested next
+    ResultTextureFeedback, // a word per texture slot, added to by every resolve
+    ResultFeedbackReadback, // read back at the end of a feedback window
     ResultCount
 };
 
@@ -52,6 +54,7 @@ enum ScenePass : PassId
     PassAuditGroups,
     PassAuditDraw,
     PassAuditRead,
+    PassReadFeedback,
     PassCount
 };
 
