@@ -35,8 +35,8 @@ namespace ASRWorld
     void objectRemoved(LLDrawable* drawable);
 
     // The native frame, in place of LLPipeline::updateGL(): runs the terrain patches' part of
-    // that queue, which is when the viewer has finished a patch's data, so it is rebuilt. The
-    // rest stays queued, as it would draw with GL.
+    // that queue, so the viewer can finish a patch's update and stop recomputing its normals
+    // every frame. The rest stays queued, as it would draw with GL.
     void updateTerrainGL();
 
     // One LOD of a mesh came in, or the server has none. The volume is not changed after this.

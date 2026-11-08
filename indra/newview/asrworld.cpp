@@ -1641,10 +1641,14 @@ void followTextures()
 // The region's material names its terrain entry, the four layers and how they blend, which is
 // worked out here every loop, as the draw pool does, and sent when it changes.
 //
-// A patch is rebuilt when the viewer has finished its data: heights, normals from them and
-// its neighbours, and composition. That is when it calls the patch's updateGL(), which only
-// the native path runs here (ASRWorld::updateTerrainGL()). Its geometry rebuilds that follow
-// the camera's distance are not needed, as the GPU picks the LOD.
+// Every region LLWorld lists is watched here, each loop. Its layers are tracked from the start,
+// so their textures load whether or not its heights are in. A patch whose heights have not
+// come shows flat at the water's height, in the region's layers, so ground is never empty.
+// Once its heights are in and the viewer has generated its composition, it is built for real,
+// and again whenever its data changes: LLSurfacePatch::dirtyZ() stamps a new update time.
+// A patch whose heights change also rebuilds its built neighbours, whose edge normals read
+// it. The viewer's geometry rebuilds that follow the camera's distance are not needed, as the
+// GPU picks the LOD. A region that leaves the list takes all its patches with it.
 
 // LLSurfacePatch::updateVisibility(): a grid step is used from step / 0.15 grid cells away. An
 // instance's LOD size here is its grid spacing times lodScale(), so the LOD factor and field
@@ -1667,9 +1671,12 @@ namespace
 
 struct TerrainJob
 {
-    LLDrawable* drawable = nullptr; // the patch's, which may be gone when the job comes back
+    LLSurface* surface = nullptr;   // with handle, says which region: it may be gone when the job comes back
+    U64 handle = 0;
+    U32 index = 0;                  // the patch, x + y * patches per edge
     U32 number = 0;                 // which build of it this is
     U32 boxVersion = 0;
+    bool flat = false;              // a stand-in: one LOD is enough
     asr::GeometryBox box{};
     asr::TerrainGrid grid;          // pointing into the vectors below
     std::vector<F32> heights;
@@ -1680,23 +1687,27 @@ struct TerrainJob
 
 struct TerrainPatch
 {
-    LLSurface* surface = nullptr;   // only a key: the region may be gone before its patches
-    LLVector3 regionAgent;          // the region's origin in agent space, kept up with shifts
     LLVector3 centre;               // region metres
-    F32 spacing = 1.f;              // metres between grid points
     U32 geometries[LODS] = { 0, 0, 0, 0 };
     U32 instance = NO_INSTANCE;
     U32 material = 0;               // the region's material for the box its geometry is in
     U32 job = 0;                    // the build it waits for
+    U64 key = 0;                    // the update time of the data last sent to be built; 0 asks for a build
+    U64 seen = 0;                   // the update time last told to its neighbours
+    bool real = false;              // built, or being built, from its own heights
     bool busy = false;
-    bool again = false;             // its data changed while it was being built
+    bool again = false;             // asked for again while it was being built
 };
 
 constexpr U32 TERRAIN_IMAGES = asr::TERRAIN_LAYERS + 1; // the layers, then the alpha ramp
 
 struct TerrainRegion
 {
-    LLViewerRegion* region = nullptr; // compared with LLWorld's list before it is used
+    LLViewerRegion* region = nullptr; // used only while LLWorld lists it
+    U64 handle = 0;
+    LLVector3 agent;                  // its origin in agent space, kept up with shifts
+    F32 spacing = 1.f;                // metres between grid points
+    U32 perEdge = 0;                  // patches along an edge
     U32 terrain = 0;
     asr::TerrainDesc desc;
     LLViewerTexture* images[TERRAIN_IMAGES] = {};
@@ -1705,13 +1716,11 @@ struct TerrainRegion
     asr::GeometryBox box{};
     U32 material = 0;                           // for the current box
     std::unordered_map<U32, U32> materialUsers; // material id, and the patches drawn with it
-    std::unordered_set<LLDrawable*> patches;
+    std::vector<TerrainPatch> patches;
     bool toldPaintMap = false;
 };
 
 std::unordered_map<LLSurface*, TerrainRegion> sTerrainRegions;
-std::unordered_map<LLDrawable*, TerrainPatch> sTerrainPatches;
-std::unordered_set<LLDrawable*> sTerrainReady; // patches whose data the viewer has finished
 U32 sTerrainJobs = 0;
 U32 sTerrainBuilt = 0;   // temporary: since the last log
 U32 sTerrainReboxed = 0; // temporary: since the last log
@@ -1733,13 +1742,24 @@ void buildTerrainPatch(TerrainJob& job)
         coarser = sScene->addGeometry(asr::buildGeometry(vertices.data(), U32(vertices.size()), indices.data(), U32(indices.size()), &job.box),
                                       coarser, coarser != 0 ? TERRAIN_COARSER_AT[lod + 1] : 0.f);
         job.geometries[lod] = coarser;
+        if (job.flat)
+        {
+            break; // flat ground looks the same at any step
+        }
     }
 }
 
-LLVOSurfacePatch* patchObjectOf(LLDrawable* drawable)
+// The finest LOD there is, which instances name.
+U32 finestTerrainGeometry(const U32 (&geometries)[LODS])
 {
-    LLViewerObject* object = drawable && !drawable->isDead() ? drawable->getVObj().get() : nullptr;
-    return object && object->getPCode() == LLViewerObject::LL_VO_SURFACE_PATCH ? static_cast<LLVOSurfacePatch*>(object) : nullptr;
+    for (U32 id : geometries)
+    {
+        if (id != 0)
+        {
+            return id;
+        }
+    }
+    return 0;
 }
 
 void removeTerrainGeometries(const U32 (&geometries)[LODS])
@@ -1763,13 +1783,14 @@ void releaseTerrainMaterial(TerrainRegion& region, U32 material)
     }
 }
 
-// One box for every patch of the surface, from all its heights, with room for edits. A new
-// one gets its own material, and each patch moves to it as its geometry is rebuilt in it.
+// One box for every patch of the surface, from all its heights and the water's, where flat
+// patches stand, with room for edits. A new one gets its own material, and each patch moves
+// to it as its geometry is rebuilt in it.
 void boxTerrainRegion(TerrainRegion& region, LLSurface* surface)
 {
     const S32 points = surface->getGridsPerEdge();
-    F32 low = F32_MAX;
-    F32 high = -F32_MAX;
+    F32 low = surface->getRegion()->getWaterHeight();
+    F32 high = low;
     for (S32 k = 0; k < points * points; ++k)
     {
         low = llmin(low, surface->getZ(k));
@@ -1799,36 +1820,24 @@ void boxTerrainRegion(TerrainRegion& region, LLSurface* surface)
     }
 }
 
-TerrainRegion& terrainRegionOf(LLSurface* surface)
+void writeTerrainInstance(const TerrainRegion& region, TerrainPatch& state)
 {
-    const auto entry = sTerrainRegions.try_emplace(surface);
-    TerrainRegion& region = entry.first->second;
-    if (entry.second)
-    {
-        region.region = surface->getRegion();
-        region.terrain = sScene->addTerrain(region.desc);
-        boxTerrainRegion(region, surface);
-    }
-    return region;
-}
-
-void writeTerrainInstance(TerrainPatch& state)
-{
-    if (state.geometries[0] == 0)
+    const U32 finest = finestTerrainGeometry(state.geometries);
+    if (finest == 0)
     {
         return;
     }
     asr::InstanceDesc desc;
-    desc.geometry = state.geometries[0];
+    desc.geometry = finest;
     desc.material = state.material;
-    const LLVector3 origin = state.regionAgent + sRenderOrigin;
+    const LLVector3 origin = region.agent + sRenderOrigin;
     const F32 rows[12] = { 1.f, 0.f, 0.f, origin.mV[VX], 0.f, 1.f, 0.f, origin.mV[VY], 0.f, 0.f, 1.f, origin.mV[VZ] };
     std::copy(rows, rows + 12, desc.objectToWorld);
     for (U32 axis = 0; axis < 3; ++axis)
     {
         desc.lodCenter[axis] = origin.mV[axis] + state.centre.mV[axis];
     }
-    desc.lodSize = lodScale() * state.spacing;
+    desc.lodSize = lodScale() * region.spacing;
     if (state.instance == NO_INSTANCE)
     {
         state.instance = sScene->addInstance(desc);
@@ -1839,28 +1848,25 @@ void writeTerrainInstance(TerrainPatch& state)
     }
 }
 
-void startTerrainPatch(LLDrawable* drawable)
+// Its heights are in, and the viewer has generated its composition from them, after its normals.
+bool terrainPatchReady(const LLSurfacePatch* patch)
 {
-    LLVOSurfacePatch* object = patchObjectOf(drawable);
-    LLSurfacePatch* patch = object ? object->getPatch() : nullptr;
-    LLSurface* surface = patch ? patch->getSurface() : nullptr;
-    LLViewerRegion* regionp = surface ? surface->getRegion() : nullptr;
-    if (!regionp || !patch->getDataZ())
-    {
-        return;
-    }
+    return patch->getHasReceivedData() && patch->isHeightsGenerated() && patch->getDataZ();
+}
 
-    TerrainPatch& state = sTerrainPatches[drawable];
+// Sends a patch to be built: from its own data once that is in, flat at the water's height
+// before. One that is being built is asked for again once it is back.
+void startTerrainPatch(TerrainRegion& region, LLSurface* surface, U32 index)
+{
+    TerrainPatch& state = region.patches[index];
     if (state.busy)
     {
         state.again = true;
         return;
     }
-    TerrainRegion& region = terrainRegionOf(surface);
-    region.patches.insert(drawable);
-    state.surface = surface;
-    state.regionAgent = surface->getOriginAgent();
-    state.spacing = surface->getMetersPerGrid();
+    LLSurfacePatch* patch = surface->getPatch(S32(index % region.perEdge), S32(index / region.perEdge));
+    LLViewerRegion* regionp = region.region;
+    const bool real = terrainPatchReady(patch);
 
     // As LLSurfacePatch::eval() gives them to the viewer's terrain.
     auto job = std::make_shared<TerrainJob>();
@@ -1870,7 +1876,8 @@ void startTerrainPatch(LLDrawable* drawable)
     const LLVector3 origin = patch->getOriginAgent() - surface->getOriginAgent();
     const LLVector3d& global = patch->getOriginGlobal();
     const F32 noiseScale = (1.f / (4.9215f * 7.f)) * 0.2222222222f;
-    const F32* z = patch->getDataZ();
+    const F32* z = real ? patch->getDataZ() : nullptr;
+    const F32 water = regionp->getWaterHeight();
     job->heights.resize(points * points);
     job->normals.resize(points * points * 3);
     job->blends.resize(points * points * 2);
@@ -1881,44 +1888,49 @@ void startTerrainPatch(LLDrawable* drawable)
         for (U32 x = 0; x < points; ++x)
         {
             const U32 at = y * points + x;
-            job->heights[at] = z[x + y * stride];
+            job->heights[at] = z ? z[x + y * stride] : water;
             low = llmin(low, job->heights[at]);
             high = llmax(high, job->heights[at]);
-            const LLVector3& normal = patch->getNormal(x, y);
+            const LLVector3 normal = z ? patch->getNormal(x, y) : LLVector3::z_axis;
             std::copy(normal.mV, normal.mV + 3, &job->normals[at * 3]);
-            job->blends[at * 2] = regionp->getCompositionXY(llfloor(origin.mV[VX]) + S32(x), llfloor(origin.mV[VY]) + S32(y));
+            job->blends[at * 2] = z ? regionp->getCompositionXY(llfloor(origin.mV[VX]) + S32(x), llfloor(origin.mV[VY]) + S32(y)) : 0.f;
             F32 at_noise[3] = { (F32)fmod((F32)(global.mdV[VX] + x) * noiseScale, 256.f), (F32)fmod((F32)(global.mdV[VY] + y) * noiseScale, 256.f), 0.f };
             job->blends[at * 2 + 1] = llclamp(noise2(at_noise) * 0.75f + 0.5f, 0.f, 1.f);
         }
     }
 
-    // An edit past the box asks for a new one, and every patch of the region is rebuilt in it.
+    // Heights past the box ask for a new one, and every patch of the region is built again in it.
     if (low < region.box.center[2] - region.box.scale || high > region.box.center[2] + region.box.scale)
     {
         boxTerrainRegion(region, surface);
         ++sTerrainReboxed;
-        for (LLDrawable* other : region.patches)
+        for (U32 other = 0; other < region.patches.size(); ++other)
         {
-            if (other != drawable)
+            if (other != index && (finestTerrainGeometry(region.patches[other].geometries) != 0 || region.patches[other].busy))
             {
-                sTerrainReady.insert(other);
+                startTerrainPatch(region, surface, other);
             }
         }
     }
 
-    const F32 half = F32(size) * state.spacing * 0.5f;
+    const F32 half = F32(size) * region.spacing * 0.5f;
     state.centre.setVec(origin.mV[VX] + half, origin.mV[VY] + half, (low + high) * 0.5f);
     state.busy = true;
+    state.real = real;
+    state.key = real ? patch->getLastUpdateTime() : 0;
     state.job = ++sTerrainJobs;
 
-    job->drawable = drawable;
+    job->surface = surface;
+    job->handle = region.handle;
+    job->index = index;
     job->number = state.job;
     job->boxVersion = region.boxVersion;
+    job->flat = !real;
     job->box = region.box;
     job->grid.size = size;
     job->grid.origin[0] = origin.mV[VX];
     job->grid.origin[1] = origin.mV[VY];
-    job->grid.spacing = state.spacing;
+    job->grid.spacing = region.spacing;
     job->grid.heights = job->heights.data();
     job->grid.normals = job->normals.data();
     job->grid.blends = job->blends.data();
@@ -1932,39 +1944,41 @@ void startTerrainPatch(LLDrawable* drawable)
 
 void finishTerrainPatch(TerrainJob& job)
 {
-    auto found = sTerrainPatches.find(job.drawable);
-    if (found == sTerrainPatches.end() || found->second.job != job.number)
+    auto region = sTerrainRegions.find(job.surface);
+    if (region == sTerrainRegions.end() || region->second.handle != job.handle || job.index >= region->second.patches.size() ||
+        region->second.patches[job.index].job != job.number)
     {
-        removeTerrainGeometries(job.geometries); // its patch went, or came back as another
+        removeTerrainGeometries(job.geometries); // its region went, or asked for a newer build
         return;
     }
-    TerrainPatch& state = found->second;
+    TerrainRegion& owner = region->second;
+    TerrainPatch& state = owner.patches[job.index];
     state.busy = false;
-    auto region = sTerrainRegions.find(state.surface);
-    if (region == sTerrainRegions.end() || job.boxVersion != region->second.boxVersion)
+    if (job.boxVersion != owner.boxVersion)
     {
-        removeTerrainGeometries(job.geometries);
-        sTerrainReady.insert(job.drawable); // built in a box the region has left
-        return;
+        removeTerrainGeometries(job.geometries); // built in a box the region has left
+        state.again = true;
     }
-
-    U32 previous[LODS];
-    std::copy(std::begin(state.geometries), std::end(state.geometries), previous);
-    std::copy(std::begin(job.geometries), std::end(job.geometries), state.geometries);
-    const U32 previousMaterial = state.material;
-    state.material = region->second.material;
-    ++region->second.materialUsers[state.material];
-    writeTerrainInstance(state);
-    removeTerrainGeometries(previous);
-    if (previousMaterial != 0)
+    else
     {
-        releaseTerrainMaterial(region->second, previousMaterial);
+        U32 previous[LODS];
+        std::copy(std::begin(state.geometries), std::end(state.geometries), previous);
+        std::copy(std::begin(job.geometries), std::end(job.geometries), state.geometries);
+        const U32 previousMaterial = state.material;
+        state.material = owner.material;
+        ++owner.materialUsers[state.material];
+        writeTerrainInstance(owner, state);
+        removeTerrainGeometries(previous);
+        if (previousMaterial != 0)
+        {
+            releaseTerrainMaterial(owner, previousMaterial);
+        }
+        ++sTerrainBuilt;
     }
-    ++sTerrainBuilt;
-    if (state.again)
+    if (state.again && LLWorld::getInstance()->isRegionListed(owner.region))
     {
         state.again = false;
-        sTerrainReady.insert(job.drawable);
+        startTerrainPatch(owner, &owner.region->getLand(), job.index);
     }
 }
 
@@ -1982,42 +1996,23 @@ void releaseTerrainImages(TerrainRegion& region)
     }
 }
 
-void removeTerrainPatch(LLDrawable* drawable)
+// A build still running finds no region, and lets its geometry go.
+void dropTerrainRegion(TerrainRegion& region)
 {
-    sTerrainReady.erase(drawable);
-    auto found = sTerrainPatches.find(drawable);
-    if (found == sTerrainPatches.end())
+    for (const TerrainPatch& state : region.patches)
     {
-        return;
-    }
-    TerrainPatch state = found->second;
-    sTerrainPatches.erase(found); // a build still running finds nothing, and lets its geometry go
-    if (state.instance != NO_INSTANCE)
-    {
-        sScene->removeInstance(state.instance);
-    }
-    removeTerrainGeometries(state.geometries);
-
-    auto region = sTerrainRegions.find(state.surface);
-    if (region == sTerrainRegions.end())
-    {
-        return;
-    }
-    if (state.material != 0)
-    {
-        releaseTerrainMaterial(region->second, state.material);
-    }
-    region->second.patches.erase(drawable);
-    if (region->second.patches.empty())
-    {
-        for (const auto& material : region->second.materialUsers)
+        if (state.instance != NO_INSTANCE)
         {
-            sScene->removeMaterial(material.first);
+            sScene->removeInstance(state.instance);
         }
-        sScene->removeTerrain(region->second.terrain);
-        releaseTerrainImages(region->second);
-        sTerrainRegions.erase(region);
+        removeTerrainGeometries(state.geometries);
     }
+    for (const auto& material : region.materialUsers)
+    {
+        sScene->removeMaterial(material.first);
+    }
+    sScene->removeTerrain(region.terrain);
+    releaseTerrainImages(region);
 }
 
 // The layers as LLDrawPoolTerrain::renderFullShader() binds them.
@@ -2126,7 +2121,88 @@ void refreshTerrainLayers(TerrainRegion& region)
     }
 }
 
-void rewriteTerrainInstances();
+// The neighbours whose edge normals read this patch, built from their own data, are built
+// again once their data is regenerated: a forgotten update time does that.
+void rebuildTerrainNeighbours(LLSurfacePatch* patch)
+{
+    for (U32 direction = 0; direction < 8; ++direction)
+    {
+        LLSurfacePatch* neighbour = patch->getNeighborPatch(direction);
+        auto region = neighbour ? sTerrainRegions.find(neighbour->getSurface()) : sTerrainRegions.end();
+        if (region == sTerrainRegions.end())
+        {
+            continue;
+        }
+        const size_t index = size_t(neighbour - neighbour->getSurface()->getPatch(0, 0));
+        if (index < region->second.patches.size() && region->second.patches[index].real)
+        {
+            region->second.patches[index].key = 0;
+        }
+    }
+}
+
+// One look at each patch: a few compares, so every region can be watched every loop.
+void watchTerrainRegion(LLViewerRegion* regionp)
+{
+    LLSurface* surface = &regionp->getLand();
+    const S32 perEdge = surface->getPatchesPerEdge();
+    if (perEdge <= 0 || !surface->getPatch(0, 0))
+    {
+        return;
+    }
+    const auto entry = sTerrainRegions.try_emplace(surface);
+    TerrainRegion& region = entry.first->second;
+    if (entry.second)
+    {
+        region.region = regionp;
+        region.handle = regionp->getHandle();
+        region.agent = surface->getOriginAgent();
+        region.spacing = surface->getMetersPerGrid();
+        region.perEdge = U32(perEdge);
+        region.patches.resize(size_t(perEdge) * perEdge);
+        region.terrain = sScene->addTerrain(region.desc);
+        boxTerrainRegion(region, surface);
+    }
+    refreshTerrainLayers(region);
+
+    for (U32 index = 0; index < region.patches.size(); ++index)
+    {
+        TerrainPatch& state = region.patches[index];
+        LLSurfacePatch* patch = surface->getPatch(S32(index % region.perEdge), S32(index / region.perEdge));
+        if (terrainPatchReady(patch))
+        {
+            if (state.real && state.key == patch->getLastUpdateTime())
+            {
+                continue;
+            }
+            // Only its own new data reaches its neighbours: a rebuild they asked for does not.
+            if (state.seen != patch->getLastUpdateTime())
+            {
+                state.seen = patch->getLastUpdateTime();
+                rebuildTerrainNeighbours(patch);
+            }
+            startTerrainPatch(region, surface, index);
+        }
+        else if (!state.real && !state.busy && finestTerrainGeometry(state.geometries) == 0)
+        {
+            startTerrainPatch(region, surface, index); // flat until its heights come
+        }
+    }
+}
+
+void rewriteTerrainInstances()
+{
+    for (auto& entry : sTerrainRegions)
+    {
+        for (TerrainPatch& state : entry.second.patches)
+        {
+            if (state.instance != NO_INSTANCE)
+            {
+                writeTerrainInstance(entry.second, state);
+            }
+        }
+    }
+}
 
 void updateTerrain()
 {
@@ -2137,29 +2213,25 @@ void updateTerrain()
         lastScale = lodScale();
         rewriteTerrainInstances();
     }
-    for (auto& entry : sTerrainRegions)
-    {
-        if (LLWorld::getInstance()->isRegionListed(entry.second.region))
-        {
-            refreshTerrainLayers(entry.second);
-        }
-    }
-    std::vector<LLDrawable*> ready(sTerrainReady.begin(), sTerrainReady.end());
-    sTerrainReady.clear();
-    for (LLDrawable* drawable : ready)
-    {
-        startTerrainPatch(drawable);
-    }
-}
 
-void rewriteTerrainInstances()
-{
-    for (auto& entry : sTerrainPatches)
+    // A region LLWorld no longer lists may be freed already: its entry is all that is used.
+    const LLWorld::region_list_t& listed = LLWorld::getInstance()->getRegionList();
+    for (auto next = sTerrainRegions.begin(); next != sTerrainRegions.end();)
     {
-        if (entry.second.instance != NO_INSTANCE)
+        const TerrainRegion& region = next->second;
+        const bool kept = std::find(listed.begin(), listed.end(), region.region) != listed.end() && &region.region->getLand() == next->first &&
+                          region.region->getHandle() == region.handle;
+        if (kept)
         {
-            writeTerrainInstance(entry.second);
+            ++next;
+            continue;
         }
+        dropTerrainRegion(next->second);
+        next = sTerrainRegions.erase(next);
+    }
+    for (LLViewerRegion* regionp : listed)
+    {
+        watchTerrainRegion(regionp);
     }
 }
 
@@ -2630,15 +2702,23 @@ void logCounts()
         {
             LL_WARNS("ASRenderer") << "full cull lists turned away " << stats.droppedEntries << " entries since the start" << LL_ENDL;
         }
+        size_t terrainPatches = 0;
         U32 terrainDrawn = 0;
+        U32 terrainReal = 0;
         U32 terrainBusy = 0;
-        for (const auto& patch : sTerrainPatches)
+        for (const auto& region : sTerrainRegions)
         {
-            terrainDrawn += patch.second.instance != NO_INSTANCE ? 1 : 0;
-            terrainBusy += patch.second.busy ? 1 : 0;
+            terrainPatches += region.second.patches.size();
+            for (const TerrainPatch& patch : region.second.patches)
+            {
+                terrainDrawn += patch.instance != NO_INSTANCE ? 1 : 0;
+                terrainReal += patch.instance != NO_INSTANCE && patch.real ? 1 : 0;
+                terrainBusy += patch.busy ? 1 : 0;
+            }
         }
-        LL_INFOS("ASRenderer") << "terrain: " << sTerrainRegions.size() << " regions, " << terrainDrawn << " of " << sTerrainPatches.size() << " patches drawn, "
-                               << terrainBusy << " building, " << sTerrainBuilt << " built and " << sTerrainReboxed << " regions reboxed since the last log" << LL_ENDL;
+        LL_INFOS("ASRenderer") << "terrain: " << sTerrainRegions.size() << " regions, " << terrainDrawn << " of " << terrainPatches << " patches drawn, "
+                               << terrainDrawn - terrainReal << " of them flat while their heights come, " << terrainBusy << " building, " << sTerrainBuilt
+                               << " built and " << sTerrainReboxed << " regions reboxed since the last log" << LL_ENDL;
         sTerrainBuilt = 0;
         sTerrainReboxed = 0;
 
@@ -2704,9 +2784,7 @@ void ASRWorld::stop()
     sCameraTravel = 0.0;
     sObjects.clear();
     sLeftOut.clear();
-    sTerrainPatches.clear();
     sTerrainRegions.clear();
-    sTerrainReady.clear();
     sMaterials.clear();
     sSlotOwners.clear();
     sTextures.clear();
@@ -2744,7 +2822,6 @@ void ASRWorld::objectRemoved(LLDrawable* drawable)
         sShifted = nullptr;
     }
     dropObject(drawable);
-    removeTerrainPatch(drawable);
 }
 
 void ASRWorld::updateTerrainGL()
@@ -2765,10 +2842,6 @@ void ASRWorld::updateTerrainGL()
         next = queue.erase(next);
         patch->mInQ = false;
         patch->updateGL();
-        if (patch->mDrawable.notNull())
-        {
-            sTerrainReady.insert(patch->mDrawable.get());
-        }
     }
 }
 
@@ -2822,9 +2895,9 @@ void ASRWorld::worldShifted(const LLVector3& offset)
     // half a millimetre of precision.
     constexpr F32 LARGEST_ORIGIN = 8192.f;
     sRenderOrigin -= offset;
-    for (auto& patch : sTerrainPatches)
+    for (auto& region : sTerrainRegions)
     {
-        patch.second.regionAgent += offset;
+        region.second.agent += offset;
     }
     if (gAgent.getTeleportState() != LLAgent::TELEPORT_NONE || sRenderOrigin.length() > LARGEST_ORIGIN)
     {
