@@ -1859,6 +1859,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             printf("resolve guards: bits %u, %llu pixels, largest bad value %u\n", stats.guardBits, (unsigned long long)stats.guardPixels, stats.guardValue);
         }
         expect(stats.guardPixels == 0, "the resolve reads nothing out of place");
+        expect(stats.droppedEntries == 0, "no cull list was full");
         double total = 0.0;
         for (uint32_t i = 0; i < stats.passCount; ++i)
         {

@@ -57,7 +57,8 @@ layout(buffer_reference, std430) buffer CountsRef
     DrawArguments late[LISTS];
     WorkCount retest;
     WorkCount groupWork[2]; // early, late
-    uint guard[4]; // the resolve's, see GpuSceneCounts::guard
+    uint guard[3]; // the resolve's, see GpuSceneCounts::guard
+    uint dropped;  // entries a full list turned away
 };
 layout(buffer_reference, std430) writeonly buffer ListWriteRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer PyramidRef { float values[]; };
@@ -180,9 +181,27 @@ float scaleBoundOf(Instance instance)
     return sqrt(dot(row0, row0) + dot(row1, row1) + dot(row2, row2));
 }
 
+// Every list write takes its place with an atomic add, checked against the room left. A
+// thread that finds the list full takes its add back, so the count ends at the entries
+// written and is what the draw or dispatch that reads it covers. No place is handed out
+// twice: the count is at the room or above while any thread is taking an add back.
+const uint TAKE_BACK = 0xFFFFFFFFu; // adds as minus one
+
+void turnAway(CountsRef counts)
+{
+    atomicAdd(counts.dropped, 1u);
+}
+
+// Where a list's room ends: where the next one starts.
+uint listEnd(ViewRef view, uint list)
+{
+    return list + 1u < LISTS ? view.listBase[list + 1u] : view.visibleEnd;
+}
+
 void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, uint triangles)
 {
     const uint list = listOf(instance.flags, triangles);
+    const uint room = listEnd(view, list) - view.listBase[list];
     CountsRef counts = CountsRef(push.output_counts);
     ListWriteRef visible = ListWriteRef(push.visible);
     if (latePhase())
@@ -191,6 +210,12 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
         // numbers one entry of one list whichever draw made it.
         const uint earlyCount = counts.early[list].instanceCount;
         const uint slot = atomicAdd(counts.late[list].instanceCount, 1u);
+        if (slot >= room - earlyCount)
+        {
+            atomicAdd(counts.late[list].instanceCount, TAKE_BACK);
+            turnAway(counts);
+            return;
+        }
         if (slot == 0u)
         {
             counts.late[list].firstInstance = earlyCount;
@@ -200,14 +225,26 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
     else
     {
         const uint slot = atomicAdd(counts.early[list].instanceCount, 1u);
+        if (slot >= room)
+        {
+            atomicAdd(counts.early[list].instanceCount, TAKE_BACK);
+            turnAway(counts);
+            return;
+        }
         visible.items[view.listBase[list] + slot] = ListEntry(instanceIndex, clusterId);
     }
 }
 
-void retest(uint instanceIndex, uint clusterId)
+void retest(ViewRef view, uint instanceIndex, uint clusterId)
 {
     CountsRef counts = CountsRef(push.output_counts);
     const uint slot = atomicAdd(counts.retest.entries, 1u);
+    if (slot >= view.visibleEnd + view.groupEnd + view.instanceEnd)
+    {
+        atomicAdd(counts.retest.entries, TAKE_BACK);
+        turnAway(counts);
+        return;
+    }
     if ((slot & 63u) == 0u)
     {
         atomicAdd(counts.retest.groups[0], 1u);
@@ -217,16 +254,22 @@ void retest(uint instanceIndex, uint clusterId)
 
 // A group whose clusters are to be tested, by the groups job of the same phase. The late
 // part of the list carries on where the early part ended.
-void addGroup(uint instanceIndex, uint groupId)
+void addGroup(ViewRef view, uint instanceIndex, uint groupId)
 {
     CountsRef counts = CountsRef(push.output_counts);
     const uint work = latePhase() ? 1u : 0u;
+    const uint base = work == 1u ? counts.groupWork[0].entries : 0u;
     const uint slot = atomicAdd(counts.groupWork[work].entries, 1u);
+    if (slot >= view.groupEnd - base)
+    {
+        atomicAdd(counts.groupWork[work].entries, TAKE_BACK);
+        turnAway(counts);
+        return;
+    }
     if (slot % GROUPS_PER_WORKGROUP == 0u)
     {
         atomicAdd(counts.groupWork[work].groups[0], 1u);
     }
-    const uint base = work == 1u ? counts.groupWork[0].entries : 0u;
     ListWriteRef(push.groups).items[base + slot] = ListEntry(instanceIndex, groupId);
 }
 
@@ -281,7 +324,7 @@ void testCluster(ViewRef view, Instance instance, uint instanceIndex, uint clust
     }
     else if (earlyPhase())
     {
-        retest(instanceIndex, clusterId);
+        retest(view, instanceIndex, clusterId);
     }
 }
 
@@ -300,11 +343,11 @@ void testGroup(ViewRef view, Instance instance, uint instanceIndex, uint groupId
     }
     if (!hiddenByPyramid(view, center, radius))
     {
-        addGroup(instanceIndex, groupId);
+        addGroup(view, instanceIndex, groupId);
     }
     else if (earlyPhase())
     {
-        retest(instanceIndex, RETEST_GROUP | groupId);
+        retest(view, instanceIndex, RETEST_GROUP | groupId);
     }
 }
 
@@ -328,7 +371,7 @@ void cullInstance(ViewRef view, uint instanceIndex)
     {
         if (push.phase == CULL_EARLY)
         {
-            retest(instanceIndex, WHOLE_INSTANCE);
+            retest(view, instanceIndex, WHOLE_INSTANCE);
         }
         return;
     }
@@ -409,7 +452,7 @@ void main()
             const ClusterGroup group = ClusterGroupsRef(push.clusters).items[groupId];
             if (!hiddenByPyramid(view, transformPoint(instance.rows, group.center), group.radius * scaleBound))
             {
-                addGroup(entry.instance, groupId);
+                addGroup(view, entry.instance, groupId);
             }
             return;
         }

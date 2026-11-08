@@ -219,7 +219,7 @@ uint64_t SceneStore::groupCapacity() const
     {
         capacity *= 2;
     }
-    return capacity;
+    return std::min<uint64_t>(capacity, MAX_VISIBLE_CLUSTERS);
 }
 
 uint64_t SceneStore::freeChunkBytes() const

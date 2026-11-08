@@ -2061,6 +2061,10 @@ void logCounts()
             LL_WARNS("ASRenderer") << "resolve guards since the start: bits " << stats.guardBits << " (1 entry, 2 instance, 4 cluster, 8 material, 16 addresses), "
                                    << stats.guardPixels << " pixels, largest bad value " << stats.guardValue << LL_ENDL;
         }
+        if (stats.droppedEntries != 0)
+        {
+            LL_WARNS("ASRenderer") << "full cull lists turned away " << stats.droppedEntries << " entries since the start" << LL_ENDL;
+        }
 
         std::ostringstream reasons;
         for (const auto& reason : leftOut)

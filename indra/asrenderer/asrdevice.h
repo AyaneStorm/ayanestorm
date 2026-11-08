@@ -94,6 +94,7 @@ struct SceneStats
     uint32_t guardBits = 0;           // temporary: the resolve's failed checks since the start, GUARD_*
     uint64_t guardPixels = 0;         // pixels they stopped, since the start
     uint32_t guardValue = 0;          // the largest bad value seen
+    uint64_t droppedEntries = 0;      // turned away by a full cull list, since the start
     uint64_t auditErrorPixels = 0;    // pixels that a wrongly hidden cluster should have covered
     uint64_t auditedFrames = 0;
     uint64_t pendingGeometries = 0;

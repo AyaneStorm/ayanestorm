@@ -98,7 +98,7 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint visibleEnd; // entries of the visible list and of the two tables, for the resolve's checks
     uint clusterEnd;
     uint materialEnd;
-    uint unusedEnd;
+    uint groupEnd;   // entries of the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };

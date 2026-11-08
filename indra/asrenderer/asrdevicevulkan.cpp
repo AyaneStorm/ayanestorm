@@ -2162,6 +2162,7 @@ private:
         view.visibleEnd = base;
         view.clusterEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
         view.materialEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
+        view.groupEnd = uint32_t(mSceneStore.groupCapacity());
         view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
@@ -2382,6 +2383,7 @@ private:
             mSceneFrameStats.guardBits |= counts->guardBits;
             mSceneFrameStats.guardPixels += counts->guardPixels;
             mSceneFrameStats.guardValue = std::max(mSceneFrameStats.guardValue, counts->guardValue);
+            mSceneFrameStats.droppedEntries += counts->dropped;
         }
         if (mFeedbackRead[slot].number != 0)
         {

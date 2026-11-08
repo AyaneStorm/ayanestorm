@@ -222,7 +222,10 @@ struct GpuSceneCounts
     uint32_t guardBits;
     uint32_t guardPixels;
     uint32_t guardValue;
-    uint32_t unused;
+
+    // Entries a full list turned away this frame. The lists are sized for every cluster of
+    // every instance, so this stays 0 below the MAX_VISIBLE_CLUSTERS cap.
+    uint32_t dropped;
 };
 static_assert(sizeof(GpuSceneCounts) == 576, "shaders read this layout");
 
@@ -350,7 +353,7 @@ struct GpuSceneView
     uint32_t visibleEnd;      // entries in the visible list, and of the two tables, which the
     uint32_t clusterEnd;      // resolve checks before it reads through them: see GpuSceneCounts::guard
     uint32_t materialEnd;
-    uint32_t unused;
+    uint32_t groupEnd;        // entries in the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
 };
 static_assert(sizeof(GpuSceneView) == 480, "shaders read this layout");
 
