@@ -1658,7 +1658,8 @@ F64 sPartWorst[PART_COUNT] = {};
 constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI",
                                                                                  "network", "idle callbacks", "window update", "object list", "cleanup", "move", "particles", "apparent angles",
                                                                                  "input and coroutines", "idle() as a whole, counted again", "snapshots", "texture threads", "mesh update",
-                                                                                 "display() as a whole, counted again", "sleep and threads at the end, counted again" };
+                                                                                 "display() as a whole, counted again", "sleep and threads at the end, counted again",
+                                                                                 "idle() start and agent update", "agent position", "effects and regions", "camera and media", "audio" };
 F64 sMainSeconds[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sMainWorst[ASRWorld::MAIN_PART_COUNT] = {};
 F64 sWorstLoop = 0.0;

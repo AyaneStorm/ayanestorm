@@ -6352,6 +6352,7 @@ void LLAppViewer::idle()
         // real-time key/controller input and resubmitted next frame.
         gAgent.resetControlFlags();
     }
+    ASRWorld::addMainTime(ASRWorld::MAIN_IDLE_START, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     //////////////////////////////////////
     //
@@ -6516,9 +6517,11 @@ void LLAppViewer::idle()
     {
         // Handle pending gesture processing
         LL_RECORD_BLOCK_TIME(FTM_AGENT_POSITION);
+        part_timer.reset(); // <AS:Chanayane/>
         LLGestureMgr::instance().update();
 
         gAgent.updateAgentPosition(gFrameDTClamped, yaw, current_mouse.mX, current_mouse.mY);
+        ASRWorld::addMainTime(ASRWorld::MAIN_AGENT_POSITION, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
     }
 
     {
@@ -6567,6 +6570,7 @@ void LLAppViewer::idle()
     // dead objects.
     //
 
+    part_timer.reset(); // <AS:Chanayane/>
     {
         LL_RECORD_BLOCK_TIME(FTM_HUD_EFFECTS);
         LLSelectMgr::getInstance()->updateEffects();
@@ -6621,6 +6625,7 @@ void LLAppViewer::idle()
     {
         gWindVec.setVec(0.0f, 0.0f, 0.0f);
     }
+    ASRWorld::addMainTime(ASRWorld::MAIN_REGIONS, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     //////////////////////////////////////
     //
@@ -6642,6 +6647,7 @@ void LLAppViewer::idle()
         LLWorld::getInstance()->updateParticles();
     }
     ASRWorld::addMainTime(ASRWorld::MAIN_PARTICLES, part_timer.getElapsedTimeF32()); // temporary
+    part_timer.reset();
     // </AS:Chanayane>
 
     if (gAgentPilot.isPlaying() && gAgentPilot.getOverrideCamera())
@@ -6668,6 +6674,7 @@ void LLAppViewer::idle()
     // Update marketplace
     LLMarketplaceInventoryImporter::update();
     LLMarketplaceInventoryNotifications::update();
+    ASRWorld::addMainTime(ASRWorld::MAIN_CAMERA_MEDIA, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     // objects and camera should be in sync, do LOD calculations now
     {
@@ -6678,6 +6685,7 @@ void LLAppViewer::idle()
     }
 
     // Update AV render info
+    part_timer.reset(); // <AS:Chanayane/>
     LLAvatarRenderInfoAccountant::getInstance()->idle();
 
     {
@@ -6693,6 +6701,7 @@ void LLAppViewer::idle()
             gAudiop->idle();
         }
     }
+    ASRWorld::addMainTime(ASRWorld::MAIN_AUDIO, part_timer.getElapsedTimeF32()); // <AS:Chanayane/>
 
     // Handle shutdown process, for example,
     // wait for floaters to close, send quit message,
