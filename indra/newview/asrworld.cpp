@@ -1643,7 +1643,8 @@ void followTextures()
 //
 // Every region LLWorld lists is watched here, each loop. Its layers are tracked from the start,
 // so their textures load whether or not its heights are in. A patch whose heights have not
-// come shows flat at the water's height, in the region's layers, so ground is never empty.
+// come shows the surface's heights as they stand, flat at 0 with edges its neighbours wrote,
+// in the region's first layer, so ground is never empty and always continuous.
 // Once its heights are in and the viewer has generated its composition, it is built for real,
 // and again whenever its data changes: LLSurfacePatch::dirtyZ() stamps a new update time.
 // A patch whose heights change also rebuilds its built neighbours, whose edge normals read
@@ -1783,14 +1784,13 @@ void releaseTerrainMaterial(TerrainRegion& region, U32 material)
     }
 }
 
-// One box for every patch of the surface, from all its heights and the water's, where flat
-// patches stand, with room for edits. A new one gets its own material, and each patch moves
-// to it as its geometry is rebuilt in it.
+// One box for every patch of the surface, from all its heights, with room for edits. A new
+// one gets its own material, and each patch moves to it as its geometry is rebuilt in it.
 void boxTerrainRegion(TerrainRegion& region, LLSurface* surface)
 {
     const S32 points = surface->getGridsPerEdge();
-    F32 low = surface->getRegion()->getWaterHeight();
-    F32 high = low;
+    F32 low = F32_MAX;
+    F32 high = -F32_MAX;
     for (S32 k = 0; k < points * points; ++k)
     {
         low = llmin(low, surface->getZ(k));
@@ -1854,8 +1854,10 @@ bool terrainPatchReady(const LLSurfacePatch* patch)
     return patch->getHasReceivedData() && patch->isHeightsGenerated() && patch->getDataZ();
 }
 
-// Sends a patch to be built: from its own data once that is in, flat at the water's height
-// before. One that is being built is asked for again once it is back.
+// Sends a patch to be built, from the surface's heights as they stand, as OpenGL does: before
+// its own come they are 0, flat, except along edges a neighbour with data has written, so the
+// ground is continuous whatever has arrived. Its blend waits for its composition. One that is
+// being built is asked for again once it is back.
 void startTerrainPatch(TerrainRegion& region, LLSurface* surface, U32 index)
 {
     TerrainPatch& state = region.patches[index];
@@ -1876,8 +1878,7 @@ void startTerrainPatch(TerrainRegion& region, LLSurface* surface, U32 index)
     const LLVector3 origin = patch->getOriginAgent() - surface->getOriginAgent();
     const LLVector3d& global = patch->getOriginGlobal();
     const F32 noiseScale = (1.f / (4.9215f * 7.f)) * 0.2222222222f;
-    const F32* z = real ? patch->getDataZ() : nullptr;
-    const F32 water = regionp->getWaterHeight();
+    const F32* z = patch->getDataZ();
     job->heights.resize(points * points);
     job->normals.resize(points * points * 3);
     job->blends.resize(points * points * 2);
@@ -1888,12 +1889,12 @@ void startTerrainPatch(TerrainRegion& region, LLSurface* surface, U32 index)
         for (U32 x = 0; x < points; ++x)
         {
             const U32 at = y * points + x;
-            job->heights[at] = z ? z[x + y * stride] : water;
+            job->heights[at] = z[x + y * stride];
             low = llmin(low, job->heights[at]);
             high = llmax(high, job->heights[at]);
-            const LLVector3 normal = z ? patch->getNormal(x, y) : LLVector3::z_axis;
+            const LLVector3& normal = patch->getNormal(x, y); // the surface starts with them all up
             std::copy(normal.mV, normal.mV + 3, &job->normals[at * 3]);
-            job->blends[at * 2] = z ? regionp->getCompositionXY(llfloor(origin.mV[VX]) + S32(x), llfloor(origin.mV[VY]) + S32(y)) : 0.f;
+            job->blends[at * 2] = real ? regionp->getCompositionXY(llfloor(origin.mV[VX]) + S32(x), llfloor(origin.mV[VY]) + S32(y)) : 0.f;
             F32 at_noise[3] = { (F32)fmod((F32)(global.mdV[VX] + x) * noiseScale, 256.f), (F32)fmod((F32)(global.mdV[VY] + y) * noiseScale, 256.f), 0.f };
             job->blends[at * 2 + 1] = llclamp(noise2(at_noise) * 0.75f + 0.5f, 0.f, 1.f);
         }
@@ -2121,8 +2122,11 @@ void refreshTerrainLayers(TerrainRegion& region)
     }
 }
 
-// The neighbours whose edge normals read this patch, built from their own data, are built
-// again once their data is regenerated: a forgotten update time does that.
+// New heights reach the neighbours: the viewer has copied this patch's edges into their
+// edge rows (LLSurface::decompressDCTPatch()), and their normals along it read it, but it only
+// marks them dirty, with no new update time. A neighbour built from its own data is built
+// again once the viewer has regenerated it: a forgotten update time does that. One still
+// waiting for its heights is built again now, with the new edge.
 void rebuildTerrainNeighbours(LLSurfacePatch* patch)
 {
     for (U32 direction = 0; direction < 8; ++direction)
@@ -2134,9 +2138,18 @@ void rebuildTerrainNeighbours(LLSurfacePatch* patch)
             continue;
         }
         const size_t index = size_t(neighbour - neighbour->getSurface()->getPatch(0, 0));
-        if (index < region->second.patches.size() && region->second.patches[index].real)
+        if (index >= region->second.patches.size())
         {
-            region->second.patches[index].key = 0;
+            continue;
+        }
+        TerrainPatch& state = region->second.patches[index];
+        if (state.real)
+        {
+            state.key = 0;
+        }
+        else if (state.busy || finestTerrainGeometry(state.geometries) != 0)
+        {
+            startTerrainPatch(region->second, neighbour->getSurface(), U32(index));
         }
     }
 }
