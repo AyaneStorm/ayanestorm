@@ -446,6 +446,12 @@ bool LLToolCamera::handleHover(S32 x, S32 y, MASK mask)
         else if (gCameraBtnZoom)
         {
             // Zoom tool
+            // <AS:Chanayane> With the new renderer, by the mouse's own motion: see asrcameraturn.h.
+            if (hasMouseCapture() && ASRCameraTurn::zoomToolOrbit(mMouseSteering, mOutsideSlopY))
+            {
+            }
+            else
+            // </AS:Chanayane>
             if (hasMouseCapture())
             {
 

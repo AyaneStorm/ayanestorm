@@ -119,6 +119,7 @@ bool sOrbitRaw = false;
 F32 sOrbitDx = 0.f;
 F32 sOrbitDy = 0.f;
 bool sRawOrbiting = false;
+bool sOrbitPitches = false; // the drag up and down orbits over, as the render thread shows
 
 // Temporary: the Mac never turns a frame ahead of the main thread, and these find at which
 // step the turn stops, counted since the last log.
@@ -557,6 +558,31 @@ bool ASRCameraTurn::orbit()
     const F32 radians_per_unit = orbitBy(sOrbitDx, sOrbitDy);
     turned(Tool::Orbit, -radians_per_unit, -radians_per_unit);
     sRawOrbiting = true;
+    sOrbitPitches = true;
+    gViewerWindow->moveCursorToCenter();
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool ASRCameraTurn::zoomToolOrbit(bool mouse_steering, bool outside_slop_y)
+{
+#if ASR_TURN_SUPPORTED
+    if (!sOrbitRaw)
+    {
+        return false;
+    }
+    const bool pitches = mouse_steering && outside_slop_y;
+    const F32 radians_per_unit = orbitBy(sOrbitDx, pitches ? sOrbitDy : 0.f);
+    if (!mouse_steering && outside_slop_y && sOrbitDy != 0.f)
+    {
+        const F32 IN_FACTOR = 0.99f; // LLToolCamera's
+        gAgentCamera.cameraZoomIn(powf(IN_FACTOR, sOrbitDy));
+    }
+    turned(Tool::Orbit, -radians_per_unit, pitches ? -radians_per_unit : 0.f);
+    sRawOrbiting = true;
+    sOrbitPitches = pitches;
     gViewerWindow->moveCursorToCenter();
     return true;
 #else
@@ -569,15 +595,17 @@ void ASRCameraTurn::endOrbit()
 #if ASR_TURN_SUPPORTED
     if (sRawOrbiting)
     {
+        // Only what the render thread has shown: the zoom tool's drag zoom it never showed.
         F32 dx = 0.f;
         F32 dy = 0.f;
         if (takeMotion(0, 0, dx, dy))
         {
-            orbitBy(dx, dy);
+            orbitBy(dx, sOrbitPitches ? dy : 0.f);
         }
     }
     sRawOrbiting = false;
     sOrbitRaw = false;
+    sOrbitPitches = false;
 #endif
 }
 
