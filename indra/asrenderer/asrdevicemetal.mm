@@ -241,6 +241,7 @@ public:
             const std::chrono::steady_clock::time_point frameStart = std::chrono::steady_clock::now();
             mFrameSeconds = mFrame != 0 ? std::chrono::duration<double>(frameStart - mPreviousFrameStart).count() : 0.0;
             mPreviousFrameStart = frameStart;
+            releaseFreedTextures();
             mRetiredTextures.run(input.ui ? input.ui->generation : 0, mFrame, FRAMES_IN_FLIGHT, [this](uint32_t retired)
             {
                 destroyTexture(retired);
@@ -1320,24 +1321,50 @@ private:
         }
     }
 
+    // A material can still name this slot for a moment, so the slot reads white from now
+    // on. The texture itself goes later: frames already recorded may still sample it
+    // through the argument buffer, which keeps nothing alive, and freeing it under them
+    // was a GPU page fault in the resolve pass.
     void destroyTexture(uint32_t slot)
     {
-        Texture& texture = mTextureObjects[slot];
-        if (texture.texture)
-        {
-            if (@available(macOS 15.0, *))
-            {
-                [(id<MTLResidencySet>)mResidency removeAllocation:texture.texture];
-                [(id<MTLResidencySet>)mResidency commit];
-            }
-            mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
-        }
-        texture = Texture();
-
-        // A material can still name this slot for a moment, and white is safe to read.
         if (slot != 0 && mTextureObjects[0].texture)
         {
             [mArgumentEncoder setTexture:mTextureObjects[0].texture atIndex:slot];
+        }
+        Texture& texture = mTextureObjects[slot];
+        if (texture.texture)
+        {
+            mFreedTextures.push_back({ texture.texture, mFrame + FRAMES_IN_FLIGHT + 1, texture.bytes });
+        }
+        texture = Texture();
+    }
+
+    // Lets go of textures that no recorded frame can sample any more.
+    void releaseFreedTextures()
+    {
+        bool removed = false;
+        for (size_t i = 0; i < mFreedTextures.size();)
+        {
+            if (mFrame < mFreedTextures[i].frame)
+            {
+                ++i;
+                continue;
+            }
+            if (@available(macOS 15.0, *))
+            {
+                [(id<MTLResidencySet>)mResidency removeAllocation:mFreedTextures[i].texture];
+                removed = true;
+            }
+            mMemoryBudget.release(MemoryCategory::Textures, mFreedTextures[i].bytes);
+            mFreedTextures[i] = mFreedTextures.back();
+            mFreedTextures.pop_back();
+        }
+        if (removed)
+        {
+            if (@available(macOS 15.0, *))
+            {
+                [(id<MTLResidencySet>)mResidency commit];
+            }
         }
     }
 
@@ -1499,6 +1526,14 @@ private:
     std::vector<TextureCommand> mTextureCommands; // taken, not yet run
     size_t mTextureCommandsDone = 0;              // the front of mTextureCommands already run
     RetiredTextures mRetiredTextures;
+
+    struct FreedTexture
+    {
+        id<MTLTexture> texture;
+        uint64_t frame; // released from this frame on
+        uint64_t bytes;
+    };
+    std::vector<FreedTexture> mFreedTextures;     // destroyed, waiting for the frames that may sample them
     id<MTLBuffer> mUploadRing = nil;              // texture pixels, written by the main thread
     uint64_t mUploadPieceBytes = 0;               // the most one frame copies from it
     id<MTLBuffer> mZeros = nil;

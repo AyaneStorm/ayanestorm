@@ -1639,24 +1639,43 @@ private:
                        BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, texture.mipLevels - 1);
     }
 
+    // A material can still name this slot for a moment, so the slot reads white from now
+    // on. The image itself goes later: frames already recorded may still sample it through
+    // the bindless array, and on Metal freeing it under them was a GPU page fault.
     void destroyTexture(uint32_t slot)
     {
-        Texture& texture = mTextureObjects[slot];
-        if (texture.view != VK_NULL_HANDLE)
-        {
-            vkDestroyImageView(mDevice, texture.view, nullptr);
-        }
-        if (texture.image != VK_NULL_HANDLE)
-        {
-            vmaDestroyImage(mAllocator, texture.image, texture.allocation);
-            mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
-        }
-        texture = Texture();
-
-        // A material can still name this slot for a moment, and white is safe to read.
         if (slot != 0 && !mShuttingDown && mTextureObjects[0].view != VK_NULL_HANDLE)
         {
             writeTextureDescriptor(slot, mTextureObjects[0].view);
+        }
+        Texture& texture = mTextureObjects[slot];
+        if (texture.image != VK_NULL_HANDLE || texture.view != VK_NULL_HANDLE)
+        {
+            mFreedTextures.push_back({ texture, mFrame + FRAMES_IN_FLIGHT + 1 });
+        }
+        texture = Texture();
+        if (mShuttingDown)
+        {
+            releaseFreedTextures(true); // the device is idle
+        }
+    }
+
+    // Destroys images no recorded frame can sample any more, or all of them.
+    void releaseFreedTextures(bool all)
+    {
+        while (!mFreedTextures.empty() && (all || mFreedTextures.front().frame <= mFrame))
+        {
+            Texture& texture = mFreedTextures.front().texture;
+            if (texture.view != VK_NULL_HANDLE)
+            {
+                vkDestroyImageView(mDevice, texture.view, nullptr);
+            }
+            if (texture.image != VK_NULL_HANDLE)
+            {
+                vmaDestroyImage(mAllocator, texture.image, texture.allocation);
+                mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
+            }
+            mFreedTextures.pop_front();
         }
     }
 
@@ -2486,6 +2505,7 @@ private:
         }
 
         const auto retireStart = std::chrono::steady_clock::now();
+        releaseFreedTextures(false);
         mRetiredTextures.run(input.ui ? input.ui->generation : 0, mFrame, FRAMES_IN_FLIGHT, [this](uint32_t retired)
         {
             destroyTexture(retired);
@@ -2728,6 +2748,13 @@ private:
     TextureFeedback::Window mFeedbackEnding;                 // the window this frame ends, when it ends one
     uint32_t mFeedbackValue = 0;                             // GpuSceneView::feedback for this frame
     std::deque<RetiredBuffer> mRetiredBuffers;
+
+    struct FreedTexture
+    {
+        Texture texture;
+        uint64_t frame; // destroyed from this frame on
+    };
+    std::deque<FreedTexture> mFreedTextures; // destroyed, waiting for the frames that may sample them
     std::vector<VkBufferCopy> mSceneRegions;
     VkDescriptorSetLayout mSceneSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool mScenePool = VK_NULL_HANDLE;
