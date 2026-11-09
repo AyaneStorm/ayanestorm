@@ -275,8 +275,7 @@ public:
             {
                 [encoder waitForFence:mSceneFence beforeStages:MTLRenderStageFragment];
                 [encoder setRenderPipelineState:mCompositePipeline];
-                [encoder setFragmentTexture:mAlbedoTarget atIndex:1];
-                [encoder setFragmentTexture:mNormalTarget atIndex:2];
+                [encoder setFragmentTexture:mSceneColorTarget atIndex:9];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
             }
             if (input.testTriangle)
@@ -475,7 +474,7 @@ private:
 
         mVisibilityPipeline = createVisibilityPipeline(visibilityVertex, visibilityFragment, error);
         mMaskedPipeline = createVisibilityPipeline(maskedVertex, maskedFragment, error);
-        if (!mVisibilityPipeline || !mMaskedPipeline)
+        if (!mVisibilityPipeline || !mMaskedPipeline || !createMacOITPipelines(shaderDir, error))
         {
             return false;
         }
@@ -650,6 +649,198 @@ private:
         return texture;
     }
 
+    // Mac OIT, the native renderer's transparency, kept in one place: its targets, its
+    // pipelines and its passes. Another transparency would replace this block and the passes
+    // of declareMacOIT(), making the scene colour the same way.
+    struct MacOITResources
+    {
+        id<MTLTexture> moments = nil;   // set 1 binding 4
+        id<MTLTexture> tailDepth = nil; // 5
+        id<MTLTexture> color = nil;     // 6
+        id<MTLTexture> weights = nil;   // 7
+        id<MTLBuffer> state = nil;      // see macoitBytes()
+        id<MTLRenderPipelineState> keys = nil;
+        id<MTLRenderPipelineState> tail = nil;
+        id<MTLRenderPipelineState> colorPass = nil;
+        id<MTLComputePipelineState> resolve = nil;
+        id<MTLDepthStencilState> depthState = nil; // tested against the opaque depth, never written
+    };
+
+    id<MTLRenderPipelineState> createMacOITPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, std::initializer_list<MTLPixelFormat> colors,
+                                                    std::string& error)
+    {
+        MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = vertex;
+        descriptor.fragmentFunction = fragment;
+        NSUInteger index = 0;
+        for (MTLPixelFormat format : colors)
+        {
+            // Every target adds, as the OpenGL version's accumulations do.
+            MTLRenderPipelineColorAttachmentDescriptor* attachment = descriptor.colorAttachments[index++];
+            attachment.pixelFormat = format;
+            attachment.blendingEnabled = YES;
+            attachment.rgbBlendOperation = MTLBlendOperationAdd;
+            attachment.alphaBlendOperation = MTLBlendOperationAdd;
+            attachment.sourceRGBBlendFactor = MTLBlendFactorOne;
+            attachment.destinationRGBBlendFactor = MTLBlendFactorOne;
+            attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+            attachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+        }
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        NSError* failure = nil;
+        id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        if (!pipeline)
+        {
+            error = std::string("Mac OIT pipeline: ") + failure.localizedDescription.UTF8String;
+        }
+        return pipeline;
+    }
+
+    bool createMacOITPipelines(const std::string& shaderDir, std::string& error)
+    {
+        id<MTLFunction> vertex = loadFunction(shaderDir, "asrSceneMacOITV", error);
+        id<MTLFunction> keys = loadFunction(shaderDir, "asrSceneMacOITKeysF", error);
+        id<MTLFunction> tail = loadFunction(shaderDir, "asrSceneMacOITTailF", error);
+        id<MTLFunction> color = loadFunction(shaderDir, "asrSceneMacOITColorF", error);
+        mMacOIT.resolve = createComputePipeline(shaderDir, "asrSceneMacOITResolveC", error);
+        if (!vertex || !keys || !tail || !color || !mMacOIT.resolve)
+        {
+            return false;
+        }
+        mMacOIT.keys = createMacOITPipeline(vertex, keys, {}, error);
+        mMacOIT.tail = createMacOITPipeline(vertex, tail, { MTLPixelFormatRGBA32Float, MTLPixelFormatR32Float }, error);
+        mMacOIT.colorPass = createMacOITPipeline(vertex, color, { MTLPixelFormatRGBA16Float, MTLPixelFormatRG32Float }, error);
+        MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
+        depth.depthCompareFunction = MTLCompareFunctionGreater; // reversed depth: nearer is larger
+        depth.depthWriteEnabled = NO;
+        mMacOIT.depthState = [mDevice newDepthStencilStateWithDescriptor:depth];
+        return mMacOIT.keys && mMacOIT.tail && mMacOIT.colorPass && mMacOIT.depthState;
+    }
+
+    bool createMacOITTargets(uint32_t width, uint32_t height)
+    {
+        constexpr MTLTextureUsage usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        mMacOIT.moments = createTarget(MTLPixelFormatRGBA32Float, usage, width, height, 16, "Mac OIT moments");
+        mMacOIT.tailDepth = createTarget(MTLPixelFormatR32Float, usage, width, height, 4, "Mac OIT tail depth");
+        mMacOIT.color = createTarget(MTLPixelFormatRGBA16Float, usage, width, height, 8, "Mac OIT colour");
+        mMacOIT.weights = createTarget(MTLPixelFormatRG32Float, usage, width, height, 8, "Mac OIT weights");
+        if (mMacOIT.state)
+        {
+            mRetiredBuffers.push_back({ mMacOIT.state, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::OIT });
+        }
+        const uint64_t pixels = uint64_t(width) * height;
+        mMacOIT.state = createSceneBuffer(macoitBytes(pixels), MemoryCategory::OIT, "Mac OIT state");
+        if (!mMacOIT.moments || !mMacOIT.tailDepth || !mMacOIT.color || !mMacOIT.weights || !mMacOIT.state)
+        {
+            return false;
+        }
+        // Every key empty, every farthest depth and count 0, before any frame uses it: shared
+        // memory, so written here. The resolve keeps it so.
+        const uint64_t keyBytes = pixels * MACOIT_LAYERS * sizeof(uint32_t);
+        memset(mMacOIT.state.contents, 0xFF, keyBytes);
+        memset(static_cast<char*>(mMacOIT.state.contents) + keyBytes, 0, macoitBytes(pixels) - keyBytes);
+        return true;
+    }
+
+    // One Mac OIT raster pass over the blended lists, early then late. targets are its
+    // colour targets, cleared; with gated set, the draws come from GpuSceneCounts::macoitTail.
+    bool passMacOIT(id<MTLRenderPipelineState> pipeline, std::initializer_list<id<MTLTexture>> targets, bool gated)
+    {
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        NSUInteger index = 0;
+        for (id<MTLTexture> target : targets)
+        {
+            pass.colorAttachments[index].texture = target;
+            pass.colorAttachments[index].loadAction = MTLLoadActionClear; // sums start at 0
+            pass.colorAttachments[index].storeAction = MTLStoreActionStore;
+            pass.colorAttachments[index].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+            ++index;
+        }
+        pass.depthAttachment.texture = mDepthTarget;
+        pass.depthAttachment.loadAction = MTLLoadActionLoad;
+        pass.depthAttachment.storeAction = MTLStoreActionStore;
+        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
+        {
+            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
+            pass.sampleBufferAttachments[0].startOfVertexSampleIndex = passSample(0);
+            pass.sampleBufferAttachments[0].endOfVertexSampleIndex = passSample(2);
+            pass.sampleBufferAttachments[0].startOfFragmentSampleIndex = passSample(3);
+            pass.sampleBufferAttachments[0].endOfFragmentSampleIndex = passSample(1);
+        }
+
+        id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        draw.label = passLabel();
+        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
+        [draw setRenderPipelineState:pipeline];
+        [draw setDepthStencilState:mMacOIT.depthState];
+        [draw setFrontFacingWinding:MTLWindingCounterClockwise];
+        [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        if (pipeline == mMacOIT.colorPass)
+        {
+            // Only the colour pass reads the moments; the tail pass writes them.
+            [draw setFragmentTexture:mMacOIT.moments atIndex:4];
+            [draw setFragmentTexture:mMacOIT.tailDepth atIndex:5];
+        }
+        for (uint32_t kind = SCENE_BLENDED_KIND; kind < SCENE_KINDS; ++kind)
+        {
+            [draw setCullMode:(kind & 1) ? MTLCullModeNone : MTLCullModeBack];
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                const uint32_t list = sceneList(kind, bucket);
+                mScenePush.list = list;
+                [draw setVertexBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                [draw setFragmentBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+                for (uint32_t late = 0; late < 2; ++late)
+                {
+                    const uint64_t at = gated ? offsetof(GpuSceneCounts, macoitTail) +
+                                                    (late * SCENE_BLENDED_LISTS + list - sceneList(SCENE_BLENDED_KIND, 0)) * sizeof(GpuDrawArguments)
+                                              : (late ? offsetof(GpuSceneCounts, late) : offsetof(GpuSceneCounts, early)) + list * sizeof(GpuDrawArguments);
+                    [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts indirectBufferOffset:at];
+                }
+            }
+        }
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
+    }
+
+    bool passMacOITGate()
+    {
+        id<MTLComputeCommandEncoder> gate = beginCompute();
+        [gate setComputePipelineState:mCullPipeline];
+        mScenePush.phase = MACOIT_GATE;
+        [gate setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [gate dispatchThreadgroups:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(CULL_GROUP_SIZE, 1, 1)];
+        [gate updateFence:mSceneFence];
+        [gate endEncoding];
+        return true;
+    }
+
+    bool passMacOITResolve()
+    {
+        id<MTLComputeCommandEncoder> resolve = beginCompute();
+        [resolve setComputePipelineState:mMacOIT.resolve];
+        [resolve setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [resolve setTexture:mMacOIT.color atIndex:6];
+        [resolve setTexture:mMacOIT.weights atIndex:7];
+        [resolve setTexture:mLitTarget atIndex:8];
+        [resolve setTexture:mSceneColorTarget atIndex:9];
+        [resolve dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
+                threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        [resolve updateFence:mSceneFence];
+        [resolve endEncoding];
+        return true;
+    }
+
+    void setMacOITBodies()
+    {
+        mGraph.setBody(PassMacOITKeys, [this]() { return passMacOIT(mMacOIT.keys, {}, false); });
+        mGraph.setBody(PassMacOITGate, [this]() { return passMacOITGate(); });
+        mGraph.setBody(PassMacOITTail, [this]() { return passMacOIT(mMacOIT.tail, { mMacOIT.moments, mMacOIT.tailDepth }, true); });
+        mGraph.setBody(PassMacOITColor, [this]() { return passMacOIT(mMacOIT.colorPass, { mMacOIT.color, mMacOIT.weights }, false); });
+        mGraph.setBody(PassMacOITResolve, [this]() { return passMacOITResolve(); });
+    }
+
     // Command buffers keep what they use alive, so the old targets can go at once.
     bool ensureSceneTargets(uint32_t width, uint32_t height)
     {
@@ -671,6 +862,12 @@ private:
         mDepthTarget = createTarget(MTLPixelFormatDepth32Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "depth buffer");
         mAlbedoTarget = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 4, "albedo target");
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
+        mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "lit target");
+        mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
+        if (!mLitTarget || !mSceneColorTarget || !createMacOITTargets(width, height))
+        {
+            return false;
+        }
 
         if (mScenePyramid)
         {
@@ -809,6 +1006,7 @@ private:
         mScenePush.groups = addressOf(mSceneGroups);
         mScenePush.feedback = addressOf(mTextureFeedback);
         mScenePush.terrains = addressOf(mSceneTables[uint32_t(SceneTable::Terrains)]);
+        mScenePush.macoit = addressOf(mMacOIT.state);
         return true;
     }
 
@@ -883,7 +1081,7 @@ private:
         [draw setDepthStencilState:mDepthState];
         [draw setFrontFacingWinding:MTLWindingCounterClockwise];
         [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
-        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
+        for (uint32_t kind = 0; kind < SCENE_OPAQUE_KINDS; ++kind) // blended kinds are Mac OIT's
         {
             [draw setRenderPipelineState:(kind & 2) ? mMaskedPipeline : mVisibilityPipeline];
             [draw setCullMode:(kind & 1) ? MTLCullModeNone : MTLCullModeBack];
@@ -941,6 +1139,7 @@ private:
         [resolve setTexture:mVisibilityTarget atIndex:0];
         [resolve setTexture:mAlbedoTarget atIndex:1];
         [resolve setTexture:mNormalTarget atIndex:2];
+        [resolve setTexture:mLitTarget atIndex:8];
         [resolve dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
                 threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
         [resolve updateFence:mSceneFence];
@@ -990,6 +1189,7 @@ private:
     void setPassBodies()
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        setMacOITBodies();
         for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
         {
             mGraph.setBody(PassId(PassSkinPalette + phase), [this, phase]() { return passSkin(phase); });
@@ -1735,6 +1935,9 @@ private:
     id<MTLTexture> mAlbedoTarget = nil;
     id<MTLTexture> mNormalTarget = nil;
     id<MTLTexture> mAuditTarget = nil;
+    id<MTLTexture> mLitTarget = nil;        // the opaque image, set 1 binding 8
+    id<MTLTexture> mSceneColorTarget = nil; // with transparency, set 1 binding 9
+    MacOITResources mMacOIT;
     uint64_t mSceneTargetBytes = 0;
     uint32_t mSceneWidth = 0;
     uint32_t mSceneHeight = 0;

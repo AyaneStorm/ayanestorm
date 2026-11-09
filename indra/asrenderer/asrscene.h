@@ -47,23 +47,28 @@ constexpr uint32_t INSTANCE_DOUBLE_SIDED = 2u; // drawn from both sides
 constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alpha
 constexpr uint32_t INSTANCE_SKINNED = 8u;      // set by the store: its positions follow joints, see GpuBinding
 constexpr uint32_t INSTANCE_BOUND = 16u;       // set by the store: on a skeleton, and GpuInstance::binding names how
+constexpr uint32_t INSTANCE_BLENDED = 32u;     // alpha blended: drawn by the transparency passes, never into depth
 
 // Surfaces in the same plane would tie in depth, and the order of a list changes from frame
 // to frame, so which one shows would flicker. Each rank sits a fixed share of its distance
 // nearer, see the vertex shader, so the higher one always wins, at any camera position.
 constexpr uint32_t INSTANCE_RANK_SHIFT = 8;
 constexpr uint32_t INSTANCE_RANK_MAX = 1023;
-constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
+constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | INSTANCE_BLENDED | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
 
-// Each kind of surface has its own draw state, so each has its own lists: double-sided
-// is bit 0 of the kind, and masked is bit 1. The list a cluster goes in comes from its
-// instance's kind and its own size.
-constexpr uint32_t SCENE_KINDS = 4;
+// Each kind of surface has its own draw state, so each has its own lists. The opaque kinds
+// come first: double-sided is bit 0, and masked is bit 1. Blended surfaces have two kinds
+// after them, one- and two-sided; a blended surface is never masked, as its alpha is kept.
+// The list a cluster goes in comes from its instance's kind and its own size.
+constexpr uint32_t SCENE_OPAQUE_KINDS = 4;
+constexpr uint32_t SCENE_BLENDED_KIND = 4;
+constexpr uint32_t SCENE_KINDS = 6;
 constexpr uint32_t SCENE_LISTS = SCENE_KINDS * CLUSTER_BUCKETS;
+constexpr uint32_t SCENE_BLENDED_LISTS = (SCENE_KINDS - SCENE_BLENDED_KIND) * CLUSTER_BUCKETS;
 
 constexpr uint32_t sceneKind(uint32_t instanceFlags)
 {
-    return (instanceFlags >> 1) & (SCENE_KINDS - 1);
+    return (instanceFlags & INSTANCE_BLENDED) != 0 ? SCENE_BLENDED_KIND + ((instanceFlags >> 1) & 1) : (instanceFlags >> 1) & 3;
 }
 
 constexpr uint32_t sceneList(uint32_t kind, uint32_t bucket)
@@ -389,8 +394,37 @@ struct GpuSceneCounts
     // Entries a full list turned away this frame. The lists are sized for every cluster of
     // every instance, so this stays 0 below the MAX_VISIBLE_CLUSTERS cap.
     uint32_t dropped;
+
+    // Mac OIT: not 0 once a pixel has more than MACOIT_LAYERS fragments, so a tail to
+    // weight by moments. The tail pass draws from macoitTail, which the gate fills from the
+    // blended lists, early then late, or leaves empty when there is no tail.
+    uint32_t macoitTailSeen;
+    uint32_t unused[3];
+    GpuDrawArguments macoitTail[2 * SCENE_BLENDED_LISTS];
 };
-static_assert(sizeof(GpuSceneCounts) == 576, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 1104, "shaders read this layout");
+static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolveC.glsl's GUARD_OFFSET");
+static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
+
+// Transparency is Mac OIT, the viewer's own, rebuilt: the MACOIT_LAYERS nearest layers of each
+// pixel are exact, found by their keys (22 bits of log depth above 8 bits of alpha, biased so
+// every key is a positive normal float, so float and integer order agree), and what lies
+// behind them is weighted by four power moments of its optical depth. See asrSceneMacOIT.glsl.
+constexpr uint32_t MACOIT_LAYERS = 4;
+constexpr uint32_t MACOIT_KEYS = 0; // the Mac OIT passes, in order
+constexpr uint32_t MACOIT_TAIL = 1;
+constexpr uint32_t MACOIT_COLOR = 2;
+constexpr uint32_t MACOIT_EMPTY_KEY = 0xFFFFFFFFu; // behind every real key; keys compare as integers
+constexpr uint32_t MACOIT_GATE = 6; // the cull shader's phase that fills GpuSceneCounts::macoitTail
+
+// Mac OIT's per-pixel state, one buffer of three runs, kept between frames: the resolve puts
+// back every pixel a frame touched, so it is never cleared whole. For P pixels: P *
+// MACOIT_LAYERS keys, nearest first (empty: MACOIT_EMPTY_KEY); P farthest depths, the bits of
+// a positive float (empty: 0); P fragment counts (empty: 0). Each run fills with one byte.
+constexpr uint64_t macoitBytes(uint64_t pixels)
+{
+    return pixels * (MACOIT_LAYERS + 2) * sizeof(uint32_t);
+}
 
 constexpr uint32_t GUARD_ENTRY = 1;     // a visibility pixel names an entry past the visible list
 constexpr uint32_t GUARD_INSTANCE = 2;  // an entry names an instance past instanceEnd
@@ -424,10 +458,11 @@ struct ScenePush
     uint64_t groups; // the group list
     uint64_t feedback; // a word per texture slot: see FEEDBACK_SAMPLES
     uint64_t terrains;
+    uint64_t macoit; // Mac OIT's per-pixel state: see macoitBytes()
     uint32_t list;
-    uint32_t phase; // one of CULL_*, or the pyramid level being read
+    uint32_t phase;  // one of CULL_*, SKIN_*, MACOIT_*, or the pyramid level being read
 };
-static_assert(sizeof(ScenePush) == 104, "shaders read this layout");
+static_assert(sizeof(ScenePush) == 112, "shaders read this layout");
 
 // One cluster of a built geometry. Offsets count from the start of GeometryData::blob.
 struct ClusterData
@@ -550,7 +585,7 @@ struct GpuSceneView
     uint32_t morphWorkEnd;
     uint32_t unused[3];
 };
-static_assert(sizeof(GpuSceneView) == 640, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 672, "shaders read this layout");
 
 // The time skeletons and views are stamped with.
 uint32_t sceneTime(std::chrono::steady_clock::time_point time);

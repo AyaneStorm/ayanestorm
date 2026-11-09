@@ -401,6 +401,20 @@ public:
         mTube = scene.addGeometry(build(fineTube, &CREATURE_BOX, fineWeights.data()), roughTubeId, 30.f);
         mSkin = scene.addSkin(creatureSkin());
         mMorphSet = scene.addMorphSet(creatureMorphs(fineTube));
+
+        // Two tints of glass, for the panes, spheres and creatures Mac OIT draws.
+        asr::MaterialDesc glass;
+        glass.color[0] = 0.55f;
+        glass.color[1] = 0.8f;
+        glass.color[2] = 1.f;
+        glass.color[3] = 0.3f;
+        const uint32_t glassMaterial = scene.addMaterial(glass);
+        asr::MaterialDesc amber = glass;
+        amber.color[0] = 1.f;
+        amber.color[1] = 0.65f;
+        amber.color[2] = 0.25f;
+        amber.color[3] = 0.55f;
+        mAmber = scene.addMaterial(amber);
         mSwellSize = 0;
         for (const asr::SceneVertex& vertex : fineTube.vertices)
         {
@@ -417,7 +431,40 @@ public:
             creature.phase = float(i) * 0.7f;
             creature.material = mMaterials[i % MATERIALS];
             creature.morphed = (i % 2) == 1;
+            creature.blended = (i % 4) == 2;
             addCreature(creature, 0.f);
+        }
+
+        // Transparency, through Mac OIT: stacks of six glass panes across the street walk,
+        // more layers than it keeps exact, so its moment tail is used too, and tinted spheres.
+        constexpr uint32_t STACKS = 12;
+        constexpr uint32_t PANES = 6;
+        for (uint32_t stack = 0; stack < STACKS; ++stack)
+        {
+            const float angle = (float(stack) + 0.3f) / STACKS * TWO_PI;
+            const float radial[2] = { std::cos(angle), std::sin(angle) };
+            const float along[2] = { -radial[1], radial[0] };
+            for (uint32_t pane = 0; pane < PANES; ++pane)
+            {
+                // Face 0's normal is x: x goes along the walk, y across it, z up.
+                const float x = radial[0] * 70.f + along[0] * 0.5f * float(pane);
+                const float y = radial[1] * 70.f + along[1] * 0.5f * float(pane);
+                asr::InstanceDesc desc;
+                desc.geometry = mBoxFaces[0];
+                desc.material = pane % 2 == 0 ? glassMaterial : mAmber;
+                desc.flags = asr::INSTANCE_DOUBLE_SIDED | asr::INSTANCE_BLENDED;
+                const float rows[12] = { along[0], radial[0] * 5.f, 0.f, x, along[1], radial[1] * 5.f, 0.f, y, 0.f, 0.f, 3.f, 2.f };
+                std::copy(rows, rows + 12, desc.objectToWorld);
+                scene.addInstance(desc);
+                ++mInstances;
+            }
+        }
+        for (uint32_t i = 0; i < 200; ++i)
+        {
+            const float x = (next() - 0.5f) * EXTENT * 2.f;
+            const float y = (next() - 0.5f) * EXTENT * 2.f;
+            const float size = 1.f + next() * 3.f;
+            place(mSphere, i % 2 == 0 ? glassMaterial : mAmber, x, y, size + 3.f, size, size, size, false, asr::INSTANCE_BLENDED);
         }
     }
 
@@ -509,6 +556,7 @@ private:
         uint32_t material = 0;
         uint32_t morph = 0;
         bool morphed = false;
+        bool blended = false;
         float x = 0.f, y = 0.f, phase = 0.f;
     };
 
@@ -534,6 +582,11 @@ private:
         desc.skin = mSkin;
         desc.morph = creature.morph;
         desc.lodSize = CREATURE_HEIGHT;
+        if (creature.blended)
+        {
+            desc.material = mAmber; // a see-through creature: skinned, through Mac OIT
+            desc.flags = asr::INSTANCE_BLENDED;
+        }
         return desc;
     }
 
@@ -773,6 +826,7 @@ private:
     uint32_t mSkin = 0;
     uint32_t mMorphSet = 0;
     uint32_t mSwellSize = 0;
+    uint32_t mAmber = 0;
     std::vector<Creature> mCreatures;
     uint32_t mCreatureChanges = 0;
     float mLastCreatureChange = 0.f;

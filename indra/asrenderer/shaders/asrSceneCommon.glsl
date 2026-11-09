@@ -7,7 +7,9 @@
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
-const uint LISTS = 16;
+const uint LISTS = 24;
+const uint BLENDED_KIND = 4u;   // the first blended kind; see sceneKind()
+const uint BLENDED_LISTS = 8u;
 const uint PYRAMID_LEVELS = 16;
 
 const uint INSTANCE_FLIPPED = 1u;
@@ -15,6 +17,7 @@ const uint INSTANCE_DOUBLE_SIDED = 2u;
 const uint INSTANCE_MASKED = 4u;
 const uint INSTANCE_SKINNED = 8u;
 const uint INSTANCE_BOUND = 16u;
+const uint INSTANCE_BLENDED = 32u;
 const uint INSTANCE_RANK_SHIFT = 8u;
 const uint INSTANCE_RANK_MAX = 1023u;
 
@@ -272,6 +275,7 @@ layout(push_constant) uniform ScenePush
     uint64_t groups; // the group list
     uint64_t feedback; // a word per texture slot
     uint64_t terrains;
+    uint64_t macoit; // Mac OIT's per-pixel state: see macoitBytes() in asrscene.h
     uint list;
     uint phase;
 } push;
@@ -291,6 +295,41 @@ vec3 packedPosition(uint64_t positions, uint vertex)
     return vec3(float(int(xy << 16) >> 16), float(int(xy) >> 16), float(int(z << 16) >> 16)) / 32767.0;
 }
 
+vec3 octahedralDecode(float x, float y)
+{
+    vec3 n = vec3(x, y, 1.0 - abs(x) - abs(y));
+    if (n.z < 0.0)
+    {
+        const vec2 wrapped = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+        n.x = wrapped.x;
+        n.y = wrapped.y;
+    }
+    return normalize(n);
+}
+
+// A vertex's normal, from the first word of its attributes.
+vec3 attributeNormal(uint word)
+{
+    return octahedralDecode(float(int(word << 16) >> 16) / 32767.0, float(int(word) >> 16) / 32767.0);
+}
+
+// The viewer's planar mapping: the texture lies flat on the surface, at a size that
+// follows the object's scale, not stretched over the face. position is scaled.
+vec2 planarUV(vec3 normal, vec3 position)
+{
+    vec3 binormal;
+    if (abs(normal.x) >= 0.5)
+    {
+        binormal = vec3(0.0, normal.x < 0.0 ? -1.0 : 1.0, 0.0);
+    }
+    else
+    {
+        binormal = vec3(normal.y > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
+    }
+    const vec3 tangent = cross(binormal, normal);
+    return vec2(1.0 + dot(binormal, position) * 2.0 - 0.5, -(dot(tangent, position) * 2.0 - 0.5));
+}
+
 vec3 transformPoint(vec4 rows[3], vec3 p)
 {
     return vec3(dot(rows[0], vec4(p, 1.0)), dot(rows[1], vec4(p, 1.0)), dot(rows[2], vec4(p, 1.0)));
@@ -299,4 +338,76 @@ vec3 transformPoint(vec4 rows[3], vec3 p)
 uint pyramidLevelSize(uint pixels, uint level)
 {
     return (pixels + (1u << level) - 1u) >> level;
+}
+
+// Texture feedback, from one pixel of each 4 by 4 block, at a place that moves every frame.
+// The samplers are not anisotropic, so the GPU picks its mip from the longer of the two
+// steps: the texels across that step makes one per pixel are what this pixel really needs.
+// Most pixels find a word already as large, and skip the atomic. The resolve and Mac OIT's
+// colour pass both report through here.
+void giveFeedback(ivec2 pixel, uint slot, vec2 uvDx, vec2 uvDy)
+{
+    const uint feedback = ViewRef(push.view).feedback;
+    if (feedback != 0u && slot != 0u && ((uint(pixel.x) & 3u) | ((uint(pixel.y) & 3u) << 2)) == (feedback & 15u))
+    {
+        const float step = max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)), 1e-30);
+        const uint level = uint(clamp(ceil(-0.5 * log2(step)), 0.0, float(FEEDBACK_MAX_LEVEL)));
+        const uint word = ((feedback >> 4) << FEEDBACK_LEVEL_BITS) | (level + 1u);
+        FeedbackRef seen = FeedbackRef(push.feedback);
+        if (seen.words[slot] < word)
+        {
+            atomicMax(seen.words[slot], word);
+        }
+    }
+}
+
+// Mac OIT, shared by its passes and its resolve. See asrscene.h for the state's layout.
+const uint MACOIT_LAYERS = 4u;
+const uint MACOIT_EMPTY_KEY = 0xFFFFFFFFu;
+const uint MACOIT_KEY_BIAS = 0x00800000u;
+const float MACOIT_DEPTH_SCALE = 4194303.0;
+const float MACOIT_MIN_LAYER_ALPHA = 1.0 / 255.0;
+
+layout(buffer_reference, std430) buffer MacOITStateRef { uint words[]; };
+
+uint macoitPixels()
+{
+    ViewRef view = ViewRef(push.view);
+    return uint(view.pixelSize.x) * uint(view.pixelSize.y);
+}
+
+uint macoitKeyWord(uint pixel, uint layer)
+{
+    return pixel * MACOIT_LAYERS + layer;
+}
+
+uint macoitFarthestWord(uint pixel)
+{
+    return macoitPixels() * MACOIT_LAYERS + pixel;
+}
+
+uint macoitCountWord(uint pixel)
+{
+    return macoitPixels() * (MACOIT_LAYERS + 1u) + pixel;
+}
+
+uint macoitKeyDepth(uint key)
+{
+    return (key - MACOIT_KEY_BIAS) >> 8u;
+}
+
+float macoitKeyDepth01(uint key)
+{
+    return float(macoitKeyDepth(key)) / MACOIT_DEPTH_SCALE;
+}
+
+float macoitKeyTransmittance(uint key)
+{
+    return 1.0 - float((key - MACOIT_KEY_BIAS) & 255u) / 255.0;
+}
+
+// The same effective-opaque end point as the resolve's total opacity.
+float macoitOpticalDepth(float alpha)
+{
+    return -log(max(1.0 - alpha, 1.0 / 65536.0));
 }

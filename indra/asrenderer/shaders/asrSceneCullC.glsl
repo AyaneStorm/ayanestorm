@@ -59,7 +59,12 @@ layout(buffer_reference, std430) buffer CountsRef
     WorkCount groupWork[2]; // early, late
     uint guard[3]; // the resolve's, see GpuSceneCounts::guard
     uint dropped;  // entries a full list turned away
+    uint macoitTailSeen;
+    uint countsUnused[3];
+    DrawArguments macoitTail[2u * BLENDED_LISTS];
 };
+
+const uint MACOIT_GATE = 6u;
 layout(buffer_reference, std430) writeonly buffer ListWriteRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer PyramidRef { float values[]; };
 
@@ -167,7 +172,7 @@ bool facesAway(uint cone, vec3 center, float radius, vec3 camera)
 
 uint listOf(uint flags, uint triangles)
 {
-    const uint kind = (flags >> 1) & 3u;
+    const uint kind = (flags & INSTANCE_BLENDED) != 0u ? BLENDED_KIND + ((flags >> 1) & 1u) : (flags >> 1) & 3u; // sceneKind()
     return kind * 4u + (triangles <= 2u ? 0u : triangles <= 8u ? 1u : triangles <= 32u ? 2u : 3u);
 }
 
@@ -434,10 +439,34 @@ void cullGroupClusters(ViewRef view)
     testCluster(view, instance, entry.instance, group.firstCluster + lane, cameraInPacked(instance, view.camera.xyz), scaleBoundOf(instance));
 }
 
+// Mac OIT's tail pass draws the blended lists only when some pixel has a tail; otherwise its
+// draws are empty and cost nothing. One thread per draw: early lists, then late.
+void gateMacOITTail()
+{
+    const uint draw = gl_GlobalInvocationID.x;
+    if (draw >= 2u * BLENDED_LISTS)
+    {
+        return;
+    }
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint list = BLENDED_KIND * 4u + (draw % BLENDED_LISTS);
+    DrawArguments arguments = draw < BLENDED_LISTS ? counts.early[list] : counts.late[list];
+    if (counts.macoitTailSeen == 0u)
+    {
+        arguments.instanceCount = 0u;
+    }
+    counts.macoitTail[draw] = arguments;
+}
+
 void main()
 {
     ViewRef view = ViewRef(push.view);
     const uint index = gl_GlobalInvocationID.x;
+    if (push.phase == MACOIT_GATE)
+    {
+        gateMacOITTail();
+        return;
+    }
     const bool late = latePhase();
     occluderRows = late ? view.viewRows : view.previousRows;
     occluderFocal = late ? view.projection.xy : view.previousProjection.xy;

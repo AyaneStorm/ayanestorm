@@ -17,6 +17,15 @@ layout(set = 0, binding = 1) uniform sampler samplers[4];
 layout(set = 1, binding = 0, r32ui) uniform readonly uimage2D visibility;
 layout(set = 1, binding = 1, rgba8) uniform writeonly image2D albedo;
 layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
+// The opaque image Mac OIT composites over. Until lighting in P4: albedo with a soft light
+// from the normal so shapes read, and the sky colour where nothing is drawn. Alpha is glow.
+layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
+const vec4 SKY = vec4(0.32, 0.45, 0.62, 0.0);
+
+vec4 unlit(vec3 albedo, vec3 normal)
+{
+    return vec4(albedo * (0.65 + 0.35 * dot(normal, normalize(vec3(0.4, 0.3, 0.87)))), 0.0);
+}
 
 struct Interpolator
 {
@@ -60,7 +69,7 @@ const uint GUARD_CLUSTER = 4u;
 const uint GUARD_MATERIAL = 8u;
 const uint GUARD_ADDRESSES = 16u;
 const uint64_t CHUNK_BYTES = 64ul * 1024ul * 1024ul; // SCENE_CHUNK_BYTES
-const uint64_t GUARD_OFFSET = 560ul;                  // offsetof(GpuSceneCounts, guardBits)
+const uint64_t GUARD_OFFSET = 816ul;                  // offsetof(GpuSceneCounts, guardBits)
 
 layout(buffer_reference, std430) buffer GuardRef
 {
@@ -78,18 +87,7 @@ void reject(ivec2 pixel, uint bit, uint value)
     atomicMax(guard.value, value);
     imageStore(albedo, pixel, vec4(1.0, 0.0, 1.0, 1.0));
     imageStore(normals, pixel, vec4(0.0, 0.0, 1.0, 1.0));
-}
-
-vec3 octahedralDecode(float x, float y)
-{
-    vec3 n = vec3(x, y, 1.0 - abs(x) - abs(y));
-    if (n.z < 0.0)
-    {
-        const vec2 wrapped = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
-        n.x = wrapped.x;
-        n.y = wrapped.y;
-    }
-    return normalize(n);
+    imageStore(lit, pixel, vec4(1.0, 0.0, 1.0, 0.0));
 }
 
 vec3 skinNormal(ViewRef view, Binding binding, uint vertex, vec3 normal)
@@ -107,43 +105,6 @@ vec3 skinNormal(ViewRef view, Binding binding, uint vertex, vec3 normal)
         }
     }
     return dot(turned, turned) > 0.0 ? normalize(turned) : normal;
-}
-
-// The viewer's planar mapping: the texture lies flat on the surface, at a size that
-// follows the object's scale, not stretched over the face. position is scaled.
-vec2 planarUV(vec3 normal, vec3 position)
-{
-    vec3 binormal;
-    if (abs(normal.x) >= 0.5)
-    {
-        binormal = vec3(0.0, normal.x < 0.0 ? -1.0 : 1.0, 0.0);
-    }
-    else
-    {
-        binormal = vec3(normal.y > 0.0 ? -1.0 : 1.0, 0.0, 0.0);
-    }
-    const vec3 tangent = cross(binormal, normal);
-    return vec2(1.0 + dot(binormal, position) * 2.0 - 0.5, -(dot(tangent, position) * 2.0 - 0.5));
-}
-
-// Texture feedback, from one pixel of each 4 by 4 block, at a place that moves every frame.
-// The samplers are not anisotropic, so the GPU picks its mip from the longer of the two
-// steps: the texels across that step makes one per pixel are what this pixel really needs.
-// Most pixels find a word already as large, and skip the atomic.
-void giveFeedback(ivec2 pixel, uint slot, vec2 uvDx, vec2 uvDy)
-{
-    const uint feedback = ViewRef(push.view).feedback;
-    if (feedback != 0u && slot != 0u && ((uint(pixel.x) & 3u) | ((uint(pixel.y) & 3u) << 2)) == (feedback & 15u))
-    {
-        const float step = max(max(dot(uvDx, uvDx), dot(uvDy, uvDy)), 1e-30);
-        const uint level = uint(clamp(ceil(-0.5 * log2(step)), 0.0, float(FEEDBACK_MAX_LEVEL)));
-        const uint word = ((feedback >> 4) << FEEDBACK_LEVEL_BITS) | (level + 1u);
-        FeedbackRef seen = FeedbackRef(push.feedback);
-        if (seen.words[slot] < word)
-        {
-            atomicMax(seen.words[slot], word);
-        }
-    }
 }
 
 // A texture by its bits (see uiTextureBits()), with the steps of its UVs one pixel across and down.
@@ -253,6 +214,7 @@ void main()
     {
         imageStore(albedo, pixel, vec4(0.0, 0.0, 0.0, 0.0));
         imageStore(normals, pixel, vec4(0.0));
+        imageStore(lit, pixel, SKY);
         return;
     }
 
@@ -380,4 +342,5 @@ void main()
 
     imageStore(albedo, pixel, vec4(color.rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
+    imageStore(lit, pixel, unlit(color.rgb, worldNormal));
 }

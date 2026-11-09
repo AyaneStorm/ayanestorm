@@ -26,6 +26,13 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("group list", ResultScope::Frame);
     graph.addResult("texture feedback", ResultScope::Persistent);
     graph.addResult("feedback readback", ResultScope::Frame);
+    graph.addResult("lit", ResultScope::Frame);
+    graph.addResult("scene color", ResultScope::Frame);
+    graph.addResult("macoit state", ResultScope::Persistent);
+    graph.addResult("macoit moments", ResultScope::Frame);
+    graph.addResult("macoit tail depth", ResultScope::Frame);
+    graph.addResult("macoit color", ResultScope::Frame);
+    graph.addResult("macoit weights", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -78,7 +85,9 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultVisibility, ComputeRead },
                                { ResultAlbedo, ComputeWrite },
                                { ResultNormals, ComputeWrite },
+                               { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });
+    declareMacOIT(graph);
     graph.addPass("read counts", { { ResultDrawArguments, CopyRead }, { ResultSceneCounts, CopyWrite } });
 
     // The audit runs last, and reuses the lists: nothing after it reads them. All of it
@@ -102,9 +111,45 @@ void declareSceneGraph(FrameGraph& graph)
     // Only on the last frame of a feedback window, when its sink is on.
     graph.addPass("read feedback", { { ResultTextureFeedback, CopyRead }, { ResultFeedbackReadback, CopyWrite } });
 
-    graph.setSink(ResultAlbedo, FragmentRead, true);
-    graph.setSink(ResultNormals, FragmentRead, true);
+    graph.setSink(ResultSceneColor, FragmentRead, true);
     graph.setSink(ResultSceneCounts, CopyRead, true);
+}
+
+void declareMacOIT(FrameGraph& graph)
+{
+    using namespace GraphAccess;
+
+    // Keys: the blended lists, early and late, against the opaque depth, which none of the
+    // three passes writes. Fragments also flag a tail in the counts.
+    graph.addPass("macoit keys", { { ResultSceneData, VertexRead | FragmentRead },
+                                   { ResultDrawArguments, Indirect | FragmentWrite | Keep },
+                                   { ResultVisibleClusters, VertexRead },
+                                   { ResultDepth, DepthTarget | Keep },
+                                   { ResultMacOITState, FragmentRead | FragmentWrite | Keep } });
+    // Empties the tail pass's draws when no pixel has a tail.
+    graph.addPass("macoit gate", { { ResultDrawArguments, ComputeRead | ComputeWrite | Keep } });
+    graph.addPass("macoit tail", { { ResultSceneData, VertexRead | FragmentRead },
+                                   { ResultDrawArguments, Indirect },
+                                   { ResultVisibleClusters, VertexRead },
+                                   { ResultDepth, DepthTarget | Keep },
+                                   { ResultMacOITState, FragmentRead },
+                                   { ResultMacOITMoments, ColorTarget },
+                                   { ResultMacOITTailDepth, ColorTarget } });
+    graph.addPass("macoit color", { { ResultSceneData, VertexRead | FragmentRead },
+                                    { ResultDrawArguments, Indirect },
+                                    { ResultVisibleClusters, VertexRead },
+                                    { ResultDepth, DepthTarget | Keep },
+                                    { ResultMacOITState, FragmentRead },
+                                    { ResultMacOITMoments, FragmentRead },
+                                    { ResultMacOITTailDepth, FragmentRead },
+                                    { ResultMacOITColor, ColorTarget },
+                                    { ResultMacOITWeights, ColorTarget },
+                                    { ResultTextureFeedback, FragmentWrite | Keep } });
+    graph.addPass("macoit resolve", { { ResultLit, ComputeRead },
+                                      { ResultMacOITColor, ComputeRead },
+                                      { ResultMacOITWeights, ComputeRead },
+                                      { ResultMacOITState, ComputeRead | ComputeWrite | Keep },
+                                      { ResultSceneColor, ComputeWrite } });
 }
 
 } // namespace asr

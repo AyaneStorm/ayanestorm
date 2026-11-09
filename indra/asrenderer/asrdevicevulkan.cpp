@@ -48,6 +48,14 @@ constexpr VkFormat VISIBILITY_FORMAT = VK_FORMAT_R32_UINT;
 constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 10; // set 1, see createScene()
+
+// Mac OIT's targets, as asMacOITCaptureF.glsl accumulates them.
+constexpr VkFormat MACOIT_MOMENTS_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
+constexpr VkFormat MACOIT_TAIL_DEPTH_FORMAT = VK_FORMAT_R32_SFLOAT;
+constexpr VkFormat MACOIT_COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
+constexpr VkFormat MACOIT_WEIGHTS_FORMAT = VK_FORMAT_R32G32_SFLOAT;
 
 constexpr VkShaderStageFlags SCENE_PUSH_STAGES = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
@@ -914,8 +922,27 @@ private:
     }
 
     // Both scene raster pipelines: no vertex input, one color target, and depth on request.
+    // What a scene raster pipeline draws into, and how.
+    struct RasterSetup
+    {
+        std::vector<VkFormat> colors; // one per target
+        bool depthTest = false;       // against the scene depth; culling is then dynamic
+        bool depthWrite = false;
+        bool additive = false;        // every target adds, as Mac OIT's accumulations do
+    };
+
     VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
     {
+        RasterSetup setup;
+        setup.colors = { colorFormat };
+        setup.depthTest = depth;
+        setup.depthWrite = depth;
+        return createSceneRasterPipeline(vertexName, fragmentName, setup, error);
+    }
+
+    VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, const RasterSetup& setup, std::string& error)
+    {
+        const bool depth = setup.depthTest;
         VkShaderModule vertex = loadShader(vertexName, error);
         VkShaderModule fragment = vertex ? loadShader(fragmentName, error) : VK_NULL_HANDLE;
         VkPipeline pipeline = VK_NULL_HANDLE;
@@ -945,21 +972,34 @@ private:
             multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
             VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
             depthStencil.depthTestEnable = depth;
-            depthStencil.depthWriteEnable = depth;
+            depthStencil.depthWriteEnable = setup.depthWrite;
             depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER; // reversed depth: nearer is larger
-            VkPipelineColorBlendAttachmentState attachment{};
-            attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+            std::vector<VkPipelineColorBlendAttachmentState> attachments(setup.colors.size());
+            for (VkPipelineColorBlendAttachmentState& attachment : attachments)
+            {
+                attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+                if (setup.additive)
+                {
+                    attachment.blendEnable = VK_TRUE;
+                    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.colorBlendOp = VK_BLEND_OP_ADD;
+                    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                }
+            }
             VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
-            blend.attachmentCount = 1;
-            blend.pAttachments = &attachment;
+            blend.attachmentCount = uint32_t(attachments.size());
+            blend.pAttachments = attachments.data();
             // Double-sided lists turn culling off, with no pipelines just for that.
             const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
             VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
             dynamic.dynamicStateCount = depth ? 3 : 2;
             dynamic.pDynamicStates = dynamics;
             VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
-            rendering.colorAttachmentCount = 1;
-            rendering.pColorAttachmentFormats = &colorFormat;
+            rendering.colorAttachmentCount = uint32_t(setup.colors.size());
+            rendering.pColorAttachmentFormats = setup.colors.data();
             rendering.depthAttachmentFormat = depth ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
 
             VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
@@ -992,9 +1032,10 @@ private:
 
     bool createScene(std::string& error)
     {
-        // Visibility, albedo and normals, then depth, which the pyramid reads.
-        VkDescriptorSetLayoutBinding bindings[4]{};
-        for (uint32_t i = 0; i < 4; ++i)
+        // Visibility, albedo and normals, then depth, which the pyramid reads, then Mac OIT's
+        // moments, tail depth, colour and weights, the lit image and the scene colour.
+        VkDescriptorSetLayoutBinding bindings[SCENE_IMAGE_BINDINGS]{};
+        for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
             bindings[i].binding = i;
             bindings[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
@@ -1002,10 +1043,10 @@ private:
             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
         VkDescriptorSetLayoutCreateInfo layout{ VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
-        layout.bindingCount = 4;
+        layout.bindingCount = SCENE_IMAGE_BINDINGS;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3 }, { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 } };
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - 1 }, { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
         pool.poolSizeCount = 2;
@@ -1043,7 +1084,7 @@ private:
         mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
         mSkinPipeline = mCompositePipeline ? createComputePipeline("asrSceneSkinC", error) : VK_NULL_HANDLE;
-        if (!mSkinPipeline)
+        if (!mSkinPipeline || !createMacOITPipelines(error))
         {
             return false;
         }
@@ -1054,6 +1095,12 @@ private:
         mResultImages[ResultDepth] = &mDepthImage;
         mResultImages[ResultAlbedo] = &mAlbedoImage;
         mResultImages[ResultNormals] = &mNormalImage;
+        mResultImages[ResultLit] = &mLitImage;
+        mResultImages[ResultSceneColor] = &mSceneColorImage;
+        mResultImages[ResultMacOITMoments] = &mMacOIT.moments;
+        mResultImages[ResultMacOITTailDepth] = &mMacOIT.tailDepth;
+        mResultImages[ResultMacOITColor] = &mMacOIT.color;
+        mResultImages[ResultMacOITWeights] = &mMacOIT.weights;
 
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1159,6 +1206,9 @@ private:
         destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
         destroyTarget(mAuditImage);
+        destroyTarget(mLitImage);
+        destroyTarget(mSceneColorImage);
+        destroyMacOITTargets();
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         for (bool& written : mAuditWritten)
         {
@@ -1170,7 +1220,10 @@ private:
         if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
             !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
             !createTarget(mAlbedoImage, ALBEDO_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "albedo target") ||
-            !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target"))
+            !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
+            !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
+            !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
+            !createMacOITTargets())
         {
             return false;
         }
@@ -1183,10 +1236,12 @@ private:
             return false;
         }
 
-        const VkImageView views[4] = { mVisibilityImage.view, mAlbedoImage.view, mNormalImage.view, mDepthImage.view };
-        VkDescriptorImageInfo images[4]{};
-        VkWriteDescriptorSet writes[4]{};
-        for (uint32_t i = 0; i < 4; ++i)
+        const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mAlbedoImage.view,   mNormalImage.view,     mDepthImage.view,
+                                                          mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
+                                                          mLitImage.view,         mSceneColorImage.view };
+        VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
+        VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
+        for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
             images[i].imageView = views[i];
             images[i].imageLayout = i == 3 ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
@@ -1197,8 +1252,191 @@ private:
             writes[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[i].pImageInfo = &images[i];
         }
-        vkUpdateDescriptorSets(mDevice, 4, writes, 0, nullptr);
+        vkUpdateDescriptorSets(mDevice, SCENE_IMAGE_BINDINGS, writes, 0, nullptr);
         return true;
+    }
+
+    // Mac OIT, the native renderer's transparency, kept in one place: its targets, its
+    // pipelines and its passes. Another transparency would replace this block and the passes
+    // of declareMacOIT(), making ResultSceneColor the same way.
+    struct MacOITResources
+    {
+        TargetImage moments;
+        TargetImage tailDepth;
+        TargetImage color;
+        TargetImage weights;
+        GpuBuffer state;       // see macoitBytes()
+        bool stateFresh = false; // filled empty before its first use
+        VkPipeline keys = VK_NULL_HANDLE;
+        VkPipeline tail = VK_NULL_HANDLE;
+        VkPipeline colorPass = VK_NULL_HANDLE;
+        VkPipeline resolve = VK_NULL_HANDLE;
+    };
+
+    bool createMacOITPipelines(std::string& error)
+    {
+        RasterSetup keys;
+        keys.depthTest = true; // against the opaque depth, never writing it
+        mMacOIT.keys = createSceneRasterPipeline("asrSceneMacOITV", "asrSceneMacOITKeysF", keys, error);
+        RasterSetup tail = keys;
+        tail.colors = { MACOIT_MOMENTS_FORMAT, MACOIT_TAIL_DEPTH_FORMAT };
+        tail.additive = true;
+        mMacOIT.tail = mMacOIT.keys ? createSceneRasterPipeline("asrSceneMacOITV", "asrSceneMacOITTailF", tail, error) : VK_NULL_HANDLE;
+        RasterSetup color = tail;
+        color.colors = { MACOIT_COLOR_FORMAT, MACOIT_WEIGHTS_FORMAT };
+        mMacOIT.colorPass = mMacOIT.tail ? createSceneRasterPipeline("asrSceneMacOITV", "asrSceneMacOITColorF", color, error) : VK_NULL_HANDLE;
+        mMacOIT.resolve = mMacOIT.colorPass ? createComputePipeline("asrSceneMacOITResolveC", error) : VK_NULL_HANDLE;
+        return mMacOIT.resolve != VK_NULL_HANDLE;
+    }
+
+    void destroyMacOITPipelines()
+    {
+        for (VkPipeline pipeline : { mMacOIT.keys, mMacOIT.tail, mMacOIT.colorPass, mMacOIT.resolve })
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice, pipeline, nullptr);
+            }
+        }
+        mMacOIT.keys = mMacOIT.tail = mMacOIT.colorPass = mMacOIT.resolve = VK_NULL_HANDLE;
+    }
+
+    bool createMacOITTargets()
+    {
+        constexpr VkImageUsageFlags usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT;
+        const uint64_t pixels = uint64_t(mSceneExtent.width) * mSceneExtent.height;
+        if (!createTarget(mMacOIT.moments, MACOIT_MOMENTS_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 16, "Mac OIT moments") ||
+            !createTarget(mMacOIT.tailDepth, MACOIT_TAIL_DEPTH_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 4, "Mac OIT tail depth") ||
+            !createTarget(mMacOIT.color, MACOIT_COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "Mac OIT colour") ||
+            !createTarget(mMacOIT.weights, MACOIT_WEIGHTS_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "Mac OIT weights") ||
+            !createBufferObject(mMacOIT.state, macoitBytes(pixels), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                                "Mac OIT state", MemoryCategory::OIT))
+        {
+            return false;
+        }
+        mMacOIT.stateFresh = true;
+        return true;
+    }
+
+    void destroyMacOITTargets()
+    {
+        destroyTarget(mMacOIT.moments);
+        destroyTarget(mMacOIT.tailDepth);
+        destroyTarget(mMacOIT.color);
+        destroyTarget(mMacOIT.weights);
+        destroyBufferObject(mMacOIT.state, MemoryCategory::OIT);
+    }
+
+    // The blended lists, early then late, with one draw per list: from the cull's own draws,
+    // or with gated set, from GpuSceneCounts::macoitTail, which holds the same draws or none.
+    void drawMacOITLists(VkCommandBuffer commands, bool gated)
+    {
+        for (uint32_t kind = SCENE_BLENDED_KIND; kind < SCENE_KINDS; ++kind)
+        {
+            vkCmdSetCullMode(commands, (kind & 1) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
+            for (uint32_t bucket = 0; bucket < CLUSTER_BUCKETS; ++bucket)
+            {
+                const uint32_t list = sceneList(kind, bucket);
+                vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, offsetof(ScenePush, list), sizeof(list), &list);
+                for (uint32_t late = 0; late < 2; ++late)
+                {
+                    const uint64_t at = gated ? offsetof(GpuSceneCounts, macoitTail) +
+                                                    (late * SCENE_BLENDED_LISTS + list - sceneList(SCENE_BLENDED_KIND, 0)) * sizeof(GpuDrawArguments)
+                                              : (late ? offsetof(GpuSceneCounts, late) : offsetof(GpuSceneCounts, early)) + list * sizeof(GpuDrawArguments);
+                    vkCmdDrawIndirect(commands, mSceneCounts.buffer, at, 1, sizeof(GpuDrawArguments));
+                }
+            }
+        }
+    }
+
+    // One Mac OIT raster pass over the blended lists. targets are its colour targets, cleared.
+    bool passMacOIT(VkPipeline pipeline, std::initializer_list<const TargetImage*> targets, bool gated)
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        std::vector<VkRenderingAttachmentInfo> colors;
+        for (const TargetImage* target : targets)
+        {
+            VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+            color.imageView = target->view;
+            color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // sums start at 0
+            color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            colors.push_back(color);
+        }
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mDepthImage.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, mSceneExtent };
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = uint32_t(colors.size());
+        rendering.pColorAttachments = colors.data();
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+
+        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        pushScene(commands);
+        drawMacOITLists(commands, gated);
+        vkCmdEndRendering(commands);
+        return true;
+    }
+
+    bool passMacOITKeys()
+    {
+        if (mMacOIT.stateFresh)
+        {
+            // Every key empty, every farthest depth and count 0: the resolve keeps it so.
+            VkCommandBuffer commands = mRecordCommands;
+            const uint64_t pixels = uint64_t(mSceneExtent.width) * mSceneExtent.height;
+            const uint64_t keyBytes = pixels * MACOIT_LAYERS * sizeof(uint32_t);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            vkCmdFillBuffer(commands, mMacOIT.state.buffer, 0, keyBytes, MACOIT_EMPTY_KEY);
+            vkCmdFillBuffer(commands, mMacOIT.state.buffer, keyBytes, macoitBytes(pixels) - keyBytes, 0);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                          VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            mMacOIT.stateFresh = false;
+        }
+        return passMacOIT(mMacOIT.keys, {}, false);
+    }
+
+    bool passMacOITGate()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mCullPipeline);
+        mScenePush.phase = MACOIT_GATE;
+        pushScene(commands);
+        vkCmdDispatch(commands, 1, 1, 1); // 2 * SCENE_BLENDED_LISTS draws fit one workgroup
+        return true;
+    }
+
+    bool passMacOITResolve()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mMacOIT.resolve);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        pushScene(commands);
+        vkCmdDispatch(commands, (mSceneExtent.width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE,
+                      (mSceneExtent.height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1);
+        return true;
+    }
+
+    void setMacOITBodies()
+    {
+        mGraph.setBody(PassMacOITKeys, [this]() { return passMacOITKeys(); });
+        mGraph.setBody(PassMacOITGate, [this]() { return passMacOITGate(); });
+        mGraph.setBody(PassMacOITTail, [this]() { return passMacOIT(mMacOIT.tail, { &mMacOIT.moments, &mMacOIT.tailDepth }, true); });
+        mGraph.setBody(PassMacOITColor, [this]() { return passMacOIT(mMacOIT.colorPass, { &mMacOIT.color, &mMacOIT.weights }, false); });
+        mGraph.setBody(PassMacOITResolve, [this]() { return passMacOITResolve(); });
     }
 
     void destroyScene()
@@ -1237,6 +1475,10 @@ private:
         destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
         destroyTarget(mAuditImage);
+        destroyTarget(mLitImage);
+        destroyTarget(mSceneColorImage);
+        destroyMacOITTargets();
+        destroyMacOITPipelines();
         for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
@@ -1909,7 +2151,7 @@ private:
         {
             stages |= VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
         }
-        if (uses & GraphAccess::FragmentRead)
+        if (uses & (GraphAccess::FragmentRead | GraphAccess::FragmentWrite))
         {
             stages |= VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
         }
@@ -1935,7 +2177,7 @@ private:
         {
             access |= VK_ACCESS_2_TRANSFER_WRITE_BIT;
         }
-        if (uses & GraphAccess::ComputeWrite)
+        if (uses & (GraphAccess::ComputeWrite | GraphAccess::FragmentWrite))
         {
             access |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
         }
@@ -1961,7 +2203,8 @@ private:
         {
             access |= VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
         }
-        if (uses & (GraphAccess::VertexRead | GraphAccess::FragmentRead | GraphAccess::ComputeRead | GraphAccess::ComputeWrite))
+        if (uses & (GraphAccess::VertexRead | GraphAccess::FragmentRead | GraphAccess::ComputeRead | GraphAccess::ComputeWrite |
+                    GraphAccess::FragmentWrite))
         {
             access |= VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
         }
@@ -2180,6 +2423,7 @@ private:
         mScenePush.groups = mSceneGroups.address;
         mScenePush.feedback = mTextureFeedback.address;
         mScenePush.terrains = mSceneTables[uint32_t(SceneTable::Terrains)].address;
+        mScenePush.macoit = mMacOIT.state.address;
         return true;
     }
 
@@ -2254,7 +2498,7 @@ private:
         vkCmdSetScissor(commands, 0, 1, &scissor);
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 1, &mUISets[mRecordSlot], 0, nullptr);
         pushScene(commands);
-        for (uint32_t kind = 0; kind < SCENE_KINDS; ++kind)
+        for (uint32_t kind = 0; kind < SCENE_OPAQUE_KINDS; ++kind) // blended kinds are Mac OIT's
         {
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, (kind & 2) ? mMaskedPipeline : mVisibilityPipeline);
             vkCmdSetCullMode(commands, (kind & 1) ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
@@ -2367,6 +2611,7 @@ private:
         mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditImage.view, offsetof(GpuSceneCounts, early), false, true); });
         mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
         mGraph.setBody(PassReadFeedback, [this]() { return passReadFeedback(); });
+        setMacOITBodies();
     }
 
     // What this slot's earlier frame left behind. It has finished: its fence was waited on.
@@ -2908,6 +3153,9 @@ private:
     TargetImage mAlbedoImage;
     TargetImage mNormalImage;
     TargetImage mAuditImage;
+    TargetImage mLitImage;
+    TargetImage mSceneColorImage;
+    MacOITResources mMacOIT;
     VkExtent2D mSceneExtent{};
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
     float mTimestampMilliseconds = 0.f;

@@ -41,8 +41,9 @@ constexpr uint32_t ComputeRead = 1u << 5;
 constexpr uint32_t ComputeWrite = 1u << 6;
 constexpr uint32_t ColorTarget = 1u << 7;
 constexpr uint32_t DepthTarget = 1u << 8;
-constexpr uint32_t Writes = CopyWrite | ComputeWrite | ColorTarget | DepthTarget;
-constexpr uint32_t Stages = (1u << 9) - 1;
+constexpr uint32_t FragmentWrite = 1u << 11; // storage written by fragment shaders, as Mac OIT's keys
+constexpr uint32_t Writes = CopyWrite | ComputeWrite | ColorTarget | DepthTarget | FragmentWrite;
+constexpr uint32_t Stages = ((1u << 9) - 1) | FragmentWrite;
 
 constexpr uint32_t Keep = 1u << 9;           // a write that adds to what is there
 constexpr uint32_t PreviousFrame = 1u << 10; // reads what the last frame left: no order inside this frame

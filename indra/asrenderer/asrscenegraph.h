@@ -33,6 +33,17 @@ enum SceneResult : ResultId
     ResultGroupList,      // cluster groups whose clusters are tested next
     ResultTextureFeedback, // a word per texture slot, added to by every resolve
     ResultFeedbackReadback, // read back at the end of a feedback window
+
+    // Transparency's interface: it reads the opaque image, the opaque depth and the blended
+    // lists, and makes the scene colour. Whatever makes it can be replaced as a whole: see
+    // declareMacOIT(). Its own results below are private to it.
+    ResultLit,            // the opaque image, kept for readers such as depth of field
+    ResultSceneColor,     // opaque and transparent together
+    ResultMacOITState,    // Mac OIT's per-pixel keys, farthest depth and count, kept clean between frames
+    ResultMacOITMoments,  // tail moments
+    ResultMacOITTailDepth, // tail optical depth
+    ResultMacOITColor,    // sum of colour * weight, and glow
+    ResultMacOITWeights,  // sum of weight, and of optical depth
     ResultCount
 };
 
@@ -54,6 +65,11 @@ enum ScenePass : PassId
     PassDrawLate,
     PassPyramidFinal,
     PassResolve,
+    PassMacOITKeys,    // Mac OIT, declared by declareMacOIT()
+    PassMacOITGate,
+    PassMacOITTail,
+    PassMacOITColor,
+    PassMacOITResolve,
     PassReadCounts,
     PassAuditReset,
     PassAuditCull,
@@ -67,5 +83,10 @@ enum ScenePass : PassId
 constexpr uint32_t MAX_SCENE_PASSES = PassCount;
 
 void declareSceneGraph(FrameGraph& graph);
+
+// Transparency by Mac OIT: makes ResultSceneColor from ResultLit, the opaque depth and the
+// blended lists. Another transparency replaces these passes with its own (FrameGraph's
+// replacement), making the same result, and no reader of it changes.
+void declareMacOIT(FrameGraph& graph);
 
 } // namespace asr

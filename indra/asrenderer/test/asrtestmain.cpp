@@ -1414,6 +1414,70 @@ void testSceneStore()
     }
 }
 
+// Mac OIT's keys pass, as asrSceneMacOIT.glsl runs it, against the OpenGL version's peeling:
+// layer 0 is the smallest key, and layer k the smallest key strictly behind layer k-1 in
+// depth. Both must give the same layers whatever order fragments arrive in. A key's depth is
+// its bits above the lowest 8.
+void testMacOITKeys()
+{
+    const auto depthOf = [](uint32_t key) { return key >> 8; };
+    const auto insert = [&](uint32_t slots[asr::MACOIT_LAYERS], uint32_t key)
+    {
+        for (uint32_t k = 0; k < asr::MACOIT_LAYERS; ++k)
+        {
+            const uint32_t previous = slots[k];
+            slots[k] = std::min(previous, key); // atomicMin
+            if (previous == asr::MACOIT_EMPTY_KEY || depthOf(previous) == depthOf(key))
+            {
+                return;
+            }
+            key = std::max(previous, key);
+        }
+    };
+
+    uint32_t random = 777;
+    const auto next = [&random]() { random = random * 1664525u + 1013904223u; return random >> 8; };
+    bool same = true;
+    for (int trial = 0; trial < 2000 && same; ++trial)
+    {
+        // Few depths, so many fragments share one, as two faces of one layer would.
+        std::vector<uint32_t> keys(1 + next() % 12);
+        for (uint32_t& key : keys)
+        {
+            key = (1 + next() % 8) << 8 | (next() & 255);
+        }
+        uint32_t peeled[asr::MACOIT_LAYERS];
+        uint32_t behind = 0;
+        for (uint32_t k = 0; k < asr::MACOIT_LAYERS; ++k)
+        {
+            peeled[k] = asr::MACOIT_EMPTY_KEY;
+            for (uint32_t key : keys)
+            {
+                if (depthOf(key) > behind && key < peeled[k])
+                {
+                    peeled[k] = key;
+                }
+            }
+            behind = peeled[k] == asr::MACOIT_EMPTY_KEY ? behind : depthOf(peeled[k]);
+        }
+        for (int order = 0; order < 6 && same; ++order)
+        {
+            for (size_t i = keys.size(); i > 1; --i)
+            {
+                std::swap(keys[i - 1], keys[next() % i]);
+            }
+            uint32_t slots[asr::MACOIT_LAYERS];
+            std::fill(slots, slots + asr::MACOIT_LAYERS, asr::MACOIT_EMPTY_KEY);
+            for (uint32_t key : keys)
+            {
+                insert(slots, key);
+            }
+            same = std::equal(slots, slots + asr::MACOIT_LAYERS, peeled);
+        }
+    }
+    expect(same, "Mac OIT's one-pass keys are the layers peeling finds, in any order");
+}
+
 // The newest bytes this update sent for one table entry, or null.
 template <typename T>
 const T* writtenEntry(const asr::SceneStore& store, asr::SceneTable table, uint64_t index)
@@ -2289,6 +2353,7 @@ int main(int argc, char** argv)
         testTextureFeedback();
         testSceneStore();
         testSkinStore();
+        testMacOITKeys();
         testFrameGraph();
         testPyramidLayout();
     }
