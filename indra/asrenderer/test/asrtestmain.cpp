@@ -1414,6 +1414,153 @@ void testSceneStore()
     }
 }
 
+// The newest bytes this update sent for one table entry, or null.
+template <typename T>
+const T* writtenEntry(const asr::SceneStore& store, asr::SceneTable table, uint64_t index)
+{
+    const uint64_t at = index * asr::SCENE_TABLE_STRIDE[uint32_t(table)];
+    const uint8_t* found = nullptr;
+    for (const asr::SceneWrite& write : store.writes())
+    {
+        if (write.table == table && write.offset <= at && at < write.offset + write.bytes)
+        {
+            const uint8_t* bytes = write.data ? static_cast<const uint8_t*>(write.data) : store.tableBytes().data() + write.source;
+            found = bytes + (at - write.offset);
+        }
+    }
+    return reinterpret_cast<const T*>(found);
+}
+
+void testSkinStore()
+{
+    asr::SceneQueue queue;
+    asr::SceneStore store(2);
+    FakeChunks chunks;
+    constexpr uint64_t LIMIT = 4 * 1024 * 1024;
+
+    std::vector<asr::SkinWeights> roughWeights;
+    std::vector<asr::SkinWeights> fineWeights;
+    const asrtest::Mesh rough = asrtest::makeTube(8, 8, roughWeights);
+    const asrtest::Mesh fine = asrtest::makeTube(64, 24, fineWeights);
+    const uint32_t roughId = queue.addGeometry(asrtest::build(rough, &asrtest::CREATURE_BOX, roughWeights.data()));
+    const uint32_t fineId = queue.addGeometry(asrtest::build(fine, &asrtest::CREATURE_BOX, fineWeights.data()), roughId, 30.f);
+    const uint32_t plain = queue.addGeometry(asrtest::build(asrtest::makeBoxFace(0, 1.f)));
+    const uint32_t skin = queue.addSkin(asrtest::creatureSkin());
+    const uint32_t skeleton = queue.addSkeleton(asrtest::CREATURE_JOINTS);
+    float rows[asrtest::CREATURE_JOINTS * 12];
+    asrtest::creaturePose(0.f, 10.f, 20.f, 0.5f, 0.f, rows);
+    const auto start = std::chrono::steady_clock::now();
+    queue.poseSkeleton(skeleton, rows, asrtest::CREATURE_JOINTS, start);
+
+    asr::InstanceDesc tube;
+    tube.geometry = fineId;
+    tube.skeleton = skeleton;
+    tube.skin = skin;
+    tube.lodSize = asrtest::CREATURE_HEIGHT;
+    const uint32_t tubeId = queue.addInstance(tube);
+    asr::InstanceDesc held;
+    memset(held.objectToWorld, 0, sizeof(held.objectToWorld));
+    held.objectToWorld[0] = held.objectToWorld[5] = held.objectToWorld[10] = 1.f;
+    held.objectToWorld[11] = 1.25f;
+    held.geometry = plain;
+    held.skeleton = skeleton;
+    held.joint = asrtest::CREATURE_JOINTS - 1;
+    const uint32_t heldId = queue.addInstance(held);
+    asr::InstanceDesc loose = tube;
+    loose.geometry = plain; // no weights: nothing to skin
+    const uint32_t looseId = queue.addInstance(loose);
+
+    uint64_t frame = 10;
+    store.update(queue, chunks, frame, LIMIT);
+    expect(store.skinnedInstances() == 1, "a skinned instance is bound, and one with no weights is not");
+    const asr::GpuInstance* tubeEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, tubeId);
+    expect(tubeEntry && (tubeEntry->flags & (asr::INSTANCE_SKINNED | asr::INSTANCE_BOUND)) == (asr::INSTANCE_SKINNED | asr::INSTANCE_BOUND),
+           "a skinned instance is marked");
+    expect(tubeEntry && tubeEntry->geometry != fineId && tubeEntry->geometry != roughId && tubeEntry->geometry != 0,
+           "a skinned instance draws through a geometry of its own");
+    const uint32_t bindingId = tubeEntry ? tubeEntry->binding : 0;
+    const asr::GpuBinding* binding = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, bindingId);
+    expect(binding && binding->kind == asr::BINDING_SKINNED && binding->source == fineId && binding->instance == tubeId &&
+               tubeEntry && binding->target == tubeEntry->geometry,
+           "its binding names the source chain and its own geometry");
+    const asr::GpuInstance* heldEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, heldId);
+    const asr::GpuSkeleton* skeletonEntry = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, skeleton);
+    const asr::GpuBinding* heldBinding = heldEntry ? writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, heldEntry->binding) : nullptr;
+    expect(heldBinding && skeletonEntry && heldBinding->kind == asr::BINDING_ATTACHED &&
+               heldBinding->palette == skeletonEntry->firstJoint + asrtest::CREATURE_JOINTS - 1,
+           "an attached instance follows its joint");
+    const asr::GpuInstance* looseEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, looseId);
+    expect(looseEntry && looseEntry->geometry == 0, "an instance that cannot be skinned draws nothing");
+    expect(store.skinThreads(asr::SKIN_VERTICES) >= fine.vertices.size() && store.skinThreads(asr::SKIN_PALETTE) >= asrtest::CREATURE_JOINTS,
+           "the skin passes cover every vertex and palette entry");
+
+    // Every vertex, skinned on the CPU, must land in the box its positions are packed in.
+    const auto insideBox = [&](const asr::GpuSkeleton& entry, const float* pose)
+    {
+        bool inside = true;
+        for (size_t i = 0; i < fine.vertices.size(); ++i)
+        {
+            const float* p = fine.vertices[i].position;
+            float skinned[3] = { 0.f, 0.f, 0.f };
+            for (int k = 0; k < 2; ++k)
+            {
+                const uint32_t joint = fineWeights[i].joints[k];
+                const float amount = fineWeights[i].weights[k] / 65535.f;
+                const float lowered[12] = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, -float(joint) };
+                float palette[12];
+                asrtest::multiplyRows(pose + joint * 12, lowered, palette);
+                for (int row = 0; row < 3; ++row)
+                {
+                    skinned[row] += amount * (palette[row * 4] * p[0] + palette[row * 4 + 1] * p[1] + palette[row * 4 + 2] * p[2] + palette[row * 4 + 3]);
+                }
+            }
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                inside = inside && std::fabs(skinned[axis] - entry.boxCenter[axis]) <= entry.boxScale;
+            }
+        }
+        return inside;
+    };
+    expect(skeletonEntry && insideBox(*skeletonEntry, rows), "the skeleton's box holds every skinned vertex");
+
+    // A second pose: the one before is kept for the GPU to carry the motion on from.
+    float later[asrtest::CREATURE_JOINTS * 12];
+    asrtest::creaturePose(0.5f, 10.5f, 20.f, 0.6f, 0.f, later);
+    queue.poseSkeleton(skeleton, later, asrtest::CREATURE_JOINTS, start + std::chrono::milliseconds(20));
+    store.update(queue, chunks, ++frame, LIMIT);
+    skeletonEntry = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, skeleton);
+    const asr::GpuJoint* joints = skeletonEntry ? writtenEntry<asr::GpuJoint>(store, asr::SceneTable::Joints, skeletonEntry->firstJoint) : nullptr;
+    expect(skeletonEntry && skeletonEntry->time - skeletonEntry->previousTime == 20000 && skeletonEntry->maxLead == asr::SKELETON_MAX_LEAD,
+           "two poses give a step and a lead");
+    expect(joints && joints[1].rows[0][3] == later[12 + 3] && joints[1].previous[0][3] == rows[12 + 3], "joints carry both poses");
+    float ahead[asrtest::CREATURE_JOINTS * 12];
+    for (size_t i = 0; i < sizeof(ahead) / sizeof(ahead[0]); ++i)
+    {
+        ahead[i] = later[i] + (later[i] - rows[i]) * asr::SKELETON_MAX_LEAD;
+    }
+    expect(skeletonEntry && insideBox(*skeletonEntry, later) && insideBox(*skeletonEntry, ahead), "the box holds the furthest lead too");
+
+    // A new material keeps the skinned geometry: only its instance and binding are written.
+    tube.material = 3;
+    queue.setInstance(tubeId, tube);
+    store.update(queue, chunks, ++frame, LIMIT);
+    tubeEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, tubeId);
+    expect(tubeEntry && tubeEntry->binding == bindingId && tubeEntry->material == 3, "a skinned instance set again keeps its binding");
+    expect(store.writes().size() == 2, "and writes only its instance and binding");
+
+    // Everything goes once frames in flight are done with it, and ids come back.
+    queue.removeInstance(tubeId);
+    queue.removeInstance(heldId);
+    queue.removeInstance(looseId);
+    queue.removeSkeleton(skeleton);
+    queue.removeSkin(skin);
+    store.update(queue, chunks, ++frame, LIMIT);
+    expect(store.skinnedInstances() == 0, "a removed skinned instance is unbound");
+    store.update(queue, chunks, frame += 4, LIMIT);
+    expect(queue.addSkeleton(2) == skeleton, "a freed skeleton id is reused");
+    expect(queue.addSkin(asrtest::creatureSkin()) == skin, "a freed skin id is reused");
+}
+
 void testFrameGraph()
 {
     using namespace asr::GraphAccess;
@@ -2097,6 +2244,7 @@ int main(int argc, char** argv)
         testCameraZoom();
         testTextureFeedback();
         testSceneStore();
+        testSkinStore();
         testFrameGraph();
         testPyramidLayout();
     }

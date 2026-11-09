@@ -95,7 +95,7 @@ endfunction()
 
 set(ASR_SHADER_OUTPUTS)
 foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asrScenePyramidC asrSceneVisibilityV
-        asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF)
+        asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})

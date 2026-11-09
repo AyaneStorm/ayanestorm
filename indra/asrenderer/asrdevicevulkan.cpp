@@ -1042,7 +1042,8 @@ private:
         mVisibilityPipeline = mResolvePipeline ? createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
-        if (!mCompositePipeline)
+        mSkinPipeline = mCompositePipeline ? createComputePipeline("asrSceneSkinC", error) : VK_NULL_HANDLE;
+        if (!mSkinPipeline)
         {
             return false;
         }
@@ -1236,7 +1237,7 @@ private:
         destroyTarget(mAlbedoImage);
         destroyTarget(mNormalImage);
         destroyTarget(mAuditImage);
-        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline })
+        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -2152,17 +2153,12 @@ private:
 
         GpuSceneView view{};
         fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneExtent.width, mSceneExtent.height);
-        uint32_t base = 0;
-        for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+        mSceneStore.fillView(view);
+        for (uint32_t table = SCENE_FIRST_SKIN_TABLE; table < SCENE_TABLES; ++table)
         {
-            view.listBase[list] = base;
-            base += mSceneStore.listCapacity(list);
+            view.skinTables[table - SCENE_FIRST_SKIN_TABLE] = mSceneTables[table].address;
         }
-        view.instanceEnd = mSceneStore.instanceEnd();
-        view.visibleEnd = base;
-        view.clusterEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
-        view.materialEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
-        view.groupEnd = uint32_t(mSceneStore.groupCapacity());
+        view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
@@ -2211,6 +2207,21 @@ private:
         {
             vkCmdDispatch(commands, (mSceneInstanceEnd + CULL_GROUP_SIZE - 1) / CULL_GROUP_SIZE, 1, 1);
         }
+        return true;
+    }
+
+    bool passSkin(uint32_t phase)
+    {
+        const uint32_t threads = mSceneStore.skinThreads(phase);
+        if (threads == 0)
+        {
+            return true;
+        }
+        VkCommandBuffer commands = mRecordCommands;
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mSkinPipeline);
+        mScenePush.phase = phase;
+        pushScene(commands);
+        vkCmdDispatch(commands, (threads + SKIN_BLOCK - 1) / SKIN_BLOCK, 1, 1);
         return true;
     }
 
@@ -2336,6 +2347,10 @@ private:
     void setPassBodies()
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
+        {
+            mGraph.setBody(PassId(PassSkinPalette + phase), [this, phase]() { return passSkin(phase); });
+        }
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
         mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
@@ -2432,6 +2447,7 @@ private:
         mRecordCommands = commands;
         mRecordSlot = slot;
         mRecordCamera = &camera;
+        mRecordTime = std::chrono::steady_clock::now(); // what avatars' motion is carried on to
 
         const uint32_t firstQuery = slot * (MAX_TIMED_PASSES + 1);
         const uint32_t passes = std::min(mGraph.passCount(), MAX_TIMED_PASSES);
@@ -2885,6 +2901,7 @@ private:
     VkPipeline mVisibilityPipeline = VK_NULL_HANDLE;
     VkPipeline mMaskedPipeline = VK_NULL_HANDLE;
     VkPipeline mResolvePipeline = VK_NULL_HANDLE;
+    VkPipeline mSkinPipeline = VK_NULL_HANDLE;
     VkPipeline mCompositePipeline = VK_NULL_HANDLE;
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;
@@ -2908,6 +2925,7 @@ private:
     VkCommandBuffer mRecordCommands = VK_NULL_HANDLE;
     uint32_t mRecordSlot = 0;
     const SceneCamera3D* mRecordCamera = nullptr;
+    std::chrono::steady_clock::time_point mRecordTime;
     ScenePush mScenePush{};
     uint32_t mSceneInstanceEnd = 0;
     uint32_t mPyramidLevels = 0;

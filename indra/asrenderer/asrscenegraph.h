@@ -39,6 +39,11 @@ enum SceneResult : ResultId
 enum ScenePass : PassId
 {
     PassUpload,
+    PassSkinPalette, // the skin passes: SKIN_PALETTE to SKIN_GROUPS, in order
+    PassSkinBind,
+    PassSkinVertices,
+    PassSkinClusters,
+    PassSkinGroups,
     PassCullEarly,
     PassGroupsEarly,
     PassDrawEarly,

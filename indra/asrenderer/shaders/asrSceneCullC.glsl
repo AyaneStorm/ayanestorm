@@ -351,9 +351,28 @@ void testGroup(ViewRef view, Instance instance, uint instanceIndex, uint groupId
     }
 }
 
+// A view can draw only the instances bound to chosen skeletons: avatars over a plain colour.
+bool chosenByView(ViewRef view, Instance instance)
+{
+    if (view.drawOnly == 0ul)
+    {
+        return true;
+    }
+    if ((instance.flags & INSTANCE_BOUND) == 0u)
+    {
+        return false;
+    }
+    const uint skeleton = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding].skeleton;
+    return (WordsRef(view.drawOnly).words[skeleton >> 5] & (1u << (skeleton & 31u))) != 0u;
+}
+
 void cullInstance(ViewRef view, uint instanceIndex)
 {
     const Instance instance = InstancesRef(push.instances).items[instanceIndex];
+    if (!chosenByView(view, instance))
+    {
+        return;
+    }
     const float scaleBound = scaleBoundOf(instance);
     const Geometry geometry = GeometriesRef(push.geometries).items[chooseGeometry(view, instance, scaleBound)];
     if (geometry.clusterCount == 0u)

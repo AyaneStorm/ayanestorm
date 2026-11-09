@@ -5,7 +5,9 @@
 #include "asrscenestore.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
+#include <limits>
 #include <utility>
 
 namespace asr
@@ -275,6 +277,11 @@ void SceneStore::applyGeometry(GeometryCommand& command)
     geometry = Geometry();
     memcpy(geometry.center, command.data.center, sizeof(geometry.center));
     geometry.scale = command.data.scale;
+    geometry.radius = command.data.radius;
+    geometry.vertexCount = command.data.vertexCount;
+    geometry.clusterCount = uint32_t(command.data.clusters.size());
+    geometry.groupCount = uint32_t(command.data.groups.size());
+    geometry.skinned = command.data.skinned;
     geometry.data = std::move(command.data);
     geometry.queued = true;
     ++mQueuedGeometries;
@@ -306,6 +313,26 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
         mInstanceUses.resize(size_t(command.id) + 1);
     }
     InstanceUse& current = mInstanceUses[command.id];
+    const InstanceDesc& desc = command.desc;
+
+    // A skinned instance set again on the same skeleton, skin and geometry keeps its own
+    // geometry and ranges: a new material, say, costs one binding write.
+    uint32_t kept = 0;
+    if (current.binding != 0)
+    {
+        const Binding& binding = mBindings[current.binding];
+        if (command.type == InstanceCommand::Type::Set && binding.kind == BINDING_SKINNED && desc.skin == binding.skin &&
+            desc.skeleton == binding.skeleton && desc.geometry == binding.source)
+        {
+            kept = current.binding;
+        }
+        else
+        {
+            unbind(current.binding, frame);
+        }
+        current.binding = 0;
+    }
+
     if (current.geometry != 0)
     {
         const uint32_t old = current.geometry;
@@ -328,7 +355,6 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
         return;
     }
 
-    const InstanceDesc& desc = command.desc;
     if (desc.geometry != 0 && desc.geometry < mGeometries.size())
     {
         Geometry& geometry = mGeometries[desc.geometry];
@@ -352,12 +378,512 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
         memcpy(instance.lodCenter, desc.lodCenter, sizeof(instance.lodCenter));
         instance.lodSize = desc.lodSize;
 
-        current.geometry = desc.geometry;
-        current.kind = sceneKind(instance.flags);
-        countInstance(current.geometry, current.kind, 1);
+        // On a skeleton, the skin passes write the matrix and LOD centre every frame.
+        uint32_t binding = 0;
+        bool drawn = true;
+        if (desc.skeleton != 0 && desc.skin != 0)
+        {
+            binding = kept != 0 ? kept : bindSkinned(command.id, desc);
+            if (binding != 0)
+            {
+                if (kept != 0)
+                {
+                    writeSkinnedBinding(kept, command.id, desc);
+                }
+                instance.geometry = mBindings[binding].target;
+                instance.flags = INSTANCE_SKINNED | INSTANCE_BOUND | (desc.flags & INSTANCE_DESC_FLAGS);
+            }
+            drawn = binding != 0;
+        }
+        else if (desc.skeleton != 0)
+        {
+            binding = bindAttached(command.id, desc, instance);
+            instance.flags |= INSTANCE_BOUND;
+            drawn = binding != 0;
+        }
+        instance.binding = binding;
+        current.binding = binding;
+
+        if (drawn)
+        {
+            current.geometry = desc.geometry;
+            current.kind = sceneKind(instance.flags);
+            countInstance(current.geometry, current.kind, 1);
+        }
+        else
+        {
+            instance = GpuInstance{}; // its skeleton, skin or weights are missing: nothing to draw
+        }
     }
     writeEntry(SceneTable::Instances, command.id, &instance, sizeof(instance));
     mInstanceEnd = std::max(mInstanceEnd, command.id + 1);
+}
+
+uint32_t SceneStore::allocateRange(SceneTable table, uint64_t size)
+{
+    RangeAllocator& ranges = mRanges[uint32_t(table)];
+    uint64_t offset = 0;
+    while (!ranges.allocate(size, 1, offset))
+    {
+        ranges.grow(std::max<uint64_t>({ ranges.capacity() * 2, 1024, size }));
+    }
+    ensureTable(table, ranges.capacity());
+    if (table == SceneTable::Palette)
+    {
+        ensureTable(SceneTable::PaletteJobs, ranges.capacity()); // entry for entry
+    }
+    return uint32_t(offset);
+}
+
+void SceneStore::retireRange(SceneTable table, uint32_t first, uint32_t count, uint64_t frame)
+{
+    if (count != 0)
+    {
+        mRetired.push_back({ Retired::Type::TableRange, uint32_t(table), first, count, frame + mFreeDelay });
+    }
+}
+
+void SceneStore::applySkeleton(const SkeletonCommand& command)
+{
+    if (mSkeletons.size() <= command.id)
+    {
+        mSkeletons.resize(size_t(command.id) + 1);
+    }
+    Skeleton& skeleton = mSkeletons[command.id];
+    if (command.jointCount != 0)
+    {
+        skeleton = Skeleton();
+        skeleton.jointCount = command.jointCount;
+        skeleton.firstJoint = allocateRange(SceneTable::Joints, command.jointCount);
+        GpuJoint identity{};
+        for (int row = 0; row < 3; ++row)
+        {
+            identity.rows[row][row] = 1.f;
+            identity.previous[row][row] = 1.f;
+        }
+        skeleton.joints.assign(command.jointCount, identity);
+        writeSkeleton(command.id, true);
+    }
+    if (command.rows.empty() || skeleton.jointCount == 0)
+    {
+        return;
+    }
+
+    const size_t count = std::min<size_t>(skeleton.jointCount, command.rows.size() / 12);
+    for (size_t i = 0; i < count; ++i)
+    {
+        GpuJoint& joint = skeleton.joints[i];
+        if (skeleton.posed)
+        {
+            memcpy(joint.previous, joint.rows, sizeof(joint.rows));
+            memcpy(joint.rows, &command.rows[i * 12], sizeof(joint.rows));
+        }
+        else
+        {
+            memcpy(joint.rows, &command.rows[i * 12], sizeof(joint.rows));
+            memcpy(joint.previous, joint.rows, sizeof(joint.rows));
+        }
+    }
+    skeleton.previousTime = skeleton.posed ? skeleton.time : command.time;
+    skeleton.time = command.time;
+    skeleton.posed = true;
+    writeSkeleton(command.id, true);
+}
+
+// The box every skinned vertex of the skeleton stays in, at any lead the GPU can draw: around
+// the joints' places from the newest pose to the furthest lead, widened by how far anything
+// bound reaches from its joints, times the largest joint scale. Motion is linear in the lead,
+// so its two ends hold the rest.
+void SceneStore::writeSkeleton(uint32_t id, bool joints)
+{
+    Skeleton& skeleton = mSkeletons[id];
+    const uint32_t step = skeleton.time - skeleton.previousTime; // wraps like the times
+    const float lead = step == 0 ? 0.f : std::min(SKELETON_MAX_LEAD, SKELETON_MAX_LEAD_SECONDS * 1e6f / float(step));
+
+    float low[3] = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+    float high[3] = { -low[0], -low[1], -low[2] };
+    float scale = 0.f;
+    for (const GpuJoint& joint : skeleton.joints)
+    {
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const float now = joint.rows[axis][3];
+            const float ahead = now + (now - joint.previous[axis][3]) * lead;
+            low[axis] = std::min({ low[axis], now, ahead });
+            high[axis] = std::max({ high[axis], now, ahead });
+        }
+        // The Frobenius norm bounds how far a joint can stretch anything, in any direction.
+        for (const auto& rows : { joint.rows, joint.previous })
+        {
+            float sum = 0.f;
+            for (int row = 0; row < 3; ++row)
+            {
+                sum += rows[row][0] * rows[row][0] + rows[row][1] * rows[row][1] + rows[row][2] * rows[row][2];
+            }
+            scale = std::max(scale, std::sqrt(sum));
+        }
+    }
+    const float widen = skeleton.reach * scale;
+
+    GpuSkeleton entry{};
+    float half = 1e-3f;
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        entry.boxCenter[axis] = (low[axis] + high[axis]) * 0.5f;
+        half = std::max(half, (high[axis] - low[axis]) * 0.5f + widen);
+    }
+    entry.boxScale = half * 1.001f; // so rounding never puts a vertex outside
+    entry.firstJoint = skeleton.firstJoint;
+    entry.jointCount = skeleton.jointCount;
+    entry.time = skeleton.time;
+    entry.previousTime = skeleton.previousTime;
+    entry.maxLead = lead;
+    writeEntry(SceneTable::Skeletons, id, &entry, sizeof(entry));
+
+    if (!joints)
+    {
+        return;
+    }
+    const uint64_t bytes = skeleton.joints.size() * sizeof(GpuJoint);
+    if (skeleton.jointUpdate == mUpdate)
+    {
+        // Overlapping copies in one batch are undefined, so a second pose writes over the first.
+        memcpy(mTableBytes.data() + mWrites[skeleton.jointWrite].source, skeleton.joints.data(), bytes);
+        return;
+    }
+    skeleton.jointUpdate = mUpdate;
+    skeleton.jointWrite = uint32_t(mWrites.size());
+    writeTable(SceneTable::Joints, skeleton.firstJoint, skeleton.joints.data(), bytes);
+}
+
+void SceneStore::applySkin(const SkinCommand& command)
+{
+    if (mSkins.size() <= command.id)
+    {
+        mSkins.resize(size_t(command.id) + 1);
+    }
+    Skin& skin = mSkins[command.id];
+    skin = Skin();
+    const size_t count = std::min(command.desc.joints.size(), command.desc.matrices.size() / 12);
+    if (count == 0)
+    {
+        return; // nothing can be skinned to it
+    }
+    skin.matrices.assign(command.desc.matrices.begin(), command.desc.matrices.begin() + count * 12);
+    skin.joints.assign(command.desc.joints.begin(), command.desc.joints.begin() + count);
+    skin.firstMatrix = allocateRange(SceneTable::SkinMatrices, count);
+    writeTable(SceneTable::SkinMatrices, skin.firstMatrix, skin.matrices.data(), count * 48);
+}
+
+void SceneStore::removeSkeletonIfUnused(uint32_t id, uint64_t frame)
+{
+    Skeleton& skeleton = mSkeletons[id];
+    if (!skeleton.removing || skeleton.users != 0)
+    {
+        return;
+    }
+    const GpuSkeleton empty{};
+    writeEntry(SceneTable::Skeletons, id, &empty, sizeof(empty));
+    retireRange(SceneTable::Joints, skeleton.firstJoint, skeleton.jointCount, frame);
+    skeleton = Skeleton();
+    mRetired.push_back({ Retired::Type::SkeletonId, id, 0, 0, frame + mFreeDelay });
+}
+
+void SceneStore::removeSkinIfUnused(uint32_t id, uint64_t frame)
+{
+    Skin& skin = mSkins[id];
+    if (!skin.removing || skin.users != 0)
+    {
+        return;
+    }
+    retireRange(SceneTable::SkinMatrices, skin.firstMatrix, uint32_t(skin.joints.size()), frame);
+    skin = Skin();
+    mRetired.push_back({ Retired::Type::SkinId, id, 0, 0, frame + mFreeDelay });
+}
+
+// One palette per skeleton and skin, whatever number of faces and views use it.
+uint32_t SceneStore::usePalette(uint32_t skeletonId, uint32_t skinId)
+{
+    const uint64_t key = uint64_t(skeletonId) << 32 | skinId;
+    auto found = mPalettes.find(key);
+    if (found != mPalettes.end())
+    {
+        ++found->second.users;
+        return found->second.first;
+    }
+
+    Skeleton& skeleton = mSkeletons[skeletonId];
+    Skin& skin = mSkins[skinId];
+    Palette palette;
+    palette.count = uint32_t(skin.joints.size());
+    palette.first = allocateRange(SceneTable::Palette, palette.count);
+    palette.users = 1;
+    std::vector<GpuPaletteJob> jobs(palette.count);
+    for (uint32_t i = 0; i < palette.count; ++i)
+    {
+        jobs[i].joint = skeleton.firstJoint + std::min<uint32_t>(skin.joints[i], skeleton.jointCount - 1);
+        jobs[i].matrix = skin.firstMatrix + i;
+        jobs[i].skeleton = skeletonId;
+    }
+    writeTable(SceneTable::PaletteJobs, palette.first, jobs.data(), jobs.size() * sizeof(GpuPaletteJob));
+    ++skeleton.users;
+    ++skin.users;
+    mPalettes.emplace(key, palette);
+    return palette.first;
+}
+
+void SceneStore::releasePalette(uint32_t skeletonId, uint32_t skinId, uint64_t frame)
+{
+    const auto found = mPalettes.find(uint64_t(skeletonId) << 32 | skinId);
+    if (found == mPalettes.end() || --found->second.users != 0)
+    {
+        return;
+    }
+    const Palette palette = found->second;
+    mPalettes.erase(found);
+    const std::vector<GpuPaletteJob> empty(palette.count);
+    writeTable(SceneTable::PaletteJobs, palette.first, empty.data(), empty.size() * sizeof(GpuPaletteJob));
+    retireRange(SceneTable::Palette, palette.first, palette.count, frame);
+    --mSkeletons[skeletonId].users;
+    --mSkins[skinId].users;
+    removeSkeletonIfUnused(skeletonId, frame);
+    removeSkinIfUnused(skinId, frame);
+}
+
+void SceneStore::writeSkinnedBinding(uint32_t id, uint32_t instance, const InstanceDesc& desc)
+{
+    const Binding& binding = mBindings[id];
+    const Geometry& source = mGeometries[binding.source];
+    GpuBinding entry{};
+    entry.kind = BINDING_SKINNED;
+    entry.instance = instance;
+    entry.skeleton = binding.skeleton;
+    entry.palette = mPalettes[uint64_t(binding.skeleton) << 32 | binding.skin].first;
+    entry.source = binding.source;
+    entry.target = binding.target;
+    entry.targetEntry = binding.targetEntry;
+    entry.lod[3] = desc.lodSize;
+    memcpy(entry.sourceBox, source.center, sizeof(source.center));
+    entry.sourceBox[3] = source.scale;
+    entry.positions = binding.positions;
+    entry.firstBlock = binding.firstBlock;
+    entry.groupCapacity = binding.groupCapacity;
+    writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
+}
+
+uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
+{
+    if (desc.skeleton >= mSkeletons.size() || mSkeletons[desc.skeleton].jointCount == 0 || mSkeletons[desc.skeleton].removing ||
+        desc.skin >= mSkins.size() || mSkins[desc.skin].joints.empty() || mSkins[desc.skin].removing)
+    {
+        return 0;
+    }
+
+    // Room for the largest LOD of the chain, which every LOD must be able to skin.
+    uint32_t vertices = 0;
+    uint32_t groups = 0;
+    uint32_t clusters = 0;
+    uint32_t at = desc.geometry;
+    for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
+    {
+        const Geometry& geometry = mGeometries[at];
+        if (!geometry.skinned)
+        {
+            return 0;
+        }
+        vertices = std::max(vertices, geometry.vertexCount);
+        groups = std::max(groups, geometry.groupCount);
+        clusters = std::max(clusters, geometry.clusterCount);
+        at = geometry.coarser;
+    }
+    if (vertices == 0 || clusters == 0)
+    {
+        return 0;
+    }
+
+    uint32_t id = 0;
+    if (mBindings.empty())
+    {
+        mBindings.resize(1); // 0 is never a binding
+    }
+    if (!mFreeBindings.empty())
+    {
+        id = mFreeBindings.back();
+        mFreeBindings.pop_back();
+    }
+    else
+    {
+        id = uint32_t(mBindings.size());
+        mBindings.emplace_back();
+    }
+    ensureTable(SceneTable::Bindings, uint64_t(mBindings.size()));
+
+    Binding& binding = mBindings[id];
+    binding = Binding();
+    binding.kind = BINDING_SKINNED;
+    binding.skeleton = desc.skeleton;
+    binding.skin = desc.skin;
+    binding.source = desc.geometry;
+    binding.target = mQueue->reserveGeometry();
+    ensureTable(SceneTable::Geometries, uint64_t(binding.target) + 1);
+    const GpuGeometry empty{};
+    writeEntry(SceneTable::Geometries, binding.target, &empty, sizeof(empty));
+
+    binding.groupCapacity = groups;
+    binding.entryCount = groups + clusters;
+    uint64_t firstEntry = 0;
+    while (!mClusterRanges.allocate(binding.entryCount, 1, firstEntry))
+    {
+        mClusterRanges.grow(std::max<uint64_t>(mClusterRanges.capacity() * 2, 4096));
+    }
+    binding.targetEntry = uint32_t(firstEntry);
+    binding.vertexCapacity = vertices;
+    binding.positions = allocateRange(SceneTable::SkinnedPositions, vertices);
+    binding.blockCount = std::max({ (vertices + SKIN_BLOCK - 1) / SKIN_BLOCK, (clusters + SKIN_BLOCK - 1) / SKIN_BLOCK, 1u });
+    binding.firstBlock = allocateRange(SceneTable::SkinBlocks, binding.blockCount);
+    const std::vector<uint32_t> blocks(binding.blockCount, id);
+    writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
+    usePalette(desc.skeleton, desc.skin);
+
+    // How far its vertices can be from any of its joints, in the joints' own space: its
+    // bounding sphere, carried through each inverse bind matrix.
+    const Geometry& source = mGeometries[desc.geometry];
+    const float sphere = source.radius * source.scale;
+    const Skin& skin = mSkins[desc.skin];
+    float reach = 0.f;
+    for (size_t joint = 0; joint < skin.joints.size(); ++joint)
+    {
+        const float* m = &skin.matrices[joint * 12];
+        float center = 0.f;
+        float stretch = 0.f;
+        for (int row = 0; row < 3; ++row)
+        {
+            const float* r = m + row * 4;
+            const float c = r[0] * source.center[0] + r[1] * source.center[1] + r[2] * source.center[2] + r[3];
+            center += c * c;
+            stretch += r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+        }
+        reach = std::max(reach, std::sqrt(center) + sphere * std::sqrt(stretch));
+    }
+    Skeleton& skeleton = mSkeletons[desc.skeleton];
+    ++skeleton.users;
+    if (reach > skeleton.reach)
+    {
+        skeleton.reach = reach;
+        writeSkeleton(desc.skeleton, false);
+    }
+
+    writeSkinnedBinding(id, instance, desc);
+    ++mSkinnedBindings;
+    return id;
+}
+
+uint32_t SceneStore::bindAttached(uint32_t instance, const InstanceDesc& desc, const GpuInstance& placed)
+{
+    if (desc.skeleton >= mSkeletons.size() || mSkeletons[desc.skeleton].jointCount == 0 || mSkeletons[desc.skeleton].removing ||
+        desc.joint >= mSkeletons[desc.skeleton].jointCount)
+    {
+        return 0;
+    }
+    uint32_t id = 0;
+    if (mBindings.empty())
+    {
+        mBindings.resize(1);
+    }
+    if (!mFreeBindings.empty())
+    {
+        id = mFreeBindings.back();
+        mFreeBindings.pop_back();
+    }
+    else
+    {
+        id = uint32_t(mBindings.size());
+        mBindings.emplace_back();
+    }
+    ensureTable(SceneTable::Bindings, uint64_t(mBindings.size()));
+
+    Skeleton& skeleton = mSkeletons[desc.skeleton];
+    ++skeleton.users;
+    Binding& binding = mBindings[id];
+    binding = Binding();
+    binding.kind = BINDING_ATTACHED;
+    binding.skeleton = desc.skeleton;
+    binding.matrix = allocateRange(SceneTable::SkinMatrices, 1);
+    writeTable(SceneTable::SkinMatrices, binding.matrix, placed.rows, sizeof(placed.rows)); // packing to joint space
+
+    GpuBinding entry{};
+    entry.kind = BINDING_ATTACHED;
+    entry.instance = instance;
+    entry.skeleton = desc.skeleton;
+    entry.palette = skeleton.firstJoint + desc.joint;
+    entry.matrix = binding.matrix;
+    memcpy(entry.lod, desc.lodCenter, sizeof(desc.lodCenter));
+    entry.lod[3] = desc.lodSize;
+    writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
+    return id;
+}
+
+void SceneStore::unbind(uint32_t id, uint64_t frame)
+{
+    Binding& binding = mBindings[id];
+    const GpuBinding empty{};
+    writeEntry(SceneTable::Bindings, id, &empty, sizeof(empty));
+    if (binding.kind == BINDING_SKINNED)
+    {
+        const std::vector<uint32_t> blocks(binding.blockCount, 0u);
+        writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
+        retireRange(SceneTable::SkinBlocks, binding.firstBlock, binding.blockCount, frame);
+        retireRange(SceneTable::SkinnedPositions, binding.positions, binding.vertexCapacity, frame);
+        const GpuGeometry emptyGeometry{};
+        writeEntry(SceneTable::Geometries, binding.target, &emptyGeometry, sizeof(emptyGeometry));
+        mRetired.push_back({ Retired::Type::Clusters, 0, binding.targetEntry, binding.entryCount, frame + mFreeDelay });
+        mRetired.push_back({ Retired::Type::GeometryId, binding.target, 0, 0, frame + mFreeDelay });
+        releasePalette(binding.skeleton, binding.skin, frame);
+        --mSkinnedBindings;
+    }
+    else if (binding.kind == BINDING_ATTACHED)
+    {
+        retireRange(SceneTable::SkinMatrices, binding.matrix, 1, frame);
+    }
+    const uint32_t skeleton = binding.skeleton;
+    binding = Binding();
+    mRetired.push_back({ Retired::Type::BindingId, id, 0, 0, frame + mFreeDelay });
+    if (skeleton != 0)
+    {
+        --mSkeletons[skeleton].users;
+        removeSkeletonIfUnused(skeleton, frame);
+    }
+}
+
+void SceneStore::fillView(GpuSceneView& view) const
+{
+    uint32_t base = 0;
+    for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+    {
+        view.listBase[list] = base;
+        base += listCapacity(list);
+    }
+    view.instanceEnd = mInstanceEnd;
+    view.visibleEnd = base;
+    view.clusterEnd = uint32_t(tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
+    view.materialEnd = uint32_t(tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
+    view.groupEnd = uint32_t(groupCapacity());
+    view.paletteEnd = uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
+    view.bindingEnd = uint32_t(mBindings.size());
+    view.blockEnd = uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used());
+}
+
+uint32_t SceneStore::skinThreads(uint32_t phase) const
+{
+    switch (phase)
+    {
+        case SKIN_PALETTE:
+            return uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
+        case SKIN_BIND:
+            return uint32_t(mBindings.size());
+        default:
+            return mSkinnedBindings == 0 ? 0 : uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used()) * SKIN_BLOCK;
+    }
 }
 
 void SceneStore::removeGeometry(uint32_t id, uint64_t frame)
@@ -551,6 +1077,18 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
             case Retired::Type::TerrainId:
                 queue.releaseTerrain(retired.index);
                 break;
+            case Retired::Type::TableRange:
+                mRanges[retired.index].release(retired.offset, retired.size);
+                break;
+            case Retired::Type::BindingId:
+                mFreeBindings.push_back(retired.index);
+                break;
+            case Retired::Type::SkeletonId:
+                queue.releaseSkeleton(retired.index);
+                break;
+            case Retired::Type::SkinId:
+                queue.releaseSkin(retired.index);
+                break;
         }
     }
 }
@@ -561,16 +1099,18 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     mTableBytes.clear();
     mWrittenBlobs.clear();
     ++mUpdate;
+    mQueue = &queue;
 
     if (!mStarted)
     {
         // Entries 0 are written once. Tables start zeroed, and the first material is white.
+        // Every table exists from the start, so each has an address.
         mStarted = true;
         applyMaterial(MaterialCommand());
-        ensureTable(SceneTable::Geometries, 1);
-        ensureTable(SceneTable::Instances, 1);
-        ensureTable(SceneTable::Clusters, 1);
-        ensureTable(SceneTable::Terrains, 1);
+        for (uint32_t table = 0; table < SCENE_TABLES; ++table)
+        {
+            ensureTable(SceneTable(table), 1);
+        }
     }
 
     runRetired(queue, frame);
@@ -593,9 +1133,19 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         {
             applyGeometry(command);
         }
+        for (const SkeletonCommand& command : mCommands.skeletons)
+        {
+            applySkeleton(command);
+        }
+        for (const SkinCommand& command : mCommands.skins)
+        {
+            applySkin(command);
+        }
         mCommands.terrains.clear();
         mCommands.materials.clear();
         mCommands.geometries.clear();
+        mCommands.skeletons.clear();
+        mCommands.skins.clear();
     }
 
     while (mInstancesDone < mCommands.instances.size() && mTableBytes.size() < uploadLimit / 2)
@@ -619,6 +1169,28 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             mRetired.push_back({ Retired::Type::TerrainId, id, 0, 0, frame + mFreeDelay });
         }
         mCommands.removedTerrains.clear();
+        for (uint32_t id : mCommands.removedSkeletons)
+        {
+            if (id < mSkeletons.size() && mSkeletons[id].jointCount != 0)
+            {
+                mSkeletons[id].removing = true;
+                removeSkeletonIfUnused(id, frame);
+            }
+        }
+        mCommands.removedSkeletons.clear();
+        for (uint32_t id : mCommands.removedSkins)
+        {
+            if (id < mSkins.size() && !mSkins[id].joints.empty())
+            {
+                mSkins[id].removing = true;
+                removeSkinIfUnused(id, frame);
+            }
+            else if (id < mSkins.size())
+            {
+                mRetired.push_back({ Retired::Type::SkinId, id, 0, 0, frame + mFreeDelay }); // never held anything
+            }
+        }
+        mCommands.removedSkins.clear();
     }
 
     uint64_t uploaded = 0;

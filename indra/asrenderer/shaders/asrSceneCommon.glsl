@@ -13,6 +13,8 @@ const uint PYRAMID_LEVELS = 16;
 const uint INSTANCE_FLIPPED = 1u;
 const uint INSTANCE_DOUBLE_SIDED = 2u;
 const uint INSTANCE_MASKED = 4u;
+const uint INSTANCE_SKINNED = 8u;
+const uint INSTANCE_BOUND = 16u;
 const uint INSTANCE_RANK_SHIFT = 8u;
 const uint INSTANCE_RANK_MAX = 1023u;
 
@@ -23,8 +25,74 @@ struct Instance
     uint geometry;
     uint material;
     uint flags;
+    uint binding; // with INSTANCE_BOUND
+};
+
+// Avatars: see asrscene.h and asrSceneSkinC.glsl.
+const uint BINDING_ATTACHED = 1u;
+const uint BINDING_SKINNED = 2u;
+
+struct Rows
+{
+    vec4 r[3]; // an affine matrix, three rows
+};
+
+struct Joint
+{
+    Rows newest;
+    Rows previous;
+};
+
+struct Skeleton
+{
+    vec3 boxCenter;
+    float boxScale;
+    uint firstJoint;
+    uint jointCount;
+    uint time;
+    uint previousTime;
+    float maxLead;
+    uint unused[3];
+};
+
+struct PaletteJob
+{
+    uint joint;
+    uint matrix;
+    uint skeleton;
     uint unused;
 };
+
+struct Binding
+{
+    uint kind;
+    uint instance;
+    uint skeleton;
+    uint palette;     // skinned: first palette entry; attached: its joint
+    uint matrix;
+    uint source;
+    uint target;
+    uint targetEntry;
+    vec4 lod;
+    vec4 sourceBox;
+    uint positions;
+    uint chosen;
+    uint firstBlock;
+    uint groupCapacity;
+    uint64_t weights;
+    uint morphed;
+    uint unused;
+};
+
+// GpuSceneView::skinTables, in SceneTable order.
+const uint SKIN_TABLE_SKELETONS = 0u;
+const uint SKIN_TABLE_JOINTS = 1u;
+const uint SKIN_TABLE_MATRICES = 2u;
+const uint SKIN_TABLE_PALETTE_JOBS = 3u;
+const uint SKIN_TABLE_PALETTE = 4u;
+const uint SKIN_TABLE_BINDINGS = 5u;
+const uint SKIN_TABLE_BLOCKS = 6u;
+const uint SKIN_TABLE_POSITIONS = 7u;
 
 struct Geometry
 {
@@ -125,6 +193,12 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint clusterEnd;
     uint materialEnd;
     uint groupEnd;   // entries of the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
+    uint64_t skinTables[8];
+    uint64_t drawOnly; // not 0: a bit per skeleton, and only instances bound to one set are drawn
+    uint time;
+    uint paletteEnd;
+    uint bindingEnd;
+    uint blockEnd;
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };
@@ -136,6 +210,30 @@ layout(buffer_reference, std430) readonly buffer TerrainsRef { Terrain items[]; 
 layout(buffer_reference, std430) readonly buffer ListRef { ListEntry items[]; };
 layout(buffer_reference, std430) readonly buffer WordsRef { uint words[]; };
 layout(buffer_reference, std430) buffer FeedbackRef { uint words[]; };
+layout(buffer_reference, std430) readonly buffer BindingsRef { Binding items[]; };
+layout(buffer_reference, std430) readonly buffer RowsRef { Rows items[]; };
+
+// A point or a direction through an affine matrix of three rows.
+vec3 rowsPoint(Rows m, vec3 p)
+{
+    return vec3(dot(m.r[0], vec4(p, 1.0)), dot(m.r[1], vec4(p, 1.0)), dot(m.r[2], vec4(p, 1.0)));
+}
+
+vec3 rowsDirection(Rows m, vec3 d)
+{
+    return vec3(dot(m.r[0].xyz, d), dot(m.r[1].xyz, d), dot(m.r[2].xyz, d));
+}
+
+// A skinned vertex's palette entries and weights, from its three words of SkinWeights.
+void skinWeights(uint64_t weights, uint vertex, out uvec4 joints, out vec4 amounts)
+{
+    WordsRef words = WordsRef(weights);
+    const uint packedJoints = words.words[vertex * 3u];
+    const uint low = words.words[vertex * 3u + 1u];
+    const uint high = words.words[vertex * 3u + 2u];
+    joints = uvec4(packedJoints & 0xFFu, (packedJoints >> 8) & 0xFFu, (packedJoints >> 16) & 0xFFu, packedJoints >> 24);
+    amounts = vec4(float(low & 0xFFFFu), float(low >> 16), float(high & 0xFFFFu), float(high >> 16)) / 65535.0;
+}
 
 const uint FEEDBACK_LEVEL_BITS = 8;
 const uint FEEDBACK_MAX_LEVEL = 15;

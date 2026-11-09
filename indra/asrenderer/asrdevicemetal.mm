@@ -460,13 +460,14 @@ private:
         mCullPipeline = createComputePipeline(shaderDir, "asrSceneCullC", error);
         mPyramidPipeline = createComputePipeline(shaderDir, "asrScenePyramidC", error);
         mResolvePipeline = createComputePipeline(shaderDir, "asrSceneResolveC", error);
+        mSkinPipeline = createComputePipeline(shaderDir, "asrSceneSkinC", error);
         id<MTLFunction> visibilityVertex = loadFunction(shaderDir, "asrSceneVisibilityV", error);
         id<MTLFunction> visibilityFragment = loadFunction(shaderDir, "asrSceneVisibilityF", error);
         id<MTLFunction> maskedVertex = loadFunction(shaderDir, "asrSceneMaskedV", error);
         id<MTLFunction> maskedFragment = loadFunction(shaderDir, "asrSceneMaskedF", error);
         id<MTLFunction> compositeVertex = loadFunction(shaderDir, "asrSceneCompositeV", error);
         id<MTLFunction> compositeFragment = loadFunction(shaderDir, "asrSceneCompositeF", error);
-        if (!mCullPipeline || !mPyramidPipeline || !mResolvePipeline || !visibilityVertex || !visibilityFragment || !maskedVertex || !maskedFragment ||
+        if (!mCullPipeline || !mPyramidPipeline || !mResolvePipeline || !mSkinPipeline || !visibilityVertex || !visibilityFragment || !maskedVertex || !maskedFragment ||
             !compositeVertex || !compositeFragment)
         {
             return false;
@@ -784,17 +785,12 @@ private:
 
         GpuSceneView view{};
         fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneWidth, mSceneHeight);
-        uint32_t base = 0;
-        for (uint32_t list = 0; list < SCENE_LISTS; ++list)
+        mSceneStore.fillView(view);
+        for (uint32_t table = SCENE_FIRST_SKIN_TABLE; table < SCENE_TABLES; ++table)
         {
-            view.listBase[list] = base;
-            base += mSceneStore.listCapacity(list);
+            view.skinTables[table - SCENE_FIRST_SKIN_TABLE] = addressOf(mSceneTables[table]);
         }
-        view.instanceEnd = mSceneStore.instanceEnd();
-        view.visibleEnd = base;
-        view.clusterEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
-        view.materialEnd = uint32_t(mSceneStore.tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
-        view.groupEnd = uint32_t(mSceneStore.groupCapacity());
+        view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
@@ -841,6 +837,23 @@ private:
         }
         [cull updateFence:mSceneFence];
         [cull endEncoding];
+        return true;
+    }
+
+    bool passSkin(uint32_t phase)
+    {
+        const uint32_t threads = mSceneStore.skinThreads(phase);
+        if (threads == 0)
+        {
+            return true; // an empty dispatch is an error to Metal's validation
+        }
+        id<MTLComputeCommandEncoder> skin = beginCompute();
+        [skin setComputePipelineState:mSkinPipeline];
+        mScenePush.phase = phase;
+        [skin setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        [skin dispatchThreadgroups:MTLSizeMake((threads + SKIN_BLOCK - 1) / SKIN_BLOCK, 1, 1) threadsPerThreadgroup:MTLSizeMake(SKIN_BLOCK, 1, 1)];
+        [skin updateFence:mSceneFence];
+        [skin endEncoding];
         return true;
     }
 
@@ -977,6 +990,10 @@ private:
     void setPassBodies()
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
+        {
+            mGraph.setBody(PassId(PassSkinPalette + phase), [this, phase]() { return passSkin(phase); });
+        }
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
         mGraph.setBody(PassGroupsLate, [this]() { return passCull(CULL_GROUPS_LATE); });
@@ -1092,6 +1109,7 @@ private:
         mRecordCommands = commands;
         mRecordSlot = slot;
         mRecordCamera = &camera;
+        mRecordTime = std::chrono::steady_clock::now(); // what avatars' motion is carried on to
         for (uint32_t i = 0; i < mGraph.passCount(); ++i)
         {
             mRecordPass = i;
@@ -1706,6 +1724,7 @@ private:
     id<MTLComputePipelineState> mCullPipeline = nil;
     id<MTLComputePipelineState> mPyramidPipeline = nil;
     id<MTLComputePipelineState> mResolvePipeline = nil;
+    id<MTLComputePipelineState> mSkinPipeline = nil;
     id<MTLRenderPipelineState> mVisibilityPipeline = nil;
     id<MTLRenderPipelineState> mMaskedPipeline = nil;
     id<MTLRenderPipelineState> mCompositePipeline = nil;
@@ -1733,6 +1752,7 @@ private:
     uint32_t mRecordSlot = 0;
     uint32_t mRecordPass = 0;
     const SceneCamera3D* mRecordCamera = nullptr;
+    std::chrono::steady_clock::time_point mRecordTime;
     ScenePush mScenePush{};
     uint32_t mSceneInstanceEnd = 0;
     uint32_t mPyramidLevels = 0;

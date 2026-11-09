@@ -30,6 +30,13 @@ void declareSceneGraph(FrameGraph& graph)
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
     graph.addPass("upload", { { ResultSceneData, CopyWrite | Keep }, { ResultDrawArguments, CopyWrite } });
+
+    // Avatars, once per frame for every view: palettes, then placing and LOD, then skinned
+    // vertices and the bounds made from them. Each reads what the one before wrote.
+    for (const char* name : { "skin palette", "skin bind", "skin vertices", "skin clusters", "skin groups" })
+    {
+        graph.addPass(name, { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
+    }
     graph.addPass("cull early", { { ResultSceneData, ComputeRead },
                                   { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                   { ResultDrawArguments, ComputeWrite | Keep },

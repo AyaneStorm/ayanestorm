@@ -9,6 +9,8 @@
 
 #include "asrscene.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -141,9 +143,85 @@ inline Mesh makeBoxFace(int axis, float sign)
     return mesh;
 }
 
-inline asr::GeometryData build(const Mesh& mesh, const asr::GeometryBox* box = nullptr)
+inline asr::GeometryData build(const Mesh& mesh, const asr::GeometryBox* box = nullptr, const asr::SkinWeights* weights = nullptr)
 {
-    return asr::buildGeometry(mesh.vertices.data(), uint32_t(mesh.vertices.size()), mesh.indices.data(), uint32_t(mesh.indices.size()), box);
+    return asr::buildGeometry(mesh.vertices.data(), uint32_t(mesh.vertices.size()), mesh.indices.data(), uint32_t(mesh.indices.size()), box, weights);
+}
+
+// A creature: a tapering tube standing on a chain of joints one metre apart, each vertex
+// weighted between the two joints nearest its height, as a rigged mesh arrives.
+constexpr uint32_t CREATURE_JOINTS = 4;
+constexpr float CREATURE_HEIGHT = 4.f;
+const asr::GeometryBox CREATURE_BOX{ { 0.f, 0.f, CREATURE_HEIGHT * 0.5f }, CREATURE_HEIGHT * 0.5f };
+
+inline Mesh makeTube(uint32_t rows, uint32_t columns, std::vector<asr::SkinWeights>& weights)
+{
+    Mesh mesh;
+    weights.clear();
+    for (uint32_t row = 0; row <= rows; ++row)
+    {
+        const float z = CREATURE_HEIGHT * (1.f - float(row) / rows); // top first, as the sphere, so it faces out
+        const float radius = 0.35f * (1.f - 0.5f * z / CREATURE_HEIGHT);
+        const float along = std::min(std::max(z - 0.5f, 0.f), float(CREATURE_JOINTS - 1));
+        const uint32_t lower = std::min(uint32_t(along), CREATURE_JOINTS - 2);
+        const float upper = along - float(lower);
+        for (uint32_t column = 0; column <= columns; ++column)
+        {
+            const float phi = float(column) / columns * TWO_PI;
+            mesh.vertices.push_back(vertexAt(radius * std::cos(phi), radius * std::sin(phi), z, std::cos(phi), std::sin(phi), 0.f,
+                                             float(column) / columns * 2.f, float(row) / rows * 4.f));
+            asr::SkinWeights skin{};
+            skin.joints[0] = uint8_t(lower);
+            skin.joints[1] = uint8_t(lower + 1);
+            skin.weights[1] = uint16_t(std::lround(upper * 65535.f));
+            skin.weights[0] = uint16_t(65535 - skin.weights[1]);
+            weights.push_back(skin);
+        }
+    }
+    addGrid(mesh, rows, columns, 0);
+    return mesh;
+}
+
+// Three rows each: out = a * b.
+inline void multiplyRows(const float a[12], const float b[12], float out[12])
+{
+    for (int row = 0; row < 3; ++row)
+    {
+        for (int column = 0; column < 4; ++column)
+        {
+            out[row * 4 + column] = a[row * 4] * b[column] + a[row * 4 + 1] * b[4 + column] + a[row * 4 + 2] * b[8 + column] +
+                                    (column == 3 ? a[row * 4 + 3] : 0.f);
+        }
+    }
+}
+
+// The creature's skin: joint j rests at height j, so its inverse bind lowers by j.
+inline asr::SkinDesc creatureSkin()
+{
+    asr::SkinDesc skin;
+    for (uint32_t joint = 0; joint < CREATURE_JOINTS; ++joint)
+    {
+        const float rows[12] = { 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 0.f, 1.f, -float(joint) };
+        skin.matrices.insert(skin.matrices.end(), rows, rows + 12);
+        skin.joints.push_back(uint16_t(joint));
+    }
+    return skin;
+}
+
+// Its joints at a time: a bend that runs up the chain, standing at x, y and turned by yaw.
+inline void creaturePose(float seconds, float x, float y, float yaw, float phase, float out[CREATURE_JOINTS * 12])
+{
+    float placed[12] = { std::cos(yaw), -std::sin(yaw), 0.f, x, std::sin(yaw), std::cos(yaw), 0.f, y, 0.f, 0.f, 1.f, 0.f };
+    for (uint32_t joint = 0; joint < CREATURE_JOINTS; ++joint)
+    {
+        const float angle = 0.45f * std::sin(2.f * seconds + phase + float(joint) * 0.9f);
+        const float lift = joint == 0 ? 0.f : 1.f;
+        const float local[12] = { 1.f, 0.f, 0.f, 0.f, 0.f, std::cos(angle), -std::sin(angle), 0.f, 0.f, std::sin(angle), std::cos(angle), lift };
+        float next[12];
+        multiplyRows(placed, local, next);
+        std::copy(next, next + 12, placed);
+        std::copy(placed, placed + 12, out + joint * 12);
+    }
 }
 
 } // namespace asrtest
@@ -252,6 +330,28 @@ public:
         mReplaced = 0;
         mSwapGeometry = scene.addGeometry(build(mKnotMesh));
         mSwapInstance = place(mSwapGeometry, mMaterials[1], 0.f, 0.f, 30.f, 12.f, 12.f, 12.f, false);
+
+        // Creatures in two rings either side of the street walk: skinned tubes with two LODs,
+        // each with a box held at its tip, posed by this thread and carried on by the GPU.
+        std::vector<asr::SkinWeights> roughWeights;
+        std::vector<asr::SkinWeights> fineWeights;
+        const Mesh roughTube = makeTube(8, 8, roughWeights);
+        const Mesh fineTube = makeTube(64, 24, fineWeights);
+        const uint32_t roughTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX, roughWeights.data()));
+        mTube = scene.addGeometry(build(fineTube, &CREATURE_BOX, fineWeights.data()), roughTubeId, 30.f);
+        mSkin = scene.addSkin(creatureSkin());
+        for (uint32_t i = 0; i < CREATURES; ++i)
+        {
+            const float angle = float(i) / CREATURES * TWO_PI;
+            const float radius = (i % 2) == 0 ? 64.f : 76.f;
+            mCreatures.push_back({});
+            Creature& creature = mCreatures.back();
+            creature.x = std::cos(angle) * radius;
+            creature.y = std::sin(angle) * radius;
+            creature.phase = float(i) * 0.7f;
+            creature.material = mMaterials[i % MATERIALS];
+            addCreature(creature, 0.f);
+        }
     }
 
     asr::SceneCamera3D camera(float seconds, uint32_t width, uint32_t height) const
@@ -283,6 +383,23 @@ public:
                 mScene.setInstance(object.instance, desc);
             }
             mMoved += uint32_t(mMoving.size());
+            for (const Creature& creature : mCreatures)
+            {
+                pose(creature, seconds);
+            }
+        }
+        if (seconds - mLastCreatureChange >= 1.f)
+        {
+            // One creature goes and comes back, with a new skeleton; another changes its
+            // material, which keeps its skinned geometry.
+            mLastCreatureChange = seconds;
+            Creature& gone = mCreatures[mCreatureChanges % CREATURES];
+            removeCreature(gone);
+            addCreature(gone, seconds);
+            Creature& recoloured = mCreatures[(mCreatureChanges * 7 + 3) % CREATURES];
+            recoloured.material = mMaterials[(mCreatureChanges * 5) % MATERIALS];
+            mScene.setInstance(recoloured.tube, tubeDesc(recoloured));
+            ++mCreatureChanges;
         }
         if (seconds - mLastSwap >= 0.5f)
         {
@@ -295,6 +412,7 @@ public:
         }
     }
 
+    uint32_t creatures() const { return uint32_t(mCreatures.size()); }
     uint32_t objects() const { return mObjects; }
     uint32_t instances() const { return mInstances; }
     uint32_t moved() const { return mMoved; }
@@ -313,6 +431,65 @@ private:
         uint32_t material;
         float x, y, z, size, phase;
     };
+
+    static constexpr uint32_t CREATURES = 160;
+
+    struct Creature
+    {
+        uint32_t skeleton = 0;
+        uint32_t tube = 0;
+        uint32_t box[6]{};
+        uint32_t material = 0;
+        float x = 0.f, y = 0.f, phase = 0.f;
+    };
+
+    void pose(const Creature& creature, float seconds)
+    {
+        float rows[CREATURE_JOINTS * 12];
+        const float wander = 0.3f * seconds + creature.phase;
+        creaturePose(seconds, creature.x + 3.f * std::sin(wander), creature.y + 3.f * std::cos(wander), wander, creature.phase, rows);
+        mScene.poseSkeleton(creature.skeleton, rows, CREATURE_JOINTS, std::chrono::steady_clock::now());
+    }
+
+    asr::InstanceDesc tubeDesc(const Creature& creature) const
+    {
+        asr::InstanceDesc desc;
+        desc.geometry = mTube;
+        desc.material = creature.material;
+        desc.skeleton = creature.skeleton;
+        desc.skin = mSkin;
+        desc.lodSize = CREATURE_HEIGHT;
+        return desc;
+    }
+
+    void addCreature(Creature& creature, float seconds)
+    {
+        creature.skeleton = mScene.addSkeleton(CREATURE_JOINTS);
+        pose(creature, seconds);
+        creature.tube = mScene.addInstance(tubeDesc(creature));
+        for (uint32_t face = 0; face < 6; ++face)
+        {
+            // Half a metre wide, held 1.25 m above the top joint.
+            asr::InstanceDesc desc = instanceDesc(mBoxFaces[face], creature.material, 0.f, 0.f, 1.25f, 0.5f, 0.5f, 0.5f);
+            desc.skeleton = creature.skeleton;
+            desc.joint = CREATURE_JOINTS - 1;
+            desc.lodCenter[2] = 1.25f;
+            desc.lodSize = 0.5f;
+            creature.box[face] = mScene.addInstance(desc);
+        }
+        mInstances += 7;
+    }
+
+    void removeCreature(Creature& creature)
+    {
+        mScene.removeInstance(creature.tube);
+        for (uint32_t box : creature.box)
+        {
+            mScene.removeInstance(box);
+        }
+        mScene.removeSkeleton(creature.skeleton);
+        mInstances -= 7;
+    }
 
     // One texture is large enough to span several frames of uploads.
     static uint32_t checker(asr::TextureQueue& textures, uint32_t index, uint32_t SIZE, uint32_t dark)
@@ -504,6 +681,11 @@ private:
     uint32_t mReplaced = 0;
     float mLastMove = 0.f;
     float mLastSwap = 0.f;
+    uint32_t mTube = 0;
+    uint32_t mSkin = 0;
+    std::vector<Creature> mCreatures;
+    uint32_t mCreatureChanges = 0;
+    float mLastCreatureChange = 0.f;
 };
 
 } // namespace asrtest

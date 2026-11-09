@@ -22,6 +22,7 @@
 namespace asr
 {
 
+// The avatar tables, from Skeletons on, are in GpuSceneView::skinTables in this order.
 enum class SceneTable : uint32_t
 {
     Instances,
@@ -29,11 +30,24 @@ enum class SceneTable : uint32_t
     Clusters,
     Materials,
     Terrains,
+    Skeletons,
+    Joints,
+    SkinMatrices,
+    PaletteJobs,
+    Palette,          // written by the GPU, entry for entry with PaletteJobs
+    Bindings,
+    SkinBlocks,       // a binding id per block of SKIN_BLOCK vertices or clusters, 0 for none
+    SkinnedPositions, // written by the GPU
     Count
 };
 
 constexpr uint32_t SCENE_TABLES = uint32_t(SceneTable::Count);
-constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial), sizeof(GpuTerrain) };
+constexpr uint32_t SCENE_FIRST_SKIN_TABLE = uint32_t(SceneTable::Skeletons);
+constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial),
+                                                        sizeof(GpuTerrain), sizeof(GpuSkeleton), sizeof(GpuJoint), 48,
+                                                        sizeof(GpuPaletteJob), 48, sizeof(GpuBinding), sizeof(uint32_t),
+                                                        sizeof(PackedPosition) };
+static_assert(SCENE_TABLES - SCENE_FIRST_SKIN_TABLE == sizeof(GpuSceneView::skinTables) / sizeof(uint64_t), "one address per avatar table");
 constexpr uint64_t SCENE_CHUNK_BYTES = 64ull * 1024 * 1024;
 
 // Hands out ranges of a span that can grow. First fit, and freed neighbours merge.
@@ -44,6 +58,7 @@ public:
 
     void grow(uint64_t capacity);
     uint64_t capacity() const { return mEnd; }
+    uint64_t used() const { return mBump; } // nothing past this was ever handed out
     uint64_t freeSpace() const { return mEnd - mBump + mFreeBytes; }
 
     // Returns false when no range is large enough. Takes the smallest range that fits.
@@ -103,6 +118,15 @@ public:
     // One past the highest instance in use.
     uint32_t instanceEnd() const { return mInstanceEnd; }
 
+    // Everything in a view that comes from the store: list places, table ends and what
+    // the skin passes cover. A backend adds table addresses, time and texture feedback.
+    void fillView(GpuSceneView& view) const;
+
+    // Threads each skin pass needs: palette entries, bindings, and blocks for the rest.
+    uint32_t skinThreads(uint32_t phase) const;
+
+    uint32_t skinnedInstances() const { return mSkinnedBindings; }
+
     // The room each list needs if every cluster of every instance is seen.
     uint32_t listCapacity(uint32_t list) const;
     uint64_t visibleCapacity() const; // of all lists together
@@ -138,6 +162,10 @@ private:
         uint64_t triangles = 0;
         float center[3]{};
         float scale = 1.f;
+        float radius = 0.f;      // in packed units
+        uint32_t vertexCount = 0;
+        uint32_t clusterCount = 0;
+        bool skinned = false;    // has weights
         bool uploaded = false;
         bool removing = false; // asked to go, and waiting for its last user
         bool queued = false;   // waiting in mPending to be uploaded
@@ -147,6 +175,55 @@ private:
     {
         uint32_t geometry = 0; // 0 means free
         uint32_t kind = 0;
+        uint32_t binding = 0;
+    };
+
+    struct Skeleton
+    {
+        uint32_t jointCount = 0; // 0 means free
+        uint32_t firstJoint = 0;
+        std::vector<GpuJoint> joints;
+        uint32_t time = 0;
+        uint32_t previousTime = 0;
+        bool posed = false;
+        bool removing = false;
+        float reach = 0.f;       // how far anything skinned to it can be from its joints, before joint scale
+        uint32_t users = 0;      // bindings and palettes
+        uint64_t jointUpdate = 0; // the update that last wrote its joints, and where
+        uint32_t jointWrite = 0;
+    };
+
+    struct Skin
+    {
+        std::vector<float> matrices; // empty means free
+        std::vector<uint16_t> joints;
+        uint32_t firstMatrix = 0;
+        bool removing = false;
+        uint32_t users = 0;
+    };
+
+    struct Palette
+    {
+        uint32_t first = 0;
+        uint32_t count = 0;
+        uint32_t users = 0;
+    };
+
+    struct Binding
+    {
+        uint32_t kind = 0;
+        uint32_t skeleton = 0;
+        uint32_t skin = 0;
+        uint32_t source = 0;
+        uint32_t target = 0;      // skinned
+        uint32_t targetEntry = 0;
+        uint32_t entryCount = 0;
+        uint32_t groupCapacity = 0;
+        uint32_t positions = 0;
+        uint32_t vertexCapacity = 0;
+        uint32_t firstBlock = 0;
+        uint32_t blockCount = 0;
+        uint32_t matrix = 0;      // attached
     };
 
     struct Chunk
@@ -170,10 +247,14 @@ private:
             GeometryId,
             InstanceId,
             MaterialId,
-            TerrainId
+            TerrainId,
+            TableRange, // index is the table
+            BindingId,
+            SkeletonId,
+            SkinId
         };
         Type type;
-        uint32_t index;   // chunk, or the id
+        uint32_t index;   // chunk, table, or the id
         uint64_t offset;  // inside the chunk, or the first entry of the cluster table
         uint64_t size;
         uint64_t frame;   // free from this frame on
@@ -187,6 +268,22 @@ private:
     void removeIfUnused(uint32_t id, uint64_t frame);
     bool upload(uint32_t id, SceneChunks& chunks);
     void runRetired(SceneQueue& queue, uint64_t frame);
+
+    void applySkeleton(const SkeletonCommand& command);
+    void applySkin(const SkinCommand& command);
+    void writeSkeleton(uint32_t id, bool joints);
+    void removeSkeletonIfUnused(uint32_t id, uint64_t frame);
+    void removeSkinIfUnused(uint32_t id, uint64_t frame);
+
+    // Returns the binding, or 0 when the instance cannot be bound yet and draws nothing.
+    uint32_t bindSkinned(uint32_t instance, const InstanceDesc& desc);
+    uint32_t bindAttached(uint32_t instance, const InstanceDesc& desc, const GpuInstance& placed);
+    void unbind(uint32_t binding, uint64_t frame);
+    uint32_t usePalette(uint32_t skeleton, uint32_t skin);
+    void releasePalette(uint32_t skeleton, uint32_t skin, uint64_t frame);
+    uint32_t allocateRange(SceneTable table, uint64_t size);
+    void retireRange(SceneTable table, uint32_t first, uint32_t count, uint64_t frame);
+    void writeSkinnedBinding(uint32_t id, uint32_t instance, const InstanceDesc& desc);
 
     void writeTable(SceneTable table, uint32_t index, const void* data, uint64_t bytes);
 
@@ -221,6 +318,15 @@ private:
     uint64_t mTriangles = 0;
     uint32_t mInstanceEnd = 0;
     bool mStarted = false;
+
+    std::vector<Skeleton> mSkeletons;
+    std::vector<Skin> mSkins;
+    std::map<uint64_t, Palette> mPalettes; // by skeleton << 32 | skin
+    std::vector<Binding> mBindings;        // 0 is never used
+    std::vector<uint32_t> mFreeBindings;
+    uint32_t mSkinnedBindings = 0;
+    RangeAllocator mRanges[SCENE_TABLES];  // for the avatar tables that hold ranges
+    SceneQueue* mQueue = nullptr;          // during update(), for the store's own geometries
 };
 
 } // namespace asr

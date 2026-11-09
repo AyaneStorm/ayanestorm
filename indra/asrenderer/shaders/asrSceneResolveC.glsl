@@ -92,6 +92,23 @@ vec3 octahedralDecode(float x, float y)
     return normalize(n);
 }
 
+vec3 skinNormal(ViewRef view, Binding binding, uint vertex, vec3 normal)
+{
+    uvec4 joints;
+    vec4 amounts;
+    skinWeights(binding.weights, vertex, joints, amounts);
+    RowsRef palette = RowsRef(view.skinTables[SKIN_TABLE_PALETTE]);
+    vec3 turned = vec3(0.0);
+    for (int i = 0; i < 4; ++i)
+    {
+        if (amounts[i] > 0.0)
+        {
+            turned += amounts[i] * rowsDirection(palette.items[binding.palette + joints[i]], normal);
+        }
+    }
+    return dot(turned, turned) > 0.0 ? normalize(turned) : normal;
+}
+
 // The viewer's planar mapping: the texture lies flat on the surface, at a size that
 // follows the object's scale, not stretched over the face. position is scaled.
 vec2 planarUV(vec3 normal, vec3 position)
@@ -265,7 +282,9 @@ void main()
         return;
     }
     // One blob holds a cluster's indices, then positions, then attributes, in one chunk.
-    if (cluster.positions < cluster.indices || cluster.attributes < cluster.positions || cluster.attributes - cluster.indices >= CHUNK_BYTES)
+    // A skinned cluster's positions are its own, elsewhere.
+    const bool skinned = (instance.flags & INSTANCE_SKINNED) != 0u;
+    if (!skinned && (cluster.positions < cluster.indices || cluster.attributes < cluster.positions || cluster.attributes - cluster.indices >= CHUNK_BYTES))
     {
         reject(pixel, GUARD_ADDRESSES, uint(min((cluster.attributes - cluster.indices) >> 20, 0xFFFFFFFFul)));
         return;
@@ -292,9 +311,18 @@ void main()
     vec2 uv2 = vec2(uintBitsToFloat(attributes.words[base.z + 2u]), uintBitsToFloat(attributes.words[base.z + 3u]));
 
     const uvec3 normalWords = uvec3(attributes.words[base.x], attributes.words[base.y], attributes.words[base.z]);
-    const vec3 n0 = octahedralDecode(float(int(normalWords.x << 16) >> 16) / 32767.0, float(int(normalWords.x) >> 16) / 32767.0);
-    const vec3 n1 = octahedralDecode(float(int(normalWords.y << 16) >> 16) / 32767.0, float(int(normalWords.y) >> 16) / 32767.0);
-    const vec3 n2 = octahedralDecode(float(int(normalWords.z << 16) >> 16) / 32767.0, float(int(normalWords.z) >> 16) / 32767.0);
+    vec3 n0 = octahedralDecode(float(int(normalWords.x << 16) >> 16) / 32767.0, float(int(normalWords.x) >> 16) / 32767.0);
+    vec3 n1 = octahedralDecode(float(int(normalWords.y << 16) >> 16) / 32767.0, float(int(normalWords.y) >> 16) / 32767.0);
+    vec3 n2 = octahedralDecode(float(int(normalWords.z << 16) >> 16) / 32767.0, float(int(normalWords.z) >> 16) / 32767.0);
+    if (skinned)
+    {
+        // Only skinned positions are stored: normals turn here with the same palette, as the
+        // viewer's rigged shaders turn them. The box matrix only scales, so it leaves them be.
+        const Binding binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding];
+        n0 = skinNormal(view, binding, i0, n0);
+        n1 = skinNormal(view, binding, i1, n1);
+        n2 = skinNormal(view, binding, i2, n2);
+    }
 
     const vec3 objectNormal = mat3(n0, n1, n2) * bary.weights;
 

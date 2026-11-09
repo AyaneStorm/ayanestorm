@@ -244,7 +244,8 @@ void appendBytes(std::vector<uint8_t>& blob, const std::vector<T>& values)
 
 } // namespace
 
-GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount, const GeometryBox* box)
+GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount, const GeometryBox* box,
+                           const SkinWeights* weights)
 {
     GeometryData geometry;
     const uint32_t triangleCount = indexCount / 3;
@@ -412,7 +413,22 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
     appendBytes(geometry.blob, positions);
     geometry.attributesOffset = uint32_t(geometry.blob.size());
     appendBytes(geometry.blob, attributes);
+    geometry.vertexCount = vertexCount;
+    if (weights)
+    {
+        // Right after the attributes, with no padding: shaders find them from the cluster's
+        // positions and attributes addresses, as attributes + 2 * (attributes - positions).
+        const size_t start = geometry.blob.size();
+        geometry.blob.resize(start + size_t(vertexCount) * sizeof(SkinWeights));
+        memcpy(geometry.blob.data() + start, weights, size_t(vertexCount) * sizeof(SkinWeights));
+        geometry.skinned = true;
+    }
     return geometry;
+}
+
+uint32_t sceneTime(std::chrono::steady_clock::time_point time)
+{
+    return uint32_t(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(time.time_since_epoch()).count()));
 }
 
 void buildTerrainLod(const TerrainGrid& grid, uint32_t step, std::vector<SceneVertex>& vertices, std::vector<uint16_t>& indices)
@@ -780,10 +796,107 @@ void SceneQueue::removeInstance(uint32_t id)
     mCommands.instances.push_back(command);
 }
 
+uint32_t SceneQueue::addSkeleton(uint32_t jointCount)
+{
+    SkeletonCommand command;
+    command.jointCount = std::max(jointCount, 1u);
+
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (!mFreeSkeletons.empty())
+    {
+        command.id = mFreeSkeletons.back();
+        mFreeSkeletons.pop_back();
+    }
+    else
+    {
+        command.id = mNextSkeleton++;
+    }
+    const uint32_t id = command.id;
+    mCommands.skeletons.push_back(std::move(command));
+    return id;
+}
+
+void SceneQueue::poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time)
+{
+    if (id == 0 || jointCount == 0)
+    {
+        return;
+    }
+    SkeletonCommand command;
+    command.id = id;
+    command.rows.assign(rows, rows + size_t(jointCount) * 12);
+    command.time = sceneTime(time);
+
+    std::lock_guard<std::mutex> lock(mMutex);
+    mCommands.skeletons.push_back(std::move(command));
+}
+
+void SceneQueue::removeSkeleton(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedSkeletons.push_back(id);
+    }
+}
+
+uint32_t SceneQueue::addSkin(SkinDesc&& desc)
+{
+    SkinCommand command;
+    command.desc = std::move(desc);
+
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (!mFreeSkins.empty())
+    {
+        command.id = mFreeSkins.back();
+        mFreeSkins.pop_back();
+    }
+    else
+    {
+        command.id = mNextSkin++;
+    }
+    const uint32_t id = command.id;
+    mCommands.skins.push_back(std::move(command));
+    return id;
+}
+
+void SceneQueue::removeSkin(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedSkins.push_back(id);
+    }
+}
+
 void SceneQueue::take(SceneCommands& commands)
 {
     std::lock_guard<std::mutex> lock(mMutex);
     std::swap(commands, mCommands);
+}
+
+uint32_t SceneQueue::reserveGeometry()
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    if (!mFreeGeometries.empty())
+    {
+        const uint32_t id = mFreeGeometries.back();
+        mFreeGeometries.pop_back();
+        return id;
+    }
+    return mNextGeometry++;
+}
+
+void SceneQueue::releaseSkeleton(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeSkeletons.push_back(id);
+}
+
+void SceneQueue::releaseSkin(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeSkins.push_back(id);
 }
 
 void SceneQueue::releaseGeometry(uint32_t id)

@@ -69,7 +69,7 @@ struct FrameInput
     bool audit = false; // also looks for clusters occlusion culling lost
 };
 
-constexpr uint32_t MAX_TIMED_PASSES = 20;
+constexpr uint32_t MAX_TIMED_PASSES = 32; // every scene pass, audit and feedback included
 
 // One pass of the frame graph. On Vulkan it runs from the end of the last pass to its
 // own end, so barriers count too and the passes add up to the frame's GPU time. On Metal

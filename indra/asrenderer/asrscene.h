@@ -13,6 +13,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -44,6 +45,8 @@ constexpr uint32_t VISIBILITY_EMPTY = 0xFFFFFFFFu;
 constexpr uint32_t INSTANCE_FLIPPED = 1u;      // a negative scale: winding is reversed
 constexpr uint32_t INSTANCE_DOUBLE_SIDED = 2u; // drawn from both sides
 constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alpha
+constexpr uint32_t INSTANCE_SKINNED = 8u;      // set by the store: its positions follow joints, see GpuBinding
+constexpr uint32_t INSTANCE_BOUND = 16u;       // set by the store: on a skeleton, and GpuInstance::binding names how
 
 // Surfaces in the same plane would tie in depth, and the order of a list changes from frame
 // to frame, so which one shows would flicker. Each rank sits a fixed share of its distance
@@ -150,6 +153,15 @@ struct GpuClusterGroup
 };
 static_assert(sizeof(GpuClusterGroup) == sizeof(GpuCluster), "shares the cluster table");
 
+// A skinned vertex's joints and weights. Weights add up to 65535. The blob keeps them right
+// after the attributes, so a shader finds them from a cluster's two addresses alone.
+struct SkinWeights
+{
+    uint8_t joints[4];   // of the skin, not of the skeleton
+    uint16_t weights[4];
+};
+static_assert(sizeof(SkinWeights) == 12, "shaders read this layout");
+
 struct GpuGeometry
 {
     uint32_t firstGroup;
@@ -171,9 +183,79 @@ struct GpuInstance
     uint32_t geometry;
     uint32_t material;
     uint32_t flags;
-    uint32_t unused;
+    uint32_t binding; // with INSTANCE_BOUND: its GpuBinding
 };
 static_assert(sizeof(GpuInstance) == 80, "shaders read this layout");
+
+// Avatars. A skeleton's joints carry the two newest poses the main thread gave, and the GPU
+// carries the motion on from them to the frame's own time, so avatars move at render rate.
+// A skin's palette is its joints' poses times their inverse bind matrices, made once per
+// frame per skeleton and skin, and shared by every face and every view. A skinned instance
+// draws through a geometry of its own, whose positions and bounds the skin passes rewrite
+// each frame, packed in its skeleton's box, so culling, drawing and the resolve treat it as
+// any other. An attached instance follows one joint. See asrSceneSkinC.glsl.
+constexpr uint32_t SKIN_BLOCK = 64;          // vertices or clusters per workgroup of the skin passes
+constexpr uint32_t SKIN_PALETTE = 0;         // the skin passes, in order
+constexpr uint32_t SKIN_BIND = 1;
+constexpr uint32_t SKIN_VERTICES = 2;
+constexpr uint32_t SKIN_CLUSTERS = 3;
+constexpr uint32_t SKIN_GROUPS = 4;
+constexpr uint32_t SKIN_PHASES = 5;
+constexpr uint32_t BINDING_ATTACHED = 1;
+constexpr uint32_t BINDING_SKINNED = 2;
+constexpr float SKELETON_MAX_LEAD = 1.1f;    // main-thread steps the motion is carried on, at most
+constexpr float SKELETON_MAX_LEAD_SECONDS = 0.25f;
+
+struct GpuJoint
+{
+    float rows[3][4];     // the newest pose, in render space
+    float previous[3][4]; // the one before
+};
+static_assert(sizeof(GpuJoint) == 96, "shaders read this layout");
+
+struct GpuSkeleton
+{
+    float boxCenter[3]; // holds every vertex bound to it at any lead it can draw: packing for its skinned instances
+    float boxScale;
+    uint32_t firstJoint;
+    uint32_t jointCount;
+    uint32_t time;         // of the newest pose, and of the one before: microseconds, wrapping
+    uint32_t previousTime;
+    float maxLead;         // steps of motion carried on past the newest pose, at most
+    uint32_t unused[3];
+};
+static_assert(sizeof(GpuSkeleton) == 48, "shaders read this layout");
+
+struct GpuPaletteJob
+{
+    uint32_t joint;    // in the joint table
+    uint32_t matrix;   // in the skin matrix table
+    uint32_t skeleton;
+    uint32_t unused;
+};
+static_assert(sizeof(GpuPaletteJob) == 16, "shaders read this layout");
+
+struct GpuBinding
+{
+    uint32_t kind;        // 0 for a free entry, BINDING_ATTACHED or BINDING_SKINNED
+    uint32_t instance;
+    uint32_t skeleton;
+    uint32_t palette;     // skinned: its first palette entry; attached: its joint, in the joint table
+    uint32_t matrix;      // attached: object to joint, packing included, in the skin matrix table
+    uint32_t source;      // skinned: the finest geometry of the chain it draws from
+    uint32_t target;      // skinned: its own geometry
+    uint32_t targetEntry; // skinned: its first entry in the cluster table: groups, then clusters
+    float lod[4];         // what LOD measures from, in joint space for an attachment, and the object's size
+    float sourceBox[4];   // skinned: the chain's packing box, centre and scale
+    uint32_t positions;   // skinned: its first entry in the skinned position table
+    uint32_t chosen;      // skinned, written by the GPU: the LOD drawn this frame
+    uint32_t firstBlock;  // in the skin block table
+    uint32_t groupCapacity; // groups room before its clusters
+    uint64_t weights;     // skinned, written by the GPU: the chosen LOD's SkinWeights
+    uint32_t morphed;     // reserved for morphs: their output, 0 for none
+    uint32_t unused;
+};
+static_assert(sizeof(GpuBinding) == 96, "shaders read this layout");
 
 struct GpuMaterial
 {
@@ -326,6 +408,8 @@ struct GeometryData
     std::vector<ClusterGroupData> groups; // empty when there are CLUSTERS_WITHOUT_GROUPS or fewer
     uint32_t positionsOffset = 0;
     uint32_t attributesOffset = 0;
+    uint32_t vertexCount = 0;
+    bool skinned = false; // SkinWeights follow the attributes
     float center[3] = { 0.f, 0.f, 0.f }; // packed = (object - center) / scale
     float scale = 1.f;
     float radius = 0.f;                  // in packed units, around the packed origin
@@ -341,9 +425,10 @@ struct GeometryBox
 
 // Cuts a face into clusters and packs it. Takes about a hundred nanoseconds per triangle,
 // so it belongs on a worker. Triangles are reordered, and vertices stay where they are.
-// With no box given, the face's own bounds are used.
+// With no box given, the face's own bounds are used. weights, one per vertex, make a
+// geometry that skinned instances can draw.
 GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, const uint16_t* indices, uint32_t indexCount,
-                           const GeometryBox* box = nullptr);
+                           const GeometryBox* box = nullptr, const SkinWeights* weights = nullptr);
 
 // A square of ground: a grid of (size + 1) by (size + 1) points, row after row, x first.
 // size is a power of two.
@@ -404,8 +489,19 @@ struct GpuSceneView
     uint32_t clusterEnd;      // resolve checks before it reads through them: see GpuSceneCounts::guard
     uint32_t materialEnd;
     uint32_t groupEnd;        // entries in the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
+
+    // The avatar tables, in SceneTable order from Skeletons, and what the skin passes cover.
+    uint64_t skinTables[8];
+    uint64_t drawOnly;        // not 0: a bit per skeleton, and only instances bound to one set are drawn
+    uint32_t time;            // the frame's own time, microseconds, wrapping as GpuSkeleton::time does
+    uint32_t paletteEnd;
+    uint32_t bindingEnd;
+    uint32_t blockEnd;
 };
-static_assert(sizeof(GpuSceneView) == 480, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 568, "shaders read this layout");
+
+// The time skeletons and views are stamped with.
+uint32_t sceneTime(std::chrono::steady_clock::time_point time);
 
 // previous is the camera of the frame that left the depth pyramid, or null when there is none.
 void fillSceneView(GpuSceneView& view, const SceneCamera3D& camera, const SceneCamera3D* previous, uint32_t width, uint32_t height);
@@ -430,6 +526,21 @@ struct InstanceDesc
     float objectToWorld[12]; // three rows
     float lodCenter[3] = { 0.f, 0.f, 0.f }; // shared by an object's faces, so they agree on an LOD
     float lodSize = 0.f;     // 0 uses the instance's own bounding sphere
+
+    // On a skeleton: with a skin, the geometry is skinned, objectToWorld and lodCenter are
+    // unused, and LOD measures from the skeleton. Without one, the instance follows joint:
+    // objectToWorld and lodCenter are then in that joint's space.
+    uint32_t skeleton = 0;
+    uint32_t skin = 0;
+    uint32_t joint = 0;
+};
+
+// A rigged mesh's skin: for each of its joints, inverse bind times bind shape as three rows,
+// and which joint of a skeleton it is. All skeletons number their joints alike.
+struct SkinDesc
+{
+    std::vector<float> matrices; // 12 per joint
+    std::vector<uint16_t> joints;
 };
 
 struct MaterialDesc
@@ -498,21 +609,40 @@ struct MaterialCommand
     MaterialDesc desc;
 };
 
+struct SkeletonCommand
+{
+    uint32_t id = 0;
+    uint32_t jointCount = 0;  // not 0: the skeleton is new
+    std::vector<float> rows;  // a pose, 12 per joint, or empty
+    uint32_t time = 0;
+};
+
+struct SkinCommand
+{
+    uint32_t id = 0;
+    SkinDesc desc;
+};
+
 // Handed over in one piece by SceneQueue::take().
 struct SceneCommands
 {
     std::vector<TerrainCommand> terrains;
     std::vector<MaterialCommand> materials;
     std::vector<GeometryCommand> geometries;
+    std::vector<SkeletonCommand> skeletons;
+    std::vector<SkinCommand> skins;
     std::vector<InstanceCommand> instances;
     std::vector<uint32_t> removedGeometries;
     std::vector<uint32_t> removedMaterials;
     std::vector<uint32_t> removedTerrains;
+    std::vector<uint32_t> removedSkeletons;
+    std::vector<uint32_t> removedSkins;
 
     bool empty() const
     {
-        return terrains.empty() && materials.empty() && geometries.empty() && instances.empty() && removedGeometries.empty() &&
-               removedMaterials.empty() && removedTerrains.empty();
+        return terrains.empty() && materials.empty() && geometries.empty() && skeletons.empty() && skins.empty() && instances.empty() &&
+               removedGeometries.empty() && removedMaterials.empty() && removedTerrains.empty() && removedSkeletons.empty() &&
+               removedSkins.empty();
     }
 };
 
@@ -543,12 +673,26 @@ public:
     void setInstance(uint32_t id, const InstanceDesc& desc);
     void removeInstance(uint32_t id);
 
+    // An avatar's or animated object's joints. Ids start at 1. A pose is jointCount
+    // matrices of three rows, joint to render space, as of time; the GPU carries the motion
+    // between the last two on to each frame's time. Removal waits for its last instance.
+    uint32_t addSkeleton(uint32_t jointCount);
+    void poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time);
+    void removeSkeleton(uint32_t id);
+
+    // Ids start at 1. Removal waits for its last instance.
+    uint32_t addSkin(SkinDesc&& desc);
+    void removeSkin(uint32_t id);
+
     // Render thread.
     void take(SceneCommands& commands);
+    uint32_t reserveGeometry(); // for the store's own geometries
     void releaseGeometry(uint32_t id);
     void releaseInstance(uint32_t id);
     void releaseMaterial(uint32_t id);
     void releaseTerrain(uint32_t id);
+    void releaseSkeleton(uint32_t id);
+    void releaseSkin(uint32_t id);
 
 private:
     std::mutex mMutex; // held only to move a command, so neither thread really waits
@@ -557,10 +701,14 @@ private:
     std::vector<uint32_t> mFreeInstances;
     std::vector<uint32_t> mFreeMaterials;
     std::vector<uint32_t> mFreeTerrains;
+    std::vector<uint32_t> mFreeSkeletons;
+    std::vector<uint32_t> mFreeSkins;
     uint32_t mNextGeometry = 1; // 0 is the empty geometry
     uint32_t mNextInstance = 0;
     uint32_t mNextMaterial = 1; // 0 is plain white
     uint32_t mNextTerrain = 1;  // 0 means none
+    uint32_t mNextSkeleton = 1;
+    uint32_t mNextSkin = 1;
 };
 
 } // namespace asr
