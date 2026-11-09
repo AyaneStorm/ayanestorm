@@ -16,6 +16,9 @@
  *                   [--validate]         turn on the Vulkan validation layers
  *                   [--vsync]            wait for the display
  *                   [--shaders DIR]      compiled shader folder
+ *   asrenderer_test --vram-stress        real VRAM overcommit, mip retirement and recovery
+ *   asrenderer_test --vram-managed       same asset arrivals with bounded first-image mips
+ *   asrenderer_test --avatar-sweep        crowd camera turn with and without VRAM pressure
  *   asrenderer_test --mouse-probe [--seconds N]  Mac: does mouse motion arrive while the main thread reads no events
  *
  * Exit code 0 means every check passed.
@@ -27,6 +30,11 @@
 #include "asrscenefile.h"
 #include "asrscenegraph.h"
 #include "asrscenestore.h"
+#include "asrjointpose.h"
+#include "asrskinweights.h"
+#include "asrmeshlodresidency.h"
+#include "asravatarresidency.h"
+#include "asrtexturestreaming.h"
 #include "asrtexturequeue.h"
 #include "asruilist.h"
 
@@ -34,6 +42,7 @@
 #include "asrdevice.h"
 #include "asrrenderthread.h"
 #include "asrtestwindow.h"
+#include "asrtestvram.h"
 #endif
 #include "asrtestscene.h"
 
@@ -247,6 +256,39 @@ void testMemoryBudget()
 {
     using Category = asr::MemoryCategory;
     constexpr uint64_t GB = 1024ull * 1024 * 1024;
+    constexpr uint64_t MB = 1024ull * 1024;
+    static_assert(asr::workingVRAMBudget(10 * GB, 0, 0) == 9 * GB, "reserve space for the desktop and other apps");
+    static_assert(asr::workingVRAMBudget(5 * GB, 4 * GB, 4 * GB) == 5 * GB - 512 * MB, "follow a lower driver allowance");
+    static_assert(asr::workingVRAMBudget(10 * GB, 6 * GB, 5 * GB, 5 * GB) == 4 * GB, "account for driver overhead inside the user cap");
+    static_assert(asr::workingVRAMBudget(5 * GB, 0, 0, 9 * GB) == 5 * GB - 512 * MB, "a higher user cap cannot consume headroom");
+    static_assert(asr::workingVRAMBudget(256 * MB, 0, 0) == 128 * MB, "bound the reserve on small budgets");
+    static_assert(asr::workingVRAMBudget(GB, 2 * GB, 0) == 0, "overhead cannot underflow the ceiling");
+
+    // Crowd detail ranking: everyone full while memory allows, nearest first when it does not.
+    {
+        using Policy = asr::AvatarDetailPolicy;
+        Policy detail;
+        detail.update(30, 60, 100, 150, 0.0, false);
+        expect(detail.fullDetail() == 150 && detail.lodCap(149) == Policy::FINEST, "a large card keeps every avatar at full detail");
+        double now = 0.0;
+        for (int step = 0; step < 40 && detail.fullDetail() > Policy::MIN_FULL; ++step) detail.update(60, 95, 100, 150, now += Policy::STEP_SECONDS, false);
+        expect(detail.fullDetail() == Policy::MIN_FULL, "memory pressure lowers the full-detail count to its floor");
+        expect(detail.lodCap(0) == Policy::FINEST && detail.lodCap(Policy::MIN_FULL) == Policy::FINEST - 1, "the nearest keep full detail, the next step down");
+        expect(detail.lodCap(149) == Policy::COARSEST_CAP, "the farthest stop at the coarsest cap, never the often broken lowest LOD");
+        detail.update(20, 60, 100, 150, now += 1.0, false);
+        expect(detail.fullDetail() == Policy::MIN_FULL, "no step before the previous one had time to free memory");
+        detail.update(20, 95, 100, 150, now += Policy::STEP_SECONDS, false);
+        expect(detail.fullDetail() == Policy::MIN_FULL, "no detail returns while the total is near the budget");
+        detail.update(20, 60, 100, 150, now += Policy::STEP_SECONDS, false);
+        expect(detail.fullDetail() > Policy::MIN_FULL, "detail returns as memory frees");
+
+        // A low mesh share, but past the budget with textures at their floor: mesh gives way.
+        Policy crowd;
+        crowd.update(40, 101, 100, 90, 0.0, false);
+        expect(crowd.fullDetail() == 90, "under the high share and not overcommitted, mesh keeps full detail");
+        crowd.update(40, 101, 100, 90, Policy::STEP_SECONDS, true);
+        expect(crowd.fullDetail() < 90, "overcommitted, mesh gives way whatever its share");
+    }
 
     asr::MemoryBudget budget;
     expect(!budget.reserve(Category::Textures, 1), "nothing fits before a budget is set");
@@ -257,13 +299,25 @@ void testMemoryBudget()
         shared.setBudget(8 * GB);
         const uint64_t share = shared.limit(Category::Textures);
         const uint64_t idle = shared.textureLimit();
-        expect(idle > share && idle <= 6 * GB + 1024, "with nothing else in use, textures may pass their share, up to a reserve");
+        expect(idle > share && idle == 8 * GB / 100 * asr::TEXTURE_STEERING_PERCENT, "textures steer below the working budget, leaving room for the screen and replacements");
         shared.reserveAnyway(Category::Textures, 3 * GB);
         expect(shared.textureLimit() == idle, "their own use does not lower it");
         shared.reserveAnyway(Category::RenderTargets, GB);
         expect(shared.textureLimit() == idle - GB, "what others use comes off");
         shared.reserveAnyway(Category::Shadows, 7 * GB);
-        expect(shared.textureLimit() == share, "and it never falls below their share");
+        expect(shared.textureLimit() == 0, "other categories can consume the remaining allowance");
+        expect(!shared.reserve(Category::UI, 1), "a category with room cannot exceed the working budget");
+    }
+
+    {
+        asr::MemoryBudget shared;
+        shared.setBudget(asr::workingVRAMBudget(10 * GB, 0, 0, 7 * GB));
+        expect(shared.reserve(Category::Geometry, 3 * GB), "geometry fits under the configured cap");
+        shared.setBudget(asr::workingVRAMBudget(3 * GB, 3 * GB, 3 * GB, 7 * GB));
+        expect(shared.textureLimit() == 0 && !shared.reserve(Category::UI, 1), "a falling driver budget stops new reservations");
+        expect(shared.pressure() == asr::MemoryPressure::HoldLoads, "existing allocations trigger reclamation after a budget drop");
+        shared.release(Category::Geometry, 3 * GB);
+        expect(shared.reserve(Category::UI, 1), "admission resumes once memory is released");
     }
 
     budget.setBudget(4 * GB);
@@ -288,6 +342,19 @@ void testMemoryBudget()
     expect(!budget.reserve(Category::UI, 1), "past the limit nothing else fits");
     budget.release(Category::UI, 1024);
     budget.release(Category::UI, budget.limit(Category::UI));
+
+    // Geometry borrows past its share what is free, never the textures' share.
+    const uint64_t borrowable = budget.budget() - budget.limit(Category::Textures);
+    expect(budget.reserve(Category::Geometry, borrowable), "geometry borrows past its share");
+    expect(!budget.reserve(Category::Geometry, 1), "geometry never borrows the textures' share");
+    budget.release(Category::Geometry, borrowable);
+    const uint64_t textures = budget.limit(Category::Textures) + 1024 * 1024; // textures past their share
+    budget.reserveAnyway(Category::Textures, textures);
+    expect(!budget.reserve(Category::Geometry, borrowable), "geometry borrows only what is free");
+    expect(budget.reserve(Category::Geometry, borrowable - 1024 * 1024), "geometry borrows all that is free");
+    budget.release(Category::Geometry, borrowable - 1024 * 1024);
+    budget.release(Category::Textures, textures);
+    expect(budget.totalUsed() == 0, "borrowing leaves nothing behind");
 
     // One category cannot reach 85% of the total, so fill all of them equally.
     const auto fill = [&](uint64_t percent)
@@ -870,6 +937,89 @@ void testRangeAllocator()
         many.release(offsets[i], 16);
     }
     expect(many.allocate(PIECES * 16, 16, tooLarge) && tooLarge == 0, "all pieces merge back into one");
+
+    // Freeing the tail must lower dispatch bounds without losing alignment holes.
+    asr::RangeAllocator tail(128);
+    expect(tail.allocate(3, 1, a) && tail.allocate(16, 16, b) && b == 16, "an aligned allocation leaves padding");
+    tail.release(a, 3);
+    expect(tail.used() == 32 && tail.live() == 16, "an interior hole keeps the live tail");
+    tail.release(b, 16);
+    expect(tail.used() == 0 && tail.live() == 0 && tail.freeSpace() == 128, "the free tail and its padding collapse together");
+    expect(tail.allocate(128, 16, c) && c == 0, "the collapsed span can be reused completely");
+}
+
+void testTextureStreamingPolicy()
+{
+    // These regressions also execute during syntax-only checking, without a test build.
+    static_assert(asr::firstTextureMip(2048, 2048, 4, true, 32 * 1024 * 1024) == 0, "roomy first images retain requested detail");
+    static_assert(asr::firstTextureMip(2048, 2048, 4, true, 2 * 1024 * 1024) == 2, "first images fit remaining room before allocation");
+    static_assert(asr::firstTextureMip(2048, 2048, 4, true, 0) == 4, "pressure still admits a 128-pixel first image");
+    static_assert(asr::firstTextureMip(1024, 512, 4, true, 0) == 3, "rectangular images preserve full-size discard metadata");
+    static_assert(asr::firstTextureMip(1, 4096, 4, true, 0) == 0, "thin images cannot change their logical full width");
+    static_assert(asr::firstTextureMip(2048, 2048, 4, false, 0) == 0, "nonmipmapped images retain their existing semantics");
+    static_assert(asr::textureFeedbackSeen(10.0, 10.0, 4.0), "unchanged completed feedback retains demand");
+    static_assert(asr::textureFeedbackSeen(12.0, 10.0, 4.0), "one missed two-second window retains demand");
+    static_assert(!asr::textureFeedbackSeen(14.0, 10.0, 4.0), "completed negative evidence expires demand");
+    static_assert(!asr::textureFeedbackSeen(10.0, -1000.0, 4.0), "first images need bootstrap demand");
+    static_assert(asr::avatarDetailTexelLimit(1.f) == 512 && asr::avatarDetailTexelLimit(2.f) == 256 &&
+                  asr::avatarDetailTexelLimit(4.f) == 128, "small details reduce with distance");
+    static_assert(asr::avatarDetailTexelLimit(0.5f) == 1024 && asr::avatarDetailTexelLimit(0.25f) == 2048,
+                  "camera close-ups get finer small details");
+    static_assert(asr::textureDiscardForLimit(2048, 512, 5) == 2 && asr::textureDiscardForLimit(256, 512, 5) == 0,
+                  "limit the longest side without refining an already small asset");
+    constexpr bool copyRecovery = []()
+    {
+        uint32_t level = 99;
+        return asr::textureMipCopyLevel(1024, 1024, 11, 256, 256, 9, level) && level == 2 &&
+               !asr::textureMipCopyLevel(128, 128, 8, 512, 512, 10, level) &&
+               !asr::textureMipCopyLevel(1024, 1024, 3, 256, 256, 9, level) &&
+               !asr::textureMipCopyLevel(0, 0, 0, 1, 1, 1, level);
+    }();
+    static_assert(copyRecovery, "actual mip recovery and invalid-copy rejection");
+    constexpr bool replacementIsolation = []()
+    {
+        asr::TextureReplacementState<4> state;
+        state.begin(1);
+        state.fail(1);
+        if (!state.failed(1) || state.failed(2)) return false;
+        state.begin(2); // unrelated creates must not unblock a failed slot's uploads
+        if (!state.failed(1)) return false;
+        state.begin(1); // only a new transaction for this slot permits uploads again
+        return !state.failed(1);
+    }();
+    static_assert(replacementIsolation, "failed replacements cannot fall back to uploading into the displayed image");
+    // At eight GPU FPS a 16-frame window takes two seconds. No readback between
+    // those windows is not evidence that a previously sampled texture disappeared.
+    expect(asr::textureFeedbackSeen(10.0, 10.0, 4.0), "an unchanged completed-window clock retains demand while waiting for the GPU");
+    expect(asr::textureFeedbackSeen(12.0, 10.0, 4.0), "one missed slow window retains the existing demand");
+    expect(!asr::textureFeedbackSeen(14.0, 10.0, 4.0), "completed windows can establish that a texture is no longer sampled");
+    expect(!asr::textureFeedbackSeen(10.0, -1000.0, 4.0), "never-sampled textures retain the separate bootstrap path");
+
+    uint32_t mip = 99;
+    // CPU believed a 2048 image had published, but allocation failed and the GPU
+    // retained 1024. A requested 256 image needs actual mip 2, not queued mip 3.
+    expect(asr::textureMipCopyLevel(1024, 1024, 11, 256, 256, 9, mip) && mip == 2,
+           "a shrink uses the actual retained image after a failed grow");
+    expect(asr::textureMipCopyLevel(1024, 512, 11, 128, 64, 8, mip) && mip == 3,
+           "rectangular images select matching mip extents");
+    expect(!asr::textureMipCopyLevel(128, 128, 8, 512, 512, 10, mip), "a missing larger source must retain the old image, never publish a clear");
+    expect(!asr::textureMipCopyLevel(1024, 1024, 11, 256, 128, 9, mip), "mismatched source aspect cannot be copied");
+    expect(!asr::textureMipCopyLevel(1024, 1024, 3, 256, 256, 9, mip), "an incomplete mip chain cannot fill a replacement");
+    expect(!asr::textureMipCopyLevel(0, 0, 0, 1, 1, 1, mip), "a missing source cannot fill a replacement");
+}
+
+void testMeshLodResidency()
+{
+    asr::MeshLodResidency residency;
+    expect(!residency.holds(3, 0.0, false), "an unrequested fine LOD is not admitted");
+    residency.want(3, 1.0);
+    residency.want(0, 5.0);
+    expect(residency.holds(3, 5.5, true), "a camera glance does not immediately evict detail");
+    expect(!residency.holds(3, 6.0, true) && residency.holds(0, 6.0, true), "under pressure only obsolete fine detail expires");
+    expect(residency.holds(3, 30.0, false) && !residency.holds(3, 31.0, false), "normal retention has a bounded lifetime");
+    expect(!residency.holds(3, 32.0, false), "a late callback cannot re-admit an evicted level");
+    residency.want(3, 33.0); // actual finer fallback when the requested coarse asset is absent
+    expect(residency.holds(3, 34.0, true) && residency.holds(0, 34.0, true), "current demand or an asset fallback admits the whole required chain again");
 }
 
 void testCameraPredictor()
@@ -1232,18 +1382,26 @@ void testTextureFeedback()
 class FakeChunks final : public asr::SceneChunks
 {
 public:
-    uint64_t createSceneChunk() override
+    uint64_t createSceneChunk(uint32_t index) override
     {
         if (limit == 0)
         {
             return 0;
         }
         --limit;
+        lastIndex = index;
         return next += asr::SCENE_CHUNK_BYTES;
     }
 
+    void releaseSceneChunk(uint32_t index) override
+    {
+        released.push_back(index);
+    }
+
     uint32_t limit = 100;
+    uint32_t lastIndex = 0;
     uint64_t next = 0;
+    std::vector<uint32_t> released;
 };
 
 void testSceneStore()
@@ -1310,8 +1468,29 @@ void testSceneStore()
     store.update(queue, chunks, ++frame, LIMIT);
     expect(store.freeChunkBytes() == freeBefore, "freed geometry waits for frames in flight");
     store.update(queue, chunks, frame += 4, LIMIT);
-    expect(store.freeChunkBytes() > freeBefore, "freed geometry comes back");
+    expect(store.chunkCount() == 0 && chunks.released.size() == 1 && chunks.released.back() == 0,
+           "an empty chunk is returned to the backend after frames in flight finish");
     expect(queue.addGeometry(asrtest::build(mesh)) == geometry, "a freed id is reused");
+    store.update(queue, chunks, ++frame, LIMIT);
+    expect(store.chunkCount() == 1 && chunks.lastIndex == 0, "a released chunk slot is reusable without moving live indices");
+
+    // Ranged tables shrink after retirement and do not regrow to historical capacity
+    // when a much smaller avatar arrives. Neither shrink nor ID reuse is premature.
+    asr::SceneQueue trimQueue;
+    asr::SceneStore trim(2);
+    const uint32_t largeSkeleton = trimQueue.addSkeleton(2048);
+    trim.update(trimQueue, chunks, 1, LIMIT);
+    const uint64_t largeTable = trim.tableCapacity(asr::SceneTable::Joints);
+    expect(largeTable > 64 * 1024, "the reclamation test grows a joint table");
+    trimQueue.removeSkeleton(largeSkeleton);
+    trim.update(trimQueue, chunks, 2, LIMIT);
+    expect(trim.tableCapacity(asr::SceneTable::Joints) == largeTable, "a table cannot shrink while retired joints are in flight");
+    trim.update(trimQueue, chunks, 6, LIMIT);
+    expect(trim.tableCapacity(asr::SceneTable::Joints) == 64 * 1024 && trim.rangeEnd(asr::SceneTable::Joints) == 0,
+           "retired joint storage and dispatch extent shrink");
+    trimQueue.addSkeleton(2);
+    trim.update(trimQueue, chunks, 7, LIMIT);
+    expect(trim.tableCapacity(asr::SceneTable::Joints) == 64 * 1024, "a small allocation does not restore the historical table size");
 
     // LODs: lists keep room for every LOD an instance could show, and a coarse LOD
     // stays for as long as a finer one names it.
@@ -1354,13 +1533,14 @@ void testSceneStore()
     lodQueue.removeGeometry(roughId);
     lods.update(lodQueue, chunks, 2, LIMIT);
     lods.update(lodQueue, chunks, 10, LIMIT);
-    const uint64_t freeWithRough = lods.freeChunkBytes();
+    const size_t releasesWithRough = chunks.released.size();
     lodQueue.removeInstance(lodInstance);
     lodQueue.removeGeometry(otherBoxId);
     lodQueue.removeGeometry(fineId);
     lods.update(lodQueue, chunks, 11, LIMIT);
     lods.update(lodQueue, chunks, 20, LIMIT);
-    expect(lods.freeChunkBytes() > freeWithRough, "the coarse LOD went with its last user");
+    // A completely empty chunk is destroyed, rather than retained as free space.
+    expect(lods.chunkCount() == 0 && chunks.released.size() > releasesWithRough, "the coarse LOD went with its last user");
     expect(lods.triangles() == 0, "nothing is left of the chain");
     desc.flags = 0;
 
@@ -1495,6 +1675,102 @@ const T* writtenEntry(const asr::SceneStore& store, asr::SceneTable table, uint6
     return reinterpret_cast<const T*>(found);
 }
 
+void testSkinAmounts()
+{
+    const float cases[][4] = { { 0.f, .5f, .5f, 0.f }, { 0.f, 1.f/6.f, 1.f/6.f, 2.f/3.f },
+                              { .2f, .3f, .1f, .4f }, { 0.f, 0.f, 0.f, 1.f } };
+    for (const auto& shares : cases)
+    {
+        uint16_t amounts[4];
+        asr::packSkinAmounts(shares, amounts);
+        uint32_t total = 0;
+        bool emptyStaysEmpty = true;
+        for (int i = 0; i < 4; ++i)
+        {
+            total += amounts[i];
+            emptyStaysEmpty = emptyStaysEmpty && (shares[i] != 0.f || amounts[i] == 0);
+        }
+        expect(total == 65535 && emptyStaysEmpty, "rounded skin weights total exactly one without activating empty joints");
+    }
+    const float zero[4]{};
+    uint16_t amounts[4];
+    asr::packSkinAmounts(zero, amounts);
+    expect(amounts[0] == 65535 && amounts[1] == 0 && amounts[2] == 0 && amounts[3] == 0,
+           "a vertex with no skin amounts follows its first joint");
+}
+
+void testJointPrediction()
+{
+    // Independent analytic rotations of a sheared, nonuniformly scaled shape.
+    // Matrix-element extrapolation fails these checks even for an unscaled joint.
+    const float shape[3][4] = { { 1.7f, .3f, .1f, 1.f }, { 0.f, .8f, .2f, 2.f }, { 0.f, 0.f, 1.2f, 3.f } };
+    auto rotated = [&](int axis, float angle, float out[3][4])
+    {
+        const int a = (axis + 1) % 3, b = (axis + 2) % 3;
+        memcpy(out, shape, sizeof(shape));
+        for (int column = 0; column < 3; ++column)
+        {
+            out[a][column] = std::cos(angle)*shape[a][column] - std::sin(angle)*shape[b][column];
+            out[b][column] = std::sin(angle)*shape[a][column] + std::cos(angle)*shape[b][column];
+        }
+    };
+    for (int axis = 0; axis < 3; ++axis)
+    {
+        bool followsRotation = true, preservesShape = true, followsTranslation = true;
+        for (float degrees : { 5.f, 60.f, 170.f, -170.f })
+        {
+            const float angle = degrees * 3.14159265358979323846f / 180.f;
+            float newest[3][4], delta[4];
+            rotated(axis, angle, newest);
+            newest[0][3] += .5f;
+            asr::jointRotationDelta(newest, shape, delta);
+            for (float lead : { 0.f, .25f, .5f, asr::SKELETON_MAX_LEAD })
+            {
+                float predicted[3][4], expected[3][4];
+                asr::extrapolateJointRows(newest, shape, delta, lead, predicted);
+                rotated(axis, angle * (1.f + lead), expected);
+                for (int row = 0; row < 3; ++row)
+                {
+                    followsTranslation = followsTranslation && std::fabs(predicted[row][3] -
+                        (shape[row][3] + (row == 0 ? .5f * (1.f + lead) : 0.f))) < 1e-5f;
+                    for (int column = 0; column < 3; ++column)
+                    {
+                        followsRotation = followsRotation && std::fabs(predicted[row][column] - expected[row][column]) < 2e-5f;
+                        float before = 0.f, after = 0.f;
+                        for (int k = 0; k < 3; ++k)
+                        {
+                            before += newest[k][row] * newest[k][column];
+                            after += predicted[k][row] * predicted[k][column];
+                        }
+                        preservesShape = preservesShape && std::fabs(before - after) < 2e-5f;
+                    }
+                }
+            }
+        }
+        expect(followsRotation, "joint prediction follows analytic rotation about each axis, including large turns");
+        expect(preservesShape, "joint prediction preserves column lengths and angles with nonuniform scale and shear");
+        expect(followsTranslation, "joint prediction retains linear translation");
+    }
+    float singular[3][4]{}, delta[4], result[3][4];
+    asr::jointRotationDelta(shape, singular, delta);
+    asr::extrapolateJointRows(shape, singular, delta, 1.f, result);
+    expect(delta[3] == 1.f && result[0][0] == shape[0][0] && std::isfinite(result[2][3]),
+           "a singular previous pose keeps the latest shape finite");
+    float reflected[3][4];
+    memcpy(reflected, shape, sizeof(shape));
+    for (int column = 0; column < 3; ++column) reflected[0][column] *= -1.f;
+    asr::jointRotationDelta(reflected, shape, delta);
+    expect(delta[0] == 0.f && delta[1] == 0.f && delta[2] == 0.f && delta[3] == 1.f,
+           "a reflection change is not treated as a rotation");
+    asr::jointRotationDelta(shape, shape, delta);
+    asr::extrapolateJointRows(shape, shape, delta, asr::SKELETON_MAX_LEAD, result);
+    bool unchanged = true;
+    for (int row = 0; row < 3; ++row)
+        for (int column = 0; column < 4; ++column)
+            unchanged = unchanged && std::fabs(result[row][column] - shape[row][column]) < 1e-6f;
+    expect(unchanged, "a stopped pose does not drift");
+}
+
 void testSkinStore()
 {
     asr::SceneQueue queue;
@@ -1599,6 +1875,7 @@ void testSkinStore()
            "the skin passes cover every vertex and palette entry");
 
     // Every vertex, skinned on the CPU, must land in the box its positions are packed in.
+    const float bindingReach = binding ? binding->reach : 0.f; // held now: a later update need not write the entry again
     const auto insideBox = [&](const asr::GpuSkeleton& entry, const float* pose)
     {
         bool inside = true;
@@ -1620,12 +1897,12 @@ void testSkinStore()
             }
             for (int axis = 0; axis < 3; ++axis)
             {
-                inside = inside && std::fabs(skinned[axis] - entry.boxCenter[axis]) <= entry.boxScale;
+                inside = inside && std::fabs(skinned[axis] - entry.boxCenter[axis]) <= entry.boxScale + bindingReach * entry.stretch;
             }
         }
         return inside;
     };
-    expect(skeletonEntry && insideBox(*skeletonEntry, rows), "the skeleton's box holds every morphed and skinned vertex");
+    expect(skeletonEntry && insideBox(*skeletonEntry, rows), "the binding's box holds every morphed and skinned vertex");
 
     // A second pose: the one before is kept for the GPU to carry the motion on from.
     float later[asrtest::CREATURE_JOINTS * 12];
@@ -1638,10 +1915,25 @@ void testSkinStore()
            "two poses give a step and a lead");
     expect(joints && joints[1].rows[0][3] == later[12 + 3] && joints[1].previous[0][3] == rows[12 + 3], "joints carry both poses");
     expect(store.skinThreads(asr::SKIN_MORPH) == 0, "a morph whose weights did not change is not rebuilt");
+
+    // A far avatar's skeleton: drawn one gap late, between its last two poses, and a gap
+    // after a rest counts as at most the one given.
+    const uint32_t farSkeleton = queue.addSkeleton(asrtest::CREATURE_JOINTS);
+    queue.poseSkeleton(farSkeleton, rows, asrtest::CREATURE_JOINTS, start, std::chrono::microseconds(50000));
+    queue.poseSkeleton(farSkeleton, later, asrtest::CREATURE_JOINTS, start + std::chrono::seconds(5), std::chrono::microseconds(50000));
+    store.update(queue, chunks, ++frame, LIMIT);
+    const asr::GpuSkeleton* farEntry = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, farSkeleton);
+    expect(farEntry && farEntry->minLead == -1.f && farEntry->maxLead == 0.f && farEntry->time - farEntry->previousTime == 50000,
+           "an interpolated skeleton blends one capped gap late, never past its newest pose");
     float ahead[asrtest::CREATURE_JOINTS * 12];
-    for (size_t i = 0; i < sizeof(ahead) / sizeof(ahead[0]); ++i)
+    for (size_t i = 0; i < asrtest::CREATURE_JOINTS; ++i)
     {
-        ahead[i] = later[i] + (later[i] - rows[i]) * asr::SKELETON_MAX_LEAD;
+        float newest[3][4], previous[3][4], delta[4], predicted[3][4];
+        memcpy(newest, later + i * 12, sizeof(newest));
+        memcpy(previous, rows + i * 12, sizeof(previous));
+        asr::jointRotationDelta(newest, previous, delta);
+        asr::extrapolateJointRows(newest, previous, delta, asr::SKELETON_MAX_LEAD, predicted);
+        memcpy(ahead + i * 12, predicted, sizeof(predicted));
     }
     expect(skeletonEntry && insideBox(*skeletonEntry, later) && insideBox(*skeletonEntry, ahead), "the box holds the furthest lead too");
 
@@ -1653,7 +1945,79 @@ void testSkinStore()
     expect(tubeEntry && tubeEntry->binding == bindingId && tubeEntry->material == 3, "a skinned instance set again keeps its binding");
     expect(store.writes().size() == 2, "and writes only its instance and binding");
 
+    // Out of view, an avatar gives back its skinned copies; back in view it gets them again.
+    const uint64_t liveBefore = store.rangeLive(asr::SceneTable::SkinnedPositions);
+    queue.setSkeletonResident(skeleton, false);
+    store.update(queue, chunks, ++frame, LIMIT);
+    const asr::GpuBinding* parked = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, bindingId);
+    expect(parked && parked->kind == 0, "a parked avatar's bindings are skipped");
+    const asr::GpuSkeleton* parkedSkeleton = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, skeleton);
+    expect(parkedSkeleton && (parkedSkeleton->flags & asr::SKELETON_PARKED), "parked skins also stop generating unused palettes");
+    for (int i = 0; i < 8; ++i)
+    {
+        store.update(queue, chunks, ++frame, LIMIT); // past the free delay
+    }
+    expect(store.rangeLive(asr::SceneTable::SkinnedPositions) < liveBefore, "and its deformed positions are released");
+    queue.setSkeletonResident(skeleton, true);
+    store.update(queue, chunks, ++frame, LIMIT);
+    const asr::GpuBinding* back = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, bindingId);
+    const asr::GpuSkeleton* residentSkeleton = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, skeleton);
+    expect(residentSkeleton && (residentSkeleton->flags & asr::SKELETON_PARKED) == 0, "un-parking restores palette generation in the same update");
+    expect(back && back->kind == asr::BINDING_SKINNED && store.rangeLive(asr::SceneTable::SkinnedPositions) == liveBefore,
+           "back in view, its bindings are skinned again with storage of their own");
+
+    // Faces can have different morph bounds, but shared edges still need one packing
+    // grid for their skeleton/skin. A later widening must reach already-bound faces too.
+    asr::InstanceDesc sibling = tube;
+    sibling.morph = 0;
+    const uint32_t siblingId = queue.addInstance(sibling);
+    store.update(queue, chunks, ++frame, LIMIT);
+    const asr::GpuInstance* siblingEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, siblingId);
+    const uint32_t siblingBindingId = siblingEntry ? siblingEntry->binding : 0;
+    const asr::GpuBinding* siblingBinding = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, siblingBindingId);
+    expect(siblingBinding && siblingBinding->reach == bindingReach,
+           "another face of the same skin keeps the shared packing grid despite a smaller morph bound");
+    const float largerMorph[2] = { 2.f, 2.f };
+    queue.setMorphWeights(morph, largerMorph, 2);
+    store.update(queue, chunks, ++frame, LIMIT);
+    binding = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, bindingId);
+    siblingBinding = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, siblingBindingId);
+    expect(binding && siblingBinding && binding->reach > bindingReach && binding->reach == siblingBinding->reach,
+           "a larger morph updates the packing grid of every face sharing that skin");
+
+    // An absent/coarse face has no weights. Either neighbour can still supply a
+    // valid weighted surface; a bad palette index in one LOD is isolated too.
+    const uint32_t unweightedCoarse = queue.addGeometry(asrtest::build(rough, &asrtest::CREATURE_BOX));
+    const uint32_t weightedFine = queue.addGeometry(asrtest::build(fine, &asrtest::CREATURE_BOX, fineWeights.data()), unweightedCoarse, 30.f);
+    const uint32_t unweightedFine = queue.addGeometry(asrtest::build(fine, &asrtest::CREATURE_BOX), roughId, 30.f);
+    std::vector<asr::SkinWeights> invalidWeights = fineWeights;
+    for (asr::SkinWeights& weights : invalidWeights)
+        for (int k = 0; k < 4; ++k) weights.joints[k] = 255;
+    const uint32_t invalidCoarse = queue.addGeometry(asrtest::build(rough, &asrtest::CREATURE_BOX, invalidWeights.data()));
+    const uint32_t goodFine = queue.addGeometry(asrtest::build(fine, &asrtest::CREATURE_BOX, fineWeights.data()), invalidCoarse, 30.f);
+    uint32_t mixedInstances[3];
+    size_t mixed = 0;
+    for (uint32_t geometry : { weightedFine, unweightedFine, goodFine })
+    {
+        asr::InstanceDesc desc = sibling;
+        desc.geometry = geometry;
+        mixedInstances[mixed++] = queue.addInstance(desc);
+    }
+    store.update(queue, chunks, ++frame, LIMIT);
+    for (uint32_t instance : mixedInstances)
+    {
+        const asr::GpuInstance* entry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, instance);
+        expect(entry && entry->binding != 0 && (entry->flags & asr::INSTANCE_SKINNED) != 0,
+               "a valid weighted LOD survives an unweighted or invalid neighbour");
+    }
+    const asr::GpuGeometry* coarseEntry = writtenEntry<asr::GpuGeometry>(store, asr::SceneTable::Geometries, unweightedCoarse);
+    const asr::GpuGeometry* invalidEntry = writtenEntry<asr::GpuGeometry>(store, asr::SceneTable::Geometries, invalidCoarse);
+    expect(coarseEntry && coarseEntry->skinJoints == 0 && invalidEntry && invalidEntry->skinJoints == 256,
+           "the GPU receives each LOD's own palette requirements");
+
     // Everything goes once frames in flight are done with it, and ids come back.
+    for (uint32_t instance : mixedInstances) queue.removeInstance(instance);
+    queue.removeInstance(siblingId);
     queue.removeInstance(tubeId);
     queue.removeInstance(heldId);
     queue.removeInstance(looseId);
@@ -1667,6 +2031,61 @@ void testSkinStore()
     expect(queue.addSkeleton(2) == skeleton, "a freed skeleton id is reused");
     expect(queue.addSkin(asrtest::creatureSkin()) == skin, "a freed skin id is reused");
     expect(queue.addMorph(1) == morph && queue.addMorphSet(asr::MorphSetDesc()) == morphSet, "freed morph ids are reused");
+}
+
+void testDeformationCompaction()
+{
+    asr::SceneQueue queue;
+    asr::SceneStore store(2);
+    FakeChunks chunks;
+    constexpr uint64_t LIMIT = 64 * 1024 * 1024;
+    constexpr uint32_t AVATARS = 80;
+    std::vector<asr::SkinWeights> weights;
+    const asrtest::Mesh mesh = asrtest::makeTube(256, 64, weights);
+    const uint32_t geometry = queue.addGeometry(asrtest::build(mesh, &asrtest::CREATURE_BOX, weights.data()));
+    const uint32_t skin = queue.addSkin(asrtest::creatureSkin());
+    std::vector<uint32_t> skeletons, bindingIds;
+    for (uint32_t i = 0; i < AVATARS; ++i)
+    {
+        asr::InstanceDesc desc;
+        desc.geometry = geometry;
+        desc.skin = skin;
+        desc.skeleton = queue.addSkeleton(asrtest::CREATURE_JOINTS);
+        skeletons.push_back(desc.skeleton);
+        queue.addInstance(desc);
+    }
+    store.update(queue, chunks, 1, LIMIT);
+    const uint64_t originalCapacity = store.tableCapacity(asr::SceneTable::SkinnedPositions);
+    expect(originalCapacity >= 16 * 1024 * 1024, "the compaction test creates a large output cache");
+    for (const asr::SceneWrite& write : store.writes())
+        if (write.table == asr::SceneTable::Bindings && write.bytes == sizeof(asr::GpuBinding))
+            bindingIds.push_back(uint32_t(write.offset / sizeof(asr::GpuBinding)));
+    for (uint32_t i = 0; i < 64; ++i) queue.setSkeletonResident(skeletons[i], false);
+    store.update(queue, chunks, 2, LIMIT);
+    queue.setSkeletonResident(skeletons[64], false);
+    store.update(queue, chunks, 4, LIMIT); // this avatar's old range retires after compaction
+    store.update(queue, chunks, 5, LIMIT);
+    expect(store.positionsCompacted() && store.tableCapacity(asr::SceneTable::SkinnedPositions) < originalCapacity / 2,
+           "parked interior holes force a fresh, smaller physical position buffer");
+    const uint64_t vertices = mesh.vertices.size();
+    expect(store.rangeLive(asr::SceneTable::SkinnedPositions) == 15 * vertices &&
+           store.rangeEnd(asr::SceneTable::SkinnedPositions) == 15 * vertices,
+           "only resident bindings occupy the compacted cache");
+    expect(store.rangeEnd(asr::SceneTable::SkinBlocks) == store.rangeLive(asr::SceneTable::SkinBlocks) &&
+           store.rangeEnd(asr::SceneTable::ClusterBlocks) == store.rangeLive(asr::SceneTable::ClusterBlocks),
+           "compaction removes empty dispatch-map holes too");
+    uint64_t expectedOffset = 0;
+    for (uint32_t i = 65; i < AVATARS; ++i)
+    {
+        const asr::GpuBinding* binding = writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, bindingIds[i]);
+        expect(binding && binding->positions == expectedOffset, "every surviving binding receives its own dense output span");
+        expectedOffset += vertices;
+    }
+    queue.setSkeletonResident(skeletons[0], true);
+    store.update(queue, chunks, 6, LIMIT);
+    store.update(queue, chunks, 8, LIMIT);
+    expect(store.rangeLive(asr::SceneTable::SkinnedPositions) == 16 * vertices,
+           "old-generation retirement cannot free a new allocation after un-parking");
 }
 
 void testFrameGraph()
@@ -1790,6 +2209,24 @@ void testFrameGraph()
     }
     expect(scene.isRunning(asr::PassPyramidFinal), "the final pyramid runs, for the next frame");
     expect(!scene.isRunning(asr::PassAuditDraw), "the audit costs nothing unless asked for");
+    const auto orderOf = [&scene](asr::PassId pass)
+    {
+        for (uint32_t i = 0; i < scene.passCount(); ++i) if (scene.passId(i) == pass) return i;
+        return scene.passCount();
+    };
+    expect(orderOf(asr::PassSkinClusters) < orderOf(asr::PassCullEarly) &&
+           orderOf(asr::PassGroupsEarly) < orderOf(asr::PassSkinVertices) &&
+           orderOf(asr::PassSkinVertices) < orderOf(asr::PassDrawEarly),
+           "conservative bounds and culling precede early deformation and drawing");
+    expect(orderOf(asr::PassPyramidEarly) < orderOf(asr::PassGroupsLate) &&
+           orderOf(asr::PassGroupsLate) < orderOf(asr::PassSkinVerticesLate) &&
+           orderOf(asr::PassSkinVerticesLate) < orderOf(asr::PassDrawLate),
+           "current-depth recovery deforms newly exposed geometry before its same-frame draw");
+    transitions = scene.transitions(orderOf(asr::PassSkinVertices), count);
+    expect(std::any_of(transitions, transitions + count, [](const asr::GraphTransition& transition)
+    {
+        return transition.result == asr::ResultSceneData && (transition.source & ComputeWrite) && (transition.destination & ComputeRead);
+    }), "culling demand writes are synchronized before deformation reads them");
     scene.setSink(asr::ResultAuditPixels, CopyRead, true);
     expect(scene.compile(error) && scene.isRunning(asr::PassAuditDraw), "asking for the audit runs it");
     expect(scene.passCount() <= asr::MAX_TIMED_PASSES, "every scene pass can be timed");
@@ -2214,6 +2651,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             printf("audit: %llu frames, %llu pixels lost\n", (unsigned long long)stats.auditedFrames, (unsigned long long)stats.auditErrorPixels);
             expect(stats.auditedFrames > 0, "the audit ran");
             expect(stats.auditErrorPixels == 0, "occlusion culling lost nothing");
+            printf("skin audit: %llu samples, %llu errors, maximum %.9g metres\n",
+                   (unsigned long long)stats.skinAuditSamples, (unsigned long long)stats.skinAuditErrors, stats.skinAuditMaxError);
+            expect(stats.skinAuditSamples > 0, "actual GPU skinned positions were checked");
+            expect(stats.skinAuditErrors == 0, "stored skinned positions match direct float skinning");
         }
     }
 
@@ -2252,6 +2693,8 @@ int main(int argc, char** argv)
     double stallSeconds = 2.0;
     bool drawUI = false;
     bool drawScene = false;
+    bool vramStress = false;
+    asrtest::VramTestMode vramMode = asrtest::VramTestMode::Overcommit;
     bool street = false;
     bool audit = false;
     bool keepSize = false;
@@ -2279,6 +2722,21 @@ int main(int argc, char** argv)
         else if (arg == "--ui")
         {
             drawUI = true;
+        }
+        else if (arg == "--vram-stress")
+        {
+            vramStress = true;
+            vramMode = asrtest::VramTestMode::Overcommit;
+        }
+        else if (arg == "--vram-managed")
+        {
+            vramStress = true;
+            vramMode = asrtest::VramTestMode::ManagedTextures;
+        }
+        else if (arg == "--avatar-sweep")
+        {
+            vramStress = true;
+            vramMode = asrtest::VramTestMode::AvatarSweep;
         }
         else if (arg == "--scene")
         {
@@ -2335,6 +2793,9 @@ int main(int argc, char** argv)
         }
     }
 
+#ifdef ASR_HAS_DEVICE
+    if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode);
+#endif
     if (selftest)
     {
         testSceneFile("asrenderer_test_scene.tmp");
@@ -2346,13 +2807,18 @@ int main(int argc, char** argv)
         testTerrainLods();
         testClusterGroups();
         testRangeAllocator();
+        testMeshLodResidency();
+        testTextureStreamingPolicy();
         testCameraPredictor();
         testMouseMotion();
         testCameraTurn();
         testCameraZoom();
         testTextureFeedback();
         testSceneStore();
+        testJointPrediction();
+        testSkinAmounts();
         testSkinStore();
+        testDeformationCompaction();
         testMacOITKeys();
         testFrameGraph();
         testPyramidLayout();

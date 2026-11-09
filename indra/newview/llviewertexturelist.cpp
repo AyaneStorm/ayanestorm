@@ -1069,7 +1069,11 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         // <AS:Chanayane> Faces only say how large a texture would show. The new renderer says
         // whether it shows at all, how large the GPU needed it, and whether it can keep its
         // image. No size means no fetch.
-        if (ASR::active() && imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        // <AS:Chanayane> Other avatars' bakes need GPU demand sizing too; their boost remains loading priority.
+        // if (ASR::active() && imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        if (ASR::active() && imagep->getType() == LLViewerTexture::LOD_TEXTURE &&
+            (imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE || imagep->getBoostLevel() == LLViewerTexture::BOOST_AVATAR_BAKED))
+        // </AS:Chanayane>
         {
             //const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check);
             const ASRWorld::TextureUse use = ASRWorld::judgeTexture(imagep, on_screen || face_count > max_faces_to_check, bias, max_vsize);
@@ -1082,7 +1086,12 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
         }
         // </AS:Chanayane>
 
-        if (imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        // <AS:Chanayane> Bakes must also drop their previous maximum when native demand shrinks.
+        // if (imagep->getType() == LLViewerTexture::LOD_TEXTURE && imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE)
+        if (imagep->getType() == LLViewerTexture::LOD_TEXTURE &&
+            (imagep->getBoostLevel() == LLViewerTexture::BOOST_NONE ||
+             (ASR::active() && imagep->getBoostLevel() == LLViewerTexture::BOOST_AVATAR_BAKED)))
+        // </AS:Chanayane>
         { // conditionally reset max virtual size for unboosted LOD_TEXTURES
           // this is an alternative to decaying mMaxVirtualSize over time
           // that keeps textures from continously downrezzing and uprezzing in the background

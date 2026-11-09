@@ -6,11 +6,30 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <string>
 
 namespace asr
 {
+
+// Leave space for the desktop and apps launched between driver budget samples.
+// On small budgets, keep at least half available to the renderer.
+inline constexpr uint64_t workingVRAMBudget(uint64_t driverBudget, uint64_t driverUsage,
+                                            uint64_t residentBytes, uint64_t configuredCap = 0)
+{
+    constexpr uint64_t MIN_HEADROOM = 512ull * 1024 * 1024;
+    const uint64_t headroom = std::min(driverBudget / 2, std::max(driverBudget / 10, MIN_HEADROOM));
+    uint64_t ceiling = driverBudget - headroom;
+    if (configuredCap != 0) ceiling = std::min(ceiling, configuredCap);
+    const uint64_t overhead = driverUsage > residentBytes ? driverUsage - residentBytes : 0;
+    return ceiling > overhead ? ceiling - overhead : 0;
+}
+
+// Textures steer to this share of the working budget; the rest absorbs replacements
+// and what is counted past the budget (screen, scene tables, geometry).
+inline constexpr uint64_t TEXTURE_STEERING_PERCENT = 85;
 
 enum class MemoryCategory : uint32_t
 {
@@ -45,19 +64,25 @@ public:
     uint64_t limit(MemoryCategory category) const;
     uint64_t used(MemoryCategory category) const;
 
-    // What textures may take now, which is never below their limit(). Other categories
+    // What textures may take now. Other categories
     // leave their share unused until something needs it, so textures may use what is really
-    // free, less a reserve. As the others grow this falls by itself, and textures shrink to
+    // free inside the working budget. As the others grow this falls by itself, and textures shrink to
     // make room, so nothing depends on the size of the card.
     uint64_t textureLimit() const;
     uint64_t totalUsed() const { return mTotalUsed.load(std::memory_order_relaxed); }
 
-    // Returns false, and changes nothing, if the category has no room left.
+    // Returns false, and changes nothing, if the category has no room left. Geometry is
+    // the one category the world sizes rather than the screen (a crowd of avatars), so past
+    // its share it borrows what is really free, never the textures' share. textureLimit()
+    // counts the borrowed memory, so textures shrink to give the reserve back.
     bool reserve(MemoryCategory category, uint64_t bytes);
     // Counts the memory even past the limit. For a caller whose own policy decides,
     // and for what has to work when memory is short, such as shrinking a texture.
     void reserveAnyway(MemoryCategory category, uint64_t bytes);
     void release(MemoryCategory category, uint64_t bytes);
+
+    // The error for a refused reserve(): what asked, how much, and the figures it was refused on.
+    std::string refusal(const char* what, MemoryCategory category, uint64_t bytes) const;
 
     MemoryPressure pressure() const;
 
@@ -73,6 +98,8 @@ public:
     uint64_t uploadRingPieceBytes(uint32_t framesInFlight) const { return uploadRingBytes(framesInFlight) / (framesInFlight + 1); }
 
 private:
+    bool canBorrow(uint64_t bytes) const;
+
     static constexpr uint32_t COUNT = uint32_t(MemoryCategory::Count);
 
     std::atomic<uint64_t> mBudget{ 0 };

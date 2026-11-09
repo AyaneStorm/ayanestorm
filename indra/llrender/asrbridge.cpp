@@ -320,30 +320,51 @@ bool ASR::shrinkTexture(U32 name, S32 mips)
     return true;
 }
 
-void ASR::getTextureMemory(U64& used, U64& limit)
+void ASR::getTextureMemory(U64& used, U64& limit, U64* hardLimit)
 {
     used = 0;
     limit = 0;
+    U64 hard = 0;
     if (sLink)
     {
-        sLink->getTextureMemory(used, limit);
+        sLink->getTextureMemory(used, limit, hard);
+    }
+    if (hardLimit)
+    {
+        *hardLimit = hard;
     }
 }
 
+// Against the hard limit, not the steering one: an image refused here leaves its texture at
+// the image it had, so this is only for what would push memory out of VRAM.
 bool ASR::textureFits(S32 width, S32 height, S32 components, bool mips)
 {
     U64 used = 0;
+    U64 steering = 0;
     U64 limit = 0;
-    getTextureMemory(used, limit);
+    getTextureMemory(used, steering, &limit);
     const U64 channels = components == 3 ? 4 : components;
-    U64 bytes = U64(width) * height * channels;
-    bytes += mips ? bytes / 3 : 0;
-    return used + bytes <= limit;
+    if (width <= 0 || height <= 0 || components <= 0 || used > limit) return false;
+    U64 bytes = 0;
+    // Count the full chain, including the long tail of rectangular images.
+    for (;;)
+    {
+        bytes += U64(width) * height * channels;
+        if (!mips || (width == 1 && height == 1)) break;
+        width = llmax(width / 2, 1);
+        height = llmax(height / 2, 1);
+    }
+    return bytes <= limit - used;
 }
 
 U32 ASR::freeTextureSlots()
 {
     return sLink ? sLink->freeTextureSlots() : 0;
+}
+
+U32 ASR::firstTextureMip(U32 width, U32 height, U32 components, bool mips)
+{
+    return sLink ? sLink->firstTextureMip(width, height, components, mips) : 0;
 }
 
 U32 ASR::textureSlot(U32 name)

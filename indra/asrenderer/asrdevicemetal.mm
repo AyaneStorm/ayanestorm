@@ -9,6 +9,7 @@
 #include "asrdevice.h"
 #include "asrscenegraph.h"
 #include "asrscenestore.h"
+#include "asrtexturestreaming.h"
 
 #import <Cocoa/Cocoa.h>
 #import <Metal/Metal.h>
@@ -203,7 +204,12 @@ public:
 
     // Apple's figure is fixed for the device, so unlike Vulkan it does not move
     // with what other applications use.
-    void refreshMemoryBudget() override { setDriverBudget(mDevice.recommendedMaxWorkingSetSize); }
+    void refreshMemoryBudget() override
+    {
+        driverBudgetBytes = mDevice.recommendedMaxWorkingSetSize;
+        driverUsageBytes = mDevice.currentAllocatedSize;
+        setDriverBudget(mDevice.recommendedMaxWorkingSetSize);
+    }
 
     bool renderFrame(const FrameInput& input) override
     {
@@ -223,12 +229,8 @@ public:
                 // An estimate at 4 bytes per pixel, for each image the layer can hold.
                 mMemoryBudget.release(MemoryCategory::RenderTargets, mDrawableBytes);
                 mDrawableBytes = uint64_t(width) * height * 4 * mLayer.maximumDrawableCount;
-                if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, mDrawableBytes))
-                {
-                    mDrawableBytes = 0;
-                    mError = "the drawables do not fit in the render target budget";
-                    return false;
-                }
+                // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
+                mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, mDrawableBytes);
             }
 
             id<CAMetalDrawable> drawable = [mLayer nextDrawable];
@@ -365,11 +367,18 @@ private:
 
     // Shaders reach these by address, so they must be resident, and Metal cannot see
     // which ones a pass touches. That is why the passes are ordered by mSceneFence.
-    id<MTLBuffer> createSceneBuffer(uint64_t bytes, MemoryCategory category, const char* what)
+    // A required buffer is counted even past the budget: scene tables and lists must grow with
+    // what is already in the scene, or the renderer stops. The geometry that fills them waits for
+    // room instead (createSceneChunk()), and textureLimit() falls so textures give memory back.
+    id<MTLBuffer> createSceneBuffer(uint64_t bytes, MemoryCategory category, const char* what, bool required = false)
     {
-        if (!mMemoryBudget.reserve(category, bytes))
+        if (required && !mMemoryBudget.reserve(category, bytes))
         {
-            mError = std::string(what) + " does not fit in its memory budget";
+            mMemoryBudget.reserveAnyway(category, bytes);
+        }
+        else if (!required && !mMemoryBudget.reserve(category, bytes))
+        {
+            mError = mMemoryBudget.refusal(what, category, bytes);
             return nil;
         }
         id<MTLBuffer> buffer = [mDevice newBufferWithLength:bytes options:MTLResourceStorageModeShared];
@@ -411,15 +420,23 @@ private:
         return 0; // never reached: the probe refuses older systems
     }
 
-    uint64_t createSceneChunk() override
+    uint64_t createSceneChunk(uint32_t index) override
     {
         id<MTLBuffer> chunk = createSceneBuffer(SCENE_CHUNK_BYTES, MemoryCategory::Geometry, "scene geometry chunk");
         if (!chunk)
         {
             return 0;
         }
-        mSceneChunks.push_back(chunk);
+        if (mSceneChunks.size() <= index) mSceneChunks.resize(size_t(index) + 1);
+        mSceneChunks[index] = chunk;
         return addressOf(chunk);
+    }
+
+    void releaseSceneChunk(uint32_t index) override
+    {
+        // SceneStore already waited for every in-flight reference to retire.
+        releaseSceneBuffer(mSceneChunks[index], MemoryCategory::Geometry);
+        mSceneChunks[index] = nil;
     }
 
     id<MTLComputePipelineState> createComputePipeline(const std::string& shaderDir, const char* name, std::string& error)
@@ -631,12 +648,9 @@ private:
 
     id<MTLTexture> createTarget(MTLPixelFormat format, MTLTextureUsage usage, uint32_t width, uint32_t height, uint32_t pixelBytes, const char* what)
     {
+        // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
         const uint64_t bytes = uint64_t(width) * height * pixelBytes;
-        if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, bytes))
-        {
-            mError = std::string(what) + " does not fit in the render target budget";
-            return nil;
-        }
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, bytes);
         mSceneTargetBytes += bytes;
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:width height:height mipmapped:NO];
         descriptor.storageMode = MTLStorageModePrivate;
@@ -729,7 +743,7 @@ private:
             mRetiredBuffers.push_back({ mMacOIT.state, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::OIT });
         }
         const uint64_t pixels = uint64_t(width) * height;
-        mMacOIT.state = createSceneBuffer(macoitBytes(pixels), MemoryCategory::OIT, "Mac OIT state");
+        mMacOIT.state = createSceneBuffer(macoitBytes(pixels), MemoryCategory::OIT, "Mac OIT state", true);
         if (!mMacOIT.moments || !mMacOIT.tailDepth || !mMacOIT.color || !mMacOIT.weights || !mMacOIT.state)
         {
             return false;
@@ -876,22 +890,23 @@ private:
         uint32_t offsets[PYRAMID_MAX_LEVELS];
         uint32_t levels = 0;
         const uint64_t pyramidBytes = uint64_t(pyramidLayout(width, height, offsets, levels)) * sizeof(float);
-        mScenePyramid = createSceneBuffer(pyramidBytes, MemoryCategory::RenderTargets, "depth pyramid");
+        mScenePyramid = createSceneBuffer(pyramidBytes, MemoryCategory::RenderTargets, "depth pyramid", true);
         return mVisibilityTarget && mDepthTarget && mAlbedoTarget && mNormalTarget && mScenePyramid;
     }
 
     // Frames still running may read the old table, so it stays until they are done.
-    bool growTable(id<MTLBlitCommandEncoder> blit, uint32_t table, uint64_t bytes)
+    bool growTable(id<MTLBlitCommandEncoder> blit, uint32_t table, uint64_t bytes, bool preserve = true)
     {
-        id<MTLBuffer> grown = createSceneBuffer(bytes, MemoryCategory::Geometry, "scene table");
+        id<MTLBuffer> grown = createSceneBuffer(bytes, MemoryCategory::Geometry, "scene table", true);
         if (!grown)
         {
             return false;
         }
-        memset(grown.contents, 0, bytes);
+        if (preserve) memset(grown.contents, 0, bytes);
         if (mSceneTables[table])
         {
-            [blit copyFromBuffer:mSceneTables[table] sourceOffset:0 toBuffer:grown destinationOffset:0 size:mSceneTables[table].length];
+            if (preserve)
+                [blit copyFromBuffer:mSceneTables[table] sourceOffset:0 toBuffer:grown destinationOffset:0 size:std::min<uint64_t>(mSceneTables[table].length, bytes)];
             mRetiredBuffers.push_back({ mSceneTables[table], mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::Geometry });
         }
         mSceneTables[table] = grown;
@@ -900,7 +915,8 @@ private:
 
     bool growList(id<MTLBuffer> __strong& list, uint64_t bytes, const char* what)
     {
-        if (bytes <= list.length)
+        // Lists are regenerated each frame; reclaim large unused tails after a crowd leaves.
+        if (bytes <= list.length && bytes > list.length / 2)
         {
             return true;
         }
@@ -908,7 +924,7 @@ private:
         {
             mRetiredBuffers.push_back({ list, mFrame + FRAMES_IN_FLIGHT + 1, MemoryCategory::Geometry });
         }
-        list = createSceneBuffer(bytes, MemoryCategory::Geometry, what);
+        list = createSceneBuffer(bytes, MemoryCategory::Geometry, what, true);
         return list != nil;
     }
 
@@ -928,7 +944,9 @@ private:
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
             const uint64_t bytes = mSceneStore.tableCapacity(SceneTable(i));
-            if (bytes > mSceneTables[i].length && !growTable(blit, i, bytes))
+            const bool positions = SceneTable(i) == SceneTable::SkinnedPositions;
+            const bool resize = bytes != mSceneTables[i].length || (positions && mSceneStore.positionsCompacted());
+            if (resize && !growTable(blit, i, bytes, !positions))
             {
                 [blit endEncoding];
                 return false;
@@ -983,12 +1001,14 @@ private:
         GpuSceneView view{};
         fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneWidth, mSceneHeight);
         mSceneStore.fillView(view);
+        view.skinAudit = mGraph.isRunning(PassAuditCull) ? 1 : 0;
         for (uint32_t table = SCENE_FIRST_SKIN_TABLE; table < SCENE_TABLES; ++table)
         {
             view.skinTables[table - SCENE_FIRST_SKIN_TABLE] = addressOf(mSceneTables[table]);
         }
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
+        view.debugView = mRecordCamera->debugView;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
@@ -1190,9 +1210,14 @@ private:
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
         setMacOITBodies();
+        const PassId skinPasses[SKIN_PHASES] = { PassSkinPose, PassSkinPalette, PassSkinBind, PassSkinMorph,
+                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit };
         for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
         {
-            mGraph.setBody(PassId(PassSkinPalette + phase), [this, phase]() { return passSkin(phase); });
+            mGraph.setBody(skinPasses[phase], [this, phase]()
+            {
+                return phase == SKIN_AUDIT && !mGraph.isRunning(PassAuditCull) ? true : passSkin(phase);
+            });
         }
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
@@ -1255,6 +1280,11 @@ private:
             mSceneFrameStats.guardPixels += counts->guardPixels;
             mSceneFrameStats.guardValue = std::max(mSceneFrameStats.guardValue, counts->guardValue);
             mSceneFrameStats.droppedEntries += counts->dropped;
+            mSceneFrameStats.skinAuditSamples += counts->skinAuditSamples;
+            mSceneFrameStats.skinAuditErrors += counts->skinAuditErrors;
+            float skinError;
+            memcpy(&skinError, &counts->skinAuditMaxError, sizeof(skinError));
+            mSceneFrameStats.skinAuditMaxError = std::max(mSceneFrameStats.skinAuditMaxError, skinError);
         }
         if (mFeedbackRead[slot].number != 0)
         {
@@ -1332,6 +1362,16 @@ private:
         mSceneFrameStats.triangles = mSceneStore.triangles();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
+        mSceneFrameStats.paletteEnd = mSceneStore.rangeEnd(SceneTable::Palette);
+        mSceneFrameStats.paletteLive = mSceneStore.rangeLive(SceneTable::Palette);
+        mSceneFrameStats.vertexBlockEnd = mSceneStore.rangeEnd(SceneTable::SkinBlocks);
+        mSceneFrameStats.vertexBlockLive = mSceneStore.rangeLive(SceneTable::SkinBlocks);
+        mSceneFrameStats.clusterBlockEnd = mSceneStore.rangeEnd(SceneTable::ClusterBlocks);
+        mSceneFrameStats.clusterBlockLive = mSceneStore.rangeLive(SceneTable::ClusterBlocks);
+        mSceneStore.memoryStats(mSceneFrameStats.chunkBytes, mSceneFrameStats.chunkFreeBytes, mSceneFrameStats.tableBytes, mSceneFrameStats.skinnedPositionBytes,
+                                mSceneFrameStats.clusterTableBytes);
+        mSceneFrameStats.textureCopiesRebased = mTextureCopiesRebased;
+        mSceneFrameStats.textureCopiesRejected = mTextureCopiesRejected;
         publishSceneStats(mSceneFrameStats);
         return true;
     }
@@ -1402,11 +1442,8 @@ private:
                 const uint64_t size = std::max<uint64_t>(std::max(bytes, oldSize * 2), 1024 * 1024);
                 mMemoryBudget.release(MemoryCategory::UI, oldSize);
                 mUIBuffers[slot] = nil;
-                if (!mMemoryBudget.reserve(MemoryCategory::UI, size))
-                {
-                    mError = "the UI vertex buffer does not fit in its memory budget";
-                    return false;
-                }
+                // Every frame needs it: counted anyway, and textures and avatars give way.
+                mMemoryBudget.reserveAnyway(MemoryCategory::UI, size);
                 mUIBuffers[slot] = [mDevice newBufferWithLength:size options:MTLResourceStorageModeShared];
                 if (!mUIBuffers[slot])
                 {
@@ -1466,13 +1503,44 @@ private:
     // really running out shows as white and is not an error.
     void createTexture(const TextureCommand& command, id<MTLBlitCommandEncoder> blit)
     {
+        mTextureReplacements.begin(command.slot);
         if (mTextureObjects.size() <= command.slot)
         {
             mTextureObjects.resize(command.slot + 1);
         }
         const uint64_t bytes = textureBytes(command.desc);
-
         const TextureDesc& desc = command.desc;
+        if (command.replace)
+        {
+            const auto pending = mPendingTextures.find(command.slot);
+            if (pending != mPendingTextures.end())
+            {
+                mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
+                mPendingTextures.erase(pending);
+            }
+        }
+        uint32_t sourceMip = 0;
+        id<MTLTexture> source = nil;
+        if (command.sourceSlot != 0)
+        {
+            const Texture* resident = command.sourceSlot < mTextureObjects.size() ? &mTextureObjects[command.sourceSlot] : nullptr;
+            if (!resident || !resident->texture || resident->desc.format != desc.format || resident->desc.swizzle != desc.swizzle ||
+                !textureMipCopyLevel(uint32_t(resident->texture.width), uint32_t(resident->texture.height), uint32_t(resident->texture.mipmapLevelCount),
+                                     desc.width, desc.height, desc.mipLevels, sourceMip))
+            {
+                ++mTextureCopiesRejected;
+                if (command.replace) mTextureReplacements.fail(command.slot);
+                mMemoryBudget.release(MemoryCategory::Textures, bytes);
+                return; // keep the published image; never publish an unfilled shrink
+            }
+            mTextureCopiesRebased += sourceMip != command.sourceMip ? 1 : 0;
+            if (command.replace && command.sourceSlot == command.slot && sourceMip == 0 && resident->desc.mipLevels == desc.mipLevels)
+            {
+                mMemoryBudget.release(MemoryCategory::Textures, bytes);
+                return; // the published image already has exactly the requested size
+            }
+            source = resident->texture;
+        }
         const MTLPixelFormat format = desc.format == TextureFormat::R8    ? MTLPixelFormatR8Unorm
                                     : desc.format == TextureFormat::RG8   ? MTLPixelFormatRG8Unorm
                                     : desc.format == TextureFormat::BGRA8 ? MTLPixelFormatBGRA8Unorm
@@ -1503,6 +1571,7 @@ private:
         id<MTLTexture> texture = [mDevice newTextureWithDescriptor:descriptor];
         if (!texture)
         {
+            if (command.replace) mTextureReplacements.fail(command.slot);
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
             if (!command.replace)
             {
@@ -1513,8 +1582,7 @@ private:
 
         const uint32_t pixelBytes = textureBytesPerPixel(desc.format);
         // For a replacement the source is the slot's own image, which is still showing.
-        id<MTLTexture> source = mTextureObjects[command.sourceSlot].texture;
-        if (command.sourceSlot != 0 && source && source.mipmapLevelCount >= command.sourceMip + desc.mipLevels)
+        if (command.sourceSlot != 0)
         {
             // In command order, so after any mips made from the source just before.
             for (NSUInteger level = 0; level < desc.mipLevels; ++level)
@@ -1522,7 +1590,7 @@ private:
                 const MTLSize size = MTLSizeMake(std::max<NSUInteger>(desc.width >> level, 1), std::max<NSUInteger>(desc.height >> level, 1), 1);
                 [blit copyFromTexture:source
                           sourceSlice:0
-                          sourceLevel:command.sourceMip + level
+                          sourceLevel:sourceMip + level
                          sourceOrigin:MTLOriginMake(0, 0, 0)
                            sourceSize:size
                             toTexture:texture
@@ -1564,19 +1632,14 @@ private:
         }
         if (command.replace)
         {
-            // Built out of sight: the slot keeps its image until publish. One replaced
-            // again before it was published goes.
-            const auto pending = mPendingTextures.find(command.slot);
-            if (pending != mPendingTextures.end())
-            {
-                mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
-            }
-            mPendingTextures[command.slot] = Texture{ texture, bytes, pixelBytes };
+            // Built out of sight: the slot keeps its image until publish.
+            mPendingTextures[command.slot] = Texture{ texture, bytes, pixelBytes, desc };
             return;
         }
         mTextureObjects[command.slot].texture = texture;
         mTextureObjects[command.slot].bytes = bytes;
         mTextureObjects[command.slot].pixelBytes = pixelBytes;
+        mTextureObjects[command.slot].desc = desc;
         // The main thread hands out a slot at once, so a material can name it before its
         // texture is created here, and a slot never written holds no texture: a GPU page
         // fault, 'null texture access'. White, the first texture made, fills every slot
@@ -1597,6 +1660,7 @@ private:
     const Texture& textureFor(uint32_t slot) const
     {
         static const Texture none;
+        if (mTextureReplacements.failed(slot)) return none;
         const auto pending = mPendingTextures.find(slot);
         return pending != mPendingTextures.end() ? pending->second : slot < mTextureObjects.size() ? mTextureObjects[slot] : none;
     }
@@ -1605,6 +1669,7 @@ private:
     // every frame's array has let go of it.
     void publishTexture(uint32_t slot)
     {
+        if (mTextureReplacements.failed(slot)) return;
         const auto pending = mPendingTextures.find(slot);
         if (pending == mPendingTextures.end())
         {
@@ -1653,6 +1718,7 @@ private:
     // buffer keeps nothing alive, and freeing it under them was a GPU page fault.
     void destroyTexture(uint32_t slot)
     {
+        mTextureReplacements.begin(slot);
         mSlotCopies.changed(slot);
         const auto pending = mPendingTextures.find(slot);
         if (pending != mPendingTextures.end())
@@ -1830,6 +1896,7 @@ private:
         id<MTLTexture> texture = nil;
         uint64_t bytes = 0;
         uint32_t pixelBytes = 4;
+        TextureDesc desc; // metadata of the successfully created image, not queued requests
     };
 
     id<MTLDevice> mDevice = nil;
@@ -1856,6 +1923,9 @@ private:
     id<MTLBuffer> mUIBuffers[FRAMES_IN_FLIGHT];
     uint64_t mUIBufferGeneration[FRAMES_IN_FLIGHT]{};
     std::vector<Texture> mTextureObjects;         // by slot
+    TextureReplacementState<MAX_TEXTURES> mTextureReplacements;
+    uint64_t mTextureCopiesRebased = 0;
+    uint64_t mTextureCopiesRejected = 0;
     std::unordered_map<uint32_t, Texture> mPendingTextures; // replacements being built, by slot
     std::vector<TextureCommand> mTextureCommands; // taken, not yet run
     size_t mTextureCommandsDone = 0;              // the front of mTextureCommands already run

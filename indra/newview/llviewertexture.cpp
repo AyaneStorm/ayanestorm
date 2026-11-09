@@ -58,6 +58,7 @@
 // <AS:Chanayane> The new renderer's texture memory.
 #include "asrbridge.h"
 #include "asrgltable.h"
+#include "asrworld.h"
 // </AS:Chanayane>
 #include "lltextureentry.h"
 #include "lltexturemanagerbridge.h"
@@ -545,17 +546,22 @@ void LLViewerTexture::updateClass()
     // 'bias' calculation to kick in.
     F32 target = llmax(llmin(budget - 512.f, budget * 0.8f), MIN_VRAM_BUDGET);
 
-    // <AS:Chanayane> The new renderer knows its real usage, so no estimate is needed. Bias
-    // starts rising at 85% of what textures may take, so the limit itself is rarely met.
+    // <AS:Chanayane> Use native allocation accounting while retaining the configured texture target.
+    // Pause refinements at that target; bounded first images continue loading under pressure.
     F32 native_limit = 0.f;
+    F32 native_hard_limit = 0.f;
     if (ASR::active())
     {
         U64 used_bytes = 0;
         U64 limit_bytes = 0;
-        ASR::getTextureMemory(used_bytes, limit_bytes);
+        U64 hard_bytes = 0;
+        ASR::getTextureMemory(used_bytes, limit_bytes, &hard_bytes);
         used = (F32)(used_bytes / (1024 * 1024));
         native_limit = llmax((F32)(limit_bytes / (1024 * 1024)), 1.f);
-        target = native_limit * 0.85f;
+        native_hard_limit = llmax((F32)(hard_bytes / (1024 * 1024)), 1.f);
+        // Retain the configured viewer texture target instead of replacing it with all available VRAM.
+        // target = native_limit * 0.85f;
+        target = llmin(target, native_limit * 0.85f);
     }
     // </AS:Chanayane>
 
@@ -687,10 +693,11 @@ void LLViewerTexture::updateClass()
 
     LLViewerTexture::sFreezeImageUpdates = false;
 
-    // <AS:Chanayane> At the limit, asking for sharper images would only waste decodes.
+    // <AS:Chanayane> Pause refinements at the steering target; first images still arrive at a bounded mip.
     if (ASR::active())
     {
-        LLViewerTexture::sFreezeImageUpdates = used >= native_limit;
+        // LLViewerTexture::sFreezeImageUpdates = used >= native_hard_limit;
+        LLViewerTexture::sFreezeImageUpdates = used >= llmin(native_hard_limit, target);
     }
     // </AS:Chanayane>
 }
@@ -1736,14 +1743,18 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     }
 
     // <AS:Chanayane> At the limit a normal texture keeps the image it has, at its discard
-    // level, while bias makes room. Boosted ones, such as the UI, always get in, and so does
-    // a first image: with none, a leaf card shows as a solid grey sheet, and being turned
-    // away would leave it so. While frozen these ask for a small image: see processTextureStats().
-    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && mGLTexturep->getHasGLTexture()
-        && !ASR::textureFits(mRawImage->getWidth(), mRawImage->getHeight(), mRawImage->getComponents(), mUseMipMaps))
-    {
-        return false;
-    }
+    // level, while bias makes room. Boosted images such as UI use their existing priority.
+    // First images may still enter at a smaller mip if there is room below the hard limit.
+    // <AS:Chanayane> A smaller replacement must get through even at the hard limit.
+    // if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && mGLTexturep->getHasGLTexture()
+    // if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && mGLTexturep->getHasGLTexture()
+    //     && mRawDiscardLevel <= getDiscardLevel()
+    //     && !ASR::textureFits(mRawImage->getWidth(), mRawImage->getHeight(), mRawImage->getComponents(), mUseMipMaps))
+    // {
+    //     return false;
+    // }
+    // Admission now uses the final upload dimensions below.
+    // </AS:Chanayane>
     // Slots are a hard limit, unlike memory, so this goes for first images too: with none
     // made here, the texture still has no image and simply asks again. The last few slots
     // are for boosted textures, and ASRWorld::judgeTexture() keeps this from being reached.
@@ -1754,7 +1765,53 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
     }
     // </AS:Chanayane>
 
-    bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    // <AS:Chanayane> Cap small avatar details even if Firestorm returned a finer cached image.
+    // Keep the original raw image for callbacks and cache, and test the actual upload size.
+    LLPointer<LLImageRaw> upload_image = mRawImage;
+    S32 upload_discard = mRawDiscardLevel;
+    // if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH && !mGLTexturep->getHasGLTexture())
+    if (ASR::active() && mBoostLevel < LLGLTexture::BOOST_HIGH)
+    {
+        const S32 components = mRawImage->getComponents();
+        const bool first = !mGLTexturep->getHasGLTexture();
+        S32 width = mRawImage->getWidth();
+        S32 height = mRawImage->getHeight();
+        // Match processTextureStats(): a waiting callback can require a finer mip.
+        const S32 detail_discard = llmin(ASRWorld::avatarDetailDiscard(this), mLoadedCallbackDesiredDiscardLevel);
+        const S32 budget_discard = first ? upload_discard + S32(ASR::firstTextureMip(width, height, components, mUseMipMaps)) : upload_discard;
+        const S32 target_discard = llmax(detail_discard, budget_discard);
+        while (upload_discard < target_discard && width > 1 && height > 1 && !(width & 1) && !(height & 1))
+        {
+            width >>= 1;
+            height >>= 1;
+            ++upload_discard;
+        }
+        // A first image never waits: waiting for memory to retire left worn mesh gray at
+        // arm's length in crowds. At the limit it enters small (about 20 KB), counted past
+        // the budget so steering shrinks others, and refines as room appears.
+        // A replacement at the same or a finer mip must fit, unless it is in view near the camera.
+        // if (!ASR::textureFits(width, height, components, mUseMipMaps)) return false;
+        // if ((first || upload_discard <= getDiscardLevel()) && !ASR::textureFits(width, height, components, mUseMipMaps)) return false;
+        constexpr S32 FIRST_IMAGE_AT_LIMIT_SIDE = 64;
+        if (first && !ASR::textureFits(width, height, components, mUseMipMaps))
+        {
+            while (llmax(width, height) > FIRST_IMAGE_AT_LIMIT_SIDE && width > 1 && height > 1 && !(width & 1) && !(height & 1))
+            {
+                width >>= 1;
+                height >>= 1;
+                ++upload_discard;
+            }
+        }
+        else if (!first && upload_discard <= getDiscardLevel() && !ASRWorld::isNearTexture(this) && !ASR::textureFits(width, height, components, mUseMipMaps)) return false;
+        if (upload_discard != mRawDiscardLevel)
+        {
+            upload_image = mRawImage->scaled(width, height);
+            if (upload_image.isNull()) return false;
+        }
+    }
+    // bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    bool res = mGLTexturep->createGLTexture(upload_discard, upload_image, usename, true, mBoostLevel);
+    // </AS:Chanayane>
 
     return res;
 }
@@ -3311,6 +3368,10 @@ void LLViewerLODTexture::processTextureStats()
         // Clamp to min desired discard
         mDesiredDiscardLevel = llmin(mMinDesiredDiscardLevel, mDesiredDiscardLevel);
 
+        // <AS:Chanayane> Choose the accessory mip before scheduling a fetch or shrink.
+        if (ASR::active()) mDesiredDiscardLevel = llmax(mDesiredDiscardLevel, ASRWorld::avatarDetailDiscard(this));
+        // </AS:Chanayane>
+
         //
         // At this point we've calculated the quality level that we want,
         // if possible.  Now we check to see if we have it, and take the
@@ -3318,7 +3379,11 @@ void LLViewerLODTexture::processTextureStats()
         //
 
         S32 current_discard = getDiscardLevel();
-        if (mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED)
+        // <AS:Chanayane> Native GPU demand can downscale other avatars' bakes; preserve self-bake and raw-image requirements.
+        // if (mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED)
+        if (mBoostLevel < LLGLTexture::BOOST_AVATAR_BAKED ||
+            (ASR::active() && mBoostLevel == LLGLTexture::BOOST_AVATAR_BAKED))
+        // </AS:Chanayane>
         {
             if (current_discard < mDesiredDiscardLevel && !mForceToSaveRawImage)
             { // should scale down
@@ -3326,9 +3391,14 @@ void LLViewerLODTexture::processTextureStats()
             }
         }
 
-        if (isUpdateFrozen() // we are out of memory and nearing max allowed bias
+        // <AS:Chanayane> The soft target still freezes background upgrades. High screen demand
+        // can refine if the complete replacement fits alongside the old image.
+        // if (isUpdateFrozen() && mBoostLevel < LLGLTexture::BOOST_SCULPTED && mDesiredDiscardLevel < current_discard)
+        if (isUpdateFrozen()
             && mBoostLevel < LLGLTexture::BOOST_SCULPTED
-            && mDesiredDiscardLevel < current_discard)
+            && mDesiredDiscardLevel < current_discard
+            && !(ASR::active() && ASRWorld::canRefineVisibleTexture(this, mDesiredDiscardLevel)))
+        // </AS:Chanayane>
         {
             // stop requesting more
             mDesiredDiscardLevel = current_discard;

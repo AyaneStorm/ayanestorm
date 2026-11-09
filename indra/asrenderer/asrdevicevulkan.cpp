@@ -9,6 +9,7 @@
 #include "asrdevice.h"
 #include "asrscenegraph.h"
 #include "asrscenestore.h"
+#include "asrtexturestreaming.h"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -19,6 +20,7 @@
 #include <windows.h>
 #include "volk.h"
 #include "vk_mem_alloc.h"
+#include "asrdiagnosticsvulkan.h"
 
 #include <algorithm>
 #include <atomic>
@@ -28,6 +30,9 @@
 #include <cstring>
 #include <deque>
 #include <fstream>
+#include <iterator>
+#include <map>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -69,7 +74,9 @@ bool hasRequiredFeatures(VkPhysicalDevice gpu)
     VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
     vkGetPhysicalDeviceFeatures2(gpu, &features);
 
-    if (!features.features.shaderInt64)
+    // Mac OIT writes storage from fragments and reads its RG32F weights in the resolve.
+    if (!features.features.shaderInt64 || !features.features.drawIndirectFirstInstance ||
+        !features.features.fragmentStoresAndAtomics || !features.features.shaderStorageImageExtendedFormats)
     {
         return false;
     }
@@ -219,6 +226,7 @@ struct Texture
     uint32_t mipLevels = 1;
     uint32_t width = 1;
     uint32_t height = 1;
+    TextureDesc desc; // dimensions/format of this successfully created GPU image
 };
 
 class DeviceVulkan final : public Device, private SceneChunks
@@ -258,6 +266,15 @@ public:
             {
                 bytes = budget.heapBudget[mMemoryHeap];
             }
+            driverBudgetBytes = budget.heapBudget[mMemoryHeap];
+            driverUsageBytes = budget.heapUsage[mMemoryHeap];
+        }
+        if (mAllocator)
+        {
+            VmaBudget heaps[VK_MAX_MEMORY_HEAPS]{};
+            vmaGetHeapBudgets(mAllocator, heaps);
+            allocatorBlockBytes = heaps[mMemoryHeap].statistics.blockBytes;
+            allocatorUsedBytes = heaps[mMemoryHeap].statistics.allocationBytes;
         }
         setDriverBudget(bytes);
     }
@@ -394,7 +411,114 @@ private:
             return true;
         }
         mError = std::string(what) + " failed: VkResult " + std::to_string(int(result));
+        if (result == VK_ERROR_DEVICE_LOST)
+        {
+            mError += describeDeviceFault();
+            // Keep the detailed trace in the log instead of expanding the failure dialog.
+            const std::string diagnostics = mDiagnostics.describeLostDevice(mQueue);
+            if (mOptions.report)
+            {
+                mOptions.report(diagnostics.c_str());
+            }
+            else
+            {
+                fprintf(stderr, "GPU diagnostics: %s\n", diagnostics.c_str());
+            }
+        }
         return false;
+    }
+
+    // Which buffer holds an address, or held it until lately: a lost device is named by the
+    // address it faulted on, where the driver can tell.
+    struct BufferRecord
+    {
+        uint64_t size;
+        std::string what;
+    };
+    std::map<uint64_t, BufferRecord> mLiveBuffers;     // by device address
+    std::deque<std::pair<uint64_t, BufferRecord>> mFreedBuffers; // the latest few, oldest first
+    bool mHasDeviceFault = false;
+
+    std::string nameAddress(uint64_t address) const
+    {
+        const auto inside = [address](uint64_t start, const BufferRecord& record) { return address >= start && address < start + record.size; };
+        auto live = mLiveBuffers.upper_bound(address);
+        if (live != mLiveBuffers.begin() && inside(std::prev(live)->first, std::prev(live)->second))
+        {
+            --live;
+            return live->second.what + " + " + std::to_string(address - live->first) + " of " + std::to_string(live->second.size);
+        }
+        for (auto freed = mFreedBuffers.rbegin(); freed != mFreedBuffers.rend(); ++freed)
+        {
+            if (inside(freed->first, freed->second))
+            {
+                return "freed " + freed->second.what + " + " + std::to_string(address - freed->first);
+            }
+        }
+        if (live != mLiveBuffers.begin())
+        {
+            --live;
+            return "past " + live->second.what + " by " + std::to_string(address - live->first - live->second.size);
+        }
+        return "no buffer";
+    }
+
+    std::string describeDeviceFault()
+    {
+        if (!mHasDeviceFault)
+        {
+            return " (the driver gives no fault details)";
+        }
+        VkDeviceFaultCountsEXT counts{ VK_STRUCTURE_TYPE_DEVICE_FAULT_COUNTS_EXT };
+        const VkResult countResult = vkGetDeviceFaultInfoEXT(mDevice, &counts, nullptr);
+        if (countResult != VK_SUCCESS)
+        {
+            return " (fault count query failed: VkResult " + std::to_string(int(countResult)) + ")";
+        }
+        std::vector<VkDeviceFaultAddressInfoEXT> addresses(counts.addressInfoCount);
+        std::vector<VkDeviceFaultVendorInfoEXT> vendor(counts.vendorInfoCount);
+        VkDeviceFaultInfoEXT info{ VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT };
+        info.pAddressInfos = addresses.data();
+        info.pVendorInfos = vendor.data();
+        const uint64_t binaryBytes = counts.vendorBinarySize;
+        counts.vendorBinarySize = 0;
+        const VkResult infoResult = vkGetDeviceFaultInfoEXT(mDevice, &counts, &info);
+        // VK_INCOMPLETE still returns the description and the entries that fit. Omitting
+        // an available vendor binary can produce it; do not throw away the useful text.
+        if (infoResult != VK_SUCCESS && infoResult != VK_INCOMPLETE)
+        {
+            return " (fault info query failed: VkResult " + std::to_string(int(infoResult)) + ")";
+        }
+        addresses.resize(std::min<size_t>(addresses.size(), counts.addressInfoCount));
+        vendor.resize(std::min<size_t>(vendor.size(), counts.vendorInfoCount));
+        std::string text = std::string("; fault: ") + info.description;
+        if (infoResult == VK_INCOMPLETE)
+        {
+            text += "; partial fault info, omitted binary bytes " + std::to_string(binaryBytes);
+        }
+        static const char* const TYPES[] = { "none", "read", "write", "execute", "instruction pointer unknown", "instruction pointer invalid", "instruction pointer fault" };
+        for (const VkDeviceFaultAddressInfoEXT& address : addresses)
+        {
+            const uint32_t type = uint32_t(address.addressType);
+            text += std::string("; ") + (type < 7 ? TYPES[type] : "?") + " at 0x" + [](uint64_t value)
+            {
+                char hex[24];
+                snprintf(hex, sizeof(hex), "%llx", (unsigned long long)value);
+                return std::string(hex);
+            }(address.reportedAddress);
+            text += " precision " + std::to_string(address.addressPrecision);
+            // Instruction pointers refer to driver shader code, not scene buffers.
+            if (address.addressType == VK_DEVICE_FAULT_ADDRESS_TYPE_READ_INVALID_EXT ||
+                address.addressType == VK_DEVICE_FAULT_ADDRESS_TYPE_WRITE_INVALID_EXT)
+            {
+                text += " (" + nameAddress(address.reportedAddress) + ")";
+            }
+        }
+        for (const VkDeviceFaultVendorInfoEXT& entry : vendor)
+        {
+            text += std::string("; ") + entry.description + " " + std::to_string(entry.vendorFaultCode);
+        }
+        return text;
     }
 
     static VKAPI_ATTR VkBool32 VKAPI_CALL onValidation(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
@@ -403,8 +527,16 @@ private:
     {
         if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         {
-            static_cast<DeviceVulkan*>(user)->mValidationErrors.fetch_add(1, std::memory_order_relaxed);
-            fprintf(stderr, "VALIDATION: %s\n", data->pMessage);
+            DeviceVulkan* device = static_cast<DeviceVulkan*>(user);
+            device->mValidationErrors.fetch_add(1, std::memory_order_relaxed);
+            if (device->mOptions.report)
+            {
+                device->mOptions.report(data->pMessage);
+            }
+            else
+            {
+                fprintf(stderr, "VALIDATION: %s\n", data->pMessage);
+            }
         }
         return VK_FALSE;
     }
@@ -450,6 +582,17 @@ private:
         create.ppEnabledExtensionNames = extensions.data();
         create.enabledLayerCount = validation ? 1 : 0;
         create.ppEnabledLayerNames = &layerName;
+
+        // GPU-assisted checks: a shader reading or writing past a buffer through its address
+        // is reported where it happens, instead of losing the device later.
+        const VkValidationFeatureEnableEXT gpuChecks = VK_VALIDATION_FEATURE_ENABLE_GPU_ASSISTED_EXT;
+        VkValidationFeaturesEXT features{ VK_STRUCTURE_TYPE_VALIDATION_FEATURES_EXT };
+        features.enabledValidationFeatureCount = 1;
+        features.pEnabledValidationFeatures = &gpuChecks;
+        if (validation)
+        {
+            create.pNext = &features;
+        }
         const VkResult result = vkCreateInstance(&create, nullptr, &mInstance);
         if (result != VK_SUCCESS)
         {
@@ -534,6 +677,9 @@ private:
         v12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
         VkPhysicalDeviceFeatures2 features{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &v12 };
         features.features.shaderInt64 = VK_TRUE;
+        features.features.drawIndirectFirstInstance = VK_TRUE; // the cull's draws start at their list's place
+        features.features.fragmentStoresAndAtomics = VK_TRUE; // Mac OIT keys, tail flag and texture feedback
+        features.features.shaderStorageImageExtendedFormats = VK_TRUE; // Mac OIT's RG32F weights image
 
         const float priority = 1.f;
         VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -542,10 +688,30 @@ private:
         queue.pQueuePriorities = &priority;
 
         std::vector<const char*> extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+        // Optional fault evidence from the installed driver; no external debugger is needed.
+        const bool checkpoints = hasDeviceExtension(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+        if (checkpoints)
+        {
+            extensions.push_back(VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME);
+        }
         mHasMemoryBudgetExtension = hasDeviceExtension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
         if (mHasMemoryBudgetExtension)
         {
             extensions.push_back(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+        }
+        // What a lost device faulted on, where the driver can tell: see describeDeviceFault().
+        VkPhysicalDeviceFaultFeaturesEXT fault{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT };
+        if (hasDeviceExtension(VK_EXT_DEVICE_FAULT_EXTENSION_NAME))
+        {
+            VkPhysicalDeviceFeatures2 supported{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2, &fault };
+            vkGetPhysicalDeviceFeatures2(mGpu, &supported);
+            mHasDeviceFault = fault.deviceFault == VK_TRUE;
+            if (mHasDeviceFault)
+            {
+                extensions.push_back(VK_EXT_DEVICE_FAULT_EXTENSION_NAME);
+                fault.pNext = features.pNext;
+                features.pNext = &fault;
+            }
         }
 
         VkDeviceCreateInfo create{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, &features };
@@ -561,6 +727,14 @@ private:
         }
         volkLoadDevice(mDevice);
         vkGetDeviceQueue(mDevice, mQueueFamily, 0, &mQueue);
+        if (checkpoints)
+        {
+            mDiagnostics.initialize(vkCmdSetCheckpointNV, vkGetQueueCheckpointDataNV);
+        }
+        if (mOptions.report)
+        {
+            mOptions.report(mDiagnostics.checkpointsEnabled() ? "GPU diagnostic checkpoints enabled" : "GPU diagnostic checkpoints unavailable");
+        }
         refreshMemoryBudget();
 
         // Picked once and kept, so the pipeline never depends on the swapchain's life.
@@ -759,6 +933,10 @@ private:
         allocator.instance = mInstance;
         allocator.vulkanApiVersion = VK_API_VERSION_1_3;
         allocator.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+        // 64 MB blocks, not 256: a block goes back to the driver only once nothing in it is
+        // left, and thousands of textures shrinking and growing stranded 1.4 GB in big blocks
+        // that no limit of ours sees. Anything over half a block gets memory of its own.
+        allocator.preferredLargeHeapBlockSize = 64ull * 1024 * 1024;
         allocator.pVulkanFunctions = &functions;
         if (vmaImportVulkanFunctionsFromVolk(&allocator, &functions) != VK_SUCCESS ||
             vmaCreateAllocator(&allocator, &mAllocator) != VK_SUCCESS)
@@ -854,11 +1032,19 @@ private:
 
     // --- Scene setup ----------------------------------------------------------
 
-    bool createBufferObject(GpuBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, const char* what, MemoryCategory category = MemoryCategory::Geometry)
+    // A required buffer is counted even past the budget: scene tables and lists must grow with
+    // what is already in the scene, or the renderer stops. The geometry that fills them waits for
+    // room instead (createSceneChunk()), and textureLimit() falls so textures give memory back.
+    bool createBufferObject(GpuBuffer& buffer, uint64_t bytes, VkBufferUsageFlags usage, const char* what, MemoryCategory category = MemoryCategory::Geometry,
+                            bool required = false)
     {
-        if (!mMemoryBudget.reserve(category, bytes))
+        if (required && !mMemoryBudget.reserve(category, bytes))
         {
-            mError = std::string(what) + " does not fit in its memory budget";
+            mMemoryBudget.reserveAnyway(category, bytes);
+        }
+        else if (!required && !mMemoryBudget.reserve(category, bytes))
+        {
+            mError = mMemoryBudget.refusal(what, category, bytes);
             return false;
         }
         VkBufferCreateInfo create{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -866,6 +1052,12 @@ private:
         create.usage = usage | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        // Large scene buffers must return their memory when released, including when
+        // tables shrink after a crowd leaves. Do not strand them in shared VMA blocks.
+        if (bytes >= SCENE_CHUNK_BYTES)
+        {
+            allocation.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        }
         if (!check(vmaCreateBuffer(mAllocator, &create, &allocation, &buffer.buffer, &buffer.allocation, nullptr), what))
         {
             mMemoryBudget.release(category, bytes);
@@ -875,6 +1067,7 @@ private:
         address.buffer = buffer.buffer;
         buffer.address = vkGetBufferDeviceAddress(mDevice, &address);
         buffer.size = bytes;
+        mLiveBuffers[buffer.address] = { bytes, what };
         return true;
     }
 
@@ -882,21 +1075,38 @@ private:
     {
         if (buffer.buffer != VK_NULL_HANDLE)
         {
+            const auto live = mLiveBuffers.find(buffer.address);
+            if (live != mLiveBuffers.end())
+            {
+                mFreedBuffers.emplace_back(live->first, live->second);
+                if (mFreedBuffers.size() > 64)
+                {
+                    mFreedBuffers.pop_front();
+                }
+                mLiveBuffers.erase(live);
+            }
             vmaDestroyBuffer(mAllocator, buffer.buffer, buffer.allocation);
             mMemoryBudget.release(category, buffer.size);
         }
         buffer = GpuBuffer();
     }
 
-    uint64_t createSceneChunk() override
+    uint64_t createSceneChunk(uint32_t index) override
     {
         GpuBuffer chunk;
         if (!createBufferObject(chunk, SCENE_CHUNK_BYTES, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, "scene geometry chunk"))
         {
             return 0;
         }
-        mSceneChunks.push_back(chunk);
+        if (mSceneChunks.size() <= index) mSceneChunks.resize(size_t(index) + 1);
+        mSceneChunks[index] = chunk;
         return chunk.address;
+    }
+
+    void releaseSceneChunk(uint32_t index) override
+    {
+        // SceneStore already waited for every in-flight reference to retire.
+        destroyBufferObject(mSceneChunks[index]);
     }
 
     VkPipeline createComputePipeline(const char* name, std::string& error)
@@ -1143,12 +1353,9 @@ private:
 
     bool createTarget(TargetImage& target, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t pixelBytes, const char* what)
     {
+        // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
         const uint64_t bytes = uint64_t(mSceneExtent.width) * mSceneExtent.height * pixelBytes;
-        if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, bytes))
-        {
-            mError = std::string(what) + " does not fit in the render target budget";
-            return false;
-        }
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, bytes);
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         image.imageType = VK_IMAGE_TYPE_2D;
         image.format = format;
@@ -1231,7 +1438,7 @@ private:
         uint32_t offsets[PYRAMID_MAX_LEVELS];
         uint32_t levels = 0;
         const uint64_t pyramidBytes = uint64_t(pyramidLayout(mSceneExtent.width, mSceneExtent.height, offsets, levels)) * sizeof(float);
-        if (!createBufferObject(mScenePyramid, pyramidBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "depth pyramid", MemoryCategory::RenderTargets))
+        if (!createBufferObject(mScenePyramid, pyramidBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "depth pyramid", MemoryCategory::RenderTargets, true))
         {
             return false;
         }
@@ -1310,7 +1517,7 @@ private:
             !createTarget(mMacOIT.color, MACOIT_COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "Mac OIT colour") ||
             !createTarget(mMacOIT.weights, MACOIT_WEIGHTS_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "Mac OIT weights") ||
             !createBufferObject(mMacOIT.state, macoitBytes(pixels), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                                "Mac OIT state", MemoryCategory::OIT))
+                                "Mac OIT state", MemoryCategory::OIT, true))
         {
             return false;
         }
@@ -1604,11 +1811,9 @@ private:
         }
         const uint64_t size = std::max<uint64_t>(std::max(bytes, buffer.size * 2), 1024 * 1024);
         destroyBuffer(buffer, category);
-        if (!mMemoryBudget.reserve(category, size))
-        {
-            mError = std::string(what) + " does not fit in its memory budget";
-            return false;
-        }
+        // Every frame needs these, and they are small: counted anyway, and textures and
+        // avatars give way. Refusing one stopped the renderer.
+        mMemoryBudget.reserveAnyway(category, size);
 
         VkBufferCreateInfo create{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
         create.size = size;
@@ -1781,6 +1986,7 @@ private:
     // really running out shows as white and is not an error.
     bool createTexture(VkCommandBuffer commands, const TextureCommand& command)
     {
+        mTextureReplacements.begin(command.slot);
         if (mTextureObjects.size() <= command.slot)
         {
             mTextureObjects.resize(command.slot + 1);
@@ -1795,9 +2001,33 @@ private:
                 mPendingTextures.erase(pending);
             }
         }
+        const uint64_t bytes = textureBytes(command.desc);
+        uint32_t sourceMip = 0;
+        if (command.sourceSlot != 0)
+        {
+            // Shrink offsets queued against a failed/unpublished replacement are not
+            // authoritative. Copy from the actual resident image, or keep it unchanged.
+            const Texture* source = command.sourceSlot < mTextureObjects.size() ? &mTextureObjects[command.sourceSlot] : nullptr;
+            if (!source || source->image == VK_NULL_HANDLE || source->desc.format != command.desc.format || source->desc.swizzle != command.desc.swizzle ||
+                !textureMipCopyLevel(source->width, source->height, source->mipLevels,
+                                     command.desc.width, command.desc.height, command.desc.mipLevels, sourceMip))
+            {
+                ++mTextureCopiesRejected;
+                if (command.replace) mTextureReplacements.fail(command.slot);
+                mMemoryBudget.release(MemoryCategory::Textures, bytes);
+                return true; // no pending image: the following publish cannot expose a clear
+            }
+            mTextureCopiesRebased += sourceMip != command.sourceMip ? 1 : 0;
+            if (command.replace && command.sourceSlot == command.slot && sourceMip == 0 && source->mipLevels == command.desc.mipLevels)
+            {
+                // A failed earlier grow may mean the resident image already is exactly
+                // the requested size. Keep it, including a 1x1 image with no copy-source usage.
+                mMemoryBudget.release(MemoryCategory::Textures, bytes);
+                return true;
+            }
+        }
         // A replacement is built out of sight, and the slot keeps its image until publish.
         Texture& texture = command.replace ? mPendingTextures[command.slot] : mTextureObjects[command.slot];
-        const uint64_t bytes = textureBytes(command.desc);
 
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         image.imageType = VK_IMAGE_TYPE_2D;
@@ -1817,12 +2047,21 @@ private:
         }
         VmaAllocationCreateInfo allocation{};
         allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        // A large image gets memory of its own, so shrinking it gives the memory back at
+        // once instead of leaving a hole in a shared block. Few images are this large, far
+        // under the driver's allocation count.
+        constexpr uint64_t OWN_MEMORY_BYTES = 8ull * 1024 * 1024;
+        if (bytes >= OWN_MEMORY_BYTES)
+        {
+            allocation.flags |= VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT;
+        }
         if (vmaCreateImage(mAllocator, &image, &allocation, &texture.image, &texture.allocation, nullptr) != VK_SUCCESS)
         {
             texture.image = VK_NULL_HANDLE;
             mMemoryBudget.release(MemoryCategory::Textures, bytes);
             if (command.replace)
             {
+                mTextureReplacements.fail(command.slot);
                 mPendingTextures.erase(command.slot); // the slot keeps its old image
             }
             else
@@ -1835,6 +2074,7 @@ private:
         texture.mipLevels = command.desc.mipLevels;
         texture.width = command.desc.width;
         texture.height = command.desc.height;
+        texture.desc = command.desc;
 
         VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         view.image = texture.image;
@@ -1859,10 +2099,9 @@ private:
         }
 
         // For a replacement the source is the slot's own image, which is still showing.
-        const Texture& source = mTextureObjects[command.sourceSlot];
-        if (command.sourceSlot != 0 && source.image != VK_NULL_HANDLE && source.mipLevels >= command.sourceMip + texture.mipLevels)
+        if (command.sourceSlot != 0)
         {
-            copySmallerMips(commands, texture, source, command.sourceMip);
+            copySmallerMips(commands, texture, mTextureObjects[command.sourceSlot], sourceMip);
             if (!command.replace)
             {
                 mSlotCopies.changed(command.slot);
@@ -1897,6 +2136,8 @@ private:
     // Where uploads and mips to a slot go: its replacement while one is being built.
     Texture& textureFor(uint32_t slot)
     {
+        static Texture unavailable;
+        if (mTextureReplacements.failed(slot)) return unavailable;
         const auto pending = mPendingTextures.find(slot);
         return pending != mPendingTextures.end() ? pending->second : mTextureObjects[slot];
     }
@@ -1905,6 +2146,7 @@ private:
     // every frame's array has let go of it.
     void publishTexture(uint32_t slot)
     {
+        if (mTextureReplacements.failed(slot)) return;
         const auto pending = mPendingTextures.find(slot);
         if (pending == mPendingTextures.end())
         {
@@ -1987,6 +2229,7 @@ private:
     // array has let go of it and the frames that used them have finished.
     void destroyTexture(uint32_t slot)
     {
+        mTextureReplacements.begin(slot);
         mSlotCopies.changed(slot);
         const auto pending = mPendingTextures.find(slot);
         if (pending != mPendingTextures.end())
@@ -2280,20 +2523,26 @@ private:
     }
 
     // Frames still running may read the old table, so it stays until they are done.
-    bool growTable(VkCommandBuffer commands, GpuBuffer& table, uint64_t bytes)
+    bool growTable(VkCommandBuffer commands, GpuBuffer& table, uint64_t bytes, bool preserve = true)
     {
         GpuBuffer grown;
-        if (!createBufferObject(grown, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "scene table"))
+        if (!createBufferObject(grown, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT, "scene table", MemoryCategory::Geometry, true))
         {
             return false;
         }
-        vkCmdFillBuffer(commands, grown.buffer, 0, VK_WHOLE_SIZE, 0);
-        memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        if (preserve)
+        {
+            vkCmdFillBuffer(commands, grown.buffer, 0, VK_WHOLE_SIZE, 0);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        }
         if (table.buffer != VK_NULL_HANDLE)
         {
-            const VkBufferCopy copy{ 0, 0, table.size };
-            vkCmdCopyBuffer(commands, table.buffer, grown.buffer, 1, &copy);
-            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            if (preserve)
+            {
+                const VkBufferCopy copy{ 0, 0, std::min(table.size, bytes) };
+                vkCmdCopyBuffer(commands, table.buffer, grown.buffer, 1, &copy);
+                memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            }
             mRetiredBuffers.push_back({ table, mFrame + FRAMES_IN_FLIGHT + 1 });
         }
         table = grown;
@@ -2311,7 +2560,9 @@ private:
 
     bool growList(GpuBuffer& list, uint64_t bytes, const char* what)
     {
-        if (bytes <= list.size)
+        // Lists are regenerated each frame. Reclaim a large unused tail with the same
+        // two-to-one hysteresis as tables, retaining the old allocation for in-flight draws.
+        if (bytes <= list.size && bytes > list.size / 2)
         {
             return true;
         }
@@ -2320,7 +2571,7 @@ private:
             mRetiredBuffers.push_back({ list, mFrame + FRAMES_IN_FLIGHT + 1 });
             list = GpuBuffer();
         }
-        return createBufferObject(list, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, what);
+        return createBufferObject(list, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, what, MemoryCategory::Geometry, true);
     }
 
     // Applies this frame's scene changes on the GPU, and fills in the view.
@@ -2342,7 +2593,11 @@ private:
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)
         {
             const uint64_t bytes = mSceneStore.tableCapacity(SceneTable(i));
-            if (bytes > mSceneTables[i].size && !growTable(commands, mSceneTables[i], bytes))
+            const bool positions = SceneTable(i) == SceneTable::SkinnedPositions;
+            const bool resize = bytes != mSceneTables[i].size || (positions && mSceneStore.positionsCompacted());
+            // Every current consumer deforms its positions before drawing. Copying the
+            // historical cache would waste bandwidth and defeat interior-hole compaction.
+            if (resize && !growTable(commands, mSceneTables[i], bytes, !positions))
             {
                 return false;
             }
@@ -2397,12 +2652,14 @@ private:
         GpuSceneView view{};
         fillSceneView(view, *mRecordCamera, mHasPyramid ? &mPyramidCamera : nullptr, mSceneExtent.width, mSceneExtent.height);
         mSceneStore.fillView(view);
+        view.skinAudit = mGraph.isRunning(PassAuditCull) ? 1 : 0;
         for (uint32_t table = SCENE_FIRST_SKIN_TABLE; table < SCENE_TABLES; ++table)
         {
             view.skinTables[table - SCENE_FIRST_SKIN_TABLE] = mSceneTables[table].address;
         }
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
+        view.debugView = mRecordCamera->debugView;
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
@@ -2591,9 +2848,14 @@ private:
     void setPassBodies()
     {
         mGraph.setBody(PassUpload, [this]() { return passUpload(); });
+        const PassId skinPasses[SKIN_PHASES] = { PassSkinPose, PassSkinPalette, PassSkinBind, PassSkinMorph,
+                                               PassSkinVertices, PassSkinClusters, PassSkinGroups, PassSkinVerticesLate, PassSkinAudit };
         for (uint32_t phase = 0; phase < SKIN_PHASES; ++phase)
         {
-            mGraph.setBody(PassId(PassSkinPalette + phase), [this, phase]() { return passSkin(phase); });
+            mGraph.setBody(skinPasses[phase], [this, phase]()
+            {
+                return phase == SKIN_AUDIT && !mGraph.isRunning(PassAuditCull) ? true : passSkin(phase);
+            });
         }
         mGraph.setBody(PassCullEarly, [this]() { return passCull(CULL_EARLY); });
         mGraph.setBody(PassGroupsEarly, [this]() { return passCull(CULL_GROUPS_EARLY); });
@@ -2632,6 +2894,8 @@ private:
             }
             vmaInvalidateAllocation(mAllocator, mSceneReadback[slot].allocation, 0, sizeof(GpuSceneCounts));
             const GpuSceneCounts* counts = static_cast<const GpuSceneCounts*>(mSceneReadback[slot].mapped);
+            // Preserve the completed frame's own list capacities before this slot's view changes.
+            mDiagnostics.completedScene(mFrame - FRAMES_IN_FLIGHT, *counts, *static_cast<const GpuSceneView*>(mSceneViews[slot].mapped));
             mSceneFrameStats.earlyClusters = 0;
             mSceneFrameStats.lateClusters = 0;
             for (uint32_t list = 0; list < SCENE_LISTS; ++list)
@@ -2645,6 +2909,11 @@ private:
             mSceneFrameStats.guardPixels += counts->guardPixels;
             mSceneFrameStats.guardValue = std::max(mSceneFrameStats.guardValue, counts->guardValue);
             mSceneFrameStats.droppedEntries += counts->dropped;
+            mSceneFrameStats.skinAuditSamples += counts->skinAuditSamples;
+            mSceneFrameStats.skinAuditErrors += counts->skinAuditErrors;
+            float skinError;
+            memcpy(&skinError, &counts->skinAuditMaxError, sizeof(skinError));
+            mSceneFrameStats.skinAuditMaxError = std::max(mSceneFrameStats.skinAuditMaxError, skinError);
         }
         if (mFeedbackRead[slot].number != 0)
         {
@@ -2700,6 +2969,7 @@ private:
         vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery);
         for (uint32_t i = 0; i < mGraph.passCount(); ++i)
         {
+            mDiagnostics.checkpoint(commands, mGraph.passId(i), mGraph.passName(i));
             uint32_t count = 0;
             const GraphTransition* transitions = mGraph.transitions(i, count);
             applyTransitions(commands, transitions, count);
@@ -2707,6 +2977,7 @@ private:
             {
                 return false;
             }
+            mDiagnostics.checkpoint(commands, mGraph.passId(i), mGraph.passName(i), true);
             if (i < passes)
             {
                 vkCmdWriteTimestamp2(commands, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, mSceneQueries, firstQuery + i + 1);
@@ -2725,6 +2996,16 @@ private:
         mSceneFrameStats.triangles = mSceneStore.triangles();
         mSceneFrameStats.pendingGeometries = mSceneStore.pendingGeometries();
         mSceneFrameStats.chunks = mSceneStore.chunkCount();
+        mSceneFrameStats.paletteEnd = mSceneStore.rangeEnd(SceneTable::Palette);
+        mSceneFrameStats.paletteLive = mSceneStore.rangeLive(SceneTable::Palette);
+        mSceneFrameStats.vertexBlockEnd = mSceneStore.rangeEnd(SceneTable::SkinBlocks);
+        mSceneFrameStats.vertexBlockLive = mSceneStore.rangeLive(SceneTable::SkinBlocks);
+        mSceneFrameStats.clusterBlockEnd = mSceneStore.rangeEnd(SceneTable::ClusterBlocks);
+        mSceneFrameStats.clusterBlockLive = mSceneStore.rangeLive(SceneTable::ClusterBlocks);
+        mSceneStore.memoryStats(mSceneFrameStats.chunkBytes, mSceneFrameStats.chunkFreeBytes, mSceneFrameStats.tableBytes, mSceneFrameStats.skinnedPositionBytes,
+                                mSceneFrameStats.clusterTableBytes);
+        mSceneFrameStats.textureCopiesRebased = mTextureCopiesRebased;
+        mSceneFrameStats.textureCopiesRejected = mTextureCopiesRejected;
         publishSceneStats(mSceneFrameStats);
         return true;
     }
@@ -2822,12 +3103,8 @@ private:
         // The driver allocates these, so this is an estimate at 4 bytes per pixel.
         mMemoryBudget.release(MemoryCategory::RenderTargets, mSwapchainBytes);
         mSwapchainBytes = uint64_t(extent.width) * extent.height * 4 * count;
-        if (!mMemoryBudget.reserve(MemoryCategory::RenderTargets, mSwapchainBytes))
-        {
-            mSwapchainBytes = 0;
-            mError = "the swapchain does not fit in the render target budget";
-            return false;
-        }
+        // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, mSwapchainBytes);
 
         for (uint32_t i = 0; i < count; ++i)
         {
@@ -2879,6 +3156,8 @@ private:
         {
             return false;
         }
+        mDiagnostics.beginFrame(mFrame);
+        mDiagnostics.checkpoint(commands, PassCount, "texture commands");
 
         const auto retireStart = std::chrono::steady_clock::now();
         releaseFreedTextures(false);
@@ -2895,12 +3174,14 @@ private:
             return false;
         }
         bringSlots(slot);
+        mDiagnostics.checkpoint(commands, PassCount, "texture commands", true);
         mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
         if (input.camera && !recordScene(commands, slot, *input.camera, input.audit))
         {
             return false;
         }
 
+        mDiagnostics.checkpoint(commands, PassCount + 1, "composite and UI");
         imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT);
 
@@ -2941,6 +3222,7 @@ private:
 
         imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_PIPELINE_STAGE_2_NONE);
+        mDiagnostics.checkpoint(commands, PassCount + 1, "composite and UI", true);
         return check(vkEndCommandBuffer(commands), "end commands");
     }
 
@@ -3041,6 +3323,7 @@ private:
     }
 
     DeviceOptions mOptions;
+    VulkanDiagnostics<PassCount + 2> mDiagnostics;
     DeviceInfo mInfo;
     std::string mError;
     std::atomic<uint32_t> mValidationErrors{ 0 };
@@ -3096,6 +3379,9 @@ private:
     uint64_t mRingEnd[FRAMES_IN_FLIGHT]{};                  // how far each slot's frame read it, 0 for not at all
     uint64_t mUploadBytesPerFrame = 0;
     std::vector<Texture> mTextureObjects;                   // by slot
+    TextureReplacementState<MAX_TEXTURES> mTextureReplacements;
+    uint64_t mTextureCopiesRebased = 0;
+    uint64_t mTextureCopiesRejected = 0;
     std::unordered_map<uint32_t, Texture> mPendingTextures; // replacements being built, by slot
     std::vector<TextureCommand> mTextureCommands;           // taken, not yet run
     size_t mTextureCommandsDone = 0;                        // the front of mTextureCommands already run

@@ -69,6 +69,7 @@
 #include "llselectmgr.h"
 #include "pipeline.h"
 #include "asrgltable.h" // <AS:Chanayane/>
+#include "asrworld.h" // <AS:Chanayane/> crowd detail ranking in calcLOD()
 #include "llsdutil.h"
 #include "llmatrix4a.h"
 #include "llmediaentry.h"
@@ -1818,6 +1819,13 @@ bool LLVOVolume::calcLOD()
     }
     else
     {
+        // <AS:Chanayane> Crowd detail ranking: avatars ranked down in a crowd use a lower LOD
+        // factor, so their coarse LODs show only with distance, as with a lower mesh detail setting.
+        if (ASR::active() && (isAttachment() || isAnimatedObject()))
+        {
+            lod_factor *= ASRWorld::avatarLodScale(this);
+        }
+        // </AS:Chanayane>
         cur_detail = computeLODDetail(ll_round(distance, 0.01f), ll_round(radius, 0.01f), lod_factor);
     }
 

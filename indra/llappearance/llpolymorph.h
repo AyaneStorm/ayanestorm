@@ -147,6 +147,9 @@ protected:
 class alignas(16) LLPolyMorphTarget : public LLViewerVisualParam
 {
     LL_ALIGN_NEW
+    // <AS:Chanayane> the new renderer reads the morph's data, mesh and mask
+    friend class ASRAvatarBody;
+    // </AS:Chanayane>
 public:
     LLPolyMorphTarget(LLPolyMesh *poly_mesh);
     ~LLPolyMorphTarget();

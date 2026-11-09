@@ -7,9 +7,13 @@
 #extension GL_GOOGLE_include_directive : require
 #include "asrSceneCommon.glsl"
 
+invariant gl_Position; // see scenePosition()
+
 layout(location = 0) out vec2 vary_uv;
 layout(location = 1) flat out uint vary_texture;
 layout(location = 2) flat out vec4 vary_color;
+layout(location = 3) out vec3 vary_normal;   // world
+layout(location = 4) out vec3 vary_toCamera; // world, for two-sided faces
 
 void main()
 {
@@ -21,6 +25,8 @@ void main()
     vary_uv = vec2(0.0);
     vary_texture = 0u;
     vary_color = vec4(0.0);
+    vary_normal = vec3(0.0, 0.0, 1.0);
+    vary_toCamera = vec3(0.0, 0.0, 1.0);
     if (triangle >= cluster.triangles)
     {
         gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
@@ -35,13 +41,20 @@ void main()
     }
     const uint vertex = clusterIndex(cluster.indices, triangle * 3u + corner);
     const vec3 packed = packedPosition(cluster.positions, vertex);
-    gl_Position = view.viewProjection * vec4(transformPoint(instance.rows, packed), 1.0);
-    // The same rank as the visibility pass, so coplanar surfaces order the same way.
-    const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
-    gl_Position.z *= 1.0 + float(rank) / 4194304.0;
+    // The same position and rank as the visibility pass, so coplanar surfaces order the same way.
+    gl_Position = scenePosition(view, instance, packed);
+    vary_toCamera = view.camera.xyz - transformPoint(instance.rows, packed);
 
     const Material material = MaterialsRef(push.materials).items[instance.material];
     WordsRef attributes = WordsRef(cluster.attributes);
+    // Lit as the resolve lights opaque surfaces: skinned normals turn with the palette.
+    vec3 objectNormal = attributeNormal(attributes.words[vertex * 4u]);
+    if ((instance.flags & INSTANCE_SKINNED) != 0u)
+    {
+        const Binding binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[instance.binding];
+        objectNormal = skinNormal(view, binding, vertex, objectNormal);
+    }
+    vary_normal = worldNormalOf(instance, objectNormal);
     vec2 faceUV = vec2(uintBitsToFloat(attributes.words[vertex * 4u + 2u]), uintBitsToFloat(attributes.words[vertex * 4u + 3u]));
     if (material.mapping == MATERIAL_PLANAR)
     {

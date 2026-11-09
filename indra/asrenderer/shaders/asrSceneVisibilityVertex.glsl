@@ -8,6 +8,8 @@
 #extension GL_GOOGLE_include_directive : require
 #include "asrSceneCommon.glsl"
 
+invariant gl_Position; // see scenePosition()
+
 layout(location = 0) flat out uint vary_visibility;
 #ifdef MASKED
 layout(location = 1) out vec2 vary_uv;
@@ -41,14 +43,7 @@ void main()
         corner = 3u - corner;
     }
     const uint vertex = clusterIndex(cluster.indices, triangle * 3u + corner);
-    const vec3 world = transformPoint(instance.rows, packedPosition(cluster.positions, vertex));
-    gl_Position = view.viewProjection * vec4(world, 1.0);
-
-    // Reversed depth, so a larger z is nearer, and depth is near / distance, so this moves a
-    // surface by the same share of its distance everywhere. One rank is a few steps of the
-    // depth buffer. The highest rank is 2.4 cm at 100 m, well under a pixel of real depth.
-    const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
-    gl_Position.z *= 1.0 + float(rank) / 4194304.0;
+    gl_Position = scenePosition(view, instance, packedPosition(cluster.positions, vertex));
 
 #ifdef MASKED
     const Material material = MaterialsRef(push.materials).items[instance.material];

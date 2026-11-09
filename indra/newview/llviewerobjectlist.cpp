@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerobjectlist.h"
+#include "asrworld.h" // <AS:Chanayane/> orphans leave the new renderer
 
 #include "message.h"
 #include "llfasttimer.h"
@@ -2409,6 +2410,10 @@ void LLViewerObjectList::orphanize(LLViewerObject *childp, U32 parent_id, U32 ip
         {
             // Make sure that this object becomes invisible if it's an orphan
             childp->mDrawable->setState(LLDrawable::FORCE_INVISIBLE);
+            // <AS:Chanayane> The new renderer stops drawing it too: an attachment left by its
+            // avatar otherwise stood frozen in its last pose.
+            ASRWorld::objectChanged(childp->mDrawable);
+            // </AS:Chanayane>
         }
     }
 

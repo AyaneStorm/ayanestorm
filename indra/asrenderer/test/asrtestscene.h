@@ -397,7 +397,9 @@ public:
         Mesh fineTube = makeTube(64, 24, fineWeights);
         Mesh roughTube = fineTube;
         roughTube.indices = coarseTubeIndices(64, 24, 8, 3);
-        const uint32_t roughTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX, fineWeights.data()));
+        // An unweighted coarsest neighbour must not remove the weighted tube.
+        const uint32_t unweightedTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX));
+        const uint32_t roughTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX, fineWeights.data()), unweightedTubeId, 60.f);
         mTube = scene.addGeometry(build(fineTube, &CREATURE_BOX, fineWeights.data()), roughTubeId, 30.f);
         mSkin = scene.addSkin(creatureSkin());
         mMorphSet = scene.addMorphSet(creatureMorphs(fineTube));
@@ -420,19 +422,12 @@ public:
         {
             mSwellSize += vertex.position[2] > 3.2f ? 1 : 0;
         }
-        for (uint32_t i = 0; i < CREATURES; ++i)
+        // A few now and the rest while it runs, as avatars arrive, so the skin tables grow
+        // under load. Reserved, so adding one never moves the others.
+        mCreatures.reserve(CREATURES);
+        while (mCreatures.size() < FIRST_CREATURES)
         {
-            const float angle = float(i) / CREATURES * TWO_PI;
-            const float radius = (i % 2) == 0 ? 64.f : 76.f;
-            mCreatures.push_back({});
-            Creature& creature = mCreatures.back();
-            creature.x = std::cos(angle) * radius;
-            creature.y = std::sin(angle) * radius;
-            creature.phase = float(i) * 0.7f;
-            creature.material = mMaterials[i % MATERIALS];
-            creature.morphed = (i % 2) == 1;
-            creature.blended = (i % 4) == 2;
-            addCreature(creature, 0.f);
+            arriveCreature(0.f);
         }
 
         // Transparency, through Mac OIT: stacks of six glass panes across the street walk,
@@ -502,15 +497,24 @@ public:
                 pose(creature, seconds);
             }
         }
+        if (mCreatures.size() < CREATURES && seconds - mLastArrival >= 0.1f)
+        {
+            mLastArrival = seconds;
+            for (uint32_t i = 0; i < 4 && mCreatures.size() < CREATURES; ++i)
+            {
+                arriveCreature(seconds);
+            }
+        }
         if (seconds - mLastCreatureChange >= 1.f)
         {
             // One creature goes and comes back, with a new skeleton; another changes its
             // material, which keeps its skinned geometry.
             mLastCreatureChange = seconds;
-            Creature& gone = mCreatures[mCreatureChanges % CREATURES];
+            const uint32_t count = uint32_t(mCreatures.size());
+            Creature& gone = mCreatures[mCreatureChanges % count];
             removeCreature(gone);
             addCreature(gone, seconds);
-            Creature& recoloured = mCreatures[(mCreatureChanges * 7 + 3) % CREATURES];
+            Creature& recoloured = mCreatures[(mCreatureChanges * 7 + 3) % count];
             recoloured.material = mMaterials[(mCreatureChanges * 5) % MATERIALS];
             mScene.setInstance(recoloured.tube, tubeDesc(recoloured));
             ++mCreatureChanges;
@@ -547,6 +551,7 @@ private:
     };
 
     static constexpr uint32_t CREATURES = 160;
+    static constexpr uint32_t FIRST_CREATURES = 8;
 
     struct Creature
     {
@@ -584,10 +589,26 @@ private:
         desc.lodSize = CREATURE_HEIGHT;
         if (creature.blended)
         {
-            desc.material = mAmber; // a see-through creature: skinned, through Mac OIT
-            desc.flags = asr::INSTANCE_BLENDED;
+            desc.material = mAmber; // a see-through creature: skinned, through Mac OIT, seen from both sides as hair is
+            desc.flags = asr::INSTANCE_BLENDED | asr::INSTANCE_DOUBLE_SIDED;
         }
         return desc;
+    }
+
+    void arriveCreature(float seconds)
+    {
+        const uint32_t i = uint32_t(mCreatures.size());
+        const float angle = float(i) / CREATURES * TWO_PI;
+        const float radius = (i % 2) == 0 ? 64.f : 76.f;
+        mCreatures.push_back({});
+        Creature& creature = mCreatures.back();
+        creature.x = std::cos(angle) * radius;
+        creature.y = std::sin(angle) * radius;
+        creature.phase = float(i) * 0.7f;
+        creature.material = mMaterials[i % MATERIALS];
+        creature.morphed = (i % 2) == 1;
+        creature.blended = (i % 4) == 2;
+        addCreature(creature, seconds);
     }
 
     void addCreature(Creature& creature, float seconds)
@@ -614,6 +635,11 @@ private:
             desc.joint = CREATURE_JOINTS - 1;
             desc.lodCenter[2] = 1.25f;
             desc.lodSize = 0.5f;
+            if (creature.blended)
+            {
+                desc.material = mAmber; // a see-through attachment
+                desc.flags = asr::INSTANCE_BLENDED;
+            }
             creature.box[face] = mScene.addInstance(desc);
         }
         mInstances += 7;
@@ -830,6 +856,7 @@ private:
     std::vector<Creature> mCreatures;
     uint32_t mCreatureChanges = 0;
     float mLastCreatureChange = 0.f;
+    float mLastArrival = 0.f;
 };
 
 } // namespace asrtest

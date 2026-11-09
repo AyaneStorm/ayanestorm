@@ -125,6 +125,15 @@ struct PackedPosition
 };
 static_assert(sizeof(PackedPosition) == 8, "shaders read this layout");
 
+// Skinned geometry's positions: full floats, same packed units. The cluster's positions
+// address carries 1 in its low bit for these, as for deformed copies.
+struct FloatPosition
+{
+    float xyz[3];
+    float unused;
+};
+static_assert(sizeof(FloatPosition) == 16, "shaders read this layout");
+
 struct PackedAttributes
 {
     int16_t normal[2];  // octahedral
@@ -171,7 +180,7 @@ struct GpuGeometry
 {
     uint32_t firstGroup;
     uint32_t groupCount;   // 0 when its clusters are few enough to test directly
-    uint32_t unused;
+    uint32_t skinJoints;   // highest weighted palette index + 1; 0 without weights
     float radius;          // bounding sphere around the packed origin
     uint32_t firstCluster;
     uint32_t clusterCount; // 0 until its data has reached the GPU
@@ -197,19 +206,23 @@ static_assert(sizeof(GpuInstance) == 80, "shaders read this layout");
 // A skin's palette is its joints' poses times their inverse bind matrices, made once per
 // frame per skeleton and skin, and shared by every face and every view. A skinned instance
 // draws through a geometry of its own, whose positions and bounds the skin passes rewrite
-// each frame, packed in its skeleton's box, so culling, drawing and the resolve treat it as
+// each frame, in float metres relative to its skeleton's centre, so the other passes treat it as
 // any other. An attached instance follows one joint. See asrSceneSkinC.glsl.
 constexpr uint32_t SKIN_BLOCK = 64;          // vertices or clusters per workgroup of the skin passes
-constexpr uint32_t SKIN_PALETTE = 0;         // the skin passes, in order
-constexpr uint32_t SKIN_BIND = 1;
-constexpr uint32_t SKIN_MORPH = 2;
-constexpr uint32_t SKIN_VERTICES = 3;
-constexpr uint32_t SKIN_CLUSTERS = 4;
-constexpr uint32_t SKIN_GROUPS = 5;
-constexpr uint32_t SKIN_PHASES = 6;
+constexpr uint32_t SKIN_POSE = 0;            // the skin passes, in order
+constexpr uint32_t SKIN_PALETTE = 1;
+constexpr uint32_t SKIN_BIND = 2;
+constexpr uint32_t SKIN_MORPH = 3;
+constexpr uint32_t SKIN_VERTICES = 4;
+constexpr uint32_t SKIN_CLUSTERS = 5;
+constexpr uint32_t SKIN_GROUPS = 6;
+constexpr uint32_t SKIN_VERTICES_LATE = 7; // same-frame recovery after current-depth culling
+constexpr uint32_t SKIN_AUDIT = 8;         // position checks, after deformation
+constexpr uint32_t SKIN_PHASES = 9;
 constexpr uint32_t MORPH_NO_MASK = 0xFFFFFFFFu;
 constexpr uint32_t BINDING_ATTACHED = 1;
 constexpr uint32_t BINDING_SKINNED = 2;
+constexpr uint32_t SKELETON_PARKED = 1;
 constexpr float SKELETON_MAX_LEAD = 1.1f;    // main-thread steps the motion is carried on, at most
 constexpr float SKELETON_MAX_LEAD_SECONDS = 0.25f;
 
@@ -217,21 +230,30 @@ struct GpuJoint
 {
     float rows[3][4];     // the newest pose, in render space
     float previous[3][4]; // the one before
+    float rotationDelta[4]; // xyzw: shortest rotation between poses, with scale/shear removed
+    float predicted[3][4]; // written once per joint per GPU frame, reused by every skin
+    uint32_t skeleton;
+    uint32_t unused[3];
 };
-static_assert(sizeof(GpuJoint) == 96, "shaders read this layout");
+static_assert(sizeof(GpuJoint) == 176, "shaders read this layout");
 
 struct GpuSkeleton
 {
-    float boxCenter[3]; // holds every vertex bound to it at any lead it can draw: packing for its skinned instances
+    // Its joints' places at any permitted lead, as a cube. The centre is the common
+    // origin of float skinned positions; size/stretch provide conservative LOD bounds.
+    float boxCenter[3];
     float boxScale;
     uint32_t firstJoint;
     uint32_t jointCount;
     uint32_t time;         // of the newest pose, and of the one before: microseconds, wrapping
     uint32_t previousTime;
     float maxLead;         // steps of motion carried on past the newest pose, at most
-    uint32_t unused[3];
+    float stretch;         // newest affine Frobenius norm; predicted rotation preserves it
+    float minLead;         // 0 to carry motion on; -1 to blend from the pose before, one gap late
+    uint32_t flags;        // SKELETON_PARKED: no resident skinned consumers need palettes
 };
 static_assert(sizeof(GpuSkeleton) == 48, "shaders read this layout");
+static_assert(offsetof(GpuSkeleton, flags) == 44, "shader skeleton flags offset");
 
 struct GpuPaletteJob
 {
@@ -248,7 +270,7 @@ struct GpuBinding
     uint32_t instance;
     uint32_t skeleton;
     uint32_t palette;     // skinned: its first palette entry; attached: its joint, in the joint table
-    uint32_t matrix;      // attached: object to joint, packing included, in the skin matrix table
+    uint32_t matrix;      // attached: skin matrix index; skinned: number of palette entries
     uint32_t source;      // skinned: the finest geometry of the chain it draws from
     uint32_t target;      // skinned: its own geometry
     uint32_t targetEntry; // skinned: its first entry in the cluster table: groups, then clusters
@@ -256,13 +278,17 @@ struct GpuBinding
     float sourceBox[4];   // skinned: the chain's packing box, centre and scale
     uint32_t positions;   // skinned: its first entry in the skinned position table
     uint32_t chosen;      // skinned, written by the GPU: the LOD drawn this frame
-    uint32_t firstBlock;  // in the skin block table
+    uint32_t firstBlock;  // in the skin block table: its vertex blocks
     uint32_t groupCapacity; // groups room before its clusters
     uint64_t weights;     // skinned, written by the GPU: the chosen LOD's SkinWeights
     uint32_t morph;       // skinned: the GpuMorph its vertices start from, 0 for the geometry's own
-    uint32_t unused;
+    float reach;          // skinned: how far its vertices can be from their joints, before joint stretch
+    uint32_t firstClusterBlock; // in the cluster block table
+    uint32_t skinDemand;  // GPU: first culling phase that admitted this binding this frame
+    uint32_t unused[2];   // to a multiple of 16, as std430 rounds a struct holding a vec4
 };
-static_assert(sizeof(GpuBinding) == 96, "shaders read this layout");
+static_assert(sizeof(GpuBinding) == 112, "shaders read this layout");
+static_assert(offsetof(GpuBinding, skinDemand) == 100, "shader deformation demand offset");
 
 // System avatar morphs. A morph set is a mesh's base vertices and the sparse deltas of its
 // targets, sorted by vertex, stored once and shared by every avatar wearing that mesh. A
@@ -301,7 +327,8 @@ struct GpuMorph
     uint32_t masks;
     uint32_t output;      // in the morphed position and attribute tables
     float normalSoften;
-    uint32_t unused[2];
+    float bound;          // no morphed vertex moves further than this: the clusters' spheres widen by it
+    uint32_t unused;
 };
 static_assert(sizeof(GpuMorph) == 32, "shaders read this layout");
 
@@ -399,12 +426,15 @@ struct GpuSceneCounts
     // weight by moments. The tail pass draws from macoitTail, which the gate fills from the
     // blended lists, early then late, or leaves empty when there is no tail.
     uint32_t macoitTailSeen;
-    uint32_t unused[3];
+    uint32_t skinAuditSamples; // --audit: one actual GPU position per skinned cluster
+    uint32_t skinAuditErrors;
+    uint32_t skinAuditMaxError; // positive float bits: metres from direct float skinning
     GpuDrawArguments macoitTail[2 * SCENE_BLENDED_LISTS];
 };
 static_assert(sizeof(GpuSceneCounts) == 1104, "shaders read this layout");
 static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolveC.glsl's GUARD_OFFSET");
 static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
+static_assert(offsetof(GpuSceneCounts, skinAuditSamples) == 836, "asrSceneSkinAudit.glsl's counter offset");
 
 // Transparency is Mac OIT, the viewer's own, rebuilt: the MACOIT_LAYERS nearest layers of each
 // pixel are exact, found by their keys (22 bits of log depth above 8 bits of alpha, biased so
@@ -498,6 +528,17 @@ struct GeometryData
     float center[3] = { 0.f, 0.f, 0.f }; // packed = (object - center) / scale
     float scale = 1.f;
     float radius = 0.f;                  // in packed units, around the packed origin
+
+    // Skinned: for each joint index some weight names, the sphere around the vertices it
+    // moves, in object space. How far a skin can move them from that joint follows from it,
+    // so joints a skin lists but no vertex uses cost nothing.
+    struct JointSphere
+    {
+        uint32_t joint;
+        float center[3];
+        float radius;
+    };
+    std::vector<JointSphere> jointSpheres;
 };
 
 // A box to pack into. The LODs of one face must share one, because an instance's
@@ -542,7 +583,15 @@ struct SceneCamera3D
     float nearClip;
     float lodScale;           // distances count this much more: above 1 lowers detail
     float farClip;            // nothing past this is drawn; 0 means no limit
+    uint32_t debugView = 0;   // development: 0 shaded or a DEBUG_VIEW_* below
 };
+
+// What GpuSceneView::debugView shows instead of the shaded scene.
+constexpr uint32_t DEBUG_VIEW_NORMALS = 1;    // world normals as colours
+constexpr uint32_t DEBUG_VIEW_ALBEDO = 2;     // the surface colour, no light
+constexpr uint32_t DEBUG_VIEW_ALPHA_MODE = 3; // grey opaque, green cut-out, red blended
+constexpr uint32_t DEBUG_VIEW_CLUSTERS = 4;   // one colour per drawn cluster
+constexpr uint32_t DEBUG_VIEW_NO_OCCLUSION = 5; // shaded, with occlusion culling off
 
 // A look-at camera with reversed depth and no far plane. World space is the viewer's:
 // right-handed, Z up. Y comes out flipped, as Vulkan wants it, and asr_spirv2msl turns
@@ -576,16 +625,20 @@ struct GpuSceneView
     uint32_t groupEnd;        // entries in the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
 
     // The avatar tables, in SceneTable order from Skeletons, and what the skin passes cover.
-    uint64_t skinTables[15];
+    uint64_t skinTables[16];
     uint64_t drawOnly;        // not 0: a bit per skeleton, and only instances bound to one set are drawn
     uint32_t time;            // the frame's own time, microseconds, wrapping as GpuSkeleton::time does
     uint32_t paletteEnd;
     uint32_t bindingEnd;
-    uint32_t blockEnd;
+    uint32_t blockEnd;        // vertex blocks
     uint32_t morphWorkEnd;
-    uint32_t unused[3];
+    uint32_t jointEnd;
+    uint32_t skinAudit;
+    uint32_t clusterBlockEnd;
+    uint32_t debugView;       // SceneCamera3D::debugView
+    uint32_t unused;          // to a multiple of 16, as std430 rounds a struct holding a vec4
 };
-static_assert(sizeof(GpuSceneView) == 672, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 688, "shaders read this layout");
 
 // The time skeletons and views are stamped with.
 uint32_t sceneTime(std::chrono::steady_clock::time_point time);
@@ -727,6 +780,7 @@ struct SkeletonCommand
     uint32_t jointCount = 0;  // not 0: the skeleton is new
     std::vector<float> rows;  // a pose, 12 per joint, or empty
     uint32_t time = 0;
+    uint32_t interpolate = 0; // not 0: drawn one gap late, blended between the last two poses, a gap at most this long (microseconds)
 };
 
 struct SkinCommand
@@ -764,6 +818,7 @@ struct SceneCommands
     std::vector<uint32_t> removedMaterials;
     std::vector<uint32_t> removedTerrains;
     std::vector<uint32_t> removedSkeletons;
+    std::vector<std::pair<uint32_t, bool>> residentSkeletons;
     std::vector<uint32_t> removedSkins;
     std::vector<uint32_t> removedMorphSets;
     std::vector<uint32_t> removedMorphs;
@@ -772,7 +827,7 @@ struct SceneCommands
     {
         return terrains.empty() && materials.empty() && geometries.empty() && skeletons.empty() && skins.empty() && morphSets.empty() &&
                morphs.empty() && instances.empty() && removedGeometries.empty() && removedMaterials.empty() && removedTerrains.empty() &&
-               removedSkeletons.empty() && removedSkins.empty() && removedMorphSets.empty() && removedMorphs.empty();
+               removedSkeletons.empty() && residentSkeletons.empty() && removedSkins.empty() && removedMorphSets.empty() && removedMorphs.empty();
     }
 };
 
@@ -806,9 +861,16 @@ public:
     // An avatar's or animated object's joints. Ids start at 1. A pose is jointCount
     // matrices of three rows, joint to render space, as of time; the GPU carries the motion
     // between the last two on to each frame's time. Removal waits for its last instance.
+    // With interpolate, it is drawn one gap late instead, blended between the last two
+    // poses, so it never overshoots: for far avatars posed every few frames. The gap counts
+    // as at most interpolate, so the first pose after a rest does not take seconds.
     uint32_t addSkeleton(uint32_t jointCount);
-    void poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time);
+    void poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time,
+                      std::chrono::microseconds interpolate = std::chrono::microseconds(0));
     void removeSkeleton(uint32_t id);
+    // Not resident: its skinned instances give back their deformed copies and draw nothing,
+    // for an avatar well out of view. Resident again, they are skinned in that same update.
+    void setSkeletonResident(uint32_t id, bool resident);
 
     // Ids start at 1. Removal waits for its last instance.
     uint32_t addSkin(SkinDesc&& desc);

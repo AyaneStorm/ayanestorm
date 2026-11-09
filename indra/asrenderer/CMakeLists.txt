@@ -19,7 +19,7 @@ set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 # --- Portable code, built on every platform. ---------------------------------
 find_package(Threads REQUIRED)
 add_library(asrenderer STATIC asrframegraph.cpp asrmemorybudget.cpp asrrenderthread.cpp asrscene.cpp asrscenefile.cpp
-    asrscenegraph.cpp asrscenestore.cpp asrtexturefeedback.cpp asrtexturequeue.cpp asruilist.cpp)
+    asrscenegraph.cpp asrscenestore.cpp asrscenestorememory.cpp asrjointpose.cpp asrtexturefeedback.cpp asrtexturequeue.cpp asruilist.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(asrenderer PUBLIC Threads::Threads)
 
@@ -85,7 +85,7 @@ function(asr_add_shader source outputs_var)
             COMMAND asr_spirv2msl ${spv} ${msl}
             DEPENDS ${spv} asr_spirv2msl VERBATIM)
         add_custom_command(OUTPUT ${lib}
-            COMMAND xcrun metal -std=metal3.0 -o ${lib} ${msl}
+            COMMAND xcrun metal -std=metal3.0 -fpreserve-invariance -o ${lib} ${msl}
             DEPENDS ${msl} VERBATIM)
         list(APPEND result ${lib})
     endif()
@@ -98,6 +98,18 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC
         asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
+endforeach()
+# These fragment programs include the Mac OIT implementation as well as the common types.
+foreach(shader asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneMacOIT.glsl)
+endforeach()
+add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/asrSceneSkinC.spv APPEND
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneJointPose.glsl
+            ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinAudit.glsl)
+foreach(shader asrSceneSkinC asrSceneCullC)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinDemand.glsl)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})
 

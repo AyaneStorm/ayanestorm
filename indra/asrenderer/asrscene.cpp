@@ -297,6 +297,40 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
                 boundHigh = { std::max(boundHigh.x, p.x), std::max(boundHigh.y, p.y), std::max(boundHigh.z, p.z) };
             }
         }
+        if (weights)
+        {
+            // After the indices, which draws never read past: the joints that move the
+            // cluster, so the skin pass bounds it from them alone. First their count, then
+            // the most a vertex's weights sum strays from one, in 4/65535ths (rounded up, so
+            // any sum of four weights fits).
+            bool used[256] = {};
+            uint32_t stray = 0;
+            for (uint32_t triangle : triangles)
+            {
+                for (uint32_t corner = 0; corner < 3; ++corner)
+                {
+                    const SkinWeights& w = weights[indices[triangle * 3 + corner]];
+                    int32_t sum = 0;
+                    for (int k = 0; k < 4; ++k)
+                    {
+                        sum += w.weights[k];
+                        used[w.joints[k]] = used[w.joints[k]] || w.weights[k] != 0;
+                    }
+                    stray = std::max(stray, uint32_t(std::abs(sum - 65535)));
+                }
+            }
+            const size_t countAt = ordered.size();
+            ordered.push_back(0);
+            ordered.push_back(uint16_t((stray + 3) / 4));
+            for (uint32_t joint = 0; joint < 256; ++joint)
+            {
+                if (used[joint])
+                {
+                    ordered.push_back(uint16_t(joint));
+                    ++ordered[countAt];
+                }
+            }
+        }
         if (ordered.size() % 2 != 0)
         {
             ordered.push_back(0); // the next cluster starts on four bytes, which shaders read in
@@ -410,18 +444,73 @@ GeometryData buildGeometry(const SceneVertex* vertices, uint32_t vertexCount, co
     appendBytes(geometry.blob, ordered);
     geometry.blob.resize((geometry.blob.size() + 15) & ~size_t(15));
     geometry.positionsOffset = uint32_t(geometry.blob.size());
-    appendBytes(geometry.blob, positions);
+    if (weights)
+    {
+        // Skinned positions stay full floats. Layered meshes (lipstick, eyeliner) sit a few
+        // microns above the skin, the snorm grid of a large object is coarser than that, and
+        // the layers would fight in depth. See packedPosition() in asrSceneCommon.glsl.
+        std::vector<FloatPosition> exact(vertexCount);
+        for (uint32_t i = 0; i < vertexCount; ++i)
+        {
+            const Vec3 p = packed(i);
+            exact[i] = { { p.x, p.y, p.z }, 1.f };
+        }
+        appendBytes(geometry.blob, exact);
+    }
+    else
+    {
+        appendBytes(geometry.blob, positions);
+    }
     geometry.attributesOffset = uint32_t(geometry.blob.size());
     appendBytes(geometry.blob, attributes);
     geometry.vertexCount = vertexCount;
     if (weights)
     {
         // Right after the attributes, with no padding: shaders find them from the cluster's
-        // positions and attributes addresses, as attributes + 2 * (attributes - positions).
+        // attributes address and vertex count: see vertexCountOf() in asrSceneCommon.glsl.
         const size_t start = geometry.blob.size();
         geometry.blob.resize(start + size_t(vertexCount) * sizeof(SkinWeights));
         memcpy(geometry.blob.data() + start, weights, size_t(vertexCount) * sizeof(SkinWeights));
         geometry.skinned = true;
+
+        // Each used joint's sphere: around the middle of its vertices' bounds, then as wide
+        // as the farthest of them.
+        constexpr uint32_t JOINTS = 256;
+        std::vector<Vec3> jointLow(JOINTS, Vec3{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() });
+        std::vector<Vec3> jointHigh(JOINTS, Vec3{ -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max(), -std::numeric_limits<float>::max() });
+        const auto eachUse = [&](auto&& use)
+        {
+            for (uint32_t i = 0; i < vertexCount; ++i)
+            {
+                for (int k = 0; k < 4; ++k)
+                {
+                    if (weights[i].weights[k] != 0)
+                    {
+                        use(weights[i].joints[k], positionOf(vertices[i]));
+                    }
+                }
+            }
+        };
+        eachUse([&](uint32_t joint, const Vec3& p)
+        {
+            Vec3& l = jointLow[joint];
+            Vec3& h = jointHigh[joint];
+            l = { std::min(l.x, p.x), std::min(l.y, p.y), std::min(l.z, p.z) };
+            h = { std::max(h.x, p.x), std::max(h.y, p.y), std::max(h.z, p.z) };
+        });
+        std::vector<float> jointRadius(JOINTS, 0.f);
+        eachUse([&](uint32_t joint, const Vec3& p)
+        {
+            jointRadius[joint] = std::max(jointRadius[joint], length(p - (jointLow[joint] + jointHigh[joint]) * 0.5f));
+        });
+        for (uint32_t joint = 0; joint < JOINTS; ++joint)
+        {
+            if (jointLow[joint].x <= jointHigh[joint].x)
+            {
+                const Vec3 middle = (jointLow[joint] + jointHigh[joint]) * 0.5f;
+                geometry.jointSpheres.push_back({ joint, { middle.x, middle.y, middle.z }, jointRadius[joint] });
+            }
+        }
     }
     return geometry;
 }
@@ -816,7 +905,8 @@ uint32_t SceneQueue::addSkeleton(uint32_t jointCount)
     return id;
 }
 
-void SceneQueue::poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time)
+void SceneQueue::poseSkeleton(uint32_t id, const float* rows, uint32_t jointCount, std::chrono::steady_clock::time_point time,
+                              std::chrono::microseconds interpolate)
 {
     if (id == 0 || jointCount == 0)
     {
@@ -826,9 +916,19 @@ void SceneQueue::poseSkeleton(uint32_t id, const float* rows, uint32_t jointCoun
     command.id = id;
     command.rows.assign(rows, rows + size_t(jointCount) * 12);
     command.time = sceneTime(time);
+    command.interpolate = uint32_t(std::max<int64_t>(0, interpolate.count()));
 
     std::lock_guard<std::mutex> lock(mMutex);
     mCommands.skeletons.push_back(std::move(command));
+}
+
+void SceneQueue::setSkeletonResident(uint32_t id, bool resident)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.residentSkeletons.emplace_back(id, resident);
+    }
 }
 
 void SceneQueue::removeSkeleton(uint32_t id)

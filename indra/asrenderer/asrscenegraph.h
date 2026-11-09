@@ -50,18 +50,21 @@ enum SceneResult : ResultId
 enum ScenePass : PassId
 {
     PassUpload,
-    PassSkinPalette, // the skin passes: SKIN_PALETTE to SKIN_GROUPS, in order
+    PassSkinPose, // cheap pose/bounds work before culling; deformation follows demand
+    PassSkinPalette,
     PassSkinBind,
     PassSkinMorph,
-    PassSkinVertices,
     PassSkinClusters,
     PassSkinGroups,
     PassCullEarly,
     PassGroupsEarly,
+    PassSkinVertices,
+    PassSkinAudit,
     PassDrawEarly,
     PassPyramidEarly,
     PassCullLate,
     PassGroupsLate,
+    PassSkinVerticesLate,
     PassDrawLate,
     PassPyramidFinal,
     PassResolve,

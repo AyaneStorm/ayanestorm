@@ -5,11 +5,11 @@
 # Only asrviewer.cpp gets AS_RENDERER. A define on the whole viewer target would
 # recompile every file in newview each time it is switched. The renderer's include
 # folder does reach the whole target through the link, which is harmless.
-list(APPEND viewer_SOURCE_FILES asrcameraturn.cpp asrviewer.cpp asrworld.cpp)
-list(APPEND viewer_HEADER_FILES asrcameraturn.h asrviewer.h asrworld.h)
+list(APPEND viewer_SOURCE_FILES asravatarbody.cpp asrcameraturn.cpp asrviewer.cpp asrworld.cpp)
+list(APPEND viewer_HEADER_FILES asravatarbody.h asrcameraturn.h asrviewer.h asrworld.h asrworldshared.h)
 
 if(AS_RENDERER)
-    set_source_files_properties(asrcameraturn.cpp asrviewer.cpp asrworld.cpp PROPERTIES
+    set_source_files_properties(asravatarbody.cpp asrcameraturn.cpp asrviewer.cpp asrworld.cpp PROPERTIES
         COMPILE_DEFINITIONS AS_RENDERER
         INCLUDE_DIRECTORIES ${CMAKE_CURRENT_SOURCE_DIR}/../asrenderer)
 endif()

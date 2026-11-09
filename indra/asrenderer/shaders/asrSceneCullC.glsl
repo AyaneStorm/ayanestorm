@@ -21,6 +21,7 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #include "asrSceneCommon.glsl"
+#include "asrSceneSkinDemand.glsl"
 
 layout(local_size_x = 64) in;
 
@@ -82,18 +83,6 @@ bool latePhase()
 bool earlyPhase()
 {
     return push.phase == CULL_EARLY || push.phase == CULL_GROUPS_EARLY;
-}
-
-bool insideView(ViewRef view, vec3 center, float radius)
-{
-    for (int i = 0; i < 6; ++i)
-    {
-        if (dot(view.planes[i], vec4(center, 1.0)) < -radius)
-        {
-            return false;
-        }
-    }
-    return view.farClip <= 0.0 || distance(center, view.camera.xyz) - radius <= view.farClip;
 }
 
 // True when every pixel the sphere covers already shows something nearer. The screen
@@ -238,6 +227,7 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
         }
         visible.items[view.listBase[list] + slot] = ListEntry(instanceIndex, clusterId);
     }
+    if (earlyPhase() || latePhase()) requestSkin(view, instance, latePhase());
 }
 
 void retest(ViewRef view, uint instanceIndex, uint clusterId)
@@ -471,7 +461,7 @@ void main()
     occluderRows = late ? view.viewRows : view.previousRows;
     occluderFocal = late ? view.projection.xy : view.previousProjection.xy;
     occluderNear = late ? view.projection.z : view.previousProjection.z;
-    testOcclusion = late || (earlyPhase() && view.previousProjection.w != 0.0);
+    testOcclusion = view.debugView != DEBUG_VIEW_NO_OCCLUSION && (late || (earlyPhase() && view.previousProjection.w != 0.0));
 
     if (push.phase >= CULL_GROUPS_EARLY)
     {

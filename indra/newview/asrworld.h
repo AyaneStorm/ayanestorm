@@ -7,8 +7,9 @@
  * on worker threads, and all prims of that shape share it. See section 4 of
  * doc/ayanestorm-new-renderer-plan.md.
  *
- * Prims, sculpts, mesh and terrain are drawn so far. Flexible prims, attachments and rigged objects
- * are left out until their own steps.
+ * Prims, sculpts, mesh, terrain, attachments, rigged mesh and the system avatar body
+ * (asravatarbody.cpp) are drawn so far, worn or animated, on each avatar's skeleton on the GPU.
+ * Flexible prims are left out until their own step.
  */
 #ifndef ASR_WORLD_H
 #define ASR_WORLD_H
@@ -20,6 +21,8 @@ class LLVector3;
 class LLViewerFetchedTexture;
 class LLVolume;
 class LLVolumeParams;
+class LLVOAvatar;
+class LLViewerObject;
 
 namespace ASRWorld
 {
@@ -33,6 +36,16 @@ namespace ASRWorld
     void objectMoved(LLDrawable* drawable);
 
     void objectRemoved(LLDrawable* drawable);
+
+    // An avatar's body morph masks were made again, in place, from its bakes.
+    void avatarMasksChanged(LLVOAvatar* avatar);
+
+    // Every how many frames the avatar animates, by distance rank; 0 when the renderer
+    // does not set it (off, your own avatar, not drawn by it), so the viewer's rules apply.
+    S32 animationPeriod(LLVOAvatar* avatar);
+
+    // The viewer animated the avatar this frame: its joints and body weights can have moved.
+    void avatarAnimated(LLVOAvatar* avatar);
 
     // The native frame, in place of LLPipeline::updateGL(): runs the terrain patches' part of
     // that queue, so the viewer can finish a patch's update and stop recomputing its normals
@@ -55,6 +68,15 @@ namespace ASRWorld
     // the faces are in view but the GPU drew none of it, it is hidden, and wants less.
     enum class TextureUse { Wanted, NotDrawn, Release };
     TextureUse judgeTexture(LLViewerFetchedTexture* image, bool inView, F32 bias, F32& size);
+    // Distance-based mip floor for textures used exclusively by small avatar details.
+    S32 avatarDetailDiscard(LLViewerFetchedTexture* image);
+    // In view and near the camera: always allowed to update, even past the texture limit.
+    bool isNearTexture(LLViewerFetchedTexture* image);
+    // Near surfaces always, and far ones at high screen demand when they fit, refine above the soft target.
+    bool canRefineVisibleTexture(LLViewerFetchedTexture* image, S32 discard);
+    // Crowd detail ranking: the factor on the LOD factor for the meshes an avatar wears.
+    // 1 for anything not worn, and while the renderer is off.
+    F32 avatarLodScale(LLViewerObject* object);
     void releaseTexture(LLViewerFetchedTexture* image);
 
     // Applies everything reported since the last call. Main thread, once per frame.

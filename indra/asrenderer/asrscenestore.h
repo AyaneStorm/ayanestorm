@@ -36,7 +36,7 @@ enum class SceneTable : uint32_t
     PaletteJobs,
     Palette,          // written by the GPU, entry for entry with PaletteJobs
     Bindings,
-    SkinBlocks,       // a binding id per block of SKIN_BLOCK vertices or clusters, 0 for none
+    SkinBlocks,       // a binding id per block of SKIN_BLOCK vertices, 0 for none
     SkinnedPositions, // written by the GPU
     Morphs,
     MorphVertices,
@@ -45,6 +45,7 @@ enum class SceneTable : uint32_t
     MorphedPositions,  // written by the GPU, entry for entry with MorphedAttributes
     MorphedAttributes,
     MorphWork,         // rewritten each update: the morphs to rebuild this frame
+    ClusterBlocks,     // a binding id per block of SKIN_BLOCK clusters, 0 for none
     Count
 };
 
@@ -53,9 +54,9 @@ constexpr uint32_t SCENE_FIRST_SKIN_TABLE = uint32_t(SceneTable::Skeletons);
 constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial),
                                                         sizeof(GpuTerrain), sizeof(GpuSkeleton), sizeof(GpuJoint), 48,
                                                         sizeof(GpuPaletteJob), 48, sizeof(GpuBinding), sizeof(uint32_t),
-                                                        sizeof(PackedPosition), sizeof(GpuMorph), sizeof(GpuMorphVertex),
+                                                        16, sizeof(GpuMorph), sizeof(GpuMorphVertex), // skinned positions: float4, not SNORM16
                                                         sizeof(GpuMorphDelta), sizeof(float), 16, sizeof(PackedAttributes),
-                                                        sizeof(GpuMorphWork) };
+                                                        sizeof(GpuMorphWork), sizeof(uint32_t) };
 static_assert(SCENE_TABLES - SCENE_FIRST_SKIN_TABLE == sizeof(GpuSceneView::skinTables) / sizeof(uint64_t), "one address per avatar table");
 constexpr uint64_t SCENE_CHUNK_BYTES = 64ull * 1024 * 1024;
 
@@ -67,8 +68,9 @@ public:
 
     void grow(uint64_t capacity);
     uint64_t capacity() const { return mEnd; }
-    uint64_t used() const { return mBump; } // nothing past this was ever handed out
+    uint64_t used() const { return mBump; } // live or still awaiting retirement; free tails collapse
     uint64_t freeSpace() const { return mEnd - mBump + mFreeBytes; }
+    uint64_t live() const { return mBump - mFreeBytes; } // handed out and not released
 
     // Returns false when no range is large enough. Takes the smallest range that fits.
     // Both cost log n: a teleport can leave tens of thousands of free ranges.
@@ -93,7 +95,9 @@ public:
 
     // Creates a chunk of SCENE_CHUNK_BYTES and returns its device address, or 0 when
     // the geometry budget has no room for it.
-    virtual uint64_t createSceneChunk() = 0;
+    virtual uint64_t createSceneChunk(uint32_t index) = 0;
+    // Called only after every range has passed the frames-in-flight retirement delay.
+    virtual void releaseSceneChunk(uint32_t index) = 0;
 };
 
 // One write. When data is null, source is an offset into SceneStore::tableBytes().
@@ -123,6 +127,7 @@ public:
 
     // What the tables must hold for writes() to fit.
     uint64_t tableCapacity(SceneTable table) const { return mTableCapacity[uint32_t(table)]; }
+    bool positionsCompacted() const { return mPositionsCompacted; }
 
     // One past the highest instance in use.
     uint32_t instanceEnd() const { return mInstanceEnd; }
@@ -147,7 +152,19 @@ public:
     size_t pendingGeometries() const { return mQueuedGeometries; }
 
     uint64_t triangles() const { return mTriangles; }   // in all instances
-    uint32_t chunkCount() const { return uint32_t(mChunks.size()); }
+    uint32_t chunkCount() const;
+    // Temporary, for the log: skin jobs run over a table up to its end; live is what is in use.
+    uint64_t rangeEnd(SceneTable table) const { return mRanges[uint32_t(table)].used(); }
+    uint64_t rangeLive(SceneTable table) const { return mRanges[uint32_t(table)].live(); }
+    void memoryStats(uint64_t& chunkBytes, uint64_t& chunkFree, uint64_t& tables, uint64_t& skinnedPositions, uint64_t& clusters) const
+    {
+        chunkBytes = uint64_t(chunkCount()) * SCENE_CHUNK_BYTES;
+        chunkFree = freeChunkBytes();
+        tables = 0;
+        for (uint32_t i = 0; i < SCENE_TABLES; ++i) tables += mTableCapacity[i];
+        skinnedPositions = mTableCapacity[uint32_t(SceneTable::SkinnedPositions)];
+        clusters = mTableCapacity[uint32_t(SceneTable::Clusters)];
+    }
 
     // Clusters' total triangle count, for tests.
     uint64_t freeChunkBytes() const;
@@ -175,6 +192,8 @@ private:
         uint32_t vertexCount = 0;
         uint32_t clusterCount = 0;
         bool skinned = false;    // has weights
+        uint32_t skinJoints = 0; // validate each LOD independently against a skin
+        std::vector<GeometryData::JointSphere> jointSpheres; // kept after upload, for skinned bindings' reach
         bool uploaded = false;
         bool removing = false; // asked to go, and waiting for its last user
         bool queued = false;   // waiting in mPending to be uploaded
@@ -195,8 +214,9 @@ private:
         uint32_t time = 0;
         uint32_t previousTime = 0;
         bool posed = false;
+        bool interpolate = false; // drawn one gap late, between its last two poses
         bool removing = false;
-        float reach = 0.f;       // how far anything skinned to it can be from its joints, before joint scale
+        bool parked = false;     // out of view: its skinned bindings hold no storage
         uint32_t users = 0;      // bindings and palettes
         uint64_t jointUpdate = 0; // the update that last wrote its joints, and where
         uint32_t jointWrite = 0;
@@ -216,6 +236,10 @@ private:
         uint32_t first = 0;
         uint32_t count = 0;
         uint32_t users = 0;
+        // Faces of one mesh on one skeleton must use the same position grid, or shared
+        // edges round apart. Keep their maximum reach here, without widening other skins.
+        float reach = 0.f;
+        std::vector<uint32_t> bindings;
     };
 
     struct Binding
@@ -232,12 +256,18 @@ private:
         uint32_t vertexCapacity = 0;
         uint32_t firstBlock = 0;
         uint32_t blockCount = 0;
+        uint32_t firstClusterBlock = 0;
+        uint32_t clusterBlockCount = 0;
         uint32_t matrix = 0;      // attached
         uint32_t morph = 0;       // skinned
-        // How far its vertices reach from its joints: centre + (sphere + morph bound) * stretch.
+        uint32_t instance = 0;    // skinned
+        bool parked = false;      // skinned, with no storage: see SceneStore::setResident()
+        float lodSize = 0.f;
+        // How far its vertices reach from their joints: centre + morph bound * stretch, and
+        // that reach as written, which only grows.
         float reachCenter = 0.f;
         float reachStretch = 0.f;
-        float sphere = 0.f;
+        float reach = 0.f;
     };
 
     struct MorphSet
@@ -325,11 +355,15 @@ private:
     uint32_t bindSkinned(uint32_t instance, const InstanceDesc& desc);
     uint32_t bindAttached(uint32_t instance, const InstanceDesc& desc, const GpuInstance& placed);
     void unbind(uint32_t binding, uint64_t frame);
-    uint32_t usePalette(uint32_t skeleton, uint32_t skin);
-    void releasePalette(uint32_t skeleton, uint32_t skin, uint64_t frame);
+    uint32_t usePalette(uint32_t skeleton, uint32_t skin, uint32_t binding);
+    void releasePalette(uint32_t skeleton, uint32_t skin, uint32_t binding, uint64_t frame);
     uint32_t allocateRange(SceneTable table, uint64_t size);
     void retireRange(SceneTable table, uint32_t first, uint32_t count, uint64_t frame);
     void writeSkinnedBinding(uint32_t id, uint32_t instance, const InstanceDesc& desc);
+    void writeSkinnedBinding(uint32_t id); // from what the binding holds
+    void allocateDeformed(uint32_t id);
+    void releaseDeformed(uint32_t id, uint64_t frame);
+    void setResident(uint32_t skeleton, bool resident, uint64_t frame);
 
     void applyMorphSet(const MorphSetCommand& command);
     void applyMorph(const MorphCommand& command);
@@ -338,6 +372,7 @@ private:
     void removeMorphIfUnused(uint32_t id, uint64_t frame);
     void writeMorphWork();
     void widenReach(uint32_t binding); // to the binding's reach, if that is further
+    void writeMorphEntry(uint32_t morph); // its GPU entry, bound included
 
     void writeTable(SceneTable table, uint32_t index, const void* data, uint64_t bytes);
 
@@ -346,6 +381,8 @@ private:
     void writeEntry(SceneTable table, uint32_t index, const void* data, uint64_t bytes);
 
     void ensureTable(SceneTable table, uint64_t entries);
+    void trimTables(); // reclaim unused tails, preserving stable indices and live contents
+    void compactDeformedPositions(); // fresh GPU output storage; no live source geometry moves
     void countClusters(const Geometry& geometry, uint32_t kind, int64_t instances);
     void countInstance(uint32_t id, uint32_t kind, int sign);
 
@@ -372,6 +409,8 @@ private:
     uint64_t mTriangles = 0;
     uint32_t mInstanceEnd = 0;
     bool mStarted = false;
+    bool mPositionsCompacted = false;
+    std::chrono::steady_clock::time_point mLastPositionCompaction{};
 
     std::vector<Skeleton> mSkeletons;
     std::vector<Skin> mSkins;

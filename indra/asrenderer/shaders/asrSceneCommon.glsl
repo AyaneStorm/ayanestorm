@@ -34,6 +34,7 @@ struct Instance
 // Avatars: see asrscene.h and asrSceneSkinC.glsl.
 const uint BINDING_ATTACHED = 1u;
 const uint BINDING_SKINNED = 2u;
+const uint SKELETON_PARKED = 1u;
 
 struct Rows
 {
@@ -44,18 +45,24 @@ struct Joint
 {
     Rows newest;
     Rows previous;
+    vec4 rotationDelta;
+    Rows predicted;
+    uint skeleton;
+    uint unused[3];
 };
 
 struct Skeleton
 {
-    vec3 boxCenter;
+    vec3 boxCenter; // the joints' cube: see bindingBox()
     float boxScale;
     uint firstJoint;
     uint jointCount;
     uint time;
     uint previousTime;
     float maxLead;
-    uint unused[3];
+    float stretch;
+    float minLead;
+    uint flags;
 };
 
 struct PaletteJob
@@ -84,7 +91,10 @@ struct Binding
     uint groupCapacity;
     uint64_t weights;
     uint morph;
-    uint unused;
+    float reach;
+    uint firstClusterBlock;
+    uint skinDemand;
+    uint bindingUnused[2];
 };
 
 struct Morph
@@ -95,7 +105,8 @@ struct Morph
     uint masks;
     uint outputIndex;
     float normalSoften;
-    uint unused[2];
+    float bound;
+    uint unused;
 };
 
 // GpuSceneView::skinTables, in SceneTable order.
@@ -114,12 +125,13 @@ const uint SKIN_TABLE_MORPH_WEIGHTS = 11u;
 const uint SKIN_TABLE_MORPHED_POSITIONS = 12u;
 const uint SKIN_TABLE_MORPHED_ATTRIBUTES = 13u;
 const uint SKIN_TABLE_MORPH_WORK = 14u;
+const uint SKIN_TABLE_CLUSTER_BLOCKS = 15u;
 
 struct Geometry
 {
     uint firstGroup;
     uint groupCount; // 0 when its clusters are tested directly
-    uint unused;
+    uint skinJoints;
     float radius;
     uint firstCluster;
     uint clusterCount;
@@ -214,15 +226,38 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint clusterEnd;
     uint materialEnd;
     uint groupEnd;   // entries of the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
-    uint64_t skinTables[15];
+    uint64_t skinTables[16];
     uint64_t drawOnly; // not 0: a bit per skeleton, and only instances bound to one set are drawn
     uint time;
     uint paletteEnd;
     uint bindingEnd;
     uint blockEnd;
     uint morphWorkEnd;
-    uint viewUnused[3];
+    uint jointEnd;
+    uint skinAudit;
+    uint clusterBlockEnd;
+    uint debugView; // DEBUG_VIEW_*
+    uint viewUnused;
 };
+
+const uint DEBUG_VIEW_NORMALS = 1u;
+const uint DEBUG_VIEW_ALBEDO = 2u;
+const uint DEBUG_VIEW_ALPHA_MODE = 3u;
+const uint DEBUG_VIEW_CLUSTERS = 4u;
+const uint DEBUG_VIEW_NO_OCCLUSION = 5u;
+
+// The sphere touches the view frustum and is nearer than the far clip.
+bool insideView(ViewRef view, vec3 center, float radius)
+{
+    for (int i = 0; i < 6; ++i)
+    {
+        if (dot(view.planes[i], vec4(center, 1.0)) < -radius)
+        {
+            return false;
+        }
+    }
+    return view.farClip <= 0.0 || distance(center, view.camera.xyz) - radius <= view.farClip;
+}
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };
 layout(buffer_reference, std430) readonly buffer GeometriesRef { Geometry items[]; };
@@ -287,8 +322,23 @@ uint clusterIndex(uint64_t indices, uint index)
     return (word >> ((index & 1u) * 16u)) & 0xFFFFu;
 }
 
+// A cluster's geometry's vertices: the positions run up to the attributes.
+uint vertexCountOf(uint64_t positions, uint64_t attributes)
+{
+    return uint((attributes - (positions & ~1ul)) / ((positions & 1ul) != 0ul ? 16ul : 8ul));
+}
+
 vec3 packedPosition(uint64_t positions, uint vertex)
 {
+    // Source geometry is SNORM16, skinned source geometry float4. Deformed geometry keeps
+    // float4 positions relative to its skeleton. Float4 is tagged in the otherwise-zero
+    // low address bit on both APIs.
+    if ((positions & 1ul) != 0ul)
+    {
+        WordsRef floatWords = WordsRef(positions & ~1ul);
+        const uint at = vertex * 4u;
+        return vec3(uintBitsToFloat(floatWords.words[at]), uintBitsToFloat(floatWords.words[at + 1u]), uintBitsToFloat(floatWords.words[at + 2u]));
+    }
     WordsRef words = WordsRef(positions);
     const uint xy = words.words[vertex * 2u];
     const uint z = words.words[vertex * 2u + 1u];
@@ -308,6 +358,55 @@ vec3 octahedralDecode(float x, float y)
 }
 
 // A vertex's normal, from the first word of its attributes.
+// Until lighting in P4: a soft light from the normal so shapes read. Opaque surfaces and
+// Mac OIT's blended ones both take it, so a blended layer is not brighter than what it covers.
+float placeholderLight(vec3 normal)
+{
+    return 0.65 + 0.35 * dot(normal, normalize(vec3(0.4, 0.3, 0.87)));
+}
+
+// A palette entry holds the bind shape, which can scale unevenly, so a normal follows its
+// inverse transpose, as the viewer turns rigged normals by the bind shape's on the CPU. The
+// cofactor matrix is that up to the determinant: its sign is put back so a mirrored entry
+// keeps the normal outward, and each joint's share is normalized before the weighted sum.
+vec3 skinNormal(ViewRef view, Binding binding, uint vertex, vec3 normal)
+{
+    uvec4 joints;
+    vec4 amounts;
+    skinWeights(binding.weights, vertex, joints, amounts);
+    RowsRef palette = RowsRef(view.skinTables[SKIN_TABLE_PALETTE]);
+    vec3 turned = vec3(0.0);
+    for (int i = 0; i < 4; ++i)
+    {
+        if (amounts[i] > 0.0)
+        {
+            const Rows rows = palette.items[binding.palette + joints[i]];
+            const vec3 a = rows.r[0].xyz;
+            const vec3 b = rows.r[1].xyz;
+            const vec3 c = rows.r[2].xyz;
+            const vec3 bc = cross(b, c);
+            // Rows bc, ca, ab: the cofactor matrix, so the normal goes on the left.
+            vec3 joint = normal * mat3(bc, cross(c, a), cross(a, b));
+            joint *= dot(a, bc) < 0.0 ? -1.0 : 1.0;
+            if (dot(joint, joint) > 0.0)
+            {
+                turned += amounts[i] * normalize(joint);
+            }
+        }
+    }
+    return dot(turned, turned) > 0.0 ? normalize(turned) : normal;
+}
+
+// An object normal in the world: the cofactor of the instance rows, which stays right
+// under any stretch. GLSL's mat3() takes columns, so the normal goes on the left.
+vec3 worldNormalOf(Instance instance, vec3 objectNormal)
+{
+    const vec3 row0 = instance.rows[0].xyz;
+    const vec3 row1 = instance.rows[1].xyz;
+    const vec3 row2 = instance.rows[2].xyz;
+    return normalize(objectNormal * mat3(cross(row1, row2), cross(row2, row0), cross(row0, row1)));
+}
+
 vec3 attributeNormal(uint word)
 {
     return octahedralDecode(float(int(word << 16) >> 16) / 32767.0, float(int(word) >> 16) / 32767.0);
@@ -333,6 +432,27 @@ vec2 planarUV(vec3 normal, vec3 position)
 vec3 transformPoint(vec4 rows[3], vec3 p)
 {
     return vec3(dot(rows[0], vec4(p, 1.0)), dot(rows[1], vec4(p, 1.0)), dot(rows[2], vec4(p, 1.0)));
+}
+
+// Where every scene pass puts a vertex: the visibility, masked and Mac OIT passes must give
+// equal surfaces bit-equal depths, so one rank step settles their ties as the viewer's pass
+// order does. Each of their vertex shaders declares gl_Position invariant and calls this,
+// so no compiler fuses the arithmetic differently in one of them.
+// Reversed depth, so a larger z is nearer, and depth is near / distance, so the rank moves a
+// surface by the same share of its distance everywhere. One rank is a few steps of the
+// depth buffer.
+// The vertex is never made a world position: at region coordinates a float steps in microns,
+// which would round each layer of a skin separately. It is placed relative to the camera, the
+// instance's own offset from the camera rounded once for all its vertices, and the camera's
+// clip position added last, one value for the whole view.
+vec4 scenePosition(ViewRef view, Instance instance, vec3 packed)
+{
+    const vec3 offset = vec3(instance.rows[0].w, instance.rows[1].w, instance.rows[2].w) - view.camera.xyz;
+    const vec3 relative = vec3(dot(instance.rows[0].xyz, packed), dot(instance.rows[1].xyz, packed), dot(instance.rows[2].xyz, packed)) + offset;
+    vec4 position = view.viewProjection * vec4(relative, 0.0) + view.viewProjection * vec4(view.camera.xyz, 1.0);
+    const uint rank = (instance.flags >> INSTANCE_RANK_SHIFT) & INSTANCE_RANK_MAX;
+    position.z *= 1.0 + float(rank) / 4194304.0;
+    return position;
 }
 
 uint pyramidLevelSize(uint pixels, uint level)

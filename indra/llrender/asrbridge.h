@@ -65,8 +65,11 @@ namespace ASR
         virtual void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, PixelLayout layout, U32 fromMip) = 0;
         virtual void publishTexture(U32 slot) = 0;
         virtual void destroyTexture(U32 slot) = 0;
-        // Bytes that exist or have been asked for, and how much textures may take.
-        virtual void getTextureMemory(U64& used, U64& limit) = 0;
+        // Bytes that exist or have been asked for, how much textures should take (what the
+        // discard bias steers by), and how much a new image may never push them past.
+        virtual void getTextureMemory(U64& used, U64& limit, U64& hardLimit) = 0;
+        // Admission for a decoded first image; a relative mip, without changing its raw data.
+        virtual U32 firstTextureMip(U32 width, U32 height, U32 components, bool mips) = 0;
         // How many more textures can exist now.
         virtual U32 freeTextureSlots() = 0;
 
@@ -110,10 +113,11 @@ namespace ASR
     void imageChanged(const void* image);
     void takeChangedImages(std::vector<const void*>& images);
 
-    // What the viewer's texture budget steers by, in bytes.
-    void getTextureMemory(U64& used, U64& limit);
+    // What the viewer's texture budget steers by, in bytes, and the limit no image may pass.
+    void getTextureMemory(U64& used, U64& limit, U64* hardLimit = nullptr);
     // Whether a new image of this size stays inside the limit.
     bool textureFits(S32 width, S32 height, S32 components, bool mips);
+    U32 firstTextureMip(U32 width, U32 height, U32 components, bool mips);
     // How many more textures can exist now. Slots are a hard limit, unlike memory.
     U32 freeTextureSlots();
 

@@ -2,32 +2,39 @@
  * asrSceneSkinC.glsl
  * Avatars, before anything is culled. Each frame, once for every view:
  *
- * Palette: one thread per palette entry. A joint's pose is carried on from its two newest
- * main-thread poses to the frame's own time, then times the skin's inverse bind matrix.
+ * Pose: one thread per joint, continuing rotation and translation to the frame's time
+ * while preserving the latest scale/shear. Every skin and attachment shares the result.
+ * Palette: one thread per palette entry, times the skin's inverse bind matrix.
  * One palette serves every face skinned to that skeleton and skin.
  *
  * Bind: one thread per binding. An attached instance gets its joint's pose times its own
  * matrix. A skinned one is placed in its skeleton's box, picks its LOD, and gets its own
  * geometry pointed at the LOD's room.
  *
- * Vertices: a thread per vertex of the LOD picked, skinned and packed in the box.
- * Clusters: a thread per cluster, with bounds and a normal cone from the skinned triangles.
- * Groups: spheres around their clusters.
+ * Clusters: one thread per cluster, conservative bounds from its influencing joints.
+ * Groups: spheres around their clusters, before culling decides deformation demand.
+ * Vertices: a thread per selected-LOD vertex, only for bindings admitted by early culling
+ * or newly exposed by current-depth late culling. Float position fidelity is unchanged.
  *
  * So culling, drawing and the resolve read skinned geometry like any other.
  */
 #version 460
 #extension GL_GOOGLE_include_directive : require
 #include "asrSceneCommon.glsl"
+#include "asrSceneJointPose.glsl"
+#include "asrSceneSkinDemand.glsl"
 
 layout(local_size_x = 64) in;
 
-const uint SKIN_PALETTE = 0u;
-const uint SKIN_BIND = 1u;
-const uint SKIN_MORPH = 2u;
-const uint SKIN_VERTICES = 3u;
-const uint SKIN_CLUSTERS = 4u;
-const uint SKIN_GROUPS = 5u;
+const uint SKIN_POSE = 0u;
+const uint SKIN_PALETTE = 1u;
+const uint SKIN_BIND = 2u;
+const uint SKIN_MORPH = 3u;
+const uint SKIN_VERTICES = 4u;
+const uint SKIN_CLUSTERS = 5u;
+const uint SKIN_GROUPS = 6u;
+const uint SKIN_VERTICES_LATE = 7u;
+const uint SKIN_AUDIT = 8u;
 const uint SKIN_BLOCK = 64u;
 const uint MAX_LODS = 4u;
 const uint MORPH_NO_MASK = 0xFFFFFFFFu;
@@ -71,6 +78,7 @@ layout(buffer_reference, std430) buffer Vec4Ref { vec4 items[]; };
 
 layout(buffer_reference, std430) readonly buffer SkeletonsRef { Skeleton items[]; };
 layout(buffer_reference, std430) readonly buffer JointsRef { Joint items[]; };
+layout(buffer_reference, std430) buffer JointsWriteRef { Joint items[]; };
 layout(buffer_reference, std430) readonly buffer PaletteJobsRef { PaletteJob items[]; };
 layout(buffer_reference, std430) writeonly buffer RowsWriteRef { Rows items[]; };
 layout(buffer_reference, std430) buffer BindingsWriteRef { Binding items[]; };
@@ -92,27 +100,42 @@ Rows multiply(Rows a, Rows b)
 }
 
 // The motion between the two newest poses, carried on to the frame's time, at most maxLead
-// steps. Times wrap, so they are compared by difference.
-Rows predict(ViewRef view, Skeleton skeleton, uint joint)
+// steps. Times wrap, so they are compared by difference. With minLead -1 the skeleton is
+// drawn one step late: from the pose before (-1) to the newest (0), never past it.
+void predictJoint(ViewRef view, uint joint)
 {
+    if (joint >= view.jointEnd) return;
     const Joint pose = JointsRef(view.skinTables[SKIN_TABLE_JOINTS]).items[joint];
+    if (pose.skeleton == 0u) return;
+    const Skeleton skeleton = SkeletonsRef(view.skinTables[SKIN_TABLE_SKELETONS]).items[pose.skeleton];
+    if (joint < skeleton.firstJoint || joint - skeleton.firstJoint >= skeleton.jointCount) return;
     const uint step = skeleton.time - skeleton.previousTime;
     float lead = 0.0;
     if (step != 0u)
     {
-        lead = clamp(float(int(view.time - skeleton.time)) / float(step), 0.0, skeleton.maxLead);
+        lead = clamp(float(int(view.time - skeleton.time)) / float(step) + skeleton.minLead, skeleton.minLead, skeleton.maxLead);
     }
-    Rows m;
+    const Rows predicted = extrapolateJoint(pose, lead);
     for (int i = 0; i < 3; ++i)
     {
-        m.r[i] = pose.newest.r[i] + (pose.newest.r[i] - pose.previous.r[i]) * lead;
+        JointsWriteRef(view.skinTables[SKIN_TABLE_JOINTS]).items[joint].predicted.r[i] = predicted.r[i];
     }
-    return m;
+}
+
+Rows predict(ViewRef view, uint joint)
+{
+    return JointsRef(view.skinTables[SKIN_TABLE_JOINTS]).items[joint].predicted;
 }
 
 Skeleton skeletonOf(ViewRef view, uint id)
 {
     return SkeletonsRef(view.skinTables[SKIN_TABLE_SKELETONS]).items[id];
+}
+
+// Conservative fallback LOD size; deformed positions no longer use this packing grid.
+float bindingBox(Skeleton skeleton, Binding binding)
+{
+    return (skeleton.boxScale + binding.reach * skeleton.stretch) * 1.001;
 }
 
 void makePalette(ViewRef view, uint entry)
@@ -122,35 +145,38 @@ void makePalette(ViewRef view, uint entry)
         return;
     }
     const PaletteJob job = PaletteJobsRef(view.skinTables[SKIN_TABLE_PALETTE_JOBS]).items[entry];
-    if (job.skeleton == 0u)
+    if (job.skeleton == 0u || (skeletonOf(view, job.skeleton).flags & SKELETON_PARKED) != 0u)
     {
-        return; // a free entry
+        return; // free or parked: no resident skinned consumer needs this palette
     }
     const Rows matrix = RowsRef(view.skinTables[SKIN_TABLE_MATRICES]).items[job.matrix];
-    RowsWriteRef(view.skinTables[SKIN_TABLE_PALETTE]).items[entry] = multiply(predict(view, skeletonOf(view, job.skeleton), job.joint), matrix);
+    // The joint is taken to the skeleton centre before the bind matrices multiply it: the
+    // product's translation then stays metres, not region coordinates whose float steps are
+    // microns, and the rounding left is the joint's own, shared by every layer it moves.
+    // Layered meshes with different bind matrices keep their micron offsets this way.
+    Rows joint = predict(view, job.joint);
+    const vec3 center = skeletonOf(view, job.skeleton).boxCenter;
+    for (int row = 0; row < 3; ++row) joint.r[row].w -= center[row];
+    RowsWriteRef(view.skinTables[SKIN_TABLE_PALETTE]).items[entry] = multiply(joint, matrix);
 }
 
 // The finest LOD that is in and fine enough, as the cull shader picks for other instances.
-uint chooseLod(ViewRef view, uint id, vec3 center, float size)
+uint chooseLod(ViewRef view, uint id, vec3 center, float size, uint paletteCount)
 {
     GeometriesRef geometries = GeometriesRef(push.geometries);
-    Geometry geometry = geometries.items[id];
     const float ratio = distance(center, view.camera.xyz) * view.projection.w / size;
-    for (uint lod = 1u; lod < MAX_LODS && geometry.coarser != 0u; ++lod)
+    uint chosen = 0u;
+    for (uint lod = 0u; lod < MAX_LODS && id != 0u; ++lod)
     {
-        if (geometry.clusterCount != 0u && ratio <= geometry.coarserAt)
+        const Geometry geometry = geometries.items[id];
+        if (geometry.clusterCount != 0u && geometry.skinJoints != 0u && geometry.skinJoints <= paletteCount)
         {
-            break;
-        }
-        const Geometry coarser = geometries.items[geometry.coarser];
-        if (coarser.clusterCount == 0u && geometry.clusterCount != 0u)
-        {
-            break;
+            chosen = id;
+            if (ratio <= geometry.coarserAt) break;
         }
         id = geometry.coarser;
-        geometry = coarser;
     }
-    return id;
+    return chosen;
 }
 
 void bind(ViewRef view, uint id)
@@ -170,7 +196,7 @@ void bind(ViewRef view, uint id)
 
     if (binding.kind == BINDING_ATTACHED)
     {
-        const Rows pose = predict(view, skeleton, binding.palette);
+        const Rows pose = predict(view, binding.palette);
         const Rows placed = multiply(pose, RowsRef(view.skinTables[SKIN_TABLE_MATRICES]).items[binding.matrix]);
         // Row by row: a whole array written to device memory does not translate to Metal.
         instances.items[binding.instance].rows[0] = placed.r[0];
@@ -180,21 +206,27 @@ void bind(ViewRef view, uint id)
         return;
     }
 
-    // Packed positions are box units, so the matrix is the box.
+    // Demand is per frame, reset before either culling phase can admit this binding.
+    bindings.items[id].skinDemand = SKIN_DEMAND_NONE;
+    // Deformed positions are float metres relative to the same skeleton centre.
+    // No per-face grid or changing scale can move a shared boundary vertex.
     const vec3 center = skeleton.boxCenter;
-    const float scale = skeleton.boxScale;
-    instances.items[binding.instance].rows[0] = vec4(scale, 0.0, 0.0, center.x);
-    instances.items[binding.instance].rows[1] = vec4(0.0, scale, 0.0, center.y);
-    instances.items[binding.instance].rows[2] = vec4(0.0, 0.0, scale, center.z);
-    const float size = binding.lod.w > 0.0 ? binding.lod.w : scale;
+    instances.items[binding.instance].rows[0] = vec4(1.0, 0.0, 0.0, center.x);
+    instances.items[binding.instance].rows[1] = vec4(0.0, 1.0, 0.0, center.y);
+    instances.items[binding.instance].rows[2] = vec4(0.0, 0.0, 1.0, center.z);
+    const float size = binding.lod.w > 0.0 ? binding.lod.w : bindingBox(skeleton, binding);
     instances.items[binding.instance].lod = vec4(center, size);
 
-    const uint chosen = chooseLod(view, binding.source, center, size);
+    // Outside the view: nothing to skin or draw this frame. bindingBox() bounds every
+    // deformed vertex per axis, so its sphere is the box's half diagonal. One that comes
+    // into the view is skinned in that same frame.
+    const bool seen = insideView(view, center, bindingBox(skeleton, binding) * 1.7321);
+    const uint chosen = seen ? chooseLod(view, binding.source, center, size, binding.matrix) : 0u;
     const Geometry lod = GeometriesRef(push.geometries).items[chosen];
     Geometry own;
     own.firstGroup = binding.targetEntry;
     own.groupCount = lod.groupCount;
-    own.unused = 0u;
+    own.skinJoints = 0u;
     own.radius = 0.0; // the clusters job widens it
     own.firstCluster = binding.targetEntry + binding.groupCapacity;
     own.clusterCount = lod.clusterCount;
@@ -206,32 +238,33 @@ void bind(ViewRef view, uint id)
     if (lod.clusterCount != 0u)
     {
         const Cluster first = ClustersRef(push.clusters).items[lod.firstCluster];
-        bindings.items[id].weights = first.attributes + 2ul * (first.attributes - first.positions);
+        bindings.items[id].weights = first.attributes + 16ul * vertexCountOf(first.positions, first.attributes);
     }
 }
 
 // The binding of this workgroup's block, and the block's place inside it. False when the
 // block is free, or its binding draws nothing this frame.
-bool blockBinding(ViewRef view, out Binding binding, out uint block)
+// Vertex blocks come from SKIN_TABLE_BLOCKS, cluster blocks from SKIN_TABLE_CLUSTER_BLOCKS.
+bool blockBinding(ViewRef view, bool clusterBlocks, out Binding binding, out uint block)
 {
     const uint index = gl_WorkGroupID.x;
-    if (index >= view.blockEnd)
+    if (index >= (clusterBlocks ? view.clusterBlockEnd : view.blockEnd))
     {
         return false;
     }
-    const uint id = WordsRef(view.skinTables[SKIN_TABLE_BLOCKS]).words[index];
+    const uint id = WordsRef(view.skinTables[clusterBlocks ? SKIN_TABLE_CLUSTER_BLOCKS : SKIN_TABLE_BLOCKS]).words[index];
     if (id == 0u)
     {
         return false;
     }
     binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[id];
-    block = index - binding.firstBlock;
+    block = index - (clusterBlocks ? binding.firstClusterBlock : binding.firstBlock);
     return binding.kind == BINDING_SKINNED && binding.chosen != 0u;
 }
 
 uint64_t ownPositions(ViewRef view, Binding binding)
 {
-    return view.skinTables[SKIN_TABLE_POSITIONS] + uint64_t(binding.positions) * 8ul;
+    return (view.skinTables[SKIN_TABLE_POSITIONS] + uint64_t(binding.positions) * 16ul) | 1ul;
 }
 
 int snorm16(float value)
@@ -301,22 +334,11 @@ void morphVertex(ViewRef view)
     attributes.words[at * 4u + 3u] = floatBitsToUint(uv.y);
 }
 
-void skinVertex(ViewRef view)
+// Direct float result also serves as the audit reference, before output storage.
+vec3 skinnedPoint(ViewRef view, Binding binding, uint vertex)
 {
-    Binding binding;
-    uint block;
-    if (!blockBinding(view, binding, block))
-    {
-        return;
-    }
-    const uint vertex = block * SKIN_BLOCK + gl_LocalInvocationID.x;
     const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
     const Cluster first = ClustersRef(push.clusters).items[lod.firstCluster];
-    if (vertex >= uint((first.attributes - first.positions) / 8ul))
-    {
-        return;
-    }
-
     vec3 mesh;
     if (binding.morph != 0u)
     {
@@ -340,12 +362,30 @@ void skinVertex(ViewRef view)
         }
     }
 
-    const Skeleton skeleton = skeletonOf(view, binding.skeleton);
-    const vec3 packed = (skinned - skeleton.boxCenter) / skeleton.boxScale;
-    PositionsWriteRef out_positions = PositionsWriteRef(ownPositions(view, binding));
-    out_positions.words[vertex * 2u] = (uint(snorm16(packed.x)) & 0xFFFFu) | (uint(snorm16(packed.y)) << 16);
-    out_positions.words[vertex * 2u + 1u] = uint(snorm16(packed.z)) & 0xFFFFu;
+    return skinned;
 }
+
+void skinVertex(ViewRef view)
+{
+    Binding binding;
+    uint block;
+    if (!blockBinding(view, false, binding, block)) return;
+    // Audit mode deforms all chosen bindings early, so its no-occlusion reference
+    // never reads old positions. Normal frames deform only actual draw consumers.
+    if (view.skinAudit != 0u)
+    {
+        if (push.phase == SKIN_VERTICES_LATE) return;
+    }
+    else if (binding.skinDemand != (push.phase == SKIN_VERTICES_LATE ? SKIN_DEMAND_LATE : SKIN_DEMAND_EARLY)) return;
+    const uint vertex = block * SKIN_BLOCK + gl_LocalInvocationID.x;
+    const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
+    const Cluster first = ClustersRef(push.clusters).items[lod.firstCluster];
+    if (vertex >= vertexCountOf(first.positions, first.attributes)) return;
+    const vec3 skinned = skinnedPoint(view, binding, vertex);
+    Vec4Ref(ownPositions(view, binding) & ~1ul).items[vertex] = vec4(skinned, 1.0);
+}
+
+#include "asrSceneSkinAudit.glsl"
 
 // As buildGeometry() packs a cone: rounded so it never claims more than the real one.
 uint coneBits(vec3 axis, float cutoff)
@@ -355,66 +395,16 @@ uint coneBits(vec3 axis, float cutoff)
     return (uint(bytes.x) & 0xFFu) | ((uint(bytes.y) & 0xFFu) << 8) | ((uint(bytes.z) & 0xFFu) << 16) | ((uint(bytes.w) & 0xFFu) << 24);
 }
 
-void skinCluster(ViewRef view)
+// Stores one deformed cluster from its bounds: one thread per cluster calls this.
+void writeSkinnedCluster(ViewRef view, Binding binding, Cluster source, uint64_t positions, uint local,
+                         vec3 middle, float radius, uint cone)
 {
-    Binding binding;
-    uint block;
-    if (!blockBinding(view, binding, block))
-    {
-        return;
-    }
-    const uint local = block * SKIN_BLOCK + gl_LocalInvocationID.x;
-    const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
-    if (local >= lod.clusterCount)
-    {
-        return;
-    }
-    const Cluster source = ClustersRef(push.clusters).items[lod.firstCluster + local];
-    const uint64_t positions = ownPositions(view, binding);
-
-    vec3 low = vec3(2.0);
-    vec3 high = vec3(-2.0);
-    vec3 normalSum = vec3(0.0);
-    for (uint triangle = 0u; triangle < source.triangles; ++triangle)
-    {
-        const vec3 a = packedPosition(positions, clusterIndex(source.indices, triangle * 3u));
-        const vec3 b = packedPosition(positions, clusterIndex(source.indices, triangle * 3u + 1u));
-        const vec3 c = packedPosition(positions, clusterIndex(source.indices, triangle * 3u + 2u));
-        low = min(low, min(a, min(b, c)));
-        high = max(high, max(a, max(b, c)));
-        const vec3 facing = cross(b - a, c - a);
-        if (dot(facing, facing) > 0.0)
-        {
-            normalSum += normalize(facing);
-        }
-    }
-    const vec3 middle = (low + high) * 0.5;
-    const vec3 axis = dot(normalSum, normalSum) > 0.0 ? normalize(normalSum) : vec3(0.0, 0.0, 1.0);
-    float radius = 0.0;
-    float cutoff = 1.0;
-    bool anyNormal = false;
-    for (uint triangle = 0u; triangle < source.triangles; ++triangle)
-    {
-        const vec3 a = packedPosition(positions, clusterIndex(source.indices, triangle * 3u));
-        const vec3 b = packedPosition(positions, clusterIndex(source.indices, triangle * 3u + 1u));
-        const vec3 c = packedPosition(positions, clusterIndex(source.indices, triangle * 3u + 2u));
-        radius = max(radius, max(distance(a, middle), max(distance(b, middle), distance(c, middle))));
-        const vec3 facing = cross(b - a, c - a);
-        if (dot(facing, facing) > 0.0)
-        {
-            cutoff = min(cutoff, dot(normalize(facing), axis));
-            anyNormal = true;
-        }
-    }
-    radius += 2.0 / 32767.0; // packing moves vertices a little, as in buildGeometry()
-
-    // The sine of how far normals stray past the plane: 1 turns the facing test off.
-    const float sine = (cutoff <= 0.0 || !anyNormal) ? 1.0 : sqrt(max(1.0 - cutoff * cutoff, 0.0));
+    radius += max(1e-5, length(middle) * 1e-6); // conservative float roundoff
 
     Cluster own;
     own.center = middle;
     own.radius = radius;
-    own.cone = coneBits(axis, sine);
+    own.cone = cone;
     own.triangles = source.triangles;
     own.indices = source.indices;
     own.positions = positions;
@@ -432,11 +422,103 @@ void skinCluster(ViewRef view)
     atomicMax(geometryWords.words[binding.target * 8u + 3u], floatBitsToUint(length(middle) + radius));
 }
 
-void skinGroups(ViewRef view)
+// An upper bound of how much the rows' linear part can stretch a length: the square root of
+// the largest Gershgorin row sum of L Lt. Exact for rotations and uniform scales.
+float stretchOf(Rows rows)
+{
+    const vec3 a = rows.r[0].xyz;
+    const vec3 b = rows.r[1].xyz;
+    const vec3 c = rows.r[2].xyz;
+    const float ab = abs(dot(a, b));
+    const float ac = abs(dot(a, c));
+    const float bc = abs(dot(b, c));
+    return sqrt(max(dot(a, a) + ab + ac, max(dot(b, b) + ab + bc, dot(c, c) + ac + bc)));
+}
+
+// Whether the rows only turn and scale evenly, so face normals turn as the rows do. A mirror
+// fails: it flips them.
+bool turnsOnly(Rows rows)
+{
+    const vec3 a = rows.r[0].xyz;
+    const vec3 b = rows.r[1].xyz;
+    const vec3 c = rows.r[2].xyz;
+    const float scale = dot(a, a);
+    const float tolerance = scale * 1e-3;
+    return scale > 0.0 && dot(cross(a, b), c) > 0.0 && abs(dot(b, b) - scale) <= tolerance && abs(dot(c, c) - scale) <= tolerance
+        && abs(dot(a, b)) <= tolerance && abs(dot(a, c)) <= tolerance && abs(dot(b, c)) <= tolerance;
+}
+
+// One thread per cluster, with no vertex read. A skinned vertex is the weighted sum of where
+// each of its joints carries it, so with weights that sum to one it lies among those points,
+// and the cluster's rest sphere (widened by the morph bound) carried through each of its
+// joints holds it. buildGeometry() lists the joints after the cluster's indices: their
+// count, how far a weight sum strays from one (in 4/65535ths), then the joints.
+void skinCluster(ViewRef view)
 {
     Binding binding;
     uint block;
-    if (!blockBinding(view, binding, block) || block != 0u)
+    if (!blockBinding(view, true, binding, block)) return;
+    const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
+    const uint local = block * SKIN_BLOCK + gl_LocalInvocationID.x;
+    if (local >= lod.clusterCount) return;
+    const Cluster source = ClustersRef(push.clusters).items[lod.firstCluster + local];
+
+    const uint list = source.triangles * 3u;
+    const uint jointCount = clusterIndex(source.indices, list);
+    const float stray = float(clusterIndex(source.indices, list + 1u)) * (4.0 / 65535.0);
+    const float bound = binding.morph != 0u ? MorphsRef(view.skinTables[SKIN_TABLE_MORPHS]).items[binding.morph].bound : 0.0;
+    const vec3 restCenter = source.center * binding.sourceBox.w + binding.sourceBox.xyz;
+    const float restRadius = source.radius * binding.sourceBox.w + bound;
+    RowsRef palette = RowsRef(view.skinTables[SKIN_TABLE_PALETTE]);
+
+    vec3 low = vec3(3.402823e38);
+    vec3 high = -low;
+    for (uint i = 0u; i < jointCount; ++i)
+    {
+        const vec3 carried = rowsPoint(palette.items[binding.palette + clusterIndex(source.indices, list + 2u + i)], restCenter);
+        low = min(low, carried);
+        high = max(high, carried);
+    }
+    const vec3 middle = jointCount != 0u ? (low + high) * 0.5 : vec3(0.0);
+    float radius = 0.0;
+    for (uint i = 0u; i < jointCount; ++i)
+    {
+        const Rows rows = palette.items[binding.palette + clusterIndex(source.indices, list + 2u + i)];
+        radius = max(radius, distance(rowsPoint(rows, restCenter), middle) + restRadius * stretchOf(rows));
+    }
+    // A sum s times a point among them is off it by at most |s - 1| times its length.
+    radius += stray * (length(middle) + radius);
+
+    // The facing cone holds only when the whole cluster turns rigidly with one joint.
+    uint cone = 127u << 24; // off
+    if (jointCount == 1u && stray == 0.0 && binding.morph == 0u)
+    {
+        const Rows rows = palette.items[binding.palette + clusterIndex(source.indices, list + 2u)];
+        const float sine = float(int(source.cone) >> 24) / 127.0;
+        if (turnsOnly(rows) && sine < 1.0)
+        {
+            const ivec3 bytes = ivec3(int(source.cone << 24) >> 24, int(source.cone << 16) >> 24, int(source.cone << 8) >> 24);
+            const vec3 axis = vec3(bytes) / 127.0;
+            const vec3 turned = vec3(dot(rows.r[0].xyz, axis), dot(rows.r[1].xyz, axis), dot(rows.r[2].xyz, axis));
+            if (dot(turned, turned) > 0.0)
+            {
+                cone = coneBits(normalize(turned), sine);
+            }
+        }
+    }
+    writeSkinnedCluster(view, binding, source, ownPositions(view, binding), local, middle, radius, cone);
+}
+
+// A workgroup per binding.
+void skinGroups(ViewRef view)
+{
+    const uint id = gl_WorkGroupID.x;
+    if (id >= view.bindingEnd)
+    {
+        return;
+    }
+    const Binding binding = BindingsRef(view.skinTables[SKIN_TABLE_BINDINGS]).items[id];
+    if (binding.kind != BINDING_SKINNED || binding.chosen == 0u)
     {
         return;
     }
@@ -448,8 +530,8 @@ void skinGroups(ViewRef view)
     {
         const ClusterGroup source = table.items[lod.firstGroup + group];
         const uint first = firstOwnCluster + (source.firstCluster - lod.firstCluster);
-        vec3 low = vec3(3.0);
-        vec3 high = vec3(-3.0);
+        vec3 low = vec3(3.402823e38);
+        vec3 high = -low;
         for (uint i = 0u; i < source.clusterCount; ++i)
         {
             const Cluster cluster = clusters.items[first + i];
@@ -478,11 +560,27 @@ void skinGroups(ViewRef view)
     }
 }
 
+// Position fidelity is checked only after the vertex pass, independently of bounds.
+void auditPositions(ViewRef view)
+{
+    if (view.skinAudit == 0u) return;
+    Binding binding;
+    uint block;
+    if (!blockBinding(view, true, binding, block)) return;
+    const Geometry lod = GeometriesRef(push.geometries).items[binding.chosen];
+    const uint local = block * SKIN_BLOCK + gl_LocalInvocationID.x;
+    if (local >= lod.clusterCount) return;
+    auditSkinCluster(view, binding, ClustersRef(push.clusters).items[lod.firstCluster + local], ownPositions(view, binding));
+}
+
 void main()
 {
     ViewRef view = ViewRef(push.view);
     switch (push.phase)
     {
+        case SKIN_POSE:
+            predictJoint(view, gl_GlobalInvocationID.x);
+            break;
         case SKIN_PALETTE:
             makePalette(view, gl_GlobalInvocationID.x);
             break;
@@ -493,13 +591,17 @@ void main()
             morphVertex(view);
             break;
         case SKIN_VERTICES:
+        case SKIN_VERTICES_LATE:
             skinVertex(view);
             break;
         case SKIN_CLUSTERS:
             skinCluster(view);
             break;
-        default:
+        case SKIN_GROUPS:
             skinGroups(view);
+            break;
+        case SKIN_AUDIT:
+            auditPositions(view);
             break;
     }
 }

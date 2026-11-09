@@ -35,7 +35,6 @@ new code here;
 - Project documentation belongs in `/doc`.
 - When searching for documentation or researching a technical question, record the findings in a clearly named Markdown (`.md`) file under `/doc`.
 - Structure research notes with descriptive headings and searchable terms so another AI agent can find and reuse them easily.
-- Do not create multiple files for a given project. Just a single file per project.
 
 ## Git Safety
 

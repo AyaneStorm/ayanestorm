@@ -3,6 +3,7 @@
  * See asrscenestore.h.
  */
 #include "asrscenestore.h"
+#include "asrjointpose.h"
 
 #include <algorithm>
 #include <cmath>
@@ -113,7 +114,16 @@ void RangeAllocator::release(uint64_t offset, uint64_t size)
             removeFree(previous);
         }
     }
-    addFree(offset, size);
+    // Return the free tail to the bump span too. Otherwise parking/removal leaves the
+    // GPU dispatching over historical allocations, and tables can never shrink.
+    if (offset + size == mBump)
+    {
+        mBump = offset;
+    }
+    else
+    {
+        addFree(offset, size);
+    }
 }
 
 void SceneStore::ensureTable(SceneTable table, uint64_t entries)
@@ -122,7 +132,30 @@ void SceneStore::ensureTable(SceneTable table, uint64_t entries)
     const uint64_t bytes = entries * SCENE_TABLE_STRIDE[uint32_t(table)];
     if (capacity < bytes)
     {
-        capacity = std::max<uint64_t>({ bytes, capacity * 2, 64 * 1024 });
+        // A quarter more, not double: a doubled table held twice its live bytes, and the
+        // old buffer stays while frames in flight read it. Growth still costs log n copies.
+        const uint64_t grown = std::max<uint64_t>({ bytes, capacity + capacity / 4, 64 * 1024 });
+        capacity = (grown + 15) & ~uint64_t(15); // Vulkan fill/copy sizes stay word aligned
+    }
+}
+
+void SceneStore::trimTables()
+{
+    // Only range-owned tables: ID tables have independent lifetimes. Retirement has
+    // finished before this runs, and no writes for this update have been recorded yet.
+    for (uint32_t i = 0; i < SCENE_TABLES; ++i)
+    {
+        SceneTable owner = SceneTable(i);
+        if (owner == SceneTable::PaletteJobs) owner = SceneTable::Palette;
+        if (owner == SceneTable::MorphedAttributes) owner = SceneTable::MorphedPositions;
+        const RangeAllocator& ranges = owner == SceneTable::Clusters ? mClusterRanges : mRanges[uint32_t(owner)];
+        if (ranges.capacity() == 0) continue;
+        constexpr uint64_t PAGE = 64 * 1024;
+        const uint64_t needed = std::max<uint64_t>(ranges.used() * SCENE_TABLE_STRIDE[i], PAGE);
+        if (needed <= mTableCapacity[i] / 2)
+        {
+            mTableCapacity[i] = (needed + PAGE - 1) / PAGE * PAGE;
+        }
     }
 }
 
@@ -229,9 +262,14 @@ uint64_t SceneStore::freeChunkBytes() const
     uint64_t total = 0;
     for (const Chunk& chunk : mChunks)
     {
-        total += chunk.ranges.freeSpace();
+        if (chunk.address != 0) total += chunk.ranges.freeSpace();
     }
     return total;
+}
+
+uint32_t SceneStore::chunkCount() const
+{
+    return uint32_t(std::count_if(mChunks.begin(), mChunks.end(), [](const Chunk& chunk) { return chunk.address != 0; }));
 }
 
 void SceneStore::applyMaterial(const MaterialCommand& command)
@@ -282,6 +320,12 @@ void SceneStore::applyGeometry(GeometryCommand& command)
     geometry.clusterCount = uint32_t(command.data.clusters.size());
     geometry.groupCount = uint32_t(command.data.groups.size());
     geometry.skinned = command.data.skinned;
+    geometry.jointSpheres = std::move(command.data.jointSpheres);
+    geometry.skinJoints = 0;
+    for (const GeometryData::JointSphere& sphere : geometry.jointSpheres)
+    {
+        geometry.skinJoints = std::max(geometry.skinJoints, uint32_t(sphere.joint) + 1);
+    }
     geometry.data = std::move(command.data);
     geometry.queued = true;
     ++mQueuedGeometries;
@@ -425,16 +469,16 @@ uint32_t SceneStore::allocateRange(SceneTable table, uint64_t size)
     uint64_t offset = 0;
     while (!ranges.allocate(size, 1, offset))
     {
-        ranges.grow(std::max<uint64_t>({ ranges.capacity() * 2, 1024, size }));
+        ranges.grow(ranges.capacity() + std::max<uint64_t>({ ranges.capacity() / 4, 1024, size })); // see ensureTable()
     }
-    ensureTable(table, ranges.capacity());
+    ensureTable(table, ranges.used());
     if (table == SceneTable::Palette)
     {
-        ensureTable(SceneTable::PaletteJobs, ranges.capacity()); // entry for entry
+        ensureTable(SceneTable::PaletteJobs, ranges.used()); // entry for entry
     }
     if (table == SceneTable::MorphedPositions)
     {
-        ensureTable(SceneTable::MorphedAttributes, ranges.capacity());
+        ensureTable(SceneTable::MorphedAttributes, ranges.used());
     }
     return uint32_t(offset);
 }
@@ -556,14 +600,7 @@ void SceneStore::applyMorph(const MorphCommand& command)
         morph.weightsAndMasks.assign(set.targetSizes.size() + set.maskCount, 0.f);
         morph.values = allocateRange(SceneTable::MorphWeights, std::max<size_t>(morph.weightsAndMasks.size(), 1));
         morph.output = allocateRange(SceneTable::MorphedPositions, set.vertexCount);
-        GpuMorph entry{};
-        entry.firstVertex = set.firstVertex;
-        entry.vertexCount = set.vertexCount;
-        entry.weights = morph.values;
-        entry.masks = morph.values + uint32_t(set.targetSizes.size());
-        entry.output = morph.output;
-        entry.normalSoften = set.normalSoften;
-        writeEntry(SceneTable::Morphs, command.id, &entry, sizeof(entry));
+        writeMorphEntry(command.id);
         writeMorphValues(command.id);
         return;
     }
@@ -612,7 +649,7 @@ void SceneStore::writeMorphValues(uint32_t id)
     }
 
     // No vertex moves further than the weighted sum of each target's longest delta: masks
-    // only scale down. The skeletons' boxes widen to it, and never narrow.
+    // only scale down. The bindings' reach widens to it, and never narrows.
     const MorphSet& set = mMorphSets[morph.set];
     float bound = 0.f;
     for (size_t target = 0; target < set.targetReach.size(); ++target)
@@ -622,11 +659,27 @@ void SceneStore::writeMorphValues(uint32_t id)
     if (bound > morph.bound)
     {
         morph.bound = bound;
+        writeMorphEntry(id);
         for (uint32_t binding : morph.bindings)
         {
             widenReach(binding);
         }
     }
+}
+
+void SceneStore::writeMorphEntry(uint32_t id)
+{
+    const Morph& morph = mMorphs[id];
+    const MorphSet& set = mMorphSets[morph.set];
+    GpuMorph entry{};
+    entry.firstVertex = set.firstVertex;
+    entry.vertexCount = set.vertexCount;
+    entry.weights = morph.values;
+    entry.masks = morph.values + uint32_t(set.targetSizes.size());
+    entry.output = morph.output;
+    entry.normalSoften = set.normalSoften;
+    entry.bound = morph.bound;
+    writeEntry(SceneTable::Morphs, id, &entry, sizeof(entry));
 }
 
 void SceneStore::removeMorphSetIfUnused(uint32_t id, uint64_t frame)
@@ -707,6 +760,8 @@ void SceneStore::applySkeleton(const SkeletonCommand& command)
         skeleton.jointCount = command.jointCount;
         skeleton.firstJoint = allocateRange(SceneTable::Joints, command.jointCount);
         GpuJoint identity{};
+        identity.skeleton = command.id;
+        identity.rotationDelta[3] = 1.f;
         for (int row = 0; row < 3; ++row)
         {
             identity.rows[row][row] = 1.f;
@@ -734,22 +789,33 @@ void SceneStore::applySkeleton(const SkeletonCommand& command)
             memcpy(joint.rows, &command.rows[i * 12], sizeof(joint.rows));
             memcpy(joint.previous, joint.rows, sizeof(joint.rows));
         }
+        jointRotationDelta(joint.rows, joint.previous, joint.rotationDelta);
     }
     skeleton.previousTime = skeleton.posed ? skeleton.time : command.time;
+    if (command.interpolate != 0 && command.time - skeleton.previousTime > command.interpolate)
+    {
+        skeleton.previousTime = command.time - command.interpolate; // after a rest: blend over one gap, not the whole rest
+    }
     skeleton.time = command.time;
     skeleton.posed = true;
+    skeleton.interpolate = command.interpolate != 0;
     writeSkeleton(command.id, true);
 }
 
-// The box every skinned vertex of the skeleton stays in, at any lead the GPU can draw: around
-// the joints' places from the newest pose to the furthest lead, widened by how far anything
-// bound reaches from its joints, times the largest joint scale. Motion is linear in the lead,
-// so its two ends hold the rest.
+// The cube the joints stay in, at any lead the GPU can draw: around their places from the
+// newest pose to the furthest lead, as motion is linear in the lead and its two ends hold the
+// rest. Each binding widens it by its own reach times the largest stretch: see bindingBox().
 void SceneStore::writeSkeleton(uint32_t id, bool joints)
 {
     Skeleton& skeleton = mSkeletons[id];
     const uint32_t step = skeleton.time - skeleton.previousTime; // wraps like the times
-    const float lead = step == 0 ? 0.f : std::min(SKELETON_MAX_LEAD, SKELETON_MAX_LEAD_SECONDS * 1e6f / float(step));
+    float lead = step == 0 ? 0.f : std::min(SKELETON_MAX_LEAD, SKELETON_MAX_LEAD_SECONDS * 1e6f / float(step));
+    float leastLead = 0.f;
+    if (skeleton.interpolate)
+    {
+        leastLead = -1.f; // the pose before, and nothing past the newest
+        lead = 0.f;
+    }
 
     float low[3] = { std::numeric_limits<float>::max(), std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
     float high[3] = { -low[0], -low[1], -low[2] };
@@ -760,35 +826,38 @@ void SceneStore::writeSkeleton(uint32_t id, bool joints)
         {
             const float now = joint.rows[axis][3];
             const float ahead = now + (now - joint.previous[axis][3]) * lead;
-            low[axis] = std::min({ low[axis], now, ahead });
-            high[axis] = std::max({ high[axis], now, ahead });
+            const float behind = now + (now - joint.previous[axis][3]) * leastLead;
+            low[axis] = std::min({ low[axis], now, ahead, behind });
+            high[axis] = std::max({ high[axis], now, ahead, behind });
         }
-        // The Frobenius norm bounds how far a joint can stretch anything, in any direction.
-        for (const auto& rows : { joint.rows, joint.previous })
+        // Prediction rotates the newest affine shape: its Frobenius norm stays constant.
+        float now = 0.f;
+        for (int row = 0; row < 3; ++row)
         {
-            float sum = 0.f;
-            for (int row = 0; row < 3; ++row)
+            for (int column = 0; column < 3; ++column)
             {
-                sum += rows[row][0] * rows[row][0] + rows[row][1] * rows[row][1] + rows[row][2] * rows[row][2];
+                const float value = joint.rows[row][column];
+                now += value * value;
             }
-            scale = std::max(scale, std::sqrt(sum));
         }
+        scale = std::max(scale, std::sqrt(now));
     }
-    const float widen = skeleton.reach * scale;
-
     GpuSkeleton entry{};
     float half = 1e-3f;
     for (int axis = 0; axis < 3; ++axis)
     {
         entry.boxCenter[axis] = (low[axis] + high[axis]) * 0.5f;
-        half = std::max(half, (high[axis] - low[axis]) * 0.5f + widen);
+        half = std::max(half, (high[axis] - low[axis]) * 0.5f);
     }
-    entry.boxScale = half * 1.001f; // so rounding never puts a vertex outside
+    entry.boxScale = half;
+    entry.stretch = scale;
     entry.firstJoint = skeleton.firstJoint;
     entry.jointCount = skeleton.jointCount;
     entry.time = skeleton.time;
     entry.previousTime = skeleton.previousTime;
     entry.maxLead = lead;
+    entry.minLead = leastLead;
+    entry.flags = skeleton.parked ? SKELETON_PARKED : 0;
     writeEntry(SceneTable::Skeletons, id, &entry, sizeof(entry));
 
     if (!joints)
@@ -853,13 +922,14 @@ void SceneStore::removeSkinIfUnused(uint32_t id, uint64_t frame)
 }
 
 // One palette per skeleton and skin, whatever number of faces and views use it.
-uint32_t SceneStore::usePalette(uint32_t skeletonId, uint32_t skinId)
+uint32_t SceneStore::usePalette(uint32_t skeletonId, uint32_t skinId, uint32_t binding)
 {
     const uint64_t key = uint64_t(skeletonId) << 32 | skinId;
     auto found = mPalettes.find(key);
     if (found != mPalettes.end())
     {
         ++found->second.users;
+        found->second.bindings.push_back(binding);
         return found->second.first;
     }
 
@@ -869,6 +939,7 @@ uint32_t SceneStore::usePalette(uint32_t skeletonId, uint32_t skinId)
     palette.count = uint32_t(skin.joints.size());
     palette.first = allocateRange(SceneTable::Palette, palette.count);
     palette.users = 1;
+    palette.bindings.push_back(binding);
     std::vector<GpuPaletteJob> jobs(palette.count);
     for (uint32_t i = 0; i < palette.count; ++i)
     {
@@ -879,18 +950,25 @@ uint32_t SceneStore::usePalette(uint32_t skeletonId, uint32_t skinId)
     writeTable(SceneTable::PaletteJobs, palette.first, jobs.data(), jobs.size() * sizeof(GpuPaletteJob));
     ++skeleton.users;
     ++skin.users;
-    mPalettes.emplace(key, palette);
-    return palette.first;
+    const uint32_t first = palette.first;
+    mPalettes.emplace(key, std::move(palette));
+    return first;
 }
 
-void SceneStore::releasePalette(uint32_t skeletonId, uint32_t skinId, uint64_t frame)
+void SceneStore::releasePalette(uint32_t skeletonId, uint32_t skinId, uint32_t binding, uint64_t frame)
 {
     const auto found = mPalettes.find(uint64_t(skeletonId) << 32 | skinId);
-    if (found == mPalettes.end() || --found->second.users != 0)
+    if (found == mPalettes.end())
     {
         return;
     }
-    const Palette palette = found->second;
+    auto& bindings = found->second.bindings;
+    bindings.erase(std::remove(bindings.begin(), bindings.end(), binding), bindings.end());
+    if (--found->second.users != 0)
+    {
+        return;
+    }
+    const Palette palette = std::move(found->second);
     mPalettes.erase(found);
     const std::vector<GpuPaletteJob> empty(palette.count);
     writeTable(SceneTable::PaletteJobs, palette.first, empty.data(), empty.size() * sizeof(GpuPaletteJob));
@@ -903,21 +981,108 @@ void SceneStore::releasePalette(uint32_t skeletonId, uint32_t skinId, uint64_t f
 
 void SceneStore::writeSkinnedBinding(uint32_t id, uint32_t instance, const InstanceDesc& desc)
 {
+    mBindings[id].instance = instance;
+    mBindings[id].lodSize = desc.lodSize;
+    writeSkinnedBinding(id);
+}
+
+// A skinned binding's own storage: its deformed positions, its clusters and groups, and the
+// blocks the skin jobs run over. Only while its skeleton is resident: see setResident().
+void SceneStore::allocateDeformed(uint32_t id)
+{
+    Binding& binding = mBindings[id];
+    const uint32_t clusters = binding.entryCount - binding.groupCapacity;
+    uint64_t firstEntry = 0;
+    while (!mClusterRanges.allocate(binding.entryCount, 1, firstEntry))
+    {
+        mClusterRanges.grow(mClusterRanges.capacity() + std::max<uint64_t>({ mClusterRanges.capacity() / 4, 4096, binding.entryCount })); // see ensureTable()
+    }
+    binding.targetEntry = uint32_t(firstEntry);
+    binding.positions = allocateRange(SceneTable::SkinnedPositions, binding.vertexCapacity);
+    // Vertex and cluster jobs each run over their own blocks: clusters are far fewer.
+    binding.blockCount = std::max((binding.vertexCapacity + SKIN_BLOCK - 1) / SKIN_BLOCK, 1u);
+    binding.firstBlock = allocateRange(SceneTable::SkinBlocks, binding.blockCount);
+    const std::vector<uint32_t> blocks(binding.blockCount, id);
+    writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
+    binding.clusterBlockCount = std::max((clusters + SKIN_BLOCK - 1) / SKIN_BLOCK, 1u);
+    binding.firstClusterBlock = allocateRange(SceneTable::ClusterBlocks, binding.clusterBlockCount);
+    const std::vector<uint32_t> clusterBlocks(binding.clusterBlockCount, id);
+    writeTable(SceneTable::ClusterBlocks, binding.firstClusterBlock, clusterBlocks.data(), clusterBlocks.size() * sizeof(uint32_t));
+}
+
+// Its geometry entry goes empty, so its instance draws nothing until it is skinned again.
+void SceneStore::releaseDeformed(uint32_t id, uint64_t frame)
+{
     const Binding& binding = mBindings[id];
+    const std::vector<uint32_t> blocks(binding.blockCount, 0u);
+    writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
+    retireRange(SceneTable::SkinBlocks, binding.firstBlock, binding.blockCount, frame);
+    const std::vector<uint32_t> clusterBlocks(binding.clusterBlockCount, 0u);
+    writeTable(SceneTable::ClusterBlocks, binding.firstClusterBlock, clusterBlocks.data(), clusterBlocks.size() * sizeof(uint32_t));
+    retireRange(SceneTable::ClusterBlocks, binding.firstClusterBlock, binding.clusterBlockCount, frame);
+    retireRange(SceneTable::SkinnedPositions, binding.positions, binding.vertexCapacity, frame);
+    const GpuGeometry emptyGeometry{};
+    writeEntry(SceneTable::Geometries, binding.target, &emptyGeometry, sizeof(emptyGeometry));
+    mRetired.push_back({ Retired::Type::Clusters, 0, binding.targetEntry, binding.entryCount, frame + mFreeDelay });
+}
+
+// An avatar out of view gives back every skinned copy it has; back in view, they are made
+// again in the same update, and the skin jobs fill them before anything draws them.
+void SceneStore::setResident(uint32_t skeletonId, bool resident, uint64_t frame)
+{
+    if (skeletonId >= mSkeletons.size() || mSkeletons[skeletonId].jointCount == 0 || mSkeletons[skeletonId].parked == !resident)
+    {
+        return;
+    }
+    mSkeletons[skeletonId].parked = !resident;
+    writeSkeleton(skeletonId, false); // palettes can skip parked skins; rigid attachments still pose
+    for (uint32_t id = 1; id < mBindings.size(); ++id)
+    {
+        Binding& binding = mBindings[id];
+        if (binding.kind != BINDING_SKINNED || binding.skeleton != skeletonId || binding.parked == !resident)
+        {
+            continue;
+        }
+        binding.parked = !resident;
+        if (resident)
+        {
+            allocateDeformed(id);
+        }
+        else
+        {
+            releaseDeformed(id, frame);
+        }
+        writeSkinnedBinding(id);
+    }
+}
+
+void SceneStore::writeSkinnedBinding(uint32_t id)
+{
+    const Binding& binding = mBindings[id];
+    if (binding.parked)
+    {
+        const GpuBinding empty{}; // the skin jobs pass it by
+        writeEntry(SceneTable::Bindings, id, &empty, sizeof(empty));
+        return;
+    }
     const Geometry& source = mGeometries[binding.source];
+    const Palette& palette = mPalettes[uint64_t(binding.skeleton) << 32 | binding.skin];
     GpuBinding entry{};
     entry.kind = BINDING_SKINNED;
-    entry.instance = instance;
+    entry.instance = binding.instance;
     entry.skeleton = binding.skeleton;
-    entry.palette = mPalettes[uint64_t(binding.skeleton) << 32 | binding.skin].first;
+    entry.palette = palette.first;
+    entry.matrix = uint32_t(mSkins[binding.skin].joints.size());
     entry.source = binding.source;
     entry.target = binding.target;
     entry.targetEntry = binding.targetEntry;
-    entry.lod[3] = desc.lodSize;
+    entry.lod[3] = binding.lodSize;
+    entry.reach = palette.reach;
     memcpy(entry.sourceBox, source.center, sizeof(source.center));
     entry.sourceBox[3] = source.scale;
     entry.positions = binding.positions;
     entry.firstBlock = binding.firstBlock;
+    entry.firstClusterBlock = binding.firstClusterBlock;
     entry.groupCapacity = binding.groupCapacity;
     entry.morph = binding.morph;
     writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
@@ -931,7 +1096,8 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
         return 0;
     }
 
-    // Room for the largest LOD of the chain, which every LOD must be able to skin.
+    // An unweighted/invalid coarse LOD must not reject valid weighted finer LODs.
+    // The GPU walks the same chain, retaining only LODs this palette can skin.
     uint32_t vertices = 0;
     uint32_t groups = 0;
     uint32_t clusters = 0;
@@ -939,14 +1105,14 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
     for (uint32_t lod = 0; lod < MAX_LODS && at != 0; ++lod)
     {
         const Geometry& geometry = mGeometries[at];
-        if (!geometry.skinned)
+        at = geometry.coarser;
+        if (!geometry.skinned || geometry.skinJoints == 0 || geometry.skinJoints > mSkins[desc.skin].joints.size())
         {
-            return 0;
+            continue;
         }
         vertices = std::max(vertices, geometry.vertexCount);
         groups = std::max(groups, geometry.groupCount);
         clusters = std::max(clusters, geometry.clusterCount);
-        at = geometry.coarser;
     }
     if (vertices == 0 || clusters == 0)
     {
@@ -994,62 +1160,72 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
 
     binding.groupCapacity = groups;
     binding.entryCount = groups + clusters;
-    uint64_t firstEntry = 0;
-    while (!mClusterRanges.allocate(binding.entryCount, 1, firstEntry))
-    {
-        mClusterRanges.grow(std::max<uint64_t>(mClusterRanges.capacity() * 2, 4096));
-    }
-    binding.targetEntry = uint32_t(firstEntry);
     binding.vertexCapacity = vertices;
-    binding.positions = allocateRange(SceneTable::SkinnedPositions, vertices);
-    binding.blockCount = std::max({ (vertices + SKIN_BLOCK - 1) / SKIN_BLOCK, (clusters + SKIN_BLOCK - 1) / SKIN_BLOCK, 1u });
-    binding.firstBlock = allocateRange(SceneTable::SkinBlocks, binding.blockCount);
-    const std::vector<uint32_t> blocks(binding.blockCount, id);
-    writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
-    usePalette(desc.skeleton, desc.skin);
-
-    // How far its vertices can be from any of its joints, in the joints' own space: its
-    // bounding sphere, carried through each inverse bind matrix, and what morphs add.
-    const Geometry& source = mGeometries[desc.geometry];
-    binding.sphere = source.radius * source.scale;
-    const Skin& skin = mSkins[desc.skin];
-    for (size_t joint = 0; joint < skin.joints.size(); ++joint)
+    binding.parked = mSkeletons[desc.skeleton].parked;
+    if (!binding.parked)
     {
-        const float* m = &skin.matrices[joint * 12];
-        float center = 0.f;
-        float stretch = 0.f;
-        for (int row = 0; row < 3; ++row)
+        allocateDeformed(id);
+    }
+    usePalette(desc.skeleton, desc.skin, id);
+
+    // How far its vertices can be from the joints that move them, in the joints' own space:
+    // for each joint some LOD's weights name, the sphere around its vertices carried through
+    // that joint's skin matrix. Joints the skin lists but no vertex uses add nothing.
+    const Skin& skin = mSkins[desc.skin];
+    for (uint32_t at = desc.geometry, lod = 0; lod < MAX_LODS && at != 0; ++lod, at = mGeometries[at].coarser)
+    {
+        for (const GeometryData::JointSphere& sphere : mGeometries[at].jointSpheres)
         {
-            const float* r = m + row * 4;
-            const float c = r[0] * source.center[0] + r[1] * source.center[1] + r[2] * source.center[2] + r[3];
-            center += c * c;
-            stretch += r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+            if (sphere.joint >= skin.joints.size())
+            {
+                continue; // the instance cannot be drawn right anyway: the viewer leaves such faces out
+            }
+            const float* m = &skin.matrices[size_t(sphere.joint) * 12];
+            float center = 0.f;
+            float stretch = 0.f;
+            for (int row = 0; row < 3; ++row)
+            {
+                const float* r = m + row * 4;
+                const float c = r[0] * sphere.center[0] + r[1] * sphere.center[1] + r[2] * sphere.center[2] + r[3];
+                center += c * c;
+                stretch += r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
+            }
+            binding.reachCenter = std::max(binding.reachCenter, std::sqrt(center) + sphere.radius * std::sqrt(stretch));
+            binding.reachStretch = std::max(binding.reachStretch, std::sqrt(stretch));
         }
-        binding.reachCenter = std::max(binding.reachCenter, std::sqrt(center));
-        binding.reachStretch = std::max(binding.reachStretch, std::sqrt(stretch));
     }
     ++mSkeletons[desc.skeleton].users;
     if (desc.morph != 0)
     {
         mMorphs[desc.morph].bindings.push_back(id);
     }
+    binding.instance = instance;
+    binding.lodSize = desc.lodSize;
     widenReach(id);
-
-    writeSkinnedBinding(id, instance, desc);
     ++mSkinnedBindings;
     return id;
 }
 
 void SceneStore::widenReach(uint32_t id)
 {
-    const Binding& binding = mBindings[id];
+    Binding& binding = mBindings[id];
     const float bound = binding.morph != 0 ? mMorphs[binding.morph].bound : 0.f;
-    const float reach = binding.reachCenter + (binding.sphere + bound) * binding.reachStretch;
-    Skeleton& skeleton = mSkeletons[binding.skeleton];
-    if (reach > skeleton.reach)
+    const float reach = binding.reachCenter + bound * binding.reachStretch;
+    binding.reach = std::max(binding.reach, reach);
+    Palette& palette = mPalettes[uint64_t(binding.skeleton) << 32 | binding.skin];
+    if (binding.reach > palette.reach)
     {
-        skeleton.reach = reach;
-        writeSkeleton(binding.skeleton, false);
+        // A new face, finer LOD or morph can widen the mesh. Publish one grid for all
+        // its faces in the same update, including faces that were already bound.
+        palette.reach = binding.reach;
+        for (uint32_t face : palette.bindings)
+        {
+            writeSkinnedBinding(face);
+        }
+    }
+    else
+    {
+        writeSkinnedBinding(id);
     }
 }
 
@@ -1105,15 +1281,12 @@ void SceneStore::unbind(uint32_t id, uint64_t frame)
     writeEntry(SceneTable::Bindings, id, &empty, sizeof(empty));
     if (binding.kind == BINDING_SKINNED)
     {
-        const std::vector<uint32_t> blocks(binding.blockCount, 0u);
-        writeTable(SceneTable::SkinBlocks, binding.firstBlock, blocks.data(), blocks.size() * sizeof(uint32_t));
-        retireRange(SceneTable::SkinBlocks, binding.firstBlock, binding.blockCount, frame);
-        retireRange(SceneTable::SkinnedPositions, binding.positions, binding.vertexCapacity, frame);
-        const GpuGeometry emptyGeometry{};
-        writeEntry(SceneTable::Geometries, binding.target, &emptyGeometry, sizeof(emptyGeometry));
-        mRetired.push_back({ Retired::Type::Clusters, 0, binding.targetEntry, binding.entryCount, frame + mFreeDelay });
+        if (!binding.parked)
+        {
+            releaseDeformed(id, frame);
+        }
         mRetired.push_back({ Retired::Type::GeometryId, binding.target, 0, 0, frame + mFreeDelay });
-        releasePalette(binding.skeleton, binding.skin, frame);
+        releasePalette(binding.skeleton, binding.skin, id, frame);
         --mSkinnedBindings;
         if (binding.morph != 0)
         {
@@ -1154,20 +1327,30 @@ void SceneStore::fillView(GpuSceneView& view) const
     view.bindingEnd = uint32_t(mBindings.size());
     view.blockEnd = uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used());
     view.morphWorkEnd = mMorphWorkCount;
+    view.jointEnd = uint32_t(mRanges[uint32_t(SceneTable::Joints)].used());
+    view.clusterBlockEnd = uint32_t(mRanges[uint32_t(SceneTable::ClusterBlocks)].used());
 }
 
 uint32_t SceneStore::skinThreads(uint32_t phase) const
 {
     switch (phase)
     {
+        case SKIN_POSE:
+            return uint32_t(mRanges[uint32_t(SceneTable::Joints)].used());
         case SKIN_PALETTE:
             return uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
         case SKIN_BIND:
             return uint32_t(mBindings.size());
         case SKIN_MORPH:
             return mMorphWorkCount * SKIN_BLOCK;
-        default:
+        case SKIN_VERTICES:
+        case SKIN_VERTICES_LATE:
             return mSkinnedBindings == 0 ? 0 : uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used()) * SKIN_BLOCK;
+        case SKIN_CLUSTERS:
+        case SKIN_AUDIT:
+            return mSkinnedBindings == 0 ? 0 : uint32_t(mRanges[uint32_t(SceneTable::ClusterBlocks)].used()) * SKIN_BLOCK;
+        default: // groups: a workgroup per binding
+            return mSkinnedBindings == 0 ? 0 : uint32_t(mBindings.size()) * SKIN_BLOCK;
     }
 }
 
@@ -1243,7 +1426,10 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     }
     else
     {
-        const uint64_t address = chunks.createSceneChunk();
+        // Reuse an empty slot without moving any live chunk's index or device address.
+        chunkIndex = 0;
+        while (chunkIndex < mChunks.size() && mChunks[chunkIndex].address != 0) ++chunkIndex;
+        const uint64_t address = chunks.createSceneChunk(chunkIndex);
         if (address == 0)
         {
             return false; // no memory for it: it waits, and the budget's pressure rules take over
@@ -1251,9 +1437,9 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
         Chunk chunk;
         chunk.address = address;
         chunk.ranges.grow(SCENE_CHUNK_BYTES);
-        mChunks.push_back(std::move(chunk));
-        chunkIndex = uint32_t(mChunks.size() - 1);
-        mChunks.back().ranges.allocate(blobBytes, BLOB_ALIGNMENT, chunkOffset);
+        if (chunkIndex == mChunks.size()) mChunks.emplace_back();
+        mChunks[chunkIndex] = std::move(chunk);
+        mChunks[chunkIndex].ranges.allocate(blobBytes, BLOB_ALIGNMENT, chunkOffset);
     }
 
     const uint64_t groupCount = data.groups.size();
@@ -1293,7 +1479,7 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
         to.cone = from.cone;
         to.triangles = from.triangles;
         to.indices = base + from.indexOffset;
-        to.positions = base + data.positionsOffset;
+        to.positions = base + data.positionsOffset + (data.skinned ? 1u : 0u); // float positions
         to.attributes = base + data.attributesOffset;
 
         const uint32_t bucket = bucketOf(from.triangles);
@@ -1305,6 +1491,7 @@ bool SceneStore::upload(uint32_t id, SceneChunks& chunks)
     GpuGeometry entry{};
     entry.firstGroup = uint32_t(firstEntry);
     entry.groupCount = uint32_t(groupCount);
+    entry.skinJoints = geometry.skinJoints;
     entry.radius = data.radius;
     entry.firstCluster = uint32_t(firstCluster);
     entry.clusterCount = uint32_t(clusterCount);
@@ -1389,6 +1576,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     mWrites.clear();
     mTableBytes.clear();
     mWrittenBlobs.clear();
+    mPositionsCompacted = false;
     ++mUpdate;
     mQueue = &queue;
 
@@ -1405,6 +1593,8 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     }
 
     runRetired(queue, frame);
+    trimTables();
+    compactDeformedPositions();
 
     // A take finishes before the next one starts, which keeps commands in order.
     if (mInstancesDone == mCommands.instances.size())
@@ -1455,6 +1645,12 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     }
     if (mInstancesDone == mCommands.instances.size())
     {
+        // After the instances, so bindings made in this update follow too.
+        for (const auto& resident : mCommands.residentSkeletons)
+        {
+            setResident(resident.first, resident.second, frame);
+        }
+        mCommands.residentSkeletons.clear();
         for (uint32_t id : mCommands.removedGeometries)
         {
             removeGeometry(id, frame);
@@ -1536,7 +1732,17 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         --mQueuedGeometries;
         mPending.pop_front();
     }
-    ensureTable(SceneTable::Clusters, mClusterRanges.capacity());
+    // Empty chunks have no live or in-flight users. Destroy the actual backend allocation,
+    // rather than counting its bytes as free while keeping the driver's memory forever.
+    for (uint32_t i = 0; i < mChunks.size(); ++i)
+    {
+        if (mChunks[i].address != 0 && mChunks[i].ranges.live() == 0)
+        {
+            chunks.releaseSceneChunk(i);
+            mChunks[i] = Chunk();
+        }
+    }
+    ensureTable(SceneTable::Clusters, mClusterRanges.used());
     writeMorphWork();
     ensureTable(SceneTable::MorphWork, mMorphWorkCount);
 }

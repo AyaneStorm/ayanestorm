@@ -52,6 +52,9 @@ class LLJointData;
 class LLAvatarAppearance : public LLCharacter
 {
     LOG_CLASS(LLAvatarAppearance);
+    // <AS:Chanayane> the new renderer reads the body meshes (mMeshLOD)
+    friend class ASRAvatarBody;
+    // </AS:Chanayane>
 
 protected:
     struct LLAvatarXmlInfo;

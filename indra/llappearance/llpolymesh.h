@@ -64,6 +64,9 @@ class LLPolyMorphTarget;
 class LLPolyMeshSharedData
 {
     friend class LLPolyMesh;
+    // <AS:Chanayane> the new renderer reads the base vertices, faces and morphs
+    friend class ASRAvatarBody;
+    // </AS:Chanayane>
 private:
     // transform data
     LLVector3               mPosition;

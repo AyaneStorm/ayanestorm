@@ -18,10 +18,6 @@ constexpr uint64_t MINIMUM_STAGING_BYTES = 48ull * 1024 * 1024;
 constexpr uint64_t MAXIMUM_UPLOAD_BYTES = 64ull * 1024 * 1024;
 constexpr uint64_t SMALL_STAGING_BYTES = 16ull * 1024 * 1024; // kept for per-frame views and readbacks
 
-// Of the whole budget, kept out of textures' reach for what the others may need at short
-// notice. It keeps total use under the 85% of pressure(), which starts dropping mips.
-constexpr uint64_t TEXTURE_RESERVE_PERCENT = 25;
-
 constexpr uint64_t SHARE_PER_MILLE[] = {
     250, // RenderTargets
     100, // Shadows
@@ -76,12 +72,25 @@ uint64_t MemoryBudget::used(MemoryCategory category) const
 
 uint64_t MemoryBudget::textureLimit() const
 {
+    // Steered below the working budget: a texture replacement holds both images for a while,
+    // and the screen, scene tables and geometry are counted even past the budget. Steering
+    // to all of it left nothing for them, and the total sat over the budget.
+    const uint64_t total = budget() / 100 * TEXTURE_STEERING_PERCENT;
+    const uint64_t all = totalUsed();
+    const uint64_t textures = used(MemoryCategory::Textures);
+    const uint64_t others = all > textures ? all - textures : 0;
+    return total > others ? total - others : 0;
+}
+
+bool MemoryBudget::canBorrow(uint64_t bytes) const
+{
     const uint64_t total = budget();
-    const uint64_t others = totalUsed() - used(MemoryCategory::Textures);
-    const uint64_t kept = others + total / 100 * TEXTURE_RESERVE_PERCENT;
-    const uint64_t room = total > kept ? total - kept : 0;
-    const uint64_t share = limit(MemoryCategory::Textures);
-    return room > share ? room : share;
+    const uint64_t all = totalUsed();
+    const uint64_t textureUse = used(MemoryCategory::Textures);
+    const uint64_t others = all > textureUse ? all - textureUse : 0;
+    const uint64_t textures = limit(MemoryCategory::Textures);
+    // Within what is free now, and never into the textures' own share.
+    return textures <= total && bytes <= total - textures && all <= total - bytes && others <= total - textures - bytes;
 }
 
 bool MemoryBudget::reserve(MemoryCategory category, uint64_t bytes)
@@ -91,19 +100,28 @@ bool MemoryBudget::reserve(MemoryCategory category, uint64_t bytes)
     uint64_t used = mUsed[index].load(std::memory_order_relaxed);
     do
     {
-        if (bytes > limit || used > limit - bytes)
+        if ((bytes > limit || used > limit - bytes) && (category != MemoryCategory::Geometry || !canBorrow(bytes)))
         {
             return false;
         }
     } while (!mUsed[index].compare_exchange_weak(used, used + bytes, std::memory_order_relaxed));
-    mTotalUsed.fetch_add(bytes, std::memory_order_relaxed);
+    uint64_t all = totalUsed();
+    do
+    {
+        const uint64_t total = budget();
+        if (bytes > total || all > total - bytes)
+        {
+            mUsed[index].fetch_sub(bytes, std::memory_order_relaxed);
+            return false;
+        }
+    } while (!mTotalUsed.compare_exchange_weak(all, all + bytes, std::memory_order_relaxed));
     return true;
 }
 
 void MemoryBudget::reserveAnyway(MemoryCategory category, uint64_t bytes)
 {
-    mUsed[uint32_t(category)].fetch_add(bytes, std::memory_order_relaxed);
     mTotalUsed.fetch_add(bytes, std::memory_order_relaxed);
+    mUsed[uint32_t(category)].fetch_add(bytes, std::memory_order_relaxed);
 }
 
 void MemoryBudget::release(MemoryCategory category, uint64_t bytes)
@@ -112,9 +130,18 @@ void MemoryBudget::release(MemoryCategory category, uint64_t bytes)
     mTotalUsed.fetch_sub(bytes, std::memory_order_relaxed);
 }
 
+std::string MemoryBudget::refusal(const char* what, MemoryCategory category, uint64_t bytes) const
+{
+    const auto mb = [](uint64_t value) { return std::to_string((value + (1 << 20) - 1) >> 20); };
+    return std::string(what) + " does not fit in its memory budget: " + mb(bytes) + " MB asked, " +
+           memoryCategoryName(category) + " " + mb(used(category)) + "/" + mb(limit(category)) + " MB, all " +
+           mb(totalUsed()) + "/" + mb(budget()) + " MB, textures " + mb(used(MemoryCategory::Textures)) + " MB";
+}
+
 uint64_t MemoryBudget::uploadBytesPerFrame(uint32_t framesInFlight) const
 {
-    const uint64_t share = (limit(MemoryCategory::Staging) - SMALL_STAGING_BYTES) / (uint64_t(framesInFlight) * 2);
+    const uint64_t staging = limit(MemoryCategory::Staging);
+    const uint64_t share = staging > SMALL_STAGING_BYTES ? (staging - SMALL_STAGING_BYTES) / (uint64_t(framesInFlight) * 2) : 0;
     return share < MAXIMUM_UPLOAD_BYTES ? share : MAXIMUM_UPLOAD_BYTES;
 }
 

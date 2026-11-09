@@ -38,42 +38,47 @@ void declareSceneGraph(FrameGraph& graph)
     // arguments as Indirect too.
     graph.addPass("upload", { { ResultSceneData, CopyWrite | Keep }, { ResultDrawArguments, CopyWrite } });
 
-    // Avatars, once per frame for every view: palettes, then placing and LOD, then morphs
-    // whose weights changed, then skinned vertices and the bounds made from them. Each reads
-    // what the one before wrote.
-    for (const char* name : { "skin palette", "skin bind", "skin morph", "skin vertices", "skin clusters", "skin groups" })
+    // Joint-derived conservative bounds need no deformed positions. Culling can therefore
+    // decide demand before spending vertex bandwidth; late depth rejection has recovery.
+    for (const char* name : { "skin pose", "skin palette", "skin bind", "skin morph", "skin clusters", "skin groups" })
     {
         graph.addPass(name, { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     }
-    graph.addPass("cull early", { { ResultSceneData, ComputeRead },
+    graph.addPass("cull early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                   { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                   { ResultDrawArguments, ComputeWrite | Keep },
                                   { ResultVisibleClusters, ComputeWrite },
                                   { ResultRetestList, ComputeWrite },
                                   { ResultGroupList, ComputeWrite } });
-    graph.addPass("groups early", { { ResultSceneData, ComputeRead },
+    graph.addPass("groups early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                     { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                     { ResultGroupList, ComputeRead },
                                     { ResultDrawArguments, Indirect | ComputeWrite | Keep },
                                     { ResultVisibleClusters, ComputeWrite | Keep },
                                     { ResultRetestList, ComputeWrite | Keep } });
+    graph.addPass("skin vertices", { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
+    // Its body is a no-op outside audit mode. Audit positions must follow deformation,
+    // while the read-counts pass must still see their results in the same frame.
+    graph.addPass("skin audit", { { ResultSceneData, ComputeRead },
+                                  { ResultDrawArguments, ComputeWrite | Keep } });
     graph.addPass("draw early", { { ResultSceneData, VertexRead },
                                   { ResultDrawArguments, Indirect },
                                   { ResultVisibleClusters, VertexRead },
                                   { ResultVisibility, ColorTarget },
                                   { ResultDepth, DepthTarget } });
     graph.addPass("pyramid early", { { ResultDepth, ComputeRead }, { ResultDepthPyramid, ComputeWrite } });
-    graph.addPass("cull late", { { ResultSceneData, ComputeRead },
+    graph.addPass("cull late", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                  { ResultDepthPyramid, ComputeRead },
                                  { ResultRetestList, ComputeRead },
                                  { ResultDrawArguments, Indirect | ComputeWrite | Keep },
                                  { ResultVisibleClusters, ComputeWrite | Keep },
                                  { ResultGroupList, ComputeWrite | Keep } });
-    graph.addPass("groups late", { { ResultSceneData, ComputeRead },
+    graph.addPass("groups late", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                    { ResultDepthPyramid, ComputeRead },
                                    { ResultGroupList, ComputeRead },
                                    { ResultDrawArguments, Indirect | ComputeWrite | Keep },
                                    { ResultVisibleClusters, ComputeWrite | Keep } });
+    graph.addPass("skin vertices late", { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     graph.addPass("draw late", { { ResultSceneData, VertexRead },
                                  { ResultDrawArguments, Indirect },
                                  { ResultVisibleClusters, VertexRead },

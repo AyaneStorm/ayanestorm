@@ -223,6 +223,7 @@ SceneCamera3D CameraPredictor::predict(const SceneCamera3D& newest, Clock::time_
     const float verticalFov = 2.f * std::atan(1.f / newest.focal[1]);
     SceneCamera3D camera = makeCameraFromAxes(shownEye, forward, up, verticalFov, newest.focal[1] / newest.focal[0], newest.nearClip, newest.farClip);
     camera.lodScale = newest.lodScale;
+    camera.debugView = newest.debugView;
     return camera;
 }
 
@@ -323,6 +324,7 @@ SceneCamera3D turnCamera(const SceneCamera3D& published, const CameraTurn& turn,
     SceneCamera3D camera = makeCameraFromAxes(eye, forward, rolledUp, verticalFov, published.focal[1] / published.focal[0],
                                               published.nearClip, published.farClip);
     camera.lodScale = published.lodScale;
+    camera.debugView = published.debugView;
     return camera;
 }
 

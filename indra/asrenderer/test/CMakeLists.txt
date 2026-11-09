@@ -2,9 +2,9 @@
 # self checks. Linux builds the self checks only until its window code exists.
 set(test_sources asrtestmain.cpp)
 if(WIN32)
-    list(APPEND test_sources asrtestwindowwin32.cpp)
+    list(APPEND test_sources asrtestwindowwin32.cpp asrtestvram.cpp)
 elseif(APPLE)
-    list(APPEND test_sources asrtestwindowcocoa.mm asrtestmouseprobe.mm)
+    list(APPEND test_sources asrtestwindowcocoa.mm asrtestmouseprobe.mm asrtestvram.cpp)
     set_source_files_properties(asrtestwindowcocoa.mm asrtestmouseprobe.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 endif()
 

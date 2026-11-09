@@ -3980,6 +3980,12 @@ public:
             LLSpatialBridge* bridge = part->asBridge();
             if (bridge && gPipeline.hasRenderType(bridge->mDrawableType))
             {
+                // <AS:Chanayane> Bridge bounds too: see LLSpatialPartition::lineSegmentIntersect().
+                if (ASR::active())
+                {
+                    ((LLSpatialGroup*)part->mOctree->getListener(0))->rebound();
+                }
+                // </AS:Chanayane>
                 check(part->mOctree);
             }
         }
@@ -4050,6 +4056,13 @@ LLDrawable* LLSpatialPartition::lineSegmentIntersect(const LLVector4a& start, co
     )
 
 {
+    // <AS:Chanayane> The new renderer runs no cull(), the only place group bounds are refreshed;
+    // stale bounds let the ray skip moved drawables (avatars). rebound() does nothing when clean.
+    if (ASR::active())
+    {
+        ((LLSpatialGroup*)mOctree->getListener(0))->rebound();
+    }
+    // </AS:Chanayane>
     LLOctreeIntersect intersect(start, end, pick_transparent, pick_rigged, pick_unselectable, pick_reflection_probe, face_hit, intersection, tex_coord, normal, tangent);
     LLDrawable* drawable = intersect.check(mOctree);
 

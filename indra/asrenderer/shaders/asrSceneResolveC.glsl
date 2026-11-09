@@ -24,7 +24,7 @@ const vec4 SKY = vec4(0.32, 0.45, 0.62, 0.0);
 
 vec4 unlit(vec3 albedo, vec3 normal)
 {
-    return vec4(albedo * (0.65 + 0.35 * dot(normal, normalize(vec3(0.4, 0.3, 0.87)))), 0.0);
+    return vec4(albedo * placeholderLight(normal), 0.0);
 }
 
 struct Interpolator
@@ -88,23 +88,6 @@ void reject(ivec2 pixel, uint bit, uint value)
     imageStore(albedo, pixel, vec4(1.0, 0.0, 1.0, 1.0));
     imageStore(normals, pixel, vec4(0.0, 0.0, 1.0, 1.0));
     imageStore(lit, pixel, vec4(1.0, 0.0, 1.0, 0.0));
-}
-
-vec3 skinNormal(ViewRef view, Binding binding, uint vertex, vec3 normal)
-{
-    uvec4 joints;
-    vec4 amounts;
-    skinWeights(binding.weights, vertex, joints, amounts);
-    RowsRef palette = RowsRef(view.skinTables[SKIN_TABLE_PALETTE]);
-    vec3 turned = vec3(0.0);
-    for (int i = 0; i < 4; ++i)
-    {
-        if (amounts[i] > 0.0)
-        {
-            turned += amounts[i] * rowsDirection(palette.items[binding.palette + joints[i]], normal);
-        }
-    }
-    return dot(turned, turned) > 0.0 ? normalize(turned) : normal;
 }
 
 // A texture by its bits (see uiTextureBits()), with the steps of its UVs one pixel across and down.
@@ -319,12 +302,7 @@ void main()
         color = material.color * sampleBits(pixel, material.texture, uv, uvDx, uvDy);
     }
 
-    // Normals follow the cofactor matrix, which stays right under any stretch.
-    const vec3 row0 = instance.rows[0].xyz;
-    const vec3 row1 = instance.rows[1].xyz;
-    const vec3 row2 = instance.rows[2].xyz;
-    const mat3 cofactor = mat3(cross(row1, row2), cross(row2, row0), cross(row0, row1));
-    vec3 worldNormal = normalize(cofactor * objectNormal);
+    vec3 worldNormal = worldNormalOf(instance, objectNormal);
 
     // The back of a two-sided surface faces the other way. In this space the front
     // of a triangle turns clockwise, and a flipped instance swaps the two.
@@ -342,5 +320,27 @@ void main()
 
     imageStore(albedo, pixel, vec4(color.rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
-    imageStore(lit, pixel, unlit(color.rgb, worldNormal));
+    vec4 shown = unlit(color.rgb, worldNormal);
+    if (view.debugView == DEBUG_VIEW_NORMALS)
+    {
+        shown = vec4(worldNormal * 0.5 + 0.5, 1.0);
+    }
+    else if (view.debugView == DEBUG_VIEW_ALBEDO)
+    {
+        shown = vec4(color.rgb, 1.0);
+    }
+    else if (view.debugView == DEBUG_VIEW_ALPHA_MODE)
+    {
+        shown = (instance.flags & INSTANCE_MASKED) != 0u ? vec4(0.1, 0.8, 0.1, 1.0) : vec4(0.5, 0.5, 0.5, 1.0);
+    }
+    else if (view.debugView == DEBUG_VIEW_CLUSTERS)
+    {
+        // One colour per drawn cluster: a patch with straight cluster edges is culling,
+        // a ragged one is two surfaces fighting in depth.
+        uint hash = visible.cluster * 747796405u + 2891336453u;
+        hash = ((hash >> ((hash >> 28u) + 4u)) ^ hash) * 277803737u;
+        hash ^= hash >> 22u;
+        shown = vec4(vec3(hash & 255u, (hash >> 8) & 255u, (hash >> 16) & 255u) / 255.0, 1.0);
+    }
+    imageStore(lit, pixel, shown);
 }

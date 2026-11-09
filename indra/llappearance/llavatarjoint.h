@@ -45,6 +45,9 @@ class alignas(16) LLAvatarJoint :
     public LLJoint
 {
     LL_ALIGN_NEW
+    // <AS:Chanayane> the new renderer reads which LOD and parts are shown
+    friend class ASRAvatarBody;
+    // </AS:Chanayane>
 public:
     LLAvatarJoint();
     LLAvatarJoint(S32 joint_num);

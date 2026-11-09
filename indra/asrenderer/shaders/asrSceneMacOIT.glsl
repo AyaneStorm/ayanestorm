@@ -33,6 +33,8 @@ layout(set = 0, binding = 1) uniform sampler samplers[4];
 layout(location = 0) in vec2 vary_uv;
 layout(location = 1) flat in uint vary_texture;
 layout(location = 2) flat in vec4 vary_color;
+layout(location = 3) in vec3 vary_normal;
+layout(location = 4) in vec3 vary_toCamera;
 
 #if MACOIT_PASS == 2
 layout(set = 1, binding = 4, rgba32f) uniform readonly image2D macoitMoments; // optical depth * (z, z^2, z^3, z^4)
@@ -174,7 +176,27 @@ void main()
 {
     vec2 uvDx;
     vec2 uvDy;
-    const vec4 color = surfaceColor(uvDx, uvDy);
+    vec4 color = surfaceColor(uvDx, uvDy);
+    // The same placeholder light as opaque surfaces. A face seen from behind (two-sided)
+    // turns its normal to the camera, as the resolve does.
+    vec3 normal = normalize(vary_normal);
+    normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
+    color.rgb *= placeholderLight(normal);
+    if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
+    {
+        color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha
+    }
+    // Helpers must participate in the derivatives above, but can lie outside the viewport.
+    // Their ordinary buffer reads are not suppressed like atomic writes: stop before OIT.
+    if (gl_HelperInvocation)
+    {
+        return;
+    }
+    const vec2 extent = ViewRef(push.view).pixelSize.xy;
+    if (!all(greaterThanEqual(gl_FragCoord.xy, vec2(0.0))) || !all(lessThan(gl_FragCoord.xy, extent)))
+    {
+        return; // never form a physical buffer address for a pixel outside this view
+    }
     const float alpha = clamp(color.a, 0.0, 1.0);
     if (alpha <= 0.0)
     {
@@ -189,7 +211,8 @@ void main()
     const uint before = atomicAdd(state.words[macoitCountWord(pixel)], 1u);
     if (before == MACOIT_LAYERS)
     {
-        TailSeenRef(push.output_counts + MACOIT_TAIL_SEEN_OFFSET).value = 1u; // this pixel has a tail
+        // Many pixels find a tail together: even identical writes to this shared flag must be atomic.
+        atomicOr(TailSeenRef(push.output_counts + MACOIT_TAIL_SEEN_OFFSET).value, 1u);
     }
     atomicMax(state.words[macoitFarthestWord(pixel)], floatBitsToUint(depth01));
     if (alpha < MACOIT_MIN_LAYER_ALPHA)

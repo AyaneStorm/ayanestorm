@@ -5,6 +5,12 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "asrworld.h"
+#include "asravatarbody.h"
+#include "asravatarresidency.h"
+#include "asrskinweights.h"
+#include "asrmeshlodresidency.h"
+#include "asrtexturestreaming.h"
+#include "asrworldshared.h"
 
 #if defined(AS_RENDERER) && (LL_WINDOWS || LL_DARWIN) // as ASR_VIEWER_SUPPORTED in asrviewer.cpp
 
@@ -14,6 +20,9 @@
 #include "asrrenderthread.h"
 #include "asrviewer.h"
 #include "llagent.h"
+#include "llagentcamera.h"
+#include "fsavatarrenderpersistence.h"
+#include "llviewerobjectlist.h"
 #include "llappviewer.h"
 #include "lldrawable.h"
 #include "llfetchedgltfmaterial.h"
@@ -21,10 +30,12 @@
 #include "llimage.h"
 #include "llmaterial.h"
 #include "llmeshrepository.h"
+#include "llskinningutil.h"
 #include "lltextureentry.h"
 #include "lltoolpie.h"
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
+#include "llviewerjointattachment.h"
 #include "llviewerobject.h"
 #include "llviewerregion.h"
 #include "llviewertexture.h"
@@ -62,6 +73,9 @@
 #include <unordered_set>
 #include <vector>
 
+// Named outside the namespace below, so asrworldshared.h can hand it to asravatarbody.cpp.
+struct ASRSharedMaterial;
+
 namespace
 {
 
@@ -84,6 +98,9 @@ struct ShapeFace
     U32 geometries[LODS] = { 0, 0, 0, 0 };
     U32 finest = 0; // 0 for a face with nothing to draw
     asr::GeometryBox box{};
+
+    // Empty/coarse LODs do not invalidate another LOD's weighted surface.
+    U32 skinJoints[LODS]{}; // highest weighted palette index + 1 per LOD; 0 without weights
 };
 
 // What makes geometry the same: a repeated mesh, a grass field say, is one shape however
@@ -131,6 +148,8 @@ struct Shape
     U32 nextLod = 0;
     LLPointer<LLVolume> arrived[LODS];
     bool gone[LODS] = { false, false, false, false }; // the server has no such LOD
+    asr::MeshLodResidency residency;
+    S32 actualLods[LODS] = { -1, -1, -1, -1 }; // cached header remapping, including finer fallbacks
 };
 
 struct TerrainJob;
@@ -150,7 +169,7 @@ struct ShapeJob
     bool sculptMissing = false;      // the asset does not exist, so it draws a placeholder
 };
 
-struct SharedMaterial;
+using SharedMaterial = ASRSharedMaterial;
 
 // A texture some face shows. Its slot changes as sharper versions load.
 struct TrackedTexture
@@ -160,15 +179,20 @@ struct TrackedTexture
     S8 components = 0;
     F32 visited = -1000.f; // see visitTextures()
     U32 changes = 0; // temporary: how often its slot changed
-    std::unordered_map<LLDrawable*, U32> users; // how many of its faces use it
+    struct Uses { U32 faces = 0; U32 eyes = 0; };
+    std::unordered_map<LLDrawable*, Uses> users;
     U32 terrainUsers = 0;                       // layers of regions' ground, which follow its slot themselves
     std::vector<SharedMaterial*> materials;     // what a new slot has to be written to
 
     // Texture feedback: when it got its slot, as feedback from before then is another
     // texture's, and what the GPU last saw of it.
     asr::TextureFeedback::Clock::time_point slotSince{};
-    U8 gpuLevel = 0;         // log2 of the texels across it needed
-    F32 gpuSeenAt = -1000.f; // gFrameTimeSeconds
+    U8 gpuLevel = 0;          // log2 of the texels across it needed, the largest lately: see takeFeedback()
+    U8 latestGpuLevel = 0;    // immediate demand, without the retention window
+    F32 gpuLevelAt = -1000.f; // when that level was last needed
+    F32 gpuSeenAt = -1000.f;  // gFrameTimeSeconds
+    U32 detailLimit = 0;      // longest side allowed for a small avatar detail
+    F32 detailLimitAt = -1000.f;
 };
 
 // What makes two materials one. The slot is not part of it: it follows the image.
@@ -182,13 +206,18 @@ struct MaterialKey
 };
 static_assert(sizeof(MaterialKey) == 80, "compared and hashed as bytes, so it has no padding");
 
-struct SharedMaterial
+} // namespace
+
+struct ASRSharedMaterial
 {
     U32 id = 0;
     U32 users = 0; // faces
     asr::MaterialDesc desc;
     TrackedTexture* texture = nullptr;
 };
+
+namespace
+{
 
 struct ObjectFace
 {
@@ -212,8 +241,50 @@ struct StackKey
 };
 static_assert(sizeof(StackKey) == 56, "compared and hashed as bytes, so it has no padding");
 
+// An avatar's skeleton on the GPU: its bones, collision volumes and attachment points, in
+// the viewer's own joint numbering, which rigged meshes are made against.
+struct AvatarSkeleton
+{
+    U32 id = 0;
+    U32 joints = 0;
+    std::vector<F32> rows; // as last posed
+    bool settled = false;  // the last pose repeated the one before, so the GPU leads nothing
+    std::unordered_set<LLDrawable*> users;
+    F32 lodDistance = -1.f; // the avatar's distance when its objects' LODs were last checked
+    S32 animationPeriod = 1; // every how many frames the viewer animates it: see setAnimationPeriods()
+    bool interpolate = false; // drawn one period late, blended between poses, never overshooting
+    U32 unchangedFrames = 0;  // since the last new pose
+    bool animated = true;     // the viewer animated it since its joints were last read
+    bool bodyPosed = true;    // accumulated until the lower-priority system body gets a turn
+    LLVector3 origin;         // the render origin they were read with
+    bool resident = true;     // its skinned copies kept: see setAnimationPeriods()
+    double nearViewAt = 0.0;  // gFrameTimeSeconds when it was last near the view
+    S32 lodCap = asr::AvatarDetailPolicy::FINEST; // the finest LOD its meshes may use: see setAnimationPeriods()
+    ASRAvatarBody::BodyPtr body; // its system body, which keeps the skeleton as users do
+};
+
+// A rigged mesh's skin, shared by everything wearing that mesh.
+using SkinKey = std::pair<LLUUID, U64>; // mesh, and the skin's hash
+struct SharedSkin
+{
+    U32 id = 0;
+    U32 joints = 0;
+    U32 users = 0;
+};
+
+// An object drawn on an avatar: rigged to its skeleton, or attached to one of its joints.
+struct AvatarBinding
+{
+    LLVOAvatar* avatar = nullptr;
+    SharedSkin* skin = nullptr; // rigged
+    SkinKey skinKey;
+    U32 joint = 0;              // attached
+    F32 local[12] = {};         // attached: its matrix in that joint's space, as last written
+};
+
 struct WorldObject
 {
+    std::unique_ptr<AvatarBinding> bound;
     Shape* shape = nullptr;
     Shape* next = nullptr; // what replaces shape once it is built, so nothing blinks out
     std::vector<ObjectFace> faces;
@@ -223,6 +294,7 @@ struct WorldObject
     F64 lodDue = F64_MAX;         // the camera travel at which its LOD is checked: see updateLods()
     S32 askedLod = -1;            // the finest LOD this object has asked the mesh system for
     bool askedWithHeader = false; // whether the mesh's header was known by then
+    S32 skinnedLod = -1;          // rigged: the LOD its skinned faces were last applied at
 };
 
 struct SweepEntry
@@ -262,6 +334,39 @@ struct BytesHash
 
 asr::SceneQueue* sScene = nullptr;
 bool sRunning = false;
+asr::AvatarResidencyPolicy sAvatarResidency;
+asr::AvatarDetailPolicy sAvatarDetail;
+
+// Within this distance a surface is sharp to what the GPU asks for. It narrows while textures
+// are over their limit and widens back once under: in a club nearly everything is within a
+// fixed 20 m, and holding all of it sharp left nothing able to refine. See updateNearRange().
+constexpr F32 NEAREST_RANGE = 4.f;
+constexpr F32 FULL_NEAR_RANGE = 20.f;
+F32 sNearMetres = FULL_NEAR_RANGE;
+
+void updateNearRange(const asr::MemoryBudget& memory)
+{
+    constexpr F32 STEP_SECONDS = 1.f;
+    static F32 steppedAt = 0.f;
+    if (gFrameTimeSeconds - steppedAt < STEP_SECONDS) return;
+    steppedAt = gFrameTimeSeconds;
+    const U64 used = memory.used(asr::MemoryCategory::Textures);
+    const U64 limit = memory.textureLimit();
+    if (used > limit)
+    {
+        sNearMetres = llmax(sNearMetres * 0.8f, NEAREST_RANGE);
+    }
+    else if (used < limit / 10 * 9)
+    {
+        sNearMetres = llmin(sNearMetres * 1.1f, FULL_NEAR_RANGE);
+    }
+}
+
+// The avatar menu's "Always render fully", as Firestorm saves it: LLVOAvatar keeps its copy protected.
+bool alwaysRenderedFully(LLVOAvatar* avatar)
+{
+    return FSAvatarRenderPersistence::getInstance()->getAvatarRenderSettings(avatar->getID()) == LLVOAvatar::AV_ALWAYS_RENDER;
+}
 
 std::map<ShapeKey, std::unique_ptr<Shape>> sShapes;
 std::unordered_map<const void*, TrackedTexture> sTextures; // by LLImageGL, which is what reports a change
@@ -290,7 +395,17 @@ void takeTextureFeedback()
         TrackedTexture* owner = sSlotOwners[sFeedback.slots[i]];
         if (owner && owner->slotSince <= sFeedback.since)
         {
-            owner->gpuLevel = sFeedback.levels[i];
+            // Each batch samples other pixels, so its level for one texture swings, and a
+            // texture following it would shrink and sharpen again and again. A larger need
+            // counts at once; a smaller one only once the larger has gone unmet for a while.
+            constexpr F32 LEVEL_HOLD = 4.f; // seconds
+            const U8 level = sFeedback.levels[i];
+            owner->latestGpuLevel = level;
+            if (level >= owner->gpuLevel || gFrameTimeSeconds - owner->gpuLevelAt > LEVEL_HOLD)
+            {
+                owner->gpuLevel = level;
+                owner->gpuLevelAt = gFrameTimeSeconds;
+            }
             owner->gpuSeenAt = gFrameTimeSeconds;
         }
     }
@@ -306,7 +421,14 @@ void ownSlot(TrackedTexture& texture, U32 slot)
     {
         sSlotOwners[texture.slot] = nullptr;
     }
-    // What the GPU saw stays: a new slot is the same texture at a new size.
+    // Keep the demand window across mip replacements (the texture-cycling fix), but
+    // after eviction no old feedback may suppress the first image of a reload.
+    if (slot == 0)
+    {
+        texture.gpuSeenAt = -1000.f;
+        texture.gpuLevelAt = -1000.f;
+        texture.gpuLevel = 0;
+    }
     texture.slot = slot;
     texture.slotSince = asr::TextureFeedback::Clock::now();
     if (slot != 0)
@@ -359,7 +481,8 @@ bool sStopping = false;
 
 bool hasGeometry(const LLVolumeFace& face)
 {
-    return face.mNumVertices > 0 && face.mNumIndices >= 3;
+    // LLVolume represents an absent mesh face by one vertex and three zero indices.
+    return face.mNumVertices >= 3 && face.mNumIndices >= 3;
 }
 
 // Adds one LOD to the fine end of a face's chain. Its box must already be set.
@@ -376,7 +499,35 @@ void addFaceLod(ShapeFace& face, U32 lod, LLVolumeFace& volumeFace)
         memcpy(vertex.tangent, volumeFace.mTangents[i].getF32ptr(), sizeof(vertex.tangent));
         memcpy(vertex.uv, volumeFace.mTexCoords[i].mV, sizeof(vertex.uv));
     }
-    face.finest = sScene->addGeometry(asr::buildGeometry(vertices.data(), U32(vertices.size()), volumeFace.mIndices, U32(volumeFace.mNumIndices), &face.box),
+
+    // Each weight is a joint index plus its share, as LLSkinningUtil::getPerVertexSkinMatrix()
+    // reads them: shares normalised, and a vertex with none goes wholly to its first joint.
+    std::vector<asr::SkinWeights> weights;
+    if (volumeFace.mWeights)
+    {
+        weights.resize(volumeFace.mNumVertices);
+        for (S32 i = 0; i < volumeFace.mNumVertices; ++i)
+        {
+            const F32* packed = volumeFace.mWeights[i].getF32ptr();
+            F32 shares[4];
+            for (U32 k = 0; k < 4; ++k)
+            {
+                const F32 whole = floorf(packed[k]);
+                weights[i].joints[k] = U8(llclamp(S32(whole), 0, S32(LL_MAX_JOINTS_PER_MESH_OBJECT) - 1));
+                shares[k] = packed[k] - whole;
+            }
+            asr::packSkinAmounts(shares, weights[i].weights);
+            for (U32 k = 0; k < 4; ++k)
+            {
+                if (weights[i].weights[k] != 0)
+                {
+                    face.skinJoints[lod] = llmax(face.skinJoints[lod], U32(weights[i].joints[k]) + 1);
+                }
+            }
+        }
+    }
+    face.finest = sScene->addGeometry(asr::buildGeometry(vertices.data(), U32(vertices.size()), volumeFace.mIndices, U32(volumeFace.mNumIndices), &face.box,
+                                                         weights.empty() ? nullptr : weights.data()),
                                       face.finest, COARSER_AT[lod]);
     face.geometries[lod] = face.finest;
 }
@@ -532,6 +683,28 @@ void startSculpt(Shape& shape)
     startJob(std::move(job));
 }
 
+bool memoryPressure();
+LLVOVolume* volumeOf(LLDrawable* drawable);
+
+// Refresh from current users when the time-sliced demand sweep may have lagged. Both
+// admission and eviction use this check, preventing lost late arrivals and reload churn.
+bool meshLodNeeded(Shape& shape, U32 level)
+{
+    for (LLDrawable* user : shape.users)
+    {
+        LLVOVolume* volume = volumeOf(user);
+        if (!volume || user->isDead()) continue;
+        const S32 wanted = llclamp(volume->getLOD(), 0, S32(LODS) - 1);
+        const U32 actual = U32(llmax(wanted, shape.actualLods[wanted]));
+        if (actual >= level)
+        {
+            shape.residency.want(actual, gFrameTimeSeconds);
+            return true;
+        }
+    }
+    return false;
+}
+
 void startNextMeshLod(Shape& shape)
 {
     if (shape.busy)
@@ -541,6 +714,12 @@ void startNextMeshLod(Shape& shape)
     for (; shape.nextLod < LODS; ++shape.nextLod)
     {
         const U32 lod = shape.nextLod;
+        if (!shape.residency.holds(lod, gFrameTimeSeconds, memoryPressure()) && !meshLodNeeded(shape, lod))
+        {
+            // A late callback must not rebuild an unwanted/evicted fine LOD.
+            for (U32 at = lod; at < LODS; ++at) shape.arrived[at] = nullptr;
+            return;
+        }
         if (shape.arrived[lod].notNull())
         {
             ShapeJob job;
@@ -607,20 +786,31 @@ void releaseShape(Shape* shape, LLDrawable* drawable)
     }
 }
 
+// Shorten unused LOD retention when the renderer reaches its working budget.
+bool memoryPressure()
+{
+    asr::Device* device = ASRViewer::device();
+    return device && device->memoryBudget().totalUsed() >= device->memoryBudget().budget();
+}
+
 // Asks for every LOD up to the one this object needs, coarsest included, all at once. The
 // request stays alive for as long as one object wants it, and asking twice costs nothing.
 // Once the header is known the real LODs are known too: a request for one the mesh does
 // not have is dropped without a reply, so this runs again then.
 void wantMeshLods(WorldObject& object, LLVOVolume* volume)
 {
-    const Shape* latest = object.next ? object.next : object.shape;
+    Shape* latest = object.next ? object.next : object.shape;
     const LLVolumeParams& params = volume->getVolume()->getParams();
     if (!latest || !isMeshKey(latest->key) || params.getSculptID() != latest->key.first.getSculptID())
     {
         return; // it changes shape in applyObject(), and asks then
     }
 
-    const S32 wanted = volume->getLOD();
+    // Keep exactly the viewer's quality choice. Memory pressure changes retention time,
+    // not the requested LOD, and demand is refreshed even when no new request is needed.
+    const S32 wanted = llclamp(volume->getLOD(), 0, S32(LODS) - 1);
+    latest->residency.want(U32(wanted), gFrameTimeSeconds);
+    if (latest->actualLods[wanted] >= 0) latest->residency.want(U32(latest->actualLods[wanted]), gFrameTimeSeconds);
     if (wanted <= object.askedLod && object.askedWithHeader)
     {
         return; // the usual case, and it takes no lock
@@ -639,6 +829,8 @@ void wantMeshLods(WorldObject& object, LLVOVolume* volume)
     for (S32 lod = 0; lod <= wanted; ++lod)
     {
         const S32 actual = gMeshRepo.getActualMeshLOD(params, lod);
+        latest->actualLods[lod] = actual;
+        if (actual >= 0) latest->residency.want(U32(actual), gFrameTimeSeconds);
         if (actual >= 0 && U32(actual) >= shape.nextLod && shape.arrived[actual].isNull())
         {
             gMeshRepo.loadMesh(volume, params, actual);
@@ -668,10 +860,12 @@ TrackedTexture* trackTexture(LLViewerTexture* image)
     return &found->second;
 }
 
-TrackedTexture* useTexture(LLViewerTexture* image, LLDrawable* drawable)
+TrackedTexture* useTexture(LLViewerTexture* image, LLDrawable* drawable, bool eye)
 {
     TrackedTexture* texture = trackTexture(image);
-    ++texture->users[drawable];
+    auto& uses = texture->users[drawable];
+    ++uses.faces;
+    uses.eyes += eye;
     return texture;
 }
 
@@ -684,12 +878,13 @@ void forgetUnusedTexture(TrackedTexture* texture)
     }
 }
 
-void releaseTexture(TrackedTexture* texture, LLDrawable* drawable)
+void releaseTexture(TrackedTexture* texture, LLDrawable* drawable, bool eye)
 {
     auto user = texture->users.find(drawable);
-    if (user != texture->users.end() && --user->second == 0)
+    if (user != texture->users.end())
     {
-        texture->users.erase(user);
+        user->second.eyes -= eye;
+        if (--user->second.faces == 0) texture->users.erase(user);
     }
     forgetUnusedTexture(texture);
 }
@@ -739,9 +934,9 @@ void writeMaterials(const TrackedTexture& texture)
     }
 }
 
-SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLDrawable* drawable)
+SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLDrawable* drawable, bool eye = false)
 {
-    TrackedTexture* texture = image ? useTexture(image, drawable) : nullptr;
+    TrackedTexture* texture = image ? useTexture(image, drawable, eye) : nullptr;
     const MaterialKey key = materialKey(desc, image);
     auto found = sMaterials.find(key);
     if (found == sMaterials.end())
@@ -761,7 +956,7 @@ SharedMaterial* useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* imag
     return &found->second;
 }
 
-void releaseMaterial(SharedMaterial* material, LLDrawable* drawable)
+void releaseMaterial(SharedMaterial* material, LLDrawable* drawable, bool eye = false)
 {
     TrackedTexture* texture = material->texture;
     if (--material->users == 0)
@@ -776,7 +971,7 @@ void releaseMaterial(SharedMaterial* material, LLDrawable* drawable)
     }
     if (texture)
     {
-        releaseTexture(texture, drawable);
+        releaseTexture(texture, drawable, eye);
     }
 }
 
@@ -821,6 +1016,9 @@ void scheduleLod(LLDrawable* drawable, WorldObject& object, F64 due)
     }
 }
 
+void releaseBinding(LLDrawable* drawable, WorldObject& object);
+std::unordered_set<LLDrawable*> sAwaitingAvatar; // worn before its avatar was built: tried again each frame
+
 // Removes an object for good. sweepSlot stays true as entries swap places.
 void dropObject(LLDrawable* drawable)
 {
@@ -832,6 +1030,8 @@ void dropObject(LLDrawable* drawable)
 
     WorldObject& object = found->second;
     clearObject(drawable, object);
+    releaseBinding(drawable, object);
+    sAwaitingAvatar.erase(drawable);
     if (object.next)
     {
         releaseShape(object.next, drawable);
@@ -853,11 +1053,29 @@ void setUVTransform(asr::MaterialDesc& material, F32 c, F32 s, F32 scaleS, F32 s
     material.uvRow1[2] = 0.5f * scaleT * (s - c) + offsetT + 0.5f;
 }
 
-// Blending comes with the transparency pass. Until then a blended surface shows where
-// it is more than half opaque, so glass and hair do not turn solid.
-constexpr F32 BLEND_STANDIN_CUTOFF = 0.5f;
 
 // The material of a face. Returns false when the face shows nothing at all.
+// Development only, while a GPU fault with real avatars is found: ASRendererAvatarSkip.
+enum AvatarSkip : U32 { SKIP_RIGGED = 1, SKIP_ATTACHED = 2, SKIP_BLENDING = 4 };
+
+bool skipping(U32 part)
+{
+    static LLCachedControl<U32> skip(gSavedSettings, "ASRendererAvatarSkip", 0);
+    return (skip() & part) != 0;
+}
+
+// Drawn by Mac OIT, or as a cut-out where it is more than half opaque while skipping it.
+void setBlended(U32& flags, asr::MaterialDesc& material)
+{
+    if (skipping(SKIP_BLENDING))
+    {
+        flags |= asr::INSTANCE_MASKED;
+        material.alphaCutoff = 0.5f;
+        return;
+    }
+    flags |= asr::INSTANCE_BLENDED;
+}
+
 bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& image, LLVOVolume* volume, S32 index, const asr::GeometryBox& box)
 {
     const LLTextureEntry* te = volume->getTE(index);
@@ -884,8 +1102,7 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
         }
         else if (gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_BLEND)
         {
-            flags |= asr::INSTANCE_MASKED;
-            material.alphaCutoff = BLEND_STANDIN_CUTOFF;
+            setBlended(flags, material);
         }
 
         // Base colour UVs flip into glTF's space, transform there, and flip back.
@@ -916,8 +1133,7 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
         }
         else if (material.color[3] < 1.f || (alphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_BLEND && textureAlpha))
         {
-            flags |= asr::INSTANCE_MASKED;
-            material.alphaCutoff = BLEND_STANDIN_CUTOFF;
+            setBlended(flags, material);
         }
 
         F32 scaleS = 1.f;
@@ -990,6 +1206,611 @@ void fillTransform(asr::InstanceDesc& desc, LLDrawable* drawable, LLVOVolume* vo
     desc.lodSize = shape.lodBias.scaledVec(volume->getScale()).length();
 }
 
+// Avatars. Each has one skeleton on the GPU, posed from the viewer's joints whenever they
+// move, which the GPU carries on to the frame's time. A rigged mesh is skinned to it there,
+// and an attachment follows its attachment point there, so an avatar that moves writes its
+// joints and nothing else.
+std::unordered_map<LLVOAvatar*, AvatarSkeleton> sSkeletons;
+std::map<SkinKey, SharedSkin> sSkins;
+std::vector<LLVOAvatar*> sBodyAvatars; // rebuilt from live characters each update; never retained as ownership
+
+// Three rows of a row-vector matrix, as the GPU takes them.
+void rowsOf(const LLMatrix4& matrix, F32* rows)
+{
+    for (U32 row = 0; row < 3; ++row)
+    {
+        for (U32 column = 0; column < 4; ++column)
+        {
+            rows[row * 4 + column] = matrix.mMatrix[column][row];
+        }
+    }
+}
+
+// Every joint LLVOAvatar::getJoint() numbers: bones, then collision volumes, then attachment
+// points, which come last.
+U32 skeletonJoints(LLVOAvatar* avatar)
+{
+    U32 joints = 0;
+    for (const auto& point : avatar->mAttachmentPoints)
+    {
+        joints = llmax(joints, U32(llmax(point.second->getJointNum(), 0)) + 1);
+    }
+    return joints;
+}
+
+// Every this many frames each skeleton is read even if the viewer did not animate it, in
+// case its joints moved some other way.
+constexpr U32 POSE_SWEEP_FRAMES = 64;
+
+// Sends the avatar's pose if it changed. Its joints are only read when they can have moved:
+// the viewer animated it (ASRWorld::avatarAnimated()), it animates every frame, the render
+// origin moved, or the sweep is due. Returns whether they were read.
+bool poseSkeleton(LLVOAvatar* avatar, AvatarSkeleton& skeleton)
+{
+    const bool read = skeleton.animated || skeleton.animationPeriod <= 1 || skeleton.rows.empty() || skeleton.origin != sRenderOrigin ||
+                      (LLDrawable::getCurrentFrame() + skeleton.id) % POSE_SWEEP_FRAMES == 0;
+    skeleton.animated = false;
+    if (!read)
+    {
+        // Far avatars animate every few frames (setAnimationPeriods()). When a whole period
+        // brings no new pose, the last is sent once more, and the GPU stops moving it.
+        ++skeleton.unchangedFrames;
+        if (!skeleton.settled && skeleton.unchangedFrames > U32(skeleton.animationPeriod))
+        {
+            sScene->poseSkeleton(skeleton.id, skeleton.rows.data(), skeleton.joints, std::chrono::steady_clock::now());
+            skeleton.settled = true;
+        }
+        return false;
+    }
+    skeleton.origin = sRenderOrigin;
+
+    // A joint the avatar does not have stands at its root, and so do HUD attachment points,
+    // which are in screen space: anywhere far off would stretch the box the GPU packs skinned
+    // vertices in, and its 16-bit positions would snap to a coarse grid.
+    static std::vector<F32> rows; // reused: the main thread only
+    rows.resize(size_t(skeleton.joints) * 12);
+    LLMatrix4 root = avatar->getRootJoint() ? avatar->getRootJoint()->getWorldMatrix() : LLMatrix4();
+    for (U32 joint = 0; joint < skeleton.joints; ++joint)
+    {
+        LLJoint* found = avatar->getJoint(S32(joint));
+        LLViewerJointAttachment* point = dynamic_cast<LLViewerJointAttachment*>(found);
+        LLMatrix4 matrix = found && !(point && point->getIsHUDAttachment()) ? found->getWorldMatrix() : root;
+        matrix.mMatrix[3][0] += sRenderOrigin.mV[0];
+        matrix.mMatrix[3][1] += sRenderOrigin.mV[1];
+        matrix.mMatrix[3][2] += sRenderOrigin.mV[2];
+        rowsOf(matrix, &rows[size_t(joint) * 12]);
+    }
+
+    // Only a new pose is sent, so the GPU moves far avatars smoothly between poses.
+    const bool changed = rows != skeleton.rows;
+    skeleton.unchangedFrames = changed ? 0 : skeleton.unchangedFrames + 1;
+    if (changed || (!skeleton.settled && skeleton.unchangedFrames > U32(skeleton.animationPeriod)))
+    {
+        // Interpolated: the gap the GPU blends over is at most the period, with room for
+        // uneven frames, so the first pose after a rest does not take seconds.
+        const F32 gap = skeleton.interpolate ? F32(skeleton.animationPeriod) * llmax(gFrameIntervalSeconds.value(), 0.001f) * 1.5f : 0.f;
+        sScene->poseSkeleton(skeleton.id, rows.data(), skeleton.joints, std::chrono::steady_clock::now(),
+                             std::chrono::microseconds(S64(gap * 1e6f)));
+        skeleton.settled = !changed;
+        skeleton.rows.swap(rows);
+    }
+    return true;
+}
+
+AvatarSkeleton& skeletonOf(LLVOAvatar* avatar)
+{
+    AvatarSkeleton& skeleton = sSkeletons[avatar];
+    if (skeleton.id == 0)
+    {
+        skeleton.joints = skeletonJoints(avatar);
+        skeleton.id = sScene->addSkeleton(skeleton.joints);
+        poseSkeleton(avatar, skeleton); // posed before anything is drawn on it
+        // Identify the extra skeleton when diagnosing transparency faults around arriving avatars or animesh.
+        LL_INFOS("ASRenderer") << "created skeleton " << skeleton.id << " for "
+                                << (avatar->isControlAvatar() ? "animesh " : avatar->isSelf() ? "self avatar " : "avatar ")
+                                << avatar->getID() << ", " << skeleton.joints << " joints" << LL_ENDL;
+    }
+    return skeleton;
+}
+
+AvatarSkeleton* useSkeleton(LLVOAvatar* avatar, LLDrawable* drawable)
+{
+    AvatarSkeleton& skeleton = skeletonOf(avatar);
+    skeleton.users.insert(drawable);
+    return &skeleton;
+}
+
+SharedSkin* useSkin(const LLMeshSkinInfo* info, LLVOAvatar* avatar, SkinKey& key)
+{
+    key = SkinKey(info->mMeshID, info->mHash);
+    SharedSkin& skin = sSkins[key];
+    if (skin.id == 0)
+    {
+        // Every avatar numbers its joints alike, so one lookup serves them all.
+        LLSkinningUtil::initJointNums(const_cast<LLMeshSkinInfo*>(info), avatar);
+        const U32 joints = llmin(LLSkinningUtil::getMeshJointCount(info), U32(info->mBindPoseMatrix.size()), U32(info->mJointNums.size()));
+        asr::SkinDesc desc;
+        desc.matrices.resize(size_t(joints) * 12);
+        desc.joints.resize(joints);
+        for (U32 joint = 0; joint < joints; ++joint)
+        {
+            // Bind shape then inverse bind, as LLFace bakes the first into the vertices and
+            // initSkinningMatrixPalette() puts the second before the joint.
+            rowsOf(LLMatrix4(info->mBindPoseMatrix[joint].getF32ptr()), &desc.matrices[size_t(joint) * 12]);
+            desc.joints[joint] = U16(llmax(info->mJointNums[joint], 0));
+        }
+        skin.joints = joints;
+        skin.id = joints ? sScene->addSkin(std::move(desc)) : 0;
+    }
+    ++skin.users;
+    return &skin;
+}
+
+void releaseBinding(LLDrawable* drawable, WorldObject& object)
+{
+    if (!object.bound)
+    {
+        return;
+    }
+    const auto skeleton = sSkeletons.find(object.bound->avatar);
+    if (skeleton != sSkeletons.end())
+    {
+        skeleton->second.users.erase(drawable); // removed in updateAvatars(), if that was the last
+    }
+    if (object.bound->skin && --object.bound->skin->users == 0)
+    {
+        if (object.bound->skin->id != 0)
+        {
+            sScene->removeSkin(object.bound->skin->id);
+        }
+        sSkins.erase(object.bound->skinKey);
+    }
+    object.bound.reset();
+}
+
+// The avatar it is drawn on, if any: a rigged mesh on the one it is rigged to, whether worn
+// or animated, and anything else worn on its wearer. The other prims of an animated object
+// stand in the world.
+LLVOAvatar* boundAvatar(LLVOVolume* volume, bool& rigged)
+{
+    LLVOAvatar* avatar = volume->getAvatar();
+    rigged = volume->isRiggedMesh() && avatar && volume->getSkinInfo();
+    return rigged ? avatar : volume->getAvatarAncestor();
+}
+
+// An attached prim's matrix in its attachment point's space. The root's place is kept
+// against that point, and the other prims' against the root.
+void attachedMatrix(LLDrawable* drawable, LLVOVolume* volume, LLViewerJointAttachment* point, F32* rows)
+{
+    LLMatrix4 matrix = volume->getRelativeXform();
+    if (drawable->isState(LLDrawable::ANIMATED_CHILD))
+    {
+        // Spun against its root: as fillTransform(), from its world matrix.
+        const LLVector3& scale = drawable->getScale();
+        matrix.initRows(LLVector4(scale.mV[VX], 0.f, 0.f, 0.f), LLVector4(0.f, scale.mV[VY], 0.f, 0.f), LLVector4(0.f, 0.f, scale.mV[VZ], 0.f), LLVector4(0.f, 0.f, 0.f, 1.f));
+        matrix *= drawable->getWorldMatrix();
+        LLMatrix4 toPoint = point->getWorldMatrix();
+        toPoint.invert();
+        matrix *= toPoint;
+    }
+    else
+    {
+        LLDrawable* root = drawable->isRoot() ? drawable : drawable->getParent();
+        matrix *= LLMatrix4(root->getRotation(), LLVector4(root->getPosition(), 1.f));
+    }
+    rowsOf(matrix, rows);
+}
+
+// Fills desc for an object drawn on an avatar. False when it is not drawn yet, or at all.
+bool bindToAvatar(LLDrawable* drawable, LLVOVolume* volume, WorldObject& object, asr::InstanceDesc& desc)
+{
+    bool rigged = false;
+    LLVOAvatar* avatar = boundAvatar(volume, rigged);
+    const LLMeshSkinInfo* info = rigged ? volume->getSkinInfo() : nullptr;
+    const SkinKey skinKey = info ? SkinKey(info->mMeshID, info->mHash) : SkinKey();
+    if (object.bound && (object.bound->avatar != avatar || object.bound->skinKey != skinKey))
+    {
+        releaseBinding(drawable, object);
+    }
+    if (!avatar || avatar->isDead() || !avatar->isBuilt())
+    {
+        return false;
+    }
+
+    LLViewerJointAttachment* point = nullptr;
+    if (!rigged)
+    {
+        point = avatar->getTargetAttachmentPoint(volume->getRootEdit());
+        if (!point || point->getJointNum() < 0)
+        {
+            return false;
+        }
+    }
+    if (!object.bound)
+    {
+        object.bound = std::make_unique<AvatarBinding>();
+        object.bound->avatar = avatar;
+        if (info)
+        {
+            object.bound->skin = useSkin(info, avatar, object.bound->skinKey);
+        }
+    }
+    AvatarSkeleton* skeleton = useSkeleton(avatar, drawable);
+
+    desc.skeleton = skeleton->id;
+    if (rigged)
+    {
+        // GL's volume batching normally sets this flag. Native rendering does not run
+        // that batching, but CPU LOD selection and ray picking still depend on it.
+        // As there, the first time it is marked, the LOD is measured again: until then
+        // calcLOD() measured the attachment's own small size, not its avatar's.
+        const bool wasRigged = drawable->isState(LLDrawable::RIGGED);
+        drawable->setState(LLDrawable::RIGGED);
+        LLDrawable* root = drawable->getRoot();
+        if (root && root != drawable) root->setState(LLDrawable::RIGGED_CHILD);
+        if (!wasRigged)
+        {
+            volume->updateLOD();
+        }
+        // As LLVOVolume::calcLOD() measures a rigged mesh: by its avatar's animated extents.
+        // Not by its own size: creators often leave a rigged mesh's coarser LODs empty or
+        // broken, as the viewer only shows them with the whole avatar far away, and outfits
+        // then lost parts at a few metres.
+        desc.skin = object.bound->skin->id;
+        const LLVector3* extents = avatar->getLastAnimExtents();
+        desc.lodSize = llmax((extents[1] - extents[0]).magVec() * (avatar->isControlAvatar() ? 0.5f : 1.f), 0.1f);
+        return true; // a skin with no joints draws nothing: see skinnable()
+    }
+    object.bound->joint = U32(point->getJointNum());
+    desc.joint = object.bound->joint;
+    attachedMatrix(drawable, volume, point, object.bound->local);
+    memcpy(desc.objectToWorld, object.bound->local, sizeof(desc.objectToWorld));
+    desc.lodCenter[0] = desc.objectToWorld[3];
+    desc.lodCenter[1] = desc.objectToWorld[7];
+    desc.lodCenter[2] = desc.objectToWorld[11];
+    desc.lodSize = object.shape->lodBias.scaledVec(volume->getScale()).length();
+    return true;
+}
+
+// A usable weighted LOD is enough; the GPU skips unsuitable neighbours in its chain.
+bool skinnable(const ShapeFace& face, const WorldObject& object)
+{
+    const SharedSkin* skin = object.bound ? object.bound->skin : nullptr;
+    if (!skin) return true;
+    for (U32 lod = 0; skin->id != 0 && lod < LODS; ++lod)
+    {
+        if (face.skinJoints[lod] != 0 && face.skinJoints[lod] <= skin->joints) return true;
+    }
+    return false;
+}
+
+// Poses every skeleton something is drawn on, system bodies included, and lets go of those
+// nothing is.
+// The nearest ASRendererFullRateAvatars avatars in view, yours first, animate every frame;
+// the others less often: by their distance to the camera, or rarely when out of view.
+// Animating them is most of the main thread's time in crowds. The gaps are times, turned
+// into frames at the current loop rate, so a slow main thread does not make poses older.
+// Only new poses reach the GPU, which blends between them one gap late, so they move
+// smoothly and never overshoot. One seated on something moving keeps a short period and
+// is carried on instead: late, it would trail its seat.
+// LLVOAvatar::computeNeedsUpdate() reads these through ASRWorld::animationPeriod().
+void setAnimationPeriods()
+{
+    static LLCachedControl<U32> fullRate(gSavedSettings, "ASRendererFullRateAvatars", 16);
+    static LLCachedControl<bool> park(gSavedSettings, "ASRendererParkAvatars", true);
+    const asr::MemoryBudget& memory = ASRViewer::device()->memoryBudget();
+    sAvatarResidency.update(memory.totalUsed(), memory.budget(), gFrameTimeSeconds);
+    // Smoothed, so one slow frame does not reshuffle every period.
+    static F32 loopSeconds = 1.f / 60.f;
+    loopSeconds += (llclamp(F32(gFrameIntervalSeconds.value()), 0.001f, 0.5f) - loopSeconds) * 0.05f;
+
+    struct Ranked
+    {
+        F32 distance;
+        bool inView;
+        bool onMovingSeat;
+        AvatarSkeleton* skeleton;
+        bool alwaysFull; // the local avatar, the camera's focus, and those set to always render fully
+    };
+    std::vector<Ranked> ranked;
+    ranked.reserve(sSkeletons.size());
+    LLViewerCamera* camera = LLViewerCamera::getInstance();
+    LLViewerObject* focus = gAgentCamera.getFocusObject().get();
+    const LLViewerObject* focusAvatar = focus ? (focus->isAvatar() ? focus : focus->getAvatar()) : nullptr;
+    const F32 aspect = camera->getAspect();
+    const F32 halfCorner = atanf(tanf(camera->getView() * 0.5f) * sqrtf(1.f + aspect * aspect));
+    for (auto& [avatar, skeleton] : sSkeletons)
+    {
+        bool inView = false;
+        F32 distance = 0.f;
+        if (avatar->mDrawable.notNull())
+        {
+            // From where the avatar is drawn this frame, seated ones included. Not from its
+            // drawable's spatial extents and distance: the viewer's own render pipeline keeps
+            // those up to date, and with this renderer drawing they can lag far behind, so an
+            // avatar right in view counted as out of it.
+            constexpr F32 LEAST_RADIUS = 1.5f; // metres: a standing avatar's half height and some
+            const LLVector3 middle = avatar->getRenderPosition();
+            const LLVector3* box = avatar->getLastAnimExtents();
+            const F32 radius = llmax((box[1] - box[0]).length() * 0.5f, LEAST_RADIUS);
+            const LLVector3 to = middle - camera->getOrigin();
+            distance = to.length();
+            inView = camera->sphereInFrustum(middle, radius) != 0;
+
+            // Keep a margin for render-thread camera turns between viewer updates.
+            const bool wanted = inView || avatar->isSelf() || !park || distance <= radius ||
+                sAvatarResidency.nearView((to / distance) * camera->getAtAxis(), radius / distance, halfCorner);
+            const bool resident = sAvatarResidency.keepResident(wanted, gFrameTimeSeconds, skeleton.nearViewAt);
+            if (resident != skeleton.resident && skeleton.id != 0)
+            {
+                skeleton.resident = resident;
+                sScene->setSkeletonResident(skeleton.id, resident);
+            }
+        }
+        const LLViewerObject* seat = static_cast<const LLViewerObject*>(avatar->getParent());
+        const bool moving = seat && (seat->getVelocity().lengthSquared() > 0.01f || seat->getAngularVelocity().lengthSquared() > 0.01f);
+        const bool alwaysFull = avatar->isSelf() || avatar == focusAvatar || alwaysRenderedFully(avatar) ||
+                                (inView && distance <= asr::AvatarDetailPolicy::NEAR_METRES);
+        ranked.push_back({ avatar->isSelf() ? -1.f : distance, avatar->isSelf() || inView, moving, &skeleton, alwaysFull });
+    }
+    // In view first, then nearest; ties keep a stable order so places do not churn.
+    std::stable_sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b)
+    {
+        return a.inView != b.inView ? a.inView : a.distance < b.distance;
+    });
+    for (size_t rank = 0; rank < ranked.size(); ++rank)
+    {
+        const Ranked& entry = ranked[rank];
+        F32 gap = 0.f; // seconds between poses
+        if (entry.onMovingSeat && rank >= fullRate())
+        {
+            gap = 2.f * loopSeconds;
+        }
+        else if (rank >= fullRate())
+        {
+            gap = !entry.inView ? 1.f
+                : entry.distance <= 4.f ? 0.12f
+                : entry.distance <= 8.f ? 0.25f
+                : entry.distance <= 16.f ? 0.5f
+                : entry.distance <= 32.f ? 1.f
+                : 2.f;
+        }
+        const S32 period = llclamp(S32(gap / loopSeconds + 0.5f), 1, 128);
+        entry.skeleton->animationPeriod = period;
+        entry.skeleton->interpolate = period > 2 && !entry.onMovingSeat;
+    }
+
+    // Crowd detail ranking, in the same order: in view first, then nearest. LLVOVolume::calcLOD()
+    // reads the cap through ASRWorld::avatarLodCap(), and the LOD sweep applies a change.
+    const U64 textures = memory.used(asr::MemoryCategory::Textures);
+    const U64 others = memory.totalUsed() > textures ? memory.totalUsed() - textures : 0;
+    updateNearRange(memory);
+    const bool overcommitted = memory.totalUsed() > memory.budget() && sNearMetres <= NEAREST_RANGE;
+    sAvatarDetail.update(others, memory.totalUsed(), memory.budget(), ranked.size(), gFrameTimeSeconds, overcommitted);
+    size_t detailRank = 0;
+    for (const Ranked& entry : ranked)
+    {
+        entry.skeleton->lodCap = entry.alwaysFull ? asr::AvatarDetailPolicy::FINEST : sAvatarDetail.lodCap(detailRank++);
+    }
+}
+
+// An avatar showing only its system body while the simulator lists attachments gets them
+// back: what the viewer holds is applied again (the renderer dropped it), and what it
+// lacks is asked of the simulator again (the update never arrived). After 10 s, then
+// doubling up to 2 minutes, so an avatar the simulator does not complete is not flooded.
+void recoverBodyOnlyAvatars()
+{
+    struct Retry { F32 at; F32 wait; F32 since; };
+    static std::unordered_map<LLVOAvatar*, Retry> retries;
+    bool sendEverythingAround = false;
+
+    // Whether the simulator is still sending the region: objects arriving after login or a
+    // teleport. The default interest list sends what is in front of the camera first; 360
+    // then would queue everything behind it ahead of the attachments in view.
+    constexpr F32 QUIET_SAMPLE_SECONDS = 10.f;
+    constexpr S32 QUIET_NEW_OBJECTS = 50;
+    static F32 sampledAt = 0.f;
+    static S32 sampledObjects = 0;
+    static bool regionSent = false;
+    if (gFrameTimeSeconds - sampledAt >= QUIET_SAMPLE_SECONDS)
+    {
+        const S32 objects = gObjectList.getNumObjects();
+        regionSent = objects - sampledObjects < QUIET_NEW_OBJECTS;
+        sampledObjects = objects;
+        sampledAt = gFrameTimeSeconds;
+    }
+    for (auto entry = retries.begin(); entry != retries.end();)
+    {
+        const auto found = sSkeletons.find(entry->first);
+        const bool bodyOnly = found != sSkeletons.end() && found->second.users.empty() && found->second.body;
+        entry = bodyOnly ? std::next(entry) : retries.erase(entry);
+    }
+    for (auto& [avatar, skeleton] : sSkeletons)
+    {
+        if (!skeleton.users.empty() || !skeleton.body || avatar->isDead() || avatar->isControlAvatar() || avatar->mSimAttachments.empty()) continue;
+        const auto [retry, added] = retries.emplace(avatar, Retry{ gFrameTimeSeconds, 10.f, gFrameTimeSeconds });
+        if (added || gFrameTimeSeconds - retry->second.at < retry->second.wait) continue;
+        retry->second.at = gFrameTimeSeconds;
+        retry->second.wait = llmin(retry->second.wait * 2.f, 120.f);
+
+        U32 reapplied = 0;
+        U32 held = 0; // attachments on the viewer: getNumAttachments() is protected
+        for (const auto& [point, attachment] : avatar->mAttachmentPoints)
+        {
+            for (const auto& attached : attachment->mAttachedObjects)
+            {
+                if (!attached || attached->isDead()) continue;
+                ++held;
+                if (attached->mDrawable.notNull()) { sChanged.insert(attached->mDrawable); ++reapplied; }
+                for (LLViewerObject* child : attached->getChildren())
+                {
+                    if (child && child->mDrawable.notNull()) { sChanged.insert(child->mDrawable); ++reapplied; }
+                }
+            }
+        }
+        U32 unattached = 0;
+        U32 missing = 0;
+        for (const auto& [id, point] : avatar->mSimAttachments)
+        {
+            LLViewerObject* object = gObjectList.findObject(id);
+            if (!object) ++missing;
+            else if (!object->isAttachment()) { object->requestObjectUpdate(); ++unattached; }
+        }
+        // Asking for the avatar again does not bring them: the simulator's interest list held
+        // them back. Area Search's 360 mode releases them, so recovery borrows it briefly, but
+        // only for an avatar bare for a minute once the region is sent: at a crowded arrival,
+        // 360 delayed the attachments in view by minutes.
+        constexpr F32 BARE_BEFORE_360 = 60.f;
+        sendEverythingAround |= missing != 0 && regionSent && gFrameTimeSeconds - retry->second.since >= BARE_BEFORE_360;
+        LL_INFOS("ASRenderer") << "body only: " << avatar->getDebugName() << ", " << avatar->mSimAttachments.size() << " attachments by the simulator, "
+                               << held << " on the viewer; " << reapplied << " objects applied again, " << unattached
+                               << " unattached and " << missing << " missing asked again; rezzed status " << avatar->getRezzedStatus()
+                               << ", fully loaded " << avatar->isFullyLoaded() << ", lod cap " << skeleton.lodCap << LL_ENDL;
+    }
+
+    // The 360 interest list for a few seconds, at most once a minute: the simulator then sends
+    // everything within draw distance, missing attachments included. Left alone while Area
+    // Search or anything else has chosen another mode.
+    constexpr F32 SEND_ALL_SECONDS = 5.f;
+    constexpr F32 SEND_ALL_EVERY = 60.f;
+    static bool sendingAll = false;
+    static F32 sendAllUntil = 0.f;
+    static F32 sendAllNext = 0.f;
+    if (sendEverythingAround && !sendingAll && gFrameTimeSeconds >= sendAllNext && !gAgent.getFSAreaSearchActive() &&
+        gAgent.getInterestListMode() == IL_MODE_DEFAULT)
+    {
+        gAgent.changeInterestListMode(IL_MODE_360);
+        sendingAll = true;
+        sendAllUntil = gFrameTimeSeconds + SEND_ALL_SECONDS;
+        sendAllNext = gFrameTimeSeconds + SEND_ALL_EVERY;
+        LL_INFOS("ASRenderer") << "body only: interest list set to 360 for " << SEND_ALL_SECONDS << " s to bring missing attachments" << LL_ENDL;
+    }
+    else if (sendingAll && gFrameTimeSeconds >= sendAllUntil)
+    {
+        sendingAll = false;
+        if (!gAgent.getFSAreaSearchActive() && gAgent.getInterestListMode() == IL_MODE_360)
+        {
+            gAgent.changeInterestListMode(IL_MODE_DEFAULT);
+        }
+    }
+}
+
+void updateAvatars()
+{
+    std::unordered_set<LLVOAvatar*> alive;
+    sBodyAvatars.clear();
+    for (LLCharacter* character : LLCharacter::sInstances)
+    {
+        LLVOAvatar* avatar = static_cast<LLVOAvatar*>(character);
+        alive.insert(avatar);
+        if (ASRAvatarBody::wanted(avatar))
+        {
+            sBodyAvatars.push_back(avatar); // system bodies get a turn after mesh work
+        }
+    }
+    for (auto entry = sSkeletons.begin(); entry != sSkeletons.end();)
+    {
+        AvatarSkeleton& skeleton = entry->second;
+        const bool gone = alive.count(entry->first) == 0 || entry->first->isDead();
+        if (gone)
+        {
+            // Its objects normally went first. Any left are dropped with it.
+            std::vector<LLDrawable*> users(skeleton.users.begin(), skeleton.users.end());
+            for (LLDrawable* drawable : users)
+            {
+                dropObject(drawable);
+            }
+            skeleton.users.clear();
+        }
+        if (skeleton.body && (gone || !ASRAvatarBody::wanted(entry->first)))
+        {
+            ASRAvatarBody::release(skeleton.body); // reads nothing of a gone avatar
+        }
+        if (skeleton.users.empty() && !skeleton.body && (gone || !ASRAvatarBody::wanted(entry->first)))
+        {
+            sScene->removeSkeleton(skeleton.id);
+            entry = sSkeletons.erase(entry);
+            continue;
+        }
+        // GPU culling replaces updateCull(), which normally refreshes these CPU bounds
+        // and distances. Keep them current for rigged mesh LOD requests and picking.
+        LLVOAvatar* avatar = entry->first;
+        if (avatar->mDrawable.notNull())
+        {
+            LLVector4a low, high;
+            avatar->updateSpatialExtents(low, high);
+            avatar->mDrawable->setSpatialExtents(low, high);
+            avatar->mDrawable->movePartition();
+            // The distance part of LLDrawable::updateDistance(), without invoking
+            // the system avatar's GL mesh/VBO LOD rebuild. From where the avatar is drawn this
+            // frame: its position group follows the spatial extents, which only the viewer's own
+            // render pipeline keeps up to date, and a stale far distance gives an avatar right
+            // here the coarse LODs of everything it wears, often empty.
+            const LLVector3 center = avatar->getRenderPosition();
+            avatar->mDrawable->mDistanceWRTCamera = llmax(0.01f, ll_round((center - LLViewerCamera::getInstance()->getOrigin()).length(), 0.01f));
+
+            // LOD checks follow camera travel, which only suits what stands still. A worn
+            // object moves with its avatar, and a teleport or an avatar walking up changes
+            // its distance with no travel, so these are checked when the avatar's own
+            // distance changes by a tenth. LOD limits are distance ratios, hence relative.
+            const F32 distance = avatar->mDrawable->mDistanceWRTCamera;
+            if (skeleton.lodDistance < 0.f || fabsf(distance - skeleton.lodDistance) > skeleton.lodDistance * 0.1f)
+            {
+                skeleton.lodDistance = distance;
+                for (LLDrawable* user : skeleton.users)
+                {
+                    const auto found = sObjects.find(user);
+                    if (found != sObjects.end())
+                    {
+                        scheduleLod(user, found->second, sCameraTravel);
+                    }
+                }
+            }
+        }
+        skeleton.bodyPosed |= poseSkeleton(avatar, skeleton);
+        ++entry;
+    }
+    sChanged.insert(sAwaitingAvatar.begin(), sAwaitingAvatar.end());
+
+    recoverBodyOnlyAvatars();
+
+    // Entering or leaving first person rewrites what the local avatar wears (hiddenSelf()).
+    static bool selfShown = true;
+    if (gAgent.needsRenderAvatar() != selfShown)
+    {
+        selfShown = !selfShown;
+        for (auto& [drawable, object] : sObjects)
+        {
+            if (object.bound && object.bound->avatar && object.bound->avatar->isSelf())
+            {
+                sChanged.insert(drawable);
+            }
+        }
+    }
+    setAnimationPeriods();
+}
+
+// Mesh arrivals, LODs and texture requests have already been serviced. System bodies
+// must not create skeletons/morph sets or enqueue uploads ahead of worn mesh bodies.
+void updateSystemBodies()
+{
+    constexpr auto BUDGET = std::chrono::microseconds(500);
+    static size_t next = 0;
+    const auto start = std::chrono::steady_clock::now();
+    for (size_t count = 0; count < sBodyAvatars.size(); ++count)
+    {
+        if (std::chrono::steady_clock::now() - start >= BUDGET) break;
+        next = next < sBodyAvatars.size() ? next : 0;
+        LLVOAvatar* avatar = sBodyAvatars[next++];
+        // A body starts as soon as the avatar is built, whatever its textures and the scene's
+        // backlog: waiting for a full load or a quiet scene left crowd avatars invisible.
+        // Mesh work still goes first, as this runs after it in its own time slice.
+        AvatarSkeleton& skeleton = skeletonOf(avatar);
+        ASRAvatarBody::update(avatar, skeleton.body, skeleton.id, skeleton.bodyPosed);
+        skeleton.bodyPosed = false;
+    }
+}
+
 // Why an object is not drawn yet, or null when it can be.
 const char* whyLeftOut(LLDrawable* drawable, LLVOVolume* volume)
 {
@@ -997,13 +1818,25 @@ const char* whyLeftOut(LLDrawable* drawable, LLVOVolume* volume)
     {
         return "no volume";
     }
-    if (volume->getAvatarAncestor() || volume->isHUDAttachment())
+    if (volume->isHUDAttachment())
     {
-        return "attached";
+        return "HUD";
     }
-    if (volume->getAvatar())
+    // OpenGL hides these and they cannot be picked: an attachment whose avatar went, kept
+    // until the simulator removes it. Drawn here they stood frozen in their last pose.
+    if (volume->isOrphaned() || drawable->isState(LLDrawable::FORCE_INVISIBLE))
     {
-        return "animated"; // rigged to a control avatar, like attachments in step e
+        return "orphaned";
+    }
+    if (volume->getAvatar() && volume->isMesh() && !volume->getSkinInfo() && !volume->isSkinInfoUnavaliable() &&
+        gMeshRepo.hasSkinInfo(volume->getVolume()->getParams().getSculptID()))
+    {
+        return "skin to come"; // drawn unrigged it would stand at its attachment point, the size of a building
+    }
+    bool rigged = false;
+    if (boundAvatar(volume, rigged) && skipping(rigged ? SKIP_RIGGED : SKIP_ATTACHED))
+    {
+        return "skipped";
     }
     if (volume->isFlexible())
     {
@@ -1039,11 +1872,49 @@ U32 tieRankOf(const LLUUID& object, size_t face)
     return (U32(object.mData[0]) + U32(face)) & (asr::INSTANCE_RANK_MAX >> STACK_RANK_BITS);
 }
 
-void writeFace(ObjectFace& face, const ShapeFace& shapeFace, asr::InstanceDesc& desc)
+// A rigged face names the finest LOD loaded at or below its object's own LOD, or the
+// coarsest loaded when none is. Each skinned instance keeps a deformed copy sized for the
+// LOD it names, so naming the shape's finest would size every far avatar in a crowd for a
+// close-up. The GPU still picks within the chain from here, and never finer.
+U32 skinnedGeometry(const ShapeFace& shapeFace, S32 lod)
 {
-    desc.geometry = face.hidden ? 0 : shapeFace.finest;
+    for (S32 at = llclamp(lod, 0, S32(LODS) - 1); at >= 0; --at)
+    {
+        if (shapeFace.geometries[at] != 0)
+        {
+            return shapeFace.geometries[at];
+        }
+    }
+    for (S32 at = lod + 1; at < S32(LODS); ++at)
+    {
+        if (shapeFace.geometries[at] != 0)
+        {
+            return shapeFace.geometries[at];
+        }
+    }
+    return shapeFace.finest;
+}
+
+// What the local avatar wears is not drawn when the viewer would not draw the avatar:
+// first person, unless the avatar is set visible there, and RLV's showself. The system
+// body follows the same rule in ASRAvatarBody::update().
+bool hiddenSelf(const WorldObject& object)
+{
+    return object.bound && object.bound->avatar && object.bound->avatar->isSelf() && !gAgent.needsRenderAvatar();
+}
+
+// skinnedLod is the object's LOD for a rigged face, -1 for others.
+void writeFace(ObjectFace& face, const ShapeFace& shapeFace, asr::InstanceDesc& desc, S32 skinnedLod, bool hide = false)
+{
+    desc.geometry = face.hidden || hide ? 0 : skinnedLod >= 0 ? skinnedGeometry(shapeFace, skinnedLod) : shapeFace.finest;
     desc.material = face.material->id;
-    desc.flags = face.flags | (((face.tieRank << STACK_RANK_BITS) | face.rank) << asr::INSTANCE_RANK_SHIFT);
+    // Rigged layers (lipstick, eyeliner) sit microns above the skin, under what an ID rank
+    // moves a face at a few metres, so the skin would show through. Exact ties go as the
+    // viewer's passes draw them, each over the last at equal depth: blended over cut-out over
+    // opaque, then the face order. At most 23 steps, microns at any distance.
+    const U32 pass = (face.flags & asr::INSTANCE_BLENDED) ? 2 : (face.flags & asr::INSTANCE_MASKED) ? 1 : 0;
+    const U32 rank = skinnedLod >= 0 ? (pass << 3) | face.tieRank : (face.tieRank << STACK_RANK_BITS) | face.rank;
+    desc.flags = face.flags | (rank << asr::INSTANCE_RANK_SHIFT);
     if (face.instance == NO_INSTANCE)
     {
         face.instance = sScene->addInstance(desc);
@@ -1080,7 +1951,7 @@ void resolveStack(Stack& stack)
             }
 
             ObjectFace& face = objectFaces[i];
-            const bool masked = (face.flags & asr::INSTANCE_MASKED) != 0;
+            const bool masked = (face.flags & (asr::INSTANCE_MASKED | asr::INSTANCE_BLENDED)) != 0; // what shows through it stays
             const bool hidden = !masked && covered;
             const U32 faceRank = masked && stack.members.size() > 1 ? llmin(++rank, (1u << STACK_RANK_BITS) - 1) : 0;
             covered = covered || !masked;
@@ -1105,7 +1976,7 @@ void resolveStack(Stack& stack)
             {
                 if (object.faces[i].instance != NO_INSTANCE)
                 {
-                    writeFace(object.faces[i], object.shape->faces[i], desc);
+                    writeFace(object.faces[i], object.shape->faces[i], desc, -1); // stacks are never rigged
                 }
             }
         }
@@ -1248,14 +2119,34 @@ void applyObject(LLDrawable* drawable)
     object.faces.resize(faces);
 
     asr::InstanceDesc desc;
-    fillTransform(desc, drawable, volume, shape);
+    bool rigged = false;
+    if (boundAvatar(volume, rigged))
+    {
+        leaveStack(drawable, object); // a place in a joint's space is no place in the world
+        if (!bindToAvatar(drawable, volume, object, desc))
+        {
+            for (ObjectFace& face : object.faces)
+            {
+                clearFace(face, drawable);
+            }
+            sAwaitingAvatar.insert(drawable);
+            return;
+        }
+    }
+    else
+    {
+        releaseBinding(drawable, object);
+        fillTransform(desc, drawable, volume, shape);
+    }
+    sAwaitingAvatar.erase(drawable);
+    object.skinnedLod = desc.skin != 0 ? volume->getLOD() : -1;
     for (size_t i = 0; i < faces; ++i)
     {
         ObjectFace& face = object.faces[i];
         asr::MaterialDesc material;
         LLViewerTexture* image = nullptr;
         U32 flags = 0;
-        if (shape.faces[i].finest == 0 || !fillMaterial(material, flags, image, volume, S32(i), shape.faces[i].box))
+        if (shape.faces[i].finest == 0 || !skinnable(shape.faces[i], object) || !fillMaterial(material, flags, image, volume, S32(i), shape.faces[i].box))
         {
             clearFace(face, drawable);
             continue;
@@ -1266,14 +2157,17 @@ void applyObject(LLDrawable* drawable)
         SharedMaterial* previous = face.material;
         face.material = useMaterial(material, image, drawable);
         face.flags = flags;
-        face.tieRank = tieRankOf(drawable->getVObj()->getID(), i);
-        writeFace(face, shape.faces[i], desc);
+        face.tieRank = object.skinnedLod >= 0 ? U32(llmin(i, size_t(7))) : tieRankOf(drawable->getVObj()->getID(), i);
+        writeFace(face, shape.faces[i], desc, object.skinnedLod, hiddenSelf(object));
         if (previous)
         {
             releaseMaterial(previous, drawable);
         }
     }
-    placeInStack(drawable, object, desc);
+    if (!object.bound)
+    {
+        placeInStack(drawable, object, desc);
+    }
 }
 
 void moveObject(LLDrawable* drawable)
@@ -1288,14 +2182,42 @@ void moveObject(LLDrawable* drawable)
     WorldObject& object = found->second;
     scheduleLod(drawable, object, sCameraTravel); // the camera is not all that changes distance
     asr::InstanceDesc desc;
-    fillTransform(desc, drawable, volume, *object.shape);
-    placeInStack(drawable, object, desc);
+    if (object.bound)
+    {
+        // Worn: it moves with its avatar every frame, and that is the skeleton's work. Only
+        // an attachment's place against its joint is its own.
+        if (object.bound->skin)
+        {
+            return;
+        }
+        LLViewerJointAttachment* point = object.bound->avatar->getTargetAttachmentPoint(volume->getRootEdit());
+        F32 local[12];
+        if (point && U32(point->getJointNum()) == object.bound->joint)
+        {
+            attachedMatrix(drawable, volume, point, local);
+            if (memcmp(local, object.bound->local, sizeof(local)) == 0)
+            {
+                return;
+            }
+        }
+        if (!bindToAvatar(drawable, volume, object, desc))
+        {
+            sChanged.insert(drawable);
+            return;
+        }
+    }
+    else
+    {
+        fillTransform(desc, drawable, volume, *object.shape);
+        placeInStack(drawable, object, desc);
+    }
     for (size_t i = 0; i < object.faces.size(); ++i)
     {
         ObjectFace& face = object.faces[i];
         if (face.instance != NO_INSTANCE && !face.hidden)
         {
-            writeFace(face, object.shape->faces[i], desc);
+            // The LOD it was applied at: a move never rebinds to another size.
+            writeFace(face, object.shape->faces[i], desc, desc.skin != 0 ? object.skinnedLod : -1, hiddenSelf(object));
         }
     }
 }
@@ -1346,7 +2268,12 @@ void applyFinishedShapes()
 
         // Instances name the finest LOD. A finer one changes only that, so a mesh repeated
         // thousands of times does not go through all its materials again.
-        (newFaces ? sChanged : sMoved).insert(shape->users.begin(), shape->users.end());
+        // A worn one is not moved by the world, so it goes through apply, which rebinds it.
+        for (LLDrawable* user : shape->users)
+        {
+            const auto found = sObjects.find(user);
+            (newFaces || (found != sObjects.end() && found->second.bound) ? sChanged : sMoved).insert(user);
+        }
     }
 }
 
@@ -1369,6 +2296,77 @@ void applyChanges()
         {
             return;
         }
+    }
+}
+
+// Drop only fine LODs that no live user has requested within the residency window.
+// SceneStore already keeps removing geometry alive until every instance and finer LOD
+// releases it; unrelated object-update backlog must not prevent retirement.
+void evictUnusedMeshLods()
+{
+    constexpr auto BUDGET = std::chrono::microseconds(500);
+    static ShapeKey cursor;
+    static size_t remaining = 0;
+    static F32 lastSweep = -1000.f;
+    if (sShapes.empty()) return;
+    if (remaining == 0)
+    {
+        if (gFrameTimeSeconds - lastSweep < 1.f) return;
+        remaining = sShapes.size();
+        lastSweep = gFrameTimeSeconds;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    const bool pressure = memoryPressure();
+    auto next = sShapes.upper_bound(cursor);
+    while (remaining != 0)
+    {
+        if (next == sShapes.end()) next = sShapes.begin();
+        auto entry = next++;
+        cursor = entry->first;
+        --remaining;
+        Shape& shape = *entry->second;
+        if (isMeshKey(shape.key) && !shape.busy && shape.ready)
+        {
+            U32 top = 0;
+            for (const ShapeFace& face : shape.faces)
+                for (U32 lod = 1; lod < LODS; ++lod)
+                    if (face.geometries[lod] != 0) top = llmax(top, lod);
+
+            bool replaceable = top != 0 && !shape.residency.holds(top, gFrameTimeSeconds, pressure);
+            if (replaceable && meshLodNeeded(shape, top)) replaceable = false;
+            for (const ShapeFace& face : shape.faces)
+            {
+                if (!replaceable || face.geometries[top] == 0) continue;
+                bool coarser = false;
+                for (U32 lod = 0; lod < top; ++lod)
+                    coarser |= face.geometries[lod] != 0 && (face.skinJoints[top] == 0 ||
+                        (face.skinJoints[lod] != 0 && face.skinJoints[lod] <= face.skinJoints[top]));
+                // Empty, unweighted or incompatible coarse faces must not remove an outfit.
+                replaceable = coarser;
+            }
+            if (replaceable)
+            {
+                for (ShapeFace& face : shape.faces)
+                {
+                    if (face.geometries[top] == 0) continue;
+                    sScene->removeGeometry(face.geometries[top]);
+                    face.geometries[top] = 0;
+                    face.skinJoints[top] = 0;
+                    face.finest = 0;
+                    for (U32 lod = 0; lod < top; ++lod)
+                        if (face.geometries[lod] != 0) face.finest = face.geometries[lod];
+                }
+                shape.nextLod = top;
+                for (U32 lod = top; lod < LODS; ++lod) shape.arrived[lod] = nullptr;
+                for (LLDrawable* user : shape.users)
+                {
+                    auto object = sObjects.find(user);
+                    if (object != sObjects.end()) object->second.askedLod = llmin(object->second.askedLod, S32(top) - 1);
+                    sChanged.insert(user);
+                }
+            }
+        }
+        if (std::chrono::steady_clock::now() - start >= BUDGET) break;
     }
 }
 
@@ -1456,7 +2454,14 @@ F32 metresToNextLod(LLVOVolume* volume, F32 distance, F32 scale)
         return CLOSE_UP_STEP;
     }
 
-    const F32 radius = volume->getVolume() ? volume->getVolume()->mLODScaleBias.scaledVec(volume->getScale()).length() : volume->getScale().length();
+    F32 radius = volume->getVolume() ? volume->getVolume()->mLODScaleBias.scaledVec(volume->getScale()).length() : volume->getScale().length();
+    bool rigged = false;
+    LLVOAvatar* avatar = boundAvatar(volume, rigged);
+    if (rigged)
+    {
+        const LLVector3* extents = avatar->getLastAnimExtents();
+        radius = (extents[1] - extents[0]).length() * (avatar->isControlAvatar() ? 0.5f : 1.f);
+    }
     F32 metres = F32_MAX;
     for (U32 lod = 1; lod < LODS; ++lod)
     {
@@ -1511,10 +2516,18 @@ void updateLods()
         LLVOVolume* volume = volumeOf(check.drawable);
         if (volume && !check.drawable->isDead())
         {
-            const F32 distance = (check.drawable->getPositionAgent() - eye).length();
+            bool rigged = false;
+            LLVOAvatar* avatar = boundAvatar(volume, rigged);
+            const F32 distance = rigged && avatar->mDrawable.notNull() ? avatar->mDrawable->mDistanceWRTCamera :
+                                                                                       (check.drawable->getPositionAgent() - eye).length();
             check.drawable->mDistanceWRTCamera = ll_round(distance, 0.01f);
             volume->updateLOD();
             scheduleLod(check.drawable, object, sCameraTravel + metresToNextLod(volume, distance, scale));
+            // A rigged face's deformed copy is sized for the LOD it names: see skinnedGeometry().
+            if (object.skinnedLod >= 0 && volume->getLOD() != object.skinnedLod)
+            {
+                sChanged.insert(check.drawable);
+            }
         }
         if (++checked % CHECK_EVERY == 0 && std::chrono::steady_clock::now() - start >= BUDGET)
         {
@@ -1554,7 +2567,13 @@ void sweepObjects()
             continue;
         }
 
-        if (camera->sphereInFrustum(entry.drawable->getPositionAgent(), entry.drawable->getRadius()))
+        // Worn meshes can retain bind-space drawable bounds without GL batching.
+        // Their first textures must follow the live wearer, like animation priority.
+        LLVOAvatar* avatar = entry.object->bound ? entry.object->bound->avatar : nullptr;
+        const LLVector3 center = avatar ? avatar->getRenderPosition() : entry.drawable->getPositionAgent();
+        const LLVector3* extents = avatar ? avatar->getLastAnimExtents() : nullptr;
+        const F32 radius = extents ? llmax((extents[1] - extents[0]).length() * 0.5f, 1.5f) : entry.drawable->getRadius();
+        if (camera->sphereInFrustum(center, radius))
         {
             visitTextures(*entry.object);
         }
@@ -2260,6 +3279,17 @@ void logObjectFaces(const char* what, LLDrawable* drawable, const WorldObject& o
     {
         const ObjectFace& face = object.faces[i];
         const TrackedTexture* texture = face.material ? face.material->texture : nullptr;
+        // Include faces with no material/instance: those are precisely what a missing
+        // clothing section needs diagnosed, and the old texture-only log omitted them.
+        const ShapeFace* shape = object.shape && i < object.shape->faces.size() ? &object.shape->faces[i] : nullptr;
+        const SharedSkin* skin = object.bound ? object.bound->skin : nullptr;
+        LL_INFOS("ASRenderer") << "  face state " << i << " submitted " << (face.instance != NO_INSTANCE)
+                                << " geometry " << (shape ? shape->finest : 0)
+                                << " weighted joints by LOD " << (shape ? shape->skinJoints[0] : 0) << "/"
+                                << (shape ? shape->skinJoints[1] : 0) << "/" << (shape ? shape->skinJoints[2] : 0) << "/"
+                                << (shape ? shape->skinJoints[3] : 0) << " skin joints " << (skin ? skin->joints : 0)
+                                << " flags " << face.flags << " alpha " << (face.material ? face.material->desc.color[3] : -1.f)
+                                << " cutoff " << (face.material ? face.material->desc.alphaCutoff : -1.f) << LL_ENDL;
         if (texture)
         {
             LLViewerTexture* image = texture->image.get();
@@ -2326,6 +3356,8 @@ void publishCamera()
                                                        camera->getAspect(), camera->getNear(), camera->getFar());
 
     scene.lodScale = lodScale();
+    static LLCachedControl<U32> debugView(gSavedSettings, "ASRendererDebugView", 0);
+    scene.debugView = debugView();
     asr::CameraTurn turn;
     ASRCameraTurn::publish(turn, sRenderOrigin);
     ASRViewer::setCamera(scene, turn);
@@ -2354,7 +3386,7 @@ void cullObjectCache()
     {
         LLVOAvatar* avatar = static_cast<LLVOAvatar*>(character);
         if (avatar->mDrawable.notNull() && !avatar->isDead()
-            && (avatar->isSelf() || camera->sphereInFrustum(avatar->getPositionAgent(), AVATAR_RADIUS)))
+            && (avatar->isSelf() || camera->sphereInFrustum(avatar->getRenderPosition(), AVATAR_RADIUS)))
         {
             avatar->mDrawable->setVisible(*camera);
         }
@@ -2362,8 +3394,8 @@ void cullObjectCache()
 }
 
 // Temporary: what update() and the whole main thread loop spend, since the last log.
-enum UpdatePart { PART_MESH, PART_CACHE, PART_SHAPES, PART_TEXTURES, PART_LOD, PART_SWEEP, PART_APPLY, PART_MOVE, PART_TERRAIN, PART_COUNT };
-constexpr const char* PART_NAMES[PART_COUNT] = { "mesh repository", "object cache", "finished shapes", "follow textures", "LOD queue", "sweep", "apply", "move", "terrain" };
+enum UpdatePart { PART_MESH, PART_CACHE, PART_SHAPES, PART_TEXTURES, PART_LOD, PART_SWEEP, PART_AVATARS, PART_APPLY, PART_MOVE, PART_TERRAIN, PART_COUNT };
+constexpr const char* PART_NAMES[PART_COUNT] = { "mesh repository", "object cache", "finished shapes", "follow textures", "LOD queue", "sweep", "avatars", "apply", "move", "terrain" };
 F64 sPartSeconds[PART_COUNT] = {};
 F64 sPartWorst[PART_COUNT] = {};
 constexpr const char* MAIN_PART_NAMES[ASRWorld::MAIN_PART_COUNT] = { "textures", "camera", "create objects", "update geometry", "UI",
@@ -2460,6 +3492,36 @@ void logCounts()
                                << " active, looking along " << LLViewerCamera::getInstance()->getAtAxis() << ", far " << LLViewerCamera::getInstance()->getFar()
                                << ", near " << LLViewerCamera::getInstance()->getNear() << ", view " << LLViewerCamera::getInstance()->getView() << ", aspect "
                                << LLViewerCamera::getInstance()->getAspect() << LL_ENDL;
+        U32 rigged = 0;
+        U32 attached = 0;
+        for (const auto& entry : sObjects)
+        {
+            if (entry.second.bound)
+            {
+                ++(entry.second.bound->skin ? rigged : attached);
+            }
+        }
+        // How far the farthest joint is from the first: the skinned vertices' box grows with it.
+        F32 spread = 0.f;
+        U32 parked = 0;
+        for (const auto& entry : sSkeletons)
+        {
+            parked += entry.second.resident ? 0 : 1;
+            const std::vector<F32>& rows = entry.second.rows;
+            for (size_t at = 12; at + 12 <= rows.size(); at += 12)
+            {
+                const LLVector3 offset(rows[at + 3] - rows[3], rows[at + 7] - rows[7], rows[at + 11] - rows[11]);
+                spread = llmax(spread, offset.length());
+            }
+        }
+        LL_INFOS("ASRenderer") << "avatars: " << sSkeletons.size() << " skeletons (" << parked << " parked out of view), " << sSkins.size() << " skins, " << rigged << " rigged and "
+                               << attached << " attached objects, " << sAwaitingAvatar.size() << " waiting for their avatar, farthest joint "
+                               << spread << " m from the root, avatar residency pressure " << sAvatarResidency.underPressure()
+                               << ", full-detail avatars " << sAvatarDetail.fullDetail() << ", sharp within " << sNearMetres << " m" << LL_ENDL;
+        const ASRAvatarBody::Counts body = ASRAvatarBody::takeCounts();
+        LL_INFOS("ASRenderer") << "system bodies: " << body.bodies << " bodies, " << body.parts << " parts shown; since the last log "
+                               << body.weightUpdates << " morph weight updates, " << body.maskUpdates << " masks, " << body.lodChanges
+                               << " LOD changes" << LL_ENDL;
 
         U32 unloaded = 0;
         LLViewerTexture* sample = nullptr;
@@ -2484,6 +3546,11 @@ void logCounts()
         U32 missing = 0;
         U32 fetching = 0;
         U32 idle = 0;
+        U32 idleWornInView = 0;
+        U32 idleWornOutOfView = 0;
+        U32 idleNotWorn = 0;
+        F32 idleNearest = F32_MAX;
+        LLViewerFetchedTexture* idleNearestImage = nullptr;
         std::vector<std::pair<F32, LLViewerFetchedTexture*>> waiting;
         for (const auto& texture : sTextures)
         {
@@ -2494,14 +3561,60 @@ void logCounts()
                 fetching += fetched->isFetching() ? 1 : 0;
                 idle += !fetched->isMissingAsset() && !fetched->isFetching() ? 1 : 0;
                 waiting.emplace_back(fetched->getMaxVirtualSize(), fetched);
+                // Temporary: idle images never requested, by where their wearer is, with
+                // judgeTexture()'s own test. Gray meshes on avatars in view land in the first.
+                if (!fetched->isMissingAsset() && !fetched->isFetching())
+                {
+                    bool worn = false;
+                    bool wornInView = false;
+                    F32 nearest = F32_MAX;
+                    for (const auto& user : texture.second.users)
+                    {
+                        const auto object = sObjects.find(user.first);
+                        LLVOAvatar* avatar = object != sObjects.end() && object->second.bound ? object->second.bound->avatar : nullptr;
+                        if (!avatar || avatar->isDead()) continue;
+                        worn = true;
+                        const LLVector3 center = avatar->getRenderPosition();
+                        const LLVector3* extents = avatar->getLastAnimExtents();
+                        const F32 radius = llmax((extents[1] - extents[0]).length() * 0.5f, 1.5f);
+                        if (LLViewerCamera::getInstance()->sphereInFrustum(center, radius))
+                        {
+                            wornInView = true;
+                            nearest = llmin(nearest, (center - LLViewerCamera::getInstance()->getOrigin()).length());
+                        }
+                    }
+                    if (wornInView)
+                    {
+                        ++idleWornInView;
+                        if (nearest < idleNearest)
+                        {
+                            idleNearest = nearest;
+                            idleNearestImage = fetched;
+                        }
+                    }
+                    idleWornOutOfView += worn && !wornInView ? 1 : 0;
+                    idleNotWorn += !worn ? 1 : 0;
+                }
             }
         }
         const size_t shown = llmin(waiting.size(), size_t(5));
         std::partial_sort(waiting.begin(), waiting.begin() + shown, waiting.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
         LL_INFOS("ASRenderer") << "no image: " << missing << " missing, " << fetching << " fetching, " << idle << " idle" << LL_ENDL;
+        LL_INFOS("ASRenderer") << "idle with no image: " << idleWornInView << " worn by avatars in view, " << idleWornOutOfView << " worn out of view, "
+                               << idleNotWorn << " not worn" << LL_ENDL;
+        if (idleNearestImage)
+        {
+            LL_INFOS("ASRenderer") << "  nearest in view " << idleNearestImage->getID() << " at " << idleNearest << " m, size " << idleNearestImage->getMaxVirtualSize()
+                                   << " desired discard " << idleNearestImage->getDesiredDiscardLevel() << " max discard " << idleNearestImage->getMaxDiscardLevel()
+                                   << " boost " << idleNearestImage->getBoostLevel() << " faces " << idleNearestImage->getTotalNumFaces() << LL_ENDL;
+        }
         const asr::MemoryBudget& memory = ASRViewer::device()->memoryBudget();
         LL_INFOS("ASRenderer") << "texture memory " << memory.used(asr::MemoryCategory::Textures) / (1024 * 1024) << " of "
-                               << memory.textureLimit() / (1024 * 1024) << " MB" << LL_ENDL;
+                               << memory.textureLimit() / (1024 * 1024) << " MB; all ours " << memory.totalUsed() / (1024 * 1024) << " of "
+                               << memory.budget() / (1024 * 1024) << " MB; driver says the process uses "
+                               << ASRViewer::device()->driverUsageBytes / (1024 * 1024) << " of " << ASRViewer::device()->driverBudgetBytes / (1024 * 1024)
+                               << " MB; allocator holds " << ASRViewer::device()->allocatorBlockBytes / (1024 * 1024) << " MB, "
+                               << ASRViewer::device()->allocatorUsedBytes / (1024 * 1024) << " MB of it in use" << LL_ENDL;
 
         // Temporary: live must match the memory above, or something leaks. Drawn says how
         // much of it faces we actually draw are using.
@@ -2541,6 +3654,8 @@ void logCounts()
         }
         LL_INFOS("ASRenderer") << "texture feedback: " << sFeedbackWindows << " windows since the last log, " << seenNow << " of " << sTextures.size()
                                << " drawn textures seen now, judgements sized by it " << sFeedbackSized << ", hidden " << sFeedbackHidden
+                               << "; feedback age " << (sLastFeedback > -1000.f ? gFrameTimeSeconds.value() - sLastFeedback : -1.f) << " s; mip copies rebased/rejected "
+                               << stats.textureCopiesRebased << "/" << stats.textureCopiesRejected
                                << "; texels across needed, by count:" << levelCounts.str() << LL_ENDL;
         sFeedbackWindows = 0;
         sFeedbackSized = 0;
@@ -2638,7 +3753,8 @@ void logCounts()
         LL_INFOS("ASRenderer") << meshes << " meshes shown by " << meshUsers << " objects, " << meshesWaiting << " with nothing yet, built up to LOD 0/1/2/3: " << meshLods[1] << "/"
                                << meshLods[2] << "/" << meshLods[3] << "/" << meshLods[4] << ", " << lodsHeld << " LODs waiting for a coarser one, " << sChanged.size()
                                << " objects left to apply, geometry memory " << budget.used(asr::MemoryCategory::Geometry) / (1024 * 1024) << " of "
-                               << budget.limit(asr::MemoryCategory::Geometry) / (1024 * 1024) << " MB" << LL_ENDL;
+                               << budget.limit(asr::MemoryCategory::Geometry) / (1024 * 1024) << " MB" << (memoryPressure() ? ", memory short" : "")
+                               << LL_ENDL;
 
         // Temporary: what fills texture memory, and whether anything still wants to change.
         constexpr U32 DISCARDS = 7;
@@ -2704,7 +3820,15 @@ void logCounts()
             gpuTotal += stats.passes[i].milliseconds;
         }
         LL_INFOS("ASRenderer") << "GPU ms " << gpuTotal << timings.str() << ", retest entries " << stats.retestEntries << ", groups " << stats.groupEntries
-                               << ", chunks " << stats.chunks << LL_ENDL;
+                               << ", chunks " << stats.chunks << ", skin work run/in use: palette " << stats.paletteEnd << "/" << stats.paletteLive << ", vertex blocks "
+                               << stats.vertexBlockEnd << "/" << stats.vertexBlockLive << ", cluster blocks " << stats.clusterBlockEnd << "/"
+                               << stats.clusterBlockLive << LL_ENDL;
+        constexpr U64 MB = 1024 * 1024;
+        const U64 geometry = ASRViewer::device()->memoryBudget().used(asr::MemoryCategory::Geometry);
+        const U64 known = stats.chunkBytes + stats.tableBytes;
+        LL_INFOS("ASRenderer") << "geometry MB: chunks " << stats.chunkBytes / MB << " (" << stats.chunkFreeBytes / MB << " free), tables "
+                               << stats.tableBytes / MB << " (deformed positions " << stats.skinnedPositionBytes / MB << ", clusters "
+                               << stats.clusterTableBytes / MB << "), lists and the rest " << (geometry > known ? geometry - known : 0) / MB << LL_ENDL;
         if (stats.guardPixels != 0)
         {
             // Temporary: GUARD_* of asrscene.h, the resolve's checks that stopped a bad read.
@@ -2796,6 +3920,12 @@ void ASRWorld::stop()
     sLodChecks = {};
     sCameraTravel = 0.0;
     sObjects.clear();
+    sAwaitingAvatar.clear();
+    sSkeletons.clear();
+    sAvatarResidency = {};
+    sBodyAvatars.clear();
+    ASRAvatarBody::forget();
+    sSkins.clear();
     sLeftOut.clear();
     sTerrainRegions.clear();
     sMaterials.clear();
@@ -2819,6 +3949,74 @@ void ASRWorld::objectMoved(LLDrawable* drawable)
     {
         markMoved(drawable->getVObj().get());
     }
+}
+
+void ASRWorld::avatarMasksChanged(LLVOAvatar* avatar)
+{
+    if (sRunning)
+    {
+        ASRAvatarBody::masksChanged(avatar);
+    }
+}
+
+void ASRWorld::avatarAnimated(LLVOAvatar* avatar)
+{
+    if (sRunning)
+    {
+        const auto found = sSkeletons.find(avatar);
+        if (found != sSkeletons.end())
+        {
+            found->second.animated = true;
+        }
+    }
+}
+
+S32 ASRWorld::animationPeriod(LLVOAvatar* avatar)
+{
+    if (!sRunning || avatar->isSelf())
+    {
+        return 0;
+    }
+    // No impostors are drawn, so the viewer's impostor periods would freeze avatars drawn
+    // in full. Ours come with the GPU blending between poses: see setAnimationPeriods().
+    const auto found = sSkeletons.find(avatar);
+    return found != sSkeletons.end() ? found->second.animationPeriod : 0;
+}
+
+// For asravatarbody.cpp: see asrworldshared.h.
+asr::SceneQueue& ASRWorldShared::scene()
+{
+    return *sScene;
+}
+
+ASRSharedMaterial* ASRWorldShared::useMaterial(const asr::MaterialDesc& desc, LLViewerTexture* image, LLDrawable* user, bool eye)
+{
+    return ::useMaterial(desc, image, user, eye);
+}
+
+void ASRWorldShared::releaseMaterial(ASRSharedMaterial* material, LLDrawable* user, bool eye)
+{
+    ::releaseMaterial(material, user, eye);
+}
+
+U32 ASRWorldShared::materialId(const ASRSharedMaterial* material)
+{
+    return material->id;
+}
+
+void ASRWorldShared::visitMaterialTexture(ASRSharedMaterial* material)
+{
+    TrackedTexture* texture = material->texture;
+    if (texture && gFrameTimeSeconds - texture->visited >= LOD_SWEEP_SECONDS)
+    {
+        texture->visited = gFrameTimeSeconds;
+        visitTexture(*texture);
+    }
+}
+
+void ASRWorldShared::rowsOf(const LLMatrix4& matrix, F32* rows)
+{
+    ::rowsOf(matrix, rows);
 }
 
 void ASRWorld::objectRemoved(LLDrawable* drawable)
@@ -2923,6 +4121,143 @@ void ASRWorld::worldShifted(const LLVector3& offset)
     }
 }
 
+S32 ASRWorld::avatarDetailDiscard(LLViewerFetchedTexture* image)
+{
+    static LLCachedControl<bool> fullRes(gSavedSettings, "TextureLoadFullRes", false);
+    if (!sRunning || fullRes() || !image->getUseMipMaps() || image->getType() != LLViewerTexture::LOD_TEXTURE ||
+        (image->getBoostLevel() != LLViewerTexture::BOOST_NONE && image->getBoostLevel() != LLViewerTexture::BOOST_AVATAR_BAKED))
+    {
+        return 0;
+    }
+    const auto found = sTextures.find(image->getGLTexture());
+    if (found == sTextures.end() || found->second.terrainUsers || found->second.users.empty()) return 0;
+
+    TrackedTexture& texture = found->second;
+    const LLVector3 camera = LLViewerCamera::getInstance()->getOrigin();
+    U32 limit = 0;
+    for (const auto& [drawable, uses] : texture.users)
+    {
+        if (!drawable || drawable->isDead()) return 0;
+        F32 distance;
+        if (uses.eyes == uses.faces)
+        {
+            LLViewerObject* object = drawable->getVObj().get();
+            if (!object || !object->isAvatar()) return 0;
+            LLJoint* eye = static_cast<LLVOAvatar*>(object)->getJoint("mEyeLeft");
+            if (!eye) return 0;
+            distance = (eye->getWorldPosition() - camera).length();
+        }
+        else
+        {
+            const auto object = sObjects.find(drawable);
+            LLVOVolume* volume = volumeOf(drawable);
+            if (object == sObjects.end() || !object->second.bound || !volume) return 0;
+            const LLVector3& size = volume->getScale();
+            constexpr F32 SMALL_ATTACHMENT_METRES = 0.25f;
+            if (llmax(size.mV[0], size.mV[1], size.mV[2]) > SMALL_ATTACHMENT_METRES) return 0;
+
+            const AvatarBinding& bound = *object->second.bound;
+            if (bound.skin)
+            {
+                // Rigged attachments have no reliable CPU position of their own. The
+                // distance to the wearer's animated bounds favors detail when in doubt.
+                if (!bound.avatar || bound.avatar->isDead()) return 0;
+                const LLVector3* box = bound.avatar->getLastAnimExtents();
+                if (box[0] == box[1]) return 0;
+                LLVector3 nearest;
+                for (U32 axis = 0; axis < 3; ++axis)
+                {
+                    nearest.mV[axis] = llclamp(camera.mV[axis], box[0].mV[axis], box[1].mV[axis]);
+                }
+                distance = (nearest - camera).length();
+            }
+            else
+            {
+                distance = (volume->getRenderPosition() - camera).length();
+            }
+        }
+        limit = llmax(limit, asr::avatarDetailTexelLimit(distance));
+    }
+
+    // Close-ups sharpen immediately. A brief camera movement should not discard mips.
+    if (texture.detailLimit == 0 || limit >= texture.detailLimit || gFrameTimeSeconds - texture.detailLimitAt >= 4.f)
+    {
+        texture.detailLimit = limit;
+        texture.detailLimitAt = gFrameTimeSeconds;
+    }
+    return asr::textureDiscardForLimit(llmax(image->getFullWidth(), image->getFullHeight()),
+                                      texture.detailLimit, image->getMaxDiscardLevel());
+}
+
+
+// Metres from the camera to the nearest thing using this texture. 0 for what always keeps
+// full detail: the local avatar, avatars set to always render fully, and the camera's focus
+// (an object's whole linkset, or an avatar with what it wears).
+static F32 nearestUse(const TrackedTexture& texture)
+{
+    const LLViewerCamera* camera = LLViewerCamera::getInstance();
+    LLViewerObject* focus = gAgentCamera.getFocusObject().get();
+    LLViewerObject* focusRoot = focus ? focus->getRootEdit() : nullptr;
+    LLViewerObject* focusAvatar = focus ? (focus->isAvatar() ? focus : focus->getAvatar()) : nullptr;
+    F32 nearest = F32_MAX;
+    for (const auto& user : texture.users)
+    {
+        LLDrawable* drawable = user.first;
+        LLViewerObject* object = drawable ? drawable->getVObj().get() : nullptr;
+        if (!object || drawable->isDead()) continue;
+        const auto found = sObjects.find(drawable);
+        LLVOAvatar* wearer = found != sObjects.end() && found->second.bound ? found->second.bound->avatar : nullptr;
+        if (!wearer && object->isAvatar()) wearer = static_cast<LLVOAvatar*>(object); // a system body
+        if ((focusRoot && object->getRootEdit() == focusRoot) || (wearer && wearer == focusAvatar) ||
+            (wearer && (wearer->isSelf() || alwaysRenderedFully(wearer))))
+        {
+            return 0.f;
+        }
+        const LLVector3 center = wearer ? wearer->getRenderPosition() : drawable->getPositionAgent();
+        const F32 radius = wearer ? 1.f : drawable->getRadius();
+        nearest = llmin(nearest, llmax((center - camera->getOrigin()).length() - radius, 0.f));
+    }
+    return nearest;
+}
+
+F32 ASRWorld::avatarLodScale(LLViewerObject* object)
+{
+    LLVOAvatar* avatar = sRunning && object ? object->getAvatar() : nullptr;
+    const auto found = avatar ? sSkeletons.find(avatar) : sSkeletons.end();
+    return found != sSkeletons.end() ? asr::AvatarDetailPolicy::lodScale(found->second.lodCap) : 1.f;
+}
+
+bool ASRWorld::isNearTexture(LLViewerFetchedTexture* image)
+{
+    // In view (the GPU sampled it in the last second) and near. Never refused an update:
+    // a blurred or gray surface next to the camera is the worst a crowd can do. Far
+    // textures shrink first to make the room (judgeTexture()).
+    // Bounded by the working budget itself, not the texture steering target: in a club most
+    // of the crowd is within the near range, and unbounded near updates pushed the process into
+    // shared memory. The working budget already leaves the desktop and other apps their room.
+    const auto found = sTextures.find(image->getGLTexture());
+    if (found == sTextures.end()) return false;
+    // Within NEAREST_RANGE nothing is refused: little fits there, and it is what is looked at.
+    const TrackedTexture& texture = found->second;
+    if (texture.slot == 0 || !asr::textureFeedbackSeen(sLastFeedback, texture.gpuSeenAt, 1.0)) return false;
+    const F32 distance = nearestUse(texture);
+    const asr::MemoryBudget& memory = ASRViewer::device()->memoryBudget();
+    return distance <= NEAREST_RANGE || (distance <= sNearMetres && memory.totalUsed() < memory.budget());
+}
+
+bool ASRWorld::canRefineVisibleTexture(LLViewerFetchedTexture* image, S32 discard)
+{
+    const auto found = sTextures.find(image->getGLTexture());
+    if (found == sTextures.end() || discard < 0) return false;
+    if (isNearTexture(image)) return true;
+    const TrackedTexture& texture = found->second;
+    // At the limit, far surfaces sharpen only when they fill much of the screen and fit.
+    constexpr U8 HIGH_SCREEN_DEMAND = 9; // 512 texels across
+    return texture.slot != 0 && texture.latestGpuLevel >= HIGH_SCREEN_DEMAND &&
+           asr::textureFeedbackSeen(sLastFeedback, texture.gpuSeenAt, 0.5) &&
+           ASR::textureFits(image->getWidth(discard), image->getHeight(discard), image->getComponents(), image->getUseMipMaps());
+}
+
 ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool inView, F32 bias, F32& size)
 {
     if (!sRunning)
@@ -2930,18 +4265,47 @@ ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool 
         return TextureUse::Wanted;
     }
 
-    // A window samples each pixel once, so a texture on a few pixels can miss one or two.
-    constexpr F32 SEEN_LATELY = 0.5f;     // seconds
-    constexpr F32 FEEDBACK_STALE = 1.f;   // without feedback this long, the faces decide alone
+    // A window samples each pixel once, so a texture on a few pixels can miss several. Long
+    // enough that one missed for a moment does not drop two levels and come back sharp.
+    constexpr F32 SEEN_LATELY = 4.f;      // seconds
     constexpr F32 HIDDEN_DIVISOR = 16.f;  // two levels coarser, so a corner turned shows something
     constexpr F32 PRESSURE_BIAS = 1.9f;   // as the faces' loop: above this, sizes give way
 
     const auto found = sTextures.find(image->getGLTexture());
     const bool drawn = found != sTextures.end();
-    if (drawn && gFrameTimeSeconds - sLastFeedback < FEEDBACK_STALE)
+    if (drawn && (found->second.slot == 0 || found->second.gpuSeenAt <= -1000.f))
+    {
+        // GL batching normally marks individual faces rigged and maintains their deformed
+        // bounds. It does not run here: the texture walk can test a worn mesh's bind-space
+        // box instead of its wearer and assign a near avatar almost no loading priority.
+        // Before feedback exists, use the live wearer as a conservative bootstrap bound.
+        const LLViewerCamera* camera = LLViewerCamera::getInstance();
+        for (const auto& user : found->second.users)
+        {
+            const auto object = sObjects.find(user.first);
+            LLVOAvatar* avatar = object != sObjects.end() && object->second.bound ? object->second.bound->avatar : nullptr;
+            if (!avatar || avatar->isDead()) continue;
+            const LLVector3 center = avatar->getRenderPosition();
+            const LLVector3* extents = avatar->getLastAnimExtents();
+            const F32 radius = llmax((extents[1] - extents[0]).length() * 0.5f, 1.5f);
+            if (camera->sphereInFrustum(center, radius))
+            {
+                inView = true;
+                const F32 distance = llmax((center - camera->getOrigin()).length() - radius, 0.1f);
+                const F32 pixels = radius * camera->getPixelMeterRatio() / distance;
+                // A small first image gets alpha/BOM surfaces drawing; feedback then
+                // requests their actual resolution, without a full-size loading burst.
+                size = llmax(size, llmin(F_PI * pixels * pixels, 128.f * 128.f));
+            }
+        }
+    }
+    // A complete window needs at least 16 GPU frames. A one-second timeout switched
+    // between GPU and face demand at low FPS, undoing the hold and reloading repeatedly.
+    // No new completed window means no new evidence that this texture stopped showing.
+    if (drawn && sLastFeedback > -1000.f)
     {
         const TrackedTexture& texture = found->second;
-        if (gFrameTimeSeconds - texture.gpuSeenAt < SEEN_LATELY)
+        if (asr::textureFeedbackSeen(sLastFeedback, texture.gpuSeenAt, SEEN_LATELY))
         {
             // What the GPU needed, as the area it would cover at full size: the texels across
             // its longer side, and as many down as its shape gives.
@@ -2952,10 +4316,29 @@ ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture* image, bool 
             size = longest > 0.f ? across * across * F32(width) * F32(height) / (longest * longest) : across * across;
             if (LLViewerTexture::sDesiredDiscardBias > PRESSURE_BIAS)
             {
-                size /= bias;
+                // Room comes from the farthest first: past sNearMetres a surface gives way with
+                // the square of its distance. Near ones keep what the GPU asks for; when that is
+                // not enough, updateNearRange() narrows the range, so what was near gives way.
+                const F32 distance = nearestUse(texture);
+                if (distance > sNearMetres)
+                {
+                    size /= bias * (distance / sNearMetres) * (distance / sNearMetres);
+                }
             }
             image->mLastSeen = gFrameTimeSeconds;
             ++sFeedbackSized;
+            return TextureUse::Wanted;
+        }
+        // Never seen by the GPU since it got its slot: no feedback says anything about it yet,
+        // so the faces decide, as the viewer would. Judging it hidden starved what cannot show
+        // without it: a mesh body cut out by a bake not loaded yet is never sampled, so its
+        // bake was never wanted, and avatars in view never rezzed while those behind did.
+        if (inView && (texture.slot == 0 || texture.gpuSeenAt <= -1000.f))
+        {
+            // Feedback cannot prove a surface hidden before it has an image to sample.
+            // Refresh its lifetime too: falling through released it despite saying that
+            // the faces should decide, cancelling avatar reloads again and again.
+            image->mLastSeen = gFrameTimeSeconds;
             return TextureUse::Wanted;
         }
         if (inView)
@@ -3007,8 +4390,10 @@ void ASRWorld::update()
     timed(PART_SHAPES, applyFinishedShapes);
     timed(PART_TEXTURES, followTextures);
     updateLocalShift();
+    timed(PART_AVATARS, updateAvatars);
     timed(PART_LOD, updateLods);
     timed(PART_SWEEP, sweepObjects);
+    timed(PART_APPLY, evictUnusedMeshLods);
     timed(PART_APPLY, applyChanges);
     timed(PART_MOVE, []()
     {
@@ -3020,6 +4405,7 @@ void ASRWorld::update()
     });
     timed(PART_TERRAIN, updateTerrain);
     publishCamera();
+    timed(PART_AVATARS, updateSystemBodies);
     logCounts();
 }
 
@@ -3030,12 +4416,17 @@ void ASRWorld::stop() {}
 void ASRWorld::objectChanged(LLDrawable*) {}
 void ASRWorld::objectMoved(LLDrawable*) {}
 void ASRWorld::objectRemoved(LLDrawable*) {}
+void ASRWorld::avatarMasksChanged(LLVOAvatar*) {}
+S32 ASRWorld::animationPeriod(LLVOAvatar*) { return 0; }
+void ASRWorld::avatarAnimated(LLVOAvatar*) {}
 void ASRWorld::updateTerrainGL() {}
 void ASRWorld::meshLoaded(const LLVolumeParams&, LLVolume*, S32) {}
 void ASRWorld::meshUnavailable(const LLVolumeParams&, S32) {}
 void ASRWorld::worldShifted(const LLVector3&) {}
 void ASRWorld::addMainTime(MainPart, F32) {}
 ASRWorld::TextureUse ASRWorld::judgeTexture(LLViewerFetchedTexture*, bool, F32, F32&) { return TextureUse::Wanted; }
+S32 ASRWorld::avatarDetailDiscard(LLViewerFetchedTexture*) { return 0; }
+bool ASRWorld::canRefineVisibleTexture(LLViewerFetchedTexture*, S32) { return false; }
 void ASRWorld::releaseTexture(LLViewerFetchedTexture*) {}
 void ASRWorld::update() {}
 

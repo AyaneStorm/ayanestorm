@@ -35,7 +35,8 @@ struct SurfaceTarget
 struct DeviceOptions
 {
     std::string shaderDir;   // folder holding the compiled shaders
-    bool validation = false; // Vulkan validation layers, when installed
+    bool validation = false; // Vulkan validation layers, when installed, GPU-assisted checks included
+    void (*report)(const char* message) = nullptr; // where validation errors go; stderr when null
     bool vsync = false;      // off by default: the renderer has no built-in cap
     uint64_t memoryCapBytes = 0; // lowers the memory budget; 0 means no cap
     bool occlusion = true;   // off: for measuring what occlusion culling saves
@@ -97,8 +98,25 @@ struct SceneStats
     uint64_t droppedEntries = 0;      // turned away by a full cull list, since the start
     uint64_t auditErrorPixels = 0;    // pixels that a wrongly hidden cluster should have covered
     uint64_t auditedFrames = 0;
+    uint64_t skinAuditSamples = 0;
+    uint64_t skinAuditErrors = 0;
+    float skinAuditMaxError = 0.f;
     uint64_t pendingGeometries = 0;
     uint32_t chunks = 0;              // geometry chunks in use
+    uint64_t paletteEnd = 0;          // entries a skin job runs over, and those in use
+    uint64_t paletteLive = 0;
+    uint64_t vertexBlockEnd = 0;
+    uint64_t vertexBlockLive = 0;
+    uint64_t clusterBlockEnd = 0;
+    uint64_t clusterBlockLive = 0;
+    // Temporary, for the log: where geometry memory goes. The rest of it is lists.
+    uint64_t chunkBytes = 0;              // every geometry chunk
+    uint64_t chunkFreeBytes = 0;          // free inside them
+    uint64_t tableBytes = 0;              // every scene table's capacity
+    uint64_t skinnedPositionBytes = 0;    // of which deformed positions
+    uint64_t clusterTableBytes = 0;       // and clusters, sources' and deformed copies'
+    uint64_t textureCopiesRebased = 0;    // queued shrink used a different actual resident mip
+    uint64_t textureCopiesRejected = 0;   // invalid copies kept their previous published image
     uint32_t passCount = 0;
     PassTime passes[MAX_TIMED_PASSES];
 };
@@ -243,7 +261,9 @@ public:
 protected:
     void setDriverBudget(uint64_t bytes)
     {
-        mMemoryBudget.setBudget(mMemoryCapBytes ? std::min(bytes, mMemoryCapBytes) : bytes);
+        const uint64_t allocatorUsed = allocatorUsedBytes.load();
+        const uint64_t resident = allocatorUsed != 0 ? allocatorUsed : mMemoryBudget.totalUsed();
+        mMemoryBudget.setBudget(workingVRAMBudget(bytes, driverUsageBytes.load(), resident, mMemoryCapBytes));
     }
 
     // Passes vary from frame to frame, so one frame's time says little. A pass that
@@ -285,6 +305,16 @@ protected:
     std::mutex mFeedbackMutex;
     TextureFeedback mFeedback;
     uint64_t mMemoryCapBytes = 0;
+
+public:
+    // Temporary, for the log: what the driver says this process uses and may use. Over its
+    // budget, the system moves memory out of VRAM and passes on big buffers slow down.
+    std::atomic<uint64_t> driverBudgetBytes{ 0 };
+    std::atomic<uint64_t> driverUsageBytes{ 0 };
+    // Vulkan: what the allocator holds from the driver, and what of it is handed out. The
+    // difference is free space inside its blocks, which no limit of ours sees.
+    std::atomic<uint64_t> allocatorBlockBytes{ 0 };
+    std::atomic<uint64_t> allocatorUsedBytes{ 0 };
 };
 
 } // namespace asr

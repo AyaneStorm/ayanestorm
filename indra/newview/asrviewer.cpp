@@ -13,6 +13,7 @@
 #include "llappviewer.h"
 #include "llcoord.h"
 #include "lldir.h"
+#include "llgl.h"
 #include "lltimer.h"
 #include "llviewercontrol.h"
 #include "llwindow.h"
@@ -22,6 +23,7 @@
 #define ASR_VIEWER_SUPPORTED 1
 #include "asrdevice.h"
 #include "asrrenderthread.h"
+#include "asrtexturestreaming.h"
 #if LL_WINDOWS
 #include "llwin32headers.h"
 #else
@@ -240,11 +242,26 @@ public:
         sDevice->textures().destroy(slot, sRenderThread->currentUIGeneration());
     }
 
-    void getTextureMemory(U64& used, U64& limit) override
+    void getTextureMemory(U64& used, U64& limit, U64& hardLimit) override
     {
         const asr::MemoryBudget& budget = sDevice->memoryBudget();
         used = budget.used(asr::MemoryCategory::Textures);
         limit = budget.textureLimit();
+        // Honour the viewer's texture allowance; unused VRAM is not a request to fill it.
+        static LLCachedControl<bool> manual(gSavedSettings, "FSLimitTextureVRAMUsage");
+        static LLCachedControl<U32> megabytes(gSavedSettings, "RenderMaxVRAMBudget", 0);
+        static LLCachedControl<U32> divisor(gSavedSettings, "RenderTextureVRAMDivisor", 2);
+        const U64 configured = (manual() ? U64(megabytes()) : U64(llmax(1024.f, F32(gGLManager.mVRAM) / F32(divisor() ? divisor() : 1)))) * 1024 * 1024;
+        limit = llmin(limit, configured);
+        hardLimit = limit;
+    }
+
+    U32 firstTextureMip(U32 width, U32 height, U32 components, bool mips) override
+    {
+        U64 used = 0, limit = 0, hard = 0;
+        getTextureMemory(used, limit, hard);
+        const U64 target = limit / 100 * 85;
+        return asr::firstTextureMip(width, height, components == 3 ? 4 : components, mips, target > used ? target - used : 0);
     }
 
     U32 freeTextureSlots() override
@@ -350,6 +367,7 @@ std::string startRenderer(LLWindow* window)
     asr::DeviceOptions options;
     options.shaderDir = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders_native");
     options.validation = gSavedSettings.getBOOL("ASRendererValidation");
+    options.report = [](const char* message) { LL_WARNS("ASRenderer") << "renderer: " << message << LL_ENDL; };
     options.vsync = gSavedSettings.getBOOL("RenderVSyncEnable");
     options.memoryCapBytes = U64(gSavedSettings.getU32("ASRendererVRAMBudgetMB")) * 1024 * 1024;
 

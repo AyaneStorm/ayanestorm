@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llvoavatar.h"
+#include "asrworld.h" // <AS:Chanayane/> the new renderer's system body masks
 
 #include <stdio.h>
 #include <ctype.h>
@@ -5731,9 +5732,18 @@ bool LLVOAvatar::computeNeedsUpdate()
     const F32 MAX_IMPOSTOR_INTERVAL = 4.0f;
     computeUpdatePeriod();
 
-    bool needs_update_by_frame_count = ((LLDrawable::getCurrentFrame()+mID.mData[0])%mUpdatePeriod == 0);
+    // <AS:Chanayane> The new renderer draws no impostors and sets its own, shorter periods.
+    // mUpdatePeriod stays as it was, so isImpostor() does not change. The impostor's
+    // refresh time does not apply either: with no impostor drawn it is never reset, and
+    // would make every avatar animate every frame.
+    //bool needs_update_by_frame_count = ((LLDrawable::getCurrentFrame()+mID.mData[0])%mUpdatePeriod == 0);
+    const S32 own_period = mNeedsAnimUpdate ? 0 : ASRWorld::animationPeriod(this);
+    const S32 period = own_period != 0 ? own_period : mUpdatePeriod;
+    bool needs_update_by_frame_count = ((LLDrawable::getCurrentFrame()+mID.mData[0])%period == 0);
 
-    bool needs_update_by_max_time = ((gFrameTimeSeconds-mLastImpostorUpdateFrameTime)> MAX_IMPOSTOR_INTERVAL);
+    //bool needs_update_by_max_time = ((gFrameTimeSeconds-mLastImpostorUpdateFrameTime)> MAX_IMPOSTOR_INTERVAL);
+    bool needs_update_by_max_time = own_period == 0 && ((gFrameTimeSeconds-mLastImpostorUpdateFrameTime)> MAX_IMPOSTOR_INTERVAL);
+    // </AS:Chanayane>
     bool needs_update = needs_update_by_frame_count || needs_update_by_max_time;
 
     if (needs_update && !isSelf())
@@ -5810,6 +5820,7 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         updateMotions(LLCharacter::HIDDEN_UPDATE);
         return false;
     }
+    ASRWorld::avatarAnimated(this); // <AS:Chanayane/> the new renderer reads its joints only then
 
     //--------------------------------------------------------------------
     // Handle transitions between regular rendering, jellydoll, or invisible.
@@ -10499,6 +10510,7 @@ void LLVOAvatar::applyMorphMask(const U8* tex_data, S32 width, S32 height, S32 n
             morph_target->applyMask(tex_data, width, height, num_components, maskedMorph->mInvert);
         }
     }
+    ASRWorld::avatarMasksChanged(this); // <AS:Chanayane/> the new renderer sends the new masks
 }
 
 // returns true if morph masks are present and not valid for a given baked texture, false otherwise
