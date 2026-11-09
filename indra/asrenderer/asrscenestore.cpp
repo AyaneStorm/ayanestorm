@@ -322,7 +322,7 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
     {
         const Binding& binding = mBindings[current.binding];
         if (command.type == InstanceCommand::Type::Set && binding.kind == BINDING_SKINNED && desc.skin == binding.skin &&
-            desc.skeleton == binding.skeleton && desc.geometry == binding.source)
+            desc.skeleton == binding.skeleton && desc.geometry == binding.source && desc.morph == binding.morph)
         {
             kept = current.binding;
         }
@@ -432,7 +432,258 @@ uint32_t SceneStore::allocateRange(SceneTable table, uint64_t size)
     {
         ensureTable(SceneTable::PaletteJobs, ranges.capacity()); // entry for entry
     }
+    if (table == SceneTable::MorphedPositions)
+    {
+        ensureTable(SceneTable::MorphedAttributes, ranges.capacity());
+    }
     return uint32_t(offset);
+}
+
+// The set's deltas go in vertex order, so the GPU gathers each vertex's sum in one thread,
+// with no atomics: a vertex names its run of deltas.
+void SceneStore::applyMorphSet(const MorphSetCommand& command)
+{
+    if (mMorphSets.size() <= command.id)
+    {
+        mMorphSets.resize(size_t(command.id) + 1);
+    }
+    MorphSet& set = mMorphSets[command.id];
+    set = MorphSet();
+    const MorphSetDesc& desc = command.desc;
+    const uint32_t vertexCount = uint32_t(std::min({ desc.positions.size() / 3, desc.normals.size() / 3, desc.binormals.size() / 3, desc.uvs.size() / 2 }));
+    if (vertexCount == 0)
+    {
+        return;
+    }
+
+    struct Entry
+    {
+        uint32_t vertex;
+        uint32_t target;
+        uint32_t index; // inside the target
+    };
+    std::vector<Entry> entries;
+    set.targetMasks.assign(desc.targets.size(), MORPH_NO_MASK);
+    set.targetSizes.assign(desc.targets.size(), 0);
+    for (uint32_t target = 0; target < desc.targets.size(); ++target)
+    {
+        const MorphTargetDesc& morph = desc.targets[target];
+        const uint32_t count = uint32_t(std::min({ morph.vertices.size(), morph.positions.size() / 3, morph.normals.size() / 3,
+                                                   morph.binormals.size() / 3, morph.uvs.size() / 2 }));
+        set.targetSizes[target] = count;
+        float longest = 0.f;
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            const float* d = &morph.positions[i * 3];
+            longest = std::max(longest, std::sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+        }
+        set.targetReach.push_back(longest);
+        if (morph.masked)
+        {
+            set.targetMasks[target] = set.maskCount;
+            set.maskCount += count;
+        }
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            if (morph.vertices[i] < vertexCount)
+            {
+                entries.push_back({ morph.vertices[i], target, i });
+            }
+        }
+    }
+    std::stable_sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.vertex < b.vertex; });
+
+    std::vector<GpuMorphDelta> deltas(entries.size());
+    for (size_t i = 0; i < entries.size(); ++i)
+    {
+        const MorphTargetDesc& morph = desc.targets[entries[i].target];
+        const uint32_t at = entries[i].index;
+        GpuMorphDelta& delta = deltas[i];
+        memcpy(delta.position, &morph.positions[at * 3], sizeof(delta.position));
+        memcpy(delta.normal, &morph.normals[at * 3], sizeof(delta.normal));
+        memcpy(delta.binormal, &morph.binormals[at * 3], sizeof(delta.binormal));
+        memcpy(delta.uv, &morph.uvs[at * 2], sizeof(delta.uv));
+        delta.target = entries[i].target;
+        delta.mask = morph.masked ? set.targetMasks[entries[i].target] + at : MORPH_NO_MASK;
+    }
+
+    set.vertexCount = vertexCount;
+    set.deltaCount = uint32_t(deltas.size());
+    set.normalSoften = desc.normalSoften;
+    set.firstVertex = allocateRange(SceneTable::MorphVertices, vertexCount);
+    set.firstDelta = deltas.empty() ? 0 : allocateRange(SceneTable::MorphDeltas, deltas.size());
+
+    std::vector<GpuMorphVertex> vertices(vertexCount);
+    size_t next = 0;
+    for (uint32_t v = 0; v < vertexCount; ++v)
+    {
+        GpuMorphVertex& vertex = vertices[v];
+        memcpy(vertex.position, &desc.positions[v * 3], sizeof(vertex.position));
+        memcpy(vertex.normal, &desc.normals[v * 3], sizeof(vertex.normal));
+        memcpy(vertex.binormal, &desc.binormals[v * 3], sizeof(vertex.binormal));
+        memcpy(vertex.uv, &desc.uvs[v * 2], sizeof(vertex.uv));
+        vertex.firstDelta = set.firstDelta + uint32_t(next);
+        while (next < entries.size() && entries[next].vertex == v)
+        {
+            ++next;
+        }
+        vertex.deltaCount = set.firstDelta + uint32_t(next) - vertex.firstDelta;
+    }
+    writeTable(SceneTable::MorphVertices, set.firstVertex, vertices.data(), vertices.size() * sizeof(GpuMorphVertex));
+    if (!deltas.empty())
+    {
+        writeTable(SceneTable::MorphDeltas, set.firstDelta, deltas.data(), deltas.size() * sizeof(GpuMorphDelta));
+    }
+}
+
+void SceneStore::applyMorph(const MorphCommand& command)
+{
+    if (mMorphs.size() <= command.id)
+    {
+        mMorphs.resize(size_t(command.id) + 1);
+    }
+    Morph& morph = mMorphs[command.id];
+    if (command.set != 0)
+    {
+        morph = Morph();
+        if (command.set >= mMorphSets.size() || mMorphSets[command.set].vertexCount == 0 || mMorphSets[command.set].removing)
+        {
+            return; // never usable
+        }
+        MorphSet& set = mMorphSets[command.set];
+        ++set.users;
+        morph.set = command.set;
+        morph.weightsAndMasks.assign(set.targetSizes.size() + set.maskCount, 0.f);
+        morph.values = allocateRange(SceneTable::MorphWeights, std::max<size_t>(morph.weightsAndMasks.size(), 1));
+        morph.output = allocateRange(SceneTable::MorphedPositions, set.vertexCount);
+        GpuMorph entry{};
+        entry.firstVertex = set.firstVertex;
+        entry.vertexCount = set.vertexCount;
+        entry.weights = morph.values;
+        entry.masks = morph.values + uint32_t(set.targetSizes.size());
+        entry.output = morph.output;
+        entry.normalSoften = set.normalSoften;
+        writeEntry(SceneTable::Morphs, command.id, &entry, sizeof(entry));
+        writeMorphValues(command.id);
+        return;
+    }
+    if (morph.set == 0)
+    {
+        return;
+    }
+    const MorphSet& set = mMorphSets[morph.set];
+    if (command.target == 0xFFFFFFFFu)
+    {
+        const size_t count = std::min(command.values.size(), set.targetSizes.size());
+        std::copy(command.values.begin(), command.values.begin() + count, morph.weightsAndMasks.begin());
+    }
+    else if (command.target < set.targetSizes.size() && set.targetMasks[command.target] != MORPH_NO_MASK)
+    {
+        const size_t count = std::min<size_t>(command.values.size(), set.targetSizes[command.target]);
+        std::copy(command.values.begin(), command.values.begin() + count,
+                  morph.weightsAndMasks.begin() + set.targetSizes.size() + set.targetMasks[command.target]);
+    }
+    writeMorphValues(command.id);
+}
+
+// Its values in one write per update, however many changes came, and a rebuild this frame.
+void SceneStore::writeMorphValues(uint32_t id)
+{
+    Morph& morph = mMorphs[id];
+    if (morph.weightsAndMasks.empty())
+    {
+        morph.weightsAndMasks.push_back(0.f); // a set with no targets still has its base to show
+    }
+    const uint64_t bytes = morph.weightsAndMasks.size() * sizeof(float);
+    if (morph.valuesUpdate == mUpdate)
+    {
+        memcpy(mTableBytes.data() + mWrites[morph.valuesWrite].source, morph.weightsAndMasks.data(), bytes);
+    }
+    else
+    {
+        morph.valuesUpdate = mUpdate;
+        morph.valuesWrite = uint32_t(mWrites.size());
+        writeTable(SceneTable::MorphWeights, morph.values, morph.weightsAndMasks.data(), bytes);
+    }
+    if (morph.dirtyUpdate != mUpdate)
+    {
+        morph.dirtyUpdate = mUpdate;
+        mDirtyMorphs.push_back(id);
+    }
+
+    // No vertex moves further than the weighted sum of each target's longest delta: masks
+    // only scale down. The skeletons' boxes widen to it, and never narrow.
+    const MorphSet& set = mMorphSets[morph.set];
+    float bound = 0.f;
+    for (size_t target = 0; target < set.targetReach.size(); ++target)
+    {
+        bound += std::fabs(morph.weightsAndMasks[target]) * set.targetReach[target];
+    }
+    if (bound > morph.bound)
+    {
+        morph.bound = bound;
+        for (uint32_t binding : morph.bindings)
+        {
+            widenReach(binding);
+        }
+    }
+}
+
+void SceneStore::removeMorphSetIfUnused(uint32_t id, uint64_t frame)
+{
+    MorphSet& set = mMorphSets[id];
+    if (!set.removing || set.users != 0)
+    {
+        return;
+    }
+    retireRange(SceneTable::MorphVertices, set.firstVertex, set.vertexCount, frame);
+    retireRange(SceneTable::MorphDeltas, set.firstDelta, set.deltaCount, frame);
+    set = MorphSet();
+    mRetired.push_back({ Retired::Type::MorphSetId, id, 0, 0, frame + mFreeDelay });
+}
+
+void SceneStore::removeMorphIfUnused(uint32_t id, uint64_t frame)
+{
+    Morph& morph = mMorphs[id];
+    if (!morph.removing || morph.users != 0)
+    {
+        return;
+    }
+    if (morph.set != 0)
+    {
+        MorphSet& set = mMorphSets[morph.set];
+        retireRange(SceneTable::MorphWeights, morph.values, uint32_t(morph.weightsAndMasks.size()), frame);
+        retireRange(SceneTable::MorphedPositions, morph.output, set.vertexCount, frame);
+        --set.users;
+        removeMorphSetIfUnused(morph.set, frame);
+    }
+    morph = Morph();
+    mRetired.push_back({ Retired::Type::MorphId, id, 0, 0, frame + mFreeDelay });
+}
+
+// The morphs whose values changed this update, in blocks of SKIN_BLOCK vertices.
+void SceneStore::writeMorphWork()
+{
+    std::vector<GpuMorphWork> work;
+    for (uint32_t id : mDirtyMorphs)
+    {
+        const Morph& morph = mMorphs[id];
+        if (morph.set == 0)
+        {
+            continue; // removed in the same update
+        }
+        const uint32_t vertices = mMorphSets[morph.set].vertexCount;
+        for (uint32_t first = 0; first < vertices; first += SKIN_BLOCK)
+        {
+            work.push_back({ id, first });
+        }
+    }
+    mDirtyMorphs.clear();
+    mMorphWorkCount = uint32_t(work.size());
+    if (!work.empty())
+    {
+        writeTable(SceneTable::MorphWork, 0, work.data(), work.size() * sizeof(GpuMorphWork));
+    }
 }
 
 void SceneStore::retireRange(SceneTable table, uint32_t first, uint32_t count, uint64_t frame)
@@ -668,6 +919,7 @@ void SceneStore::writeSkinnedBinding(uint32_t id, uint32_t instance, const Insta
     entry.positions = binding.positions;
     entry.firstBlock = binding.firstBlock;
     entry.groupCapacity = binding.groupCapacity;
+    entry.morph = binding.morph;
     writeEntry(SceneTable::Bindings, id, &entry, sizeof(entry));
 }
 
@@ -700,6 +952,12 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
     {
         return 0;
     }
+    // A morph must cover every vertex any LOD of the chain has.
+    if (desc.morph != 0 && (desc.morph >= mMorphs.size() || mMorphs[desc.morph].set == 0 || mMorphs[desc.morph].removing ||
+                            mMorphSets[mMorphs[desc.morph].set].vertexCount < vertices))
+    {
+        return 0;
+    }
 
     uint32_t id = 0;
     if (mBindings.empty())
@@ -724,6 +982,11 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
     binding.skeleton = desc.skeleton;
     binding.skin = desc.skin;
     binding.source = desc.geometry;
+    binding.morph = desc.morph;
+    if (desc.morph != 0)
+    {
+        ++mMorphs[desc.morph].users;
+    }
     binding.target = mQueue->reserveGeometry();
     ensureTable(SceneTable::Geometries, uint64_t(binding.target) + 1);
     const GpuGeometry empty{};
@@ -746,11 +1009,10 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
     usePalette(desc.skeleton, desc.skin);
 
     // How far its vertices can be from any of its joints, in the joints' own space: its
-    // bounding sphere, carried through each inverse bind matrix.
+    // bounding sphere, carried through each inverse bind matrix, and what morphs add.
     const Geometry& source = mGeometries[desc.geometry];
-    const float sphere = source.radius * source.scale;
+    binding.sphere = source.radius * source.scale;
     const Skin& skin = mSkins[desc.skin];
-    float reach = 0.f;
     for (size_t joint = 0; joint < skin.joints.size(); ++joint)
     {
         const float* m = &skin.matrices[joint * 12];
@@ -763,19 +1025,32 @@ uint32_t SceneStore::bindSkinned(uint32_t instance, const InstanceDesc& desc)
             center += c * c;
             stretch += r[0] * r[0] + r[1] * r[1] + r[2] * r[2];
         }
-        reach = std::max(reach, std::sqrt(center) + sphere * std::sqrt(stretch));
+        binding.reachCenter = std::max(binding.reachCenter, std::sqrt(center));
+        binding.reachStretch = std::max(binding.reachStretch, std::sqrt(stretch));
     }
-    Skeleton& skeleton = mSkeletons[desc.skeleton];
-    ++skeleton.users;
-    if (reach > skeleton.reach)
+    ++mSkeletons[desc.skeleton].users;
+    if (desc.morph != 0)
     {
-        skeleton.reach = reach;
-        writeSkeleton(desc.skeleton, false);
+        mMorphs[desc.morph].bindings.push_back(id);
     }
+    widenReach(id);
 
     writeSkinnedBinding(id, instance, desc);
     ++mSkinnedBindings;
     return id;
+}
+
+void SceneStore::widenReach(uint32_t id)
+{
+    const Binding& binding = mBindings[id];
+    const float bound = binding.morph != 0 ? mMorphs[binding.morph].bound : 0.f;
+    const float reach = binding.reachCenter + (binding.sphere + bound) * binding.reachStretch;
+    Skeleton& skeleton = mSkeletons[binding.skeleton];
+    if (reach > skeleton.reach)
+    {
+        skeleton.reach = reach;
+        writeSkeleton(binding.skeleton, false);
+    }
 }
 
 uint32_t SceneStore::bindAttached(uint32_t instance, const InstanceDesc& desc, const GpuInstance& placed)
@@ -840,6 +1115,13 @@ void SceneStore::unbind(uint32_t id, uint64_t frame)
         mRetired.push_back({ Retired::Type::GeometryId, binding.target, 0, 0, frame + mFreeDelay });
         releasePalette(binding.skeleton, binding.skin, frame);
         --mSkinnedBindings;
+        if (binding.morph != 0)
+        {
+            Morph& morph = mMorphs[binding.morph];
+            morph.bindings.erase(std::remove(morph.bindings.begin(), morph.bindings.end(), id), morph.bindings.end());
+            --morph.users;
+            removeMorphIfUnused(binding.morph, frame);
+        }
     }
     else if (binding.kind == BINDING_ATTACHED)
     {
@@ -871,6 +1153,7 @@ void SceneStore::fillView(GpuSceneView& view) const
     view.paletteEnd = uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
     view.bindingEnd = uint32_t(mBindings.size());
     view.blockEnd = uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used());
+    view.morphWorkEnd = mMorphWorkCount;
 }
 
 uint32_t SceneStore::skinThreads(uint32_t phase) const
@@ -881,6 +1164,8 @@ uint32_t SceneStore::skinThreads(uint32_t phase) const
             return uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
         case SKIN_BIND:
             return uint32_t(mBindings.size());
+        case SKIN_MORPH:
+            return mMorphWorkCount * SKIN_BLOCK;
         default:
             return mSkinnedBindings == 0 ? 0 : uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used()) * SKIN_BLOCK;
     }
@@ -1089,6 +1374,12 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
             case Retired::Type::SkinId:
                 queue.releaseSkin(retired.index);
                 break;
+            case Retired::Type::MorphSetId:
+                queue.releaseMorphSet(retired.index);
+                break;
+            case Retired::Type::MorphId:
+                queue.releaseMorph(retired.index);
+                break;
         }
     }
 }
@@ -1141,11 +1432,21 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         {
             applySkin(command);
         }
+        for (const MorphSetCommand& command : mCommands.morphSets)
+        {
+            applyMorphSet(command);
+        }
+        for (const MorphCommand& command : mCommands.morphs)
+        {
+            applyMorph(command);
+        }
         mCommands.terrains.clear();
         mCommands.materials.clear();
         mCommands.geometries.clear();
         mCommands.skeletons.clear();
         mCommands.skins.clear();
+        mCommands.morphSets.clear();
+        mCommands.morphs.clear();
     }
 
     while (mInstancesDone < mCommands.instances.size() && mTableBytes.size() < uploadLimit / 2)
@@ -1191,6 +1492,28 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
             }
         }
         mCommands.removedSkins.clear();
+        for (uint32_t id : mCommands.removedMorphs)
+        {
+            if (id < mMorphs.size())
+            {
+                mMorphs[id].removing = true;
+                removeMorphIfUnused(id, frame);
+            }
+        }
+        mCommands.removedMorphs.clear();
+        for (uint32_t id : mCommands.removedMorphSets)
+        {
+            if (id < mMorphSets.size() && mMorphSets[id].vertexCount != 0)
+            {
+                mMorphSets[id].removing = true;
+                removeMorphSetIfUnused(id, frame);
+            }
+            else if (id < mMorphSets.size())
+            {
+                mRetired.push_back({ Retired::Type::MorphSetId, id, 0, 0, frame + mFreeDelay });
+            }
+        }
+        mCommands.removedMorphSets.clear();
     }
 
     uint64_t uploaded = 0;
@@ -1214,6 +1537,8 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         mPending.pop_front();
     }
     ensureTable(SceneTable::Clusters, mClusterRanges.capacity());
+    writeMorphWork();
+    ensureTable(SceneTable::MorphWork, mMorphWorkCount);
 }
 
 } // namespace asr

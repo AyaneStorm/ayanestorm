@@ -182,6 +182,66 @@ inline Mesh makeTube(uint32_t rows, uint32_t columns, std::vector<asr::SkinWeigh
     return mesh;
 }
 
+// A coarser tube on the fine one's own vertices, as system avatar LODs share theirs: every
+// step-th row and column of a tube of rows by columns.
+inline std::vector<uint16_t> coarseTubeIndices(uint32_t rows, uint32_t columns, uint32_t rowStep, uint32_t columnStep)
+{
+    std::vector<uint16_t> indices;
+    for (uint32_t row = 0; row + rowStep <= rows; row += rowStep)
+    {
+        for (uint32_t column = 0; column + columnStep <= columns; column += columnStep)
+        {
+            const uint16_t a = uint16_t(row * (columns + 1) + column);
+            const uint16_t b = uint16_t(a + columnStep);
+            const uint16_t c = uint16_t(a + rowStep * (columns + 1));
+            const uint16_t d = uint16_t(c + columnStep);
+            indices.insert(indices.end(), { a, c, b, b, c, d });
+        }
+    }
+    return indices;
+}
+
+// The creature's morphs: a bulge round its middle, and a masked swell at its top that also
+// moves its UVs. Binormals start as the normals, as the viewer starts them.
+inline asr::MorphSetDesc creatureMorphs(const Mesh& tube)
+{
+    asr::MorphSetDesc set;
+    asr::MorphTargetDesc bulge;
+    asr::MorphTargetDesc swell;
+    swell.masked = true;
+    for (uint32_t i = 0; i < tube.vertices.size(); ++i)
+    {
+        const asr::SceneVertex& vertex = tube.vertices[i];
+        set.positions.insert(set.positions.end(), vertex.position, vertex.position + 3);
+        set.normals.insert(set.normals.end(), vertex.normal, vertex.normal + 3);
+        set.binormals.insert(set.binormals.end(), vertex.normal, vertex.normal + 3);
+        set.uvs.insert(set.uvs.end(), vertex.uv, vertex.uv + 2);
+        const float z = vertex.position[2];
+        const auto add = [&](asr::MorphTargetDesc& target, float amount, float uvShift)
+        {
+            target.vertices.push_back(i);
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                target.positions.push_back(vertex.normal[axis] * amount);
+                target.normals.push_back(0.f);
+                target.binormals.push_back(0.f);
+            }
+            target.uvs.insert(target.uvs.end(), { 0.f, uvShift });
+        };
+        if (z > 1.5f && z < 2.5f)
+        {
+            add(bulge, 0.25f * std::sin((z - 1.5f) * 3.1415927f), 0.f);
+        }
+        if (z > 3.2f)
+        {
+            add(swell, 0.2f, 0.1f);
+        }
+    }
+    set.targets.push_back(std::move(bulge));
+    set.targets.push_back(std::move(swell));
+    return set;
+}
+
 // Three rows each: out = a * b.
 inline void multiplyRows(const float a[12], const float b[12], float out[12])
 {
@@ -333,13 +393,19 @@ public:
 
         // Creatures in two rings either side of the street walk: skinned tubes with two LODs,
         // each with a box held at its tip, posed by this thread and carried on by the GPU.
-        std::vector<asr::SkinWeights> roughWeights;
         std::vector<asr::SkinWeights> fineWeights;
-        const Mesh roughTube = makeTube(8, 8, roughWeights);
-        const Mesh fineTube = makeTube(64, 24, fineWeights);
-        const uint32_t roughTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX, roughWeights.data()));
+        Mesh fineTube = makeTube(64, 24, fineWeights);
+        Mesh roughTube = fineTube;
+        roughTube.indices = coarseTubeIndices(64, 24, 8, 3);
+        const uint32_t roughTubeId = scene.addGeometry(build(roughTube, &CREATURE_BOX, fineWeights.data()));
         mTube = scene.addGeometry(build(fineTube, &CREATURE_BOX, fineWeights.data()), roughTubeId, 30.f);
         mSkin = scene.addSkin(creatureSkin());
+        mMorphSet = scene.addMorphSet(creatureMorphs(fineTube));
+        mSwellSize = 0;
+        for (const asr::SceneVertex& vertex : fineTube.vertices)
+        {
+            mSwellSize += vertex.position[2] > 3.2f ? 1 : 0;
+        }
         for (uint32_t i = 0; i < CREATURES; ++i)
         {
             const float angle = float(i) / CREATURES * TWO_PI;
@@ -350,6 +416,7 @@ public:
             creature.y = std::sin(angle) * radius;
             creature.phase = float(i) * 0.7f;
             creature.material = mMaterials[i % MATERIALS];
+            creature.morphed = (i % 2) == 1;
             addCreature(creature, 0.f);
         }
     }
@@ -440,6 +507,8 @@ private:
         uint32_t tube = 0;
         uint32_t box[6]{};
         uint32_t material = 0;
+        uint32_t morph = 0;
+        bool morphed = false;
         float x = 0.f, y = 0.f, phase = 0.f;
     };
 
@@ -449,6 +518,11 @@ private:
         const float wander = 0.3f * seconds + creature.phase;
         creaturePose(seconds, creature.x + 3.f * std::sin(wander), creature.y + 3.f * std::cos(wander), wander, creature.phase, rows);
         mScene.poseSkeleton(creature.skeleton, rows, CREATURE_JOINTS, std::chrono::steady_clock::now());
+        if (creature.morph != 0)
+        {
+            const float weights[2] = { 0.5f + 0.5f * std::sin(1.5f * seconds + creature.phase), 1.f };
+            mScene.setMorphWeights(creature.morph, weights, 2);
+        }
     }
 
     asr::InstanceDesc tubeDesc(const Creature& creature) const
@@ -458,6 +532,7 @@ private:
         desc.material = creature.material;
         desc.skeleton = creature.skeleton;
         desc.skin = mSkin;
+        desc.morph = creature.morph;
         desc.lodSize = CREATURE_HEIGHT;
         return desc;
     }
@@ -465,6 +540,17 @@ private:
     void addCreature(Creature& creature, float seconds)
     {
         creature.skeleton = mScene.addSkeleton(CREATURE_JOINTS);
+        if (creature.morphed)
+        {
+            // The swell is masked in stripes, as a clothing alpha mask would leave it.
+            creature.morph = mScene.addMorph(mMorphSet);
+            std::vector<float> mask(mSwellSize);
+            for (uint32_t i = 0; i < mSwellSize; ++i)
+            {
+                mask[i] = ((i / 3) % 2) == 0 ? 1.f : 0.f;
+            }
+            mScene.setMorphMask(creature.morph, 1, mask.data(), mSwellSize);
+        }
         pose(creature, seconds);
         creature.tube = mScene.addInstance(tubeDesc(creature));
         for (uint32_t face = 0; face < 6; ++face)
@@ -488,6 +574,8 @@ private:
             mScene.removeInstance(box);
         }
         mScene.removeSkeleton(creature.skeleton);
+        mScene.removeMorph(creature.morph);
+        creature.morph = 0;
         mInstances -= 7;
     }
 
@@ -683,6 +771,8 @@ private:
     float mLastSwap = 0.f;
     uint32_t mTube = 0;
     uint32_t mSkin = 0;
+    uint32_t mMorphSet = 0;
+    uint32_t mSwellSize = 0;
     std::vector<Creature> mCreatures;
     uint32_t mCreatureChanges = 0;
     float mLastCreatureChange = 0.f;

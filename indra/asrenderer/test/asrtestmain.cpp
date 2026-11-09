@@ -1438,14 +1438,35 @@ void testSkinStore()
     FakeChunks chunks;
     constexpr uint64_t LIMIT = 4 * 1024 * 1024;
 
-    std::vector<asr::SkinWeights> roughWeights;
     std::vector<asr::SkinWeights> fineWeights;
-    const asrtest::Mesh rough = asrtest::makeTube(8, 8, roughWeights);
     const asrtest::Mesh fine = asrtest::makeTube(64, 24, fineWeights);
-    const uint32_t roughId = queue.addGeometry(asrtest::build(rough, &asrtest::CREATURE_BOX, roughWeights.data()));
+    asrtest::Mesh rough = fine;
+    rough.indices = asrtest::coarseTubeIndices(64, 24, 8, 3);
+    const uint32_t roughId = queue.addGeometry(asrtest::build(rough, &asrtest::CREATURE_BOX, fineWeights.data()));
     const uint32_t fineId = queue.addGeometry(asrtest::build(fine, &asrtest::CREATURE_BOX, fineWeights.data()), roughId, 30.f);
     const uint32_t plain = queue.addGeometry(asrtest::build(asrtest::makeBoxFace(0, 1.f)));
     const uint32_t skin = queue.addSkin(asrtest::creatureSkin());
+
+    // Morphs at full weight, the swell unmasked: the furthest the vertices go.
+    const asr::MorphSetDesc morphDesc = asrtest::creatureMorphs(fine);
+    asr::MorphSetDesc morphCopy = morphDesc;
+    const uint32_t morphSet = queue.addMorphSet(std::move(morphCopy));
+    const uint32_t morph = queue.addMorph(morphSet);
+    const float fullWeights[2] = { 1.f, 1.f };
+    queue.setMorphWeights(morph, fullWeights, 2);
+    const std::vector<float> fullMask(morphDesc.targets[1].vertices.size(), 1.f);
+    queue.setMorphMask(morph, 1, fullMask.data(), uint32_t(fullMask.size()));
+    std::vector<float> morphed = morphDesc.positions;
+    for (const asr::MorphTargetDesc& target : morphDesc.targets)
+    {
+        for (size_t i = 0; i < target.vertices.size(); ++i)
+        {
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                morphed[target.vertices[i] * 3 + axis] += target.positions[i * 3 + axis];
+            }
+        }
+    }
     const uint32_t skeleton = queue.addSkeleton(asrtest::CREATURE_JOINTS);
     float rows[asrtest::CREATURE_JOINTS * 12];
     asrtest::creaturePose(0.f, 10.f, 20.f, 0.5f, 0.f, rows);
@@ -1456,6 +1477,7 @@ void testSkinStore()
     tube.geometry = fineId;
     tube.skeleton = skeleton;
     tube.skin = skin;
+    tube.morph = morph;
     tube.lodSize = asrtest::CREATURE_HEIGHT;
     const uint32_t tubeId = queue.addInstance(tube);
     asr::InstanceDesc held;
@@ -1468,6 +1490,7 @@ void testSkinStore()
     const uint32_t heldId = queue.addInstance(held);
     asr::InstanceDesc loose = tube;
     loose.geometry = plain; // no weights: nothing to skin
+    loose.morph = 0;
     const uint32_t looseId = queue.addInstance(loose);
 
     uint64_t frame = 10;
@@ -1483,6 +1506,23 @@ void testSkinStore()
     expect(binding && binding->kind == asr::BINDING_SKINNED && binding->source == fineId && binding->instance == tubeId &&
                tubeEntry && binding->target == tubeEntry->geometry,
            "its binding names the source chain and its own geometry");
+    expect(binding && binding->morph == morph, "a morphed instance names its morph");
+    expect(store.skinThreads(asr::SKIN_MORPH) == (fine.vertices.size() + asr::SKIN_BLOCK - 1) / asr::SKIN_BLOCK * asr::SKIN_BLOCK,
+           "a new morph is rebuilt, every vertex once");
+
+    // Each vertex names its run of deltas, and the runs hold every delta once.
+    const asr::GpuMorph* morphEntry = writtenEntry<asr::GpuMorph>(store, asr::SceneTable::Morphs, morph);
+    const asr::GpuMorphVertex* morphVertices =
+        morphEntry ? writtenEntry<asr::GpuMorphVertex>(store, asr::SceneTable::MorphVertices, morphEntry->firstVertex) : nullptr;
+    uint32_t deltaTotal = 0;
+    bool runsInOrder = morphVertices != nullptr;
+    for (uint32_t v = 0; morphVertices && v < morphEntry->vertexCount; ++v)
+    {
+        runsInOrder = runsInOrder && (v == 0 || morphVertices[v].firstDelta == morphVertices[v - 1].firstDelta + morphVertices[v - 1].deltaCount);
+        deltaTotal += morphVertices[v].deltaCount;
+    }
+    expect(runsInOrder && deltaTotal == morphDesc.targets[0].vertices.size() + morphDesc.targets[1].vertices.size(),
+           "morph deltas are sorted by vertex, each once");
     const asr::GpuInstance* heldEntry = writtenEntry<asr::GpuInstance>(store, asr::SceneTable::Instances, heldId);
     const asr::GpuSkeleton* skeletonEntry = writtenEntry<asr::GpuSkeleton>(store, asr::SceneTable::Skeletons, skeleton);
     const asr::GpuBinding* heldBinding = heldEntry ? writtenEntry<asr::GpuBinding>(store, asr::SceneTable::Bindings, heldEntry->binding) : nullptr;
@@ -1500,7 +1540,7 @@ void testSkinStore()
         bool inside = true;
         for (size_t i = 0; i < fine.vertices.size(); ++i)
         {
-            const float* p = fine.vertices[i].position;
+            const float* p = &morphed[i * 3];
             float skinned[3] = { 0.f, 0.f, 0.f };
             for (int k = 0; k < 2; ++k)
             {
@@ -1521,7 +1561,7 @@ void testSkinStore()
         }
         return inside;
     };
-    expect(skeletonEntry && insideBox(*skeletonEntry, rows), "the skeleton's box holds every skinned vertex");
+    expect(skeletonEntry && insideBox(*skeletonEntry, rows), "the skeleton's box holds every morphed and skinned vertex");
 
     // A second pose: the one before is kept for the GPU to carry the motion on from.
     float later[asrtest::CREATURE_JOINTS * 12];
@@ -1533,6 +1573,7 @@ void testSkinStore()
     expect(skeletonEntry && skeletonEntry->time - skeletonEntry->previousTime == 20000 && skeletonEntry->maxLead == asr::SKELETON_MAX_LEAD,
            "two poses give a step and a lead");
     expect(joints && joints[1].rows[0][3] == later[12 + 3] && joints[1].previous[0][3] == rows[12 + 3], "joints carry both poses");
+    expect(store.skinThreads(asr::SKIN_MORPH) == 0, "a morph whose weights did not change is not rebuilt");
     float ahead[asrtest::CREATURE_JOINTS * 12];
     for (size_t i = 0; i < sizeof(ahead) / sizeof(ahead[0]); ++i)
     {
@@ -1554,11 +1595,14 @@ void testSkinStore()
     queue.removeInstance(looseId);
     queue.removeSkeleton(skeleton);
     queue.removeSkin(skin);
+    queue.removeMorph(morph);
+    queue.removeMorphSet(morphSet);
     store.update(queue, chunks, ++frame, LIMIT);
     expect(store.skinnedInstances() == 0, "a removed skinned instance is unbound");
     store.update(queue, chunks, frame += 4, LIMIT);
     expect(queue.addSkeleton(2) == skeleton, "a freed skeleton id is reused");
     expect(queue.addSkin(asrtest::creatureSkin()) == skin, "a freed skin id is reused");
+    expect(queue.addMorph(1) == morph && queue.addMorphSet(asr::MorphSetDesc()) == morphSet, "freed morph ids are reused");
 }
 
 void testFrameGraph()

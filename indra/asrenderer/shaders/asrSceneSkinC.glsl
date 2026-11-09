@@ -24,11 +24,50 @@ layout(local_size_x = 64) in;
 
 const uint SKIN_PALETTE = 0u;
 const uint SKIN_BIND = 1u;
-const uint SKIN_VERTICES = 2u;
-const uint SKIN_CLUSTERS = 3u;
-const uint SKIN_GROUPS = 4u;
+const uint SKIN_MORPH = 2u;
+const uint SKIN_VERTICES = 3u;
+const uint SKIN_CLUSTERS = 4u;
+const uint SKIN_GROUPS = 5u;
 const uint SKIN_BLOCK = 64u;
 const uint MAX_LODS = 4u;
+const uint MORPH_NO_MASK = 0xFFFFFFFFu;
+
+struct MorphVertex
+{
+    vec3 position;
+    uint firstDelta;
+    vec3 normal;
+    uint deltaCount;
+    vec3 binormal;
+    float u;
+    float v;
+    uint unused[3];
+};
+
+struct MorphDelta
+{
+    vec3 position;
+    uint target;
+    vec3 normal;
+    uint mask;
+    vec3 binormal;
+    float u;
+    float v;
+    uint unused[3];
+};
+
+struct MorphWork
+{
+    uint morph;
+    uint firstVertex;
+};
+
+layout(buffer_reference, std430) readonly buffer MorphsRef { Morph items[]; };
+layout(buffer_reference, std430) readonly buffer MorphVerticesRef { MorphVertex items[]; };
+layout(buffer_reference, std430) readonly buffer MorphDeltasRef { MorphDelta items[]; };
+layout(buffer_reference, std430) readonly buffer MorphWorkRef { MorphWork items[]; };
+layout(buffer_reference, std430) readonly buffer FloatsRef { float values[]; };
+layout(buffer_reference, std430) buffer Vec4Ref { vec4 items[]; };
 
 layout(buffer_reference, std430) readonly buffer SkeletonsRef { Skeleton items[]; };
 layout(buffer_reference, std430) readonly buffer JointsRef { Joint items[]; };
@@ -200,6 +239,68 @@ int snorm16(float value)
     return int(round(clamp(value, -1.0, 1.0) * 32767.0));
 }
 
+// As buildGeometry() packs a normal: octahedral, two signed 16-bit halves.
+uint packOctahedral(vec3 n)
+{
+    n /= max(abs(n.x) + abs(n.y) + abs(n.z), 1e-20);
+    vec2 p = n.xy;
+    if (n.z < 0.0)
+    {
+        p = (1.0 - abs(p.yx)) * vec2(p.x >= 0.0 ? 1.0 : -1.0, p.y >= 0.0 ? 1.0 : -1.0);
+    }
+    return (uint(snorm16(p.x)) & 0xFFFFu) | (uint(snorm16(p.y)) << 16);
+}
+
+// A morphed vertex rebuilt from its base, as the viewer's sums give it: positions and UVs
+// add their weighted deltas, normals and binormals add softened ones and are normalized,
+// and the tangent is the binormal crossed with the normal.
+void morphVertex(ViewRef view)
+{
+    const uint index = gl_WorkGroupID.x;
+    if (index >= view.morphWorkEnd)
+    {
+        return;
+    }
+    const MorphWork work = MorphWorkRef(view.skinTables[SKIN_TABLE_MORPH_WORK]).items[index];
+    const Morph morph = MorphsRef(view.skinTables[SKIN_TABLE_MORPHS]).items[work.morph];
+    const uint vertex = work.firstVertex + gl_LocalInvocationID.x;
+    if (vertex >= morph.vertexCount)
+    {
+        return;
+    }
+    const MorphVertex base = MorphVerticesRef(view.skinTables[SKIN_TABLE_MORPH_VERTICES]).items[morph.firstVertex + vertex];
+    MorphDeltasRef deltas = MorphDeltasRef(view.skinTables[SKIN_TABLE_MORPH_DELTAS]);
+    FloatsRef values = FloatsRef(view.skinTables[SKIN_TABLE_MORPH_WEIGHTS]);
+    vec3 position = base.position;
+    vec3 normal = base.normal;
+    vec3 binormal = base.binormal;
+    vec2 uv = vec2(base.u, base.v);
+    for (uint i = 0u; i < base.deltaCount; ++i)
+    {
+        const MorphDelta delta = deltas.items[base.firstDelta + i];
+        float weight = values.values[morph.weights + delta.target];
+        if (delta.mask != MORPH_NO_MASK)
+        {
+            weight *= values.values[morph.masks + delta.mask];
+        }
+        position += weight * delta.position;
+        normal += weight * morph.normalSoften * delta.normal;
+        binormal += weight * morph.normalSoften * delta.binormal;
+        uv += weight * vec2(delta.u, delta.v);
+    }
+    normal = dot(normal, normal) > 0.0 ? normalize(normal) : vec3(0.0, 0.0, 1.0);
+    vec3 tangent = cross(binormal, normal);
+    tangent = dot(tangent, tangent) > 0.0 ? normalize(tangent) : vec3(1.0, 0.0, 0.0);
+
+    const uint at = morph.outputIndex + vertex;
+    Vec4Ref(view.skinTables[SKIN_TABLE_MORPHED_POSITIONS]).items[at] = vec4(position, 1.0);
+    PositionsWriteRef attributes = PositionsWriteRef(view.skinTables[SKIN_TABLE_MORPHED_ATTRIBUTES]);
+    attributes.words[at * 4u] = packOctahedral(normal);
+    attributes.words[at * 4u + 1u] = packOctahedral(tangent) & ~0x10000u; // handedness bit clear: positive
+    attributes.words[at * 4u + 2u] = floatBitsToUint(uv.x);
+    attributes.words[at * 4u + 3u] = floatBitsToUint(uv.y);
+}
+
 void skinVertex(ViewRef view)
 {
     Binding binding;
@@ -216,7 +317,16 @@ void skinVertex(ViewRef view)
         return;
     }
 
-    const vec3 mesh = packedPosition(first.positions, vertex) * binding.sourceBox.w + binding.sourceBox.xyz;
+    vec3 mesh;
+    if (binding.morph != 0u)
+    {
+        const Morph morph = MorphsRef(view.skinTables[SKIN_TABLE_MORPHS]).items[binding.morph];
+        mesh = Vec4Ref(view.skinTables[SKIN_TABLE_MORPHED_POSITIONS]).items[morph.outputIndex + vertex].xyz;
+    }
+    else
+    {
+        mesh = packedPosition(first.positions, vertex) * binding.sourceBox.w + binding.sourceBox.xyz;
+    }
     uvec4 joints;
     vec4 amounts;
     skinWeights(binding.weights, vertex, joints, amounts);
@@ -309,6 +419,12 @@ void skinCluster(ViewRef view)
     own.indices = source.indices;
     own.positions = positions;
     own.attributes = source.attributes;
+    if (binding.morph != 0u)
+    {
+        // Normals and UVs as morphed: the resolve and masked surfaces read them from here.
+        const Morph morph = MorphsRef(view.skinTables[SKIN_TABLE_MORPHS]).items[binding.morph];
+        own.attributes = view.skinTables[SKIN_TABLE_MORPHED_ATTRIBUTES] + uint64_t(morph.outputIndex) * 16ul;
+    }
     ClustersWriteRef(push.clusters).items[binding.targetEntry + binding.groupCapacity + local] = own;
 
     // The geometry's sphere around the packed origin. Positive floats order as their bits.
@@ -372,6 +488,9 @@ void main()
             break;
         case SKIN_BIND:
             bind(view, gl_GlobalInvocationID.x);
+            break;
+        case SKIN_MORPH:
+            morphVertex(view);
             break;
         case SKIN_VERTICES:
             skinVertex(view);

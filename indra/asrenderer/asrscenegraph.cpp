@@ -31,9 +31,10 @@ void declareSceneGraph(FrameGraph& graph)
     // arguments as Indirect too.
     graph.addPass("upload", { { ResultSceneData, CopyWrite | Keep }, { ResultDrawArguments, CopyWrite } });
 
-    // Avatars, once per frame for every view: palettes, then placing and LOD, then skinned
-    // vertices and the bounds made from them. Each reads what the one before wrote.
-    for (const char* name : { "skin palette", "skin bind", "skin vertices", "skin clusters", "skin groups" })
+    // Avatars, once per frame for every view: palettes, then placing and LOD, then morphs
+    // whose weights changed, then skinned vertices and the bounds made from them. Each reads
+    // what the one before wrote.
+    for (const char* name : { "skin palette", "skin bind", "skin morph", "skin vertices", "skin clusters", "skin groups" })
     {
         graph.addPass(name, { { ResultSceneData, ComputeRead | ComputeWrite | Keep } });
     }

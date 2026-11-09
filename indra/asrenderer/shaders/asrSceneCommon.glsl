@@ -80,8 +80,19 @@ struct Binding
     uint firstBlock;
     uint groupCapacity;
     uint64_t weights;
-    uint morphed;
+    uint morph;
     uint unused;
+};
+
+struct Morph
+{
+    uint firstVertex;
+    uint vertexCount;
+    uint weights;
+    uint masks;
+    uint outputIndex;
+    float normalSoften;
+    uint unused[2];
 };
 
 // GpuSceneView::skinTables, in SceneTable order.
@@ -93,6 +104,13 @@ const uint SKIN_TABLE_PALETTE = 4u;
 const uint SKIN_TABLE_BINDINGS = 5u;
 const uint SKIN_TABLE_BLOCKS = 6u;
 const uint SKIN_TABLE_POSITIONS = 7u;
+const uint SKIN_TABLE_MORPHS = 8u;
+const uint SKIN_TABLE_MORPH_VERTICES = 9u;
+const uint SKIN_TABLE_MORPH_DELTAS = 10u;
+const uint SKIN_TABLE_MORPH_WEIGHTS = 11u;
+const uint SKIN_TABLE_MORPHED_POSITIONS = 12u;
+const uint SKIN_TABLE_MORPHED_ATTRIBUTES = 13u;
+const uint SKIN_TABLE_MORPH_WORK = 14u;
 
 struct Geometry
 {
@@ -193,12 +211,14 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint clusterEnd;
     uint materialEnd;
     uint groupEnd;   // entries of the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
-    uint64_t skinTables[8];
+    uint64_t skinTables[15];
     uint64_t drawOnly; // not 0: a bit per skeleton, and only instances bound to one set are drawn
     uint time;
     uint paletteEnd;
     uint bindingEnd;
     uint blockEnd;
+    uint morphWorkEnd;
+    uint viewUnused[3];
 };
 
 layout(buffer_reference, std430) readonly buffer InstancesRef { Instance items[]; };

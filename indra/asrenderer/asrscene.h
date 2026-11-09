@@ -197,10 +197,12 @@ static_assert(sizeof(GpuInstance) == 80, "shaders read this layout");
 constexpr uint32_t SKIN_BLOCK = 64;          // vertices or clusters per workgroup of the skin passes
 constexpr uint32_t SKIN_PALETTE = 0;         // the skin passes, in order
 constexpr uint32_t SKIN_BIND = 1;
-constexpr uint32_t SKIN_VERTICES = 2;
-constexpr uint32_t SKIN_CLUSTERS = 3;
-constexpr uint32_t SKIN_GROUPS = 4;
-constexpr uint32_t SKIN_PHASES = 5;
+constexpr uint32_t SKIN_MORPH = 2;
+constexpr uint32_t SKIN_VERTICES = 3;
+constexpr uint32_t SKIN_CLUSTERS = 4;
+constexpr uint32_t SKIN_GROUPS = 5;
+constexpr uint32_t SKIN_PHASES = 6;
+constexpr uint32_t MORPH_NO_MASK = 0xFFFFFFFFu;
 constexpr uint32_t BINDING_ATTACHED = 1;
 constexpr uint32_t BINDING_SKINNED = 2;
 constexpr float SKELETON_MAX_LEAD = 1.1f;    // main-thread steps the motion is carried on, at most
@@ -252,10 +254,58 @@ struct GpuBinding
     uint32_t firstBlock;  // in the skin block table
     uint32_t groupCapacity; // groups room before its clusters
     uint64_t weights;     // skinned, written by the GPU: the chosen LOD's SkinWeights
-    uint32_t morphed;     // reserved for morphs: their output, 0 for none
+    uint32_t morph;       // skinned: the GpuMorph its vertices start from, 0 for the geometry's own
     uint32_t unused;
 };
 static_assert(sizeof(GpuBinding) == 96, "shaders read this layout");
+
+// System avatar morphs. A morph set is a mesh's base vertices and the sparse deltas of its
+// targets, sorted by vertex, stored once and shared by every avatar wearing that mesh. A
+// morph is one avatar's use of a set: a weight per target, and masks for targets that have
+// them. The GPU rebuilds its vertices from the base, as the viewer's sums give them, only
+// in a frame where its weights or masks changed, and skinning starts from them.
+struct GpuMorphVertex
+{
+    float position[3];
+    uint32_t firstDelta;
+    float normal[3];
+    uint32_t deltaCount;
+    float binormal[3];
+    float uv[2];
+    uint32_t unused[3];
+};
+static_assert(sizeof(GpuMorphVertex) == 64, "shaders read this layout");
+
+struct GpuMorphDelta
+{
+    float position[3];
+    uint32_t target;
+    float normal[3];
+    uint32_t mask;     // its place in the morph's masks, or MORPH_NO_MASK
+    float binormal[3];
+    float uv[2];
+    uint32_t unused[3];
+};
+static_assert(sizeof(GpuMorphDelta) == 64, "shaders read this layout");
+
+struct GpuMorph
+{
+    uint32_t firstVertex; // of its set, in the morph vertex table
+    uint32_t vertexCount;
+    uint32_t weights;     // in the morph weight table: a weight per target, then the masks
+    uint32_t masks;
+    uint32_t output;      // in the morphed position and attribute tables
+    float normalSoften;
+    uint32_t unused[2];
+};
+static_assert(sizeof(GpuMorph) == 32, "shaders read this layout");
+
+struct GpuMorphWork
+{
+    uint32_t morph;
+    uint32_t firstVertex;
+};
+static_assert(sizeof(GpuMorphWork) == 8, "shaders read this layout");
 
 struct GpuMaterial
 {
@@ -491,14 +541,16 @@ struct GpuSceneView
     uint32_t groupEnd;        // entries in the group list; the retest list holds visibleEnd + groupEnd + instanceEnd
 
     // The avatar tables, in SceneTable order from Skeletons, and what the skin passes cover.
-    uint64_t skinTables[8];
+    uint64_t skinTables[15];
     uint64_t drawOnly;        // not 0: a bit per skeleton, and only instances bound to one set are drawn
     uint32_t time;            // the frame's own time, microseconds, wrapping as GpuSkeleton::time does
     uint32_t paletteEnd;
     uint32_t bindingEnd;
     uint32_t blockEnd;
+    uint32_t morphWorkEnd;
+    uint32_t unused[3];
 };
-static_assert(sizeof(GpuSceneView) == 568, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 640, "shaders read this layout");
 
 // The time skeletons and views are stamped with.
 uint32_t sceneTime(std::chrono::steady_clock::time_point time);
@@ -533,6 +585,31 @@ struct InstanceDesc
     uint32_t skeleton = 0;
     uint32_t skin = 0;
     uint32_t joint = 0;
+    uint32_t morph = 0; // skinned: from addMorph(), its set made from this geometry's vertices
+};
+
+// One morph target: the vertices it moves and, for each, deltas of position, normal and
+// binormal (3 floats) and UV (2). A masked target's deltas are scaled per vertex by a mask
+// each avatar gives, as clothing alpha masks do.
+struct MorphTargetDesc
+{
+    std::vector<uint32_t> vertices;
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<float> binormals;
+    std::vector<float> uvs;
+    bool masked = false;
+};
+
+// A mesh's base vertices, 3 floats each and 2 for UVs, in the order its geometry has them.
+struct MorphSetDesc
+{
+    std::vector<float> positions;
+    std::vector<float> normals;
+    std::vector<float> binormals;
+    std::vector<float> uvs;
+    std::vector<MorphTargetDesc> targets;
+    float normalSoften = 0.65f; // how much of a normal delta counts, as the viewer softens them
 };
 
 // A rigged mesh's skin: for each of its joints, inverse bind times bind shape as three rows,
@@ -623,6 +700,20 @@ struct SkinCommand
     SkinDesc desc;
 };
 
+struct MorphSetCommand
+{
+    uint32_t id = 0;
+    MorphSetDesc desc;
+};
+
+struct MorphCommand
+{
+    uint32_t id = 0;
+    uint32_t set = 0;            // not 0: the morph is new
+    uint32_t target = 0xFFFFFFFFu; // not that: a mask for this target, else weights
+    std::vector<float> values;
+};
+
 // Handed over in one piece by SceneQueue::take().
 struct SceneCommands
 {
@@ -631,18 +722,22 @@ struct SceneCommands
     std::vector<GeometryCommand> geometries;
     std::vector<SkeletonCommand> skeletons;
     std::vector<SkinCommand> skins;
+    std::vector<MorphSetCommand> morphSets;
+    std::vector<MorphCommand> morphs;
     std::vector<InstanceCommand> instances;
     std::vector<uint32_t> removedGeometries;
     std::vector<uint32_t> removedMaterials;
     std::vector<uint32_t> removedTerrains;
     std::vector<uint32_t> removedSkeletons;
     std::vector<uint32_t> removedSkins;
+    std::vector<uint32_t> removedMorphSets;
+    std::vector<uint32_t> removedMorphs;
 
     bool empty() const
     {
-        return terrains.empty() && materials.empty() && geometries.empty() && skeletons.empty() && skins.empty() && instances.empty() &&
-               removedGeometries.empty() && removedMaterials.empty() && removedTerrains.empty() && removedSkeletons.empty() &&
-               removedSkins.empty();
+        return terrains.empty() && materials.empty() && geometries.empty() && skeletons.empty() && skins.empty() && morphSets.empty() &&
+               morphs.empty() && instances.empty() && removedGeometries.empty() && removedMaterials.empty() && removedTerrains.empty() &&
+               removedSkeletons.empty() && removedSkins.empty() && removedMorphSets.empty() && removedMorphs.empty();
     }
 };
 
@@ -684,6 +779,16 @@ public:
     uint32_t addSkin(SkinDesc&& desc);
     void removeSkin(uint32_t id);
 
+    // Ids start at 1. A morph starts with every weight 0 and no masks, which is the base
+    // mesh. A mask has a value per vertex of its target, in the target's order. Removal
+    // of either waits for its last user.
+    uint32_t addMorphSet(MorphSetDesc&& desc);
+    void removeMorphSet(uint32_t id);
+    uint32_t addMorph(uint32_t set);
+    void setMorphWeights(uint32_t id, const float* weights, uint32_t count);
+    void setMorphMask(uint32_t id, uint32_t target, const float* values, uint32_t count);
+    void removeMorph(uint32_t id);
+
     // Render thread.
     void take(SceneCommands& commands);
     uint32_t reserveGeometry(); // for the store's own geometries
@@ -693,8 +798,12 @@ public:
     void releaseTerrain(uint32_t id);
     void releaseSkeleton(uint32_t id);
     void releaseSkin(uint32_t id);
+    void releaseMorphSet(uint32_t id);
+    void releaseMorph(uint32_t id);
 
 private:
+    uint32_t takeId(std::vector<uint32_t>& free, uint32_t& next); // with mMutex held
+
     std::mutex mMutex; // held only to move a command, so neither thread really waits
     SceneCommands mCommands;
     std::vector<uint32_t> mFreeGeometries;
@@ -703,6 +812,10 @@ private:
     std::vector<uint32_t> mFreeTerrains;
     std::vector<uint32_t> mFreeSkeletons;
     std::vector<uint32_t> mFreeSkins;
+    std::vector<uint32_t> mFreeMorphSets;
+    std::vector<uint32_t> mFreeMorphs;
+    uint32_t mNextMorphSet = 1;
+    uint32_t mNextMorph = 1;
     uint32_t mNextGeometry = 1; // 0 is the empty geometry
     uint32_t mNextInstance = 0;
     uint32_t mNextMaterial = 1; // 0 is plain white

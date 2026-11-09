@@ -887,6 +887,88 @@ uint32_t SceneQueue::reserveGeometry()
     return mNextGeometry++;
 }
 
+uint32_t SceneQueue::takeId(std::vector<uint32_t>& free, uint32_t& next)
+{
+    if (!free.empty())
+    {
+        const uint32_t id = free.back();
+        free.pop_back();
+        return id;
+    }
+    return next++;
+}
+
+uint32_t SceneQueue::addMorphSet(MorphSetDesc&& desc)
+{
+    MorphSetCommand command;
+    command.desc = std::move(desc);
+    std::lock_guard<std::mutex> lock(mMutex);
+    command.id = takeId(mFreeMorphSets, mNextMorphSet);
+    const uint32_t id = command.id;
+    mCommands.morphSets.push_back(std::move(command));
+    return id;
+}
+
+void SceneQueue::removeMorphSet(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedMorphSets.push_back(id);
+    }
+}
+
+uint32_t SceneQueue::addMorph(uint32_t set)
+{
+    MorphCommand command;
+    command.set = set;
+    std::lock_guard<std::mutex> lock(mMutex);
+    command.id = takeId(mFreeMorphs, mNextMorph);
+    const uint32_t id = command.id;
+    mCommands.morphs.push_back(std::move(command));
+    return id;
+}
+
+void SceneQueue::setMorphWeights(uint32_t id, const float* weights, uint32_t count)
+{
+    MorphCommand command;
+    command.id = id;
+    command.values.assign(weights, weights + count);
+    std::lock_guard<std::mutex> lock(mMutex);
+    mCommands.morphs.push_back(std::move(command));
+}
+
+void SceneQueue::setMorphMask(uint32_t id, uint32_t target, const float* values, uint32_t count)
+{
+    MorphCommand command;
+    command.id = id;
+    command.target = target;
+    command.values.assign(values, values + count);
+    std::lock_guard<std::mutex> lock(mMutex);
+    mCommands.morphs.push_back(std::move(command));
+}
+
+void SceneQueue::removeMorph(uint32_t id)
+{
+    if (id != 0)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+        mCommands.removedMorphs.push_back(id);
+    }
+}
+
+void SceneQueue::releaseMorphSet(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeMorphSets.push_back(id);
+}
+
+void SceneQueue::releaseMorph(uint32_t id)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mFreeMorphs.push_back(id);
+}
+
 void SceneQueue::releaseSkeleton(uint32_t id)
 {
     std::lock_guard<std::mutex> lock(mMutex);

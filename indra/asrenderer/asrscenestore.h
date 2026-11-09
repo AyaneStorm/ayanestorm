@@ -38,6 +38,13 @@ enum class SceneTable : uint32_t
     Bindings,
     SkinBlocks,       // a binding id per block of SKIN_BLOCK vertices or clusters, 0 for none
     SkinnedPositions, // written by the GPU
+    Morphs,
+    MorphVertices,
+    MorphDeltas,
+    MorphWeights,      // a morph's target weights, then its masks
+    MorphedPositions,  // written by the GPU, entry for entry with MorphedAttributes
+    MorphedAttributes,
+    MorphWork,         // rewritten each update: the morphs to rebuild this frame
     Count
 };
 
@@ -46,7 +53,9 @@ constexpr uint32_t SCENE_FIRST_SKIN_TABLE = uint32_t(SceneTable::Skeletons);
 constexpr uint32_t SCENE_TABLE_STRIDE[SCENE_TABLES] = { sizeof(GpuInstance), sizeof(GpuGeometry), sizeof(GpuCluster), sizeof(GpuMaterial),
                                                         sizeof(GpuTerrain), sizeof(GpuSkeleton), sizeof(GpuJoint), 48,
                                                         sizeof(GpuPaletteJob), 48, sizeof(GpuBinding), sizeof(uint32_t),
-                                                        sizeof(PackedPosition) };
+                                                        sizeof(PackedPosition), sizeof(GpuMorph), sizeof(GpuMorphVertex),
+                                                        sizeof(GpuMorphDelta), sizeof(float), 16, sizeof(PackedAttributes),
+                                                        sizeof(GpuMorphWork) };
 static_assert(SCENE_TABLES - SCENE_FIRST_SKIN_TABLE == sizeof(GpuSceneView::skinTables) / sizeof(uint64_t), "one address per avatar table");
 constexpr uint64_t SCENE_CHUNK_BYTES = 64ull * 1024 * 1024;
 
@@ -224,6 +233,41 @@ private:
         uint32_t firstBlock = 0;
         uint32_t blockCount = 0;
         uint32_t matrix = 0;      // attached
+        uint32_t morph = 0;       // skinned
+        // How far its vertices reach from its joints: centre + (sphere + morph bound) * stretch.
+        float reachCenter = 0.f;
+        float reachStretch = 0.f;
+        float sphere = 0.f;
+    };
+
+    struct MorphSet
+    {
+        uint32_t vertexCount = 0; // 0 means free
+        uint32_t firstVertex = 0;
+        uint32_t deltaCount = 0;
+        uint32_t firstDelta = 0;
+        uint32_t maskCount = 0;
+        std::vector<uint32_t> targetMasks; // per target: its first mask, or MORPH_NO_MASK
+        std::vector<uint32_t> targetSizes; // per target: its vertices
+        std::vector<float> targetReach;    // per target: its longest position delta
+        float normalSoften = 0.65f;
+        bool removing = false;
+        uint32_t users = 0;
+    };
+
+    struct Morph
+    {
+        uint32_t set = 0; // 0 means free
+        uint32_t values = 0;   // in MorphWeights
+        uint32_t output = 0;   // in MorphedPositions and MorphedAttributes
+        std::vector<float> weightsAndMasks;
+        std::vector<uint32_t> bindings; // that skin from it
+        float bound = 0.f;              // no vertex moves further than this, at any weights it had
+        bool removing = false;
+        uint32_t users = 0;
+        uint64_t valuesUpdate = 0; // the update that last wrote its values, and where
+        uint32_t valuesWrite = 0;
+        uint64_t dirtyUpdate = 0;  // the update that listed it for rebuilding
     };
 
     struct Chunk
@@ -251,7 +295,9 @@ private:
             TableRange, // index is the table
             BindingId,
             SkeletonId,
-            SkinId
+            SkinId,
+            MorphSetId,
+            MorphId
         };
         Type type;
         uint32_t index;   // chunk, table, or the id
@@ -284,6 +330,14 @@ private:
     uint32_t allocateRange(SceneTable table, uint64_t size);
     void retireRange(SceneTable table, uint32_t first, uint32_t count, uint64_t frame);
     void writeSkinnedBinding(uint32_t id, uint32_t instance, const InstanceDesc& desc);
+
+    void applyMorphSet(const MorphSetCommand& command);
+    void applyMorph(const MorphCommand& command);
+    void writeMorphValues(uint32_t id);
+    void removeMorphSetIfUnused(uint32_t id, uint64_t frame);
+    void removeMorphIfUnused(uint32_t id, uint64_t frame);
+    void writeMorphWork();
+    void widenReach(uint32_t binding); // to the binding's reach, if that is further
 
     void writeTable(SceneTable table, uint32_t index, const void* data, uint64_t bytes);
 
@@ -325,6 +379,10 @@ private:
     std::vector<Binding> mBindings;        // 0 is never used
     std::vector<uint32_t> mFreeBindings;
     uint32_t mSkinnedBindings = 0;
+    std::vector<MorphSet> mMorphSets;
+    std::vector<Morph> mMorphs;
+    std::vector<uint32_t> mDirtyMorphs;   // this update's morphs to rebuild
+    uint32_t mMorphWorkCount = 0;
     RangeAllocator mRanges[SCENE_TABLES];  // for the avatar tables that hold ranges
     SceneQueue* mQueue = nullptr;          // during update(), for the store's own geometries
 };
