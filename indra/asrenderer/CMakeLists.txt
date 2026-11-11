@@ -96,8 +96,14 @@ endfunction()
 set(ASR_SHADER_OUTPUTS)
 foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asrScenePyramidC asrSceneVisibilityV
         asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC
-        asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC)
+        asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC
+        asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
+endforeach()
+# The texture encoders share their block loading and line fitting.
+foreach(shader asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrEncodeCommon.glsl)
 endforeach()
 # These fragment programs include the Mac OIT implementation as well as the common types.
 foreach(shader asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF)

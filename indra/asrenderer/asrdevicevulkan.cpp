@@ -227,6 +227,10 @@ struct Texture
     uint32_t width = 1;
     uint32_t height = 1;
     TextureDesc desc; // dimensions/format of this successfully created GPU image
+    // A compressed texture not encoded yet: uploads go to texels (RGBA8, every mip),
+    // and encodeTexture() writes blocks and copies them into the image.
+    GpuBuffer encodeTexels;
+    GpuBuffer encodeBlocks;
 };
 
 class DeviceVulkan final : public Device, private SceneChunks
@@ -680,6 +684,12 @@ private:
         features.features.drawIndirectFirstInstance = VK_TRUE; // the cull's draws start at their list's place
         features.features.fragmentStoresAndAtomics = VK_TRUE; // Mac OIT keys, tail flag and texture feedback
         features.features.shaderStorageImageExtendedFormats = VK_TRUE; // Mac OIT's RG32F weights image
+        // Fetched textures are kept in BC formats where the device samples them: every
+        // target does, and without it they stay uncompressed.
+        VkPhysicalDeviceFeatures available{};
+        vkGetPhysicalDeviceFeatures(mGpu, &available);
+        features.features.textureCompressionBC = available.textureCompressionBC;
+        mTextures.setCompressionSupported(available.textureCompressionBC == VK_TRUE);
 
         const float priority = 1.f;
         VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -1294,7 +1304,11 @@ private:
         mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
         mSkinPipeline = mCompositePipeline ? createComputePipeline("asrSceneSkinC", error) : VK_NULL_HANDLE;
-        if (!mSkinPipeline || !createMacOITPipelines(error))
+        mTextureMipPipeline = mSkinPipeline ? createComputePipeline("asrTextureMipC", error) : VK_NULL_HANDLE;
+        mEncodeBC1Pipeline = mTextureMipPipeline ? createComputePipeline("asrEncodeBC1C", error) : VK_NULL_HANDLE;
+        mEncodeBC45Pipeline = mEncodeBC1Pipeline ? createComputePipeline("asrEncodeBC45C", error) : VK_NULL_HANDLE;
+        mEncodeBC7Pipeline = mEncodeBC45Pipeline ? createComputePipeline("asrEncodeBC7C", error) : VK_NULL_HANDLE;
+        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error))
         {
             return false;
         }
@@ -1686,7 +1700,8 @@ private:
         destroyTarget(mSceneColorImage);
         destroyMacOITTargets();
         destroyMacOITPipelines();
-        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline })
+        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline,
+                                     mTextureMipPipeline, mEncodeBC1Pipeline, mEncodeBC45Pipeline, mEncodeBC7Pipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -2034,6 +2049,10 @@ private:
         image.format = command.desc.format == TextureFormat::R8    ? VK_FORMAT_R8_UNORM
                      : command.desc.format == TextureFormat::RG8   ? VK_FORMAT_R8G8_UNORM
                      : command.desc.format == TextureFormat::BGRA8 ? VK_FORMAT_B8G8R8A8_UNORM
+                     : command.desc.format == TextureFormat::BC1   ? VK_FORMAT_BC1_RGBA_UNORM_BLOCK
+                     : command.desc.format == TextureFormat::BC4   ? VK_FORMAT_BC4_UNORM_BLOCK
+                     : command.desc.format == TextureFormat::BC5   ? VK_FORMAT_BC5_UNORM_BLOCK
+                     : command.desc.format == TextureFormat::BC7   ? VK_FORMAT_BC7_UNORM_BLOCK
                                                                    : VK_FORMAT_R8G8B8A8_UNORM;
         image.extent = { command.desc.width, command.desc.height, 1 };
         image.mipLevels = command.desc.mipLevels;
@@ -2110,14 +2129,24 @@ private:
         }
 
         // Cleared, because a list can draw this texture before its pixels arrive.
-        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                       VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
-        const VkClearColorValue transparent{};
-        const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, texture.mipLevels, 0, 1 };
-        vkCmdClearColorImage(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &transparent, 1, &range);
-        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                       VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        if (textureCompressed(command.desc.format))
+        {
+            if (!clearCompressedTexture(commands, texture))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            const VkClearColorValue transparent{};
+            const VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, texture.mipLevels, 0, 1 };
+            vkCmdClearColorImage(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &transparent, 1, &range);
+            textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                           TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
 
         // The main thread hands out a slot at once, so a material can name it before its
         // texture is created here, and a slot never written has no texture: on Metal that
@@ -2170,6 +2199,11 @@ private:
         {
             return; // did not fit in the budget
         }
+        if (textureCompressed(texture.desc.format))
+        {
+            uploadCompressedTexels(commands, texture, command);
+            return;
+        }
 
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT,
@@ -2188,6 +2222,11 @@ private:
     void generateMips(VkCommandBuffer commands, uint32_t slot)
     {
         const Texture& texture = textureFor(slot);
+        if (textureCompressed(texture.desc.format))
+        {
+            encodeTexture(commands, slot); // its mips are made before encoding, from the texels
+            return;
+        }
         if (texture.image == VK_NULL_HANDLE || texture.mipLevels < 2)
         {
             return;
@@ -2222,6 +2261,266 @@ private:
                        BLIT, VK_ACCESS_2_TRANSFER_READ_BIT, SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                        BLIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, SHADER, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, texture.mipLevels - 1);
+    }
+
+    // Copies every mip's blocks from encodeBlocks into the image, in TRANSFER_DST layout.
+    void copyBlocksToImage(VkCommandBuffer commands, const Texture& texture)
+    {
+        VkBufferImageCopy copies[16]{};
+        uint32_t width = texture.width;
+        uint32_t height = texture.height;
+        const uint32_t levels = std::min<uint32_t>(texture.mipLevels, 16);
+        for (uint32_t level = 0; level < levels; ++level)
+        {
+            copies[level].bufferOffset = textureMipOffset(texture.desc, level, true);
+            copies[level].imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+            copies[level].imageExtent = { width, height, 1 };
+            width = std::max(width / 2, 1u);
+            height = std::max(height / 2, 1u);
+        }
+        vkCmdCopyBufferToImage(commands, texture.encodeBlocks.buffer, texture.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, levels, copies);
+    }
+
+    // A compressed image cannot be cleared directly: its transparent blocks are copied in,
+    // from the block buffer its encoding will use. Uploads go to its RGBA8 texels.
+    bool clearCompressedTexture(VkCommandBuffer commands, Texture& texture)
+    {
+        TextureDesc texels = texture.desc;
+        texels.format = TextureFormat::RGBA8;
+        constexpr VkBufferUsageFlags USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        if (!createBufferObject(texture.encodeTexels, textureBytes(texels), USAGE, "texels to encode", MemoryCategory::Staging, true) ||
+            !createBufferObject(texture.encodeBlocks, texture.bytes, USAGE, "encoded blocks", MemoryCategory::Staging, true))
+        {
+            return false;
+        }
+        // BC1 with equal endpoints is in its three-colour mode, where index 3 is transparent;
+        // a zero block is transparent black in BC4, BC5 and BC7.
+        vkCmdFillBuffer(commands, texture.encodeBlocks.buffer, 0, VK_WHOLE_SIZE, texture.desc.format == TextureFormat::BC1 ? 0xFFFFFFFFu : 0u);
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        copyBlocksToImage(commands, texture);
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        return true;
+    }
+
+    // Uploads to a compressed texture land in its RGBA8 texels, whole rows of level 0.
+    void uploadCompressedTexels(VkCommandBuffer commands, const Texture& texture, const TextureCommand& command)
+    {
+        if (texture.encodeTexels.buffer == VK_NULL_HANDLE || command.level != 0 || command.x != 0 || command.width != texture.width)
+        {
+            ++mCompressedUploadsDropped; // encoded already, or not whole rows: never sent so
+            return;
+        }
+        VkBufferCopy copy{};
+        copy.srcOffset = command.ringOffset;
+        copy.dstOffset = uint64_t(command.y) * texture.width * 4;
+        copy.size = std::min<uint64_t>(command.ringBytes, texture.encodeTexels.size - copy.dstOffset);
+        vkCmdCopyBuffer(commands, mUploadRing.buffer, texture.encodeTexels.buffer, 1, &copy);
+    }
+
+    // In place of making mips: makes the RGBA8 mips, encodes every mip into blocks, copies
+    // them into the image, and lets the transient buffers go once this frame is done.
+    void encodeTexture(VkCommandBuffer commands, uint32_t slot)
+    {
+        Texture& texture = textureFor(slot);
+        if (texture.image == VK_NULL_HANDLE || texture.encodeTexels.buffer == VK_NULL_HANDLE)
+        {
+            return;
+        }
+        TextureDesc texels = texture.desc;
+        texels.format = TextureFormat::RGBA8;
+        const auto sizeOf = [&texture](uint32_t level) {
+            return uint32_t(std::max(texture.width >> level, 1u)) | (uint32_t(std::max(texture.height >> level, 1u)) << 16);
+        };
+        ScenePush push{};
+
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mTextureMipPipeline);
+        for (uint32_t level = 1; level < texture.mipLevels; ++level)
+        {
+            push.view = texture.encodeTexels.address + textureMipOffset(texels, level - 1, false);
+            push.instances = texture.encodeTexels.address + textureMipOffset(texels, level, false);
+            push.list = sizeOf(level - 1);
+            vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+            const uint32_t width = std::max(texture.width >> level, 1u);
+            const uint32_t height = std::max(texture.height >> level, 1u);
+            vkCmdDispatch(commands, (width + 7) / 8, (height + 7) / 8, 1);
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+        }
+
+        const TextureFormat format = texture.desc.format;
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE,
+                          format == TextureFormat::BC1 ? mEncodeBC1Pipeline : format == TextureFormat::BC7 ? mEncodeBC7Pipeline : mEncodeBC45Pipeline);
+        push.phase = format == TextureFormat::BC5 ? 2 : 1; // channels, for BC4 and BC5
+        for (uint32_t level = 0; level < texture.mipLevels; ++level)
+        {
+            push.view = texture.encodeTexels.address + textureMipOffset(texels, level, false);
+            push.instances = texture.encodeBlocks.address + textureMipOffset(texture.desc, level, true);
+            push.list = sizeOf(level);
+            vkCmdPushConstants(commands, mScenePipelineLayout, SCENE_PUSH_STAGES, 0, sizeof(push), &push);
+            const uint32_t blocks = ((std::max(texture.width >> level, 1u) + 3) / 4) * ((std::max(texture.height >> level, 1u) + 3) / 4);
+            vkCmdDispatch(commands, (blocks + ENCODE_GROUP_SIZE - 1) / ENCODE_GROUP_SIZE, 1, 1);
+        }
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                       TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+        copyBlocksToImage(commands, texture);
+        textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                       VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+        mEncodedTexels += encodeTexels(slot);
+        ++mTexturesEncoded;
+        mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 });
+        texture.encodeTexels = GpuBuffer();
+        texture.encodeBlocks = GpuBuffer();
+    }
+
+    // Texels an encode of this slot reads, all mips; 0 when there is nothing to encode.
+    uint64_t encodeTexels(uint32_t slot)
+    {
+        const Texture& texture = textureFor(slot);
+        return texture.encodeTexels.buffer != VK_NULL_HANDLE ? texture.encodeTexels.size / 4 : 0;
+    }
+
+    // Tests: a blit decodes the mip into an RGBA8 image, as sampling would, then it is copied
+    // to memory the CPU reads. Slow, and only between frames.
+    bool readTexture(uint32_t slot, uint32_t level, std::vector<uint8_t>& rgba) override
+    {
+        return readMip(slot, level, rgba, false);
+    }
+
+    bool readTextureData(uint32_t slot, uint32_t level, std::vector<uint8_t>& data) override
+    {
+        return readMip(slot, level, data, true);
+    }
+
+    // raw: the mip as stored, blocks for a compressed format; otherwise decoded to RGBA8.
+    bool readMip(uint32_t slot, uint32_t level, std::vector<uint8_t>& rgba, bool raw)
+    {
+        if (slot >= mTextureObjects.size() || mTextureObjects[slot].image == VK_NULL_HANDLE || level >= mTextureObjects[slot].mipLevels ||
+            vkDeviceWaitIdle(mDevice) != VK_SUCCESS)
+        {
+            return false;
+        }
+        const Texture& texture = mTextureObjects[slot];
+        const uint32_t width = std::max(texture.width >> level, 1u);
+        const uint32_t height = std::max(texture.height >> level, 1u);
+        const bool blocks = textureCompressed(texture.desc.format);
+        const uint64_t rawBytes = blocks ? uint64_t((width + 3) / 4) * ((height + 3) / 4) * textureBlockBytes(texture.desc.format)
+                                         : uint64_t(width) * height * textureBytesPerPixel(texture.desc.format);
+
+        VkImageCreateInfo imageInfo{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+        imageInfo.imageType = VK_IMAGE_TYPE_2D;
+        imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+        imageInfo.extent = { width, height, 1 };
+        imageInfo.mipLevels = 1;
+        imageInfo.arrayLayers = 1;
+        imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+        VmaAllocationCreateInfo imageAllocation{};
+        imageAllocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+        VkImage decoded = VK_NULL_HANDLE;
+        VmaAllocation decodedAllocation = VK_NULL_HANDLE;
+        VkBufferCreateInfo bufferInfo{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        bufferInfo.size = raw ? rawBytes : uint64_t(width) * height * 4;
+        bufferInfo.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+        VmaAllocationCreateInfo bufferAllocation{};
+        bufferAllocation.usage = VMA_MEMORY_USAGE_AUTO;
+        bufferAllocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VkBuffer buffer = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VmaAllocationInfo mapped{};
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        VkCommandPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+        poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        poolInfo.queueFamilyIndex = mQueueFamily;
+        const VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+        bool ok = vmaCreateImage(mAllocator, &imageInfo, &imageAllocation, &decoded, &decodedAllocation, nullptr) == VK_SUCCESS &&
+                  vmaCreateBuffer(mAllocator, &bufferInfo, &bufferAllocation, &buffer, &allocation, &mapped) == VK_SUCCESS &&
+                  vkCreateCommandPool(mDevice, &poolInfo, nullptr, &pool) == VK_SUCCESS &&
+                  vkCreateFence(mDevice, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
+        VkCommandBuffer commands = VK_NULL_HANDLE;
+        if (ok)
+        {
+            VkCommandBufferAllocateInfo allocate{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            allocate.commandPool = pool;
+            allocate.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocate.commandBufferCount = 1;
+            VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            ok = vkAllocateCommandBuffers(mDevice, &allocate, &commands) == VK_SUCCESS && vkBeginCommandBuffer(commands, &begin) == VK_SUCCESS;
+        }
+        if (ok && raw)
+        {
+            textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, level);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+            copy.imageExtent = { width, height, 1 };
+            vkCmdCopyImageToBuffer(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy);
+            textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_COPY_BIT, 0, VK_PIPELINE_STAGE_2_NONE, 0, level);
+        }
+        else if (ok)
+        {
+            textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_READ_BIT, level);
+            textureBarrier(commands, decoded, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_NONE, 0, VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkImageBlit blit{};
+            blit.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, 0, 1 };
+            blit.srcOffsets[1] = { int32_t(width), int32_t(height), 1 };
+            blit.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            blit.dstOffsets[1] = { int32_t(width), int32_t(height), 1 };
+            vkCmdBlitImage(commands, texture.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, decoded, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_NEAREST);
+            textureBarrier(commands, texture.image, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_BLIT_BIT, 0, VK_PIPELINE_STAGE_2_NONE, 0, level);
+            textureBarrier(commands, decoded, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_BLIT_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+            copy.imageExtent = { width, height, 1 };
+            vkCmdCopyImageToBuffer(commands, decoded, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &copy);
+        }
+        if (ok)
+        {
+            VkCommandBufferSubmitInfo submitted{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+            submitted.commandBuffer = commands;
+            VkSubmitInfo2 submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+            submit.commandBufferInfoCount = 1;
+            submit.pCommandBufferInfos = &submitted;
+            ok = vkEndCommandBuffer(commands) == VK_SUCCESS && vkQueueSubmit2(mQueue, 1, &submit, fence) == VK_SUCCESS &&
+                 vkWaitForFences(mDevice, 1, &fence, VK_TRUE, UINT64_MAX) == VK_SUCCESS;
+        }
+        if (ok)
+        {
+            vmaInvalidateAllocation(mAllocator, allocation, 0, VK_WHOLE_SIZE);
+            const uint8_t* bytes = static_cast<const uint8_t*>(mapped.pMappedData);
+            rgba.assign(bytes, bytes + bufferInfo.size);
+        }
+        if (fence) vkDestroyFence(mDevice, fence, nullptr);
+        if (pool) vkDestroyCommandPool(mDevice, pool, nullptr);
+        if (buffer) vmaDestroyBuffer(mAllocator, buffer, allocation);
+        if (decoded) vmaDestroyImage(mAllocator, decoded, decodedAllocation);
+        return ok;
+    }
+
+    // Destroys encoding buffers no recorded frame can use any more, or all of them.
+    void releaseFreedEncodes(bool all)
+    {
+        while (!mFreedEncodes.empty() && (all || mFreedEncodes.front().frame <= mFrame))
+        {
+            destroyBufferObject(mFreedEncodes.front().texels, MemoryCategory::Staging);
+            destroyBufferObject(mFreedEncodes.front().blocks, MemoryCategory::Staging);
+            mFreedEncodes.pop_front();
+        }
     }
 
     // A material can still name this slot for a moment, so the slot reads white from now
@@ -2264,8 +2563,12 @@ private:
                 vmaDestroyImage(mAllocator, texture.image, texture.allocation);
                 mMemoryBudget.release(MemoryCategory::Textures, texture.bytes);
             }
+            // Gone before it was encoded.
+            destroyBufferObject(texture.encodeTexels, MemoryCategory::Staging);
+            destroyBufferObject(texture.encodeBlocks, MemoryCategory::Staging);
             mFreedTextures.pop_front();
         }
+        releaseFreedEncodes(all);
     }
 
     // Runs what the main thread queued, in order, until this frame's time for it or
@@ -2278,6 +2581,7 @@ private:
         const Clock::time_point start = Clock::now();
         const auto limit = std::chrono::duration<double>(textureCommandSeconds(mFrameSeconds));
         uint64_t uploaded = 0;
+        mEncodedTexels = 0;
         size_t i = mTextureCommandsDone;
         for (; i < mTextureCommands.size(); ++i)
         {
@@ -2289,6 +2593,11 @@ private:
             if (command.type == TextureCommand::Type::Upload && uploaded != 0 && uploaded + command.ringBytes > mUploadPieceBytes)
             {
                 break;
+            }
+            if (command.type == TextureCommand::Type::GenerateMips && mEncodedTexels != 0 &&
+                mEncodedTexels + encodeTexels(command.slot) > ENCODE_TEXELS_PER_FRAME)
+            {
+                break; // the GPU's share of encoding for this frame is spent
             }
             switch (command.type)
             {
@@ -3433,6 +3742,22 @@ private:
     VkPipeline mMaskedPipeline = VK_NULL_HANDLE;
     VkPipeline mResolvePipeline = VK_NULL_HANDLE;
     VkPipeline mSkinPipeline = VK_NULL_HANDLE;
+    VkPipeline mTextureMipPipeline = VK_NULL_HANDLE; // texture compression: see encodeTexture()
+    VkPipeline mEncodeBC1Pipeline = VK_NULL_HANDLE;
+    VkPipeline mEncodeBC45Pipeline = VK_NULL_HANDLE;
+    VkPipeline mEncodeBC7Pipeline = VK_NULL_HANDLE;
+    // A compressed texture's RGBA8 texels and blocks, kept until the frames that encode
+    // it have finished.
+    struct FreedEncode
+    {
+        GpuBuffer texels;
+        GpuBuffer blocks;
+        uint64_t frame;
+    };
+    std::deque<FreedEncode> mFreedEncodes;
+    uint64_t mEncodedTexels = 0; // this frame's, against ENCODE_TEXELS_PER_FRAME
+    uint64_t mTexturesEncoded = 0;
+    uint64_t mCompressedUploadsDropped = 0;
     VkPipeline mCompositePipeline = VK_NULL_HANDLE;
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;

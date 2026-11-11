@@ -786,7 +786,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         const S32 w = getWidth();
         const S32 h = getHeight();
         mMipLevels = mUseMipMaps ? wpo2(llmax(w, h)) : 0;
-        ASR::setTextureImage(usename ? usename : mTexName, w, h, mFormatPrimary, mFormatType, data_in, mUseMipMaps);
+        ASR::setTextureImage(usename ? usename : mTexName, w, h, mFormatPrimary, mFormatType, data_in, mUseMipMaps, mAllowCompression);
         ASR::imageChanged(this);
         if (data_in && !is_compressed)
         {

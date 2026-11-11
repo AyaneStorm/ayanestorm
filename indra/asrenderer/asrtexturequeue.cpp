@@ -16,18 +16,91 @@ uint32_t textureBytesPerPixel(TextureFormat format)
     return format == TextureFormat::R8 ? 1 : format == TextureFormat::RG8 ? 2 : 4;
 }
 
-uint64_t textureBytes(const TextureDesc& desc)
+uint64_t textureMipOffset(const TextureDesc& desc, uint32_t level, bool blocks)
 {
     uint64_t total = 0;
     uint64_t width = desc.width;
     uint64_t height = desc.height;
-    for (uint32_t level = 0; level < desc.mipLevels; ++level)
+    for (uint32_t i = 0; i < level; ++i)
     {
-        total += width * height * textureBytesPerPixel(desc.format);
+        total += blocks ? ((width + 3) / 4) * ((height + 3) / 4) * textureBlockBytes(desc.format)
+                        : width * height * textureBytesPerPixel(desc.format);
         width = std::max<uint64_t>(width / 2, 1);
         height = std::max<uint64_t>(height / 2, 1);
     }
     return total;
+}
+
+uint64_t textureBytes(const TextureDesc& desc)
+{
+    return textureMipOffset(desc, desc.mipLevels, textureCompressed(desc.format));
+}
+
+TextureFormat chooseTextureFormat(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t channels)
+{
+    const TextureFormat plain = channels == 1 ? TextureFormat::R8 : channels == 2 ? TextureFormat::RG8 : TextureFormat::RGBA8;
+    constexpr uint32_t SMALLEST = 8;
+    // Whole blocks only: Metal asks it of a compressed texture's size.
+    if (!pixels || width < SMALLEST || height < SMALLEST || width % 4 != 0 || height % 4 != 0 || channels == 0 || channels > 4)
+    {
+        return plain;
+    }
+    if (channels == 1)
+    {
+        return TextureFormat::BC4;
+    }
+    if (channels == 2)
+    {
+        return TextureFormat::BC5;
+    }
+    if (channels == 4)
+    {
+        const size_t count = size_t(width) * height;
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (pixels[i * 4 + 3] != 255)
+            {
+                return TextureFormat::BC7;
+            }
+        }
+    }
+
+    // Opaque colour. BC1 bands where a block changes a little and smoothly: its endpoints
+    // have 5 or 6 bits and it has four steps, so a gentle gradient (skin, sky) shows
+    // stairs. A block is smooth when its largest channel range is above 0 and at most
+    // SMOOTH_RANGE. Up to SAMPLES blocks spread over the image are looked at.
+    constexpr uint32_t SMOOTH_RANGE = 24;
+    constexpr uint32_t SAMPLES = 1024;
+    constexpr uint32_t SMOOTH_PERCENT = 20;
+    const uint32_t blocksX = width / 4;
+    const uint32_t blocksY = height / 4;
+    const uint64_t blocks = uint64_t(blocksX) * blocksY;
+    const uint64_t stride = std::max<uint64_t>(blocks / SAMPLES, 1);
+    uint32_t sampled = 0;
+    uint32_t smooth = 0;
+    for (uint64_t block = 0; block < blocks; block += stride)
+    {
+        const uint32_t bx = uint32_t(block % blocksX) * 4;
+        const uint32_t by = uint32_t(block / blocksX) * 4;
+        uint8_t lo[3] = { 255, 255, 255 };
+        uint8_t hi[3] = { 0, 0, 0 };
+        for (uint32_t y = 0; y < 4; ++y)
+        {
+            const uint8_t* row = pixels + (size_t(by + y) * width + bx) * channels;
+            for (uint32_t x = 0; x < 4; ++x)
+            {
+                for (uint32_t c = 0; c < 3; ++c)
+                {
+                    lo[c] = std::min(lo[c], row[x * channels + c]);
+                    hi[c] = std::max(hi[c], row[x * channels + c]);
+                }
+            }
+        }
+        const uint32_t range = std::max({ hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2] });
+        smooth += range > 0 && range <= SMOOTH_RANGE ? 1 : 0;
+        ++sampled;
+    }
+    return smooth * 100 >= sampled * SMOOTH_PERCENT ? TextureFormat::BC7 : TextureFormat::BC1;
 }
 
 TextureQueue::TextureQueue(MemoryBudget* budget) : mBudget(budget)

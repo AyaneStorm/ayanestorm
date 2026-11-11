@@ -54,15 +54,21 @@ namespace ASR
     public:
         virtual ~RendererLink() = default;
 
-        virtual U32 createTexture(U32 width, U32 height, U32 mipLevels, PixelLayout layout) = 0;
+        // storage: 0 keeps the pixels' layout; otherwise what chooseStorage() gave, a
+        // compressed format the GPU encodes the uploads into (see
+        // doc/ayanestorm-new-renderer-texture-compression.md).
+        virtual U32 createTexture(U32 width, U32 height, U32 mipLevels, PixelLayout layout, U8 storage) = 0;
         // rowPixels is the width of the data that pixels points into.
         virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
-                                   const void* pixels, U32 rowPixels) = 0;
+                                   const void* pixels, U32 rowPixels, U8 storage) = 0;
+        // Makes the smaller mips; for a compressed texture, also encodes it.
         virtual void generateMips(U32 slot) = 0;
         // A new image for a slot in use, which keeps showing its old one until publishTexture(),
         // so a resize never shows white. Uploads and mips go to the new image meanwhile. With
         // fromMip > 0 it is made on the GPU from the old image's mips, from fromMip down.
-        virtual void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, PixelLayout layout, U32 fromMip) = 0;
+        virtual void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, PixelLayout layout, U32 fromMip, U8 storage) = 0;
+        // How a fetched image is kept, from its pixels: 0 as it is, or a compressed format.
+        virtual U8 chooseStorage(U32 width, U32 height, PixelLayout layout, const void* pixels) = 0;
         virtual void publishTexture(U32 slot) = 0;
         virtual void destroyTexture(U32 slot) = 0;
         // Bytes that exist or have been asked for, how much textures should take (what the
@@ -95,7 +101,19 @@ namespace ASR
     // Textures, named by the name LLImageGL holds. A new image for a name replaces
     // the old one, in the same call, if its size or layout changes. With no slot free,
     // the name keeps the image it has: callers make sure of a slot first, see freeTextureSlots().
-    void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips);
+    // compressible: LLImageGL allows it, and the image was fetched (see CompressionScope);
+    // the renderer may then keep it in a compressed format, which takes no sub-images.
+    void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips, bool compressible = false);
+
+    // While one exists on a thread, images set on that thread may be compressed: only
+    // LLViewerFetchedTexture::createTexture() opens one, so UI, fonts and media never are.
+    class CompressionScope
+    {
+    public:
+        CompressionScope();
+        ~CompressionScope();
+        static bool open();
+    };
     void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
     // Drops the given number of top mips, keeping what is left, with no decode. False
     // when the texture has no such mips, and then nothing has changed.

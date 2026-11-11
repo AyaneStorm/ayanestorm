@@ -31,8 +31,25 @@ enum class TextureFormat : uint8_t
     RGBA8,
     BGRA8, // web and media pages arrive like this, and need no conversion
     RG8,
-    R8
+    R8,
+    // Compressed on the GPU from RGBA8 uploads: see textureCompressed() and
+    // doc/ayanestorm-new-renderer-texture-compression.md.
+    BC1, // opaque colour, 4 bits a texel
+    BC4, // one channel (red), 4 bits a texel
+    BC5, // two channels (red, green), 8 bits a texel
+    BC7  // colour with alpha, or opaque colour BC1 would band, 8 bits a texel
 };
+
+inline bool textureCompressed(TextureFormat format)
+{
+    return format == TextureFormat::BC1 || format == TextureFormat::BC4 || format == TextureFormat::BC5 || format == TextureFormat::BC7;
+}
+
+// Bytes of one 4x4 block of a compressed format.
+inline uint32_t textureBlockBytes(TextureFormat format)
+{
+    return format == TextureFormat::BC1 || format == TextureFormat::BC4 ? 8 : 16;
+}
 
 // What the shader reads from the stored channels.
 enum class TextureSwizzle : uint8_t
@@ -52,10 +69,28 @@ struct TextureDesc
     TextureSwizzle swizzle = TextureSwizzle::Identity;
 };
 
+// Bytes of one texel as uploaded: a compressed format takes RGBA8, which the GPU encodes.
 uint32_t textureBytesPerPixel(TextureFormat format);
 
 // The memory a texture takes, with all of its mips.
 uint64_t textureBytes(const TextureDesc& desc);
+
+// Where a mip starts in a texture's data, all its mips one after the other: compressed
+// blocks with blocks set, the RGBA8 texels being encoded without.
+uint64_t textureMipOffset(const TextureDesc& desc, uint32_t level, bool blocks);
+
+// Which format a fetched image is kept in, from its pixels: BC4 for one channel, BC5 for
+// two, BC7 for colour with alpha or with smooth gradients BC1 would band, BC1 for other
+// opaque colour. channels is 1 to 4 bytes a pixel, rows tightly packed. Images under 8
+// texels across, or not whole 4x4 blocks, stay as they are (returns the uncompressed format).
+TextureFormat chooseTextureFormat(const uint8_t* pixels, uint32_t width, uint32_t height, uint32_t channels);
+
+// How many source texels the GPU may encode in a frame, like textureCommandSeconds() for
+// the CPU: a teleport brings thousands of textures, and encoding them all in one frame
+// would stall it. At least one texture always goes. BC7 encodes about 800 Mtexels/s on an
+// RTX 3080 Ti: a 1024 texture with its mips, 1.4 Mtexels, takes about 1.7 ms.
+inline constexpr uint64_t ENCODE_TEXELS_PER_FRAME = 1536ull << 10;
+inline constexpr uint32_t ENCODE_GROUP_SIZE = 64; // asrEncodeCommon.glsl's
 
 // Where each piece of an upload starts in the ring, which also keeps every copy's
 // offset a multiple of the texel size the APIs ask for.
@@ -164,6 +199,11 @@ public:
     // Any thread. Bytes of uploads that wait for room in the ring, for the log.
     uint64_t waitingBytes() const { return mWaitingBytes.load(std::memory_order_relaxed); }
 
+    // Whether the device samples and encodes the BC formats. The device sets it as it
+    // starts; callers ask for a compressed format only when it is set.
+    void setCompressionSupported(bool supported) { mCompression.store(supported, std::memory_order_relaxed); }
+    bool compressionSupported() const { return mCompression.load(std::memory_order_relaxed); }
+
 private:
     // A command behind an upload that found no room, with that upload's pixels.
     struct Waiting
@@ -192,6 +232,7 @@ private:
     std::atomic<uint64_t> mRingTail{ 0 };  // where the GPU has finished reading
     std::deque<Waiting> mWaiting;
     std::atomic<uint64_t> mWaitingBytes{ 0 };
+    std::atomic<bool> mCompression{ false };
     Waiting mOpen;                         // between beginUpload() and finishUpload()
     bool mOpenInRing = false;
     uint64_t mOpenPosition = 0;

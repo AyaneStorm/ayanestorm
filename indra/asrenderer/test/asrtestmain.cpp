@@ -2694,6 +2694,7 @@ int main(int argc, char** argv)
     bool drawUI = false;
     bool drawScene = false;
     bool vramStress = false;
+    bool encodeTest = false;
     asrtest::VramTestMode vramMode = asrtest::VramTestMode::Overcommit;
     bool street = false;
     bool audit = false;
@@ -2737,6 +2738,10 @@ int main(int argc, char** argv)
         {
             vramStress = true;
             vramMode = asrtest::VramTestMode::AvatarSweep;
+        }
+        else if (arg == "--encode")
+        {
+            encodeTest = true;
         }
         else if (arg == "--scene")
         {
@@ -2795,6 +2800,7 @@ int main(int argc, char** argv)
 
 #ifdef ASR_HAS_DEVICE
     if (vramStress) return asrtest::runVramStress(options, seconds, windowWidth, windowHeight, vramMode);
+    if (encodeTest) return asrtest::runEncodeTest(options);
 #endif
     if (selftest)
     {

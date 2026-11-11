@@ -258,6 +258,13 @@ public:
     // word for word, or empty. Metal only: Vulkan loses the device instead, and says so.
     virtual std::string takeGpuErrors() { return std::string(); }
 
+    // Tests, between frames: one mip of a texture as the GPU samples it, RGBA8, decoded
+    // by the hardware when compressed. Waits for the device. False where not supported.
+    virtual bool readTexture(uint32_t /*slot*/, uint32_t /*level*/, std::vector<uint8_t>& /*rgba*/) { return false; }
+    // Tests, between frames: one mip as stored, blocks for a compressed format, rows tightly
+    // packed. Waits for the device.
+    virtual bool readTextureData(uint32_t /*slot*/, uint32_t /*level*/, std::vector<uint8_t>& /*data*/) { return false; }
+
 protected:
     void setDriverBudget(uint64_t bytes)
     {

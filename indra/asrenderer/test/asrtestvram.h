@@ -9,4 +9,6 @@ namespace asrtest
 {
 enum class VramTestMode { Overcommit, ManagedTextures, AvatarSweep };
 int runVramStress(const asr::DeviceOptions& options, double holdSeconds, uint32_t width, uint32_t height, VramTestMode mode);
+// Texture compression: quality of each format against its source, and encode speed.
+int runEncodeTest(const asr::DeviceOptions& options);
 }

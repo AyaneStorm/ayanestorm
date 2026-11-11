@@ -1810,6 +1810,8 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         }
     }
     // bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    // Fetched images may be kept compressed by the new renderer (ASR::CompressionScope).
+    ASR::CompressionScope compressible;
     bool res = mGLTexturep->createGLTexture(upload_discard, upload_image, usename, true, mBoostLevel);
     // </AS:Chanayane>
 

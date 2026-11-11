@@ -146,6 +146,8 @@ public:
                 (unsigned long long)(addressOf(mUploadRing) + ringBytes));
         mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
         mTextures.setUploadRing(static_cast<uint8_t*>(mUploadRing.contents), ringBytes, mUploadPieceBytes);
+        // Fetched textures are kept in BC formats where the GPU samples them: Apple silicon does.
+        mTextures.setCompressionSupported(mDevice.supportsBCTextureCompression);
 
         NSView* view = (__bridge NSView*)target.nativeWindow;
         mLayer = [CAMetalLayer layer];
@@ -477,6 +479,15 @@ private:
         mPyramidPipeline = createComputePipeline(shaderDir, "asrScenePyramidC", error);
         mResolvePipeline = createComputePipeline(shaderDir, "asrSceneResolveC", error);
         mSkinPipeline = createComputePipeline(shaderDir, "asrSceneSkinC", error);
+        mTextureMipPipeline = createComputePipeline(shaderDir, "asrTextureMipC", error);
+        mEncodeBC1Pipeline = createComputePipeline(shaderDir, "asrEncodeBC1C", error);
+        mEncodeBC45Pipeline = createComputePipeline(shaderDir, "asrEncodeBC45C", error);
+        mEncodeBC7Pipeline = createComputePipeline(shaderDir, "asrEncodeBC7C", error);
+        mEncodeFence = [mDevice newFence];
+        if (!mTextureMipPipeline || !mEncodeBC1Pipeline || !mEncodeBC45Pipeline || !mEncodeBC7Pipeline || !mEncodeFence)
+        {
+            return false;
+        }
         id<MTLFunction> visibilityVertex = loadFunction(shaderDir, "asrSceneVisibilityV", error);
         id<MTLFunction> visibilityFragment = loadFunction(shaderDir, "asrSceneVisibilityF", error);
         id<MTLFunction> maskedVertex = loadFunction(shaderDir, "asrSceneMaskedV", error);
@@ -1515,7 +1526,7 @@ private:
             const auto pending = mPendingTextures.find(command.slot);
             if (pending != mPendingTextures.end())
             {
-                mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
+                freeTexture(pending->second);
                 mPendingTextures.erase(pending);
             }
         }
@@ -1544,6 +1555,10 @@ private:
         const MTLPixelFormat format = desc.format == TextureFormat::R8    ? MTLPixelFormatR8Unorm
                                     : desc.format == TextureFormat::RG8   ? MTLPixelFormatRG8Unorm
                                     : desc.format == TextureFormat::BGRA8 ? MTLPixelFormatBGRA8Unorm
+                                    : desc.format == TextureFormat::BC1   ? MTLPixelFormatBC1_RGBA
+                                    : desc.format == TextureFormat::BC4   ? MTLPixelFormatBC4_RUnorm
+                                    : desc.format == TextureFormat::BC5   ? MTLPixelFormatBC5_RGUnorm
+                                    : desc.format == TextureFormat::BC7   ? MTLPixelFormatBC7_RGBAUnorm
                                                                           : MTLPixelFormatRGBA8Unorm;
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format
                                                                                               width:desc.width
@@ -1581,6 +1596,7 @@ private:
         }
 
         const uint32_t pixelBytes = textureBytesPerPixel(desc.format);
+        Texture made{ texture, bytes, pixelBytes, desc };
         // For a replacement the source is the slot's own image, which is still showing.
         if (command.sourceSlot != 0)
         {
@@ -1597,6 +1613,17 @@ private:
                      destinationSlice:0
                      destinationLevel:level
                     destinationOrigin:MTLOriginMake(0, 0, 0)];
+            }
+        }
+        else if (textureCompressed(desc.format))
+        {
+            // Cleared, because a list can draw this texture before its pixels arrive.
+            if (!clearCompressedTexture(made, blit))
+            {
+                if (command.replace) mTextureReplacements.fail(command.slot);
+                mMemoryBudget.release(MemoryCategory::Textures, bytes);
+                if (!command.replace) mSlotCopies.changed(command.slot);
+                return;
             }
         }
         else
@@ -1633,13 +1660,10 @@ private:
         if (command.replace)
         {
             // Built out of sight: the slot keeps its image until publish.
-            mPendingTextures[command.slot] = Texture{ texture, bytes, pixelBytes, desc };
+            mPendingTextures[command.slot] = made;
             return;
         }
-        mTextureObjects[command.slot].texture = texture;
-        mTextureObjects[command.slot].bytes = bytes;
-        mTextureObjects[command.slot].pixelBytes = pixelBytes;
-        mTextureObjects[command.slot].desc = desc;
+        mTextureObjects[command.slot] = made;
         // The main thread hands out a slot at once, so a material can name it before its
         // texture is created here, and a slot never written holds no texture: a GPU page
         // fault, 'null texture access'. White, the first texture made, fills every slot
@@ -1678,7 +1702,7 @@ private:
         Texture& current = mTextureObjects[slot];
         if (current.texture)
         {
-            mFreedTextures.push_back({ current.texture, mFrame + FRAMES_IN_FLIGHT + 1, current.bytes });
+            freeTexture(current);
         }
         current = pending->second;
         mPendingTextures.erase(pending);
@@ -1723,20 +1747,206 @@ private:
         const auto pending = mPendingTextures.find(slot);
         if (pending != mPendingTextures.end())
         {
-            mFreedTextures.push_back({ pending->second.texture, mFrame + FRAMES_IN_FLIGHT + 1, pending->second.bytes });
+            freeTexture(pending->second);
             mPendingTextures.erase(pending);
         }
         Texture& texture = mTextureObjects[slot];
         if (texture.texture)
         {
-            mFreedTextures.push_back({ texture.texture, mFrame + FRAMES_IN_FLIGHT + 1, texture.bytes });
+            freeTexture(texture);
         }
         texture = Texture();
+    }
+
+    // The texture goes once no recorded frame can sample it, with any buffers of an encode
+    // that never ran.
+    void freeTexture(Texture& texture)
+    {
+        mFreedTextures.push_back({ texture.texture, mFrame + FRAMES_IN_FLIGHT + 1, texture.bytes });
+        retireEncodeBuffers(texture);
+    }
+
+    void retireEncodeBuffers(Texture& texture)
+    {
+        if (texture.encodeTexels || texture.encodeBlocks)
+        {
+            mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 });
+        }
+        texture.encodeTexels = nil;
+        texture.encodeBlocks = nil;
+    }
+
+    // Copies every mip's blocks from encodeBlocks into the texture.
+    void copyBlocksToTexture(const Texture& texture, id<MTLBlitCommandEncoder> blit)
+    {
+        const TextureDesc& desc = texture.desc;
+        for (uint32_t level = 0; level < desc.mipLevels; ++level)
+        {
+            const uint32_t width = std::max(desc.width >> level, 1u);
+            const uint32_t height = std::max(desc.height >> level, 1u);
+            const NSUInteger rowBytes = NSUInteger((width + 3) / 4) * textureBlockBytes(desc.format);
+            [blit copyFromBuffer:texture.encodeBlocks
+                       sourceOffset:textureMipOffset(desc, level, true)
+                  sourceBytesPerRow:rowBytes
+                sourceBytesPerImage:rowBytes * ((height + 3) / 4)
+                         sourceSize:MTLSizeMake(width, height, 1)
+                          toTexture:texture.texture
+                   destinationSlice:0
+                   destinationLevel:level
+                  destinationOrigin:MTLOriginMake(0, 0, 0)];
+        }
+    }
+
+    // A compressed texture is cleared with transparent blocks, from the block buffer its
+    // encoding will use; uploads go to its RGBA8 texels. See the Vulkan backend.
+    bool clearCompressedTexture(Texture& texture, id<MTLBlitCommandEncoder> blit)
+    {
+        TextureDesc texels = texture.desc;
+        texels.format = TextureFormat::RGBA8;
+        texture.encodeTexels = createSceneBuffer(textureBytes(texels), MemoryCategory::Staging, "texels to encode", true);
+        texture.encodeBlocks = texture.encodeTexels ? createSceneBuffer(texture.bytes, MemoryCategory::Staging, "encoded blocks", true) : nil;
+        if (!texture.encodeBlocks)
+        {
+            retireEncodeBuffers(texture);
+            return false;
+        }
+        // BC1 with equal endpoints and every index 3 is transparent; zero is in the others.
+        [blit fillBuffer:texture.encodeBlocks range:NSMakeRange(0, texture.encodeBlocks.length) value:texture.desc.format == TextureFormat::BC1 ? 0xFF : 0];
+        copyBlocksToTexture(texture, blit);
+        return true;
+    }
+
+    uint64_t encodeTexels(uint32_t slot) const
+    {
+        const Texture& texture = textureFor(slot);
+        return texture.encodeTexels ? texture.encodeTexels.length / 4 : 0;
+    }
+
+    // In place of making mips: the RGBA8 mips, then every mip's blocks, then the copy into
+    // the texture, between the blit encoders of the texture commands. Buffers reached by
+    // address are not tracked, so a fence orders the encoders and barriers the dispatches.
+    id<MTLBlitCommandEncoder> encodeTexture(uint32_t slot, id<MTLCommandBuffer> commands, id<MTLBlitCommandEncoder> blit)
+    {
+        Texture& texture = mPendingTextures.count(slot) ? mPendingTextures[slot] : mTextureObjects[slot];
+        if (mTextureReplacements.failed(slot) || !texture.texture || !texture.encodeTexels)
+        {
+            return blit;
+        }
+        [blit updateFence:mEncodeFence];
+        [blit endEncoding];
+
+        TextureDesc texels = texture.desc;
+        texels.format = TextureFormat::RGBA8;
+        const auto sizeOf = [&texture](uint32_t level) {
+            return uint32_t(std::max(texture.desc.width >> level, 1u)) | (uint32_t(std::max(texture.desc.height >> level, 1u)) << 16);
+        };
+        const uint64_t texelsAt = addressOf(texture.encodeTexels);
+        const uint64_t blocksAt = addressOf(texture.encodeBlocks);
+        ScenePush push{};
+        id<MTLComputeCommandEncoder> compute = [commands computeCommandEncoder];
+        compute.label = @"texture encoding";
+        [compute waitForFence:mEncodeFence];
+        [compute setComputePipelineState:mTextureMipPipeline];
+        for (uint32_t level = 1; level < texture.desc.mipLevels; ++level)
+        {
+            push.view = texelsAt + textureMipOffset(texels, level - 1, false);
+            push.instances = texelsAt + textureMipOffset(texels, level, false);
+            push.list = sizeOf(level - 1);
+            [compute setBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+            const NSUInteger width = std::max(texture.desc.width >> level, 1u);
+            const NSUInteger height = std::max(texture.desc.height >> level, 1u);
+            [compute dispatchThreadgroups:MTLSizeMake((width + 7) / 8, (height + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+            [compute memoryBarrierWithScope:MTLBarrierScopeBuffers];
+        }
+        const TextureFormat format = texture.desc.format;
+        [compute setComputePipelineState:format == TextureFormat::BC1 ? mEncodeBC1Pipeline : format == TextureFormat::BC7 ? mEncodeBC7Pipeline : mEncodeBC45Pipeline];
+        push.phase = format == TextureFormat::BC5 ? 2 : 1; // channels, for BC4 and BC5
+        for (uint32_t level = 0; level < texture.desc.mipLevels; ++level)
+        {
+            push.view = texelsAt + textureMipOffset(texels, level, false);
+            push.instances = blocksAt + textureMipOffset(texture.desc, level, true);
+            push.list = sizeOf(level);
+            [compute setBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+            const NSUInteger blocks = NSUInteger((std::max(texture.desc.width >> level, 1u) + 3) / 4) * ((std::max(texture.desc.height >> level, 1u) + 3) / 4);
+            [compute dispatchThreadgroups:MTLSizeMake((blocks + ENCODE_GROUP_SIZE - 1) / ENCODE_GROUP_SIZE, 1, 1)
+                    threadsPerThreadgroup:MTLSizeMake(ENCODE_GROUP_SIZE, 1, 1)];
+        }
+        [compute updateFence:mEncodeFence];
+        [compute endEncoding];
+
+        blit = [commands blitCommandEncoder];
+        blit.label = @"texture commands";
+        [blit waitForFence:mEncodeFence];
+        copyBlocksToTexture(texture, blit);
+        mEncodedTexels += encodeTexels(slot);
+        ++mTexturesEncoded;
+        retireEncodeBuffers(texture);
+        return blit;
+    }
+
+    // Only what is left of the texture queue, for now: the rest of the parts are Vulkan's.
+    FrameParts frameParts() const override
+    {
+        FrameParts parts;
+        parts.textureCommandsLeft = uint32_t(mTextureCommands.size() - mTextureCommandsDone);
+        return parts;
+    }
+
+    // Tests: a mip's blocks (or texels) as stored, copied to shared memory. Waits for the GPU.
+    bool readTextureData(uint32_t slot, uint32_t level, std::vector<uint8_t>& data) override
+    {
+        if (slot >= mTextureObjects.size() || !mTextureObjects[slot].texture || level >= mTextureObjects[slot].desc.mipLevels)
+        {
+            return false;
+        }
+        const Texture& texture = mTextureObjects[slot];
+        const TextureDesc& desc = texture.desc;
+        const uint32_t width = std::max(desc.width >> level, 1u);
+        const uint32_t height = std::max(desc.height >> level, 1u);
+        const bool blocks = textureCompressed(desc.format);
+        const NSUInteger rowBytes = blocks ? NSUInteger((width + 3) / 4) * textureBlockBytes(desc.format) : NSUInteger(width) * texture.pixelBytes;
+        const NSUInteger rows = blocks ? (height + 3) / 4 : height;
+        id<MTLBuffer> buffer = [mDevice newBufferWithLength:rowBytes * rows options:MTLResourceStorageModeShared];
+        id<MTLCommandBuffer> commands = [mQueue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [commands blitCommandEncoder];
+        [blit copyFromTexture:texture.texture
+                         sourceSlice:0
+                         sourceLevel:level
+                        sourceOrigin:MTLOriginMake(0, 0, 0)
+                          sourceSize:MTLSizeMake(width, height, 1)
+                            toBuffer:buffer
+                   destinationOffset:0
+              destinationBytesPerRow:rowBytes
+            destinationBytesPerImage:rowBytes * rows];
+        [blit endEncoding];
+        [commands commit];
+        [commands waitUntilCompleted];
+        if (commands.status != MTLCommandBufferStatusCompleted)
+        {
+            return false;
+        }
+        const uint8_t* bytes = static_cast<const uint8_t*>(buffer.contents);
+        data.assign(bytes, bytes + rowBytes * rows);
+        return true;
     }
 
     // Lets go of textures that no recorded frame can sample any more.
     void releaseFreedTextures()
     {
+        for (size_t i = 0; i < mFreedEncodes.size();)
+        {
+            if (mFrame < mFreedEncodes[i].frame)
+            {
+                ++i;
+                continue;
+            }
+            for (id<MTLBuffer> buffer : { mFreedEncodes[i].texels, mFreedEncodes[i].blocks })
+            {
+                if (buffer) releaseSceneBuffer(buffer, MemoryCategory::Staging);
+            }
+            mFreedEncodes[i] = mFreedEncodes.back();
+            mFreedEncodes.pop_back();
+        }
         bool removed = false;
         for (size_t i = 0; i < mFreedTextures.size();)
         {
@@ -1783,6 +1993,7 @@ private:
         blit.label = @"texture commands";
         bool created = false;
         uint64_t uploaded = 0;
+        mEncodedTexels = 0;
         uint64_t ringEnd = 0;
         size_t i = mTextureCommandsDone;
         for (; i < mTextureCommands.size(); ++i)
@@ -1796,6 +2007,11 @@ private:
             {
                 break;
             }
+            if (command.type == TextureCommand::Type::GenerateMips && mEncodedTexels != 0 &&
+                mEncodedTexels + encodeTexels(command.slot) > ENCODE_TEXELS_PER_FRAME)
+            {
+                break; // the GPU's share of encoding for this frame is spent
+            }
             const Texture& target = textureFor(command.slot); // a replacement being built takes the uploads
             id<MTLTexture> texture = command.type != TextureCommand::Type::Create ? target.texture : nil;
             switch (command.type)
@@ -1808,7 +2024,24 @@ private:
                     publishTexture(command.slot);
                     break;
                 case TextureCommand::Type::Upload:
-                    if (texture)
+                    if (texture && textureCompressed(target.desc.format))
+                    {
+                        // Whole rows of level 0 into the texels being encoded.
+                        if (target.encodeTexels && command.level == 0 && command.x == 0 && command.width == target.desc.width)
+                        {
+                            const uint64_t at = uint64_t(command.y) * target.desc.width * 4;
+                            [blit copyFromBuffer:mUploadRing
+                                    sourceOffset:command.ringOffset
+                                        toBuffer:target.encodeTexels
+                               destinationOffset:at
+                                            size:std::min<uint64_t>(command.ringBytes, target.encodeTexels.length - at)];
+                        }
+                        else
+                        {
+                            ++mCompressedUploadsDropped;
+                        }
+                    }
+                    else if (texture)
                     {
                         const NSUInteger rowBytes = NSUInteger(command.width) * target.pixelBytes;
                         [blit copyFromBuffer:mUploadRing
@@ -1825,7 +2058,11 @@ private:
                     ringEnd = command.ringEnd;
                     break;
                 case TextureCommand::Type::GenerateMips:
-                    if (texture && texture.mipmapLevelCount > 1)
+                    if (texture && textureCompressed(target.desc.format))
+                    {
+                        blit = encodeTexture(command.slot, commands, blit);
+                    }
+                    else if (texture && texture.mipmapLevelCount > 1)
                     {
                         [blit generateMipmapsForTexture:texture];
                     }
@@ -1897,6 +2134,10 @@ private:
         uint64_t bytes = 0;
         uint32_t pixelBytes = 4;
         TextureDesc desc; // metadata of the successfully created image, not queued requests
+        // A compressed texture not encoded yet: uploads go to encodeTexels (RGBA8, every
+        // mip), and encodeTexture() writes encodeBlocks and copies them into the texture.
+        id<MTLBuffer> encodeTexels = nil;
+        id<MTLBuffer> encodeBlocks = nil;
     };
 
     id<MTLDevice> mDevice = nil;
@@ -1938,6 +2179,21 @@ private:
         uint64_t bytes;
     };
     std::vector<FreedTexture> mFreedTextures;     // destroyed, waiting for the frames that may sample them
+    struct FreedEncode
+    {
+        id<MTLBuffer> texels;
+        id<MTLBuffer> blocks;
+        uint64_t frame;
+    };
+    std::vector<FreedEncode> mFreedEncodes;       // a compressed texture's encoding buffers, until its frame is done
+    id<MTLFence> mEncodeFence = nil;
+    id<MTLComputePipelineState> mTextureMipPipeline = nil;
+    id<MTLComputePipelineState> mEncodeBC1Pipeline = nil;
+    id<MTLComputePipelineState> mEncodeBC45Pipeline = nil;
+    id<MTLComputePipelineState> mEncodeBC7Pipeline = nil;
+    uint64_t mEncodedTexels = 0; // this frame's, against ENCODE_TEXELS_PER_FRAME
+    uint64_t mTexturesEncoded = 0;
+    uint64_t mCompressedUploadsDropped = 0;
     id<MTLBuffer> mUploadRing = nil;              // texture pixels, written by the main thread
     uint64_t mUploadPieceBytes = 0;               // the most one frame copies from it
     id<MTLBuffer> mZeros = nil;

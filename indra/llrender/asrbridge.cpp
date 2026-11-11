@@ -37,7 +37,10 @@ struct Texture
     PixelLayout layout = PixelLayout::RGBA;
     U8 sampler = SAMPLER_WRAP; // GL's default for a new texture
     bool mips = false;
+    U8 storage = 0; // RendererLink::chooseStorage()'s, 0 when kept as its layout
 };
+
+thread_local U32 sCompressionScopes = 0;
 
 // Indexed by name minus FIRST_TEXTURE_NAME, so finding a texture at draw time is
 // one array read. Names are reused, so this stays as long as the most textures
@@ -222,7 +225,22 @@ U64 pixelBytes(PixelLayout layout)
 }
 }
 
-void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips)
+ASR::CompressionScope::CompressionScope()
+{
+    ++sCompressionScopes;
+}
+
+ASR::CompressionScope::~CompressionScope()
+{
+    --sCompressionScopes;
+}
+
+bool ASR::CompressionScope::open()
+{
+    return sCompressionScopes != 0;
+}
+
+void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips, bool compressible)
 {
     if (!sLink)
     {
@@ -247,12 +265,16 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
         return;
     }
 
+    // A compressed image is encoded once from whole pixels, so new pixels always make a
+    // new image, which the slot shows once it is encoded.
+    const U8 storage = compressible && pixels && CompressionScope::open() ? sLink->chooseStorage(width, height, layout, pixels) : 0;
     bool replacing = false;
-    if (texture->slot == 0 || texture->width != width || texture->height != height || texture->layout != layout || texture->mips != mips)
+    if (texture->slot == 0 || texture->width != width || texture->height != height || texture->layout != layout || texture->mips != mips ||
+        texture->storage != storage || storage != 0)
     {
         if (texture->slot == 0)
         {
-            const U32 slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout);
+            const U32 slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout, storage);
             if (slot == 0)
             {
                 LL_WARNS_ONCE("ASRenderer") << "no texture slot left for a new image" << LL_ENDL;
@@ -265,7 +287,7 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
             // Another size: the slot keeps showing the old image until the new one is
             // filled, so a texture loaded sharper or smaller never flashes white, and what
             // names the slot never has to change.
-            sLink->replaceTexture(texture->slot, width, height, mips ? fullMipCount(width, height) : 1, layout, 0);
+            sLink->replaceTexture(texture->slot, width, height, mips ? fullMipCount(width, height) : 1, layout, 0, storage);
             replacing = true;
         }
         ++sCreated;
@@ -274,15 +296,16 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
         texture->height = height;
         texture->layout = layout;
         texture->mips = mips;
+        texture->storage = storage;
     }
 
     if (pixels)
     {
         ++sFilled;
-        sLink->uploadTexture(texture->slot, 0, 0, width, height, layout, pixels, width);
-        if (mips)
+        sLink->uploadTexture(texture->slot, 0, 0, width, height, layout, pixels, width, storage);
+        if (mips || storage != 0)
         {
-            sLink->generateMips(texture->slot);
+            sLink->generateMips(texture->slot); // encodes a compressed one
         }
     }
     if (replacing)
@@ -294,10 +317,15 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
 void ASR::setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels)
 {
     const Texture& texture = findTexture(name);
-    if (sLink && texture.slot != 0)
+    if (sLink && texture.slot != 0 && texture.storage != 0)
+    {
+        // Encoded once, whole: CompressionScope keeps images that take sub-images out.
+        LL_WARNS_ONCE("ASRenderer") << "a sub-image for a compressed texture was left out" << LL_ENDL;
+    }
+    else if (sLink && texture.slot != 0)
     {
         ++sSubImages;
-        sLink->uploadTexture(texture.slot, x, y, width, height, texture.layout, pixels, rowPixels);
+        sLink->uploadTexture(texture.slot, x, y, width, height, texture.layout, pixels, rowPixels, 0);
     }
 }
 
@@ -312,7 +340,7 @@ bool ASR::shrinkTexture(U32 name, S32 mips)
     const S32 width = llmax(texture->width >> mips, 1);
     const S32 height = llmax(texture->height >> mips, 1);
     // Made on the GPU from the image's own mips, and shown in its place once made.
-    sLink->replaceTexture(texture->slot, width, height, fullMipCount(width, height), texture->layout, U32(mips));
+    sLink->replaceTexture(texture->slot, width, height, fullMipCount(width, height), texture->layout, U32(mips), texture->storage);
     sLink->publishTexture(texture->slot);
     texture->width = width;
     texture->height = height;

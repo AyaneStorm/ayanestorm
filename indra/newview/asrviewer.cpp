@@ -142,8 +142,15 @@ U32 sourcePixelBytes(ASR::PixelLayout layout)
     }
 }
 
-asr::TextureDesc textureDesc(U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout)
+asr::TextureDesc textureDesc(U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U8 storage = 0)
 {
+    if (storage != 0)
+    {
+        // Compressed: the swizzle still applies, to what the format keeps.
+        asr::TextureDesc desc = textureDesc(width, height, mipLevels, layout);
+        desc.format = asr::TextureFormat(storage);
+        return desc;
+    }
     asr::TextureDesc desc;
     desc.width = width;
     desc.height = height;
@@ -183,16 +190,31 @@ asr::TextureDesc textureDesc(U32 width, U32 height, U32 mipLevels, ASR::PixelLay
 class ViewerLink final : public ASR::RendererLink
 {
 public:
-    U32 createTexture(U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout) override
+    U32 createTexture(U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U8 storage) override
     {
-        return sDevice->textures().create(textureDesc(width, height, mipLevels, layout));
+        return sDevice->textures().create(textureDesc(width, height, mipLevels, layout, storage));
     }
 
-    void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, ASR::PixelLayout layout, const void* pixels, U32 rowPixels) override
+    // BC formats for fetched images, chosen from their pixels: see asr::chooseTextureFormat().
+    // Web and media pages (BGRA) are redrawn often and stay as they are.
+    U8 chooseStorage(U32 width, U32 height, ASR::PixelLayout layout, const void* pixels) override
     {
-        // GPUs have no three-channel format, so those rows gain an opaque alpha.
+        static LLCachedControl<bool> compress(gSavedSettings, "ASTextureCompression", true);
+        if (!compress || !sDevice->textures().compressionSupported() || layout == ASR::PixelLayout::BGRA || layout == ASR::PixelLayout::BGR)
+        {
+            return 0;
+        }
+        const U32 channels = sourcePixelBytes(layout);
+        const asr::TextureFormat format = asr::chooseTextureFormat(static_cast<const U8*>(pixels), width, height, channels);
+        return asr::textureCompressed(format) ? U8(format) : 0;
+    }
+
+    void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, ASR::PixelLayout layout, const void* pixels, U32 rowPixels, U8 storage) override
+    {
+        // GPUs have no three-channel format, so those rows gain an opaque alpha. A texture
+        // the GPU compresses takes four bytes a texel, its channels first.
         const U32 sourceBytes = sourcePixelBytes(layout);
-        const U32 targetBytes = sourceBytes == 3 ? 4 : sourceBytes;
+        const U32 targetBytes = sourceBytes == 3 || storage != 0 ? 4 : sourceBytes;
         const size_t sourceRow = size_t(rowPixels) * sourceBytes;
         const size_t targetRow = size_t(width) * targetBytes;
 
@@ -210,10 +232,10 @@ public:
             {
                 for (U32 column = 0; column < width; ++column)
                 {
-                    target[column * 4] = source[column * 3];
-                    target[column * 4 + 1] = source[column * 3 + 1];
-                    target[column * 4 + 2] = source[column * 3 + 2];
-                    target[column * 4 + 3] = 255;
+                    for (U32 c = 0; c < 4; ++c)
+                    {
+                        target[column * 4 + c] = c < sourceBytes ? source[column * sourceBytes + c] : c == 3 ? 255 : 0;
+                    }
                 }
             }
             source += sourceRow;
@@ -227,9 +249,9 @@ public:
         sDevice->textures().generateMips(slot);
     }
 
-    void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U32 fromMip) override
+    void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U32 fromMip, U8 storage) override
     {
-        sDevice->textures().replace(slot, textureDesc(width, height, mipLevels, layout), fromMip);
+        sDevice->textures().replace(slot, textureDesc(width, height, mipLevels, layout, storage), fromMip);
     }
 
     void publishTexture(U32 slot) override
