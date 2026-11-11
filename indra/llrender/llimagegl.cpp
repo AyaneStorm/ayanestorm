@@ -1740,10 +1740,23 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
 
     mCurrentDiscardLevel = discard_level;
 
+    // <AS:Chanayane> The new renderer keeps showing the old image until the new one is ready.
+    const bool asr_moved = ASR::active() && main_thread && !defer_copy && old_texname != 0 && new_texname != old_texname;
+    if (asr_moved)
+    {
+        ASR::moveTexture(old_texname, new_texname);
+    }
+    // </AS:Chanayane>
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("cglt - late setImage");
         if (!setImage(data_in, data_hasmips, new_texname))
         {
+            // <AS:Chanayane> The old name keeps its image.
+            if (asr_moved)
+            {
+                ASR::moveTexture(new_texname, old_texname);
+            }
+            // </AS:Chanayane>
             return false;
         }
     }

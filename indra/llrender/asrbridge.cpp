@@ -477,6 +477,18 @@ void ASR::genTextureNames(S32 count, U32* names)
     }
 }
 
+void ASR::moveTexture(U32 from, U32 to)
+{
+    Texture* source = changeTexture(from);
+    Texture* target = changeTexture(to);
+    if (!source || !target || from == to || source->slot == 0 || target->slot != 0)
+    {
+        return;
+    }
+    *target = *source;
+    source->slot = 0; // deleting the old name no longer takes the slot with it
+}
+
 void ASR::deleteTextureNames(S32 count, const U32* names)
 {
     for (S32 i = 0; i < count; ++i)

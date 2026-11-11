@@ -115,6 +115,10 @@ namespace ASR
         static bool open();
     };
     void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
+    // LLImageGL makes a new name for an image loaded at another size, then deletes the old
+    // one. Moving the slot to the new name makes the new image a replacement: the old one
+    // shows until the new one is filled (and encoded), instead of a blank slot meanwhile.
+    void moveTexture(U32 from, U32 to);
     // Drops the given number of top mips, keeping what is left, with no decode. False
     // when the texture has no such mips, and then nothing has changed.
     bool shrinkTexture(U32 name, S32 mips);
