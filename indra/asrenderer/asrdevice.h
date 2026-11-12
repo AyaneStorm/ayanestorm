@@ -69,7 +69,6 @@ struct OverlayInput
     bool hiddenSelections = false;  // outline what other objects hide too, fainter
     float outlineWidth = 3.f;       // pixels, up to 4
     float selectionColors[3][4]{};  // SELECTION_COLOR_* in asrscene.h
-    uint32_t hudDebug = 0;          // temporary: see asrOverlayHudF.glsl's HUD_DEBUG_*
 };
 
 struct FrameInput

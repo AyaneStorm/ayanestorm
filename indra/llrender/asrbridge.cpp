@@ -64,6 +64,17 @@ bool sScissorEnabled = false;
 S32 sScissor[4] = { 0, 0, 0, 0 };
 bool sScissorDirty = true;
 
+// GL's defaults: no depth test, GL_LESS, depth writes on, no culling, back faces.
+bool sDepthTest = false;
+bool sDepthWrite = true;
+U8 sDepthCompare = 1;
+bool sCull = false;
+U8 sCullFace = 1;
+bool sDepthCullDirty = true;
+
+S32 sViewport[4] = { 0, 0, 0, 0 };
+bool sViewportDirty = false;
+
 const Texture& findTexture(U32 name)
 {
     const U32 index = name - FIRST_TEXTURE_NAME;
@@ -135,6 +146,16 @@ void sendChangedState()
         sLink->setUIScissor(sScissorEnabled, sScissor[0], sScissor[1], sScissor[2], sScissor[3]);
         sScissorDirty = false;
     }
+    if (sDepthCullDirty)
+    {
+        sLink->setUIDepthCull(sDepthTest, sDepthWrite, sDepthCompare, sCull, sCullFace);
+        sDepthCullDirty = false;
+    }
+    if (sViewportDirty)
+    {
+        sLink->setUIViewport(sViewport[0], sViewport[1], sViewport[2], sViewport[3]);
+        sViewportDirty = false;
+    }
 }
 
 } // namespace
@@ -154,6 +175,8 @@ void ASR::beginUI()
         // A new list starts from its defaults, not from where the last one ended.
         sBlendDirty = true;
         sScissorDirty = true;
+        sDepthCullDirty = true;
+        sViewportDirty = sViewport[2] != 0;
     }
 }
 
@@ -583,4 +606,68 @@ void ASR::setScissorRect(S32 x, S32 y, S32 width, S32 height)
     sScissor[2] = width;
     sScissor[3] = height;
     sScissorDirty = true;
+}
+
+void ASR::setDepthTestEnabled(bool enabled)
+{
+    sDepthTest = enabled;
+    sDepthCullDirty = true;
+}
+
+void ASR::setDepthCompare(U8 compare)
+{
+    sDepthCompare = compare;
+    sDepthCullDirty = true;
+}
+
+void ASR::setDepthWrite(bool enabled)
+{
+    sDepthWrite = enabled;
+    sDepthCullDirty = true;
+}
+
+void ASR::setCullEnabled(bool enabled)
+{
+    sCull = enabled;
+    sDepthCullDirty = true;
+}
+
+void ASR::setCullFace(U8 face)
+{
+    sCullFace = face;
+    sDepthCullDirty = true;
+}
+
+void ASR::setViewport(S32 x, S32 y, S32 width, S32 height)
+{
+    sViewport[0] = x;
+    sViewport[1] = y;
+    sViewport[2] = width;
+    sViewport[3] = height;
+    sViewportDirty = true;
+}
+
+// In order with the draws, as glClear is.
+void ASR::clearDepth()
+{
+    if (sLink && sRecording)
+    {
+        sLink->clearUIDepth();
+    }
+}
+
+void ASR::beginUIWorld(F32 nearClip)
+{
+    if (sLink && sRecording)
+    {
+        sLink->beginUIWorld(nearClip);
+    }
+}
+
+void ASR::markUIHud()
+{
+    if (sLink && sRecording)
+    {
+        sLink->markUIHud();
+    }
 }

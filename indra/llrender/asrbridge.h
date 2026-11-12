@@ -88,6 +88,12 @@ namespace ASR
         virtual void beginUI() = 0;
         virtual void setUIBlend(const U8 factors[4]) = 0; // colour source, colour dest, alpha source, alpha dest, as LLRender::eBlendFactor
         virtual void setUIScissor(bool enabled, S32 x, S32 y, S32 width, S32 height) = 0;
+        // compare is GL's, less GL_NEVER; cullFace 0 front, 1 back.
+        virtual void setUIDepthCull(bool test, bool write, U8 compare, bool cull, U8 cullFace) = 0;
+        virtual void setUIViewport(S32 x, S32 y, S32 width, S32 height) = 0;
+        virtual void clearUIDepth() = 0;
+        virtual void beginUIWorld(F32 nearClip) = 0;
+        virtual void markUIHud() = 0;
         virtual void drawUI(const UIDrawData& data) = 0;
         virtual void publishUI() = 0;
     };
@@ -183,6 +189,19 @@ namespace ASR
     void setBlendFactors(U8 colorSource, U8 colorDest, U8 alphaSource, U8 alphaDest);
     void setScissorEnabled(bool enabled);
     void setScissorRect(S32 x, S32 y, S32 width, S32 height);
+    void setDepthTestEnabled(bool enabled);
+    void setDepthCompare(U8 compare); // GL's, less GL_NEVER
+    void setDepthWrite(bool enabled);
+    void setCullEnabled(bool enabled);
+    void setCullFace(U8 face);        // 0 front, 1 back
+    void setViewport(S32 x, S32 y, S32 width, S32 height);
+    void clearDepth();
+
+    // The world part of the UI, the 3D elements OpenGL draws before the HUD with the
+    // scene's depth (render_hud_elements()), runs from beginUIWorld() to markUIHud().
+    // nearClip is the renderer camera's, as published for this frame.
+    void beginUIWorld(F32 nearClip);
+    void markUIHud();
 }
 
 #endif // ASR_BRIDGE_H

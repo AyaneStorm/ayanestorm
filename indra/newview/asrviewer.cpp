@@ -344,6 +344,35 @@ public:
         mList->setScissor(scissor);
     }
 
+    void setUIDepthCull(bool test, bool write, U8 compare, bool cull, U8 cullFace) override
+    {
+        mList->setDepthTest(test);
+        mList->setDepthWrite(write);
+        mList->setDepthCompare(asr::UICompare(compare & 7));
+        mList->setCullEnabled(cull);
+        mList->setCullFace(cullFace == 0 ? asr::UICull::Front : asr::UICull::Back);
+    }
+
+    void setUIViewport(S32 x, S32 y, S32 width, S32 height) override
+    {
+        mList->setViewport(x, y, width, height);
+    }
+
+    void clearUIDepth() override
+    {
+        mList->clearDepth();
+    }
+
+    void beginUIWorld(F32 nearClip) override
+    {
+        mList->beginWorld(nearClip);
+    }
+
+    void markUIHud() override
+    {
+        mList->markHud();
+    }
+
     void drawUI(const ASR::UIDrawData& data) override
     {
         asr::UIStreams streams;

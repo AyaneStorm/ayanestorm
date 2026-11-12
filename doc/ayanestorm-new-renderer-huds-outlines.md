@@ -89,6 +89,35 @@ sorted, after tone mapping, a few hundred faces. So:
 - **Face tool**: selected faces drawn again in the mask pass's view with the face select
   texture tint, as `renderSelectedFaces()`.
 
+## 3D UI and floating text (design, 12 November)
+
+OpenGL draws, after the scene: `render_hud_elements()` (manipulators, light spheres,
+beacons, property and parcel lines, all depth tested against the scene, the manipulators
+also writing depth), then the HUD (depth cleared), then `render_ui_3d()` (HUD
+manipulators, against the HUD's depth), `LLHUDObject::renderAll()` (floating text, name
+tags, effects) and the 2D UI. All of it goes through `gGL`, so the UI capture already
+sees it; what it lacks is depth, cull and viewport state, and the HUD's place in the order.
+
+- **GL state capture** (`asrgltable.cpp`, no LL edits): `GL_DEPTH_TEST`, `glDepthFunc`,
+  `glDepthMask`, `GL_CULL_FACE`, `glCullFace`, `glViewport`, `glClear(GL_DEPTH_BUFFER_BIT)`
+  reach the UI list through the bridge, as blend and scissor do.
+- **UI list**: each draw carries depth (test, compare, write) and cull state. A draw with
+  depth testing or writing gets its clip z rewritten on the CPU into the renderer's
+  reversed depth, by the space the viewer names: world `z = nearClip` (reversed, no far
+  plane), HUD `z = 0.5 w - 0.5 z` (as `fillOverlay()`); GL's compares flip to match. A
+  viewport other than the list's full size is folded into clip x and y. `markHud()` splits
+  the list: draws before it go before the HUD, the rest after.
+- **Device**: the window's last rendering always has the window-sized UI depth attached
+  (made with the swapchain; was the HUD depth), and the UI pipelines declare it; depth and
+  cull are dynamic state (core in Vulkan 1.3, per encoder in Metal). With a scene: when
+  the part before the HUD tests depth, the graph pass `ui depth` (sink `ResultUIDepth`)
+  copies the scene depth into it, in the world view; then scene outline, UI before the
+  HUD, depth cleared, HUD opaque, blended, HUD outline, UI after.
+- **Viewer** (`display_native()`): after `publishFrame()`, the UI capture takes
+  `render_hud_elements()` in the world view with the world camera, `markHud()`, then
+  `render_ui_3d()`, `LLHUDObject::renderAll()`, then the 2D UI. `renderSilhouettes()` is
+  skipped (the renderer draws outlines), as is `updateSilhouettes()`'s edge work.
+
 ## As built (12 November, in progress)
 
 - Instance flags (`asrscene.h`, `asrSceneCommon.glsl`): `INSTANCE_HUD` (64),
@@ -133,9 +162,20 @@ sorted, after tone mapping, a few hundred faces. So:
   HUD zoom, converts `get_hud_matrices()` to Y down and reversed depth, and fills the
   toggles and colours (face tint white at 0.3). `llselectmgr.h`: one tagged friend line
   (`ASRSelectionAccess`) for the private outline toggles.
+- 3D UI and floating text (as designed above): `asruilist` depth, cull, viewport (folded
+  into clip x and y, and clipping as a scissor), `beginWorld()` / `markHud()`;
+  `asrgltable.cpp` captures `glDepthFunc`, `glDepthMask`, `glCullFace`, `glViewport`,
+  `glClear`, `GL_DEPTH_TEST`, `GL_CULL_FACE`; `asrbridge` and `asrviewer.cpp` pass them on;
+  Vulkan `passUIDepth()`, `asrOverlayDepthF.glsl`, `recordOverlays()` hosts the whole UI;
+  Metal: one window pass with a memoryless UI depth, the world part, then farthest written
+  by `asrOverlayDepthF` phase 1 (no HUD in Metal yet). Viewer: `display_native()` draws
+  `render_hud_elements()`, `markUIHud`, `render_ui_3d()`, `LLHUDObject::renderAll()`;
+  `renderSelections()` skips silhouettes in native mode (tagged). `ASRendererHudDebug`
+  removed. `asrenderer_test`: UI list checks pass; `--scene --overlay --ui` draws a wire
+  box through the city, solid where seen and faint where hidden, clipped to the world
+  view; no validation errors. Viewer and Metal unbuilt.
 - Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
   (context) colours; mesh selections use the same colours.
-- To do: Metal device, UI list depth state for 3D UI, viewer build test, then remaining
-  viewer hooks
-  (`asrworld.cpp` HUD instances and selection flags, HUD zoom easing and matrices,
-  `render_ui_3d()` in `display_native()`), `asrenderer_test` checks.
+- To do: viewer build test of the 3D UI and floating text (programs other than
+  `gUIProgram` and `gSolidColorProgram` are left out and logged once: check the log),
+  then Metal's side of step h (HUD, outlines), then texture animation.

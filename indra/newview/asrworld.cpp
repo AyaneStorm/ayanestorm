@@ -4635,8 +4635,6 @@ void ASRWorld::fillOverlay(asr::OverlayInput& overlay)
         memcpy(overlay.hudViewProjection, glm::value_ptr(hud), sizeof(overlay.hudViewProjection));
     }
 
-    static LLCachedControl<U32> hud_debug(gSavedSettings, "ASRendererHudDebug", 0);
-    overlay.hudDebug = hud_debug;
 
     LLSelectMgr* manager = LLSelectMgr::getInstance();
     overlay.outlines = ASRSelectionAccess::outlinesShown(*manager);

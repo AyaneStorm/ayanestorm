@@ -474,6 +474,38 @@ void testUIList()
     list.append(UIGeometry::Triangles, quad, 3);
     expect(list.draws().size() == 4 && list.draws()[3].vertexCount == 6, "the same scissor keeps merging");
 
+    // Depth: GL's compares reversed; world vertices end at nearClip / w, the rest at one
+    // less GL's depth; asrUIV.glsl makes depth (z + w) / 2.
+    list.clear();
+    list.setSize(100, 100);
+    asr::UIVertex deep[3] = { quad[0], quad[1], quad[2] };
+    for (asr::UIVertex& v : deep)
+    {
+        v.position[2] = 0.5f;
+        v.position[3] = 2.f;
+    }
+    list.beginWorld(0.25f);
+    list.setDepthTest(true);
+    list.setDepthCompare(asr::UICompare::LessOrEqual);
+    list.append(UIGeometry::Triangles, deep, 3);
+    expect(list.draws()[0].depth.test && list.draws()[0].depth.write && list.draws()[0].depth.compare == asr::UICompare::GreaterOrEqual,
+           "GL's LEQUAL becomes GEQUAL in reversed depth, writing");
+    expect(std::fabs((list.vertices()[0].position[2] + 2.f) * 0.5f / 2.f - 0.125f) < 1e-6f, "a world vertex lands at nearClip / w");
+    list.markHud();
+    list.append(UIGeometry::Triangles, deep, 3);
+    expect(list.hudDraw() == 1 && list.draws().size() == 2 && list.worldDepthTested(), "the HUD mark splits the list");
+    expect(std::fabs((list.vertices()[3].position[2] + 2.f) * 0.5f / 2.f - 0.375f) < 1e-6f, "after the HUD, depth is one less GL's");
+    list.clearDepth();
+    list.setDepthTest(false);
+    list.setViewport(50, 0, 50, 100);
+    list.append(UIGeometry::Triangles, deep, 3);
+    expect(list.draws()[2].clearDepth && !list.draws()[3].depth.test, "a depth clear is its own draw");
+    expect(std::fabs(list.vertices()[6].position[0] / 2.f - 0.5f) < 1e-6f, "the viewport folds into clip x");
+    expect(list.draws()[3].scissor.enabled && list.draws()[3].scissor.x == 50 && list.draws()[3].scissor.width == 50 &&
+           list.draws()[3].scissor.height == 100, "the viewport clips, as a scissor");
+    list.clear();
+    expect(list.hudDraw() == 0 && !list.worldDepthTested(), "clear forgets the HUD mark");
+
     // Doubles X, moves Y by 3.
     const float matrix[16] = { 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1 };
     const float uvMatrix[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.5f, 0, 0, 1 };
@@ -2332,17 +2364,75 @@ public:
         mShrunk = textures.create(shrunkDesc, mMipped, 2);
     }
 
-    void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration)
+    // As render_hud_elements(): a 50 m wire box 60 m ahead of the camera, cutting through
+    // the city, in the world view's
+    // viewport, drawn twice as a manipulator is: where it shows (GL's LEQUAL) solid,
+    // where the scene hides it (GL_GREATER) faint. Then the HUD mark.
+    void buildWorld(asr::UIList& list, uint32_t height, const asr::SceneCamera3D& camera, const uint32_t worldView[4])
+    {
+        list.beginWorld(camera.nearClip);
+        list.setViewport(int32_t(worldView[0]), int32_t(height) - int32_t(worldView[1] + worldView[3]), int32_t(worldView[2]), int32_t(worldView[3]));
+        const float* r = camera.viewRows[2];
+        const float centre[3] = { camera.position[0] - r[0] * 60.f, camera.position[1] - r[1] * 60.f, camera.position[2] - r[2] * 60.f };
+        asr::UIVertex lines[24];
+        for (uint32_t edge = 0; edge < 12; ++edge)
+        {
+            // Each edge: an axis, and the two other coordinates' signs.
+            const uint32_t axis = edge / 4;
+            for (uint32_t end = 0; end < 2; ++end)
+            {
+                float p[3];
+                p[axis] = end ? 25.f : -25.f;
+                p[(axis + 1) % 3] = (edge & 1) ? 25.f : -25.f;
+                p[(axis + 2) % 3] = (edge & 2) ? 25.f : -25.f;
+                const float* m = camera.viewProjection;
+                const float x = centre[0] + p[0], y = centre[1] + p[1], z = centre[2] + p[2];
+                asr::UIVertex& v = lines[edge * 2 + end];
+                v = uiVertex(0, 0, 0);
+                v.position[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
+                v.position[1] = -(m[1] * x + m[5] * y + m[9] * z + m[13]); // the renderer's Y down to GL's up
+                v.position[2] = 0.f;                                      // rewritten: depth tested
+                v.position[3] = m[3] * x + m[7] * y + m[11] * z + m[15];
+                v.texture = asr::uiTextureBits(0);
+            }
+        }
+        list.setDepthTest(true);
+        list.setDepthWrite(false);
+        list.setDepthCompare(asr::UICompare::LessOrEqual);
+        for (asr::UIVertex& v : lines)
+        {
+            v.color = 0xFF00FFFF; // yellow, RGBA8 little-endian
+        }
+        list.append(asr::UIGeometry::Lines, lines, 24);
+        list.setDepthCompare(asr::UICompare::Greater);
+        for (asr::UIVertex& v : lines)
+        {
+            v.color = 0x5000FFFF;
+        }
+        list.append(asr::UIGeometry::Lines, lines, 24);
+        list.setDepthTest(false);
+        list.setDepthWrite(true);
+        list.setViewport(0, 0, 0, 0);
+        list.markHud();
+    }
+
+    void build(asr::UIList& list, uint32_t width, uint32_t height, float seconds, uint64_t listGeneration,
+               const asr::SceneCamera3D* world = nullptr, const uint32_t* worldView = nullptr)
     {
         list.clear();
         list.setSize(width, height);
         mFlushes = 0;
+        if (world)
+        {
+            buildWorld(list, height, *world, worldView);
+        }
 
         // Pixels to GL clip space, as the viewer's 2D setup does.
         const float matrix[16] = { 2.f / width, 0, 0, 0, 0, 2.f / height, 0, 0, 0, 0, -1, 0, -1, -1, 0, 1 };
 
-        const int columns = 120;
-        const int rows = 60;
+        // The scene shows through where the world part is drawn: no dense grid over it.
+        const int columns = world ? 0 : 120;
+        const int rows = world ? 0 : 60;
         const float size = 9.f;
         for (int row = 0; row < rows; ++row)
         {
@@ -2533,7 +2623,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         width = phase == 1 ? width + 200 : phase == 2 ? width / 2 : width;
         height = phase == 1 ? height + 100 : phase == 2 ? height / 2 : height;
         asr::UIList& list = renderThread.ui();
-        testUI.build(list, width, height, float(secondsSince(uiStart)), renderThread.currentUIGeneration());
+        // With overlays, the world part as the viewer draws it, at the window's size only.
+        const asr::FrameState& state = renderThread.state();
+        const bool world = sOverlays && drawScene && state.hasCamera && phase == 0;
+        testUI.build(list, width, height, float(secondsSince(uiStart)), renderThread.currentUIGeneration(),
+                     world ? &state.camera : nullptr, state.worldView);
         lastDraws = uint32_t(list.draws().size());
         lastVertices = uint32_t(list.vertices().size());
         renderThread.publishUI();

@@ -5246,7 +5246,10 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
 {
     LLObjectSelectionHandle selection = LLSelectMgr::getInstance()->getSelection();
 
-    if (!for_hud && !for_gl_pick)
+    // <AS:Chanayane> The native renderer draws its own outlines from the selection.
+    // if (!for_hud && !for_gl_pick)
+    if (!for_hud && !for_gl_pick && !ASR::active())
+    // </AS:Chanayane>
     {
         // Call this once and only once
         LLSelectMgr::getInstance()->updateSilhouettes();
@@ -5273,7 +5276,13 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
     else if (( for_hud && selection->getSelectType() == SELECT_TYPE_HUD) ||
              (!for_hud && selection->getSelectType() != SELECT_TYPE_HUD))
     {
-        LLSelectMgr::getInstance()->renderSilhouettes(for_hud);
+        // <AS:Chanayane> The native renderer draws its own outlines from the selection.
+        // LLSelectMgr::getInstance()->renderSilhouettes(for_hud);
+        if (!ASR::active())
+        {
+            LLSelectMgr::getInstance()->renderSilhouettes(for_hud);
+        }
+        // </AS:Chanayane>
 
         stop_glerror();
 

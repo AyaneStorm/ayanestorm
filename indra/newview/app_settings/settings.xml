@@ -12017,17 +12017,6 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <real>1.0</real>
   </map>
-  <key>ASRendererHudDebug</key>
-  <map>
-    <key>Comment</key>
-    <string>Temporary, new renderer: 1 keeps HUD back faces, 2 lets every HUD fragment pass the depth test, 3 both. 0 is normal.</string>
-    <key>Persist</key>
-    <integer>0</integer>
-    <key>Type</key>
-    <string>U32</string>
-    <key>Value</key>
-    <integer>0</integer>
-  </map>
   <key>ASRendererUIHz</key>
   <map>
     <key>Comment</key>

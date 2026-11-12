@@ -173,8 +173,9 @@ public:
         descriptor.vertexFunction = vertex;
         descriptor.fragmentFunction = fragment;
         descriptor.colorAttachments[0].pixelFormat = mLayer.pixelFormat;
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float; // the window pass has the UI depth
         NSError* failure = nil;
-        mPipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        mPipeline =[mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
         if (!mPipeline)
         {
             error = std::string("pipeline: ") + failure.localizedDescription.UTF8String;
@@ -268,11 +269,20 @@ public:
                 return false;
             }
 
+            if (!ensureUIDepth(uint32_t(drawable.texture.width), uint32_t(drawable.texture.height)))
+            {
+                dispatch_semaphore_signal(mFrameSlots);
+                return false;
+            }
             MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
             pass.colorAttachments[0].texture = drawable.texture;
             pass.colorAttachments[0].loadAction = MTLLoadActionClear;
             pass.colorAttachments[0].storeAction = MTLStoreActionStore;
             pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 1.0); // what the viewer clears to, and transparent UI shows it
+            pass.depthAttachment.texture = mUIDepth;
+            pass.depthAttachment.loadAction = MTLLoadActionClear;
+            pass.depthAttachment.storeAction = MTLStoreActionDontCare;
+            pass.depthAttachment.clearDepth = 0.0; // reversed depth: 0 is far away
 
             id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
             if (input.camera)
@@ -294,7 +304,21 @@ public:
             }
             if (input.ui && !input.ui->vertices().empty())
             {
-                drawUI(encoder, slot, *input.ui, width, height);
+                // The world part against the scene depth, then the depth farthest again for
+                // the HUD's part, as Vulkan's recordOverlays(). No HUD in Metal yet.
+                const UIList& ui = *input.ui;
+                const uint32_t draws = uint32_t(ui.draws().size());
+                const uint32_t hud = input.camera ? std::min(ui.hudDraw(), draws) : 0;
+                if (hud != 0)
+                {
+                    if (ui.worldDepthTested())
+                    {
+                        writeUIDepth(encoder, 0, width, height);
+                    }
+                    drawUI(encoder, slot, ui, width, height, 0, hud);
+                    writeUIDepth(encoder, 1, width, height);
+                }
+                drawUI(encoder, slot, ui, width, height, hud, draws);
             }
             [encoder endEncoding];
             [commands presentDrawable:drawable];
@@ -515,11 +539,26 @@ private:
         descriptor.vertexFunction = compositeVertex;
         descriptor.fragmentFunction = compositeFragment;
         descriptor.colorAttachments[0].pixelFormat = mLayer.pixelFormat;
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float; // the window pass has the UI depth
         NSError* failure = nil;
         mCompositePipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
         if (!mCompositePipeline)
         {
             error = std::string("composite pipeline: ") + failure.localizedDescription.UTF8String;
+            return false;
+        }
+        // The scene depth into the UI depth for the UI's world part, or farthest after it.
+        id<MTLFunction> depthCopy = loadFunction(shaderDir, "asrOverlayDepthF", error);
+        if (!depthCopy)
+        {
+            return false;
+        }
+        descriptor.fragmentFunction = depthCopy;
+        descriptor.colorAttachments[0].writeMask = MTLColorWriteMaskNone;
+        mDepthCopyPipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        if (!mDepthCopyPipeline)
+        {
+            error = std::string("depth copy pipeline: ") + failure.localizedDescription.UTF8String;
             return false;
         }
 
@@ -1428,6 +1467,7 @@ private:
         color.destinationRGBBlendFactor = toMetal(blend.colorDest);
         color.sourceAlphaBlendFactor = toMetal(blend.alphaSource);
         color.destinationAlphaBlendFactor = toMetal(blend.alphaDest);
+        descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float; // the UI depth
 
         NSError* failure = nil;
         id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
@@ -1486,15 +1526,84 @@ private:
         return true;
     }
 
-    void drawUI(id<MTLRenderCommandEncoder> encoder, uint32_t slot, const UIList& ui, uint32_t width, uint32_t height)
+    id<MTLDepthStencilState> uiDepthState(const UIDepth& depth)
+    {
+        const uint32_t key = (depth.test ? 16u : 0u) | (depth.write ? 8u : 0u) | (uint32_t(depth.compare) & 7);
+        if (!mUIDepthStates[key])
+        {
+            static constexpr MTLCompareFunction COMPARES[8] = {
+                MTLCompareFunctionNever,   MTLCompareFunctionLess,     MTLCompareFunctionEqual,        MTLCompareFunctionLessEqual,
+                MTLCompareFunctionGreater, MTLCompareFunctionNotEqual, MTLCompareFunctionGreaterEqual, MTLCompareFunctionAlways };
+            MTLDepthStencilDescriptor* descriptor = [MTLDepthStencilDescriptor new];
+            descriptor.depthCompareFunction = depth.test ? COMPARES[key & 7] : MTLCompareFunctionAlways;
+            descriptor.depthWriteEnabled = depth.test && depth.write;
+            mUIDepthStates[key] = [mDevice newDepthStencilStateWithDescriptor:descriptor];
+        }
+        return mUIDepthStates[key];
+    }
+
+    // The window pass's depth, as Vulkan's UI depth: see FrameInput and asruilist.h.
+    bool ensureUIDepth(uint32_t width, uint32_t height)
+    {
+        if (mUIDepth && mUIDepth.width == width && mUIDepth.height == height)
+        {
+            return true;
+        }
+        mUIDepth = nil;
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                              width:width height:height mipmapped:NO];
+        descriptor.usage = MTLTextureUsageRenderTarget;
+        // Apple GPUs keep it on chip: it never reaches memory, so it costs none.
+        descriptor.storageMode = [mDevice supportsFamily:MTLGPUFamilyApple1] ? MTLStorageModeMemoryless : MTLStorageModePrivate;
+        mUIDepth = [mDevice newTextureWithDescriptor:descriptor];
+        if (!mUIDepth)
+        {
+            mError = "cannot create the UI depth";
+            return false;
+        }
+        return true;
+    }
+
+    // A fullscreen depth write over the window: the scene depth (phase 0) or farthest (1).
+    void writeUIDepth(id<MTLRenderCommandEncoder> encoder, uint32_t phase, uint32_t width, uint32_t height)
+    {
+        [encoder setScissorRect:MTLScissorRect{ 0, 0, width, height }];
+        UIDepth always;
+        always.test = true;
+        always.write = true;
+        always.compare = UICompare::Always;
+        [encoder setRenderPipelineState:mDepthCopyPipeline];
+        [encoder setDepthStencilState:uiDepthState(always)];
+        [encoder setCullMode:MTLCullModeNone];
+        [encoder setFragmentTexture:mDepthTarget atIndex:3];
+        ScenePush push{};
+        push.phase = phase;
+        [encoder setFragmentBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+
+    // The draws from first to end.
+    void drawUI(id<MTLRenderCommandEncoder> encoder, uint32_t slot, const UIList& ui, uint32_t width, uint32_t height,
+                uint32_t first, uint32_t end)
     {
         [encoder setVertexBuffer:mUIBuffers[slot] offset:0 atIndex:UI_VERTEX_BUFFER];
         [encoder setFragmentBuffer:mArguments[slot] offset:0 atIndex:0];
         [encoder setViewport:MTLViewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 }];
+        // GL's counter-clockwise front: the Metal shader build undoes asrUIV.glsl's Y flip.
+        [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
+        static constexpr MTLCullMode CULLS[3] = { MTLCullModeNone, MTLCullModeFront, MTLCullModeBack };
         id<MTLRenderPipelineState> bound = nil;
-        for (const UIDraw& draw : ui.draws())
+        const std::vector<UIDraw>& draws = ui.draws();
+        for (uint32_t i = first; i < end && i < draws.size(); ++i)
         {
+            const UIDraw& draw = draws[i];
+            if (draw.clearDepth)
+            {
+                writeUIDepth(encoder, 1, width, height);
+                bound = nil;
+                continue;
+            }
             UIRect rect;
             if (!resolveScissor(draw.scissor, ui.width(), ui.height(), width, height, rect))
             {
@@ -1506,6 +1615,9 @@ private:
                 [encoder setRenderPipelineState:pipeline];
                 bound = pipeline;
             }
+            // Cheap to set: the states are made once each, and Metal keeps what is current.
+            [encoder setDepthStencilState:uiDepthState(draw.depth)];
+            [encoder setCullMode:CULLS[uint32_t(draw.cull)]];
             [encoder setScissorRect:MTLScissorRect{ rect.x, rect.y, rect.width, rect.height }];
             const MTLPrimitiveType type = draw.primitive == UIPrimitive::Triangles ? MTLPrimitiveTypeTriangle
                                         : draw.primitive == UIPrimitive::Lines     ? MTLPrimitiveTypeLine
@@ -2291,7 +2403,10 @@ private:
     id<MTLRenderPipelineState> mVisibilityPipeline = nil;
     id<MTLRenderPipelineState> mMaskedPipeline = nil;
     id<MTLRenderPipelineState> mCompositePipeline = nil;
+    id<MTLRenderPipelineState> mDepthCopyPipeline = nil;   // asrOverlayDepthF: phase 0 copies, 1 clears
     id<MTLDepthStencilState> mDepthState = nil;
+    id<MTLDepthStencilState> mUIDepthStates[32] = {};      // by UIDepth: test, write, compare
+    id<MTLTexture> mUIDepth = nil;                          // window-sized, memoryless where it can be
     id<MTLFence> mSceneFence = nil;
     id<MTLTexture> mVisibilityTarget = nil;
     id<MTLTexture> mDepthTarget = nil;

@@ -133,6 +133,39 @@ struct UIRect
 bool resolveScissor(const UIScissor& scissor, uint32_t listWidth, uint32_t listHeight,
                     uint32_t targetWidth, uint32_t targetHeight, UIRect& rect);
 
+// In GL's order (GL_NEVER + n). The list stores them flipped for reversed depth.
+enum class UICompare : uint8_t
+{
+    Never,
+    Less,
+    Equal,
+    LessOrEqual,
+    Greater,
+    NotEqual,
+    GreaterOrEqual,
+    Always
+};
+
+enum class UICull : uint8_t
+{
+    None,
+    Front,
+    Back
+};
+
+// A draw's depth state. GL writes depth only while it tests, and so does this.
+struct UIDepth
+{
+    bool test = false;
+    bool write = false;
+    UICompare compare = UICompare::GreaterOrEqual; // reversed: GL's GL_LEQUAL
+
+    bool operator==(const UIDepth& other) const
+    {
+        return test == other.test && write == other.write && compare == other.compare;
+    }
+};
+
 struct UIDraw
 {
     uint32_t firstVertex = 0;
@@ -140,6 +173,9 @@ struct UIDraw
     UIScissor scissor;
     uint16_t blend = 0; // index into UIList::blends()
     UIPrimitive primitive = UIPrimitive::Triangles;
+    UIDepth depth;
+    UICull cull = UICull::None;
+    bool clearDepth = false; // no vertices: clears the depth to farthest, as glClear
 };
 
 // The vertices LLRender holds at a flush: separate arrays, not yet transformed.
@@ -175,6 +211,29 @@ public:
     void setBlend(const UIBlend& blend);
     void setScissor(const UIScissor& scissor);
 
+    // GL depth and cull state, as glEnable, glDepthFunc, glDepthMask and glCullFace set it.
+    void setDepthTest(bool enabled) { mDepthTest = enabled; }
+    void setDepthWrite(bool enabled) { mDepthWrite = enabled; }
+    void setDepthCompare(UICompare glCompare);
+    void setCullEnabled(bool enabled) { mCullEnabled = enabled; }
+    void setCullFace(UICull face) { mCullFace = face; }
+    void clearDepth();
+
+    // glViewport, in GL window pixels (Y up). Folded into the vertices' clip x and y,
+    // as the list draws in one viewport of its full size.
+    void setViewport(int32_t x, int32_t y, int32_t width, int32_t height);
+
+    // Depth-tested vertices get their depth in the renderer's reversed convention.
+    // Between beginWorld() and markHud() they are the world camera's, compared with
+    // the scene depth: reversed with no far plane, `nearClip / w`. Elsewhere they keep
+    // GL's own window depth, reversed, so they compare with each other and with the
+    // HUD's depth as in OpenGL. markHud() is where the HUD goes: the draws before it
+    // are drawn before the HUD, the rest after.
+    void beginWorld(float nearClip);
+    void markHud();
+    uint32_t hudDraw() const { return mHudDraw; }      // the first draw after the HUD
+    bool worldDepthTested() const { return mWorldDepthTested; } // a draw before the HUD tests depth
+
     // Adds vertices that are already final.
     void append(UIGeometry geometry, const UIVertex* vertices, uint32_t count);
 
@@ -200,6 +259,15 @@ private:
     uint16_t mBlend = 0;
     uint32_t mWidth = 0;
     uint32_t mHeight = 0;
+    bool mDepthTest = false;
+    bool mDepthWrite = true;
+    UICompare mDepthCompare = UICompare::GreaterOrEqual;
+    bool mCullEnabled = false;
+    UICull mCullFace = UICull::Back;
+    int32_t mViewport[4] = { 0, 0, 0, 0 }; // zero width: the list's full size
+    float mWorldNear = 0.f;                // above 0 between beginWorld() and markHud()
+    uint32_t mHudDraw = 0;
+    bool mWorldDepthTested = false;
 };
 
 } // namespace asr

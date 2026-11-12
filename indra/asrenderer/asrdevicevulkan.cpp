@@ -1362,6 +1362,7 @@ private:
         mResultImages[ResultMacOITColor] = &mMacOIT.color;
         mResultImages[ResultMacOITWeights] = &mMacOIT.weights;
         mResultImages[ResultSelectionMask] = &mSelectionMask;
+        mResultImages[ResultUIDepth] = &mUIDepth;
 
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1454,12 +1455,10 @@ private:
     // have finished by the time it changes.
     bool ensureSceneTargets()
     {
-        if (mSceneExtent.width == mWorldViewExtent.width && mSceneExtent.height == mWorldViewExtent.height &&
-            mTargetsWindow.width == mExtent.width && mTargetsWindow.height == mExtent.height)
+        if (mSceneExtent.width == mWorldViewExtent.width && mSceneExtent.height == mWorldViewExtent.height)
         {
             return true;
         }
-        mTargetsWindow = mExtent; // the HUD depth is window-sized
         if (!check(vkDeviceWaitIdle(mDevice), "wait for device"))
         {
             return false;
@@ -1472,7 +1471,6 @@ private:
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
         destroyTarget(mSelectionMask);
-        destroyTarget(mOverlay.hudDepth);
         destroyMacOITTargets();
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         for (bool& written : mAuditWritten)
@@ -1489,8 +1487,6 @@ private:
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
             !createTarget(mSelectionMask, SELECTION_MASK_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "selection mask") ||
-            !createTarget(mOverlay.hudDepth, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "HUD depth",
-                          mExtent) || // window-sized: drawn at the world view's place in it
             !createMacOITTargets())
         {
             return false;
@@ -1548,10 +1544,10 @@ private:
         VkPipeline hudOpaque = VK_NULL_HANDLE;  // HUD objects into the HUD depth
         VkPipeline hudBlended = VK_NULL_HANDLE; // back to front, testing it
         VkPipeline outline = VK_NULL_HANDLE;    // fullscreen, from the mask
+        VkPipeline depthCopy = VK_NULL_HANDLE;  // fullscreen: the scene depth into the UI depth
         GpuBuffer selectionList;                // written by the early cull
         MappedBuffer hudViews[FRAMES_IN_FLIGHT];
         MappedBuffer hudLists[FRAMES_IN_FLIGHT];
-        TargetImage hudDepth;
         std::vector<GpuListEntry> hudEntries;
         uint32_t hudOpaqueCount = 0; // the HUD list's opaque prefix
         uint32_t hudSelected = 0; // its selected entries, at its end
@@ -1560,6 +1556,7 @@ private:
         uint64_t hudList = 0;
         bool sceneMask = false;   // the scene's selections are in the mask this frame
         bool hudMask = false;     // the HUD's are
+        bool depthCopied = false; // the UI's world part tests the scene depth this frame
     };
 
     bool createOverlayPipelines(std::string& error)
@@ -1583,12 +1580,17 @@ private:
         mOverlay.hudOpaque = mOverlay.mask ? createSceneRasterPipeline("asrOverlayV", "asrOverlayHudF", hud, error) : VK_NULL_HANDLE;
         mOverlay.hudBlended = mOverlay.hudOpaque ? createSceneRasterPipeline("asrOverlayV", "asrOverlayHudF", blended, error) : VK_NULL_HANDLE;
         mOverlay.outline = mOverlay.hudBlended ? createSceneRasterPipeline("asrSceneCompositeV", "asrOverlayOutlineF", outline, error) : VK_NULL_HANDLE;
-        return mOverlay.outline != VK_NULL_HANDLE;
+        RasterSetup depthCopy;      // depth only, in the UI depth pass
+        depthCopy.depthTest = true; // over the cleared farthest, which every depth equals or passes
+        depthCopy.depthWrite = true;
+        depthCopy.depthEqualPasses = true;
+        mOverlay.depthCopy = mOverlay.outline ? createSceneRasterPipeline("asrSceneCompositeV", "asrOverlayDepthF", depthCopy, error) : VK_NULL_HANDLE;
+        return mOverlay.depthCopy != VK_NULL_HANDLE;
     }
 
     void destroyOverlay()
     {
-        for (VkPipeline pipeline : { mOverlay.mask, mOverlay.hudOpaque, mOverlay.hudBlended, mOverlay.outline })
+        for (VkPipeline pipeline : { mOverlay.mask, mOverlay.hudOpaque, mOverlay.hudBlended, mOverlay.outline, mOverlay.depthCopy })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -1725,6 +1727,34 @@ private:
         return true;
     }
 
+    // The scene depth into the UI depth, in the world view; farthest around it.
+    bool passUIDepth()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mUIDepth.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 0 is farthest, in reversed depth
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, mExtent };
+        rendering.layerCount = 1;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.depthCopy);
+        vkCmdSetCullMode(commands, VK_CULL_MODE_NONE);
+        const ScenePush scene = mScenePush;
+        setWorldViewport(commands);
+        mScenePush.phase = 0; // copy, not farthest: see asrOverlayDepthF.glsl
+        pushScene(commands);
+        vkCmdDraw(commands, 3, 1, 0, 0);
+        mScenePush = scene;
+        vkCmdEndRendering(commands);
+        return true;
+    }
+
     // The world view's viewport and scissor in the window, at the scene's size, and its
     // offset in push.list, x low, y high, for the shaders that read scene images by pixel.
     void setWorldViewport(VkCommandBuffer commands)
@@ -1742,19 +1772,26 @@ private:
         return mOverlay.sceneMask || mOverlay.hudDrawn != 0;
     }
 
-    // Over the composited image, before the UI: the scene's outlines, the HUD, its outlines.
-    void recordOverlays(VkCommandBuffer commands, uint32_t image)
+    // Over the composited image, in one rendering with the UI depth: with a scene, the
+    // scene depth copied in when the UI's world part tests it, the scene's outlines, that
+    // world part, the depth cleared, the HUD and its outlines; then the rest of the UI.
+    void recordOverlays(VkCommandBuffer commands, uint32_t image, uint32_t slot, const UIList* ui, bool scene)
     {
+        const bool uiDrawn = ui && !ui->vertices().empty();
+        const uint32_t uiDraws = uiDrawn ? uint32_t(ui->draws().size()) : 0;
+        const uint32_t uiHud = scene ? std::min(ui ? ui->hudDraw() : 0u, uiDraws) : 0;
         VkImageMemoryBarrier2 depthBarrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
         depthBarrier.srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT; // the last frame's HUD
         depthBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
         depthBarrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
         depthBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        depthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // cleared below
+        // Cleared below, unless the UI depth pass filled it with the scene depth.
+        const bool depthCopied = scene && mOverlay.depthCopied;
+        depthBarrier.oldLayout = depthCopied ? VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
         depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        depthBarrier.image = mOverlay.hudDepth.image;
+        depthBarrier.image = mUIDepth.image;
         depthBarrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
         VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
         dependency.imageMemoryBarrierCount = 1;
@@ -1770,9 +1807,9 @@ private:
         color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
-        depth.imageView = mOverlay.hudDepth.view;
+        depth.imageView = mUIDepth.view;
         depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 0 is farthest, in reversed depth
+        depth.loadOp = depthCopied ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR; // 0 is farthest, in reversed depth
         depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
         rendering.renderArea = { { 0, 0 }, mExtent };
@@ -1781,10 +1818,23 @@ private:
         rendering.pColorAttachments = &color;
         rendering.pDepthAttachment = &depth;
         vkCmdBeginRendering(commands, &rendering);
+        const VkViewport windowViewport{ 0.f, 0.f, float(mExtent.width), float(mExtent.height), 0.f, 1.f };
+        const VkRect2D windowScissor{ { 0, 0 }, mExtent };
+        if (!scene)
+        {
+            vkCmdSetViewport(commands, 0, 1, &windowViewport);
+            vkCmdSetScissor(commands, 0, 1, &windowScissor);
+            if (uiDrawn)
+            {
+                drawUI(commands, slot, *ui, 0, uiDraws);
+            }
+            vkCmdEndRendering(commands);
+            return;
+        }
         const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
 
-        const ScenePush scene = mScenePush;
+        const ScenePush savedPush = mScenePush;
         setWorldViewport(commands); // as OpenGL draws HUDs: in the world view
         const uint32_t worldOffset = mScenePush.list;
         if (mOverlay.sceneMask)
@@ -1794,13 +1844,26 @@ private:
             pushScene(commands);
             vkCmdDraw(commands, 3, 1, 0, 0);
         }
+        if (uiHud != 0)
+        {
+            // The UI's world part draws in the window viewport, its own already folded in.
+            vkCmdSetViewport(commands, 0, 1, &windowViewport);
+            drawUI(commands, slot, *ui, 0, uiHud);
+            // The HUD starts from a cleared depth, as LLDrawPoolHUD clears it.
+            VkClearAttachment clear{};
+            clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            const VkClearRect rect{ windowScissor, 0, 1 };
+            vkCmdClearAttachments(commands, 1, &clear, 1, &rect);
+            vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+            setWorldViewport(commands);
+        }
         if (mOverlay.hudDrawn != 0)
         {
             const uint32_t vertices = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3;
             mScenePush.view = mOverlay.hudView;
             mScenePush.visible = mOverlay.hudList;
             mScenePush.list = 0;
-            mScenePush.phase = mRecordOverlay->hudDebug; // temporary, see asrOverlayHudF.glsl
+            mScenePush.phase = 0;
             if (mOverlay.hudOpaqueCount != 0)
             {
                 vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.hudOpaque);
@@ -1825,7 +1888,13 @@ private:
                 vkCmdDraw(commands, 3, 1, 0, 0);
             }
         }
-        mScenePush = scene;
+        mScenePush = savedPush;
+        if (uiDraws > uiHud)
+        {
+            vkCmdSetViewport(commands, 0, 1, &windowViewport);
+            vkCmdSetScissor(commands, 0, 1, &windowScissor);
+            drawUI(commands, slot, *ui, uiHud, uiDraws);
+        }
         vkCmdEndRendering(commands);
         // The UI draws over this, and the HUD's texture feedback lands outside the frame
         // graph: what comes next, this frame's UI or the next frame's graph, sees both.
@@ -1999,6 +2068,7 @@ private:
         mGraph.setBody(PassMacOITColor, [this]() { return passMacOIT(mMacOIT.colorPass, { &mMacOIT.color, &mMacOIT.weights }, false); });
         mGraph.setBody(PassMacOITResolve, [this]() { return passMacOITResolve(); });
         mGraph.setBody(PassSelectionMask, [this]() { return passSelectionMask(); });
+        mGraph.setBody(PassUIDepth, [this]() { return passUIDepth(); });
     }
 
     void destroyScene()
@@ -2040,7 +2110,7 @@ private:
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
         destroyTarget(mSelectionMask);
-        destroyTarget(mOverlay.hudDepth);
+        destroyTarget(mUIDepth);
         destroyMacOITTargets();
         destroyMacOITPipelines();
         destroyOverlay();
@@ -2129,13 +2199,20 @@ private:
         blend.attachmentCount = 1;
         blend.pAttachments = &attachment;
 
-        const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+        // Depth and culling change per draw (see UIDraw), in the UI depth's rendering.
+        // GL's counter-clockwise front, seen through the Y flip of asrUIV.glsl.
+        raster.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
+        const VkDynamicState dynamics[] = { VK_DYNAMIC_STATE_VIEWPORT,          VK_DYNAMIC_STATE_SCISSOR,
+                                            VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE, VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+                                            VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,  VK_DYNAMIC_STATE_CULL_MODE };
         VkPipelineDynamicStateCreateInfo dynamic{ VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-        dynamic.dynamicStateCount = 2;
+        dynamic.dynamicStateCount = uint32_t(std::size(dynamics));
         dynamic.pDynamicStates = dynamics;
         VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachmentFormats = &mSurfaceFormat.format;
+        rendering.depthAttachmentFormat = DEPTH_FORMAT;
 
         VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
         create.stageCount = 2;
@@ -2145,6 +2222,7 @@ private:
         create.pViewportState = &viewport;
         create.pRasterizationState = &raster;
         create.pMultisampleState = &multisample;
+        create.pDepthStencilState = &depthStencil;
         create.pColorBlendState = &blend;
         create.pDynamicState = &dynamic;
         create.layout = mUIPipelineLayout;
@@ -3045,7 +3123,8 @@ private:
         return true;
     }
 
-    void drawUI(VkCommandBuffer commands, uint32_t slot, const UIList& ui)
+    // The draws from first to end, in a rendering with the UI depth attached.
+    void drawUI(VkCommandBuffer commands, uint32_t slot, const UIList& ui, uint32_t first, uint32_t end)
     {
         const VkDeviceSize offset = 0;
         vkCmdBindVertexBuffers(commands, 0, 1, &mUIBuffers[slot].buffer, &offset);
@@ -3053,9 +3132,27 @@ private:
         const VkViewport viewport{ 0.f, UI_EDGE_NUDGE, float(ui.width()), float(ui.height()), 0.f, 1.f };
         vkCmdSetViewport(commands, 0, 1, &viewport);
 
+        static constexpr VkCompareOp COMPARES[8] = { VK_COMPARE_OP_NEVER,   VK_COMPARE_OP_LESS,      VK_COMPARE_OP_EQUAL,
+                                                     VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL,
+                                                     VK_COMPARE_OP_GREATER_OR_EQUAL, VK_COMPARE_OP_ALWAYS };
+        static constexpr VkCullModeFlags CULLS[3] = { VK_CULL_MODE_NONE, VK_CULL_MODE_FRONT_BIT, VK_CULL_MODE_BACK_BIT };
         VkPipeline bound = VK_NULL_HANDLE;
-        for (const UIDraw& draw : ui.draws())
+        bool stateSet = false;
+        UIDepth depth;
+        UICull cull = UICull::None;
+        const std::vector<UIDraw>& draws = ui.draws();
+        for (uint32_t i = first; i < end && i < draws.size(); ++i)
         {
+            const UIDraw& draw = draws[i];
+            if (draw.clearDepth)
+            {
+                VkClearAttachment clear{};
+                clear.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+                clear.clearValue.depthStencil.depth = 0.f; // farthest, in reversed depth
+                const VkClearRect rect{ { { 0, 0 }, mExtent }, 0, 1 };
+                vkCmdClearAttachments(commands, 1, &clear, 1, &rect);
+                continue;
+            }
             UIRect rect;
             if (!resolveScissor(draw.scissor, ui.width(), ui.height(), mExtent.width, mExtent.height, rect))
             {
@@ -3067,6 +3164,19 @@ private:
                 vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
                 bound = pipeline;
             }
+            if (!stateSet || !(draw.depth == depth))
+            {
+                vkCmdSetDepthTestEnable(commands, draw.depth.test ? VK_TRUE : VK_FALSE);
+                vkCmdSetDepthWriteEnable(commands, draw.depth.write ? VK_TRUE : VK_FALSE);
+                vkCmdSetDepthCompareOp(commands, COMPARES[uint32_t(draw.depth.compare) & 7]);
+                depth = draw.depth;
+            }
+            if (!stateSet || draw.cull != cull)
+            {
+                vkCmdSetCullMode(commands, CULLS[uint32_t(draw.cull)]);
+                cull = draw.cull;
+            }
+            stateSet = true;
             const VkRect2D scissor{ { int32_t(rect.x), int32_t(rect.y) }, { rect.width, rect.height } };
             vkCmdSetScissor(commands, 0, 1, &scissor);
             vkCmdDraw(commands, draw.vertexCount, 1, draw.firstVertex, 0);
@@ -3207,7 +3317,7 @@ private:
                 memory.dstAccessMask |= accessOf(transition.destination);
                 continue;
             }
-            const VkImageAspectFlags aspect = target == &mDepthImage ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+            const VkImageAspectFlags aspect = target == &mDepthImage || target == &mUIDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
             VkImageMemoryBarrier2& barrier = images[imageCount++];
             barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
             barrier.srcStageMask = stagesOf(transition.source);
@@ -3658,7 +3768,8 @@ private:
     }
 
     // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
-    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit, const OverlayInput& overlay)
+    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit, const OverlayInput& overlay,
+                     bool uiWorldDepth)
     {
         const auto readStart = std::chrono::steady_clock::now();
         readSceneResults(slot);
@@ -3668,6 +3779,9 @@ private:
         mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
         // The mask only while something is selected and shown; the outline pass reads it.
         mGraph.setSink(ResultSelectionMask, GraphAccess::FragmentRead, (overlay.outlines || overlay.faceHighlights) && mSceneStore.hasSelection());
+        // The world part of the UI tests against the scene depth, copied into the UI depth.
+        mGraph.setSink(ResultUIDepth, GraphAccess::DepthTarget, uiWorldDepth);
+        mOverlay.depthCopied = uiWorldDepth;
         mRecordOverlay = &overlay;
         if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
@@ -3837,7 +3951,9 @@ private:
                 return false;
             }
         }
-        return true;
+        // The UI's 3D parts and the HUD test it, whether or not a scene is drawn.
+        destroyTarget(mUIDepth);
+        return createTarget(mUIDepth, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "UI depth", mExtent);
     }
 
     static void imageBarrier(VkCommandBuffer commands, VkImage image, VkImageLayout from, VkImageLayout to,
@@ -3893,7 +4009,8 @@ private:
         bringSlots(slot);
         mDiagnostics.checkpoint(commands, PassCount, "texture commands", true);
         mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
-        if (input.camera && !recordScene(commands, slot, *input.camera, input.audit, input.overlay))
+        const bool uiWorldDepth = input.ui && input.ui->worldDepthTested();
+        if (input.camera && !recordScene(commands, slot, *input.camera, input.audit, input.overlay, uiWorldDepth))
         {
             return false;
         }
@@ -3936,22 +4053,13 @@ private:
             vkCmdPushConstants(commands, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(input.seconds), &input.seconds);
             vkCmdDraw(commands, 3, 1, 0, 0);
         }
-        if (input.camera && overlaysDrawn())
-        {
-            // Outlines and HUDs need their own depth: a rendering of their own, then the
-            // UI carries on over what they drew.
-            vkCmdEndRendering(commands);
-            recordOverlays(commands, image);
-            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-            vkCmdBeginRendering(commands, &rendering);
-            vkCmdSetViewport(commands, 0, 1, &viewport);
-            vkCmdSetScissor(commands, 0, 1, &scissor);
-        }
-        if (input.ui && !input.ui->vertices().empty())
-        {
-            drawUI(commands, slot, *input.ui);
-        }
         vkCmdEndRendering(commands);
+        // Outlines, HUDs and the UI's 3D parts need a depth: one rendering for them all.
+        const bool uiDrawn = input.ui && !input.ui->vertices().empty();
+        if ((input.camera && overlaysDrawn()) || uiDrawn)
+        {
+            recordOverlays(commands, image, slot, input.ui, input.camera != nullptr);
+        }
 
         imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT, 0, VK_PIPELINE_STAGE_2_NONE);
@@ -4200,7 +4308,7 @@ private:
     VkExtent2D mSceneExtent{};
     VkOffset2D mWorldViewOffset{}; // where the scene's extent sits in the window, see FrameInput::worldView
     VkExtent2D mWorldViewExtent{}; // what the scene targets should be this frame
-    VkExtent2D mTargetsWindow{};   // the window size the targets were made for
+    TargetImage mUIDepth;          // window-sized: the UI's and the HUD's, see recordOverlays()
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
     float mTimestampMilliseconds = 0.f;
     SceneStats mSceneFrameStats;

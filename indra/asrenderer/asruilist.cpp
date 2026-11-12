@@ -59,6 +59,52 @@ void UIList::clear()
     mBlends.clear();
     mScissor = UIScissor();
     mBlend = 0;
+    mDepthTest = false;
+    mDepthWrite = true;
+    mDepthCompare = UICompare::GreaterOrEqual;
+    mCullEnabled = false;
+    mCullFace = UICull::Back;
+    mViewport[2] = 0;
+    mWorldNear = 0.f;
+    mHudDraw = 0;
+    mWorldDepthTested = false;
+}
+
+void UIList::setDepthCompare(UICompare glCompare)
+{
+    // Reversed depth: nearer is larger, so each compare turns around.
+    static constexpr UICompare REVERSED[8] = { UICompare::Never, UICompare::Greater, UICompare::Equal,
+                                               UICompare::GreaterOrEqual, UICompare::Less, UICompare::NotEqual,
+                                               UICompare::LessOrEqual, UICompare::Always };
+    mDepthCompare = REVERSED[uint32_t(glCompare) & 7];
+}
+
+void UIList::setViewport(int32_t x, int32_t y, int32_t width, int32_t height)
+{
+    const bool full = x == 0 && y == 0 && uint32_t(width) == mWidth && uint32_t(height) == mHeight;
+    mViewport[0] = x;
+    mViewport[1] = y;
+    mViewport[2] = full || width <= 0 || height <= 0 ? 0 : width;
+    mViewport[3] = height;
+}
+
+void UIList::clearDepth()
+{
+    UIDraw draw;
+    draw.firstVertex = uint32_t(mVertices.size());
+    draw.clearDepth = true;
+    mDraws.push_back(draw);
+}
+
+void UIList::beginWorld(float nearClip)
+{
+    mWorldNear = nearClip;
+}
+
+void UIList::markHud()
+{
+    mWorldNear = 0.f;
+    mHudDraw = uint32_t(mDraws.size());
 }
 
 void UIList::setBlend(const UIBlend& blend)
@@ -92,20 +138,44 @@ UIDraw& UIList::drawFor(UIPrimitive primitive)
     {
         mBlends.push_back(UIBlend());
     }
-    if (!mDraws.empty())
+    UIDepth depth;
+    depth.test = mDepthTest;
+    depth.write = mDepthTest && mDepthWrite;
+    depth.compare = mDepthCompare;
+    // Culling only means something to triangles, and GL culls none of the rest.
+    const UICull cull = mCullEnabled && primitive == UIPrimitive::Triangles ? mCullFace : UICull::None;
+    // GL clips to the viewport too: with one smaller than the list, the scissor keeps to it.
+    UIScissor scissor = mScissor;
+    if (mViewport[2] != 0)
+    {
+        const int32_t left = scissor.enabled ? std::max(scissor.x, mViewport[0]) : mViewport[0];
+        const int32_t bottom = scissor.enabled ? std::max(scissor.y, mViewport[1]) : mViewport[1];
+        const int32_t right = scissor.enabled ? std::min(scissor.x + scissor.width, mViewport[0] + mViewport[2]) : mViewport[0] + mViewport[2];
+        const int32_t top = scissor.enabled ? std::min(scissor.y + scissor.height, mViewport[1] + mViewport[3]) : mViewport[1] + mViewport[3];
+        scissor = { true, left, bottom, std::max(right - left, 0), std::max(top - bottom, 0) };
+    }
+    // A draw belongs to the part before the HUD or after it, never to both.
+    if (!mDraws.empty() && mDraws.size() != mHudDraw)
     {
         UIDraw& last = mDraws.back();
-        if (last.primitive == primitive && last.blend == mBlend && last.scissor == mScissor)
+        if (!last.clearDepth && last.primitive == primitive && last.blend == mBlend && last.scissor == scissor &&
+            last.depth == depth && last.cull == cull)
         {
             return last;
         }
     }
     UIDraw draw;
     draw.firstVertex = uint32_t(mVertices.size());
-    draw.scissor = mScissor;
+    draw.scissor = scissor;
     draw.blend = mBlend;
     draw.primitive = primitive;
+    draw.depth = depth;
+    draw.cull = cull;
     mDraws.push_back(draw);
+    if (mWorldNear > 0.f && depth.test)
+    {
+        mWorldDepthTested = true;
+    }
     return mDraws.back();
 }
 
@@ -169,6 +239,32 @@ void UIList::append(UIGeometry geometry, const UIVertex* in, uint32_t count)
                 *out++ = in[0];
             }
             break;
+    }
+
+    UIVertex* const first = mVertices.data() + start;
+    if (mViewport[2] != 0 && mWidth != 0 && mHeight != 0)
+    {
+        // From the viewport's clip space to the list's: x' = x * sx + w * ox.
+        const float sx = float(mViewport[2]) / float(mWidth);
+        const float sy = float(mViewport[3]) / float(mHeight);
+        const float ox = float(2 * mViewport[0] + mViewport[2]) / float(mWidth) - 1.f;
+        const float oy = float(2 * mViewport[1] + mViewport[3]) / float(mHeight) - 1.f;
+        for (UIVertex* v = first; v != first + added; ++v)
+        {
+            v->position[0] = v->position[0] * sx + v->position[3] * ox;
+            v->position[1] = v->position[1] * sy + v->position[3] * oy;
+        }
+    }
+    if (draw.depth.test)
+    {
+        // The UI vertex shader makes depth (z + w) / 2; the z written here makes it
+        // the reversed depth wanted: nearClip / w for the world, 1 - GL's otherwise.
+        for (UIVertex* v = first; v != first + added; ++v)
+        {
+            const float w = v->position[3];
+            const float wanted = mWorldNear > 0.f ? mWorldNear : 0.5f * (w - v->position[2]);
+            v->position[2] = 2.f * wanted - w;
+        }
     }
     draw.vertexCount += added;
 }

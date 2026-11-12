@@ -27,6 +27,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llviewerdisplay.h"
+#include "asrbridge.h" // <AS:Chanayane/>
 #include "asrgltable.h" // <AS:Chanayane/>
 #include "asrviewer.h" // <AS:Chanayane/>
 #include "asrworld.h" // <AS:Chanayane/>
@@ -247,7 +248,6 @@ static void display_native(bool rebuild)
     {
         gPipeline.rebuildPools();
     }
-    LLHUDObject::renderAllForTimer();
 
     LLViewerTexture::updateClass();
     gBumpImageList.updateImages();
@@ -272,6 +272,28 @@ static void display_native(bool rebuild)
     if (LLApp::isExiting() || !ASRViewer::beginUI())
     {
         return;
+    }
+
+    // The 3D parts of the UI, in OpenGL's order around the HUD (see display()): the world
+    // part against the scene depth, then the HUD, then 3D UI and floating text over it.
+    if (gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_UI) && !gDisconnected)
+    {
+        gViewerWindow->setup3DRender();
+        gViewerWindow->setup3DViewport();
+        ASR::beginUIWorld(LLViewerCamera::getInstance()->getNear());
+        render_hud_elements();
+        ASR::markUIHud();
+        {
+            LLGLSDefault gls_default;
+            LLGLSUIDefault gls_ui;
+            gPipeline.disableLights();
+            render_ui_3d();
+            LLHUDObject::renderAll();
+        }
+    }
+    else
+    {
+        LLHUDObject::renderAllForTimer(); // makes particle effects disappear, as display() does
     }
 
     LLGLSUIDefault gls_ui;

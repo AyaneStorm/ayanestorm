@@ -188,6 +188,42 @@ void setCapability(GLenum capability, bool enabled)
     {
         ASR::setScissorEnabled(enabled);
     }
+    else if (capability == GL_DEPTH_TEST)
+    {
+        ASR::setDepthTestEnabled(enabled);
+    }
+    else if (capability == GL_CULL_FACE)
+    {
+        ASR::setCullEnabled(enabled);
+    }
+}
+
+void APIENTRY asrDepthFunc(GLenum compare)
+{
+    ASR::setDepthCompare(U8(compare - GL_NEVER));
+}
+
+void APIENTRY asrDepthMask(GLboolean enabled)
+{
+    ASR::setDepthWrite(enabled != GL_FALSE);
+}
+
+void APIENTRY asrCullFace(GLenum face)
+{
+    ASR::setCullFace(face == GL_FRONT ? 0 : 1); // GL_FRONT_AND_BACK draws nothing: rare, taken as back
+}
+
+void APIENTRY asrViewport(GLint x, GLint y, GLsizei width, GLsizei height)
+{
+    ASR::setViewport(x, y, width, height);
+}
+
+void APIENTRY asrClear(GLbitfield mask)
+{
+    if (mask & GL_DEPTH_BUFFER_BIT)
+    {
+        ASR::clearDepth();
+    }
 }
 
 void APIENTRY asrEnable(GLenum capability)
@@ -317,6 +353,11 @@ void* ASRGLTable::get(const char* name)
         { "glScissor",                 answer(asrScissor) },
         { "glBlendFunc",               answer(asrBlendFunc) },
         { "glBlendFuncSeparate",       answer(asrBlendFuncSeparate) },
+        { "glDepthFunc",               answer(asrDepthFunc) },
+        { "glDepthMask",               answer(asrDepthMask) },
+        { "glCullFace",                answer(asrCullFace) },
+        { "glViewport",                answer(asrViewport) },
+        { "glClear",                   answer(asrClear) },
         { "glGenBuffers",              answer(asrGenNames) },
         { "glGenFramebuffers",         answer(asrGenNames) },
         { "glGenRenderbuffers",        answer(asrGenNames) },

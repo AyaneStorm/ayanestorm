@@ -46,6 +46,7 @@ enum SceneResult : ResultId
     ResultMacOITWeights,  // sum of weight, and of optical depth
     ResultSelectionList,  // the early cull's clusters of selected instances
     ResultSelectionMask,  // where selections are, for the outline: see asrOverlayMaskF.glsl
+    ResultUIDepth,        // window-sized: the scene depth in the world view, for the UI's world part
     ResultCount
 };
 
@@ -76,6 +77,7 @@ enum ScenePass : PassId
     PassMacOITColor,
     PassMacOITResolve,
     PassSelectionMask, // only while something is selected: the mask's sink is off otherwise
+    PassUIDepth,       // only while the UI's world part tests depth: see asruilist.h
     PassReadCounts,
     PassAuditReset,
     PassAuditCull,

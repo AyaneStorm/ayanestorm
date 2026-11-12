@@ -35,6 +35,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("macoit weights", ResultScope::Frame);
     graph.addResult("selection list", ResultScope::Frame);
     graph.addResult("selection mask", ResultScope::Frame);
+    graph.addResult("ui depth", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -103,6 +104,9 @@ void declareSceneGraph(FrameGraph& graph)
                                       { ResultSelectionList, VertexRead },
                                       { ResultDepth, FragmentRead | Keep },
                                       { ResultSelectionMask, ColorTarget } });
+    // The final opaque depth into the window-sized UI depth, in the world view, which the
+    // UI's world part then tests against, as OpenGL's render_hud_elements() does.
+    graph.addPass("ui depth", { { ResultDepth, FragmentRead | Keep }, { ResultUIDepth, DepthTarget } });
     graph.addPass("read counts", { { ResultDrawArguments, CopyRead }, { ResultSceneCounts, CopyWrite } });
 
     // The audit runs last, and reuses the lists: nothing after it reads them. All of it
