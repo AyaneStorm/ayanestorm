@@ -1022,9 +1022,13 @@ private:
         pool.poolSizeCount = 2;
         pool.pPoolSizes = sizes;
 
+        // World-space vertices to the window: see UI_WORLD_BIT and asrUIV.glsl.
+        const VkPushConstantRange push{ VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(float) * 16 };
         VkPipelineLayoutCreateInfo pipelineLayout{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
         pipelineLayout.setLayoutCount = 1;
         pipelineLayout.pSetLayouts = &mUISetLayout;
+        pipelineLayout.pushConstantRangeCount = 1;
+        pipelineLayout.pPushConstantRanges = &push;
 
         if (vkCreateDescriptorSetLayout(mDevice, &layout, nullptr, &mUISetLayout) != VK_SUCCESS ||
             vkCreateDescriptorPool(mDevice, &pool, nullptr, &mUIPool) != VK_SUCCESS ||
@@ -1775,8 +1779,15 @@ private:
     // Over the composited image, in one rendering with the UI depth: with a scene, the
     // scene depth copied in when the UI's world part tests it, the scene's outlines, that
     // world part, the depth cleared, the HUD and its outlines; then the rest of the UI.
-    void recordOverlays(VkCommandBuffer commands, uint32_t image, uint32_t slot, const UIList* ui, bool scene)
+    void recordOverlays(VkCommandBuffer commands, uint32_t image, uint32_t slot, const UIList* ui, const SceneCamera3D* camera)
     {
+        const bool scene = camera != nullptr;
+        if (ui)
+        {
+            const float size[2] = { float(mSceneExtent.width), float(mSceneExtent.height) };
+            const float offset[2] = { float(mWorldViewOffset.x), float(mWorldViewOffset.y) };
+            uiWorldToWindow(camera ? camera->viewProjection : nullptr, *ui, size, offset, mUIWorldToWindow);
+        }
         const bool uiDrawn = ui && !ui->vertices().empty();
         const uint32_t uiDraws = uiDrawn ? uint32_t(ui->draws().size()) : 0;
         const uint32_t uiHud = scene ? std::min(ui ? ui->hudDraw() : 0u, uiDraws) : 0;
@@ -3131,6 +3142,7 @@ private:
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mUIPipelineLayout, 0, 1, &mUISets[slot], 0, nullptr);
         const VkViewport viewport{ 0.f, UI_EDGE_NUDGE, float(ui.width()), float(ui.height()), 0.f, 1.f };
         vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdPushConstants(commands, mUIPipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(mUIWorldToWindow), mUIWorldToWindow);
 
         static constexpr VkCompareOp COMPARES[8] = { VK_COMPARE_OP_NEVER,   VK_COMPARE_OP_LESS,      VK_COMPARE_OP_EQUAL,
                                                      VK_COMPARE_OP_LESS_OR_EQUAL, VK_COMPARE_OP_GREATER, VK_COMPARE_OP_NOT_EQUAL,
@@ -4058,7 +4070,7 @@ private:
         const bool uiDrawn = input.ui && !input.ui->vertices().empty();
         if ((input.camera && overlaysDrawn()) || uiDrawn)
         {
-            recordOverlays(commands, image, slot, input.ui, input.camera != nullptr);
+            recordOverlays(commands, image, slot, input.ui, input.camera);
         }
 
         imageBarrier(commands, mImages[image], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
@@ -4309,6 +4321,7 @@ private:
     VkOffset2D mWorldViewOffset{}; // where the scene's extent sits in the window, see FrameInput::worldView
     VkExtent2D mWorldViewExtent{}; // what the scene targets should be this frame
     TargetImage mUIDepth;          // window-sized: the UI's and the HUD's, see recordOverlays()
+    float mUIWorldToWindow[16]{};  // this frame's, see uiWorldToWindow()
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
     float mTimestampMilliseconds = 0.f;
     SceneStats mSceneFrameStats;

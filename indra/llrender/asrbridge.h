@@ -19,6 +19,8 @@
 
 #include <vector>
 
+class LLGLSLShader;
+
 namespace ASR
 {
     // How a texture's pixels arrive. Every layout has 8 bits per channel.
@@ -40,13 +42,16 @@ namespace ASR
         const F32* positions = nullptr; // x, y, z, and one unused float per vertex
         const F32* uvs = nullptr;       // two floats per vertex
         const U32* colors = nullptr;    // RGBA8 per vertex
-        const F32* matrix = nullptr;    // to clip space
+        const F32* matrix = nullptr;    // to clip space; to the camera's eye space when world is set
+        bool world = false;             // drawn with the world camera's projection: see beginUIWorld()
         const F32* uvMatrix = nullptr;  // null when it is the identity
         U32 count = 0;
         U32 slot = 0;                   // where the texture is, 0 being white
         U8 mode = 0;                    // LLRender::eGeomModes
         U8 sampler = 0;                 // in the order of asr::UISampler
         bool solidColor = false;        // gSolidColorProgram, not gUIProgram
+        bool uniformColor = false;      // one colour for all vertices: singleColor, colors unused
+        U32 singleColor = 0xFFFFFFFF;   // RGBA8
     };
 
     class RendererLink
@@ -92,7 +97,7 @@ namespace ASR
         virtual void setUIDepthCull(bool test, bool write, U8 compare, bool cull, U8 cullFace) = 0;
         virtual void setUIViewport(S32 x, S32 y, S32 width, S32 height) = 0;
         virtual void clearUIDepth() = 0;
-        virtual void beginUIWorld(F32 nearClip) = 0;
+        virtual void beginUIWorld() = 0;
         virtual void markUIHud() = 0;
         virtual void drawUI(const UIDrawData& data) = 0;
         virtual void publishUI() = 0;
@@ -199,9 +204,16 @@ namespace ASR
 
     // The world part of the UI, the 3D elements OpenGL draws before the HUD with the
     // scene's depth (render_hud_elements()), runs from beginUIWorld() to markUIHud().
-    // nearClip is the renderer camera's, as published for this frame.
-    void beginUIWorld(F32 nearClip);
+    // Called with the world camera's matrices current: from then until endUI(), draws
+    // with that projection are sent in its eye space, for the renderer to place in the
+    // world and project with the camera it draws (see asr::UI_WORLD_BIT).
+    void beginUIWorld();
     void markUIHud();
+
+    // Programs whose colour is their diffuse colour uniform, not the vertices', as
+    // gDebugProgram (the rotate manipulator): the UI draws them flat in that colour.
+    void addUniformColorProgram(const LLGLSLShader* shader);
+    void setDiffuseColor(const LLGLSLShader* shader, const F32 color[4]);
 }
 
 #endif // ASR_BRIDGE_H

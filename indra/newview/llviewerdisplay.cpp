@@ -280,7 +280,7 @@ static void display_native(bool rebuild)
     {
         gViewerWindow->setup3DRender();
         gViewerWindow->setup3DViewport();
-        ASR::beginUIWorld(LLViewerCamera::getInstance()->getNear());
+        ASR::beginUIWorld();
         render_hud_elements();
         ASR::markUIHud();
         {

@@ -75,6 +75,30 @@ bool sDepthCullDirty = true;
 S32 sViewport[4] = { 0, 0, 0, 0 };
 bool sViewportDirty = false;
 
+// See ASR::beginUIWorld().
+glm::mat4 sWorldProjection(1.f);
+bool sWorldActive = false;
+
+// See ASR::addUniformColorProgram(): a handful, with their last diffuse colour (RGBA8).
+struct UniformColorProgram
+{
+    const LLGLSLShader* shader;
+    U32 color;
+};
+std::vector<UniformColorProgram> sUniformColorPrograms;
+
+UniformColorProgram* findUniformColorProgram(const LLGLSLShader* shader)
+{
+    for (UniformColorProgram& program : sUniformColorPrograms)
+    {
+        if (program.shader == shader)
+        {
+            return &program;
+        }
+    }
+    return nullptr;
+}
+
 const Texture& findTexture(U32 name)
 {
     const U32 index = name - FIRST_TEXTURE_NAME;
@@ -178,6 +202,7 @@ void ASR::beginUI()
         sDepthCullDirty = true;
         sViewportDirty = sViewport[2] != 0;
     }
+    sWorldActive = false;
 }
 
 void ASR::endUI()
@@ -187,6 +212,7 @@ void ASR::endUI()
         sLink->publishUI();
     }
     sRecording = false;
+    sWorldActive = false;
 }
 
 void ASR::drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* colors, U32 count,
@@ -199,7 +225,8 @@ void ASR::drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* color
 
     const LLGLSLShader* shader = LLGLSLShader::sCurBoundShaderPtr;
     const bool solidColor = shader == &gSolidColorProgram;
-    if (!solidColor && shader != &gUIProgram)
+    const UniformColorProgram* uniformColor = solidColor || shader == &gUIProgram ? nullptr : findUniformColorProgram(shader);
+    if (!solidColor && shader != &gUIProgram && !uniformColor)
     {
         reportLeftOut(shader);
         return;
@@ -208,13 +235,15 @@ void ASR::drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* color
     sendChangedState();
 
     const Texture& bound = findTexture(gGL.getTexUnit(0)->getCurrTexture());
-    const glm::mat4 matrix = projection * modelview;
+    const bool world = sWorldActive && projection == sWorldProjection;
+    const glm::mat4 matrix = world ? modelview : projection * modelview;
 
     UIDrawData data;
     data.positions = positions;
     data.uvs = uvs;
     data.colors = colors;
     data.matrix = glm::value_ptr(matrix);
+    data.world = world;
     // Only gUIProgram's vertex shader reads the texture matrix.
     data.uvMatrix = (solidColor || texture == glm::mat4(1.f)) ? nullptr : glm::value_ptr(texture);
     data.count = count;
@@ -222,6 +251,14 @@ void ASR::drawUI(U8 mode, const F32* positions, const F32* uvs, const U32* color
     data.mode = mode;
     data.sampler = bound.sampler;
     data.solidColor = solidColor;
+    if (uniformColor)
+    {
+        // Flat in its colour, untextured, as these programs draw.
+        data.uniformColor = true;
+        data.singleColor = uniformColor->color;
+        data.slot = 0;
+        data.uvMatrix = nullptr;
+    }
     sLink->drawUI(data);
 }
 
@@ -656,11 +693,34 @@ void ASR::clearDepth()
     }
 }
 
-void ASR::beginUIWorld(F32 nearClip)
+void ASR::beginUIWorld()
 {
     if (sLink && sRecording)
     {
-        sLink->beginUIWorld(nearClip);
+        sWorldProjection = gGL.getProjectionMatrix(); // what LLRender hands drawUI()
+        sWorldActive = true;
+        sLink->beginUIWorld();
+    }
+}
+
+void ASR::addUniformColorProgram(const LLGLSLShader* shader)
+{
+    if (!findUniformColorProgram(shader))
+    {
+        sUniformColorPrograms.push_back({ shader, 0xFFFFFFFF });
+    }
+}
+
+void ASR::setDiffuseColor(const LLGLSLShader* shader, const F32 color[4])
+{
+    if (UniformColorProgram* program = findUniformColorProgram(shader))
+    {
+        U32 packed = 0;
+        for (U32 i = 0; i < 4; ++i)
+        {
+            packed |= U32(llclamp(color[i], 0.f, 1.f) * 255.f + 0.5f) << (i * 8);
+        }
+        program->color = packed;
     }
 }
 

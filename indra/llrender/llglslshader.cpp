@@ -36,6 +36,7 @@
 
 #include "hbxxh.h"
 #include "llsdserialize.h"
+#include "asrbridge.h" // <AS:Chanayane/>
 #include "asrgltable.h" // <AS:Chanayane/>
 
 #if LL_DARWIN
@@ -1449,6 +1450,13 @@ void LLGLSLShader::uniform4f(U32 index, GLfloat x, GLfloat y, GLfloat z, GLfloat
             llassert(false);
             return;
         }
+        // <AS:Chanayane> The native UI draws some programs in this colour.
+        if (index == LLShaderMgr::DIFFUSE_COLOR && ASR::active())
+        {
+            const GLfloat color[4] = { x, y, z, w };
+            ASR::setDiffuseColor(this, color);
+        }
+        // </AS:Chanayane>
 
         if (mUniform[index] >= 0)
         {
@@ -1612,6 +1620,12 @@ void LLGLSLShader::uniform4fv(U32 index, U32 count, const GLfloat* v)
             llassert(false);
             return;
         }
+        // <AS:Chanayane> The native UI draws some programs in this colour.
+        if (index == LLShaderMgr::DIFFUSE_COLOR && count != 0 && ASR::active())
+        {
+            ASR::setDiffuseColor(this, v);
+        }
+        // </AS:Chanayane>
 
         if (mUniform[index] >= 0)
         {

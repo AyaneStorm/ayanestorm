@@ -174,6 +174,15 @@ sees it; what it lacks is depth, cull and viewport state, and the HUD's place in
   removed. `asrenderer_test`: UI list checks pass; `--scene --overlay --ui` draws a wire
   box through the city, solid where seen and faint where hidden, clipped to the world
   view; no validation errors. Viewer and Metal unbuilt.
+- After the first viewer test (manipulators jumped while a zoom eased; rotate rings
+  missing): draws made with the world camera's projection (the bridge compares it with
+  the one current at `beginUIWorld()`) are sent in eye space; `asrviewer.cpp` takes them
+  to the renderer's world with the published camera's rows, flagged `UI_WORLD_BIT`;
+  `asrUIV.glsl` projects them with `uiWorldToWindow()` (the camera drawn this frame, into
+  the world view), so they hold still through zoom easing, prediction and capped UI
+  updates, with the scene's own depth. `gDebugProgram` draws flat in its diffuse colour
+  uniform (`ASR::addUniformColorProgram()`, tagged hook in `LLGLSLShader::uniform4f[v]`).
+  Test box placed once in the world. Self-tests and validated overlay run pass.
 - Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
   (context) colours; mesh selections use the same colours.
 - To do: viewer build test of the 3D UI and floating text (programs other than

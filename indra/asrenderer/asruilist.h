@@ -29,6 +29,10 @@ constexpr float UI_EDGE_NUDGE = 1.f / 128.f;
 // How UIVertex::texture packs its fields.
 constexpr uint32_t UI_TEXTURE_SLOT_MASK = 0xFFFFF;
 constexpr uint32_t UI_SAMPLER_SHIFT = 28;
+// The position is in world space (w 1), not clip space: the device projects it with the
+// camera it draws the scene with this frame, so it holds still while that camera eases
+// on from the one the list was made with (zoom, prediction), and between list updates.
+constexpr uint32_t UI_WORLD_BIT = 1u << 27;
 constexpr uint32_t UI_SOLID_COLOR_BIT = 1u << 31; // keep the vertex color, take alpha from the texture
 
 enum class UISampler : uint32_t
@@ -166,6 +170,14 @@ struct UIDepth
     }
 };
 
+class UIList;
+
+// For asrUIV.glsl: world space to the list's clip space, through viewProjection (the
+// camera drawn this frame, column-major, Y down, reversed depth) into the scene's place
+// in the window (pixels, from the top left). With no camera, all zeros: nothing shows.
+void uiWorldToWindow(const float* viewProjection, const UIList& ui, const float sceneSize[2], const float sceneOffset[2],
+                     float out[16]);
+
 struct UIDraw
 {
     uint32_t firstVertex = 0;
@@ -186,7 +198,8 @@ struct UIStreams
     const float* uvs = nullptr;          // two floats per vertex
     const uint32_t* colors = nullptr;    // RGBA8 per vertex; null uses singleColor
     uint32_t singleColor = 0xFFFFFFFF;
-    const float* matrix = nullptr;       // column-major 4x4, to clip space
+    const float* matrix = nullptr;       // column-major 4x4, to clip space, or world space when world is set
+    bool world = false;                  // see UI_WORLD_BIT
     const float* uvMatrix = nullptr;     // column-major 4x4; null means none
     uint32_t texture = 0;                // see uiTextureBits()
 };
@@ -223,14 +236,14 @@ public:
     // as the list draws in one viewport of its full size.
     void setViewport(int32_t x, int32_t y, int32_t width, int32_t height);
 
-    // Depth-tested vertices get their depth in the renderer's reversed convention.
-    // Between beginWorld() and markHud() they are the world camera's, compared with
-    // the scene depth: reversed with no far plane, `nearClip / w`. Elsewhere they keep
-    // GL's own window depth, reversed, so they compare with each other and with the
-    // HUD's depth as in OpenGL. markHud() is where the HUD goes: the draws before it
-    // are drawn before the HUD, the rest after.
-    void beginWorld(float nearClip);
+    // World-space vertices (UI_WORLD_BIT) get the scene's own depth from the device's
+    // projection. Other depth-tested vertices keep GL's window depth, reversed, so they
+    // compare with each other and with the HUD's depth as in OpenGL. beginWorld() opens
+    // the part drawn before the HUD, against the scene depth; markHud() is where the HUD
+    // goes: the draws before it are drawn before the HUD, the rest after.
+    void beginWorld();
     void markHud();
+    bool hasWorld() const { return mHasWorld; } // some vertices are in world space
     uint32_t hudDraw() const { return mHudDraw; }      // the first draw after the HUD
     bool worldDepthTested() const { return mWorldDepthTested; } // a draw before the HUD tests depth
 
@@ -265,9 +278,10 @@ private:
     bool mCullEnabled = false;
     UICull mCullFace = UICull::Back;
     int32_t mViewport[4] = { 0, 0, 0, 0 }; // zero width: the list's full size
-    float mWorldNear = 0.f;                // above 0 between beginWorld() and markHud()
+    bool mInWorld = false;                 // between beginWorld() and markHud()
     uint32_t mHudDraw = 0;
     bool mWorldDepthTested = false;
+    bool mHasWorld = false;
 };
 
 } // namespace asr

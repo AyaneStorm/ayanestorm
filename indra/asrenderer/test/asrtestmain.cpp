@@ -474,27 +474,44 @@ void testUIList()
     list.append(UIGeometry::Triangles, quad, 3);
     expect(list.draws().size() == 4 && list.draws()[3].vertexCount == 6, "the same scissor keeps merging");
 
-    // Depth: GL's compares reversed; world vertices end at nearClip / w, the rest at one
-    // less GL's depth; asrUIV.glsl makes depth (z + w) / 2.
+    // Depth: GL's compares reversed; world vertices kept as they are, for the device to
+    // project; the rest at one less GL's depth; asrUIV.glsl makes depth (z + w) / 2.
     list.clear();
     list.setSize(100, 100);
     asr::UIVertex deep[3] = { quad[0], quad[1], quad[2] };
-    for (asr::UIVertex& v : deep)
+    asr::UIVertex placed[3] = { quad[0], quad[1], quad[2] };
+    for (uint32_t i = 0; i < 3; ++i)
     {
-        v.position[2] = 0.5f;
-        v.position[3] = 2.f;
+        deep[i].position[2] = 0.5f;
+        deep[i].position[3] = 2.f;
+        placed[i].position[2] = 7.f;
+        placed[i].texture |= asr::UI_WORLD_BIT;
     }
-    list.beginWorld(0.25f);
+    list.beginWorld();
     list.setDepthTest(true);
     list.setDepthCompare(asr::UICompare::LessOrEqual);
-    list.append(UIGeometry::Triangles, deep, 3);
+    list.setViewport(50, 0, 50, 100);
+    list.append(UIGeometry::Triangles, placed, 3);
+    list.setViewport(0, 0, 100, 100);
     expect(list.draws()[0].depth.test && list.draws()[0].depth.write && list.draws()[0].depth.compare == asr::UICompare::GreaterOrEqual,
            "GL's LEQUAL becomes GEQUAL in reversed depth, writing");
-    expect(std::fabs((list.vertices()[0].position[2] + 2.f) * 0.5f / 2.f - 0.125f) < 1e-6f, "a world vertex lands at nearClip / w");
+    expect(list.vertices()[0].position[2] == 7.f && list.vertices()[0].position[0] == 0.f && list.hasWorld(),
+           "a world vertex is neither folded nor rewritten");
     list.markHud();
     list.append(UIGeometry::Triangles, deep, 3);
     expect(list.hudDraw() == 1 && list.draws().size() == 2 && list.worldDepthTested(), "the HUD mark splits the list");
     expect(std::fabs((list.vertices()[3].position[2] + 2.f) * 0.5f / 2.f - 0.375f) < 1e-6f, "after the HUD, depth is one less GL's");
+
+    // World to the list's clip space: a scene of 50 x 100 at x 50 in a list of 100 x 100.
+    const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+    const float sceneSize[2] = { 50.f, 100.f };
+    const float sceneOffset[2] = { 50.f, 0.f };
+    float toWindow[16];
+    asr::uiWorldToWindow(identity, list, sceneSize, sceneOffset, toWindow);
+    expect(toWindow[0] == 0.5f && toWindow[12] == 0.5f && toWindow[5] == 1.f && toWindow[13] == 0.f,
+           "the scene's clip space folds into the list's");
+    asr::uiWorldToWindow(nullptr, list, sceneSize, sceneOffset, toWindow);
+    expect(toWindow[15] == 0.f, "with no camera, world vertices collapse");
     list.clearDepth();
     list.setDepthTest(false);
     list.setViewport(50, 0, 50, 100);
@@ -2370,10 +2387,20 @@ public:
     // where the scene hides it (GL_GREATER) faint. Then the HUD mark.
     void buildWorld(asr::UIList& list, uint32_t height, const asr::SceneCamera3D& camera, const uint32_t worldView[4])
     {
-        list.beginWorld(camera.nearClip);
+        list.beginWorld();
         list.setViewport(int32_t(worldView[0]), int32_t(height) - int32_t(worldView[1] + worldView[3]), int32_t(worldView[2]), int32_t(worldView[3]));
-        const float* r = camera.viewRows[2];
-        const float centre[3] = { camera.position[0] - r[0] * 60.f, camera.position[1] - r[1] * 60.f, camera.position[2] - r[2] * 60.f };
+        // Placed once, where the camera first looks: it then keeps still in the world
+        // while the camera moves, as the device projects it each frame.
+        if (!mBoxPlaced)
+        {
+            const float* r = camera.viewRows[2];
+            for (uint32_t i = 0; i < 3; ++i)
+            {
+                mBoxCentre[i] = camera.position[i] - r[i] * 60.f;
+            }
+            mBoxPlaced = true;
+        }
+        const float* centre = mBoxCentre;
         asr::UIVertex lines[24];
         for (uint32_t edge = 0; edge < 12; ++edge)
         {
@@ -2385,15 +2412,13 @@ public:
                 p[axis] = end ? 25.f : -25.f;
                 p[(axis + 1) % 3] = (edge & 1) ? 25.f : -25.f;
                 p[(axis + 2) % 3] = (edge & 2) ? 25.f : -25.f;
-                const float* m = camera.viewProjection;
-                const float x = centre[0] + p[0], y = centre[1] + p[1], z = centre[2] + p[2];
                 asr::UIVertex& v = lines[edge * 2 + end];
                 v = uiVertex(0, 0, 0);
-                v.position[0] = m[0] * x + m[4] * y + m[8] * z + m[12];
-                v.position[1] = -(m[1] * x + m[5] * y + m[9] * z + m[13]); // the renderer's Y down to GL's up
-                v.position[2] = 0.f;                                      // rewritten: depth tested
-                v.position[3] = m[3] * x + m[7] * y + m[11] * z + m[15];
-                v.texture = asr::uiTextureBits(0);
+                v.position[0] = centre[0] + p[0];
+                v.position[1] = centre[1] + p[1];
+                v.position[2] = centre[2] + p[2];
+                v.position[3] = 1.f;
+                v.texture = asr::uiTextureBits(0) | asr::UI_WORLD_BIT;
             }
         }
         list.setDepthTest(true);
@@ -2523,6 +2548,8 @@ private:
     uint32_t mMipped = 0;
     uint32_t mShrunk = 0;
     uint32_t mFlushes = 0;
+    float mBoxCentre[3] = {}; // see buildWorld()
+    bool mBoxPlaced = false;
     uint32_t mBuilds = 0;
     uint32_t mReplaced = 0;
 };

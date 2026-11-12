@@ -307,6 +307,10 @@ public:
                 // The world part against the scene depth, then the depth farthest again for
                 // the HUD's part, as Vulkan's recordOverlays(). No HUD in Metal yet.
                 const UIList& ui = *input.ui;
+                // The scene fills the window in Metal so far: see the composite above.
+                const float size[2] = { float(width), float(height) };
+                const float offset[2] = { 0.f, 0.f };
+                uiWorldToWindow(input.camera ? input.camera->viewProjection : nullptr, ui, size, offset, mUIWorldToWindow);
                 const uint32_t draws = uint32_t(ui.draws().size());
                 const uint32_t hud = input.camera ? std::min(ui.hudDraw(), draws) : 0;
                 if (hud != 0)
@@ -1587,6 +1591,7 @@ private:
                 uint32_t first, uint32_t end)
     {
         [encoder setVertexBuffer:mUIBuffers[slot] offset:0 atIndex:UI_VERTEX_BUFFER];
+        [encoder setVertexBytes:mUIWorldToWindow length:sizeof(mUIWorldToWindow) atIndex:PUSH_CONSTANT_BUFFER];
         [encoder setFragmentBuffer:mArguments[slot] offset:0 atIndex:0];
         [encoder setViewport:MTLViewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 }];
         // GL's counter-clockwise front: the Metal shader build undoes asrUIV.glsl's Y flip.
@@ -2407,6 +2412,7 @@ private:
     id<MTLDepthStencilState> mDepthState = nil;
     id<MTLDepthStencilState> mUIDepthStates[32] = {};      // by UIDepth: test, write, compare
     id<MTLTexture> mUIDepth = nil;                          // window-sized, memoryless where it can be
+    float mUIWorldToWindow[16] = {};                        // this frame's, see uiWorldToWindow()
     id<MTLFence> mSceneFence = nil;
     id<MTLTexture> mVisibilityTarget = nil;
     id<MTLTexture> mDepthTarget = nil;

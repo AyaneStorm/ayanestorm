@@ -52,6 +52,29 @@ bool resolveScissor(const UIScissor& scissor, uint32_t listWidth, uint32_t listH
     return rect.width != 0 && rect.height != 0;
 }
 
+void uiWorldToWindow(const float* viewProjection, const UIList& ui, const float sceneSize[2], const float sceneOffset[2],
+                     float out[16])
+{
+    std::fill(out, out + 16, 0.f);
+    if (!viewProjection || ui.width() == 0 || ui.height() == 0)
+    {
+        return;
+    }
+    // The scene's clip space to the list's: x' = x * s + w * o, as in setViewport().
+    const float scale[2] = { sceneSize[0] / float(ui.width()), sceneSize[1] / float(ui.height()) };
+    const float offset[2] = { (2.f * sceneOffset[0] + sceneSize[0]) / float(ui.width()) - 1.f,
+                              (2.f * sceneOffset[1] + sceneSize[1]) / float(ui.height()) - 1.f };
+    for (uint32_t column = 0; column < 4; ++column)
+    {
+        const float* in = viewProjection + column * 4;
+        float* o = out + column * 4;
+        o[0] = in[0] * scale[0] + in[3] * offset[0];
+        o[1] = in[1] * scale[1] + in[3] * offset[1];
+        o[2] = in[2];
+        o[3] = in[3];
+    }
+}
+
 void UIList::clear()
 {
     mVertices.clear();
@@ -65,9 +88,10 @@ void UIList::clear()
     mCullEnabled = false;
     mCullFace = UICull::Back;
     mViewport[2] = 0;
-    mWorldNear = 0.f;
+    mInWorld = false;
     mHudDraw = 0;
     mWorldDepthTested = false;
+    mHasWorld = false;
 }
 
 void UIList::setDepthCompare(UICompare glCompare)
@@ -96,14 +120,14 @@ void UIList::clearDepth()
     mDraws.push_back(draw);
 }
 
-void UIList::beginWorld(float nearClip)
+void UIList::beginWorld()
 {
-    mWorldNear = nearClip;
+    mInWorld = true;
 }
 
 void UIList::markHud()
 {
-    mWorldNear = 0.f;
+    mInWorld = false;
     mHudDraw = uint32_t(mDraws.size());
 }
 
@@ -172,7 +196,7 @@ UIDraw& UIList::drawFor(UIPrimitive primitive)
     draw.depth = depth;
     draw.cull = cull;
     mDraws.push_back(draw);
-    if (mWorldNear > 0.f && depth.test)
+    if (mInWorld && depth.test)
     {
         mWorldDepthTested = true;
     }
@@ -242,6 +266,13 @@ void UIList::append(UIGeometry geometry, const UIVertex* in, uint32_t count)
     }
 
     UIVertex* const first = mVertices.data() + start;
+    if ((in[0].texture & UI_WORLD_BIT) != 0)
+    {
+        // The device projects these into the world view: nothing to fold or rewrite.
+        mHasWorld = true;
+        draw.vertexCount += added;
+        return;
+    }
     if (mViewport[2] != 0 && mWidth != 0 && mHeight != 0)
     {
         // From the viewport's clip space to the list's: x' = x * sx + w * ox.
@@ -258,11 +289,11 @@ void UIList::append(UIGeometry geometry, const UIVertex* in, uint32_t count)
     if (draw.depth.test)
     {
         // The UI vertex shader makes depth (z + w) / 2; the z written here makes it
-        // the reversed depth wanted: nearClip / w for the world, 1 - GL's otherwise.
+        // one less GL's window depth, reversed as the renderer's.
         for (UIVertex* v = first; v != first + added; ++v)
         {
             const float w = v->position[3];
-            const float wanted = mWorldNear > 0.f ? mWorldNear : 0.5f * (w - v->position[2]);
+            const float wanted = 0.5f * (w - v->position[2]);
             v->position[2] = 2.f * wanted - w;
         }
     }
@@ -295,7 +326,7 @@ void UIList::append(UIGeometry geometry, const UIStreams& streams, uint32_t coun
         v.uv[1] = t ? t[1] * u + t[5] * w + t[13] : w;
 
         v.color = streams.colors ? streams.colors[i] : streams.singleColor;
-        v.texture = streams.texture;
+        v.texture = streams.world ? streams.texture | UI_WORLD_BIT : streams.texture;
     }
     append(geometry, mTransformed.data(), count);
 }

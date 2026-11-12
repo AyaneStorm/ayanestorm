@@ -18,6 +18,7 @@
 #include "llgl.h"
 #include "lltimer.h"
 #include "llviewercontrol.h"
+#include "llviewershadermgr.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
 
@@ -363,9 +364,26 @@ public:
         mList->clearDepth();
     }
 
-    void beginUIWorld(F32 nearClip) override
+    void beginUIWorld() override
     {
-        mList->beginWorld(nearClip);
+        // The camera published this frame: its eye space is GL's, so the inverse of its
+        // rows takes GL eye space to the renderer's world (render origin included).
+        // Rows: eye = R * world + t, so world = R^T * (eye - t). Column-major.
+        const float (&rows)[3][4] = sCamera.viewRows;
+        for (U32 column = 0; column < 3; ++column)
+        {
+            for (U32 row = 0; row < 3; ++row)
+            {
+                mEyeToWorld[column * 4 + row] = rows[column][row];
+            }
+            mEyeToWorld[column * 4 + 3] = 0.f;
+        }
+        for (U32 row = 0; row < 3; ++row)
+        {
+            mEyeToWorld[12 + row] = -(rows[0][row] * rows[0][3] + rows[1][row] * rows[1][3] + rows[2][row] * rows[2][3]);
+        }
+        mEyeToWorld[15] = 1.f;
+        mList->beginWorld();
     }
 
     void markUIHud() override
@@ -378,8 +396,28 @@ public:
         asr::UIStreams streams;
         streams.positions = data.positions;
         streams.uvs = data.uvs;
-        streams.colors = data.colors;
+        streams.colors = data.uniformColor ? nullptr : data.colors;
+        streams.singleColor = data.singleColor;
         streams.matrix = data.matrix;
+        F32 toWorld[16];
+        if (data.world)
+        {
+            // Eye space (data.matrix) on to the renderer's world: see beginUIWorld().
+            for (U32 column = 0; column < 4; ++column)
+            {
+                for (U32 row = 0; row < 4; ++row)
+                {
+                    F32 sum = 0.f;
+                    for (U32 k = 0; k < 4; ++k)
+                    {
+                        sum += mEyeToWorld[k * 4 + row] * data.matrix[column * 4 + k];
+                    }
+                    toWorld[column * 4 + row] = sum;
+                }
+            }
+            streams.matrix = toWorld;
+            streams.world = true;
+        }
         streams.uvMatrix = data.uvMatrix;
         streams.texture = asr::uiTextureBits(data.slot, asr::UISampler(data.sampler), data.solidColor);
         mList->append(asr::UIGeometry(data.mode), streams, data.count);
@@ -393,6 +431,7 @@ public:
 
 private:
     asr::UIList* mList = nullptr;
+    F32 mEyeToWorld[16] = {}; // column-major, see beginUIWorld()
 };
 
 ViewerLink sViewerLink;
@@ -460,6 +499,7 @@ std::string startRenderer(LLWindow* window)
     sStarted = Clock::now();
     sStatsLogged = sStarted;
     ASR::setRendererLink(&sViewerLink);
+    ASR::addUniformColorProgram(&gDebugProgram); // the rotate manipulator's rings
     ASRWorld::start();
     ASRTextureCache::start();
     LL_INFOS("ASRenderer") << "running on " << sDevice->info().backend << ", " << sDevice->info().name << ", budget "
