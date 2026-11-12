@@ -237,8 +237,10 @@ void UIList::append(UIGeometry geometry, const UIVertex* in, uint32_t count)
         case UIGeometry::TriangleStrip:
             for (uint32_t i = 2; i < count; ++i)
             {
-                *out++ = in[i - 2];
-                *out++ = in[i - 1];
+                // GL turns every other strip triangle round so all keep one winding: culling needs it.
+                const bool odd = (i & 1) != 0;
+                *out++ = in[odd ? i - 1 : i - 2];
+                *out++ = in[odd ? i - 2 : i - 1];
                 *out++ = in[i];
             }
             break;
