@@ -305,7 +305,6 @@ struct WorldObject
     S32 askedLod = -1;            // the finest LOD this object has asked the mesh system for
     bool askedWithHeader = false; // whether the mesh's header was known by then
     S32 skinnedLod = -1;          // rigged: the LOD its skinned faces were last applied at
-    LLVector3 placed;             // temporary: where its transform was last written, see followSelection()
 };
 
 struct SweepEntry
@@ -1107,6 +1106,12 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
     {
         image = gltf->mBaseColorTexture.get();
         memcpy(material.color, gltf->mBaseColor.mV, sizeof(material.color));
+        if (gltf->mAlphaMode == LLGLTFMaterial::ALPHA_MODE_OPAQUE)
+        {
+            // glTF's opaque mode ignores alpha, and OpenGL draws such a face whatever its
+            // base colour alpha: zero must not drop it below.
+            material.color[3] = 1.f;
+        }
         if (gltf->mDoubleSided)
         {
             flags |= asr::INSTANCE_DOUBLE_SIDED;
@@ -2069,7 +2074,6 @@ void placeInStack(LLDrawable* drawable, WorldObject& object, const asr::Instance
         members.insert(std::upper_bound(members.begin(), members.end(), member, [](const StackMember& a, const StackMember& b) { return a.id < b.id; }), member);
     }
 
-    object.placed.set(desc.objectToWorld[3], desc.objectToWorld[7], desc.objectToWorld[11]);
     // Also for an object alone in its place: it may have just come out of a stack.
     resolveStack(*object.stack);
 }
@@ -2117,41 +2121,6 @@ U32 selectionFlags(LLDrawable* drawable, S32 face)
     return found->second.flags | (faceSelected ? asr::INSTANCE_FACE_SELECTED : 0);
 }
 
-// Temporary, for walls and roofs that stay missing until they are right-clicked, which
-// applies them again: what they were drawn as just before, against what they are now.
-void logSelectedState(LLDrawable* drawable)
-{
-    const auto found = sObjects.find(drawable);
-    LLVOVolume* volume = volumeOf(drawable);
-    if (found == sObjects.end() || !volume)
-    {
-        const auto left = sLeftOut.find(drawable);
-        LL_INFOS("ASRenderer") << "selected " << drawable->getVObj()->getID() << ": not in the world, left out: "
-                               << (left != sLeftOut.end() ? left->second : "no") << LL_ENDL;
-        return;
-    }
-    const WorldObject& object = found->second;
-    U32 noInstance = 0;
-    U32 hidden = 0;
-    for (const ObjectFace& face : object.faces)
-    {
-        noInstance += face.instance == NO_INSTANCE ? 1 : 0;
-        hidden += face.hidden ? 1 : 0;
-    }
-    F32 moved = -1.f;
-    if (!object.bound && object.shape)
-    {
-        asr::InstanceDesc desc;
-        fillTransform(desc, drawable, volume, *object.shape);
-        moved = (LLVector3(desc.objectToWorld[3], desc.objectToWorld[7], desc.objectToWorld[11]) - object.placed).length();
-    }
-    LL_INFOS("ASRenderer") << "selected " << drawable->getVObj()->getID() << ": faces " << object.faces.size() << ", without instance "
-                           << noInstance << ", hidden as a copy " << hidden << ", stack " << (object.stack ? object.stack->members.size() : 0)
-                           << ", shape ready " << (object.shape && object.shape->ready) << ", next shape " << (object.next != nullptr)
-                           << ", bound " << (object.bound != nullptr) << ", active " << drawable->isActive() << ", root "
-                           << drawable->isRoot() << ", placed off by " << moved << " m, LOD " << volume->getLOD() << LL_ENDL;
-}
-
 // As LLSelectMgr::renderSilhouettes() walks the selection: the root's colour for roots,
 // the children's for the rest; in face mode only prims with a selected face, and those
 // faces tinted, as LLPipeline::renderHighlights() tints them.
@@ -2185,10 +2154,6 @@ void followSelection()
         {
             sChanged.insert(entry.first);
         }
-        if (found == sSelected.end())
-        {
-            logSelectedState(entry.first);
-        }
     }
     for (const auto& entry : sSelected)
     {
@@ -2204,25 +2169,22 @@ void followSelection()
 // before it counted as a HUD, at login say, took a world LOD and a check far off in camera
 // travel, which a HUD never makes: a mesh then stayed at its lowest LOD.
 std::unordered_set<LLDrawable*> sHudObjects;
-U32 sHudPrims = 0;     // temporary: on the HUD points at the last check, see logCounts()
-U32 sHudRaised = 0;    // given the highest LOD here, since the start
-U32 sHudReapplied = 0; // applied again for not having been applied as HUD
 
 void followHudPrim(LLViewerObject* object)
 {
     LLVOVolume* volume = object && object->mDrawable.notNull() ? volumeOf(object->mDrawable.get()) : nullptr;
     if (volume && !object->mDrawable->isDead())
     {
-        ++sHudPrims;
         LLDrawable* drawable = object->mDrawable.get();
-        if (volume->getLOD() != 3 && volume->updateLOD()) // 3: the highest
+        // 3: the highest. Not updateLOD(): calcLOD() gives up on a zero distance to the
+        // camera, before its HUD branch, and nothing here measures that distance for HUDs.
+        if (volume->getLOD() != 3)
         {
-            ++sHudRaised;
+            volume->forceLOD(3);
             sChanged.insert(drawable); // asks its mesh for the new LOD
         }
         else if (sHudObjects.find(drawable) == sHudObjects.end() && sObjects.find(drawable) != sObjects.end())
         {
-            ++sHudReapplied;
             sChanged.insert(drawable); // applied before it was a HUD: as a world object
         }
     }
@@ -2239,7 +2201,6 @@ void followHudPrim(LLViewerObject* object)
 // before it counts as a HUD, and nothing applies it again when it becomes one.
 void followHudLods()
 {
-    sHudPrims = 0;
     if (!isAgentAvatarValid())
     {
         return;
@@ -2466,7 +2427,13 @@ void applyFinishedShapes()
             continue;
         }
         Shape* shape = job.shape;
-        const bool newFaces = !shape->ready || job.faces.size() != shape->faces.size();
+        // A mesh face can be empty at a coarse LOD and gain triangles at a finer one: it had no
+        // instance, which a move does not make, so its users go through apply again.
+        bool newFaces = !shape->ready || job.faces.size() != shape->faces.size();
+        for (size_t i = 0; !newFaces && i < job.faces.size(); ++i)
+        {
+            newFaces = shape->faces[i].finest == 0 && job.faces[i].finest != 0;
+        }
         shape->busy = false;
         shape->ready = true;
         shape->faces = std::move(job.faces);
@@ -3932,14 +3899,6 @@ void logCounts()
         U32 filled = 0;
         U32 subImages = 0;
         ASR::getTextureCounts(created, blank, filled, subImages);
-        U32 hudLow = 0; // temporary: HUD prims not at the highest LOD
-        for (LLDrawable* hud : sHudObjects)
-        {
-            LLVOVolume* volume = volumeOf(hud);
-            hudLow += volume && volume->getLOD() != 3 ? 1 : 0;
-        }
-        LL_INFOS("ASRenderer") << "HUD prims " << sHudPrims << ", applied as HUD " << sHudObjects.size() << ", below the highest LOD " << hudLow
-                               << ", raised " << sHudRaised << ", applied again " << sHudReapplied << LL_ENDL;
         LL_INFOS("ASRenderer") << "faces on white " << facesWhite << ", hidden by a copy " << facesHidden << ", with no texture " << facesNoTexture << ", textures out of date " << outOfDate
                                << "; textures created " << created << ", created blank " << blank << ", filled " << filled << ", sub images " << subImages
                                << ", lost their image " << sLostTextures << LL_ENDL;

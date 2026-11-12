@@ -531,10 +531,11 @@ void ASRViewer::publishFrame(LLWindow* window)
     ASRWorld::fillOverlay(state.overlay);
     // The world view, where OpenGL draws the scene and HUDs, and picking reads them: it can
     // leave part of the window to the UI. From the window's top left, as the renderer's.
-    const LLRect world = gViewerWindow->getWorldViewRectRaw();
-    const LLRect window = gViewerWindow->getWindowRectRaw();
+    // Frames are published while the viewer window is still being built: whole window then.
+    const LLRect world = gViewerWindow ? gViewerWindow->getWorldViewRectRaw()
+                                       : LLRect(0, size.mY, size.mX, 0);
     state.worldView[0] = U32(llmax(world.mLeft, 0));
-    state.worldView[1] = U32(llmax(window.getHeight() - world.mTop, 0));
+    state.worldView[1] = U32(llmax(size.mY - world.mTop, 0));
     state.worldView[2] = U32(llmax(world.getWidth(), 0));
     state.worldView[3] = U32(llmax(world.getHeight(), 0));
     sRenderThread->publishState();
