@@ -41,6 +41,8 @@ struct Texture
 };
 
 thread_local U32 sCompressionScopes = 0;
+thread_local const void* sCompressionOwner = nullptr;
+thread_local const ASR::EncodedImage* sEncodedImage = nullptr;
 
 // Indexed by name minus FIRST_TEXTURE_NAME, so finding a texture at draw time is
 // one array read. Names are reused, so this stays as long as the most textures
@@ -225,19 +227,41 @@ U64 pixelBytes(PixelLayout layout)
 }
 }
 
-ASR::CompressionScope::CompressionScope()
+ASR::CompressionScope::CompressionScope(const void* owner) : mPreviousOwner(sCompressionOwner)
 {
     ++sCompressionScopes;
+    sCompressionOwner = owner;
 }
 
 ASR::CompressionScope::~CompressionScope()
 {
     --sCompressionScopes;
+    sCompressionOwner = mPreviousOwner;
 }
 
 bool ASR::CompressionScope::open()
 {
     return sCompressionScopes != 0;
+}
+
+const void* ASR::CompressionScope::owner()
+{
+    return sCompressionOwner;
+}
+
+ASR::EncodedImageScope::EncodedImageScope(const EncodedImage& image)
+{
+    sEncodedImage = &image;
+}
+
+ASR::EncodedImageScope::~EncodedImageScope()
+{
+    sEncodedImage = nullptr;
+}
+
+const ASR::EncodedImage* ASR::EncodedImageScope::current()
+{
+    return sEncodedImage;
 }
 
 void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips, bool compressible)
@@ -267,14 +291,23 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
 
     // A compressed image is encoded once from whole pixels, so new pixels always make a
     // new image, which the slot shows once it is encoded.
-    const U8 storage = compressible && pixels && CompressionScope::open() ? sLink->chooseStorage(width, height, layout, pixels) : 0;
+    // Blocks from the disk cache come in place of the pixels, already encoded.
+    const EncodedImage* encoded = EncodedImageScope::current();
+    const U32 mipLevels = mips ? fullMipCount(width, height) : 1;
+    if (encoded && (encoded->storage == 0 || encoded->mipLevels != mipLevels))
+    {
+        encoded = nullptr; // not this image's: the pixels, if any, are used
+    }
+    const U8 storage = encoded ? encoded->storage
+                     : compressible && pixels && CompressionScope::open() ? sLink->chooseStorage(width, height, layout, pixels) : 0;
     bool replacing = false;
     if (texture->slot == 0 || texture->width != width || texture->height != height || texture->layout != layout || texture->mips != mips ||
         texture->storage != storage || storage != 0)
     {
         if (texture->slot == 0)
         {
-            const U32 slot = sLink->createTexture(width, height, mips ? fullMipCount(width, height) : 1, layout, storage);
+            const U32 slot = encoded ? sLink->createEncodedTexture(width, height, mipLevels, layout, storage)
+                                     : sLink->createTexture(width, height, mipLevels, layout, storage);
             if (slot == 0)
             {
                 LL_WARNS_ONCE("ASRenderer") << "no texture slot left for a new image" << LL_ENDL;
@@ -287,7 +320,14 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
             // Another size: the slot keeps showing the old image until the new one is
             // filled, so a texture loaded sharper or smaller never flashes white, and what
             // names the slot never has to change.
-            sLink->replaceTexture(texture->slot, width, height, mips ? fullMipCount(width, height) : 1, layout, 0, storage);
+            if (encoded)
+            {
+                sLink->replaceEncodedTexture(texture->slot, width, height, mipLevels, layout, storage);
+            }
+            else
+            {
+                sLink->replaceTexture(texture->slot, width, height, mipLevels, layout, 0, storage);
+            }
             replacing = true;
         }
         ++sCreated;
@@ -299,13 +339,23 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
         texture->storage = storage;
     }
 
-    if (pixels)
+    if (encoded)
+    {
+        ++sFilled;
+        for (U32 level = 0; level < mipLevels; ++level)
+        {
+            sLink->uploadBlocks(texture->slot, width, height, mipLevels, storage, level, encoded->blocks + encoded->mipOffsets[level]);
+        }
+        sLink->generateMips(texture->slot, nullptr); // puts them in place; nothing to store again
+    }
+    else if (pixels)
     {
         ++sFilled;
         sLink->uploadTexture(texture->slot, 0, 0, width, height, layout, pixels, width, storage);
         if (mips || storage != 0)
         {
-            sLink->generateMips(texture->slot); // encodes a compressed one
+            // Encodes a compressed one; the disk cache may keep its blocks.
+            sLink->generateMips(texture->slot, storage != 0 ? CompressionScope::owner() : nullptr);
         }
     }
     if (replacing)

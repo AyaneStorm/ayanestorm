@@ -122,6 +122,8 @@ struct TextureCommand
     TextureDesc desc;              // Create
     uint32_t sourceSlot = 0;       // Create: the texture to take mips from, 0 to start cleared
     uint32_t sourceMip = 0;        // Create: which of its mips becomes level 0 here
+    bool encoded = false;          // Create, compressed: its blocks arrive by uploadBlocks(), not as texels
+    uint64_t readBack = 0;         // GenerateMips, compressed: nonzero hands the blocks back, see takeEncoded()
     uint32_t level = 0;            // Upload: one piece of an upload, a run of whole rows
     uint32_t x = 0;
     uint32_t y = 0;
@@ -144,13 +146,33 @@ public:
     // exist is the caller's call: memory is counted even past the limit.
     // With a sourceSlot, the new texture is that one's mips from sourceMip down, copied
     // on the GPU. desc must be the size of that mip, with no more levels than it has left.
-    uint32_t create(const TextureDesc& desc, uint32_t sourceSlot = 0, uint32_t sourceMip = 0);
+    uint32_t create(const TextureDesc& desc, uint32_t sourceSlot = 0, uint32_t sourceMip = 0, bool encoded = false);
+
+    // Main thread. A compressed texture whose blocks were encoded before, as the disk cache
+    // keeps them: give every mip with uploadBlocks(), then generateMips() puts them in place,
+    // with no encoding. replaceEncoded() is replace() for such a texture.
+    uint32_t createEncoded(const TextureDesc& desc);
+    void replaceEncoded(uint32_t slot, const TextureDesc& desc);
+    void uploadBlocks(uint32_t slot, const TextureDesc& desc, uint32_t level, const void* blocks);
+
+    // A compressed texture's blocks, every mip one after the other (textureMipOffset()), as
+    // generateMips() with a readBack token asked for them once encoded.
+    struct EncodedTexture
+    {
+        uint64_t token = 0;
+        TextureDesc desc;
+        std::vector<uint8_t> blocks;
+    };
+    // Main thread: what has been read back since the last call.
+    void takeEncoded(std::vector<EncodedTexture>& encoded);
+    // Device, once the GPU has finished with them.
+    void addEncoded(EncodedTexture&& encoded);
 
     // Main thread. A new image for a slot in use, of another size or format, which the
     // slot keeps showing its old image until publish(). Uploads and mips to the slot go to
     // the new image meanwhile. So a resize never shows white, and what names the slot
     // never changes. fromMip > 0 fills it from the old image's mips, on the GPU.
-    void replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip = 0);
+    void replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip = 0, bool encoded = false);
 
     // Main thread. The replacement is complete: the slot shows it from the next frame.
     void publish(uint32_t slot);
@@ -171,8 +193,9 @@ public:
     void upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y, uint32_t width, uint32_t height,
                 const void* pixels, size_t bytes);
 
-    // Main thread. Makes every smaller mip from level 0, on the GPU.
-    void generateMips(uint32_t slot);
+    // Main thread. Makes every smaller mip from level 0, on the GPU; for a compressed
+    // texture, also encodes it, and a nonzero readBack hands its blocks to takeEncoded().
+    void generateMips(uint32_t slot, uint64_t readBack = 0);
 
     // Main thread. lastList is the newest list recorded so far, including the one
     // being recorded now: the texture is freed only once no list can draw it.
@@ -239,6 +262,7 @@ private:
 
     std::mutex mMutex; // held only to move commands, so neither thread really waits
     std::vector<TextureCommand> mCommands;
+    std::vector<EncodedTexture> mEncoded; // read back, waiting for takeEncoded(); under mMutex
     std::vector<uint32_t> mFreeSlots;
     uint32_t mNextSlot = 0;
 };

@@ -60,6 +60,7 @@ namespace LLImageGLMemory
 class LLImageGL : public LLRefCount
 {
     friend class LLTexUnit;
+    friend class ASRTextureCacheAccess; // <AS:Chanayane/> the new renderer's disk cache keeps the alpha mask and pick mask
 public:
 
     // call once per frame

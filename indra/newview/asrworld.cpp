@@ -8,6 +8,7 @@
 #include "asravatarbody.h"
 #include "asravatarresidency.h"
 #include "asrskinweights.h"
+#include "asrtexturecache.h"
 #include "asrmeshlodresidency.h"
 #include "asrtexturestreaming.h"
 #include "asrworldshared.h"
@@ -4389,6 +4390,7 @@ void ASRWorld::update()
     timed(PART_CACHE, cullObjectCache);
     timed(PART_SHAPES, applyFinishedShapes);
     timed(PART_TEXTURES, followTextures);
+    ASRTextureCache::update();
     updateLocalShift();
     timed(PART_AVATARS, updateAvatars);
     timed(PART_LOD, updateLods);

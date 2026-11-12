@@ -278,6 +278,7 @@ class LLViewerFetchedTexture : public LLViewerTexture
 {
     friend class LLTextureBar; // debug info only
     friend class LLTextureView; // debug info only
+    friend class ASRTextureCacheAccess; // <AS:Chanayane/> the new renderer's disk cache makes textures from its blocks
 
 protected:
     /*virtual*/ ~LLViewerFetchedTexture();

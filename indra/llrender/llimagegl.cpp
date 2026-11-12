@@ -788,7 +788,8 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         mMipLevels = mUseMipMaps ? wpo2(llmax(w, h)) : 0;
         ASR::setTextureImage(usename ? usename : mTexName, w, h, mFormatPrimary, mFormatType, data_in, mUseMipMaps, mAllowCompression);
         ASR::imageChanged(this);
-        if (data_in && !is_compressed)
+        // From the disk cache, data_in holds no pixels: the cache sets the mask and pick mask.
+        if (data_in && !is_compressed && !ASR::EncodedImageScope::current())
         {
             analyzeAlpha(data_in, w, h);
             updatePickMask(w, h, data_in);

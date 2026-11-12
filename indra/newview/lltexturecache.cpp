@@ -38,6 +38,7 @@
 // Included to allow LLTextureCache::purgeTextures() to pause watchdog timeout
 #include "llappviewer.h"
 #include "llmemory.h"
+#include "asrtexturecache.h" // <AS:Chanayane/> cleared with this cache
 
 // Cache organization:
 // cache/texture.entries
@@ -1700,6 +1701,7 @@ void LLTextureCache::purgeAllTextures(bool purge_directories)
 {
     if (!mReadOnly)
     {
+        ASRTextureCache::clear(); // <AS:Chanayane/> the new renderer's compressed textures go with it
         // <AS:Chanayane> authored by Trish (trish-sl): an open fast cache file can't be deleted,
         // and it now stays open between accesses
         {

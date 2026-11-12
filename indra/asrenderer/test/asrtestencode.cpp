@@ -431,6 +431,56 @@ int runEncodeTest(const asr::DeviceOptions& options)
         okay = okay && pass;
     }
 
+    // The disk cache's round trip: an encode read back, then a texture made from those
+    // blocks with no encoding, which must hold the very same blocks at every mip.
+    {
+        const EncodeCase& c = cases[2]; // alpha edges, BC7
+        asr::TextureDesc desc;
+        desc.width = SIZE;
+        desc.height = SIZE;
+        desc.mipLevels = MIPS;
+        desc.format = c.expected;
+        const std::vector<uint8_t> rgba = toRgba(c.pixels, c.channels);
+        const uint32_t encodedSlot = textures.create(desc);
+        textures.upload(encodedSlot, 0, 0, 0, SIZE, SIZE, rgba.data(), rgba.size());
+        constexpr uint64_t TOKEN = 42;
+        textures.generateMips(encodedSlot, TOKEN);
+        std::vector<asr::TextureQueue::EncodedTexture> encoded;
+        for (int i = 0; i < 20 && encoded.empty() && settle(); ++i)
+        {
+            frames(1);
+            textures.takeEncoded(encoded);
+        }
+        bool roundTrip = encoded.size() == 1 && encoded[0].token == TOKEN && encoded[0].blocks.size() == asr::textureBytes(desc);
+        if (roundTrip)
+        {
+            std::vector<uint8_t> stored;
+            roundTrip = device->readTextureData(encodedSlot, 0, stored) &&
+                        std::equal(stored.begin(), stored.end(), encoded[0].blocks.begin());
+        }
+        uint32_t cachedSlot = 0;
+        if (roundTrip)
+        {
+            cachedSlot = textures.createEncoded(desc);
+            for (uint32_t level = 0; level < MIPS; ++level)
+            {
+                textures.uploadBlocks(cachedSlot, desc, level, encoded[0].blocks.data() + asr::textureMipOffset(desc, level, true));
+            }
+            textures.generateMips(cachedSlot);
+            roundTrip = settle();
+        }
+        for (uint32_t level = 0; roundTrip && level < MIPS; ++level)
+        {
+            std::vector<uint8_t> stored;
+            const uint64_t at = asr::textureMipOffset(desc, level, true);
+            roundTrip = device->readTextureData(cachedSlot, level, stored) &&
+                        stored.size() == asr::textureMipOffset(desc, level + 1, true) - at &&
+                        std::equal(stored.begin(), stored.end(), encoded[0].blocks.begin() + at);
+        }
+        printf("%s blocks read back and made into a texture again, every mip the same\n", roundTrip ? "ok   " : "FAIL ");
+        okay = okay && roundTrip;
+    }
+
     // Speed: a teleport's worth of large textures, at most ENCODE_TEXELS_PER_FRAME a frame.
     constexpr uint32_t BIG = 1024;
     constexpr uint32_t COUNT = 24;

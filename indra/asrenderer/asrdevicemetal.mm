@@ -1618,7 +1618,7 @@ private:
         else if (textureCompressed(desc.format))
         {
             // Cleared, because a list can draw this texture before its pixels arrive.
-            if (!clearCompressedTexture(made, blit))
+            if (!clearCompressedTexture(made, blit, command.encoded))
             {
                 if (command.replace) mTextureReplacements.fail(command.slot);
                 mMemoryBudget.release(MemoryCategory::Textures, bytes);
@@ -1766,11 +1766,12 @@ private:
         retireEncodeBuffers(texture);
     }
 
-    void retireEncodeBuffers(Texture& texture)
+    // A nonzero readBack hands the blocks to the texture queue once the frame is done.
+    void retireEncodeBuffers(Texture& texture, uint64_t readBack = 0)
     {
         if (texture.encodeTexels || texture.encodeBlocks)
         {
-            mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 });
+            mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1, readBack, texture.desc });
         }
         texture.encodeTexels = nil;
         texture.encodeBlocks = nil;
@@ -1799,12 +1800,12 @@ private:
 
     // A compressed texture is cleared with transparent blocks, from the block buffer its
     // encoding will use; uploads go to its RGBA8 texels. See the Vulkan backend.
-    bool clearCompressedTexture(Texture& texture, id<MTLBlitCommandEncoder> blit)
+    bool clearCompressedTexture(Texture& texture, id<MTLBlitCommandEncoder> blit, bool encoded)
     {
         TextureDesc texels = texture.desc;
         texels.format = TextureFormat::RGBA8;
-        texture.encodeTexels = createSceneBuffer(textureBytes(texels), MemoryCategory::Staging, "texels to encode", true);
-        texture.encodeBlocks = texture.encodeTexels ? createSceneBuffer(texture.bytes, MemoryCategory::Staging, "encoded blocks", true) : nil;
+        texture.encodeTexels = encoded ? nil : createSceneBuffer(textureBytes(texels), MemoryCategory::Staging, "texels to encode", true);
+        texture.encodeBlocks = encoded || texture.encodeTexels ? createSceneBuffer(texture.bytes, MemoryCategory::Staging, "encoded blocks", true) : nil;
         if (!texture.encodeBlocks)
         {
             retireEncodeBuffers(texture);
@@ -1825,11 +1826,18 @@ private:
     // In place of making mips: the RGBA8 mips, then every mip's blocks, then the copy into
     // the texture, between the blit encoders of the texture commands. Buffers reached by
     // address are not tracked, so a fence orders the encoders and barriers the dispatches.
-    id<MTLBlitCommandEncoder> encodeTexture(uint32_t slot, id<MTLCommandBuffer> commands, id<MTLBlitCommandEncoder> blit)
+    id<MTLBlitCommandEncoder> encodeTexture(uint32_t slot, id<MTLCommandBuffer> commands, id<MTLBlitCommandEncoder> blit, uint64_t readBack)
     {
         Texture& texture = mPendingTextures.count(slot) ? mPendingTextures[slot] : mTextureObjects[slot];
-        if (mTextureReplacements.failed(slot) || !texture.texture || !texture.encodeTexels)
+        if (mTextureReplacements.failed(slot) || !texture.texture || !texture.encodeBlocks)
         {
+            return blit;
+        }
+        if (!texture.encodeTexels)
+        {
+            // Encoded before: the uploads filled the blocks, in this same blit encoder.
+            copyBlocksToTexture(texture, blit);
+            retireEncodeBuffers(texture);
             return blit;
         }
         [blit updateFence:mEncodeFence];
@@ -1880,7 +1888,7 @@ private:
         copyBlocksToTexture(texture, blit);
         mEncodedTexels += encodeTexels(slot);
         ++mTexturesEncoded;
-        retireEncodeBuffers(texture);
+        retireEncodeBuffers(texture, readBack); // shared memory: read once the frame is done
         return blit;
     }
 
@@ -1939,6 +1947,15 @@ private:
             {
                 ++i;
                 continue;
+            }
+            if (mFreedEncodes[i].readBack != 0 && mFreedEncodes[i].blocks)
+            {
+                TextureQueue::EncodedTexture encoded;
+                encoded.token = mFreedEncodes[i].readBack;
+                encoded.desc = mFreedEncodes[i].desc;
+                const uint8_t* bytes = static_cast<const uint8_t*>(mFreedEncodes[i].blocks.contents);
+                encoded.blocks.assign(bytes, bytes + textureBytes(encoded.desc));
+                mTextures.addEncoded(std::move(encoded));
             }
             for (id<MTLBuffer> buffer : { mFreedEncodes[i].texels, mFreedEncodes[i].blocks })
             {
@@ -2026,8 +2043,22 @@ private:
                 case TextureCommand::Type::Upload:
                     if (texture && textureCompressed(target.desc.format))
                     {
+                        // Blocks encoded before go to the block buffer, a row being a row of blocks.
+                        if (!target.encodeTexels && target.encodeBlocks && command.height != 0)
+                        {
+                            const uint64_t rowBytes = command.ringBytes / command.height;
+                            const uint64_t at = textureMipOffset(target.desc, command.level, true) + uint64_t(command.y) * rowBytes;
+                            if (at < target.encodeBlocks.length)
+                            {
+                                [blit copyFromBuffer:mUploadRing
+                                        sourceOffset:command.ringOffset
+                                            toBuffer:target.encodeBlocks
+                                   destinationOffset:at
+                                                size:std::min<uint64_t>(command.ringBytes, target.encodeBlocks.length - at)];
+                            }
+                        }
                         // Whole rows of level 0 into the texels being encoded.
-                        if (target.encodeTexels && command.level == 0 && command.x == 0 && command.width == target.desc.width)
+                        else if (target.encodeTexels && command.level == 0 && command.x == 0 && command.width == target.desc.width)
                         {
                             const uint64_t at = uint64_t(command.y) * target.desc.width * 4;
                             [blit copyFromBuffer:mUploadRing
@@ -2060,7 +2091,7 @@ private:
                 case TextureCommand::Type::GenerateMips:
                     if (texture && textureCompressed(target.desc.format))
                     {
-                        blit = encodeTexture(command.slot, commands, blit);
+                        blit = encodeTexture(command.slot, commands, blit, command.readBack);
                     }
                     else if (texture && texture.mipmapLevelCount > 1)
                     {
@@ -2184,6 +2215,8 @@ private:
         id<MTLBuffer> texels;
         id<MTLBuffer> blocks;
         uint64_t frame;
+        uint64_t readBack; // nonzero: hand the blocks to the texture queue
+        TextureDesc desc;
     };
     std::vector<FreedEncode> mFreedEncodes;       // a compressed texture's encoding buffers, until its frame is done
     id<MTLFence> mEncodeFence = nil;

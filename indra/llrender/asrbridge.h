@@ -61,8 +61,14 @@ namespace ASR
         // rowPixels is the width of the data that pixels points into.
         virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
                                    const void* pixels, U32 rowPixels, U8 storage) = 0;
-        // Makes the smaller mips; for a compressed texture, also encodes it.
-        virtual void generateMips(U32 slot) = 0;
+        // Makes the smaller mips; for a compressed texture, also encodes it. cacheOwner is
+        // CompressionScope::owner(): the texture whose blocks the disk cache may keep.
+        virtual void generateMips(U32 slot, const void* cacheOwner) = 0;
+        // A compressed texture from blocks encoded before (the disk cache): every mip
+        // through uploadBlocks(), then generateMips() puts them in place.
+        virtual U32 createEncodedTexture(U32 width, U32 height, U32 mipLevels, PixelLayout layout, U8 storage) = 0;
+        virtual void replaceEncodedTexture(U32 slot, U32 width, U32 height, U32 mipLevels, PixelLayout layout, U8 storage) = 0;
+        virtual void uploadBlocks(U32 slot, U32 width, U32 height, U32 mipLevels, U8 storage, U32 level, const U8* blocks) = 0;
         // A new image for a slot in use, which keeps showing its old one until publishTexture(),
         // so a resize never shows white. Uploads and mips go to the new image meanwhile. With
         // fromMip > 0 it is made on the GPU from the old image's mips, from fromMip down.
@@ -107,12 +113,34 @@ namespace ASR
 
     // While one exists on a thread, images set on that thread may be compressed: only
     // LLViewerFetchedTexture::createTexture() opens one, so UI, fonts and media never are.
+    // owner, the LLViewerFetchedTexture, lets the disk cache keep what is encoded.
     class CompressionScope
     {
     public:
-        CompressionScope();
+        explicit CompressionScope(const void* owner = nullptr);
         ~CompressionScope();
         static bool open();
+        static const void* owner();
+    private:
+        const void* mPreviousOwner;
+    };
+
+    // Blocks encoded before, from the disk cache, which the next image set on this thread
+    // takes in place of its pixels; its pixels are then not looked at (alpha and pick mask
+    // come from the cache too).
+    struct EncodedImage
+    {
+        U8 storage = 0;             // RendererLink::chooseStorage()'s format
+        U32 mipLevels = 0;
+        const U8* blocks = nullptr; // every mip, largest first, one after the other
+        const U64* mipOffsets = nullptr; // where each starts in blocks
+    };
+    class EncodedImageScope
+    {
+    public:
+        explicit EncodedImageScope(const EncodedImage& image);
+        ~EncodedImageScope();
+        static const EncodedImage* current();
     };
     void setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, const void* pixels, S32 rowPixels);
     // LLImageGL makes a new name for an image loaded at another size, then deletes the old

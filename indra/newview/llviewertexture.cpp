@@ -58,6 +58,7 @@
 // <AS:Chanayane> The new renderer's texture memory.
 #include "asrbridge.h"
 #include "asrgltable.h"
+#include "asrtexturecache.h"
 #include "asrworld.h"
 // </AS:Chanayane>
 #include "lltextureentry.h"
@@ -1810,8 +1811,9 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         }
     }
     // bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
-    // Fetched images may be kept compressed by the new renderer (ASR::CompressionScope).
-    ASR::CompressionScope compressible;
+    // Fetched images may be kept compressed by the new renderer (ASR::CompressionScope),
+    // and their blocks in its disk cache.
+    ASR::CompressionScope compressible(this);
     bool res = mGLTexturep->createGLTexture(upload_discard, upload_image, usename, true, mBoostLevel);
     // </AS:Chanayane>
 
@@ -2396,6 +2398,13 @@ bool LLViewerFetchedTexture::updateFetch()
         }
     }
 
+    // <AS:Chanayane> The new renderer's disk cache of compressed textures answers first:
+    // a hit needs no fetch, no JPEG2000 decode and no encode.
+    if (make_request && !mIsFetching && ASRTextureCache::load(this, desired_discard))
+    {
+        make_request = false;
+    }
+    // </AS:Chanayane>
     if (make_request)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - make request");

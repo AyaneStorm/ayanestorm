@@ -11907,6 +11907,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>1</integer>
   </map>
+  <key>ASTextureCacheMB</key>
+  <map>
+    <key>Comment</key>
+    <string>New renderer: disk space for compressed textures, kept so they load again with no decode or encode. Least recently used go first. Cleared with the texture cache.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>4096</integer>
+  </map>
   <key>ASRendererBackend</key>
   <map>
     <key>Comment</key>

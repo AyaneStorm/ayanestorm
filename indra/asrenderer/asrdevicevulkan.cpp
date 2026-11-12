@@ -2131,7 +2131,7 @@ private:
         // Cleared, because a list can draw this texture before its pixels arrive.
         if (textureCompressed(command.desc.format))
         {
-            if (!clearCompressedTexture(commands, texture))
+            if (!clearCompressedTexture(commands, texture, command.encoded))
             {
                 return false;
             }
@@ -2219,12 +2219,12 @@ private:
                        TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     }
 
-    void generateMips(VkCommandBuffer commands, uint32_t slot)
+    void generateMips(VkCommandBuffer commands, uint32_t slot, uint64_t readBack)
     {
         const Texture& texture = textureFor(slot);
         if (textureCompressed(texture.desc.format))
         {
-            encodeTexture(commands, slot); // its mips are made before encoding, from the texels
+            encodeTexture(commands, slot, readBack); // its mips are made before encoding, from the texels
             return;
         }
         if (texture.image == VK_NULL_HANDLE || texture.mipLevels < 2)
@@ -2282,13 +2282,14 @@ private:
     }
 
     // A compressed image cannot be cleared directly: its transparent blocks are copied in,
-    // from the block buffer its encoding will use. Uploads go to its RGBA8 texels.
-    bool clearCompressedTexture(VkCommandBuffer commands, Texture& texture)
+    // from the block buffer its encoding will use. Uploads go to its RGBA8 texels, or, for
+    // blocks encoded before (encoded), straight to the block buffer.
+    bool clearCompressedTexture(VkCommandBuffer commands, Texture& texture, bool encoded)
     {
         TextureDesc texels = texture.desc;
         texels.format = TextureFormat::RGBA8;
         constexpr VkBufferUsageFlags USAGE = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-        if (!createBufferObject(texture.encodeTexels, textureBytes(texels), USAGE, "texels to encode", MemoryCategory::Staging, true) ||
+        if ((!encoded && !createBufferObject(texture.encodeTexels, textureBytes(texels), USAGE, "texels to encode", MemoryCategory::Staging, true)) ||
             !createBufferObject(texture.encodeBlocks, texture.bytes, USAGE, "encoded blocks", MemoryCategory::Staging, true))
         {
             return false;
@@ -2305,9 +2306,23 @@ private:
         return true;
     }
 
-    // Uploads to a compressed texture land in its RGBA8 texels, whole rows of level 0.
+    // Uploads to a compressed texture land in its RGBA8 texels, whole rows of level 0; for
+    // blocks encoded before, in its block buffer, a row being a row of blocks.
     void uploadCompressedTexels(VkCommandBuffer commands, const Texture& texture, const TextureCommand& command)
     {
+        if (texture.encodeTexels.buffer == VK_NULL_HANDLE && texture.encodeBlocks.buffer != VK_NULL_HANDLE && command.height != 0)
+        {
+            const uint64_t rowBytes = command.ringBytes / command.height;
+            VkBufferCopy copy{};
+            copy.srcOffset = command.ringOffset;
+            copy.dstOffset = textureMipOffset(texture.desc, command.level, true) + uint64_t(command.y) * rowBytes;
+            copy.size = std::min<uint64_t>(command.ringBytes, texture.encodeBlocks.size - std::min(copy.dstOffset, texture.encodeBlocks.size));
+            if (copy.size != 0)
+            {
+                vkCmdCopyBuffer(commands, mUploadRing.buffer, texture.encodeBlocks.buffer, 1, &copy);
+            }
+            return;
+        }
         if (texture.encodeTexels.buffer == VK_NULL_HANDLE || command.level != 0 || command.x != 0 || command.width != texture.width)
         {
             ++mCompressedUploadsDropped; // encoded already, or not whole rows: never sent so
@@ -2322,11 +2337,24 @@ private:
 
     // In place of making mips: makes the RGBA8 mips, encodes every mip into blocks, copies
     // them into the image, and lets the transient buffers go once this frame is done.
-    void encodeTexture(VkCommandBuffer commands, uint32_t slot)
+    void encodeTexture(VkCommandBuffer commands, uint32_t slot, uint64_t readBack)
     {
         Texture& texture = textureFor(slot);
-        if (texture.image == VK_NULL_HANDLE || texture.encodeTexels.buffer == VK_NULL_HANDLE)
+        if (texture.image == VK_NULL_HANDLE || texture.encodeBlocks.buffer == VK_NULL_HANDLE)
         {
+            return;
+        }
+        if (texture.encodeTexels.buffer == VK_NULL_HANDLE)
+        {
+            // Encoded before: the uploads filled the blocks.
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+            textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            copyBlocksToImage(commands, texture);
+            textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                           VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 });
+            texture.encodeBlocks = GpuBuffer();
             return;
         }
         TextureDesc texels = texture.desc;
@@ -2373,9 +2401,23 @@ private:
         textureBarrier(commands, texture.image, texture.mipLevels, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, TEXTURE_READ_STAGES, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
+        FreedEncode freed{ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 };
+        if (readBack != 0)
+        {
+            // The blocks to memory the CPU reads, handed over once this frame is done.
+            if (growBuffer(freed.readBack, texture.encodeBlocks.size, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "encoded blocks read back", true))
+            {
+                memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_READ_BIT);
+                const VkBufferCopy copy{ 0, 0, texture.encodeBlocks.size };
+                vkCmdCopyBuffer(commands, texture.encodeBlocks.buffer, freed.readBack.buffer, 1, &copy);
+                freed.token = readBack;
+                freed.desc = texture.desc;
+            }
+        }
         mEncodedTexels += encodeTexels(slot);
         ++mTexturesEncoded;
-        mFreedEncodes.push_back({ texture.encodeTexels, texture.encodeBlocks, mFrame + FRAMES_IN_FLIGHT + 1 });
+        mFreedEncodes.push_back(freed);
         texture.encodeTexels = GpuBuffer();
         texture.encodeBlocks = GpuBuffer();
     }
@@ -2517,8 +2559,23 @@ private:
     {
         while (!mFreedEncodes.empty() && (all || mFreedEncodes.front().frame <= mFrame))
         {
-            destroyBufferObject(mFreedEncodes.front().texels, MemoryCategory::Staging);
-            destroyBufferObject(mFreedEncodes.front().blocks, MemoryCategory::Staging);
+            FreedEncode& freed = mFreedEncodes.front();
+            if (freed.readBack.buffer != VK_NULL_HANDLE)
+            {
+                if (!all) // at shutdown the copy may not have run
+                {
+                    vmaInvalidateAllocation(mAllocator, freed.readBack.allocation, 0, VK_WHOLE_SIZE);
+                    TextureQueue::EncodedTexture encoded;
+                    encoded.token = freed.token;
+                    encoded.desc = freed.desc;
+                    const uint8_t* bytes = static_cast<const uint8_t*>(freed.readBack.mapped);
+                    encoded.blocks.assign(bytes, bytes + freed.blocks.size);
+                    mTextures.addEncoded(std::move(encoded));
+                }
+                destroyBuffer(freed.readBack, MemoryCategory::Staging);
+            }
+            destroyBufferObject(freed.texels, MemoryCategory::Staging);
+            destroyBufferObject(freed.blocks, MemoryCategory::Staging);
             mFreedEncodes.pop_front();
         }
     }
@@ -2616,7 +2673,7 @@ private:
                     mRingEnd[frameSlot] = command.ringEnd;
                     break;
                 case TextureCommand::Type::GenerateMips:
-                    generateMips(commands, command.slot);
+                    generateMips(commands, command.slot, command.readBack);
                     break;
                 case TextureCommand::Type::Publish:
                     publishTexture(command.slot);
@@ -3753,6 +3810,9 @@ private:
         GpuBuffer texels;
         GpuBuffer blocks;
         uint64_t frame;
+        MappedBuffer readBack;   // the blocks for takeEncoded(), when asked for
+        uint64_t token = 0;
+        TextureDesc desc;
     };
     std::deque<FreedEncode> mFreedEncodes;
     uint64_t mEncodedTexels = 0; // this frame's, against ENCODE_TEXELS_PER_FRAME

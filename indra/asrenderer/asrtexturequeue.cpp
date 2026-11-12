@@ -120,13 +120,50 @@ TextureQueue::TextureQueue(MemoryBudget* budget) : mBudget(budget)
     mWaiting.push_back(std::move(fill));
 }
 
-uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint32_t sourceMip)
+uint32_t TextureQueue::createEncoded(const TextureDesc& desc)
+{
+    return create(desc, 0, 0, true);
+}
+
+void TextureQueue::replaceEncoded(uint32_t slot, const TextureDesc& desc)
+{
+    replace(slot, desc, 0, true);
+}
+
+void TextureQueue::uploadBlocks(uint32_t slot, const TextureDesc& desc, uint32_t level, const void* blocks)
+{
+    // A row is a row of blocks: four rows of texels.
+    const uint32_t width = std::max(desc.width >> level, 1u);
+    const uint32_t height = std::max(desc.height >> level, 1u);
+    const uint32_t rows = (height + 3) / 4;
+    const uint64_t rowBytes = uint64_t((width + 3) / 4) * textureBlockBytes(desc.format);
+    upload(slot, level, 0, 0, width, rows, blocks, size_t(rowBytes * rows));
+}
+
+void TextureQueue::takeEncoded(std::vector<EncodedTexture>& encoded)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    for (EncodedTexture& texture : mEncoded)
+    {
+        encoded.push_back(std::move(texture));
+    }
+    mEncoded.clear();
+}
+
+void TextureQueue::addEncoded(EncodedTexture&& encoded)
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    mEncoded.push_back(std::move(encoded));
+}
+
+uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint32_t sourceMip, bool encoded)
 {
     TextureCommand command;
     command.type = TextureCommand::Type::Create;
     command.desc = desc;
     command.sourceSlot = sourceSlot;
     command.sourceMip = sourceMip;
+    command.encoded = encoded;
 
     std::lock_guard<std::mutex> producer(mProducer);
     {
@@ -154,7 +191,7 @@ uint32_t TextureQueue::create(const TextureDesc& desc, uint32_t sourceSlot, uint
     return slot;
 }
 
-void TextureQueue::replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip)
+void TextureQueue::replace(uint32_t slot, const TextureDesc& desc, uint32_t fromMip, bool encoded)
 {
     if (slot == 0)
     {
@@ -164,6 +201,7 @@ void TextureQueue::replace(uint32_t slot, const TextureDesc& desc, uint32_t from
     command.type = TextureCommand::Type::Create;
     command.slot = slot;
     command.replace = true;
+    command.encoded = encoded;
     command.desc = desc;
     command.sourceSlot = fromMip != 0 ? slot : 0;
     command.sourceMip = fromMip;
@@ -355,7 +393,7 @@ void TextureQueue::upload(uint32_t slot, uint32_t level, uint32_t x, uint32_t y,
     finishUpload();
 }
 
-void TextureQueue::generateMips(uint32_t slot)
+void TextureQueue::generateMips(uint32_t slot, uint64_t readBack)
 {
     if (slot == 0)
     {
@@ -364,6 +402,7 @@ void TextureQueue::generateMips(uint32_t slot)
     TextureCommand command;
     command.type = TextureCommand::Type::GenerateMips;
     command.slot = slot;
+    command.readBack = readBack;
 
     std::lock_guard<std::mutex> producer(mProducer);
     queue(std::move(command));

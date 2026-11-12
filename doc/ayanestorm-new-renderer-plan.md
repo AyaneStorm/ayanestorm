@@ -278,10 +278,15 @@ Each phase ends with a user build and test. From P1b on, renderer work is tested
 | **P3 Scene and speed proof** | Prims, mesh, textures with the lossless path, compression under pressure, avatars, culling, visibility buffer and material resolve, unlit G-buffer view, tiled snapshot path with overlap | Target scene geometry pass measured; stop and review if 5x is out of reach. VRAM at or below OpenGL at the same spot. Runs in budget at 8, 6 and 4 GB caps |
 | **P3b CPU to GPU** | Everything in the section 0 table: camera prediction, GPU motion and palettes, compute skinning, morphs, flexi, particles, feedback-driven LOD and textures, parallel avatar motion, main-thread early-outs | Busy place with a crowd holds at least 60 fps on worst frames, including during main-thread stalls; main-thread cost compared with P0; particles, flexi and morphs match in comparison mode |
 | **P4 Lighting parity** | EEP sky with the AyaneStorm atmospherics and horizon scattering, sun and moon discs with their glow, stars, clouds as EEP sets them, day and night cycle; sun and moon light, shadows, probes, water, terrain lighting, local lights, projectors. Until then the unlit view shows a plain colour where nothing is drawn | Side-by-side captures, sky and clouds included |
-| **P5 Alpha and tools** | Alpha modes, redesigned OIT modes, particles, glow, HUD, highlights, beacons, build tools, debug displays, media, previews, morphs, bakes, impostors | Alpha-heavy avatar test; every preview floater works |
+| **P5 Alpha and tools** | Alpha modes, redesigned OIT modes, particles, glow, beacons, build tools, debug displays, media, previews, morphs, bakes, impostors (HUDs and selection outlines moved to P3 step h) | Alpha-heavy avatar test; every preview floater works |
 | **P6 Effects** | GTAO/VBAO, colour grading, LUTs, bloom, flares, vignette, chromatic aberration, motion blur, volumetrics, night sky, sun, moon, auroras, snow, My Lights | Each one in live and snapshot, computed every frame, with no tile seams, and GPU cost reported against P0 with all effects on. Busy place holds 60 fps at full quality |
 | **P7 DoF** | Aperture-sampled, then Live, autofocus, tracking; snapshot first | Snapshot quality matches |
 | **P8 Hardening** | Linux pass, device loss, previews, stats, acceptance suite | Requirements acceptance list passes, including at 8, 6 and 4 GB caps |
+
+Order decided by the user, 12 November: close P3 step e (avatars) from the user's tests,
+then HUDs and selection outlines (P3 step h, brought forward from P5: the viewer is hard to
+use without them and they do not wait for lighting), then step g (snapshots, capture and
+the speed gate), then P4.
 
 Metal is built alongside Vulkan from P2, not in a final port. Snapshot support and the memory budget apply to every phase from P3: each new feature declares its memory category and tier behaviour, and is tested at the 4 GB cap.
 

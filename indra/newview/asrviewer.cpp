@@ -9,8 +9,10 @@
 #include "asrbridge.h"
 #include "asrcameraturn.h"
 #include "asrgltable.h"
+#include "asrtexturecache.h"
 #include "asrworld.h"
 #include "llappviewer.h"
+#include "llviewertexture.h"
 #include "llcoord.h"
 #include "lldir.h"
 #include "llgl.h"
@@ -244,9 +246,31 @@ public:
         textures.finishUpload();
     }
 
-    void generateMips(U32 slot) override
+    void generateMips(U32 slot, const void* cacheOwner) override
     {
-        sDevice->textures().generateMips(slot);
+        // The disk cache may keep what is encoded: it hands a token to read the blocks back.
+        LLViewerFetchedTexture* owner = static_cast<LLViewerFetchedTexture*>(const_cast<void*>(cacheOwner));
+        sDevice->textures().generateMips(slot, owner ? ASRTextureCache::store(owner) : 0);
+    }
+
+    U32 createEncodedTexture(U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U8 storage) override
+    {
+        return sDevice->textures().createEncoded(textureDesc(width, height, mipLevels, layout, storage));
+    }
+
+    void replaceEncodedTexture(U32 slot, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U8 storage) override
+    {
+        sDevice->textures().replaceEncoded(slot, textureDesc(width, height, mipLevels, layout, storage));
+    }
+
+    void uploadBlocks(U32 slot, U32 width, U32 height, U32 mipLevels, U8 storage, U32 level, const U8* blocks) override
+    {
+        asr::TextureDesc desc;
+        desc.width = width;
+        desc.height = height;
+        desc.mipLevels = mipLevels;
+        desc.format = asr::TextureFormat(storage);
+        sDevice->textures().uploadBlocks(slot, desc, level, blocks);
     }
 
     void replaceTexture(U32 slot, U32 width, U32 height, U32 mipLevels, ASR::PixelLayout layout, U32 fromMip, U8 storage) override
@@ -407,6 +431,7 @@ std::string startRenderer(LLWindow* window)
     sStatsLogged = sStarted;
     ASR::setRendererLink(&sViewerLink);
     ASRWorld::start();
+    ASRTextureCache::start();
     LL_INFOS("ASRenderer") << "running on " << sDevice->info().backend << ", " << sDevice->info().name << ", budget "
                            << sDevice->memoryBudget().budget() / (1024 * 1024) << " MB" << LL_ENDL;
     return std::string();
@@ -415,6 +440,7 @@ std::string startRenderer(LLWindow* window)
 void stopRenderer()
 {
     ASRCameraTurn::stop();
+    ASRTextureCache::stop();
     ASRWorld::stop();
     ASR::setRendererLink(nullptr);
     if (sRenderThread)

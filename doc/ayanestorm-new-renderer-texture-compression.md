@@ -109,6 +109,42 @@ Agreed with the user (2026-11-12):
 (The viewer's own split of a header file and body files is for speed: many textures
 need only their header or first levels, read from one file.)
 
+### Built so far (2026-11-12)
+
+Renderer side, tested on Windows and the Mac (`asrenderer_test --encode`):
+`TextureQueue::generateMips(slot, token)` reads an encode's blocks back
+(`takeEncoded()`), and `createEncoded()`/`replaceEncoded()` + `uploadBlocks()` +
+`generateMips()` make a texture from stored blocks with no encode; the round trip is
+byte-identical at every mip.
+
+### Viewer side, written (2026-11-12, unbuilt)
+
+`newview/asrtexturecache.cpp` does all of it; the viewer's files get tagged hooks only:
+`LLViewerFetchedTexture::updateFetch()` asks `ASRTextureCache::load()` before the fetcher
+(the short circuit), `createTexture()` opens `ASR::CompressionScope(this)`,
+`LLTextureCache::purgeAllTextures()` calls `clear()`, and `LLImageGL` and
+`LLViewerFetchedTexture` befriend `ASRTextureCacheAccess`. A hit calls the texture's own
+`createGLTexture()` with a placeholder image while `ASR::EncodedImageScope` hands the
+renderer the blocks, so the name swap and bookkeeping stay the viewer's. The log gives
+hits, misses, writes and size once a minute.
+
+### Viewer side, plan
+
+1. `asrtexturecache.cpp` (newview, AS-owned): files, index, size limit
+   (`ASTextureCacheMB`), worker-thread reads and writes, cleared with the viewer's cache.
+2. Writing: `ASR::CompressionScope` carries the texture's UUID, full size and whether it
+   may be cached; the link reads the encode back and the cache writes it, with what the
+   viewer computes from pixels at creation: `LLImageGL::mIsMask` and the pick mask
+   (`updatePickMask()`, a bit for every second texel, alpha over 32), from the largest
+   size, thinned for smaller ones.
+3. Reading: in `LLViewerFetchedTexture::updateFetch()`, before a fetch is requested, a
+   cached size at least the one wanted is read on a worker thread instead; the texture is
+   then made from its blocks through a new `LLImageGL` entry that sets size, discard level,
+   mask and pick mask as `createGLTexture()` would. A miss fetches as today.
+4. Not cached: textures that need their pixels on the CPU (aux data, load callbacks,
+   saved raw images, bakes being composited), local textures, sculpt maps (never
+   compressed).
+
 ## Verification
 
 - `asrenderer_test --selftest`: block sizes, format choice, and each encoder against
