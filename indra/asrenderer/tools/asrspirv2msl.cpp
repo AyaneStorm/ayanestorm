@@ -12,6 +12,10 @@
 #include <string>
 #include <vector>
 
+// Image bindings of set 1 that keep their number as Metal texture indices; a binding past
+// these would get whatever index SPIRV-Cross picks, and the device binds it elsewhere.
+constexpr uint32_t SCENE_SET_IMAGES = 16;
+
 int main(int argc, char** argv)
 {
     if (argc != 3)
@@ -51,8 +55,9 @@ int main(int argc, char** argv)
         compiler.add_discrete_descriptor_set(1);
         for (spv::ExecutionModel stage : { spv::ExecutionModelVertex, spv::ExecutionModelFragment, spv::ExecutionModelGLCompute })
         {
-            // Visibility, albedo, normals, depth, Mac OIT's four targets, lit, scene colour.
-            for (uint32_t binding = 0; binding < 10; ++binding)
+            // Visibility, albedo, normals, depth, Mac OIT's four targets, lit, scene colour,
+            // selection mask: every binding of Vulkan's scene set.
+            for (uint32_t binding = 0; binding < SCENE_SET_IMAGES; ++binding)
             {
                 spirv_cross::MSLResourceBinding image;
                 image.stage = stage;
