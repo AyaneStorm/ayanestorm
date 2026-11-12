@@ -54,9 +54,15 @@ HUDs and selection outlines, and neither waits for lighting.
 - **Floating text** (`llSetText`, world and HUD): to be drawn by the viewer's own
   `render_hud_elements()` through the UI capture, after the HUD objects and their
   outline, before the 2D UI, with no HUD depth; with the 3D UI (`render_ui_3d()`).
-- **Texture animation** (`llSetTextureAnim`): not drawn natively yet, world or HUD. Own
-  step: each face's animation and start time in its material, UVs computed in the vertex
-  shader from the frame's time; picking keeps the viewer's CPU path.
+- **Texture animation** (`llSetTextureAnim`), written 2026-11-12, world and HUD alike:
+  `MaterialDesc::anim` carries the mode, grid, rate and the frame counter at a steady-clock
+  time (`ASRTextureAnimClock::fill()` in `asrworld.cpp`, a friend of
+  `LLViewerTextureAnim`). The scene store keeps animated materials in a list and, once a
+  frame from the frame's record time, rewrites their UV rows with `textureAnimRows()`,
+  a port of `animateTextures()`; an entry is written only when its frame changed. No
+  shader change: every pass reads the rows it already read. A new animation message
+  marks the object retextured, as in OpenGL, which refills the material with the new
+  counter. Picking keeps the viewer's CPU path. Self-tests in asrenderer_test.
 - **Web pages on faces**: dynamic textures updated by sub-images, which the texture
   bridge already carries; checked only if a web face stays white.
 

@@ -58,6 +58,8 @@ public:
     F32 mScaleT;
     F32 mRot;
 
+    friend struct ASRTextureAnimClock; // <AS:Chanayane/> the new renderer animates from the frame counter
+
 protected:
     LLVOVolume* mVObj;
     LLFrameTimer mTimer;

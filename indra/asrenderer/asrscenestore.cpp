@@ -333,7 +333,54 @@ void SceneStore::applyMaterial(const MaterialCommand& command)
     material.mapping = command.desc.terrain != 0 ? MATERIAL_TERRAIN : command.desc.planar ? MATERIAL_PLANAR : MATERIAL_FACE_UV;
     memcpy(material.planarScale, command.desc.planarScale, sizeof(material.planarScale));
     memcpy(material.planarOffset, command.desc.planarOffset, sizeof(material.planarOffset));
+    const bool animated = (command.desc.anim.mode & TEXTURE_ANIM_ON) != 0 && command.desc.terrain == 0;
+    setAnimated(command.id, animated ? &material : nullptr, command.desc.anim);
     writeEntry(SceneTable::Materials, command.id, &material, sizeof(material));
+}
+
+void SceneStore::setAnimated(uint32_t id, const GpuMaterial* material, const TextureAnimDesc& anim)
+{
+    const auto found = mAnimatedIndex.find(id);
+    if (material)
+    {
+        if (found != mAnimatedIndex.end())
+        {
+            mAnimatedMaterials[found->second] = { id, *material, anim };
+        }
+        else
+        {
+            mAnimatedIndex.emplace(id, uint32_t(mAnimatedMaterials.size()));
+            mAnimatedMaterials.push_back({ id, *material, anim });
+        }
+    }
+    else if (found != mAnimatedIndex.end())
+    {
+        const uint32_t place = found->second;
+        mAnimatedIndex.erase(found);
+        if (place + 1 != mAnimatedMaterials.size())
+        {
+            mAnimatedMaterials[place] = mAnimatedMaterials.back();
+            mAnimatedIndex[mAnimatedMaterials[place].id] = place;
+        }
+        mAnimatedMaterials.pop_back();
+    }
+}
+
+// Each animated material once a frame, written only when its frame changed.
+void SceneStore::animateMaterials(std::chrono::steady_clock::time_point time)
+{
+    for (AnimatedMaterial& animated : mAnimatedMaterials)
+    {
+        float row0[3];
+        float row1[3];
+        textureAnimRows(animated.anim, time, row0, row1);
+        if (memcmp(row0, animated.material.uvRow0, sizeof(row0)) != 0 || memcmp(row1, animated.material.uvRow1, sizeof(row1)) != 0)
+        {
+            memcpy(animated.material.uvRow0, row0, sizeof(row0));
+            memcpy(animated.material.uvRow1, row1, sizeof(row1));
+            writeEntry(SceneTable::Materials, animated.id, &animated.material, sizeof(animated.material));
+        }
+    }
 }
 
 void SceneStore::applyTerrain(const TerrainCommand& command)
@@ -1639,7 +1686,7 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
     }
 }
 
-void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit)
+void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit, std::chrono::steady_clock::time_point time)
 {
     mWrites.clear();
     mTableBytes.clear();
@@ -1726,6 +1773,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         mCommands.removedGeometries.clear();
         for (uint32_t id : mCommands.removedMaterials)
         {
+            setAnimated(id, nullptr, TextureAnimDesc());
             mRetired.push_back({ Retired::Type::MaterialId, id, 0, 0, frame + mFreeDelay });
         }
         mCommands.removedMaterials.clear();
@@ -1779,6 +1827,7 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
         }
         mCommands.removedMorphSets.clear();
     }
+    animateMaterials(time);
 
     uint64_t uploaded = 0;
     while (!mPending.empty())

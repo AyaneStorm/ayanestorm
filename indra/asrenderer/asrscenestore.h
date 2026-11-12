@@ -16,6 +16,7 @@
 #include <deque>
 #include <map>
 #include <set>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -120,7 +121,9 @@ public:
     // Applies what is queued, and fills writes(). uploadLimit bounds what one frame
     // sends, so a burst of loads spreads over several frames. Instances past half of it
     // wait for the next update, and the other half is for geometry.
-    void update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit);
+    // time is the frame's, which animated textures show; store tests leave it out.
+    void update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit,
+                std::chrono::steady_clock::time_point time = std::chrono::steady_clock::time_point());
 
     const std::vector<SceneWrite>& writes() const { return mWrites; }
     const std::vector<uint8_t>& tableBytes() const { return mTableBytes; }
@@ -417,6 +420,19 @@ private:
     std::vector<GpuCluster> mClusterScratch;
     std::vector<GpuClusterGroup> mGroupScratch;
     std::vector<EntryMark> mEntryMarks[SCENE_TABLES]; // by table
+
+    // Materials with a texture animation, whose UV rows each update rewrites.
+    struct AnimatedMaterial
+    {
+        uint32_t id;
+        GpuMaterial material;
+        TextureAnimDesc anim;
+    };
+    std::vector<AnimatedMaterial> mAnimatedMaterials;
+    std::unordered_map<uint32_t, uint32_t> mAnimatedIndex; // material id to its place there
+    void setAnimated(uint32_t id, const GpuMaterial* material, const TextureAnimDesc& anim); // null: not animated
+    void animateMaterials(std::chrono::steady_clock::time_point time);
+
     uint64_t mUpdate = 0;
     uint64_t mTableCapacity[SCENE_TABLES]{};
     uint64_t mListTotals[SCENE_LISTS]{};

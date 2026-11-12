@@ -57,6 +57,7 @@ bool get_hud_matrices(glm::mat4& proj, glm::mat4& model); // llviewerdisplay.cpp
 #include "llsurface.h"
 #include "llsurfacepatch.h"
 #include "llviewershadermgr.h"
+#include "llviewertextureanim.h"
 #include "llvlcomposition.h"
 #include "llvosurfacepatch.h"
 #include "llvovolume.h"
@@ -211,10 +212,11 @@ struct MaterialKey
     F32 values[17];
     U32 planar;
     const LLViewerTexture* image;
+    asr::TextureAnimDesc anim;
 
     bool operator==(const MaterialKey& other) const { return memcmp(this, &other, sizeof(MaterialKey)) == 0; }
 };
-static_assert(sizeof(MaterialKey) == 80, "compared and hashed as bytes, so it has no padding");
+static_assert(sizeof(MaterialKey) == 136, "compared and hashed as bytes, so it has no padding");
 
 } // namespace
 
@@ -921,6 +923,7 @@ MaterialKey materialKey(const asr::MaterialDesc& desc, const LLViewerTexture* im
     add(desc.planarOffset, 3);
     key.planar = desc.planar ? 1 : 0;
     key.image = image;
+    key.anim = desc.anim;
     return key;
 }
 
@@ -1057,15 +1060,58 @@ void dropObject(LLDrawable* drawable)
     sObjects.erase(found);
 }
 
+} // namespace
+
+// A face's texture animation, from the frame counter LLViewerTextureAnim keeps to itself.
+struct ASRTextureAnimClock
+{
+    static void fill(asr::TextureAnimDesc& anim, LLVOVolume* volume, S32 face, F32 rotation, F32 scaleS, F32 scaleT, F32 offsetS, F32 offsetT);
+};
+
+void ASRTextureAnimClock::fill(asr::TextureAnimDesc& anim, LLVOVolume* volume, S32 face, F32 rotation, F32 scaleS, F32 scaleT, F32 offsetS, F32 offsetT)
+{
+    anim = asr::TextureAnimDesc();
+    const LLViewerTextureAnim* animation = volume->mTextureAnimp;
+    if (!animation || !(animation->mMode & LLTextureAnim::ON) ||
+        (animation->mFace >= 0 && animation->mFace < volume->getNumTEs() && animation->mFace != face))
+    {
+        return;
+    }
+
+    // The steady clock at this frame's start, which LLFrameTimer counts from: the same for
+    // every face of the frame, so their materials still share.
+    static U32 sFrame = 0;
+    static S64 sAt = 0;
+    if (sFrame != LLFrameTimer::getFrameCount() || sAt == 0)
+    {
+        sFrame = LLFrameTimer::getFrameCount();
+        const auto now = std::chrono::steady_clock::now().time_since_epoch();
+        sAt = std::chrono::duration_cast<std::chrono::microseconds>(now).count() - S64(LLFrameTimer::getCurrentFrameTime() * 1e6f);
+    }
+
+    // As animateTextures(): smooth, the timer restarts at each call and the count carries on.
+    const F32 elapsed = animation->mTimer.getElapsedTimeF32() * animation->mRate;
+    anim.at = sAt;
+    anim.mode = animation->mMode;
+    anim.counter = (animation->mMode & LLTextureAnim::SMOOTH) ? F32(animation->mLastTime) + elapsed : elapsed;
+    anim.rate = animation->mRate;
+    anim.sizeX = animation->mSizeX;
+    anim.sizeY = animation->mSizeY;
+    anim.start = animation->mStart;
+    anim.length = animation->mLength;
+    anim.rotation = rotation;
+    anim.scaleS = scaleS;
+    anim.scaleT = scaleT;
+    anim.offsetS = offsetS;
+    anim.offsetT = offsetT;
+}
+
+namespace
+{
+
 void setUVTransform(asr::MaterialDesc& material, F32 c, F32 s, F32 scaleS, F32 scaleT, F32 offsetS, F32 offsetT)
 {
-    // LLFace's xform() as a matrix: rotate about the centre, then scale, then offset.
-    material.uvRow0[0] = scaleS * c;
-    material.uvRow0[1] = scaleS * s;
-    material.uvRow0[2] = -0.5f * scaleS * (c + s) + offsetS + 0.5f;
-    material.uvRow1[0] = -scaleT * s;
-    material.uvRow1[1] = scaleT * c;
-    material.uvRow1[2] = 0.5f * scaleT * (s - c) + offsetT + 0.5f;
+    asr::uvTransformRows(c, s, scaleS, scaleT, offsetS, offsetT, material.uvRow0, material.uvRow1);
 }
 
 
@@ -1166,6 +1212,7 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
         te->getScale(&scaleS, &scaleT);
         te->getOffset(&offsetS, &offsetT);
         setUVTransform(material, cosf(te->getRotation()), sinf(te->getRotation()), scaleS, scaleT, offsetS, offsetT);
+        ASRTextureAnimClock::fill(material.anim, volume, index, te->getRotation(), scaleS, scaleT, offsetS, offsetT);
 
         if (te->getTexGen() == LLTextureEntry::TEX_GEN_PLANAR)
         {

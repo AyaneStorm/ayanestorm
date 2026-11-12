@@ -520,6 +520,83 @@ uint32_t sceneTime(std::chrono::steady_clock::time_point time)
     return uint32_t(uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(time.time_since_epoch()).count()));
 }
 
+void uvTransformRows(float c, float s, float scaleS, float scaleT, float offsetS, float offsetT, float row0[3], float row1[3])
+{
+    row0[0] = scaleS * c;
+    row0[1] = scaleS * s;
+    row0[2] = -0.5f * scaleS * (c + s) + offsetS + 0.5f;
+    row1[0] = -scaleT * s;
+    row1[1] = scaleT * c;
+    row1[2] = 0.5f * scaleT * (s - c) + offsetT + 0.5f;
+}
+
+void textureAnimRows(const TextureAnimDesc& anim, std::chrono::steady_clock::time_point time, float row0[3], float row1[3])
+{
+    const uint32_t mode = anim.mode;
+    const bool smooth = (mode & TEXTURE_ANIM_SMOOTH) != 0;
+    const bool loop = (mode & TEXTURE_ANIM_LOOP) != 0;
+    const float frames = anim.length != 0.f ? anim.length : std::max(1.f, anim.sizeX * anim.sizeY);
+    float full = frames;
+    if (mode & TEXTURE_ANIM_PING_PONG)
+    {
+        full = smooth ? 2.f * frames : std::max(1.f, loop ? 2.f * frames - 2.f : 2.f * frames - 1.f);
+    }
+
+    // In double: an animation can run for hours.
+    const int64_t now = std::chrono::duration_cast<std::chrono::microseconds>(time.time_since_epoch()).count();
+    double counter = double(anim.counter) + double(now - anim.at) * 1e-6 * double(anim.rate);
+    counter = loop ? std::fmod(counter, double(full)) : std::min(double(full) - 1.0, counter);
+    float frame = float(counter);
+    if (!smooth)
+    {
+        frame = std::min(full - 1.f, std::floor(frame + 0.01f));
+    }
+    if ((mode & TEXTURE_ANIM_PING_PONG) && frame >= frames)
+    {
+        frame = smooth ? frames - (frame - frames) : (frames - 1.99f) - (frame - frames);
+    }
+    if (mode & TEXTURE_ANIM_REVERSE)
+    {
+        frame = smooth ? frames - frame : (frames - 0.99f) - frame;
+    }
+    frame += anim.start;
+    if (!smooth)
+    {
+        frame = std::floor(frame + 0.5f);
+    }
+
+    float rotation = anim.rotation;
+    float scaleS = anim.scaleS;
+    float scaleT = anim.scaleT;
+    float offsetS = anim.offsetS;
+    float offsetT = anim.offsetT;
+    if (mode & TEXTURE_ANIM_ROTATE)
+    {
+        rotation = frame;
+    }
+    else if (mode & TEXTURE_ANIM_SCALE)
+    {
+        scaleS = frame;
+        scaleT = frame;
+    }
+    else if (anim.sizeX != 0.f && anim.sizeY != 0.f)
+    {
+        scaleS = 1.f / anim.sizeX;
+        scaleT = 1.f / anim.sizeY;
+        const float column = std::fmod(frame, anim.sizeX);
+        const float row = float(int32_t(frame / anim.sizeX));
+        offsetS = -0.5f + 0.5f * scaleS + column * scaleS;
+        offsetT = 0.5f - 0.5f * scaleT - row * scaleT;
+    }
+    else
+    {
+        // A strip with no grid moves by whole textures and keeps the face's scale.
+        offsetS = frame;
+        offsetT = 0.f;
+    }
+    uvTransformRows(std::cos(rotation), std::sin(rotation), scaleS, scaleT, offsetS, offsetT, row0, row1);
+}
+
 void buildTerrainLod(const TerrainGrid& grid, uint32_t step, std::vector<SceneVertex>& vertices, std::vector<uint16_t>& indices)
 {
     vertices.clear();

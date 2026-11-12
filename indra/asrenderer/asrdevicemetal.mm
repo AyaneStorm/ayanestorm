@@ -1308,7 +1308,7 @@ private:
             mRetiredBuffers.pop_front();
         }
 
-        mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
+        mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame, mRecordTime);
 
         id<MTLBlitCommandEncoder> blit = beginBlit();
         for (uint32_t i = 0; i < SCENE_TABLES; ++i)

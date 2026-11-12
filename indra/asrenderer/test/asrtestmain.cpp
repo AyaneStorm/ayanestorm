@@ -412,6 +412,49 @@ void testMemoryBudget()
     expect(budget.used(Category::Staging) == 0 && budget.totalUsed() == 0, "threads racing leave the count exact");
 }
 
+// The frame shown, as the face UV square's corner (0, 0) lands in the texture.
+bool animCorner(const asr::TextureAnimDesc& anim, double seconds, float u, float v)
+{
+    const auto at = std::chrono::steady_clock::time_point(std::chrono::microseconds(anim.at));
+    float row0[3];
+    float row1[3];
+    asr::textureAnimRows(anim, at + std::chrono::microseconds(int64_t(seconds * 1e6)), row0, row1);
+    return std::fabs(row0[2] - u) < 1e-4f && std::fabs(row1[2] - v) < 1e-4f;
+}
+
+void testTextureAnim()
+{
+    asr::TextureAnimDesc grid;
+    grid.at = 1000000;
+    grid.mode = asr::TEXTURE_ANIM_ON | asr::TEXTURE_ANIM_LOOP;
+    grid.rate = 2.f;
+    grid.sizeX = 4.f;
+    grid.sizeY = 2.f;
+    // Frames run along the top row first, from the left: v up, so the top row is v 0.5 to 1.
+    expect(animCorner(grid, 0.1, 0.f, 0.5f), "a grid starts at its top left frame");
+    expect(animCorner(grid, 1.6, 0.75f, 0.5f), "a grid steps along its top row");
+    expect(animCorner(grid, 2.6, 0.25f, 0.f), "a grid goes on to its next row");
+    expect(animCorner(grid, 4.6, 0.25f, 0.5f), "a looping grid starts over");
+
+    asr::TextureAnimDesc once = grid;
+    once.mode = asr::TEXTURE_ANIM_ON;
+    once.counter = 1.f;
+    expect(animCorner(once, 0.f, 0.25f, 0.5f), "the counter carries on from where the viewer had it");
+    expect(animCorner(once, 100.0, 0.75f, 0.f), "a grid played once stays on its last frame");
+
+    asr::TextureAnimDesc turn;
+    turn.at = grid.at;
+    turn.mode = asr::TEXTURE_ANIM_ON | asr::TEXTURE_ANIM_LOOP | asr::TEXTURE_ANIM_SMOOTH | asr::TEXTURE_ANIM_ROTATE;
+    turn.rate = 1.f;
+    turn.length = 100.f;
+    turn.scaleS = 2.f;
+    float row0[3];
+    float row1[3];
+    asr::textureAnimRows(turn, std::chrono::steady_clock::time_point(std::chrono::microseconds(grid.at + 500000)), row0, row1);
+    expect(std::fabs(row0[0] - 2.f * std::cos(0.5f)) < 1e-4f && std::fabs(row1[1] - std::cos(0.5f)) < 1e-4f,
+           "a smooth rotation turns by its rate and keeps the face's scale");
+}
+
 asr::UIVertex uiVertex(float x, float y, uint32_t texture)
 {
     asr::UIVertex vertex{};
@@ -2956,6 +2999,7 @@ int main(int argc, char** argv)
         testLatestValue();
         testMemoryBudget();
         testUIList();
+        testTextureAnim();
         testTextureQueue();
         testSceneGeometry();
         testTerrainLods();

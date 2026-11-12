@@ -723,6 +723,43 @@ struct SkinDesc
     std::vector<uint16_t> joints;
 };
 
+// Texture animation (llSetTextureAnim), as the viewer's LLTextureAnim modes.
+constexpr uint32_t TEXTURE_ANIM_ON = 0x01;
+constexpr uint32_t TEXTURE_ANIM_LOOP = 0x02;
+constexpr uint32_t TEXTURE_ANIM_REVERSE = 0x04;
+constexpr uint32_t TEXTURE_ANIM_PING_PONG = 0x08;
+constexpr uint32_t TEXTURE_ANIM_SMOOTH = 0x10;
+constexpr uint32_t TEXTURE_ANIM_ROTATE = 0x20;
+constexpr uint32_t TEXTURE_ANIM_SCALE = 0x40;
+
+// A face's texture animation. With TEXTURE_ANIM_ON the scene store rewrites the material's
+// UV rows each frame, from the frame's time; what the animation leaves is the face's own.
+// No padding: the viewer compares and hashes it as bytes.
+struct TextureAnimDesc
+{
+    int64_t at = 0;        // steady_clock microseconds at which the frame counter was counter
+    uint32_t mode = 0;     // TEXTURE_ANIM_*; without ON, nothing animates
+    float counter = 0.f;   // frames, before looping, reversing and start
+    float rate = 0.f;      // frames per second
+    float sizeX = 0.f;     // the frame grid; 0 for none
+    float sizeY = 0.f;
+    float start = 0.f;     // first frame
+    float length = 0.f;    // frames; 0 for the whole grid
+    float rotation = 0.f;  // the face's own transform, radians
+    float scaleS = 1.f;
+    float scaleT = 1.f;
+    float offsetS = 0.f;
+    float offsetT = 0.f;
+};
+static_assert(sizeof(TextureAnimDesc) == 56, "compared and hashed as bytes, so it has no padding");
+
+// The 2x3 UV matrix of a face transform, as the viewer's LLFace::xform(): rotate about the
+// centre, then scale, then offset.
+void uvTransformRows(float c, float s, float scaleS, float scaleT, float offsetS, float offsetT, float row0[3], float row1[3]);
+
+// An animated face's UV rows at time, as the viewer's LLViewerTextureAnim::animateTextures().
+void textureAnimRows(const TextureAnimDesc& anim, std::chrono::steady_clock::time_point time, float row0[3], float row1[3]);
+
 struct MaterialDesc
 {
     float color[4] = { 1.f, 1.f, 1.f, 1.f };
@@ -738,6 +775,9 @@ struct MaterialDesc
     // planar scale and offset then take packed positions to region metres, and a vertex's
     // UV is its composition and noise.
     uint32_t terrain = 0;
+
+    // With TEXTURE_ANIM_ON, uvRow0 and uvRow1 are animated from this instead.
+    TextureAnimDesc anim;
 };
 
 struct TerrainLayerDesc

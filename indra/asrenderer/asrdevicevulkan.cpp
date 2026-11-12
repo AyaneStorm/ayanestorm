@@ -3418,7 +3418,7 @@ private:
         }
 
         const auto updateStart = std::chrono::steady_clock::now();
-        mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame);
+        mSceneStore.update(mScene, *this, mFrame, mUploadBytesPerFrame, mRecordTime);
         const auto growthStart = std::chrono::steady_clock::now();
         mFrameParts.sceneUpdate = std::chrono::duration<double>(growthStart - updateStart).count();
 
