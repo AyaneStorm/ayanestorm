@@ -13,6 +13,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 namespace asrtest
@@ -480,6 +481,22 @@ public:
         return asr::makeCamera(eye, target, 1.05f, aspect, 0.1f);
     }
 
+    // --overlay: selections as above, and two HUD knots in HUD space (X away from the
+    // camera, Y left, Z up), an opaque selected one and a blended one in front of it.
+    void showOverlays()
+    {
+        mOverlays = true;
+        mScene.addInstance(instanceDesc(mKnot, mMaterials[2], 0.f, 0.25f, 0.2f, 0.12f, 0.12f, 0.12f, asr::INSTANCE_HUD | asr::INSTANCE_SELECTED));
+        mScene.addInstance(instanceDesc(mKnot, mMaterials[3], -0.2f, 0.2f, 0.18f, 0.1f, 0.1f, 0.1f, asr::INSTANCE_HUD | asr::INSTANCE_BLENDED));
+    }
+
+    // HUD space to clip for showOverlays(): orthographic, a unit high, Y down, reversed depth.
+    static void hudViewProjection(float aspect, float matrix[16])
+    {
+        const float m[16] = { 0.f, 0.f, -0.25f, 0.f,  -2.f / aspect, 0.f, 0.f, 0.f,  0.f, -2.f, 0.f, 0.f,  0.f, 0.f, 0.5f, 1.f };
+        std::memcpy(matrix, m, sizeof(m));
+    }
+
     void update(float seconds)
     {
         if (seconds - mLastMove >= 1.f / 45.f)
@@ -487,8 +504,11 @@ public:
             mLastMove = seconds;
             for (const Moving& object : mMoving)
             {
+                // --overlay: the first two are selected, a root and a linked child.
+                const size_t index = size_t(&object - mMoving.data());
+                const uint32_t flags = !mOverlays || index > 1 ? 0 : index == 0 ? asr::INSTANCE_SELECTED : asr::INSTANCE_SELECTED_CHILD;
                 asr::InstanceDesc desc = instanceDesc(object.geometry, object.material, object.x + 4.f * std::sin(seconds + object.phase),
-                                                      object.y + 4.f * std::cos(seconds + object.phase), object.z, object.size, object.size, object.size);
+                                                      object.y + 4.f * std::cos(seconds + object.phase), object.z, object.size, object.size, object.size, flags);
                 mScene.setInstance(object.instance, desc);
             }
             mMoved += uint32_t(mMoving.size());
@@ -523,7 +543,8 @@ public:
         {
             mLastSwap = seconds;
             const uint32_t fresh = mScene.addGeometry(build(mKnotMesh));
-            mScene.setInstance(mSwapInstance, instanceDesc(fresh, mMaterials[1], 0.f, 0.f, 30.f, 12.f, 12.f, 12.f));
+            const uint32_t swapFlags = mOverlays ? asr::INSTANCE_SELECTED | asr::INSTANCE_FACE_SELECTED : 0;
+            mScene.setInstance(mSwapInstance, instanceDesc(fresh, mMaterials[1], 0.f, 0.f, 30.f, 12.f, 12.f, 12.f, swapFlags));
             mScene.removeGeometry(mSwapGeometry);
             mSwapGeometry = fresh;
             ++mReplaced;
@@ -842,6 +863,7 @@ private:
     std::vector<Moving> mMoving;
     uint32_t mSwapGeometry = 0;
     uint32_t mSwapInstance = 0;
+    bool mOverlays = false; // see showOverlays()
     uint32_t mObjects = 0;
     uint32_t mInstances = 0;
     uint32_t mMoved = 0;

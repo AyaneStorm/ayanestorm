@@ -585,6 +585,7 @@ void RenderThread::run()
             input.camera = state.hasCamera ? &state.camera : nullptr;
         }
         input.audit = state.audit;
+        input.overlay = state.overlay;
         if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();

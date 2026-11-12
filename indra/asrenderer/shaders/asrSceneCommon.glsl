@@ -18,6 +18,14 @@ const uint INSTANCE_MASKED = 4u;
 const uint INSTANCE_SKINNED = 8u;
 const uint INSTANCE_BOUND = 16u;
 const uint INSTANCE_BLENDED = 32u;
+const uint INSTANCE_HUD = 64u;
+const uint INSTANCE_SELECTED = 128u;
+const uint INSTANCE_SELECTED_CHILD = 1u << 18;
+const uint INSTANCE_FACE_SELECTED = 1u << 19;
+const uint SELECTION_COLOR_ROOT = 0u; // GpuSceneView::selectionColors
+const uint SELECTION_COLOR_CHILD = 1u;
+const uint SELECTION_COLOR_FACE = 2u;
+const uint INSTANCE_SELECTION =INSTANCE_SELECTED | INSTANCE_SELECTED_CHILD | INSTANCE_FACE_SELECTED;
 const uint INSTANCE_RANK_SHIFT = 8u;
 const uint INSTANCE_RANK_MAX = 1023u;
 
@@ -237,7 +245,11 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint skinAudit;
     uint clusterBlockEnd;
     uint debugView; // DEBUG_VIEW_*
-    uint viewUnused;
+    uint selectionEnd; // GpuSceneView::selectionEnd
+    uint64_t selection;
+    uint hiddenSelections;
+    float outlineWidth;
+    vec4 selectionColors[3]; // SELECTION_COLOR_* in asrscene.h: root, child, face
 };
 
 const uint DEBUG_VIEW_NORMALS = 1u;

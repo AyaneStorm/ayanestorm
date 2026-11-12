@@ -63,6 +63,7 @@ layout(buffer_reference, std430) buffer CountsRef
     uint macoitTailSeen;
     uint countsUnused[3];
     DrawArguments macoitTail[2u * BLENDED_LISTS];
+    DrawArguments selection; // see addSelected()
 };
 
 const uint MACOIT_GATE = 6u;
@@ -230,6 +231,27 @@ void draw(ViewRef view, Instance instance, uint instanceIndex, uint clusterId, u
     if (earlyPhase() || latePhase()) requestSkin(view, instance, latePhase());
 }
 
+// A selected instance in view: every cluster of the LOD the scene draws goes on the
+// selection list, hidden ones too, so the mask has the same surface the scene shows and
+// what lies behind other objects. Its skinning is asked for, as a drawn cluster asks.
+void addSelected(ViewRef view, Instance instance, uint instanceIndex, Geometry geometry)
+{
+    CountsRef counts = CountsRef(push.output_counts);
+    const uint first = atomicAdd(counts.selection.instanceCount, geometry.clusterCount);
+    const uint stored = first >= view.selectionEnd ? 0u : min(geometry.clusterCount, view.selectionEnd - first);
+    if (stored < geometry.clusterCount)
+    {
+        atomicAdd(counts.selection.instanceCount, stored - geometry.clusterCount); // gives the rest back
+        turnAway(counts);
+    }
+    ListWriteRef selection = ListWriteRef(view.selection);
+    for (uint i = 0u; i < stored; ++i)
+    {
+        selection.items[first + i] = ListEntry(instanceIndex, geometry.firstCluster + i);
+    }
+    requestSkin(view, instance, false);
+}
+
 void retest(ViewRef view, uint instanceIndex, uint clusterId)
 {
     CountsRef counts = CountsRef(push.output_counts);
@@ -349,6 +371,10 @@ void testGroup(ViewRef view, Instance instance, uint instanceIndex, uint groupId
 // A view can draw only the instances bound to chosen skeletons: avatars over a plain colour.
 bool chosenByView(ViewRef view, Instance instance)
 {
+    if ((instance.flags & INSTANCE_HUD) != 0u)
+    {
+        return false; // HUD space: drawn by the HUD pass only
+    }
     if (view.drawOnly == 0ul)
     {
         return true;
@@ -380,6 +406,10 @@ void cullInstance(ViewRef view, uint instanceIndex)
     if (!insideView(view, center, radius))
     {
         return;
+    }
+    if (push.phase == CULL_EARLY && (instance.flags & INSTANCE_SELECTION) != 0u)
+    {
+        addSelected(view, instance, instanceIndex, geometry);
     }
     if (hiddenByPyramid(view, center, radius))
     {

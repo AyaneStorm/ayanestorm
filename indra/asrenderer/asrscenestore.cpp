@@ -245,6 +245,56 @@ uint64_t SceneStore::visibleCapacity() const
     return total;
 }
 
+void SceneStore::hudList(std::vector<GpuListEntry>& entries, uint32_t& opaque, uint32_t& selected) const
+{
+    entries.clear();
+    opaque = 0;
+    selected = 0;
+    if (mHudInstances.empty())
+    {
+        return;
+    }
+    // Opaque first in id order, so the order never flickers; then blended, farthest first.
+    std::vector<std::pair<float, uint32_t>> order;
+    order.reserve(mHudInstances.size());
+    for (uint32_t id : mHudInstances)
+    {
+        const InstanceUse& use = mInstanceUses[id];
+        const bool blended = use.kind >= SCENE_BLENDED_KIND;
+        order.push_back({ blended ? -use.hudDepth : -std::numeric_limits<float>::infinity(), id });
+    }
+    std::stable_sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+    const auto add = [&](uint32_t id)
+    {
+        const Geometry& geometry = mGeometries[mInstanceUses[id].geometry];
+        if (!geometry.uploaded)
+        {
+            return uint32_t(0);
+        }
+        const uint32_t firstCluster = geometry.firstEntry + geometry.groupCount;
+        for (uint32_t i = 0; i < geometry.clusterCount; ++i)
+        {
+            entries.push_back({ id, firstCluster + i });
+        }
+        return geometry.clusterCount;
+    };
+    for (const auto& item : order)
+    {
+        const uint32_t added = add(item.second);
+        if (mInstanceUses[item.second].kind < SCENE_BLENDED_KIND)
+        {
+            opaque += added; // opaque items sort first, so these stay a prefix
+        }
+    }
+    for (uint32_t id : mHudInstances)
+    {
+        if (mInstanceUses[id].hudSelected)
+        {
+            selected += add(id);
+        }
+    }
+}
+
 uint64_t SceneStore::groupCapacity() const
 {
     // An instance's group goes in the list once, early or late, never both, as one that
@@ -377,6 +427,11 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
         current.binding = 0;
     }
 
+    mSelectedClusters -= current.selectedClusters;
+    current.selectedClusters = 0;
+    mHudSelected -= current.hudSelected ? 1 : 0;
+    current.hudSelected = false;
+    mHudInstances.erase(command.id);
     if (current.geometry != 0)
     {
         const uint32_t old = current.geometry;
@@ -453,6 +508,18 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
             current.geometry = desc.geometry;
             current.kind = sceneKind(instance.flags);
             countInstance(current.geometry, current.kind, 1);
+            if ((instance.flags & INSTANCE_SELECTION) != 0 && (instance.flags & INSTANCE_HUD) == 0)
+            {
+                current.selectedClusters = mGeometries[desc.geometry].clusterCount;
+                mSelectedClusters += current.selectedClusters;
+            }
+            if ((instance.flags & INSTANCE_HUD) != 0)
+            {
+                current.hudDepth = instance.rows[0][3]; // the HUD camera looks along +X
+                current.hudSelected = (instance.flags & INSTANCE_SELECTION) != 0;
+                mHudSelected += current.hudSelected ? 1 : 0;
+                mHudInstances.insert(command.id);
+            }
         }
         else
         {
@@ -1323,6 +1390,7 @@ void SceneStore::fillView(GpuSceneView& view) const
     view.clusterEnd = uint32_t(tableCapacity(SceneTable::Clusters) / sizeof(GpuCluster));
     view.materialEnd = uint32_t(tableCapacity(SceneTable::Materials) / sizeof(GpuMaterial));
     view.groupEnd = uint32_t(groupCapacity());
+    view.selectionEnd = mSelectedClusters; // the backend sets view.selection
     view.paletteEnd = uint32_t(mRanges[uint32_t(SceneTable::Palette)].used());
     view.bindingEnd = uint32_t(mBindings.size());
     view.blockEnd = uint32_t(mRanges[uint32_t(SceneTable::SkinBlocks)].used());

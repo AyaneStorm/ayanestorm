@@ -62,6 +62,7 @@ namespace
 {
 
 using Clock = std::chrono::steady_clock;
+bool sOverlays = false; // --overlay
 
 double secondsSince(Clock::time_point start)
 {
@@ -2479,12 +2480,26 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
             state.audit = audit;
+            if (sOverlays)
+            {
+                const float colors[3][4] = { { 1.f, 1.f, 0.f, 1.f }, { 0.f, 0.6f, 1.f, 1.f }, { 1.f, 1.f, 1.f, 0.35f } };
+                state.overlay.hud = true;
+                state.overlay.outlines = true;
+                state.overlay.faceHighlights = true;
+                state.overlay.hiddenSelections = true;
+                std::memcpy(state.overlay.selectionColors, colors, sizeof(colors));
+                asrtest::TestCity::hudViewProjection(float(state.width) / float(std::max(state.height, 1u)), state.overlay.hudViewProjection);
+            }
         }
         renderThread.publishState();
     };
     if (drawScene)
     {
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
+        if (sOverlays)
+        {
+            city->showOverlays();
+        }
         printf("city: %u objects, %u instances, built in %.0f ms\n", city->objects(), city->instances(), secondsSince(sceneStart) * 1000.0);
     }
     publishWindowSize();
@@ -2750,6 +2765,10 @@ int main(int argc, char** argv)
         else if (arg == "--street")
         {
             street = true;
+        }
+        else if (arg == "--overlay")
+        {
+            sOverlays = true; // selections and HUDs, see TestCity::showOverlays()
         }
         else if (arg == "--audit")
         {

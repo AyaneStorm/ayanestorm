@@ -54,7 +54,8 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 10; // set 1, see createScene()
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 11; // set 1, see createScene()
+constexpr VkFormat SELECTION_MASK_FORMAT = VK_FORMAT_R8G8B8A8_UNORM; // see asrOverlayMaskF.glsl
 
 // Mac OIT's targets, as asMacOITCaptureF.glsl accumulates them.
 constexpr VkFormat MACOIT_MOMENTS_FORMAT = VK_FORMAT_R32G32B32A32_SFLOAT;
@@ -1149,6 +1150,9 @@ private:
         bool depthTest = false;       // against the scene depth; culling is then dynamic
         bool depthWrite = false;
         bool additive = false;        // every target adds, as Mac OIT's accumulations do
+        bool maxBlend = false;        // every target keeps the larger, as the selection mask
+        bool alphaBlend = false;      // source over, as the HUD and the outlines
+        bool depthFormat = false;     // a depth target is bound, though not tested
     };
 
     VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
@@ -1208,6 +1212,26 @@ private:
                     attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
                     attachment.alphaBlendOp = VK_BLEND_OP_ADD;
                 }
+                else if (setup.maxBlend)
+                {
+                    attachment.blendEnable = VK_TRUE;
+                    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.colorBlendOp = VK_BLEND_OP_MAX;
+                    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.alphaBlendOp = VK_BLEND_OP_MAX;
+                }
+                else if (setup.alphaBlend)
+                {
+                    attachment.blendEnable = VK_TRUE;
+                    attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+                    attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                    attachment.colorBlendOp = VK_BLEND_OP_ADD;
+                    attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+                    attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+                    attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+                }
             }
             VkPipelineColorBlendStateCreateInfo blend{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
             blend.attachmentCount = uint32_t(attachments.size());
@@ -1220,7 +1244,7 @@ private:
             VkPipelineRenderingCreateInfo rendering{ VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
             rendering.colorAttachmentCount = uint32_t(setup.colors.size());
             rendering.pColorAttachmentFormats = setup.colors.data();
-            rendering.depthAttachmentFormat = depth ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
+            rendering.depthAttachmentFormat = depth || setup.depthFormat ? DEPTH_FORMAT : VK_FORMAT_UNDEFINED;
 
             VkGraphicsPipelineCreateInfo create{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, &rendering };
             create.stageCount = 2;
@@ -1308,7 +1332,7 @@ private:
         mEncodeBC1Pipeline = mTextureMipPipeline ? createComputePipeline("asrEncodeBC1C", error) : VK_NULL_HANDLE;
         mEncodeBC45Pipeline = mEncodeBC1Pipeline ? createComputePipeline("asrEncodeBC45C", error) : VK_NULL_HANDLE;
         mEncodeBC7Pipeline = mEncodeBC45Pipeline ? createComputePipeline("asrEncodeBC7C", error) : VK_NULL_HANDLE;
-        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error))
+        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error) || !createOverlayPipelines(error))
         {
             return false;
         }
@@ -1325,6 +1349,7 @@ private:
         mResultImages[ResultMacOITTailDepth] = &mMacOIT.tailDepth;
         mResultImages[ResultMacOITColor] = &mMacOIT.color;
         mResultImages[ResultMacOITWeights] = &mMacOIT.weights;
+        mResultImages[ResultSelectionMask] = &mSelectionMask;
 
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1429,6 +1454,8 @@ private:
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
+        destroyTarget(mSelectionMask);
+        destroyTarget(mOverlay.hudDepth);
         destroyMacOITTargets();
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
         for (bool& written : mAuditWritten)
@@ -1444,6 +1471,8 @@ private:
             !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
+            !createTarget(mSelectionMask, SELECTION_MASK_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "selection mask") ||
+            !createTarget(mOverlay.hudDepth, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "HUD depth") ||
             !createMacOITTargets())
         {
             return false;
@@ -1459,7 +1488,7 @@ private:
 
         const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mAlbedoImage.view,   mNormalImage.view,     mDepthImage.view,
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
-                                                          mLitImage.view,         mSceneColorImage.view };
+                                                          mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
@@ -1493,6 +1522,287 @@ private:
         VkPipeline colorPass = VK_NULL_HANDLE;
         VkPipeline resolve = VK_NULL_HANDLE;
     };
+
+    // HUDs and selection outlines: see doc/ayanestorm-new-renderer-huds-outlines.md.
+    struct Overlay
+    {
+        VkPipeline mask = VK_NULL_HANDLE;       // the selection mask, MAX blended
+        VkPipeline hudOpaque = VK_NULL_HANDLE;  // HUD objects into the HUD depth
+        VkPipeline hudBlended = VK_NULL_HANDLE; // back to front, testing it
+        VkPipeline outline = VK_NULL_HANDLE;    // fullscreen, from the mask
+        GpuBuffer selectionList;                // written by the early cull
+        MappedBuffer hudViews[FRAMES_IN_FLIGHT];
+        MappedBuffer hudLists[FRAMES_IN_FLIGHT];
+        TargetImage hudDepth;
+        std::vector<GpuListEntry> hudEntries;
+        uint32_t hudOpaqueCount = 0; // the HUD list's opaque prefix
+        uint32_t hudSelected = 0; // its selected entries, at its end
+        uint32_t hudDrawn = 0;    // entries drawn: opaque and blended
+        uint64_t hudView = 0;     // addresses for this frame
+        uint64_t hudList = 0;
+        bool sceneMask = false;   // the scene's selections are in the mask this frame
+        bool hudMask = false;     // the HUD's are
+    };
+
+    bool createOverlayPipelines(std::string& error)
+    {
+        RasterSetup mask;
+        mask.colors = { SELECTION_MASK_FORMAT };
+        mask.maxBlend = true;
+        RasterSetup hud;
+        hud.colors = { mSurfaceFormat.format };
+        hud.depthTest = true;
+        hud.depthWrite = true;
+        RasterSetup blended = hud;
+        blended.depthWrite = false;
+        blended.alphaBlend = true;
+        RasterSetup outline;
+        outline.colors = { mSurfaceFormat.format };
+        outline.depthFormat = true; // drawn in the HUD's rendering
+        outline.alphaBlend = true;
+        mOverlay.mask = createSceneRasterPipeline("asrOverlayV", "asrOverlayMaskF", mask, error);
+        mOverlay.hudOpaque = mOverlay.mask ? createSceneRasterPipeline("asrOverlayV", "asrOverlayHudF", hud, error) : VK_NULL_HANDLE;
+        mOverlay.hudBlended = mOverlay.hudOpaque ? createSceneRasterPipeline("asrOverlayV", "asrOverlayHudF", blended, error) : VK_NULL_HANDLE;
+        mOverlay.outline = mOverlay.hudBlended ? createSceneRasterPipeline("asrSceneCompositeV", "asrOverlayOutlineF", outline, error) : VK_NULL_HANDLE;
+        return mOverlay.outline != VK_NULL_HANDLE;
+    }
+
+    void destroyOverlay()
+    {
+        for (VkPipeline pipeline : { mOverlay.mask, mOverlay.hudOpaque, mOverlay.hudBlended, mOverlay.outline })
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice, pipeline, nullptr);
+            }
+        }
+        destroyBufferObject(mOverlay.selectionList, MemoryCategory::RenderTargets);
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            destroyBuffer(mOverlay.hudViews[i], MemoryCategory::Staging);
+            destroyBuffer(mOverlay.hudLists[i], MemoryCategory::Staging);
+        }
+        mOverlay = Overlay{};
+    }
+
+    // In the upload pass, with the scene's view: the selection list's room, the overlay's
+    // part of the view, and the HUD's view and list for this frame's slot.
+    bool prepareOverlay(GpuSceneView& view, uint32_t slot)
+    {
+        const OverlayInput& input = *mRecordOverlay;
+        const bool masked = mGraph.isRunning(PassSelectionMask); // see recordScene()
+        const bool selections = input.outlines || input.faceHighlights;
+        mOverlay.sceneMask = masked && selections && view.selectionEnd != 0;
+        if (!mOverlay.sceneMask)
+        {
+            view.selectionEnd = 0; // the cull adds nothing
+        }
+        if (view.selectionEnd != 0 && mOverlay.selectionList.size < uint64_t(view.selectionEnd) * sizeof(GpuListEntry))
+        {
+            destroyBufferObject(mOverlay.selectionList, MemoryCategory::RenderTargets);
+            const uint64_t bytes = uint64_t(view.selectionEnd) * 2 * sizeof(GpuListEntry); // room to grow
+            if (!createBufferObject(mOverlay.selectionList, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "selection list", MemoryCategory::RenderTargets))
+            {
+                return false;
+            }
+        }
+        view.selection = mOverlay.selectionList.address;
+        view.hiddenSelections = input.hiddenSelections ? 1 : 0;
+        view.outlineWidth = input.outlineWidth;
+        memcpy(view.selectionColors, input.selectionColors, sizeof(view.selectionColors));
+        if (!input.faceHighlights)
+        {
+            view.selectionColors[SELECTION_COLOR_FACE][3] = 0.f;
+        }
+        if (!input.outlines)
+        {
+            view.selectionColors[SELECTION_COLOR_ROOT][3] = 0.f;
+            view.selectionColors[SELECTION_COLOR_CHILD][3] = 0.f;
+        }
+
+        mOverlay.hudDrawn = 0;
+        mOverlay.hudMask = false;
+        if (input.hud)
+        {
+            mSceneStore.hudList(mOverlay.hudEntries, mOverlay.hudOpaqueCount, mOverlay.hudSelected);
+        }
+        else
+        {
+            mOverlay.hudEntries.clear(); // hidden, as Alt+Shift+H hides them
+            mOverlay.hudOpaqueCount = 0;
+            mOverlay.hudSelected = 0;
+        }
+        if (mOverlay.hudEntries.empty())
+        {
+            return true;
+        }
+        const VkBufferUsageFlags usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+        const uint64_t listBytes = mOverlay.hudEntries.size() * sizeof(GpuListEntry);
+        if (!growBuffer(mOverlay.hudViews[slot], sizeof(GpuSceneView), usage, MemoryCategory::Staging, "HUD view") ||
+            !growBuffer(mOverlay.hudLists[slot], listBytes, usage, MemoryCategory::Staging, "HUD list"))
+        {
+            return false;
+        }
+        // The scene's view with the HUD's camera: HUD space has its origin at the camera.
+        GpuSceneView hudView = view;
+        memcpy(hudView.viewProjection, input.hudViewProjection, sizeof(hudView.viewProjection));
+        hudView.camera[0] = hudView.camera[1] = hudView.camera[2] = 0.f;
+        memcpy(mOverlay.hudViews[slot].mapped, &hudView, sizeof(hudView));
+        vmaFlushAllocation(mAllocator, mOverlay.hudViews[slot].allocation, 0, sizeof(hudView));
+        memcpy(mOverlay.hudLists[slot].mapped, mOverlay.hudEntries.data(), listBytes);
+        vmaFlushAllocation(mAllocator, mOverlay.hudLists[slot].allocation, 0, listBytes);
+        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address.buffer = mOverlay.hudViews[slot].buffer;
+        mOverlay.hudView = vkGetBufferDeviceAddress(mDevice, &address);
+        address.buffer = mOverlay.hudLists[slot].buffer;
+        mOverlay.hudList = vkGetBufferDeviceAddress(mDevice, &address);
+        mOverlay.hudDrawn = uint32_t(mOverlay.hudEntries.size()) - mOverlay.hudSelected;
+        mOverlay.hudMask = masked && selections && mOverlay.hudSelected != 0;
+        return true;
+    }
+
+    // The selection mask: the scene's selections against its depth, then the HUD's.
+    bool passSelectionMask()
+    {
+        VkCommandBuffer commands = mRecordCommands;
+        VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        color.imageView = mSelectionMask.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 0: nothing selected
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, mSceneExtent };
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        vkCmdBeginRendering(commands, &rendering);
+        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.mask);
+        const ScenePush scene = mScenePush;
+        if (mOverlay.sceneMask)
+        {
+            mScenePush.visible = mOverlay.selectionList.address;
+            mScenePush.list = 0;
+            mScenePush.phase = 0; // OVERLAY_MASK_SCENE
+            pushScene(commands);
+            vkCmdDrawIndirect(commands, mSceneCounts.buffer, offsetof(GpuSceneCounts, selection), 1, sizeof(GpuDrawArguments));
+        }
+        if (mOverlay.hudMask)
+        {
+            mScenePush.view = mOverlay.hudView;
+            mScenePush.visible = mOverlay.hudList;
+            mScenePush.list = mOverlay.hudDrawn;
+            mScenePush.phase = 1; // OVERLAY_MASK_HUD
+            pushScene(commands);
+            vkCmdDraw(commands, CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3, mOverlay.hudSelected, 0, 0);
+        }
+        mScenePush = scene;
+        vkCmdEndRendering(commands);
+        return true;
+    }
+
+    bool overlaysDrawn() const
+    {
+        return mOverlay.sceneMask || mOverlay.hudDrawn != 0;
+    }
+
+    // Over the composited image, before the UI: the scene's outlines, the HUD, its outlines.
+    void recordOverlays(VkCommandBuffer commands, uint32_t image)
+    {
+        VkImageMemoryBarrier2 depthBarrier{ VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+        depthBarrier.srcStageMask = VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT; // the last frame's HUD
+        depthBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthBarrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        depthBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        depthBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; // cleared below
+        depthBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        depthBarrier.image = mOverlay.hudDepth.image;
+        depthBarrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+        VkDependencyInfo dependency{ VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+        dependency.imageMemoryBarrierCount = 1;
+        dependency.pImageMemoryBarriers = &depthBarrier;
+        vkCmdPipelineBarrier2(commands, &dependency);
+        // The composite's colour writes come before these.
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+                      VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        const VkExtent2D extent{ std::min(mExtent.width, mSceneExtent.width), std::min(mExtent.height, mSceneExtent.height) };
+        VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        color.imageView = mViews[image];
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mOverlay.hudDepth.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 0 is farthest, in reversed depth
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, extent };
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, extent };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+
+        const ScenePush scene = mScenePush;
+        if (mOverlay.sceneMask)
+        {
+            vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.outline);
+            mScenePush.phase = 0; // OVERLAY_OUTLINE_SCENE
+            pushScene(commands);
+            vkCmdDraw(commands, 3, 1, 0, 0);
+        }
+        if (mOverlay.hudDrawn != 0)
+        {
+            const uint32_t vertices = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3;
+            mScenePush.view = mOverlay.hudView;
+            mScenePush.visible = mOverlay.hudList;
+            mScenePush.list = 0;
+            if (mOverlay.hudOpaqueCount != 0)
+            {
+                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.hudOpaque);
+                vkCmdSetCullMode(commands, VK_CULL_MODE_NONE);
+                pushScene(commands);
+                vkCmdDraw(commands, vertices, mOverlay.hudOpaqueCount, 0, 0);
+            }
+            if (mOverlay.hudDrawn > mOverlay.hudOpaqueCount)
+            {
+                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.hudBlended);
+                vkCmdSetCullMode(commands, VK_CULL_MODE_NONE);
+                mScenePush.list = mOverlay.hudOpaqueCount;
+                pushScene(commands);
+                vkCmdDraw(commands, vertices, mOverlay.hudDrawn - mOverlay.hudOpaqueCount, 0, 0);
+            }
+            if (mOverlay.hudMask)
+            {
+                vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.outline);
+                mScenePush.phase = 1; // OVERLAY_OUTLINE_HUD
+                pushScene(commands);
+                vkCmdDraw(commands, 3, 1, 0, 0);
+            }
+        }
+        mScenePush = scene;
+        vkCmdEndRendering(commands);
+        // The UI draws over this, and the HUD's texture feedback lands outside the frame
+        // graph: what comes next, this frame's UI or the next frame's graph, sees both.
+        memoryBarrier(commands, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                      VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                      VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
+    }
 
     bool createMacOITPipelines(std::string& error)
     {
@@ -1658,6 +1968,7 @@ private:
         mGraph.setBody(PassMacOITTail, [this]() { return passMacOIT(mMacOIT.tail, { &mMacOIT.moments, &mMacOIT.tailDepth }, true); });
         mGraph.setBody(PassMacOITColor, [this]() { return passMacOIT(mMacOIT.colorPass, { &mMacOIT.color, &mMacOIT.weights }, false); });
         mGraph.setBody(PassMacOITResolve, [this]() { return passMacOITResolve(); });
+        mGraph.setBody(PassSelectionMask, [this]() { return passSelectionMask(); });
     }
 
     void destroyScene()
@@ -1698,8 +2009,11 @@ private:
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
+        destroyTarget(mSelectionMask);
+        destroyTarget(mOverlay.hudDepth);
         destroyMacOITTargets();
         destroyMacOITPipelines();
+        destroyOverlay();
         for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline,
                                      mTextureMipPipeline, mEncodeBC1Pipeline, mEncodeBC45Pipeline, mEncodeBC7Pipeline })
         {
@@ -3026,6 +3340,10 @@ private:
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         view.debugView = mRecordCamera->debugView;
+        if (!prepareOverlay(view, slot))
+        {
+            return false;
+        }
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
@@ -3310,7 +3628,7 @@ private:
     }
 
     // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
-    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit)
+    bool recordScene(VkCommandBuffer commands, uint32_t slot, const SceneCamera3D& camera, bool audit, const OverlayInput& overlay)
     {
         const auto readStart = std::chrono::steady_clock::now();
         readSceneResults(slot);
@@ -3318,6 +3636,9 @@ private:
         const bool readFeedback = mFeedbackCollector.frame(std::chrono::steady_clock::now(), mFeedbackValue, mFeedbackEnding);
         mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
         mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
+        // The mask only while something is selected and shown; the outline pass reads it.
+        mGraph.setSink(ResultSelectionMask, GraphAccess::FragmentRead, (overlay.outlines || overlay.faceHighlights) && mSceneStore.hasSelection());
+        mRecordOverlay = &overlay;
         if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
             return false;
@@ -3542,7 +3863,7 @@ private:
         bringSlots(slot);
         mDiagnostics.checkpoint(commands, PassCount, "texture commands", true);
         mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
-        if (input.camera && !recordScene(commands, slot, *input.camera, input.audit))
+        if (input.camera && !recordScene(commands, slot, *input.camera, input.audit, input.overlay))
         {
             return false;
         }
@@ -3579,6 +3900,17 @@ private:
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mPipeline);
             vkCmdPushConstants(commands, mPipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(input.seconds), &input.seconds);
             vkCmdDraw(commands, 3, 1, 0, 0);
+        }
+        if (input.camera && overlaysDrawn())
+        {
+            // Outlines and HUDs need their own depth: a rendering of their own, then the
+            // UI carries on over what they drew.
+            vkCmdEndRendering(commands);
+            recordOverlays(commands, image);
+            color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            vkCmdBeginRendering(commands, &rendering);
+            vkCmdSetViewport(commands, 0, 1, &viewport);
+            vkCmdSetScissor(commands, 0, 1, &scissor);
         }
         if (input.ui && !input.ui->vertices().empty())
         {
@@ -3826,6 +4158,9 @@ private:
     TargetImage mAuditImage;
     TargetImage mLitImage;
     TargetImage mSceneColorImage;
+    TargetImage mSelectionMask; // see ResultSelectionMask
+    Overlay mOverlay;
+    const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()
     MacOITResources mMacOIT;
     VkExtent2D mSceneExtent{};
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;

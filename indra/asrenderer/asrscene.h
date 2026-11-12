@@ -48,13 +48,18 @@ constexpr uint32_t INSTANCE_MASKED = 4u;       // holes, from the texture's alph
 constexpr uint32_t INSTANCE_SKINNED = 8u;      // set by the store: its positions follow joints, see GpuBinding
 constexpr uint32_t INSTANCE_BOUND = 16u;       // set by the store: on a skeleton, and GpuInstance::binding names how
 constexpr uint32_t INSTANCE_BLENDED = 32u;     // alpha blended: drawn by the transparency passes, never into depth
+constexpr uint32_t INSTANCE_HUD = 64u;         // a HUD object, in HUD space: only the HUD pass draws it
+constexpr uint32_t INSTANCE_SELECTED = 128u;   // outlined in the root's selection colour
+constexpr uint32_t INSTANCE_SELECTED_CHILD = 1u << 18; // outlined in the linked children's colour
+constexpr uint32_t INSTANCE_FACE_SELECTED = 1u << 19;  // a face the face tool selected: tinted
+constexpr uint32_t INSTANCE_SELECTION = INSTANCE_SELECTED | INSTANCE_SELECTED_CHILD | INSTANCE_FACE_SELECTED;
 
 // Surfaces in the same plane would tie in depth, and the order of a list changes from frame
 // to frame, so which one shows would flicker. Each rank sits a fixed share of its distance
 // nearer, see the vertex shader, so the higher one always wins, at any camera position.
 constexpr uint32_t INSTANCE_RANK_SHIFT = 8;
 constexpr uint32_t INSTANCE_RANK_MAX = 1023;
-constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | INSTANCE_BLENDED | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
+constexpr uint32_t INSTANCE_DESC_FLAGS = INSTANCE_DOUBLE_SIDED | INSTANCE_MASKED | INSTANCE_BLENDED | INSTANCE_HUD | INSTANCE_SELECTION | (INSTANCE_RANK_MAX << INSTANCE_RANK_SHIFT);
 
 // Each kind of surface has its own draw state, so each has its own lists. The opaque kinds
 // come first: double-sided is bit 0, and masked is bit 1. Blended surfaces have two kinds
@@ -430,8 +435,9 @@ struct GpuSceneCounts
     uint32_t skinAuditErrors;
     uint32_t skinAuditMaxError; // positive float bits: metres from direct float skinning
     GpuDrawArguments macoitTail[2 * SCENE_BLENDED_LISTS];
+    GpuDrawArguments selection; // the early cull's selected clusters, for the selection mask
 };
-static_assert(sizeof(GpuSceneCounts) == 1104, "shaders read this layout");
+static_assert(sizeof(GpuSceneCounts) == 1120, "shaders read this layout");
 static_assert(offsetof(GpuSceneCounts, guardBits) == 816, "asrSceneResolveC.glsl's GUARD_OFFSET");
 static_assert(offsetof(GpuSceneCounts, macoitTailSeen) == 832, "asrSceneMacOIT.glsl's MACOIT_TAIL_SEEN_OFFSET");
 static_assert(offsetof(GpuSceneCounts, skinAuditSamples) == 836, "asrSceneSkinAudit.glsl's counter offset");
@@ -636,9 +642,17 @@ struct GpuSceneView
     uint32_t skinAudit;
     uint32_t clusterBlockEnd;
     uint32_t debugView;       // SceneCamera3D::debugView
-    uint32_t unused;          // to a multiple of 16, as std430 rounds a struct holding a vec4
+    uint32_t selectionEnd;    // entries the selection list holds; 0: nothing selected, none drawn
+    uint64_t selection;       // the selection list: the early cull's clusters of selected instances
+    uint32_t hiddenSelections; // not 0: outlines show behind other objects too, fainter
+    float outlineWidth;       // pixels
+    float selectionColors[3][4]; // SELECTION_COLOR_*, as the viewer's colour table has them
 };
-static_assert(sizeof(GpuSceneView) == 688, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 752, "shaders read this layout");
+constexpr uint32_t SELECTION_COLOR_ROOT = 0;  // SilhouetteParentColor
+constexpr uint32_t SELECTION_COLOR_CHILD = 1; // SilhouetteChildColor
+constexpr uint32_t SELECTION_COLOR_FACE = 2;  // the face tool's tint
+static_assert(offsetof(GpuSceneView, selection) % 8 == 0, "std430 aligns a uint64_t to 8");
 
 // The time skeletons and views are stamped with.
 uint32_t sceneTime(std::chrono::steady_clock::time_point time);

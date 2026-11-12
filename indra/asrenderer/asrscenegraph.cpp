@@ -33,6 +33,8 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("macoit tail depth", ResultScope::Frame);
     graph.addResult("macoit color", ResultScope::Frame);
     graph.addResult("macoit weights", ResultScope::Frame);
+    graph.addResult("selection list", ResultScope::Frame);
+    graph.addResult("selection mask", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -49,7 +51,8 @@ void declareSceneGraph(FrameGraph& graph)
                                   { ResultDrawArguments, ComputeWrite | Keep },
                                   { ResultVisibleClusters, ComputeWrite },
                                   { ResultRetestList, ComputeWrite },
-                                  { ResultGroupList, ComputeWrite } });
+                                  { ResultGroupList, ComputeWrite },
+                                  { ResultSelectionList, ComputeWrite } });
     graph.addPass("groups early", { { ResultSceneData, ComputeRead | ComputeWrite | Keep },
                                     { ResultDepthPyramid, ComputeRead | PreviousFrame },
                                     { ResultGroupList, ComputeRead },
@@ -93,6 +96,13 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });
     declareMacOIT(graph);
+    // The scene's selections against the final opaque depth, read as a texture, and the
+    // HUD's selected entries in the HUD view. The composite pass draws outlines from it.
+    graph.addPass("selection mask", { { ResultSceneData, VertexRead | FragmentRead },
+                                      { ResultDrawArguments, Indirect | Keep },
+                                      { ResultSelectionList, VertexRead },
+                                      { ResultDepth, FragmentRead | Keep },
+                                      { ResultSelectionMask, ColorTarget } });
     graph.addPass("read counts", { { ResultDrawArguments, CopyRead }, { ResultSceneCounts, CopyWrite } });
 
     // The audit runs last, and reuses the lists: nothing after it reads them. All of it

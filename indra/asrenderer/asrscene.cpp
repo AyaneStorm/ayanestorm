@@ -657,6 +657,8 @@ GpuSceneCounts sceneCountsTemplate()
         counts.early[list].vertexCount = vertices;
         counts.late[list].vertexCount = vertices;
     }
+    counts.selection.vertexCount = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3; // one draw for every size
+
     for (GpuWorkCount* work : { &counts.retest, &counts.groups[0], &counts.groups[1] })
     {
         work->groups[1] = 1;

@@ -148,6 +148,18 @@ public:
     // The room the group list needs if every group of every instance passes.
     uint64_t groupCapacity() const;
 
+    // The room the selection list needs: every cluster of every selected instance's finest
+    // LOD. 0 when nothing is selected, and the selection passes are skipped.
+    uint32_t selectionCapacity() const { return mSelectedClusters; }
+    bool hasSelection() const { return mSelectedClusters != 0 || mHudSelected != 0; }
+
+    // The HUD pass's draw order, as OpenGL's: opaque instances, the first `opaque` entries,
+    // then blended ones back to front along the HUD camera's axis; every cluster of each
+    // one's finest LOD, as HUDs are near and few. After them, the clusters of selected HUD
+    // instances again, `selected` of them, for the HUD's selection mask. Empty when there
+    // are no HUD instances.
+    void hudList(std::vector<GpuListEntry>& entries, uint32_t& opaque, uint32_t& selected) const;
+
     // Geometries waiting for upload room or for memory.
     size_t pendingGeometries() const { return mQueuedGeometries; }
 
@@ -204,6 +216,9 @@ private:
         uint32_t geometry = 0; // 0 means free
         uint32_t kind = 0;
         uint32_t binding = 0;
+        uint32_t selectedClusters = 0; // selected: what it may add to the selection list
+        float hudDepth = 0.f;          // a HUD instance: its centre along the HUD camera's axis
+        bool hudSelected = false;      // a HUD instance with an outline or a face tint
     };
 
     struct Skeleton
@@ -408,6 +423,9 @@ private:
     uint64_t mGroupTotal = 0;
     uint64_t mTriangles = 0;
     uint32_t mInstanceEnd = 0;
+    uint32_t mSelectedClusters = 0;
+    uint32_t mHudSelected = 0; // HUD instances with an outline or a tint
+    std::set<uint32_t> mHudInstances; // ids drawn by the HUD pass
     bool mStarted = false;
     bool mPositionsCompacted = false;
     std::chrono::steady_clock::time_point mLastPositionCompaction{};

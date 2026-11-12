@@ -129,6 +129,7 @@ struct FrameState
     CameraTurn turn{};
     bool predictCamera = false; // see CameraPredictor; while turning, only the pivots
     bool audit = false;     // see FrameInput
+    OverlayInput overlay{}; // see FrameInput
     float maxFramesPerSecond = 0.f; // the user's frame limit, which paces this thread; 0 is none
 };
 

@@ -44,6 +44,8 @@ enum SceneResult : ResultId
     ResultMacOITTailDepth, // tail optical depth
     ResultMacOITColor,    // sum of colour * weight, and glow
     ResultMacOITWeights,  // sum of weight, and of optical depth
+    ResultSelectionList,  // the early cull's clusters of selected instances
+    ResultSelectionMask,  // where selections are, for the outline: see asrOverlayMaskF.glsl
     ResultCount
 };
 
@@ -73,6 +75,7 @@ enum ScenePass : PassId
     PassMacOITTail,
     PassMacOITColor,
     PassMacOITResolve,
+    PassSelectionMask, // only while something is selected: the mask's sink is off otherwise
     PassReadCounts,
     PassAuditReset,
     PassAuditCull,

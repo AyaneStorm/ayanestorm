@@ -59,6 +59,18 @@ struct ProbeResult
 };
 
 // One frame's work.
+// What is drawn over the scene besides the UI: HUDs and selection outlines.
+struct OverlayInput
+{
+    bool hud = false;               // draw HUD instances, as LLPipeline::sShowHUDAttachments
+    float hudViewProjection[16]{};  // HUD space to clip, column-major, Y down, reversed depth
+    bool outlines = false;          // selection outlines shown, as the build tools' toggles say
+    bool faceHighlights = false;    // faces the face tool selected are tinted
+    bool hiddenSelections = false;  // outline what other objects hide too, fainter
+    float outlineWidth = 3.f;       // pixels, up to 4
+    float selectionColors[3][4]{};  // SELECTION_COLOR_* in asrscene.h
+};
+
 struct FrameInput
 {
     uint32_t width = 0; // in pixels; a change of size recreates what depends on it
@@ -68,6 +80,7 @@ struct FrameInput
     const UIList* ui = nullptr; // drawn on top; stays valid during the call
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
     bool audit = false; // also looks for clusters occlusion culling lost
+    OverlayInput overlay{}; // with the scene only
 };
 
 constexpr uint32_t MAX_TIMED_PASSES = 32; // every scene pass, audit and feedback included
