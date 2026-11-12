@@ -2285,6 +2285,14 @@ void applyObject(LLDrawable* drawable)
         return;
     }
     refreshGltfMaterials(volume);
+    // rebuildGeom() also gives an animated object its own skeleton, once its mesh and skin
+    // are in. Without it an animesh whose mesh came after its animations never got one: alone
+    // it stood still and unskinned, worn it took the wearer's skeleton. A new skeleton marks
+    // the object for rebuild, which comes back here and binds it.
+    if (!volume->isMesh() || volume->getSkinInfo() || volume->isSkinInfoUnavaliable())
+    {
+        volume->updateControlAvatar();
+    }
 
     const Shape& shape = *object.shape;
     const size_t faces = llmin(size_t(volume->getNumTEs()), shape.faces.size());
