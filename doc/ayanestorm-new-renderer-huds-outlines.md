@@ -50,7 +50,7 @@ HUDs and selection outlines, and neither waits for lighting.
 - **World view** (12 November): the scene is made at the world view's size and placed at
   its offset in the window (`FrameInput::worldView`, composite viewport, `push.list`
   offset), as OpenGL's viewport; HUDs and outlines draw in the same viewport. Picking,
-  world and HUD, then agrees with what shows. Metal: not yet, the scene fills its window.
+  world and HUD, then agrees with what shows. Metal the same (`mWorldViewX/Y`).
 - **Floating text** (`llSetText`, world and HUD): to be drawn by the viewer's own
   `render_hud_elements()` through the UI capture, after the HUD objects and their
   outline, before the 2D UI, with no HUD depth; with the 3D UI (`render_ui_3d()`).
@@ -183,8 +183,20 @@ sees it; what it lacks is depth, cull and viewport state, and the HUD's place in
   updates, with the scene's own depth. `gDebugProgram` draws flat in its diffuse colour
   uniform (`ASR::addUniformColorProgram()`, tagged hook in `LLGLSLShader::uniform4f[v]`).
   Test box placed once in the world. Self-tests and validated overlay run pass.
+- Metal side (12 November): `OverlayResources`, `prepareOverlay()` in the upload pass,
+  graph body `passSelectionMask()` (RGBA8 mask, scene depth at texture 3); the scene is
+  made at the world view's size and composited at its offset. One window pass: composite,
+  scene outline, UI world part (scene depth copied in the world view), depth farthest, HUD
+  opaque and blended (GREATER_EQUAL), HUD outline, rest of the UI; the pass updates
+  `mSceneFence` when overlays drew, so the next frame's feedback readback sees the HUD's.
+  `PassUIDepth` stays off in Metal (memoryless UI depth). `attachPassSamples()` shared by
+  the render passes. Two stale self-tests fixed: strip winding (after the strip fix) and
+  the draw count, now counting only the 2D part after the HUD mark. Mac and Windows:
+  selftest and `--scene --overlay --ui --validate` pass, no validation errors. Mac picture
+  not yet seen (no screen capture over SSH); Mac viewer unbuilt.
 - Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
   (context) colours; mesh selections use the same colours.
 - To do: viewer build test of the 3D UI and floating text (programs other than
   `gUIProgram` and `gSolidColorProgram` are left out and logged once: check the log),
-  then Metal's side of step h (HUD, outlines), then texture animation.
+  then Metal's side of step h (HUD, outlines: written, see above; Mac picture and viewer
+  test pending), then texture animation.

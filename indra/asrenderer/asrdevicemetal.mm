@@ -263,7 +263,19 @@ public:
 
             id<MTLCommandBuffer> commands = newCommandBuffer();
             watchErrors(commands, "frame");
-            if (input.camera && !recordScene(commands, slot, *input.camera, width, height, input.audit))
+            // The world view, inside the window: the scene is made at its size and placed there.
+            mWorldViewX = 0;
+            mWorldViewY = 0;
+            uint32_t worldWidth = width;
+            uint32_t worldHeight = height;
+            if (input.worldView[2] != 0 && input.worldView[3] != 0)
+            {
+                mWorldViewX = std::min(input.worldView[0], width - 1);
+                mWorldViewY = std::min(input.worldView[1], height - 1);
+                worldWidth = std::min(input.worldView[2], width - mWorldViewX);
+                worldHeight = std::min(input.worldView[3], height - mWorldViewY);
+            }
+            if (input.camera && !recordScene(commands, slot, *input.camera, worldWidth, worldHeight, input.audit, input.overlay))
             {
                 dispatch_semaphore_signal(mFrameSlots);
                 return false;
@@ -285,44 +297,65 @@ public:
             pass.depthAttachment.clearDepth = 0.0; // reversed depth: 0 is far away
 
             id<MTLRenderCommandEncoder> encoder = [commands renderCommandEncoderWithDescriptor:pass];
+            const bool overlays = input.camera && overlaysDrawn();
             if (input.camera)
             {
-                [encoder waitForFence:mSceneFence beforeStages:MTLRenderStageFragment];
+                // The HUD's vertices read the scene tables: wait before the vertex stage then.
+                [encoder waitForFence:mSceneFence beforeStages:overlays ? MTLRenderStageVertex : MTLRenderStageFragment];
                 [encoder setRenderPipelineState:mCompositePipeline];
                 [encoder setFragmentTexture:mSceneColorTarget atIndex:9];
-                // The composite reads the world view's offset from push.list: none here yet,
-                // the scene fills the window (FrameInput::worldView is Vulkan's so far).
-                const ScenePush noOffset{};
-                [encoder setFragmentBytes:&noOffset length:sizeof(noOffset) atIndex:PUSH_CONSTANT_BUFFER];
+                // The composite reads the world view's offset from push.list.
+                ScenePush offset{};
+                offset.list = setWorldViewport(encoder);
+                [encoder setFragmentBytes:&offset length:sizeof(offset) atIndex:PUSH_CONSTANT_BUFFER];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+                if (mOverlay.sceneMask)
+                {
+                    drawSceneOutline(encoder);
+                }
             }
             if (input.testTriangle)
             {
+                [encoder setViewport:MTLViewport{ 0.0, 0.0, double(width), double(height), 0.0, 1.0 }];
+                [encoder setScissorRect:MTLScissorRect{ 0, 0, width, height }];
                 [encoder setRenderPipelineState:mPipeline];
                 [encoder setFragmentBytes:&input.seconds length:sizeof(input.seconds) atIndex:PUSH_CONSTANT_BUFFER];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
             }
-            if (input.ui && !input.ui->vertices().empty())
+            // As Vulkan's recordOverlays(): the UI's world part against the scene depth, the
+            // depth farthest again, the HUD and its outlines, then the rest of the UI.
+            const bool uiDrawn = input.ui && !input.ui->vertices().empty();
+            const uint32_t uiDraws = uiDrawn ? uint32_t(input.ui->draws().size()) : 0;
+            const uint32_t uiHud = input.camera ? std::min(uiDrawn ? input.ui->hudDraw() : 0u, uiDraws) : 0;
+            if (uiDrawn)
             {
-                // The world part against the scene depth, then the depth farthest again for
-                // the HUD's part, as Vulkan's recordOverlays(). No HUD in Metal yet.
-                const UIList& ui = *input.ui;
-                // The scene fills the window in Metal so far: see the composite above.
-                const float size[2] = { float(width), float(height) };
-                const float offset[2] = { 0.f, 0.f };
-                uiWorldToWindow(input.camera ? input.camera->viewProjection : nullptr, ui, size, offset, mUIWorldToWindow);
-                const uint32_t draws = uint32_t(ui.draws().size());
-                const uint32_t hud = input.camera ? std::min(ui.hudDraw(), draws) : 0;
-                if (hud != 0)
+                const float size[2] = { float(mSceneWidth), float(mSceneHeight) };
+                const float offset[2] = { float(mWorldViewX), float(mWorldViewY) };
+                uiWorldToWindow(input.camera ? input.camera->viewProjection : nullptr, *input.ui, size, offset, mUIWorldToWindow);
+            }
+            if (uiHud != 0)
+            {
+                if (input.ui->worldDepthTested())
                 {
-                    if (ui.worldDepthTested())
-                    {
-                        writeUIDepth(encoder, 0, width, height);
-                    }
-                    drawUI(encoder, slot, ui, width, height, 0, hud);
-                    writeUIDepth(encoder, 1, width, height);
+                    writeUIDepth(encoder, 0, width, height);
                 }
-                drawUI(encoder, slot, ui, width, height, hud, draws);
+                drawUI(encoder, slot, *input.ui, width, height, 0, uiHud);
+                // The HUD starts from a cleared depth, as LLDrawPoolHUD clears it.
+                writeUIDepth(encoder, 1, width, height);
+            }
+            if (input.camera && mOverlay.hudDrawn != 0)
+            {
+                drawHud(encoder, slot);
+            }
+            if (uiDraws > uiHud)
+            {
+                drawUI(encoder, slot, *input.ui, width, height, uiHud, uiDraws);
+            }
+            if (overlays)
+            {
+                // The HUD's texture feedback lands outside the frame graph: the next frame's
+                // readback waits for it.
+                [encoder updateFence:mSceneFence afterStages:MTLRenderStageFragment];
             }
             [encoder endEncoding];
             [commands presentDrawable:drawable];
@@ -565,6 +598,10 @@ private:
             error = std::string("depth copy pipeline: ") + failure.localizedDescription.UTF8String;
             return false;
         }
+        if (!createOverlayPipelines(shaderDir, compositeVertex, error))
+        {
+            return false;
+        }
 
         MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
         depth.depthCompareFunction = MTLCompareFunctionGreater; // reversed depth: nearer is larger
@@ -624,6 +661,19 @@ private:
     NSUInteger passSample(uint32_t sample) const
     {
         return NSUInteger(mRecordSlot * MAX_TIMED_PASSES + mRecordPass) * SAMPLES_PER_PASS + sample;
+    }
+
+    // A render pass's timing samples, while the pass is one of the timed ones.
+    void attachPassSamples(MTLRenderPassDescriptor* pass) const
+    {
+        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
+        {
+            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
+            pass.sampleBufferAttachments[0].startOfVertexSampleIndex = passSample(0);
+            pass.sampleBufferAttachments[0].endOfVertexSampleIndex = passSample(2);
+            pass.sampleBufferAttachments[0].startOfFragmentSampleIndex = passSample(3);
+            pass.sampleBufferAttachments[0].endOfFragmentSampleIndex = passSample(1);
+        }
     }
 
     id<MTLComputeCommandEncoder> beginCompute()
@@ -831,14 +881,7 @@ private:
         pass.depthAttachment.texture = mDepthTarget;
         pass.depthAttachment.loadAction = MTLLoadActionLoad;
         pass.depthAttachment.storeAction = MTLStoreActionStore;
-        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
-        {
-            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
-            pass.sampleBufferAttachments[0].startOfVertexSampleIndex = passSample(0);
-            pass.sampleBufferAttachments[0].endOfVertexSampleIndex = passSample(2);
-            pass.sampleBufferAttachments[0].startOfFragmentSampleIndex = passSample(3);
-            pass.sampleBufferAttachments[0].endOfFragmentSampleIndex = passSample(1);
-        }
+        attachPassSamples(pass);
 
         id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
         draw.label = passLabel();
@@ -913,6 +956,274 @@ private:
         mGraph.setBody(PassMacOITResolve, [this]() { return passMacOITResolve(); });
     }
 
+    // Selection outlines and HUDs, as Vulkan's Overlay: the selection mask is a graph pass,
+    // the rest draws in the window pass, around the UI's world part.
+    struct OverlayResources
+    {
+        id<MTLRenderPipelineState> mask = nil;       // the selection mask, MAX blended
+        id<MTLRenderPipelineState> hudOpaque = nil;  // HUD objects into the UI depth
+        id<MTLRenderPipelineState> hudBlended = nil; // back to front, testing it
+        id<MTLRenderPipelineState> outline = nil;    // fullscreen, from the mask
+        id<MTLDepthStencilState> hudOpaqueDepth = nil;
+        id<MTLDepthStencilState> hudBlendedDepth = nil;
+        id<MTLBuffer> selectionList = nil;           // written by the early cull
+        id<MTLBuffer> hudViews[FRAMES_IN_FLIGHT] = {};
+        id<MTLBuffer> hudLists[FRAMES_IN_FLIGHT] = {};
+        std::vector<GpuListEntry> hudEntries;
+        uint32_t hudOpaqueCount = 0; // the HUD list's opaque prefix
+        uint32_t hudSelected = 0;    // its selected entries, at its end
+        uint32_t hudDrawn = 0;       // entries drawn: opaque and blended
+        uint64_t hudView = 0;        // addresses for this frame
+        uint64_t hudList = 0;
+        bool sceneMask = false;      // the scene's selections are in the mask this frame
+        bool hudMask = false;        // the HUD's are
+    };
+
+    enum class OverlayBlend { None, Max, Alpha };
+
+    id<MTLRenderPipelineState> createOverlayPipeline(id<MTLFunction> vertex, id<MTLFunction> fragment, MTLPixelFormat color, bool depth,
+                                                     OverlayBlend blend, std::string& error)
+    {
+        MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+        descriptor.vertexFunction = vertex;
+        descriptor.fragmentFunction = fragment;
+        MTLRenderPipelineColorAttachmentDescriptor* attachment = descriptor.colorAttachments[0];
+        attachment.pixelFormat = color;
+        if (blend != OverlayBlend::None)
+        {
+            const bool max = blend == OverlayBlend::Max; // else source over, as the HUD and the outlines
+            attachment.blendingEnabled = YES;
+            attachment.rgbBlendOperation = max ? MTLBlendOperationMax : MTLBlendOperationAdd;
+            attachment.alphaBlendOperation = max ? MTLBlendOperationMax : MTLBlendOperationAdd;
+            attachment.sourceRGBBlendFactor = max ? MTLBlendFactorOne : MTLBlendFactorSourceAlpha;
+            attachment.destinationRGBBlendFactor = max ? MTLBlendFactorOne : MTLBlendFactorOneMinusSourceAlpha;
+            attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+            attachment.destinationAlphaBlendFactor = max ? MTLBlendFactorOne : MTLBlendFactorOneMinusSourceAlpha;
+        }
+        if (depth)
+        {
+            descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float; // the window pass's UI depth
+        }
+        NSError* failure = nil;
+        id<MTLRenderPipelineState> pipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+        if (!pipeline)
+        {
+            error = std::string("overlay pipeline: ") + failure.localizedDescription.UTF8String;
+        }
+        return pipeline;
+    }
+
+    bool createOverlayPipelines(const std::string& shaderDir, id<MTLFunction> fullscreen, std::string& error)
+    {
+        id<MTLFunction> vertex = loadFunction(shaderDir, "asrOverlayV", error);
+        id<MTLFunction> mask = loadFunction(shaderDir, "asrOverlayMaskF", error);
+        id<MTLFunction> hud = loadFunction(shaderDir, "asrOverlayHudF", error);
+        id<MTLFunction> outline = loadFunction(shaderDir, "asrOverlayOutlineF", error);
+        if (!vertex || !mask || !hud || !outline)
+        {
+            return false;
+        }
+        mOverlay.mask = createOverlayPipeline(vertex, mask, MTLPixelFormatRGBA8Unorm, false, OverlayBlend::Max, error);
+        mOverlay.hudOpaque = createOverlayPipeline(vertex, hud, mLayer.pixelFormat, true, OverlayBlend::None, error);
+        mOverlay.hudBlended = createOverlayPipeline(vertex, hud, mLayer.pixelFormat, true, OverlayBlend::Alpha, error);
+        mOverlay.outline = createOverlayPipeline(fullscreen, outline, mLayer.pixelFormat, true, OverlayBlend::Alpha, error);
+        // HUD layers lie flat on each other, drawn in order as OpenGL's: at equal depth the later wins.
+        MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
+        depth.depthCompareFunction = MTLCompareFunctionGreaterEqual; // reversed depth: nearer is larger
+        depth.depthWriteEnabled = YES;
+        mOverlay.hudOpaqueDepth = [mDevice newDepthStencilStateWithDescriptor:depth];
+        depth.depthWriteEnabled = NO;
+        mOverlay.hudBlendedDepth = [mDevice newDepthStencilStateWithDescriptor:depth];
+        return mOverlay.mask && mOverlay.hudOpaque && mOverlay.hudBlended && mOverlay.outline && mOverlay.hudOpaqueDepth && mOverlay.hudBlendedDepth;
+    }
+
+    // In the upload pass, with the scene's view: the selection list's room, the overlay's
+    // part of the view, and the HUD's view and list for this frame's slot.
+    bool prepareOverlay(GpuSceneView& view, uint32_t slot)
+    {
+        const OverlayInput& input = *mRecordOverlay;
+        const bool masked = mGraph.isRunning(PassSelectionMask); // see recordScene()
+        const bool selections = input.outlines || input.faceHighlights;
+        mOverlay.sceneMask = masked && selections && view.selectionEnd != 0;
+        if (!mOverlay.sceneMask)
+        {
+            view.selectionEnd = 0; // the cull adds nothing
+        }
+        else if (!growList(mOverlay.selectionList, uint64_t(view.selectionEnd) * 2 * sizeof(GpuListEntry), "selection list")) // room to grow
+        {
+            return false;
+        }
+        view.selection = mOverlay.sceneMask ? addressOf(mOverlay.selectionList) : 0;
+        view.hiddenSelections = input.hiddenSelections ? 1 : 0;
+        view.outlineWidth = input.outlineWidth;
+        memcpy(view.selectionColors, input.selectionColors, sizeof(view.selectionColors));
+        if (!input.faceHighlights)
+        {
+            view.selectionColors[SELECTION_COLOR_FACE][3] = 0.f;
+        }
+        if (!input.outlines)
+        {
+            view.selectionColors[SELECTION_COLOR_ROOT][3] = 0.f;
+            view.selectionColors[SELECTION_COLOR_CHILD][3] = 0.f;
+        }
+
+        mOverlay.hudDrawn = 0;
+        mOverlay.hudMask = false;
+        if (input.hud)
+        {
+            mSceneStore.hudList(mOverlay.hudEntries, mOverlay.hudOpaqueCount, mOverlay.hudSelected);
+        }
+        else
+        {
+            mOverlay.hudEntries.clear(); // hidden, as Alt+Shift+H hides them
+            mOverlay.hudOpaqueCount = 0;
+            mOverlay.hudSelected = 0;
+        }
+        if (mOverlay.hudEntries.empty())
+        {
+            return true;
+        }
+        if (!mOverlay.hudViews[slot])
+        {
+            mOverlay.hudViews[slot] = createSceneBuffer(sizeof(GpuSceneView), MemoryCategory::Staging, "HUD view", true);
+        }
+        const uint64_t listBytes = mOverlay.hudEntries.size() * sizeof(GpuListEntry);
+        if (!mOverlay.hudViews[slot] || !growList(mOverlay.hudLists[slot], listBytes, "HUD list"))
+        {
+            return false;
+        }
+        // The scene's view with the HUD's camera: HUD space has its origin at the camera.
+        GpuSceneView hudView = view;
+        memcpy(hudView.viewProjection, input.hudViewProjection, sizeof(hudView.viewProjection));
+        hudView.camera[0] = hudView.camera[1] = hudView.camera[2] = 0.f;
+        memcpy(mOverlay.hudViews[slot].contents, &hudView, sizeof(hudView));
+        memcpy(mOverlay.hudLists[slot].contents, mOverlay.hudEntries.data(), listBytes);
+        mOverlay.hudView = addressOf(mOverlay.hudViews[slot]);
+        mOverlay.hudList = addressOf(mOverlay.hudLists[slot]);
+        mOverlay.hudDrawn = uint32_t(mOverlay.hudEntries.size()) - mOverlay.hudSelected;
+        mOverlay.hudMask = masked && selections && mOverlay.hudSelected != 0;
+        return true;
+    }
+
+    // The selection mask: the scene's selections against its depth, then the HUD's.
+    bool passSelectionMask()
+    {
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = mSelectionMask;
+        pass.colorAttachments[0].loadAction = MTLLoadActionClear; // 0: nothing selected
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+        attachPassSamples(pass);
+
+        id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        draw.label = passLabel();
+        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
+        [draw setRenderPipelineState:mOverlay.mask];
+        [draw setCullMode:MTLCullModeNone];
+        [draw setFrontFacingWinding:MTLWindingCounterClockwise];
+        [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        [draw setFragmentTexture:mDepthTarget atIndex:3];
+        ScenePush push = mScenePush;
+        if (mOverlay.sceneMask)
+        {
+            push.visible = addressOf(mOverlay.selectionList);
+            push.list = 0;
+            push.phase = 0; // OVERLAY_MASK_SCENE
+            setOverlayPush(draw, push);
+            [draw drawPrimitives:MTLPrimitiveTypeTriangle indirectBuffer:mSceneCounts indirectBufferOffset:offsetof(GpuSceneCounts, selection)];
+        }
+        if (mOverlay.hudMask)
+        {
+            push.view = mOverlay.hudView;
+            push.visible = mOverlay.hudList;
+            push.list = mOverlay.hudDrawn;
+            push.phase = 1; // OVERLAY_MASK_HUD
+            setOverlayPush(draw, push);
+            [draw drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3
+                   instanceCount:mOverlay.hudSelected];
+        }
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
+    }
+
+    static void setOverlayPush(id<MTLRenderCommandEncoder> encoder, const ScenePush& push)
+    {
+        [encoder setVertexBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+        [encoder setFragmentBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+    }
+
+    // The world view's viewport and scissor in the window, at the scene's size; returns its
+    // offset as push.list carries it, x low, y high, for the shaders that read scene images by pixel.
+    uint32_t setWorldViewport(id<MTLRenderCommandEncoder> encoder)
+    {
+        [encoder setViewport:MTLViewport{ double(mWorldViewX), double(mWorldViewY), double(mSceneWidth), double(mSceneHeight), 0.0, 1.0 }];
+        [encoder setScissorRect:MTLScissorRect{ mWorldViewX, mWorldViewY, mSceneWidth, mSceneHeight }];
+        return mWorldViewX | (mWorldViewY << 16);
+    }
+
+    bool overlaysDrawn() const
+    {
+        return mOverlay.sceneMask || mOverlay.hudDrawn != 0;
+    }
+
+    // The scene's outlines, over the composited scene, before the UI's world part.
+    void drawSceneOutline(id<MTLRenderCommandEncoder> encoder)
+    {
+        ScenePush push = mScenePush;
+        push.phase = 0; // OVERLAY_OUTLINE_SCENE
+        push.list = setWorldViewport(encoder);
+        [encoder setRenderPipelineState:mOverlay.outline];
+        [encoder setDepthStencilState:uiDepthState(UIDepth{})];
+        [encoder setCullMode:MTLCullModeNone];
+        [encoder setFragmentTexture:mSelectionMask atIndex:10];
+        setOverlayPush(encoder, push);
+        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    }
+
+    // The HUD, opaque then blended, into the cleared UI depth, then its outlines; in the world
+    // view, as OpenGL draws HUDs.
+    void drawHud(id<MTLRenderCommandEncoder> encoder, uint32_t slot)
+    {
+        const uint32_t worldOffset = setWorldViewport(encoder);
+        const uint32_t vertices = CLUSTER_BUCKET_TRIANGLES[CLUSTER_BUCKETS - 1] * 3;
+        ScenePush push = mScenePush;
+        push.view = mOverlay.hudView;
+        push.visible = mOverlay.hudList;
+        push.list = 0;
+        push.phase = 0;
+        [encoder setCullMode:MTLCullModeNone];
+        [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
+        [encoder setFragmentBuffer:mArguments[slot] offset:0 atIndex:0];
+        if (mOverlay.hudOpaqueCount != 0)
+        {
+            [encoder setRenderPipelineState:mOverlay.hudOpaque];
+            [encoder setDepthStencilState:mOverlay.hudOpaqueDepth];
+            setOverlayPush(encoder, push);
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices instanceCount:mOverlay.hudOpaqueCount];
+        }
+        if (mOverlay.hudDrawn > mOverlay.hudOpaqueCount)
+        {
+            [encoder setRenderPipelineState:mOverlay.hudBlended];
+            [encoder setDepthStencilState:mOverlay.hudBlendedDepth];
+            push.list = mOverlay.hudOpaqueCount;
+            setOverlayPush(encoder, push);
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:vertices
+                      instanceCount:mOverlay.hudDrawn - mOverlay.hudOpaqueCount];
+        }
+        if (mOverlay.hudMask)
+        {
+            push = mScenePush;
+            push.phase = 1; // OVERLAY_OUTLINE_HUD
+            push.list = worldOffset;
+            [encoder setRenderPipelineState:mOverlay.outline];
+            [encoder setDepthStencilState:uiDepthState(UIDepth{})];
+            [encoder setFragmentTexture:mSelectionMask atIndex:10];
+            setOverlayPush(encoder, push);
+            [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+        }
+    }
+
     // Command buffers keep what they use alive, so the old targets can go at once.
     bool ensureSceneTargets(uint32_t width, uint32_t height)
     {
@@ -936,7 +1247,8 @@ private:
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
         mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "lit target");
         mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
-        if (!mLitTarget || !mSceneColorTarget || !createMacOITTargets(width, height))
+        mSelectionMask = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "selection mask");
+        if (!mLitTarget || !mSceneColorTarget || !mSelectionMask || !createMacOITTargets(width, height))
         {
             return false;
         }
@@ -1067,6 +1379,10 @@ private:
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         view.debugView = mRecordCamera->debugView;
+        if (!prepareOverlay(view, slot))
+        {
+            return false;
+        }
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
@@ -1144,14 +1460,7 @@ private:
         pass.depthAttachment.loadAction = loadDepth ? MTLLoadActionLoad : MTLLoadActionClear;
         pass.depthAttachment.storeAction = MTLStoreActionStore;
         pass.depthAttachment.clearDepth = 0.0; // reversed depth: 0 is far away
-        if (mPassSamples && mRecordPass < MAX_TIMED_PASSES)
-        {
-            pass.sampleBufferAttachments[0].sampleBuffer = mPassSamples;
-            pass.sampleBufferAttachments[0].startOfVertexSampleIndex = passSample(0);
-            pass.sampleBufferAttachments[0].endOfVertexSampleIndex = passSample(2);
-            pass.sampleBufferAttachments[0].startOfFragmentSampleIndex = passSample(3);
-            pass.sampleBufferAttachments[0].endOfFragmentSampleIndex = passSample(1);
-        }
+        attachPassSamples(pass);
 
         id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
         draw.label = passLabel();
@@ -1293,6 +1602,9 @@ private:
         mGraph.setBody(PassAuditDraw, [this]() { return passDraw(mAuditTarget, offsetof(GpuSceneCounts, early), false, true); });
         mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
         mGraph.setBody(PassReadFeedback, [this]() { return passReadFeedback(); });
+        mGraph.setBody(PassSelectionMask, [this]() { return passSelectionMask(); });
+        // PassUIDepth stays off: the window pass copies the scene depth itself, into its
+        // memoryless UI depth (writeUIDepth()).
     }
 
     // What this slot's earlier frame left behind. That frame has finished.
@@ -1379,7 +1691,8 @@ private:
 
     // Runs the frame graph: uploads, two phases of culling and drawing, and the resolve.
     // Metal orders the passes by mSceneFence, so the graph's transitions are not needed here.
-    bool recordScene(id<MTLCommandBuffer> commands, uint32_t slot, const SceneCamera3D& camera, uint32_t width, uint32_t height, bool audit)
+    bool recordScene(id<MTLCommandBuffer> commands, uint32_t slot, const SceneCamera3D& camera, uint32_t width, uint32_t height, bool audit,
+                     const OverlayInput& overlay)
     {
         readSceneResults(slot);
         if (!ensureSceneTargets(width, height))
@@ -1389,6 +1702,9 @@ private:
         const bool readFeedback = mFeedbackCollector.frame(std::chrono::steady_clock::now(), mFeedbackValue, mFeedbackEnding);
         mGraph.setSink(ResultAuditPixels, GraphAccess::CopyRead, audit);
         mGraph.setSink(ResultFeedbackReadback, GraphAccess::CopyRead, readFeedback);
+        // The mask only while something is selected and shown; the outline pass reads it.
+        mGraph.setSink(ResultSelectionMask, GraphAccess::FragmentRead, (overlay.outlines || overlay.faceHighlights) && mSceneStore.hasSelection());
+        mRecordOverlay = &overlay;
         if (!mGraph.compile(mError) || (audit && !ensureAuditTargets(slot)))
         {
             return false;
@@ -1569,9 +1885,19 @@ private:
     }
 
     // A fullscreen depth write over the window: the scene depth (phase 0) or farthest (1).
+    // The copy draws in the world view, the scene's size; farthest covers the window.
     void writeUIDepth(id<MTLRenderCommandEncoder> encoder, uint32_t phase, uint32_t width, uint32_t height)
     {
-        [encoder setScissorRect:MTLScissorRect{ 0, 0, width, height }];
+        ScenePush push{};
+        if (phase == 0)
+        {
+            push.list = setWorldViewport(encoder);
+        }
+        else
+        {
+            [encoder setViewport:MTLViewport{ 0.0, 0.0, double(width), double(height), 0.0, 1.0 }];
+            [encoder setScissorRect:MTLScissorRect{ 0, 0, width, height }];
+        }
         UIDepth always;
         always.test = true;
         always.write = true;
@@ -1580,7 +1906,6 @@ private:
         [encoder setDepthStencilState:uiDepthState(always)];
         [encoder setCullMode:MTLCullModeNone];
         [encoder setFragmentTexture:mDepthTarget atIndex:3];
-        ScenePush push{};
         push.phase = phase;
         [encoder setFragmentBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
         [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -1593,7 +1918,8 @@ private:
         [encoder setVertexBuffer:mUIBuffers[slot] offset:0 atIndex:UI_VERTEX_BUFFER];
         [encoder setVertexBytes:mUIWorldToWindow length:sizeof(mUIWorldToWindow) atIndex:PUSH_CONSTANT_BUFFER];
         [encoder setFragmentBuffer:mArguments[slot] offset:0 atIndex:0];
-        [encoder setViewport:MTLViewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 }];
+        const MTLViewport viewport{ 0.0, UI_EDGE_NUDGE, double(ui.width()), double(ui.height()), 0.0, 1.0 };
+        [encoder setViewport:viewport];
         // GL's counter-clockwise front: the Metal shader build undoes asrUIV.glsl's Y flip.
         [encoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
@@ -1606,6 +1932,7 @@ private:
             if (draw.clearDepth)
             {
                 writeUIDepth(encoder, 1, width, height);
+                [encoder setViewport:viewport];
                 bound = nil;
                 continue;
             }
@@ -2421,7 +2748,12 @@ private:
     id<MTLTexture> mAuditTarget = nil;
     id<MTLTexture> mLitTarget = nil;        // the opaque image, set 1 binding 8
     id<MTLTexture> mSceneColorTarget = nil; // with transparency, set 1 binding 9
+    id<MTLTexture> mSelectionMask = nil;    // see ResultSelectionMask, set 1 binding 10
     MacOITResources mMacOIT;
+    OverlayResources mOverlay;
+    const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()
+    uint32_t mWorldViewX = 0; // the world view in the window: the scene is its size
+    uint32_t mWorldViewY = 0;
     uint64_t mSceneTargetBytes = 0;
     uint32_t mSceneWidth = 0;
     uint32_t mSceneHeight = 0;

@@ -433,8 +433,10 @@ void testUIList()
     list.append(UIGeometry::TriangleStrip, quad, 4);
     expect(list.draws().size() == 1, "a texture change does not split a draw");
     expect(list.vertices().size() == 12, "a strip of 4 becomes 6 triangle vertices, twice");
-    expect(list.vertices()[3].position[0] == 1.f && list.vertices()[5].position[0] == 1.f && list.vertices()[5].position[1] == 1.f,
-           "strip triangles keep their vertices");
+    // The second triangle turned round as GL turns it, so both keep one winding: 2, 1, 3.
+    expect(list.vertices()[3].position[1] == 1.f && list.vertices()[4].position[0] == 1.f && list.vertices()[4].position[1] == 0.f &&
+               list.vertices()[5].position[0] == 1.f && list.vertices()[5].position[1] == 1.f,
+           "strip triangles keep their vertices and GL's winding");
 
     list.clear();
     list.append(UIGeometry::TriangleFan, quad, 4);
@@ -2655,7 +2657,8 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         const bool world = sOverlays && drawScene && state.hasCamera && phase == 0;
         testUI.build(list, width, height, float(secondsSince(uiStart)), renderThread.currentUIGeneration(),
                      world ? &state.camera : nullptr, state.worldView);
-        lastDraws = uint32_t(list.draws().size());
+        // The 2D part's draws: the world part before the HUD mark draws apart, by depth state.
+        lastDraws = uint32_t(list.draws().size()) - std::min(list.hudDraw(), uint32_t(list.draws().size()));
         lastVertices = uint32_t(list.vertices().size());
         renderThread.publishUI();
         worstBuildSeconds = std::max(worstBuildSeconds, secondsSince(lastUI));
@@ -2750,7 +2753,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     {
         printf("UI: %u lists built, worst %.2f ms, %u vertices, %u flushes merged into %u draws, %u textures replaced\n",
                uiBuilds, worstBuildSeconds * 1000.0, lastVertices, testUI.flushes(), lastDraws, testUI.replaced());
-        expect(lastDraws <= 4, "UI flushes merge into a few draws");
+        expect(lastDraws <= 4, "2D UI flushes merge into a few draws");
         expect(testUI.replaced() > 0, "textures were replaced while lists were drawing");
     }
 
