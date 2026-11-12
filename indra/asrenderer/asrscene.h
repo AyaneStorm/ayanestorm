@@ -680,6 +680,7 @@ struct InstanceDesc
     float objectToWorld[12]; // three rows
     float lodCenter[3] = { 0.f, 0.f, 0.f }; // shared by an object's faces, so they agree on an LOD
     float lodSize = 0.f;     // 0 uses the instance's own bounding sphere
+    float hudDepth = 0.f;    // INSTANCE_HUD: the HUD pass's sort distance along the HUD camera, as OpenGL's
 
     // On a skeleton: with a skin, the geometry is skinned, objectToWorld and lodCenter are
     // unused, and LOD measures from the skeleton. Without one, the instance follows joint:

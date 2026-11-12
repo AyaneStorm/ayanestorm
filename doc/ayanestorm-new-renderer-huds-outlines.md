@@ -42,6 +42,24 @@ HUDs and selection outlines, and neither waits for lighting.
   stays the viewer's CPU picking; each face is its own instance, so the face tool's
   selection is `INSTANCE_FACE_SELECTED` on that instance.
 
+- **HUD LOD** (12 November): HUDs always at LOD 3, linked children too, as OpenGL's
+  `calcLOD()`. `followHudLods()` reads the self avatar's HUD points each frame: a prim
+  below LOD 3 gets `updateLOD()` and is applied again; one applied before it counted as a
+  HUD is applied again as one. Cause found by log: worn at login, meshes stayed at LOD 0
+  (a panel's lowest LOD is one triangle).
+- **World view** (12 November): the scene is made at the world view's size and placed at
+  its offset in the window (`FrameInput::worldView`, composite viewport, `push.list`
+  offset), as OpenGL's viewport; HUDs and outlines draw in the same viewport. Picking,
+  world and HUD, then agrees with what shows. Metal: not yet, the scene fills its window.
+- **Floating text** (`llSetText`, world and HUD): to be drawn by the viewer's own
+  `render_hud_elements()` through the UI capture, after the HUD objects and their
+  outline, before the 2D UI, with no HUD depth; with the 3D UI (`render_ui_3d()`).
+- **Texture animation** (`llSetTextureAnim`): not drawn natively yet, world or HUD. Own
+  step: each face's animation and start time in its material, UVs computed in the vertex
+  shader from the frame's time; picking keeps the viewer's CPU path.
+- **Web pages on faces**: dynamic textures updated by sub-images, which the texture
+  bridge already carries; checked only if a web face stays white.
+
 ## OpenGL selection drawing (`llselectmgr.cpp`, `pipeline.cpp`)
 
 - `LLSelectNode::renderOneSilhouette()`: visible edges as a strip fading outward with a
@@ -106,6 +124,18 @@ sorted, after tone mapping, a few hundred faces. So:
   swapping knot selected and face-tinted, two HUD knots (opaque selected, blended).
   Windows: builds, selftest passes, validated audit passes, no validation errors;
   screenshot shows world and HUD outlines, the HUD knots unlit over the scene.
-- To do: Metal device, UI list depth state for 3D UI, viewer hooks
+- Viewer (unbuilt): `asrworld.cpp`: HUD volumes are drawn (`whyLeftOut()` keeps out
+  rigged HUDs only), never bound to the avatar (`boundAvatar()`), in HUD space with no
+  render origin (`fillTransform()`), at LOD distance 0 (`updateLods()`), flagged
+  `INSTANCE_HUD`; `followSelection()` each frame re-applies prims whose selection mark
+  (root or child, face bits in face mode) changed, and `selectionFlags()` adds the flags
+  per face; `ASRWorld::fillOverlay()`, called from `ASRViewer::publishFrame()`, eases the
+  HUD zoom, converts `get_hud_matrices()` to Y down and reversed depth, and fills the
+  toggles and colours (face tint white at 0.3). `llselectmgr.h`: one tagged friend line
+  (`ASRSelectionAccess`) for the private outline toggles.
+- Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
+  (context) colours; mesh selections use the same colours.
+- To do: Metal device, UI list depth state for 3D UI, viewer build test, then remaining
+  viewer hooks
   (`asrworld.cpp` HUD instances and selection flags, HUD zoom easing and matrices,
   `render_ui_3d()` in `display_native()`), `asrenderer_test` checks.

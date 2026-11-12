@@ -2483,6 +2483,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             if (sOverlays)
             {
                 const float colors[3][4] = { { 1.f, 1.f, 0.f, 1.f }, { 0.f, 0.6f, 1.f, 1.f }, { 1.f, 1.f, 1.f, 0.35f } };
+                // A world view short of the window, as a toolbar keeping its space leaves it.
+                state.worldView[0] = 40;
+                state.worldView[1] = 30;
+                state.worldView[2] = state.width > 120 ? state.width - 80 : state.width;
+                state.worldView[3] = state.height > 140 ? state.height - 100 : state.height;
                 state.overlay.hud = true;
                 state.overlay.outlines = true;
                 state.overlay.faceHighlights = true;

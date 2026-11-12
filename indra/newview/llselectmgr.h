@@ -509,6 +509,9 @@ private:
 
 class LLSelectMgr : public LLEditMenuHandler, public LLSimpleton<LLSelectMgr>, public nd::selection::PropertiesServer
 {
+    // <AS:Chanayane> the native renderer reads the outline toggles, see asrworld.cpp
+    friend struct ASRSelectionAccess;
+    // </AS:Chanayane>
 public:
     static bool                 sRectSelectInclusive;   // do we need to surround an object to pick it?
     static bool                 sRenderHiddenSelections;    // do we show selection silhouettes that are occluded?

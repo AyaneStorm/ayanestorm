@@ -23,6 +23,10 @@ class LLVolume;
 class LLVolumeParams;
 class LLVOAvatar;
 class LLViewerObject;
+namespace asr
+{
+struct OverlayInput;
+}
 
 namespace ASRWorld
 {
@@ -81,6 +85,10 @@ namespace ASRWorld
 
     // Applies everything reported since the last call. Main thread, once per frame.
     void update();
+
+    // HUDs and selection outlines for the frame being published: the HUD camera, with the
+    // HUD zoom eased as OpenGL eases it, and the build tools' outline toggles and colours.
+    void fillOverlay(asr::OverlayInput& overlay);
 
     // Temporary: the rest of the main thread loop, so the log can account for all of it.
     enum MainPart

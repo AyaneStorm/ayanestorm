@@ -309,6 +309,16 @@ public:
             }
         }
 
+        // The world view, inside the window: the scene is made at its size and placed there.
+        mWorldViewOffset = { 0, 0 };
+        mWorldViewExtent = mExtent;
+        if (input.worldView[2] != 0 && input.worldView[3] != 0)
+        {
+            const uint32_t x = std::min(input.worldView[0], mExtent.width - 1);
+            const uint32_t y = std::min(input.worldView[1], mExtent.height - 1);
+            mWorldViewOffset = { int32_t(x), int32_t(y) };
+            mWorldViewExtent = { std::min(input.worldView[2], mExtent.width - x), std::min(input.worldView[3], mExtent.height - y) };
+        }
         if (input.camera && !ensureSceneTargets())
         {
             return false;
@@ -1153,6 +1163,7 @@ private:
         bool maxBlend = false;        // every target keeps the larger, as the selection mask
         bool alphaBlend = false;      // source over, as the HUD and the outlines
         bool depthFormat = false;     // a depth target is bound, though not tested
+        bool depthEqualPasses = false; // as OpenGL's LEQUAL: at equal depth the later draw wins
     };
 
     VkPipeline createSceneRasterPipeline(const char* vertexName, const char* fragmentName, VkFormat colorFormat, bool depth, std::string& error)
@@ -1197,7 +1208,8 @@ private:
             VkPipelineDepthStencilStateCreateInfo depthStencil{ VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
             depthStencil.depthTestEnable = depth;
             depthStencil.depthWriteEnable = setup.depthWrite;
-            depthStencil.depthCompareOp = VK_COMPARE_OP_GREATER; // reversed depth: nearer is larger
+            depthStencil.depthCompareOp = setup.depthEqualPasses ? VK_COMPARE_OP_GREATER_OR_EQUAL
+                                                                 : VK_COMPARE_OP_GREATER; // reversed depth: nearer is larger
             std::vector<VkPipelineColorBlendAttachmentState> attachments(setup.colors.size());
             for (VkPipelineColorBlendAttachmentState& attachment : attachments)
             {
@@ -1390,15 +1402,18 @@ private:
         return true;
     }
 
-    bool createTarget(TargetImage& target, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t pixelBytes, const char* what)
+    // At the scene's size, or at `size` when one is given.
+    bool createTarget(TargetImage& target, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t pixelBytes, const char* what,
+                      VkExtent2D size = {})
     {
+        const VkExtent2D extent = size.width != 0 ? size : mSceneExtent;
         // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
-        const uint64_t bytes = uint64_t(mSceneExtent.width) * mSceneExtent.height * pixelBytes;
+        const uint64_t bytes = uint64_t(extent.width) * extent.height * pixelBytes;
         mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, bytes);
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         image.imageType = VK_IMAGE_TYPE_2D;
         image.format = format;
-        image.extent = { mSceneExtent.width, mSceneExtent.height, 1 };
+        image.extent = { extent.width, extent.height, 1 };
         image.mipLevels = 1;
         image.arrayLayers = 1;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1439,10 +1454,12 @@ private:
     // have finished by the time it changes.
     bool ensureSceneTargets()
     {
-        if (mSceneExtent.width == mExtent.width && mSceneExtent.height == mExtent.height)
+        if (mSceneExtent.width == mWorldViewExtent.width && mSceneExtent.height == mWorldViewExtent.height &&
+            mTargetsWindow.width == mExtent.width && mTargetsWindow.height == mExtent.height)
         {
             return true;
         }
+        mTargetsWindow = mExtent; // the HUD depth is window-sized
         if (!check(vkDeviceWaitIdle(mDevice), "wait for device"))
         {
             return false;
@@ -1463,7 +1480,7 @@ private:
             written = false;
         }
         mHasPyramid = false;
-        mSceneExtent = mExtent;
+        mSceneExtent = mWorldViewExtent;
 
         if (!createTarget(mVisibilityImage, VISIBILITY_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "visibility buffer") ||
             !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
@@ -1472,7 +1489,8 @@ private:
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
             !createTarget(mSelectionMask, SELECTION_MASK_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "selection mask") ||
-            !createTarget(mOverlay.hudDepth, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "HUD depth") ||
+            !createTarget(mOverlay.hudDepth, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "HUD depth",
+                          mExtent) || // window-sized: drawn at the world view's place in it
             !createMacOITTargets())
         {
             return false;
@@ -1553,6 +1571,7 @@ private:
         hud.colors = { mSurfaceFormat.format };
         hud.depthTest = true;
         hud.depthWrite = true;
+        hud.depthEqualPasses = true; // HUD layers lie flat on each other, drawn in order as OpenGL's
         RasterSetup blended = hud;
         blended.depthWrite = false;
         blended.alphaBlend = true;
@@ -1706,6 +1725,18 @@ private:
         return true;
     }
 
+    // The world view's viewport and scissor in the window, at the scene's size, and its
+    // offset in push.list, x low, y high, for the shaders that read scene images by pixel.
+    void setWorldViewport(VkCommandBuffer commands)
+    {
+        const VkViewport viewport{ float(mWorldViewOffset.x), float(mWorldViewOffset.y), float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ mWorldViewOffset, { std::min(mSceneExtent.width, mExtent.width - uint32_t(mWorldViewOffset.x)),
+                                                    std::min(mSceneExtent.height, mExtent.height - uint32_t(mWorldViewOffset.y)) } };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        mScenePush.list = uint32_t(mWorldViewOffset.x) | (uint32_t(mWorldViewOffset.y) << 16);
+    }
+
     bool overlaysDrawn() const
     {
         return mOverlay.sceneMask || mOverlay.hudDrawn != 0;
@@ -1733,7 +1764,6 @@ private:
         memoryBarrier(commands, VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
                       VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT, VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
-        const VkExtent2D extent{ std::min(mExtent.width, mSceneExtent.width), std::min(mExtent.height, mSceneExtent.height) };
         VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
         color.imageView = mViews[image];
         color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -1745,20 +1775,18 @@ private:
         depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 0 is farthest, in reversed depth
         depth.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
         VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
-        rendering.renderArea = { { 0, 0 }, extent };
+        rendering.renderArea = { { 0, 0 }, mExtent };
         rendering.layerCount = 1;
         rendering.colorAttachmentCount = 1;
         rendering.pColorAttachments = &color;
         rendering.pDepthAttachment = &depth;
         vkCmdBeginRendering(commands, &rendering);
-        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
-        const VkRect2D scissor{ { 0, 0 }, extent };
-        vkCmdSetViewport(commands, 0, 1, &viewport);
-        vkCmdSetScissor(commands, 0, 1, &scissor);
         const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
         vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
 
         const ScenePush scene = mScenePush;
+        setWorldViewport(commands); // as OpenGL draws HUDs: in the world view
+        const uint32_t worldOffset = mScenePush.list;
         if (mOverlay.sceneMask)
         {
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.outline);
@@ -1772,6 +1800,7 @@ private:
             mScenePush.view = mOverlay.hudView;
             mScenePush.visible = mOverlay.hudList;
             mScenePush.list = 0;
+            mScenePush.phase = mRecordOverlay->hudDebug; // temporary, see asrOverlayHudF.glsl
             if (mOverlay.hudOpaqueCount != 0)
             {
                 vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.hudOpaque);
@@ -1791,6 +1820,7 @@ private:
             {
                 vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mOverlay.outline);
                 mScenePush.phase = 1; // OVERLAY_OUTLINE_HUD
+                mScenePush.list = worldOffset;
                 pushScene(commands);
                 vkCmdDraw(commands, 3, 1, 0, 0);
             }
@@ -3891,9 +3921,14 @@ private:
         vkCmdSetScissor(commands, 0, 1, &scissor);
         if (input.camera)
         {
+            // In the world view only, as OpenGL's viewport: the rest stays the clear colour.
+            setWorldViewport(commands);
             vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mCompositePipeline);
             vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 1, 1, &mSceneSet, 0, nullptr);
+            pushScene(commands);
             vkCmdDraw(commands, 3, 1, 0, 0);
+            vkCmdSetViewport(commands, 0, 1, &viewport);
+            vkCmdSetScissor(commands, 0, 1, &scissor);
         }
         if (input.testTriangle)
         {
@@ -4163,6 +4198,9 @@ private:
     const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()
     MacOITResources mMacOIT;
     VkExtent2D mSceneExtent{};
+    VkOffset2D mWorldViewOffset{}; // where the scene's extent sits in the window, see FrameInput::worldView
+    VkExtent2D mWorldViewExtent{}; // what the scene targets should be this frame
+    VkExtent2D mTargetsWindow{};   // the window size the targets were made for
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
     float mTimestampMilliseconds = 0.f;
     SceneStats mSceneFrameStats;

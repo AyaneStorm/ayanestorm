@@ -487,7 +487,9 @@ public:
     {
         mOverlays = true;
         mScene.addInstance(instanceDesc(mKnot, mMaterials[2], 0.f, 0.25f, 0.2f, 0.12f, 0.12f, 0.12f, asr::INSTANCE_HUD | asr::INSTANCE_SELECTED));
-        mScene.addInstance(instanceDesc(mKnot, mMaterials[3], -0.2f, 0.2f, 0.18f, 0.1f, 0.1f, 0.1f, asr::INSTANCE_HUD | asr::INSTANCE_BLENDED));
+        asr::InstanceDesc blended = instanceDesc(mKnot, mMaterials[3], -0.2f, 0.2f, 0.18f, 0.1f, 0.1f, 0.1f, asr::INSTANCE_HUD | asr::INSTANCE_BLENDED);
+        blended.hudDepth = -0.2f; // its centre along the HUD camera's axis
+        mScene.addInstance(blended);
     }
 
     // HUD space to clip for showOverlays(): orthographic, a unit high, Y down, reversed depth.

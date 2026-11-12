@@ -5,6 +5,7 @@
 #include "asrrenderthread.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cmath>
 
 namespace asr
@@ -586,6 +587,7 @@ void RenderThread::run()
         }
         input.audit = state.audit;
         input.overlay = state.overlay;
+        std::copy(std::begin(state.worldView), std::end(state.worldView), std::begin(input.worldView));
         if (!mDevice.renderFrame(input))
         {
             mError = mDevice.lastError();

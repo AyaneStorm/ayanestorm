@@ -34,6 +34,14 @@
 #include "llskinningutil.h"
 #include "lltextureentry.h"
 #include "lltoolpie.h"
+#include "llcriticaldamp.h"
+#include "llselectmgr.h"
+#include "pipeline.h"
+#include "rlvlocks.h"
+#include <glm/glm.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+bool get_hud_matrices(glm::mat4& proj, glm::mat4& model); // llviewerdisplay.cpp
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llviewerjointattachment.h"
@@ -99,6 +107,7 @@ struct ShapeFace
     U32 geometries[LODS] = { 0, 0, 0, 0 };
     U32 finest = 0; // 0 for a face with nothing to draw
     asr::GeometryBox box{};
+    F32 extents[2][3]{}; // object space, as LLVolumeFace::mExtents: for HUD faces' draw order
 
     // Empty/coarse LODs do not invalidate another LOD's weighted surface.
     U32 skinJoints[LODS]{}; // highest weighted palette index + 1 per LOD; 0 without weights
@@ -296,6 +305,7 @@ struct WorldObject
     S32 askedLod = -1;            // the finest LOD this object has asked the mesh system for
     bool askedWithHeader = false; // whether the mesh's header was known by then
     S32 skinnedLod = -1;          // rigged: the LOD its skinned faces were last applied at
+    LLVector3 placed;             // temporary: where its transform was last written, see followSelection()
 };
 
 struct SweepEntry
@@ -531,6 +541,11 @@ void addFaceLod(ShapeFace& face, U32 lod, LLVolumeFace& volumeFace)
                                                          weights.empty() ? nullptr : weights.data()),
                                       face.finest, COARSER_AT[lod]);
     face.geometries[lod] = face.finest;
+    for (U32 k = 0; k < 3; ++k) // the last LOD built is the finest
+    {
+        face.extents[0][k] = volumeFace.mExtents[0][k];
+        face.extents[1][k] = volumeFace.mExtents[1][k];
+    }
 }
 
 void addFaceGeometry(ShapeFace& face, LLVolumeFace* lods[LODS])
@@ -1124,7 +1139,9 @@ bool fillMaterial(asr::MaterialDesc& material, U32& flags, LLViewerTexture*& ima
         image = volume->getTEImage(index);
         memcpy(material.color, te->getColor().mV, sizeof(material.color));
 
-        const LLMaterialPtr params = te->getMaterialParams();
+        // A HUD's faces have no legacy material, as OpenGL's rebuildGeom() ignores it for
+        // HUD groups: any alpha in texture or colour blends, never cut or dropped.
+        const LLMaterialPtr params = volume->isHUDAttachment() ? LLMaterialPtr() : te->getMaterialParams();
         const U8 alphaMode = params.notNull() ? params->getDiffuseAlphaMode() : U8(LLMaterial::DIFFUSE_ALPHA_MODE_BLEND);
         const bool textureAlpha = image && image->getComponents() == 4;
         if (alphaMode == LLMaterial::DIFFUSE_ALPHA_MODE_MASK)
@@ -1196,8 +1213,11 @@ void fillTransform(asr::InstanceDesc& desc, LLDrawable* drawable, LLVOVolume* vo
             desc.objectToWorld[row * 4 + column] = matrix.mMatrix[column][row]; // LLMatrix4 holds rows of a row-vector matrix
         }
         desc.lodCenter[row] = matrix.mMatrix[3][row];
-        desc.objectToWorld[row * 4 + 3] += sRenderOrigin.mV[row];
-        desc.lodCenter[row] += sRenderOrigin.mV[row];
+        if (!volume->isHUDAttachment()) // HUD space has no world origin
+        {
+            desc.objectToWorld[row * 4 + 3] += sRenderOrigin.mV[row];
+            desc.lodCenter[row] += sRenderOrigin.mV[row];
+        }
     }
     if (drawable == sShifted)
     {
@@ -1374,6 +1394,11 @@ void releaseBinding(LLDrawable* drawable, WorldObject& object)
 // stand in the world.
 LLVOAvatar* boundAvatar(LLVOVolume* volume, bool& rigged)
 {
+    if (volume->isHUDAttachment())
+    {
+        rigged = false;
+        return nullptr; // in HUD space, placed by its own matrix: see fillTransform()
+    }
     LLVOAvatar* avatar = volume->getAvatar();
     rigged = volume->isRiggedMesh() && avatar && volume->getSkinInfo();
     return rigged ? avatar : volume->getAvatarAncestor();
@@ -1819,9 +1844,9 @@ const char* whyLeftOut(LLDrawable* drawable, LLVOVolume* volume)
     {
         return "no volume";
     }
-    if (volume->isHUDAttachment())
+    if (volume->isHUDAttachment() && volume->isRiggedMesh())
     {
-        return "HUD";
+        return "rigged HUD"; // OpenGL's HUD pass skips rigged meshes too
     }
     // OpenGL hides these and they cannot be picked: an attachment whose avatar went, kept
     // until the simulator removes it. Drawn here they stood frozen in their last pose.
@@ -1915,7 +1940,25 @@ void writeFace(ObjectFace& face, const ShapeFace& shapeFace, asr::InstanceDesc& 
     // opaque, then the face order. At most 23 steps, microns at any distance.
     const U32 pass = (face.flags & asr::INSTANCE_BLENDED) ? 2 : (face.flags & asr::INSTANCE_MASKED) ? 1 : 0;
     const U32 rank = skinnedLod >= 0 ? (pass << 3) | face.tieRank : (face.tieRank << STACK_RANK_BITS) | face.rank;
-    desc.flags = face.flags | (rank << asr::INSTANCE_RANK_SHIFT);
+    const bool hud = (face.flags & asr::INSTANCE_HUD) != 0;
+    // A HUD's layers lie millimetres apart in a depth range a rank step would jump across:
+    // they keep no rank, and go by draw order, as OpenGL's.
+    desc.flags = face.flags | (hud ? 0 : rank << asr::INSTANCE_RANK_SHIFT);
+    if (hud)
+    {
+        // OpenGL's alpha sort distance (LLDrawable::updateDistance()): the face's box in HUD
+        // space, its centre moved a quarter of its depth toward the camera, along X.
+        F32 low = F32_MAX;
+        F32 high = -F32_MAX;
+        for (U32 corner = 0; corner < 8; ++corner)
+        {
+            const F32 p[3] = { shapeFace.extents[corner & 1][0], shapeFace.extents[(corner >> 1) & 1][1], shapeFace.extents[(corner >> 2) & 1][2] };
+            const F32 x = desc.objectToWorld[0] * p[0] + desc.objectToWorld[1] * p[1] + desc.objectToWorld[2] * p[2] + desc.objectToWorld[3];
+            low = llmin(low, x);
+            high = llmax(high, x);
+        }
+        desc.hudDepth = 0.5f * (low + high) - 0.25f * (high - low);
+    }
     if (face.instance == NO_INSTANCE)
     {
         face.instance = sScene->addInstance(desc);
@@ -2026,6 +2069,7 @@ void placeInStack(LLDrawable* drawable, WorldObject& object, const asr::Instance
         members.insert(std::upper_bound(members.begin(), members.end(), member, [](const StackMember& a, const StackMember& b) { return a.id < b.id; }), member);
     }
 
+    object.placed.set(desc.objectToWorld[3], desc.objectToWorld[7], desc.objectToWorld[11]);
     // Also for an object alone in its place: it may have just come out of a stack.
     resolveStack(*object.stack);
 }
@@ -2051,6 +2095,167 @@ void refreshGltfMaterials(LLVOVolume* volume)
     }
 }
 
+// Selections. Each selected prim's faces carry flags (asr::INSTANCE_SELECTED and the rest),
+// so only prims whose selection changes are applied again: see followSelection().
+struct SelectionMark
+{
+    U32 flags = 0;  // INSTANCE_SELECTED or INSTANCE_SELECTED_CHILD
+    S32 faces = 0;  // the face tool's selected faces, a bit each, as LLSelectNode keeps them
+    bool operator==(const SelectionMark& other) const { return flags == other.flags && faces == other.faces; }
+};
+std::unordered_map<LLDrawable*, SelectionMark> sSelected;
+std::unordered_map<LLDrawable*, SelectionMark> sNextSelected; // reused
+
+U32 selectionFlags(LLDrawable* drawable, S32 face)
+{
+    const auto found = sSelected.find(drawable);
+    if (found == sSelected.end())
+    {
+        return 0;
+    }
+    const bool faceSelected = face < 32 && (found->second.faces & (1 << face)) != 0;
+    return found->second.flags | (faceSelected ? asr::INSTANCE_FACE_SELECTED : 0);
+}
+
+// Temporary, for walls and roofs that stay missing until they are right-clicked, which
+// applies them again: what they were drawn as just before, against what they are now.
+void logSelectedState(LLDrawable* drawable)
+{
+    const auto found = sObjects.find(drawable);
+    LLVOVolume* volume = volumeOf(drawable);
+    if (found == sObjects.end() || !volume)
+    {
+        const auto left = sLeftOut.find(drawable);
+        LL_INFOS("ASRenderer") << "selected " << drawable->getVObj()->getID() << ": not in the world, left out: "
+                               << (left != sLeftOut.end() ? left->second : "no") << LL_ENDL;
+        return;
+    }
+    const WorldObject& object = found->second;
+    U32 noInstance = 0;
+    U32 hidden = 0;
+    for (const ObjectFace& face : object.faces)
+    {
+        noInstance += face.instance == NO_INSTANCE ? 1 : 0;
+        hidden += face.hidden ? 1 : 0;
+    }
+    F32 moved = -1.f;
+    if (!object.bound && object.shape)
+    {
+        asr::InstanceDesc desc;
+        fillTransform(desc, drawable, volume, *object.shape);
+        moved = (LLVector3(desc.objectToWorld[3], desc.objectToWorld[7], desc.objectToWorld[11]) - object.placed).length();
+    }
+    LL_INFOS("ASRenderer") << "selected " << drawable->getVObj()->getID() << ": faces " << object.faces.size() << ", without instance "
+                           << noInstance << ", hidden as a copy " << hidden << ", stack " << (object.stack ? object.stack->members.size() : 0)
+                           << ", shape ready " << (object.shape && object.shape->ready) << ", next shape " << (object.next != nullptr)
+                           << ", bound " << (object.bound != nullptr) << ", active " << drawable->isActive() << ", root "
+                           << drawable->isRoot() << ", placed off by " << moved << " m, LOD " << volume->getLOD() << LL_ENDL;
+}
+
+// As LLSelectMgr::renderSilhouettes() walks the selection: the root's colour for roots,
+// the children's for the rest; in face mode only prims with a selected face, and those
+// faces tinted, as LLPipeline::renderHighlights() tints them.
+void followSelection()
+{
+    sNextSelected.clear();
+    if (!LLSelectMgr::instanceExists())
+    {
+        return;
+    }
+    LLSelectMgr* manager = LLSelectMgr::getInstance();
+    const bool faceMode = manager->getTEMode();
+    LLObjectSelectionHandle selection = manager->getSelection();
+    for (LLObjectSelection::iterator iter = selection->begin(); iter != selection->end(); ++iter)
+    {
+        LLSelectNode* node = *iter;
+        LLViewerObject* object = node ? node->getObject() : nullptr;
+        if (!object || !object->mDrawable || (faceMode && !node->hasSelectedTE()))
+        {
+            continue;
+        }
+        SelectionMark mark;
+        mark.flags = object->isRootEdit() ? asr::INSTANCE_SELECTED : asr::INSTANCE_SELECTED_CHILD;
+        mark.faces = faceMode ? node->getTESelectMask() : 0;
+        sNextSelected[object->mDrawable.get()] = mark;
+    }
+    for (const auto& entry : sNextSelected)
+    {
+        const auto found = sSelected.find(entry.first);
+        if (found == sSelected.end() || !(found->second == entry.second))
+        {
+            sChanged.insert(entry.first);
+        }
+        if (found == sSelected.end())
+        {
+            logSelectedState(entry.first);
+        }
+    }
+    for (const auto& entry : sSelected)
+    {
+        if (sNextSelected.find(entry.first) == sNextSelected.end())
+        {
+            sChanged.insert(entry.first); // deselected; a dead one is dropped by applyObject()
+        }
+    }
+    sSelected.swap(sNextSelected);
+}
+
+// HUD objects, which OpenGL's calcLOD() always gives the highest LOD. One first applied
+// before it counted as a HUD, at login say, took a world LOD and a check far off in camera
+// travel, which a HUD never makes: a mesh then stayed at its lowest LOD.
+std::unordered_set<LLDrawable*> sHudObjects;
+U32 sHudPrims = 0;     // temporary: on the HUD points at the last check, see logCounts()
+U32 sHudRaised = 0;    // given the highest LOD here, since the start
+U32 sHudReapplied = 0; // applied again for not having been applied as HUD
+
+void followHudPrim(LLViewerObject* object)
+{
+    LLVOVolume* volume = object && object->mDrawable.notNull() ? volumeOf(object->mDrawable.get()) : nullptr;
+    if (volume && !object->mDrawable->isDead())
+    {
+        ++sHudPrims;
+        LLDrawable* drawable = object->mDrawable.get();
+        if (volume->getLOD() != 3 && volume->updateLOD()) // 3: the highest
+        {
+            ++sHudRaised;
+            sChanged.insert(drawable); // asks its mesh for the new LOD
+        }
+        else if (sHudObjects.find(drawable) == sHudObjects.end() && sObjects.find(drawable) != sObjects.end())
+        {
+            ++sHudReapplied;
+            sChanged.insert(drawable); // applied before it was a HUD: as a world object
+        }
+    }
+    if (object)
+    {
+        for (LLViewerObject* child : object->getChildren())
+        {
+            followHudPrim(child);
+        }
+    }
+}
+
+// The HUD points are the authority, not what was applied: an object can be applied
+// before it counts as a HUD, and nothing applies it again when it becomes one.
+void followHudLods()
+{
+    sHudPrims = 0;
+    if (!isAgentAvatarValid())
+    {
+        return;
+    }
+    for (const auto& point : gAgentAvatarp->mAttachmentPoints)
+    {
+        if (point.second && point.second->getIsHUDAttachment())
+        {
+            for (const LLPointer<LLViewerObject>& object : point.second->mAttachedObjects)
+            {
+                followHudPrim(object.get());
+            }
+        }
+    }
+}
+
 void applyObject(LLDrawable* drawable)
 {
     LLVOVolume* volume = volumeOf(drawable);
@@ -2065,8 +2270,17 @@ void applyObject(LLDrawable* drawable)
     }
     if (leftOut)
     {
+        sHudObjects.erase(drawable);
         dropObject(drawable);
         return;
+    }
+    if (volume->isHUDAttachment())
+    {
+        sHudObjects.insert(drawable);
+    }
+    else
+    {
+        sHudObjects.erase(drawable);
     }
 
     const auto entry = sObjects.try_emplace(drawable);
@@ -2157,7 +2371,7 @@ void applyObject(LLDrawable* drawable)
         // old one goes last, so no instance is left pointing at it.
         SharedMaterial* previous = face.material;
         face.material = useMaterial(material, image, drawable);
-        face.flags = flags;
+        face.flags = flags | (volume->isHUDAttachment() ? asr::INSTANCE_HUD : 0) | selectionFlags(drawable, S32(i));
         face.tieRank = object.skinnedLod >= 0 ? U32(llmin(i, size_t(7))) : tieRankOf(drawable->getVObj()->getID(), i);
         writeFace(face, shape.faces[i], desc, object.skinnedLod, hiddenSelf(object));
         if (previous)
@@ -2519,8 +2733,10 @@ void updateLods()
         {
             bool rigged = false;
             LLVOAvatar* avatar = boundAvatar(volume, rigged);
-            const F32 distance = rigged && avatar->mDrawable.notNull() ? avatar->mDrawable->mDistanceWRTCamera :
-                                                                                       (check.drawable->getPositionAgent() - eye).length();
+            // A HUD is in HUD space, at the screen: always its finest detail.
+            const F32 distance = volume->isHUDAttachment() ? 0.f :
+                                 rigged && avatar->mDrawable.notNull() ? avatar->mDrawable->mDistanceWRTCamera :
+                                                                         (check.drawable->getPositionAgent() - eye).length();
             check.drawable->mDistanceWRTCamera = ll_round(distance, 0.01f);
             volume->updateLOD();
             scheduleLod(check.drawable, object, sCameraTravel + metresToNextLod(volume, distance, scale));
@@ -3716,6 +3932,14 @@ void logCounts()
         U32 filled = 0;
         U32 subImages = 0;
         ASR::getTextureCounts(created, blank, filled, subImages);
+        U32 hudLow = 0; // temporary: HUD prims not at the highest LOD
+        for (LLDrawable* hud : sHudObjects)
+        {
+            LLVOVolume* volume = volumeOf(hud);
+            hudLow += volume && volume->getLOD() != 3 ? 1 : 0;
+        }
+        LL_INFOS("ASRenderer") << "HUD prims " << sHudPrims << ", applied as HUD " << sHudObjects.size() << ", below the highest LOD " << hudLow
+                               << ", raised " << sHudRaised << ", applied again " << sHudReapplied << LL_ENDL;
         LL_INFOS("ASRenderer") << "faces on white " << facesWhite << ", hidden by a copy " << facesHidden << ", with no texture " << facesNoTexture << ", textures out of date " << outOfDate
                                << "; textures created " << created << ", created blank " << blank << ", filled " << filled << ", sub images " << subImages
                                << ", lost their image " << sLostTextures << LL_ENDL;
@@ -4029,6 +4253,8 @@ void ASRWorld::objectRemoved(LLDrawable* drawable)
     sChanged.erase(drawable);
     sMoved.erase(drawable);
     sLeftOut.erase(drawable);
+    sSelected.erase(drawable);
+    sHudObjects.erase(drawable);
     if (drawable == sShifted)
     {
         sShifted = nullptr;
@@ -4396,6 +4622,8 @@ void ASRWorld::update()
     timed(PART_LOD, updateLods);
     timed(PART_SWEEP, sweepObjects);
     timed(PART_APPLY, evictUnusedMeshLods);
+    timed(PART_APPLY, followSelection);
+    timed(PART_APPLY, followHudLods);
     timed(PART_APPLY, applyChanges);
     timed(PART_MOVE, []()
     {
@@ -4409,6 +4637,61 @@ void ASRWorld::update()
     publishCamera();
     timed(PART_AVATARS, updateSystemBodies);
     logCounts();
+}
+
+// Reads what LLSelectMgr keeps private: see the friend line in llselectmgr.h.
+struct ASRSelectionAccess
+{
+    // As the test at the top of LLSelectMgr::renderSilhouettes().
+    static bool outlinesShown(const LLSelectMgr& manager)
+    {
+        const bool normal = manager.mFSShowHideHighlight == FS_SHOW_HIDE_HIGHLIGHT_NORMAL;
+        return (normal && manager.mRenderSilhouettes && manager.mRenderHighlightSelections) ||
+               manager.mFSShowHideHighlight == FS_SHOW_HIDE_HIGHLIGHT_SHOW;
+    }
+};
+
+void ASRWorld::fillOverlay(asr::OverlayInput& overlay)
+{
+    overlay = asr::OverlayInput{};
+    if (!LLSelectMgr::instanceExists())
+    {
+        return; // made after the first frames, and the HUD zoom asks it about the selection
+    }
+
+    // The HUD zoom eases to its target as render_hud_attachments() eases it, which the
+    // native frame does not call: editing a HUD zooms it out as in OpenGL.
+    gAgentCamera.mHUDTargetZoom = llclamp(gAgentCamera.mHUDTargetZoom, !gRlvAttachmentLocks.hasLockedHUD() ? 0.1f : 0.85f, 1.f);
+    gAgentCamera.mHUDCurZoom = lerp(gAgentCamera.mHUDCurZoom, gAgentCamera.getAgentHUDTargetZoom(), LLSmoothInterpolation::getInterpolant(0.03f));
+
+    // HUD space to clip, as OpenGL's; then Y down and reversed depth, as the renderer's.
+    glm::mat4 proj;
+    glm::mat4 model;
+    overlay.hud = LLPipeline::sShowHUDAttachments && !gDisconnected && get_hud_matrices(proj, model);
+    if (overlay.hud)
+    {
+        const glm::mat4 toRenderer(1.f, 0.f, 0.f, 0.f, 0.f, -1.f, 0.f, 0.f, 0.f, 0.f, -0.5f, 0.f, 0.f, 0.f, 0.5f, 1.f);
+        // Drawn in the world view's viewport, as the scene is: see ASRViewer::publishFrame().
+        const glm::mat4 hud = toRenderer * proj * model;
+        memcpy(overlay.hudViewProjection, glm::value_ptr(hud), sizeof(overlay.hudViewProjection));
+    }
+
+    static LLCachedControl<U32> hud_debug(gSavedSettings, "ASRendererHudDebug", 0);
+    overlay.hudDebug = hud_debug;
+
+    LLSelectMgr* manager = LLSelectMgr::getInstance();
+    overlay.outlines = ASRSelectionAccess::outlinesShown(*manager);
+    overlay.faceHighlights = manager->getTEMode() && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_SELECTED);
+    overlay.hiddenSelections = LLSelectMgr::sRenderHiddenSelections;
+    const LLColor4 root = LLSelectMgr::sSilhouetteParentColor.get();
+    const LLColor4 child = LLSelectMgr::sSilhouetteChildColor.get();
+    const LLColor4 face(1.f, 1.f, 1.f, 0.3f); // renderSelectedFaces()' white at half, through its striped texture
+    for (U32 i = 0; i < 4; ++i)
+    {
+        overlay.selectionColors[asr::SELECTION_COLOR_ROOT][i] = root.mV[i];
+        overlay.selectionColors[asr::SELECTION_COLOR_CHILD][i] = child.mV[i];
+        overlay.selectionColors[asr::SELECTION_COLOR_FACE][i] = face.mV[i];
+    }
 }
 
 #else // the new renderer is not in this build
@@ -4431,5 +4714,6 @@ S32 ASRWorld::avatarDetailDiscard(LLViewerFetchedTexture*) { return 0; }
 bool ASRWorld::canRefineVisibleTexture(LLViewerFetchedTexture*, S32) { return false; }
 void ASRWorld::releaseTexture(LLViewerFetchedTexture*) {}
 void ASRWorld::update() {}
+void ASRWorld::fillOverlay(asr::OverlayInput&) {}
 
 #endif

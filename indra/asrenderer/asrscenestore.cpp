@@ -515,7 +515,7 @@ void SceneStore::applyInstance(const InstanceCommand& command, uint64_t frame)
             }
             if ((instance.flags & INSTANCE_HUD) != 0)
             {
-                current.hudDepth = instance.rows[0][3]; // the HUD camera looks along +X
+                current.hudDepth = desc.hudDepth; // the HUD camera looks along +X
                 current.hudSelected = (instance.flags & INSTANCE_SELECTION) != 0;
                 mHudSelected += current.hudSelected ? 1 : 0;
                 mHudInstances.insert(command.id);

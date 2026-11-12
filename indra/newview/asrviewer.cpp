@@ -18,6 +18,7 @@
 #include "llgl.h"
 #include "lltimer.h"
 #include "llviewercontrol.h"
+#include "llviewerwindow.h"
 #include "llwindow.h"
 
 // The Linux window is still to do, so that build stays on OpenGL.
@@ -527,6 +528,15 @@ void ASRViewer::publishFrame(LLWindow* window)
     static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
     static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit", 0);
     state.maxFramesPerSecond = limit_framerate() ? F32(max_fps()) : 0.f;
+    ASRWorld::fillOverlay(state.overlay);
+    // The world view, where OpenGL draws the scene and HUDs, and picking reads them: it can
+    // leave part of the window to the UI. From the window's top left, as the renderer's.
+    const LLRect world = gViewerWindow->getWorldViewRectRaw();
+    const LLRect window = gViewerWindow->getWindowRectRaw();
+    state.worldView[0] = U32(llmax(world.mLeft, 0));
+    state.worldView[1] = U32(llmax(window.getHeight() - world.mTop, 0));
+    state.worldView[2] = U32(llmax(world.getWidth(), 0));
+    state.worldView[3] = U32(llmax(world.getHeight(), 0));
     sRenderThread->publishState();
     sDevice->textures().flush(); // uploads that found the ring full
 

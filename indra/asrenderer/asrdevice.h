@@ -69,6 +69,7 @@ struct OverlayInput
     bool hiddenSelections = false;  // outline what other objects hide too, fainter
     float outlineWidth = 3.f;       // pixels, up to 4
     float selectionColors[3][4]{};  // SELECTION_COLOR_* in asrscene.h
+    uint32_t hudDebug = 0;          // temporary: see asrOverlayHudF.glsl's HUD_DEBUG_*
 };
 
 struct FrameInput
@@ -81,6 +82,9 @@ struct FrameInput
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
     bool audit = false; // also looks for clusters occlusion culling lost
     OverlayInput overlay{}; // with the scene only
+    // Where the scene goes in the window, as OpenGL's world view: x, y from the top left,
+    // width, height, in pixels. The rest is the UI's. A width of 0 is the whole window.
+    uint32_t worldView[4]{};
 };
 
 constexpr uint32_t MAX_TIMED_PASSES = 32; // every scene pass, audit and feedback included

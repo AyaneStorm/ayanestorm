@@ -280,6 +280,10 @@ public:
                 [encoder waitForFence:mSceneFence beforeStages:MTLRenderStageFragment];
                 [encoder setRenderPipelineState:mCompositePipeline];
                 [encoder setFragmentTexture:mSceneColorTarget atIndex:9];
+                // The composite reads the world view's offset from push.list: none here yet,
+                // the scene fills the window (FrameInput::worldView is Vulkan's so far).
+                const ScenePush noOffset{};
+                [encoder setFragmentBytes:&noOffset length:sizeof(noOffset) atIndex:PUSH_CONSTANT_BUFFER];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
             }
             if (input.testTriangle)

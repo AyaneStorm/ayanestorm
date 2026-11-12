@@ -40,7 +40,8 @@ float coverage(vec4 mask, bool hud, bool hidden, out float colour)
 void main()
 {
     ViewRef view = ViewRef(push.view);
-    const ivec2 pixel = ivec2(gl_FragCoord.xy);
+    // The window pixel, less the world view's place in it (push.list, x low, y high).
+    const ivec2 pixel = ivec2(gl_FragCoord.xy) - ivec2(push.list & 0xFFFFu, push.list >> 16);
     const ivec2 size = imageSize(selectionMask);
     const bool hud = push.phase == OVERLAY_OUTLINE_HUD;
     const bool hidden = view.hiddenSelections != 0u;

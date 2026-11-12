@@ -22,8 +22,18 @@ layout(location = 4) flat in float vary_cutoff;
 
 layout(location = 0) out vec4 frag_color;
 
+const uint HUD_DEBUG_BACKS = 1u; // temporary, push.phase: back faces are kept
+const uint HUD_DEBUG_DEPTH = 2u; // temporary: every fragment passes the depth test
+
 void main()
 {
+    // One draw takes one-sided and double-sided faces alike, so culling is off and backs
+    // go here: a translucent panel would show its mirrored back through its front.
+    if (!gl_FrontFacing && (vary_flags & INSTANCE_DOUBLE_SIDED) == 0u && (push.phase & HUD_DEBUG_BACKS) == 0u)
+    {
+        discard;
+    }
+    gl_FragDepth = (push.phase & HUD_DEBUG_DEPTH) != 0u ? 1.0 : gl_FragCoord.z;
     const uint slot = vary_texture & 0xFFFFFu;
     const uint samplerIndex = (vary_texture >> 28) & 3u;
     const vec2 uvDx = dFdx(vary_uv);

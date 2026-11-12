@@ -42,6 +42,10 @@ void main()
     const uint vertex = clusterIndex(cluster.indices, triangle * 3u + corner);
     const vec3 packed = packedPosition(cluster.positions, vertex);
     gl_Position = scenePosition(view, instance, packed);
+    if ((push.phase & 4u) != 0u) // temporary, ASRendererHudDebug 4: HUD depth clamped, never clipped
+    {
+        gl_Position.z = clamp(gl_Position.z, 0.0, gl_Position.w);
+    }
 
     const Material material = MaterialsRef(push.materials).items[instance.material];
     WordsRef attributes = WordsRef(cluster.attributes);
