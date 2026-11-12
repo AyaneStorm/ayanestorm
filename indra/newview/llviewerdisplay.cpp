@@ -282,13 +282,20 @@ static void display_native(bool rebuild)
         gViewerWindow->setup3DViewport();
         ASR::beginUIWorld();
         render_hud_elements();
+        {
+            // Floating text and name tags test against the scene's depth, as in OpenGL,
+            // where the scene's depth is still there when they draw: walls hide them.
+            LLGLSDefault gls_default;
+            LLGLSUIDefault gls_ui;
+            gPipeline.disableLights();
+            LLHUDObject::renderAll();
+        }
         ASR::markUIHud();
         {
             LLGLSDefault gls_default;
             LLGLSUIDefault gls_ui;
             gPipeline.disableLights();
             render_ui_3d();
-            LLHUDObject::renderAll();
         }
     }
     else
