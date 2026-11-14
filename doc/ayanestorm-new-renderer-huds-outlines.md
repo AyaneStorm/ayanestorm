@@ -202,7 +202,13 @@ sees it; what it lacks is depth, cull and viewport state, and the HUD's place in
   not yet seen (no screen capture over SSH); Mac viewer unbuilt.
 - Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
   (context) colours; mesh selections use the same colours.
-- To do: viewer build test of the 3D UI and floating text (programs other than
-  `gUIProgram` and `gSolidColorProgram` are left out and logged once: check the log),
-  then Metal's side of step h (HUD, outlines: written, see above; Mac picture and viewer
-  test pending), then texture animation.
+- Done since: 3D UI and floating text tested in the Windows viewer; Metal side checked by
+  the user in `asrenderer_test`; texture animation confirmed on Windows and the Mac; Mac
+  outlines fixed (set 1 images mapped only up to binding 9, the mask is 10), confirmed.
+- Mac viewer tested by the user, 15 November: all works.
+- Plane-drag grid drew as a white panel: its hand-made mips went through
+  `setManualImage()`, which returns early in native mode. `ASR::setTextureLevel()` now
+  takes them (level 0 makes the image and GPU mips, later levels replace those), called
+  from `LLManipTranslate` and `FSManipTranslateJoint`; the bridge's `uploadTexture()`
+  gained a level. Unbuilt.
+- To do: hover highlights and the other colours above.

@@ -63,8 +63,8 @@ namespace ASR
         // compressed format the GPU encodes the uploads into (see
         // doc/ayanestorm-new-renderer-texture-compression.md).
         virtual U32 createTexture(U32 width, U32 height, U32 mipLevels, PixelLayout layout, U8 storage) = 0;
-        // rowPixels is the width of the data that pixels points into.
-        virtual void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
+        // rowPixels is the width of the data that pixels points into; level is the mip written.
+        virtual void uploadTexture(U32 slot, U32 level, U32 x, U32 y, U32 width, U32 height, PixelLayout layout,
                                    const void* pixels, U32 rowPixels, U8 storage) = 0;
         // Makes the smaller mips; for a compressed texture, also encodes it. cacheOwner is
         // CompressionScope::owner(): the texture whose blocks the disk cache may keep.
@@ -121,6 +121,10 @@ namespace ASR
     // compressible: LLImageGL allows it, and the image was fetched (see CompressionScope);
     // the renderer may then keep it in a compressed format, which takes no sub-images.
     void setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type, const void* pixels, bool mips, bool compressible = false);
+    // A texture whose mips the caller makes itself, given level by level as glTexImage2D
+    // takes them: level 0 makes the image with every mip (made on the GPU, so none is
+    // ever undefined), each later level replaces the one made.
+    void setTextureLevel(U32 name, S32 level, S32 width, S32 height, U32 format, U32 type, const void* pixels);
 
     // While one exists on a thread, images set on that thread may be compressed: only
     // LLViewerFetchedTexture::createTexture() opens one, so UI, fonts and media never are.

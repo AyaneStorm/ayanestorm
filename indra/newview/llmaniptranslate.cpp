@@ -31,6 +31,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llmaniptranslate.h"
+#include "asrbridge.h" // <AS:Chanayane/>
 
 #include "llgl.h"
 #include "llrender.h"
@@ -271,6 +272,13 @@ void LLManipTranslate::restoreGL()
                 }
             }
         }
+        // <AS:Chanayane> The new renderer takes the hand-made mips too.
+        if (ASR::active())
+        {
+            ASR::setTextureLevel(sGridTex->getTexName(), mip, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
+        }
+        else
+        // </AS:Chanayane>
         LLImageGL::setManualImage(GL_TEXTURE_2D, mip, GL_RGBA, rez, rez, GL_RGBA, GL_UNSIGNED_BYTE, d);
         rez = rez >> 1;
         mip++;

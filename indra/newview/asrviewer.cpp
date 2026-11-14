@@ -213,7 +213,7 @@ public:
         return asr::textureCompressed(format) ? U8(format) : 0;
     }
 
-    void uploadTexture(U32 slot, U32 x, U32 y, U32 width, U32 height, ASR::PixelLayout layout, const void* pixels, U32 rowPixels, U8 storage) override
+    void uploadTexture(U32 slot, U32 level, U32 x, U32 y, U32 width, U32 height, ASR::PixelLayout layout, const void* pixels, U32 rowPixels, U8 storage) override
     {
         // GPUs have no three-channel format, so those rows gain an opaque alpha. A texture
         // the GPU compresses takes four bytes a texel, its channels first.
@@ -224,7 +224,7 @@ public:
 
         // Written once, usually straight into the memory the GPU copies from.
         asr::TextureQueue& textures = sDevice->textures();
-        U8* target = textures.beginUpload(slot, 0, x, y, width, height, U32(targetRow));
+        U8* target = textures.beginUpload(slot, level, x, y, width, height, U32(targetRow));
         const U8* source = static_cast<const U8*>(pixels);
         for (U32 row = 0; target && row < height; ++row)
         {

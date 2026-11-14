@@ -411,7 +411,7 @@ void ASR::setTextureImage(U32 name, S32 width, S32 height, U32 format, U32 type,
     else if (pixels)
     {
         ++sFilled;
-        sLink->uploadTexture(texture->slot, 0, 0, width, height, layout, pixels, width, storage);
+        sLink->uploadTexture(texture->slot, 0, 0, 0, width, height, layout, pixels, width, storage);
         if (mips || storage != 0)
         {
             // Encodes a compressed one; the disk cache may keep its blocks.
@@ -435,8 +435,28 @@ void ASR::setTextureSubImage(U32 name, S32 x, S32 y, S32 width, S32 height, cons
     else if (sLink && texture.slot != 0)
     {
         ++sSubImages;
-        sLink->uploadTexture(texture.slot, x, y, width, height, texture.layout, pixels, rowPixels, 0);
+        sLink->uploadTexture(texture.slot, 0, x, y, width, height, texture.layout, pixels, rowPixels, 0);
     }
+}
+
+void ASR::setTextureLevel(U32 name, S32 level, S32 width, S32 height, U32 format, U32 type, const void* pixels)
+{
+    if (level == 0)
+    {
+        setTextureImage(name, width, height, format, type, pixels, true);
+        return;
+    }
+
+    const Texture& texture = findTexture(name);
+    PixelLayout layout;
+    if (!sLink || texture.slot == 0 || !texture.mips || texture.storage != 0 || !pixels || level < 0 ||
+        level >= S32(fullMipCount(texture.width, texture.height)) || width != std::max(texture.width >> level, 1) ||
+        height != std::max(texture.height >> level, 1) || !toPixelLayout(format, type, layout) || layout != texture.layout)
+    {
+        LL_WARNS_ONCE("ASRenderer") << "a mip level that does not fit its texture was left out" << LL_ENDL;
+        return;
+    }
+    sLink->uploadTexture(texture.slot, U32(level), 0, 0, U32(width), U32(height), layout, pixels, U32(width), 0);
 }
 
 bool ASR::shrinkTexture(U32 name, S32 mips)
