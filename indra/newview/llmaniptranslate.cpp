@@ -31,7 +31,10 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "llmaniptranslate.h"
-#include "asrbridge.h" // <AS:Chanayane/>
+// <AS:Chanayane>
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 
 #include "llgl.h"
 #include "llrender.h"

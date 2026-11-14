@@ -26,7 +26,10 @@
  */
 
 #include "fsmaniptranslatejoint.h"
-#include "asrbridge.h" // <AS:Chanayane/>
+// <AS:Chanayane>
+#include "asrbridge.h"
+#include "asrgltable.h"
+// </AS:Chanayane>
 #include "llagent.h"
 #include "llagentcamera.h"
 #include "llviewercontrol.h"

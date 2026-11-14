@@ -36,6 +36,12 @@
 #include "lltoolpie.h"
 #include "llcriticaldamp.h"
 #include "llselectmgr.h"
+#include "llfloaterinspect.h"
+#include "llfloaterreg.h"
+#include "llfocusmgr.h"
+#include "llkeyboard.h"
+#include "llsidepaneltaskinfo.h"
+#include "llviewermediafocus.h"
 #include "pipeline.h"
 #include "rlvlocks.h"
 #include <glm/glm.hpp>
@@ -2146,11 +2152,11 @@ void refreshGltfMaterials(LLVOVolume* volume)
     }
 }
 
-// Selections. Each selected prim's faces carry flags (asr::INSTANCE_SELECTED and the rest),
-// so only prims whose selection changes are applied again: see followSelection().
+// Selections. Each selected or highlighted prim's faces carry flags (asr::instanceOutline()
+// and the face bit), so only prims whose marks change are applied again: see followSelection().
 struct SelectionMark
 {
-    U32 flags = 0;  // INSTANCE_SELECTED or INSTANCE_SELECTED_CHILD
+    U32 flags = 0;  // asr::instanceOutline(SELECTION_COLOR_*)
     S32 faces = 0;  // the face tool's selected faces, a bit each, as LLSelectNode keeps them
     bool operator==(const SelectionMark& other) const { return flags == other.flags && faces == other.faces; }
 };
@@ -2168,9 +2174,31 @@ U32 selectionFlags(LLDrawable* drawable, S32 face)
     return found->second.flags | (faceSelected ? asr::INSTANCE_FACE_SELECTED : 0);
 }
 
-// As LLSelectMgr::renderSilhouettes() walks the selection: the root's colour for roots,
-// the children's for the rest; in face mode only prims with a selected face, and those
-// faces tinted, as LLPipeline::renderHighlights() tints them.
+// The object the Inspect floater, or else the build floater's object panel, has picked,
+// as LLSelectMgr::renderSilhouettes() finds it.
+LLUUID inspectedObject()
+{
+    LLFloaterInspect* inspect = LLFloaterReg::findTypedInstance<LLFloaterInspect>("inspect");
+    if (inspect && inspect->getVisible())
+    {
+        return inspect->getSelectedUUID();
+    }
+    LLSidepanelTaskInfo* panel = LLSidepanelTaskInfo::getActivePanel();
+    return panel ? panel->getSelectedUUID() : LLUUID::null;
+}
+
+bool isMesh(LLViewerObject* object)
+{
+    LLVOVolume* volume = object->mDrawable->getVOVolume();
+    return volume && volume->isMesh();
+}
+
+// As LLSelectMgr::renderSilhouettes() picks each colour. Selected: media focus (not for
+// mesh, as there), inspected, the pie menu's, root or child; in face mode only prims with
+// a selected face, and those faces tinted, as LLPipeline::renderHighlights() tints them.
+// Then the highlighted, which the rectangle, a drag from inventory or the eyedropper
+// would pick: red for all while Ctrl takes them out of the selection, else left to their
+// selection colour if selected.
 void followSelection()
 {
     sNextSelected.clear();
@@ -2181,18 +2209,58 @@ void followSelection()
     LLSelectMgr* manager = LLSelectMgr::getInstance();
     const bool faceMode = manager->getTEMode();
     LLObjectSelectionHandle selection = manager->getSelection();
-    for (LLObjectSelection::iterator iter = selection->begin(); iter != selection->end(); ++iter)
+    if (selection->getNumNodes())
+    {
+        const LLUUID inspected = inspectedObject();
+        const LLUUID focused = LLViewerMediaFocus::getInstance()->getFocusedObjectID();
+        for (LLObjectSelection::iterator iter = selection->begin(); iter != selection->end(); ++iter)
+        {
+            LLSelectNode* node = *iter;
+            LLViewerObject* object = node ? node->getObject() : nullptr;
+            if (!object || !object->mDrawable || (faceMode && !node->hasSelectedTE()))
+            {
+                continue;
+            }
+            const bool mesh = isMesh(object);
+            U32 colour = object->isRootEdit() ? asr::SELECTION_COLOR_ROOT : asr::SELECTION_COLOR_CHILD;
+            if (!mesh && object->getID() == focused)
+            {
+                colour = asr::SELECTION_COLOR_FOCUS;
+            }
+            else if (object->getID() == inspected)
+            {
+                colour = asr::SELECTION_COLOR_INSPECT;
+            }
+            else if (node->isTransient())
+            {
+                colour = asr::SELECTION_COLOR_TRANSIENT;
+            }
+            SelectionMark mark;
+            mark.flags = asr::instanceOutline(colour);
+            mark.faces = faceMode ? node->getTESelectMask() : 0;
+            sNextSelected[object->mDrawable.get()] = mark;
+        }
+    }
+
+    LLObjectSelectionHandle highlighted = manager->getHighlightedObjects();
+    const bool removing = highlighted->getNumNodes() && gKeyboard && gKeyboard->currentMask(true) == MASK_CONTROL;
+    for (LLObjectSelection::iterator iter = highlighted->begin(); iter != highlighted->end(); ++iter)
     {
         LLSelectNode* node = *iter;
         LLViewerObject* object = node ? node->getObject() : nullptr;
-        if (!object || !object->mDrawable || (faceMode && !node->hasSelectedTE()))
+        if (!object || !object->mDrawable)
         {
             continue;
         }
-        SelectionMark mark;
-        mark.flags = object->isRootEdit() ? asr::INSTANCE_SELECTED : asr::INSTANCE_SELECTED_CHILD;
-        mark.faces = faceMode ? node->getTESelectMask() : 0;
-        sNextSelected[object->mDrawable.get()] = mark;
+        SelectionMark& mark = sNextSelected[object->mDrawable.get()];
+        if (removing)
+        {
+            mark.flags = asr::instanceOutline(asr::SELECTION_COLOR_REMOVE);
+        }
+        else if (mark.flags == 0)
+        {
+            mark.flags = asr::instanceOutline(object->isRoot() ? asr::SELECTION_COLOR_HIGHLIGHT_ROOT : asr::SELECTION_COLOR_HIGHLIGHT_CHILD);
+        }
     }
     for (const auto& entry : sNextSelected)
     {
@@ -4695,14 +4763,19 @@ void ASRWorld::fillOverlay(asr::OverlayInput& overlay)
     overlay.outlines = ASRSelectionAccess::outlinesShown(*manager);
     overlay.faceHighlights = manager->getTEMode() && gPipeline.hasRenderDebugFeatureMask(LLPipeline::RENDER_DEBUG_FEATURE_SELECTED);
     overlay.hiddenSelections = LLSelectMgr::sRenderHiddenSelections;
-    const LLColor4 root = LLSelectMgr::sSilhouetteParentColor.get();
-    const LLColor4 child = LLSelectMgr::sSilhouetteChildColor.get();
-    const LLColor4 face(1.f, 1.f, 1.f, 0.3f); // renderSelectedFaces()' white at half, through its striped texture
-    for (U32 i = 0; i < 4; ++i)
+    LLColor4 colors[asr::SELECTION_COLORS];
+    colors[asr::SELECTION_COLOR_FACE] = LLColor4(1.f, 1.f, 1.f, 0.3f); // renderSelectedFaces()' white at half, through its striped texture
+    colors[asr::SELECTION_COLOR_HIGHLIGHT_CHILD] = LLSelectMgr::sHighlightChildColor.get();
+    colors[asr::SELECTION_COLOR_HIGHLIGHT_ROOT] = LLSelectMgr::sHighlightParentColor.get();
+    colors[asr::SELECTION_COLOR_CHILD] = LLSelectMgr::sSilhouetteChildColor.get();
+    colors[asr::SELECTION_COLOR_ROOT] = LLSelectMgr::sSilhouetteParentColor.get();
+    colors[asr::SELECTION_COLOR_TRANSIENT] = LLSelectMgr::sContextSilhouetteColor.get();
+    colors[asr::SELECTION_COLOR_INSPECT] = LLSelectMgr::sHighlightInspectColor.get();
+    colors[asr::SELECTION_COLOR_FOCUS] = gFocusMgr.getFocusColor();
+    colors[asr::SELECTION_COLOR_REMOVE] = LLColor4::red;
+    for (U32 colour = 0; colour < asr::SELECTION_COLORS; ++colour)
     {
-        overlay.selectionColors[asr::SELECTION_COLOR_ROOT][i] = root.mV[i];
-        overlay.selectionColors[asr::SELECTION_COLOR_CHILD][i] = child.mV[i];
-        overlay.selectionColors[asr::SELECTION_COLOR_FACE][i] = face.mV[i];
+        memcpy(overlay.selectionColors[colour], colors[colour].mV, sizeof(overlay.selectionColors[colour]));
     }
 }
 

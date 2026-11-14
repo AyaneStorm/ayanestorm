@@ -49,10 +49,12 @@ constexpr uint32_t INSTANCE_SKINNED = 8u;      // set by the store: its position
 constexpr uint32_t INSTANCE_BOUND = 16u;       // set by the store: on a skeleton, and GpuInstance::binding names how
 constexpr uint32_t INSTANCE_BLENDED = 32u;     // alpha blended: drawn by the transparency passes, never into depth
 constexpr uint32_t INSTANCE_HUD = 64u;         // a HUD object, in HUD space: only the HUD pass draws it
-constexpr uint32_t INSTANCE_SELECTED = 128u;   // outlined in the root's selection colour
-constexpr uint32_t INSTANCE_SELECTED_CHILD = 1u << 18; // outlined in the linked children's colour
 constexpr uint32_t INSTANCE_FACE_SELECTED = 1u << 19;  // a face the face tool selected: tinted
-constexpr uint32_t INSTANCE_SELECTION = INSTANCE_SELECTED | INSTANCE_SELECTED_CHILD | INSTANCE_FACE_SELECTED;
+// Outlined, in a colour of GpuSceneView::selectionColors (SELECTION_COLOR_*, 0: not outlined).
+constexpr uint32_t INSTANCE_OUTLINE_SHIFT = 20;
+constexpr uint32_t INSTANCE_OUTLINE_MASK = 15u << INSTANCE_OUTLINE_SHIFT;
+constexpr uint32_t instanceOutline(uint32_t colour) { return (colour << INSTANCE_OUTLINE_SHIFT) & INSTANCE_OUTLINE_MASK; }
+constexpr uint32_t INSTANCE_SELECTION = INSTANCE_OUTLINE_MASK | INSTANCE_FACE_SELECTED;
 
 // Surfaces in the same plane would tie in depth, and the order of a list changes from frame
 // to frame, so which one shows would flicker. Each rank sits a fixed share of its distance
@@ -646,12 +648,20 @@ struct GpuSceneView
     uint64_t selection;       // the selection list: the early cull's clusters of selected instances
     uint32_t hiddenSelections; // not 0: outlines show behind other objects too, fainter
     float outlineWidth;       // pixels
-    float selectionColors[3][4]; // SELECTION_COLOR_*, as the viewer's colour table has them
+    float selectionColors[9][4]; // SELECTION_COLOR_*, as the viewer's colour table has them
 };
-static_assert(sizeof(GpuSceneView) == 752, "shaders read this layout");
-constexpr uint32_t SELECTION_COLOR_ROOT = 0;  // SilhouetteParentColor
-constexpr uint32_t SELECTION_COLOR_CHILD = 1; // SilhouetteChildColor
-constexpr uint32_t SELECTION_COLOR_FACE = 2;  // the face tool's tint
+static_assert(sizeof(GpuSceneView) == 848, "shaders read this layout");
+// Where outlines meet, the mask keeps the higher one, so the order is OpenGL's precedence.
+constexpr uint32_t SELECTION_COLOR_FACE = 0;            // the face tool's tint, not an outline
+constexpr uint32_t SELECTION_COLOR_HIGHLIGHT_CHILD = 1; // HighlightChildColor: a child the pointer would pick
+constexpr uint32_t SELECTION_COLOR_HIGHLIGHT_ROOT = 2;  // HighlightParentColor
+constexpr uint32_t SELECTION_COLOR_CHILD = 3;           // SilhouetteChildColor
+constexpr uint32_t SELECTION_COLOR_ROOT = 4;            // SilhouetteParentColor
+constexpr uint32_t SELECTION_COLOR_TRANSIENT = 5;       // ContextSilhouetteColor: the pie menu's object, never shown hidden
+constexpr uint32_t SELECTION_COLOR_INSPECT = 6;         // HighlightInspectColor: the one the Inspect list picks
+constexpr uint32_t SELECTION_COLOR_FOCUS = 7;           // the media focus colour
+constexpr uint32_t SELECTION_COLOR_REMOVE = 8;          // red: Ctrl takes highlighted objects out of the selection
+constexpr uint32_t SELECTION_COLORS = 9;
 static_assert(offsetof(GpuSceneView, selection) % 8 == 0, "std430 aligns a uint64_t to 8");
 
 // The time skeletons and views are stamped with.

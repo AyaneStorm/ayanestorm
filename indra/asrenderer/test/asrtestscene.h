@@ -486,7 +486,7 @@ public:
     void showOverlays()
     {
         mOverlays = true;
-        mScene.addInstance(instanceDesc(mKnot, mMaterials[2], 0.f, 0.25f, 0.2f, 0.12f, 0.12f, 0.12f, asr::INSTANCE_HUD | asr::INSTANCE_SELECTED));
+        mScene.addInstance(instanceDesc(mKnot, mMaterials[2], 0.f, 0.25f, 0.2f, 0.12f, 0.12f, 0.12f, asr::INSTANCE_HUD | asr::instanceOutline(asr::SELECTION_COLOR_ROOT)));
         asr::InstanceDesc blended = instanceDesc(mKnot, mMaterials[3], -0.2f, 0.2f, 0.18f, 0.1f, 0.1f, 0.1f, asr::INSTANCE_HUD | asr::INSTANCE_BLENDED);
         blended.hudDepth = -0.2f; // its centre along the HUD camera's axis
         mScene.addInstance(blended);
@@ -506,9 +506,12 @@ public:
             mLastMove = seconds;
             for (const Moving& object : mMoving)
             {
-                // --overlay: the first two are selected, a root and a linked child.
+                // --overlay: the first two are selected, a root and a linked child; the next
+                // two are a highlighted root and the pie menu's object.
+                static const uint32_t outlined[] = { asr::SELECTION_COLOR_ROOT, asr::SELECTION_COLOR_CHILD,
+                                                     asr::SELECTION_COLOR_HIGHLIGHT_ROOT, asr::SELECTION_COLOR_TRANSIENT };
                 const size_t index = size_t(&object - mMoving.data());
-                const uint32_t flags = !mOverlays || index > 1 ? 0 : index == 0 ? asr::INSTANCE_SELECTED : asr::INSTANCE_SELECTED_CHILD;
+                const uint32_t flags = !mOverlays || index >= std::size(outlined) ? 0 : asr::instanceOutline(outlined[index]);
                 asr::InstanceDesc desc = instanceDesc(object.geometry, object.material, object.x + 4.f * std::sin(seconds + object.phase),
                                                       object.y + 4.f * std::cos(seconds + object.phase), object.z, object.size, object.size, object.size, flags);
                 mScene.setInstance(object.instance, desc);
@@ -545,7 +548,7 @@ public:
         {
             mLastSwap = seconds;
             const uint32_t fresh = mScene.addGeometry(build(mKnotMesh));
-            const uint32_t swapFlags = mOverlays ? asr::INSTANCE_SELECTED | asr::INSTANCE_FACE_SELECTED : 0;
+            const uint32_t swapFlags = mOverlays ? asr::instanceOutline(asr::SELECTION_COLOR_ROOT) | asr::INSTANCE_FACE_SELECTED : 0;
             mScene.setInstance(mSwapInstance, instanceDesc(fresh, mMaterials[1], 0.f, 0.f, 30.f, 12.f, 12.f, 12.f, swapFlags));
             mScene.removeGeometry(mSwapGeometry);
             mSwapGeometry = fresh;

@@ -211,4 +211,13 @@ sees it; what it lacks is depth, cull and viewport state, and the HUD's place in
   takes them (level 0 makes the image and GPU mips, later levels replace those), called
   from `LLManipTranslate` and `FSManipTranslateJoint`; the bridge's `uploadTexture()`
   gained a level. Unbuilt.
-- To do: hover highlights and the other colours above.
+- Highlights and the other colours, 15 November: the two selection bits became a 4-bit
+  colour index (`instanceOutline()`, bits 20-23; bit 7 and 18 freed), the mask keeps the
+  index / 255 so the MAX blend gives OpenGL's precedence (face tint 0, highlight child,
+  highlight root, child, root, transient, inspect, focus, remove), and the view holds 9
+  colours (848 bytes). `followSelection()` picks them as `renderSilhouettes()` does: focus
+  (not mesh), inspect, transient, root or child; then `getHighlightedObjects()` (rectangle,
+  inventory drag, eyedropper) in highlight colours, or red for all with Ctrl. Transient
+  outlines never show hidden. Windows `asrenderer_test`: selftest and
+  `--scene --overlay --ui --validate` pass, 0 errors; the test city now also outlines a
+  highlighted root and a transient object. Mac and viewers not built.

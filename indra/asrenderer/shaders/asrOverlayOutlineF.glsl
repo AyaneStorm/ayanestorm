@@ -21,20 +21,21 @@ const uint OVERLAY_OUTLINE_HUD = 1u;
 const int MAX_OUTLINE_RADIUS = 4;      // the search square's half size, in pixels
 const float HIDDEN_STRENGTH = 0.4;
 
-// How strongly a mask texel counts as selected, and in which colour (1 root, 0.5 child).
-float coverage(vec4 mask, bool hud, bool hidden, out float colour)
+// How strongly a mask texel counts as selected, and in which colour (SELECTION_COLOR_*).
+// The pie menu's object is never outlined behind others, as OpenGL draws it.
+float coverage(vec4 mask, bool hud, bool hidden, out uint colour)
 {
     if (hud)
     {
-        colour = mask.a;
-        return mask.a > 0.0 ? 1.0 : 0.0;
+        colour = uint(mask.a * 255.0 + 0.5);
+        return colour != 0u ? 1.0 : 0.0;
     }
-    colour = mask.g;
+    colour = uint(mask.g * 255.0 + 0.5);
     if (mask.r > 0.75)
     {
         return 1.0;
     }
-    return mask.r > 0.0 && hidden ? HIDDEN_STRENGTH : 0.0;
+    return mask.r > 0.0 && hidden && colour != SELECTION_COLOR_TRANSIENT ? HIDDEN_STRENGTH : 0.0;
 }
 
 void main()
@@ -47,7 +48,7 @@ void main()
     const bool hidden = view.hiddenSelections != 0u;
     const vec4 own = imageLoad(selectionMask, pixel);
 
-    float ownColour = 0.0;
+    uint ownColour = 0u;
     if (coverage(own, hud, hidden, ownColour) > 0.0)
     {
         // Inside a selected shape: only the face tool's tint shows here.
@@ -64,7 +65,7 @@ void main()
     const int radius = int(ceil(width));
     float best = width + 1.0;
     float strength = 0.0;
-    float colour = 0.0;
+    uint colour = 0u;
     for (int y = -radius; y <= radius; ++y)
     {
         for (int x = -radius; x <= radius; ++x)
@@ -74,10 +75,10 @@ void main()
             {
                 continue;
             }
-            float nearColour = 0.0;
+            uint nearColour = 0u;
             const float near = coverage(imageLoad(selectionMask, at), hud, hidden, nearColour);
             const float distance = length(vec2(x, y));
-            // The nearer pixel wins; at the same distance, the stronger and the root's.
+            // The nearer pixel wins; at the same distance, the stronger and the higher colour.
             if (near > 0.0 && (distance < best || (distance == best && (near > strength || nearColour > colour))))
             {
                 best = distance;
@@ -90,7 +91,7 @@ void main()
     {
         discard;
     }
-    const vec4 tint = view.selectionColors[colour > 0.75 ? SELECTION_COLOR_ROOT : SELECTION_COLOR_CHILD];
+    const vec4 tint = view.selectionColors[min(colour, 8u)];
     const float fade = 1.0 - (best - 1.0) / width; // full at the edge, gone past the band
     frag_color = vec4(tint.rgb, tint.a * strength * clamp(fade, 0.0, 1.0));
 }

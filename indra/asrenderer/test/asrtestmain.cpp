@@ -2644,7 +2644,11 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             state.audit = audit;
             if (sOverlays)
             {
-                const float colors[3][4] = { { 1.f, 1.f, 0.f, 1.f }, { 0.f, 0.6f, 1.f, 1.f }, { 1.f, 1.f, 1.f, 0.35f } };
+                // SELECTION_COLOR_* order: face tint, highlight child and root, child, root,
+                // transient, inspect, focus, remove.
+                const float colors[asr::SELECTION_COLORS][4] = { { 1.f, 1.f, 1.f, 0.35f }, { 0.5f, 0.5f, 1.f, 1.f }, { 0.f, 1.f, 0.f, 1.f },
+                                                                 { 0.f, 0.6f, 1.f, 1.f }, { 1.f, 1.f, 0.f, 1.f }, { 1.f, 0.5f, 0.f, 0.5f },
+                                                                 { 1.f, 0.f, 1.f, 1.f }, { 0.f, 1.f, 1.f, 1.f }, { 1.f, 0.f, 0.f, 1.f } };
                 // A world view short of the window, as a toolbar keeping its space leaves it.
                 state.worldView[0] = 40;
                 state.worldView[1] = 30;

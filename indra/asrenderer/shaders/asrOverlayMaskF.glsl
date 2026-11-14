@@ -3,7 +3,7 @@
  * The selection mask, drawn with the MAX blend so each pixel keeps the strongest of the
  * fragments on it. Scene phase, from the selection list in the scene's view:
  *   R: outlined here, 1 in front of the scene's depth, 0.5 behind it
- *   G: the outline colour, 1 the root's, 0.5 a linked child's (the root wins)
+ *   G: the outline colour, its SELECTION_COLOR_* index / 255 (the higher wins)
  *   B: 1 where a face the face tool selected shows: tinted
  * HUD phase, from the HUD list's selected entries in the HUD view, no depth:
  *   A: as G, for the HUD's own outline
@@ -44,8 +44,10 @@ void main()
             discard;
         }
     }
-    const bool outlined = (vary_flags & (INSTANCE_SELECTED | INSTANCE_SELECTED_CHILD)) != 0u;
-    const float colour = !outlined ? 0.0 : (vary_flags & INSTANCE_SELECTED) != 0u ? 1.0 : 0.5;
+    // The colour's index, exact in 8 bits; the MAX blend keeps the higher, which wins.
+    const uint index = (vary_flags & INSTANCE_OUTLINE_MASK) >> INSTANCE_OUTLINE_SHIFT;
+    const bool outlined = index != 0u;
+    const float colour = float(index) / 255.0;
     if (push.phase == OVERLAY_MASK_HUD)
     {
         frag_mask = vec4(0.0, 0.0, 0.0, colour);

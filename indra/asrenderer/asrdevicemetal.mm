@@ -1061,10 +1061,9 @@ private:
         {
             view.selectionColors[SELECTION_COLOR_FACE][3] = 0.f;
         }
-        if (!input.outlines)
+        for (uint32_t colour = SELECTION_COLOR_FACE + 1; !input.outlines && colour < SELECTION_COLORS; ++colour)
         {
-            view.selectionColors[SELECTION_COLOR_ROOT][3] = 0.f;
-            view.selectionColors[SELECTION_COLOR_CHILD][3] = 0.f;
+            view.selectionColors[colour][3] = 0.f;
         }
 
         mOverlay.hudDrawn = 0;
