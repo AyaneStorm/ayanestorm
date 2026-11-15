@@ -56,6 +56,7 @@
 #include "llfloatercamera.h"
 #include "llmenugl.h"
 #include "asrcameraturn.h" // <AS:Chanayane/>
+#include "asmoonrendering.h" // <AS:Chanayane/> alt-click on the moon
 
 // Globals
 bool gCameraBtnZoom = true;
@@ -168,6 +169,15 @@ void LLToolCamera::pickCallback(const LLPickInfo& pick_info)
     // Check for hit the sky, or some other invalid point
     if (!hit_obj && pick_info.mPosGlobal.isExactlyZero())
     {
+        // <AS:Chanayane> Alt-click (or the camera tool) on the moon turns the camera to it
+        if ((pick_info.mKeyMask & MASK_ALT || LLToolMgr::getInstance()->getCurrentTool()->getName() == "Camera") &&
+            CAMERA_MODE_CUSTOMIZE_AVATAR != gAgentCamera.getCameraMode() &&
+            ASMoonRendering::focusOnMoon(pick_info.mMousePt.mX, pick_info.mMousePt.mY))
+        {
+            camera->mValidClickPoint = true;
+            return;
+        }
+        // </AS:Chanayane>
         camera->mValidClickPoint = false;
         return;
     }

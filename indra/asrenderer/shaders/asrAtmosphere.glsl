@@ -73,6 +73,7 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     float milkyWaySaturation;
     float moonHeightScale;     // the height map's range in moon radii
     vec4 moonEarthshineColor;
+    vec4 moonTint;             // over the disc and its halo
 };
 
 // SkyStar in asratmosphere.h.
@@ -116,6 +117,7 @@ struct Atmosphere
     uint moonNormalTexture;
     bool moonSphere;
     vec3 moonSkyLight; // what the moon gives the sky at its phase
+    float moonPhaseLight; // that against full moon
     vec3 moonLightDirection;
     float moonTerminatorSoftness;
     float moonEarthshine;
@@ -132,6 +134,7 @@ struct Atmosphere
     uint deepSkyTexture;
     float moonHeightScale;
     vec3 moonEarthshineColor;
+    vec3 moonTint;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -169,6 +172,7 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonNormalTexture = floatBitsToUint(ref.aerial.y);
     a.moonSphere = floatBitsToUint(ref.aerial.z) != 0u;
     a.moonSkyLight = ref.moonIlluminance.xyz * ref.aerial.w;
+    a.moonPhaseLight = ref.aerial.w;
     a.moonLightDirection = ref.moonLight.xyz;
     a.moonTerminatorSoftness = ref.moonLight.w;
     a.moonEarthshine = ref.moonLook.x;
@@ -185,6 +189,7 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.deepSkyTexture = ref.deepSkyTexture;
     a.moonHeightScale = ref.moonHeightScale;
     a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
+    a.moonTint = ref.moonTint.xyz;
     return a;
 }
 

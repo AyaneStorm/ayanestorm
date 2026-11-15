@@ -60,6 +60,25 @@ vec3 sunDisc(Atmosphere a, float cosAngle)
 // normals are equirectangular maps of the whole moon, the side facing the Earth in the
 // middle, its north towards moonUp. Lit from moonLightDirection, which its phase gives, not
 // the sun. rgb: against the disc's brightness, a: cover, the edge smoothed over a pixel.
+// The moon map's mean colour, linear: its texture's last mip. White without a texture.
+vec3 moonMeanColor(Atmosphere a)
+{
+    if (a.moonTexture == NO_SKY_TEXTURE)
+    {
+        return vec3(1.0);
+    }
+    const uint slot = a.moonTexture & 0xFFFFFu;
+    return srgbToLinear(textureLod(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT((a.moonTexture >> 28) & 3u)]), vec2(0.5), 16.0).rgb);
+}
+
+// The face's mean colour as it is shown, against the disc's brightness: the sphere's albedo
+// is scaled to a mean of 1 (see moonSphere()), a flat image shows as it is.
+vec3 moonFaceColor(Atmosphere a)
+{
+    const vec3 mean = moonMeanColor(a);
+    return a.moonSphere ? mean / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01) : mean;
+}
+
 // Where on the moon's maps a point of the unit sphere is (see moonSphere()).
 vec2 moonUV(vec3 point, vec3 right, vec3 up, vec3 toViewer)
 {
@@ -76,7 +95,10 @@ vec2 moonUV(vec3 point, vec3 right, vec3 up, vec3 toViewer)
 // arc: one pixel's size on the sphere, radians.
 float moonShadow(Atmosphere a, vec3 normal, vec3 right, vec3 up, vec3 toViewer, vec2 uv, float arc)
 {
-    const float SUN_RADIUS = 0.00465; // radians, as seen from the moon
+    // The light's radius as seen from the moon: the sun's, widened by the terminator's
+    // softness, which wraps the shading past the terminator by as much (moonSphere()). The
+    // shadows soften with it, instead of cutting the wrapped light off at the terminator.
+    const float SUN_RADIUS = 0.00465 + a.moonTerminatorSoftness; // radians
     const float MAX_DISTANCE = 0.2;   // radii: the ray is then past the highest relief
     const vec3 light = a.moonLightDirection;
     const float sinElevation = dot(light, normal);
@@ -148,7 +170,10 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     vec3 albedo = vec3(1.0);
     if (a.moonTexture != NO_SKY_TEXTURE)
     {
-        albedo = srgbToLinear(sampleBits(pixel, a.moonTexture, uv, uvDx, uvDy).rgb);
+        // Scaled to a mean of 1: the real moon reflects about 12%, and moonBrightness is what
+        // its face shows at on average, as a grey OpenGL image of the moon does.
+        const vec3 mean = moonMeanColor(a);
+        albedo = srgbToLinear(sampleBits(pixel, a.moonTexture, uv, uvDx, uvDy).rgb) / max(dot(mean, vec3(0.2126, 0.7152, 0.0722)), 0.01);
     }
     vec3 surface = normal;
     if (a.moonNormalTexture != NO_SKY_TEXTURE && a.moonRelief > 0.0)
@@ -174,14 +199,21 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 // The halo around the moon (ASMoonHalo*), over the air's own glow: from the disc's edge out
 // to moonHaloRadius radii, against the disc's brightness, fading as its softness asks.
 // Returns its share of the disc's brightness.
-float moonHalo(Atmosphere a, float moonCos)
+vec3 moonHalo(Atmosphere a, float moonCos)
 {
-    const float rings = (acos(clamp(moonCos, -1.0, 1.0)) / a.moonAngularRadius - 1.0) / (a.moonHaloRadius - 1.0);
-    if (a.moonHaloStrength <= 0.0 || rings <= 0.0 || rings >= 1.0)
+    // x: 0 at the limb, 1 at the halo's radius. A glow is brightest at the limb and falls
+    // steeply, then trails away: exponential, reaching 5% at the radius for softness 1 (more
+    // for softer), faded to nothing over the last third so there is no edge. It shines with
+    // the light the moon gives at its phase: a crescent's halo is faint.
+    const float x = (acos(clamp(moonCos, -1.0, 1.0)) / a.moonAngularRadius - 1.0) / (a.moonHaloRadius - 1.0);
+    if (a.moonHaloStrength <= 0.0 || x <= 0.0 || x >= 1.0)
     {
-        return 0.0;
+        return vec3(0.0);
     }
-    return a.moonHaloStrength * pow(1.0 - rings, 2.0 / a.moonHaloSoftness);
+    const float fade = 1.0 - smoothstep(0.67, 1.0, x);
+    // Against the face's mean colour as it shows: strength 1 glows at 5% of it at the limb,
+    // a real glow's share; ASMoonHaloStrength's 0 to 2 then spans what looks right.
+    return moonFaceColor(a) * (0.05 * a.moonHaloStrength * a.moonPhaseLight * exp(-3.0 * x / a.moonHaloSoftness) * fade);
 }
 
 // The glow behind the stars (ASMilkyWay): the Milky Way and deep sky maps read in the stars'
@@ -229,7 +261,7 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     if (moonCos > a.moonCosRadius)
     {
         // Against the exposure, so the disc shows its face at any time (SkyInput::moonBrightness).
-        const float moonLuminance = a.moonBrightness / ExposureRef(ViewRef(push.view).exposure).exposure;
+        const vec3 moonLuminance = a.moonTint * (a.moonBrightness / ExposureRef(ViewRef(push.view).exposure).exposure);
         space += moonLuminance * moonHalo(a, moonCos);
         if (a.moonSphere)
         {

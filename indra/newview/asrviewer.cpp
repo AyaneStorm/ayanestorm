@@ -13,6 +13,7 @@
 #include "asrworld.h"
 #include "asdofrenderer.h"
 #include "asmilkyway.h"
+#include "asmoonrendering.h"
 #include "asstars.h"
 #include "llagent.h"
 #include "llsky.h"
@@ -119,7 +120,9 @@ U32 skyTextureBits(LLViewerTexture* image, asr::UISampler sampler)
 // sphere with the NASA maps; a custom moon stays a flat image, as OpenGL draws it.
 void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
 {
-    constexpr F32 REAL_MOON_RADIUS = 0.26f * DEG_TO_RAD; // as seen from the Earth
+    // The size is OpenGL's, which EEP skies were made against (ASMoonRendering::angularRadius(),
+    // about 2.6 degrees at scale 1, ten times the real moon). Its stretch near the horizon is
+    // left out: it would make the sphere oval.
     // The whole moon's light on the sky against EEP's moonlight colour: SL nights have a moon
     // far brighter than the real one. Tuned at the side-by-side with OpenGL.
     constexpr F32 MOON_SKY_SHARE = 3e-3f;
@@ -149,7 +152,12 @@ void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
         sky.moonIlluminance[i] = moonlight.mV[i] * current.getMoonBrightness() * MOON_SKY_SHARE;
     }
     sky.moonBrightness = current.getMoonBrightness() * llclamp(gSavedSettings.getF32("ASMoonBrightnessMultiplier"), 0.f, 5.f);
-    sky.moonAngularRadius = REAL_MOON_RADIUS * llmax(current.getMoonScale(), 0.f);
+    sky.moonAngularRadius = ASMoonRendering::angularRadius(current);
+    const LLColor3 tint = ASMoonRendering::horizonTint(direction.mV[VZ]);
+    for (S32 i = 0; i < 3; ++i)
+    {
+        sky.moonTint[i] = tint.mV[i];
+    }
 
     const LLUUID texture = current.getMoonTextureId();
     if (texture.isNull())
@@ -183,7 +191,8 @@ void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
     sky.moonEarthshine = llclamp(gSavedSettings.getF32("ASMoonEarthshineStrength"), 0.f, 0.30f);
     sky.moonRelief = llclamp(gSavedSettings.getF32("ASMoonTerminatorReliefStrength"), 0.f, 2.f);
     sky.moonHaloStrength = gSavedSettings.getBOOL("ASMoonHaloEnabled") ? llclamp(gSavedSettings.getF32("ASMoonHaloStrength"), 0.f, 2.f) : 0.f;
-    sky.moonHaloRadius = llclamp(gSavedSettings.getF32("ASMoonHaloRadius"), 1.25f, 4.f);
+    // Up to 12: OpenGL's halo square stops at 4 (asmoonrendering.cpp clamps there), the native one does not.
+    sky.moonHaloRadius = llclamp(gSavedSettings.getF32("ASMoonHaloRadius"), 1.25f, 12.f);
     sky.moonHaloSoftness = llclamp(gSavedSettings.getF32("ASMoonHaloSoftness"), 0.1f, 2.f);
 }
 
@@ -281,6 +290,25 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.sunIlluminance[0] = sunlight.mV[0];
     sky.sunIlluminance[1] = sunlight.mV[1];
     sky.sunIlluminance[2] = sunlight.mV[2];
+
+    // The sun's image at OpenGL's size, which EEP skies were made against: llvosky.cpp's sun
+    // square reaches HEAVENLY_BODY_FACTOR x SUN_DISK_RADIUS (0.5) x sun_scale of its distance
+    // from its centre, about 2.9 degrees, its glow included. With no image OpenGL draws no
+    // sun, and neither does this: the disc's radius goes to 0.
+    const LLVector3 sunUp = sun.mV[VZ] > 0.99f ? LLVector3::z_axis * current->getSunRotation() : LLVector3::z_axis; // as llvosky.cpp
+    for (S32 i = 0; i < 3; ++i)
+    {
+        sky.sunUp[i] = sunUp.mV[i];
+    }
+    sky.sunTextureRadius = atanf(HEAVENLY_BODY_FACTOR * 0.5f * llmax(current->getSunScale(), 0.f));
+    if (current->getSunTextureId().isNull())
+    {
+        sky.sunAngularRadius = 0.f;
+    }
+    else if (gSky.mVOSkyp)
+    {
+        sky.sunTexture = skyTextureBits(gSky.mVOSkyp->getSunTex(), asr::UISampler::LinearClamp);
+    }
 
     fillStars(sky, *current); // first: the moon takes its orientation from the stars' frame
     fillMoon(sky, *current);

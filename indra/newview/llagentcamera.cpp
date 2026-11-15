@@ -31,6 +31,7 @@
 
 #include "aoengine.h"           // ## Zi: Animation Overrider
 #include "asrcameraturn.h" // <AS:Chanayane/>
+#include "asmoonrendering.h" // <AS:Chanayane/> moon focus zoom
 #include "llagent.h"
 #include "llanimationstates.h"
 #include "llfloatercamera.h"
@@ -2369,6 +2370,13 @@ void LLAgentCamera::handleScrollWheel(S32 clicks)
 {
     // <FS:PP> Option to disable mouse wheel for camera zooming in/out
     static LLCachedControl<bool> FSDisableMouseWheelCameraZoom(gSavedSettings, "FSDisableMouseWheelCameraZoom");
+
+    // <AS:Chanayane> On the moon (alt-click), the wheel zooms the field of view
+    if (!FSDisableMouseWheelCameraZoom && ASMoonRendering::handleScrollWheel(clicks))
+    {
+        return;
+    }
+    // </AS:Chanayane>
 
     if (mCameraMode == CAMERA_MODE_FOLLOW && getFocusOnAvatar())
     {

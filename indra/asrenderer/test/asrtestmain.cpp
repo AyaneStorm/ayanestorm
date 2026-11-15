@@ -192,6 +192,9 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
         sky.moonEarthshine = 0.05f;
         sky.moonPhase = 0.3f; // waxing gibbous, lit on the right
         sky.moonTerminatorSoftness = 0.05f;
+        sky.moonHaloStrength = 1.f;
+        sky.moonHaloRadius = 3.f;
+        sky.moonHaloSoftness = 1.f;
         // Stars over the whole sphere, the same every run, as ASStars' stock sizes on a 15 km
         // dome: the planet hides the lower half. Steady, so captures compare.
         static const std::shared_ptr<const std::vector<asr::SkyStar>> stars = []()
@@ -2835,9 +2838,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         city->skyView = sSkyView;
         if (sLookMoon)
         {
-            // The disc fills about 70% of the window's height.
+            // The disc fills about 70% of the window's height, or the halo 90% of it.
             std::copy(sSky.moonDirection, sSky.moonDirection + 3, city->lookDirection);
-            city->lookFov = 2.f * sSky.moonAngularRadius / 0.7f;
+            const float reach = sSky.moonHaloStrength > 0.f ? std::max(sSky.moonHaloRadius / 0.9f, 1.f / 0.7f) : 1.f / 0.7f;
+            city->lookFov = 2.f * sSky.moonAngularRadius * reach;
         }
         if (!sMoonMaps.empty() && !loadMoonMaps(device->textures(), sMoonMaps, sSky))
         {

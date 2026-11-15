@@ -192,6 +192,11 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
         out.moonEarthshineColor[i] = std::max(sky.moonEarthshineColor[i], 0.f);
     }
     out.pad = 0.f;
+    for (int i = 0; i < 3; ++i)
+    {
+        out.moonTint[i] = std::max(sky.moonTint[i], 0.f);
+    }
+    out.pad2 = 0.f;
 }
 
 } // namespace asr

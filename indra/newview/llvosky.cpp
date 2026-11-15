@@ -30,6 +30,7 @@
 
 // <AS:Chanayane> Viewer-local celestial visibility policy.
 #include "ascelestialtwilight.h"
+#include "asmoonrendering.h" // <AS:Chanayane/> moon size multiplier
 // </AS:Chanayane>
 
 #include "llfeaturemanager.h"
@@ -1072,7 +1073,10 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     up.normalize();
 
     bool draw_sun  = updateHeavenlyBodyGeometry(drawable, mSunScale, FACE_SUN, mSun, up, right);
-    bool draw_moon = updateHeavenlyBodyGeometry(drawable, mMoonScale, FACE_MOON, mMoon, up, right);
+    // <AS:Chanayane> ASMoonSizeMultiplier on top of the sky's moon scale
+    //bool draw_moon = updateHeavenlyBodyGeometry(drawable, mMoonScale, FACE_MOON, mMoon, up, right);
+    bool draw_moon = updateHeavenlyBodyGeometry(drawable, mMoonScale * ASMoonRendering::sizeMultiplier(), FACE_MOON, mMoon, up, right);
+    // </AS:Chanayane>
 
     // <FS:Ansariel> Factor out instance() calls
     LLEnvironment& environment = LLEnvironment::instance();
@@ -1095,7 +1099,7 @@ bool LLVOSky::updateGeometry(LLDrawable *drawable)
     // geometry. Do this after the partial-disc test because it updates corners.
     if (draw_moon)
     {
-        updateHeavenlyBodyGeometry(drawable, mMoonScale * 4.f,
+        updateHeavenlyBodyGeometry(drawable, mMoonScale * ASMoonRendering::sizeMultiplier() * 4.f,
                                    FACE_BLOOM, mMoon, up, right);
     }
     // </AS:Chanayane>

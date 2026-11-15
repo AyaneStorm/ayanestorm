@@ -109,6 +109,9 @@ struct SkyInput
     float moonHaloStrength = 0.f;
     float moonHaloRadius = 2.f;
     float moonHaloSoftness = 1.f;
+    // An artist's colour over the disc and its halo, on top of what the air does to them
+    // (ASMoonHorizonTint* near the horizon): white leaves them as they are.
+    float moonTint[3] = { 1.f, 1.f, 1.f };
 
     // The stars: sprites drawn only where nothing else was, hidden by the planet, the moon
     // and the sun, and dimmed by the air. The list changes only with the catalogue, and a new
@@ -200,8 +203,10 @@ struct GpuAtmosphere
     float moonHeightScale; // the height map's range in moon radii; 0: no relief shadows
     float moonEarthshineColor[3];
     float pad;
+    float moonTint[3];
+    float pad2;
 };
-static_assert(sizeof(GpuAtmosphere) == 480, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 496, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.
