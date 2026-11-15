@@ -87,7 +87,7 @@
       <slider name="autofocus_time" control_name="ASDepthOfFieldAutofocusTime"
               layout="topleft" left="15" top="128" width="365" height="18"
               label="Focus time (s)" label_width="130" min_val="0" max_val="3"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Seconds to reach a new focus distance; 0 is instant. Small depth changes (breathing, idle animations) are ignored so the image stays still." />
       <button name="reset_autofocus_time" label="D" layout="topleft"
               left="385" top="126" width="20" height="22" tool_tip="Reset to default.">
@@ -238,7 +238,7 @@
       <slider name="aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureResidualBlur"
               layout="topleft" left="15" top="168" width="365" height="18"
               label="Dot smoothing" label_width="130" min_val="0" max_val="10"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Fills the gaps between sample dots in out-of-focus highlights. 1 matches the dot spacing, 2 (default) fills it smoothly; 0 is off. Higher values soften and round the bokeh shape." />
       <button name="reset_aperture_residual_blur" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
               left="385" top="166" width="20" height="22" tool_tip="Reset to default.">
@@ -247,7 +247,7 @@
       <slider name="aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" control_name="ASDepthOfFieldApertureSmoothing"
               layout="topleft" left="15" top="196" width="365" height="18"
               label="Final smoothing" label_width="130" min_val="0" max_val="4"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Once sampling is finished, smooths only the bokeh shapes of light sources: stars (faint ones included) and glowing objects (bulbs, neon, lamps with glow), located from where the renderer drew them in each sample, over the spacing left between sample dots, so they read as continuous light instead of dots. Everything else, including hair and plain blurred background, stays as sampled. Fades as more samples are rendered. 2 (default) smooths fully; lower keeps crisper bokeh edges; 0 is off." />
       <button name="reset_aperture_smoothing" enabled_control="ASDepthOfFieldUIAperture" label="D" layout="topleft"
               left="385" top="194" width="20" height="22" tool_tip="Reset to default.">
@@ -301,7 +301,7 @@
       <slider name="aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" control_name="ASDepthOfFieldApertureCatEyeStrength"
               layout="topleft" left="15" top="88" width="365" height="18"
               label="Cat's-eye strength" label_width="130" min_val="0" max_val="2"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="How much the barrel clips at the frame corner, in aperture radii. Higher values clip more and start closer to the centre." />
       <button name="reset_aperture_cat_eye_strength" enabled_control="ASDepthOfFieldUICatEye" label="D" layout="topleft"
               left="385" top="86" width="20" height="22" tool_tip="Reset to default.">
@@ -326,7 +326,7 @@
       <slider name="aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" control_name="ASDepthOfFieldApertureSphericalStrength"
               layout="topleft" left="15" top="166" width="365" height="18"
               label="Spherical strength" label_width="130" min_val="-5" max_val="5"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Positive (most lenses): soft, centre-bright background bokeh and bright-rimmed foreground bokeh. Negative (over-corrected, 'soap bubble'): bright rings in the background. Beyond 1 (stylised): a hard core or a thin ring." />
       <button name="reset_aperture_spherical_strength" enabled_control="ASDepthOfFieldUISpherical" label="D" layout="topleft"
               left="385" top="164" width="20" height="22" tool_tip="Reset to default.">
@@ -352,7 +352,7 @@
       <slider name="aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" control_name="ASDepthOfFieldApertureHighlightThreshold"
               layout="topleft" left="15" top="244" width="365" height="18"
               label="Highlight threshold" label_width="130" min_val="0.05" max_val="8"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Brightness where highlights start (linear). Lower picks up dimmer lights such as stars; higher only the brightest lamps." />
       <button name="reset_aperture_highlight_threshold" enabled_control="ASDepthOfFieldUIHighlights" label="D" layout="topleft"
               left="385" top="242" width="20" height="22" tool_tip="Reset to default.">
@@ -369,7 +369,7 @@
       <slider name="field_curvature_strength" enabled_control="ASDepthOfFieldUIFieldCurvature" control_name="ASDepthOfFieldFieldCurvatureStrength"
               layout="topleft" left="15" top="296" width="365" height="18"
               label="Curvature (% of f)" label_width="130" min_val="-3" max_val="3"
-              increment="0.05" decimal_digits="2" can_edit_text="true"
+              increment="0.01" decimal_digits="2" can_edit_text="true"
               tool_tip="Focal shift at the frame corner in percent of the focal length. Positive (most lenses): the corners focus nearer. Negative: farther." />
       <button name="reset_field_curvature_strength" enabled_control="ASDepthOfFieldUIFieldCurvature" label="D" layout="topleft"
               left="385" top="294" width="20" height="22" tool_tip="Reset to default.">
@@ -400,7 +400,7 @@
       <slider name="near_radius" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldNearRadius"
               layout="topleft" left="35" top="66" width="345" height="18"
               label="Foreground radius" label_width="110" min_val="0" max_val="4"
-              increment="0.05" decimal_digits="2" can_edit_text="true" />
+              increment="0.01" decimal_digits="2" can_edit_text="true" />
       <button name="reset_near_radius" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="64" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldNearRadius" />
@@ -408,7 +408,7 @@
       <slider name="far_radius" enabled_control="ASDepthOfFieldUIScreenSpace" control_name="ASDepthOfFieldFarRadius"
               layout="topleft" left="15" top="94" width="365" height="18"
               label="Background radius" label_width="130" min_val="0" max_val="4"
-              increment="0.05" decimal_digits="2" can_edit_text="true" />
+              increment="0.01" decimal_digits="2" can_edit_text="true" />
       <button name="reset_far_radius" enabled_control="ASDepthOfFieldUIScreenSpace" label="D" layout="topleft"
               left="385" top="92" width="20" height="22" tool_tip="Reset to default.">
         <button.commit_callback function="ASDepthOfField.ResetDefault" parameter="ASDepthOfFieldFarRadius" />

@@ -147,7 +147,7 @@ LLColor3 ASMoonRendering::horizonTint(F32 moon_z)
 F32 ASMoonRendering::sizeMultiplier()
 {
     static LLCachedControl<F32> multiplier(gSavedSettings, "ASMoonSizeMultiplier", 1.f);
-    return llclamp((F32)multiplier, 0.1f, 4.f);
+    return llclamp((F32)multiplier, 0.1f, 10.f);
 }
 
 F32 ASMoonRendering::angularRadius(const LLSettingsSky& sky)
