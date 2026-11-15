@@ -68,10 +68,6 @@
 #include "rlvactions.h"
 #include "rlvhandler.h"
 #include "rlvmodifiers.h"
-// <AS:Chanayane> temporary: rectangle select diagnosis
-#include "llvolume.h"
-#include "llvovolume.h"
-// </AS:Chanayane>
 // [/RLVa:KB]
 
 #include <vector>
@@ -250,9 +246,6 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
             }
         }
 
-        // <AS:Chanayane> temporary: where the rectangle loses its objects in the new renderer
-        S32 asr_volumes = 0, asr_spheres = 0, asr_verts = 0;
-        // </AS:Chanayane>
         for (LLDrawable* drawable : potentials)
         {
             if (!drawable)
@@ -261,37 +254,6 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
             }
 
             LLViewerObject* vobjp = drawable->getVObj();
-            // <AS:Chanayane> temporary
-            if (vobjp && vobjp->getPCode() == LL_PCODE_VOLUME && !vobjp->isAttachment())
-            {
-                ++asr_volumes;
-                const S32 asr_in = camera.sphereInFrustum(drawable->getPositionAgent(), drawable->getRadius());
-                asr_spheres += asr_in ? 1 : 0;
-                const bool asr_vis = asr_in == 1 && camera.areVertsVisible(vobjp, LLSelectMgr::sRectSelectInclusive);
-                asr_verts += asr_vis ? 1 : 0;
-                LLVolume* asr_volume = vobjp->getVolume();
-                if (asr_in == 1 && !asr_vis && asr_volumes <= 3 && asr_volume)
-                {
-                    LLVector3 asr_first;
-                    if (asr_volume->getNumVolumeFaces() > 0 && asr_volume->getVolumeFace(0).mNumVertices > 0)
-                    {
-                        LLVOVolume* asr_vo = (LLVOVolume*)vobjp;
-                        asr_vo->updateRelativeXform();
-                        LLVector4a asr_v;
-                        LLMatrix4a asr_m;
-                        asr_m.loadu(asr_vo->getRelativeXform());
-                        asr_m.affineTransform(asr_volume->getVolumeFace(0).mPositions[0], asr_v);
-                        asr_first.set(asr_v.getF32ptr());
-                    }
-                    LL_INFOS("ASRenderer") << "rectangle miss: faces " << asr_volume->getNumVolumeFaces() << ", verts0 "
-                                           << (asr_volume->getNumVolumeFaces() > 0 ? asr_volume->getVolumeFace(0).mNumVertices : -1)
-                                           << ", active " << drawable->isActive() << ", agent " << drawable->getPositionAgent()
-                                           << ", render " << vobjp->getRenderPosition() << ", radius " << drawable->getRadius()
-                                           << ", first vertex " << asr_first << ", in " << camera.pointInFrustum(asr_first)
-                                           << ", eye " << camera.getOrigin() << LL_ENDL;
-                }
-            }
-            // </AS:Chanayane>
 
             if (!vobjp ||
                 vobjp->getPCode() != LL_PCODE_VOLUME ||
@@ -333,11 +295,6 @@ void LLToolSelectRect::handleRectangleSelection(S32 x, S32 y, MASK mask)
                 }
             }
         }
-        // <AS:Chanayane> temporary
-        LL_INFOS("ASRenderer") << "rectangle select: " << potentials.size() << " drawables, " << asr_volumes << " volumes, "
-                               << asr_spheres << " in the frustum, " << asr_verts << " with vertices in, "
-                               << LLSelectMgr::getInstance()->getHighlightedObjects()->getNumNodes() << " highlighted" << LL_ENDL;
-        // </AS:Chanayane>
     }
 
     // restore drawing mode

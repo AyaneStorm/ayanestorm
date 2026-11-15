@@ -29,6 +29,7 @@
 // file include
 #define LLSELECTMGR_CPP
 #include "llselectmgr.h"
+#include "asrgltable.h" // <AS:Chanayane/>
 #include "llmaterialmgr.h"
 
 // library includes
@@ -6555,7 +6556,11 @@ void LLSelectMgr::updateSilhouettes()
 
     mHighlightedObjects->cleanupNodes();
 
-    if((cameraPos - mLastCameraPos).magVecSquared() > SILHOUETTE_UPDATE_THRESHOLD_SQUARED * currentCameraZoom * currentCameraZoom)
+    // <AS:Chanayane> The native renderer draws outlines from the selection itself: no silhouettes.
+    // if((cameraPos - mLastCameraPos).magVecSquared() > SILHOUETTE_UPDATE_THRESHOLD_SQUARED * currentCameraZoom * currentCameraZoom)
+    const bool asr_silhouettes = !ASR::active();
+    if (asr_silhouettes && (cameraPos - mLastCameraPos).magVecSquared() > SILHOUETTE_UPDATE_THRESHOLD_SQUARED * currentCameraZoom * currentCameraZoom)
+    // </AS:Chanayane>
     {
         struct f : public LLSelectedObjectFunctor
         {
@@ -6572,7 +6577,13 @@ void LLSelectMgr::updateSilhouettes()
 
     std::vector<LLViewerObject*> changed_objects;
 
-    updateSelectionSilhouette(mSelectedObjects, num_sils_genned, changed_objects);
+    // <AS:Chanayane> no silhouettes in the native renderer
+    // updateSelectionSilhouette(mSelectedObjects, num_sils_genned, changed_objects);
+    if (asr_silhouettes)
+    {
+        updateSelectionSilhouette(mSelectedObjects, num_sils_genned, changed_objects);
+    }
+    // </AS:Chanayane>
     if (mRectSelectedObjects.size() > 0)
     {
         //gGLSPipelineSelection.set();
@@ -6697,7 +6708,10 @@ void LLSelectMgr::updateSilhouettes()
 
         // render silhouettes for highlighted objects
         //bool subtracting_from_selection = (gKeyboard->currentMask(true) == MASK_CONTROL);
-        for (S32 pass = 0; pass < 2; pass++)
+        // <AS:Chanayane> no silhouettes in the native renderer
+        // for (S32 pass = 0; pass < 2; pass++)
+        for (S32 pass = 0; asr_silhouettes && pass < 2; pass++)
+        // </AS:Chanayane>
         {
             for (LLObjectSelection::iterator iter = mHighlightedObjects->begin();
                  iter != mHighlightedObjects->end(); iter++)

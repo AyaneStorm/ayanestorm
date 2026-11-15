@@ -2267,6 +2267,10 @@ void followSelection()
         return;
     }
     LLSelectMgr* manager = LLSelectMgr::getInstance();
+    // OpenGL calls this from postSort(), which does not run here. It turns the objects a selection
+    // rectangle or a drag and drop marks into the highlighted ones read below, and the rectangle
+    // selects those on mouse up. Its silhouettes are skipped in this renderer.
+    manager->updateSilhouettes();
     const bool faceMode = manager->getTEMode();
     LLObjectSelectionHandle selection = manager->getSelection();
     if (selection->getNumNodes())
