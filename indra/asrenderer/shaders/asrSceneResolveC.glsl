@@ -199,7 +199,7 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 // The halo around the moon (ASMoonHalo*), over the air's own glow: from the disc's edge out
 // to moonHaloRadius radii, against the disc's brightness, fading as its softness asks.
 // Returns its share of the disc's brightness.
-vec3 moonHalo(Atmosphere a, float moonCos)
+vec3 moonHalo(Atmosphere a, vec3 direction, float moonCos)
 {
     // x: 0 at the limb, 1 at the halo's radius. A glow is brightest at the limb and falls
     // steeply, then trails away: exponential, reaching 5% at the radius for softness 1 (more
@@ -213,9 +213,17 @@ vec3 moonHalo(Atmosphere a, float moonCos)
         return vec3(0.0);
     }
     const float fade = 1.0 - smoothstep(0.67, 1.0, x);
+    // As OpenGL: it follows the phase, full where the nearest limb is sunlit, 15% beside
+    // the dark one. The limb is read slightly inside the edge, at 0.85 radius, where the
+    // sphere still faces the viewer, softened by the terminator and the halo's softness.
+    const vec3 aside = direction - a.moonDirection * moonCos;
+    const vec3 side = dot(aside, aside) > 1e-12 ? normalize(aside) : vec3(0.0);
+    const float limbLight = dot(0.85 * side - 0.527 * a.moonDirection, a.moonLightDirection);
+    const float width = max(a.moonTerminatorSoftness, 0.002) + 0.15 * a.moonHaloSoftness;
+    const float limb = mix(0.15, 1.0, smoothstep(0.0, 1.0, (limbLight + width) / (2.0 * width)));
     // Against the face's mean colour as it shows: strength 1 glows at 5% of it at the limb,
     // a real glow's share; ASMoonHaloStrength's 0 to 2 then spans what looks right.
-    return moonFaceColor(a) * (0.05 * a.moonHaloStrength * a.moonPhaseLight * exp(-3.0 * x / a.moonHaloSoftness) * fade);
+    return moonFaceColor(a) * (0.05 * a.moonHaloStrength * a.moonPhaseLight * exp(-3.0 * x / a.moonHaloSoftness) * fade * limb);
 }
 
 // The glow behind the stars (ASMilkyWay): the Milky Way and deep sky maps read in the stars'
@@ -264,7 +272,7 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     {
         // Against the exposure, so the disc shows its face at any time (SkyInput::moonBrightness).
         const vec3 moonLuminance = a.moonTint * (a.moonBrightness / ExposureRef(ViewRef(push.view).exposure).exposure);
-        space += moonLuminance * moonHalo(a, moonCos);
+        space += moonLuminance * moonHalo(a, direction, moonCos);
         if (a.moonSphere)
         {
             const vec4 moon = moonSphere(pixel, a, direction, pixelAngle);
