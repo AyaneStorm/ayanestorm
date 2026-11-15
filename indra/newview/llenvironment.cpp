@@ -1270,7 +1270,11 @@ void LLEnvironment::setEnvironment(LLEnvironment::EnvSelection_t env, LLEnvironm
     }
     else if (!environment->getSky())
     {
-        if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE)
+        // <AS:Chanayane> The current environment can have no sky (an empty experience or
+        // local slot): setSky() then dereferences null. Fall to the substitutes below instead.
+        //if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE)
+        if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE && mCurrentEnvironment->getSky())
+        // </AS:Chanayane>
         {
             // Note: This looks suspicious. Shouldn't we assign whole day if mCurrentEnvironment has whole day?
             // and then add water/sky on top
@@ -1312,7 +1316,11 @@ void LLEnvironment::setEnvironment(LLEnvironment::EnvSelection_t env, LLEnvironm
     }
     else if (!environment->getWater())
     {
-        if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE)
+        // <AS:Chanayane> Quick Prefs' next sky crashed in setWater() here: a sky-only preset took
+        // the current environment's water, which it did not have. Fall to the substitutes below.
+        //if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE)
+        if (mCurrentEnvironment->getEnvironmentSelection() != ENV_NONE && mCurrentEnvironment->getWater())
+        // </AS:Chanayane>
         {
             // Note: This looks suspicious. Shouldn't we assign whole day if mCurrentEnvironment has whole day?
             // and then add water/sky on top
