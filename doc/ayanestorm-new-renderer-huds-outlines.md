@@ -200,8 +200,13 @@ sees it; what it lacks is depth, cull and viewport state, and the HUD's place in
   the draw count, now counting only the 2D part after the HUD mark. Mac and Windows:
   selftest and `--scene --overlay --ui --validate` pass, no validation errors. Mac picture
   not yet seen (no screen capture over SSH); Mac viewer unbuilt.
-- Not yet: hover highlights (`mHighlightedObjects`), focus, inspect and transient
-  (context) colours; mesh selections use the same colours.
+- Highlights (`mHighlightedObjects`: selection rectangle, drag and drop target, Ctrl
+  remove), focus, inspect and transient (context) colours: done and tested on Windows. The
+  rectangle and drag and drop fill `mRectSelectedObjects`, which only
+  `LLSelectMgr::updateSilhouettes()` turns into highlights; OpenGL calls it from `postSort()`,
+  which does not run natively, so `followSelection()` calls it, and its silhouette work is
+  skipped under `ASR::active()`. OpenGL has no other hover effect (`RenderHoverGlowEnable` is
+  deprecated and read nowhere).
 - Done since: 3D UI and floating text tested in the Windows viewer; Metal side checked by
   the user in `asrenderer_test`; texture animation confirmed on Windows and the Mac; Mac
   outlines fixed (set 1 images mapped only up to binding 9, the mask is 10), confirmed.
