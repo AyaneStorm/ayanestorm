@@ -189,6 +189,38 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
         sky.moonEarthshine = 0.05f;
         sky.moonPhase = 0.3f; // waxing gibbous, lit on the right
         sky.moonTerminatorSoftness = 0.05f;
+        // Stars over the whole sphere, the same every run, as ASStars' stock sizes on a 15 km
+        // dome: the planet hides the lower half. Steady, so captures compare.
+        static const std::shared_ptr<const std::vector<asr::SkyStar>> stars = []()
+        {
+            auto list = std::make_shared<std::vector<asr::SkyStar>>(4000);
+            uint32_t seed = 12345u;
+            auto next = [&seed]()
+            {
+                seed = seed * 1664525u + 1013904223u;
+                return float(seed >> 8) / float(1u << 24);
+            };
+            for (asr::SkyStar& star : *list)
+            {
+                const float z = next() * 2.f - 1.f;
+                const float angle = next() * 6.2831853f;
+                const float ring = std::sqrt(std::max(0.f, 1.f - z * z));
+                star.direction[0] = ring * std::cos(angle);
+                star.direction[1] = ring * std::sin(angle);
+                star.direction[2] = z;
+                star.size = (16.f + next() * 20.f) / 15000.f;
+                const float warm = next();
+                star.color[0] = 0.8f + 0.2f * warm;
+                star.color[1] = 0.9f;
+                star.color[2] = 1.f - 0.2f * warm;
+                const float u = next();
+                star.brightness = 0.1f + 2.f * u * u * u * u;
+            }
+            return std::shared_ptr<const std::vector<asr::SkyStar>>(list);
+        }();
+        sky.stars = stars;
+        sky.starBrightness = 4.f;
+        sky.starTwinkle = 0.f;
     }
     return true;
 }

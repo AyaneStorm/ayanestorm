@@ -1502,7 +1502,7 @@ private:
             !createTarget(mDepthImage, DEPTH_FORMAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_ASPECT_DEPTH_BIT, 4, "depth buffer") ||
             !createTarget(mAlbedoImage, ALBEDO_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "albedo target") ||
             !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
-            !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
+            !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
             !createTarget(mSelectionMask, SELECTION_MASK_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "selection mask") ||
             !createMacOITTargets())
@@ -1555,6 +1555,12 @@ private:
         VkPipeline aerialPipeline = VK_NULL_HANDLE;
         GpuBuffer exposure; // GpuExposure
         VkPipeline exposurePipeline = VK_NULL_HANDLE;
+        // The stars: a copy of the list per frame in flight, written again only when the
+        // viewer hands over a new list, and the list each copy holds.
+        VkPipeline starsPipeline = VK_NULL_HANDLE;
+        MappedBuffer stars[FRAMES_IN_FLIGHT];
+        std::shared_ptr<const std::vector<SkyStar>> starsHeld[FRAMES_IN_FLIGHT];
+        uint32_t starCount = 0; // this frame's
     };
 
     bool createSky(std::string& error)
@@ -1577,7 +1583,81 @@ private:
         mSky.skyViewPipeline = mSky.multiscatterPipeline ? createComputePipeline("asrAtmosphereSkyViewC", error) : VK_NULL_HANDLE;
         mSky.aerialPipeline = mSky.skyViewPipeline ? createComputePipeline("asrAtmosphereAerialC", error) : VK_NULL_HANDLE;
         mSky.exposurePipeline = mSky.aerialPipeline ? createComputePipeline("asrAtmosphereExposureC", error) : VK_NULL_HANDLE;
-        return mSky.exposurePipeline != VK_NULL_HANDLE;
+        RasterSetup stars;
+        stars.colors = { COLOR_FORMAT };
+        stars.depthTest = true; // only where the depth is still the far plane
+        stars.depthEqualPasses = true;
+        stars.additive = true;
+        mSky.starsPipeline = mSky.exposurePipeline ? createSceneRasterPipeline("asrSkyStarsV", "asrSkyStarsF", stars, error) : VK_NULL_HANDLE;
+        return mSky.starsPipeline != VK_NULL_HANDLE;
+    }
+
+    // The star list into this slot's copy, when the viewer has handed over a new one.
+    // Returns the copy's address, 0 with no stars.
+    uint64_t prepareStars(uint32_t slot)
+    {
+        const std::shared_ptr<const std::vector<SkyStar>>& stars = mRecordSky.stars;
+        mSky.starCount = stars && mRecordSky.starBrightness > 0.f ? uint32_t(stars->size()) : 0;
+        if (mSky.starCount == 0)
+        {
+            return 0;
+        }
+        MappedBuffer& copy = mSky.stars[slot];
+        if (mSky.starsHeld[slot] != stars)
+        {
+            const uint64_t bytes = stars->size() * sizeof(SkyStar);
+            if (!growBuffer(copy, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, MemoryCategory::Staging, "star list"))
+            {
+                mSky.starsHeld[slot].reset();
+                mSky.starCount = 0;
+                return 0;
+            }
+            memcpy(copy.mapped, stars->data(), bytes);
+            vmaFlushAllocation(mAllocator, copy.allocation, 0, bytes);
+            mSky.starsHeld[slot] = stars;
+        }
+        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address.buffer = copy.buffer;
+        return vkGetBufferDeviceAddress(mDevice, &address);
+    }
+
+    // The stars over the lit image, where nothing was drawn.
+    bool passStars()
+    {
+        if (mSky.starCount == 0)
+        {
+            return true;
+        }
+        VkCommandBuffer commands = mRecordCommands;
+        VkRenderingAttachmentInfo color{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        color.imageView = mLitImage.view;
+        color.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        color.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingAttachmentInfo depth{ VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        depth.imageView = mDepthImage.view;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo rendering{ VK_STRUCTURE_TYPE_RENDERING_INFO };
+        rendering.renderArea = { { 0, 0 }, mSceneExtent };
+        rendering.layerCount = 1;
+        rendering.colorAttachmentCount = 1;
+        rendering.pColorAttachments = &color;
+        rendering.pDepthAttachment = &depth;
+        vkCmdBeginRendering(commands, &rendering);
+        const VkViewport viewport{ 0.f, 0.f, float(mSceneExtent.width), float(mSceneExtent.height), 0.f, 1.f };
+        const VkRect2D scissor{ { 0, 0 }, mSceneExtent };
+        vkCmdSetViewport(commands, 0, 1, &viewport);
+        vkCmdSetScissor(commands, 0, 1, &scissor);
+        vkCmdSetCullMode(commands, VK_CULL_MODE_NONE); // sprites face the screen either way round
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_GRAPHICS, mSky.starsPipeline);
+        pushScene(commands);
+        vkCmdDraw(commands, 6, mSky.starCount, 0, 0);
+        vkCmdEndRendering(commands);
+        return true;
     }
 
     void destroySky()
@@ -1587,12 +1667,17 @@ private:
         destroyTarget(mSky.skyView);
         destroyTarget(mSky.aerial);
         destroyBufferObject(mSky.exposure, MemoryCategory::RenderTargets);
-        for (VkPipeline pipeline : { mSky.transmittancePipeline, mSky.multiscatterPipeline, mSky.skyViewPipeline, mSky.aerialPipeline, mSky.exposurePipeline })
+        for (VkPipeline pipeline : { mSky.transmittancePipeline, mSky.multiscatterPipeline, mSky.skyViewPipeline, mSky.aerialPipeline, mSky.exposurePipeline,
+                                     mSky.starsPipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
                 vkDestroyPipeline(mDevice, pipeline, nullptr);
             }
+        }
+        for (MappedBuffer& stars : mSky.stars)
+        {
+            destroyBuffer(stars, MemoryCategory::Staging);
         }
         mSky = SkyTables();
     }
@@ -3609,6 +3694,8 @@ private:
         mPyramidLevels = view.pyramidLevels;
         GpuAtmosphere atmosphere;
         fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2], view.farClip);
+        atmosphere.stars = prepareStars(slot);
+        atmosphere.starCount = mSky.starCount;
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
         memcpy(static_cast<char*>(mSceneViews[slot].mapped) + sizeof(view), &atmosphere, sizeof(atmosphere));
         vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view) + sizeof(atmosphere));
@@ -3813,6 +3900,7 @@ private:
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityImage.view, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
+        mGraph.setBody(PassStars, [this]() { return passStars(); });
         mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
         mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
         mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });

@@ -61,7 +61,28 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
                                // sphere; w: the moon's light on the sky against full moon
     vec4 moonLight;            // where the sphere is lit from; w: terminator softness
     vec4 moonLook;             // earthshine, relief, halo strength, halo radius
-    vec4 moonHalo;             // x: halo softness, y: disc brightness against the exposure
+    vec4 moonHalo;             // x: halo softness, y: disc brightness against the exposure,
+                               // z: star brightness against the exposure, w: twinkle
+    vec4 starRotation[3];      // star frame to world, by columns; w: twinkle phase, Milky Way
+                               // level, deep sky level
+    uint64_t stars;            // SkyStar list (asratmosphere.h)
+    uint starCount;
+    uint starTexture;
+    uint milkyWayTexture;
+    uint deepSkyTexture;
+    float milkyWaySaturation;
+    float pad;
+};
+
+// SkyStar in asratmosphere.h.
+struct SkyStar
+{
+    vec4 direction; // w: the sprite's side, radians
+    vec4 color;     // w: brightness against the others
+};
+layout(buffer_reference, std430) readonly buffer SkyStarsRef
+{
+    SkyStar star[];
 };
 
 struct Atmosphere
@@ -102,6 +123,12 @@ struct Atmosphere
     float moonHaloRadius;
     float moonHaloSoftness;
     float moonBrightness;
+    mat3 starRotation;  // star frame to world
+    float milkyWayLevel;
+    float deepSkyLevel;
+    float milkyWaySaturation;
+    uint milkyWayTexture;
+    uint deepSkyTexture;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -147,6 +174,12 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonHaloRadius = ref.moonLook.w;
     a.moonHaloSoftness = ref.moonHalo.x;
     a.moonBrightness = ref.moonHalo.y;
+    a.starRotation = mat3(ref.starRotation[0].xyz, ref.starRotation[1].xyz, ref.starRotation[2].xyz);
+    a.milkyWayLevel = ref.starRotation[1].w;
+    a.deepSkyLevel = ref.starRotation[2].w;
+    a.milkyWaySaturation = ref.milkyWaySaturation;
+    a.milkyWayTexture = ref.milkyWayTexture;
+    a.deepSkyTexture = ref.deepSkyTexture;
     return a;
 }
 

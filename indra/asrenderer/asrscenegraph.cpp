@@ -115,6 +115,13 @@ void declareSceneGraph(FrameGraph& graph)
                                { ResultNormals, ComputeWrite },
                                { ResultLit, ComputeWrite },
                                { ResultTextureFeedback, ComputeWrite | Keep } });
+    // The stars, added to the lit image where the depth is still the far plane, before the
+    // blended layers go over it.
+    graph.addPass("stars", { { ResultTransmittanceLut, FragmentRead },
+                             { ResultExposure, VertexRead },
+                             { ResultDepth, DepthTarget | Keep },
+                             { ResultLit, ColorTarget | Keep },
+                             { ResultTextureFeedback, FragmentWrite | Keep } });
     declareMacOIT(graph);
     // The scene's selections against the final opaque depth, read as a texture, and the
     // HUD's selected entries in the HUD view. The composite pass draws outlines from it.

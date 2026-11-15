@@ -119,6 +119,30 @@ float moonHalo(Atmosphere a, float moonCos)
     return a.moonHaloStrength * pow(1.0 - rings, 2.0 / a.moonHaloSoftness);
 }
 
+// The glow behind the stars (ASMilkyWay): the Milky Way and deep sky maps read in the stars'
+// frame, against the exposure as the stars are. The maps hold value^(1/2.2). Mips follow the
+// pixel's size on the sky, wider in u towards the poles.
+vec3 milkyWay(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
+{
+    const vec3 star = transpose(a.starRotation) * direction;
+    const float cosDeclination = max(length(star.xy), 0.01);
+    const vec2 uv = vec2(atan(star.y, star.x) / (2.0 * ATMOSPHERE_PI) + 0.5, asin(clamp(star.z, -1.0, 1.0)) / ATMOSPHERE_PI + 0.5);
+    const vec2 uvDx = vec2(pixelAngle / (2.0 * ATMOSPHERE_PI * cosDeclination), 0.0);
+    const vec2 uvDy = vec2(0.0, pixelAngle / ATMOSPHERE_PI);
+    vec3 color = vec3(0.0);
+    if (a.milkyWayLevel > 0.0)
+    {
+        color += pow(sampleBits(pixel, a.milkyWayTexture, uv, uvDx, uvDy).rgb, vec3(2.2)) * a.milkyWayLevel;
+    }
+    if (a.deepSkyLevel > 0.0)
+    {
+        color += pow(sampleBits(pixel, a.deepSkyTexture, uv, uvDx, uvDy).rgb, vec3(2.2)) * a.deepSkyLevel;
+    }
+    const float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
+    color = max(vec3(luminance) + (color - vec3(luminance)) * a.milkyWaySaturation, vec3(0.0));
+    return color / ExposureRef(ViewRef(push.view).exposure).exposure;
+}
+
 // The background: the sky lit by sun and moon, and behind the air, dimmed by it and hidden
 // by the planet, the moon, then the sun over it. pixelAngle: a pixel's size on the sky,
 // radians. The stars are the viewer's catalogue (ASStars), drawn by their own pass.
@@ -131,6 +155,10 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         return min(luminance, vec3(60000.0));
     }
     vec3 space = vec3(0.0);
+    if (a.milkyWayLevel > 0.0 || a.deepSkyLevel > 0.0)
+    {
+        space = milkyWay(pixel, a, direction, pixelAngle);
+    }
 
     const float moonCos = dot(direction, a.moonDirection);
     if (moonCos > a.moonCosRadius)

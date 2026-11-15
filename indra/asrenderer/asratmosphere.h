@@ -11,11 +11,24 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace asr
 {
 
 constexpr uint32_t NO_SKY_TEXTURE = 0xFFFFFFFFu;
+
+// One star of the viewer's catalogue (ASStars), in the stars' own frame (SkyInput::
+// starRotation). Also the GPU layout of the star list: std430, read by asrSkyStarsV.glsl.
+struct SkyStar
+{
+    float direction[3]{}; // unit length
+    float size = 0.f;     // radians: the sprite's side
+    float color[3]{};     // linear
+    float brightness = 1.f; // against the others: OpenGL's decoded vertex alpha, 1 for stock stars
+};
+static_assert(sizeof(SkyStar) == 32, "asrSkyStarsV.glsl reads this layout");
 
 // One layer of a density profile, Bruneton's format, which EEP's rayleigh_config,
 // mie_config and absorption_config use too. The density at height h (km above the bottom
@@ -92,6 +105,26 @@ struct SkyInput
     float moonHaloStrength = 0.f;
     float moonHaloRadius = 2.f;
     float moonHaloSoftness = 1.f;
+
+    // The stars: sprites drawn only where nothing else was, hidden by the planet, the moon
+    // and the sun, and dimmed by the air. The list changes only with the catalogue, and a new
+    // list is a new pointer: that is how the renderer knows to upload it.
+    std::shared_ptr<const std::vector<SkyStar>> stars;
+    float starRotation[9] = { 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f }; // star frame to world, by columns
+    // What a star of brightness 1 shows at before tone mapping, against the frame's exposure
+    // as the moon's disc: OpenGL's chain (EEP star brightness, x32, ASStarsBrightness).
+    float starBrightness = 0.f;
+    float starTwinkle = 0.f;      // 0 steady, 1 OpenGL's
+    float starTwinklePhase = 0.f; // OpenGL's: the sky dome's radius times mod(seconds / 2, 1.25)
+    uint32_t starTexture = NO_SKY_TEXTURE; // the sprite: EEP's bloom image
+    // The glow behind the stars (ASMilkyWay): equirectangular maps in the stars' frame, u the
+    // right ascension from -180 degrees, v the declination from -90, stored as value^(1/2.2).
+    // Levels against the exposure, as the stars'; 0 draws none.
+    uint32_t milkyWayTexture = NO_SKY_TEXTURE;
+    uint32_t deepSkyTexture = NO_SKY_TEXTURE;
+    float milkyWayIntensity = 0.f;
+    float deepSkyIntensity = 0.f;
+    float milkyWaySaturation = 1.f;
 };
 
 SkyInput earthSky();
@@ -151,9 +184,18 @@ struct GpuAtmosphere
     float moonHaloRadius;
     float moonHaloSoftness;
     float moonBrightness;
-    float pad[2];
+    float starBrightness;
+    float starTwinkle;
+    float starRotation[3][4]; // columns; w: twinkle phase, Milky Way level, deep sky level
+    uint64_t stars;           // the star list (SkyStar), set by the device
+    uint32_t starCount;
+    uint32_t starTexture;
+    uint32_t milkyWayTexture;
+    uint32_t deepSkyTexture;
+    float milkyWaySaturation;
+    float pad;
 };
-static_assert(sizeof(GpuAtmosphere) == 384, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 464, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.

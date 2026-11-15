@@ -11,7 +11,12 @@
 #include "asrgltable.h"
 #include "asrtexturecache.h"
 #include "asrworld.h"
+#include "asdofrenderer.h"
+#include "asmilkyway.h"
+#include "asstars.h"
 #include "llagent.h"
+#include "llsky.h"
+#include "llvosky.h"
 #include "llapp.h"
 #include "llappviewer.h"
 #include "llenvironment.h"
@@ -103,6 +108,123 @@ asr::AtmosphereProfile toProfile(const LLSD& layers)
     return profile;
 }
 
+// Where a texture is in the renderer, as SkyInput takes it; NO_SKY_TEXTURE until it has an image.
+U32 skyTextureBits(LLViewerTexture* image, asr::UISampler sampler)
+{
+    const U32 slot = image && image->getTexName() ? ASR::textureSlot(image->getTexName()) : 0;
+    return slot ? asr::uiTextureBits(slot, sampler) : asr::NO_SKY_TEXTURE;
+}
+
+// The moon from EEP and the AyaneStorm moon settings (ASMoon*). The default moon is the lit
+// sphere with the NASA maps; a custom moon stays a flat image, as OpenGL draws it.
+void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
+{
+    constexpr F32 REAL_MOON_RADIUS = 0.26f * DEG_TO_RAD; // as seen from the Earth
+    // The whole moon's light on the sky against EEP's moonlight colour: SL nights have a moon
+    // far brighter than the real one. Tuned at the side-by-side with OpenGL.
+    constexpr F32 MOON_SKY_SHARE = 3e-3f;
+
+    const LLVector3 direction = current.getMoonDirection();
+    const LLVector3 up = direction.mV[VZ] > 0.99f ? LLVector3::z_axis * current.getMoonRotation() : LLVector3::z_axis; // as llvosky.cpp
+    for (S32 i = 0; i < 3; ++i)
+    {
+        sky.moonDirection[i] = direction.mV[i];
+        sky.moonUp[i] = up.mV[i];
+    }
+    const LLColor3 moonlight = current.getMoonlightColor();
+    for (S32 i = 0; i < 3; ++i)
+    {
+        sky.moonIlluminance[i] = moonlight.mV[i] * current.getMoonBrightness() * MOON_SKY_SHARE;
+    }
+    sky.moonBrightness = current.getMoonBrightness() * llclamp(gSavedSettings.getF32("ASMoonBrightnessMultiplier"), 0.f, 5.f);
+    sky.moonAngularRadius = REAL_MOON_RADIUS * llmax(current.getMoonScale(), 0.f);
+
+    const LLUUID texture = current.getMoonTextureId();
+    if (texture.isNull())
+    {
+        sky.moonAngularRadius = 0.f; // no image: OpenGL draws no moon, its light stays
+        return;
+    }
+    sky.moonSphere = texture == LLSettingsSky::GetDefaultMoonTextureId();
+    if (sky.moonSphere)
+    {
+        static LLPointer<LLViewerFetchedTexture> albedo, normals;
+        if (albedo.isNull())
+        {
+            albedo = LLViewerTextureManager::getFetchedTextureFromFile("as/as_moon_albedo.png", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI);
+            normals = LLViewerTextureManager::getFetchedTextureFromFile("as/as_moon_normal.png", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI);
+            albedo->setNoDelete();
+            normals->setNoDelete();
+        }
+        sky.moonTexture = skyTextureBits(albedo, asr::UISampler::LinearWrap);
+        sky.moonNormalTexture = skyTextureBits(normals, asr::UISampler::LinearWrap);
+    }
+    else
+    {
+        sky.moonTexture = gSky.mVOSkyp ? skyTextureBits(gSky.mVOSkyp->getMoonTex(), asr::UISampler::LinearClamp) : asr::NO_SKY_TEXTURE;
+    }
+
+    sky.moonPhase = llclamp(gSavedSettings.getF32("ASMoonPhase"), 0.f, 1.f);
+    sky.moonPhaseTilt = llclamp(gSavedSettings.getF32("ASMoonPhaseTilt"), -180.f, 180.f) * DEG_TO_RAD;
+    sky.moonTerminatorSoftness = llclamp(gSavedSettings.getF32("ASMoonPhaseSoftness"), 0.f, 0.30f);
+    sky.moonEarthshine = llclamp(gSavedSettings.getF32("ASMoonEarthshineStrength"), 0.f, 0.30f);
+    sky.moonRelief = llclamp(gSavedSettings.getF32("ASMoonTerminatorReliefStrength"), 0.f, 2.f);
+    sky.moonHaloStrength = gSavedSettings.getBOOL("ASMoonHaloEnabled") ? llclamp(gSavedSettings.getF32("ASMoonHaloStrength"), 0.f, 2.f) : 0.f;
+    sky.moonHaloRadius = llclamp(gSavedSettings.getF32("ASMoonHaloRadius"), 1.25f, 4.f);
+    sky.moonHaloSoftness = llclamp(gSavedSettings.getF32("ASMoonHaloSoftness"), 0.1f, 2.f);
+}
+
+// The stars (ASStars) and the Milky Way (ASMilkyWay), as OpenGL draws them: the list is
+// rebuilt only when ASStars makes a new catalogue.
+void fillStars(asr::SkyInput& sky, const LLSettingsSky& current)
+{
+    static std::shared_ptr<const std::vector<asr::SkyStar>> sStars;
+    static U32 sStarsGeneration = 0;
+    const LLVector3* directions = nullptr;
+    const LLColor4* colors = nullptr;
+    F32 radius = 1.f;
+    const U32 generation = ASStars::catalogue(directions, colors, radius);
+    if (!sStars || generation != sStarsGeneration)
+    {
+        auto stars = std::make_shared<std::vector<asr::SkyStar>>(ASStars::starCount());
+        for (U32 i = 0; i < stars->size(); ++i)
+        {
+            asr::SkyStar& star = (*stars)[i];
+            for (S32 c = 0; c < 3; ++c)
+            {
+                star.direction[c] = directions[i].mV[c];
+                star.color[c] = colors[i].mV[c];
+            }
+            star.size = ASStars::starSize(i) / radius;
+            star.brightness = ASStars::starBrightness(i);
+        }
+        sStars = std::move(stars);
+        sStarsGeneration = generation;
+    }
+    sky.stars = sStars;
+
+    // starsF.glsl's chain: EEP star brightness through smoothstep(0, 0.9), x32, then
+    // ASStarsBrightness. OpenGL draws nothing below 0.001.
+    const F32 alpha = current.getStarBrightness() / 500.f;
+    const F32 t = llclamp(alpha / 0.9f, 0.f, 1.f);
+    sky.starBrightness = alpha < 0.001f ? 0.f : t * t * (3.f - 2.f * t) * 32.f * ASStars::brightness();
+    sky.starTwinkle = ASStars::twinkleAmount();
+    // starsV.glsl: the dome position times mod(time, 1.25), time being seconds / 2.
+    sky.starTwinklePhase = radius * F32(fmod(LLFrameTimer::getElapsedSeconds() * 0.5, 1.25));
+    ASStars::starFrame(ASDoFRenderer::starRotationTime(gFrameTimeSeconds), sky.starRotation);
+    sky.starTexture = gSky.mVOSkyp ? skyTextureBits(gSky.mVOSkyp->getBloomTex(), asr::UISampler::LinearClamp) : asr::NO_SKY_TEXTURE;
+
+    F32 band = 0.f, deepSky = 0.f, saturation = 1.f;
+    if (ASMilkyWay::levels(band, deepSky, saturation))
+    {
+        sky.milkyWayTexture = skyTextureBits(ASMilkyWay::rendererMap(false), asr::UISampler::LinearWrap);
+        sky.deepSkyTexture = skyTextureBits(ASMilkyWay::rendererMap(true), asr::UISampler::LinearWrap);
+        sky.milkyWayIntensity = band;
+        sky.deepSkyIntensity = deepSky;
+        sky.milkyWaySaturation = saturation;
+    }
+}
+
 // The frame's sky and tone settings from the current EEP sky and the graphics preferences.
 // Scattering coefficients are not in EEP, so the Earth values stay until the legacy values
 // are translated (doc/ayanestorm-new-renderer-sky.md, decision 1).
@@ -146,6 +268,9 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.sunIlluminance[0] = sunlight.mV[0];
     sky.sunIlluminance[1] = sunlight.mV[1];
     sky.sunIlluminance[2] = sunlight.mV[2];
+
+    fillMoon(sky, *current);
+    fillStars(sky, *current);
 }
 
 constexpr char STALL_SETTING[] = "ASRendererStallTestAt";

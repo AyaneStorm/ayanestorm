@@ -81,7 +81,8 @@ enum ScenePass : PassId
     PassAerialLut,
     PassExposure,
     PassResolve,
-    PassMacOITKeys,    // Mac OIT, declared by declareMacOIT()
+    PassStars,         // only while the sky has stars to show
+    PassMacOITKeys,   // Mac OIT, declared by declareMacOIT()
     PassMacOITGate,
     PassMacOITTail,
     PassMacOITColor,

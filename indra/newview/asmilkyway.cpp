@@ -26,6 +26,7 @@
 #include "llimage.h"
 #include "llrender.h"
 #include "llsettingssky.h"
+#include "llviewertexture.h"
 #include "llviewercontrol.h"
 
 namespace
@@ -191,26 +192,8 @@ void ASMilkyWay::unloadShader()
 
 bool ASMilkyWay::configureShader(bool hdri_sky)
 {
-    static LLCachedControl<bool> stars_enabled(gSavedSettings, "ASStarsEnabled", true);
-    static LLCachedControl<bool> enabled(gSavedSettings, "ASMilkyWayEnabled", true);
-    static LLCachedControl<F32> intensity(gSavedSettings, "ASMilkyWayIntensity", 1.f);
-    static LLCachedControl<F32> dso_intensity(gSavedSettings, "ASMilkyWayDeepSkyIntensity", 1.f);
-    static LLCachedControl<F32> saturation(gSavedSettings, "ASMilkyWaySaturation", 1.f);
-
-    const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
-    if (hdri_sky || !sky || !stars_enabled || !enabled || !ASStars::realSkyActive() ||
-        !sMilkyWayProgram.isComplete())
-    {
-        return false;
-    }
-
-    // Night factor exactly as the stars: EEP star brightness through the
-    // same smoothstep(0, 0.9) as starsF.glsl, so the glow comes and goes
-    // with the stars.
-    const F32 star_alpha = llclamp(sky->getStarBrightness() / 500.f / 0.9f, 0.f, 1.f);
-    const F32 night = star_alpha * star_alpha * (3.f - 2.f * star_alpha);
-    const F32 level = night * GLOW_SCALE;
-    if (level <= 0.0001f || (intensity <= 0.f && dso_intensity <= 0.f))
+    F32 band_level, deep_sky_level, saturation;
+    if (hdri_sky || !sMilkyWayProgram.isComplete() || !levels(band_level, deep_sky_level, saturation))
     {
         return false;
     }
@@ -228,10 +211,58 @@ bool ASMilkyWay::configureShader(bool hdri_sky)
     sMilkyWayProgram.uniform3fv(sRotation0, 1, rotation);
     sMilkyWayProgram.uniform3fv(sRotation1, 1, rotation + 3);
     sMilkyWayProgram.uniform3fv(sRotation2, 1, rotation + 6);
-    sMilkyWayProgram.uniform1f(sMilkyWayIntensity, llmax((F32)intensity, 0.f) * level);
-    sMilkyWayProgram.uniform1f(sDeepSkyIntensity, llmax((F32)dso_intensity, 0.f) * level);
-    sMilkyWayProgram.uniform1f(sSaturation, llmax((F32)saturation, 0.f));
+    sMilkyWayProgram.uniform1f(sMilkyWayIntensity, band_level);
+    sMilkyWayProgram.uniform1f(sDeepSkyIntensity, deep_sky_level);
+    sMilkyWayProgram.uniform1f(sSaturation, saturation);
     return true;
+}
+
+bool ASMilkyWay::levels(F32& band, F32& deep_sky, F32& saturation)
+{
+    static LLCachedControl<bool> stars_enabled(gSavedSettings, "ASStarsEnabled", true);
+    static LLCachedControl<bool> enabled(gSavedSettings, "ASMilkyWayEnabled", true);
+    static LLCachedControl<F32> intensity(gSavedSettings, "ASMilkyWayIntensity", 1.f);
+    static LLCachedControl<F32> dso_intensity(gSavedSettings, "ASMilkyWayDeepSkyIntensity", 1.f);
+    static LLCachedControl<F32> saturation_setting(gSavedSettings, "ASMilkyWaySaturation", 1.f);
+
+    const LLSettingsSky::ptr_t sky = LLEnvironment::instance().getCurrentSky();
+    if (!sky || !stars_enabled || !enabled || !ASStars::realSkyActive())
+    {
+        return false;
+    }
+
+    // Night factor exactly as the stars: EEP star brightness through the
+    // same smoothstep(0, 0.9) as starsF.glsl, so the glow comes and goes
+    // with the stars.
+    const F32 star_alpha = llclamp(sky->getStarBrightness() / 500.f / 0.9f, 0.f, 1.f);
+    const F32 night = star_alpha * star_alpha * (3.f - 2.f * star_alpha);
+    const F32 level = night * GLOW_SCALE;
+    if (level <= 0.0001f || (intensity <= 0.f && dso_intensity <= 0.f))
+    {
+        return false;
+    }
+    band = llmax((F32)intensity, 0.f) * level;
+    deep_sky = llmax((F32)dso_intensity, 0.f) * level;
+    saturation = llmax((F32)saturation_setting, 0.f);
+    return true;
+}
+
+LLViewerFetchedTexture* ASMilkyWay::rendererMap(bool deep_sky)
+{
+    // Through the texture list, so the new renderer receives it with mips; the GL path keeps
+    // its own upload. Loaded on first use and kept.
+    static LLPointer<LLViewerFetchedTexture> maps[2];
+    LLPointer<LLViewerFetchedTexture>& map = maps[deep_sky ? 1 : 0];
+    if (map.isNull())
+    {
+        const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "stars", deep_sky ? sDeepSky.mFile : sBand.mFile);
+        map = LLViewerTextureManager::getFetchedTextureFromUrl("file://" + path, FTT_LOCAL_FILE, true, LLGLTexture::BOOST_UI);
+        if (map.notNull())
+        {
+            map->setNoDelete();
+        }
+    }
+    return map.get();
 }
 
 LLGLSLShader& ASMilkyWay::getShader()

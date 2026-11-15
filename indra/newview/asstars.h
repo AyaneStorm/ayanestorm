@@ -47,6 +47,16 @@ namespace ASStars
     // J2000 equatorial frame, as a GL column-major mat3; same orientation as
     // applySkyTransform() at star_time.
     void localToEquatorial(F32 star_time, F32 out[9]);
+
+    // For the new renderer. The last generate()'s stars: unit directions in the star frame,
+    // vertex colours (alpha encoded as for starsF.glsl), the dome radius their sprite sizes
+    // (starSize()) are on. Returns a number that changes with every generate().
+    U32 catalogue(const LLVector3*& directions, const LLColor4*& colors, F32& radius);
+    // Star i's brightness against the others, decoded as starsF.glsl does.
+    F32 starBrightness(U32 i);
+    // The star frame to the local frame (x east, y north, z up), by columns: the rotation
+    // applySkyTransform() makes, stock or real sky.
+    void starFrame(F32 star_time, F32 out[9]);
 }
 
 #endif

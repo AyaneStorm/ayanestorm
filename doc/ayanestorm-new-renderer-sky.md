@@ -284,6 +284,16 @@ Library, Vulkan and Metal. Built and validated on Windows, 0 errors. The user sa
 - **Moonlight in the air:** the sky view texture holds two tables, sun on top and moon below (`SKY_VIEW_LUT_LIGHTS`). The aerial volume marches both lights and stores light at their own brightness. Exposure meters both.
 - **Test:** `--moon-maps DIR` reads `moon_albedo.rgba` (2048 × 1024) and `moon_normal.rgba` (1024 × 512), raw RGBA written from the PNGs with Pillow, into `build-asr/moon`.
 
+## Step 1 batch 3b: stars, Milky Way, moon in the viewer (written 15 November 2026)
+
+Library, Vulkan and Metal, and the viewer. `asrenderer_test --scene --sky-view --sky night --validate` runs with 0 validation errors on Windows. Not yet checked by eye; Metal and the viewer not yet built.
+
+- **Stars pass** (`asrSkyStarsV/F.glsl`, pass `stars`, after the resolve): one screen-facing sprite per star, added into the lit image where the depth is still the far plane. A star behind the planet, the moon's disc or the sun's disc is not drawn; the rest are dimmed by the transmittance along their direction. Brightness is OpenGL's chain (EEP star brightness through smoothstep, x32, ASStarsBrightness, the per-star decoded alpha, twinkle), against the exposure as the moon's disc. Alpha adds nothing, so glow is unchanged.
+- **At least 2 pixels wide:** a smaller sprite is drawn 2 pixels wide and dimmed by the area it gained, so a star never falls between pixel centres and blinks as the sky turns. OpenGL's horizon fades are dropped: the planet and the air do that job.
+- **Star list:** `SkyInput::stars`, a shared list the viewer replaces only when ASStars makes a new catalogue; each frame-in-flight slot keeps its own copy, written only when the list changes.
+- **Milky Way** in the resolve's background, under the moon: both maps read in the stars' frame, with mips from the pixel's size on the sky. Levels from `ASMilkyWay::levels()`, which OpenGL now uses too.
+- **Viewer:** `fillMoon()` and `fillStars()` in `asrviewer.cpp`. The default moon is the sphere with `as_moon_albedo.png` and `as_moon_normal.png`; a custom moon is EEP's image; no moon image draws no disc. The moon's light on the sky is EEP moonlight x moon brightness x 3e-3, to tune at the side-by-side. Not carried over yet: ASMoonHorizonTint and ASMoonHorizonMinOpacity (the air now reddens and dims the moon near the horizon), and the sun's image.
+
 ## Step 1 reading pass (15 November 2026)
 
 ### Where the sky is today

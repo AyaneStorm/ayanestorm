@@ -789,6 +789,13 @@ private:
         id<MTLComputePipelineState> aerialPipeline = nil;
         id<MTLBuffer> exposure = nil; // GpuExposure
         id<MTLComputePipelineState> exposurePipeline = nil;
+        // The stars: a copy of the list per frame in flight, written again only when the
+        // viewer hands over a new list, and the list each copy holds.
+        id<MTLRenderPipelineState> starsPipeline = nil;
+        id<MTLDepthStencilState> starsDepth = nil; // the far plane only, nothing written
+        id<MTLBuffer> stars[FRAMES_IN_FLIGHT] = {};
+        std::shared_ptr<const std::vector<SkyStar>> starsHeld[FRAMES_IN_FLIGHT];
+        uint32_t starCount = 0; // this frame's
     };
 
     // A volume when depth is above 1.
@@ -828,7 +835,100 @@ private:
         mSky.skyViewPipeline = createComputePipeline(shaderDir, "asrAtmosphereSkyViewC", error);
         mSky.aerialPipeline = createComputePipeline(shaderDir, "asrAtmosphereAerialC", error);
         mSky.exposurePipeline = createComputePipeline(shaderDir, "asrAtmosphereExposureC", error);
-        return mSky.transmittancePipeline && mSky.multiscatterPipeline && mSky.skyViewPipeline && mSky.aerialPipeline && mSky.exposurePipeline;
+        id<MTLFunction> starsVertex = loadFunction(shaderDir, "asrSkyStarsV", error);
+        id<MTLFunction> starsFragment = starsVertex ? loadFunction(shaderDir, "asrSkyStarsF", error) : nil;
+        if (starsFragment)
+        {
+            MTLRenderPipelineDescriptor* descriptor = [MTLRenderPipelineDescriptor new];
+            descriptor.vertexFunction = starsVertex;
+            descriptor.fragmentFunction = starsFragment;
+            MTLRenderPipelineColorAttachmentDescriptor* attachment = descriptor.colorAttachments[0];
+            attachment.pixelFormat = MTLPixelFormatRGBA16Float; // the lit image
+            attachment.blendingEnabled = YES; // added
+            attachment.rgbBlendOperation = MTLBlendOperationAdd;
+            attachment.alphaBlendOperation = MTLBlendOperationAdd;
+            attachment.sourceRGBBlendFactor = MTLBlendFactorOne;
+            attachment.destinationRGBBlendFactor = MTLBlendFactorOne;
+            attachment.sourceAlphaBlendFactor = MTLBlendFactorOne;
+            attachment.destinationAlphaBlendFactor = MTLBlendFactorOne;
+            descriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+            NSError* failure = nil;
+            mSky.starsPipeline = [mDevice newRenderPipelineStateWithDescriptor:descriptor error:&failure];
+            if (!mSky.starsPipeline)
+            {
+                error = std::string("stars pipeline: ") + failure.localizedDescription.UTF8String;
+            }
+            MTLDepthStencilDescriptor* depth = [MTLDepthStencilDescriptor new];
+            depth.depthCompareFunction = MTLCompareFunctionGreaterEqual; // reversed depth: the far plane is 0
+            depth.depthWriteEnabled = NO;
+            mSky.starsDepth = [mDevice newDepthStencilStateWithDescriptor:depth];
+        }
+        return mSky.transmittancePipeline && mSky.multiscatterPipeline && mSky.skyViewPipeline && mSky.aerialPipeline && mSky.exposurePipeline &&
+               mSky.starsPipeline && mSky.starsDepth;
+    }
+
+    // The star list into this slot's copy, when the viewer has handed over a new one.
+    // Returns the copy's address, 0 with no stars.
+    uint64_t prepareStars(uint32_t slot)
+    {
+        const std::shared_ptr<const std::vector<SkyStar>>& stars = mRecordSky.stars;
+        mSky.starCount = stars && mRecordSky.starBrightness > 0.f ? uint32_t(stars->size()) : 0;
+        if (mSky.starCount == 0)
+        {
+            return 0;
+        }
+        if (mSky.starsHeld[slot] != stars)
+        {
+            const uint64_t bytes = stars->size() * sizeof(SkyStar);
+            if (!mSky.stars[slot] || mSky.stars[slot].length < bytes)
+            {
+                if (mSky.stars[slot])
+                {
+                    releaseSceneBuffer(mSky.stars[slot], MemoryCategory::Staging);
+                }
+                mSky.stars[slot] = createSceneBuffer(std::max<uint64_t>(bytes, 1024 * 1024), MemoryCategory::Staging, "star list", true);
+                if (!mSky.stars[slot])
+                {
+                    mSky.starsHeld[slot].reset();
+                    mSky.starCount = 0;
+                    return 0;
+                }
+            }
+            memcpy(mSky.stars[slot].contents, stars->data(), bytes);
+            mSky.starsHeld[slot] = stars;
+        }
+        return addressOf(mSky.stars[slot]);
+    }
+
+    // The stars over the lit image, where nothing was drawn.
+    bool passStars()
+    {
+        if (mSky.starCount == 0)
+        {
+            return true;
+        }
+        MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
+        pass.colorAttachments[0].texture = mLitTarget;
+        pass.colorAttachments[0].loadAction = MTLLoadActionLoad;
+        pass.colorAttachments[0].storeAction = MTLStoreActionStore;
+        pass.depthAttachment.texture = mDepthTarget;
+        pass.depthAttachment.loadAction = MTLLoadActionLoad;
+        pass.depthAttachment.storeAction = MTLStoreActionStore;
+        attachPassSamples(pass);
+
+        id<MTLRenderCommandEncoder> draw = [mRecordCommands renderCommandEncoderWithDescriptor:pass];
+        draw.label = passLabel();
+        [draw waitForFence:mSceneFence beforeStages:MTLRenderStageVertex];
+        [draw setRenderPipelineState:mSky.starsPipeline];
+        [draw setDepthStencilState:mSky.starsDepth];
+        [draw setCullMode:MTLCullModeNone]; // sprites face the screen either way round
+        [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        [draw setFragmentTexture:mSky.transmittance atIndex:15];
+        setOverlayPush(draw, mScenePush);
+        [draw drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:6 instanceCount:mSky.starCount];
+        [draw updateFence:mSceneFence afterStages:MTLRenderStageFragment];
+        [draw endEncoding];
+        return true;
     }
 
     // The tables at their sampling bindings, except the one the pass writes.
@@ -1359,7 +1459,7 @@ private:
         mDepthTarget = createTarget(MTLPixelFormatDepth32Float, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "depth buffer");
         mAlbedoTarget = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 4, "albedo target");
         mNormalTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "normal target");
-        mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "lit target");
+        mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget, width, height, 8, "lit target");
         mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
         mSelectionMask = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "selection mask");
         if (!mLitTarget || !mSceneColorTarget || !mSelectionMask || !createMacOITTargets(width, height))
@@ -1506,6 +1606,8 @@ private:
         mPyramidLevels = view.pyramidLevels;
         GpuAtmosphere atmosphere;
         fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2], view.farClip);
+        atmosphere.stars = prepareStars(slot);
+        atmosphere.starCount = mSky.starCount;
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
         memcpy(static_cast<char*>(mSceneViews[slot].contents) + sizeof(view), &atmosphere, sizeof(atmosphere));
 
@@ -1719,6 +1821,7 @@ private:
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
+        mGraph.setBody(PassStars, [this]() { return passStars(); });
         setSkyBodies();
         mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
         mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });

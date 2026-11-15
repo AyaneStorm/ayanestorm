@@ -157,6 +157,35 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
     }
     out.moonCosRadius = std::cos(std::min(sky.moonAngularRadius * reach, 3.1f));
     out.aerialDistance = (drawDistance > 0.f ? drawDistance : AERIAL_DEFAULT_DISTANCE) * 0.001f;
+
+    out.starBrightness = std::max(sky.starBrightness, 0.f);
+    out.starTwinkle = std::clamp(sky.starTwinkle, 0.f, 1.f);
+    const float rotationW[3] = { sky.starTwinklePhase, std::max(sky.milkyWayIntensity, 0.f), std::max(sky.deepSkyIntensity, 0.f) };
+    for (int column = 0; column < 3; ++column)
+    {
+        for (int row = 0; row < 3; ++row)
+        {
+            out.starRotation[column][row] = sky.starRotation[column * 3 + row];
+        }
+        out.starRotation[column][3] = rotationW[column];
+    }
+    // The device sets the list's address and count once it is on the GPU.
+    out.stars = 0;
+    out.starCount = 0;
+    out.starTexture = sky.starTexture;
+    // A map that is missing draws no glow: both levels must have their map.
+    out.milkyWayTexture = sky.milkyWayTexture;
+    out.deepSkyTexture = sky.deepSkyTexture;
+    if (sky.milkyWayTexture == NO_SKY_TEXTURE)
+    {
+        out.starRotation[1][3] = 0.f;
+    }
+    if (sky.deepSkyTexture == NO_SKY_TEXTURE)
+    {
+        out.starRotation[2][3] = 0.f;
+    }
+    out.milkyWaySaturation = std::max(sky.milkyWaySaturation, 0.f);
+    out.pad = 0.f;
 }
 
 } // namespace asr

@@ -95,6 +95,11 @@ namespace
 
     U32 sCount = 0;
     std::vector<F32> sSizes;
+    // The last generate()'s catalogue as the new renderer takes it (see catalogue()).
+    std::vector<LLVector3> sDirections;
+    std::vector<LLColor4> sColors;
+    F32 sRadius = 1.f;
+    U32 sGeneration = 0;
     // Latched by generate(): the stars are in the equatorial frame.
     bool sRealSky = false;
     // Latched by generate(): vertex alpha holds log-encoded brightness
@@ -498,6 +503,55 @@ void ASStars::generate(F32 radius, std::vector<LLVector3>& positions,
         }
         sSizes[i] = base_size * llmax(size, 0.f);
     }
+
+    sDirections.resize(sCount);
+    for (U32 i = 0; i < sCount; ++i)
+    {
+        sDirections[i] = positions[i];
+        sDirections[i].normVec();
+    }
+    sColors = colors;
+    sRadius = llmax(radius, 1.f);
+    ++sGeneration;
+}
+
+U32 ASStars::catalogue(const LLVector3*& directions, const LLColor4*& colors, F32& radius)
+{
+    directions = sDirections.data();
+    colors = sColors.data();
+    radius = sRadius;
+    return sGeneration;
+}
+
+F32 ASStars::starBrightness(U32 i)
+{
+    // As starsF.glsl: encoded alpha is log2 brightness over the octave range; stock ignores it.
+    return sEncoded && i < sColors.size()
+         ? std::exp2(sColors[i].mV[VALPHA] * (LOG_OCTAVES_BELOW + LOG_OCTAVES_ABOVE) - LOG_OCTAVES_BELOW)
+         : 1.f;
+}
+
+void ASStars::starFrame(F32 star_time, F32 out[9])
+{
+    if (sRealSky)
+    {
+        // localToEquatorial() gives A^T by columns, which is A (star frame to local) by rows.
+        F32 transposed[9];
+        localToEquatorial(star_time, transposed);
+        for (S32 column = 0; column < 3; ++column)
+        {
+            for (S32 row = 0; row < 3; ++row)
+            {
+                out[column * 3 + row] = transposed[row * 3 + column];
+            }
+        }
+        return;
+    }
+    // Stock: applySkyTransform()'s slow spin around the zenith.
+    const F32 spin = star_time * 0.01f * DEG_TO_RAD;
+    const F32 c = std::cos(spin), s = std::sin(spin);
+    const F32 a[9] = { c, s, 0.f, -s, c, 0.f, 0.f, 0.f, 1.f };
+    std::copy(a, a + 9, out);
 }
 
 U32 ASStars::starCount()

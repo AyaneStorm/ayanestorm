@@ -12,6 +12,8 @@
 
 #include "llglslshader.h"
 
+class LLViewerFetchedTexture;
+
 namespace ASMilkyWay
 {
     void registerShader(std::vector<LLGLSLShader*>& shaders);
@@ -23,6 +25,12 @@ namespace ASMilkyWay
     // daylight, missing texture).
     bool configureShader(bool hdri_sky);
     LLGLSLShader& getShader();
+
+    // The Milky Way and deep sky levels (night factor included) and saturation, for GL and
+    // the new renderer alike; false when no glow shows.
+    bool levels(F32& band, F32& deep_sky, F32& saturation);
+    // The new renderer's copy of a map, through the texture list (loaded on first use).
+    LLViewerFetchedTexture* rendererMap(bool deep_sky);
 }
 
 #endif
