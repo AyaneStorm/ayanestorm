@@ -11,7 +11,11 @@
 #include "asrgltable.h"
 #include "asrtexturecache.h"
 #include "asrworld.h"
+#include "llagent.h"
 #include "llappviewer.h"
+#include "llenvironment.h"
+#include "llsettingssky.h"
+#include "llviewerregion.h"
 #include "llviewertexture.h"
 #include "llcoord.h"
 #include "lldir.h"
@@ -56,6 +60,80 @@ bool sFellBack = false;
 #if ASR_VIEWER_SUPPORTED
 
 using Clock = std::chrono::steady_clock;
+
+// One EEP density profile (rayleigh_config, mie_config, absorption_config) in the
+// renderer's form. EEP keeps heights in metres and the renderer in kilometres, so widths
+// shrink by 1000 and the per-metre terms grow by 1000. A single EEP layer, 'the entire
+// atmosphere', is Bruneton's second layer, after a first of width 0.
+asr::AtmosphereProfile toProfile(const LLSD& layers)
+{
+    asr::AtmosphereProfile profile;
+    if (!layers.isArray() || layers.size() == 0)
+    {
+        return profile;
+    }
+    const size_t first = layers.size() == 1 ? 1 : 0;
+    for (size_t i = 0; i < std::min<size_t>(layers.size(), 2); ++i)
+    {
+        const LLSD& layer = layers[i];
+        asr::AtmosphereLayer& out = profile.layers[first + i];
+        out.width = F32(layer[LLSettingsSky::SETTING_DENSITY_PROFILE_WIDTH].asReal()) * 0.001f;
+        out.expTerm = F32(layer[LLSettingsSky::SETTING_DENSITY_PROFILE_EXP_TERM].asReal());
+        out.expScale = F32(layer[LLSettingsSky::SETTING_DENSITY_PROFILE_EXP_SCALE_FACTOR].asReal()) * 1000.f;
+        out.linearTerm = F32(layer[LLSettingsSky::SETTING_DENSITY_PROFILE_LINEAR_TERM].asReal()) * 1000.f;
+        out.constantTerm = F32(layer[LLSettingsSky::SETTING_DENSITY_PROFILE_CONSTANT_TERM].asReal());
+    }
+    if (first == 1)
+    {
+        profile.layers[0].width = 0.f;
+    }
+    return profile;
+}
+
+// The frame's sky and tone settings from the current EEP sky and the graphics preferences.
+// Scattering coefficients are not in EEP, so the Earth values stay until the legacy values
+// are translated (doc/ayanestorm-new-renderer-sky.md, decision 1).
+void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
+{
+    sky = asr::earthSky();
+    // Region shifts are horizontal, so render space heights are region heights.
+    if (const LLViewerRegion* region = gAgent.getRegion())
+    {
+        sky.seaLevel = region->getWaterHeight();
+    }
+
+    static LLCachedControl<F32> exposure(gSavedSettings, "RenderExposure", 1.f);
+    static LLCachedControl<U32> mapper(gSavedSettings, "RenderTonemapType", 0U);
+    static LLCachedControl<bool> autoAdjustLegacy(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
+    tone.exposure = llclamp(F32(exposure()), 0.5f, 4.f); // GL's range
+    tone.mapper = llmin(U32(mapper()), asr::TONE_MAPPER_AGX);
+
+    const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky();
+    if (!current)
+    {
+        tone.mix = 0.7f;
+        return;
+    }
+    // As GL: RenderTonemapMix for EEP skies (LLSettingsVOSky sets it on the sky), none for a
+    // sky made from legacy settings unless those are adjusted.
+    tone.mix = current->getTonemapMix(autoAdjustLegacy());
+
+    sky.bottomRadius = current->getSkyBottomRadius();
+    sky.topRadius = current->getSkyTopRadius();
+    sky.rayleigh = toProfile(current->getRayleighConfigs());
+    sky.mie = toProfile(current->getMieConfigs());
+    sky.absorption = toProfile(current->getAbsorptionConfigs());
+    sky.mieG = current->getMieAnisotropy();
+
+    const LLVector3 sun = current->getSunDirection();
+    sky.sunDirection[0] = sun.mV[0];
+    sky.sunDirection[1] = sun.mV[1];
+    sky.sunDirection[2] = sun.mV[2];
+    const LLColor3 sunlight = current->getSunlightColor();
+    sky.sunIlluminance[0] = sunlight.mV[0];
+    sky.sunIlluminance[1] = sunlight.mV[1];
+    sky.sunIlluminance[2] = sunlight.mV[2];
+}
 
 constexpr char STALL_SETTING[] = "ASRendererStallTestAt";
 constexpr F64 STALL_SECONDS = 5.0; // well short of the 30 s that would log the agent out
@@ -591,6 +669,7 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.height = sHeight;
     state.hasCamera = sHasCamera;
     state.camera = sCamera;
+    fillSky(state.sky, state.tone);
     state.turn = sCameraTurn;
     static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
     state.predictCamera = predict_camera;
