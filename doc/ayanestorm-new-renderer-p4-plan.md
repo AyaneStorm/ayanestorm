@@ -16,6 +16,7 @@ Studies this plan follows:
 - **VRAM budget:** every target and table comes from its budget category and has a low tier. The low-tier reference is the GT 1030 and 4 GB cards.
 - **Ready for snapshots:** step g's tiled snapshots must work with every effect here. Screen-space passes take a tile overlap, and per-view results (aerial perspective, froxels, masks) are made per tile view. Nothing may assume the view is the screen.
 - **Firestorm merges stay reasonable:** logic lives in AS-owned files; LL files get small tagged hooks only.
+- **Graphics preferences are honoured (user, 15 November 2026):** where a Firestorm graphics preference applies to an effect, the new renderer reacts to it, live, through the same setting. Where GL's controls do not fit the new renderer, a graphics preferences tab may be added for it, or an existing tab replaced while the new renderer is active. Each step checks its rows in [Graphics preferences](#graphics-preferences) before it is written and updates the table when done.
 
 ## Steps
 
@@ -146,6 +147,77 @@ From LightSpeed Studios' GDC 2023 talk 'Photon Water System: open world water re
 - Cloud cost; the low tier on the GT 1030.
 - The VRAM of every new result against the budget categories.
 - Side-by-side captures of the whole of P4 against the GL viewer.
+
+## Graphics preferences
+
+From Firestorm's graphics preferences panel (`panel_preferences_graphics1.xml`; the advanced floater repeats some of them). Only the ones a P4 step touches are listed. What each setting means for the new renderer is decided in its step, against what the GL viewer does with it.
+
+| Setting | Step |
+|---|---|
+| `RenderFarClip` (draw distance) | 1: aerial perspective range |
+| `RenderQualityPerformance` (quality slider) | 1, 8, 9: sky tier (LUT sizes, volumetric clouds) |
+| `RenderDisableVintageMode` (HDR, PBR emissive) | 2: what the off state means here is decided then |
+| `RenderExposure`, `RenderTonemapType`, `RenderTonemapMix` | 2: tone mapper |
+| `RenderHighPrecisionPostProcess` | 2: HDR target format |
+| `RenderGlow`, `RenderGlowIterations`, `RenderGlowResolutionPow` | 2: glow |
+| `RenderDeferredSSAO` | 2: ambient occlusion |
+| `RenderLocalLightCount`, `RenderShaderLightingMaxLevel` | 3: local lights |
+| `RenderShadowDetail`, `RenderShadowResolutionScale` | 4: shadows |
+| `RenderTransparentWater` | 6: water |
+| `RenderScreenSpaceReflections`, `RenderMirrors`, `RenderHeroProbeResolution`, `RenderHeroProbeUpdateRate` | 6, 7: reflections |
+| `RenderReflectionProbeDetail`, `RenderReflectionProbeLevel`, `RenderReflectionProbeCount` | 7: reflection probes |
+
+### Read by the new renderer today (15 November 2026)
+
+Only `RenderMaxVRAMBudget`, `RenderTextureVRAMDivisor`, `RenderVSyncEnable` (`asrviewer.cpp`), and `RenderTerrainScale`, `RenderTerrainPBRScale`, `RenderTerrainPBRPlanarSampleCount`, `RenderTerrainPBRTriplanarBlendFactor` (`asrworld.cpp`). Whether `RenderFarClip` reaches it through the viewer camera is not checked yet.
+
+### Settings outside P4, to check (user, 15 November 2026)
+
+Every graphics slider is checked against what GL does with it and replicated where it applies: LOD factors (`RenderVolumeLODFactor`, `RenderTreeLODFactor`, `RenderTerrainLODFactor`, `RenderAvatarLODFactor`, `RenderAvatarPhysicsLODFactor`, `RenderFlexTimeFactor`), `RenderMaxPartCount`, `RenderMaxTextureResolution`, `RenderAnisotropicLevel`, `RenderFSAAType` and `RenderFSAASamples`, `RenderCASSharpness`, avatar complexity and impostors (`RenderAvatarMaxComplexity`, `RenderAvatarMaxNonImpostors`, `IndirectMaxComplexity`, `IndirectMaxNonImpostors`). The new renderer may give a slider's steps a different meaning where its methods differ.
+
+### The quality slider
+
+`RenderQualityPerformance` (notches 1 to 7) applies one list of `featuretable.txt` per notch. Its values (blank: that notch does not set the setting):
+
+| Setting | Low | LowMid | Mid | MidHigh | High | HighUltra | Ultra |
+|---|---|---|---|---|---|---|---|
+| `RenderFarClip` | 64 | 96 | 128 | 128 | 128 | 128 | 256 |
+| `RenderDisableVintageMode` | 0 | 0 | | | | | |
+| `RenderHighPrecisionPostProcess` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
+| `RenderExposure` | 1 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `RenderTonemapType`, `RenderTonemapMix` | 1, 0.7 | same | same | same | same | same | same |
+| `RenderGlowResolutionPow` | 8 | 8 | 9 | 9 | 9 | 9 | 9 |
+| `RenderDeferredSSAO` | 0 | 0 | 0 | 0 | 1 | 1 | 1 |
+| `RenderLocalLightCount` | 8 | 256 | 512 | 1024 | 2048 | 4096 | 8192 |
+| `RenderShadowDetail` | 0 | 0 | 0 | 0 | 1 | 2 | 2 |
+| `RenderTransparentWater` | 0 | 0 | 0 | 0 | 1 | 1 | 1 |
+| `RenderReflectionsEnabled` | 0 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `RenderReflectionProbeDetail` | 0 | 0 | 0 | 1 | 1 | 1 | 1 |
+| `RenderReflectionProbeLevel` | 0 | 0 | 1 | 1 | 2 | 3 | 3 |
+| `RenderReflectionProbeCount` | 1 | 32 | 64 | 64 | 128 | 256 | 256 |
+| `RenderScreenSpaceReflections`, `RenderMirrors` | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| `RenderHeroProbeResolution` | 256 | 256 | 512 | 512 | 512 | 1024 | 2048 |
+| `RenderHeroProbeDistance` | 4 | 6 | 6 | 6 | 8 | 16 | 16 |
+| `RenderHeroProbeUpdateRate` | 6 | 3 | 3 | 2 | 2 | 2 | 2 |
+| `RenderHeroProbeConservativeUpdateMultiplier` | 16 | 16 | 16 | 8 | 8 | 4 | 4 |
+| `RenderVolumeLODFactor` | 1.5 | 2 | 2 | 2 | 2 | 2 | 3 |
+| `RenderTreeLODFactor` | 0 | 0.5 | 0.5 | 0.5 | 0.5 | 0.5 | 1 |
+| `RenderTerrainLODFactor` | 1 | 1 | 2 | 2 | 2 | 2 | 2 |
+| `RenderAvatarLODFactor` | 0 | 0.5 | 1 | 1 | 1 | 1 | 1 |
+| `RenderAvatarPhysicsLODFactor` | 0 | 0.75 | 1 | 1 | 1 | 1 | 1 |
+| `RenderFlexTimeFactor` | 0 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `RenderAvatarMaxNonImpostors` | 3 | 5 | 7 | 9 | 11 | 16 | 16 |
+| `RenderAvatarMaxComplexity` | 35000 | 100000 | 200000 | 250000 | 300000 | 350000 | |
+| `RenderMaxPartCount` | 256 | 2048 | 4096 | 4096 | 4096 | 4096 | 8192 |
+| `RenderMaxTextureResolution` | 512 | 1024 | 2048 | 2048 | 2048 | 2048 | 2048 |
+| `RenderAnisotropicLevel` | 0 | 2 | 2 | 4 | 4 | 4 | 8 |
+| `RenderFSAAType`, `RenderFSAASamples` | 0, 0 | 0, 0 | 1, 1 | 1, 1 | 2, 2 | 2, 2 | 2, 3 |
+| `RenderCASSharpness` | 0 | 0 | 0 | 0 | 0.4 | 0.4 | 0.4 |
+| `RenderTerrainDetail` | 0 | 1 | 1 | 1 | 1 | 1 | 1 |
+| `RenderTerrainPBRDetail` | -4 | -1 | 0 | 0 | 0 | 0 | 0 |
+| `RenderTerrainPBRPlanarSampleCount` | 1 | 1 | 1 | 1 | 3 | 3 | 3 |
+
+**The new renderer may redefine the notches (user, 15 November 2026).** Its own tiers (step 9, low tier = GT 1030 and 4 GB cards) set what each notch means for it: which LUT sizes, cloud tier, shadow and probe budgets. A notch keeps setting the shared settings above, so moving the slider still moves the individual controls. **Proposal, not agreed:** the new renderer's own tier settings (`AS` prefix) join the same lists; how they apply only while it is active is checked in step 9.
 
 ## Order and dependencies
 

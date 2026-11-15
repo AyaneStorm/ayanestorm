@@ -236,3 +236,26 @@ Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering 
 1. **EEP legacy values: A, translated only.** One sky model; there is no legacy mode.
 2. **Volumetric clouds: yes, as the high tier, with the layer following the camera (choice 2).** It is always a set height above the camera, so it never cuts through builds. The camera never gets above it: the 'seen from the top' case does not exist.
 3. **The AyaneStorm GL add-ons are not ported.** The physical model makes their effects; their sliders do not exist in the new renderer.
+
+## Step 1 reading pass (15 November 2026)
+
+### Where the sky is today
+
+- No EEP data reaches the native renderer. The background is a constant, `SKY = vec4(0.32, 0.45, 0.62, 0.0)` in `asrSceneResolveC.glsl`, stored where the visibility buffer is empty.
+- Per-frame data path: the viewer fills `asr::FrameState` in `asrviewer.cpp` (camera, overlay, world view), the render thread copies it into `asr::FrameInput` (`asrdevice.h`). The sky inputs join both. Both are headers: adding fields rebuilds their includers.
+- Viewer source of the values: `LLEnvironment::getCurrentSky()` (an `LLSettingsSky`).
+
+### EEP physical units (checked in `llsettingssky.cpp`)
+
+| Value | EEP default | Unit | Sample unit | Translation |
+|---|---|---|---|---|
+| Planet, sky bottom radius | 6360 | km | km | copy |
+| Sky top radius | 6420 | km | km (sample 6460) | copy |
+| Rayleigh layer | `exp_term 1, exp_scale -1/8000` | per metre | per km | `exp_scale` × 1000 |
+| Mie layer | `exp_term 1, exp_scale -1/1200`, anisotropy 0.8 | per metre | per km | `exp_scale` × 1000, g copied |
+| Ozone layers | widths 25000, linear `-1/25000`, `-1/15000`, constants `-2/3`, `8/3` | metres | km | `width` ÷ 1000, `linear_term` × 1000 |
+| Sun arc | 0.00045 | radians | - | copy (disc size) |
+
+- **Mixed units:** radii are in kilometres, density profiles in metres. The sample's profile terms are per kilometre, so `exp_scale` and `linear_term` scale by 1000 and `width` by 1/1000. `exp_term` and `constant_term` have no unit.
+- **No scattering coefficients in EEP.** Rayleigh scattering, Mie scattering and extinction, and ozone extinction have no settings fields. The sample's Earth values (table above) are the base, and decision 1's legacy translation tints and scales them.
+- **The GL viewer does not use the physical model.** Its sky comes from the legacy values (blue horizon, blue density, haze density and horizon, density and distance multipliers); only a leftover uniform name (`single_mie_scattering_texture`) remains. Matching GL's look therefore rests on the legacy translation, not on the physical fields.
