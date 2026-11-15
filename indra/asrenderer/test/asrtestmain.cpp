@@ -107,6 +107,20 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
     sky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
     sky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
     sky.sunDirection[2] = std::sin(elevation);
+    sky.sunUp[2] = 1.f;
+    // A full moon 40 degrees to the side of the sun, low, at about its real share of the
+    // sun's light: the day sky hides it, as it should.
+    const float moonAzimuth = azimuth + 0.7f;
+    const float moonElevation = 0.25f;
+    sky.moonDirection[0] = std::cos(moonElevation) * std::cos(moonAzimuth);
+    sky.moonDirection[1] = std::cos(moonElevation) * std::sin(moonAzimuth);
+    sky.moonDirection[2] = std::sin(moonElevation);
+    sky.moonUp[2] = 1.f;
+    sky.moonAngularRadius = 0.5f * 0.52f * 3.14159265f / 180.f;
+    for (int i = 0; i < 3; ++i)
+    {
+        sky.moonIlluminance[i] = 2.5e-6f;
+    }
     return true;
 }
 

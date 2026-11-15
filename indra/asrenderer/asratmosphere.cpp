@@ -70,7 +70,7 @@ SkyInput earthSky()
     return sky;
 }
 
-void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ)
+void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, float drawDistance)
 {
     out = GpuAtmosphere{};
     std::copy(sky.rayleighScattering, sky.rayleighScattering + 3, out.rayleighScattering);
@@ -91,6 +91,18 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ)
     packProfile(out.profiles[0], sky.rayleigh);
     packProfile(out.profiles[1], sky.mie);
     packProfile(out.profiles[2], sky.absorption);
+
+    out.sunTexture = sky.sunTexture;
+    out.sunTextureRadius = sky.sunTextureRadius;
+    std::copy(sky.sunUp, sky.sunUp + 3, out.sunUp);
+    out.moonTexture = sky.moonTexture;
+    std::copy(sky.moonDirection, sky.moonDirection + 3, out.moonDirection);
+    std::copy(sky.moonUp, sky.moonUp + 3, out.moonUp);
+    std::copy(sky.moonIlluminance, sky.moonIlluminance + 3, out.moonIlluminance);
+    out.moonAngularRadius = sky.moonAngularRadius;
+    // A square's corner reaches sqrt(2) times its half side: nothing of it lies outside that.
+    out.moonCosRadius = std::cos(sky.moonTexture == NO_SKY_TEXTURE ? sky.moonAngularRadius : sky.moonAngularRadius * 1.41422f);
+    out.aerialDistance = (drawDistance > 0.f ? drawDistance : AERIAL_DEFAULT_DISTANCE) * 0.001f;
 }
 
 } // namespace asr

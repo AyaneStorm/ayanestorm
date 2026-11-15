@@ -1,0 +1,10 @@
+as_moon_albedo.png and as_moon_normal.png come from NASA's CGI Moon Kit:
+
+NASA's Scientific Visualization Studio
+Visualizer: Ernie Wright (STC)
+Scientist: Noah Petro (NASA/GSFC)
+
+as_moon_albedo.png is the kit's 2048 x 1024 colour map. as_moon_normal.png is made from its
+16 pixels per degree displacement map, averaged down to 1024 x 512: a tangent-space normal
+map (x east, y north, z up, 0.5 is 0), with no exaggeration. Both are equirectangular, with
+longitude -180 to 180 from left to right, so the middle is the side that faces the Earth.

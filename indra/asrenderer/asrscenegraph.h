@@ -50,7 +50,8 @@ enum SceneResult : ResultId
     ResultTransmittanceLut, // the sky's tables, made every frame: see asratmosphere.h
     ResultMultiscatterLut,
     ResultSkyViewLut,
-    ResultExposure,       // GpuExposure, from the sky: read by shading and the composite
+    ResultAerialLut,      // the aerial perspective volume, along the main view's rays
+    ResultExposure,      // GpuExposure, from the sky: read by shading and the composite
     ResultCount
 };
 
@@ -77,6 +78,7 @@ enum ScenePass : PassId
     PassTransmittanceLut,
     PassMultiscatterLut,
     PassSkyViewLut,
+    PassAerialLut,
     PassExposure,
     PassResolve,
     PassMacOITKeys,    // Mac OIT, declared by declareMacOIT()

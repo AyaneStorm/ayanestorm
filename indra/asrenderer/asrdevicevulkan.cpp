@@ -54,8 +54,8 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 17; // set 1, see createScene()
-constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 14; // the sky's tables read through samplers: 14 to 16
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 19; // set 1, see createScene()
+constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
 
 // Set 1's sampled images: the depth, and the sky's tables. The rest are storage images.
 bool sceneBindingSampled(uint32_t binding)
@@ -1301,7 +1301,7 @@ private:
     {
         // Visibility, albedo and normals, then depth, which the pyramid reads, then Mac OIT's
         // moments, tail depth, colour and weights, the lit image and the scene colour, the
-        // selection mask, then the sky's tables written (11 to 13) and read (14 to 16).
+        // selection mask, then the sky's tables written (11 to 14) and read (15 to 18).
         VkDescriptorSetLayoutBinding bindings[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
@@ -1380,6 +1380,7 @@ private:
         mResultImages[ResultTransmittanceLut] = &mSky.transmittance;
         mResultImages[ResultMultiscatterLut] = &mSky.multiscatter;
         mResultImages[ResultSkyViewLut] = &mSky.skyView;
+        mResultImages[ResultAerialLut] = &mSky.aerial;
 
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1420,18 +1421,18 @@ private:
         return true;
     }
 
-    // At the scene's size, or at `size` when one is given.
+    // At the scene's size, or at `size` when one is given; a volume when depth is above 1.
     bool createTarget(TargetImage& target, VkFormat format, VkImageUsageFlags usage, VkImageAspectFlags aspect, uint32_t pixelBytes, const char* what,
-                      VkExtent2D size = {})
+                      VkExtent2D size = {}, uint32_t depth = 1)
     {
         const VkExtent2D extent = size.width != 0 ? size : mSceneExtent;
         // The screen cannot wait for room: count it anyway, and textures shrink to give it back.
-        const uint64_t bytes = uint64_t(extent.width) * extent.height * pixelBytes;
+        const uint64_t bytes = uint64_t(extent.width) * extent.height * depth * pixelBytes;
         mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, bytes);
         VkImageCreateInfo image{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
-        image.imageType = VK_IMAGE_TYPE_2D;
+        image.imageType = depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
         image.format = format;
-        image.extent = { extent.width, extent.height, 1 };
+        image.extent = { extent.width, extent.height, depth };
         image.mipLevels = 1;
         image.arrayLayers = 1;
         image.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -1448,7 +1449,7 @@ private:
         target.bytes = bytes;
         VkImageViewCreateInfo view{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         view.image = target.image;
-        view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        view.viewType = depth > 1 ? VK_IMAGE_VIEW_TYPE_3D : VK_IMAGE_VIEW_TYPE_2D;
         view.format = format;
         view.subresourceRange = { aspect, 0, 1, 0, 1 };
         return check(vkCreateImageView(mDevice, &view, nullptr, &target.view), what);
@@ -1520,8 +1521,8 @@ private:
         const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mAlbedoImage.view,   mNormalImage.view,     mDepthImage.view,
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
-                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view,
-                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view };
+                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
+                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
@@ -1541,15 +1542,17 @@ private:
 
     // The sky, kept in one place: its tables, their pipelines and their passes (see
     // asratmosphere.h). The tables are a fixed size, made once; set 1 names them for
-    // writing at 11 to 13 and for sampling at 14 to 16.
+    // writing at 11 to 14 and for sampling at 15 to 18.
     struct SkyTables
     {
         TargetImage transmittance;
         TargetImage multiscatter;
         TargetImage skyView;
+        TargetImage aerial;
         VkPipeline transmittancePipeline = VK_NULL_HANDLE;
         VkPipeline multiscatterPipeline = VK_NULL_HANDLE;
         VkPipeline skyViewPipeline = VK_NULL_HANDLE;
+        VkPipeline aerialPipeline = VK_NULL_HANDLE;
         GpuBuffer exposure; // GpuExposure
         VkPipeline exposurePipeline = VK_NULL_HANDLE;
     };
@@ -1562,6 +1565,8 @@ private:
             !createTarget(mSky.multiscatter, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "multiple scattering table",
                           { MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE }) ||
             !createTarget(mSky.skyView, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT }) ||
+            !createTarget(mSky.aerial, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "aerial perspective volume", { AERIAL_LUT_SIZE, AERIAL_LUT_SIZE },
+                          AERIAL_LUT_SIZE) ||
             !createBufferObject(mSky.exposure, sizeof(GpuExposure), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "exposure", MemoryCategory::RenderTargets, true))
         {
             error = mError;
@@ -1570,7 +1575,8 @@ private:
         mSky.transmittancePipeline = createComputePipeline("asrAtmosphereTransmittanceC", error);
         mSky.multiscatterPipeline = mSky.transmittancePipeline ? createComputePipeline("asrAtmosphereMultiscatterC", error) : VK_NULL_HANDLE;
         mSky.skyViewPipeline = mSky.multiscatterPipeline ? createComputePipeline("asrAtmosphereSkyViewC", error) : VK_NULL_HANDLE;
-        mSky.exposurePipeline = mSky.skyViewPipeline ? createComputePipeline("asrAtmosphereExposureC", error) : VK_NULL_HANDLE;
+        mSky.aerialPipeline = mSky.skyViewPipeline ? createComputePipeline("asrAtmosphereAerialC", error) : VK_NULL_HANDLE;
+        mSky.exposurePipeline = mSky.aerialPipeline ? createComputePipeline("asrAtmosphereExposureC", error) : VK_NULL_HANDLE;
         return mSky.exposurePipeline != VK_NULL_HANDLE;
     }
 
@@ -1579,8 +1585,9 @@ private:
         destroyTarget(mSky.transmittance);
         destroyTarget(mSky.multiscatter);
         destroyTarget(mSky.skyView);
+        destroyTarget(mSky.aerial);
         destroyBufferObject(mSky.exposure, MemoryCategory::RenderTargets);
-        for (VkPipeline pipeline : { mSky.transmittancePipeline, mSky.multiscatterPipeline, mSky.skyViewPipeline, mSky.exposurePipeline })
+        for (VkPipeline pipeline : { mSky.transmittancePipeline, mSky.multiscatterPipeline, mSky.skyViewPipeline, mSky.aerialPipeline, mSky.exposurePipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
             {
@@ -1613,6 +1620,7 @@ private:
         {
             return passSkyTable(mSky.skyViewPipeline, (SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group);
         });
+        mGraph.setBody(PassAerialLut, [this]() { return passSkyTable(mSky.aerialPipeline, AERIAL_LUT_SIZE / group, AERIAL_LUT_SIZE / group); });
         mGraph.setBody(PassExposure, [this]() { return passSkyTable(mSky.exposurePipeline, 1, 1); });
     }
 
@@ -3599,7 +3607,7 @@ private:
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         GpuAtmosphere atmosphere;
-        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2]);
+        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2], view.farClip);
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
         memcpy(static_cast<char*>(mSceneViews[slot].mapped) + sizeof(view), &atmosphere, sizeof(atmosphere));
         vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view) + sizeof(atmosphere));

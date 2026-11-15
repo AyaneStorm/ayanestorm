@@ -776,23 +776,31 @@ private:
 
     // The sky, kept in one place: its tables, their pipelines and their passes (see
     // asratmosphere.h). The tables are a fixed size, made once and counted apart from the
-    // screen-sized targets; set 1 names them at 11 to 13 for writing, 14 to 16 for reading.
+    // screen-sized targets; set 1 names them at 11 to 14 for writing, 15 to 18 for reading.
     struct SkyTables
     {
         id<MTLTexture> transmittance = nil;
         id<MTLTexture> multiscatter = nil;
         id<MTLTexture> skyView = nil;
+        id<MTLTexture> aerial = nil;
         id<MTLComputePipelineState> transmittancePipeline = nil;
         id<MTLComputePipelineState> multiscatterPipeline = nil;
         id<MTLComputePipelineState> skyViewPipeline = nil;
+        id<MTLComputePipelineState> aerialPipeline = nil;
         id<MTLBuffer> exposure = nil; // GpuExposure
         id<MTLComputePipelineState> exposurePipeline = nil;
     };
 
-    id<MTLTexture> createSkyTable(uint32_t width, uint32_t height, const char* what)
+    // A volume when depth is above 1.
+    id<MTLTexture> createSkyTable(uint32_t width, uint32_t height, const char* what, uint32_t depth = 1)
     {
-        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, uint64_t(width) * height * 8);
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, uint64_t(width) * height * depth * 8);
         MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:width height:height mipmapped:NO];
+        if (depth > 1)
+        {
+            descriptor.textureType = MTLTextureType3D;
+            descriptor.depth = depth;
+        }
         descriptor.storageMode = MTLStorageModePrivate;
         descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
         id<MTLTexture> texture = [mDevice newTextureWithDescriptor:descriptor];
@@ -808,8 +816,9 @@ private:
         mSky.transmittance = createSkyTable(TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT, "transmittance table");
         mSky.multiscatter = createSkyTable(MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE, "multiple scattering table");
         mSky.skyView = createSkyTable(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT, "sky view table");
+        mSky.aerial = createSkyTable(AERIAL_LUT_SIZE, AERIAL_LUT_SIZE, "aerial perspective volume", AERIAL_LUT_SIZE);
         mSky.exposure = createSceneBuffer(sizeof(GpuExposure), MemoryCategory::RenderTargets, "exposure", true);
-        if (!mSky.transmittance || !mSky.multiscatter || !mSky.skyView || !mSky.exposure)
+        if (!mSky.transmittance || !mSky.multiscatter || !mSky.skyView || !mSky.aerial || !mSky.exposure)
         {
             error = mError;
             return false;
@@ -817,17 +826,18 @@ private:
         mSky.transmittancePipeline = createComputePipeline(shaderDir, "asrAtmosphereTransmittanceC", error);
         mSky.multiscatterPipeline = createComputePipeline(shaderDir, "asrAtmosphereMultiscatterC", error);
         mSky.skyViewPipeline = createComputePipeline(shaderDir, "asrAtmosphereSkyViewC", error);
+        mSky.aerialPipeline = createComputePipeline(shaderDir, "asrAtmosphereAerialC", error);
         mSky.exposurePipeline = createComputePipeline(shaderDir, "asrAtmosphereExposureC", error);
-        return mSky.transmittancePipeline && mSky.multiscatterPipeline && mSky.skyViewPipeline && mSky.exposurePipeline;
+        return mSky.transmittancePipeline && mSky.multiscatterPipeline && mSky.skyViewPipeline && mSky.aerialPipeline && mSky.exposurePipeline;
     }
 
     // The tables at their sampling bindings, except the one the pass writes.
     void bindSkyTables(id<MTLComputeCommandEncoder> encoder, id<MTLTexture> written = nil)
     {
-        const id<MTLTexture> tables[3] = { mSky.transmittance, mSky.multiscatter, mSky.skyView };
-        for (NSUInteger i = 0; i < 3; ++i)
+        const id<MTLTexture> tables[4] = { mSky.transmittance, mSky.multiscatter, mSky.skyView, mSky.aerial };
+        for (NSUInteger i = 0; i < 4; ++i)
         {
-            [encoder setTexture:(tables[i] == written ? nil : tables[i]) atIndex:14 + i];
+            [encoder setTexture:(tables[i] == written ? nil : tables[i]) atIndex:15 + i];
         }
     }
 
@@ -865,6 +875,10 @@ private:
         {
             return passSkyTable(mSky.skyViewPipeline, mSky.skyView, 13,
                                 MTLSizeMake((SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group, 1), MTLSizeMake(group, group, 1));
+        });
+        mGraph.setBody(PassAerialLut, [this]()
+        {
+            return passSkyTable(mSky.aerialPipeline, mSky.aerial, 14, MTLSizeMake(AERIAL_LUT_SIZE / group, AERIAL_LUT_SIZE / group, 1), MTLSizeMake(group, group, 1));
         });
         mGraph.setBody(PassExposure, [this]() { return passSkyTable(mSky.exposurePipeline, nil, 0, MTLSizeMake(1, 1, 1), MTLSizeMake(64, 1, 1)); });
     }
@@ -990,9 +1004,11 @@ private:
         [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         if (pipeline == mMacOIT.colorPass)
         {
-            // Only the colour pass reads the moments; the tail pass writes them.
+            // Only the colour pass reads the moments; the tail pass writes them. It lays the
+            // air in front over each layer, from the aerial perspective volume.
             [draw setFragmentTexture:mMacOIT.moments atIndex:4];
             [draw setFragmentTexture:mMacOIT.tailDepth atIndex:5];
+            [draw setFragmentTexture:mSky.aerial atIndex:18];
         }
         for (uint32_t kind = SCENE_BLENDED_KIND; kind < SCENE_KINDS; ++kind)
         {
@@ -1488,7 +1504,7 @@ private:
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
         GpuAtmosphere atmosphere;
-        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2]);
+        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2], view.farClip);
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
         memcpy(static_cast<char*>(mSceneViews[slot].contents) + sizeof(view), &atmosphere, sizeof(atmosphere));
 

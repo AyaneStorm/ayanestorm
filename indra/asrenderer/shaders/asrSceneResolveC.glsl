@@ -22,35 +22,81 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
 layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrAtmosphere.glsl"
 
-// The pixel's direction in world space, from the camera through its centre.
-vec3 pixelDirection(ViewRef view, vec2 ndc)
+vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy); // below
+
+// A sun or moon image: a square of half side `radius` facing the camera, its top towards
+// `up`. rgb: the image in linear light, a: its cover; 0 outside the square. Mips follow the
+// pixel's size on the sky, and the texture reports what it needs like any other.
+vec4 skyImage(ivec2 pixel, uint bits, vec3 bodyDirection, vec3 up, float radius, vec3 direction, float pixelAngle)
 {
-    const vec3 camera = vec3(ndc.x / view.projection.x, -ndc.y / view.projection.y, -1.0);
-    return normalize(camera.x * view.viewRows[0].xyz + camera.y * view.viewRows[1].xyz + camera.z * view.viewRows[2].xyz);
+    const vec3 bodyUp = normalize(up - bodyDirection * dot(up, bodyDirection));
+    const vec3 bodyRight = cross(bodyDirection, bodyUp);
+    const float along = dot(direction, bodyDirection);
+    const vec2 plane = vec2(dot(direction, bodyRight), dot(direction, bodyUp)) / along;
+    const vec2 uv = vec2(plane.x, -plane.y) / (2.0 * radius) + 0.5;
+    if (along <= 0.0 || any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))))
+    {
+        return vec4(0.0);
+    }
+    const float uvStep = pixelAngle / (2.0 * radius);
+    const vec4 texel = sampleBits(pixel, bits, uv, vec2(uvStep, 0.0), vec2(0.0, uvStep));
+    return vec4(srgbToLinear(texel.rgb), texel.a);
 }
 
-// The background: the sky view table, then the sun's disc, darker at its edge (limb
-// darkening, linear with u = 0.6) and dimmed by the air before it. The disc carries the
-// sun's whole illuminance over its solid angle.
-vec3 background(Atmosphere a, vec3 direction)
+// The sun with no image: darker at its edge (limb darkening, linear with u = 0.6), carrying
+// its whole illuminance over its solid angle.
+vec3 sunDisc(Atmosphere a, float cosAngle)
+{
+    const float sinRadius2 = 1.0 - a.sunCosRadius * a.sunCosRadius;
+    const float r2 = clamp((1.0 - cosAngle * cosAngle) / max(sinRadius2, 1e-12), 0.0, 1.0);
+    const float u = 0.6;
+    const float darkening = (1.0 - u * (1.0 - sqrt(1.0 - r2))) / (1.0 - u / 3.0);
+    return a.sunIlluminance * (darkening / (2.0 * ATMOSPHERE_PI * (1.0 - a.sunCosRadius)));
+}
+
+// The background: the sky view table, and behind the air, dimmed by it and hidden by the
+// planet, the moon, then the sun over it. pixelAngle: a pixel's size on the sky, radians.
+// The stars are the viewer's catalogue (ASStars), drawn by their own pass.
+vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 {
     vec3 luminance = sampleSkyView(a, direction) * a.sunIlluminance;
-    const float cosAngle = dot(direction, a.sunDirection);
-    if (cosAngle > a.sunCosRadius)
+    const vec3 position = atmosphereCamera(a);
+    if (raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0)
     {
-        const vec3 position = atmosphereCamera(a);
-        if (raySphereIntersectNearest(position, direction, a.bottomRadius) < 0.0)
+        return min(luminance, vec3(60000.0));
+    }
+    vec3 space = vec3(0.0);
+
+    const float moonCos = dot(direction, a.moonDirection);
+    if (moonCos > a.moonCosRadius)
+    {
+        const float moonSolidAngle = ATMOSPHERE_PI * a.moonAngularRadius * a.moonAngularRadius;
+        if (a.moonTexture != NO_SKY_TEXTURE)
         {
-            const float sinRadius2 = 1.0 - a.sunCosRadius * a.sunCosRadius;
-            const float r2 = clamp((1.0 - cosAngle * cosAngle) / max(sinRadius2, 1e-12), 0.0, 1.0);
-            const float mu = sqrt(1.0 - r2);
-            const float u = 0.6;
-            const float darkening = (1.0 - u * (1.0 - mu)) / (1.0 - u / 3.0);
-            const float solidAngle = 2.0 * ATMOSPHERE_PI * (1.0 - a.sunCosRadius);
-            const vec3 transmittance = sampleTransmittance(a, length(position), direction.z);
-            luminance += a.sunIlluminance * transmittance * (darkening / solidAngle);
+            const vec4 moon = skyImage(pixel, a.moonTexture, a.moonDirection, a.moonUp, a.moonAngularRadius, direction, pixelAngle);
+            space = mix(space, moon.rgb * a.moonIlluminance / moonSolidAngle, moon.a);
+        }
+        else
+        {
+            space = a.moonIlluminance / moonSolidAngle;
         }
     }
+
+    const float sunCos = dot(direction, a.sunDirection);
+    if (a.sunTexture != NO_SKY_TEXTURE)
+    {
+        if (sunCos > cos(a.sunTextureRadius * 1.41422))
+        {
+            const vec4 sun = skyImage(pixel, a.sunTexture, a.sunDirection, a.sunUp, a.sunTextureRadius, direction, pixelAngle);
+            space = mix(space, sun.rgb * a.sunIlluminance / (ATMOSPHERE_PI * a.sunTextureRadius * a.sunTextureRadius), sun.a);
+        }
+    }
+    else if (sunCos > a.sunCosRadius)
+    {
+        space = sunDisc(a, sunCos);
+    }
+
+    luminance += sampleTransmittance(a, length(position), direction.z) * space;
     return min(luminance, vec3(60000.0)); // inside half floats
 }
 
@@ -230,7 +276,8 @@ void main()
         imageStore(albedo, pixel, vec4(0.0, 0.0, 0.0, 0.0));
         imageStore(normals, pixel, vec4(0.0));
         const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
-        imageStore(lit, pixel, vec4(background(loadAtmosphere(view.atmosphere), pixelDirection(view, ndc)), 0.0));
+        const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
+        imageStore(lit, pixel, vec4(background(pixel, loadAtmosphere(view.atmosphere), viewDirection(view, ndc), pixelAngle), 0.0));
         return;
     }
 
@@ -273,9 +320,12 @@ void main()
     const uint i1 = clusterIndex(cluster.indices, triangle * 3u + 1u);
     const uint i2 = clusterIndex(cluster.indices, triangle * 3u + 2u);
     const mat4 viewProjection = view.viewProjection;
-    const vec4 p0 = viewProjection * vec4(transformPoint(instance.rows, packedPosition(cluster.positions, i0)), 1.0);
-    const vec4 p1 = viewProjection * vec4(transformPoint(instance.rows, packedPosition(cluster.positions, i1)), 1.0);
-    const vec4 p2 = viewProjection * vec4(transformPoint(instance.rows, packedPosition(cluster.positions, i2)), 1.0);
+    const mat3 world = mat3(transformPoint(instance.rows, packedPosition(cluster.positions, i0)),
+                            transformPoint(instance.rows, packedPosition(cluster.positions, i1)),
+                            transformPoint(instance.rows, packedPosition(cluster.positions, i2)));
+    const vec4 p0 = viewProjection * vec4(world[0], 1.0);
+    const vec4 p1 = viewProjection * vec4(world[1], 1.0);
+    const vec4 p2 = viewProjection * vec4(world[2], 1.0);
 
     const vec2 pixelStep = 2.0 * view.pixelSize.zw;
     const vec2 ndc = (vec2(pixel) + 0.5) * pixelStep - 1.0;
@@ -354,6 +404,8 @@ void main()
     imageStore(albedo, pixel, vec4(color.rgb, 1.0));
     imageStore(normals, pixel, vec4(worldNormal, 1.0));
     vec4 shown = unlit(color.rgb, worldNormal);
+    shown.rgb = applyAerial(loadAtmosphere(view.atmosphere), shown.rgb, (vec2(pixel) + 0.5) * view.pixelSize.zw,
+                            distance(world * bary.weights, view.camera.xyz));
     if (view.debugView == DEBUG_VIEW_NORMALS)
     {
         shown = vec4(worldNormal * 0.5 + 0.5, 1.0);

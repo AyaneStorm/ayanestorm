@@ -39,6 +39,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("transmittance lut", ResultScope::Frame);
     graph.addResult("multiscatter lut", ResultScope::Frame);
     graph.addResult("sky view lut", ResultScope::Frame);
+    graph.addResult("aerial lut", ResultScope::Frame);
     graph.addResult("exposure", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
@@ -99,12 +100,16 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addPass("sky view lut", { { ResultTransmittanceLut, ComputeRead },
                                     { ResultMultiscatterLut, ComputeRead },
                                     { ResultSkyViewLut, ComputeWrite } });
+    graph.addPass("aerial lut", { { ResultTransmittanceLut, ComputeRead },
+                                  { ResultMultiscatterLut, ComputeRead },
+                                  { ResultAerialLut, ComputeWrite } });
     graph.addPass("exposure", { { ResultTransmittanceLut, ComputeRead }, { ResultSkyViewLut, ComputeRead }, { ResultExposure, ComputeWrite } });
     graph.addPass("resolve", { { ResultSceneData, ComputeRead },
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
                                { ResultTransmittanceLut, ComputeRead },
                                { ResultSkyViewLut, ComputeRead },
+                               { ResultAerialLut, ComputeRead },
                                { ResultExposure, ComputeRead },
                                { ResultAlbedo, ComputeWrite },
                                { ResultNormals, ComputeWrite },
@@ -179,6 +184,7 @@ void declareMacOIT(FrameGraph& graph)
                                     { ResultMacOITMoments, FragmentRead },
                                     { ResultMacOITTailDepth, FragmentRead },
                                     { ResultExposure, FragmentRead },
+                                    { ResultAerialLut, FragmentRead },
                                     { ResultMacOITColor, ColorTarget },
                                     { ResultMacOITWeights, ColorTarget },
                                     { ResultTextureFeedback, FragmentWrite | Keep } });

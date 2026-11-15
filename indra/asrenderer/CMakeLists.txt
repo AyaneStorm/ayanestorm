@@ -99,7 +99,7 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC
         asrOverlayV asrOverlayMaskF asrOverlayHudF asrOverlayOutlineF asrOverlayDepthF
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
-        asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereExposureC)
+        asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 # The texture encoders share their block loading and line fitting.
@@ -119,8 +119,9 @@ foreach(shader asrSceneSkinC asrSceneCullC)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinDemand.glsl)
 endforeach()
-# The sky's tables and the resolve's background share the atmosphere functions.
-foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereExposureC asrSceneResolveC)
+# The sky's tables, the resolve and Mac OIT's colour pass share the atmosphere functions.
+foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
+        asrSceneResolveC asrSceneMacOITColorF)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrAtmosphere.glsl)
 endforeach()

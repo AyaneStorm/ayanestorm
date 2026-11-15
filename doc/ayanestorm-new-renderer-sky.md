@@ -250,6 +250,23 @@ Library only, Vulkan and Metal, tested in `asrenderer_test` on Windows (validati
 
 Next, batch 2: aerial perspective in the resolve and Mac OIT, moon, stars. Batch 3: viewer (EEP translation, tone settings, 2D clouds).
 
+## Step 1 batch 2: written (15 November 2026)
+
+Library only, Vulkan and Metal. Built and run in `asrenderer_test` on Windows with validation on and 0 errors. Not yet checked by eye, and not yet run on the Mac.
+
+- **Aerial perspective volume** (`asrAtmosphereAerialC.glsl`, pass `aerial lut`): 32 by 32 view rays, with 32 slices spread squared out to the view's draw distance (`GpuAtmosphere::aerialDistance`, or 1024 m with no limit). One thread marches one ray once, two steps a slice. rgb is the light for a sun of brightness 1, a is the mean transmittance. The resolve lays it over opaque pixels, and Mac OIT's colour pass over each layer (`applyAerial()`), so both match. Nearer than the first slice it fades out, as in the sample.
+- **Set 1 bindings:** the sky's tables are written at 11 to 14 and sampled at 15 to 18 (18 is the volume, a 3D texture).
+- **Background:** stars, then the moon over them, then the sun over both, all dimmed by the air and hidden by the planet. Sun and moon take an image as `SkyInput::sunTexture` / `moonTexture` (a square facing the camera, its top along `sunUp` / `moonUp`, mips from the pixel's size on the sky, with texture feedback). Without an image the sun is the limb-darkened disc and the moon a flat disc. A body's image carries its illuminance over the disc inside the square.
+- **Stars: the AyaneStorm stars, ported (user, 15 November 2026).** The viewer keeps `ASStars` as it is: real-sky or procedural catalogue, settings and floater. It hands the library the list of stars when the catalogue changes, then each frame the rotation (`applySkyTransform()`: zenith spin, or sidereal spin and latitude tilt), brightness and twinkle. The library draws them as sprites in their own pass, only where nothing was drawn, each dimmed by the air along its own direction. The Milky Way glow (`ASMilkyWay`, an equirectangular texture) is read in the background under the same rotation. Not written yet. Shader-made stars were tried and removed.
+- **Test skies** carry a full moon 40 degrees from the sun, at roughly its real share of the sun's light.
+- **Cost on the 3080 Ti:** aerial volume 0.02 ms. All sky passes together come to about 0.09 ms.
+- **Open:** the brightness of the images' glow areas. The default SL sun image has a soft halo, which this scale makes bright.
+
+**Moon decisions (user, 15 November 2026):**
+- The default SL moon becomes a lit sphere, made in the shader with no mesh. Its phase comes from the real sun direction. Its surface colour is `moon_2k.tif` and its normal map is made from `moon_displacement_16.tif` (the user's, in E:\dev\AyaneStorm), both shipped as viewer assets. They are converted into `skins/default/textures/as/as_moon_albedo.png` (2048 x 1024) and `as_moon_normal.png` (1024 x 512, from the 16 pixels per degree displacement; mean slope 3 degrees), with `as_moon_CREDITS.txt` and the credit in each PNG's text. Source: NASA's CGI Moon Kit. Every file that ships them, and the viewer's credits, carry this line: "NASA's Scientific Visualization Studio. Visualizer: Ernie Wright (STC). Scientist: Noah Petro (NASA/GSFC)."
+- Custom EEP moon textures stay flat images, as OpenGL draws them.
+- Moon glow: the moon is a second light in the sky tables, so its halo and the night sky's colour come out of the same scattering as the sun's.
+
 ## Step 1 reading pass (15 November 2026)
 
 ### Where the sky is today

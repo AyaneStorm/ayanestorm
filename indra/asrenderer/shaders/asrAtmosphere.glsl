@@ -31,13 +31,16 @@
 const vec2 TRANSMITTANCE_LUT_SIZE = vec2(256.0, 64.0);
 const float MULTISCATTER_LUT_SIZE = 32.0;
 const vec2 SKY_VIEW_LUT_SIZE = vec2(192.0, 108.0);
+const float AERIAL_LUT_SIZE = 32.0;
+const uint NO_SKY_TEXTURE = 0xFFFFFFFFu;
 const float PLANET_RADIUS_OFFSET = 0.01; // km
 const float ATMOSPHERE_PI = 3.14159265358979;
 
-// Read by the passes after the tables are made; written by asrAtmosphere*C.glsl at 11 to 13.
-layout(set = 1, binding = 14) uniform texture2D transmittanceLut;
-layout(set = 1, binding = 15) uniform texture2D multiscatterLut;
-layout(set = 1, binding = 16) uniform texture2D skyViewLut;
+// Read by the passes after the tables are made; written by asrAtmosphere*C.glsl at 11 to 14.
+layout(set = 1, binding = 15) uniform texture2D transmittanceLut;
+layout(set = 1, binding = 16) uniform texture2D multiscatterLut;
+layout(set = 1, binding = 17) uniform texture2D skyViewLut;
+layout(set = 1, binding = 18) uniform texture3D aerialLut;
 
 // GpuAtmosphere in asratmosphere.h.
 layout(buffer_reference, std430) readonly buffer AtmosphereRef
@@ -48,8 +51,13 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     vec4 absorptionExtinction; // w: camera height
     vec4 groundAlbedo;         // w: multiple scattering factor
     vec4 sunDirection;         // w: cosine of the disc's radius
-    vec4 sunIlluminance;
+    vec4 sunIlluminance;       // w: the sun's texture bits
     vec4 profiles[9];          // Rayleigh, Mie, absorption: layer 0, layer 1, (width, -, -, -)
+    vec4 sunUp;                // w: half the sun square's side, radians
+    vec4 moonDirection;        // w: cosine of the radius past which nothing of the moon lies
+    vec4 moonUp;               // w: the moon's angular radius
+    vec4 moonIlluminance;      // w: the moon's texture bits
+    vec4 aerial;               // x: the aerial volume's far edge, km
 };
 
 struct Atmosphere
@@ -69,6 +77,16 @@ struct Atmosphere
     float multipleScattering;
     float sunCosRadius;
     vec4 profiles[9];
+    uint sunTexture;
+    float sunTextureRadius;
+    vec3 sunUp;
+    uint moonTexture;
+    vec3 moonDirection;
+    vec3 moonUp;
+    vec3 moonIlluminance;
+    float moonCosRadius;
+    float moonAngularRadius;
+    float aerialDistance;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -93,7 +111,48 @@ Atmosphere loadAtmosphere(uint64_t address)
     {
         a.profiles[i] = ref.profiles[i];
     }
+    a.sunTexture = floatBitsToUint(ref.sunIlluminance.w);
+    a.sunTextureRadius = ref.sunUp.w;
+    a.sunUp = ref.sunUp.xyz;
+    a.moonTexture = floatBitsToUint(ref.moonIlluminance.w);
+    a.moonDirection = ref.moonDirection.xyz;
+    a.moonUp = ref.moonUp.xyz;
+    a.moonIlluminance = ref.moonIlluminance.xyz;
+    a.moonCosRadius = ref.moonDirection.w;
+    a.moonAngularRadius = ref.moonUp.w;
+    a.aerialDistance = ref.aerial.x;
     return a;
+}
+
+// A pixel's direction in world space, from the camera through ndc.
+vec3 viewDirection(ViewRef view, vec2 ndc)
+{
+    const vec3 camera = vec3(ndc.x / view.projection.x, -ndc.y / view.projection.y, -1.0);
+    return normalize(camera.x * view.viewRows[0].xyz + camera.y * view.viewRows[1].xyz + camera.z * view.viewRows[2].xyz);
+}
+
+// The aerial perspective volume's slice z holds the air up to this distance, in km: its
+// centre, spread as the square (asratmosphere.h).
+float aerialSliceDistance(Atmosphere a, float z)
+{
+    const float s = (z + 0.5) / AERIAL_LUT_SIZE;
+    return s * s * a.aerialDistance;
+}
+
+// The air between the camera and a point `metres` away seen at screen position uv
+// (0 to 1 over the view), laid over its colour. Nearer than the first slice's centre fades
+// to nothing, as the sample does.
+vec3 applyAerial(Atmosphere a, vec3 color, vec2 uv, float metres)
+{
+    float slice = sqrt(metres * 0.001 / a.aerialDistance) * AERIAL_LUT_SIZE;
+    float weight = 1.0;
+    if (slice < 0.5)
+    {
+        weight = clamp(slice * 2.0, 0.0, 1.0);
+        slice = 0.5;
+    }
+    const vec4 air = textureLod(sampler3D(aerialLut, samplers[0]), vec3(uv, slice / AERIAL_LUT_SIZE), 0.0);
+    return color * mix(1.0, air.a, weight) + air.rgb * (weight * a.sunIlluminance);
 }
 
 // The camera in atmosphere space.

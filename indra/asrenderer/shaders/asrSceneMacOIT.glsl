@@ -29,6 +29,9 @@ layout(early_fragment_tests) in;
 
 layout(set = 0, binding = 0) uniform texture2D textures[65536];
 layout(set = 0, binding = 1) uniform sampler samplers[4];
+#if MACOIT_PASS == 2
+#include "asrAtmosphere.glsl" // the air in front of each layer
+#endif
 
 layout(location = 0) in vec2 vary_uv;
 layout(location = 1) flat in uint vary_texture;
@@ -186,6 +189,15 @@ void main()
     {
         color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha
     }
+#if MACOIT_PASS == 2
+    else
+    {
+        // The layer's own air: the weights then count it at the layer's alpha, as the
+        // resolve counts the opaque surface's at full cover.
+        color.rgb = applyAerial(loadAtmosphere(ViewRef(push.view).atmosphere), color.rgb, gl_FragCoord.xy * ViewRef(push.view).pixelSize.zw,
+                                length(vary_toCamera));
+    }
+#endif
     // Helpers must participate in the derivatives above, but can lie outside the viewport.
     // Their ordinary buffer reads are not suppressed like atomic writes: stop before OIT.
     if (gl_HelperInvocation)
