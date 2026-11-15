@@ -302,6 +302,10 @@ Metal is built alongside Vulkan from P2, not in a final port. Snapshot support a
 6. **Upstream changes** to volume or material data can break extraction. The bridge stays narrow, with a check after each merge.
 7. **Parity of legacy lighting** across two codebases. Reusing shader source and the G-buffer layout limits it. Temporal reuse and any compression must pass the side-by-side captures. Below 12 GB the budget still costs some quality; the degrade order keeps that away from what is near the camera.
 
+## Viewer state in per-frame code (rule, 15 November 2026)
+
+`ASRViewer` publishes frames from the window's creation to its end: before login and during shutdown too. Singletons and world state (`LLEnvironment`, `gAgent` and regions, `LLSelectMgr`, ...) do not exist then, and `instance()` would build one out of order. Repeated crashes came from this. Every per-frame read of viewer world state goes inside the one gate, `worldReady()` in `asrviewer.cpp` (startup at `STATE_STARTED` and the app not exiting), with defaults outside it. No call site adds an `instanceExists()` check of its own.
+
 ## Critical files (tagged, minimal edits)
 
 `indra/CMakeLists.txt`, `indra/newview/CMakeLists.txt` (tagged lines only), `indra/newview/llviewerdisplay.cpp`, `pipeline.cpp`, `llappviewer.cpp`, `llviewerwindow.cpp`, `llviewertexture.cpp`, `indra/llrender/llrender.cpp`, `llimagegl.cpp`, `llvertexbuffer.cpp`, `llglslshader.cpp`, `llrendertarget.cpp`, `llshadermgr.cpp`, `llcubemap.cpp`, `llcubemaparray.cpp`, `llgl.cpp`, `indra/llui/lllocalcliprect.cpp`, `indra/llwindow/llwindowwin32.cpp`, `llwindowsdl.cpp`, `llwindowmacosx.cpp`, `llwindowmacosx-objc.mm`, plus the P1 stray-GL list. Reused unchanged: `lltexturefetch`, `llmeshrepository`, `llvolume`, spatial partition, all other LLUI.

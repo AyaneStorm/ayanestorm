@@ -682,17 +682,24 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.height = sHeight;
     state.hasCamera = sHasCamera;
     state.camera = sCamera;
-    if (sHasCamera) // the sky is only read with a scene, after login
-    {
-        fillSky(state.sky, state.tone);
-    }
     state.turn = sCameraTurn;
     static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
     state.predictCamera = predict_camera;
     static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
     static LLCachedControl<U32> max_fps(gSavedSettings, "FramePerSecondLimit", 0);
     state.maxFramesPerSecond = limit_framerate() ? F32(max_fps()) : 0.f;
-    ASRWorld::fillOverlay(state.overlay);
+    // Everything read from the viewer's world: see worldReady().
+    if (worldReady())
+    {
+        fillSky(state.sky, state.tone);
+        ASRWorld::fillOverlay(state.overlay);
+    }
+    else
+    {
+        state.sky = asr::earthSky();
+        state.tone = asr::ToneInput{};
+        state.overlay = asr::OverlayInput{};
+    }
     // The world view, where OpenGL draws the scene and HUDs, and picking reads them: it can
     // leave part of the window to the UI. From the window's top left, as the renderer's.
     // Frames are published while the viewer window is still being built: whole window then.
