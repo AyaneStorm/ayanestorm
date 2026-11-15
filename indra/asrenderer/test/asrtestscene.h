@@ -464,9 +464,20 @@ public:
         }
     }
 
+    bool skyView = false; // --sky-view
+
     asr::SceneCamera3D camera(float seconds, uint32_t width, uint32_t height) const
     {
         const float aspect = float(width) / float(std::max(height, 1u));
+        if (skyView)
+        {
+            // From outside the city, across it to the horizon: the city fills the bottom half
+            // up to 300 m away, the sky the top, as the sun and moon come round.
+            const float turn = seconds * 0.08f;
+            const float eye[3] = { std::cos(turn) * 170.f, std::sin(turn) * 170.f, 25.f };
+            const float target[3] = { -std::cos(turn) * 170.f, -std::sin(turn) * 170.f, 25.f };
+            return asr::makeCamera(eye, target, 1.05f, aspect, 0.1f);
+        }
         if (mStreet)
         {
             // Walking between the buildings, where nearly everything hides something.

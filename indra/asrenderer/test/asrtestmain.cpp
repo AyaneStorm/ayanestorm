@@ -7,6 +7,8 @@
  *                   [--ui]               also draw a busy test UI, rebuilt on the main thread
  *                   [--scene]            draw a city of 16,000 objects instead of the triangle
  *                   [--street]           walk through it at street level
+ *                   [--sky NAME]         test sky: earth, noon, sunset, night, high, haze or fog
+ *                   [--sky-view]         look across the city to the horizon, half sky
  *                   [--audit]            count pixels occlusion culling should have kept
  *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
@@ -65,6 +67,7 @@ namespace
 using Clock = std::chrono::steady_clock;
 bool sOverlays = false; // --overlay
 asr::SkyInput sSky = asr::earthSky(); // --sky
+bool sSkyView = false; // --sky-view
 
 // The step 1 test skies: the sample's Earth with the sun at a given height, seen from the
 // ground, from 8 km up, or through a haze far denser than Earth's. False for an unknown name.
@@ -97,6 +100,18 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
             sky.mieExtinction[i] *= 8.f;
         }
         sky.mie.layers[1].expScale = -1.f / 3.f;
+    }
+    else if (name == "fog")
+    {
+        // Ground haze thick enough to see across the test city (about half the light gone
+        // in 250 m), as SL skies often have: the aerial perspective check.
+        elevation = 0.35f;
+        for (int i = 0; i < 3; ++i)
+        {
+            sky.mieScattering[i] *= 600.f;
+            sky.mieExtinction[i] *= 600.f;
+        }
+        sky.mie.layers[1].expScale = -1.f / 0.5f;
     }
     else if (name != "earth")
     {
@@ -2728,6 +2743,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     if (drawScene)
     {
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
+        city->skyView = sSkyView;
         if (sOverlays)
         {
             city->showOverlays();
@@ -3003,11 +3019,16 @@ int main(int argc, char** argv)
         {
             street = true;
         }
+        else if (arg == "--sky-view")
+        {
+            sSkyView = true;
+            drawScene = true;
+        }
         else if (arg == "--sky" && i + 1 < argc)
         {
             if (!setTestSky(argv[++i], sSky))
             {
-                fprintf(stderr, "--sky takes earth, noon, sunset, night, high or haze\n");
+                fprintf(stderr, "--sky takes earth, noon, sunset, night, high, haze or fog\n");
                 return 1;
             }
         }

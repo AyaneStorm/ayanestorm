@@ -36,23 +36,21 @@ void main()
     const float cosTheta = dot(a.sunDirection, direction);
     const float miePhaseValue = miePhase(a.mieG, -cosTheta);
     const float rayleighPhaseValue = rayleighPhase(cosTheta);
-    // The ray stops at the ground, past which nothing is drawn; the air beyond stays as it was.
-    const float tGround = raySphereIntersectNearest(origin, direction, a.bottomRadius);
-
+    // The ray goes on through the planet: SL ground can lie below altitude 0 (the water
+    // height), and anything drawn there still has the air in front of it. Density keeps
+    // its altitude 0 value below the ground, and earth shadow and the sun's transmittance
+    // read as at the surface.
     vec3 luminance = vec3(0.0);
     vec3 throughput = vec3(1.0);
     float t = 0.0;
     for (int z = 0; z < int(AERIAL_LUT_SIZE); ++z)
     {
-        float tEnd = aerialSliceDistance(a, float(z));
-        if (tGround >= 0.0)
-        {
-            tEnd = min(tEnd, tGround);
-        }
-        const float dt = max(tEnd - t, 0.0) / STEPS_PER_SLICE;
+        const float tEnd = aerialSliceDistance(a, float(z));
+        const float dt = (tEnd - t) / STEPS_PER_SLICE;
         for (float s = 0.0; s < STEPS_PER_SLICE; s += 1.0)
         {
-            const vec3 p = origin + (t + (s + 0.5) * dt) * direction;
+            vec3 p = origin + (t + (s + 0.5) * dt) * direction;
+            p *= max(a.bottomRadius + PLANET_RADIUS_OFFSET, length(p)) / length(p); // up onto the ground
             const Medium medium = sampleMedium(a, p);
             const vec3 stepTransmittance = exp(-medium.extinction * dt);
 
@@ -70,7 +68,7 @@ void main()
             luminance += throughput * (S - S * stepTransmittance) / extinction;
             throughput *= stepTransmittance;
         }
-        t = max(t, tEnd);
+        t = tEnd;
         imageStore(aerialTarget, ivec3(texel, z), vec4(luminance, dot(throughput, vec3(1.0 / 3.0))));
     }
 }
