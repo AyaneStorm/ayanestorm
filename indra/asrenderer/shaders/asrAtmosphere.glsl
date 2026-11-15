@@ -71,7 +71,8 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     uint milkyWayTexture;
     uint deepSkyTexture;
     float milkyWaySaturation;
-    float pad;
+    float moonHeightScale;     // the height map's range in moon radii
+    vec4 moonEarthshineColor;
 };
 
 // SkyStar in asratmosphere.h.
@@ -129,6 +130,8 @@ struct Atmosphere
     float milkyWaySaturation;
     uint milkyWayTexture;
     uint deepSkyTexture;
+    float moonHeightScale;
+    vec3 moonEarthshineColor;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -180,6 +183,8 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.milkyWaySaturation = ref.milkyWaySaturation;
     a.milkyWayTexture = ref.milkyWayTexture;
     a.deepSkyTexture = ref.deepSkyTexture;
+    a.moonHeightScale = ref.moonHeightScale;
+    a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
     return a;
 }
 

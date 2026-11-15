@@ -60,6 +60,67 @@ vec3 sunDisc(Atmosphere a, float cosAngle)
 // normals are equirectangular maps of the whole moon, the side facing the Earth in the
 // middle, its north towards moonUp. Lit from moonLightDirection, which its phase gives, not
 // the sun. rgb: against the disc's brightness, a: cover, the edge smoothed over a pixel.
+// Where on the moon's maps a point of the unit sphere is (see moonSphere()).
+vec2 moonUV(vec3 point, vec3 right, vec3 up, vec3 toViewer)
+{
+    return vec2(atan(dot(point, right), dot(point, toViewer)) / (2.0 * ATMOSPHERE_PI) + 0.5,
+                0.5 - asin(clamp(dot(point, up), -1.0, 1.0)) / ATMOSPHERE_PI);
+}
+
+// The relief's shadow at a point of the moon: 1 lit, 0 in shadow. From the point, a ray goes
+// towards the light, climbing at the light's height above the local horizon while the sphere
+// curves away beneath it (d^2 / 2 at d radii along); it is compared with the height map in
+// the normal map's alpha (heights over moonHeightScale radii). Steps grow with distance and
+// read coarser mips as they do. The edge is softened over the sun's apparent radius: a
+// mountain covering part of the sun leaves part of its light, the real penumbra.
+// arc: one pixel's size on the sphere, radians.
+float moonShadow(Atmosphere a, vec3 normal, vec3 right, vec3 up, vec3 toViewer, vec2 uv, float arc)
+{
+    const float SUN_RADIUS = 0.00465; // radians, as seen from the moon
+    const float MAX_DISTANCE = 0.2;   // radii: the ray is then past the highest relief
+    const vec3 light = a.moonLightDirection;
+    const float sinElevation = dot(light, normal);
+    const vec3 along = light - normal * sinElevation;
+    const float cosElevation = length(along);
+    if (cosElevation < 1e-4)
+    {
+        return 1.0; // the light overhead: nothing casts
+    }
+    const vec3 towards = along / cosElevation;
+    const float slope = sinElevation / cosElevation;
+
+    const uint slot = a.moonNormalTexture & 0xFFFFFu;
+    const uint samplerIndex = (a.moonNormalTexture >> 28) & 3u;
+    const float texelArc = 2.0 * ATMOSPHERE_PI / float(textureSize(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), 0).x);
+    const float start = max(texelArc, arc);
+    const float startLod = log2(max(arc / texelArc, 1.0));
+    const float scale = a.moonHeightScale;
+    const float h0 = textureLod(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]), uv, startLod).a * scale;
+
+    float shadow = 1.0;
+    float d = start;
+    for (int i = 0; i < 32 && d < MAX_DISTANCE; ++i)
+    {
+        const float rise = d * slope + 0.5 * d * d;
+        if (rise > scale)
+        {
+            break; // above every mountain
+        }
+        const vec3 point = normal * cos(d) + towards * sin(d);
+        // The step's own length picks the mip, so far samples see what lies across the step.
+        const float lod = log2(max(d * 0.15 / texelArc, 1.0));
+        const float terrain = textureLod(sampler2D(textures[nonuniformEXT(slot)], samplers[nonuniformEXT(samplerIndex)]),
+                                         moonUV(point, right, up, toViewer), max(lod, startLod)).a * scale;
+        shadow = min(shadow, clamp(0.5 + (h0 + rise - terrain) / (2.0 * d * SUN_RADIUS), 0.0, 1.0));
+        if (shadow <= 0.0)
+        {
+            break;
+        }
+        d *= 1.15;
+    }
+    return shadow;
+}
+
 vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 {
     const vec3 toViewer = -a.moonDirection;
@@ -102,8 +163,12 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     const float soft = a.moonTerminatorSoftness;
     const float mu0 = clamp((dot(surface, a.moonLightDirection) + soft) / (1.0 + soft), 0.0, 1.0);
     const float mu = max(dot(surface, toViewer), 0.05);
-    const float lit = 2.0 * mu0 / (mu0 + mu);
-    return vec4(albedo * (lit + a.moonEarthshine), cover);
+    float lit = 2.0 * mu0 / (mu0 + mu);
+    if (lit > 0.0 && a.moonHeightScale > 0.0 && a.moonNormalTexture != NO_SKY_TEXTURE && a.moonRelief > 0.0)
+    {
+        lit *= mix(1.0, moonShadow(a, normal, right, up, toViewer, uv, arc), min(a.moonRelief, 1.0));
+    }
+    return vec4(albedo * (lit + a.moonEarthshine * a.moonEarthshineColor), cover);
 }
 
 // The halo around the moon (ASMoonHalo*), over the air's own glow: from the disc's edge out

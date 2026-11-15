@@ -465,10 +465,20 @@ public:
     }
 
     bool skyView = false; // --sky-view
+    // --look-moon: a still camera above the city, turned towards this direction with this
+    // vertical field of view (radians); 0 for none.
+    float lookDirection[3]{};
+    float lookFov = 0.f;
 
     asr::SceneCamera3D camera(float seconds, uint32_t width, uint32_t height) const
     {
         const float aspect = float(width) / float(std::max(height, 1u));
+        if (lookFov > 0.f)
+        {
+            const float eye[3] = { 0.f, 0.f, 150.f };
+            const float target[3] = { eye[0] + lookDirection[0] * 100.f, eye[1] + lookDirection[1] * 100.f, eye[2] + lookDirection[2] * 100.f };
+            return asr::makeCamera(eye, target, lookFov, aspect, 0.1f);
+        }
         if (skyView)
         {
             // From outside the city, across it to the horizon: the city fills the bottom half

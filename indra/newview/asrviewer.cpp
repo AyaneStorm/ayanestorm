@@ -158,6 +158,7 @@ void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
         }
         sky.moonTexture = skyTextureBits(albedo, asr::UISampler::LinearWrap);
         sky.moonNormalTexture = skyTextureBits(normals, asr::UISampler::LinearWrap);
+        sky.moonHeightRange = 19.75f; // as_moon_normal.png's alpha: -9 to 10.75 km
     }
     else
     {

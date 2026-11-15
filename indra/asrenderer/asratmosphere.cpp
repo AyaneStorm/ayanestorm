@@ -185,6 +185,12 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
         out.starRotation[2][3] = 0.f;
     }
     out.milkyWaySaturation = std::max(sky.milkyWaySaturation, 0.f);
+    constexpr float MOON_RADIUS_KM = 1737.4f;
+    out.moonHeightScale = std::max(sky.moonHeightRange, 0.f) / MOON_RADIUS_KM;
+    for (int i = 0; i < 3; ++i)
+    {
+        out.moonEarthshineColor[i] = std::max(sky.moonEarthshineColor[i], 0.f);
+    }
     out.pad = 0.f;
 }
 

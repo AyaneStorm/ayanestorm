@@ -99,6 +99,10 @@ struct SkyInput
     float moonPhaseTilt = 0.f;          // radians
     float moonTerminatorSoftness = 0.f; // ASMoonPhaseSoftness: 0 is the sharp physical edge
     float moonEarthshine = 0.f;         // light on the dark side, against the lit side
+    float moonEarthshineColor[3] = { 0.80f, 0.88f, 1.f }; // the Earth's light: bluish, from its oceans and air
+    // The normal map's alpha holds heights over this range, km (0 for none): the relief then
+    // casts shadows, long ones near the terminator, scaled by moonRelief.
+    float moonHeightRange = 0.f;
     float moonRelief = 1.f;             // the normal map's strength: 1 is the real relief
     // A halo around any moon, over the glow the air gives (ASMoonHalo*): its strength
     // against the disc's brightness, its outer radius in moon radii and its softness.
@@ -193,9 +197,11 @@ struct GpuAtmosphere
     uint32_t milkyWayTexture;
     uint32_t deepSkyTexture;
     float milkyWaySaturation;
+    float moonHeightScale; // the height map's range in moon radii; 0: no relief shadows
+    float moonEarthshineColor[3];
     float pad;
 };
-static_assert(sizeof(GpuAtmosphere) == 464, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 480, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.

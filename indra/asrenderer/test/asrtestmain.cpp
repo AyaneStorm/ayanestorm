@@ -9,6 +9,7 @@
  *                   [--street]           walk through it at street level
  *                   [--sky NAME]         test sky: earth, noon, sunset, night, high, haze or fog
  *                   [--sky-view]         look across the city to the horizon, half sky
+ *                   [--look-moon]        a still camera zoomed on the moon
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--audit]            count pixels occlusion culling should have kept
  *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
@@ -69,12 +70,13 @@ using Clock = std::chrono::steady_clock;
 bool sOverlays = false; // --overlay
 asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
+bool sLookMoon = false; // --look-moon
 std::string sMoonMaps;  // --moon-maps DIR
 
 std::vector<uint8_t> readFile(const std::string& path); // below
 
 // --moon-maps: the viewer's moon (as_moon_albedo.png, as_moon_normal.png) as raw RGBA,
-// moon_albedo.rgba at 2048 x 1024 and moon_normal.rgba at 1024 x 512, made into a sphere
+// moon_albedo.rgba at 2048 x 1024 and moon_normal.rgba at 2048 x 1024 (heights in alpha), made into a sphere
 // moon. The test has no image decoder: Python with Pillow writes these from the PNGs.
 bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyInput& sky)
 {
@@ -84,7 +86,7 @@ bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyI
         uint32_t width;
         uint32_t height;
         uint32_t* bits;
-    } maps[2] = { { "moon_albedo.rgba", 2048, 1024, &sky.moonTexture }, { "moon_normal.rgba", 1024, 512, &sky.moonNormalTexture } };
+    } maps[2] = { { "moon_albedo.rgba", 2048, 1024, &sky.moonTexture }, { "moon_normal.rgba", 2048, 1024, &sky.moonNormalTexture } };
     for (const auto& map : maps)
     {
         const std::vector<uint8_t> pixels = readFile(dir + "/" + map.name);
@@ -107,6 +109,7 @@ bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyI
         *map.bits = slot | (uint32_t(asr::UISampler::LinearWrap) << asr::UI_SAMPLER_SHIFT);
     }
     sky.moonSphere = true;
+    sky.moonHeightRange = 19.75f; // as_moon_normal.png's alpha: -9 to 10.75 km
     return true;
 }
 
@@ -2830,6 +2833,12 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     {
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
         city->skyView = sSkyView;
+        if (sLookMoon)
+        {
+            // The disc fills about 70% of the window's height.
+            std::copy(sSky.moonDirection, sSky.moonDirection + 3, city->lookDirection);
+            city->lookFov = 2.f * sSky.moonAngularRadius / 0.7f;
+        }
         if (!sMoonMaps.empty() && !loadMoonMaps(device->textures(), sMoonMaps, sSky))
         {
             return 1;
@@ -3112,6 +3121,11 @@ int main(int argc, char** argv)
         else if (arg == "--moon-maps" && i + 1 < argc)
         {
             sMoonMaps = argv[++i];
+        }
+        else if (arg == "--look-moon")
+        {
+            sLookMoon = true;
+            drawScene = true;
         }
         else if (arg == "--sky-view")
         {
