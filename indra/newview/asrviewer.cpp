@@ -12,9 +12,11 @@
 #include "asrtexturecache.h"
 #include "asrworld.h"
 #include "llagent.h"
+#include "llapp.h"
 #include "llappviewer.h"
 #include "llenvironment.h"
 #include "llsettingssky.h"
+#include "llstartup.h"
 #include "llviewerregion.h"
 #include "llviewertexture.h"
 #include "llcoord.h"
@@ -60,6 +62,17 @@ bool sFellBack = false;
 #if ASR_VIEWER_SUPPORTED
 
 using Clock = std::chrono::steady_clock;
+
+// The one gate for the viewer's world state in the per-frame code: the environment, the
+// agent and its regions, the selection, and any other singleton. Frames are published from
+// the window's creation to its end, so also before login and during shutdown, when those
+// do not exist yet or any more, and calling instance() then builds one out of order: that
+// is how these crashes happen. Every read of them from here goes inside this gate, rather
+// than a check of its own at each place.
+bool worldReady()
+{
+    return LLStartUp::getStartupState() >= STATE_STARTED && !LLApp::isExiting();
+}
 
 // One EEP density profile (rayleigh_config, mie_config, absorption_config) in the
 // renderer's form. EEP keeps heights in metres and the renderer in kilometres, so widths
@@ -108,7 +121,7 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     tone.exposure = llclamp(F32(exposure()), 0.5f, 4.f); // GL's range
     tone.mapper = llmin(U32(mapper()), asr::TONE_MAPPER_AGX);
 
-    const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky();
+    const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky(); // inside worldReady()
     if (!current)
     {
         tone.mix = 0.7f;
@@ -669,7 +682,10 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.height = sHeight;
     state.hasCamera = sHasCamera;
     state.camera = sCamera;
-    fillSky(state.sky, state.tone);
+    if (sHasCamera) // the sky is only read with a scene, after login
+    {
+        fillSky(state.sky, state.tone);
+    }
     state.turn = sCameraTurn;
     static LLCachedControl<bool> predict_camera(gSavedSettings, "ASRendererCameraPrediction", true);
     state.predictCamera = predict_camera;
