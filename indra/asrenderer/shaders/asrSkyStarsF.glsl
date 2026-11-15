@@ -25,7 +25,9 @@ void main()
     ViewRef view = ViewRef(push.view);
     const Atmosphere a = loadAtmosphere(view.atmosphere);
     const uint bits = AtmosphereRef(view.atmosphere).starTexture;
-    vec4 image = vec4(1.0);
+    // Without an image, a soft round dot, as EEP's default star image is.
+    const float r = min(length(vary_uv - 0.5) * 2.0, 1.0);
+    vec4 image = vec4(1.0, 1.0, 1.0, (1.0 - r * r) * (1.0 - r * r));
     if (bits != NO_SKY_TEXTURE)
     {
         const uint slot = bits & 0xFFFFFu;

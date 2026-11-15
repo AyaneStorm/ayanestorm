@@ -125,7 +125,19 @@ void fillMoon(asr::SkyInput& sky, const LLSettingsSky& current)
     constexpr F32 MOON_SKY_SHARE = 3e-3f;
 
     const LLVector3 direction = current.getMoonDirection();
-    const LLVector3 up = direction.mV[VZ] > 0.99f ? LLVector3::z_axis * current.getMoonRotation() : LLVector3::z_axis; // as llvosky.cpp
+    LLVector3 up = direction.mV[VZ] > 0.99f ? LLVector3::z_axis * current.getMoonRotation() : LLVector3::z_axis; // as llvosky.cpp
+    if (ASStars::realSkyActive())
+    {
+        // The real sky: the moon's north towards the celestial pole, as the stars are turned
+        // for ASStarsLatitude and the sidereal time (fillStars() ran first). Upside down
+        // south of the equator, tipped near it and turning through the night. The phase
+        // tilt then turns the terminator against the moon's own face.
+        const LLVector3 pole(sky.starRotation[6], sky.starRotation[7], sky.starRotation[8]);
+        if (fabsf(pole * direction) < 0.99f)
+        {
+            up = pole;
+        }
+    }
     for (S32 i = 0; i < 3; ++i)
     {
         sky.moonDirection[i] = direction.mV[i];
@@ -270,8 +282,8 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.sunIlluminance[1] = sunlight.mV[1];
     sky.sunIlluminance[2] = sunlight.mV[2];
 
+    fillStars(sky, *current); // first: the moon takes its orientation from the stars' frame
     fillMoon(sky, *current);
-    fillStars(sky, *current);
 }
 
 constexpr char STALL_SETTING[] = "ASRendererStallTestAt";
