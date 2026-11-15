@@ -57,7 +57,11 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     vec4 moonDirection;        // w: cosine of the radius past which nothing of the moon lies
     vec4 moonUp;               // w: the moon's angular radius
     vec4 moonIlluminance;      // w: the moon's texture bits
-    vec4 aerial;               // x: the aerial volume's far edge, km
+    vec4 aerial;               // x: the aerial volume's far edge, km; y: moon normal map bits; z: moon is a
+                               // sphere; w: the moon's light on the sky against full moon
+    vec4 moonLight;            // where the sphere is lit from; w: terminator softness
+    vec4 moonLook;             // earthshine, relief, halo strength, halo radius
+    vec4 moonHalo;             // x: halo softness, y: disc brightness against the exposure
 };
 
 struct Atmosphere
@@ -87,6 +91,17 @@ struct Atmosphere
     float moonCosRadius;
     float moonAngularRadius;
     float aerialDistance;
+    uint moonNormalTexture;
+    bool moonSphere;
+    vec3 moonSkyLight; // what the moon gives the sky at its phase
+    vec3 moonLightDirection;
+    float moonTerminatorSoftness;
+    float moonEarthshine;
+    float moonRelief;
+    float moonHaloStrength;
+    float moonHaloRadius;
+    float moonHaloSoftness;
+    float moonBrightness;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -121,6 +136,17 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonCosRadius = ref.moonDirection.w;
     a.moonAngularRadius = ref.moonUp.w;
     a.aerialDistance = ref.aerial.x;
+    a.moonNormalTexture = floatBitsToUint(ref.aerial.y);
+    a.moonSphere = floatBitsToUint(ref.aerial.z) != 0u;
+    a.moonSkyLight = ref.moonIlluminance.xyz * ref.aerial.w;
+    a.moonLightDirection = ref.moonLight.xyz;
+    a.moonTerminatorSoftness = ref.moonLight.w;
+    a.moonEarthshine = ref.moonLook.x;
+    a.moonRelief = ref.moonLook.y;
+    a.moonHaloStrength = ref.moonLook.z;
+    a.moonHaloRadius = ref.moonLook.w;
+    a.moonHaloSoftness = ref.moonHalo.x;
+    a.moonBrightness = ref.moonHalo.y;
     return a;
 }
 
@@ -140,8 +166,9 @@ float aerialSliceDistance(Atmosphere a, float z)
 }
 
 // The air between the camera and a point `metres` away seen at screen position uv
-// (0 to 1 over the view), laid over its colour. Nearer than the first slice's centre fades
-// to nothing, as the sample does.
+// (0 to 1 over the view), laid over its colour: the volume holds the light of sun and moon
+// at their own brightness. Nearer than the first slice's centre fades to nothing, as the
+// sample does.
 vec3 applyAerial(Atmosphere a, vec3 color, vec2 uv, float metres)
 {
     float slice = sqrt(metres * 0.001 / a.aerialDistance) * AERIAL_LUT_SIZE;
@@ -152,7 +179,7 @@ vec3 applyAerial(Atmosphere a, vec3 color, vec2 uv, float metres)
         slice = 0.5;
     }
     const vec4 air = textureLod(sampler3D(aerialLut, samplers[0]), vec3(uv, slice / AERIAL_LUT_SIZE), 0.0);
-    return color * mix(1.0, air.a, weight) + air.rgb * (weight * a.sunIlluminance);
+    return color * mix(1.0, air.a, weight) + air.rgb * weight;
 }
 
 // The camera in atmosphere space.
@@ -277,21 +304,34 @@ vec2 skyViewParamsToUv(Atmosphere a, bool intersectGround, float viewZenithCos, 
     return vec2(fromUnitToSubUvs(uv.x, SKY_VIEW_LUT_SIZE.x), fromUnitToSubUvs(uv.y, SKY_VIEW_LUT_SIZE.y));
 }
 
-// The sky seen from the camera in a world direction, for a sun of brightness 1.
-vec3 sampleSkyView(Atmosphere a, vec3 direction)
+// The sky view texture holds two tables of SKY_VIEW_LUT_SIZE: the sky lit by the sun on top
+// (light 0), by the moon below (light 1).
+const uint SKY_LIGHT_SUN = 0u;
+const uint SKY_LIGHT_MOON = 1u;
+
+// The sky seen from the camera in a world direction, lit by one light of brightness 1.
+vec3 sampleSkyView(Atmosphere a, vec3 direction, vec3 lightDirection, uint light)
 {
     const vec3 position = atmosphereCamera(a);
     const float viewHeight = length(position);
     const vec3 up = position / viewHeight;
     const float viewZenithCos = dot(direction, up);
-    // The sun's angle around the zenith; straight up or down any angle is right.
+    // The light's angle around the zenith; straight up or down any angle is right.
     const vec2 viewOnPlane = direction.xy;
-    const vec2 sunOnPlane = a.sunDirection.xy;
-    const float lengths = length(viewOnPlane) * length(sunOnPlane);
-    const float lightViewCos = lengths > 1e-6 ? dot(viewOnPlane, sunOnPlane) / lengths : 1.0;
+    const vec2 lightOnPlane = lightDirection.xy;
+    const float lengths = length(viewOnPlane) * length(lightOnPlane);
+    const float lightViewCos = lengths > 1e-6 ? dot(viewOnPlane, lightOnPlane) / lengths : 1.0;
     const bool intersectGround = raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0;
-    const vec2 uv = skyViewParamsToUv(a, intersectGround, viewZenithCos, lightViewCos, viewHeight);
+    vec2 uv = skyViewParamsToUv(a, intersectGround, viewZenithCos, lightViewCos, viewHeight);
+    uv.y = (uv.y + float(light)) * 0.5; // texel centres of its own half: no bleeding across
     return textureLod(sampler2D(skyViewLut, samplers[0]), uv, 0.0).rgb;
+}
+
+// The sky seen from the camera in a world direction, sun and moon at their own brightness.
+vec3 skyRadiance(Atmosphere a, vec3 direction)
+{
+    return sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN) * a.sunIlluminance
+           + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight;
 }
 
 float rayleighPhase(float cosTheta)

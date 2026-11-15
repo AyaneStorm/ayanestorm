@@ -815,7 +815,7 @@ private:
     {
         mSky.transmittance = createSkyTable(TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT, "transmittance table");
         mSky.multiscatter = createSkyTable(MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE, "multiple scattering table");
-        mSky.skyView = createSkyTable(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT, "sky view table");
+        mSky.skyView = createSkyTable(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT, "sky view table");
         mSky.aerial = createSkyTable(AERIAL_LUT_SIZE, AERIAL_LUT_SIZE, "aerial perspective volume", AERIAL_LUT_SIZE);
         mSky.exposure = createSceneBuffer(sizeof(GpuExposure), MemoryCategory::RenderTargets, "exposure", true);
         if (!mSky.transmittance || !mSky.multiscatter || !mSky.skyView || !mSky.aerial || !mSky.exposure)
@@ -874,7 +874,8 @@ private:
         mGraph.setBody(PassSkyViewLut, [this]()
         {
             return passSkyTable(mSky.skyViewPipeline, mSky.skyView, 13,
-                                MTLSizeMake((SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group, 1), MTLSizeMake(group, group, 1));
+                                MTLSizeMake((SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT + group - 1) / group, 1),
+                                MTLSizeMake(group, group, 1));
         });
         mGraph.setBody(PassAerialLut, [this]()
         {

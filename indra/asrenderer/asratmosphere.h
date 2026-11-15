@@ -67,7 +67,31 @@ struct SkyInput
     float moonDirection[3]{};        // towards the moon, unit length
     float moonUp[3]{};
     float moonAngularRadius = 0.f;   // radians, half the square's side, or the disc's radius
-    float moonIlluminance[3]{};      // what the whole moon gives, in the sun's units
+    float moonIlluminance[3]{};      // what the whole moon gives the sky at full moon, in the sun's units
+    // The disc's own brightness, against the frame's exposure: a white point of it at full
+    // light shows at this before tone mapping, at any time of day. A moon bright enough to
+    // light the night is thousands of times past white at night's exposure, where the eye
+    // still sees its face, so the disc does not follow moonIlluminance. EEP moon_brightness
+    // times ASMoonBrightnessMultiplier in the viewer.
+    float moonBrightness = 1.f;
+    // The default moon: a lit sphere, moonTexture then its surface colour as an
+    // equirectangular map of the whole moon (the side facing the Earth in the middle), with
+    // this normal map (tangent space: x east, y north). Custom moons stay flat images.
+    bool moonSphere = false;
+    uint32_t moonNormalTexture = NO_SKY_TEXTURE;
+    // The phase is the artist's, not the sun's (ASMoonPhase): 0 new, 0.25 first quarter (lit
+    // on the right), 0.5 full, 0.75 last quarter. The tilt turns the terminator around the
+    // disc, counterclockwise (ASMoonPhaseTilt). The moon's light on the sky follows the phase.
+    float moonPhase = 0.5f;
+    float moonPhaseTilt = 0.f;          // radians
+    float moonTerminatorSoftness = 0.f; // ASMoonPhaseSoftness: 0 is the sharp physical edge
+    float moonEarthshine = 0.f;         // light on the dark side, against the lit side
+    float moonRelief = 1.f;             // the normal map's strength: 1 is the real relief
+    // A halo around any moon, over the glow the air gives (ASMoonHalo*): its strength
+    // against the disc's brightness, its outer radius in moon radii and its softness.
+    float moonHaloStrength = 0.f;
+    float moonHaloRadius = 2.f;
+    float moonHaloSoftness = 1.f;
 };
 
 SkyInput earthSky();
@@ -79,6 +103,7 @@ constexpr uint32_t TRANSMITTANCE_LUT_HEIGHT = 64;
 constexpr uint32_t MULTISCATTER_LUT_SIZE = 32;
 constexpr uint32_t SKY_VIEW_LUT_WIDTH = 192;
 constexpr uint32_t SKY_VIEW_LUT_HEIGHT = 108;
+constexpr uint32_t SKY_VIEW_LUT_LIGHTS = 2; // one table per light, sun then moon, one above the other
 // The aerial perspective volume: the screen in 32 by 32 columns, each the air along one view
 // ray, in 32 slices spread as the square of their number out to the draw distance, so near
 // slices are thin (sample: 32 slices of 4 km, made for flight; SL sees at most 1 km).
@@ -115,9 +140,20 @@ struct GpuAtmosphere
     float moonIlluminance[3];
     uint32_t moonTexture;
     float aerialDistance; // km: the far edge of the aerial perspective volume
-    float pad[3];
+    uint32_t moonNormalTexture;
+    uint32_t moonSphere;
+    float moonSkyScale;   // the moon's light on the sky against full moon: its phase
+    float moonLightDirection[3];
+    float moonTerminatorSoftness;
+    float moonEarthshine;
+    float moonRelief;
+    float moonHaloStrength;
+    float moonHaloRadius;
+    float moonHaloSoftness;
+    float moonBrightness;
+    float pad[2];
 };
-static_assert(sizeof(GpuAtmosphere) == 336, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 384, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.

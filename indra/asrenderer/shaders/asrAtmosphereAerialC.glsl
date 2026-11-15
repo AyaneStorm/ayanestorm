@@ -3,8 +3,8 @@
  * The aerial perspective volume: for 32 by 32 view rays across the screen, the light the air
  * scatters towards the camera and the share it lets through, up to each of 32 distances
  * (asratmosphere.h). One thread marches one ray once, two steps a slice, storing as it
- * passes each slice's distance, so no stretch of air is marched twice. rgb: light for a sun
- * of brightness 1; a: transmittance, the mean of the three.
+ * passes each slice's distance, so no stretch of air is marched twice. rgb: the light of sun
+ * and moon at their own brightness; a: transmittance, the mean of the three.
  * The march is the sample's (RenderSkyRayMarching.hlsl, its camera volumes); licence in
  * asrAtmosphere.glsl.
  */
@@ -33,9 +33,16 @@ void main()
     const vec3 direction = viewDirection(view, ndc);
     const vec3 origin = atmosphereCamera(a);
 
-    const float cosTheta = dot(a.sunDirection, direction);
-    const float miePhaseValue = miePhase(a.mieG, -cosTheta);
-    const float rayleighPhaseValue = rayleighPhase(cosTheta);
+    const vec3 lightDirections[2] = vec3[2](a.sunDirection, a.moonDirection);
+    const vec3 lightColors[2] = vec3[2](a.sunIlluminance, a.moonSkyLight);
+    vec2 miePhases;
+    vec2 rayleighPhases;
+    for (int l = 0; l < 2; ++l)
+    {
+        const float cosTheta = dot(lightDirections[l], direction);
+        miePhases[l] = miePhase(a.mieG, -cosTheta);
+        rayleighPhases[l] = rayleighPhase(cosTheta);
+    }
     // The ray goes on through the planet: SL ground can lie below altitude 0 (the water
     // height), and anything drawn there still has the air in front of it. Density keeps
     // its altitude 0 value below the ground, and earth shadow and the sun's transmittance
@@ -56,14 +63,17 @@ void main()
 
             const float pHeight = length(p);
             const vec3 up = p / pHeight;
-            const float sunZenithCos = dot(a.sunDirection, up);
-            const vec3 transmittanceToSun = sampleTransmittance(a, pHeight, sunZenithCos);
-            const vec3 phaseTimesScattering = medium.scatteringMie * miePhaseValue + medium.scatteringRay * rayleighPhaseValue;
-            const float tEarth = raySphereIntersectNearest(p - PLANET_RADIUS_OFFSET * up, a.sunDirection, a.bottomRadius);
-            const float earthShadow = tEarth >= 0.0 ? 0.0 : 1.0;
-            const vec3 multiscattered = sampleMultiscatter(a, p, sunZenithCos) * a.multipleScattering;
-
-            const vec3 S = earthShadow * transmittanceToSun * phaseTimesScattering + multiscattered * medium.scattering;
+            vec3 S = vec3(0.0);
+            for (int l = 0; l < 2; ++l)
+            {
+                const float lightZenithCos = dot(lightDirections[l], up);
+                const vec3 transmittanceToLight = sampleTransmittance(a, pHeight, lightZenithCos);
+                const vec3 phaseTimesScattering = medium.scatteringMie * miePhases[l] + medium.scatteringRay * rayleighPhases[l];
+                const float tEarth = raySphereIntersectNearest(p - PLANET_RADIUS_OFFSET * up, lightDirections[l], a.bottomRadius);
+                const float earthShadow = tEarth >= 0.0 ? 0.0 : 1.0;
+                const vec3 multiscattered = sampleMultiscatter(a, p, lightZenithCos) * a.multipleScattering;
+                S += lightColors[l] * (earthShadow * transmittanceToLight * phaseTimesScattering + multiscattered * medium.scattering);
+            }
             const vec3 extinction = max(medium.extinction, vec3(1e-9));
             luminance += throughput * (S - S * stepTransmittance) / extinction;
             throughput *= stepTransmittance;

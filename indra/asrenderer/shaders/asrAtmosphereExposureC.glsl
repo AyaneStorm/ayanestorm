@@ -44,12 +44,12 @@ void main()
         const vec2 u = (vec2(cell % 32u, cell / 32u) + 0.5) / 32.0;
         const float phi = 2.0 * ATMOSPHERE_PI * u.y;
         const float r = sqrt(u.x);
-        cosineSum += sampleSkyView(a, vec3(r * cos(phi), r * sin(phi), sqrt(max(1.0 - u.x, 0.0))));
+        cosineSum += skyRadiance(a, vec3(r * cos(phi), r * sin(phi), sqrt(max(1.0 - u.x, 0.0))));
         const float z = u.x;
         const float side = sqrt(max(1.0 - z * z, 0.0));
-        uniformSum += sampleSkyView(a, vec3(side * cos(phi), side * sin(phi), z));
+        uniformSum += skyRadiance(a, vec3(side * cos(phi), side * sin(phi), z));
     }
-    sharedSums[thread] = vec2(dot(cosineSum * a.sunIlluminance, LUMINANCE), dot(uniformSum * a.sunIlluminance, LUMINANCE));
+    sharedSums[thread] = vec2(dot(cosineSum, LUMINANCE), dot(uniformSum, LUMINANCE));
     barrier();
     for (uint half_ = 32u; half_ > 0u; half_ >>= 1u)
     {

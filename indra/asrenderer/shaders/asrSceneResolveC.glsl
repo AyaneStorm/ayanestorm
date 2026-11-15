@@ -54,12 +54,77 @@ vec3 sunDisc(Atmosphere a, float cosAngle)
     return a.sunIlluminance * (darkening / (2.0 * ATMOSPHERE_PI * (1.0 - a.sunCosRadius)));
 }
 
-// The background: the sky view table, and behind the air, dimmed by it and hidden by the
-// planet, the moon, then the sun over it. pixelAngle: a pixel's size on the sky, radians.
-// The stars are the viewer's catalogue (ASStars), drawn by their own pass.
+// The default moon as a sphere: each pixel of its disc finds its point on the sphere, lit
+// with Lommel-Seeliger, the law of dusty bodies like the moon, which keeps a full moon as
+// bright at its edge as in its middle (2 mu0 / (mu0 + mu), 1 there). Surface colour and
+// normals are equirectangular maps of the whole moon, the side facing the Earth in the
+// middle, its north towards moonUp. Lit from moonLightDirection, which its phase gives, not
+// the sun. rgb: against the disc's brightness, a: cover, the edge smoothed over a pixel.
+vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
+{
+    const vec3 toViewer = -a.moonDirection;
+    const vec3 up = normalize(a.moonUp - a.moonDirection * dot(a.moonUp, a.moonDirection));
+    const vec3 right = cross(up, toViewer);
+    const vec2 disc = vec2(dot(direction, right), dot(direction, up)) / (dot(direction, a.moonDirection) * a.moonAngularRadius);
+    const float r = length(disc);
+    const float cover = clamp((1.0 - r) * a.moonAngularRadius / pixelAngle + 0.5, 0.0, 1.0);
+    if (cover <= 0.0)
+    {
+        return vec4(0.0);
+    }
+    const vec2 onDisc = r > 1.0 ? disc / r : disc;
+    const vec3 normal = onDisc.x * right + onDisc.y * up + sqrt(max(1.0 - dot(onDisc, onDisc), 0.0)) * toViewer;
+
+    // Longitude grows to the viewer's right (east, as the moon is mapped), latitude north.
+    const float longitude = atan(dot(normal, right), dot(normal, toViewer));
+    const float latitude = asin(clamp(dot(normal, up), -1.0, 1.0));
+    const vec2 uv = vec2(longitude / (2.0 * ATMOSPHERE_PI) + 0.5, 0.5 - latitude / ATMOSPHERE_PI);
+    // A pixel spans pixelAngle / radius radians of the sphere at the disc's centre.
+    const float arc = pixelAngle / a.moonAngularRadius;
+    const vec2 uvDx = vec2(arc / (2.0 * ATMOSPHERE_PI), 0.0);
+    const vec2 uvDy = vec2(0.0, arc / ATMOSPHERE_PI);
+
+    vec3 albedo = vec3(1.0);
+    if (a.moonTexture != NO_SKY_TEXTURE)
+    {
+        albedo = srgbToLinear(sampleBits(pixel, a.moonTexture, uv, uvDx, uvDy).rgb);
+    }
+    vec3 surface = normal;
+    if (a.moonNormalTexture != NO_SKY_TEXTURE && a.moonRelief > 0.0)
+    {
+        const vec3 east = normalize(cross(up, normal) + 1e-6 * right);
+        const vec3 north = cross(normal, east);
+        vec3 tangent = sampleBits(pixel, a.moonNormalTexture, uv, uvDx, uvDy).rgb * 2.0 - 1.0;
+        tangent.xy *= a.moonRelief;
+        surface = normalize(tangent.x * east + tangent.y * north + max(tangent.z, 0.0) * normal);
+    }
+    // The terminator softened as ASMoonPhaseSoftness asks: the lit side wraps past it.
+    const float soft = a.moonTerminatorSoftness;
+    const float mu0 = clamp((dot(surface, a.moonLightDirection) + soft) / (1.0 + soft), 0.0, 1.0);
+    const float mu = max(dot(surface, toViewer), 0.05);
+    const float lit = 2.0 * mu0 / (mu0 + mu);
+    return vec4(albedo * (lit + a.moonEarthshine), cover);
+}
+
+// The halo around the moon (ASMoonHalo*), over the air's own glow: from the disc's edge out
+// to moonHaloRadius radii, against the disc's brightness, fading as its softness asks.
+// Returns its share of the disc's brightness.
+float moonHalo(Atmosphere a, float moonCos)
+{
+    const float rings = (acos(clamp(moonCos, -1.0, 1.0)) / a.moonAngularRadius - 1.0) / (a.moonHaloRadius - 1.0);
+    if (a.moonHaloStrength <= 0.0 || rings <= 0.0 || rings >= 1.0)
+    {
+        return 0.0;
+    }
+    return a.moonHaloStrength * pow(1.0 - rings, 2.0 / a.moonHaloSoftness);
+}
+
+// The background: the sky lit by sun and moon, and behind the air, dimmed by it and hidden
+// by the planet, the moon, then the sun over it. pixelAngle: a pixel's size on the sky,
+// radians. The stars are the viewer's catalogue (ASStars), drawn by their own pass.
 vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
 {
-    vec3 luminance = sampleSkyView(a, direction) * a.sunIlluminance;
+    vec3 luminance = skyRadiance(a, direction);
     const vec3 position = atmosphereCamera(a);
     if (raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0)
     {
@@ -70,15 +135,22 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     const float moonCos = dot(direction, a.moonDirection);
     if (moonCos > a.moonCosRadius)
     {
-        const float moonSolidAngle = ATMOSPHERE_PI * a.moonAngularRadius * a.moonAngularRadius;
-        if (a.moonTexture != NO_SKY_TEXTURE)
+        // Against the exposure, so the disc shows its face at any time (SkyInput::moonBrightness).
+        const float moonLuminance = a.moonBrightness / ExposureRef(ViewRef(push.view).exposure).exposure;
+        space += moonLuminance * moonHalo(a, moonCos);
+        if (a.moonSphere)
+        {
+            const vec4 moon = moonSphere(pixel, a, direction, pixelAngle);
+            space = mix(space, moon.rgb * moonLuminance, moon.a);
+        }
+        else if (a.moonTexture != NO_SKY_TEXTURE)
         {
             const vec4 moon = skyImage(pixel, a.moonTexture, a.moonDirection, a.moonUp, a.moonAngularRadius, direction, pixelAngle);
-            space = mix(space, moon.rgb * a.moonIlluminance / moonSolidAngle, moon.a);
+            space = mix(space, moon.rgb * moonLuminance, moon.a);
         }
-        else
+        else if (moonCos > cos(a.moonAngularRadius))
         {
-            space = a.moonIlluminance / moonSolidAngle;
+            space = vec3(moonLuminance);
         }
     }
 

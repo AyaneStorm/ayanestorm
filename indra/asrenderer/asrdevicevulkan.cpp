@@ -1564,7 +1564,7 @@ private:
                           { TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT }) ||
             !createTarget(mSky.multiscatter, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "multiple scattering table",
                           { MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE }) ||
-            !createTarget(mSky.skyView, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT }) ||
+            !createTarget(mSky.skyView, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT }) ||
             !createTarget(mSky.aerial, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "aerial perspective volume", { AERIAL_LUT_SIZE, AERIAL_LUT_SIZE },
                           AERIAL_LUT_SIZE) ||
             !createBufferObject(mSky.exposure, sizeof(GpuExposure), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "exposure", MemoryCategory::RenderTargets, true))
@@ -1618,7 +1618,8 @@ private:
         mGraph.setBody(PassMultiscatterLut, [this]() { return passSkyTable(mSky.multiscatterPipeline, MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE); });
         mGraph.setBody(PassSkyViewLut, [this]()
         {
-            return passSkyTable(mSky.skyViewPipeline, (SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group);
+            return passSkyTable(mSky.skyViewPipeline, (SKY_VIEW_LUT_WIDTH + group - 1) / group,
+                                (SKY_VIEW_LUT_LIGHTS * SKY_VIEW_LUT_HEIGHT + group - 1) / group);
         });
         mGraph.setBody(PassAerialLut, [this]() { return passSkyTable(mSky.aerialPipeline, AERIAL_LUT_SIZE / group, AERIAL_LUT_SIZE / group); });
         mGraph.setBody(PassExposure, [this]() { return passSkyTable(mSky.exposurePipeline, 1, 1); });

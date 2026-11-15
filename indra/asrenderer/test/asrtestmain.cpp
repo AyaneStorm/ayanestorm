@@ -9,6 +9,7 @@
  *                   [--street]           walk through it at street level
  *                   [--sky NAME]         test sky: earth, noon, sunset, night, high, haze or fog
  *                   [--sky-view]         look across the city to the horizon, half sky
+ *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--audit]            count pixels occlusion culling should have kept
  *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
@@ -68,6 +69,46 @@ using Clock = std::chrono::steady_clock;
 bool sOverlays = false; // --overlay
 asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
+std::string sMoonMaps;  // --moon-maps DIR
+
+std::vector<uint8_t> readFile(const std::string& path); // below
+
+// --moon-maps: the viewer's moon (as_moon_albedo.png, as_moon_normal.png) as raw RGBA,
+// moon_albedo.rgba at 2048 x 1024 and moon_normal.rgba at 1024 x 512, made into a sphere
+// moon. The test has no image decoder: Python with Pillow writes these from the PNGs.
+bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyInput& sky)
+{
+    const struct
+    {
+        const char* name;
+        uint32_t width;
+        uint32_t height;
+        uint32_t* bits;
+    } maps[2] = { { "moon_albedo.rgba", 2048, 1024, &sky.moonTexture }, { "moon_normal.rgba", 1024, 512, &sky.moonNormalTexture } };
+    for (const auto& map : maps)
+    {
+        const std::vector<uint8_t> pixels = readFile(dir + "/" + map.name);
+        if (pixels.size() != size_t(map.width) * map.height * 4)
+        {
+            fprintf(stderr, "--moon-maps: %s/%s is missing or not %u x %u RGBA\n", dir.c_str(), map.name, map.width, map.height);
+            return false;
+        }
+        asr::TextureDesc desc;
+        desc.width = map.width;
+        desc.height = map.height;
+        desc.mipLevels = 1;
+        while ((map.width >> desc.mipLevels) != 0)
+        {
+            ++desc.mipLevels;
+        }
+        const uint32_t slot = textures.create(desc);
+        textures.upload(slot, 0, 0, 0, map.width, map.height, pixels.data(), pixels.size());
+        textures.generateMips(slot);
+        *map.bits = slot | (uint32_t(asr::UISampler::LinearWrap) << asr::UI_SAMPLER_SHIFT);
+    }
+    sky.moonSphere = true;
+    return true;
+}
 
 // The step 1 test skies: the sample's Earth with the sun at a given height, seen from the
 // ground, from 8 km up, or through a haze far denser than Earth's. False for an unknown name.
@@ -135,6 +176,19 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
     for (int i = 0; i < 3; ++i)
     {
         sky.moonIlluminance[i] = 2.5e-6f;
+    }
+    if (name == "night")
+    {
+        // As SL nights have it: a moon four times its real size and far brighter, so the sky
+        // it lights shows over the twilight.
+        sky.moonAngularRadius *= 4.f;
+        for (int i = 0; i < 3; ++i)
+        {
+            sky.moonIlluminance[i] = 3e-3f;
+        }
+        sky.moonEarthshine = 0.05f;
+        sky.moonPhase = 0.3f; // waxing gibbous, lit on the right
+        sky.moonTerminatorSoftness = 0.05f;
     }
     return true;
 }
@@ -2744,6 +2798,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
     {
         city = std::make_unique<asrtest::TestCity>(device->scene(), device->textures(), street);
         city->skyView = sSkyView;
+        if (!sMoonMaps.empty() && !loadMoonMaps(device->textures(), sMoonMaps, sSky))
+        {
+            return 1;
+        }
         if (sOverlays)
         {
             city->showOverlays();
@@ -3018,6 +3076,10 @@ int main(int argc, char** argv)
         else if (arg == "--street")
         {
             street = true;
+        }
+        else if (arg == "--moon-maps" && i + 1 < argc)
+        {
+            sMoonMaps = argv[++i];
         }
         else if (arg == "--sky-view")
         {

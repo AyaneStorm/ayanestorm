@@ -100,8 +100,62 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
     std::copy(sky.moonUp, sky.moonUp + 3, out.moonUp);
     std::copy(sky.moonIlluminance, sky.moonIlluminance + 3, out.moonIlluminance);
     out.moonAngularRadius = sky.moonAngularRadius;
-    // A square's corner reaches sqrt(2) times its half side: nothing of it lies outside that.
-    out.moonCosRadius = std::cos(sky.moonTexture == NO_SKY_TEXTURE ? sky.moonAngularRadius : sky.moonAngularRadius * 1.41422f);
+    out.moonNormalTexture = sky.moonNormalTexture;
+    out.moonSphere = sky.moonSphere ? 1u : 0u;
+    // Where the sphere is lit from, by its phase: from behind the moon at new (theta pi), from
+    // the viewer at full (0), from the disc's right at first quarter, turned by the tilt.
+    const float* d = sky.moonDirection;
+    float up[3];
+    const float upAlong = sky.moonUp[0] * d[0] + sky.moonUp[1] * d[1] + sky.moonUp[2] * d[2];
+    float upLength = 0.f;
+    for (int i = 0; i < 3; ++i)
+    {
+        up[i] = sky.moonUp[i] - d[i] * upAlong;
+        upLength += up[i] * up[i];
+    }
+    upLength = std::sqrt(std::max(upLength, 1e-12f));
+    for (float& u : up)
+    {
+        u /= upLength;
+    }
+    // right = up x toViewer, toViewer = -d
+    const float right[3] = { -(up[1] * d[2] - up[2] * d[1]), -(up[2] * d[0] - up[0] * d[2]), -(up[0] * d[1] - up[1] * d[0]) };
+    const float theta = 3.14159265f * (1.f - 2.f * (sky.moonPhase - std::floor(sky.moonPhase)));
+    const float tiltCos = std::cos(sky.moonPhaseTilt);
+    const float tiltSin = std::sin(sky.moonPhaseTilt);
+    for (int i = 0; i < 3; ++i)
+    {
+        const float side = tiltCos * right[i] + tiltSin * up[i];
+        out.moonLightDirection[i] = std::cos(theta) * -d[i] + std::sin(theta) * side;
+    }
+    out.moonTerminatorSoftness = std::max(sky.moonTerminatorSoftness, 0.f);
+    out.moonEarthshine = std::max(sky.moonEarthshine, 0.f);
+    out.moonRelief = std::max(sky.moonRelief, 0.f);
+    out.moonHaloStrength = std::max(sky.moonHaloStrength, 0.f);
+    out.moonHaloRadius = std::max(sky.moonHaloRadius, 1.01f);
+    out.moonHaloSoftness = std::max(sky.moonHaloSoftness, 0.05f);
+    out.moonBrightness = std::max(sky.moonBrightness, 0.f);
+    out.moonSkyScale = 1.f;
+    if (sky.moonSphere)
+    {
+        // Lommel-Seeliger's sphere, as the moon's shading: its light at phase angle alpha
+        // (light, moon, viewer) against full moon.
+        const float* light = out.moonLightDirection;
+        const float cosAlpha = -(light[0] * sky.moonDirection[0] + light[1] * sky.moonDirection[1] + light[2] * sky.moonDirection[2]);
+        const float alpha = std::acos(std::clamp(cosAlpha, -1.f, 1.f));
+        const float q = alpha * 0.25f;
+        out.moonSkyScale = alpha < 1e-4f ? 1.f
+                         : alpha > 3.1415f ? 0.f
+                         : std::max(0.f, 1.f - std::sin(2.f * q) * std::tan(2.f * q) * std::log(1.f / std::tan(q)));
+    }
+    // The disc, or a square's corner (sqrt(2) times its half side): nothing lies outside. A
+    // sphere's edge is smoothed over a pixel just past its radius.
+    float reach = sky.moonSphere ? 1.05f : sky.moonTexture == NO_SKY_TEXTURE ? 1.f : 1.41422f;
+    if (out.moonHaloStrength > 0.f)
+    {
+        reach = std::max(reach, out.moonHaloRadius);
+    }
+    out.moonCosRadius = std::cos(std::min(sky.moonAngularRadius * reach, 3.1f));
     out.aerialDistance = (drawDistance > 0.f ? drawDistance : AERIAL_DEFAULT_DISTANCE) * 0.001f;
 }
 

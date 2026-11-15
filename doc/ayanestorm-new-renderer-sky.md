@@ -268,6 +268,21 @@ Library only, Vulkan and Metal. Built and run in `asrenderer_test` on Windows wi
 - The default SL moon becomes a lit sphere, made in the shader with no mesh. Its phase comes from the real sun direction. Its surface colour is `moon_2k.tif` and its normal map is made from `moon_displacement_16.tif` (the user's, in E:\dev\AyaneStorm), both shipped as viewer assets. They are converted into `skins/default/textures/as/as_moon_albedo.png` (2048 x 1024) and `as_moon_normal.png` (1024 x 512, from the 16 pixels per degree displacement; mean slope 3 degrees), with `as_moon_CREDITS.txt` and the credit in each PNG's text. Source: NASA's CGI Moon Kit. Every file that ships them, and the viewer's credits, carry this line: "NASA's Scientific Visualization Studio. Visualizer: Ernie Wright (STC). Scientist: Noah Petro (NASA/GSFC)."
 - Custom EEP moon textures stay flat images, as OpenGL draws them.
 - Moon glow: the moon is a second light in the sky tables, so its halo and the night sky's colour come out of the same scattering as the sun's.
+- The phase is the artist's, never the sun's: `moonPhase` and `moonPhaseTilt` as ASMoonPhase and ASMoonPhaseTilt mean them. The moon's light on the sky follows that phase (Lommel-Seeliger's disc-integrated phase law).
+- Size: the moon's angular radius is the real moon's 0.26 degrees times EEP `moon_scale`, so scale 1 looks like the real moon from the Earth (viewer hookup).
+- Every AyaneStorm moon panel feature carries over:
+  - In the viewer: brightness multiplier, horizon tint, horizon minimum opacity.
+  - In the library: phase, tilt, phase softness as the terminator's softness, earthshine, relief strength as the normal map's strength, and halo strength, radius and softness on top of the air's glow.
+  - Phase curvature is dropped (user): in the OpenGL moon shader it shaped a made-up surface depth on the flat disc, and the true sphere gives the real curve.
+
+## Step 1 batch 3a: moon (written 15 November 2026)
+
+Library, Vulkan and Metal. Built and validated on Windows, 0 errors. The user saw the textured moon in `asrenderer_test --sky-view --sky night --moon-maps moon`.
+
+- **Sphere moon** (`moonSphere()` in the resolve): each pixel of the disc finds its point on the sphere. Shading is Lommel-Seeliger (2 mu0 / (mu0 + mu), so a full moon is evenly bright). Colour and normals are read by longitude and latitude, with the edge smoothed over a pixel.
+- **Disc brightness against the exposure:** `moonBrightness` (EEP `moon_brightness` × ASMoonBrightnessMultiplier). A physically bright moon at night's exposure is thousands of times past white, a blown-out disc, so the disc no longer follows `moonIlluminance`, which now only lights the sky.
+- **Moonlight in the air:** the sky view texture holds two tables, sun on top and moon below (`SKY_VIEW_LUT_LIGHTS`). The aerial volume marches both lights and stores light at their own brightness. Exposure meters both.
+- **Test:** `--moon-maps DIR` reads `moon_albedo.rgba` (2048 × 1024) and `moon_normal.rgba` (1024 × 512), raw RGBA written from the PNGs with Pillow, into `build-asr/moon`.
 
 ## Step 1 reading pass (15 November 2026)
 
