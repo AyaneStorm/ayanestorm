@@ -176,6 +176,35 @@ The sky view LUT keeps doing the background beyond, as in the sample.
 
 **Altitude:** SL heights in metres become altitude above the planet's bottom radius, with SL's sea level (water height) as 0. From the ground up to 4096 m and above, the camera stays inside the atmosphere, as the sample assumes.
 
+## From the 2020 paper
+
+Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering Technique', Computer Graphics Forum 39(4), 2020.
+
+### Cost
+
+- **GTX 1080, 1280 × 720:** 0.31 ms for everything, every LUT rebuilt every frame. Of that:
+  - transmittance LUT (256 × 64, 40 steps): 0.01 ms;
+  - sky view LUT (200 × 100, 30 steps): 0.05 ms;
+  - final sky and aerial perspective on screen: 0.14 ms.
+- **For comparison:** Bruneton's model rebuilt in full costs 250 ms.
+- **iPhone 6s:** LUT sizes and step counts are lowered with no difference visible to the eye, about 1 ms in Fortnite. The transmittance LUT is kept the same on every device so the look matches. That is our low tier: smaller multi-scattering, sky view and aerial perspective tables and fewer steps, with the transmittance table identical everywhere.
+
+### Limits to know, because of EEP
+
+- The multiple-scattering shortcut assumes light scatters evenly in all directions after the second bounce. It is accurate for Earth-like air. It drifts in hue when the atmosphere is made very dense, and loses accuracy as Mie g rises.
+- EEP creators often push haze and density multipliers far beyond Earth. Heavy-haze presets are part of the side-by-side tests with the GL viewer. If they drift visibly, the translation clamps density or the multi-scattering LUT takes more steps; to be decided on the measurement.
+
+### Shadows in the atmosphere (mountains, buildings, god rays)
+
+- The paper ray marches the view ray with the cascaded shadow maps, 32 samples (1.0 ms total). It jitters per ray and smooths over frames with TAA (temporal anti-aliasing) and reprojection. **We cannot**: the real render rule bans reprojection.
+- So the shadowed atmosphere is not a separate march. It belongs to the **volumetric lighting pass**: one froxel grid ('froxel' = a cell of the camera frustum, like a 3D pixel). Each froxel gets the atmosphere's scattering and extinction from the `atmosphere` result, plus local fog, plus `sun shadow` and `local shadow atlas` visibility. The grid is integrated front to back once, with the energy-conserving integration from the Frostbite notes.
+- The result is one volume holding the shadowed aerial perspective and the volumetric lighting together, read by the opaque resolve, Mac OIT and water. The unshadowed `aerial perspective` volume stays as the low tier and for views with no volumetrics.
+- Smoothness in one frame comes from the froxel grid's own resolution and a fixed per-pixel blue-noise offset, not from history.
+
+### Not needed
+
+- **Space views:** the sky view LUT wastes most of its texels on empty space when seen from orbit, so the paper switches to marching on screen there. SL cameras stay inside the atmosphere, so that switch is not written.
+
 ## Registry results (made once per frame)
 
 | Result | Read by |
@@ -184,7 +213,8 @@ The sky view LUT keeps doing the background beyond, as in the sample.
 | `transmittance LUT`, `multiscatter LUT` | sun and moon colour, lighting, water, volumetrics, clouds |
 | `sky view LUT` | background, reflections, probes, ambient |
 | `sky ambient SH` | lighting, avatars, Mac OIT |
-| `aerial perspective`, per view | opaque resolve, Mac OIT, water, volumetric lighting |
+| `aerial perspective`, per view (unshadowed, low tier and views without volumetrics) | opaque resolve, Mac OIT, water |
+| `volumetric scattering`, per view (froxel grid: shadowed atmosphere + fog + local lights) | opaque resolve, Mac OIT, water |
 | `cloud shadow` (2D, sun space) | `sun shadow` readers, volumetrics |
 | `clouds`, per view (colour + transmittance, low resolution) | composite, reflections |
 
