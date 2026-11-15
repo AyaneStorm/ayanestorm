@@ -205,8 +205,10 @@ vec3 moonHalo(Atmosphere a, float moonCos)
     // steeply, then trails away: exponential, reaching 5% at the radius for softness 1 (more
     // for softer), faded to nothing over the last third so there is no edge. It shines with
     // the light the moon gives at its phase: a crescent's halo is faint.
-    const float x = (acos(clamp(moonCos, -1.0, 1.0)) / a.moonAngularRadius - 1.0) / (a.moonHaloRadius - 1.0);
-    if (a.moonHaloStrength <= 0.0 || x <= 0.0 || x >= 1.0)
+    // Inside the limb it holds its limb value: the disc's antialiased edge blends over it, and
+    // a zero there would leave a dark ring between disc and halo.
+    const float x = max((acos(clamp(moonCos, -1.0, 1.0)) / a.moonAngularRadius - 1.0) / (a.moonHaloRadius - 1.0), 0.0);
+    if (a.moonHaloStrength <= 0.0 || x >= 1.0)
     {
         return vec3(0.0);
     }
