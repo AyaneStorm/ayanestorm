@@ -31,6 +31,9 @@
 #include <algorithm>
 
 #include "llagent.h"
+// <AS:Chanayane> doAfterInterval: the region environment is asked again when it came too early
+#include "llcallbacklist.h"
+// </AS:Chanayane>
 #include "llviewercontrol.h" // for gSavedSettings
 #include "llviewerregion.h"
 #include "llviewernetwork.h" // <FS:Beq/> for LLGridManager
@@ -1020,7 +1023,10 @@ LLSettingsSky::ptr_t LLEnvironment::getCurrentSky() const
     {
         for (int idx = 0; idx < ENV_END; ++idx)
         {
-            if (mEnvironments[idx]->getSky())
+            // <AS:Chanayane> Cleared environments are null: Use Shared Environment crashed here.
+            //if (mEnvironments[idx]->getSky())
+            if (mEnvironments[idx] && mEnvironments[idx]->getSky())
+            // </AS:Chanayane>
             {
                 psky = mEnvironments[idx]->getSky();
                 break;
@@ -1038,7 +1044,10 @@ LLSettingsWater::ptr_t LLEnvironment::getCurrentWater() const
     {
         for (int idx = 0; idx < ENV_END; ++idx)
         {
-            if (mEnvironments[idx]->getWater())
+            // <AS:Chanayane> Cleared environments are null, as in getCurrentSky().
+            //if (mEnvironments[idx]->getWater())
+            if (mEnvironments[idx] && mEnvironments[idx]->getWater())
+            // </AS:Chanayane>
             {
                 pwater = mEnvironments[idx]->getWater();
                 break;
@@ -1892,6 +1901,15 @@ void LLEnvironment::recordEnvironment(S32 parcel_id, LLEnvironment::EnvironmentI
     if (gAgent.getRegion()->getRegionID() != envinfo->mRegionId && envinfo->mRegionId.notNull())
     {
         LL_INFOS("ENVIRONMENT") << "Requested environmend region id: " << envinfo->mRegionId << " agent is on: " << gAgent.getRegion()->getRegionID() << LL_ENDL;
+        // <AS:Chanayane> The region's capabilities, which send the request, can arrive before
+        // its handshake gives it an id: the answer cannot be checked yet and was dropped for
+        // good, leaving no shared environment (Use Shared Environment then had nothing to go
+        // back to). Ask again once the id may be known.
+        if (gAgent.getRegion()->getRegionID().isNull())
+        {
+            doAfterInterval([]() { LLEnvironment::instance().requestRegion(); }, 1.f);
+        }
+        // </AS:Chanayane>
         return;
     }
 
