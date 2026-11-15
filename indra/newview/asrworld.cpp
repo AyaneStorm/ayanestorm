@@ -36,6 +36,7 @@
 #include "lltoolpie.h"
 #include "llcriticaldamp.h"
 #include "llselectmgr.h"
+#include "llavatarappearancedefines.h"
 #include "llfloaterinspect.h"
 #include "llfloaterreg.h"
 #include "llfocusmgr.h"
@@ -310,6 +311,7 @@ struct WorldObject
     StackKey stackKey{};
     size_t sweepSlot = 0;         // in sSweep
     F64 lodDue = F64_MAX;         // the camera travel at which its LOD is checked: see updateLods()
+    size_t lodSlot = SIZE_MAX;    // its entry in sLodChecks, SIZE_MAX when it has none
     S32 askedLod = -1;            // the finest LOD this object has asked the mesh system for
     bool askedWithHeader = false; // whether the mesh's header was known by then
     S32 skinnedLod = -1;          // rigged: the LOD its skinned faces were last applied at
@@ -324,8 +326,8 @@ struct SweepEntry
 struct LodCheck
 {
     F64 due;
-    LLDrawable* drawable; // may be gone: only compared, and looked up
-    bool operator<(const LodCheck& other) const { return due > other.due; } // soonest on top
+    LLDrawable* drawable;
+    WorldObject* object; // the entry is removed with the object: see removeLodCheck()
 };
 
 struct StackMember
@@ -468,7 +470,7 @@ std::unordered_set<LLDrawable*> sMoved;
 LLVector3 sRenderOrigin;
 
 // How far the camera has moved, added up, and the objects whose LOD is next to change.
-std::priority_queue<LodCheck> sLodChecks;
+std::vector<LodCheck> sLodChecks; // a binary heap, soonest first: see siftLodCheck()
 F64 sCameraTravel = 0.0;
 LLVector3 sLastEye;
 F32 sLastLodScale = 0.f;
@@ -1029,14 +1031,71 @@ void clearObject(LLDrawable* drawable, WorldObject& object)
     }
 }
 
-// Asks for a LOD check at this much camera travel, unless one is due sooner. An older check
-// stays in the queue, and is dropped when it comes up, because its due no longer matches.
+// Each object knows its one entry in the LOD queue, and a sooner check moves that entry. With
+// a plain queue, every move of a moving object left an old entry behind: thousands a second,
+// that once stalled the main thread for seconds after a teleport.
+void placeLodCheck(size_t slot, const LodCheck& check)
+{
+    sLodChecks[slot] = check;
+    check.object->lodSlot = slot;
+}
+
+// Moves the entry at this slot up or down the heap to where its due puts it.
+void siftLodCheck(size_t slot)
+{
+    const LodCheck check = sLodChecks[slot];
+    while (slot > 0 && check.due < sLodChecks[(slot - 1) / 2].due)
+    {
+        placeLodCheck(slot, sLodChecks[(slot - 1) / 2]);
+        slot = (slot - 1) / 2;
+    }
+    for (size_t child = 2 * slot + 1; child < sLodChecks.size(); child = 2 * slot + 1)
+    {
+        if (child + 1 < sLodChecks.size() && sLodChecks[child + 1].due < sLodChecks[child].due)
+        {
+            ++child;
+        }
+        if (!(sLodChecks[child].due < check.due))
+        {
+            break;
+        }
+        placeLodCheck(slot, sLodChecks[child]);
+        slot = child;
+    }
+    placeLodCheck(slot, check);
+}
+
+void removeLodCheck(WorldObject& object)
+{
+    const size_t slot = object.lodSlot;
+    if (slot == SIZE_MAX)
+    {
+        return;
+    }
+    object.lodSlot = SIZE_MAX;
+    object.lodDue = F64_MAX;
+    const LodCheck last = sLodChecks.back();
+    sLodChecks.pop_back();
+    if (slot < sLodChecks.size())
+    {
+        placeLodCheck(slot, last);
+        siftLodCheck(slot);
+    }
+}
+
+// Asks for a LOD check at this much camera travel, unless one is due sooner.
 void scheduleLod(LLDrawable* drawable, WorldObject& object, F64 due)
 {
     if (due < object.lodDue)
     {
         object.lodDue = due;
-        sLodChecks.push({ due, drawable });
+        if (object.lodSlot == SIZE_MAX)
+        {
+            object.lodSlot = sLodChecks.size();
+            sLodChecks.push_back({ due, drawable, &object });
+        }
+        sLodChecks[object.lodSlot].due = due;
+        siftLodCheck(object.lodSlot);
     }
 }
 
@@ -1063,6 +1122,7 @@ void dropObject(LLDrawable* drawable)
     sSweep[object.sweepSlot] = sSweep.back();
     sSweep[object.sweepSlot].object->sweepSlot = object.sweepSlot;
     sSweep.pop_back();
+    removeLodCheck(object);
     sObjects.erase(found);
 }
 
@@ -2806,18 +2866,15 @@ void updateLods()
 
     const auto start = std::chrono::steady_clock::now();
     U32 checked = 0;
-    while (!sLodChecks.empty() && sLodChecks.top().due <= sCameraTravel)
+    while (!sLodChecks.empty() && sLodChecks.front().due <= sCameraTravel)
     {
-        const LodCheck check = sLodChecks.top();
-        sLodChecks.pop();
-        auto found = sObjects.find(check.drawable);
-        if (found == sObjects.end() || found->second.lodDue != check.due)
+        if (++checked % CHECK_EVERY == 0 && std::chrono::steady_clock::now() - start >= BUDGET)
         {
-            continue;
+            return;
         }
-
-        WorldObject& object = found->second;
-        object.lodDue = F64_MAX;
+        const LodCheck check = sLodChecks.front();
+        WorldObject& object = *check.object;
+        removeLodCheck(object);
         LLVOVolume* volume = volumeOf(check.drawable);
         if (volume && !check.drawable->isDead())
         {
@@ -2835,10 +2892,6 @@ void updateLods()
             {
                 sChanged.insert(check.drawable);
             }
-        }
-        if (++checked % CHECK_EVERY == 0 && std::chrono::steady_clock::now() - start >= BUDGET)
-        {
-            return;
         }
     }
 }
@@ -3596,7 +3649,11 @@ void logObjectFaces(const char* what, LLDrawable* drawable, const WorldObject& o
                                 << (shape ? shape->skinJoints[1] : 0) << "/" << (shape ? shape->skinJoints[2] : 0) << "/"
                                 << (shape ? shape->skinJoints[3] : 0) << " skin joints " << (skin ? skin->joints : 0)
                                 << " flags " << face.flags << " alpha " << (face.material ? face.material->desc.color[3] : -1.f)
-                                << " cutoff " << (face.material ? face.material->desc.alphaCutoff : -1.f) << LL_ENDL;
+                                << " cutoff " << (face.material ? face.material->desc.alphaCutoff : -1.f)
+                                << " entry " << (i < size_t(volume->getNumTEs()) ? volume->getTE(S32(i))->getID() : LLUUID::null)
+                                << (i < size_t(volume->getNumTEs()) && LLAvatarAppearanceDefines::LLAvatarAppearanceDictionary::isBakedImageId(volume->getTE(S32(i))->getID()) ? " (bake on mesh)" : "")
+                                << " components " << (i < size_t(volume->getNumTEs()) && volume->getTEImage(S32(i)) ? volume->getTEImage(S32(i))->getComponents() : -1)
+                                << LL_ENDL;
         if (texture)
         {
             LLViewerTexture* image = texture->image.get();
@@ -3607,9 +3664,67 @@ void logObjectFaces(const char* what, LLDrawable* drawable, const WorldObject& o
     }
 }
 
-// What the shift tool found: the object's faces, and anything else in the same place.
+// One object's faces, or why it is not drawn.
+void logDrawable(const std::string& what, LLDrawable* drawable)
+{
+    auto found = sObjects.find(drawable);
+    if (found != sObjects.end())
+    {
+        logObjectFaces(what.c_str(), drawable, found->second);
+        return;
+    }
+    auto leftOut = sLeftOut.find(drawable);
+    const LLViewerObject* object = drawable->getVObj();
+    LL_INFOS("ASRenderer") << what << " " << (object ? object->getID() : LLUUID::null) << " is not drawn here: "
+                           << (leftOut != sLeftOut.end() ? leftOut->second : "unknown") << LL_ENDL;
+}
+
+// What the shift tool found: the object's faces, and anything else in the same place. A
+// click on an avatar stops at the avatar, never at its rigged attachments, so then every
+// attachment it wears is listed instead.
 void logShifted()
 {
+    LLViewerObject* clicked = sShifted->getVObj();
+    if (clicked && clicked->isAvatar())
+    {
+        LLVOAvatar* avatar = static_cast<LLVOAvatar*>(clicked);
+        LL_INFOS("ASRenderer") << "clicked avatar " << avatar->getID() << ", its attachments:" << LL_ENDL;
+        for (const auto& [point, attachment] : avatar->mAttachmentPoints)
+        {
+            for (const auto& attached : attachment->mAttachedObjects)
+            {
+                if (!attached || attached->isDead() || attached->mDrawable.isNull())
+                {
+                    continue;
+                }
+                const std::string where = "attachment on " + attachment->getName();
+                logDrawable(where, attached->mDrawable.get());
+                for (LLViewerObject* child : attached->getChildren())
+                {
+                    if (child && child->mDrawable.notNull())
+                    {
+                        logDrawable(where + ", child", child->mDrawable.get());
+                    }
+                }
+            }
+        }
+        // What the simulator says it wears that the viewer does not hold, which Inspect
+        // cannot list either.
+        U32 absent = 0;
+        for (const auto& [id, point] : avatar->mSimAttachments)
+        {
+            LLViewerObject* object = gObjectList.findObject(id);
+            if (!object || !object->isAttachment())
+            {
+                ++absent;
+                LL_INFOS("ASRenderer") << "  simulator attachment " << id << " on point " << point << ": "
+                                       << (!object ? "missing, never received" : "received but not attached") << LL_ENDL;
+            }
+        }
+        LL_INFOS("ASRenderer") << "  " << avatar->mSimAttachments.size() << " attachments by the simulator, " << absent << " not on the viewer" << LL_ENDL;
+        return;
+    }
+
     auto shifted = sObjects.find(sShifted);
     if (shifted == sObjects.end())
     {
@@ -4224,7 +4339,7 @@ void ASRWorld::stop()
     sStacks.clear();
     sSweep.clear();
     sSweepNext = 0;
-    sLodChecks = {};
+    sLodChecks.clear();
     sCameraTravel = 0.0;
     sObjects.clear();
     sAwaitingAvatar.clear();
