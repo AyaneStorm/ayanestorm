@@ -54,7 +54,14 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 11; // set 1, see createScene()
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 17; // set 1, see createScene()
+constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 14; // the sky's tables read through samplers: 14 to 16
+
+// Set 1's sampled images: the depth, and the sky's tables. The rest are storage images.
+bool sceneBindingSampled(uint32_t binding)
+{
+    return binding == 3 || binding >= SKY_FIRST_SAMPLED_BINDING;
+}
 constexpr VkFormat SELECTION_MASK_FORMAT = VK_FORMAT_R8G8B8A8_UNORM; // see asrOverlayMaskF.glsl
 
 // Mac OIT's targets, as asMacOITCaptureF.glsl accumulates them.
@@ -1293,12 +1300,13 @@ private:
     bool createScene(std::string& error)
     {
         // Visibility, albedo and normals, then depth, which the pyramid reads, then Mac OIT's
-        // moments, tail depth, colour and weights, the lit image and the scene colour.
+        // moments, tail depth, colour and weights, the lit image and the scene colour, the
+        // selection mask, then the sky's tables written (11 to 13) and read (14 to 16).
         VkDescriptorSetLayoutBinding bindings[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
             bindings[i].binding = i;
-            bindings[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            bindings[i].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             bindings[i].descriptorCount = 1;
             bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
         }
@@ -1306,7 +1314,9 @@ private:
         layout.bindingCount = SCENE_IMAGE_BINDINGS;
         layout.pBindings = bindings;
 
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - 1 }, { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1 } };
+        const uint32_t sampledBindings = 1 + SCENE_IMAGE_BINDINGS - SKY_FIRST_SAMPLED_BINDING;
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - sampledBindings },
+                                                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, sampledBindings } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
         pool.poolSizeCount = 2;
@@ -1348,7 +1358,7 @@ private:
         mEncodeBC1Pipeline = mTextureMipPipeline ? createComputePipeline("asrEncodeBC1C", error) : VK_NULL_HANDLE;
         mEncodeBC45Pipeline = mEncodeBC1Pipeline ? createComputePipeline("asrEncodeBC45C", error) : VK_NULL_HANDLE;
         mEncodeBC7Pipeline = mEncodeBC45Pipeline ? createComputePipeline("asrEncodeBC7C", error) : VK_NULL_HANDLE;
-        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error) || !createOverlayPipelines(error))
+        if (!mEncodeBC7Pipeline || !createMacOITPipelines(error) || !createOverlayPipelines(error) || !createSky(error))
         {
             return false;
         }
@@ -1367,6 +1377,9 @@ private:
         mResultImages[ResultMacOITWeights] = &mMacOIT.weights;
         mResultImages[ResultSelectionMask] = &mSelectionMask;
         mResultImages[ResultUIDepth] = &mUIDepth;
+        mResultImages[ResultTransmittanceLut] = &mSky.transmittance;
+        mResultImages[ResultMultiscatterLut] = &mSky.multiscatter;
+        mResultImages[ResultSkyViewLut] = &mSky.skyView;
 
         VkQueryPoolCreateInfo queries{ VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO };
         queries.queryType = VK_QUERY_TYPE_TIMESTAMP;
@@ -1383,7 +1396,7 @@ private:
         const VkBufferUsageFlags viewUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
-            if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView), viewUsage, MemoryCategory::Staging, "scene view") ||
+            if (!growBuffer(mSceneViews[i], sizeof(GpuSceneView) + sizeof(GpuAtmosphere), viewUsage, MemoryCategory::Staging, "scene view") ||
                 !growBuffer(mSceneReadback[i], sizeof(GpuSceneCounts), VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "scene readback", true) ||
                 !growBuffer(mFeedbackReadback[i], FEEDBACK_BYTES, VK_BUFFER_USAGE_TRANSFER_DST_BIT, MemoryCategory::Staging, "texture feedback readback", true))
             {
@@ -1506,7 +1519,9 @@ private:
 
         const VkImageView views[SCENE_IMAGE_BINDINGS] = { mVisibilityImage.view,  mAlbedoImage.view,   mNormalImage.view,     mDepthImage.view,
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
-                                                          mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view };
+                                                          mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
+                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view,
+                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
@@ -1517,11 +1532,88 @@ private:
             writes[i].dstSet = mSceneSet;
             writes[i].dstBinding = i;
             writes[i].descriptorCount = 1;
-            writes[i].descriptorType = i == 3 ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+            writes[i].descriptorType = sceneBindingSampled(i) ? VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE : VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
             writes[i].pImageInfo = &images[i];
         }
         vkUpdateDescriptorSets(mDevice, SCENE_IMAGE_BINDINGS, writes, 0, nullptr);
         return true;
+    }
+
+    // The sky, kept in one place: its tables, their pipelines and their passes (see
+    // asratmosphere.h). The tables are a fixed size, made once; set 1 names them for
+    // writing at 11 to 13 and for sampling at 14 to 16.
+    struct SkyTables
+    {
+        TargetImage transmittance;
+        TargetImage multiscatter;
+        TargetImage skyView;
+        VkPipeline transmittancePipeline = VK_NULL_HANDLE;
+        VkPipeline multiscatterPipeline = VK_NULL_HANDLE;
+        VkPipeline skyViewPipeline = VK_NULL_HANDLE;
+        GpuBuffer exposure; // GpuExposure
+        VkPipeline exposurePipeline = VK_NULL_HANDLE;
+    };
+
+    bool createSky(std::string& error)
+    {
+        const VkImageUsageFlags usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+        if (!createTarget(mSky.transmittance, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "transmittance table",
+                          { TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT }) ||
+            !createTarget(mSky.multiscatter, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "multiple scattering table",
+                          { MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE }) ||
+            !createTarget(mSky.skyView, COLOR_FORMAT, usage, VK_IMAGE_ASPECT_COLOR_BIT, 8, "sky view table", { SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT }) ||
+            !createBufferObject(mSky.exposure, sizeof(GpuExposure), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, "exposure", MemoryCategory::RenderTargets, true))
+        {
+            error = mError;
+            return false;
+        }
+        mSky.transmittancePipeline = createComputePipeline("asrAtmosphereTransmittanceC", error);
+        mSky.multiscatterPipeline = mSky.transmittancePipeline ? createComputePipeline("asrAtmosphereMultiscatterC", error) : VK_NULL_HANDLE;
+        mSky.skyViewPipeline = mSky.multiscatterPipeline ? createComputePipeline("asrAtmosphereSkyViewC", error) : VK_NULL_HANDLE;
+        mSky.exposurePipeline = mSky.skyViewPipeline ? createComputePipeline("asrAtmosphereExposureC", error) : VK_NULL_HANDLE;
+        return mSky.exposurePipeline != VK_NULL_HANDLE;
+    }
+
+    void destroySky()
+    {
+        destroyTarget(mSky.transmittance);
+        destroyTarget(mSky.multiscatter);
+        destroyTarget(mSky.skyView);
+        destroyBufferObject(mSky.exposure, MemoryCategory::RenderTargets);
+        for (VkPipeline pipeline : { mSky.transmittancePipeline, mSky.multiscatterPipeline, mSky.skyViewPipeline, mSky.exposurePipeline })
+        {
+            if (pipeline != VK_NULL_HANDLE)
+            {
+                vkDestroyPipeline(mDevice, pipeline, nullptr);
+            }
+        }
+        mSky = SkyTables();
+    }
+
+    // groups: the dispatch. The multiple scattering pass has a group per texel.
+    bool passSkyTable(VkPipeline pipeline, uint32_t groupsX, uint32_t groupsY)
+    {
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindPipeline(mRecordCommands, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+        vkCmdBindDescriptorSets(mRecordCommands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        pushScene(mRecordCommands);
+        vkCmdDispatch(mRecordCommands, groupsX, groupsY, 1);
+        return true;
+    }
+
+    void setSkyBodies()
+    {
+        static constexpr uint32_t group = 8; // the shaders' local size
+        mGraph.setBody(PassTransmittanceLut, [this]()
+        {
+            return passSkyTable(mSky.transmittancePipeline, (TRANSMITTANCE_LUT_WIDTH + group - 1) / group, (TRANSMITTANCE_LUT_HEIGHT + group - 1) / group);
+        });
+        mGraph.setBody(PassMultiscatterLut, [this]() { return passSkyTable(mSky.multiscatterPipeline, MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE); });
+        mGraph.setBody(PassSkyViewLut, [this]()
+        {
+            return passSkyTable(mSky.skyViewPipeline, (SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group);
+        });
+        mGraph.setBody(PassExposure, [this]() { return passSkyTable(mSky.exposurePipeline, 1, 1); });
     }
 
     // Mac OIT, the native renderer's transparency, kept in one place: its targets, its
@@ -2123,6 +2215,7 @@ private:
         destroyTarget(mUIDepth);
         destroyMacOITTargets();
         destroyMacOITPipelines();
+        destroySky();
         destroyOverlay();
         for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline,
                                      mTextureMipPipeline, mEncodeBC1Pipeline, mEncodeBC45Pipeline, mEncodeBC7Pipeline })
@@ -3491,19 +3584,28 @@ private:
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         view.debugView = mRecordCamera->debugView;
+        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
+        address.buffer = mSceneViews[slot].buffer;
+        const VkDeviceAddress viewAddress = vkGetBufferDeviceAddress(mDevice, &address);
+        view.atmosphere = viewAddress + sizeof(GpuSceneView);
+        view.exposure = mSky.exposure.address;
+        view.userExposure = mRecordTone.exposure;
+        view.toneMix = mRecordTone.mix;
+        view.toneMapper = mRecordTone.mapper;
         if (!prepareOverlay(view, slot))
         {
             return false;
         }
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
+        GpuAtmosphere atmosphere;
+        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2]);
         memcpy(mSceneViews[slot].mapped, &view, sizeof(view));
-        vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view));
+        memcpy(static_cast<char*>(mSceneViews[slot].mapped) + sizeof(view), &atmosphere, sizeof(atmosphere));
+        vmaFlushAllocation(mAllocator, mSceneViews[slot].allocation, 0, sizeof(view) + sizeof(atmosphere));
 
-        VkBufferDeviceAddressInfo address{ VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO };
-        address.buffer = mSceneViews[slot].buffer;
         mScenePush = ScenePush{};
-        mScenePush.view = vkGetBufferDeviceAddress(mDevice, &address);
+        mScenePush.view = viewAddress;
         mScenePush.instances = mSceneTables[uint32_t(SceneTable::Instances)].address;
         mScenePush.geometries = mSceneTables[uint32_t(SceneTable::Geometries)].address;
         mScenePush.clusters = mSceneTables[uint32_t(SceneTable::Clusters)].address;
@@ -3709,6 +3811,7 @@ private:
         mGraph.setBody(PassAuditRead, [this]() { return passAuditRead(); });
         mGraph.setBody(PassReadFeedback, [this]() { return passReadFeedback(); });
         setMacOITBodies();
+        setSkyBodies();
     }
 
     // What this slot's earlier frame left behind. It has finished: its fence was waited on.
@@ -4021,6 +4124,8 @@ private:
         mDiagnostics.checkpoint(commands, PassCount, "texture commands", true);
         mFrameParts.textureCommands = std::chrono::duration<double>(std::chrono::steady_clock::now() - commandsStart).count();
         const bool uiWorldDepth = input.ui && input.ui->worldDepthTested();
+        mRecordSky = input.sky ? *input.sky : earthSky();
+        mRecordTone = input.tone;
         if (input.camera && !recordScene(commands, slot, *input.camera, input.audit, input.overlay, uiWorldDepth))
         {
             return false;
@@ -4316,6 +4421,7 @@ private:
     Overlay mOverlay;
     const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()
     MacOITResources mMacOIT;
+    SkyTables mSky;
     VkExtent2D mSceneExtent{};
     VkOffset2D mWorldViewOffset{}; // where the scene's extent sits in the window, see FrameInput::worldView
     VkExtent2D mWorldViewExtent{}; // what the scene targets should be this frame
@@ -4337,6 +4443,8 @@ private:
     VkCommandBuffer mRecordCommands = VK_NULL_HANDLE;
     uint32_t mRecordSlot = 0;
     const SceneCamera3D* mRecordCamera = nullptr;
+    SkyInput mRecordSky = earthSky(); // the frame's sky, copied in since the input does not outlive the call
+    ToneInput mRecordTone{};
     std::chrono::steady_clock::time_point mRecordTime;
     ScenePush mScenePush{};
     uint32_t mSceneInstanceEnd = 0;

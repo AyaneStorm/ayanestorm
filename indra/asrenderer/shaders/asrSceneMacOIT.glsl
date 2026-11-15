@@ -181,7 +181,7 @@ void main()
     // turns its normal to the camera, as the resolve does.
     vec3 normal = normalize(vary_normal);
     normal = dot(normal, vary_toCamera) < 0.0 ? -normal : normal;
-    color.rgb *= placeholderLight(normal);
+    color.rgb = placeholderShade(color.rgb, normal);
     if (ViewRef(push.view).debugView == DEBUG_VIEW_ALPHA_MODE)
     {
         color.rgb = vec3(0.9, 0.1, 0.1); // blended, at its own alpha

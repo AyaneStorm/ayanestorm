@@ -40,7 +40,10 @@ Studies this plan follows:
   - **Tiles classified by material kind** (from Nanite, SIGGRAPH 2021): lighting in the resolve makes it heavier, and one shader covering every material kind (legacy, PBR, terrain, fullbright) diverges inside a GPU wave. A small pass first marks which kinds each screen tile holds, then the resolve runs one indirect dispatch per kind over only its tiles, each with its own specialized shader. Mixed tiles are processed once per kind present, each pass taking only its pixels.
   - **Texture gradients:** a compute resolve has no automatic derivatives, so mip selection uses analytic gradients from the triangle's attributes (Nanite measures under 2% overhead). The resolve's current method is checked when step 2 starts, so material maps use the same rule.
   - Rejected, option B: resolve into a G-buffer, then a separate lighting pass. It costs the G-buffer's memory and bandwidth (16 to 28 bytes a pixel, written and read every frame), which the VRAM limit and the GT 1030 tier cannot afford.
-- **HDR scene colour** and a tone mapper. The choice of tone mapper is open; LL offers its own options, to be matched or replaced.
+- **HDR scene colour and tone mapping: moved to step 1 and done there** (the physical sky cannot be seen without them). Decided 15 November 2026:
+  - Tone mappers: LL's two, as GL has them (`RenderTonemapType` 0 Khronos PBR Neutral, 1 ACES Hill), plus AgX as 2. `RenderTonemapMix` and `RenderExposure` work as in GL.
+  - Exposure from the sky, not adapted over frames: an incident light meter reading of the frame's sky and sun on a horizontal surface (`exposure` pass), the same for every view and snapshot tile. A floor keeps night dark.
+  - Scene colour is linear: texture and vertex colours are decoded from sRGB where they are shaded; the composite exposes, tone maps and encodes sRGB.
 - **Direct light:** sun and moon from the transmittance LUT, with EEP sunlight colour.
 - **Ambient light:** from `sky ambient SH`.
 - **Materials:**
@@ -157,7 +160,7 @@ From Firestorm's graphics preferences panel (`panel_preferences_graphics1.xml`; 
 | `RenderFarClip` (draw distance) | 1: aerial perspective range |
 | `RenderQualityPerformance` (quality slider) | 1, 8, 9: sky tier (LUT sizes, volumetric clouds) |
 | `RenderDisableVintageMode` (HDR, PBR emissive) | 2: what the off state means here is decided then |
-| `RenderExposure`, `RenderTonemapType`, `RenderTonemapMix` | 2: tone mapper |
+| `RenderExposure`, `RenderTonemapType`, `RenderTonemapMix` | 1: tone mapping (library done; viewer hookup with step 1's viewer work) |
 | `RenderHighPrecisionPostProcess` | 2: HDR target format |
 | `RenderGlow`, `RenderGlowIterations`, `RenderGlowResolutionPow` | 2: glow |
 | `RenderDeferredSSAO` | 2: ambient occlusion |
@@ -229,7 +232,7 @@ Every graphics slider is checked against what GL does with it and replicated whe
 
 ## Open items, to complete
 
-- Tone mapper choice (step 2).
+- ~~Tone mapper choice (step 2).~~ Decided 15 November 2026: see step 2's HDR entry.
 - Ambient occlusion method (step 2).
 - Probes study (step 7).
 - Whether glow/bloom stays a P4 item or comes with the native DoF.

@@ -47,6 +47,10 @@ enum SceneResult : ResultId
     ResultSelectionList,  // the early cull's clusters of selected instances
     ResultSelectionMask,  // where selections are, for the outline: see asrOverlayMaskF.glsl
     ResultUIDepth,        // window-sized: the scene depth in the world view, for the UI's world part
+    ResultTransmittanceLut, // the sky's tables, made every frame: see asratmosphere.h
+    ResultMultiscatterLut,
+    ResultSkyViewLut,
+    ResultExposure,       // GpuExposure, from the sky: read by shading and the composite
     ResultCount
 };
 
@@ -70,6 +74,10 @@ enum ScenePass : PassId
     PassSkinVerticesLate,
     PassDrawLate,
     PassPyramidFinal,
+    PassTransmittanceLut,
+    PassMultiscatterLut,
+    PassSkyViewLut,
+    PassExposure,
     PassResolve,
     PassMacOITKeys,    // Mac OIT, declared by declareMacOIT()
     PassMacOITGate,

@@ -126,6 +126,8 @@ struct FrameState
     bool testTriangle = false;
     bool hasCamera = false; // the scene is drawn from this camera when set
     SceneCamera3D camera{};
+    SkyInput sky = earthSky(); // see FrameInput
+    ToneInput tone{};          // see FrameInput
     CameraTurn turn{};
     bool predictCamera = false; // see CameraPredictor; while turning, only the pivots
     bool audit = false;     // see FrameInput

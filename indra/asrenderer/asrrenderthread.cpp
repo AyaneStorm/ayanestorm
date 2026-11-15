@@ -585,6 +585,8 @@ void RenderThread::run()
         {
             input.camera = state.hasCamera ? &state.camera : nullptr;
         }
+        input.sky = &state.sky;
+        input.tone = state.tone;
         input.audit = state.audit;
         input.overlay = state.overlay;
         std::copy(std::begin(state.worldView), std::end(state.worldView), std::begin(input.worldView));

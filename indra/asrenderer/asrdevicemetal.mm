@@ -275,6 +275,8 @@ public:
                 worldWidth = std::min(input.worldView[2], width - mWorldViewX);
                 worldHeight = std::min(input.worldView[3], height - mWorldViewY);
             }
+            mRecordSky = input.sky ? *input.sky : earthSky();
+            mRecordTone = input.tone;
             if (input.camera && !recordScene(commands, slot, *input.camera, worldWidth, worldHeight, input.audit, input.overlay))
             {
                 dispatch_semaphore_signal(mFrameSlots);
@@ -304,8 +306,9 @@ public:
                 [encoder waitForFence:mSceneFence beforeStages:overlays ? MTLRenderStageVertex : MTLRenderStageFragment];
                 [encoder setRenderPipelineState:mCompositePipeline];
                 [encoder setFragmentTexture:mSceneColorTarget atIndex:9];
-                // The composite reads the world view's offset from push.list.
-                ScenePush offset{};
+                // The composite reads the world view's offset from push.list, and the view
+                // for exposure and tone mapping.
+                ScenePush offset = mScenePush;
                 offset.list = setWorldViewport(encoder);
                 [encoder setFragmentBytes:&offset length:sizeof(offset) atIndex:PUSH_CONSTANT_BUFFER];
                 [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
@@ -567,7 +570,7 @@ private:
 
         mVisibilityPipeline = createVisibilityPipeline(visibilityVertex, visibilityFragment, error);
         mMaskedPipeline = createVisibilityPipeline(maskedVertex, maskedFragment, error);
-        if (!mVisibilityPipeline || !mMaskedPipeline || !createMacOITPipelines(shaderDir, error))
+        if (!mVisibilityPipeline || !mMaskedPipeline || !createMacOITPipelines(shaderDir, error) || !createSky(shaderDir, error))
         {
             return false;
         }
@@ -611,7 +614,7 @@ private:
 
         for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
         {
-            mSceneViews[i] = createSceneBuffer(sizeof(GpuSceneView), MemoryCategory::Staging, "scene view");
+            mSceneViews[i] = createSceneBuffer(sizeof(GpuSceneView) + sizeof(GpuAtmosphere), MemoryCategory::Staging, "scene view");
             mSceneReadback[i] = createSceneBuffer(sizeof(GpuSceneCounts), MemoryCategory::Staging, "scene readback");
             mFeedbackReadback[i] = createSceneBuffer(FEEDBACK_BYTES, MemoryCategory::Staging, "texture feedback readback");
             if (!mSceneViews[i] || !mSceneReadback[i] || !mFeedbackReadback[i])
@@ -769,6 +772,101 @@ private:
             mError = std::string("cannot create ") + what;
         }
         return texture;
+    }
+
+    // The sky, kept in one place: its tables, their pipelines and their passes (see
+    // asratmosphere.h). The tables are a fixed size, made once and counted apart from the
+    // screen-sized targets; set 1 names them at 11 to 13 for writing, 14 to 16 for reading.
+    struct SkyTables
+    {
+        id<MTLTexture> transmittance = nil;
+        id<MTLTexture> multiscatter = nil;
+        id<MTLTexture> skyView = nil;
+        id<MTLComputePipelineState> transmittancePipeline = nil;
+        id<MTLComputePipelineState> multiscatterPipeline = nil;
+        id<MTLComputePipelineState> skyViewPipeline = nil;
+        id<MTLBuffer> exposure = nil; // GpuExposure
+        id<MTLComputePipelineState> exposurePipeline = nil;
+    };
+
+    id<MTLTexture> createSkyTable(uint32_t width, uint32_t height, const char* what)
+    {
+        mMemoryBudget.reserveAnyway(MemoryCategory::RenderTargets, uint64_t(width) * height * 8);
+        MTLTextureDescriptor* descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float width:width height:height mipmapped:NO];
+        descriptor.storageMode = MTLStorageModePrivate;
+        descriptor.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        id<MTLTexture> texture = [mDevice newTextureWithDescriptor:descriptor];
+        if (!texture)
+        {
+            mError = std::string("cannot create ") + what;
+        }
+        return texture;
+    }
+
+    bool createSky(const std::string& shaderDir, std::string& error)
+    {
+        mSky.transmittance = createSkyTable(TRANSMITTANCE_LUT_WIDTH, TRANSMITTANCE_LUT_HEIGHT, "transmittance table");
+        mSky.multiscatter = createSkyTable(MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE, "multiple scattering table");
+        mSky.skyView = createSkyTable(SKY_VIEW_LUT_WIDTH, SKY_VIEW_LUT_HEIGHT, "sky view table");
+        mSky.exposure = createSceneBuffer(sizeof(GpuExposure), MemoryCategory::RenderTargets, "exposure", true);
+        if (!mSky.transmittance || !mSky.multiscatter || !mSky.skyView || !mSky.exposure)
+        {
+            error = mError;
+            return false;
+        }
+        mSky.transmittancePipeline = createComputePipeline(shaderDir, "asrAtmosphereTransmittanceC", error);
+        mSky.multiscatterPipeline = createComputePipeline(shaderDir, "asrAtmosphereMultiscatterC", error);
+        mSky.skyViewPipeline = createComputePipeline(shaderDir, "asrAtmosphereSkyViewC", error);
+        mSky.exposurePipeline = createComputePipeline(shaderDir, "asrAtmosphereExposureC", error);
+        return mSky.transmittancePipeline && mSky.multiscatterPipeline && mSky.skyViewPipeline && mSky.exposurePipeline;
+    }
+
+    // The tables at their sampling bindings, except the one the pass writes.
+    void bindSkyTables(id<MTLComputeCommandEncoder> encoder, id<MTLTexture> written = nil)
+    {
+        const id<MTLTexture> tables[3] = { mSky.transmittance, mSky.multiscatter, mSky.skyView };
+        for (NSUInteger i = 0; i < 3; ++i)
+        {
+            [encoder setTexture:(tables[i] == written ? nil : tables[i]) atIndex:14 + i];
+        }
+    }
+
+    // target: the table written, at its binding; nil for the exposure pass.
+    bool passSkyTable(id<MTLComputePipelineState> pipeline, id<MTLTexture> target, NSUInteger binding, MTLSize groups, MTLSize threads)
+    {
+        id<MTLComputeCommandEncoder> encoder = beginCompute();
+        [encoder setComputePipelineState:pipeline];
+        [encoder setBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
+        [encoder setBytes:&mScenePush length:sizeof(mScenePush) atIndex:PUSH_CONSTANT_BUFFER];
+        bindSkyTables(encoder, target);
+        if (target)
+        {
+            [encoder setTexture:target atIndex:binding];
+        }
+        [encoder dispatchThreadgroups:groups threadsPerThreadgroup:threads];
+        [encoder updateFence:mSceneFence];
+        [encoder endEncoding];
+        return true;
+    }
+
+    void setSkyBodies()
+    {
+        static constexpr NSUInteger group = 8; // the shaders' local size
+        mGraph.setBody(PassTransmittanceLut, [this]()
+        {
+            return passSkyTable(mSky.transmittancePipeline, mSky.transmittance, 11,
+                                MTLSizeMake((TRANSMITTANCE_LUT_WIDTH + group - 1) / group, (TRANSMITTANCE_LUT_HEIGHT + group - 1) / group, 1), MTLSizeMake(group, group, 1));
+        });
+        mGraph.setBody(PassMultiscatterLut, [this]()
+        {
+            return passSkyTable(mSky.multiscatterPipeline, mSky.multiscatter, 12, MTLSizeMake(MULTISCATTER_LUT_SIZE, MULTISCATTER_LUT_SIZE, 1), MTLSizeMake(1, 1, 64));
+        });
+        mGraph.setBody(PassSkyViewLut, [this]()
+        {
+            return passSkyTable(mSky.skyViewPipeline, mSky.skyView, 13,
+                                MTLSizeMake((SKY_VIEW_LUT_WIDTH + group - 1) / group, (SKY_VIEW_LUT_HEIGHT + group - 1) / group, 1), MTLSizeMake(group, group, 1));
+        });
+        mGraph.setBody(PassExposure, [this]() { return passSkyTable(mSky.exposurePipeline, nil, 0, MTLSizeMake(1, 1, 1), MTLSizeMake(64, 1, 1)); });
     }
 
     // Mac OIT, the native renderer's transparency, kept in one place: its targets, its
@@ -1378,13 +1476,21 @@ private:
         view.time = sceneTime(mRecordTime);
         view.feedback = mFeedbackValue;
         view.debugView = mRecordCamera->debugView;
+        view.atmosphere = addressOf(mSceneViews[slot]) + sizeof(GpuSceneView);
+        view.exposure = addressOf(mSky.exposure);
+        view.userExposure = mRecordTone.exposure;
+        view.toneMix = mRecordTone.mix;
+        view.toneMapper = mRecordTone.mapper;
         if (!prepareOverlay(view, slot))
         {
             return false;
         }
         mSceneInstanceEnd = view.instanceEnd;
         mPyramidLevels = view.pyramidLevels;
+        GpuAtmosphere atmosphere;
+        fillAtmosphere(atmosphere, mRecordSky, mRecordCamera->position[2]);
         memcpy(mSceneViews[slot].contents, &view, sizeof(view));
+        memcpy(static_cast<char*>(mSceneViews[slot].contents) + sizeof(view), &atmosphere, sizeof(atmosphere));
 
         mScenePush = ScenePush{};
         mScenePush.view = addressOf(mSceneViews[slot]);
@@ -1526,6 +1632,7 @@ private:
         [resolve setTexture:mAlbedoTarget atIndex:1];
         [resolve setTexture:mNormalTarget atIndex:2];
         [resolve setTexture:mLitTarget atIndex:8];
+        bindSkyTables(resolve); // the background
         [resolve dispatchThreadgroups:MTLSizeMake((mSceneWidth + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (mSceneHeight + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
                 threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
         [resolve updateFence:mSceneFence];
@@ -1595,6 +1702,7 @@ private:
         mGraph.setBody(PassDrawLate, [this]() { return passDraw(mVisibilityTarget, offsetof(GpuSceneCounts, late), true, true); });
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
+        setSkyBodies();
         mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
         mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
         mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
@@ -2749,6 +2857,7 @@ private:
     id<MTLTexture> mSceneColorTarget = nil; // with transparency, set 1 binding 9
     id<MTLTexture> mSelectionMask = nil;    // see ResultSelectionMask, set 1 binding 10
     MacOITResources mMacOIT;
+    SkyTables mSky;
     OverlayResources mOverlay;
     const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()
     uint32_t mWorldViewX = 0; // the world view in the window: the scene is its size
@@ -2770,6 +2879,8 @@ private:
     uint32_t mRecordSlot = 0;
     uint32_t mRecordPass = 0;
     const SceneCamera3D* mRecordCamera = nullptr;
+    SkyInput mRecordSky = earthSky(); // the frame's sky, copied in since the input does not outlive the call
+    ToneInput mRecordTone{};
     std::chrono::steady_clock::time_point mRecordTime;
     ScenePush mScenePush{};
     uint32_t mSceneInstanceEnd = 0;

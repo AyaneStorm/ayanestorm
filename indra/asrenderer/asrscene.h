@@ -649,8 +649,27 @@ struct GpuSceneView
     uint32_t hiddenSelections; // not 0: outlines show behind other objects too, fainter
     float outlineWidth;       // pixels
     float selectionColors[9][4]; // SELECTION_COLOR_*, as the viewer's colour table has them
+    uint64_t atmosphere;      // the frame's GpuAtmosphere (asratmosphere.h), after the view in its buffer
+    uint64_t exposure;        // GpuExposure, which the exposure pass writes from the sky
+    float userExposure;       // RenderExposure: multiplies the exposure the sky gives
+    float toneMix;            // RenderTonemapMix: 0 the exposed colour clamped, 1 fully tone mapped
+    uint32_t toneMapper;      // TONE_MAPPER_*
+    uint32_t pad0;
 };
-static_assert(sizeof(GpuSceneView) == 848, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 880, "shaders read this layout");
+
+// RenderTonemapType's values: LL's two, then the new renderer's own.
+constexpr uint32_t TONE_MAPPER_PBR_NEUTRAL = 0; // Khronos PBR Neutral
+constexpr uint32_t TONE_MAPPER_ACES = 1;        // ACES, Hill's fit: LL's default
+constexpr uint32_t TONE_MAPPER_AGX = 2;         // AgX
+
+// What the exposure pass leaves for the frame's readers.
+struct GpuExposure
+{
+    float exposure;    // what scene colour is multiplied by before tone mapping, without RenderExposure
+    float illuminance; // on a horizontal surface at the camera: sky and sun, the floor applied
+    float pad[2];
+};
 // Where outlines meet, the mask keeps the higher one, so the order is OpenGL's precedence.
 constexpr uint32_t SELECTION_COLOR_FACE = 0;            // the face tool's tint, not an outline
 constexpr uint32_t SELECTION_COLOR_HIGHLIGHT_CHILD = 1; // HighlightChildColor: a child the pointer would pick

@@ -155,7 +155,7 @@ Earth defaults in the sample:
 |---|---|---|
 | Transmittance | 256 × 64, RGBA16F | 40 per texel (as low as 10 loses visible energy) |
 | Multiple scattering | 32 × 32 | 20 per ray, 64 directions, summed as a power series |
-| Sky view | 192 × 108, R11G11B10F | 30 per texel |
+| Sky view | 192 × 108, R11G11B10F | 4 to 14 per texel, growing with ray length (`RayMarchMinMaxSPP`; the 30 in its code is unused when the count varies) |
 | Aerial perspective | 32 × 32 × 32, RGBA16F | grows with slice (2 per slice index) |
 
 The sky view LUT's mapping is **non-linear in latitude**: more texels near the horizon, where sunsets happen. We keep that.
@@ -237,6 +237,19 @@ Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering 
 2. **Volumetric clouds: yes, as the high tier, with the layer following the camera (choice 2).** It is always a set height above the camera, so it never cuts through builds. The camera never gets above it: the 'seen from the top' case does not exist.
 3. **The AyaneStorm GL add-ons are not ported.** The physical model makes their effects; their sliders do not exist in the new renderer.
 
+## Step 1 batch 1: written (15 November 2026)
+
+Library only, Vulkan and Metal, tested in `asrenderer_test` on Windows (validation clean) and the Mac.
+
+- `asratmosphere.h/.cpp`: `SkyInput` (what a sky is, km and per km, Bruneton's two-layer profiles), `earthSky()` (the sample's Earth), `GpuAtmosphere` (after the scene view in its buffer, `GpuSceneView::atmosphere`).
+- Shaders: `asrAtmosphere.glsl` (the sample's functions, MIT notice), passes `transmittance lut`, `multiscatter lut`, `sky view lut`, `exposure`; the resolve draws the background (sky view table, limb-darkened sun disc dimmed by the air).
+- Tone mapping and exposure moved here from step 2 (see the P4 plan, step 2's HDR entry).
+- `asrenderer_test --sky earth|noon|sunset|night|high|haze` picks a test sky.
+- Cost, sky tables and exposure together: about 0.07 ms on the 3080 Ti, 0.24 ms on the M4.
+- Below the horizon the planet is black (the sample's ground albedo is 0). In SL terrain and water cover it; what shows past the draw distance is looked at with aerial perspective (batch 2).
+
+Next, batch 2: aerial perspective in the resolve and Mac OIT, moon, stars. Batch 3: viewer (EEP translation, tone settings, 2D clouds).
+
 ## Step 1 reading pass (15 November 2026)
 
 ### Where the sky is today
@@ -258,4 +271,6 @@ Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering 
 
 - **Mixed units:** radii are in kilometres, density profiles in metres. The sample's profile terms are per kilometre, so `exp_scale` and `linear_term` scale by 1000 and `width` by 1/1000. `exp_term` and `constant_term` have no unit.
 - **No scattering coefficients in EEP.** Rayleigh scattering, Mie scattering and extinction, and ozone extinction have no settings fields. The sample's Earth values (table above) are the base, and decision 1's legacy translation tints and scales them.
+- **EEP's default ozone is not Bruneton's tent.** Its first layer is `linear -1/25000, constant -2/3`, negative at every height below 25 km, so it clamps to zero there; only the falling half (25 to 40 km) exists. Bruneton's tent rises from 10 km (`linear +1/15 km`). EEP values are copied as they are; a sunset that lacks ozone's blue is checked side by side before anything is changed.
+- **Single-layer EEP profiles** store their layer first with `width 0` ('the entire atmosphere'). In Bruneton's form that layer goes second, after a first layer of width 0. The translation moves it.
 - **The GL viewer does not use the physical model.** Its sky comes from the legacy values (blue horizon, blue density, haze density and horizon, density and distance multipliers); only a leftover uniform name (`single_mie_scattering_texture`) remains. Matching GL's look therefore rests on the legacy translation, not on the physical fields.

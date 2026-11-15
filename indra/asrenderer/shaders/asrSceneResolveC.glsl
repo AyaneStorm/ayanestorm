@@ -18,13 +18,45 @@ layout(set = 1, binding = 0, r32ui) uniform readonly uimage2D visibility;
 layout(set = 1, binding = 1, rgba8) uniform writeonly image2D albedo;
 layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
 // The opaque image Mac OIT composites over. Until lighting in P4: albedo with a soft light
-// from the normal so shapes read, and the sky colour where nothing is drawn. Alpha is glow.
+// from the normal so shapes read, and the sky where nothing is drawn. Alpha is glow.
 layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
-const vec4 SKY = vec4(0.32, 0.45, 0.62, 0.0);
+#include "asrAtmosphere.glsl"
+
+// The pixel's direction in world space, from the camera through its centre.
+vec3 pixelDirection(ViewRef view, vec2 ndc)
+{
+    const vec3 camera = vec3(ndc.x / view.projection.x, -ndc.y / view.projection.y, -1.0);
+    return normalize(camera.x * view.viewRows[0].xyz + camera.y * view.viewRows[1].xyz + camera.z * view.viewRows[2].xyz);
+}
+
+// The background: the sky view table, then the sun's disc, darker at its edge (limb
+// darkening, linear with u = 0.6) and dimmed by the air before it. The disc carries the
+// sun's whole illuminance over its solid angle.
+vec3 background(Atmosphere a, vec3 direction)
+{
+    vec3 luminance = sampleSkyView(a, direction) * a.sunIlluminance;
+    const float cosAngle = dot(direction, a.sunDirection);
+    if (cosAngle > a.sunCosRadius)
+    {
+        const vec3 position = atmosphereCamera(a);
+        if (raySphereIntersectNearest(position, direction, a.bottomRadius) < 0.0)
+        {
+            const float sinRadius2 = 1.0 - a.sunCosRadius * a.sunCosRadius;
+            const float r2 = clamp((1.0 - cosAngle * cosAngle) / max(sinRadius2, 1e-12), 0.0, 1.0);
+            const float mu = sqrt(1.0 - r2);
+            const float u = 0.6;
+            const float darkening = (1.0 - u * (1.0 - mu)) / (1.0 - u / 3.0);
+            const float solidAngle = 2.0 * ATMOSPHERE_PI * (1.0 - a.sunCosRadius);
+            const vec3 transmittance = sampleTransmittance(a, length(position), direction.z);
+            luminance += a.sunIlluminance * transmittance * (darkening / solidAngle);
+        }
+    }
+    return min(luminance, vec3(60000.0)); // inside half floats
+}
 
 vec4 unlit(vec3 albedo, vec3 normal)
 {
-    return vec4(albedo * placeholderLight(normal), 0.0);
+    return vec4(placeholderShade(albedo, normal), 0.0);
 }
 
 struct Interpolator
@@ -197,7 +229,8 @@ void main()
     {
         imageStore(albedo, pixel, vec4(0.0, 0.0, 0.0, 0.0));
         imageStore(normals, pixel, vec4(0.0));
-        imageStore(lit, pixel, SKY);
+        const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
+        imageStore(lit, pixel, vec4(background(loadAtmosphere(view.atmosphere), pixelDirection(view, ndc)), 0.0));
         return;
     }
 

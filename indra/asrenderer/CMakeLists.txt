@@ -18,7 +18,7 @@ set(ASR_SHADER_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 
 # --- Portable code, built on every platform. ---------------------------------
 find_package(Threads REQUIRED)
-add_library(asrenderer STATIC asrframegraph.cpp asrmemorybudget.cpp asrrenderthread.cpp asrscene.cpp asrscenefile.cpp
+add_library(asrenderer STATIC asratmosphere.cpp asrframegraph.cpp asrmemorybudget.cpp asrrenderthread.cpp asrscene.cpp asrscenefile.cpp
     asrscenegraph.cpp asrscenestore.cpp asrscenestorememory.cpp asrjointpose.cpp asrtexturefeedback.cpp asrtexturequeue.cpp asruilist.cpp)
 target_include_directories(asrenderer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(asrenderer PUBLIC Threads::Threads)
@@ -98,7 +98,8 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrSceneVisibilityF asrSceneMaskedV asrSceneMaskedF asrSceneResolveC asrSceneCompositeV asrSceneCompositeF asrSceneSkinC
         asrSceneMacOITV asrSceneMacOITKeysF asrSceneMacOITTailF asrSceneMacOITColorF asrSceneMacOITResolveC
         asrOverlayV asrOverlayMaskF asrOverlayHudF asrOverlayOutlineF asrOverlayDepthF
-        asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C)
+        asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
+        asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereExposureC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 # The texture encoders share their block loading and line fitting.
@@ -117,6 +118,11 @@ add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/asrSceneSkinC.spv APPEND
 foreach(shader asrSceneSkinC asrSceneCullC)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSceneSkinDemand.glsl)
+endforeach()
+# The sky's tables and the resolve's background share the atmosphere functions.
+foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereExposureC asrSceneResolveC)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrAtmosphere.glsl)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})
 

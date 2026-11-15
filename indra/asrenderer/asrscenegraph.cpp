@@ -36,6 +36,10 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("selection list", ResultScope::Frame);
     graph.addResult("selection mask", ResultScope::Frame);
     graph.addResult("ui depth", ResultScope::Frame);
+    graph.addResult("transmittance lut", ResultScope::Frame);
+    graph.addResult("multiscatter lut", ResultScope::Frame);
+    graph.addResult("sky view lut", ResultScope::Frame);
+    graph.addResult("exposure", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -89,9 +93,19 @@ void declareSceneGraph(FrameGraph& graph)
                                  { ResultVisibility, ColorTarget | Keep },
                                  { ResultDepth, DepthTarget | Keep } });
     graph.addPass("pyramid final", { { ResultDepth, ComputeRead }, { ResultDepthPyramid, ComputeWrite | Keep } });
+    // The sky's tables, rebuilt every frame since EEP skies blend: each reads the ones before.
+    graph.addPass("transmittance lut", { { ResultTransmittanceLut, ComputeWrite } });
+    graph.addPass("multiscatter lut", { { ResultTransmittanceLut, ComputeRead }, { ResultMultiscatterLut, ComputeWrite } });
+    graph.addPass("sky view lut", { { ResultTransmittanceLut, ComputeRead },
+                                    { ResultMultiscatterLut, ComputeRead },
+                                    { ResultSkyViewLut, ComputeWrite } });
+    graph.addPass("exposure", { { ResultTransmittanceLut, ComputeRead }, { ResultSkyViewLut, ComputeRead }, { ResultExposure, ComputeWrite } });
     graph.addPass("resolve", { { ResultSceneData, ComputeRead },
                                { ResultVisibleClusters, ComputeRead },
                                { ResultVisibility, ComputeRead },
+                               { ResultTransmittanceLut, ComputeRead },
+                               { ResultSkyViewLut, ComputeRead },
+                               { ResultExposure, ComputeRead },
                                { ResultAlbedo, ComputeWrite },
                                { ResultNormals, ComputeWrite },
                                { ResultLit, ComputeWrite },
@@ -131,6 +145,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addPass("read feedback", { { ResultTextureFeedback, CopyRead }, { ResultFeedbackReadback, CopyWrite } });
 
     graph.setSink(ResultSceneColor, FragmentRead, true);
+    graph.setSink(ResultExposure, FragmentRead, true); // the composite exposes scene colour by it
     graph.setSink(ResultSceneCounts, CopyRead, true);
 }
 
@@ -144,6 +159,7 @@ void declareMacOIT(FrameGraph& graph)
                                    { ResultDrawArguments, Indirect | FragmentWrite | Keep },
                                    { ResultVisibleClusters, VertexRead },
                                    { ResultDepth, DepthTarget | Keep },
+                                   { ResultExposure, FragmentRead }, // the shared fragment code shades with it
                                    { ResultMacOITState, FragmentRead | FragmentWrite | Keep } });
     // Empties the tail pass's draws when no pixel has a tail.
     graph.addPass("macoit gate", { { ResultDrawArguments, ComputeRead | ComputeWrite | Keep } });
@@ -152,6 +168,7 @@ void declareMacOIT(FrameGraph& graph)
                                    { ResultVisibleClusters, VertexRead },
                                    { ResultDepth, DepthTarget | Keep },
                                    { ResultMacOITState, FragmentRead },
+                                   { ResultExposure, FragmentRead },
                                    { ResultMacOITMoments, ColorTarget },
                                    { ResultMacOITTailDepth, ColorTarget } });
     graph.addPass("macoit color", { { ResultSceneData, VertexRead | FragmentRead },
@@ -161,6 +178,7 @@ void declareMacOIT(FrameGraph& graph)
                                     { ResultMacOITState, FragmentRead },
                                     { ResultMacOITMoments, FragmentRead },
                                     { ResultMacOITTailDepth, FragmentRead },
+                                    { ResultExposure, FragmentRead },
                                     { ResultMacOITColor, ColorTarget },
                                     { ResultMacOITWeights, ColorTarget },
                                     { ResultTextureFeedback, FragmentWrite | Keep } });

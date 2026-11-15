@@ -249,7 +249,35 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     uint hiddenSelections;
     float outlineWidth;
     vec4 selectionColors[9]; // SELECTION_COLOR_* in asrscene.h
+    uint64_t atmosphere;     // AtmosphereRef in asrAtmosphere.glsl
+    uint64_t exposure;       // ExposureRef below
+    float userExposure;      // RenderExposure
+    float toneMix;           // RenderTonemapMix
+    uint toneMapper;         // TONE_MAPPER_*
 };
+
+const uint TONE_MAPPER_PBR_NEUTRAL = 0u; // see asrscene.h
+const uint TONE_MAPPER_ACES = 1u;
+const uint TONE_MAPPER_AGX = 2u;
+
+// GpuExposure: written by asrAtmosphereExposureC.glsl from the frame's sky.
+layout(buffer_reference, std430) buffer ExposureRef
+{
+    float exposure;
+    float illuminance;
+};
+
+// Texture and vertex colours are sRGB; light works on linear values.
+vec3 srgbToLinear(vec3 c)
+{
+    return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), greaterThan(c, vec3(0.04045)));
+}
+
+vec3 linearToSrgb(vec3 c)
+{
+    c = clamp(c, 0.0, 1.0);
+    return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, greaterThan(c, vec3(0.0031308)));
+}
 
 const uint DEBUG_VIEW_NORMALS = 1u;
 const uint DEBUG_VIEW_ALBEDO = 2u;
@@ -374,6 +402,14 @@ vec3 octahedralDecode(float x, float y)
 float placeholderLight(vec3 normal)
 {
     return 0.65 + 0.35 * dot(normal, normalize(vec3(0.4, 0.3, 0.87)));
+}
+
+// The stand-in shading in linear light: a white surface facing up gets the frame's measured
+// illuminance, so after exposure it reads as it did before scene colour was linear.
+vec3 placeholderShade(vec3 srgbColor, vec3 normal)
+{
+    const float illuminance = ExposureRef(ViewRef(push.view).exposure).illuminance;
+    return srgbToLinear(srgbColor) * placeholderLight(normal) * (illuminance / 3.14159265);
 }
 
 // A palette entry holds the bind shape, which can scale unevenly, so a normal follows its

@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include "asratmosphere.h"
 #include "asrmemorybudget.h"
 #include "asrscene.h"
 #include "asrtexturequeue.h"
@@ -71,6 +72,14 @@ struct OverlayInput
     float selectionColors[SELECTION_COLORS][4]{}; // SELECTION_COLOR_* in asrscene.h
 };
 
+// How scene colour becomes the window's: the viewer's graphics preferences, as GL reads them.
+struct ToneInput
+{
+    float exposure = 1.f;                 // RenderExposure
+    float mix = 0.7f;                     // RenderTonemapMix
+    uint32_t mapper = TONE_MAPPER_ACES;   // RenderTonemapType: TONE_MAPPER_* in asrscene.h
+};
+
 struct FrameInput
 {
     uint32_t width = 0; // in pixels; a change of size recreates what depends on it
@@ -79,6 +88,8 @@ struct FrameInput
     bool testTriangle = false;
     const UIList* ui = nullptr; // drawn on top; stays valid during the call
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
+    const SkyInput* sky = nullptr;         // the scene's sky; earthSky() when not set
+    ToneInput tone{};
     bool audit = false; // also looks for clusters occlusion culling lost
     OverlayInput overlay{}; // with the scene only
     // Where the scene goes in the window, as OpenGL's world view: x, y from the top left,
@@ -86,7 +97,7 @@ struct FrameInput
     uint32_t worldView[4]{};
 };
 
-constexpr uint32_t MAX_TIMED_PASSES = 32; // every scene pass, audit and feedback included
+constexpr uint32_t MAX_TIMED_PASSES = 48; // every scene pass, audit and feedback included
 
 // One pass of the frame graph. On Vulkan it runs from the end of the last pass to its
 // own end, so barriers count too and the passes add up to the frame's GPU time. On Metal

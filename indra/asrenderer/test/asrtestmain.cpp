@@ -23,6 +23,7 @@
  *
  * Exit code 0 means every check passed.
  */
+#include "asratmosphere.h"
 #include "asrlatestvalue.h"
 #include "asrmemorybudget.h"
 #include "asrframegraph.h"
@@ -63,6 +64,51 @@ namespace
 
 using Clock = std::chrono::steady_clock;
 bool sOverlays = false; // --overlay
+asr::SkyInput sSky = asr::earthSky(); // --sky
+
+// The step 1 test skies: the sample's Earth with the sun at a given height, seen from the
+// ground, from 8 km up, or through a haze far denser than Earth's. False for an unknown name.
+bool setTestSky(const std::string& name, asr::SkyInput& sky)
+{
+    sky = asr::earthSky();
+    float elevation = 0.6f; // radians
+    if (name == "noon")
+    {
+        elevation = 1.2f;
+    }
+    else if (name == "sunset")
+    {
+        elevation = 0.03f;
+    }
+    else if (name == "night")
+    {
+        elevation = -0.2f; // nautical twilight: the Earth's shadow fills the sky
+    }
+    else if (name == "high")
+    {
+        sky.seaLevel = -8000.f; // the camera 8 km above altitude 0
+    }
+    else if (name == "haze")
+    {
+        elevation = 0.5f;
+        for (int i = 0; i < 3; ++i)
+        {
+            sky.mieScattering[i] *= 8.f;
+            sky.mieExtinction[i] *= 8.f;
+        }
+        sky.mie.layers[1].expScale = -1.f / 3.f;
+    }
+    else if (name != "earth")
+    {
+        return false;
+    }
+    // The sun keeps the default's azimuth, so every sky is seen the same way.
+    const float azimuth = std::atan2(sky.sunDirection[1], sky.sunDirection[0]);
+    sky.sunDirection[0] = std::cos(elevation) * std::cos(azimuth);
+    sky.sunDirection[1] = std::cos(elevation) * std::sin(azimuth);
+    sky.sunDirection[2] = std::sin(elevation);
+    return true;
+}
 
 double secondsSince(Clock::time_point start)
 {
@@ -2641,6 +2687,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         {
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
+            state.sky = sSky;
             state.audit = audit;
             if (sOverlays)
             {
@@ -2941,6 +2988,14 @@ int main(int argc, char** argv)
         else if (arg == "--street")
         {
             street = true;
+        }
+        else if (arg == "--sky" && i + 1 < argc)
+        {
+            if (!setTestSky(argv[++i], sSky))
+            {
+                fprintf(stderr, "--sky takes earth, noon, sunset, night, high or haze\n");
+                return 1;
+            }
         }
         else if (arg == "--overlay")
         {
