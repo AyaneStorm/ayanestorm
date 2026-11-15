@@ -49,7 +49,9 @@ One huge map cut into tiles (pages). Only the pages that screen pixels need get 
 - **Local lights:** possible, but each light adds its own page tables and marking.
 - **Work:** page marking, page table, culling per page (small groups of triangles), on two APIs.
 
-**Not chosen**: it loses on moving crowds and on reuse, which are the two things this design is for. Quantized SDSM (below) gives cascades most of the sharpness.
+**Not chosen**: it loses on moving crowds and on reuse, which are the two things this design is for.
+
+Reviewed against Nanite (SIGGRAPH 2021), where virtual shadow maps were born: their speed comes from culling clusters per page and drawing every shadow view in one multiview chain. Our renderer has clusters too, so the 'work' argument above is weaker than it reads. The choice stands on the other two reasons: pages redrawn under moving avatars, and pages existing only where screen pixels asked. Nanite's multiview is taken for the cascades and the atlas (see the P4 plan's open items). Quantized SDSM (below) gives cascades most of the sharpness.
 
 ### Other recent methods
 

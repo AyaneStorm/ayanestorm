@@ -200,6 +200,13 @@ Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering 
 - So the shadowed atmosphere is not a separate march. It belongs to the **volumetric lighting pass**: one froxel grid ('froxel' = a cell of the camera frustum, like a 3D pixel). Each froxel gets the atmosphere's scattering and extinction from the `atmosphere` result, plus local fog, plus `sun shadow` and `local shadow atlas` visibility. The grid is integrated front to back once, with the energy-conserving integration from the Frostbite notes.
 - The result is one volume holding the shadowed aerial perspective and the volumetric lighting together, read by the opaque resolve, Mac OIT and water. The unshadowed `aerial perspective` volume stays as the low tier and for views with no volumetrics.
 - Smoothness in one frame comes from the froxel grid's own resolution and a fixed per-pixel blue-noise offset, not from history.
+- **Sharp sun shafts are not in the grid** (user, 15 November 2026). A froxel grid without history is lossy: blurry or stepped shafts. They come from the GL viewer's **Exact mode**, ported (see `volumetric_lighting_exact_redesign_research.md`):
+  - polygonal light volumes (Billeter 2010): each cascade's depth surface is drawn as a mesh;
+  - the exact analytic integral along each view ray: lossless, no sampling, no history.
+
+  It reads the shared `sun shadow` cascades and the `atmosphere` coefficients and adds to the grid's result. The grid leaves out the sun's single scattering entirely, so nothing is counted twice. Exact mode assumes the medium is even along the ray; the atmosphere is not (it thins with altitude), so its coefficients are taken at the camera's height, which is accurate within SL's draw distance. A ray climbing steeply from the ground to a skybox is the case to check by eye. The grid keeps everything that varies slowly: atmosphere, local fog, local lights, clouds. Sun and moon shafts are exact (user's requirement). Local lights' shafts come from the grid only (decided 15 November 2026, the user's delegation):
+- an Exact volume per shadowed projector would cost a mesh draw per light per frame, growing with the light count;
+- local lights sit near the camera, where the grid's depth slices are thinnest, so their shafts lose the least there.
 
 ### Not needed
 
