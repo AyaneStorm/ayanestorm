@@ -197,6 +197,10 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
         out.moonTint[i] = std::max(sky.moonTint[i], 0.f);
     }
     out.pad2 = 0.f;
+    out.sunGlow[0] = std::max(sky.sunGlowSize, 0.f);
+    out.sunGlow[1] = sky.sunGlowFocus; // EEP: -10 to 10, negative for a glow at the sun
+    out.sunGlow[2] = 0.f;
+    out.sunGlow[3] = 0.f;
 }
 
 } // namespace asr

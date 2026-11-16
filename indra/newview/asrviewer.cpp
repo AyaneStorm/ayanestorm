@@ -281,6 +281,9 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.mie = toProfile(current->getMieConfigs());
     sky.absorption = toProfile(current->getAbsorptionConfigs());
     sky.mieG = current->getMieAnisotropy();
+    const LLColor3 glow = current->getGlow();
+    sky.sunGlowSize = glow.mV[0];
+    sky.sunGlowFocus = glow.mV[2];
 
     const LLVector3 sun = current->getSunDirection();
     sky.sunDirection[0] = sun.mV[0];
@@ -303,8 +306,7 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.sunTextureRadius = atanf(HEAVENLY_BODY_FACTOR * 0.5f * llmax(current->getSunScale(), 0.f));
     if (current->getSunTextureId().isNull())
     {
-        // No image (most EEPs): the bright disc, at OpenGL's size.
-        sky.sunAngularRadius = sky.sunTextureRadius;
+        sky.sunAngularRadius = 0.f;
     }
     else if (gSky.mVOSkyp)
     {

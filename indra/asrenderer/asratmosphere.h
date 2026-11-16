@@ -113,6 +113,12 @@ struct SkyInput
     // (ASMoonHorizonTint* near the horizon): white leaves them as they are.
     float moonTint[3] = { 1.f, 1.f, 1.f };
 
+    // EEP's glow around the sun (LLSettingsSky::getGlow() x and z), as OpenGL's sky shades its
+    // haze: max(size * (1 - cos), 0.001) ^ focus. The sun's Mie peak is scaled by this EEP's
+    // glow against the default one's, so the default EEP keeps the physical peak alone.
+    float sunGlowSize = 5.f;
+    float sunGlowFocus = -0.48f;
+
     // The stars: sprites drawn only where nothing else was, hidden by the planet, the moon
     // and the sun, and dimmed by the air. The list changes only with the catalogue, and a new
     // list is a new pointer: that is how the renderer knows to upload it.
@@ -143,7 +149,9 @@ constexpr uint32_t TRANSMITTANCE_LUT_HEIGHT = 64;
 constexpr uint32_t MULTISCATTER_LUT_SIZE = 32;
 constexpr uint32_t SKY_VIEW_LUT_WIDTH = 192;
 constexpr uint32_t SKY_VIEW_LUT_HEIGHT = 108;
-constexpr uint32_t SKY_VIEW_LUT_LIGHTS = 2; // one table per light, sun then moon, one above the other
+// One table per light, one above the other: sun, moon, then the sun's Mie single scattering
+// with no phase, which the sky's reader shapes per pixel (sharp peak, EEP glow).
+constexpr uint32_t SKY_VIEW_LUT_LIGHTS = 3;
 // The aerial perspective volume: the screen in 32 by 32 columns, each the air along one view
 // ray, in 32 slices spread as the square of their number out to the draw distance, so near
 // slices are thin (sample: 32 slices of 4 km, made for flight; SL sees at most 1 km).
@@ -205,8 +213,9 @@ struct GpuAtmosphere
     float pad;
     float moonTint[3];
     float pad2;
+    float sunGlow[4]; // size, focus, -, -
 };
-static_assert(sizeof(GpuAtmosphere) == 496, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 512, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.

@@ -74,6 +74,7 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     float moonHeightScale;     // the height map's range in moon radii
     vec4 moonEarthshineColor;
     vec4 moonTint;             // over the disc and its halo
+    vec4 sunGlow;              // EEP glow: size, focus
 };
 
 // SkyStar in asratmosphere.h.
@@ -135,6 +136,7 @@ struct Atmosphere
     float moonHeightScale;
     vec3 moonEarthshineColor;
     vec3 moonTint;
+    vec2 sunGlow;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -190,6 +192,7 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonHeightScale = ref.moonHeightScale;
     a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
     a.moonTint = ref.moonTint.xyz;
+    a.sunGlow = ref.sunGlow.xy;
     return a;
 }
 
@@ -347,10 +350,13 @@ vec2 skyViewParamsToUv(Atmosphere a, bool intersectGround, float viewZenithCos, 
     return vec2(fromUnitToSubUvs(uv.x, SKY_VIEW_LUT_SIZE.x), fromUnitToSubUvs(uv.y, SKY_VIEW_LUT_SIZE.y));
 }
 
-// The sky view texture holds two tables of SKY_VIEW_LUT_SIZE: the sky lit by the sun on top
-// (light 0), by the moon below (light 1).
+// The sky view texture holds three tables of SKY_VIEW_LUT_SIZE, one above the other: the sky
+// lit by the sun with no Mie single scattering (light 0), by the moon (light 1), then the
+// sun's Mie single scattering with no phase (2), which skyRadiance() shapes per pixel.
 const uint SKY_LIGHT_SUN = 0u;
 const uint SKY_LIGHT_MOON = 1u;
+const uint SKY_LIGHT_SUN_MIE = 2u;
+const uint SKY_VIEW_LUT_LIGHTS = 3u; // asratmosphere.h
 
 // The sky seen from the camera in a world direction, lit by one light of brightness 1.
 vec3 sampleSkyView(Atmosphere a, vec3 direction, vec3 lightDirection, uint light)
@@ -366,15 +372,8 @@ vec3 sampleSkyView(Atmosphere a, vec3 direction, vec3 lightDirection, uint light
     const float lightViewCos = lengths > 1e-6 ? dot(viewOnPlane, lightOnPlane) / lengths : 1.0;
     const bool intersectGround = raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0;
     vec2 uv = skyViewParamsToUv(a, intersectGround, viewZenithCos, lightViewCos, viewHeight);
-    uv.y = (uv.y + float(light)) * 0.5; // texel centres of its own half: no bleeding across
+    uv.y = (uv.y + float(light)) / float(SKY_VIEW_LUT_LIGHTS); // texel centres of its own table: no bleeding across
     return textureLod(sampler2D(skyViewLut, samplers[0]), uv, 0.0).rgb;
-}
-
-// The sky seen from the camera in a world direction, sun and moon at their own brightness.
-vec3 skyRadiance(Atmosphere a, vec3 direction)
-{
-    return sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN) * a.sunIlluminance
-           + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight;
 }
 
 float rayleighPhase(float cosTheta)
@@ -387,6 +386,25 @@ float miePhase(float g, float cosTheta)
 {
     const float k = 3.0 / (8.0 * ATMOSPHERE_PI) * (1.0 - g * g) / (2.0 + g * g);
     return k * (1.0 + cosTheta * cosTheta) / pow(1.0 + g * g - 2.0 * g * -cosTheta, 1.5);
+}
+
+// OpenGL's glow on the haze (skyF.glsl): size and focus as EEP gives them, the 0.001
+// minimum angle, the 100000 cap of atmosphericsFuncs.glsl and the 0.25 anti-solar floor.
+float eepGlow(vec2 glow, float cosTheta)
+{
+    return min(pow(max(glow.x * (1.0 - cosTheta), 0.001), glow.y), 100000.0) + 0.25;
+}
+
+// The sky seen from the camera in a world direction, sun and moon at their own brightness.
+// The sun's Mie single scattering takes its phase here, per pixel, so its peak is as sharp
+// as the screen and not the table, times this EEP's glow against the default EEP's.
+vec3 skyRadiance(Atmosphere a, vec3 direction)
+{
+    const float sunCos = dot(direction, a.sunDirection);
+    const float glow = eepGlow(a.sunGlow, sunCos) / eepGlow(vec2(5.0, -0.48), sunCos);
+    const vec3 sun = sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN)
+                     + sampleSkyView(a, direction, a.sunDirection, SKY_LIGHT_SUN_MIE) * (miePhase(a.mieG, -sunCos) * glow);
+    return sun * a.sunIlluminance + sampleSkyView(a, direction, a.moonDirection, SKY_LIGHT_MOON) * a.moonSkyLight;
 }
 
 struct Medium
@@ -433,6 +451,7 @@ struct Scattering
     vec3 opticalDepth;
     vec3 transmittance;
     vec3 multiScatterAs1;
+    vec3 mieSingle; // the light's Mie single scattering with no phase: luminance holds it times the phase
 };
 
 // The sample's IntegrateScatteredLuminance: marches the ray to the ground, the top of the
@@ -447,6 +466,7 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
     result.opticalDepth = vec3(0.0);
     result.transmittance = vec3(1.0);
     result.multiScatterAs1 = vec3(0.0);
+    result.mieSingle = vec3(0.0);
 
     const float tBottom = raySphereIntersectNearest(position, direction, a.bottomRadius);
     const float tTop = raySphereIntersectNearest(position, direction, a.topRadius);
@@ -524,6 +544,8 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
         // The power series form: integrated over the step (Frostbite 2015, slide 28).
         result.multiScatterAs1 += throughput * (medium.scattering - medium.scattering * stepTransmittance) / extinction;
         luminance += throughput * (S - S * stepTransmittance) / extinction;
+        const vec3 mieS = earthShadow * transmittanceToSun * medium.scatteringMie;
+        result.mieSingle += throughput * (mieS - mieS * stepTransmittance) / extinction;
         throughput *= stepTransmittance;
     }
 
