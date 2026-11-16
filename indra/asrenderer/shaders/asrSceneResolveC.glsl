@@ -189,14 +189,23 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         tangent.xy *= a.moonRelief * smoothstep(0.0, 0.3, facing);
         surface = normalize(tangent.x * east + tangent.y * north + max(tangent.z, 0.0) * normal);
     }
-    // The terminator softened as ASMoonPhaseSoftness asks, as much on the dark side as on the
-    // lit one: within +-soft of it the light ramps smoothly, (d + soft)^2 / (4 soft), meeting
-    // max(d, 0) at both ends, so neither half grows into the other.
+    // The terminator softened as ASMoonPhaseSoftness asks, as a blur of a sharp cut: within
+    // +-soft of it the surface is lit as at the band's lit edge, faded by a curve at half on
+    // the terminator. Shading the faint grazing light itself would put the eye's cut on the
+    // dark side (at the disc's centre the light only grows as the cosine does).
     const float soft = a.moonTerminatorSoftness;
     const float d = dot(surface, a.moonLightDirection);
-    const float mu0 = soft > 0.0 && abs(d) < soft ? (d + soft) * (d + soft) / (4.0 * soft) : max(d, 0.0);
+    const float mu0 = max(d, soft);
     const float mu = max(dot(surface, toViewer), 0.05);
-    float lit = 2.0 * mu0 / (mu0 + mu);
+    float lit = 2.0 * mu0 / (mu0 + mu) * (soft > 0.0 ? smoothstep(-soft, soft, d) : step(0.0, d));
+    if (soft > 0.0 && d < soft)
+    {
+        // The band borrows light from its lit edge, soft towards the sun: only if that edge
+        // faces the viewer. At new moon it lies behind the limb, and the rim stays dark.
+        const vec3 towardLight = a.moonLightDirection - normal * dot(normal, a.moonLightDirection);
+        const float edgeFacing = facing + soft * dot(towardLight, toViewer) / max(length(towardLight), 1e-4);
+        lit *= mix(smoothstep(0.0, 0.5 * soft, edgeFacing), 1.0, smoothstep(0.0, soft, d));
+    }
     if (lit > 0.0 && a.moonHeightScale > 0.0 && a.moonNormalTexture != NO_SKY_TEXTURE && a.moonRelief > 0.0)
     {
         lit *= mix(1.0, moonShadow(a, normal, right, up, toViewer, uv, arc), min(a.moonRelief, 1.0));
