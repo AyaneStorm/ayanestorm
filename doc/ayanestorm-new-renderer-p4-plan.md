@@ -53,6 +53,9 @@ Studies this plan follows:
 - **Avatars and Mac OIT:** lit through the same functions. Mac OIT replaces today's `lit` stand-in with real lighting per layer.
 - **Glow/bloom** from emissive materials: also feeds the Live DoF bins later.
 - **Open:** ambient occlusion. LL has SSAO; GTAO is the modern choice. Screen-space, so it must handle snapshot tile overlap.
+- **Idea, to decide in step 2: skin shading on avatars** (user, 16 November 2026). Pre-integrated skin shading: a soft, reddish falloff across the terminator, done in the shading function itself, with no screen-space pass and no history.
+  - **Which faces are skin:** rigged faces whose texture is a Bakes on Mesh ID (`LLAvatarAppearanceDictionary::isBakedImageId()`), plus the system avatar body. This covers every modern body and head (Legacy, Maitreya, Reborn, the men's bodies, LeLutka, Catwa) without relying on attachment names, which users rename and which change between versions. `asrworld.cpp` already detects these faces.
+  - **Limits:** the bake also holds tattoos, makeup and painted underwear (fine for the first two; the last to check by eye). Fur and robot avatars use Bakes on Mesh too, so the scatter colour needs a setting and an off switch. Old applier skins are not detected and keep normal shading.
 
 **Tests:** material test scenes in `asrenderer_test` (each map type, legacy and PBR side by side); viewer captures against the GL viewer.
 
