@@ -200,11 +200,12 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     float lit = 2.0 * mu0 / (mu0 + mu) * (soft > 0.0 ? smoothstep(-soft, soft, d) : step(0.0, d));
     if (soft > 0.0 && d < soft)
     {
-        // The band borrows light from its lit edge, soft towards the sun: only if that edge
-        // faces the viewer. At new moon it lies behind the limb, and the rim stays dark.
-        const vec3 towardLight = a.moonLightDirection - normal * dot(normal, a.moonLightDirection);
-        const float edgeFacing = facing + soft * dot(towardLight, toViewer) / max(length(towardLight), 1e-4);
-        lit *= mix(smoothstep(0.0, 0.5 * soft, edgeFacing), 1.0, smoothstep(0.0, soft, d));
+        // The band borrows light from the lit side only as far as that side shows: the
+        // crescent is 1 + cos(phase angle) radii wide at its widest, against the band's
+        // soft. At new moon nothing shows and the rim stays dark. One factor for the whole
+        // face: a test per point darkens a line where the crescent curves behind the limb.
+        const float crescent = 1.0 + dot(a.moonLightDirection, toViewer);
+        lit *= mix(smoothstep(0.0, soft, crescent), 1.0, smoothstep(0.0, soft, d));
     }
     if (lit > 0.0 && a.moonHeightScale > 0.0 && a.moonNormalTexture != NO_SKY_TEXTURE && a.moonRelief > 0.0)
     {
