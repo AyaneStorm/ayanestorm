@@ -127,6 +127,28 @@ Source: Hillaire, 'Physically Based Sky, Atmosphere and Cloud Rendering in Frost
 - **The cloud layer follows the camera** (decision 2), where Frostbite places it at a fixed height over the planet.
 - **Cloud views:** Frostbite renders clouds in the main view, planar reflections, environment maps and shadows. Our probes and water read the main view's sky and cloud results where they can, and only views the main one cannot serve render their own, at lower resolution.
 
+## From Nubis³ (Schneider, Advances 2023)
+
+Horizon Forbidden West's voxel clouds, built so the player can fly through them. Read 16 November 2026.
+
+### What we take
+
+1. **No temporal upscaling, and still fast.** Guerrilla dropped temporal upscaling for these clouds. Instead, the render is split in two passes by depth: **under 200 m at 480×270, beyond 200 m at 960×540**. Close clouds are the costly part of the march and also the blurriest on screen, so a low resolution hides there; far clouds stay sharp, so no aliasing. On PS5: 4 ms → 2.1 ms, the same method at 40 and 60 Hz. Some pixelation shows on sharp, dense edges up close; thinner regions hide it. This replaces the single 'quarter or half resolution' march of the cost note above: two depth ranges, each upsampled with the depth-aware filter.
+2. **Distance-guided march.** A signed distance field (SDF: per voxel, the distance to the nearest cloud) sits beside the density. Step size = max(SDF distance, adaptive step) + a jitter, so empty space is crossed in one jump and dense regions get small steps. Their costs: 10 ms base → 6.1 ms with voxel lighting → **2.2 ms** with the SDF and adaptive march.
+3. **Light precomputed per voxel.** For every voxel holding cloud, density is summed along a ray toward the sun, up to the grid's edge, and stored. The march reads it instead of marching toward the sun at every sample: about **40 % less** render time, and long-distance self-shadowing for free. It also improves ambient scattering. 0.1 to 0.2 ms.
+
+### What does not carry over as is
+
+- **Their clouds are authored.** Nubis³ grids (512×512×64, about 17 MB for one field in BC6) are built offline in Houdini. EEP gives only a 2D cloud texture, density, scale and wind. So the voxel grid and its SDF would be **built on the GPU from the EEP values**: a registry result made once per EEP change, not per frame. The density shaping already planned (weather map, cloud type, erosion noise) becomes the grid's producer instead of running at every march sample.
+- **Camera-following layer** (decision 2): the grid must follow the camera. Updating only the cells that enter at the edges (a wrap-around grid) keeps it from being rebuilt each frame.
+- **Wind:** EEP scrolls clouds. If the grid holds the shape and the wind only offsets the lookup, the SDF and the light grid stay valid while the wind moves the clouds.
+- **Light amortized over 8 frames:** they spread the light grid's update over 8 frames. That is cached data refreshed over time, like the cached shadow cascades, not pixels reused from earlier frames. **Decided (user, 16 November 2026): amortized over 8 frames.** Clouds and sun move slowly, so 8 frames of lag go unseen, the more so above 60 fps. Jumps are the exception: a new EEP, a teleport or a region change refresh the whole grid in one frame (0.1 to 0.2 ms on PS5, once), so nothing is seen catching up.
+- **VRAM:** two to three grids of about 10 to 25 MB each, 30 to 60 MB in all. That fits within the 4 GB floor, but is counted in the budget and dropped with the tier.
+
+### Effect on the tier
+
+The cost note above expected full marching every frame to be too slow for a GT 1030. With the two-pass split, the SDF and the light grid, the PS5 figure is 2.1 ms. That makes the volumetric tier likely on the 3080 Ti and M4, and worth measuring on the GT 1030 instead of assuming it is out. The 2D EEP clouds stay as the low tier.
+
 ## From Hillaire's 2020 sample code
 
 Source: the paper's companion code from Epic Games, 2020, DX11 and HLSL, MIT licence. Code taken from it keeps that licence's notice in the files that carry it.
@@ -207,6 +229,19 @@ Source: Hillaire, 'A Scalable and Production Ready Sky and Atmosphere Rendering 
   It reads the shared `sun shadow` cascades and the `atmosphere` coefficients and adds to the grid's result. The grid leaves out the sun's single scattering entirely, so nothing is counted twice. Exact mode assumes the medium is even along the ray; the atmosphere is not (it thins with altitude), so its coefficients are taken at the camera's height, which is accurate within SL's draw distance. A ray climbing steeply from the ground to a skybox is the case to check by eye. The grid keeps everything that varies slowly: atmosphere, local fog, local lights, clouds. Sun and moon shafts are exact (user's requirement). Local lights' shafts come from the grid only (decided 15 November 2026, the user's delegation):
 - an Exact volume per shadowed projector would cost a mesh draw per light per frame, growing with the light count;
 - local lights sit near the camera, where the grid's depth slices are thinnest, so their shafts lose the least there.
+
+### From Wronski's froxel fog (Assassin's Creed IV, SIGGRAPH 2014)
+
+The paper that introduced the froxel grid our volumetric lighting pass uses. Read 16 November 2026. Its grid uses **no history**: smoothness comes from the grid itself, as decided above.
+
+- **Grid size:** 160×90×64, or ×128 on stronger hardware. That is as many cells as a 720p image, each lit once. The cost is fixed, whatever the screen resolution.
+- **Depth slices:** exponential, concentrated near the camera, where aliasing shows most. This matches local lights' shafts coming from the grid (above).
+- **No scene depth needed:** the grid is built from the camera, the media and the shadow maps only. So it can run on **async compute** (work running beside the drawing, on the GPU's compute queue), as soon as the shadow maps are ready, overlapping the geometry passes.
+- **No edge artifacts:** every pixel reads the grid with 3D filtering at its own depth. This avoids the halos of a 2D low-resolution effect with a bilateral upsample, and every Mac OIT layer gets its own correct fog.
+- **Shadows in the grid:** one sampled point per froxel flickers as the camera moves, and wide PCF was slow and still flickered. They fixed it with a **pre-blurred shadow map** for the fog only (an exponential shadow map, cascades downsampled ×4 to 1024×256 R32F, box blurred). Shadow leaks, the reason ESM is rejected for surfaces, did not show in fog.
+  - For us, the sun is not in the grid (Exact mode), so this concerns **local lights** in the grid, which read the `local shadow atlas` with one-tap PCF (shadows doc). **To check by eye** on the first grid build: if their shafts flicker when the camera moves, the fix is a small pre-blurred copy of the atlas tiles feeding the grid, made once per frame as its own registry result.
+- **Density:** one octave of wind-animated noise and an exponential falloff with height. More octaves cost more for little difference. This is a starting point for local fog.
+- **Cost:** 1.1 ms in all on PS4 / Xbox One (density and lighting 0.43 ms), 1.6 ms at double resolution.
 
 ### Not needed
 
