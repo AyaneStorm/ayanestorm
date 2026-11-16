@@ -303,7 +303,8 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     sky.sunTextureRadius = atanf(HEAVENLY_BODY_FACTOR * 0.5f * llmax(current->getSunScale(), 0.f));
     if (current->getSunTextureId().isNull())
     {
-        sky.sunAngularRadius = 0.f;
+        // No image (most EEPs): the bright disc, at OpenGL's size.
+        sky.sunAngularRadius = sky.sunTextureRadius;
     }
     else if (gSky.mVOSkyp)
     {
