@@ -1,0 +1,51 @@
+AyaneStorm Viewer
+Copyright (C) 2024-2026, Ayane Lyla (chanayane@ayanestorm)
+
+AyaneStorm is a viewer for Second Life(TM) and OpenSimulator, based on the
+Phoenix Firestorm Viewer, itself based on the Second Life Viewer by Linden
+Research, Inc.
+
+
+SOURCE CODE LICENSE
+
+AyaneStorm's source code is free software: you can redistribute it and/or
+modify it under the terms of the GNU Lesser General Public License as
+published by the Free Software Foundation, version 2.1 of the License only.
+The full text of that license is in the LICENSE file.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more
+details.
+
+
+WHO OWNS WHAT
+
+- Code written for AyaneStorm, including the as* source files, the AyaneStorm
+  renderer (indra/asrenderer) and every change marked with AS:Chanayane tags
+  in other files: Copyright (C) 2024-2026, Ayane Lyla.
+- Code from the Phoenix Firestorm Viewer: Copyright (C) The Phoenix Firestorm
+  Project, Inc.
+- Code from the Second Life Viewer: Copyright (C) Linden Research, Inc.
+- Third-party code keeps the copyright and license stated in its own files
+  and in doc/ (for example, code taken from the MIT-licensed
+  UnrealEngineSkyAtmosphere sample by Sebastien Hillaire keeps its MIT
+  notice in the files that use it).
+
+Each source file's own header states its copyright holders and license. If
+you redistribute this code, modified or not, the license requires you to keep
+those notices and this file, and to mark the files you changed.
+
+
+NAMES AND LOGOS
+
+The LGPL licenses the code only. It grants no rights to the names AyaneStorm
+and Ayane Lyla, nor to the AyaneStorm logos and branding, which remain the
+property of Ayane Lyla. A modified version you distribute must use a
+different name and branding, and must not suggest that it is AyaneStorm or is
+endorsed by its author, except to state truthfully that it is based on
+AyaneStorm.
+
+Second Life(TM) and the Second Life logos are trademarks of Linden Research,
+Inc. Firestorm and its logos belong to The Phoenix Firestorm Project, Inc.
+Artwork licenses: doc/LICENSE-logos.txt.

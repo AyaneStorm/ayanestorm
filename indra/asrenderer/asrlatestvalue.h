@@ -1,4 +1,5 @@
 /**
+ * @file asrlatestvalue.h
  * asrlatestvalue.h
  * Hands the newest value from one writer thread to one reader thread, with no
  * lock and no waiting on either side. A stalled writer leaves the reader on the
@@ -7,6 +8,27 @@
  *
  * There are three slots: one the writer owns, one the reader owns, and one held
  * between them. Publishing and reading each swap their slot with the middle one.
+ * @author chanayane@ayanestorm
+ *
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (C) 2026, Ayane Lyla
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * $/LicenseInfo$
  */
 #pragma once
 

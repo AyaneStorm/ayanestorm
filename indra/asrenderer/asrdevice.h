@@ -1,4 +1,5 @@
 /**
+ * @file asrdevice.h
  * asrdevice.h
  * The renderer's connection to the GPU: one interface, with a Vulkan backend on
  * Windows and a native Metal backend on macOS. It draws the scene, the UI and the
@@ -6,6 +7,27 @@
  * doc/ayanestorm-new-renderer-plan.md. Create it on one thread and use it on
  * another if needed, but only one thread may use it at a time, apart from
  * textures(), scene() and sceneStats().
+ * @author chanayane@ayanestorm
+ *
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (C) 2026, Ayane Lyla
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * $/LicenseInfo$
  */
 #pragma once
 

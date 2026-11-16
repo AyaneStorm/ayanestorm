@@ -1,6 +1,6 @@
 /**
  * @file asdofautofocus.h
- * @author chanayane@firestorm
+ * @author chanayane@ayanestorm
  * @brief Depth-of-field autofocus (ASDepthOfFieldFocusMode 1 and 2).
  *
  * Replaces Firestorm's single focus point for every DoF renderer.
@@ -26,6 +26,26 @@
  * Turning DoF on in autofocus releases the lock.
  * Snapshots and sliced captures hold the current autofocus distance: a
  * snapshot focuses exactly as the live view did.
+ *
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (C) 2026, Ayane Lyla
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * $/LicenseInfo$
  */
 #ifndef AS_DOF_AUTOFOCUS_H
 #define AS_DOF_AUTOFOCUS_H

@@ -10,6 +10,27 @@
  * Prims, sculpts, mesh, terrain, attachments, rigged mesh and the system avatar body
  * (asravatarbody.cpp) are drawn so far, worn or animated, on each avatar's skeleton on the GPU.
  * Flexible prims are left out until their own step.
+ * @author chanayane@ayanestorm
+ *
+ * $LicenseInfo:firstyear=2026&license=viewerlgpl$
+ * AyaneStorm Viewer Source Code
+ * Copyright (C) 2026, Ayane Lyla
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation;
+ * version 2.1 of the License only.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ * $/LicenseInfo$
  */
 #ifndef ASR_WORLD_H
 #define ASR_WORLD_H
