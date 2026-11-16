@@ -164,8 +164,12 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
     const vec2 uv = vec2(longitude / (2.0 * ATMOSPHERE_PI) + 0.5, 0.5 - latitude / ATMOSPHERE_PI);
     // A pixel spans pixelAngle / radius radians of the sphere at the disc's centre.
     const float arc = pixelAngle / a.moonAngularRadius;
-    const vec2 uvDx = vec2(arc / (2.0 * ATMOSPHERE_PI), 0.0);
-    const vec2 uvDy = vec2(0.0, arc / ATMOSPHERE_PI);
+    // Towards the limb a pixel stretches over 1 / cos of the sphere, and longitude widens
+    // by 1 / cos(latitude) towards the poles: mips follow, or the maps sparkle at the rim.
+    const float facing = dot(normal, toViewer);
+    const float footprint = arc / max(facing, 0.05);
+    const vec2 uvDx = vec2(footprint / (2.0 * ATMOSPHERE_PI * max(cos(latitude), 0.05)), 0.0);
+    const vec2 uvDy = vec2(0.0, footprint / ATMOSPHERE_PI);
 
     vec3 albedo = vec3(1.0);
     if (a.moonTexture != NO_SKY_TEXTURE)
@@ -181,7 +185,8 @@ vec4 moonSphere(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         const vec3 east = normalize(cross(up, normal) + 1e-6 * right);
         const vec3 north = cross(normal, east);
         vec3 tangent = sampleBits(pixel, a.moonNormalTexture, uv, uvDx, uvDy).rgb * 2.0 - 1.0;
-        tangent.xy *= a.moonRelief;
+        // Faded at the rim, where a tilted facet would catch light the sphere does not.
+        tangent.xy *= a.moonRelief * smoothstep(0.0, 0.3, facing);
         surface = normalize(tangent.x * east + tangent.y * north + max(tangent.z, 0.0) * normal);
     }
     // The terminator softened as ASMoonPhaseSoftness asks: the lit side wraps past it.
