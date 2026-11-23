@@ -13,6 +13,8 @@
  *                   [--look-moon]        a still camera zoomed on the moon
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
  *                   [--clouds]           EEP's default 2D clouds over a made-up noise
+ *                   [--cloud-map FILE]   with SL's cloud texture: an .asbc from the viewer's asrtextures cache
+ *                   [--anisotropy N]     anisotropic filtering, as RenderAnisotropicLevel (default 16, 1 for none)
  *                   [--audit]            count pixels occlusion culling should have kept
  *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
@@ -96,6 +98,8 @@ bool sSkyView = false; // --sky-view
 bool sLookMoon = false; // --look-moon
 std::string sMoonMaps;  // --moon-maps DIR
 bool sClouds = false;   // --clouds
+std::string sCloudMap;  // --cloud-map FILE
+float sAnisotropy = 16.f; // --anisotropy N: RenderAnisotropicLevel, 1 for none
 
 std::vector<uint8_t> readFile(const std::string& path); // below
 
@@ -137,10 +141,59 @@ bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyI
     return true;
 }
 
-// --clouds: EEP's default clouds (llsettingssky.cpp) over a made-up noise, as the test has no
-// image decoder: SL's default cloud texture is a soft noise that tiles, and so is this one,
-// four octaves of value noise that wrap at the edge. No wind, so runs repeat.
-void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky)
+// --clouds: EEP's default clouds (llsettingssky.cpp), over SL's own texture from --cloud-map
+// or a made-up noise. No wind, so runs repeat.
+// --cloud-map FILE: SL's own cloud texture as the viewer's disk cache keeps it (an .asbc file
+// from asrtextures: header, pick mask, then the encoded mips smallest first; see
+// asrtexturecache.cpp). 0 when the file does not read.
+uint32_t loadCloudMap(asr::TextureQueue& textures, const std::string& path)
+{
+    const std::vector<uint8_t> file = readFile(path);
+#pragma pack(push, 1)
+    struct
+    {
+        char magic[4];
+        uint32_t version;
+        uint8_t format;
+        uint8_t components;
+        uint8_t mipLevels;
+        uint8_t mask;
+        uint16_t width;
+        uint16_t height;
+        uint16_t fullWidth;
+        uint16_t fullHeight;
+        uint32_t pickBytes;
+    } header;
+#pragma pack(pop)
+    if (file.size() < sizeof(header))
+    {
+        return 0;
+    }
+    memcpy(&header, file.data(), sizeof(header));
+    asr::TextureDesc desc;
+    desc.width = header.width;
+    desc.height = header.height;
+    desc.mipLevels = header.mipLevels;
+    desc.format = asr::TextureFormat(header.format);
+    size_t at = sizeof(header) + header.pickBytes;
+    if (memcmp(header.magic, "ASBC", 4) != 0 || !asr::textureCompressed(desc.format) ||
+        file.size() != at + asr::textureMipOffset(desc, desc.mipLevels, true))
+    {
+        return 0;
+    }
+    const uint32_t slot = textures.createEncoded(desc);
+    for (int32_t level = int32_t(desc.mipLevels) - 1; level >= 0; --level)
+    {
+        textures.uploadBlocks(slot, desc, uint32_t(level), file.data() + at);
+        at += size_t(asr::textureMipOffset(desc, uint32_t(level) + 1, true) - asr::textureMipOffset(desc, uint32_t(level), true));
+    }
+    textures.generateMips(slot);
+    return slot;
+}
+
+// Without --cloud-map: a soft noise that tiles, as SL's default cloud texture, four octaves
+// of value noise that wrap at the edge. Too smooth to judge the clouds' look by.
+uint32_t makeTestNoise(asr::TextureQueue& textures)
 {
     constexpr uint32_t SIZE = 256;
     const auto lattice = [](uint32_t x, uint32_t y, uint32_t octave) {
@@ -185,13 +238,30 @@ void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky)
     const uint32_t slot = textures.create(desc);
     textures.upload(slot, 0, 0, 0, SIZE, SIZE, pixels.data(), pixels.size());
     textures.generateMips(slot);
+    return slot;
+}
+
+void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky, const std::string& map)
+{
+    uint32_t slot = map.empty() ? 0 : loadCloudMap(textures, map);
+    if (!map.empty() && slot == 0)
+    {
+        fprintf(stderr, "--cloud-map: %s is missing or not an .asbc texture, made-up noise instead\n", map.c_str());
+    }
+    if (slot == 0)
+    {
+        slot = makeTestNoise(textures);
+    }
     sky.cloudTexture = slot | (uint32_t(asr::UISampler::LinearWrap) << asr::UI_SAMPLER_SHIFT);
     sky.cloudScale = 0.4199f;
     sky.cloudShadow = 0.2699f;
     sky.cloudVariance = 0.f;
-    const float density[3] = { 1.f, 0.526f, 1.f };
+    // A real EEP's (the user's 'Sunset'), not llsettingssky.cpp's code defaults: their detail
+    // weight of 1 breaks every cloud into small pieces, and no one sees them in OpenGL.
+    const float density[3] = { 1.f, 0.53f, 0.88f };
+    const float detail[3] = { 1.f, 0.53f, 0.12f };
     std::copy(density, density + 3, sky.cloudPosDensity1);
-    std::copy(density, density + 3, sky.cloudPosDensity2);
+    std::copy(detail, detail + 3, sky.cloudPosDensity2);
     // OpenGL's lightnorm is the light in (y, z, x) order (LLEnvironment::toLightNorm()).
     const float* light = sky.sunDirection[2] > 0.f ? sky.sunDirection : sky.moonDirection;
     sky.cloudShadowOffset[0] = light[1] * 0.0125f;
@@ -2894,6 +2964,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
             state.sky = sSky;
+            state.anisotropy = sAnisotropy;
             state.audit = audit;
             if (sOverlays)
             {
@@ -2934,7 +3005,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         }
         if (sClouds)
         {
-            addTestClouds(device->textures(), sSky);
+            addTestClouds(device->textures(), sSky, sCloudMap);
         }
         if (sOverlays)
         {
@@ -3214,6 +3285,16 @@ int main(int argc, char** argv)
         else if (arg == "--moon-maps" && i + 1 < argc)
         {
             sMoonMaps = argv[++i];
+        }
+        else if (arg == "--anisotropy" && i + 1 < argc)
+        {
+            sAnisotropy = std::max(float(atof(argv[++i])), 1.f);
+        }
+        else if (arg == "--cloud-map" && i + 1 < argc)
+        {
+            sCloudMap = argv[++i];
+            sClouds = true;
+            drawScene = true;
         }
         else if (arg == "--clouds")
         {

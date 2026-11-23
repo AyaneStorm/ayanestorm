@@ -960,6 +960,8 @@ void ASRViewer::publishFrame(LLWindow* window)
     state.worldView[1] = U32(llmax(size.mY - world.mTop, 0));
     state.worldView[2] = U32(llmax(world.getWidth(), 0));
     state.worldView[3] = U32(llmax(world.getHeight(), 0));
+    static LLCachedControl<F32> anisotropy(gSavedSettings, "RenderAnisotropicLevel", 0.f);
+    state.anisotropy = llmax(F32(anisotropy()), 1.f); // 0 is off, as 1
     sRenderThread->publishState();
     sDevice->textures().flush(); // uploads that found the ring full
 

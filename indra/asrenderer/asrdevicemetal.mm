@@ -299,6 +299,7 @@ public:
             }
             mRecordSky = input.sky ? *input.sky : earthSky();
             mRecordTone = input.tone;
+            useAnisotropy(slot, input.anisotropy);
             if (input.camera && !recordScene(commands, slot, *input.camera, worldWidth, worldHeight, input.audit, input.overlay))
             {
                 dispatch_semaphore_signal(mFrameSlots);
@@ -394,6 +395,50 @@ public:
     }
 
 private:
+    // The four samplers every texture is read through. The linear ones filter anisotropically
+    // up to `anisotropy` (RenderAnisotropicLevel; 1 for none), as OpenGL's textures.
+    void createSamplers(float anisotropy)
+    {
+        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        {
+            const UISampler kind = UISampler(i);
+            const bool nearest = kind == UISampler::NearestClamp || kind == UISampler::NearestWrap;
+            const bool wrap = kind == UISampler::LinearWrap || kind == UISampler::NearestWrap;
+            MTLSamplerDescriptor* sampler = [MTLSamplerDescriptor new];
+            sampler.magFilter = nearest ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
+            sampler.minFilter = sampler.magFilter;
+            sampler.mipFilter = nearest ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterLinear;
+            sampler.sAddressMode = wrap ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
+            sampler.tAddressMode = sampler.sAddressMode;
+            sampler.maxAnisotropy = nearest ? 1 : NSUInteger(anisotropy);
+            sampler.supportArgumentBuffers = YES;
+            mSamplers[i] = [mDevice newSamplerStateWithDescriptor:sampler];
+        }
+        mAnisotropy = anisotropy;
+    }
+
+    // RenderAnisotropicLevel for the frame about to be recorded into argument buffer `copy`,
+    // whose previous frame has finished: a new level reaches each copy on its own turn.
+    void useAnisotropy(uint32_t copy, float anisotropy)
+    {
+        const float level = std::floor(std::clamp(anisotropy, 1.f, 16.f)); // Metal's range
+        if (mCopyAnisotropy[copy] == level)
+        {
+            return;
+        }
+        if (mAnisotropy != level)
+        {
+            createSamplers(level);
+        }
+        [mArgumentEncoder setArgumentBuffer:mArguments[copy] offset:0];
+        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        {
+            [mArgumentEncoder setSamplerState:mSamplers[i] atIndex:MAX_TEXTURES + i];
+            mCopySamplers[copy][i] = mSamplers[i];
+        }
+        mCopyAnisotropy[copy] = level;
+    }
+
     bool createUI(const std::string& shaderDir, std::string& error)
     {
         mFrameSlots = dispatch_semaphore_create(FRAMES_IN_FLIGHT);
@@ -418,24 +463,11 @@ private:
             }
         }
 
-        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        createSamplers(1.f);
+        for (uint32_t copy = 0; copy < FRAMES_IN_FLIGHT; ++copy)
         {
-            const UISampler kind = UISampler(i);
-            const bool nearest = kind == UISampler::NearestClamp || kind == UISampler::NearestWrap;
-            const bool wrap = kind == UISampler::LinearWrap || kind == UISampler::NearestWrap;
-            MTLSamplerDescriptor* sampler = [MTLSamplerDescriptor new];
-            sampler.magFilter = nearest ? MTLSamplerMinMagFilterNearest : MTLSamplerMinMagFilterLinear;
-            sampler.minFilter = sampler.magFilter;
-            sampler.mipFilter = nearest ? MTLSamplerMipFilterNearest : MTLSamplerMipFilterLinear;
-            sampler.sAddressMode = wrap ? MTLSamplerAddressModeRepeat : MTLSamplerAddressModeClampToEdge;
-            sampler.tAddressMode = sampler.sAddressMode;
-            sampler.supportArgumentBuffers = YES;
-            mSamplers[i] = [mDevice newSamplerStateWithDescriptor:sampler];
-            for (uint32_t copy = 0; copy < FRAMES_IN_FLIGHT; ++copy)
-            {
-                [mArgumentEncoder setArgumentBuffer:mArguments[copy] offset:0];
-                [mArgumentEncoder setSamplerState:mSamplers[i] atIndex:MAX_TEXTURES + i];
-            }
+            mCopyAnisotropy[copy] = 0.f; // written by the first useAnisotropy()
+            useAnisotropy(copy, 1.f);
         }
 
         if (@available(macOS 15.0, *))
@@ -2885,7 +2917,11 @@ private:
     id<MTLArgumentEncoder> mArgumentEncoder = nil;
     id<MTLBuffer> mArguments[FRAMES_IN_FLIGHT];     // the texture array of each frame in flight
     TextureSlotCopies mSlotCopies{ FRAMES_IN_FLIGHT };
-    id<MTLSamplerState> mSamplers[uint32_t(UISampler::Count)];
+    id<MTLSamplerState> mSamplers[uint32_t(UISampler::Count)]; // at mAnisotropy
+    float mAnisotropy = 0.f;
+    // What each frame's argument buffer holds; it keeps those samplers alive while the GPU reads them.
+    id<MTLSamplerState> mCopySamplers[FRAMES_IN_FLIGHT][uint32_t(UISampler::Count)];
+    float mCopyAnisotropy[FRAMES_IN_FLIGHT]{};
     id mResidency = nil; // id<MTLResidencySet>, which needs macOS 15 to name
     std::unordered_map<uint32_t, id<MTLRenderPipelineState>> mUIPipelines; // every one made so far
     std::vector<id<MTLRenderPipelineState>> mUIDrawPipelines;              // the current list's, by blend

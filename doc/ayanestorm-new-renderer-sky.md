@@ -357,7 +357,10 @@ Library, Vulkan and Metal, and the viewer. `asrenderer_test --scene --sky-view -
 - **Stars:** the stars' vertex shader reads the cover at each star's centre and dims or hides it, as clouds hide the moon. The bindless textures and samplers are now visible to vertex shaders (Vulkan set 0 stage flags; Metal binds the argument buffer to the stars' vertex stage).
 - **Viewer:** `fillClouds()` in asrviewer.cpp takes OpenGL's gates (a cloud texture, the Clouds render type), textures, blend, wind scroll and `lightnorm` self-shadow step.
 - **Not yet:** cloud shadows on the world (step 4, shadows), clouds in the aerial perspective under a thick layer, and the exposure meter does not see the clouds.
-- **Test:** `--clouds` adds the default EEP clouds over a made-up tiling value noise, 256 x 256.
+- **Test:** `--clouds` adds the clouds of the user's 'Sunset' EEP (density 1, 0.53, 0.88; detail 1, 0.53, 0.12; cover 0.27; scale 0.42). `--cloud-map FILE` loads SL's own cloud texture as the viewer's disk cache keeps it (an `.asbc` from `asrtextures`, uploaded encoded); without it, a made-up tiling noise, too smooth to judge the look by. A copy of SL's default cloud texture is at `build-asr/clouds/default_clouds.asbc`.
+- **llsettingssky.cpp's code defaults make poor clouds** (detail weight 1 breaks them into small pieces): nobody sees them in OpenGL, where the startup transition leaves them at once. The new renderer showed them at startup only while its frame path skipped `LLEnvironment::update()` (fixed 23 November).
+- **Banding near the horizon (user, 23 November):** the air in front was a ratio of two transmittance table reads, kinked at the table's rows. It is now marched, 8 steps over the few km to the cloud.
+- **Self-shadow moves with the sun's azimuth** (OpenGL's alpha2 lookup, offset towards the light): kept (user). In OpenGL it is hidden, as it only scales the sun's haze glow term.
 
 ## Step 1 reading pass (15 November 2026)
 

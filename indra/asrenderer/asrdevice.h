@@ -112,6 +112,7 @@ struct FrameInput
     const SceneCamera3D* camera = nullptr; // the scene is drawn when this is set
     const SkyInput* sky = nullptr;         // the scene's sky; earthSky() when not set
     ToneInput tone{};
+    float anisotropy = 1.f; // RenderAnisotropicLevel: every linear sampler's, 1 for none, up to the device's
     bool audit = false; // also looks for clusters occlusion culling lost
     OverlayInput overlay{}; // with the scene only
     // Where the scene goes in the window, as OpenGL's world view: x, y from the top left,

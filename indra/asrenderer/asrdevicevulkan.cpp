@@ -730,6 +730,14 @@ private:
         vkGetPhysicalDeviceFeatures(mGpu, &available);
         features.features.textureCompressionBC = available.textureCompressionBC;
         mTextures.setCompressionSupported(available.textureCompressionBC == VK_TRUE);
+        // RenderAnisotropicLevel, as OpenGL: surfaces seen edge on keep their detail.
+        features.features.samplerAnisotropy = available.samplerAnisotropy;
+        if (available.samplerAnisotropy)
+        {
+            VkPhysicalDeviceProperties limits;
+            vkGetPhysicalDeviceProperties(mGpu, &limits);
+            mMaxAnisotropy = limits.limits.maxSamplerAnisotropy;
+        }
 
         const float priority = 1.f;
         VkDeviceQueueCreateInfo queue{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
@@ -999,24 +1007,10 @@ private:
             return false;
         }
 
-        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        if (!createSamplers(1.f))
         {
-            const UISampler kind = UISampler(i);
-            const bool nearest = kind == UISampler::NearestClamp || kind == UISampler::NearestWrap;
-            const bool wrap = kind == UISampler::LinearWrap || kind == UISampler::NearestWrap;
-            VkSamplerCreateInfo sampler{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-            sampler.magFilter = nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
-            sampler.minFilter = sampler.magFilter;
-            sampler.mipmapMode = nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
-            sampler.addressModeU = wrap ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-            sampler.addressModeV = sampler.addressModeU;
-            sampler.addressModeW = sampler.addressModeU;
-            sampler.maxLod = VK_LOD_CLAMP_NONE;
-            if (vkCreateSampler(mDevice, &sampler, nullptr, &mSamplers[i]) != VK_SUCCESS)
-            {
-                error = "cannot create the UI samplers";
-                return false;
-            }
+            error = "cannot create the UI samplers";
+            return false;
         }
 
         VkDescriptorSetLayoutBinding bindings[2]{};
@@ -1028,8 +1022,8 @@ private:
         bindings[1].binding = 1;
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         bindings[1].descriptorCount = uint32_t(UISampler::Count);
+        // Written, not immutable: RenderAnisotropicLevel replaces them (setAnisotropy()).
         bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
-        bindings[1].pImmutableSamplers = mSamplers;
 
         // Partly bound: most slots hold nothing. Each frame in flight has its own set, changed
         // only once its previous frame has finished: see TextureSlotCopies. Update after bind
@@ -1079,10 +1073,87 @@ private:
             error = "cannot allocate the texture arrays";
             return false;
         }
+        writeSamplers();
 
         mUIVertexShader = loadShader("asrUIV", error);
         mUIFragmentShader = mUIVertexShader ? loadShader("asrUIF", error) : VK_NULL_HANDLE;
         return mUIVertexShader != VK_NULL_HANDLE && mUIFragmentShader != VK_NULL_HANDLE;
+    }
+
+    // The four samplers every texture is read through. The linear ones filter anisotropically
+    // up to `anisotropy` (RenderAnisotropicLevel; 1 for none), as OpenGL's textures.
+    bool createSamplers(float anisotropy)
+    {
+        const float level = std::clamp(anisotropy, 1.f, std::max(mMaxAnisotropy, 1.f));
+        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        {
+            const UISampler kind = UISampler(i);
+            const bool nearest = kind == UISampler::NearestClamp || kind == UISampler::NearestWrap;
+            const bool wrap = kind == UISampler::LinearWrap || kind == UISampler::NearestWrap;
+            VkSamplerCreateInfo sampler{ VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+            sampler.magFilter = nearest ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+            sampler.minFilter = sampler.magFilter;
+            sampler.mipmapMode = nearest ? VK_SAMPLER_MIPMAP_MODE_NEAREST : VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            sampler.addressModeU = wrap ? VK_SAMPLER_ADDRESS_MODE_REPEAT : VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            sampler.addressModeV = sampler.addressModeU;
+            sampler.addressModeW = sampler.addressModeU;
+            sampler.maxLod = VK_LOD_CLAMP_NONE;
+            sampler.anisotropyEnable = !nearest && level > 1.f ? VK_TRUE : VK_FALSE;
+            sampler.maxAnisotropy = level;
+            if (vkCreateSampler(mDevice, &sampler, nullptr, &mSamplers[i]) != VK_SUCCESS)
+            {
+                return false;
+            }
+        }
+        mAnisotropy = level;
+        return true;
+    }
+
+    // The samplers into every frame's texture set.
+    void writeSamplers()
+    {
+        VkDescriptorImageInfo infos[uint32_t(UISampler::Count)]{};
+        for (uint32_t i = 0; i < uint32_t(UISampler::Count); ++i)
+        {
+            infos[i].sampler = mSamplers[i];
+        }
+        VkWriteDescriptorSet writes[FRAMES_IN_FLIGHT]{};
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[i].dstSet = mUISets[i];
+            writes[i].dstBinding = 1;
+            writes[i].descriptorCount = uint32_t(UISampler::Count);
+            writes[i].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+            writes[i].pImageInfo = infos;
+        }
+        vkUpdateDescriptorSets(mDevice, FRAMES_IN_FLIGHT, writes, 0, nullptr);
+    }
+
+    // A new RenderAnisotropicLevel: rare, so the GPU finishes what uses the old samplers and
+    // every frame's set takes the new ones at once.
+    bool setAnisotropy(float anisotropy)
+    {
+        const float level = std::clamp(anisotropy, 1.f, std::max(mMaxAnisotropy, 1.f));
+        if (level == mAnisotropy)
+        {
+            return true;
+        }
+        if (!check(vkDeviceWaitIdle(mDevice), "wait for device"))
+        {
+            return false;
+        }
+        for (VkSampler& sampler : mSamplers)
+        {
+            vkDestroySampler(mDevice, sampler, nullptr);
+            sampler = VK_NULL_HANDLE;
+        }
+        if (!createSamplers(level))
+        {
+            return false;
+        }
+        writeSamplers();
+        return true;
     }
 
     // --- Scene setup ----------------------------------------------------------
@@ -4212,6 +4283,11 @@ private:
 
     bool recordCommands(uint32_t slot, uint32_t image, const FrameInput& input)
     {
+        // Before anything is recorded: the sets it binds may get new samplers.
+        if (!setAnisotropy(input.anisotropy))
+        {
+            return false;
+        }
         VkCommandBuffer commands = mCommands[slot];
         if (!check(vkResetCommandBuffer(commands, 0), "reset commands"))
         {
@@ -4549,6 +4625,8 @@ private:
     float mUIWorldToWindow[16]{};  // this frame's, see uiWorldToWindow()
     VkQueryPool mSceneQueries = VK_NULL_HANDLE;
     float mTimestampMilliseconds = 0.f;
+    float mMaxAnisotropy = 1.f; // the device's; 1 when it has no anisotropic filtering
+    float mAnisotropy = 1.f;    // the samplers'
     SceneStats mSceneFrameStats;
 
     bool mShuttingDown = false;

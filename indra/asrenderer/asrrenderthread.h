@@ -150,6 +150,7 @@ struct FrameState
     SceneCamera3D camera{};
     SkyInput sky = earthSky(); // see FrameInput
     ToneInput tone{};          // see FrameInput
+    float anisotropy = 1.f;    // see FrameInput
     CameraTurn turn{};
     bool predictCamera = false; // see CameraPredictor; while turning, only the pivots
     bool audit = false;     // see FrameInput
