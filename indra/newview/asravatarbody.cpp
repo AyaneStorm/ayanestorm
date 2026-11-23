@@ -699,7 +699,7 @@ void ASRAvatarBody::logParts(LLVOAvatar* avatar, const BodyPtr* bodyPtr)
     const bool self = avatar->isSelf();
     LL_INFOS("ASRenderer") << "clicked avatar " << avatar->getID() << " body " << (body != nullptr)
                            << " skeleton " << (body ? body->skeleton : 0) << " lod area " << (body ? body->lodArea : -1.f)
-                           << " lod checked " << (body ? gFrameTimeSeconds - body->lodCheckedAt : -1.f) << " s ago"
+                           << " lod checked " << (body ? F32(gFrameTimeSeconds - body->lodCheckedAt) : -1.f) << " s ago"
                            << " self " << self << " needs render " << (self ? gAgent.needsRenderAvatar() : true)
                            << " needs head " << (self ? gAgent.needsRenderHead() : true) << LL_ENDL;
     if (body)
