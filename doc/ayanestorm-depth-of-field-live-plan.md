@@ -537,10 +537,7 @@ The hidden share also falls faster, so fewer mip levels are read.
 
 ### Tile kernels from the completed bins (2026-10-01, unbuilt)
 
-**Runtime of the completion fix (user).** Better, but faint blocky patches remain on the hair, hairline and hand.
-- "Veil tiles" shares their grid, but nothing in its values stands out.
-- "Background layer" shows the cause. Behind the in-focus torso and hand, the background is either the near-background fill (B1, brown) or the far-background fill (B2, flat grey). The switch between the two follows a tile staircase.
-- The tiles where B1 is grey match the black tiles inside the silhouette in "Veil tiles": kernel 0.
+**Observation.** Completion reduced the artefact, but faint patches remained on the hair, hairline and hand. In "Background layer", the B1/B2 fill transition followed the tile grid. Grey B1 tiles corresponded to zero kernels inside the silhouette in "Veil tiles". This suggested a gather/completion mismatch; it did not yet establish the cause of the remaining staircase.
 
 **Cause.** The tile pass reduced each bin's raw level 0, but the gathers read the completed bin.
 - Where nearer bins hide all of B1 (behind opaque in-focus skin), a tile had a kernel of 0 and skipped B1. Its neighbour's gather ran and read B1's fill.
@@ -559,7 +556,7 @@ The hidden share also falls faster, so fewer mip levels are read.
 
 ### Gathers skip only empty bins (2026-10-01, unbuilt)
 
-**Runtime of the tile fix (user).** Blocks remain on the chest and arm: a lighter, washed staircase on skin just behind the focus. "Background layer" shows it; the skin there is B1.
+**Observation.** After the tile-kernel change, a washed staircase remained on the chest and arm just behind the focus. "Background layer" placed the affected skin in B1. The minimum-radius rule below addresses a separate skip inconsistency; the polygon-area reproduction follows in the next section.
 
 **Cause.** The veil gathers skipped kernels under 0.5 gather px, but 0.5 is the smallest radius anything can have: `liveDecompose()` and the capture clamp r to it.
 - Content just off the focus (under 1 full px, up to about 16% of the pixel in B1) has a tile kernel of exactly sqrt(W / E) = 0.5.
@@ -571,35 +568,28 @@ The hidden share also falls faster, so fewer mip levels are read.
 - `test_minimum_radius_is_gathered`: a kernel a hair under 0.5 gathers the full coverage. 16 tests pass.
 - Debug 3 ("Veil tiles") shows every gathered tile at least at a quarter brightness. A 0.5 px kernel is no longer black like a skipped tile, which hid both this defect and the previous one.
 
-### Polygon aperture tap areas: reproduced tile staircase (2026-10-01, unbuilt)
+### Polygon aperture sector integration (2026-10-01, unbuilt)
 
-**Runtime evidence.** Screenshots in `C:\Users\gabri\Documents\ShareX\Screenshots\2026-10`:
-- `AyaneStormOS-Normal_O7Pc3aB6sD.png`: normal output, washed grey squares on the hair and jaw.
-- `AyaneStormOS-Normal_NPVKFceH8v.png`: debug 9, B1 alone over magenta, carries the same staircase.
-- `AyaneStormOS-Normal_mveopfjCg7.png`: debug 10, normalized B2 alone, has no corresponding staircase there.
-- The user confirmed the current aperture is 6 blades, roundness 0. Temporarily setting roundness to 1 makes the squares disappear in debug 9, without rebuilding.
+**Observed behaviour.** With six blades and roundness 0, normal output showed washed grey blocks on the hair and jaw. Debug 9 (B1 over magenta) reproduced the staircase; debug 10 (normalized B2) did not show it at the same locations. Changing roundness to 1 removed the blocks in debug 9 without rebuilding. This located the defect in B1 before composition and tied it to aperture shape. The preceding completion, tile-kernel and skip changes had not resolved it.
 
-These observations isolate the visible defect to B1 before the B1-over-B2 combine and link it to the polygon aperture. The previous three changes did not resolve this defect; their earlier cause descriptions are not proof of its root cause.
+**Area mismatch.** Ring taps used `anamorphic * pi*s^2/3 * boundary(angle)^2`, a midpoint estimate, against the exact `ASDoFAperture::unitArea()` denominator. For a sharp hexagon, the six first-ring taps sample side midpoints with `boundary^2 = 3/4`. The estimated area `pi*3/4` divided by the true area `3*sqrt(3)/2` is `0.906900`. With the exact centre tap included, an opaque layer at source radius = kernel = 0.5 has coverage `1/9 + 8/9 * pi/(2*sqrt(3)) = 0.917244`.
 
-**Root cause, reproduced in the reference model.** The gather estimated a ring tap's polygon area as `anamorphic * pi*s^2/3 * boundary(angle)^2`. That is a midpoint approximation to the angular integral, while the energy denominator `unit_area` is the exact aperture area from `ASDoFAperture::unitArea()`.
-- With a sharp hexagon, all six first-ring angles lie at side midpoints: `boundary^2 = 3/4`. The estimated area is `pi*3/4`, versus the true `3*sqrt(3)/2`. Their ratio is `pi/(2*sqrt(3)) = 0.906900`.
-- The centre tap already uses the exact area. At source radius = kernel = 0.5, the total coverage of an opaque uniform layer is `1/9 + 8/9 * pi/(2*sqrt(3)) = 0.917244`.
-- Which annuli a source reaches depends on the tile kernel. Consequently this area error changes at tile boundaries, even when all tiles gather and the B1 colour is constant. B2 fills the missing coverage with its lighter colour.
-- The earlier reference model used circular taps only. The circle has constant boundary, so the midpoint approximation is exact; that model could not expose this error. GPU precision, mip behaviour and Mac OIT are not needed to reproduce it.
+Tile kernels change which annuli a source reaches, so this deficit varies at tile boundaries even for constant B1 colour. Lighter B2 then shows through. Circular taps have constant boundary and concealed the error in the earlier reference model; the reproduction does not require GPU rounding, mip behaviour or Mac OIT.
 
-**Model reproduction.** `evaluate_polygon_tiles()` puts constant dark B1 over a hidden light B2. All B1 sources have radius 0.5 except one radius-1.5 source, which changes the conservative tile maxima. The measured strip is outside that source's reach. It uses the shader's adaptive ring count, polygon offsets and per-tap mip footprints.
-- Previous midpoint areas: minimum B1 coverage `0.917244`, maximum tile coverage step `0.082756`, maximum output colour error `0.047171`.
-- Integrated sector areas: coverage `1.0`, tile step `0.0`, colour error `0.0` (double precision).
+**Reference case.** `evaluate_polygon_tiles()` places dark B1 over hidden light B2. B1 radii are 0.5 except for one radius-1.5 source that changes tile maxima. Measurements exclude that source's reach and retain the shader's adaptive rings, polygon offsets and mip footprints.
 
-**Fix.** Each tap integrates `boundary^2/2` over its entire angular sector. Its area is `2*d*s * sector_area`, the radial squared-width times that sector integral. The centre keeps `unit_area*s^2/4`.
-- `liveBladeAreaPrimitive()` uses the same analytic primitive as the existing CPU aperture area. `liveApertureAreaTo()` continues it across blade boundaries, including negative angles; `liveTapSectorArea()` subtracts the two angular endpoints.
-- Every ring now partitions its own annulus exactly for all blade counts, roundness values and anamorphic ratios. This preserves coverage for every constant source radius up to the kernel, including partial coverage. Whole-kernel renormalization would not establish that identity for smaller sources that reach only inner rings.
-- The shared area function applies to all four gathers. Tile maxima, binning, completion, reach tests and compositing keep their existing rules. No tile smoothing, opacity override or hexagon-specific correction is needed.
+| Area calculation | Minimum B1 coverage | Maximum tile coverage step | Maximum output colour error |
+| --- | --- | --- | --- |
+| Midpoint estimate | 0.917244 | 0.082756 | 0.047171 |
+| Integrated sectors (double precision) | 1.0 | 0.0 | 0.0 |
 
-**Validation.** The reference model includes polygon/rounded aperture taps and three new regression tests: annular area conservation for blades 0 and 3–12, uniform coverage including partial alpha and smaller source radii, and the reproduced B1 tile staircase with old versus corrected areas. A float32 sweep of the shader's sector primitive across blades 3–12, roundness 0/0.35/0.8/1, squeeze 0.1/1/2 and kernels 0.5–20 measured a maximum uniform coverage error of `3.05e-7`.
-- Khronos validator: Reduce, Tile, Gather and Composite each linked with the common library under both GLSL 410 core and 400 core: all eight pass.
-- Reference model: all 19 tests pass. Edited files checked for LF line endings.
-- Viewer build and runtime verification remain with the user; shader revision unchanged.
+**Correction.** Integrate `boundary^2/2` over each tap's angular sector. Ring-tap area becomes `2*d*s * sector_area`; the centre remains `unit_area*s^2/4`. `liveBladeAreaPrimitive()` shares the CPU aperture primitive, `liveApertureAreaTo()` extends it across blade boundaries and negative angles, and `liveTapSectorArea()` subtracts sector endpoints.
+
+Each ring partitions its annulus exactly across blade counts, roundness and anamorphic ratios. This preserves uniform coverage for partial alpha and source radii smaller than the kernel, which whole-kernel renormalization alone cannot guarantee. All four gathers use the shared calculation; tile maxima, binning, completion, reach tests and composition retain their existing rules.
+
+**Recorded validation at this stage.** Three added regressions cover annular area conservation (blades 0 and 3–12), uniform coverage with partial alpha and smaller source radii, and the B1 tile reproduction. All 19 reference tests passed. A float32 sweep across blades 3–12, roundness 0/0.35/0.8/1, squeeze 0.1/1/2 and kernels 0.5–20 found maximum uniform coverage error `3.05e-7`.
+
+Reduce, Tile, Gather and Composite each linked with the common library under GLSL 410 core and 400 core: eight validator checks passed. LF line endings were checked. Viewer build and runtime verification were pending at this stage; shader revision was unchanged.
 
 ### Known residual, and Mac preparation (2026-10-01)
 
