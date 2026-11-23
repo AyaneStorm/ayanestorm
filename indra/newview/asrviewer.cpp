@@ -304,6 +304,21 @@ void fillClouds(asr::SkyInput& sky, const LLSettingsSky& current)
     }
     sky.cloudPosDensity1[0] -= scroll.mV[0];
     sky.cloudPosDensity1[1] += scroll.mV[1];
+    // Diagnostic, temporary: clouds standing still under the shared environment.
+    static LLFrameTimer sCloudLogTimer;
+    if (sCloudLogTimer.getElapsedTimeF32() > 5.f)
+    {
+        sCloudLogTimer.reset();
+        LLEnvironment& env = LLEnvironment::instance();
+        const LLSettingsSky::ptr_t running = env.getCurrentEnvironmentInstance() ? env.getCurrentEnvironmentInstance()->getSky() : nullptr;
+        LL_INFOS("ASRenderer") << "clouds: selected env " << S32(env.getSelectedEnvironment())
+                               << " sky " << current.getName() << " rate " << current.getCloudScrollRate()
+                               << " running sky same " << (running.get() == &current)
+                               << " running rate " << (running ? running->getCloudScrollRate() : LLVector2::zero)
+                               << " paused " << env.isCloudScrollPaused() << " delta " << scroll
+                               << " density1 " << density1 << " texture " << sky.cloudTexture
+                               << " next " << sky.cloudTextureNext << " blend " << sky.cloudBlend << LL_ENDL;
+    }
     sky.cloudMaxY = current.getMaxY();
     sky.cloudDomeRadius = current.getDomeRadius();
     sky.cloudDomeOffset = current.getDomeOffset();

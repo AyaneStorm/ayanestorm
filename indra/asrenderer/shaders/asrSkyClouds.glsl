@@ -125,6 +125,8 @@ vec3 cloudLightFrom(Atmosphere a, vec3 point, vec3 light, vec3 direction)
 // alone in this direction) that lies before the cloud, by how much of the ray's extinction
 // does. skyIrradiance: the sky's light on a horizontal surface at the camera (GpuExposure),
 // the cloud's ambient.
+const int CLOUD_FRONT_STEPS = 8;
+
 vec3 cloudOver(Atmosphere a, vec3 direction, CloudHit hit, CloudShape shape, vec3 sky, vec3 behind, vec3 skyIrradiance)
 {
     const vec3 camera = atmosphereCamera(a);
@@ -133,10 +135,16 @@ vec3 cloudOver(Atmosphere a, vec3 direction, CloudHit hit, CloudShape shape, vec
                       + cloudLightFrom(a, point, a.moonDirection, direction) * a.moonSkyLight;
     const vec3 cloud = a.cloudAlbedo * (direct * (1.0 - shape.shadow) + skyIrradiance / ATMOSPHERE_PI);
 
-    const float r = length(point);
+    // The air in front, marched: a few km at most. Dividing two transmittance table reads
+    // instead banded near the horizon, where the table's rows meet.
+    const float step = hit.distance / float(CLOUD_FRONT_STEPS);
+    vec3 depth = vec3(0.0);
+    for (int i = 0; i < CLOUD_FRONT_STEPS; ++i)
+    {
+        depth += sampleMedium(a, camera + direction * (step * (float(i) + 0.5))).extinction;
+    }
+    const vec3 front = exp(-depth * step);
     const vec3 whole = sampleTransmittance(a, length(camera), direction.z);
-    const vec3 beyond = sampleTransmittance(a, r, dot(direction, point / r));
-    const vec3 front = clamp(whole / max(beyond, vec3(1e-6)), 0.0, 1.0);
     const vec3 air = sky * clamp((1.0 - front) / max(1.0 - whole, vec3(1e-4)), 0.0, 1.0);
     return mix(behind, air + front * cloud, shape.cover);
 }
