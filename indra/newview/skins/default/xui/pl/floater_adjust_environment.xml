@@ -80,9 +80,7 @@
 					<text name="star_brightness_label">
 						Gwiazdy:
 					</text>
-				</layout_panel>
-				<layout_panel name="lp_4">
-					<text name="label">
+					<text name="moon_label">
 						Księżyc:
 					</text>
 					<text name="moon_azimuth_label">

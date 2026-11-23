@@ -295,7 +295,7 @@
                               auto_resize="false"
                               user_resize="false"
                               height="150"
-                              width="310"
+                              width="470"
                               min_height="0"
                               visible="true">
                     <text follows="top|left"
@@ -331,7 +331,7 @@
                           max_val="359.99"
                           name="sun_azimuth"
                           top_pad="5"
-                          width="130"
+                          width="215"
                           can_edit_text="true"/>
                   <text follows="left|top"
                         name="sun_elevation_label"
@@ -351,7 +351,7 @@
                           max_val="90"
                           name="sun_elevation"
                           top_pad="5"
-                          width="130"
+                          width="215"
                           can_edit_text="true"/>
                     <check_box control_name="sunbeacon"
                                width="60"
@@ -442,22 +442,14 @@
                             top_pad="5"
                             width="130"
                             can_edit_text="true"/>
-                </layout_panel>
-                <layout_panel border="false"
-                              name="lp_4"
-                              bevel_style="in"
-                              auto_resize="false"
-                              user_resize="false"
-                              height="150"
-                              width="160"
-                              min_height="0"
-                              visible="true">
+                    <!-- AS:Chanayane - Sun and Moon in one panel: each half of the row
+                         under the trackballs is one light's sliders, for finer steps. -->
                     <text follows="top|left"
                           font="SansSerifBold"
                           height="10"
                           layout="topleft"
-                          name="label"
-                          left="5"
+                          name="moon_label"
+                          left="315"
                           top="5"
                           width="105">Moon:</text>
                     <sun_moon_trackball name="moon_rotation"
@@ -471,7 +463,7 @@
                         name="moon_azimuth_label"
                         height="10"
                         layout="topleft"
-                        left_delta="0"
+                        left="245"
                         top_pad="5"
                         width="200">Azimuth:</text>
                   <slider decimal_digits="2"
@@ -485,7 +477,7 @@
                           max_val="359.99"
                           name="moon_azimuth"
                           top_pad="5"
-                          width="130"
+                          width="215"
                           can_edit_text="true"/>
                   <text follows="left|top"
                         name="moon_elevation_label"
@@ -505,7 +497,7 @@
                           max_val="90"
                           name="moon_elevation"
                           top_pad="5"
-                          width="130"
+                          width="215"
                           can_edit_text="true"/>
                     <check_box control_name="moonbeacon"
                                follows="left|top"

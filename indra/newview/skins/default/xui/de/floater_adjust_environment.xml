@@ -80,9 +80,7 @@
 						Höhenwinkel:
 					</text>
 					<check_box label="Beacon anzeigen" name="sunbeacon"/>
-				</layout_panel>
-				<layout_panel name="lp_4">
-					<text name="label">
+					<text name="moon_label">
 						Mond:
 					</text>
 					<text name="moon_azimuth_label">

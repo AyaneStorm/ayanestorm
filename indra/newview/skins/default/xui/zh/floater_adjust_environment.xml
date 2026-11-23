@@ -74,9 +74,7 @@
 						仰角:
 					</text>
 					<check_box label="顯示太陽信標" name="sunbeacon" />
-				</layout_panel>
-				<layout_panel name="lp_4">
-					<text name="label">
+					<text name="moon_label">
 						月亮:
 					</text>
 					<text name="moon_azimuth_label">

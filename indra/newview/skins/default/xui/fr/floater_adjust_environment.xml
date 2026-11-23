@@ -72,9 +72,7 @@
 					<text name="star_brightness_label">
 						Brillance des étoiles :
 					</text>
-				</layout_panel>
-				<layout_panel name="lp_4">
-					<text name="label">
+					<text name="moon_label">
 						Lune :
 					</text>
 					<text name="moon_azimuth_label">
