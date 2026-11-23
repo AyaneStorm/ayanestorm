@@ -141,6 +141,25 @@ struct SkyInput
     float sunGlowSize = 5.f;
     float sunGlowFocus = -0.48f;
 
+    // EEP's 2D clouds: OpenGL's shapes (cloudsF.glsl) on OpenGL's dome mapping, lit by this sky.
+    // The low tier, and the fallback when the volumetric layer is off. A cloud scale of 0, or no
+    // texture, draws none.
+    uint32_t cloudTexture = NO_SKY_TEXTURE;     // EEP's cloud noise, wrapping
+    uint32_t cloudTextureNext = NO_SKY_TEXTURE; // the one it blends to (NO_SKY_TEXTURE: none)
+    float cloudBlend = 0.f;                     // 0: cloudTexture alone
+    float cloudScale = 0.f;                     // EEP cloud_scale
+    float cloudVariance = 0.f;                  // EEP cloud_variance
+    float cloudShadow = 0.f;                    // EEP cloud_shadow: in the shape, as OpenGL's
+    float cloudPosDensity1[3]{};                // EEP: xy with the wind's scroll as OpenGL's, z density
+    float cloudPosDensity2[3]{};
+    float cloudColor[3] = { 0.4099f, 0.4099f, 0.4099f }; // EEP cloud_color
+    float cloudMaxY = 1605.f;                   // EEP max_y: the fade to the horizon
+    float cloudDomeRadius = 15000.f;            // EEP dome_radius, the units of max_y
+    float cloudDomeOffset = 0.96f;              // EEP dome_offset: the dome's centre, in radii below the camera
+    float cloudLayerHeight = 500.f;             // metres above the camera (ASCloudLayerHeight)
+    float cloudWorldOffset[2]{};                // ASWorldClouds' UV offset (0 when it is off)
+    float cloudShadowOffset[2]{};               // OpenGL's self-shadow UV step: lightnorm x and z times 0.0125
+
     // The stars: sprites drawn only where nothing else was, hidden by the planet, the moon
     // and the sun, and dimmed by the air. The list changes only with the catalogue, and a new
     // list is a new pointer: that is how the renderer knows to upload it.
@@ -236,8 +255,17 @@ struct GpuAtmosphere
     float moonTint[3];
     float pad2;
     float sunGlow[4]; // size, focus, -, -
+    uint32_t cloudTexture;
+    uint32_t cloudTextureNext;
+    float cloudBlend;
+    float cloudScale;        // 0: no clouds
+    float cloudShape[4];     // variance, density from cloud_shadow, max_y, dome offset
+    float cloudPos1[4];      // xy, z density, w: the layer's sphere radius, km
+    float cloudPos2[4];      // xy, z density, w: EEP dome radius
+    float cloudColor[4];     // rgb: the albedo, -
+    float cloudOffsets[4];   // xy: world offset, zw: self-shadow step
 };
-static_assert(sizeof(GpuAtmosphere) == 512, "asrAtmosphere.glsl reads this layout");
+static_assert(sizeof(GpuAtmosphere) == 608, "asrAtmosphere.glsl reads this layout");
 
 // cameraZ: the camera's world height in metres. drawDistance: the view's, in metres; 0 is
 // none, and the aerial perspective volume then reaches AERIAL_DEFAULT_DISTANCE.

@@ -944,6 +944,7 @@ private:
         [draw setRenderPipelineState:mSky.starsPipeline];
         [draw setDepthStencilState:mSky.starsDepth];
         [draw setCullMode:MTLCullModeNone]; // sprites face the screen either way round
+        [draw setVertexBuffer:mArguments[mRecordSlot] offset:0 atIndex:0]; // the clouds that hide the stars
         [draw setFragmentBuffer:mArguments[mRecordSlot] offset:0 atIndex:0];
         [draw setFragmentTexture:mSky.transmittance atIndex:15];
         setOverlayPush(draw, mScenePush);

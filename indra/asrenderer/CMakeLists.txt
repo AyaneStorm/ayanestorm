@@ -126,6 +126,11 @@ foreach(shader asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosph
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrAtmosphere.glsl)
 endforeach()
+# EEP's 2D clouds: the background and the stars they hide.
+foreach(shader asrSceneResolveC asrSkyStarsV)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSkyClouds.glsl)
+endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})
 
 # --- Standalone test program: its builds never link the viewer. It is left out

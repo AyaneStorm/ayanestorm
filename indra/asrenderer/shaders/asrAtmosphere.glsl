@@ -75,6 +75,15 @@ layout(buffer_reference, std430) readonly buffer AtmosphereRef
     vec4 moonEarthshineColor;
     vec4 moonTint;             // over the disc and its halo
     vec4 sunGlow;              // EEP glow: size, focus
+    uint cloudTexture;
+    uint cloudTextureNext;
+    float cloudBlend;
+    float cloudScale;          // 0: no clouds
+    vec4 cloudShape;           // variance, density, max_y, dome offset
+    vec4 cloudPos1;            // xy, z density, w: the layer's sphere radius, km
+    vec4 cloudPos2;            // xy, z density, w: EEP dome radius
+    vec4 cloudColor;           // rgb: albedo
+    vec4 cloudOffsets;         // xy: world offset, zw: self-shadow step
 };
 
 // SkyStar in asratmosphere.h.
@@ -137,6 +146,16 @@ struct Atmosphere
     vec3 moonEarthshineColor;
     vec3 moonTint;
     vec2 sunGlow;
+    uint cloudTexture;
+    uint cloudTextureNext;
+    float cloudBlend;
+    float cloudScale;
+    vec4 cloudShape;
+    vec4 cloudPos1;
+    vec4 cloudPos2;
+    vec3 cloudAlbedo;
+    vec2 cloudWorldOffset;
+    vec2 cloudShadowOffset;
 };
 
 Atmosphere loadAtmosphere(uint64_t address)
@@ -193,6 +212,16 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
     a.moonTint = ref.moonTint.xyz;
     a.sunGlow = ref.sunGlow.xy;
+    a.cloudTexture = ref.cloudTexture;
+    a.cloudTextureNext = ref.cloudTextureNext;
+    a.cloudBlend = ref.cloudBlend;
+    a.cloudScale = ref.cloudScale;
+    a.cloudShape = ref.cloudShape;
+    a.cloudPos1 = ref.cloudPos1;
+    a.cloudPos2 = ref.cloudPos2;
+    a.cloudAlbedo = ref.cloudColor.rgb;
+    a.cloudWorldOffset = ref.cloudOffsets.xy;
+    a.cloudShadowOffset = ref.cloudOffsets.zw;
     return a;
 }
 

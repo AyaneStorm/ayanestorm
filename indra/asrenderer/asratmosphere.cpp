@@ -223,6 +223,39 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
     out.sunGlow[1] = sky.sunGlowFocus; // EEP: -10 to 10, negative for a glow at the sun
     out.sunGlow[2] = 0.f;
     out.sunGlow[3] = 0.f;
+
+    // The clouds. OpenGL multiplies its light by cloud_color, which the default EEP sets to
+    // 0.41 grey for its own light levels; here light is physical, so the colour is taken
+    // against the default one's and the default sky gets white clouds of a real albedo.
+    const bool clouds = sky.cloudTexture != NO_SKY_TEXTURE && sky.cloudScale >= 0.001f;
+    out.cloudTexture = sky.cloudTexture;
+    out.cloudTextureNext = sky.cloudTextureNext == NO_SKY_TEXTURE ? sky.cloudTexture : sky.cloudTextureNext;
+    out.cloudBlend = sky.cloudTextureNext == NO_SKY_TEXTURE ? 0.f : std::clamp(sky.cloudBlend, 0.f, 1.f);
+    out.cloudScale = clouds ? sky.cloudScale : 0.f;
+    const float domeOffset = std::clamp(sky.cloudDomeOffset, 0.f, 0.999f);
+    out.cloudShape[0] = sky.cloudVariance;
+    out.cloudShape[1] = 2.f * (sky.cloudShadow - 0.25f); // cloudsF.glsl's cloudDensity
+    out.cloudShape[2] = std::max(sky.cloudMaxY, 1.f);
+    out.cloudShape[3] = domeOffset;
+    for (int i = 0; i < 3; ++i)
+    {
+        out.cloudPos1[i] = sky.cloudPosDensity1[i];
+        out.cloudPos2[i] = sky.cloudPosDensity2[i];
+    }
+    // ASWorldClouds::radius(): the dome's top at the layer height, its centre dome_offset radii below.
+    out.cloudPos1[3] = std::max(sky.cloudLayerHeight, 1.f) * 0.001f / (1.f - domeOffset);
+    out.cloudPos2[3] = std::max(sky.cloudDomeRadius, 1.f);
+    constexpr float CLOUD_ALBEDO = 0.9f;        // thick water cloud
+    constexpr float DEFAULT_CLOUD_COLOR = 0.4099f; // llsettingssky.cpp
+    for (int i = 0; i < 3; ++i)
+    {
+        out.cloudColor[i] = std::max(sky.cloudColor[i], 0.f) * (CLOUD_ALBEDO / DEFAULT_CLOUD_COLOR);
+    }
+    out.cloudColor[3] = 0.f;
+    out.cloudOffsets[0] = sky.cloudWorldOffset[0];
+    out.cloudOffsets[1] = sky.cloudWorldOffset[1];
+    out.cloudOffsets[2] = sky.cloudShadowOffset[0];
+    out.cloudOffsets[3] = sky.cloudShadowOffset[1];
 }
 
 } // namespace asr

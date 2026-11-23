@@ -1023,11 +1023,12 @@ private:
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
         bindings[0].descriptorCount = MAX_TEXTURES;
-        bindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+        // Vertex too: the stars' vertices read the clouds that hide them.
+        bindings[0].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         bindings[1].binding = 1;
         bindings[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
         bindings[1].descriptorCount = uint32_t(UISampler::Count);
-        bindings[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+        bindings[1].stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
         bindings[1].pImmutableSamplers = mSamplers;
 
         // Partly bound: most slots hold nothing. Each frame in flight has its own set, changed

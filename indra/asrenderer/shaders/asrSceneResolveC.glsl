@@ -21,6 +21,7 @@ layout(set = 1, binding = 2, rgba16f) uniform writeonly image2D normals;
 // from the normal so shapes read, and the sky where nothing is drawn. Alpha is glow.
 layout(set = 1, binding = 8, rgba16f) uniform writeonly image2D lit;
 #include "asrAtmosphere.glsl"
+#include "asrSkyClouds.glsl"
 
 vec4 sampleBits(ivec2 pixel, uint bits, vec2 uv, vec2 uvDx, vec2 uvDy); // below
 
@@ -321,8 +322,30 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         space = sunDisc(a, sunCos);
     }
 
-    luminance += sampleTransmittance(a, length(position), direction.z) * space;
-    return min(luminance, vec3(60000.0)); // inside half floats
+    vec3 shown = luminance + sampleTransmittance(a, length(position), direction.z) * space;
+
+    // EEP's 2D clouds over all of it (asrSkyClouds.glsl).
+    if (a.cloudScale > 0.0)
+    {
+        const CloudHit hit = cloudHit(a, direction);
+        if (hit.fade > 0.0)
+        {
+            vec2 uvDx, uvDy;
+            cloudSteps(a, direction, pixelAngle, hit, uvDx, uvDy);
+            // The finest of its lookups is the small texture's, 16 times the base UVs.
+            giveFeedback(pixel, a.cloudTexture & 0xFFFFFu, uvDx * 16.0, uvDy * 16.0);
+            if (a.cloudBlend > 0.0)
+            {
+                giveFeedback(pixel, a.cloudTextureNext & 0xFFFFFu, uvDx * 16.0, uvDy * 16.0);
+            }
+            const CloudShape shape = cloudShape(a, hit, uvDx, uvDy, true);
+            if (shape.cover > 0.0)
+            {
+                shown = cloudOver(a, direction, hit, shape, luminance, shown, ExposureRef(ViewRef(push.view).exposure).skyIrradiance);
+            }
+        }
+    }
+    return min(shown, vec3(60000.0)); // inside half floats
 }
 
 vec4 unlit(vec3 albedo, vec3 normal)

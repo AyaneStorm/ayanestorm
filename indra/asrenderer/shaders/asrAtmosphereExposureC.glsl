@@ -26,7 +26,7 @@ const uint SAMPLES_PER_THREAD = 16u; // 1024 directions in all, on a 32 by 32 gr
 const float SKY_KEY = 0.5;
 
 const vec3 LUMINANCE = vec3(0.2126, 0.7152, 0.0722); // Rec. 709
-shared vec2 sharedSums[64]; // cosine-weighted, then uniform over the hemisphere
+shared vec4 sharedSums[64]; // rgb: cosine-weighted, a: uniform over the hemisphere's luminance
 
 void main()
 {
@@ -49,7 +49,7 @@ void main()
         const float side = sqrt(max(1.0 - z * z, 0.0));
         uniformSum += skyRadiance(a, vec3(side * cos(phi), side * sin(phi), z));
     }
-    sharedSums[thread] = vec2(dot(cosineSum, LUMINANCE), dot(uniformSum, LUMINANCE));
+    sharedSums[thread] = vec4(cosineSum, dot(uniformSum, LUMINANCE));
     barrier();
     for (uint half_ = 32u; half_ > 0u; half_ >>= 1u)
     {
@@ -64,8 +64,9 @@ void main()
         return;
     }
 
-    const float skyIlluminance = ATMOSPHERE_PI * sharedSums[0].x / float(64u * SAMPLES_PER_THREAD);
-    const float skyMean = sharedSums[0].y / float(64u * SAMPLES_PER_THREAD);
+    const vec3 skyIrradiance = ATMOSPHERE_PI * sharedSums[0].rgb / float(64u * SAMPLES_PER_THREAD);
+    const float skyIlluminance = dot(skyIrradiance, LUMINANCE);
+    const float skyMean = sharedSums[0].a / float(64u * SAMPLES_PER_THREAD);
     const vec3 position = atmosphereCamera(a);
     float sunIlluminance = 0.0;
     if (a.sunDirection.z > 0.0 && raySphereIntersectNearest(position, a.sunDirection, a.bottomRadius) < 0.0)
@@ -78,4 +79,5 @@ void main()
     // The guard only lowers: at night the floor above still decides.
     result.exposure = min(ATMOSPHERE_PI / illuminance, SKY_KEY / max(skyMean, 1e-9));
     result.illuminance = illuminance;
+    result.skyIrradiance = skyIrradiance;
 }

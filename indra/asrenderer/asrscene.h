@@ -691,6 +691,8 @@ struct GpuExposure
     float exposure;    // what scene colour is multiplied by before tone mapping, without RenderExposure
     float illuminance; // on a horizontal surface at the camera: sky and sun, the floor applied
     float pad[2];
+    float skyIrradiance[3]; // the sky alone on that surface, rgb, in the sun's units: the clouds' ambient
+    float pad2;
 };
 // Where outlines meet, the mask keeps the higher one, so the order is OpenGL's precedence.
 constexpr uint32_t SELECTION_COLOR_FACE = 0;            // the face tool's tint, not an outline

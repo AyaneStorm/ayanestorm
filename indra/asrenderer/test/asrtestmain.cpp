@@ -12,6 +12,7 @@
  *                   [--sky-view]         look across the city to the horizon, half sky
  *                   [--look-moon]        a still camera zoomed on the moon
  *                   [--moon-maps DIR]    the viewer's moon maps as raw RGBA: a lit sphere moon
+ *                   [--clouds]           EEP's default 2D clouds over a made-up noise
  *                   [--audit]            count pixels occlusion culling should have kept
  *                   [--no-occlusion]     draw what is hidden too, to measure what culling saves
  *                   [--stall N]          freeze the main thread for N seconds (default 2, 0 for none)
@@ -94,6 +95,7 @@ asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
 bool sLookMoon = false; // --look-moon
 std::string sMoonMaps;  // --moon-maps DIR
+bool sClouds = false;   // --clouds
 
 std::vector<uint8_t> readFile(const std::string& path); // below
 
@@ -133,6 +135,67 @@ bool loadMoonMaps(asr::TextureQueue& textures, const std::string& dir, asr::SkyI
     sky.moonSphere = true;
     sky.moonHeightRange = 19.75f; // as_moon_normal.png's alpha: -9 to 10.75 km
     return true;
+}
+
+// --clouds: EEP's default clouds (llsettingssky.cpp) over a made-up noise, as the test has no
+// image decoder: SL's default cloud texture is a soft noise that tiles, and so is this one,
+// four octaves of value noise that wrap at the edge. No wind, so runs repeat.
+void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky)
+{
+    constexpr uint32_t SIZE = 256;
+    const auto lattice = [](uint32_t x, uint32_t y, uint32_t octave) {
+        uint32_t h = x * 374761393u + y * 668265263u + octave * 2246822519u;
+        h = (h ^ (h >> 13)) * 1274126177u;
+        return float((h ^ (h >> 16)) & 0xFFFFu) / 65535.f;
+    };
+    std::vector<uint8_t> pixels(size_t(SIZE) * SIZE * 4);
+    for (uint32_t y = 0; y < SIZE; ++y)
+    {
+        for (uint32_t x = 0; x < SIZE; ++x)
+        {
+            float sum = 0.f;
+            float total = 0.f;
+            float amplitude = 0.5f;
+            for (uint32_t octave = 0; octave < 4; ++octave)
+            {
+                const uint32_t cells = 4u << octave;
+                const float fx = float(x) * cells / SIZE;
+                const float fy = float(y) * cells / SIZE;
+                const uint32_t x0 = uint32_t(fx);
+                const uint32_t y0 = uint32_t(fy);
+                const float sx = (fx - x0) * (fx - x0) * (3.f - 2.f * (fx - x0));
+                const float sy = (fy - y0) * (fy - y0) * (3.f - 2.f * (fy - y0));
+                const auto at = [&](uint32_t i, uint32_t j) { return lattice(i % cells, j % cells, octave); };
+                const float top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * sx;
+                const float bottom = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * sx;
+                sum += (top + (bottom - top) * sy) * amplitude;
+                total += amplitude;
+                amplitude *= 0.5f;
+            }
+            const uint8_t value = uint8_t(sum / total * 255.f + 0.5f);
+            uint8_t* pixel = &pixels[(size_t(y) * SIZE + x) * 4];
+            pixel[0] = pixel[1] = pixel[2] = value;
+            pixel[3] = 255;
+        }
+    }
+    asr::TextureDesc desc;
+    desc.width = SIZE;
+    desc.height = SIZE;
+    desc.mipLevels = 9;
+    const uint32_t slot = textures.create(desc);
+    textures.upload(slot, 0, 0, 0, SIZE, SIZE, pixels.data(), pixels.size());
+    textures.generateMips(slot);
+    sky.cloudTexture = slot | (uint32_t(asr::UISampler::LinearWrap) << asr::UI_SAMPLER_SHIFT);
+    sky.cloudScale = 0.4199f;
+    sky.cloudShadow = 0.2699f;
+    sky.cloudVariance = 0.f;
+    const float density[3] = { 1.f, 0.526f, 1.f };
+    std::copy(density, density + 3, sky.cloudPosDensity1);
+    std::copy(density, density + 3, sky.cloudPosDensity2);
+    // OpenGL's lightnorm is the light in (y, z, x) order (LLEnvironment::toLightNorm()).
+    const float* light = sky.sunDirection[2] > 0.f ? sky.sunDirection : sky.moonDirection;
+    sky.cloudShadowOffset[0] = light[1] * 0.0125f;
+    sky.cloudShadowOffset[1] = light[0] * 0.0125f;
 }
 
 // The step 1 test skies: the sample's Earth with the sun at a given height, seen from the
@@ -2869,6 +2932,10 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
         {
             return 1;
         }
+        if (sClouds)
+        {
+            addTestClouds(device->textures(), sSky);
+        }
         if (sOverlays)
         {
             city->showOverlays();
@@ -3147,6 +3214,11 @@ int main(int argc, char** argv)
         else if (arg == "--moon-maps" && i + 1 < argc)
         {
             sMoonMaps = argv[++i];
+        }
+        else if (arg == "--clouds")
+        {
+            sClouds = true;
+            drawScene = true;
         }
         else if (arg == "--look-moon")
         {

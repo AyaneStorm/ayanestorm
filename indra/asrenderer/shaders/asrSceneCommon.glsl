@@ -265,6 +265,7 @@ layout(buffer_reference, std430) buffer ExposureRef
 {
     float exposure;
     float illuminance;
+    vec3 skyIrradiance; // the sky alone, rgb (offset 16, as GpuExposure)
 };
 
 // Texture and vertex colours are sRGB; light works on linear values.

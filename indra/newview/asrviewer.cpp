@@ -36,7 +36,9 @@
 #include "asmilkyway.h"
 #include "asmoonrendering.h"
 #include "asstars.h"
+#include "asworldclouds.h"
 #include "llagent.h"
+#include "llagentcamera.h"
 #include "llsky.h"
 #include "llvosky.h"
 #include "llapp.h"
@@ -54,6 +56,7 @@
 #include "llviewershadermgr.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
+#include "pipeline.h"
 
 // The Linux window is still to do, so that build stays on OpenGL.
 #if defined(AS_RENDERER) && (LL_WINDOWS || LL_DARWIN)
@@ -271,6 +274,48 @@ void fillStars(asr::SkyInput& sky, const LLSettingsSky& current)
 // The frame's sky and tone settings from the current EEP sky and the graphics preferences.
 // Scattering coefficients are not in EEP, so the Earth values stay until the legacy values
 // are translated (doc/ayanestorm-new-renderer-sky.md, decision 1).
+// EEP's 2D clouds, as LLDrawPoolWLSky::renderSkyCloudsDeferred() and LLSettingsVOSky::
+// applySpecial() hand them to cloudsF.glsl: the same gates, textures and values.
+void fillClouds(asr::SkyInput& sky, const LLSettingsSky& current)
+{
+    LLViewerTexture* noise = gSky.mVOSkyp ? gSky.mVOSkyp->getCloudNoiseTex() : nullptr;
+    LLViewerTexture* next = gSky.mVOSkyp ? gSky.mVOSkyp->getCloudNoiseTexNext() : nullptr;
+    if (!noise || !gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_CLOUDS))
+    {
+        sky.cloudScale = 0.f;
+        return;
+    }
+    sky.cloudTexture = skyTextureBits(noise, asr::UISampler::LinearWrap);
+    sky.cloudTextureNext = next && next != noise ? skyTextureBits(next, asr::UISampler::LinearWrap) : asr::NO_SKY_TEXTURE;
+    sky.cloudBlend = current.getCloudScrollRate().isExactlyZero() ? 0.f : F32(current.getBlendFactor());
+    sky.cloudScale = current.getCloudScale();
+    sky.cloudVariance = current.getCloudVariance();
+    sky.cloudShadow = current.getCloudShadow();
+    // The wind: the scroll so far, its x flipped as the custom-texture preview shows it (SL-13084).
+    const LLVector2 scroll = LLEnvironment::instance().getCloudScrollDelta();
+    const LLColor3 density1 = current.getCloudPosDensity1();
+    const LLColor3 density2 = current.getCloudPosDensity2();
+    const LLColor3 color = current.getCloudColor();
+    for (S32 i = 0; i < 3; ++i)
+    {
+        sky.cloudPosDensity1[i] = density1.mV[i];
+        sky.cloudPosDensity2[i] = density2.mV[i];
+        sky.cloudColor[i] = color.mV[i];
+    }
+    sky.cloudPosDensity1[0] -= scroll.mV[0];
+    sky.cloudPosDensity1[1] += scroll.mV[1];
+    sky.cloudMaxY = current.getMaxY();
+    sky.cloudDomeRadius = current.getDomeRadius();
+    sky.cloudDomeOffset = current.getDomeOffset();
+    sky.cloudLayerHeight = ASWorldClouds::layerHeight();
+    const LLVector2 world = ASWorldClouds::offsetAt(gAgentCamera.getCameraPositionGlobal());
+    sky.cloudWorldOffset[0] = world.mV[0];
+    sky.cloudWorldOffset[1] = world.mV[1];
+    const LLVector4 lightnorm = LLEnvironment::instance().getClampedLightNorm(); // cloudsV.glsl's
+    sky.cloudShadowOffset[0] = lightnorm.mV[0] * 0.0125f;
+    sky.cloudShadowOffset[1] = lightnorm.mV[2] * 0.0125f;
+}
+
 void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
 {
     sky = asr::earthSky();
@@ -336,6 +381,7 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
 
     fillStars(sky, *current); // first: the moon takes its orientation from the stars' frame
     fillMoon(sky, *current);
+    fillClouds(sky, *current);
 }
 
 constexpr char STALL_SETTING[] = "ASRendererStallTestAt";

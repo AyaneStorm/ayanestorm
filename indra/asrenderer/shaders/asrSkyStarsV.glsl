@@ -15,6 +15,7 @@
 layout(set = 0, binding = 0) uniform texture2D textures[65536];
 layout(set = 0, binding = 1) uniform sampler samplers[4];
 #include "asrAtmosphere.glsl"
+#include "asrSkyClouds.glsl"
 
 const float STAR_MIN_PIXELS = 2.0;
 
@@ -51,6 +52,24 @@ void main()
     }
 
     const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
+
+    // EEP's 2D clouds hide it as they hide the moon: their cover at the star's centre.
+    float clear = 1.0;
+    if (a.cloudScale > 0.0)
+    {
+        const CloudHit hit = cloudHit(a, direction);
+        if (hit.fade > 0.0)
+        {
+            vec2 uvDx, uvDy;
+            cloudSteps(a, direction, pixelAngle, hit, uvDx, uvDy);
+            clear = 1.0 - cloudShape(a, hit, uvDx, uvDy, false).cover;
+        }
+    }
+    if (clear <= 0.0)
+    {
+        gl_Position = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
     const float side = star.direction.w;
     const float drawn = max(side, STAR_MIN_PIXELS * pixelAngle);
     const uint corner = uint(gl_VertexIndex);
@@ -62,6 +81,6 @@ void main()
     gl_Position = position;
 
     vary_uv = uv;
-    vary_light = star.color.rgb * level * (side * side) / (drawn * drawn);
+    vary_light = star.color.rgb * level * clear * (side * side) / (drawn * drawn);
     vary_pixels = drawn / pixelAngle;
 }
