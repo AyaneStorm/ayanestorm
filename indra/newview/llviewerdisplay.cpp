@@ -258,6 +258,13 @@ static void display_native(bool rebuild)
     display_update_camera();
     ASRWorld::addMainTime(ASRWorld::MAIN_CAMERA, part_timer.getElapsedTimeAndResetF32());
 
+    {
+        // As display() and its minimized branch: day cycle time, transitions between
+        // environments (startup, Reset to shared environment) and the clouds' wind.
+        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("Env Update");
+        LLEnvironment::instance().update(LLViewerCamera::getInstance());
+    }
+
     const F32 max_geom_update_time = 0.005f * 10.f * gFrameIntervalSeconds.value(); // 50 ms/second update time
     gPipeline.createObjects(max_geom_update_time);
     gPipeline.processPartitionQ();
