@@ -73,6 +73,9 @@ public:
     // Its morph masks were made again, in place.
     static void masksChanged(LLVOAvatar* avatar);
 
+    // The shift tool's log: every state updatePart() reads, part by part.
+    static void logParts(LLVOAvatar* avatar, const BodyPtr* body);
+
     // The renderer stops: forgets the shared meshes without touching the GPU.
     static void forget();
 

@@ -47,6 +47,7 @@
 #include "glm/matrix.hpp"
 
 #include <cmath>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -692,6 +693,74 @@ void ASRAvatarBody::updatePart(Body& body, S32 id, bool show)
 }
 
 
+void ASRAvatarBody::logParts(LLVOAvatar* avatar, const BodyPtr* bodyPtr)
+{
+    const Body* body = bodyPtr ? bodyPtr->get() : nullptr;
+    const bool self = avatar->isSelf();
+    LL_INFOS("ASRenderer") << "clicked avatar " << avatar->getID() << " body " << (body != nullptr)
+                           << " skeleton " << (body ? body->skeleton : 0) << " lod area " << (body ? body->lodArea : -1.f)
+                           << " lod checked " << (body ? gFrameTimeSeconds - body->lodCheckedAt : -1.f) << " s ago"
+                           << " self " << self << " needs render " << (self ? gAgent.needsRenderAvatar() : true)
+                           << " needs head " << (self ? gAgent.needsRenderHead() : true) << LL_ENDL;
+    if (body)
+    {
+        for (S32 id = 0; id < MESH_ID_NUM_INDICES; ++id)
+        {
+            const Part& part = body->parts[id];
+            LLJoint* above = part.instance ? avatar->getJoint(S32(part.joint)) : nullptr;
+            const LLVector3 joint = above ? above->getWorldPosition() : LLVector3::zero;
+            LL_INFOS("ASRenderer") << "  submitted part " << id << " instance " << part.instance << " lod " << (part.lod != nullptr)
+                                   << " material " << (part.material ? ASRWorldShared::materialId(part.material) : 0)
+                                   << " image " << (part.image ? part.image->getID() : LLUUID::null)
+                                   << " discard " << (part.image ? part.image->getDiscardLevel() : -2)
+                                   << " size " << (part.image ? part.image->getWidth() : 0) << "x" << (part.image ? part.image->getHeight() : 0)
+                                   << " components " << (part.image ? S32(part.image->getComponents()) : -1)
+                                   << " colour " << part.desc.color[0] << "," << part.desc.color[1] << "," << part.desc.color[2] << "," << part.desc.color[3]
+                                   << " cutoff " << part.desc.alphaCutoff << " flags " << part.flags << " eye " << part.eye
+                                   << " joint " << part.joint << " at " << joint
+                                   << " local row0 " << part.local[0] << "," << part.local[1] << "," << part.local[2] << "," << part.local[3]
+                                   << " row1 " << part.local[4] << "," << part.local[5] << "," << part.local[6] << "," << part.local[7]
+                                   << " row2 " << part.local[8] << "," << part.local[9] << "," << part.local[10] << "," << part.local[11] << LL_ENDL;
+        }
+    }
+    for (const char* name : { "mHead", "mEyeLeft", "mEyeRight", "mFaceEyeLeft", "mFaceEyeRight" })
+    {
+        LLJoint* joint = avatar->getJoint(name);
+        LL_INFOS("ASRenderer") << "  joint " << name << " number " << (joint ? joint->getJointNum() : -1)
+                               << " at " << (joint ? joint->getWorldPosition() : LLVector3::zero)
+                               << " scale " << (joint ? joint->getScale() : LLVector3::zero) << LL_ENDL;
+    }
+    static const ETextureIndex PART_BAKES[MESH_ID_NUM_INDICES] = {
+        TEX_HAIR_BAKED, TEX_HEAD_BAKED, TEX_HEAD_BAKED, TEX_UPPER_BAKED,
+        TEX_LOWER_BAKED, TEX_EYES_BAKED, TEX_EYES_BAKED, TEX_SKIRT_BAKED };
+    LL_INFOS("ASRenderer") << "clicked avatar " << avatar->getID() << " system parts: fully loaded " << avatar->isFullyLoaded()
+                           << " appearance " << S32(avatar->getOverallAppearance()) << " pixel area " << avatar->getPixelArea()
+                           << " wanted " << wanted(avatar) << LL_ENDL;
+    for (S32 id = 0; id < S32(avatar->mMeshLOD.size()) && id < MESH_ID_NUM_INDICES; ++id)
+    {
+        LLAvatarJoint* part = avatar->mMeshLOD[id];
+        if (!part) continue;
+        std::ostringstream lods;
+        for (LLAvatarJointMesh* mesh : part->mMeshParts)
+        {
+            if (!mesh) continue;
+            asr::MaterialDesc desc;
+            LLViewerTexture* image = partImage(avatar, mesh, desc);
+            LLPolyMesh* poly = mesh->getMesh();
+            lods << " [valid " << mesh->getValid() << " visible " << static_cast<LLAvatarJoint*>(mesh)->mVisible
+                 << " faces " << (poly ? poly->getNumFaces() : -1) << " weights " << (poly ? poly->hasWeights() : false)
+                 << " shared " << (sharedOf(poly) != nullptr)
+                 << " image " << (image ? image->getID() : LLUUID::null) << " components " << (image ? S32(image->getComponents()) : -1)
+                 << " colour " << desc.color[0] << "," << desc.color[1] << "," << desc.color[2] << "," << desc.color[3]
+                 << " lod " << mesh->getLOD() << " world " << mesh->getWorldPosition()                 << " parent " << (mesh->getParent() ? mesh->getParent()->getName() : std::string("none"))
+                 << " joint above " << (skeletonJointAbove(avatar, mesh) ? skeletonJointAbove(avatar, mesh)->getName() : std::string("none")) << "]";
+        }
+        LL_INFOS("ASRenderer") << "  part " << id << " shown " << partShown(avatar, id, false)
+                               << " bake visible " << avatar->isTextureVisible(PART_BAKES[id])
+                               << " joint visible " << part->mVisible << " lods" << lods.str() << LL_ENDL;
+    }
+}
+
 bool ASRAvatarBody::wanted(LLVOAvatar* avatar)
 {
     return avatar && !avatar->isDead() && avatar->isBuilt() && !avatar->isControlAvatar() && !avatar->isUIAvatar() && avatar->mDrawable.notNull();
@@ -818,6 +887,7 @@ void ASRAvatarBody::BodyDeleter::operator()(Body*) const {}
 bool ASRAvatarBody::wanted(LLVOAvatar*) { return false; }
 void ASRAvatarBody::update(LLVOAvatar*, BodyPtr&, U32, bool) {}
 void ASRAvatarBody::release(BodyPtr&) {}
+void ASRAvatarBody::logParts(LLVOAvatar*, const BodyPtr*) {}
 void ASRAvatarBody::masksChanged(LLVOAvatar*) {}
 void ASRAvatarBody::forget() {}
 ASRAvatarBody::Counts ASRAvatarBody::takeCounts() { return Counts(); }

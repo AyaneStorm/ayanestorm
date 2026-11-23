@@ -3713,6 +3713,8 @@ void logShifted()
     if (clicked && clicked->isAvatar())
     {
         LLVOAvatar* avatar = static_cast<LLVOAvatar*>(clicked);
+        const auto skeleton = sSkeletons.find(avatar);
+        ASRAvatarBody::logParts(avatar, skeleton != sSkeletons.end() ? &skeleton->second.body : nullptr);
         LL_INFOS("ASRenderer") << "clicked avatar " << avatar->getID() << ", its attachments:" << LL_ENDL;
         for (const auto& [point, attachment] : avatar->mAttachmentPoints)
         {
@@ -3759,6 +3761,12 @@ void logShifted()
     }
 
     logObjectFaces("clicked", sShifted, shifted->second);
+    // An attachment covers its wearer: the wearer's system parts too.
+    if (LLVOAvatar* wearer = clicked ? clicked->getAvatar() : nullptr)
+    {
+        const auto skeleton = sSkeletons.find(wearer);
+        ASRAvatarBody::logParts(wearer, skeleton != sSkeletons.end() ? &skeleton->second.body : nullptr);
+    }
     constexpr F32 SAME_PLACE = 0.01f; // metres
     const LLVector3 at = sShifted->getPositionAgent();
     U32 twins = 0;
