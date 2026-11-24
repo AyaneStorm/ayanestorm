@@ -41,7 +41,9 @@ vec4 skyImage(ivec2 pixel, uint bits, vec3 bodyDirection, vec3 up, float radius,
     }
     const float uvStep = pixelAngle / (2.0 * radius);
     const vec4 texel = sampleBits(pixel, bits, uv, vec2(uvStep, 0.0), vec2(0.0, uvStep));
-    return vec4(srgbToLinear(texel.rgb), texel.a);
+    // OpenGL's moonF.glsl discards alpha <= 2/255: an image's near-transparent background
+    // would otherwise show as a square around it.
+    return texel.a <= 2.0 / 255.0 ? vec4(0.0) : vec4(srgbToLinear(texel.rgb), texel.a);
 }
 
 // The sun with no image: darker at its edge (limb darkening, linear with u = 0.6), carrying
