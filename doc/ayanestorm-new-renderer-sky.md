@@ -364,6 +364,22 @@ Library, Vulkan and Metal, and the viewer. `asrenderer_test --scene --sky-view -
 - **Clouds still under the shared environment (user, 23 November): not a renderer bug.** The region's EEP had no X wind; OpenGL agreed after a cache clear (a damaged cache had also made its clouds look wrong). The wind offset is kept across environment changes by design (`updateCloudScroll()`), so the sky before a Reset decides which part of the texture is overhead after it. User: shared environment now correct.
 - **Self-shadow moves with the sun's azimuth** (OpenGL's alpha2 lookup, offset towards the light): kept (user). In OpenGL it is hidden, as it only scales the sun's haze glow term.
 
+## Firestorm sky option (design, 24 November 2026)
+
+User: an option to show EEP exactly as vanilla Firestorm's OpenGL does; our sky stays the default. To be designed the best way, not bolted on.
+
+- **Setting:** `ASRenderSkyModel`, 0 = ours (default), 1 = Firestorm. Live, no restart: a change swaps the producers below, and every table is refilled once in the next frame.
+- **Principle: same products, other producer.** The Firestorm model fills the same registry slots ours does ('What the Hillaire sky gives the rest of the renderer'), by shadowing their producers. No reader branches on the model: the opaque resolve, Mac OIT, water, reflections, ambient light and clouds read the same things in both modes. No new memory: the legacy model makes neither transmittance nor multiple-scattering tables, and the other tables keep their sizes.
+- **Sky:** `skyF.glsl`'s formulas (`blue_horizon`, `blue_density`, `haze_*`, `density_multiplier`, `distance_multiplier`, `max_y`, `glow`, `sun_moon_glow_factor`, `sky_hdr_scale`) are evaluated per pixel in the background, as OpenGL does (its sky is per pixel, not per vertex): the low-resolution sky view table would blur the glow's sharp peak. The same function also fills the sky view table, for reflections and ambient light. That is one function and two products at two resolutions, each made once. EEP's rainbow and halo (`moisture_level`, `droplet_radius`, `ice_level`, `rainbow_map`, `halo_map`) come with it. Our own model lacks them: a gap to close there as well.
+- **Haze on the scene:** the legacy atmospheric functions (`calcAtmosphericVars`: additive, attenuation) are evaluated at each froxel centre and fill the aerial perspective volume. The formula is smooth in distance, so the volume's interpolation keeps it, and Mac OIT gets each layer's haze at its own depth for free.
+- **Sun, moon and ambient light colours:** `LLSettingsSky`'s legacy values (sunlight, moonlight, ambient), constant across the scene as in OpenGL, take the place of the transmittance lookups.
+- **Clouds:** `cloudsF.glsl`'s mapping and shading, in place of our marched 2D clouds. The texture, wind and scroll stay shared (`updateCloudScroll()`).
+- **Sun, moon and stars:** as `sunDiscF.glsl`, `moonF.glsl` and `starsF.glsl` draw them. The default moon is SL's flat image, not our 3D sphere. AyaneStorm's OpenGL additions (procedural sun, volumetric lighting) are off: the reference is vanilla.
+- **Exposure and tone mapping:** these are part of the look, so this mode uses Firestorm's own chain (`sky_hdr_scale`, dynamic exposure, tone map type and mix, from the same settings OpenGL reads). Step 2 is designed with both chains from the start; the Firestorm mode is not added afterwards.
+- **Not covered:** materials, shadows and water's own fog are the same in both modes. 'Identical' means the atmosphere and its light, not the whole renderer.
+- **Check:** side by side with Firestorm OpenGL on the library EEPs and region skies, same place, same time of day. `asrenderer_test` gets `--sky-model` so the formulas are checked without a viewer build.
+- **When:** at the start of step 2, together with the exposure and tone map chain, before materials.
+
 ## Step 1 reading pass (15 November 2026)
 
 ### Where the sky is today
