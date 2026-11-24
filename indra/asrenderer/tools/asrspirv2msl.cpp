@@ -36,7 +36,7 @@
 
 // Image bindings of set 1 that keep their number as Metal texture indices; a binding past
 // these would get whatever index SPIRV-Cross picks, and the device binds it elsewhere.
-constexpr uint32_t SCENE_SET_IMAGES = 17; // up to the sky's tables, 11 to 16
+constexpr uint32_t SCENE_SET_IMAGES = 19; // as Vulkan's SCENE_IMAGE_BINDINGS: the sky's targets 11 to 14, tables 15 to 18
 
 int main(int argc, char** argv)
 {
