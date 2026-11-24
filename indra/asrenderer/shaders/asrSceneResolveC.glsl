@@ -314,7 +314,9 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
         if (sunCos > cos(a.sunTextureRadius * 1.41422))
         {
             const vec4 sun = skyImage(pixel, a.sunTexture, a.sunDirection, a.sunUp, a.sunTextureRadius, direction, pixelAngle);
-            space = mix(space, sun.rgb * a.sunIlluminance / (ATMOSPHERE_PI * a.sunTextureRadius * a.sunTextureRadius), sun.a);
+            // A picture, as OpenGL's sunDiscF.glsl shows it: its own colours against the exposure,
+            // as the moon's image, not the sun's light spread over the square (burnt white).
+            space = mix(space, sun.rgb / ExposureRef(ViewRef(push.view).exposure).exposure, sun.a);
         }
     }
     else if (sunCos > a.sunCosRadius)
