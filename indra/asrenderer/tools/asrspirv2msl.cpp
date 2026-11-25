@@ -70,6 +70,11 @@ int main(int argc, char** argv)
         spirv_cross::CompilerMSL::Options msl;
         msl.set_msl_version(3, 0);
         msl.argument_buffers = true;
+        // Set 0's struct is plain memory: [[id]] alone does not place a member. A shader
+        // declaring the samplers but no textures[] read texture handles 0 to 3 as its samplers,
+        // and every sky table pass filtered through garbage: the sky split in two on the Mac.
+        // Padding puts each member at its id, as the device writes them.
+        msl.pad_argument_buffer_resources = true;
         compiler.set_msl_options(msl);
 
         // Set 0 stays an argument buffer in buffer 0, the bindless textures. The scene's
@@ -84,6 +89,7 @@ int main(int argc, char** argv)
             {
                 spirv_cross::MSLResourceBinding image;
                 image.stage = stage;
+                image.basetype = spirv_cross::SPIRType::Image; // padding wants a type on every binding
                 image.desc_set = 1;
                 image.binding = binding;
                 image.msl_texture = binding;
@@ -94,6 +100,7 @@ int main(int argc, char** argv)
             // so a shader declaring the samplers first read every texture 4 slots off.
             spirv_cross::MSLResourceBinding textures;
             textures.stage = stage;
+            textures.basetype = spirv_cross::SPIRType::Image; // padding needs every set 0 binding's type
             textures.desc_set = 0;
             textures.binding = 0;
             textures.msl_texture = 0;
@@ -101,6 +108,7 @@ int main(int argc, char** argv)
             compiler.add_msl_resource_binding(textures);
             spirv_cross::MSLResourceBinding samplers;
             samplers.stage = stage;
+            samplers.basetype = spirv_cross::SPIRType::Sampler;
             samplers.desc_set = 0;
             samplers.binding = 1;
             samplers.msl_sampler = BINDLESS_TEXTURES;
@@ -109,6 +117,7 @@ int main(int argc, char** argv)
 
             spirv_cross::MSLResourceBinding push;
             push.stage = stage;
+            push.basetype = spirv_cross::SPIRType::Void; // a buffer
             push.desc_set = spirv_cross::kPushConstDescSet;
             push.binding = spirv_cross::kPushConstBinding;
             push.msl_buffer = 8;

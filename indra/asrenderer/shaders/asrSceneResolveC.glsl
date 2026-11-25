@@ -551,7 +551,7 @@ void main()
             {
                 shown = sampleSkyView(debugSky, debugDirection, debugSky.moonDirection, SKY_LIGHT_MOON) * debugSky.moonSkyLight * 1000.0;
             }
-            else if (debugView == 4u) // the three tables themselves, over the screen: sun, moon, sun Mie from the top
+            else if (debugView == 4u || debugView == 8u || debugView == 9u) // the three tables themselves, over the screen: sun, moon, sun Mie from the top
             {
                 const vec2 uv = (vec2(pixel) + 0.5) / view.pixelSize.xy;
                 shown = textureLod(sampler2D(skyViewLut, samplers[0]), uv, 0.0).rgb * debugSky.sunIlluminance;

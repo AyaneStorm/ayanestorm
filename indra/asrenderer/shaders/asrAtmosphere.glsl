@@ -494,6 +494,7 @@ struct Scattering
     vec3 transmittance;
     vec3 multiScatterAs1;
     vec3 mieSingle; // the light's Mie single scattering with no phase: luminance holds it times the phase
+    vec3 multiOnly; // TEMPORARY, Mac sky split: the multiple scattering part of luminance
 };
 
 // The sample's IntegrateScatteredLuminance: marches the ray to the ground, the top of the
@@ -509,6 +510,7 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
     result.transmittance = vec3(1.0);
     result.multiScatterAs1 = vec3(0.0);
     result.mieSingle = vec3(0.0);
+    result.multiOnly = vec3(0.0);
 
     const float tBottom = raySphereIntersectNearest(position, direction, a.bottomRadius);
     const float tTop = raySphereIntersectNearest(position, direction, a.topRadius);
@@ -586,6 +588,8 @@ Scattering integrateScattering(Atmosphere a, vec3 position, vec3 direction, vec3
         // The power series form: integrated over the step (Frostbite 2015, slide 28).
         result.multiScatterAs1 += throughput * (medium.scattering - medium.scattering * stepTransmittance) / extinction;
         luminance += throughput * (S - S * stepTransmittance) / extinction;
+        const vec3 multiS = multiscattered * medium.scattering;
+        result.multiOnly += throughput * (multiS - multiS * stepTransmittance) / extinction;
         const vec3 mieS = earthShadow * transmittanceToSun * medium.scatteringMie;
         result.mieSingle += throughput * (mieS - mieS * stepTransmittance) / extinction;
         throughput *= stepTransmittance;
