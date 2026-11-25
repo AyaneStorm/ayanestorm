@@ -979,6 +979,16 @@ private:
         mUploadRing.size = bytes;
         mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
         mTextures.setUploadRing(static_cast<uint8_t*>(info.pMappedData), bytes, mUploadPieceBytes);
+        // The scene's staging, one per frame in flight, at the size the scene store keeps a
+        // frame's writes to: taken now, before texture encoding can claim the staging share.
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            if (!growBuffer(mSceneStaging[i], mUploadBytesPerFrame, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene staging buffer"))
+            {
+                error = "cannot create the scene staging buffers";
+                return false;
+            }
+        }
         return true;
     }
 
@@ -2388,6 +2398,7 @@ private:
         {
             destroyBuffer(mSceneViews[i], MemoryCategory::Staging);
             destroyBuffer(mSceneStaging[i], MemoryCategory::Staging);
+            destroyBuffer(mSceneOverflow[i], MemoryCategory::Staging);
             destroyBuffer(mSceneReadback[i], MemoryCategory::Staging);
             destroyBuffer(mFeedbackReadback[i], MemoryCategory::Staging);
             destroyBuffer(mAuditReadback[i], MemoryCategory::Staging);
@@ -3661,11 +3672,11 @@ private:
         return true;
     }
 
-    void flushSceneRegions(VkCommandBuffer commands, uint32_t slot, VkBuffer target)
+    void flushSceneRegions(VkCommandBuffer commands, VkBuffer staging, VkBuffer target)
     {
         if (!mSceneRegions.empty())
         {
-            vkCmdCopyBuffer(commands, mSceneStaging[slot].buffer, target, uint32_t(mSceneRegions.size()), mSceneRegions.data());
+            vkCmdCopyBuffer(commands, staging, target, uint32_t(mSceneRegions.size()), mSceneRegions.data());
             mSceneRegions.clear();
         }
     }
@@ -3731,11 +3742,28 @@ private:
         {
             stagingBytes += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
         }
+        // This slot's frame has finished, so last time's overflow buffer is free to go.
+        destroyBuffer(mSceneOverflow[slot], MemoryCategory::Staging);
         if (stagingBytes != 0)
         {
-            if (!growBuffer(mSceneStaging[slot], std::max(stagingBytes, mUploadBytesPerFrame), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene staging buffer"))
+            // Made at startup at the size the store keeps a frame's writes to: this is a no-op.
+            if (!growBuffer(mSceneStaging[slot], mUploadBytesPerFrame, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene staging buffer"))
             {
                 return false;
+            }
+            MappedBuffer* staging = &mSceneStaging[slot];
+            if (stagingBytes > staging->size)
+            {
+                // Past the slot only by one item larger than what was left: that frame
+                // borrows a buffer of its own, counted even past the budget, so the slot
+                // keeps its size.
+                if (!growBuffer(mSceneOverflow[slot], stagingBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, MemoryCategory::Staging, "scene staging overflow buffer"))
+                {
+                    return false;
+                }
+                staging = &mSceneOverflow[slot];
+                fprintf(stderr, "asrenderer: frame %llu, scene staging overflow of %llu KB\n", (unsigned long long)mFrame,
+                        (unsigned long long)(stagingBytes / 1024));
             }
             uint64_t offset = 0;
             VkBuffer target = VK_NULL_HANDLE;
@@ -3745,15 +3773,15 @@ private:
                 const VkBuffer buffer = write.table != SceneTable::Count ? mSceneTables[uint32_t(write.table)].buffer : mSceneChunks[write.chunk].buffer;
                 if (buffer != target)
                 {
-                    flushSceneRegions(commands, slot, target);
+                    flushSceneRegions(commands, staging->buffer, target);
                     target = buffer;
                 }
-                memcpy(static_cast<char*>(mSceneStaging[slot].mapped) + offset, write.data ? write.data : tableBytes + write.source, write.bytes);
+                memcpy(static_cast<char*>(staging->mapped) + offset, write.data ? write.data : tableBytes + write.source, write.bytes);
                 mSceneRegions.push_back({ offset, write.offset, write.bytes });
                 offset += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
             }
-            flushSceneRegions(commands, slot, target);
-            vmaFlushAllocation(mAllocator, mSceneStaging[slot].allocation, 0, offset);
+            flushSceneRegions(commands, staging->buffer, target);
+            vmaFlushAllocation(mAllocator, staging->allocation, 0, offset);
         }
         mFrameParts.sceneStaging = std::chrono::duration<double>(std::chrono::steady_clock::now() - stagingStart).count();
         mFrameParts.sceneStagingBytes = stagingBytes;
@@ -4559,6 +4587,7 @@ private:
     MappedBuffer mSceneCountsTemplate;
     MappedBuffer mSceneViews[FRAMES_IN_FLIGHT];
     MappedBuffer mSceneStaging[FRAMES_IN_FLIGHT];
+    MappedBuffer mSceneOverflow[FRAMES_IN_FLIGHT]; // a frame's writes past its slot, kept until the slot comes back
     MappedBuffer mSceneReadback[FRAMES_IN_FLIGHT];
     MappedBuffer mAuditReadback[FRAMES_IN_FLIGHT];
     bool mAuditWritten[FRAMES_IN_FLIGHT]{};

@@ -1708,6 +1708,49 @@ void SceneStore::runRetired(SceneQueue& queue, uint64_t frame)
     }
 }
 
+bool SceneStore::applyTake(uint64_t room)
+{
+    // Lists in the order they were always applied: terrains, materials, geometries,
+    // skeletons, skins, morph sets, morphs. A crowd's morph sets alone reach hundreds of MB.
+    constexpr uint32_t LISTS = 7;
+    bool applied = false; // one command at least, whatever the room: a take always moves on
+    for (; mTakeList < LISTS; ++mTakeList, mTakeIndex = 0)
+    {
+        const size_t counts[LISTS] = { mCommands.terrains.size(), mCommands.materials.size(), mCommands.geometries.size(),
+                                       mCommands.skeletons.size(), mCommands.skins.size(), mCommands.morphSets.size(),
+                                       mCommands.morphs.size() };
+        for (; mTakeIndex < counts[mTakeList]; ++mTakeIndex)
+        {
+            // Geometry commands only queue: their data has its own gate, in the uploads below.
+            if (applied && mTakeList != 2 && mTableBytes.size() >= room)
+            {
+                return false; // the rest waits for the next update
+            }
+            applied = applied || mTakeList != 2;
+            switch (mTakeList)
+            {
+            case 0: applyTerrain(mCommands.terrains[mTakeIndex]); break;
+            case 1: applyMaterial(mCommands.materials[mTakeIndex]); break;
+            case 2: applyGeometry(mCommands.geometries[mTakeIndex]); break;
+            case 3: applySkeleton(mCommands.skeletons[mTakeIndex]); break;
+            case 4: applySkin(mCommands.skins[mTakeIndex]); break;
+            case 5: applyMorphSet(mCommands.morphSets[mTakeIndex]); break;
+            default: applyMorph(mCommands.morphs[mTakeIndex]); break;
+            }
+        }
+    }
+    mTakeList = 0;
+    mTakeIndex = 0;
+    mCommands.terrains.clear();
+    mCommands.materials.clear();
+    mCommands.geometries.clear();
+    mCommands.skeletons.clear();
+    mCommands.skins.clear();
+    mCommands.morphSets.clear();
+    mCommands.morphs.clear();
+    return true;
+}
+
 void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit, std::chrono::steady_clock::time_point time)
 {
     mWrites.clear();
@@ -1734,53 +1777,23 @@ void SceneStore::update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, 
     compactDeformedPositions();
 
     // A take finishes before the next one starts, which keeps commands in order.
-    if (mInstancesDone == mCommands.instances.size())
+    if (!mTaking && mInstancesDone == mCommands.instances.size())
     {
         mCommands.instances.clear();
         mInstancesDone = 0;
         queue.take(mCommands);
-        for (const TerrainCommand& command : mCommands.terrains)
-        {
-            applyTerrain(command);
-        }
-        for (const MaterialCommand& command : mCommands.materials)
-        {
-            applyMaterial(command);
-        }
-        for (GeometryCommand& command : mCommands.geometries)
-        {
-            applyGeometry(command);
-        }
-        for (const SkeletonCommand& command : mCommands.skeletons)
-        {
-            applySkeleton(command);
-        }
-        for (const SkinCommand& command : mCommands.skins)
-        {
-            applySkin(command);
-        }
-        for (const MorphSetCommand& command : mCommands.morphSets)
-        {
-            applyMorphSet(command);
-        }
-        for (const MorphCommand& command : mCommands.morphs)
-        {
-            applyMorph(command);
-        }
-        mCommands.terrains.clear();
-        mCommands.materials.clear();
-        mCommands.geometries.clear();
-        mCommands.skeletons.clear();
-        mCommands.skins.clear();
-        mCommands.morphSets.clear();
-        mCommands.morphs.clear();
+        mTaking = true;
+    }
+    if (mTaking && applyTake(uploadLimit / 2))
+    {
+        mTaking = false;
     }
 
-    while (mInstancesDone < mCommands.instances.size() && mTableBytes.size() < uploadLimit / 2)
+    while (!mTaking && mInstancesDone < mCommands.instances.size() && mTableBytes.size() < uploadLimit / 2)
     {
         applyInstance(mCommands.instances[mInstancesDone++], frame);
     }
-    if (mInstancesDone == mCommands.instances.size())
+    if (!mTaking && mInstancesDone == mCommands.instances.size())
     {
         // After the instances, so bindings made in this update follow too.
         for (const auto& resident : mCommands.residentSkeletons)

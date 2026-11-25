@@ -141,8 +141,8 @@ public:
     explicit SceneStore(uint32_t framesInFlight) : mFreeDelay(framesInFlight + 1) {}
 
     // Applies what is queued, and fills writes(). uploadLimit bounds what one frame
-    // sends, so a burst of loads spreads over several frames. Instances past half of it
-    // wait for the next update, and the other half is for geometry.
+    // sends, so a burst of loads spreads over several frames. Commands and instances past
+    // half of it wait for the next update, and the other half is for geometry.
     // time is the frame's, which animated textures show; store tests leave it out.
     void update(SceneQueue& queue, SceneChunks& chunks, uint64_t frame, uint64_t uploadLimit,
                 std::chrono::steady_clock::time_point time = std::chrono::steady_clock::time_point());
@@ -407,6 +407,9 @@ private:
 
     void applyMorphSet(const MorphSetCommand& command);
     void applyMorph(const MorphCommand& command);
+    // Applies the take's commands in order until this update's table writes reach room.
+    // False while some wait for the next update.
+    bool applyTake(uint64_t room);
     void writeMorphValues(uint32_t id);
     void removeMorphSetIfUnused(uint32_t id, uint64_t frame);
     void removeMorphIfUnused(uint32_t id, uint64_t frame);
@@ -429,6 +432,10 @@ private:
     uint32_t mFreeDelay;
     SceneCommands mCommands;
     size_t mInstancesDone = 0; // how far into mCommands.instances this take has got
+    // A take's other commands spread over updates as instances do: true until all are applied.
+    bool mTaking = false;
+    uint32_t mTakeList = 0; // the list applyTake() is in, in its order
+    size_t mTakeIndex = 0;  // how far into that list
     std::vector<Geometry> mGeometries;
     std::vector<InstanceUse> mInstanceUses;
     std::deque<uint32_t> mPending;

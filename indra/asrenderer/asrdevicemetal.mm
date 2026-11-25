@@ -168,6 +168,22 @@ public:
                 (unsigned long long)(addressOf(mUploadRing) + ringBytes));
         mUploadPieceBytes = mMemoryBudget.uploadRingPieceBytes(FRAMES_IN_FLIGHT);
         mTextures.setUploadRing(static_cast<uint8_t*>(mUploadRing.contents), ringBytes, mUploadPieceBytes);
+        // The scene's staging, one per frame in flight, at the size the scene store keeps a
+        // frame's writes to: taken now, before texture encoding can claim the staging share.
+        for (uint32_t i = 0; i < FRAMES_IN_FLIGHT; ++i)
+        {
+            if (!mMemoryBudget.reserve(MemoryCategory::Staging, mUploadBytesPerFrame))
+            {
+                error = "the scene staging buffers do not fit in their memory budget";
+                return false;
+            }
+            mSceneStaging[i] = [mDevice newBufferWithLength:mUploadBytesPerFrame options:MTLResourceStorageModeShared];
+            if (!mSceneStaging[i])
+            {
+                error = "cannot create the scene staging buffers";
+                return false;
+            }
+        }
         // Fetched textures are kept in BC formats where the GPU samples them: Apple silicon does.
         mTextures.setCompressionSupported(mDevice.supportsBCTextureCompression);
 
@@ -1607,29 +1623,40 @@ private:
         {
             stagingBytes += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
         }
-        if (stagingBytes > mSceneStaging[slot].length)
+        // This slot's frame has finished, so last time's overflow buffer is free to go.
+        if (mSceneOverflow[slot])
         {
-            const uint64_t oldSize = mSceneStaging[slot].length;
-            const uint64_t size = std::max(stagingBytes, mUploadBytesPerFrame);
-            mMemoryBudget.release(MemoryCategory::Staging, oldSize);
-            mSceneStaging[slot] = nil;
-            if (!mMemoryBudget.reserve(MemoryCategory::Staging, size))
+            mMemoryBudget.release(MemoryCategory::Staging, mSceneOverflow[slot].length);
+            mSceneOverflow[slot] = nil;
+        }
+        id<MTLBuffer> stagingBuffer = mSceneStaging[slot];
+        if (stagingBytes > stagingBuffer.length)
+        {
+            // The store keeps a frame's writes to the slot's size, past it only by one item
+            // larger than what was left. That frame borrows a buffer of its own, counted even
+            // past the budget: textures give way, and the renderer never stops for it.
+            mMemoryBudget.reserveAnyway(MemoryCategory::Staging, stagingBytes);
+            mSceneOverflow[slot] = [mDevice newBufferWithLength:stagingBytes options:MTLResourceStorageModeShared];
+            if (!mSceneOverflow[slot])
             {
-                mError = "the scene staging buffer does not fit in its memory budget";
+                mMemoryBudget.release(MemoryCategory::Staging, stagingBytes);
+                mError = "cannot create a scene staging overflow buffer";
                 [blit endEncoding];
                 return false;
             }
-            mSceneStaging[slot] = [mDevice newBufferWithLength:size options:MTLResourceStorageModeShared];
+            stagingBuffer = mSceneOverflow[slot];
+            fprintf(stderr, "asrenderer: frame %llu, scene staging overflow of %llu KB\n", (unsigned long long)mFrame,
+                    (unsigned long long)(stagingBytes / 1024));
         }
 
         uint64_t offset = 0;
-        uint8_t* staging = static_cast<uint8_t*>(mSceneStaging[slot].contents);
+        uint8_t* staging = static_cast<uint8_t*>(stagingBuffer.contents);
         const uint8_t* tableBytes = mSceneStore.tableBytes().data();
         for (const SceneWrite& write : mSceneStore.writes())
         {
             id<MTLBuffer> target = write.table != SceneTable::Count ? mSceneTables[uint32_t(write.table)] : mSceneChunks[write.chunk];
             memcpy(staging + offset, write.data ? write.data : tableBytes + write.source, write.bytes);
-            [blit copyFromBuffer:mSceneStaging[slot] sourceOffset:offset toBuffer:target destinationOffset:write.offset size:write.bytes];
+            [blit copyFromBuffer:stagingBuffer sourceOffset:offset toBuffer:target destinationOffset:write.offset size:write.bytes];
             offset += (write.bytes + UPLOAD_ALIGNMENT - 1) / UPLOAD_ALIGNMENT * UPLOAD_ALIGNMENT;
         }
 
@@ -3006,6 +3033,7 @@ private:
     id<MTLBuffer> mSceneViews[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneReadback[FRAMES_IN_FLIGHT];
     id<MTLBuffer> mSceneStaging[FRAMES_IN_FLIGHT];
+    id<MTLBuffer> mSceneOverflow[FRAMES_IN_FLIGHT]; // a frame's writes past its slot, kept until the slot comes back
     id<MTLBuffer> mAuditReadback[FRAMES_IN_FLIGHT];
     bool mAuditWritten[FRAMES_IN_FLIGHT]{};
     id<MTLBuffer> mTextureFeedback = nil;
