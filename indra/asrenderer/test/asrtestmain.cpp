@@ -312,6 +312,41 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
         }
         sky.mie.layers[1].expScale = -1.f / 0.5f;
     }
+    else if (name == "starley")
+    {
+        // An SL EEP, '*Starley* Settings', as the viewer handed it over: the sun and the moon
+        // both exactly on the horizon, in the same place. It split the sky in two on Metal.
+        auto set = [](float* to, std::initializer_list<float> from) { std::copy(from.begin(), from.end(), to); };
+        set(&sky.bottomRadius, { 6360.f, 6420.f });
+        set(&sky.rayleigh.layers[0].width, { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, -0.125f, 0.f, 0.f });
+        set(&sky.mie.layers[0].width, { 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f, -0.833333015f, 0.f, 0.f });
+        set(&sky.absorption.layers[0].width, { 25.0000019f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 1.f });
+        set(sky.rayleighScattering, { 0.00580199994f, 0.0135580003f, 0.0331000015f });
+        set(sky.mieScattering, { 0.00399600016f, 0.00399600016f, 0.00399600016f });
+        set(sky.mieExtinction, { 0.00443999982f, 0.00443999982f, 0.00443999982f });
+        set(sky.absorptionExtinction, { 0.000650000002f, 0.001881f, 8.49999997e-05f });
+        sky.mieG = 0.8f;
+        set(sky.groundAlbedo, { 0.f, 0.f, 0.f });
+        set(sky.sunDirection, { 1.f, 0.f, 0.f });
+        sky.sunAngularRadius = 0.f;
+        set(sky.sunIlluminance, { 3.f, 3.f, 3.f });
+        sky.seaLevel = 20.f;
+        set(sky.sunUp, { 0.f, 0.f, 1.f });
+        set(sky.moonDirection, { 1.f, 0.f, 0.f });
+        set(sky.moonUp, { 0.f, 0.657901168f, 0.75310427f });
+        sky.moonAngularRadius = 0.0449696593f;
+        set(sky.moonIlluminance, { 0.0045f, 0.0045f, 0.0045f });
+        sky.moonBrightness = 1.575f;
+        sky.moonPhase = 0.67f;
+        sky.moonPhaseTilt = 0.488692194f;
+        sky.moonTerminatorSoftness = 0.25f;
+        sky.moonEarthshine = 0.1f;
+        sky.moonRelief = 1.75f;
+        set(&sky.moonHaloStrength, { 0.5f, 2.35f, 0.45f });
+        set(sky.moonTint, { 1.f, 0.52f, 0.2f });
+        set(&sky.sunGlowSize, { 6.40797997f, -0.4f });
+        return true;
+    }
     else if (name != "earth")
     {
         return false;
@@ -3315,7 +3350,7 @@ int main(int argc, char** argv)
         {
             if (!setTestSky(argv[++i], sSky))
             {
-                fprintf(stderr, "--sky takes earth, noon, sunset, night, high, haze or fog\n");
+                fprintf(stderr, "--sky takes earth, noon, sunset, night, high, haze, fog or starley\n");
                 return 1;
             }
         }
