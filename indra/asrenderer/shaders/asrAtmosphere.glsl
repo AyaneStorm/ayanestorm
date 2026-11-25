@@ -146,6 +146,7 @@ struct Atmosphere
     vec3 moonEarthshineColor;
     vec3 moonTint;
     vec2 sunGlow;
+    float debugView; // TEMPORARY, Mac sky split: ASRendererSkyDebug, in sunGlow's z
     uint cloudTexture;
     uint cloudTextureNext;
     float cloudBlend;
@@ -212,6 +213,7 @@ Atmosphere loadAtmosphere(uint64_t address)
     a.moonEarthshineColor = ref.moonEarthshineColor.xyz;
     a.moonTint = ref.moonTint.xyz;
     a.sunGlow = ref.sunGlow.xy;
+    a.debugView = ref.sunGlow.z;
     a.cloudTexture = ref.cloudTexture;
     a.cloudTextureNext = ref.cloudTextureNext;
     a.cloudBlend = ref.cloudBlend;

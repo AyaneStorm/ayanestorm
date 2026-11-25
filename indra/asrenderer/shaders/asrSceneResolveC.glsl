@@ -529,6 +529,40 @@ void main()
         imageStore(normals, pixel, vec4(0.0));
         const vec2 ndc = (vec2(pixel) + 0.5) * (2.0 / view.pixelSize.xy) - 1.0;
         const float pixelAngle = 2.0 / (view.pixelSize.x * view.projection.x);
+        // TEMPORARY, Mac sky split (ASRendererSkyDebug): one term of the sky at a time.
+        const Atmosphere debugSky = loadAtmosphere(view.atmosphere);
+        const vec3 debugDirection = viewDirection(view, ndc);
+        const uint debugView = uint(debugSky.debugView + 0.5);
+        if (debugView != 0u)
+        {
+            const float sunCos = dot(debugDirection, debugSky.sunDirection);
+            vec3 shown = vec3(0.0);
+            if (debugView == 1u) // the sun's table
+            {
+                shown = sampleSkyView(debugSky, debugDirection, debugSky.sunDirection, SKY_LIGHT_SUN) * debugSky.sunIlluminance;
+            }
+            else if (debugView == 2u) // the sun's Mie table, with its phase and glow
+            {
+                const float glow = eepGlow(debugSky.sunGlow, sunCos) / eepGlow(vec2(5.0, -0.48), sunCos);
+                shown = sampleSkyView(debugSky, debugDirection, debugSky.sunDirection, SKY_LIGHT_SUN_MIE)
+                      * (miePhase(debugSky.mieG, -sunCos) * glow) * debugSky.sunIlluminance;
+            }
+            else if (debugView == 3u) // the moon's table, 1000 times brighter
+            {
+                shown = sampleSkyView(debugSky, debugDirection, debugSky.moonDirection, SKY_LIGHT_MOON) * debugSky.moonSkyLight * 1000.0;
+            }
+            else if (debugView == 4u) // the three tables themselves, over the screen: sun, moon, sun Mie from the top
+            {
+                const vec2 uv = (vec2(pixel) + 0.5) / view.pixelSize.xy;
+                shown = textureLod(sampler2D(skyViewLut, samplers[0]), uv, 0.0).rgb * debugSky.sunIlluminance;
+            }
+            else // the transmittance towards the view
+            {
+                shown = sampleTransmittance(debugSky, length(atmosphereCamera(debugSky)), debugDirection.z) * 0.5;
+            }
+            imageStore(lit, pixel, vec4(shown, 0.0));
+            return;
+        }
         imageStore(lit, pixel, vec4(background(pixel, loadAtmosphere(view.atmosphere), viewDirection(view, ndc), pixelAngle), 0.0));
         return;
     }

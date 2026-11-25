@@ -221,7 +221,7 @@ void fillAtmosphere(GpuAtmosphere& out, const SkyInput& sky, float cameraZ, floa
     out.pad2 = 0.f;
     out.sunGlow[0] = std::max(sky.sunGlowSize, 0.f);
     out.sunGlow[1] = sky.sunGlowFocus; // EEP: -10 to 10, negative for a glow at the sun
-    out.sunGlow[2] = 0.f;
+    out.sunGlow[2] = float(sky.debugView); // TEMPORARY, Mac sky split
     out.sunGlow[3] = 0.f;
 
     // The clouds. OpenGL multiplies its light by cloud_color, which the default EEP sets to

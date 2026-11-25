@@ -401,6 +401,8 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     static LLCachedControl<bool> autoAdjustLegacy(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
     tone.exposure = llclamp(F32(exposure()), 0.5f, 4.f); // GL's range
     tone.mapper = llmin(U32(mapper()), asr::TONE_MAPPER_AGX);
+    static LLCachedControl<U32> skyDebug(gSavedSettings, "ASRendererSkyDebug", 0U); // TEMPORARY, Mac sky split
+    sky.debugView = skyDebug();
 
     const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky(); // inside worldReady()
     if (!current)
