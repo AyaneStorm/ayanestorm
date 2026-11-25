@@ -556,6 +556,19 @@ void main()
                 const vec2 uv = (vec2(pixel) + 0.5) / view.pixelSize.xy;
                 shown = textureLod(sampler2D(skyViewLut, samplers[0]), uv, 0.0).rgb * debugSky.sunIlluminance;
             }
+            else if (debugView == 6u) // the sun lookup's numbers: r its u, g its azimuth cosine, b the zenith cosine
+            {
+                const vec2 lightOnPlane = debugSky.sunDirection.xy;
+                const float lengths = length(debugDirection.xy) * length(lightOnPlane);
+                const float lightViewCos = lengths > 1e-6 ? clamp(dot(debugDirection.xy, lightOnPlane) / lengths, -1.0, 1.0) : 1.0;
+                shown = vec3(sqrt(-lightViewCos * 0.5 + 0.5), lightViewCos * 0.5 + 0.5, debugDirection.z * 0.5 + 0.5);
+                shown = shown * shown * shown; // so the tone mapper's curve leaves them near their values
+            }
+            else if (debugView == 7u) // the multiple scattering table over the screen: sun zenith cosine -1 to 1 across, height down
+            {
+                const vec2 uv = (vec2(pixel) + 0.5) / view.pixelSize.xy;
+                shown = textureLod(sampler2D(multiscatterLut, samplers[0]), uv, 0.0).rgb * debugSky.sunIlluminance * 50.0;
+            }
             else // the transmittance towards the view
             {
                 shown = sampleTransmittance(debugSky, length(atmosphereCamera(debugSky)), debugDirection.z) * 0.5;
