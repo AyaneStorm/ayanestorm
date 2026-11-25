@@ -330,11 +330,11 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
     static LLCachedControl<bool> autoAdjustLegacy(gSavedSettings, "RenderSkyAutoAdjustLegacy", false);
     tone.exposure = llclamp(F32(exposure()), 0.5f, 4.f); // GL's range
     tone.mapper = llmin(U32(mapper()), asr::TONE_MAPPER_AGX);
-    static LLCachedControl<F32> bloom(gSavedSettings, "ASRendererBloomStrength", 0.04f);
-    static LLCachedControl<bool> glowOn(gSavedSettings, "RenderGlow", true);
-    static LLCachedControl<F32> glow(gSavedSettings, "RenderGlowStrength", 0.325f);
-    tone.bloom = llclamp(F32(bloom()), 0.f, 1.f);
-    tone.glow = glowOn() ? llmax(F32(glow()), 0.f) : 0.f;
+    static LLCachedControl<F32> bloomStrength(gSavedSettings, "ASRendererBloomStrength", 0.04f);
+    static LLCachedControl<bool> renderGlow(gSavedSettings, "RenderGlow", true);
+    static LLCachedControl<F32> glowStrength(gSavedSettings, "RenderGlowStrength", 0.325f);
+    tone.bloom = llclamp(F32(bloomStrength()), 0.f, 1.f);
+    tone.glow = renderGlow() ? llmax(F32(glowStrength()), 0.f) : 0.f;
 
     const LLSettingsSky::ptr_t current = LLEnvironment::instance().getCurrentSky(); // inside worldReady()
     if (!current)
