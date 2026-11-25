@@ -121,16 +121,10 @@ int main(int argc, char** argv)
         common.vertex.flip_vert_y = true;
         compiler.set_common_options(common);
 
-        // SPIRV-Cross writes fast:: max, min, clamp, normalize and the like. Vulkan's SPIR-V
-        // keeps full float behaviour, and skies sit on knife edges (a light on the horizon):
-        // fast::normalize's approximate square root is the suspect for the sky split in two on
-        // Metal. precise:: has every one of them, for 0.17 ms on the M4's test scene. The
-        // compiler keeps fast math for the rest: -fno-fast-math cost 2 ms more there.
-        std::string source = compiler.compile();
-        for (size_t at = source.find("fast::"); at != std::string::npos; at = source.find("fast::", at))
-        {
-            source.replace(at, 6, "precise::");
-        }
+        // Fast math stays, SPIRV-Cross's fast:: functions included: precise:: cost 0.17 ms on
+        // the M4's test scene and -fno-fast-math 2 ms more, for nothing seen. Shaders keep
+        // their own knife edges robust instead (raySphereIntersectNearest, the clamped azimuth).
+        const std::string source = compiler.compile();
         std::ofstream out(argv[2], std::ios::binary);
         out << source;
         if (!out)
