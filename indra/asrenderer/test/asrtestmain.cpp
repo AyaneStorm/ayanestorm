@@ -97,6 +97,8 @@ asr::SkyInput sSky = asr::earthSky(); // --sky
 bool sSkyView = false; // --sky-view
 bool sLookMoon = false; // --look-moon
 std::string sMoonMaps;  // --moon-maps DIR
+asr::ToneInput sTone;   // the sky's, as the viewer sets it (--sky starley)
+bool sLookHorizon = false; // --look-horizon: a wide view towards the moon
 bool sClouds = false;   // --clouds
 std::string sCloudMap;  // --cloud-map FILE
 float sAnisotropy = 16.f; // --anisotropy N: RenderAnisotropicLevel, 1 for none
@@ -253,6 +255,14 @@ void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky, const std::s
         slot = makeTestNoise(textures);
     }
     sky.cloudTexture = slot | (uint32_t(asr::UISampler::LinearWrap) << asr::UI_SAMPLER_SHIFT);
+    // OpenGL's lightnorm is the light in (y, z, x) order (LLEnvironment::toLightNorm()).
+    const float* light = sky.sunDirection[2] > 0.f ? sky.sunDirection : sky.moonDirection;
+    sky.cloudShadowOffset[0] = light[1] * 0.0125f;
+    sky.cloudShadowOffset[1] = light[0] * 0.0125f;
+    if (sky.cloudScale > 0.f)
+    {
+        return; // the sky has its own clouds (--sky starley)
+    }
     sky.cloudScale = 0.4199f;
     sky.cloudShadow = 0.2699f;
     sky.cloudVariance = 0.f;
@@ -262,10 +272,6 @@ void addTestClouds(asr::TextureQueue& textures, asr::SkyInput& sky, const std::s
     const float detail[3] = { 1.f, 0.53f, 0.12f };
     std::copy(density, density + 3, sky.cloudPosDensity1);
     std::copy(detail, detail + 3, sky.cloudPosDensity2);
-    // OpenGL's lightnorm is the light in (y, z, x) order (LLEnvironment::toLightNorm()).
-    const float* light = sky.sunDirection[2] > 0.f ? sky.sunDirection : sky.moonDirection;
-    sky.cloudShadowOffset[0] = light[1] * 0.0125f;
-    sky.cloudShadowOffset[1] = light[0] * 0.0125f;
 }
 
 // The step 1 test skies: the sample's Earth with the sun at a given height, seen from the
@@ -345,6 +351,14 @@ bool setTestSky(const std::string& name, asr::SkyInput& sky)
         set(&sky.moonHaloStrength, { 0.5f, 2.35f, 0.45f });
         set(sky.moonTint, { 1.f, 0.52f, 0.2f });
         set(&sky.sunGlowSize, { 6.40797997f, -0.4f });
+        // Its clouds, drawn with --clouds.
+        set(&sky.cloudBlend, { 0.f, 0.73f, 0.f, 0.22f });
+        set(sky.cloudPosDensity1, { 0.709999979f, 0.530475974f, 0.427047014f });
+        set(sky.cloudPosDensity2, { 0.384193003f, 0.5f, 0.125f });
+        set(sky.cloudColor, { 0.12863f, 0.12863f, 0.12863f });
+        set(&sky.cloudMaxY, { 805.f, 15000.f, 0.96f, 500.f });
+        sTone.mix = 0.f;
+        sTone.mapper = 1;
         return true;
     }
     else if (name != "earth")
@@ -2999,6 +3013,7 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             state.hasCamera = true;
             state.camera = city->camera(float(secondsSince(sceneStart)), state.width, state.height);
             state.sky = sSky;
+            state.tone = sTone;
             state.anisotropy = sAnisotropy;
             state.audit = audit;
             if (sOverlays)
@@ -3033,6 +3048,17 @@ int drawTriangle(double seconds, double stallSeconds, bool drawUI, bool drawScen
             std::copy(sSky.moonDirection, sSky.moonDirection + 3, city->lookDirection);
             const float reach = sSky.moonHaloStrength > 0.f ? std::max(sSky.moonHaloRadius / 0.9f, 1.f / 0.7f) : 1.f / 0.7f;
             city->lookFov = 2.f * sSky.moonAngularRadius * reach;
+        }
+        else if (sLookHorizon)
+        {
+            // 60 degrees to the side of the moon: the view reaches from it to past 90 degrees
+            // away, where a light on the horizon leaves the planet's shadow.
+            const float* m = sSky.moonDirection;
+            const float c = 0.5f, s = 0.8660254f;
+            city->lookDirection[0] = m[0] * c - m[1] * s;
+            city->lookDirection[1] = m[0] * s + m[1] * c;
+            city->lookDirection[2] = m[2];
+            city->lookFov = 1.2f; // radians, about the viewer's default
         }
         if (!sMoonMaps.empty() && !loadMoonMaps(device->textures(), sMoonMaps, sSky))
         {
@@ -3339,6 +3365,11 @@ int main(int argc, char** argv)
         else if (arg == "--look-moon")
         {
             sLookMoon = true;
+            drawScene = true;
+        }
+        else if (arg == "--look-horizon")
+        {
+            sLookHorizon = true;
             drawScene = true;
         }
         else if (arg == "--sky-view")
