@@ -420,10 +420,11 @@ float miePhase(float g, float cosTheta)
 }
 
 // OpenGL's glow on the haze (skyF.glsl): size and focus as EEP gives them, the 0.001
-// minimum angle, the 100000 cap of atmosphericsFuncs.glsl and the 0.25 anti-solar floor.
+// minimum angle (taken before the size, as OpenGL does), the 100000 cap of
+// atmosphericsFuncs.glsl and the 0.25 anti-solar floor.
 float eepGlow(vec2 glow, float cosTheta)
 {
-    return min(pow(max(glow.x * (1.0 - cosTheta), 0.001), glow.y), 100000.0) + 0.25;
+    return min(pow(max(1.0 - cosTheta, 0.001) * glow.x, glow.y), 100000.0) + 0.25;
 }
 
 // The sky seen from the camera in a world direction, sun and moon at their own brightness.

@@ -370,11 +370,9 @@ void fillSky(asr::SkyInput& sky, asr::ToneInput& tone)
         sky.sunUp[i] = sunUp.mV[i];
     }
     sky.sunTextureRadius = atanf(HEAVENLY_BODY_FACTOR * 0.5f * llmax(current->getSunScale(), 0.f));
-    if (current->getSunTextureId().isNull())
-    {
-        sky.sunAngularRadius = 0.f;
-    }
-    else if (gSky.mVOSkyp)
+    // No image (most EEPs): our sky shows the real sun, the default sky's 0.505 degree
+    // disc at its physical brightness. OpenGL's look is ASRenderSkyModel 1's job.
+    if (!current->getSunTextureId().isNull() && gSky.mVOSkyp)
     {
         sky.sunTexture = skyTextureBits(gSky.mVOSkyp->getSunTex(), asr::UISampler::LinearClamp);
     }

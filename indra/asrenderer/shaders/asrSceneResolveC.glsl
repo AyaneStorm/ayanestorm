@@ -321,9 +321,15 @@ vec3 background(ivec2 pixel, Atmosphere a, vec3 direction, float pixelAngle)
             space = mix(space, sun.rgb / ExposureRef(ViewRef(push.view).exposure).exposure, sun.a);
         }
     }
-    else if (sunCos > a.sunCosRadius)
+    else
     {
-        space = sunDisc(a, sunCos);
+        // The real sun, its edge smoothed over a pixel: the disc is only a few pixels wide.
+        const float sunRadius = acos(a.sunCosRadius);
+        const float cover = clamp((sunRadius - acos(clamp(sunCos, -1.0, 1.0))) / pixelAngle + 0.5, 0.0, 1.0);
+        if (cover > 0.0)
+        {
+            space = mix(space, sunDisc(a, sunCos), cover);
+        }
     }
 
     vec3 shown = luminance + sampleTransmittance(a, length(position), direction.z) * space;
