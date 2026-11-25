@@ -37,6 +37,7 @@
 // Image bindings of set 1 that keep their number as Metal texture indices; a binding past
 // these would get whatever index SPIRV-Cross picks, and the device binds it elsewhere.
 constexpr uint32_t SCENE_SET_IMAGES = 19; // as Vulkan's SCENE_IMAGE_BINDINGS: the sky's targets 11 to 14, tables 15 to 18
+constexpr uint32_t BINDLESS_TEXTURES = 65536; // set 0's textures[], as the device's MAX_TEXTURES
 
 int main(int argc, char** argv)
 {
@@ -88,6 +89,24 @@ int main(int argc, char** argv)
                 image.msl_texture = binding;
                 compiler.add_msl_resource_binding(image);
             }
+            // Set 0's argument buffer: textures from 0, samplers after them, where the device
+            // writes them (MAX_TEXTURES). Left to SPIRV-Cross, ids follow declaration order,
+            // so a shader declaring the samplers first read every texture 4 slots off.
+            spirv_cross::MSLResourceBinding textures;
+            textures.stage = stage;
+            textures.desc_set = 0;
+            textures.binding = 0;
+            textures.msl_texture = 0;
+            textures.count = BINDLESS_TEXTURES; // sized, or SPIRV-Cross makes it an unsized descriptor array
+            compiler.add_msl_resource_binding(textures);
+            spirv_cross::MSLResourceBinding samplers;
+            samplers.stage = stage;
+            samplers.desc_set = 0;
+            samplers.binding = 1;
+            samplers.msl_sampler = BINDLESS_TEXTURES;
+            samplers.count = 4; // samplers[4], one per UISampler
+            compiler.add_msl_resource_binding(samplers);
+
             spirv_cross::MSLResourceBinding push;
             push.stage = stage;
             push.desc_set = spirv_cross::kPushConstDescSet;
