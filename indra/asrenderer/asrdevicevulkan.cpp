@@ -76,13 +76,14 @@ constexpr VkFormat DEPTH_FORMAT = VK_FORMAT_D32_SFLOAT;
 constexpr VkFormat ALBEDO_FORMAT = VK_FORMAT_R8G8B8A8_UNORM;
 constexpr VkFormat NORMAL_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT;
 constexpr VkFormat COLOR_FORMAT = VK_FORMAT_R16G16B16A16_SFLOAT; // lit and scene colour; alpha is glow
-constexpr uint32_t SCENE_IMAGE_BINDINGS = 19; // set 1, see createScene()
+constexpr uint32_t SCENE_IMAGE_BINDINGS = 20; // set 1, see createScene()
 constexpr uint32_t SKY_FIRST_SAMPLED_BINDING = 15; // the sky's tables read through samplers: 15 to 18
+constexpr uint32_t SCENE_SAMPLED_BINDINGS = 5; // the depth and the sky's four tables
 
 // Set 1's sampled images: the depth, and the sky's tables. The rest are storage images.
 bool sceneBindingSampled(uint32_t binding)
 {
-    return binding == 3 || binding >= SKY_FIRST_SAMPLED_BINDING;
+    return binding == 3 || (binding >= SKY_FIRST_SAMPLED_BINDING && binding < SKY_FIRST_SAMPLED_BINDING + 4);
 }
 constexpr VkFormat SELECTION_MASK_FORMAT = VK_FORMAT_R8G8B8A8_UNORM; // see asrOverlayMaskF.glsl
 
@@ -1405,7 +1406,8 @@ private:
     {
         // Visibility, albedo and normals, then depth, which the pyramid reads, then Mac OIT's
         // moments, tail depth, colour and weights, the lit image and the scene colour, the
-        // selection mask, then the sky's tables written (11 to 14) and read (15 to 18).
+        // selection mask, then the sky's tables written (11 to 14) and read (15 to 18), then
+        // bloom's atlas (19).
         VkDescriptorSetLayoutBinding bindings[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
         {
@@ -1418,9 +1420,8 @@ private:
         layout.bindingCount = SCENE_IMAGE_BINDINGS;
         layout.pBindings = bindings;
 
-        const uint32_t sampledBindings = 1 + SCENE_IMAGE_BINDINGS - SKY_FIRST_SAMPLED_BINDING;
-        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - sampledBindings },
-                                                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, sampledBindings } };
+        const VkDescriptorPoolSize sizes[2] = { { VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, SCENE_IMAGE_BINDINGS - SCENE_SAMPLED_BINDINGS },
+                                                { VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, SCENE_SAMPLED_BINDINGS } };
         VkDescriptorPoolCreateInfo pool{ VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         pool.maxSets = 1;
         pool.poolSizeCount = 2;
@@ -1457,7 +1458,8 @@ private:
         mVisibilityPipeline = mResolvePipeline ? createSceneRasterPipeline("asrSceneVisibilityV", "asrSceneVisibilityF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mMaskedPipeline = mVisibilityPipeline ? createSceneRasterPipeline("asrSceneMaskedV", "asrSceneMaskedF", VISIBILITY_FORMAT, true, error) : VK_NULL_HANDLE;
         mCompositePipeline = mMaskedPipeline ? createSceneRasterPipeline("asrSceneCompositeV", "asrSceneCompositeF", mSurfaceFormat.format, false, error) : VK_NULL_HANDLE;
-        mSkinPipeline = mCompositePipeline ? createComputePipeline("asrSceneSkinC", error) : VK_NULL_HANDLE;
+        mBloomPipeline = mCompositePipeline ? createComputePipeline("asrSceneBloomC", error) : VK_NULL_HANDLE;
+        mSkinPipeline = mBloomPipeline ? createComputePipeline("asrSceneSkinC", error) : VK_NULL_HANDLE;
         mTextureMipPipeline = mSkinPipeline ? createComputePipeline("asrTextureMipC", error) : VK_NULL_HANDLE;
         mEncodeBC1Pipeline = mTextureMipPipeline ? createComputePipeline("asrEncodeBC1C", error) : VK_NULL_HANDLE;
         mEncodeBC45Pipeline = mEncodeBC1Pipeline ? createComputePipeline("asrEncodeBC45C", error) : VK_NULL_HANDLE;
@@ -1475,6 +1477,7 @@ private:
         mResultImages[ResultNormals] = &mNormalImage;
         mResultImages[ResultLit] = &mLitImage;
         mResultImages[ResultSceneColor] = &mSceneColorImage;
+        mResultImages[ResultBloom] = &mBloomImage;
         mResultImages[ResultMacOITMoments] = &mMacOIT.moments;
         mResultImages[ResultMacOITTailDepth] = &mMacOIT.tailDepth;
         mResultImages[ResultMacOITColor] = &mMacOIT.color;
@@ -1592,6 +1595,7 @@ private:
         destroyTarget(mAuditImage);
         destroyTarget(mLitImage);
         destroyTarget(mSceneColorImage);
+        destroyTarget(mBloomImage);
         destroyTarget(mSelectionMask);
         destroyMacOITTargets();
         destroyBufferObject(mScenePyramid, MemoryCategory::RenderTargets);
@@ -1608,6 +1612,8 @@ private:
             !createTarget(mNormalImage, NORMAL_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "normal target") ||
             !createTarget(mLitImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "lit target") ||
             !createTarget(mSceneColorImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "scene colour target") ||
+            !createTarget(mBloomImage, COLOR_FORMAT, VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 8, "bloom atlas",
+                          { bloomAtlasWidth(mSceneExtent.width), bloomAtlasHeight(mSceneExtent.height) }) ||
             !createTarget(mSelectionMask, SELECTION_MASK_FORMAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_IMAGE_ASPECT_COLOR_BIT, 4, "selection mask") ||
             !createMacOITTargets())
         {
@@ -1626,7 +1632,8 @@ private:
                                                           mMacOIT.moments.view,   mMacOIT.tailDepth.view, mMacOIT.color.view, mMacOIT.weights.view,
                                                           mLitImage.view,         mSceneColorImage.view,  mSelectionMask.view,
                                                           mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
-                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view };
+                                                          mSky.transmittance.view, mSky.multiscatter.view, mSky.skyView.view, mSky.aerial.view,
+                                                          mBloomImage.view };
         VkDescriptorImageInfo images[SCENE_IMAGE_BINDINGS]{};
         VkWriteDescriptorSet writes[SCENE_IMAGE_BINDINGS]{};
         for (uint32_t i = 0; i < SCENE_IMAGE_BINDINGS; ++i)
@@ -2360,6 +2367,46 @@ private:
         return true;
     }
 
+    // Bloom's levels down from the scene colour, then back up: each dispatch reads what the
+    // one before wrote (asrSceneBloomC.glsl). Nothing to spread: the composite skips it too.
+    bool passBloom()
+    {
+        if (mRecordTone.bloom <= 0.f && mRecordTone.glow <= 0.f)
+        {
+            return true;
+        }
+        VkCommandBuffer commands = mRecordCommands;
+        const VkDescriptorSet sets[2] = { mUISets[mRecordSlot], mSceneSet };
+        vkCmdBindPipeline(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mBloomPipeline);
+        vkCmdBindDescriptorSets(commands, VK_PIPELINE_BIND_POINT_COMPUTE, mScenePipelineLayout, 0, 2, sets, 0, nullptr);
+        const uint32_t phase = mScenePush.phase;
+        auto dispatch = [&](uint32_t level, uint32_t up)
+        {
+            mScenePush.phase = level | up;
+            pushScene(commands);
+            const uint32_t width = bloomLevelSize(mSceneExtent.width, level);
+            const uint32_t height = bloomLevelSize(mSceneExtent.height, level);
+            vkCmdDispatch(commands, (width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1);
+        };
+        for (uint32_t level = 0; level < BLOOM_LEVELS; ++level)
+        {
+            if (level > 0)
+            {
+                memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                              VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT);
+            }
+            dispatch(level, 0);
+        }
+        for (uint32_t level = BLOOM_LEVELS - 1; level-- > 0;)
+        {
+            memoryBarrier(commands, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
+                          VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_STORAGE_READ_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
+            dispatch(level, BLOOM_UP);
+        }
+        mScenePush.phase = phase;
+        return true;
+    }
+
     void setMacOITBodies()
     {
         mGraph.setBody(PassMacOITKeys, [this]() { return passMacOITKeys(); });
@@ -2416,7 +2463,7 @@ private:
         destroyMacOITPipelines();
         destroySky();
         destroyOverlay();
-        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mSkinPipeline,
+        for (VkPipeline pipeline : { mCullPipeline, mPyramidPipeline, mVisibilityPipeline, mMaskedPipeline, mResolvePipeline, mCompositePipeline, mBloomPipeline, mSkinPipeline,
                                      mTextureMipPipeline, mEncodeBC1Pipeline, mEncodeBC45Pipeline, mEncodeBC7Pipeline })
         {
             if (pipeline != VK_NULL_HANDLE)
@@ -3808,6 +3855,8 @@ private:
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
+        view.bloomStrength = mRecordTone.bloom;
+        view.glowStrength = mRecordTone.glow;
         if (!prepareOverlay(view, slot))
         {
             return false;
@@ -4023,6 +4072,7 @@ private:
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
         mGraph.setBody(PassStars, [this]() { return passStars(); });
+        mGraph.setBody(PassBloom, [this]() { return passBloom(); });
         mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
         mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
         mGraph.setBody(PassAuditCull, [this]() { return passCull(CULL_AUDIT); });
@@ -4635,6 +4685,7 @@ private:
     uint64_t mTexturesEncoded = 0;
     uint64_t mCompressedUploadsDropped = 0;
     VkPipeline mCompositePipeline = VK_NULL_HANDLE;
+    VkPipeline mBloomPipeline = VK_NULL_HANDLE;
     TargetImage mVisibilityImage;
     TargetImage mDepthImage;
     TargetImage mAlbedoImage;
@@ -4642,6 +4693,7 @@ private:
     TargetImage mAuditImage;
     TargetImage mLitImage;
     TargetImage mSceneColorImage;
+    TargetImage mBloomImage; // set 1 binding 19, see asrBloom.glsl
     TargetImage mSelectionMask; // see ResultSelectionMask
     Overlay mOverlay;
     const OverlayInput* mRecordOverlay = nullptr; // during one recordScene()

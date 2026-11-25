@@ -74,6 +74,7 @@ enum SceneResult : ResultId
     ResultSkyViewLut,
     ResultAerialLut,      // the aerial perspective volume, along the main view's rays
     ResultExposure,      // GpuExposure, from the sky: read by shading and the composite
+    ResultBloom,         // bloom's levels in one atlas, read by the composite
     ResultCount
 };
 
@@ -109,6 +110,7 @@ enum ScenePass : PassId
     PassMacOITTail,
     PassMacOITColor,
     PassMacOITResolve,
+    PassBloom,
     PassSelectionMask, // only while something is selected: the mask's sink is off otherwise
     PassUIDepth,       // only while the UI's world part tests depth: see asruilist.h
     PassReadCounts,

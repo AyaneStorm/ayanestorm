@@ -345,6 +345,7 @@ public:
                 [encoder waitForFence:mSceneFence beforeStages:overlays ? MTLRenderStageVertex : MTLRenderStageFragment];
                 [encoder setRenderPipelineState:mCompositePipeline];
                 [encoder setFragmentTexture:mSceneColorTarget atIndex:9];
+                [encoder setFragmentTexture:mBloomTarget atIndex:19];
                 // The composite reads the world view's offset from push.list, and the view
                 // for exposure and tone mapping.
                 ScenePush offset = mScenePush;
@@ -616,13 +617,14 @@ private:
         mCullPipeline = createComputePipeline(shaderDir, "asrSceneCullC", error);
         mPyramidPipeline = createComputePipeline(shaderDir, "asrScenePyramidC", error);
         mResolvePipeline = createComputePipeline(shaderDir, "asrSceneResolveC", error);
+        mBloomPipeline = createComputePipeline(shaderDir, "asrSceneBloomC", error);
         mSkinPipeline = createComputePipeline(shaderDir, "asrSceneSkinC", error);
         mTextureMipPipeline = createComputePipeline(shaderDir, "asrTextureMipC", error);
         mEncodeBC1Pipeline = createComputePipeline(shaderDir, "asrEncodeBC1C", error);
         mEncodeBC45Pipeline = createComputePipeline(shaderDir, "asrEncodeBC45C", error);
         mEncodeBC7Pipeline = createComputePipeline(shaderDir, "asrEncodeBC7C", error);
         mEncodeFence = [mDevice newFence];
-        if (!mTextureMipPipeline || !mEncodeBC1Pipeline || !mEncodeBC45Pipeline || !mEncodeBC7Pipeline || !mEncodeFence)
+        if (!mBloomPipeline || !mTextureMipPipeline || !mEncodeBC1Pipeline || !mEncodeBC45Pipeline || !mEncodeBC7Pipeline || !mEncodeFence)
         {
             return false;
         }
@@ -1217,6 +1219,46 @@ private:
         return true;
     }
 
+    // Bloom's levels down from the scene colour, then back up: each dispatch reads what the
+    // one before wrote (asrSceneBloomC.glsl). Nothing to spread: the composite skips it too.
+    bool passBloom()
+    {
+        if (mRecordTone.bloom <= 0.f && mRecordTone.glow <= 0.f)
+        {
+            return true;
+        }
+        id<MTLComputeCommandEncoder> encoder = beginCompute();
+        [encoder setComputePipelineState:mBloomPipeline];
+        [encoder setTexture:mSceneColorTarget atIndex:9];
+        [encoder setTexture:mBloomTarget atIndex:19];
+        ScenePush push = mScenePush;
+        auto dispatch = [&](uint32_t level, uint32_t up)
+        {
+            push.phase = level | up;
+            [encoder setBytes:&push length:sizeof(push) atIndex:PUSH_CONSTANT_BUFFER];
+            const NSUInteger width = bloomLevelSize(mSceneWidth, level);
+            const NSUInteger height = bloomLevelSize(mSceneHeight, level);
+            [encoder dispatchThreadgroups:MTLSizeMake((width + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, (height + RESOLVE_GROUP_SIZE - 1) / RESOLVE_GROUP_SIZE, 1)
+                    threadsPerThreadgroup:MTLSizeMake(RESOLVE_GROUP_SIZE, RESOLVE_GROUP_SIZE, 1)];
+        };
+        for (uint32_t level = 0; level < BLOOM_LEVELS; ++level)
+        {
+            if (level > 0)
+            {
+                [encoder memoryBarrierWithScope:MTLBarrierScopeTextures];
+            }
+            dispatch(level, 0);
+        }
+        for (uint32_t level = BLOOM_LEVELS - 1; level-- > 0;)
+        {
+            [encoder memoryBarrierWithScope:MTLBarrierScopeTextures];
+            dispatch(level, BLOOM_UP);
+        }
+        [encoder updateFence:mSceneFence];
+        [encoder endEncoding];
+        return true;
+    }
+
     bool passMacOITResolve()
     {
         id<MTLComputeCommandEncoder> resolve = beginCompute();
@@ -1533,7 +1575,8 @@ private:
         mLitTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite | MTLTextureUsageRenderTarget, width, height, 8, "lit target");
         mSceneColorTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, width, height, 8, "scene colour target");
         mSelectionMask = createTarget(MTLPixelFormatRGBA8Unorm, MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead, width, height, 4, "selection mask");
-        if (!mLitTarget || !mSceneColorTarget || !mSelectionMask || !createMacOITTargets(width, height))
+        mBloomTarget = createTarget(MTLPixelFormatRGBA16Float, MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite, bloomAtlasWidth(width), bloomAtlasHeight(height), 8, "bloom atlas");
+        if (!mLitTarget || !mSceneColorTarget || !mSelectionMask || !mBloomTarget || !createMacOITTargets(width, height))
         {
             return false;
         }
@@ -1680,6 +1723,8 @@ private:
         view.userExposure = mRecordTone.exposure;
         view.toneMix = mRecordTone.mix;
         view.toneMapper = mRecordTone.mapper;
+        view.bloomStrength = mRecordTone.bloom;
+        view.glowStrength = mRecordTone.glow;
         if (!prepareOverlay(view, slot))
         {
             return false;
@@ -1904,6 +1949,7 @@ private:
         mGraph.setBody(PassPyramidFinal, [this]() { return passPyramid(); });
         mGraph.setBody(PassResolve, [this]() { return passResolve(); });
         mGraph.setBody(PassStars, [this]() { return passStars(); });
+        mGraph.setBody(PassBloom, [this]() { return passBloom(); });
         setSkyBodies();
         mGraph.setBody(PassReadCounts, [this]() { return passReadCounts(); });
         mGraph.setBody(PassAuditReset, [this]() { return passAuditReset(); });
@@ -3045,6 +3091,7 @@ private:
     id<MTLComputePipelineState> mCullPipeline = nil;
     id<MTLComputePipelineState> mPyramidPipeline = nil;
     id<MTLComputePipelineState> mResolvePipeline = nil;
+    id<MTLComputePipelineState> mBloomPipeline = nil;
     id<MTLComputePipelineState> mSkinPipeline = nil;
     id<MTLRenderPipelineState> mVisibilityPipeline = nil;
     id<MTLRenderPipelineState> mMaskedPipeline = nil;
@@ -3062,6 +3109,7 @@ private:
     id<MTLTexture> mAuditTarget = nil;
     id<MTLTexture> mLitTarget = nil;        // the opaque image, set 1 binding 8
     id<MTLTexture> mSceneColorTarget = nil; // with transparency, set 1 binding 9
+    id<MTLTexture> mBloomTarget = nil;      // set 1 binding 19, see asrBloom.glsl
     id<MTLTexture> mSelectionMask = nil;    // see ResultSelectionMask, set 1 binding 10
     MacOITResources mMacOIT;
     SkyTables mSky;

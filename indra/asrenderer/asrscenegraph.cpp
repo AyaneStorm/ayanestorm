@@ -63,6 +63,7 @@ void declareSceneGraph(FrameGraph& graph)
     graph.addResult("sky view lut", ResultScope::Frame);
     graph.addResult("aerial lut", ResultScope::Frame);
     graph.addResult("exposure", ResultScope::Frame);
+    graph.addResult("bloom", ResultScope::Frame);
 
     // The group passes read their dispatch size from the counts, so they take the draw
     // arguments as Indirect too.
@@ -145,6 +146,10 @@ void declareSceneGraph(FrameGraph& graph)
                              { ResultLit, ColorTarget | Keep },
                              { ResultTextureFeedback, FragmentWrite | Keep } });
     declareMacOIT(graph);
+    // Bloom and SL glow from the scene colour: all its levels, down then up, in one pass.
+    graph.addPass("bloom", { { ResultSceneColor, ComputeRead },
+                             { ResultExposure, ComputeRead },
+                             { ResultBloom, ComputeWrite } });
     // The scene's selections against the final opaque depth, read as a texture, and the
     // HUD's selected entries in the HUD view. The composite pass draws outlines from it.
     graph.addPass("selection mask", { { ResultSceneData, VertexRead | FragmentRead },
@@ -180,6 +185,7 @@ void declareSceneGraph(FrameGraph& graph)
 
     graph.setSink(ResultSceneColor, FragmentRead, true);
     graph.setSink(ResultExposure, FragmentRead, true); // the composite exposes scene colour by it
+    graph.setSink(ResultBloom, FragmentRead, true);
     graph.setSink(ResultSceneCounts, CopyRead, true);
 }
 

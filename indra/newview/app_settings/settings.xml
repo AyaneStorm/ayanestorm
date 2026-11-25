@@ -12028,6 +12028,17 @@ Change of this parameter will affect the layout of buttons in notification toast
     <key>Value</key>
     <integer>60</integer>
   </map>
+  <key>ASRendererBloomStrength</key>
+  <map>
+    <key>Comment</key>
+    <string>New renderer: the share of all light that bloom spreads around where it comes from, as a lens and the eye do. It moves light and adds none. 0 turns bloom off; SL glow still shows while RenderGlow is on.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.04</real>
+  </map>
   <key>ASRendererLocalShift</key>
   <map>
     <key>Comment</key>

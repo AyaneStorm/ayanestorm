@@ -12,6 +12,9 @@
 #include "asrSceneCommon.glsl"
 
 layout(set = 1, binding = 9, rgba16f) uniform readonly image2D sceneColor;
+layout(set = 1, binding = 19, rgba16f) uniform readonly image2D bloom;
+
+#include "asrBloom.glsl"
 
 layout(location = 0) out vec4 frag_color;
 
@@ -76,13 +79,21 @@ vec3 toneMapAgX(vec3 color)
 void main()
 {
     const ivec2 pixel = ivec2(gl_FragCoord.xy) - ivec2(push.list & 0xFFFFu, push.list >> 16);
-    const vec3 color = imageLoad(sceneColor, pixel).rgb;
+    vec3 color = imageLoad(sceneColor, pixel).rgb;
     ViewRef view = ViewRef(push.view);
     const uint debugView = view.debugView;
     if (debugView != 0u && debugView != DEBUG_VIEW_NO_OCCLUSION)
     {
         frag_color = vec4(color, 1.0); // colours meant as they are
         return;
+    }
+    if (view.bloomStrength > 0.0 || view.glowStrength > 0.0)
+    {
+        // Bloom moves bloomStrength of the light into the chain's mean (asrSceneBloomC.glsl);
+        // glow comes on top.
+        const ivec2 scene = ivec2(view.pixelSize);
+        const vec3 spread = bloomBilinear(ivec2(0), bloomLevelSize(scene, 0u), (vec2(pixel) + 0.5) * 0.5);
+        color = color * (1.0 - view.bloomStrength) + spread * (1.0 / float(BLOOM_LEVELS));
     }
     const vec3 exposed = max(color, vec3(0.0)) * (ExposureRef(view.exposure).exposure * view.userExposure);
     vec3 mapped = exposed;

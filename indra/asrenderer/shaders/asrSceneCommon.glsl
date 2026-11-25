@@ -254,6 +254,8 @@ layout(buffer_reference, std430) readonly buffer ViewRef
     float userExposure;      // RenderExposure
     float toneMix;           // RenderTonemapMix
     uint toneMapper;         // TONE_MAPPER_*
+    float bloomStrength;     // ASRendererBloomStrength
+    float glowStrength;      // RenderGlowStrength, 0 with RenderGlow off
 };
 
 const uint TONE_MAPPER_PBR_NEUTRAL = 0u; // see asrscene.h

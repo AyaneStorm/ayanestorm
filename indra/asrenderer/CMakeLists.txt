@@ -100,7 +100,7 @@ foreach(shader asrTestTriangleV asrTestTriangleF asrUIV asrUIF asrSceneCullC asr
         asrOverlayV asrOverlayMaskF asrOverlayHudF asrOverlayOutlineF asrOverlayDepthF
         asrTextureMipC asrEncodeBC1C asrEncodeBC45C asrEncodeBC7C
         asrAtmosphereTransmittanceC asrAtmosphereMultiscatterC asrAtmosphereSkyViewC asrAtmosphereAerialC asrAtmosphereExposureC
-        asrSkyStarsV asrSkyStarsF)
+        asrSkyStarsV asrSkyStarsF asrSceneBloomC)
     asr_add_shader(${CMAKE_CURRENT_SOURCE_DIR}/shaders/${shader}.glsl ASR_SHADER_OUTPUTS)
 endforeach()
 # The texture encoders share their block loading and line fitting.
@@ -130,6 +130,11 @@ endforeach()
 foreach(shader asrSceneResolveC asrSkyStarsV)
     add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
         DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrSkyClouds.glsl)
+endforeach()
+# Bloom's atlas layout and filtered reads.
+foreach(shader asrSceneBloomC asrSceneCompositeF)
+    add_custom_command(OUTPUT ${ASR_SHADER_OUTPUT_DIR}/${shader}.spv APPEND
+        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shaders/asrBloom.glsl)
 endforeach()
 add_custom_target(asrenderer_shaders ALL DEPENDS ${ASR_SHADER_OUTPUTS})
 

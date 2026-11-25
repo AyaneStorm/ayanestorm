@@ -115,6 +115,37 @@ constexpr uint32_t PYRAMID_GROUP_SIZE = 16;
 constexpr uint32_t PYRAMID_LEVELS_PER_DISPATCH = 3;
 constexpr uint32_t RESOLVE_GROUP_SIZE = 8;
 
+// Bloom (asrSceneBloomC.glsl): BLOOM_LEVELS halvings of the scene colour, from half its size,
+// in one atlas: level 0 on the left, the others stacked down a column to its right, as
+// asrBloom.glsl places them. ScenePush::phase is the level written, BLOOM_UP added when the
+// pass adds the level below back into it.
+constexpr uint32_t BLOOM_LEVELS = 6;
+constexpr uint32_t BLOOM_UP = 0x100;
+
+constexpr uint32_t bloomLevelSize(uint32_t scene, uint32_t level)
+{
+    const uint32_t divisor = 2u << level;
+    const uint32_t size = (scene + divisor - 1) / divisor;
+    return size > 0 ? size : 1;
+}
+
+// The atlas's width and height for a scene of this size.
+constexpr uint32_t bloomAtlasWidth(uint32_t sceneWidth)
+{
+    return bloomLevelSize(sceneWidth, 0) + bloomLevelSize(sceneWidth, 1);
+}
+
+constexpr uint32_t bloomAtlasHeight(uint32_t sceneHeight)
+{
+    uint32_t column = 0;
+    for (uint32_t level = 1; level < BLOOM_LEVELS; ++level)
+    {
+        column += bloomLevelSize(sceneHeight, level);
+    }
+    const uint32_t left = bloomLevelSize(sceneHeight, 0);
+    return left > column ? left : column;
+}
+
 // Texture feedback: the resolve pass records, for each texture slot, the sharpest size a
 // sampled pixel needed, as the GPU really sampled it: after occlusion, repeats and every
 // UV transform. It looks at one pixel in each block of 4 by 4, at a place that moves every
@@ -676,9 +707,13 @@ struct GpuSceneView
     float userExposure;       // RenderExposure: multiplies the exposure the sky gives
     float toneMix;            // RenderTonemapMix: 0 the exposed colour clamped, 1 fully tone mapped
     uint32_t toneMapper;      // TONE_MAPPER_*
-    uint32_t pad0;
+    float bloomStrength;      // ASRendererBloomStrength: the share of all light spread by bloom
+    float glowStrength;       // RenderGlowStrength, 0 with RenderGlow off: SL glow's light into bloom
+    uint32_t pad0[3];
 };
-static_assert(sizeof(GpuSceneView) == 880, "shaders read this layout");
+static_assert(sizeof(GpuSceneView) == 896, "shaders read this layout");
+// The atmosphere follows the view in its buffer, and its shader struct holds vec4s.
+static_assert(sizeof(GpuSceneView) % 16 == 0, "the atmosphere after the view must stay 16-byte aligned");
 
 // RenderTonemapType's values: LL's two, then the new renderer's own.
 constexpr uint32_t TONE_MAPPER_PBR_NEUTRAL = 0; // Khronos PBR Neutral

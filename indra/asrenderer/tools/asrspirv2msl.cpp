@@ -36,7 +36,7 @@
 
 // Image bindings of set 1 that keep their number as Metal texture indices; a binding past
 // these would get whatever index SPIRV-Cross picks, and the device binds it elsewhere.
-constexpr uint32_t SCENE_SET_IMAGES = 19; // as Vulkan's SCENE_IMAGE_BINDINGS: the sky's targets 11 to 14, tables 15 to 18
+constexpr uint32_t SCENE_SET_IMAGES = 20; // as Vulkan's SCENE_IMAGE_BINDINGS: the sky's targets 11 to 14, tables 15 to 18, bloom 19
 constexpr uint32_t BINDLESS_TEXTURES = 65536; // set 0's textures[], as the device's MAX_TEXTURES
 
 int main(int argc, char** argv)
