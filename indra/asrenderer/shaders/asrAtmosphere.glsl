@@ -398,7 +398,9 @@ vec3 sampleSkyView(Atmosphere a, vec3 direction, vec3 lightDirection, uint light
     const vec2 viewOnPlane = direction.xy;
     const vec2 lightOnPlane = lightDirection.xy;
     const float lengths = length(viewOnPlane) * length(lightOnPlane);
-    const float lightViewCos = lengths > 1e-6 ? dot(viewOnPlane, lightOnPlane) / lengths : 1.0;
+    // Clamped: in line with the light, Metal's fast math lands a hair past 1, and the
+    // table's sqrt(0.5 - 0.5 * cos) became NaN along the light's azimuth.
+    const float lightViewCos = lengths > 1e-6 ? clamp(dot(viewOnPlane, lightOnPlane) / lengths, -1.0, 1.0) : 1.0;
     const bool intersectGround = raySphereIntersectNearest(position, direction, a.bottomRadius) >= 0.0;
     vec2 uv = skyViewParamsToUv(a, intersectGround, viewZenithCos, lightViewCos, viewHeight);
     uv.y = (uv.y + float(light)) / float(SKY_VIEW_LUT_LIGHTS); // texel centres of its own table: no bleeding across
